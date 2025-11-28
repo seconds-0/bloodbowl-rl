@@ -77,9 +77,85 @@ Blood Bowl contains five distinct decision layers:
 
 ---
 
-## Part 2: Match-Level Architecture
+## Part 2: PufferLib Integration
 
-### 2.1 State Representation
+### 2.0 Multi-Agent Architecture (CRITICAL)
+
+Blood Bowl is a **true 2-agent environment** in PufferLib. Both teams are always present as separate agents, not a single agent with perspective flipping.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    PUFFERLIB MULTI-AGENT                        │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  Agent 0 (Team 0)              Agent 1 (Team 1)                 │
+│  ┌─────────────────┐          ┌─────────────────┐               │
+│  │ Observation 0   │          │ Observation 1   │               │
+│  │ (sees from own  │          │ (sees from own  │               │
+│  │  perspective)   │          │  perspective)   │               │
+│  └────────┬────────┘          └────────┬────────┘               │
+│           │                            │                         │
+│           ▼                            ▼                         │
+│  ┌─────────────────┐          ┌─────────────────┐               │
+│  │ Policy Network  │          │ Policy Network  │               │
+│  │ (shared weights │          │ (same network   │               │
+│  │  for self-play) │          │  or opponent)   │               │
+│  └────────┬────────┘          └────────┬────────┘               │
+│           │                            │                         │
+│           ▼                            ▼                         │
+│  ┌─────────────────┐          ┌─────────────────┐               │
+│  │ Action 0        │          │ Action 1        │               │
+│  │ (only executes  │          │ (only executes  │               │
+│  │  when active)   │          │  when active)   │               │
+│  └─────────────────┘          └─────────────────┘               │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Key Principles:**
+- Both agents receive observations every step
+- Only the active team's action is executed
+- Rewards are zero-sum: `reward_team0 = -reward_team1`
+- Observations are symmetric (each team sees board from their perspective)
+- Self-play uses PufferLib's built-in mechanism with shared policy weights
+
+### 2.0.1 External Buffer Pattern
+
+PufferLib requires environments to write to **external buffers** provided by the training infrastructure. The C environment does NOT own observation/reward arrays.
+
+```c
+// WRONG: Internal buffers
+typedef struct {
+    float observations[OBS_SIZE];  // DON'T DO THIS
+    float rewards[2];              // DON'T DO THIS
+} BloodBowlEnv;
+
+// CORRECT: Game state only, buffers provided externally
+typedef struct {
+    // Only game state - no observation buffers
+    int8_t player_x[MAX_PLAYERS];
+    int8_t player_y[MAX_PLAYERS];
+    // ...
+} BloodBowlGame;
+
+// Step function receives external buffer pointers
+void bb_step(
+    BloodBowlGame* game,
+    int action,
+    float* obs_team0,       // From PufferLib
+    float* obs_team1,       // From PufferLib
+    float* reward_team0,    // From PufferLib
+    float* reward_team1,    // From PufferLib
+    uint8_t* done,          // From PufferLib
+    uint8_t* action_mask    // From PufferLib
+);
+```
+
+---
+
+## Part 2.1: Match-Level Architecture
+
+### 2.1.1 State Representation
 
 The match observation must capture both **board state** and **matchup context**.
 
@@ -1165,6 +1241,143 @@ float compute_risk_tolerance(LeagueContext *ctx, UpcomingGame *upcoming, int num
 
 ## Part 8: Training Architecture
 
+### 8.0 PufferEnv Implementation
+
+Blood Bowl must inherit from `pufferlib.PufferEnv`, not `gym.Env`:
+
+```python
+import numpy as np
+import pufferlib
+
+from .cy_bloodbowl import CBloodBowl
+
+OBS_SIZE = 2048
+ACTION_SIZE = 256
+
+
+class BloodBowl(pufferlib.PufferEnv):
+    """Blood Bowl environment following PufferLib conventions.
+
+    This is a 2-agent environment where both teams are always present.
+    """
+
+    def __init__(self, buf=None, seed=None):
+        # ALWAYS 2 agents (both teams)
+        self.num_agents = 2
+
+        # Create C environment
+        self._env = CBloodBowl(seed or 0)
+
+        # Use shared buffers from PufferLib if provided
+        if buf is not None:
+            self.observations = buf.observations  # Shared memory!
+            self.actions = buf.actions
+            self.rewards = buf.rewards
+            self.terminals = buf.terminals
+        else:
+            # Standalone mode for testing
+            self.observations = np.zeros((2, OBS_SIZE), dtype=np.float32)
+            self.actions = np.zeros(2, dtype=np.int32)
+            self.rewards = np.zeros(2, dtype=np.float32)
+            self.terminals = np.zeros(2, dtype=np.uint8)
+
+        self.action_mask = np.zeros(ACTION_SIZE, dtype=np.uint8)
+        self._active_agent = 0
+
+    @property
+    def observation_space(self):
+        return pufferlib.spaces.Box(
+            low=-1.0, high=1.0, shape=(OBS_SIZE,), dtype=np.float32
+        )
+
+    @property
+    def action_space(self):
+        return pufferlib.spaces.Discrete(ACTION_SIZE)
+
+    def reset(self):
+        """Reset game, write observations to shared buffers."""
+        self._env.reset(
+            self.observations[0],  # Team 0's buffer
+            self.observations[1]   # Team 1's buffer
+        )
+        self._active_agent = self._env.active_team
+        self.terminals[:] = 0
+        self.rewards[:] = 0
+
+    def step(self):
+        """Execute action, update all buffers in-place."""
+        action = self.actions[self._active_agent]
+        done = np.zeros(1, dtype=np.uint8)
+
+        self._env.step(
+            action,
+            self.observations[0],
+            self.observations[1],
+            self.rewards[0:1],
+            self.rewards[1:2],
+            done,
+            self.action_mask
+        )
+
+        self.terminals[:] = done[0]
+        self._active_agent = self._env.active_team
+```
+
+### 8.0.1 Training with PuffeRL
+
+```python
+import pufferlib
+import pufferlib.vector
+import pufferlib.frameworks.cleanrl as cleanrl
+
+from bloodbowl import BloodBowl
+
+
+def train():
+    # Create vectorized environments
+    envs = pufferlib.vector.make(
+        BloodBowl,
+        backend='Multiprocessing',
+        num_envs=128,
+        num_workers=16,
+    )
+
+    # Create policy
+    policy = cleanrl.Policy(
+        envs.driver_env,
+        hidden_size=256,
+    )
+
+    # Train with PuffeRL
+    cleanrl.train(
+        envs=envs,
+        policy=policy,
+        total_timesteps=100_000_000,
+
+        # PPO hyperparameters
+        learning_rate=2.5e-4,
+        batch_size=2048,
+        minibatch_size=512,
+        gamma=0.99,
+        gae_lambda=0.95,
+        clip_coef=0.2,
+        ent_coef=0.01,
+        vf_coef=0.5,
+
+        # Self-play (PufferLib built-in)
+        self_play=True,
+        self_play_window=10,
+
+        # Logging
+        track=True,
+        wandb_project='bloodbowl-rl',
+    )
+
+
+if __name__ == '__main__':
+    train()
+```
+
 ### 8.1 Curriculum Design
 
 ```python
@@ -1351,16 +1564,16 @@ def normalize_observation(obs: MatchObservation) -> np.ndarray:
 
 ## Part 9: Implementation Roadmap
 
-### Phase 1: Core Match Engine (Weeks 1-4)
-- [ ] C game state structure
+### Phase 1: Core Match Engine
+- [ ] C game state structure (external buffer pattern)
 - [ ] Basic actions (move, block, pass)
 - [ ] Turnover system
 - [ ] Core skills (Block, Dodge, Tackle, Guard, MB)
-- [ ] Cython bindings
+- [ ] Cython bindings with memory views
 - [ ] Basic observation space
 - [ ] Random opponent baseline
 
-### Phase 2: Complete Rules (Weeks 5-8)
+### Phase 2: Complete Rules
 - [ ] All 50+ skills
 - [ ] Kick-off events
 - [ ] Weather
@@ -1368,27 +1581,32 @@ def normalize_observation(obs: MatchObservation) -> np.ndarray:
 - [ ] Action masking
 - [ ] EV-based reward shaping
 
-### Phase 3: Self-Play Training (Weeks 9-12)
-- [ ] PufferLib integration
-- [ ] Self-play infrastructure
+### Phase 3: Self-Play Training
+- [ ] PufferLib integration:
+  - [ ] Inherit from `pufferlib.PufferEnv`
+  - [ ] Accept `buf` parameter for shared buffers
+  - [ ] Write observations/rewards in-place (no return values)
+  - [ ] External buffer pointers in C code
+  - [ ] Cython memory views for zero-copy
+- [ ] Self-play via PufferLib's built-in mechanism
 - [ ] Curriculum learning
 - [ ] Win rate tracking
 - [ ] Matchup-aware observations
 
-### Phase 4: Meta-Game (Weeks 13-16)
+### Phase 4: Meta-Game
 - [ ] Inducement selection
 - [ ] Apothecary/wizard/bribe timing
 - [ ] Pre-match roster selection
 - [ ] Resource timing integration
 
-### Phase 5: League Mode (Weeks 17-20)
+### Phase 5: League Mode
 - [ ] Multi-game sequences
 - [ ] Skill selection agent
 - [ ] Treasury management
 - [ ] Season simulation
 - [ ] Long-term value optimization
 
-### Phase 6: Polish & Evaluation (Weeks 21-24)
+### Phase 6: Polish & Evaluation
 - [ ] Performance optimization (>1M sps)
 - [ ] Evaluation suite
 - [ ] Matchup analysis tools
@@ -1399,7 +1617,7 @@ def normalize_observation(obs: MatchObservation) -> np.ndarray:
 
 ## Part 10: Open Questions
 
-1. **Single vs Multi-Agent**: Should we train one policy for all teams or specialize?
+1. ~~**Single vs Multi-Agent**~~: **RESOLVED** - Use PufferLib's native multi-agent with 2 agents (both teams always present). Self-play uses shared policy weights via PufferLib's built-in mechanism.
 
 2. **Action Space**: Flat vs hierarchical? Affects exploration efficiency.
 
@@ -1412,6 +1630,8 @@ def normalize_observation(obs: MatchObservation) -> np.ndarray:
 6. **Transfer Learning**: Train on simple teams, transfer to complex?
 
 7. **Human Evaluation**: How do we efficiently evaluate against human experts?
+
+8. **Team Specialization**: One shared policy for all team types, or team-specific policies?
 
 ---
 
