@@ -9,12 +9,13 @@
 
 1. [Executive Summary](#executive-summary)
 2. [Blood Bowl Game Mechanics](#blood-bowl-game-mechanics)
-3. [PufferLib Architecture](#pufferlib-architecture)
-4. [Raylib for Visualization](#raylib-for-visualization)
-5. [Performance Optimization Techniques](#performance-optimization-techniques)
-6. [Recommended Architecture](#recommended-architecture)
-7. [Implementation Roadmap](#implementation-roadmap)
-8. [References](#references)
+3. [Reward Shaping: Expected Value Over Outcomes](#reward-shaping-expected-value-over-outcomes)
+4. [PufferLib Architecture](#pufferlib-architecture)
+5. [Raylib for Visualization](#raylib-for-visualization)
+6. [Performance Optimization Techniques](#performance-optimization-techniques)
+7. [Recommended Architecture](#recommended-architecture)
+8. [Implementation Roadmap](#implementation-roadmap)
+9. [References](#references)
 
 ---
 
@@ -33,7 +34,8 @@ This document presents comprehensive research on building an extremely fast Bloo
 |--------|-----------|----------|
 | Action Space | ~10^50 branching factor | Action masking, hierarchical actions |
 | Stochasticity | Every action involves dice | Fast PRNG, precomputed probability tables |
-| Sparse Rewards | Touchdowns are rare | Reward shaping, curriculum learning |
+| Sparse Rewards | Touchdowns are rare | EV-based reward shaping (decision quality, not dice outcomes) |
+| Noisy Gradients | Outcome ≠ Decision quality | Reward Expected Value, not realized results |
 | Visualization | Rendering slows training | Raylib with headless mode toggle |
 | Performance | Python overhead | C implementation with Cython bindings |
 
@@ -118,6 +120,312 @@ typedef enum {
 4. **Dynamic action space** - available actions change each state
 5. **Long-term planning** - 16 turns per half requires strategy
 6. **Credit assignment** - hard to attribute success to specific actions
+
+---
+
+## Reward Shaping: Expected Value Over Outcomes
+
+### The Core Problem with Outcome-Based Rewards
+
+In stochastic games like Blood Bowl, **rewarding outcomes creates extremely noisy gradients**:
+
+- A mathematically correct 2-dice block (89% success) that rolls double skulls gets punished
+- A reckless 1-die block that lucks into a knockdown gets rewarded
+- The agent learns superstition, not strategy
+
+**The solution: Reward the Expected Value (EV) of the decision, not the dice result.**
+
+### Reward Philosophy
+
+```
+Good Decision + Bad Dice = POSITIVE reward (you played correctly)
+Bad Decision + Good Dice = NEGATIVE reward (you got lucky, don't repeat)
+```
+
+This requires computing the **probability-weighted value** of each action, independent of what actually happened.
+
+### Primary Value Signals
+
+#### 1. Win/Loss (Terminal Reward)
+```c
+// Ultimate signal - but sparse and delayed
+if (game_over) {
+    if (own_score > opp_score) return +10.0f;
+    if (own_score < opp_score) return -10.0f;
+    return 0.0f;  // Draw
+}
+```
+
+#### 2. Touchdown Potential (Positional)
+```c
+// Reward ball advancement toward opponent's end zone
+// Scale by probability of scoring from current position
+float td_potential(BloodBowlGame *game) {
+    if (game->ball.carrier == 255) return 0.0f;  // Ball loose
+
+    int ball_x = game->teams[game->active_team].x[game->ball.carrier];
+    int target_x = (game->active_team == 0) ? BOARD_WIDTH - 1 : 0;
+
+    // Distance-based potential (normalized 0-1)
+    float distance = abs(ball_x - target_x) / (float)BOARD_WIDTH;
+    return 1.0f - distance;  // Higher when closer to scoring
+}
+```
+
+#### 3. Block Quality (EV-Based)
+```c
+// Reward blocks based on EXPECTED knockdown/injury, not outcome
+typedef struct {
+    float p_knockdown;      // Probability of knocking down defender
+    float p_armor_break;    // Probability of breaking armor (given knockdown)
+    float p_injury;         // Probability of injury (given armor break)
+    float p_removal;        // Probability of removal (KO or worse)
+    float p_turnover;       // Probability of turning over (attacker down)
+} BlockEV;
+
+BlockEV compute_block_ev(int attacker_st, int defender_st,
+                         uint32_t attacker_skills, uint32_t defender_skills,
+                         int defender_av, int assists_for, int assists_against) {
+    BlockEV ev = {0};
+
+    // Compute effective strength
+    int eff_att_st = attacker_st + assists_for;
+    int eff_def_st = defender_st + assists_against;
+
+    // Determine number of dice and who chooses
+    int dice = 1;
+    int attacker_chooses = 1;
+    if (eff_att_st > eff_def_st) {
+        dice = (eff_att_st >= 2 * eff_def_st) ? 3 : 2;
+    } else if (eff_def_st > eff_att_st) {
+        dice = (eff_def_st >= 2 * eff_att_st) ? 3 : 2;
+        attacker_chooses = 0;
+    }
+
+    // Compute probabilities from precomputed tables
+    ev.p_knockdown = block_knockdown_prob[dice][attacker_chooses]
+                      [HAS_SKILL(defender_skills, SKILL_DODGE)]
+                      [HAS_SKILL(attacker_skills, SKILL_TACKLE)];
+
+    ev.p_turnover = block_turnover_prob[dice][attacker_chooses]
+                     [HAS_SKILL(attacker_skills, SKILL_BLOCK)]
+                     [HAS_SKILL(defender_skills, SKILL_BLOCK)];
+
+    // Armor break probability (2d6 >= AV)
+    ev.p_armor_break = armor_break_prob[defender_av];
+
+    // Injury probabilities (2d6 on injury table)
+    // 2-7: Stunned, 8-9: KO, 10+: Casualty
+    ev.p_injury = 0.583f;  // P(8+) = 15/36
+    ev.p_removal = 0.167f; // P(10+) = 6/36
+
+    // Mighty Blow adds +1 to both rolls
+    if (HAS_SKILL(attacker_skills, SKILL_MIGHTY_BLOW)) {
+        ev.p_armor_break = armor_break_prob[defender_av - 1];
+        ev.p_injury = 0.722f;  // P(7+)
+        ev.p_removal = 0.278f; // P(9+)
+    }
+
+    return ev;
+}
+
+float reward_for_block(BloodBowlGame *game, int attacker, int defender) {
+    BlockEV ev = compute_block_ev(...);
+
+    // Reward based on expected value, NOT outcome
+    float reward = 0.0f;
+
+    // Value of attempting this block
+    reward += ev.p_knockdown * KNOCKDOWN_VALUE;           // ~0.1
+    reward += ev.p_knockdown * ev.p_armor_break * ev.p_removal * REMOVAL_VALUE;  // ~0.5
+    reward -= ev.p_turnover * TURNOVER_PENALTY;           // ~-0.3
+
+    return reward;
+}
+```
+
+#### 4. Turnover Risk (Penalty for Bad Decisions)
+```c
+// Penalize actions with high turnover probability
+float turnover_penalty(ActionType action, float success_prob) {
+    // Turnover ends your turn - catastrophic
+    float turnover_prob = 1.0f - success_prob;
+
+    // Scale penalty by how bad the turnover is in current state
+    float state_value = estimate_state_value(game);
+
+    // Losing a good position hurts more than losing a bad one
+    return -turnover_prob * state_value * TURNOVER_WEIGHT;
+}
+
+// Example: Dodging through tackle zones
+float dodge_ev(int ag, int tackle_zones, int has_dodge, int opp_has_tackle) {
+    // Base probability: AG roll (lower is better in BB2020)
+    int target = ag + tackle_zones;
+    if (opp_has_tackle && has_dodge) target += 0;  // Dodge skill negated
+    else if (has_dodge) target -= 1;  // Dodge helps
+
+    float success = dodge_success_prob[target];  // From precomputed table
+    return success;
+}
+```
+
+#### 5. Forced Turnovers (Huge Positive)
+```c
+// When opponent loses the ball, big reward
+// Scale by HOW we caused it (skill vs luck)
+
+float forced_turnover_reward(TurnoverCause cause) {
+    switch (cause) {
+        case TURNOVER_STRIP_BALL:
+            return +0.8f;  // We actively caused it (Strip Ball skill)
+        case TURNOVER_FAILED_CATCH:
+            return +0.4f;  // We pressured them into a risky play
+        case TURNOVER_KNOCKED_DOWN_CARRIER:
+            return +0.6f;  // Direct result of our block
+        case TURNOVER_FAILED_DODGE:
+            return +0.3f;  // They took a risk, we benefit
+        default:
+            return +0.2f;  // General opponent mistake
+    }
+}
+```
+
+#### 6. Positional Value (Board Control)
+```c
+// Reward good positioning independent of immediate actions
+float positional_value(BloodBowlGame *game) {
+    float value = 0.0f;
+
+    // Cage formation around ball carrier
+    value += cage_strength(game) * CAGE_VALUE;
+
+    // Screen positions blocking opponent lanes
+    value += screen_coverage(game) * SCREEN_VALUE;
+
+    // Marking key opponent players
+    value += marking_value(game) * MARKING_VALUE;
+
+    // Control of the line of scrimmage
+    value += los_control(game) * LOS_VALUE;
+
+    return value;
+}
+```
+
+### Reward Computation Architecture
+
+```c
+typedef struct {
+    // Primary signals
+    float win_loss;           // Terminal: +10/-10/0
+    float touchdown;          // +3.0 for scoring
+    float td_potential;       // 0 to 1, ball advancement
+
+    // Combat EV (decision quality, not outcome)
+    float block_ev;           // Expected value of blocks taken
+    float removal_ev;         // Expected removals from our blocks
+    float knockdown_ev;       // Expected knockdowns
+
+    // Turnover signals
+    float turnover_risk;      // Penalty for risky actions (EV-based)
+    float forced_turnover;    // Reward for causing opponent turnovers
+
+    // Positional
+    float positional_delta;   // Change in board control
+
+    // Meta
+    float action_efficiency;  // Did we use our limited resources well?
+} RewardComponents;
+
+float compute_total_reward(RewardComponents *r) {
+    // Weights tuned for learning stability
+    return r->win_loss * 1.0f
+         + r->touchdown * 0.3f
+         + r->td_potential * 0.05f
+         + r->block_ev * 0.1f
+         + r->removal_ev * 0.15f
+         + r->knockdown_ev * 0.05f
+         + r->turnover_risk * 0.2f
+         + r->forced_turnover * 0.15f
+         + r->positional_delta * 0.02f;
+}
+```
+
+### Precomputed Probability Tables
+
+To make EV computation fast, precompute all probability lookups:
+
+```c
+// Initialize once at startup
+void init_reward_tables(void) {
+    // Block outcomes: [dice][attacker_chooses][def_has_dodge][att_has_tackle]
+    for (int dice = 1; dice <= 3; dice++) {
+        for (int choose = 0; choose <= 1; choose++) {
+            for (int dodge = 0; dodge <= 1; dodge++) {
+                for (int tackle = 0; tackle <= 1; tackle++) {
+                    block_knockdown_prob[dice][choose][dodge][tackle] =
+                        compute_block_knockdown(dice, choose, dodge, tackle);
+                    block_turnover_prob[dice][choose][dodge][tackle] =
+                        compute_block_turnover(dice, choose, dodge, tackle);
+                }
+            }
+        }
+    }
+
+    // Armor break: P(2d6 >= AV) for AV 4-10
+    for (int av = 4; av <= 10; av++) {
+        armor_break_prob[av] = compute_2d6_geq(av);
+    }
+
+    // Dodge success: [target_roll]
+    for (int target = 2; target <= 12; target++) {
+        dodge_success_prob[target] = compute_d6_leq(target);
+    }
+
+    // etc...
+}
+```
+
+### Why This Works
+
+| Traditional Reward | EV-Based Reward |
+|-------------------|-----------------|
+| +1 if block succeeds | +EV(block) regardless of outcome |
+| -1 if turnover | -P(turnover) × state_value |
+| Noisy gradients | Smooth gradients |
+| Learns superstition | Learns probability theory |
+| High variance | Low variance |
+| Slow convergence | Fast convergence |
+
+### Implementation Notes
+
+1. **Compute EV at action time**, not after dice roll
+2. **Store the EV**, then after dice roll, reward = EV (not outcome)
+3. **Log both** EV and outcome for debugging
+4. **Tune weights** empirically - start with the values above
+5. **Consider advantage functions**: reward = EV - baseline_EV
+
+### Example: Complete Block Sequence
+
+```
+State: 2-dice block available (ST 4 vs ST 3, no assists)
+       Defender has AV 8, no skills
+
+EV Computation:
+  - P(knockdown) = 0.89 (2 dice, attacker chooses)
+  - P(armor_break | knockdown) = 0.42 (need 8+ on 2d6)
+  - P(removal | armor_break) = 0.28 (need 9+ on 2d6)
+  - P(turnover) = 0.03 (both down without Block)
+
+Block EV = 0.89 × 0.1 + 0.89 × 0.42 × 0.28 × 0.5 - 0.03 × 0.3
+        = 0.089 + 0.052 - 0.009
+        = +0.132
+
+Reward = +0.132 (regardless of whether dice show skulls or POW)
+```
+
+This way, the agent learns that 2-dice blocks are good plays, even when they occasionally fail.
 
 ---
 
