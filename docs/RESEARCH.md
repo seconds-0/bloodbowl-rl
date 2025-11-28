@@ -232,15 +232,58 @@ BlockEV compute_block_ev(int attacker_st, int defender_st,
 float reward_for_block(BloodBowlGame *game, int attacker, int defender) {
     BlockEV ev = compute_block_ev(...);
 
+    // Get value of both players involved
+    int opp_team = 1 - game->active_team;
+    float target_value = get_player_value_for_team(game, opp_team, defender);
+    float attacker_value = get_player_value_for_team(game, game->active_team, attacker);
+
     // Reward based on expected value, NOT outcome
     float reward = 0.0f;
 
-    // Value of attempting this block
-    reward += ev.p_knockdown * KNOCKDOWN_VALUE;           // ~0.1
-    reward += ev.p_knockdown * ev.p_armor_break * ev.p_removal * REMOVAL_VALUE;  // ~0.5
-    reward -= ev.p_turnover * TURNOVER_PENALTY;           // ~-0.3
+    // Value of knocking down/removing THEIR player (scaled by their value)
+    reward += ev.p_knockdown * KNOCKDOWN_VALUE * target_value;
+    reward += ev.p_knockdown * ev.p_armor_break * ev.p_removal * REMOVAL_VALUE * target_value;
+
+    // Risk of losing OUR player (scaled by our attacker's value)
+    reward -= ev.p_turnover * TURNOVER_PENALTY * attacker_value;
 
     return reward;
+}
+
+// Generalized player value function
+float get_player_value_for_team(BloodBowlGame *game, int team_idx, int player_idx) {
+    Team *team = &game->teams[team_idx];
+
+    // Base value from stats (normalized around 1.0 for average player)
+    float value = 1.0f;
+    value += (team->ma[player_idx] - 6) * 0.15f;   // Speed premium (MA 8 = +0.3)
+    value += (team->st[player_idx] - 3) * 0.4f;    // Strength premium (ST 4 = +0.4)
+    value += (4 - team->ag[player_idx]) * 0.25f;   // Agility premium (AG 2+ = +0.5)
+    value += (team->av[player_idx] - 8) * 0.1f;    // Armor premium (AV 9 = +0.1)
+
+    // Skill premium - some skills worth more than others
+    if (HAS_SKILL(team->skills[player_idx], SKILL_BLOCK)) value += 0.3f;
+    if (HAS_SKILL(team->skills[player_idx], SKILL_DODGE)) value += 0.3f;
+    if (HAS_SKILL(team->skills[player_idx], SKILL_MIGHTY_BLOW)) value += 0.25f;
+    if (HAS_SKILL(team->skills[player_idx], SKILL_GUARD)) value += 0.35f;
+    if (HAS_SKILL(team->skills[player_idx], SKILL_SURE_HANDS)) value += 0.2f;
+    if (HAS_SKILL(team->skills[player_idx], SKILL_CATCH)) value += 0.15f;
+
+    // Ball carrier multiplier (huge)
+    if (team_idx == game->active_team && game->ball.carrier == player_idx) {
+        value *= 2.5f;  // Ball carrier is critical
+    } else if (team_idx != game->active_team && game->ball.carrier == player_idx) {
+        value *= 2.5f;  // Their ball carrier is high-value target
+    }
+
+    // Positional scarcity - losing your only ST4 player hurts more
+    int st = team->st[player_idx];
+    int count_at_st = count_players_with_stat(team, STAT_ST, st);
+    if (count_at_st == 1 && st >= 4) {
+        value *= 1.3f;  // Unique high-ST player
+    }
+
+    return value;
 }
 ```
 
@@ -251,52 +294,35 @@ float reward_for_block(BloodBowlGame *game, int attacker, int defender) {
 // We allowed a dangerous situation - punish the positioning, not the luck
 
 float penalty_for_opponent_block(BloodBowlGame *game, int opp_attacker, int our_defender) {
-    // Compute EV from THEIR perspective (but negate for our reward)
+    int opp_team = 1 - game->active_team;
+
+    // Compute EV from THEIR perspective
     BlockEV ev = compute_block_ev(
-        game->teams[1 - game->active_team].st[opp_attacker],
+        game->teams[opp_team].st[opp_attacker],
         game->teams[game->active_team].st[our_defender],
-        game->teams[1 - game->active_team].skills[opp_attacker],
+        game->teams[opp_team].skills[opp_attacker],
         game->teams[game->active_team].skills[our_defender],
         game->teams[game->active_team].av[our_defender],
         count_assists_for_opponent(...),
         count_assists_for_us(...)
     );
 
+    // Get value of OUR player being hit (higher value = bigger penalty)
+    float our_player_value = get_player_value_for_team(game, game->active_team, our_defender);
+
+    // Get value of THEIR attacker (if they're risking a valuable piece, less bad for us)
+    float their_attacker_value = get_player_value_for_team(game, opp_team, opp_attacker);
+
     float penalty = 0.0f;
 
-    // Their expected knockdown on us = bad
-    penalty -= ev.p_knockdown * KNOCKDOWN_VALUE;
+    // Their expected knockdown/removal on us = bad (scaled by our player's value)
+    penalty -= ev.p_knockdown * KNOCKDOWN_VALUE * our_player_value;
+    penalty -= ev.p_knockdown * ev.p_armor_break * ev.p_removal * REMOVAL_VALUE * our_player_value;
 
-    // Their expected removal of our player = very bad
-    penalty -= ev.p_knockdown * ev.p_armor_break * ev.p_removal * REMOVAL_VALUE;
+    // But if THEY might turn over, that's good for us (scaled by their attacker's value)
+    penalty += ev.p_turnover * TURNOVER_PENALTY * their_attacker_value * 0.5f;
 
-    // Scale by player importance (losing a Blitzer hurts more than a Lineman)
-    float player_value = get_player_value(game, our_defender);
-    penalty *= player_value;
-
-    return penalty;  // Already negative
-}
-
-// Player value based on position and stats
-float get_player_value(BloodBowlGame *game, int player_idx) {
-    Team *team = &game->teams[game->active_team];
-
-    // Base value from stats
-    float value = 1.0f;
-    value += (team->ma[player_idx] - 6) * 0.1f;  // Speed premium
-    value += (team->st[player_idx] - 3) * 0.3f;  // Strength premium
-    value += (4 - team->ag[player_idx]) * 0.2f;  // Agility premium (lower is better)
-
-    // Skill premium
-    int skill_count = __builtin_popcount(team->skills[player_idx]);
-    value += skill_count * 0.15f;
-
-    // Ball carrier is most valuable
-    if (game->ball.carrier == player_idx) {
-        value *= 2.0f;
-    }
-
-    return value;
+    return penalty;  // Net negative in most cases
 }
 
 // Called during opponent's turn for each block they throw
@@ -490,26 +516,46 @@ void init_reward_tables(void) {
 4. **Tune weights** empirically - start with the values above
 5. **Consider advantage functions**: reward = EV - baseline_EV
 
-### Example: Complete Block Sequence
+### Example: Complete Block Sequence with Unit Value
 
 ```
-State: 2-dice block available (ST 4 vs ST 3, no assists)
-       Defender has AV 8, no skills
+Scenario A: 2-dice block on opponent's Lineman (value = 1.0)
+  Attacker: Our Blitzer (value = 1.7)
+  Defender: Their Lineman (6/3/3/8, no skills, value = 1.0)
 
-EV Computation:
-  - P(knockdown) = 0.89 (2 dice, attacker chooses)
-  - P(armor_break | knockdown) = 0.42 (need 8+ on 2d6)
-  - P(removal | armor_break) = 0.28 (need 9+ on 2d6)
-  - P(turnover) = 0.03 (both down without Block)
+  EV Computation:
+    - P(knockdown) = 0.89, P(armor_break) = 0.42, P(removal) = 0.28
+    - P(turnover) = 0.03
 
-Block EV = 0.89 × 0.1 + 0.89 × 0.42 × 0.28 × 0.5 - 0.03 × 0.3
-        = 0.089 + 0.052 - 0.009
-        = +0.132
+  Block EV = (0.89 × 0.1 × 1.0) + (0.89 × 0.42 × 0.28 × 0.5 × 1.0) - (0.03 × 0.3 × 1.7)
+           = 0.089 + 0.052 - 0.015
+           = +0.126
 
-Reward = +0.132 (regardless of whether dice show skulls or POW)
+Scenario B: 2-dice block on opponent's Star Blitzer (value = 2.3)
+  Attacker: Our Blitzer (value = 1.7)
+  Defender: Their Blitzer (7/4/3/8, Block+Mighty Blow, value = 2.3)
+
+  Same dice odds, but scaled by target value:
+  Block EV = (0.89 × 0.1 × 2.3) + (0.89 × 0.42 × 0.28 × 0.5 × 2.3) - (0.03 × 0.3 × 1.7)
+           = 0.205 + 0.120 - 0.015
+           = +0.310  (2.5x more valuable!)
+
+Scenario C: 2-dice block on opponent's Ball Carrier (value = 2.5 × base)
+  If that Blitzer is carrying the ball (value = 2.3 × 2.5 = 5.75):
+  Block EV = (0.89 × 0.1 × 5.75) + (0.89 × 0.42 × 0.28 × 0.5 × 5.75) - (0.03 × 0.3 × 1.7)
+           = 0.512 + 0.301 - 0.015
+           = +0.798  (6x more valuable than hitting a Lineman!)
 ```
 
-This way, the agent learns that 2-dice blocks are good plays, even when they occasionally fail.
+**Key insight:** The agent learns to prioritize targets:
+1. Ball carrier (always highest priority)
+2. Star players with key skills (Block, Dodge, Guard, Mighty Blow)
+3. Unique positional players (only ST4+ piece)
+4. Generic linemen (lowest priority)
+
+And to protect our own pieces proportionally:
+- Don't risk your Star Blitzer on a 1-die block to hit their Lineman
+- Risking a Lineman to potentially remove their Star is good EV
 
 ---
 
