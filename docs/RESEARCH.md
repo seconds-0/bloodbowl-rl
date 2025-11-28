@@ -250,41 +250,43 @@ float reward_for_block(BloodBowlGame *game, int attacker, int defender) {
     return reward;
 }
 
-// Generalized player value function
+// Player value = just use gold cost! Blood Bowl already solved this.
 float get_player_value_for_team(BloodBowlGame *game, int team_idx, int player_idx) {
     Team *team = &game->teams[team_idx];
 
-    // Base value from stats (normalized around 1.0 for average player)
-    float value = 1.0f;
-    value += (team->ma[player_idx] - 6) * 0.15f;   // Speed premium (MA 8 = +0.3)
-    value += (team->st[player_idx] - 3) * 0.4f;    // Strength premium (ST 4 = +0.4)
-    value += (4 - team->ag[player_idx]) * 0.25f;   // Agility premium (AG 2+ = +0.5)
-    value += (team->av[player_idx] - 8) * 0.1f;    // Armor premium (AV 9 = +0.1)
+    // Gold cost is the canonical measure of player value
+    // Normalized: 50k Lineman = 1.0, 100k Blitzer = 2.0, etc.
+    float value = team->gold_value[player_idx] / 50000.0f;
 
-    // Skill premium - some skills worth more than others
-    if (HAS_SKILL(team->skills[player_idx], SKILL_BLOCK)) value += 0.3f;
-    if (HAS_SKILL(team->skills[player_idx], SKILL_DODGE)) value += 0.3f;
-    if (HAS_SKILL(team->skills[player_idx], SKILL_MIGHTY_BLOW)) value += 0.25f;
-    if (HAS_SKILL(team->skills[player_idx], SKILL_GUARD)) value += 0.35f;
-    if (HAS_SKILL(team->skills[player_idx], SKILL_SURE_HANDS)) value += 0.2f;
-    if (HAS_SKILL(team->skills[player_idx], SKILL_CATCH)) value += 0.15f;
-
-    // Ball carrier multiplier (huge)
-    if (team_idx == game->active_team && game->ball.carrier == player_idx) {
-        value *= 2.5f;  // Ball carrier is critical
-    } else if (team_idx != game->active_team && game->ball.carrier == player_idx) {
-        value *= 2.5f;  // Their ball carrier is high-value target
-    }
-
-    // Positional scarcity - losing your only ST4 player hurts more
-    int st = team->st[player_idx];
-    int count_at_st = count_players_with_stat(team, STAT_ST, st);
-    if (count_at_st == 1 && st >= 4) {
-        value *= 1.3f;  // Unique high-ST player
+    // Ball carrier multiplier - losing the ball is catastrophic
+    if (game->ball.carrier == player_idx) {
+        value *= 2.5f;
     }
 
     return value;
 }
+
+/*
+ * Gold costs already encode everything:
+ *
+ * Position              Gold     Normalized
+ * ----------------------------------------
+ * Lineman (6/3/3/8)     50k      1.0
+ * Thrower (6/3/3/8+skills) 70k   1.4
+ * Catcher (8/2/3/7)     60k      1.2
+ * Blitzer (7/3/3/8)     90k      1.8
+ * Black Orc (4/4/4/9)   90k      1.8
+ * Ogre (5/5/4/9)        140k     2.8
+ * Star Player           150k+    3.0+
+ *
+ * Skills add ~20k each to current value:
+ * - Fresh Blitzer: 90k (1.8)
+ * - Blitzer + Block + Mighty Blow: 130k (2.6)
+ * - Developed Star: 170k+ (3.4+)
+ *
+ * This is simpler AND more accurate than hand-computing from stats.
+ * The game designers already balanced these values.
+ */
 ```
 
 #### 3b. Opponent Block Quality (Symmetric Negative EV)
@@ -516,46 +518,61 @@ void init_reward_tables(void) {
 4. **Tune weights** empirically - start with the values above
 5. **Consider advantage functions**: reward = EV - baseline_EV
 
-### Example: Complete Block Sequence with Unit Value
+### Example: Complete Block Sequence with Gold Value
 
 ```
-Scenario A: 2-dice block on opponent's Lineman (value = 1.0)
-  Attacker: Our Blitzer (value = 1.7)
-  Defender: Their Lineman (6/3/3/8, no skills, value = 1.0)
+Scenario A: 2-dice block on opponent's Lineman
+  Attacker: Our Blitzer (90k = 1.8)
+  Defender: Their Lineman (50k = 1.0)
 
   EV Computation:
     - P(knockdown) = 0.89, P(armor_break) = 0.42, P(removal) = 0.28
     - P(turnover) = 0.03
 
-  Block EV = (0.89 × 0.1 × 1.0) + (0.89 × 0.42 × 0.28 × 0.5 × 1.0) - (0.03 × 0.3 × 1.7)
-           = 0.089 + 0.052 - 0.015
-           = +0.126
+  Block EV = (0.89 × 0.1 × 1.0) + (0.89 × 0.42 × 0.28 × 0.5 × 1.0) - (0.03 × 0.3 × 1.8)
+           = 0.089 + 0.052 - 0.016
+           = +0.125
 
-Scenario B: 2-dice block on opponent's Star Blitzer (value = 2.3)
-  Attacker: Our Blitzer (value = 1.7)
-  Defender: Their Blitzer (7/4/3/8, Block+Mighty Blow, value = 2.3)
+Scenario B: 2-dice block on opponent's Developed Blitzer
+  Attacker: Our Blitzer (90k = 1.8)
+  Defender: Their Blitzer with Block+MB (130k = 2.6)
 
-  Same dice odds, but scaled by target value:
-  Block EV = (0.89 × 0.1 × 2.3) + (0.89 × 0.42 × 0.28 × 0.5 × 2.3) - (0.03 × 0.3 × 1.7)
-           = 0.205 + 0.120 - 0.015
-           = +0.310  (2.5x more valuable!)
+  Same dice odds, but scaled by gold value:
+  Block EV = (0.89 × 0.1 × 2.6) + (0.89 × 0.42 × 0.28 × 0.5 × 2.6) - (0.03 × 0.3 × 1.8)
+           = 0.231 + 0.136 - 0.016
+           = +0.351  (2.8x more valuable!)
 
-Scenario C: 2-dice block on opponent's Ball Carrier (value = 2.5 × base)
-  If that Blitzer is carrying the ball (value = 2.3 × 2.5 = 5.75):
-  Block EV = (0.89 × 0.1 × 5.75) + (0.89 × 0.42 × 0.28 × 0.5 × 5.75) - (0.03 × 0.3 × 1.7)
-           = 0.512 + 0.301 - 0.015
-           = +0.798  (6x more valuable than hitting a Lineman!)
+Scenario C: 2-dice block on opponent's Ball Carrier
+  Their Blitzer carrying the ball (130k × 2.5 = 6.5 effective):
+  Block EV = (0.89 × 0.1 × 6.5) + (0.89 × 0.42 × 0.28 × 0.5 × 6.5) - (0.03 × 0.3 × 1.8)
+           = 0.579 + 0.341 - 0.016
+           = +0.904  (7x more valuable than hitting a Lineman!)
+
+Scenario D: Should our Lineman 1-die block their Ogre?
+  Attacker: Our Lineman (50k = 1.0)
+  Defender: Their Ogre (140k = 2.8)
+  1-die block: P(knockdown) = 0.33, P(turnover) = 0.17
+
+  Block EV = (0.33 × 0.1 × 2.8) + (0.33 × 0.28 × 0.17 × 0.5 × 2.8) - (0.17 × 0.3 × 1.0)
+           = 0.092 + 0.022 - 0.051
+           = +0.063  (Positive! Cheap piece taking a shot at expensive one)
 ```
 
-**Key insight:** The agent learns to prioritize targets:
-1. Ball carrier (always highest priority)
-2. Star players with key skills (Block, Dodge, Guard, Mighty Blow)
-3. Unique positional players (only ST4+ piece)
-4. Generic linemen (lowest priority)
+**Key insight:** Gold value naturally encodes target priority:
 
-And to protect our own pieces proportionally:
-- Don't risk your Star Blitzer on a 1-die block to hit their Lineman
-- Risking a Lineman to potentially remove their Star is good EV
+| Target | Gold | Value | Priority |
+|--------|------|-------|----------|
+| Ball carrier (any) | × 2.5 | Highest | Always #1 |
+| Star Player | 150k+ | 3.0+ | High |
+| Developed positional | 120-140k | 2.4-2.8 | Medium-High |
+| Big Guy (Ogre/Troll) | 140k | 2.8 | Medium-High |
+| Fresh Blitzer | 90k | 1.8 | Medium |
+| Lineman | 50k | 1.0 | Low |
+
+Trade math becomes simple:
+- Lineman (1.0) for their Blitzer (1.8) = good trade
+- Our Blitzer (1.8) for their Lineman (1.0) = bad trade
+- Mutual removal of equal-value pieces = neutral
 
 ---
 
@@ -916,6 +933,9 @@ typedef struct {
 
     // Skills (bitfield per player)
     uint32_t skills[MAX_PLAYERS_PER_TEAM];
+
+    // Gold value (for EV calculations) - base cost + 20k per skill
+    uint32_t gold_value[MAX_PLAYERS_PER_TEAM];
 
     int num_players;
 } Team;
