@@ -244,6 +244,79 @@ float reward_for_block(BloodBowlGame *game, int attacker, int defender) {
 }
 ```
 
+#### 3b. Opponent Block Quality (Symmetric Negative EV)
+```c
+// CRITICAL: Penalize when opponent gets good blocks on us
+// If they have a 2-dice block on our Blitzer, that's BAD even if they roll skulls
+// We allowed a dangerous situation - punish the positioning, not the luck
+
+float penalty_for_opponent_block(BloodBowlGame *game, int opp_attacker, int our_defender) {
+    // Compute EV from THEIR perspective (but negate for our reward)
+    BlockEV ev = compute_block_ev(
+        game->teams[1 - game->active_team].st[opp_attacker],
+        game->teams[game->active_team].st[our_defender],
+        game->teams[1 - game->active_team].skills[opp_attacker],
+        game->teams[game->active_team].skills[our_defender],
+        game->teams[game->active_team].av[our_defender],
+        count_assists_for_opponent(...),
+        count_assists_for_us(...)
+    );
+
+    float penalty = 0.0f;
+
+    // Their expected knockdown on us = bad
+    penalty -= ev.p_knockdown * KNOCKDOWN_VALUE;
+
+    // Their expected removal of our player = very bad
+    penalty -= ev.p_knockdown * ev.p_armor_break * ev.p_removal * REMOVAL_VALUE;
+
+    // Scale by player importance (losing a Blitzer hurts more than a Lineman)
+    float player_value = get_player_value(game, our_defender);
+    penalty *= player_value;
+
+    return penalty;  // Already negative
+}
+
+// Player value based on position and stats
+float get_player_value(BloodBowlGame *game, int player_idx) {
+    Team *team = &game->teams[game->active_team];
+
+    // Base value from stats
+    float value = 1.0f;
+    value += (team->ma[player_idx] - 6) * 0.1f;  // Speed premium
+    value += (team->st[player_idx] - 3) * 0.3f;  // Strength premium
+    value += (4 - team->ag[player_idx]) * 0.2f;  // Agility premium (lower is better)
+
+    // Skill premium
+    int skill_count = __builtin_popcount(team->skills[player_idx]);
+    value += skill_count * 0.15f;
+
+    // Ball carrier is most valuable
+    if (game->ball.carrier == player_idx) {
+        value *= 2.0f;
+    }
+
+    return value;
+}
+
+// Called during opponent's turn for each block they throw
+void accumulate_opponent_block_penalties(BloodBowlGame *game, float *reward) {
+    // For each block opponent attempts this turn
+    for (int i = 0; i < game->num_opponent_blocks_this_turn; i++) {
+        int attacker = game->opponent_blocks[i].attacker;
+        int defender = game->opponent_blocks[i].defender;
+
+        *reward += penalty_for_opponent_block(game, attacker, defender);
+    }
+}
+```
+
+**Key insight:** This creates pressure to:
+- Protect valuable players (don't leave your Blitzer in a 2-dice block situation)
+- Use Guard skill effectively (reduce opponent's dice)
+- Mark opponent's bashers (prevent them from getting free blocks)
+- Screen the ball carrier (don't let them even attempt blocks on the carrier)
+
 #### 4. Turnover Risk (Penalty for Bad Decisions)
 ```c
 // Penalize actions with high turnover probability
@@ -322,10 +395,15 @@ typedef struct {
     float touchdown;          // +3.0 for scoring
     float td_potential;       // 0 to 1, ball advancement
 
-    // Combat EV (decision quality, not outcome)
-    float block_ev;           // Expected value of blocks taken
+    // Offensive Combat EV (our blocks - decision quality, not outcome)
+    float block_ev;           // Expected value of blocks we threw
     float removal_ev;         // Expected removals from our blocks
-    float knockdown_ev;       // Expected knockdowns
+    float knockdown_ev;       // Expected knockdowns we caused
+
+    // Defensive Combat EV (opponent blocks on us - symmetric!)
+    float opp_block_ev;       // Penalty for blocks opponent got on us
+    float opp_removal_ev;     // Penalty for removal chances we allowed
+    float opp_knockdown_ev;   // Penalty for knockdown chances we allowed
 
     // Turnover signals
     float turnover_risk;      // Penalty for risky actions (EV-based)
@@ -343,9 +421,15 @@ float compute_total_reward(RewardComponents *r) {
     return r->win_loss * 1.0f
          + r->touchdown * 0.3f
          + r->td_potential * 0.05f
+         // Offensive: reward good blocks
          + r->block_ev * 0.1f
          + r->removal_ev * 0.15f
          + r->knockdown_ev * 0.05f
+         // Defensive: penalize allowing good blocks (symmetric!)
+         + r->opp_block_ev * 0.1f        // Already negative
+         + r->opp_removal_ev * 0.15f     // Already negative
+         + r->opp_knockdown_ev * 0.05f   // Already negative
+         // Turnovers
          + r->turnover_risk * 0.2f
          + r->forced_turnover * 0.15f
          + r->positional_delta * 0.02f;
