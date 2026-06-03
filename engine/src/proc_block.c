@@ -631,6 +631,11 @@ static void knockdown_advance(bb_match* m, bb_rng* rng) {
     bb_frame f = *bb_top(m);
     bb_pop(m);
     bb_player* p = &m->players[f.a];
+    // A knockdown can be queued behind another resolution that removes the
+    // player first (chain push into the crowd mid-action). Knocking down a
+    // player who is no longer on the pitch corrupted locations — KO branch
+    // overwrote CAS, drive-end then resurrected the casualty (review H2).
+    if (p->location != BB_LOC_ON_PITCH) return;
     // STEADY FOOTING: "Whenever this player would be Knocked Down or Fall
     // Over, roll a D6. On a 6, this player does not get Knocked Down."
     if (bb_has_skill(&p->skills, BB_SK_STEADY_FOOTING) && bb_d6(rng) == 6) {

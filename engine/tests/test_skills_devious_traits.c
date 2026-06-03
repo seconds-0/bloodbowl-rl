@@ -228,3 +228,48 @@ BB_TEST(skdt_insignificant_no_match_time_effect) {
     BB_CHECK_EQ(m.players[mover].y, 6);
     BB_CHECK_EQ(m.active_team, BB_HOME);
 }
+
+// Regression (adversarial review H2a): the Animal Savagery lash-out knocks
+// the team-mate down IMMEDIATELY — before the declared action resolves — so
+// the "downed" mate can't keep exerting TZ/assists or receive a hand-off
+// through the whole action. The deferred push also let TDs delete the
+// pending knockdown entirely.
+BB_TEST(skdt_animal_savagery_lashout_resolves_before_action) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int savage = fx_lineman(&m, 0, 0, 10, 7);
+    fx_give_skill(&m, savage, BB_SK_ANIMAL_SAVAGERY);
+    int mate = fx_lineman(&m, 0, 1, 10, 8); // adjacent standing team-mate
+
+    // Dice: AS d6 = 1 (lash out; MOVE has no +2); knockdown armour 2D6 = 2,2
+    // (no break on AV 9+). The mate holds no ball -> no turnover.
+    static const uint8_t dice[] = {1, 2, 2};
+    bb_rng rng;
+    bb_rng_script(&rng, dice, 3);
+    bb_status st = begin_move(&m, &rng, savage);
+    // First decision INSIDE the activation: the mate is already down.
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK_EQ(m.players[mate].stance, BB_STANCE_PRONE);
+    BB_CHECK_EQ(m.turnover, 0);
+    BB_CHECK_EQ(m.active_team, BB_HOME);
+    BB_CHECK(!bb_rng_error(&rng));
+}
+
+// Regression (adversarial review H2b): a KNOCKDOWN queued for a player who
+// left the pitch before it resolved (chain-push into the crowd mid-action)
+// must be a no-op — it used to set PRONE on off-pitch players, roll
+// armour/injury, overwrite a CAS location with KO, and let drive-end KO
+// recovery resurrect a casualty.
+BB_TEST(skdt_knockdown_offpitch_is_noop) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int p = fx_lineman(&m, 1, 0, 10, 7);
+    bb_remove_from_pitch(&m, p, BB_LOC_CAS);
+    bb_push(&m, BB_PROC_KNOCKDOWN, (uint8_t)p, BB_KD_OTHER, 0, 0);
+    bb_rng rng;
+    bb_rng_script(&rng, 0, 0); // any die roll would trip the script error
+    bb_advance(&m, &rng);
+    BB_CHECK_EQ(m.players[p].location, BB_LOC_CAS);
+    BB_CHECK_EQ(m.players[p].stance, BB_STANCE_STANDING);
+    BB_CHECK(!bb_rng_error(&rng)); // zero dice consumed
+}

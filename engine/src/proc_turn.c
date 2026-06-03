@@ -317,6 +317,7 @@ static void activation_apply(bb_match* m, bb_action a, bb_rng* rng) {
     f->phase = 1;
     f->b = a.arg; // action kind
     bb_player* pl = &m->players[f->a];
+    int savage_mate = -1; // Animal Savagery lash-out target (resolved last-pushed)
     // BLOODLUST (X+): after declaring, roll D6 (+1 for Block/Blitz); failure
     // downgrades to a Move Action (the once-per-turn declaration still
     // counts). The end-of-activation Thrall bite is TODO (needs Thrall
@@ -352,7 +353,11 @@ static void activation_apply(bb_match* m, bb_action a, bb_rng* rng) {
             }
             if (mate >= 0) {
                 // Knocked down; turnover only if the mate held the ball.
-                bb_knockdown2(m, mate, BB_KD_TTM_LANDING, 0, f->a);
+                // Pushed AFTER the MOVE frame below so it resolves FIRST
+                // (LIFO) — the rules knock the mate down immediately, before
+                // the action; deferring let a still-standing "downed" mate
+                // assist/TZ/catch through the whole action (review H2).
+                savage_mate = mate;
             } else {
                 pl->flags |= BB_PF_DISTRACTED;
             }
@@ -368,6 +373,9 @@ static void activation_apply(bb_match* m, bb_action a, bb_rng* rng) {
             pl->flags &= (uint16_t)~BB_PF_ACTIVATING;
             pl->flags |= BB_PF_USED;
             f->phase = 1; // ACTIVATION advance pops on next entry
+            if (savage_mate >= 0) {
+                bb_knockdown2(m, savage_mate, BB_KD_TTM_LANDING, 0, f->a);
+            }
             return;       // no MOVE pushed: activation over
         }
     }
@@ -382,7 +390,11 @@ static void activation_apply(bb_match* m, bb_action a, bb_rng* rng) {
         case BB_ACT_KTM: m->ktm_used = 1; break;
         default: break;
     }
-    bb_push(m, BB_PROC_MOVE, f->a, a.arg, 0, 0);
+    int actor = f->a;
+    bb_push(m, BB_PROC_MOVE, actor, a.arg, 0, 0);
+    if (savage_mate >= 0) {
+        bb_knockdown2(m, savage_mate, BB_KD_TTM_LANDING, 0, actor);
+    }
 }
 
 // ===== TURNOVER ==============================================================
