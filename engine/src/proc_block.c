@@ -248,6 +248,9 @@ static void block_apply(bb_match* m, bb_action a, bb_rng* rng) {
         if (a.type == BB_A_USE_REROLL) {
             int team = BB_TEAM_OF(att);
             m->rerolls[team]--;
+            // Drive-scoped bonuses (Brilliant Coaching) are spent first —
+            // they expire soonest (END_DRIVE); see proc_test.c.
+            if (m->bonus_rerolls[team]) m->bonus_rerolls[team]--;
             f->data |= BLK_RR_USED;
             int loner = bb_loner_value(m, att);
             if (!(loner > 0 && bb_roll(rng, 6) < loner)) {

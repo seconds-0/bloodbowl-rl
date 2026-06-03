@@ -90,9 +90,13 @@ typedef struct {
     // Team-turn resources. BB2025: any number of team re-rolls per turn (the
     // only limit is that no single die/pool is ever re-rolled twice).
     uint8_t rerolls[2];
-    uint8_t rerolls_start[2]; // purchased complement; replenished at half-time,
-                              // and bonus re-rolls (Brilliant Coaching) expire
-                              // back to this at the end of each drive
+    uint8_t rerolls_start[2]; // purchased complement; replenished at half-time
+    uint8_t bonus_rerolls[2]; // DRIVE-scoped bonus re-rolls currently in the
+                              // pool (Brilliant Coaching): spent before any
+                              // other re-roll; the remainder expires at
+                              // END_DRIVE. The Leader re-roll has HALF scope
+                              // and lives only in `rerolls` (granted at
+                              // PREGAME and at half-time).
     uint8_t blitz_used;               // team blitz action used this turn
     uint8_t pass_used;                // pass action used this turn
     uint8_t handoff_used;

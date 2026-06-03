@@ -803,6 +803,37 @@ BB_TEST(ball_handoff_failed_catch_rest_turnover) {
     BB_CHECK_EQ(m.decision_team, 1); // turnover
 }
 
+// SK "Pro (Active)": "The Skill cannot be used to re-roll ... a roll made
+// outside of the player's activation." A hand-off catch is the RECEIVER's
+// roll during the THROWER's activation: the receiver's Pro must NOT be
+// offered, even when the Catch skill re-roll opens the window (adversarial
+// review M1 refuter caveat — the offer condition was over-broad).
+BB_TEST(ball_handoff_catch_pro_not_offered_outside_own_activation) {
+    bb_match m;
+    fx_match_midturn(&m, 0, 0); // no team re-rolls
+    int carrier = fx_lineman(&m, 0, 0, 5, 7);
+    int receiver = fx_lineman(&m, 0, 1, 6, 7); // AG 3+
+    fx_give_skill(&m, receiver, BB_SK_PRO);
+    fx_give_skill(&m, receiver, BB_SK_CATCH);
+    fx_lineman(&m, 1, 0, 20, 2);
+    fx_ball_held(&m, carrier);
+    uint8_t script[] = {2, 3}; // catch 2 fails; Catch skill re-roll 3 passes
+    bb_rng rng;
+    bb_rng_script(&rng, script, 2);
+    fx_run(&m, &rng);
+    fx_activate(&m, &rng, carrier, BB_ACT_HANDOFF);
+    bb_status st = fx_apply(&m, mk(BB_A_HANDOFF_TARGET, 0, 6, 7), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    // The Catch skill re-roll IS offered; Pro is NOT (not their activation).
+    BB_CHECK(fx_find(&m, mk(BB_A_USE_REROLL, BB_RR_SKILL, BB_SK_CATCH, 0)) >= 0);
+    BB_CHECK_EQ(fx_find(&m, mk(BB_A_USE_REROLL, BB_RR_PRO, 0, 0)), -1);
+    st = fx_apply(&m, mk(BB_A_USE_REROLL, BB_RR_SKILL, BB_SK_CATCH, 0), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK(!bb_rng_error(&rng));
+    BB_CHECK_EQ(m.ball.carrier, receiver);
+    BB_CHECK_EQ(m.decision_team, 0); // no turnover
+}
+
 // ENGINE-DIVERGENCE: declaring Pass/Hand-off without the ball. GAME/
 // PERFORMING A PASS ACTION: "A player does not have to be in possession of
 // the ball to declare a Pass Action, and may attempt to pick up the ball as
