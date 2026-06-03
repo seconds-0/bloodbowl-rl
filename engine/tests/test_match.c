@@ -290,3 +290,20 @@ BB_TEST(match_procgen_pregame_injuries_without_replacement) {
         }
     }
 }
+
+// Holdout / fixed-matchup procgen controls (generalization experiments).
+BB_TEST(match_procgen_forced_and_excluded) {
+    for (uint64_t seed = 1; seed <= 40; seed++) {
+        bb_match m;
+        bb_rng pg;
+        bb_rng_seed(&pg, seed * 4241, 9);
+        // Pin home to team 5, exclude team 7 from the random away draw.
+        bb_match_init_forced(&m, &pg, 5, -1, 7);
+        BB_CHECK_EQ(m.team_id[0], 5);
+        BB_CHECK(m.team_id[1] != 7);
+        // Fully pinned matchup.
+        bb_match_init_forced(&m, &pg, 12, 26, -1);
+        BB_CHECK_EQ(m.team_id[0], 12);
+        BB_CHECK_EQ(m.team_id[1], 26);
+    }
+}

@@ -106,6 +106,7 @@ typedef struct {
     uint8_t secure_used;              // BB2025 Secure the Ball: once per turn
     uint8_t bribes[2];                // bribe tokens (Get the Ref / inducements)
     uint8_t cheer_assist[2];          // Cheering Fans: +1 assist on next block
+    uint8_t surfs[2];                 // players of team t crowd-pushed off (cumulative)
     uint8_t apothecary[2];            // remaining uses
     uint8_t coach_ejected[2];         // "You're Outta Here": no more arguing
 
@@ -133,6 +134,8 @@ void bb_match_init(bb_match* m, int home_team_id, int away_team_id);
 // Procedural match: random rosters/skills/injuries/re-rolls drawn from `rng`
 // (the procgen stream, not the in-match dice stream).
 void bb_match_init_random(bb_match* m, bb_rng* rng);
+// home/away >= 0 pin that side; exclude >= 0 bars a team from random draws.
+void bb_match_init_forced(bb_match* m, bb_rng* rng, int home, int away, int exclude);
 
 // Advance the engine until a coach decision is required or the match ends.
 // All dice are drawn from `rng`. Returns the resulting status.

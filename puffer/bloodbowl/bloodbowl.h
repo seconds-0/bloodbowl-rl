@@ -37,7 +37,8 @@
 //                [8..13] blitz/pass/handoff/foul/ttm/secure used this turn
 //                [14] my apothecaries, [15] opp apothecaries
 //                [16] my bribes, [17] opp bribes, [18] I am kicking
-//                [19] my team id, [20] opp team id, [21..47] spare
+//                [19..47] spare (team ids deliberately NOT observed — see
+//                         the encoder comment; forces roster-reading)
 //
 // Action heads (ACT_SIZES {30, 33, 391}): bb_action type | arg (0-31 direct,
 // 32 = sentinel for 0xFE/0xFF args) | square (y*26+x, 390 = none).
@@ -161,6 +162,18 @@ typedef struct {
     // Injury shaping (default 0 = off): per opponent removed to KO/CAS.
     float reward_injury_inflicted;
     float reward_injury_taken;
+    // Scale injury rewards by victim gold cost / 100k (price-weighted
+    // attrition: a 125k Mummy pays ~3x a 40k Skeleton). 0 = flat.
+    int reward_injury_value_scaled;
+    // Surf shaping (default 0 = off): per player crowd-pushed off the pitch,
+    // charged at the (deterministic) push event regardless of injury dice.
+    float reward_surf_taken;
+    float reward_surf_inflicted;
+    // Procgen controls: held-out-team experiments and fixed-matchup eval.
+    // -1 = unconstrained.
+    int exclude_team;
+    int force_home_team;
+    int force_away_team;
     int max_decisions;
     // Spectator rendering (bbe_render.h); NULL until c_render is first called.
     int render_fps;
@@ -179,6 +192,8 @@ typedef struct {
     int score_prev[2];
     int possessor;   // last settled possession: -1 none, else team; IN_AIR = limbo
     int out_prev[2]; // players in the KO + casualty boxes (injury shaping)
+    int surf_prev[2]; // m->surfs snapshot (surf shaping)
+    uint32_t out_mask_prev[2]; // per-player out bits (value-scaled injuries)
 } Bloodbowl;
 
 static void bbe_refresh_legal(Bloodbowl* env) {
@@ -330,8 +345,10 @@ static void bbe_encode_obs(Bloodbowl* env, int agent) {
     s[16] = m->bribes[me];
     s[17] = m->bribes[1 - me];
     s[18] = (unsigned char)(m->kicking_team == me);
-    s[19] = m->team_id[me];
-    s[20] = m->team_id[1 - me];
+    // s[19]/s[20] intentionally unused: team ids are NOT observed. Identity
+    // is fully derivable from the visible per-player stats/skills, and hiding
+    // the id forces the policy to read rosters — the structural guarantee
+    // behind the held-out / homebrew team generalization tests.
 }
 
 // --- Action encode/decode --------------------------------------------------------
@@ -449,7 +466,15 @@ static void bbe_emit_all(Bloodbowl* env) {
 static void bbe_reset_match(Bloodbowl* env) {
     env->episode++;
     bb_rng_seed(&env->procgen, env->seed * 2654435761u + env->episode, 11);
-    bb_match_init_random(&env->match, &env->procgen);
+    // Procgen controls: exclude_team bars a team from training draws
+    // (holdout); force_* pins a side for fixed-matchup eval.
+    if (env->exclude_team >= 0 || env->force_home_team >= 0 ||
+        env->force_away_team >= 0) {
+        bb_match_init_forced(&env->match, &env->procgen, env->force_home_team,
+                             env->force_away_team, env->exclude_team);
+    } else {
+        bb_match_init_random(&env->match, &env->procgen);
+    }
     bb_rng_seed(&env->rng, env->seed + env->episode * 7919u, 1);
     bb_advance(&env->match, &env->rng);
     bbe_refresh_legal(env);
@@ -466,6 +491,13 @@ static void bbe_reset_match(Bloodbowl* env) {
             out += (loc == BB_LOC_KO || loc == BB_LOC_CAS);
         }
         env->out_prev[t] = out;
+        env->surf_prev[t] = env->match.surfs[t];
+        uint32_t mask = 0;
+        for (int sl = t * BB_TEAM_SLOTS; sl < (t + 1) * BB_TEAM_SLOTS; sl++) {
+            int loc = env->match.players[sl].location;
+            if (loc == BB_LOC_KO || loc == BB_LOC_CAS) mask |= 1u << sl;
+        }
+        env->out_mask_prev[t] = mask;
     }
 }
 
@@ -597,22 +629,49 @@ static void c_step(Bloodbowl* env) {
         // Injury shaping: a player leaving the pitch to the KO or casualty
         // box punishes his coach and rewards the opponent (crowd-shoves and
         // failed-dodge self-injuries included — your attrition is always
-        // your opponent's gain in Blood Bowl).
+        // your opponent's gain in Blood Bowl). Optionally price-weighted by
+        // the victim's roster cost (a Mummy is worth ~3 Skeletons).
         if (env->reward_injury_inflicted != 0.0f || env->reward_injury_taken != 0.0f) {
             for (int t = 0; t < 2; t++) {
                 int out = 0;
+                uint32_t mask = 0;
+                float weight = 0;
                 for (int s = t * BB_TEAM_SLOTS; s < (t + 1) * BB_TEAM_SLOTS; s++) {
                     int loc = m->players[s].location;
-                    out += (loc == BB_LOC_KO || loc == BB_LOC_CAS);
+                    if (loc != BB_LOC_KO && loc != BB_LOC_CAS) continue;
+                    out++;
+                    mask |= 1u << s;
+                    if (!(env->out_mask_prev[t] & (1u << s)) &&
+                        env->reward_injury_value_scaled) {
+                        const bb_team_def* td = &bb_team_defs[m->team_id[t]];
+                        weight += (float)td->positions[m->players[s].position_id]
+                                      .cost_k / 100.0f;
+                    }
                 }
                 int d = out - env->out_prev[t];
                 if (d > 0) {
-                    env->reward_ptr[t][0] += env->reward_injury_taken * (float)d;
-                    env->ep_return[t] += env->reward_injury_taken * (float)d;
-                    env->reward_ptr[1 - t][0] += env->reward_injury_inflicted * (float)d;
-                    env->ep_return[1 - t] += env->reward_injury_inflicted * (float)d;
+                    float w = env->reward_injury_value_scaled ? weight : (float)d;
+                    env->reward_ptr[t][0] += env->reward_injury_taken * w;
+                    env->ep_return[t] += env->reward_injury_taken * w;
+                    env->reward_ptr[1 - t][0] += env->reward_injury_inflicted * w;
+                    env->ep_return[1 - t] += env->reward_injury_inflicted * w;
                 }
                 env->out_prev[t] = out;
+                env->out_mask_prev[t] = mask;
+            }
+        }
+        // Surf shaping: charged at the (deterministic) crowd-push event,
+        // independent of the injury dice that follow. Zero-sum pair.
+        if (env->reward_surf_taken != 0.0f || env->reward_surf_inflicted != 0.0f) {
+            for (int t = 0; t < 2; t++) {
+                int d = m->surfs[t] - env->surf_prev[t];
+                if (d > 0) {
+                    env->reward_ptr[t][0] += env->reward_surf_taken * (float)d;
+                    env->ep_return[t] += env->reward_surf_taken * (float)d;
+                    env->reward_ptr[1 - t][0] += env->reward_surf_inflicted * (float)d;
+                    env->ep_return[1 - t] += env->reward_surf_inflicted * (float)d;
+                }
+                env->surf_prev[t] = m->surfs[t];
             }
         }
     }

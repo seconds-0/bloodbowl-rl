@@ -140,6 +140,7 @@ static void ttm_advance(bb_match* m, bb_rng* rng) {
     for (;;) {
         if (!bb_on_pitch_xy(x, y)) {
             // Off the pitch: Injury by the Crowd; Turnover always.
+            m->surfs[BB_TEAM_OF(mate)]++; // RL shaping reads this (surf event)
             bb_turnover(m);
             if (has_ball) {
                 mp->flags &= (uint16_t)~BB_PF_HAS_BALL;

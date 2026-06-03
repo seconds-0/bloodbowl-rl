@@ -140,10 +140,7 @@ static void procgen_squad(bb_match* m, int team, int team_id, bb_rng* rng) {
     }
 }
 
-void bb_match_init_random(bb_match* m, bb_rng* rng) {
-    memset(m, 0, sizeof(*m));
-    int home = pg_pick(rng, BB_TEAM_COUNT);
-    int away = pg_pick(rng, BB_TEAM_COUNT);
+static void pg_init_match(bb_match* m, bb_rng* rng, int home, int away) {
     m->team_id[BB_HOME] = (uint8_t)home;
     m->team_id[BB_AWAY] = (uint8_t)away;
     procgen_squad(m, BB_HOME, home, rng);
@@ -157,4 +154,30 @@ void bb_match_init_random(bb_match* m, bb_rng* rng) {
     m->ball.carrier = BB_NO_PLAYER;
     m->status = BB_STATUS_RUNNING;
     bb_push(m, BB_PROC_MATCH, 0, 0, 0, 0);
+}
+
+void bb_match_init_random(bb_match* m, bb_rng* rng) {
+    memset(m, 0, sizeof(*m));
+    int home = pg_pick(rng, BB_TEAM_COUNT);
+    int away = pg_pick(rng, BB_TEAM_COUNT);
+    pg_init_match(m, rng, home, away);
+}
+
+// Holdout / fixed-matchup variant: home/away >= 0 pin that side's team;
+// exclude >= 0 redraws any random side that lands on the excluded id (the
+// held-out-team generalization experiments train with exclude set and
+// evaluate with force_* set).
+void bb_match_init_forced(bb_match* m, bb_rng* rng, int home, int away, int exclude) {
+    memset(m, 0, sizeof(*m));
+    int h = home;
+    while (h < 0 || (home < 0 && h == exclude)) {
+        h = pg_pick(rng, BB_TEAM_COUNT);
+        if (home < 0 && h == exclude) h = -1;
+    }
+    int a = away;
+    while (a < 0 || (away < 0 && a == exclude)) {
+        a = pg_pick(rng, BB_TEAM_COUNT);
+        if (away < 0 && a == exclude) a = -1;
+    }
+    pg_init_match(m, rng, h, a);
 }

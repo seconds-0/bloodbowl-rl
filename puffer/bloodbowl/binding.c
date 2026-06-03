@@ -68,6 +68,12 @@ static void apply_kwargs(Env* env, Dict* kwargs) {
     env->reward_ball_loss = (float)kw(kwargs, "reward_ball_loss", 0.0);
     env->reward_injury_inflicted = (float)kw(kwargs, "reward_injury_inflicted", 0.0);
     env->reward_injury_taken = (float)kw(kwargs, "reward_injury_taken", 0.0);
+    env->reward_injury_value_scaled = (int)kw(kwargs, "reward_injury_value_scaled", 0.0);
+    env->reward_surf_taken = (float)kw(kwargs, "reward_surf_taken", 0.0);
+    env->reward_surf_inflicted = (float)kw(kwargs, "reward_surf_inflicted", 0.0);
+    env->exclude_team = (int)kw(kwargs, "exclude_team", -1.0);
+    env->force_home_team = (int)kw(kwargs, "force_home_team", -1.0);
+    env->force_away_team = (int)kw(kwargs, "force_away_team", -1.0);
     env->max_decisions = (int)kw(kwargs, "max_decisions", BBE_MAX_DECISIONS);
     if (env->max_decisions <= 0 || env->max_decisions > BBE_MAX_DECISIONS) {
         env->max_decisions = BBE_MAX_DECISIONS;

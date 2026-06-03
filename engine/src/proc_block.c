@@ -456,6 +456,7 @@ static void push_advance(bb_match* m, bb_rng* rng) {
             // after. (FFB order; GAME/FOLLOW-UP's "before any other dice" is
             // a known minor divergence — see DECISIONS.md.)
             bool had_ball = (dp->flags & BB_PF_HAS_BALL) != 0;
+            m->surfs[BB_TEAM_OF(def)]++; // RL shaping reads this (surf event)
             if (BB_TEAM_OF(def) == m->active_team) bb_turnover(m);
             // bb_drop_ball acts on the GLOBAL carrier; unconditional, it
             // stripped an unrelated carrier elsewhere on the pitch whenever a
