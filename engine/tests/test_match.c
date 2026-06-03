@@ -2,6 +2,7 @@
 // errors, deterministically, with invariants holding at every decision point.
 #include "bb/bb_match.h"
 #include "bb/gen_teams.h"
+#include "bb_fixtures.h"
 #include "bb_test.h"
 #include <string.h>
 
@@ -131,4 +132,32 @@ BB_TEST(match_init_well_formed) {
     }
     BB_CHECK(avail[0] >= 11);
     BB_CHECK(avail[1] >= 11);
+}
+
+BB_TEST(match_procgen_games_complete) {
+    for (uint64_t seed = 1; seed <= 12; seed++) {
+        bb_match m;
+        bb_rng pg;
+        bb_rng_seed(&pg, seed * 31337, 9);
+        bb_match_init_random(&m, &pg);
+        bb_rng rng, pick;
+        bb_rng_seed(&rng, seed, 1);
+        bb_rng_seed(&pick, seed ^ 0xFACE, 2);
+        bb_status st = bb_advance(&m, &rng);
+        int steps = 0;
+        while (st == BB_STATUS_DECISION && steps < 200000) {
+            bb_action legal[BB_LEGAL_MAX];
+            int n = bb_legal_actions(&m, legal);
+            BB_CHECK(n > 0);
+            if (n <= 0) break;
+            st = bb_apply(&m, legal[fx_pick_smart(&m, legal, n, &pick)], &rng);
+            steps++;
+        }
+        BB_CHECK_EQ(st, BB_STATUS_MATCH_OVER);
+        if (st != BB_STATUS_MATCH_OVER) {
+            printf("  procgen seed %llu failed (teams %d vs %d)\n",
+                   (unsigned long long)seed, m.team_id[0], m.team_id[1]);
+            break;
+        }
+    }
 }

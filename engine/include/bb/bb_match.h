@@ -126,6 +126,10 @@ typedef struct {
 // squads come via bb_match_init_custom (Phase 5).
 void bb_match_init(bb_match* m, int home_team_id, int away_team_id);
 
+// Procedural match: random rosters/skills/injuries/re-rolls drawn from `rng`
+// (the procgen stream, not the in-match dice stream).
+void bb_match_init_random(bb_match* m, bb_rng* rng);
+
 // Advance the engine until a coach decision is required or the match ends.
 // All dice are drawn from `rng`. Returns the resulting status.
 bb_status bb_advance(bb_match* m, bb_rng* rng);
