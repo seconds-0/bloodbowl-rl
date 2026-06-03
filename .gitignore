@@ -1,0 +1,32 @@
+# Vendored reference clones (pinned in vendor/PINS.md)
+vendor/*/
+# Cached external docs/papers/PDFs
+docs/vendor/
+# Build artifacts
+build/
+*.o
+*.a
+*.so
+*.dylib
+*.profraw
+*.profdata
+compile_commands.json
+.cache/
+# Python
+__pycache__/
+*.egg-info/
+.venv/
+# Fuzzing
+crash-*
+CRASH-*
+corpus-out/
+# Training artifacts
+training/runs/
+training/checkpoints/
+wandb/
+# Replay cache (large; fetched on demand)
+validation/replay_cache/
+# Codex reviews
+.codex-reviews/
+# OS
+.DS_Store
