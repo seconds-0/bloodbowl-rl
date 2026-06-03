@@ -84,6 +84,14 @@ static void procgen_squad(bb_match* m, int team, int team_id, bb_rng* rng) {
         p->p_loner = 4;
         for (int s = 0; s < pd->num_skills; s++) {
             bb_add_skill(&p->skills, pd->skills[s]);
+            // Keep the roster's parameterized skill values, like the
+            // positional path above — dropping them left p_bloodlust 0
+            // (gate silently inert) and p_loner at the default (review LOW).
+            int v = pd->skill_values[s];
+            if (v > 0) {
+                if (pd->skills[s] == BB_SK_LONER) p->p_loner = (int8_t)v;
+                if (pd->skills[s] == BB_SK_BLOODLUST) p->p_bloodlust = (int8_t)v;
+            }
         }
         n++;
     }

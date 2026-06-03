@@ -230,3 +230,31 @@ BB_TEST(aura_mask_matches_registered_aura_hooks) {
     BB_CHECK(bb_has_skill(&bb_aura_skills, BB_SK_TITCHY));
     BB_CHECK(bb_has_skill(&bb_aura_skills, BB_SK_PREHENSILE_TAIL));
 }
+
+// Procgen players must carry the roster's parameterized skill values
+// (Loner X+, Bloodlust X+) exactly as bb_match_init players do — the lineman
+// top-up path used to drop them (review LOW). Latent until a roster's first
+// position carries Loner/Bloodlust; this pins the invariant for every slot.
+BB_TEST(match_procgen_keeps_roster_skill_values) {
+    for (uint64_t seed = 1; seed <= 60; seed++) {
+        bb_match m;
+        bb_rng pg;
+        bb_rng_seed(&pg, seed * 1237, 11);
+        bb_match_init_random(&m, &pg);
+        for (int s = 0; s < BB_NUM_PLAYERS; s++) {
+            const bb_player* p = &m.players[s];
+            if (p->location == BB_LOC_ABSENT) continue;
+            const bb_team_def* td = &bb_team_defs[m.team_id[BB_TEAM_OF(s)]];
+            const bb_position_def* pd = &td->positions[p->position_id];
+            int want_loner = 4, want_bloodlust = 0;
+            for (int k = 0; k < pd->num_skills; k++) {
+                if (pd->skill_values[k] <= 0) continue;
+                if (pd->skills[k] == BB_SK_LONER) want_loner = pd->skill_values[k];
+                if (pd->skills[k] == BB_SK_BLOODLUST) want_bloodlust = pd->skill_values[k];
+            }
+            BB_CHECK_EQ(p->p_loner, want_loner);
+            BB_CHECK_EQ(p->p_bloodlust, want_bloodlust);
+            if (p->p_loner != want_loner || p->p_bloodlust != want_bloodlust) return;
+        }
+    }
+}
