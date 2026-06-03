@@ -32,6 +32,18 @@ static bool team_reroll_available(const bb_match* m, int team) {
     return m->rerolls[team] > 0 && m->active_team == team;
 }
 
+// PRO: "During this player's activation, they may attempt to re-roll a single
+// dice. ... The Skill cannot be used to re-roll ... a roll made outside of
+// the player's activation." Once per activation (BB_PF_USED_SKILL_B), and
+// locked out once any other re-roll source has touched this die.
+static bool pro_reroll_available(const bb_match* m, int slot, uint16_t fdata) {
+    if (fdata & (TF_TEAM_USED | TF_SKILL_USED)) return false;
+    const bb_player* p = &m->players[slot];
+    if (!(p->flags & BB_PF_ACTIVATING)) return false;
+    if (p->flags & BB_PF_USED_SKILL_B) return false;
+    return bb_has_skill(&p->skills, BB_SK_PRO);
+}
+
 static void test_advance(bb_match* m, bb_rng* rng) {
     bb_frame* f = bb_top(m);
     int slot = f->a;
@@ -49,7 +61,8 @@ static void test_advance(bb_match* m, bb_rng* rng) {
         // Failed: offer rerolls if any are available.
         bool team_rr = team_reroll_available(m, team) && !(f->data & TF_TEAM_USED);
         bool skill_rr = !(f->data & TF_SKILL_USED) && bb_skill_reroll_for(m, slot, f->b) >= 0;
-        if (team_rr || skill_rr) {
+        bool pro_rr = pro_reroll_available(m, slot, f->data);
+        if (team_rr || skill_rr || pro_rr) {
             f->data |= TF_WAITING;
             bb_need_decision(m, team);
             return;
@@ -88,11 +101,9 @@ static int test_legal(const bb_match* m, bb_action* out) {
     if (team_reroll_available(m, team) && !(f->data & TF_TEAM_USED)) {
         out[n++] = (bb_action){BB_A_USE_REROLL, BB_RR_TEAM, 0, 0};
     }
-    // PRO: once per activation, 3+ to re-roll a single die; using Pro locks
-    // out every other re-roll source for this roll.
-    if (!(f->data & TF_TEAM_USED) &&
-        bb_has_skill(&m->players[slot].skills, BB_SK_PRO) &&
-        !(m->players[slot].flags & BB_PF_USED_SKILL_B)) {
+    // PRO: own activation only, once per activation, 3+ to re-roll a single
+    // die; using Pro locks out every other re-roll source for this roll.
+    if (pro_reroll_available(m, slot, f->data)) {
         out[n++] = (bb_action){BB_A_USE_REROLL, BB_RR_PRO, 0, 0};
     }
     int sk = (f->data & TF_SKILL_USED) ? -1 : bb_skill_reroll_for(m, slot, f->b);

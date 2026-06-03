@@ -964,6 +964,92 @@ BB_TEST(movement_dodge_skill_self_reroll) {
     BB_CHECK_EQ(m.players[mover].y, 6);
 }
 
+// SK "Pro (Active)": "During this player's activation, they may attempt to
+// re-roll a single dice. ... the player must roll a D6: on a 3+ the dice may
+// be re-rolled, on a 1-2 the dice may not be re-rolled." Pro is its OWN
+// re-roll source: with zero team re-rolls and no applicable skill re-roll the
+// window must still open and offer BB_RR_PRO (it was unreachable as the sole
+// source — adversarial review M1).
+BB_TEST(movement_pro_reroll_sole_source) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0); // zero team re-rolls in the pool
+    int mover = fx_lineman(&m, 0, 0, 10, 7);
+    fx_give_skill(&m, mover, BB_SK_PRO);
+    fx_lineman(&m, 1, 0, 10, 8);
+    static const uint8_t dice[] = {2, 3, 4}; // dodge 2 fails; Pro 3 (3+); re-roll 4
+    bb_rng rng;
+    bb_rng_script(&rng, dice, 3);
+
+    bb_status st = begin_move(&m, &rng, mover);
+    st = fx_apply(&m, act(BB_A_STEP, 0, 10, 6), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK(fx_find(&m, act(BB_A_USE_REROLL, BB_RR_PRO, 0, 0)) >= 0);
+    BB_CHECK(fx_find(&m, act(BB_A_DECLINE_REROLL, 0, 0, 0)) >= 0);
+    // Empty pool: no team re-roll offer.
+    BB_CHECK_EQ(fx_find(&m, act(BB_A_USE_REROLL, BB_RR_TEAM, 0, 0)), -1);
+    st = fx_apply(&m, act(BB_A_USE_REROLL, BB_RR_PRO, 0, 0), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK(!bb_rng_error(&rng));
+    BB_CHECK_EQ(m.players[mover].stance, BB_STANCE_STANDING);
+    BB_CHECK_EQ(m.players[mover].y, 6);
+    BB_CHECK(m.players[mover].flags & BB_PF_USED_SKILL_B); // once per activation
+}
+
+// SK "Pro (Active)": "on a 1-2 the dice may not be re-rolled" — the Pro
+// attempt is spent for the activation and the failed result stands (the
+// player Falls Over; turnover).
+BB_TEST(movement_pro_reroll_gate_fail_result_stands) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int mover = fx_lineman(&m, 0, 0, 10, 7);
+    fx_give_skill(&m, mover, BB_SK_PRO);
+    fx_lineman(&m, 1, 0, 10, 8);
+    static const uint8_t dice[] = {2, 2, 3, 3}; // dodge 2; Pro 2 (<3); armour holds
+    bb_rng rng;
+    bb_rng_script(&rng, dice, 4);
+
+    bb_status st = begin_move(&m, &rng, mover);
+    st = fx_apply(&m, act(BB_A_STEP, 0, 10, 6), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    st = fx_apply(&m, act(BB_A_USE_REROLL, BB_RR_PRO, 0, 0), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK(!bb_rng_error(&rng));
+    BB_CHECK(m.players[mover].flags & BB_PF_USED_SKILL_B);
+    BB_CHECK_EQ(m.players[mover].stance, BB_STANCE_PRONE); // fell in destination
+    BB_CHECK_EQ(m.players[mover].y, 6);
+    BB_CHECK_EQ(m.active_team, BB_AWAY); // turnover
+}
+
+// SK "Pro (Active)": Pro is once per ACTIVATION — after a Pro attempt
+// (successful or not) a second failed test in the same activation must not
+// offer it again; with no other source, no window opens at all.
+BB_TEST(movement_pro_reroll_once_per_activation) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int mover = fx_lineman(&m, 0, 0, 10, 7);
+    fx_give_skill(&m, mover, BB_SK_PRO);
+    fx_lineman(&m, 1, 0, 10, 8); // marks (10,7)
+    fx_lineman(&m, 1, 1, 11, 5); // marks (10,6)
+    // dodge1 (4+ for the dest marker): 2 fails, Pro 5 (3+), re-roll 4 passes.
+    // dodge2 (3+): 2 fails -> Pro already used: no window; Falls Over; armour
+    // 3,3 holds.
+    static const uint8_t dice[] = {2, 5, 4, 2, 3, 3};
+    bb_rng rng;
+    bb_rng_script(&rng, dice, 6);
+
+    bb_status st = begin_move(&m, &rng, mover);
+    st = fx_apply(&m, act(BB_A_STEP, 0, 10, 6), &rng);
+    st = fx_apply(&m, act(BB_A_USE_REROLL, BB_RR_PRO, 0, 0), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK_EQ(m.players[mover].stance, BB_STANCE_STANDING);
+    st = fx_apply(&m, act(BB_A_STEP, 0, 9, 6), &rng); // second dodge fails on 2
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK(!bb_rng_error(&rng));
+    BB_CHECK(!fx_has_type(&m, BB_A_USE_REROLL)); // no window: result stood
+    BB_CHECK_EQ(m.players[mover].stance, BB_STANCE_PRONE);
+    BB_CHECK_EQ(m.active_team, BB_AWAY); // turnover
+}
+
 // ENGINE-DIVERGENCE: SK "Dodge (Active)": "ONCE PER TURN, this player may
 // re-roll a single Agility Test when attempting to Dodge." After the skill
 // re-roll has been used, a second failed Dodge in the same turn must NOT be
