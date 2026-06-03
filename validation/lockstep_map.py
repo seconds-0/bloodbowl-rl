@@ -1206,10 +1206,22 @@ class Mapper:
                 self.act(pb["cmd"], A_BLOCK_TARGET, 0, dpos[0], dpos[1],
                          dice=pre + pool)
         else:
-            dice = list(first_pool)
+            # The engine starts the frenzy second block inside the first
+            # block's push/follow-up transition: any rush-for-block test
+            # (buffered in pre_dice) rolls there, then the second pool — all
+            # attached to the already-emitted push op.
+            pre, segs = self.split_pre_dice()
+            pool = list(first_pool)
             if pb["brawler"] and not pb["team_rr"]:
-                dice += pb["brawler"]
-            self.attach(cmd, dice, "frenzy second pool")
+                pool += pb["brawler"]
+            if segs:
+                # Re-rolled pre-block test: the engine pauses mid-push for
+                # the re-roll decision; the new pool rolls in its advance.
+                segs[-1][2].extend(pool)
+                self.attach(cmd, pre, "frenzy second rush")
+                self.flush_reroll_acts(cmd, segs)
+            else:
+                self.attach(cmd, pre + pool, "frenzy second pool")
         # Engine pauses for the team re-roll offer whenever one is available.
         engine_offers = (team is not None and self.rerolls[team] >= 0 and
                          team == self.active_team)
