@@ -5,6 +5,7 @@
 // Wrestle, Tackle, Dodge-on-Stumble, Guard assists) live in proc_block.c via
 // bb_skills.h queries; this file covers the registration-table classes.
 #include "bb/bb_hooks.h"
+#include "bb/bb_proc.h"
 
 // --- Re-roll grants -----------------------------------------------------------
 // DODGE: "Once per Turn ... may re-roll a single Agility Test when attempting
@@ -126,3 +127,43 @@ BB_SKILL_MOD(BREAK_TACKLE) {
 // with the ROOTED failure kind (acts in place; unpushable; un-roots on going
 // down or at the end of the drive).
 BB_SKILL_GATE(TAKE_ROOT, 2, BB_GATE_ROOTED)
+
+// LEAP: jumping may cross ANY single adjacent square (legality in proc_move)
+// and "may reduce the negative modifiers ... by 1, to a minimum of -1" —
+// approximated as +1 on the jump test (exact min--1 clamping TODO: needs the
+// pre-hook modifier total in ctx).
+BB_SKILL_MOD(LEAP) {
+    (void)m;
+    return c->kind == BB_TEST_JUMP ? 1 : 0;
+}
+
+// POGO: "may ignore all negative modifiers they would receive by Jumping" —
+// approximated by cancelling the marker-derived modifier.
+BB_SKILL_MOD(POGO) {
+    if (c->kind != BB_TEST_JUMP) return 0;
+    int from_tz = bb_tackle_zones(m, BB_TEAM_OF(c->player), c->from_x, c->from_y);
+    int to_tz = bb_tackle_zones(m, BB_TEAM_OF(c->player), c->to_x, c->to_y);
+    return from_tz > to_tz ? from_tz : to_tz;
+}
+
+// TIMMM-BER!: "+1 modifier to the roll for standing up for each Open Standing
+// team-mate adjacent to this player."
+BB_SKILL_MOD(TIMMM_BER) {
+    if (c->kind != BB_TEST_STANDUP) return 0;
+    const bb_player* p = &m->players[c->player];
+    int n = 0;
+    for (int dx = -1; dx <= 1; dx++) {
+        for (int dy = -1; dy <= 1; dy++) {
+            if (!dx && !dy) continue;
+            int x = p->x + dx, y = p->y + dy;
+            if (!bb_on_pitch_xy(x, y)) continue;
+            int s = bb_slot_at(m, x, y);
+            if (s >= 0 && BB_TEAM_OF(s) == BB_TEAM_OF(c->player) &&
+                m->players[s].stance == BB_STANCE_STANDING &&
+                !bb_is_marked(m, s)) {
+                n++;
+            }
+        }
+    }
+    return n;
+}

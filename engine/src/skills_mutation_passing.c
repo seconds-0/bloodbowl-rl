@@ -9,6 +9,7 @@
 // (pre-block interrupts, pass-sequence/armour-sequence changes, activation
 // continuation, special actions) and are intentionally NOT registered here.
 #include "bb/bb_hooks.h"
+#include "bb/bb_proc.h"
 
 // --- Auras ----------------------------------------------------------------------
 
@@ -33,6 +34,15 @@ static bool tail_marks_left_square(const bb_match* m, int src, const bb_ctx* c) 
 }
 
 BB_SKILL_AURA(PREHENSILE_TAIL) {
+    if (c->kind == BB_TEST_JUMP) {
+        // "-1 modifier ... when they attempt to Dodge, Jump or Leap to leave
+        // this player's Tackle Zone."
+        const bb_player* src0 = &m->players[c->other];
+        if (BB_TEAM_OF(c->other) == BB_TEAM_OF(c->player)) return 0;
+        if (!bb_exerts_tz(m, c->other)) return 0;
+        if (bb_adjacent(src0->x, src0->y, c->from_x, c->from_y)) return -1;
+        return 0;
+    }
     if (c->kind != BB_TEST_DODGE) return 0;
     if (!tail_marks_left_square(m, c->other, c)) return 0;
     // "only one of those players may use this Skill": the lowest-slot
@@ -55,6 +65,8 @@ BB_SKILL_AURA(PREHENSILE_TAIL) {
 // Burster interaction awaits Cloud Burster's interception-eligibility
 // integration.
 BB_SKILL_MOD(VERY_LONG_LEGS) {
+    // "+1 modifier ... when they attempt to Jump or Leap."
+    if (c->kind == BB_TEST_JUMP) return 1;
     (void)m;
     if (c->kind == BB_TEST_CATCH && c->other != BB_NO_PLAYER) return 2;
     return 0;

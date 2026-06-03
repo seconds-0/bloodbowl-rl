@@ -19,6 +19,8 @@ typedef enum {
     BB_TEST_PASS,
     BB_TEST_CATCH,
     BB_TEST_LONER,      // internal: team-reroll gate
+    BB_TEST_JUMP,       // jumping over a prone/stunned player (or Leap/Pogo)
+    BB_TEST_STANDUP,    // MA<3 stand-up roll (Timmm-ber! modifies)
     BB_TEST_GENERIC,
     BB_TEST_KIND_COUNT
 } bb_test_kind;
