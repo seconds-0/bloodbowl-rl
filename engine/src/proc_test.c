@@ -1,0 +1,127 @@
+// proc_test.c — the generic D6 test with reroll window.
+//
+// Frame layout: a = player slot, b = bb_test_kind, x = needed target (2..6,
+// already including modifiers via bb_test_target), data bits:
+//   bit0: team reroll consumed for this test
+//   bit1: skill reroll consumed for this test
+//   bit2: a reroll decision is pending
+//   bit3: loner gate pending (rolled when team reroll chosen)
+// Pops with m->ret = 1 (pass) or 0 (fail).
+//
+// Natural 1 always fails; natural 6 always succeeds (BB2025; the May 2026
+// errata removed the "modified below 1" floor — only targets are clamped).
+#include "bb/bb_proc.h"
+#include "bb/bb_skills.h"
+
+enum {
+    TF_TEAM_USED = 1 << 0,
+    TF_SKILL_USED = 1 << 1,
+    TF_WAITING = 1 << 2,
+};
+
+static bool test_pass(int die, int target) {
+    if (die == 1) return false;
+    if (die == 6) return true;
+    return die >= target;
+}
+
+static bool team_reroll_available(const bb_match* m, int team) {
+    // One team re-roll per team turn; only during your own team turn.
+    return m->rerolls[team] > 0 && !m->reroll_used_this_turn[team] && m->active_team == team;
+}
+
+static void test_advance(bb_match* m, bb_rng* rng) {
+    bb_frame* f = bb_top(m);
+    int slot = f->a;
+    int team = BB_TEAM_OF(slot);
+
+    if (f->phase == 0) { // initial roll
+        int die = bb_roll(rng, 6);
+        f->phase = 1;
+        if (test_pass(die, f->x)) {
+            bb_pop(m);
+            m->ret = 1;
+            return;
+        }
+        // Failed: offer rerolls if any are available.
+        bool team_rr = team_reroll_available(m, team) && !(f->data & TF_TEAM_USED);
+        bool skill_rr = !(f->data & TF_SKILL_USED) && bb_skill_reroll_for(m, slot, f->b) >= 0;
+        if (team_rr || skill_rr) {
+            f->data |= TF_WAITING;
+            bb_need_decision(m, team);
+            return;
+        }
+        bb_pop(m);
+        m->ret = 0;
+        return;
+    }
+    if (f->phase == 2) { // reroll the die after a reroll was used
+        int die = bb_roll(rng, 6);
+        if (test_pass(die, f->x)) {
+            bb_pop(m);
+            m->ret = 1;
+            return;
+        }
+        // A failed reroll may still leave the other reroll type? No: each die
+        // may only be re-rolled once, by any means.
+        bb_pop(m);
+        m->ret = 0;
+        return;
+    }
+    if (f->phase == 3) { // loner gate failed: reroll consumed, result stands
+        bb_pop(m);
+        m->ret = 0;
+        return;
+    }
+    // phase 1 while waiting shouldn't advance; treat as error
+    m->status = BB_STATUS_ERROR;
+}
+
+static int test_legal(const bb_match* m, bb_action* out) {
+    const bb_frame* f = &m->stack[m->stack_top - 1];
+    int slot = f->a;
+    int team = BB_TEAM_OF(slot);
+    int n = 0;
+    if (team_reroll_available(m, team) && !(f->data & TF_TEAM_USED)) {
+        out[n++] = (bb_action){BB_A_USE_REROLL, BB_RR_TEAM, 0, 0};
+    }
+    int sk = (f->data & TF_SKILL_USED) ? -1 : bb_skill_reroll_for(m, slot, f->b);
+    if (sk >= 0) {
+        out[n++] = (bb_action){BB_A_USE_REROLL, BB_RR_SKILL, (uint8_t)sk, 0};
+    }
+    out[n++] = (bb_action){BB_A_DECLINE_REROLL, 0, 0, 0};
+    return n;
+}
+
+static void test_apply(bb_match* m, bb_action a, bb_rng* rng) {
+    bb_frame* f = bb_top(m);
+    int slot = f->a;
+    int team = BB_TEAM_OF(slot);
+    f->data &= (uint16_t)~TF_WAITING;
+
+    if (a.type == BB_A_DECLINE_REROLL) {
+        bb_pop(m);
+        m->ret = 0;
+        return;
+    }
+    if (a.arg == BB_RR_TEAM) {
+        m->rerolls[team]--;
+        m->reroll_used_this_turn[team] = 1;
+        f->data |= TF_TEAM_USED;
+        int loner = bb_loner_value(m, slot);
+        if (loner > 0) {
+            int die = bb_roll(rng, 6);
+            if (die < loner) {
+                f->phase = 3; // reroll wasted; result stands
+                return;
+            }
+        }
+        f->phase = 2;
+        return;
+    }
+    // Skill reroll
+    f->data |= TF_SKILL_USED;
+    f->phase = 2;
+}
+
+const bb_proc_vtable bb_proc_test_vtable = {test_advance, test_legal, test_apply};

@@ -25,7 +25,9 @@ all: test
 
 $(BUILD)/obj/%.o: engine/src/%.c
 	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -c $< -o $@
+	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
+
+-include $(OBJ:.o=.d)
 
 $(LIB): $(OBJ)
 	@mkdir -p $(BUILD)

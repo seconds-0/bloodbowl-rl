@@ -1,0 +1,134 @@
+// End-to-end engine tests: full random-agent matches must complete without
+// errors, deterministically, with invariants holding at every decision point.
+#include "bb/bb_match.h"
+#include "bb/gen_teams.h"
+#include "bb_test.h"
+#include <string.h>
+
+// Setup-aware action picker: random play cannot stumble into a legal
+// formation (exactly 11 placed, 3+ on LoS, <=2 per wide zone), so during the
+// setup phase the agent (a) takes SETUP_DONE the moment it is legal, and
+// (b) places reserves on the line of scrimmage first, then centre-field
+// squares. Everything else is uniform random — exactly how an RL policy would
+// face the env.
+static int pick_action(const bb_match* m, bb_action* legal, int n, bb_rng* pick) {
+    for (int i = 0; i < n; i++) {
+        if (legal[i].type == BB_A_SETUP_DONE) return i;
+    }
+    bool in_setup = n > 0 && (legal[0].type == BB_A_SETUP_PLACE || legal[0].type == BB_A_SETUP_REMOVE);
+    if (in_setup) {
+        // Prefer: place a RESERVES player onto the LoS centre; then any centre
+        // (non-wide-zone) square in their half.
+        int best = -1;
+        for (int i = 0; i < n; i++) {
+            if (legal[i].type != BB_A_SETUP_PLACE) continue;
+            if (m->players[legal[i].arg].location != BB_LOC_RESERVES) continue;
+            bool los = (legal[i].x == 12 || legal[i].x == 13) && legal[i].y >= 4 && legal[i].y <= 10;
+            bool centre = legal[i].y >= 4 && legal[i].y <= 10;
+            if (los) return i;
+            if (centre && best < 0) best = i;
+        }
+        if (best >= 0) return best;
+    }
+    return (int)(bb_rng_next(pick) % (uint32_t)n);
+}
+
+// Play a full match with both coaches picking uniformly random legal actions.
+// Returns the final status; asserts engine invariants at every decision.
+static bb_status play_random_match(uint64_t seed, bb_match* out, int* decisions) {
+    bb_match m;
+    bb_match_init(&m, BB_TEAM_HUMAN, BB_TEAM_ORC);
+    bb_rng rng, pick;
+    bb_rng_seed(&rng, seed, 1);
+    bb_rng_seed(&pick, seed ^ 0xABCDEF, 2);
+
+    bb_status st = bb_advance(&m, &rng);
+    int n_decisions = 0;
+    while (st == BB_STATUS_DECISION && n_decisions < 200000) {
+        bb_action legal[BB_LEGAL_MAX];
+        int n = bb_legal_actions(&m, legal);
+        BB_CHECK(n > 0);
+        if (n <= 0) break;
+
+        // Invariants at every decision point:
+        // ball carrier consistency
+        if (m.ball.state == BB_BALL_HELD) {
+            BB_CHECK(m.ball.carrier != BB_NO_PLAYER);
+            const bb_player* c = &m.players[m.ball.carrier];
+            BB_CHECK(c->location == BB_LOC_ON_PITCH);
+            BB_CHECK(c->flags & BB_PF_HAS_BALL);
+            BB_CHECK_EQ(m.ball.x, c->x);
+            BB_CHECK_EQ(m.ball.y, c->y);
+        }
+        // grid <-> player position consistency
+        int on_grid = 0;
+        for (int x = 0; x < BB_PITCH_LEN; x++) {
+            for (int y = 0; y < BB_PITCH_WID; y++) {
+                int s = m.grid[x][y] ? m.grid[x][y] - 1 : -1;
+                if (s >= 0) {
+                    on_grid++;
+                    BB_CHECK_EQ(m.players[s].location, BB_LOC_ON_PITCH);
+                    BB_CHECK_EQ(m.players[s].x, x);
+                    BB_CHECK_EQ(m.players[s].y, y);
+                }
+            }
+        }
+        int on_pitch = 0;
+        for (int s = 0; s < BB_NUM_PLAYERS; s++) {
+            if (m.players[s].location == BB_LOC_ON_PITCH) on_pitch++;
+        }
+        BB_CHECK_EQ(on_grid, on_pitch);
+
+        int i = pick_action(&m, legal, n, &pick);
+        st = bb_apply(&m, legal[i], &rng);
+        n_decisions++;
+    }
+    if (out) *out = m;
+    if (decisions) *decisions = n_decisions;
+    return st;
+}
+
+BB_TEST(match_random_game_completes) {
+    bb_match m;
+    int decisions = 0;
+    bb_status st = play_random_match(1234, &m, &decisions);
+    BB_CHECK_EQ(st, BB_STATUS_MATCH_OVER);
+    BB_CHECK(decisions > 50);
+    BB_CHECK(m.turn[0] >= 8);
+    BB_CHECK(m.turn[1] >= 8);
+    BB_CHECK_EQ(m.half, 2);
+}
+
+BB_TEST(match_many_seeds_complete) {
+    for (uint64_t seed = 1; seed <= 25; seed++) {
+        bb_status st = play_random_match(seed * 7919, 0, 0);
+        BB_CHECK_EQ(st, BB_STATUS_MATCH_OVER);
+        if (st != BB_STATUS_MATCH_OVER) {
+            printf("  seed %llu failed\n", (unsigned long long)seed);
+            break;
+        }
+    }
+}
+
+BB_TEST(match_deterministic_replay) {
+    bb_match m1, m2;
+    int d1, d2;
+    bb_status s1 = play_random_match(42, &m1, &d1);
+    bb_status s2 = play_random_match(42, &m2, &d2);
+    BB_CHECK_EQ(s1, s2);
+    BB_CHECK_EQ(d1, d2);
+    BB_CHECK_EQ(m1.score[0], m2.score[0]);
+    BB_CHECK_EQ(m1.score[1], m2.score[1]);
+    BB_CHECK_EQ(memcmp(&m1, &m2, sizeof(bb_match)), 0);
+}
+
+BB_TEST(match_init_well_formed) {
+    bb_match m;
+    bb_match_init(&m, BB_TEAM_HUMAN, BB_TEAM_ORC);
+    int avail[2] = {0, 0};
+    for (int s = 0; s < BB_NUM_PLAYERS; s++) {
+        if (m.players[s].location == BB_LOC_RESERVES) avail[BB_TEAM_OF(s)]++;
+    }
+    BB_CHECK(avail[0] >= 11);
+    BB_CHECK(avail[1] >= 11);
+}

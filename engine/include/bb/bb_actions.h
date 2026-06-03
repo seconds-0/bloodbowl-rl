@@ -99,6 +99,10 @@ static inline bool bb_action_eq(bb_action a, bb_action b) {
     return bb_action_pack(a) == bb_action_pack(b);
 }
 
-#define BB_LEGAL_MAX 512 // upper bound on simultaneously legal actions
+// Upper bound on simultaneously legal actions. Setup placement is the worst
+// case: 16 players x ~190 own-half squares ~= 3000. The factored RL action
+// heads never materialize this list; it exists for replay validation, tests
+// and fuzzing.
+#define BB_LEGAL_MAX 4096
 
 #endif // BB_ACTIONS_H

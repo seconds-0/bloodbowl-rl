@@ -105,9 +105,10 @@ typedef struct {
     uint8_t status;         // bb_status
     uint8_t decision_team;  // which coach must act
     uint8_t turnover;       // pending turnover latch for the active team
+    uint16_t ret;           // last popped child's result (child -> parent)
 
     // Bookkeeping
-    uint16_t step_count;    // decisions resolved (sanity/timeout)
+    uint32_t step_count;    // decisions resolved (sanity/timeout)
     uint8_t team_id[2];     // roster ids (codegen index) for obs/embeddings
 } bb_match;
 

@@ -1,0 +1,89 @@
+#include "bb/bb_skills.h"
+#include "bb/bb_proc.h"
+
+int bb_skill_reroll_for(const bb_match* m, int slot, int kind) {
+    const bb_player* p = &m->players[slot];
+    int sk = -1;
+    switch (kind) {
+        case BB_TEST_DODGE:  sk = BB_SK_DODGE; break;
+        case BB_TEST_RUSH:   sk = BB_SK_SURE_FEET; break;
+        case BB_TEST_PICKUP: sk = BB_SK_SURE_HANDS; break;
+        case BB_TEST_PASS:   sk = BB_SK_PASS; break;
+        case BB_TEST_CATCH:  sk = BB_SK_CATCH; break;
+        default: return -1;
+    }
+    if (!bb_has_skill(&p->skills, sk)) return -1;
+    // One self-reroll per skill per activation (latched by the TEST proc).
+    return sk;
+}
+
+int bb_loner_value(const bb_match* m, int slot) {
+    const bb_player* p = &m->players[slot];
+    if (!bb_has_skill(&p->skills, BB_SK_LONER)) return 0;
+    // Per-player Loner values (3+ Ogres) come from roster skill_values; the
+    // default is 4+. Per-player parameter storage lands with procedural
+    // generation; for codegen'd default squads the default is correct except
+    // the three 3+ Ogres. TODO(phase5): per-player skill parameter table.
+    return 4;
+}
+
+int bb_max_rushes(const bb_match* m, int slot) {
+    const bb_player* p = &m->players[slot];
+    return bb_has_skill(&p->skills, BB_SK_SPRINT) ? 3 : 2;
+}
+
+bool bb_is_stunty(const bb_match* m, int slot) {
+    return bb_has_skill(&m->players[slot].skills, BB_SK_STUNTY);
+}
+
+bool bb_has_block(const bb_match* m, int slot) {
+    return bb_has_skill(&m->players[slot].skills, BB_SK_BLOCK);
+}
+
+bool bb_has_wrestle(const bb_match* m, int slot) {
+    return bb_has_skill(&m->players[slot].skills, BB_SK_WRESTLE);
+}
+
+bool bb_has_dodge_skill(const bb_match* m, int slot) {
+    return bb_has_skill(&m->players[slot].skills, BB_SK_DODGE);
+}
+
+bool bb_has_tackle_adjacent(const bb_match* m, int slot) {
+    const bb_player* p = &m->players[slot];
+    for (int dx = -1; dx <= 1; dx++) {
+        for (int dy = -1; dy <= 1; dy++) {
+            if (!dx && !dy) continue;
+            int nx = p->x + dx, ny = p->y + dy;
+            if (!bb_on_pitch_xy(nx, ny)) continue;
+            int s = bb_slot_at(m, nx, ny);
+            if (s >= 0 && BB_TEAM_OF(s) != BB_TEAM_OF(slot) && bb_exerts_tz(m, s) &&
+                bb_has_skill(&m->players[s].skills, BB_SK_TACKLE)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool bb_can_assist(const bb_match* m, int assister, int target_slot) {
+    const bb_player* a = &m->players[assister];
+    const bb_player* t = &m->players[target_slot];
+    if (a->location != BB_LOC_ON_PITCH || a->stance != BB_STANCE_STANDING) return false;
+    if (!bb_adjacent(a->x, a->y, t->x, t->y)) return false;
+    if (bb_has_skill(&a->skills, BB_SK_GUARD)) return true;
+    // Without Guard: may not be marked by any standing opponent other than the
+    // target of the block.
+    for (int dx = -1; dx <= 1; dx++) {
+        for (int dy = -1; dy <= 1; dy++) {
+            if (!dx && !dy) continue;
+            int nx = a->x + dx, ny = a->y + dy;
+            if (!bb_on_pitch_xy(nx, ny)) continue;
+            int s = bb_slot_at(m, nx, ny);
+            if (s >= 0 && s != target_slot && BB_TEAM_OF(s) != BB_TEAM_OF(assister) &&
+                bb_exerts_tz(m, s)) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
