@@ -69,6 +69,13 @@ Fires when an opponent DECLARES a block/blitz/foul against your player
   realized ball/injury shaping.
 - Arbitration: `puffer match` round-robin between best checkpoints of each,
   plus spectator review. Whatever wins, wins.
+- Orthogonal axis — GAMMA (discount horizon): 0.995 (~200-decision lookahead)
+  vs 0.998 vs 0.9992 (~1250), run on the A-vs-B winner. Hypothesis (Alex):
+  clock-aware multi-turn setup play (slow team, deep reception, turns 12-16)
+  sits at the edge of the 0.995 horizon. Primary metric: TD-by-turn histogram
+  split by team speed (dwarf-class late-half scoring rate), secondary: perf/
+  Elo. `[sweep.train.gamma]` in config/bloodbowl.ini for Protein sweeps;
+  manual 3-point grid via tools/train_profile.sh <P> --train.gamma 0.998.
 
 ## Addendum (same session): the sequencing charge
 
