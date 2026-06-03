@@ -184,3 +184,109 @@ BB_TEST(match_procgen_games_complete) {
         }
     }
 }
+
+// bb_fixtures self-test (review T1): fx_player's memset left the fresh
+// player looking ON_PITCH at (0,0), so bb_place's stale-square cleanup wiped
+// grid[0][0] on every fixture placement — silently corrupting any test that
+// stations a player at the origin.
+BB_TEST(fixtures_player_at_origin_survives_later_placements) {
+    bb_match m;
+    fx_match_midturn(&m, 0, 0);
+    int a = fx_lineman(&m, 0, 0, 0, 0);
+    int b = fx_lineman(&m, 0, 1, 5, 5);
+    int c = fx_lineman(&m, 1, 0, 20, 10);
+    BB_CHECK_EQ(bb_slot_at(&m, 0, 0), a);
+    BB_CHECK_EQ(bb_slot_at(&m, 5, 5), b);
+    BB_CHECK_EQ(bb_slot_at(&m, 20, 10), c);
+    BB_CHECK_EQ(m.players[a].location, BB_LOC_ON_PITCH);
+}
+
+// bb_match_init indexes bb_team_defs[] with its team ids; out-of-range ids
+// (file-derived, e.g. replay INIT records) must be rejected, not looked up
+// out of bounds (review Hd1).
+BB_TEST(match_init_rejects_out_of_range_team_ids) {
+    bb_match m;
+    bb_match_init(&m, -1, BB_TEAM_ORC);
+    BB_CHECK_EQ(m.status, BB_STATUS_ERROR);
+    BB_CHECK_EQ(bb_advance(&m, 0), BB_STATUS_ERROR); // stays in ERROR
+    bb_match_init(&m, BB_TEAM_HUMAN, BB_TEAM_COUNT);
+    BB_CHECK_EQ(m.status, BB_STATUS_ERROR);
+    bb_match_init(&m, 0x7FFFFFFF, 0);
+    BB_CHECK_EQ(m.status, BB_STATUS_ERROR);
+    // Boundary ids are valid.
+    bb_match_init(&m, 0, BB_TEAM_COUNT - 1);
+    BB_CHECK_EQ(m.status, BB_STATUS_RUNNING);
+}
+
+// bb_aura_skills must agree exactly with the registered aura hooks — it is
+// the fast-path mask that lets bb_hook_mods skip players with no aura skills;
+// a divergence would silently disable (or fail to skip) an aura (review P2).
+BB_TEST(aura_mask_matches_registered_aura_hooks) {
+    for (int sk = 0; sk < BB_SKILL_COUNT; sk++) {
+        BB_CHECK_EQ(bb_has_skill(&bb_aura_skills, sk), bb_hooks[sk].aura != 0);
+    }
+    // Sanity: the known aura carriers are in the mask.
+    BB_CHECK(bb_has_skill(&bb_aura_skills, BB_SK_DISTURBING_PRESENCE));
+    BB_CHECK(bb_has_skill(&bb_aura_skills, BB_SK_TITCHY));
+    BB_CHECK(bb_has_skill(&bb_aura_skills, BB_SK_PREHENSILE_TAIL));
+}
+
+// Procgen players must carry the roster's parameterized skill values
+// (Loner X+, Bloodlust X+) exactly as bb_match_init players do — the lineman
+// top-up path used to drop them (review LOW). Latent until a roster's first
+// position carries Loner/Bloodlust; this pins the invariant for every slot.
+BB_TEST(match_procgen_keeps_roster_skill_values) {
+    for (uint64_t seed = 1; seed <= 60; seed++) {
+        bb_match m;
+        bb_rng pg;
+        bb_rng_seed(&pg, seed * 1237, 11);
+        bb_match_init_random(&m, &pg);
+        for (int s = 0; s < BB_NUM_PLAYERS; s++) {
+            const bb_player* p = &m.players[s];
+            if (p->location == BB_LOC_ABSENT) continue;
+            const bb_team_def* td = &bb_team_defs[m.team_id[BB_TEAM_OF(s)]];
+            const bb_position_def* pd = &td->positions[p->position_id];
+            int want_loner = 4, want_bloodlust = 0;
+            for (int k = 0; k < pd->num_skills; k++) {
+                if (pd->skill_values[k] <= 0) continue;
+                if (pd->skills[k] == BB_SK_LONER) want_loner = pd->skill_values[k];
+                if (pd->skills[k] == BB_SK_BLOODLUST) want_bloodlust = pd->skill_values[k];
+            }
+            BB_CHECK_EQ(p->p_loner, want_loner);
+            BB_CHECK_EQ(p->p_bloodlust, want_bloodlust);
+            if (p->p_loner != want_loner || p->p_bloodlust != want_bloodlust) return;
+        }
+    }
+}
+
+// Pre-game injuries are dealt to DISTINCT players (review LOW): sampling the
+// raw slot range with replacement could hit the same player twice. At seed
+// 49 / stream 5 the home squad rolled 2 injuries but the old code
+// double-picked one player, leaving a single casualty.
+BB_TEST(match_procgen_pregame_injuries_without_replacement) {
+    bb_match m;
+    bb_rng pg;
+    bb_rng_seed(&pg, 49, 5);
+    bb_match_init_random(&m, &pg);
+    int cas = 0;
+    for (int s = 0; s < BB_TEAM_SLOTS; s++) {
+        if (m.players[s].location == BB_LOC_CAS) cas++;
+    }
+    BB_CHECK_EQ(cas, 2);
+    // Invariants: at most 2 pre-game casualties, and at least 11 healthy
+    // players always remain.
+    for (uint64_t seed = 1; seed <= 200; seed++) {
+        bb_rng pg2;
+        bb_rng_seed(&pg2, seed, 5);
+        bb_match_init_random(&m, &pg2);
+        for (int t = 0; t < 2; t++) {
+            int ncas = 0, healthy = 0;
+            for (int s = t * BB_TEAM_SLOTS; s < (t + 1) * BB_TEAM_SLOTS; s++) {
+                if (m.players[s].location == BB_LOC_CAS) ncas++;
+                if (m.players[s].location == BB_LOC_RESERVES) healthy++;
+            }
+            BB_CHECK(ncas <= 2);
+            BB_CHECK(healthy >= 11);
+        }
+    }
+}

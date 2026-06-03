@@ -406,3 +406,63 @@ BB_TEST(skdt_distracted_clears_on_next_activation_gateless) {
     BB_CHECK(!(m.players[victim].flags & BB_PF_DISTRACTED));
     BB_CHECK(!bb_rng_error(&rng)); // gate-less: no gate die consumed
 }
+
+// Regression (adversarial review LOW: Stab rush parity): during a Blitz, a
+// remaining Rush may pay for the stab exactly as it pays for a blitz block.
+// The old condition's `|| kind == BB_ACT_STAB` inside the BLITZ leg was
+// statically dead, so a blitzing stabber with movement spent simply lost the
+// stab option.
+BB_TEST(skdt_stab_blitz_rush_pays_for_stab) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int att = fx_player(&m, 0, 0, 10, 7, 1, 3, 3, 4, 9); // MA 1
+    fx_give_skill(&m, att, BB_SK_STAB);
+    int def = fx_lineman(&m, 1, 0, 12, 7);
+    fx_lineman(&m, 0, 1, 3, 3); // keeps the home turn alive after the stab
+    bb_rng rng;
+    // Rush 2+ (die 2 passes); stab armour 6+6 breaks AV9; injury 1+1 stunned.
+    static const uint8_t dice[] = {2, 6, 6, 1, 1};
+    bb_rng_script(&rng, dice, 5);
+    fx_run(&m, &rng);
+    bb_status st = fx_apply(&m, act(BB_A_ACTIVATE, att, 0, 0), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    st = fx_apply(&m, act(BB_A_DECLARE, BB_ACT_BLITZ, 0, 0), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    st = fx_apply(&m, act(BB_A_STEP, 0, 11, 7), &rng); // MA spent
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    int i = fx_find(&m, act(BB_A_SPECIAL_TARGET, 1, 12, 7));
+    BB_CHECK(i >= 0); // stab still offered: a Rush can pay for it
+    if (i < 0) return;
+    st = fx_apply(&m, act(BB_A_SPECIAL_TARGET, 1, 12, 7), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK(fx_stunned(&m, def));                 // stab landed
+    BB_CHECK_EQ(m.players[att].stance, BB_STANCE_STANDING);
+    BB_CHECK_EQ(m.players[att].x, 11);
+    BB_CHECK(!bb_rng_error(&rng));                 // rush die was consumed
+}
+
+// The rush is rolled BEFORE the stab: on a failure the stabber is knocked
+// down in place (turnover) and the stab never happens — parity with the
+// rush-for-block failure path.
+BB_TEST(skdt_stab_blitz_failed_rush_knocks_down_no_stab) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int att = fx_player(&m, 0, 0, 10, 7, 1, 3, 3, 4, 9); // MA 1
+    fx_give_skill(&m, att, BB_SK_STAB);
+    int def = fx_lineman(&m, 1, 0, 12, 7);
+    bb_rng rng;
+    // Rush die 1 fails; attacker armour 2+2 holds (prone, no injury).
+    static const uint8_t dice[] = {1, 2, 2};
+    bb_rng_script(&rng, dice, 3);
+    fx_run(&m, &rng);
+    fx_apply(&m, act(BB_A_ACTIVATE, att, 0, 0), &rng);
+    fx_apply(&m, act(BB_A_DECLARE, BB_ACT_BLITZ, 0, 0), &rng);
+    fx_apply(&m, act(BB_A_STEP, 0, 11, 7), &rng);
+    bb_status st = fx_apply(&m, act(BB_A_SPECIAL_TARGET, 1, 12, 7), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK_EQ(m.players[att].stance, BB_STANCE_PRONE);
+    BB_CHECK_EQ(m.players[att].x, 11); // down in place
+    BB_CHECK_EQ(m.players[def].stance, BB_STANCE_STANDING); // never stabbed
+    BB_CHECK_EQ(m.active_team, BB_AWAY); // knockdown of active player: turnover
+    BB_CHECK(!bb_rng_error(&rng));
+}

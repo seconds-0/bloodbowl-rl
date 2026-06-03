@@ -30,6 +30,11 @@ extern const char* bb_test_current;
 #define BB_TEST(id)                                                       \
     static void bb_test_##id(void);                                       \
     __attribute__((constructor)) static void bb_test_reg_##id(void) {     \
+        if (bb_test_count >= BB_TEST_MAX) { /* no silent OOB write */     \
+            fprintf(stderr, "bb_test: too many tests (max %d) at %s\n",   \
+                    BB_TEST_MAX, #id);                                    \
+            abort();                                                      \
+        }                                                                 \
         bb_tests[bb_test_count] = (bb_test_case){#id, bb_test_##id};      \
         bb_test_count++;                                                  \
     }                                                                     \

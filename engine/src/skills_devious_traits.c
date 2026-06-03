@@ -18,10 +18,11 @@ BB_SKILL_MOD(TITCHY) {
 }
 
 // DRUNKARD: "This player applies a -1 modifier to test whenever they attempt
-// to Rush." NOTE: proc_move.c currently computes the Rush target inline
-// (2+, Blizzard 3+) without consulting bb_hook_mods, so this registration is
-// live only once the rush call sites build a BB_TEST_RUSH bb_ctx — flagged
-// for proc integration in the batch report.
+// to Rush." LIVE: all four Rush call sites in proc_move.c (step, jump-rush
+// chain, jump apply, rush-for-block) build a BB_TEST_RUSH bb_ctx and consult
+// bb_hook_mods, so this -1 fires there — do NOT add a second inline -1 at
+// the call sites. (A stale "dead code" note here previously claimed the
+// opposite; adversarial review LOW.)
 BB_SKILL_MOD(DRUNKARD) {
     (void)m;
     return c->kind == BB_TEST_RUSH ? -1 : 0;

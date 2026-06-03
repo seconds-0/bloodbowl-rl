@@ -61,6 +61,7 @@ static void turn_end(bb_match* m, int team) {
         }
     }
     m->turnover = 0;
+    m->cheer_assist[team] = 0; // Cheering Fans buff is "next turn" only (review LOW)
     // Next team takes over (MATCH reads active_team to alternate).
     m->active_team = (uint8_t)(1 - team);
 }

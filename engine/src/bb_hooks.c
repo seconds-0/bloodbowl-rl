@@ -3,6 +3,7 @@
 #include "bb/bb_proc.h"
 
 bb_skill_hooks bb_hooks[BB_SKILL_COUNT];
+bb_skillset bb_aura_skills; // union of registered aura skills (BB_SKILL_AURA)
 uint64_t bb_skill_exercised[BB_SKILL_COUNT];
 
 int bb_next_skill(const bb_skillset* s, int start) {
@@ -33,11 +34,18 @@ int bb_hook_mods(const bb_match* m, const bb_ctx* c) {
             total += v;
         }
     }
-    // Auras from every other on-pitch player with an aura hook.
+    // Auras from every other on-pitch player with an aura hook. Skip players
+    // whose skillset doesn't intersect the registered-aura union — the per-bit
+    // walk below is dead work for almost everyone (review P2).
     for (int s = 0; s < BB_NUM_PLAYERS; s++) {
         if (s == c->player) continue;
         const bb_player* q = &m->players[s];
         if (q->location != BB_LOC_ON_PITCH) continue;
+        uint64_t any_aura = 0;
+        for (int w = 0; w < BB_SKILL_WORDS; w++) {
+            any_aura |= q->skills.w[w] & bb_aura_skills.w[w];
+        }
+        if (!any_aura) continue;
         for (int sk = bb_next_skill(&q->skills, 0); sk >= 0;
              sk = bb_next_skill(&q->skills, sk + 1)) {
             if (!bb_hooks[sk].aura) continue;
@@ -63,7 +71,9 @@ int bb_hook_reroll(const bb_match* m, const bb_ctx* c) {
     for (int sk = bb_next_skill(&p->skills, 0); sk >= 0;
          sk = bb_next_skill(&p->skills, sk + 1)) {
         if (bb_hooks[sk].reroll_kinds & (1u << c->kind)) {
-            bb_cover(sk);
+            // No bb_cover here: this is a QUERY (also reached from const
+            // bb_legal_actions); coverage is recorded when the re-roll is
+            // actually consumed, in test_apply (review P3).
             return sk;
         }
     }

@@ -1756,3 +1756,36 @@ BB_TEST(struct_sent_off_offers_argue_the_call) {
     // (Argue the Call?); the engine has already ended the turn instead.
     BB_CHECK_EQ(m.decision_team, 0);
 }
+
+// KICK-OFF EVENT "Cheering Fans" (BB2025): the winner's FIRST Block "next
+// turn" gets an extra offensive assist. The buff must not outlive that turn —
+// it used to persist across turns, drives and halves until a block consumed
+// it (review LOW).
+BB_TEST(struct_cheering_fans_assist_expires_at_turn_end) {
+    bb_match m;
+    fx_match_midturn(&m, 0, 0);
+    fx_lineman(&m, 0, 0, 10, 7);
+    fx_lineman(&m, 1, 0, 20, 12);
+    m.cheer_assist[0] = 1; // as granted by the kick-off event
+    bb_rng rng;
+    bb_rng_script(&rng, 0, 0);
+    bb_status st = fx_run(&m, &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK_EQ(m.cheer_assist[0], 1); // live during the team's turn
+    st = fx_apply(&m, stx_act(BB_A_END_TURN, 0, 0, 0), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION); // opponent's turn begins
+    BB_CHECK_EQ(m.cheer_assist[0], 0);   // unspent buff expired with the turn
+}
+
+BB_TEST(struct_cheering_fans_assist_expires_at_drive_end) {
+    bb_match m;
+    stx_base(&m);
+    m.cheer_assist[0] = m.cheer_assist[1] = 1;
+    bb_push(&m, BB_PROC_END_DRIVE, 0, 0, 0, 0);
+    bb_rng rng;
+    bb_rng_script(&rng, 0, 0); // empty pitch/KO box: no dice consumed
+    bb_status st = bb_advance(&m, &rng);
+    BB_CHECK_EQ(st, BB_STATUS_MATCH_OVER); // END_DRIVE was the only frame
+    BB_CHECK_EQ(m.cheer_assist[0], 0);
+    BB_CHECK_EQ(m.cheer_assist[1], 0);
+}

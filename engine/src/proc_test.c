@@ -175,6 +175,8 @@ static void test_apply(bb_match* m, bb_action a, bb_rng* rng) {
     // Skill reroll: once per TURN per player per skill kind.
     m->players[slot].skill_rr_used |= (uint16_t)(1u << f->b);
     f->data |= TF_SKILL_USED;
+    bb_cover(a.x); // a.x = granting skill id (set by test_legal); the re-roll
+                   // is consumed here, not at the legality query (review P3)
     f->phase = 2;
 }
 

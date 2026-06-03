@@ -19,7 +19,7 @@ TEST_SRC := $(wildcard engine/tests/test_*.c)
 LIB      := $(BUILD)/libbb.a
 TESTBIN  := $(BUILD)/bb_tests
 
-.PHONY: all test asan fuzz clean
+.PHONY: all test asan fuzz coverage coverage-run clean
 
 all: test
 
@@ -40,7 +40,7 @@ $(LIB): $(OBJ)
 # NOTE: tests link the object files directly (not libbb.a) — skill hook
 # registrations live in constructor-only objects that a static archive would
 # drop. External consumers of libbb.a must use -force_load / --whole-archive.
-$(TESTBIN): $(TEST_SRC) engine/tests/bb_test.h engine/tests/bb_test_main.c $(OBJ)
+$(TESTBIN): $(TEST_SRC) engine/tests/bb_test.h engine/tests/bb_fixtures.h engine/tests/bb_test_main.c $(OBJ)
 	$(CC) $(CFLAGS) -Iengine/tests engine/tests/bb_test_main.c $(TEST_SRC) $(OBJ) -o $@ $(LDFLAGS)
 
 test: $(TESTBIN)
@@ -65,7 +65,14 @@ goldens: $(OBJ)
 	$(CC) $(CFLAGS) tools/gen_goldens.c $(OBJ) -o $(BUILD)/gen_goldens
 	./$(BUILD)/gen_goldens engine/tests/golden
 
-coverage: $(OBJ)
+# Coverage counters are compiled in ONLY here (-DBB_COVERAGE): the OpenMP
+# training build must not share-write the process-global counters (review P3).
+coverage:
+	$(MAKE) BUILD=build/coverage \
+		CFLAGS="-std=c11 -O2 -g -Wall -Wextra -Werror -Iengine/include -DBB_COVERAGE" \
+		coverage-run
+
+coverage-run: $(OBJ)
 	$(CC) $(CFLAGS) tools/coverage_report.c $(OBJ) -o $(BUILD)/coverage_report
 	./$(BUILD)/coverage_report
 

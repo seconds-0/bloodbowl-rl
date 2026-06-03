@@ -48,6 +48,10 @@ static inline int fx_player(bb_match* m, int team, int idx, int x, int y,
     int slot = team * BB_TEAM_SLOTS + idx;
     bb_player* p = &m->players[slot];
     memset(p, 0, sizeof(*p));
+    // The memset makes the player look ON_PITCH (0) at (0,0); bb_place's
+    // stale-square cleanup would then clear grid[0][0] — erasing whichever
+    // player actually stands there — on EVERY fixture placement (review T1).
+    p->location = BB_LOC_ABSENT;
     p->ma = (int8_t)ma;
     p->st = (int8_t)st;
     p->ag = (int8_t)ag;

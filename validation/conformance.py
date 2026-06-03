@@ -59,6 +59,7 @@ import sys
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DIST_DUMP_SRC = os.path.join(REPO, "tools", "dist_dump.c")
+FIXTURES_HDR = os.path.join(REPO, "engine", "tests", "bb_fixtures.h")  # included by dist_dump.c
 DIST_DUMP_BIN = os.path.join(REPO, "build", "dist_dump")
 CALC_TESTS = os.path.join(REPO, "vendor", "BloodBowlActionCalculator",
                           "ActionCalculator.Tests", "ActionCalculatorTests.cs")
@@ -172,18 +173,26 @@ class Report:
 
 
 def build_dist_dump():
-    objs_dir = None
+    # Of the candidate object dirs, pick the one whose NEWEST object is most
+    # recent. First-hit-wins preferred a stale out-of-band build/main over the
+    # `make`-default build/obj, silently validating an old engine (review T2).
+    best = None
     for cand in ("build/main/obj", "build/obj"):
         d = os.path.join(REPO, cand)
-        if os.path.isdir(d) and any(f.endswith(".o") for f in os.listdir(d)):
-            objs_dir = d
-            break
-    if objs_dir is None:
+        if not os.path.isdir(d):
+            continue
+        mtimes = [os.path.getmtime(os.path.join(d, f))
+                  for f in os.listdir(d) if f.endswith(".o")]
+        if mtimes and (best is None or max(mtimes) > best[0]):
+            best = (max(mtimes), d)
+    if best is None:
         print("ERROR: no engine objects found (run `make` first)", file=sys.stderr)
         sys.exit(2)
+    objs_dir = best[1]
     objs = sorted(os.path.join(objs_dir, f) for f in os.listdir(objs_dir)
                   if f.endswith(".o"))
-    newest_dep = max([os.path.getmtime(DIST_DUMP_SRC)] +
+    newest_dep = max([os.path.getmtime(DIST_DUMP_SRC),
+                      os.path.getmtime(FIXTURES_HDR)] +
                      [os.path.getmtime(o) for o in objs])
     need = (not os.path.exists(DIST_DUMP_BIN) or
             os.path.getmtime(DIST_DUMP_BIN) < newest_dep)

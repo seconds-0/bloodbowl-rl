@@ -71,6 +71,14 @@ typedef enum {
 
 extern bb_skill_hooks bb_hooks[BB_SKILL_COUNT];
 
+// Union of every skill with a registered aura hook (maintained by
+// BB_SKILL_AURA). bb_hook_mods' 32-player aura scan skips players whose
+// skillset doesn't intersect it — only 3 of ~108 skills carry auras, so the
+// per-bit walk is dead work for almost every player (review P2). Derived
+// purely from the same registrations, so it can never disagree with
+// bb_hooks[].aura.
+extern bb_skillset bb_aura_skills;
+
 // Registration: define a function and attach it to a skill at load time.
 //   BB_SKILL_MOD(two_heads) { return c->kind == BB_TEST_DODGE ? 1 : 0; }
 #define BB_SKILL_MOD(skill)                                                  \
@@ -84,6 +92,7 @@ extern bb_skill_hooks bb_hooks[BB_SKILL_COUNT];
     static int bb_aura_##skill(const bb_match* m, const bb_ctx* c);          \
     __attribute__((constructor)) static void bb_reg_aura_##skill(void) {     \
         bb_hooks[BB_SK_##skill].aura = bb_aura_##skill;                      \
+        bb_add_skill(&bb_aura_skills, BB_SK_##skill);                        \
     }                                                                        \
     static int bb_aura_##skill(const bb_match* m, const bb_ctx* c)
 
@@ -118,10 +127,20 @@ int bb_hook_activation_gate(const bb_match* m, int slot, int* target, int* gk);
 int bb_next_skill(const bb_skillset* s, int start);
 
 // Rule-coverage instrumentation (validation layer 6): every time a skill's
-// effect actually fires, the engine bumps its counter. Always-on (one array
-// increment; negligible) — the report tool reads it after a corpus run.
+// effect actually fires, the engine bumps its counter — but only in
+// -DBB_COVERAGE builds (`make coverage`). The counters are one process-global
+// array, and the Linux training binding steps environments from multiple
+// OpenMP threads: unsynchronized cross-thread increments are a C11 data race
+// (UB, lost counts, cache ping-pong) that no sequential consumer ever reads
+// (review P3). Coverage reporting is sequential and opts in via the define.
 extern uint64_t bb_skill_exercised[BB_SKILL_COUNT];
-static inline void bb_cover(int skill_id) { bb_skill_exercised[skill_id]++; }
+static inline void bb_cover(int skill_id) {
+#ifdef BB_COVERAGE
+    bb_skill_exercised[skill_id]++;
+#else
+    (void)skill_id;
+#endif
+}
 
 // Aggregate queries used by the block/push/injury procedures.
 int bb_hook_push_flags(const bb_match* m, int slot);
