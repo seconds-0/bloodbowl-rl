@@ -42,5 +42,19 @@ test: $(TESTBIN)
 asan:
 	$(MAKE) BUILD=build/asan CFLAGS="-std=c11 $(SAN_FLAGS) -Wall -Wextra -Werror -Iengine/include" test
 
+# libFuzzer harness. Apple clang has no libFuzzer: use Homebrew LLVM
+# (brew install llvm) on macOS, or any stock clang on Linux (CI nightly).
+FUZZ_CC ?= $(shell test -x /opt/homebrew/opt/llvm/bin/clang && echo /opt/homebrew/opt/llvm/bin/clang || echo clang)
+fuzz:
+	@mkdir -p build/fuzz engine/tests/corpus
+	$(FUZZ_CC) -std=c11 -O1 -g -fsanitize=fuzzer,address,undefined -Iengine/include \
+		engine/tests/fuzz_match.c $(SRC) -o build/fuzz/bb_fuzz
+	@echo "run: ./build/fuzz/bb_fuzz -max_total_time=300 engine/tests/corpus/"
+
+# Regenerate golden traces (explicit; goldens change when rules change).
+goldens: $(LIB)
+	$(CC) $(CFLAGS) tools/gen_goldens.c $(LIB) -o $(BUILD)/gen_goldens
+	./$(BUILD)/gen_goldens engine/tests/golden
+
 clean:
 	rm -rf $(BUILD)

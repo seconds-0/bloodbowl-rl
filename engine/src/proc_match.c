@@ -163,6 +163,82 @@ static bool setup_constraints_ok(const bb_match* m, int team) {
     return true;
 }
 
+// Deterministic formation fix-up (no dice; replay-safe). Used when a coach
+// confirms setup past the action budget without a legal formation — the
+// engine equivalent of FUMBBL's setup clock running out.
+static void setup_autofix(bb_match* m, int team) {
+    int base = team * BB_TEAM_SLOTS;
+    int los_x = team == BB_HOME ? 12 : 13;
+    int xmin = team == BB_HOME ? 0 : 13;
+    int xmax = team == BB_HOME ? 12 : BB_PITCH_LEN - 1;
+    int avail = count_available(m, team);
+    int want = avail < 11 ? avail : 11;
+
+    // 1. Remove surplus (highest slots first).
+    for (int s = base + BB_TEAM_SLOTS - 1; s >= base && count_on_pitch(m, team) > want; s--) {
+        if (m->players[s].location == BB_LOC_ON_PITCH) {
+            bb_remove_from_pitch(m, s, BB_LOC_RESERVES);
+        }
+    }
+    // 2. Clear wide-zone surplus into free centre squares.
+    for (int wz = 0; wz < 2; wz++) {
+        int ylo = wz == 0 ? 0 : 11, yhi = wz == 0 ? 3 : 14;
+        int count = 0;
+        for (int s = base; s < base + BB_TEAM_SLOTS; s++) {
+            bb_player* p = &m->players[s];
+            if (p->location != BB_LOC_ON_PITCH || p->y < ylo || p->y > yhi) continue;
+            count++;
+            if (count <= 2) continue;
+            for (int x = xmin; x <= xmax; x++) {
+                bool moved = false;
+                for (int y = 4; y <= 10; y++) {
+                    if (!m->grid[x][y]) {
+                        bb_place(m, s, x, y);
+                        moved = true;
+                        break;
+                    }
+                }
+                if (moved) break;
+            }
+        }
+    }
+    // 3. Ensure the line of scrimmage minimum.
+    int need = count_on_pitch(m, team) < 3 ? count_on_pitch(m, team) : 3;
+    int los = 0;
+    for (int s = base; s < base + BB_TEAM_SLOTS; s++) {
+        const bb_player* p = &m->players[s];
+        if (p->location == BB_LOC_ON_PITCH && p->x == los_x && p->y >= 4 && p->y <= 10) los++;
+    }
+    for (int s = base; s < base + BB_TEAM_SLOTS && los < need; s++) {
+        bb_player* p = &m->players[s];
+        if (p->location != BB_LOC_ON_PITCH) continue;
+        if (p->x == los_x && p->y >= 4 && p->y <= 10) continue;
+        for (int y = 4; y <= 10; y++) {
+            if (!m->grid[los_x][y]) {
+                bb_place(m, s, los_x, y);
+                los++;
+                break;
+            }
+        }
+    }
+    // 4. Fill up to `want` from reserves (centre squares first).
+    for (int s = base; s < base + BB_TEAM_SLOTS && count_on_pitch(m, team) < want; s++) {
+        if (m->players[s].location != BB_LOC_RESERVES) continue;
+        bool placed = false;
+        for (int x = los_x; x >= xmin && x <= xmax && !placed; x += (team == BB_HOME ? -1 : 1)) {
+            for (int y = 4; y <= 10; y++) {
+                if (!m->grid[x][y]) {
+                    bb_place(m, s, x, y);
+                    placed = true;
+                    break;
+                }
+            }
+        }
+    }
+}
+
+#define SETUP_ACTION_BUDGET 64
+
 static void setup_advance(bb_match* m, bb_rng* rng) {
     (void)rng;
     bb_frame* f = bb_top(m);
@@ -174,8 +250,15 @@ static void setup_advance(bb_match* m, bb_rng* rng) {
 }
 
 static int setup_legal(const bb_match* m, bb_action* out) {
+    const bb_frame* f = &m->stack[m->stack_top - 1];
     int team = setup_team(m);
     int n = 0;
+    // Setup action budget exhausted: only DONE remains (the engine fixes the
+    // formation deterministically if needed) — guarantees termination.
+    if (f->data >= SETUP_ACTION_BUDGET) {
+        out[n++] = (bb_action){BB_A_SETUP_DONE, 0, 0, 0};
+        return n;
+    }
     // DONE is emitted first so it can never be truncated by the action cap.
     if (setup_constraints_ok(m, team)) {
         out[n++] = (bb_action){BB_A_SETUP_DONE, 0, 0, 0};
@@ -206,14 +289,21 @@ static void setup_apply(bb_match* m, bb_action a, bb_rng* rng) {
     (void)rng;
     bb_frame* f = bb_top(m);
     if (a.type == BB_A_SETUP_PLACE) {
+        f->data++;
         bb_place(m, a.arg, a.x, a.y);
         return; // stay in this phase; advance() re-issues the decision
     }
     if (a.type == BB_A_SETUP_REMOVE) {
+        f->data++;
         bb_remove_from_pitch(m, a.arg, BB_LOC_RESERVES);
         return;
     }
     // SETUP_DONE
+    int team = setup_team(m);
+    if (!setup_constraints_ok(m, team)) {
+        setup_autofix(m, team);
+    }
+    f->data = 0; // reset the budget for the second team's setup
     f->phase++;
 }
 

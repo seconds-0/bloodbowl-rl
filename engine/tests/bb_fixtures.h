@@ -102,4 +102,26 @@ static inline bool fx_has_type(const bb_match* m, int type) {
     return false;
 }
 
+// Setup-aware random action picker (random play cannot stumble into a legal
+// formation; see test_match.c). Used by smoke tests, golden generation and
+// benchmarks.
+static inline int fx_pick_smart(const bb_match* m, bb_action* legal, int n, bb_rng* pick) {
+    for (int i = 0; i < n; i++) {
+        if (legal[i].type == BB_A_SETUP_DONE) return i;
+    }
+    if (n > 0 && (legal[0].type == BB_A_SETUP_PLACE || legal[0].type == BB_A_SETUP_REMOVE)) {
+        int best = -1;
+        for (int i = 0; i < n; i++) {
+            if (legal[i].type != BB_A_SETUP_PLACE) continue;
+            if (m->players[legal[i].arg].location != BB_LOC_RESERVES) continue;
+            bool los = (legal[i].x == 12 || legal[i].x == 13) && legal[i].y >= 4 && legal[i].y <= 10;
+            bool centre = legal[i].y >= 4 && legal[i].y <= 10;
+            if (los) return i;
+            if (centre && best < 0) best = i;
+        }
+        if (best >= 0) return best;
+    }
+    return (int)(bb_rng_next(pick) % (uint32_t)n);
+}
+
 #endif // BB_FIXTURES_H
