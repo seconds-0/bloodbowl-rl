@@ -93,7 +93,7 @@ typedef struct {
     uint8_t star_id;           // 0 = regular player, else star player id + 1
     int8_t niggling;           // accumulated niggling injuries (league play)
     uint8_t spp_game;          // SPP events this match (for league mode)
-    uint8_t skill_rr_used;     // bitmask by bb_test_kind: skill re-rolls are
+    uint16_t skill_rr_used;    // bitmask by bb_test_kind: skill re-rolls are
                                // once per TURN per player (cleared at turn start)
     int8_t p_loner;            // Loner (X+) parameter (default 4; Ogres 3)
     int8_t p_bloodlust;        // Bloodlust (X+) parameter (0 = none)

@@ -79,11 +79,16 @@ BB_SKILL_MOD(NERVES_OF_STEEL) {
 }
 
 // --- Auras ----------------------------------------------------------------------
-// DISTURBING PRESENCE: "any opposition player ... must apply a -1 modifier
-// when they make a Passing Ability Test, or attempt to Catch or Intercept,
-// for each player on your team with this skill within three squares of them."
+// DISTURBING PRESENCE: "Any opposition player that performs a Pass Action,
+// Throw Team-mate Action or a Throw Bomb Special Action, or attempts to
+// Intercept or Catch the ball, applies a -1 modifier to their Passing
+// Ability Test or Agility Test for each player on your team with this Skill
+// within 3 squares of them." TTM included via the BB_TEST_TTM ctx (review
+// M12); interceptions are dispatched as CATCH-kind ctxs and so are covered.
 BB_SKILL_AURA(DISTURBING_PRESENCE) {
-    if (c->kind != BB_TEST_PASS && c->kind != BB_TEST_CATCH) return 0;
+    if (c->kind != BB_TEST_PASS && c->kind != BB_TEST_CATCH &&
+        c->kind != BB_TEST_TTM)
+        return 0;
     const bb_player* src = &m->players[c->other];   // aura source
     const bb_player* act = &m->players[c->player];  // acting player
     if (BB_TEAM_OF(c->other) == BB_TEAM_OF(c->player)) return 0;

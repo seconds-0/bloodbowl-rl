@@ -54,7 +54,7 @@ typedef struct {
     bb_mod_fn armour_mod; // armour-roll modifier (c->player = downed player,
                           // c->other = causer; positive helps the causer)
     bb_mod_fn injury_mod; // injury-roll modifier (same convention)
-    uint8_t reroll_kinds; // bitmask of bb_test_kind this skill lets you re-roll
+    uint16_t reroll_kinds; // bitmask of bb_test_kind this skill lets you re-roll
     uint8_t activate_gate; // D6 target for the activation negatrait (0 = none)
     uint8_t gate_kind;     // bb_gate_kind behavior on failure
     uint8_t push_flags;    // BB_PUSHF_* (owner's effect in pushes)

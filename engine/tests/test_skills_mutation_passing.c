@@ -456,3 +456,94 @@ BB_TEST(skmp_big_hand_rain_pickup_after_jump) {
     BB_CHECK_EQ(m.ball.carrier, mover);
     BB_CHECK_EQ(m.active_team, BB_HOME); // no turnover
 }
+
+// =============================================================================
+// DISTURBING PRESENCE (Mutation) on Throw Team-mate
+// =============================================================================
+
+// Regression (adversarial review M12): SK/DISTURBING PRESENCE "Any opposition
+// player that performs a Pass Action, Throw Team-mate Action or a Throw Bomb
+// Special Action ... applies a -1 modifier to their Passing Ability Test ...
+// for each player on your team with this Skill within 3 squares of them."
+// Pre-fix the TTM PA test was computed fully inline and NO aura could touch
+// it. Same dice, PA 4+ thrower, Quick throw: with an opposing DP exactly 3
+// squares away the 4 is one pip short (5+) -> Subpar -> the -1 landing fails
+// and the mate Falls Over; without DP the same 4 is Superb and the mate lands
+// on its feet.
+BB_TEST(skmp_disturbing_presence_applies_to_ttm) {
+    { // (a) DP within 3 squares of the thrower: 4 vs 5+ -> Subpar landing falls.
+        bb_match m;
+        fx_match_midturn(&m, BB_HOME, 0);
+        int thrower = fx_lineman(&m, 0, 2, 10, 7); // PA 4+
+        fx_give_skill(&m, thrower, BB_SK_THROW_TEAM_MATE);
+        int mate = fx_lineman(&m, 0, 3, 10, 8); // adjacent Right Stuff mate
+        fx_give_skill(&m, mate, BB_SK_RIGHT_STUFF);
+        int dp = fx_lineman(&m, 1, 0, 13, 7); // Chebyshev 3 from thrower; not Marking
+        fx_give_skill(&m, dp, BB_SK_DISTURBING_PRESENCE);
+        // Dice: PA 4 (Subpar at 5+), scatter 3x d8=1 (NW: (12,7)->(9,4)),
+        // landing d6=3 vs 4+ (-1 Subpar) FAILS, armour 2D6 = 2,2 holds.
+        static const uint8_t dice[] = {4, 1, 1, 1, 3, 2, 2};
+        bb_rng rng;
+        bb_rng_script(&rng, dice, 7);
+
+        bb_status st = fx_run(&m, &rng);
+        st = fx_activate(&m, &rng, thrower, BB_ACT_TTM);
+        BB_CHECK_EQ(st, BB_STATUS_DECISION);
+        st = fx_apply(&m, mk(BB_A_SPECIAL_TARGET, 7, 10, 8), &rng); // pick mate
+        BB_CHECK_EQ(st, BB_STATUS_DECISION);
+        st = fx_apply(&m, mk(BB_A_TTM_TARGET, 0, 12, 7), &rng);
+        BB_CHECK_EQ(st, BB_STATUS_DECISION);
+        BB_CHECK(!bb_rng_error(&rng));
+        BB_CHECK_EQ(m.players[mate].x, 9);
+        BB_CHECK_EQ(m.players[mate].y, 4);
+        BB_CHECK_EQ(m.players[mate].stance, BB_STANCE_PRONE);
+        BB_CHECK_EQ(m.active_team, BB_HOME); // no ball held: no turnover
+    }
+    { // (b) control, no DP: the same 4 is Superb (4+) and the landing is a
+      // bare 3+ — the mate lands standing. Pins "exactly one pip worse".
+        bb_match m;
+        fx_match_midturn(&m, BB_HOME, 0);
+        int thrower = fx_lineman(&m, 0, 2, 10, 7);
+        fx_give_skill(&m, thrower, BB_SK_THROW_TEAM_MATE);
+        int mate = fx_lineman(&m, 0, 3, 10, 8);
+        fx_give_skill(&m, mate, BB_SK_RIGHT_STUFF);
+        fx_lineman(&m, 1, 0, 24, 1); // far-away opponent bystander, no DP
+        static const uint8_t dice[] = {4, 1, 1, 1, 3};
+        bb_rng rng;
+        bb_rng_script(&rng, dice, 5);
+
+        bb_status st = fx_run(&m, &rng);
+        st = fx_activate(&m, &rng, thrower, BB_ACT_TTM);
+        st = fx_apply(&m, mk(BB_A_SPECIAL_TARGET, 7, 10, 8), &rng);
+        st = fx_apply(&m, mk(BB_A_TTM_TARGET, 0, 12, 7), &rng);
+        BB_CHECK_EQ(st, BB_STATUS_DECISION);
+        BB_CHECK(!bb_rng_error(&rng));
+        BB_CHECK_EQ(m.players[mate].x, 9);
+        BB_CHECK_EQ(m.players[mate].y, 4);
+        BB_CHECK_EQ(m.players[mate].stance, BB_STANCE_STANDING);
+        BB_CHECK_EQ(m.active_team, BB_HOME);
+    }
+    { // (c) a DP player 4+ squares from the thrower contributes nothing:
+      // identical to the control even though DP is on the pitch.
+        bb_match m;
+        fx_match_midturn(&m, BB_HOME, 0);
+        int thrower = fx_lineman(&m, 0, 2, 10, 7);
+        fx_give_skill(&m, thrower, BB_SK_THROW_TEAM_MATE);
+        int mate = fx_lineman(&m, 0, 3, 10, 8);
+        fx_give_skill(&m, mate, BB_SK_RIGHT_STUFF);
+        int dp = fx_lineman(&m, 1, 0, 14, 7); // Chebyshev 4: out of range
+        fx_give_skill(&m, dp, BB_SK_DISTURBING_PRESENCE);
+        static const uint8_t dice[] = {4, 1, 1, 1, 3};
+        bb_rng rng;
+        bb_rng_script(&rng, dice, 5);
+
+        bb_status st = fx_run(&m, &rng);
+        st = fx_activate(&m, &rng, thrower, BB_ACT_TTM);
+        st = fx_apply(&m, mk(BB_A_SPECIAL_TARGET, 7, 10, 8), &rng);
+        st = fx_apply(&m, mk(BB_A_TTM_TARGET, 0, 12, 7), &rng);
+        BB_CHECK_EQ(st, BB_STATUS_DECISION);
+        BB_CHECK(!bb_rng_error(&rng));
+        BB_CHECK_EQ(m.players[mate].stance, BB_STANCE_STANDING);
+        BB_CHECK_EQ(m.active_team, BB_HOME);
+    }
+}

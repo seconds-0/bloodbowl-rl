@@ -56,14 +56,23 @@ static void ttm_advance(bb_match* m, bb_rng* rng) {
         forced_fumble = true; // squirms free
     }
 
-    // PA test: Quick 0 / Short -1; -1 per marker; Strong Arm +1.
+    // PA test: Quick 0 / Short -1; -1 per marker; Strong Arm +1; then the
+    // skill/trait hooks via a BB_TEST_TTM ctx — the BB2025 Disturbing
+    // Presence text explicitly names the "Throw Team-mate Action", so
+    // opposing DP auras within 3 squares of the thrower apply their -1 here
+    // (adversarial review M12).
     int dx = f.x - tp->x, dy = f.y - tp->y;
-    int mod = (dx * dx + dy * dy <= 12) ? 0 : -1;
+    bool quick = dx * dx + dy * dy <= 12;
+    int mod = quick ? 0 : -1;
     mod -= bb_tackle_zones(m, BB_TEAM_OF(thrower), tp->x, tp->y);
     if (bb_has_skill(&tp->skills, BB_SK_STRONG_ARM)) {
         mod += 1;
         bb_cover(BB_SK_STRONG_ARM);
     }
+    bb_ctx c = {BB_TEST_TTM, (uint8_t)thrower, BB_NO_PLAYER, (uint8_t)thrower,
+                (int8_t)tp->x, (int8_t)tp->y, (int8_t)f.x, (int8_t)f.y,
+                (int8_t)(quick ? 0 : 1), 0};
+    mod += bb_hook_mods(m, &c);
     bool fumble = forced_fumble;
     bool subpar = false;
     if (!forced_fumble) {

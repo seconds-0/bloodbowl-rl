@@ -154,7 +154,7 @@ static void test_apply(bb_match* m, bb_action a, bb_rng* rng) {
         return;
     }
     // Skill reroll: once per TURN per player per skill kind.
-    m->players[slot].skill_rr_used |= (uint8_t)(1u << f->b);
+    m->players[slot].skill_rr_used |= (uint16_t)(1u << f->b);
     f->data |= TF_SKILL_USED;
     f->phase = 2;
 }
