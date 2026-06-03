@@ -114,6 +114,13 @@ typedef struct {
     // Reward shaping / episode bound ([env] kwargs in config/bloodbowl.ini).
     float reward_td;
     float reward_win;
+    // Setup shaping (default 0 = off): a voluntary legal SETUP_DONE earns
+    // reward_setup_done; exhausting the placement budget so the engine
+    // autofixes the formation earns reward_setup_autofix (negative). The two
+    // cases are distinguishable because a forced DONE is the ONLY legal
+    // action (n_legal == 1) while a voluntary one always has alternatives.
+    float reward_setup_done;
+    float reward_setup_autofix;
     int max_decisions;
     // Spectator rendering (bbe_render.h); NULL until c_render is first called.
     int render_fps;
@@ -418,6 +425,16 @@ static void c_step(Bloodbowl* env) {
     if (m->status == BB_STATUS_DECISION && env->n_legal > 0) {
         int agent = m->decision_team;
         bb_action act = bbe_decode(env, agent, env->action_ptr[agent]);
+        // Setup shaping: forced DONE (budget exhausted -> sole legal action)
+        // vs voluntary legal DONE. Must inspect n_legal BEFORE bb_apply.
+        if (act.type == BB_A_SETUP_DONE) {
+            float r = env->n_legal == 1 ? env->reward_setup_autofix
+                                        : env->reward_setup_done;
+            if (r != 0.0f) {
+                env->reward_ptr[agent][0] += r;
+                env->ep_return[agent] += r;
+            }
+        }
         bb_apply(m, act, &env->rng);
         env->decisions++;
         // Touchdown rewards.

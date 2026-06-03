@@ -35,6 +35,10 @@ static float bbe_scale = 1.6f;
 
 typedef struct {
     char banner[256];
+    // Training progress (BBE_CKPT_STEPS / BBE_TOTAL_STEPS env vars, set by
+    // tools/spectate.sh from the checkpoint being played). 0 = unknown.
+    double ckpt_steps;
+    double total_steps;
     bool art_ok;
     char art_dir[512];
     Texture2D pitch, ball, holdball, prone, stunned;
@@ -87,6 +91,10 @@ static void bbe_render_init(Bloodbowl* env) {
         float v = (float)atof(sc);
         if (v >= 1.0f && v <= 3.0f) bbe_scale = v;
     }
+    const char* cs = getenv("BBE_CKPT_STEPS");
+    const char* ts = getenv("BBE_TOTAL_STEPS");
+    c->ckpt_steps = cs ? atof(cs) : 0;
+    c->total_steps = ts ? atof(ts) : 0;
     InitWindow(BBE_WIN_W, BBE_WIN_H, "Blood Bowl RL — spectator");
     SetTargetFPS(env->render_fps > 0 ? env->render_fps : 60);
 
@@ -280,6 +288,32 @@ static void bbe_draw_hud(const Bloodbowl* env) {
     snprintf(buf, sizeof(buf), "half %d   turn %d/%d   decision %d   %s",
              m->half, m->turn[0], m->turn[1], env->decisions, c->banner);
     DrawText(buf, BBE_MARGIN, BBE_S(38), BBE_S(10), (Color){170, 175, 185, 255});
+
+    // Top-right: which checkpoint this policy is and how far through training.
+    if (c->ckpt_steps > 0) {
+        char prog[96];
+        if (c->total_steps > 0) {
+            snprintf(prog, sizeof(prog), "policy @ %.2fB / %.0fB steps (%.0f%%)",
+                     c->ckpt_steps / 1e9, c->total_steps / 1e9,
+                     100.0 * c->ckpt_steps / c->total_steps);
+        } else {
+            snprintf(prog, sizeof(prog), "policy @ %.2fB steps", c->ckpt_steps / 1e9);
+        }
+        int fs = BBE_S(10);
+        int tw = MeasureText(prog, fs);
+        int rx = BBE_WIN_W - BBE_MARGIN - tw;
+        DrawText(prog, rx, BBE_S(12), fs, RAYWHITE);
+        if (c->total_steps > 0) {
+            int bw = BBE_S(160);
+            int bx = BBE_WIN_W - BBE_MARGIN - bw;
+            int by = BBE_S(28);
+            float frac = (float)(c->ckpt_steps / c->total_steps);
+            if (frac > 1.0f) frac = 1.0f;
+            DrawRectangle(bx, by, bw, BBE_S(8), (Color){60, 64, 72, 255});
+            DrawRectangle(bx, by, (int)(bw * frac), BBE_S(8), BBE_GOLD);
+            DrawRectangleLines(bx, by, bw, BBE_S(8), Fade(RAYWHITE, 0.4f));
+        }
+    }
 }
 
 static void bbe_render_draw(Bloodbowl* env) {

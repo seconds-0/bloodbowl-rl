@@ -36,10 +36,13 @@ while true; do
         echo "no checkpoints yet — playing randomly initialized policy"
         load_args=()
         export BBE_BANNER="untrained (random init)"
+        unset BBE_CKPT_STEPS
     else
         load_args=(--load-model-path latest)
         steps=$(basename "$newest" .bin | sed 's/^0*//'); steps=${steps:-0}
-        export BBE_BANNER="checkpoint @ $(printf "%'d" "$steps") steps"
+        export BBE_BANNER="$(basename "$(dirname "$newest")")"
+        export BBE_CKPT_STEPS="$steps"
+        export BBE_TOTAL_STEPS="${BBE_TOTAL_STEPS:-10000000000}"
         echo "spectating: $newest"
     fi
 

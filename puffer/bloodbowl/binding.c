@@ -30,6 +30,8 @@ static double kw(Dict* kwargs, const char* key, double fallback) {
 static void apply_kwargs(Env* env, Dict* kwargs) {
     env->reward_td = (float)kw(kwargs, "reward_td", 1.0);
     env->reward_win = (float)kw(kwargs, "reward_win", 3.0);
+    env->reward_setup_done = (float)kw(kwargs, "reward_setup_done", 0.0);
+    env->reward_setup_autofix = (float)kw(kwargs, "reward_setup_autofix", 0.0);
     env->max_decisions = (int)kw(kwargs, "max_decisions", BBE_MAX_DECISIONS);
     if (env->max_decisions <= 0 || env->max_decisions > BBE_MAX_DECISIONS) {
         env->max_decisions = BBE_MAX_DECISIONS;
