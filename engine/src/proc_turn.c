@@ -174,6 +174,11 @@ static void activation_advance(bb_match* m, bb_rng* rng) {
     int slot = f->a;
     if (f->phase == 0) {
         m->players[slot].flags &= (uint16_t)~BB_PF_EYE_GOUGED; // recovers
+        // DISTRACTED clears when the player is next activated (FAQ: before
+        // declaring). The old clear lived inside the gate-success branch, so
+        // gate-less players — i.e. nearly every Hypnotic Gaze victim — stayed
+        // Distracted for the whole drive (review H4).
+        m->players[slot].flags &= (uint16_t)~BB_PF_DISTRACTED;
         m->players[slot].flags |= BB_PF_ACTIVATING;
         // Negatrait activation gate (Bone Head, Unchannelled Fury, ...).
         int target = 0, gk = 0;
@@ -193,10 +198,6 @@ static void activation_advance(bb_match* m, bb_rng* rng) {
                     bb_pop(m);
                     return;
                 }
-            }
-            // Success clears a lingering Distracted state from earlier gates.
-            if (gk != BB_GATE_ROOTED) {
-                m->players[slot].flags &= (uint16_t)~BB_PF_DISTRACTED;
             }
         }
         f->phase = 0; // continue to the declaration decision

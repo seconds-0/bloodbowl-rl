@@ -328,3 +328,31 @@ BB_TEST(skdt_ttm_pick_locks_movement_and_throws_picked_mate) {
     }
     BB_CHECK(!bb_rng_error(&rng));
 }
+
+// Regression (adversarial review H4): DISTRACTED is removed when the player
+// is next activated — for EVERY player, not only those with an activation
+// gate negatrait. Pre-fix, a gazed gate-less player stayed Distracted (no
+// TZ, no assists, no catching) for the rest of the drive.
+BB_TEST(skdt_distracted_clears_on_next_activation_gateless) {
+    bb_match m;
+    fx_match_midturn(&m, BB_AWAY, 0); // away to act; victim is home
+    int victim = fx_lineman(&m, 0, 0, 10, 7); // plain lineman: NO gate trait
+    m.players[victim].flags |= BB_PF_DISTRACTED;
+    int mover = fx_lineman(&m, 1, 0, 20, 7);
+    (void)mover;
+
+    bb_rng rng;
+    bb_rng_script(&rng, 0, 0);
+    bb_status st = fx_run(&m, &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    // Away ends its turn; home turn starts; activate the victim.
+    st = fx_apply(&m, act(BB_A_END_TURN, 0, 0, 0), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK_EQ(m.active_team, BB_HOME);
+    BB_CHECK(m.players[victim].flags & BB_PF_DISTRACTED); // persists until...
+    st = fx_apply(&m, act(BB_A_ACTIVATE, victim, 0, 0), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    // ...the moment of activation, before declaring.
+    BB_CHECK(!(m.players[victim].flags & BB_PF_DISTRACTED));
+    BB_CHECK(!bb_rng_error(&rng)); // gate-less: no gate die consumed
+}
