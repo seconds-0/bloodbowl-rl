@@ -5,13 +5,39 @@
 // engine to the next decision, and emits observations + per-head legality
 // masks. Episodes are full matches over procedurally generated rosters.
 //
-// Observation (uint8, 576B), egocentric (decision team first):
-//   [0..511]  32 players x 16B: x+1, y+1 (0 = off pitch), location, stance,
-//             flags lo/hi, ma, st, ag, pa, av, skill ids x5 (id+1, 0 = none)
-//   [512..527] ball + decision context: ball state, bx+1, by+1, carrier idx+1,
-//             top proc, phase, frame a/b/x/y, decision flags
-//   [528..575] scalars: half, my/opp turn, my/opp score, my/opp rerolls,
-//             weather, action-economy flags, apothecaries, bribes, spare
+// Observation (uint8, BBE_OBS_SIZE = 832B), egocentric: each agent sees its
+// own players first and the pitch x-mirrored for the away coach, so
+// "forward" is always +x. Layout (offsets from the BBE_* macros below):
+//   [0..767]   32 players x BBE_PLAYER_BYTES (24): rows 0-15 = my team,
+//              16-31 = opponent (row = slot, XOR 16 for the away agent):
+//                [0]  x+1, [1] y+1 (0 = off pitch; x mirrored for away)
+//                [2]  location (bb_loc), [3] stance (bb_stance)
+//                [4]  flags low byte, [5] flags high byte (BB_PF_*)
+//                [6..10]  ma, st, ag, pa, av
+//                [11..22] skill ids x BBE_SKILL_SLOTS (12) (id+1, 0 = none)
+//                [23] opposing tackle zones marking the player's square
+//                     (on-pitch only, else 0)
+//   [768..783] ball + decision context (BBE_CTX_OFF):
+//                [0]  ball state (bb_ball_state)
+//                [1]  ball x+1, [2] ball y+1 (0 = off pitch)
+//                [3]  carrier row+1 (0 = none)
+//                [4]  top-frame proc (bb_proc), [5] its phase
+//                [6]  frame a as row+1 when the proc stores a player slot
+//                     there (bbe_frame_a_is_slot), else 0
+//                [7]  frame b likewise (bbe_frame_b_is_slot)
+//                [8]  pending TEST target number (2..6 when the top frame
+//                     is a TEST reroll window, else 0)
+//                [9]  spare
+//                [10] I am the deciding coach, [11] my team is active
+//                [12..15] spare
+//   [784..831] scalars (BBE_SCALAR_OFF):
+//                [0]  half, [1] my turn, [2] opp turn
+//                [3]  my score, [4] opp score
+//                [5]  my rerolls, [6] opp rerolls, [7] weather
+//                [8..13] blitz/pass/handoff/foul/ttm/secure used this turn
+//                [14] my apothecaries, [15] opp apothecaries
+//                [16] my bribes, [17] opp bribes, [18] I am kicking
+//                [19] my team id, [20] opp team id, [21..47] spare
 //
 // Action heads (ACT_SIZES {30, 33, 391}): bb_action type | arg (0-31 direct,
 // 32 = sentinel for 0xFE/0xFF args) | square (y*26+x, 390 = none).
@@ -55,7 +81,7 @@
 #include "engine/proc_match.c"
 #undef DIR8
 
-#define BBE_PLAYER_BYTES 24    // 11 stat/state bytes + 12 skill-id slots + pad
+#define BBE_PLAYER_BYTES 24    // 11 stat/state bytes + 12 skill-id slots + TZ byte
 #define BBE_SKILL_SLOTS 12     // >= max base-roster skills (10) + procgen cap
 #define BBE_OBS_SIZE 832       // 32*24 players + 16 ball/ctx + 48 scalars
 #define BBE_CTX_OFF (BB_NUM_PLAYERS * BBE_PLAYER_BYTES) // 768
@@ -87,6 +113,10 @@ typedef struct {
     // reads hist_score_bank_<b>/hist_n_bank_<b> to drive bank swaps.
     float hist_score_bank[BBE_MAX_BANKS];
     float hist_n_bank[BBE_MAX_BANKS];
+    // Episodes ended by the defensive reset (BB_STATUS_ERROR or an empty
+    // legal set at a DECISION). Should stay at 0.0 on the dashboard; anything
+    // else means the engine/binding contract broke mid-training.
+    float error_episodes;
     float n;
 } Log;
 
@@ -165,6 +195,44 @@ static int bbe_ego_slot(int agent, int slot) {
     return agent == BB_AWAY ? (slot ^ BB_TEAM_SLOTS) : slot;
 }
 
+// Frame params a/b hold player slots only for SOME procs. The four
+// highest-frequency decision procs store TEAM IDS in a (PREGAME: toss winner;
+// SETUP/KICKOFF: kicking team; TEAM_TURN: acting team), and several store
+// kinds/flags in b (MOVE: bb_act_kind; TEST: bb_test_kind; CASUALTY /
+// KO_RECOVERY: apothecary-window flags). Team ids 0/1 pass a
+// `< BB_NUM_PLAYERS` check, so without a whitelist they get XOR-16
+// ego-remapped as if they were slots — the away agent would see "opponent
+// row 17" where the home agent sees "my player 0" for the same semantic
+// state, breaking the egocentric invariant on the modal decision type
+// (adversarial review M14). Whitelist per proc; non-slots encode as 0.
+static bool bbe_frame_a_is_slot(int proc) {
+    switch (proc) {
+    case BB_PROC_ACTIVATION:  // a = activating player
+    case BB_PROC_MOVE:        // a = mover
+    case BB_PROC_TEST:        // a = tested player
+    case BB_PROC_BLOCK:       // a = attacker
+    case BB_PROC_PUSH:        // a = pusher (direction origin)
+    case BB_PROC_CASUALTY:    // a = victim
+    case BB_PROC_FOUL:        // a = fouler
+    case BB_PROC_KO_RECOVERY: // a = KO-patch candidate
+    case BB_PROC_PASS:        // a = thrower (interception window)
+        return true;
+    default:
+        return false;
+    }
+}
+
+static bool bbe_frame_b_is_slot(int proc) {
+    switch (proc) {
+    case BB_PROC_BLOCK: // b = defender
+    case BB_PROC_PUSH:  // b = pushee
+    case BB_PROC_FOUL:  // b = victim
+        return true;
+    default:
+        return false;
+    }
+}
+
 static void bbe_encode_obs(Bloodbowl* env, int agent) {
     unsigned char* o = env->obs_ptr[agent];
     memset(o, 0, BBE_OBS_SIZE);
@@ -182,6 +250,10 @@ static void bbe_encode_obs(Bloodbowl* env, int agent) {
             int px = me == BB_HOME ? p->x : (BB_PITCH_LEN - 1 - p->x);
             t[0] = (unsigned char)(px + 1);
             t[1] = (unsigned char)(p->y + 1);
+            // [23] opposing tackle zones marking this player's square —
+            // dodge/pickup/catch difficulty and Marked/Open status without
+            // the policy re-deriving adjacency from 31 other rows.
+            t[23] = (unsigned char)bb_tackle_zones(m, team, p->x, p->y);
         }
         t[2] = p->location;
         t[3] = p->stance;
@@ -217,13 +289,23 @@ static void bbe_encode_obs(Bloodbowl* env, int agent) {
     if (top) {
         b[4] = top->proc;
         b[5] = top->phase;
-        // Frame a/b are player slots in every proc that surfaces decisions;
-        // remap egocentrically (+1, 0 = none/not-a-slot). Frame x/y are NOT
-        // exposed: their semantics vary per proc (squares, latch bits, skill
-        // payloads), so away-mirroring can't be applied consistently — the
-        // legal-action mask carries the spatial decision context instead.
-        b[6] = top->a < BB_NUM_PLAYERS ? (unsigned char)(1 + bbe_ego_slot(me, top->a)) : 0;
-        b[7] = top->b < BB_NUM_PLAYERS ? (unsigned char)(1 + bbe_ego_slot(me, top->b)) : 0;
+        // Frame a/b are player slots only for whitelisted procs (see
+        // bbe_frame_*_is_slot); remap those egocentrically (+1, 0 =
+        // none/not-a-slot). Frame x/y are NOT exposed: their semantics vary
+        // per proc (squares, latch bits, skill payloads), so away-mirroring
+        // can't be applied consistently — the legal-action mask carries the
+        // spatial decision context instead.
+        b[6] = (bbe_frame_a_is_slot(top->proc) && top->a < BB_NUM_PLAYERS)
+                   ? (unsigned char)(1 + bbe_ego_slot(me, top->a))
+                   : 0;
+        b[7] = (bbe_frame_b_is_slot(top->proc) && top->b < BB_NUM_PLAYERS)
+                   ? (unsigned char)(1 + bbe_ego_slot(me, top->b))
+                   : 0;
+        // [8] pending TEST target: at a TEST reroll window, the needed roll
+        // (2..6, modifiers already applied — proc_test.c keeps it in frame
+        // x), else 0. Lets the policy price a reroll directly instead of
+        // re-deriving stats/modifiers from the board rows.
+        b[8] = top->proc == BB_PROC_TEST ? top->x : 0;
     }
     b[10] = (unsigned char)(m->decision_team == me);
     b[11] = (unsigned char)(m->active_team == me);
@@ -534,8 +616,14 @@ static void c_step(Bloodbowl* env) {
             }
         }
     }
-    if (m->status == BB_STATUS_ERROR) {
-        // Should be unreachable (decode snaps to legal); reset defensively.
+    if (m->status == BB_STATUS_ERROR ||
+        (m->status == BB_STATUS_DECISION && env->n_legal <= 0)) {
+        // Both should be unreachable (decode snaps to legal; every decision
+        // window offers at least one action). The second guard matters: a
+        // DECISION whose legal set came back empty would otherwise livelock
+        // the env forever — the mask path emits a defensive null action, but
+        // the step path would never apply anything and never terminate.
+        env->log.error_episodes += 1;
         bbe_finish_episode(env);
     } else if (m->status == BB_STATUS_MATCH_OVER ||
                env->decisions >= env->max_decisions) {
