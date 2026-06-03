@@ -33,8 +33,11 @@ $(LIB): $(OBJ)
 	@mkdir -p $(BUILD)
 	ar rcs $@ $^
 
-$(TESTBIN): $(TEST_SRC) engine/tests/bb_test.h engine/tests/bb_test_main.c $(LIB)
-	$(CC) $(CFLAGS) -Iengine/tests engine/tests/bb_test_main.c $(TEST_SRC) $(LIB) -o $@ $(LDFLAGS)
+# NOTE: tests link the object files directly (not libbb.a) — skill hook
+# registrations live in constructor-only objects that a static archive would
+# drop. External consumers of libbb.a must use -force_load / --whole-archive.
+$(TESTBIN): $(TEST_SRC) engine/tests/bb_test.h engine/tests/bb_test_main.c $(OBJ)
+	$(CC) $(CFLAGS) -Iengine/tests engine/tests/bb_test_main.c $(TEST_SRC) $(OBJ) -o $@ $(LDFLAGS)
 
 test: $(TESTBIN)
 	./$(TESTBIN) $(TEST)
@@ -52,8 +55,10 @@ fuzz:
 	@echo "run: ./build/fuzz/bb_fuzz -max_total_time=300 engine/tests/corpus/"
 
 # Regenerate golden traces (explicit; goldens change when rules change).
-goldens: $(LIB)
-	$(CC) $(CFLAGS) tools/gen_goldens.c $(LIB) -o $(BUILD)/gen_goldens
+# Links objects directly (constructor-registered skill hooks would be dropped
+# from a static archive).
+goldens: $(OBJ)
+	$(CC) $(CFLAGS) tools/gen_goldens.c $(OBJ) -o $(BUILD)/gen_goldens
 	./$(BUILD)/gen_goldens engine/tests/golden
 
 clean:

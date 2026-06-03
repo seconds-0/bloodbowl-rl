@@ -37,6 +37,14 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
         uint8_t b = pos < size ? data[pos++] : (uint8_t)(steps * 2654435761u >> 24);
         st = bb_apply(&m, legal[b % (uint32_t)n], &rng);
         if (st == BB_STATUS_ERROR) abort(); // legal action must never error
+        // Core invariants (mirror test_match.c).
+        if (m.ball.state == BB_BALL_HELD) {
+            if (m.ball.carrier == BB_NO_PLAYER) abort();
+            const bb_player* c = &m.players[m.ball.carrier];
+            if (c->location != BB_LOC_ON_PITCH) abort();
+            if (!(c->flags & BB_PF_HAS_BALL)) abort();
+            if (m.ball.x != c->x || m.ball.y != c->y) abort();
+        }
         steps++;
     }
     if (st == BB_STATUS_DECISION) abort(); // non-termination within bound

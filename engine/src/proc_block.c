@@ -494,6 +494,11 @@ static void foul_advance(bb_match* m, bb_rng* rng) {
         // ejected from the dugout).
         if (m->coach_ejected[BB_TEAM_OF(fouler)]) {
             bb_pop(m);
+            if (m->players[fouler].flags & BB_PF_HAS_BALL) {
+                int bx = m->players[fouler].x, by = m->players[fouler].y;
+                bb_drop_ball(m);
+                bb_push(m, BB_PROC_SCATTER, 0, 1, (uint8_t)bx, (uint8_t)by);
+            }
             bb_remove_from_pitch(m, fouler, BB_LOC_SENT_OFF);
             bb_turnover(m);
             return;
@@ -526,7 +531,15 @@ static void foul_apply(bb_match* m, bb_action a, bb_rng* rng) {
         }
     }
     bb_pop(m);
-    if (!stays) bb_remove_from_pitch(m, fouler, BB_LOC_SENT_OFF);
+    if (!stays) {
+        // A sent-off ball carrier drops the ball; it bounces from their square.
+        if (m->players[fouler].flags & BB_PF_HAS_BALL) {
+            int bx = m->players[fouler].x, by = m->players[fouler].y;
+            bb_drop_ball(m);
+            bb_push(m, BB_PROC_SCATTER, 0, 1, (uint8_t)bx, (uint8_t)by);
+        }
+        bb_remove_from_pitch(m, fouler, BB_LOC_SENT_OFF);
+    }
     bb_turnover(m);
 }
 

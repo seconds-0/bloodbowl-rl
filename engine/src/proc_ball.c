@@ -6,6 +6,7 @@
 // players auto-fail and the ball bounces.
 #include "bb/bb_proc.h"
 #include "bb/bb_skills.h"
+#include "bb/bb_hooks.h"
 
 static const int8_t DIR8[8][2] = {
     {-1, -1}, {0, -1}, {1, -1}, {-1, 0}, {1, 0}, {-1, 1}, {0, 1}, {1, 1},
@@ -136,8 +137,11 @@ static void catch_advance(bb_match* m, bb_rng* rng) {
             bb_push(m, BB_PROC_SCATTER, 0, 1, (uint8_t)x, (uint8_t)y);
             return;
         }
+        bb_ctx c = {BB_TEST_CATCH, (uint8_t)slot, BB_NO_PLAYER,
+                    (int8_t)p->x, (int8_t)p->y, (int8_t)p->x, (int8_t)p->y, -1, 0};
         int mod = (int8_t)f->b;
         mod -= bb_tackle_zones(m, BB_TEAM_OF(slot), p->x, p->y);
+        mod += bb_hook_mods(m, &c);
         if (m->weather == BB_WEATHER_RAIN) mod -= 1;
         f->phase = 1;
         bb_push(m, BB_PROC_TEST, slot, BB_TEST_CATCH, bb_test_target(p->ag, mod), 0);
@@ -235,8 +239,13 @@ static void pass_advance(bb_match* m, bb_rng* rng) {
             bb_turnover(m);
             return;
         }
-        int mod = pass_range_mod(f->x - p->x, f->y - p->y);
+        int rmod = pass_range_mod(f->x - p->x, f->y - p->y);
+        bb_ctx c = {BB_TEST_PASS, (uint8_t)slot, BB_NO_PLAYER,
+                    (int8_t)p->x, (int8_t)p->y, (int8_t)f->x, (int8_t)f->y,
+                    (int8_t)(-rmod), 0};
+        int mod = rmod;
         mod -= bb_tackle_zones(m, BB_TEAM_OF(slot), p->x, p->y);
+        mod += bb_hook_mods(m, &c);
         if (m->weather == BB_WEATHER_SUNNY) mod -= 1; // Very Sunny: -1 to PA tests
         f->data = (uint16_t)(mod & 0xFF);
         f->phase = 1;
@@ -311,7 +320,10 @@ static int pass_legal(const bb_match* m, bb_action* out) {
 static void pass_start_interception(bb_match* m, bb_frame* f, int interceptor) {
     const bb_player* ip = &m->players[interceptor];
     bool inaccurate = (f->data & 0x100) != 0;
+    bb_ctx c = {BB_TEST_CATCH, (uint8_t)interceptor, f->a,
+                (int8_t)ip->x, (int8_t)ip->y, (int8_t)ip->x, (int8_t)ip->y, -1, 0};
     int mod = (inaccurate ? -2 : -3) - bb_tackle_zones(m, BB_TEAM_OF(interceptor), ip->x, ip->y);
+    mod += bb_hook_mods(m, &c);
     if (m->weather == BB_WEATHER_RAIN) mod -= 1; // rain affects interceptions
     f->b = (uint8_t)interceptor;
     f->phase = 3;

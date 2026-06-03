@@ -19,6 +19,7 @@
 // turnovers (knockdown of active player / failed pickup).
 #include "bb/bb_proc.h"
 #include "bb/bb_skills.h"
+#include "bb/bb_hooks.h"
 
 enum {
     MV_BLOCK_DONE = 1 << 0,
@@ -73,7 +74,10 @@ static void execute_step(bb_match* m, bb_rng* rng, bb_frame* f) {
             int target = m->weather == BB_WEATHER_RAIN ? 3 : 2;
             bb_push(m, BB_PROC_TEST, slot, BB_TEST_GENERIC, target, 0);
         } else {
-            int mod = -bb_tackle_zones(m, BB_TEAM_OF(slot), x, y);
+            bb_ctx c = {BB_TEST_PICKUP, (uint8_t)slot, BB_NO_PLAYER,
+                        (int8_t)x, (int8_t)y, (int8_t)x, (int8_t)y, -1, 0};
+            int mod = -bb_tackle_zones(m, BB_TEAM_OF(slot), x, y) +
+                      bb_hook_mods(m, &c);
             if (m->weather == BB_WEATHER_RAIN) mod -= 1;
             bb_push(m, BB_PROC_TEST, slot, BB_TEST_PICKUP,
                     bb_test_target(p->ag, mod), 0);
@@ -124,7 +128,11 @@ static void move_advance(bb_match* m, bb_rng* rng) {
         // Passed; run the next queued test or execute the step.
         if (f->data & MV_DODGE_PEND) {
             f->data &= (uint16_t)~MV_DODGE_PEND;
-            int mod = -bb_tackle_zones(m, BB_TEAM_OF(slot), f->x, f->y);
+            bb_ctx c = {BB_TEST_DODGE, (uint8_t)slot, BB_NO_PLAYER,
+                        (int8_t)p->x, (int8_t)p->y, (int8_t)f->x, (int8_t)f->y, -1,
+                        f->b == BB_ACT_BLITZ};
+            int mod = -bb_tackle_zones(m, BB_TEAM_OF(slot), f->x, f->y) +
+                      bb_hook_mods(m, &c);
             f->data |= MV_AWAIT_TEST;
             bb_push(m, BB_PROC_TEST, slot, BB_TEST_DODGE,
                     bb_test_target(p->ag, mod), 0);
@@ -336,7 +344,11 @@ static void move_apply(bb_match* m, bb_action a, bb_rng* rng) {
             }
             if (dodge) {
                 f->data &= (uint16_t)~MV_DODGE_PEND;
-                int mod = -bb_tackle_zones(m, BB_TEAM_OF(slot), a.x, a.y);
+                bb_ctx c = {BB_TEST_DODGE, (uint8_t)slot, BB_NO_PLAYER,
+                            (int8_t)p->x, (int8_t)p->y, (int8_t)a.x, (int8_t)a.y, -1,
+                            f->b == BB_ACT_BLITZ};
+                int mod = -bb_tackle_zones(m, BB_TEAM_OF(slot), a.x, a.y) +
+                          bb_hook_mods(m, &c);
                 f->data |= MV_AWAIT_TEST;
                 bb_push(m, BB_PROC_TEST, slot, BB_TEST_DODGE,
                         bb_test_target(p->ag, mod), 0);

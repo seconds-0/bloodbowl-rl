@@ -1,5 +1,6 @@
 // proc_turn.c — TEAM_TURN, ACTIVATION, TURNOVER.
 #include "bb/bb_proc.h"
+#include "bb/bb_hooks.h"
 
 // ===== TEAM_TURN =============================================================
 // a = team. phase 0: turn start bookkeeping. phase 1: activation loop.
@@ -147,12 +148,28 @@ static bool has_adjacent_downed_opponent(const bb_match* m, int slot) {
 }
 
 static void activation_advance(bb_match* m, bb_rng* rng) {
-    (void)rng;
     bb_frame* f = bb_top(m);
     int slot = f->a;
     if (f->phase == 0) {
         m->players[slot].flags |= BB_PF_ACTIVATING;
+        // Negatrait activation gate (Bone Head, Unchannelled Fury, ...).
+        int target = 0, gk = 0;
+        if (bb_hook_activation_gate(m, slot, &target, &gk) >= 0) {
+            int die = bb_d6(rng);
+            if (die < target && die != 6) {
+                bb_player* p = &m->players[slot];
+                if (gk == BB_GATE_LOSE_ACT_AND_TZ) p->flags |= BB_PF_DISTRACTED;
+                p->flags &= (uint16_t)~BB_PF_ACTIVATING;
+                p->flags |= BB_PF_USED; // activation lost
+                bb_pop(m);
+                return;
+            }
+            // Success clears a lingering Distracted state from earlier gates.
+            m->players[slot].flags &= (uint16_t)~BB_PF_DISTRACTED;
+        }
+        f->phase = 0; // continue to the declaration decision
         bb_need_decision(m, BB_TEAM_OF(slot));
+        f->phase = 0;
         return;
     }
     // Child finished (or turnover unwound it).

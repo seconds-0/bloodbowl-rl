@@ -1,0 +1,94 @@
+// skills_core.c — high-impact skill/trait implementations (hook registrations).
+//
+// Each entry quotes the BB2025 reference (docs/vendor/bloodbowlbase mirror,
+// core_rules/skills_and_traits) it implements. Block-face skills (Block,
+// Wrestle, Tackle, Dodge-on-Stumble, Guard assists) live in proc_block.c via
+// bb_skills.h queries; this file covers the registration-table classes.
+#include "bb/bb_hooks.h"
+
+// --- Re-roll grants -----------------------------------------------------------
+// DODGE: "Once per Turn ... may re-roll a single Agility Test when attempting
+// to Dodge."
+BB_SKILL_REROLL(DODGE, 1u << BB_TEST_DODGE)
+// SURE FEET: "Once per Turn ... may re-roll the D6 when attempting to Rush."
+BB_SKILL_REROLL(SURE_FEET, 1u << BB_TEST_RUSH)
+// SURE HANDS: "may re-roll any failed attempt to pick up the ball" (not
+// once-per-turn limited; the once-per-test limit still applies).
+BB_SKILL_REROLL(SURE_HANDS, 1u << BB_TEST_PICKUP)
+// PASS: "may re-roll a failed Passing Ability Test when performing a Pass".
+BB_SKILL_REROLL(PASS, 1u << BB_TEST_PASS)
+// CATCH: "may re-roll a failed Agility Test when attempting to catch".
+BB_SKILL_REROLL(CATCH, 1u << BB_TEST_CATCH)
+
+// --- Test modifiers -------------------------------------------------------------
+// TWO HEADS: "+1 modifier to the Agility Test when this player attempts to
+// Dodge."
+BB_SKILL_MOD(TWO_HEADS) {
+    (void)m;
+    return c->kind == BB_TEST_DODGE ? 1 : 0;
+}
+
+// EXTRA ARMS: "+1 modifier when this player attempts to pick up or Catch the
+// ball."
+BB_SKILL_MOD(EXTRA_ARMS) {
+    (void)m;
+    return (c->kind == BB_TEST_PICKUP || c->kind == BB_TEST_CATCH) ? 1 : 0;
+}
+
+// BIG HAND: ignore Marking modifiers when picking up the ball (modelled as
+// +1 per opponent marking the ball square, cancelling the base -1s).
+BB_SKILL_MOD(BIG_HAND) {
+    if (c->kind != BB_TEST_PICKUP) return 0;
+    return bb_tackle_zones(m, BB_TEAM_OF(c->player), c->to_x, c->to_y);
+}
+
+// ACCURATE: "+1 modifier when this player makes a Passing Ability Test for a
+// Quick Pass or a Short Pass."
+BB_SKILL_MOD(ACCURATE) {
+    (void)m;
+    return (c->kind == BB_TEST_PASS && c->range_band <= 1) ? 1 : 0;
+}
+
+// CANNONEER: "+1 modifier ... for a Long Pass or a Long Bomb."
+BB_SKILL_MOD(CANNONEER) {
+    (void)m;
+    return (c->kind == BB_TEST_PASS && c->range_band >= 2) ? 1 : 0;
+}
+
+// NERVES OF STEEL: "ignore any modifiers for being Marked when they attempt
+// to perform a Pass Action, attempt to Catch ... or attempt to Intercept."
+BB_SKILL_MOD(NERVES_OF_STEEL) {
+    if (c->kind != BB_TEST_PASS && c->kind != BB_TEST_CATCH) return 0;
+    const bb_player* p = &m->players[c->player];
+    return bb_tackle_zones(m, BB_TEAM_OF(c->player), p->x, p->y);
+}
+
+// --- Auras ----------------------------------------------------------------------
+// DISTURBING PRESENCE: "any opposition player ... must apply a -1 modifier
+// when they make a Passing Ability Test, or attempt to Catch or Intercept,
+// for each player on your team with this skill within three squares of them."
+BB_SKILL_AURA(DISTURBING_PRESENCE) {
+    if (c->kind != BB_TEST_PASS && c->kind != BB_TEST_CATCH) return 0;
+    const bb_player* src = &m->players[c->other];   // aura source
+    const bb_player* act = &m->players[c->player];  // acting player
+    if (BB_TEAM_OF(c->other) == BB_TEAM_OF(c->player)) return 0;
+    if (src->stance == BB_STANCE_STUNNED || src->stance == BB_STANCE_STUNNED_USED)
+        return 0; // stunned players' DP still applies when prone per FAQ; not stunned? TODO-verify
+    int dx = src->x - act->x, dy = src->y - act->y;
+    if (dx < 0) dx = -dx;
+    if (dy < 0) dy = -dy;
+    int cheb = dx > dy ? dx : dy;
+    return cheb <= 3 ? -1 : 0;
+}
+
+// --- Activation gates --------------------------------------------------------------
+// BONE HEAD: "roll a D6 ... on a 1, the player forgets what they are doing:
+// their activation ends immediately and they lose their Tackle Zone."
+BB_SKILL_GATE(BONE_HEAD, 2, BB_GATE_LOSE_ACT_AND_TZ)
+// REALLY STUPID: fails on 1-3 unless assisted by a team-mate (assist handling
+// is a TODO refine: gate target 4 without adjacency check yet).
+BB_SKILL_GATE(REALLY_STUPID, 4, BB_GATE_LOSE_ACT_AND_TZ)
+// UNCHANNELLED FURY: "on a 1-3 ... unless taking a Block or Blitz action".
+// Action-conditional gates are refined with the declaration rework; gate 4
+// approximates and is flagged for the differential harness.
+BB_SKILL_GATE(UNCHANNELLED_FURY, 4, BB_GATE_LOSE_ACTIVATION)
