@@ -36,10 +36,16 @@ BB_SKILL_MOD(DRUNKARD) {
 // destination), so a Titchy player Marking the destination contributes +1
 // here, cancelling exactly their own -1. A Titchy player exerting no Tackle
 // Zone (Prone, Stunned, Distracted) contributes no -1 and therefore no +1.
+// A STUNTY dodger already refunds EVERY Marking -1 through its own mod
+// (skills_core.c), Titchy markers included — there is no -1 left for this
+// aura to withhold, so it must contribute nothing (else the two "withhold
+// the -1" effects would stack into a net +1; adversarial review M9).
 BB_SKILL_AURA(TITCHY) {
     if (c->kind != BB_TEST_DODGE) return 0;
     if (BB_TEAM_OF(c->other) == BB_TEAM_OF(c->player)) return 0;
     if (!bb_exerts_tz(m, c->other)) return 0; // not Marking: no -1 to cancel
+    if (bb_has_skill(&m->players[c->player].skills, BB_SK_STUNTY))
+        return 0; // Stunty's own mod already cancelled this -1 (review M9)
     const bb_player* t = &m->players[c->other];
     int dx = t->x - c->to_x, dy = t->y - c->to_y;
     if (dx < 0) dx = -dx;
