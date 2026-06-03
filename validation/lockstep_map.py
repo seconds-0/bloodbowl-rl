@@ -776,6 +776,17 @@ class Mapper:
     def rep_playerAction(self, i, r, cmd):
         pid = str(r.get("actingPlayerId"))
         action = r.get("playerAction") or ""
+        # Kickoff-event free actions (Charge/"blitz", Quick Snap, Solid
+        # Defence, Kick-off Return): FFB runs them inside the kickoff
+        # resolution, but the engine treats these events as no-ops (D21) and
+        # has no decision window — mapping them as activations would steal
+        # the dice attachments of the kickoff landing chain. Drop them; the
+        # repositioning itself is a documented engine divergence.
+        if self.in_kickoff_resolution and r.get("mode") in (
+                "blitz", "quickSnap", "solidDefence", "kickoffReturn"):
+            self.skip(cmd, "kickoff_free_action_dropped",
+                      f"{r.get('mode')}/{action}")
+            return
         ts = self.slot_of.get(pid)
         if not ts:
             self.skip(cmd, "activation_unknown_player", pid)
