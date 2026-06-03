@@ -95,3 +95,21 @@ block-exposure transfer.
 Profile C (final): setup + surf + draw + block-exposure transfer (zero-sum)
 + sequencing charge. One shared closed-form probability engine, unit-tested
 against the ActionCalculator conformance odds.
+
+## Addendum 2: desperation plays (late-half / late-game low-percentage play)
+
+Three layers, no special-case "desperation reward":
+
+1. Sequencing-charge exemption: k_seq = 0 when the team has no further turns
+   this half (team-relative counter, not literal turn 8 — kickoff events can
+   move it). A last-turn turnover destroys nothing that the whistle wasn't
+   about to. Covers one-turn scores / TTM hail-marys.
+2. The outcome spread already funds desperation: win +3 / draw -0.5 / loss -3
+   means down-late, certain-safe play locks in -3 while any nonzero-chance
+   play beats it; tied-late, the +3/-0.5 gap funds going for the win. The
+   critic's job is to internalize this arithmetic as state-value curvature.
+   Expect late-game risk-taking to emerge even in profile A.
+3. Formal/eventual: memo R11 — potential shaping on a FUMBBL-fitted
+   win-probability surface. Policy-invariant (Ng et al.); desperation falls
+   out of the curvature (P(win) ~= 0 when behind-late, so turnovers cost no
+   potential while TDs spike it). Gated on the Phase-4 replay corpus.
