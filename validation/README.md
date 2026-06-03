@@ -190,3 +190,41 @@ mechanics (the v1 work queue): skill_use windows (535), moves outside
 activations (268 — follow-up/push trajectories), solidDefence/quickSnap
 repositioning (engine TODO per D21), chain pushes (43), unattached
 apothecary rolls (36). Full report: `python3 validation/lockstep_report.py`.
+
+### dice_underrun triage (2026-06-03)
+
+The 7-replay `dice_underrun` class is resolved to 1; mean consumption
+7.3% → 8.4%. Diagnosed with the runner's new `-v` (per-die proc-stack trace)
+and `--pad N` (filler dice make the first over-demanded roll visible as an
+`EXTRA` line; reported divergences unchanged). Mapper root causes fixed:
+
+- **Kickoff free-move events** (Charge/"blitz", Quick Snap, Solid Defence,
+  Kick-off Return): FFB runs `playerAction`s inside the kickoff resolution;
+  mapping them as activations stole the dice attachments of the kickoff
+  landing chain (event 2d6, landing bounce d8, landing catch). They are now
+  dropped (`kickoff_free_action_dropped`) so kickoff dice attach to the
+  KICK_TARGET act. (1907928, 1908170, partially 1907399/1907617)
+- **Dodgy Snack** fully mapped: D6 home + D6 away + per losing team a victim
+  pick (reconstructed from the victim's index in the slot-ordered on-pitch
+  list — FFB reports the victim id, not the pick die) + the victim's D6;
+  -1 MA mirrored. (1907399, 1907617)
+- **`mascotUsed` re-roll**: mapped to A_USE_REROLL/RR_TEAM with the re-rolled
+  pool; the FFB mascot-activation d6 is dropped (engine has no mascots).
+  (1907605)
+- **Frenzy second block**: the engine starts it inside the first block's
+  push transition, rolling any buffered rush-for-block test there — the
+  pre-block dice buffer is now drained into the push op instead of being
+  dropped. (1908034)
+- **Stand Firm decline**: the engine auto-applies Stand Firm; FFB lets the
+  coach decline it. Declines are a genuine engine-policy divergence, now
+  flagged (`stand_firm_decline_divergence`) with armour dice re-routed to
+  the choose-die op. (1907617 reaches 14.9%, then diverges downstream of
+  the declined push.)
+
+Remaining genuine engine divergences (do-not-fix in the mapper; engine
+kickoff-event repositioning is TODO per D21): 1907663 (Quick Snap moved a
+player off the landing square — the engine attempts a phantom landing
+catch; still `dice_underrun`), 1907928 (Charge free moves → `position` at
+the first boundary), 1908170 (Kick-off Return move → `position`).
+After: illegal (9), state (6), position (3), dice_overrun (2),
+dice_underrun (1).
