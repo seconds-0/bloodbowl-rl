@@ -423,7 +423,10 @@ static void push_advance(bb_match* m, bb_rng* rng) {
             // a known minor divergence — see DECISIONS.md.)
             bool had_ball = (dp->flags & BB_PF_HAS_BALL) != 0;
             if (BB_TEAM_OF(def) == m->active_team) bb_turnover(m);
-            bb_drop_ball(m);
+            // bb_drop_ball acts on the GLOBAL carrier; unconditional, it
+            // stripped an unrelated carrier elsewhere on the pitch whenever a
+            // non-carrier was crowd-surfed (adversarial review H1).
+            if (had_ball) bb_drop_ball(m);
             bb_remove_from_pitch(m, def, BB_LOC_RESERVES); // crowd injury relocates
             bb_push(m, BB_PROC_INJURY, def, 1 /* crowd */, 0, 0);
             if (had_ball) {

@@ -688,6 +688,33 @@ BB_TEST(blocking_crowd_push_carrier_ball_thrown_in) {
     BB_CHECK(!bb_rng_error(&rng));
 }
 
+// Regression (adversarial review H1): crowd-surfing a NON-carrier must not
+// strip the ball from an unrelated carrier elsewhere on the pitch.
+// bb_drop_ball operates on the global carrier; the crowd path called it
+// unconditionally, orphaning the ball under the real carrier's feet.
+BB_TEST(blocking_crowd_push_noncarrier_keeps_unrelated_carrier_ball) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int h1 = fx_lineman(&m, BB_HOME, 0, 11, 1);
+    int a1 = fx_lineman(&m, BB_AWAY, 0, 11, 0); // surfed, NOT carrying
+    int a2 = fx_lineman(&m, BB_AWAY, 1, 20, 7); // carrier, far away
+    fx_ball_held(&m, a2);
+
+    uint8_t script[] = {3, /*crowd injury*/ 2, 2};
+    bb_rng rng;
+    bb_rng_script(&rng, script, 3);
+    start_block(&m, &rng, h1, 11, 0);
+    apply_ok(&m, &rng, mk(BB_A_CHOOSE_DIE, 0, 0, 0));
+    apply_ok(&m, &rng, mk(BB_A_PUSH_SQUARE, 1, 11, 0));
+    BB_CHECK_EQ(m.players[a1].location, BB_LOC_RESERVES);
+    // The unrelated carrier still holds the ball.
+    BB_CHECK_EQ(m.ball.state, BB_BALL_HELD);
+    BB_CHECK_EQ(m.ball.carrier, a2);
+    BB_CHECK(m.players[a2].flags & BB_PF_HAS_BALL);
+    BB_CHECK_EQ(m.ball.x, 20);
+    BB_CHECK_EQ(m.ball.y, 7);
+}
+
 // ENGINE-DIVERGENCE: GB#PUSHED INTO THE CROWD — if a player on the ACTIVE team
 // is pushed into the crowd (here: own team-mate removed via a chain push), a
 // Turnover is caused and the active team's turn ends. The engine never latches
