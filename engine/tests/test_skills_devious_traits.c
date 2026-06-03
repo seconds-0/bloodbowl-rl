@@ -183,11 +183,11 @@ BB_TEST(skdt_drunkard_rush_mod_registered) {
     fx_give_skill(&m, p, BB_SK_DRUNKARD);
     fx_lineman(&m, 1, 9, 24, 1);
 
-    bb_ctx rush = {BB_TEST_RUSH, (uint8_t)p, BB_NO_PLAYER, 5, 7, 6, 7, -1, 0};
+    bb_ctx rush = {BB_TEST_RUSH, (uint8_t)p, BB_NO_PLAYER, (uint8_t)p, 5, 7, 6, 7, -1, 0};
     BB_CHECK_EQ(bb_hook_mods(&m, &rush), -1);
-    bb_ctx dodge = {BB_TEST_DODGE, (uint8_t)p, BB_NO_PLAYER, 5, 7, 6, 7, -1, 0};
+    bb_ctx dodge = {BB_TEST_DODGE, (uint8_t)p, BB_NO_PLAYER, (uint8_t)p, 5, 7, 6, 7, -1, 0};
     BB_CHECK_EQ(bb_hook_mods(&m, &dodge), 0);
-    bb_ctx pickup = {BB_TEST_PICKUP, (uint8_t)p, BB_NO_PLAYER, 5, 7, 6, 7, -1, 0};
+    bb_ctx pickup = {BB_TEST_PICKUP, (uint8_t)p, BB_NO_PLAYER, (uint8_t)p, 5, 7, 6, 7, -1, 0};
     BB_CHECK_EQ(bb_hook_mods(&m, &pickup), 0);
 }
 

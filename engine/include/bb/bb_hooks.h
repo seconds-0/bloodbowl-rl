@@ -29,6 +29,7 @@ typedef struct {
     uint8_t kind;     // bb_test_kind
     uint8_t player;   // acting player slot
     uint8_t other;    // opponent/target slot or BB_NO_PLAYER
+    uint8_t owner;    // slot whose skill is being invoked (set by dispatchers)
     int8_t from_x, from_y; // origin square (moves) or actor square
     int8_t to_x, to_y;     // destination/target square
     int8_t range_band;     // passes: 0 quick / 1 short / 2 long / 3 bomb; else -1

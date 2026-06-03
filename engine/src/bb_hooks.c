@@ -23,10 +23,12 @@ int bb_hook_mods(const bb_match* m, const bb_ctx* c) {
     int total = 0;
     // Own skills.
     const bb_player* p = &m->players[c->player];
+    bb_ctx own = *c;
+    own.owner = c->player;
     for (int sk = bb_next_skill(&p->skills, 0); sk >= 0;
          sk = bb_next_skill(&p->skills, sk + 1)) {
         if (bb_hooks[sk].mod) {
-            int v = bb_hooks[sk].mod(m, c);
+            int v = bb_hooks[sk].mod(m, &own);
             if (v) bb_cover(sk);
             total += v;
         }
@@ -41,6 +43,7 @@ int bb_hook_mods(const bb_match* m, const bb_ctx* c) {
             if (!bb_hooks[sk].aura) continue;
             bb_ctx ac = *c;
             ac.other = (uint8_t)s; // aura source
+            ac.owner = (uint8_t)s;
             int v = bb_hooks[sk].aura(m, &ac);
             if (v) bb_cover(sk);
             total += v;
@@ -101,12 +104,13 @@ int bb_hook_st_mod_blitz(const bb_match* m, int slot) {
 static int chain_mod(const bb_match* m, int downed, int causer, int which) {
     int total = 0;
     bb_ctx c = {0, (uint8_t)downed, (uint8_t)(causer < 0 ? BB_NO_PLAYER : causer),
-                0, 0, 0, 0, -1, 0};
+                0, 0, 0, 0, 0, -1, 0};
     // Causer's skills (Mighty Blow, Claws...) and victim's (Thick Skull is
     // band-based, not a mod; but e.g. armour bonuses) both consulted.
     int sides[2] = {causer, downed};
     for (int i = 0; i < 2; i++) {
         if (sides[i] < 0) continue;
+        c.owner = (uint8_t)sides[i]; // hook callbacks know whose skill fires
         const bb_player* p = &m->players[sides[i]];
         for (int sk = bb_next_skill(&p->skills, 0); sk >= 0;
              sk = bb_next_skill(&p->skills, sk + 1)) {

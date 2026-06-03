@@ -187,9 +187,11 @@ static void resolve_face(bb_match* m, bb_frame* f, int face) {
             // cancelling the defender's Wrestle for this block).
             if ((f->data & BLK_IS_BLITZ) &&
                 bb_has_skill(&m->players[att].skills, BB_SK_JUGGERNAUT)) {
+                // Snapshot before pop: bb_push reuses the popped slot, so f
+                // would alias the new frame (Codex finding).
                 bb_pop(m);
                 bb_push(m, BB_PROC_PUSH, att, def, ax, ay);
-                if (f->data & BLK_IS_BLITZ) bb_top(m)->data |= PSH_FROM_BLITZ;
+                bb_top(m)->data |= PSH_FROM_BLITZ;
                 return;
             }
             // Wrestle (either player): both players are PLACED Prone — no

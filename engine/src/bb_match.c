@@ -72,6 +72,9 @@ void bb_remove_from_pitch(bb_match* m, int slot, int new_location) {
 }
 
 void bb_ball_to(bb_match* m, int x, int y) {
+    if (m->ball.carrier != BB_NO_PLAYER) { // enforce the single-carrier invariant
+        m->players[m->ball.carrier].flags &= (uint16_t)~BB_PF_HAS_BALL;
+    }
     m->ball.state = BB_BALL_ON_GROUND;
     m->ball.x = (uint8_t)x;
     m->ball.y = (uint8_t)y;
@@ -79,6 +82,9 @@ void bb_ball_to(bb_match* m, int x, int y) {
 }
 
 void bb_give_ball(bb_match* m, int slot) {
+    if (m->ball.carrier != BB_NO_PLAYER && m->ball.carrier != slot) {
+        m->players[m->ball.carrier].flags &= (uint16_t)~BB_PF_HAS_BALL;
+    }
     m->ball.state = BB_BALL_HELD;
     m->ball.carrier = (uint8_t)slot;
     m->ball.x = m->players[slot].x;

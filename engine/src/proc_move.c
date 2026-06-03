@@ -113,7 +113,7 @@ static void execute_step(bb_match* m, bb_rng* rng, bb_frame* f) {
             int target = m->weather == BB_WEATHER_RAIN ? 3 : 2;
             bb_push(m, BB_PROC_TEST, slot, BB_TEST_GENERIC, target, 0);
         } else {
-            bb_ctx c = {BB_TEST_PICKUP, (uint8_t)slot, BB_NO_PLAYER,
+            bb_ctx c = {BB_TEST_PICKUP, (uint8_t)slot, BB_NO_PLAYER, (uint8_t)slot,
                         (int8_t)x, (int8_t)y, (int8_t)x, (int8_t)y, -1, 0};
             int mod = -bb_tackle_zones(m, BB_TEAM_OF(slot), x, y) +
                       bb_hook_mods(m, &c);
@@ -145,7 +145,7 @@ static void move_advance(bb_match* m, bb_rng* rng) {
             f->data = (uint16_t)((f->data & ~(31u << 9)) | ((uint16_t)remaining << 9));
             if (remaining > 0) {
                 p->rushes++;
-                bb_ctx rc = {BB_TEST_RUSH, (uint8_t)slot, BB_NO_PLAYER,
+                bb_ctx rc = {BB_TEST_RUSH, (uint8_t)slot, BB_NO_PLAYER, (uint8_t)slot,
                              (int8_t)p->x, (int8_t)p->y, (int8_t)f->x, (int8_t)f->y, -1,
                              f->b == BB_ACT_BLITZ};
                 int rmod = bb_hook_mods(m, &rc);
@@ -155,7 +155,7 @@ static void move_advance(bb_match* m, bb_rng* rng) {
                 return;
             }
             // Rushes done: the jump test itself.
-            bb_ctx jc = {BB_TEST_JUMP, (uint8_t)slot, BB_NO_PLAYER,
+            bb_ctx jc = {BB_TEST_JUMP, (uint8_t)slot, BB_NO_PLAYER, (uint8_t)slot,
                          (int8_t)p->x, (int8_t)p->y, (int8_t)f->x, (int8_t)f->y, -1,
                          f->b == BB_ACT_BLITZ};
             int from_tz = bb_tackle_zones(m, BB_TEAM_OF(slot), p->x, p->y);
@@ -191,7 +191,7 @@ static void move_advance(bb_match* m, bb_rng* rng) {
                 bb_push(m, BB_PROC_SCATTER, 0, 1, (uint8_t)tx, (uint8_t)ty);
                 return;
             }
-            bb_ctx pc = {BB_TEST_PICKUP, (uint8_t)slot, BB_NO_PLAYER,
+            bb_ctx pc = {BB_TEST_PICKUP, (uint8_t)slot, BB_NO_PLAYER, (uint8_t)slot,
                          (int8_t)tx, (int8_t)ty, (int8_t)tx, (int8_t)ty, -1, 0};
             int pmod = -bb_tackle_zones(m, BB_TEAM_OF(slot), tx, ty) + bb_hook_mods(m, &pc);
             if (m->weather == BB_WEATHER_RAIN) pmod -= 1;
@@ -273,7 +273,7 @@ static void move_advance(bb_match* m, bb_rng* rng) {
         // Passed; run the next queued test or execute the step.
         if (f->data & MV_DODGE_PEND) {
             f->data &= (uint16_t)~MV_DODGE_PEND;
-            bb_ctx c = {BB_TEST_DODGE, (uint8_t)slot, BB_NO_PLAYER,
+            bb_ctx c = {BB_TEST_DODGE, (uint8_t)slot, BB_NO_PLAYER, (uint8_t)slot,
                         (int8_t)p->x, (int8_t)p->y, (int8_t)f->x, (int8_t)f->y, -1,
                         f->b == BB_ACT_BLITZ};
             int mod = -bb_tackle_zones(m, BB_TEAM_OF(slot), f->x, f->y) +
@@ -552,7 +552,7 @@ static void move_apply(bb_match* m, bb_action a, bb_rng* rng) {
                 return;
             }
             if (p->ma < 3) {
-                bb_ctx sc = {BB_TEST_STANDUP, (uint8_t)slot, BB_NO_PLAYER,
+                bb_ctx sc = {BB_TEST_STANDUP, (uint8_t)slot, BB_NO_PLAYER, (uint8_t)slot,
                              (int8_t)p->x, (int8_t)p->y, (int8_t)p->x, (int8_t)p->y, -1, 0};
                 f->data |= MV_STAND_PEND;
                 bb_push(m, BB_PROC_TEST, slot, BB_TEST_STANDUP,
@@ -575,7 +575,7 @@ static void move_apply(bb_match* m, bb_action a, bb_rng* rng) {
             f->data = (uint16_t)((f->data & ~(31u << 9)) | ((uint16_t)rushes_needed << 9));
             if (rushes_needed > 0) {
                 p->rushes++;
-                bb_ctx rc = {BB_TEST_RUSH, (uint8_t)slot, BB_NO_PLAYER,
+                bb_ctx rc = {BB_TEST_RUSH, (uint8_t)slot, BB_NO_PLAYER, (uint8_t)slot,
                              (int8_t)p->x, (int8_t)p->y, (int8_t)a.x, (int8_t)a.y, -1,
                              f->b == BB_ACT_BLITZ};
                 int rmod = bb_hook_mods(m, &rc);
@@ -585,7 +585,7 @@ static void move_apply(bb_match* m, bb_action a, bb_rng* rng) {
                 return;
             }
             // No rushes: straight to the jump test.
-            bb_ctx jc = {BB_TEST_JUMP, (uint8_t)slot, BB_NO_PLAYER,
+            bb_ctx jc = {BB_TEST_JUMP, (uint8_t)slot, BB_NO_PLAYER, (uint8_t)slot,
                          (int8_t)p->x, (int8_t)p->y, (int8_t)a.x, (int8_t)a.y, -1,
                          f->b == BB_ACT_BLITZ};
             int from_tz = bb_tackle_zones(m, BB_TEAM_OF(slot), p->x, p->y);
@@ -627,7 +627,7 @@ static void move_apply(bb_match* m, bb_action a, bb_rng* rng) {
             if (dodge) f->data |= MV_DODGE_PEND;
             if (rush) {
                 // Rush: 2+, Blizzard -1, plus skill mods (Drunkard...).
-                bb_ctx rc = {BB_TEST_RUSH, (uint8_t)slot, BB_NO_PLAYER,
+                bb_ctx rc = {BB_TEST_RUSH, (uint8_t)slot, BB_NO_PLAYER, (uint8_t)slot,
                              (int8_t)p->x, (int8_t)p->y, (int8_t)a.x, (int8_t)a.y, -1,
                              f->b == BB_ACT_BLITZ};
                 int rmod = bb_hook_mods(m, &rc);
@@ -639,7 +639,7 @@ static void move_apply(bb_match* m, bb_action a, bb_rng* rng) {
             }
             if (dodge) {
                 f->data &= (uint16_t)~MV_DODGE_PEND;
-                bb_ctx c = {BB_TEST_DODGE, (uint8_t)slot, BB_NO_PLAYER,
+                bb_ctx c = {BB_TEST_DODGE, (uint8_t)slot, BB_NO_PLAYER, (uint8_t)slot,
                             (int8_t)p->x, (int8_t)p->y, (int8_t)a.x, (int8_t)a.y, -1,
                             f->b == BB_ACT_BLITZ};
                 int mod = -bb_tackle_zones(m, BB_TEAM_OF(slot), a.x, a.y) +
@@ -657,7 +657,7 @@ static void move_apply(bb_match* m, bb_action a, bb_rng* rng) {
             int target = bb_slot_at(m, a.x, a.y);
             if (p->stance == BB_STANCE_PRONE) {
                 // JUMP UP prone block: AG test +1; pass = stand and block.
-                bb_ctx jc = {BB_TEST_GENERIC, (uint8_t)slot, (uint8_t)target,
+                bb_ctx jc = {BB_TEST_GENERIC, (uint8_t)slot, (uint8_t)target, (uint8_t)slot,
                              (int8_t)p->x, (int8_t)p->y, (int8_t)a.x, (int8_t)a.y, -1, 0};
                 f->data |= MV_STAND_PEND;
                 f->data = (uint16_t)((f->data & ~(31u << 9)) | ((uint16_t)target << 9));
@@ -676,7 +676,7 @@ static void move_apply(bb_match* m, bb_action a, bb_rng* rng) {
                     f->x = p->x;
                     f->y = p->y;
                     f->data |= MV_AWAIT_TEST | MV_RUSH_PEND | MV_BLOCK_RUSH;
-                    bb_ctx rc = {BB_TEST_RUSH, (uint8_t)slot, BB_NO_PLAYER,
+                    bb_ctx rc = {BB_TEST_RUSH, (uint8_t)slot, BB_NO_PLAYER, (uint8_t)slot,
                                  (int8_t)p->x, (int8_t)p->y, (int8_t)p->x, (int8_t)p->y, -1, 1};
                     int rmod = bb_hook_mods(m, &rc);
                     if (m->weather == BB_WEATHER_BLIZZARD) rmod -= 1;

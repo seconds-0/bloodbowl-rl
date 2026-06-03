@@ -36,12 +36,21 @@ static bool tail_marks_left_square(const bb_match* m, int src, const bb_ctx* c) 
 BB_SKILL_AURA(PREHENSILE_TAIL) {
     if (c->kind == BB_TEST_JUMP) {
         // "-1 modifier ... when they attempt to Dodge, Jump or Leap to leave
-        // this player's Tackle Zone."
+        // this player's Tackle Zone." Only ONE tail ever applies: the
+        // lowest-slot qualifying tail contributes (mirrors the Dodge branch).
         const bb_player* src0 = &m->players[c->other];
         if (BB_TEAM_OF(c->other) == BB_TEAM_OF(c->player)) return 0;
         if (!bb_exerts_tz(m, c->other)) return 0;
-        if (bb_adjacent(src0->x, src0->y, c->from_x, c->from_y)) return -1;
-        return 0;
+        if (!bb_adjacent(src0->x, src0->y, c->from_x, c->from_y)) return 0;
+        for (int s2 = 0; s2 < c->other; s2++) {
+            const bb_player* q = &m->players[s2];
+            if (BB_TEAM_OF(s2) == BB_TEAM_OF(c->player)) continue;
+            if (q->location != BB_LOC_ON_PITCH) continue;
+            if (!bb_has_skill(&q->skills, BB_SK_PREHENSILE_TAIL)) continue;
+            if (!bb_exerts_tz(m, s2)) continue;
+            if (bb_adjacent(q->x, q->y, c->from_x, c->from_y)) return 0; // lower tail applies
+        }
+        return -1;
     }
     if (c->kind != BB_TEST_DODGE) return 0;
     if (!tail_marks_left_square(m, c->other, c)) return 0;

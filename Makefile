@@ -29,9 +29,13 @@ $(BUILD)/obj/%.o: engine/src/%.c
 
 -include $(OBJ:.o=.d)
 
+# libbb.a is built from ONE relocatable object (ld -r) so constructor-based
+# skill registrations are never dropped by archive member selection — plain
+# `-lbb` consumers get the full engine (Codex finding).
 $(LIB): $(OBJ)
 	@mkdir -p $(BUILD)
-	ar rcs $@ $^
+	ld -r $(OBJ) -o $(BUILD)/bb_all.o
+	ar rcs $@ $(BUILD)/bb_all.o
 
 # NOTE: tests link the object files directly (not libbb.a) — skill hook
 # registrations live in constructor-only objects that a static archive would

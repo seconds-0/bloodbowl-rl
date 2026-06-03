@@ -371,10 +371,9 @@ static void stun_random_players(bb_match* m, bb_rng* rng, int team, int count) {
             }
         }
         if (!nc) return;
-        // Selection is random but not part of the scripted dice stream
-        // (FUMBBL records selections as separate commands; revisit in the
-        // replay harness).
-        int pick = (int)(bb_rng_next(rng) % (uint32_t)nc);
+        // Selection consumes the scripted dice stream (replay-faithful): an
+        // N-sided roll over the candidate list, sorted by slot.
+        int pick = bb_roll(rng, nc) - 1;
         m->players[candidates[pick]].stance = BB_STANCE_STUNNED;
     }
 }

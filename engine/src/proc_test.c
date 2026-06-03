@@ -103,8 +103,9 @@ static void test_apply(bb_match* m, bb_action a, bb_rng* rng) {
 
     if (a.type == BB_A_DECLINE_REROLL) {
         int die = (f->data >> 12) & 0xF;
+        int target = f->x & 7;
         bb_pop(m);
-        m->ret = (uint16_t)(0 | (die << 8));
+        m->ret = (uint16_t)(0 | (die << 8) | (target << 12));
         return;
     }
     if (a.arg == BB_RR_TEAM) {

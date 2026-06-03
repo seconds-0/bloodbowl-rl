@@ -138,7 +138,7 @@ static void catch_advance(bb_match* m, bb_rng* rng) {
             bb_push(m, BB_PROC_SCATTER, 0, 1, (uint8_t)x, (uint8_t)y);
             return;
         }
-        bb_ctx c = {BB_TEST_CATCH, (uint8_t)slot, BB_NO_PLAYER,
+        bb_ctx c = {BB_TEST_CATCH, (uint8_t)slot, BB_NO_PLAYER, (uint8_t)slot,
                     (int8_t)p->x, (int8_t)p->y, (int8_t)p->x, (int8_t)p->y,
                     (int8_t)((f->data & 1) ? 1 : -1), 0};
         int mod = (int8_t)f->b;
@@ -211,6 +211,8 @@ static int ruler_candidates(const bb_match* m, int thrower, int tx, int ty, uint
 }
 
 static void pass_start_interception(bb_match* m, bb_frame* f, int interceptor);
+static int interception_candidates(const bb_match* m, int thrower, int tx, int ty,
+                                   uint8_t out[16]);
 
 static void pass_resolve_flight(bb_match* m, bb_frame fr) {
     bool inaccurate = (fr.data & 0x100) != 0;
@@ -248,14 +250,14 @@ static void pass_advance(bb_match* m, bb_rng* rng) {
             f->data |= 0x200; // HMP: any square; treated as a Long Bomb
         }
         int rmod = (f->data & 0x200) ? -3 : pass_range_mod(dx0, dy0);
-        bb_ctx c = {BB_TEST_PASS, (uint8_t)slot, BB_NO_PLAYER,
+        bb_ctx c = {BB_TEST_PASS, (uint8_t)slot, BB_NO_PLAYER, (uint8_t)slot,
                     (int8_t)p->x, (int8_t)p->y, (int8_t)f->x, (int8_t)f->y,
                     (int8_t)(-rmod), 0};
         int mod = rmod;
         mod -= bb_tackle_zones(m, BB_TEAM_OF(slot), p->x, p->y);
         mod += bb_hook_mods(m, &c);
         if (m->weather == BB_WEATHER_SUNNY) mod -= 1; // Very Sunny: -1 to PA tests
-        f->data = (uint16_t)(mod & 0xFF);
+        f->data = (uint16_t)((f->data & 0x200) | (mod & 0xFF)); // keep HMP latch
         f->phase = 1;
         bb_push(m, BB_PROC_TEST, slot, BB_TEST_PASS, bb_test_target(p->pa, mod), 0);
         return;
@@ -289,18 +291,7 @@ static void pass_advance(bb_match* m, bb_rng* rng) {
         // Interception window. Attempting is cost-free, so a single candidate
         // attempts automatically; with several the defending coach chooses.
         uint8_t cands[16];
-        int nc = hmp ? 0 : ruler_candidates(m, slot, f->x, f->y, cands);
-        // CLOUD BURSTER: "opposition players may not attempt to Intercept" —
-        // but Very Long Legs "ignores the Cloud Burster Skill".
-        if (nc > 0 && bb_has_skill(&m->players[slot].skills, BB_SK_CLOUD_BURSTER)) {
-            int kept = 0;
-            for (int i = 0; i < nc; i++) {
-                if (bb_has_skill(&m->players[cands[i]].skills, BB_SK_VERY_LONG_LEGS)) {
-                    cands[kept++] = cands[i];
-                }
-            }
-            nc = kept;
-        }
+        int nc = hmp ? 0 : interception_candidates(m, slot, f->x, f->y, cands);
         if (nc > 1) {
             f->phase = 2;
             bb_need_decision(m, 1 - BB_TEAM_OF(slot));
@@ -333,11 +324,26 @@ static void pass_advance(bb_match* m, bb_rng* rng) {
     m->status = BB_STATUS_ERROR;
 }
 
+static int interception_candidates(const bb_match* m, int thrower, int tx, int ty,
+                                   uint8_t out[16]) {
+    int nc = ruler_candidates(m, thrower, tx, ty, out);
+    if (nc > 0 && bb_has_skill(&m->players[thrower].skills, BB_SK_CLOUD_BURSTER)) {
+        int kept = 0;
+        for (int i = 0; i < nc; i++) {
+            if (bb_has_skill(&m->players[out[i]].skills, BB_SK_VERY_LONG_LEGS)) {
+                out[kept++] = out[i];
+            }
+        }
+        nc = kept;
+    }
+    return nc;
+}
+
 static int pass_legal(const bb_match* m, bb_action* out) {
     const bb_frame* f = &m->stack[m->stack_top - 1];
     // phase 2: interception window — defending coach picks a candidate or declines.
     uint8_t cands[16];
-    int nc = ruler_candidates(m, f->a, f->x, f->y, cands);
+    int nc = interception_candidates(m, f->a, f->x, f->y, cands);
     int n = 0;
     for (int i = 0; i < nc; i++) {
         out[n++] = (bb_action){BB_A_CHOOSE_OPTION, cands[i], 0, 0};
@@ -349,7 +355,7 @@ static int pass_legal(const bb_match* m, bb_action* out) {
 static void pass_start_interception(bb_match* m, bb_frame* f, int interceptor) {
     const bb_player* ip = &m->players[interceptor];
     bool inaccurate = (f->data & 0x100) != 0;
-    bb_ctx c = {BB_TEST_CATCH, (uint8_t)interceptor, f->a,
+    bb_ctx c = {BB_TEST_CATCH, (uint8_t)interceptor, f->a, (uint8_t)interceptor,
                 (int8_t)ip->x, (int8_t)ip->y, (int8_t)ip->x, (int8_t)ip->y, -1, 0};
     int mod = (inaccurate ? -2 : -3) - bb_tackle_zones(m, BB_TEAM_OF(interceptor), ip->x, ip->y);
     mod += bb_hook_mods(m, &c);
