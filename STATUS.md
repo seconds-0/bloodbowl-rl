@@ -1,6 +1,6 @@
 # Status — morning of 2026-06-03 (night-shift summary)
 
-**TL;DR: The BB2025 engine is real.** Full matches run end-to-end at **2.3M steps/sec/core**, with ~80 of ~108 skills/traits implemented, 228 rulebook-grounded tests green, continuous fuzzing clean (~100K total fuzzed matches), and a deep Codex review (4 High/3 Med/2 Low findings) fully resolved. 34 commits.
+**TL;DR: The BB2025 engine is real.** Full matches run end-to-end at **2.34M steps/sec/core**, with ~83 of ~108 skills/traits implemented (incl. Stab/Hypnotic Gaze special actions), 228 rulebook-grounded tests green, continuous fuzzing clean (~120K total fuzzed matches — it caught 4 real ball-invariant bugs tonight, all fixed), and a deep Codex review (4 High/3 Med/2 Low) fully resolved. 35 commits.
 
 ## Where each phase stands
 - **Phase 0–2: DONE.** Repo+docs+skills; YAML spec → codegen; core engine with exact BB2025 core rules (194 rulebook tests from the mirror found 34 divergences in my first implementation — all fixed; biggest: BB2025 made team re-rolls UNLIMITED per turn).
