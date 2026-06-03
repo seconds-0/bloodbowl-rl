@@ -263,7 +263,7 @@ static void setup_autofix(bb_match* m, int team) {
     }
 }
 
-#define SETUP_ACTION_BUDGET 64
+#define SETUP_ACTION_BUDGET 24
 
 static void setup_advance(bb_match* m, bb_rng* rng) {
     (void)rng;
@@ -292,11 +292,26 @@ static int setup_legal(const bb_match* m, bb_action* out) {
     int xmin = team == BB_HOME ? 0 : 13;
     int xmax = team == BB_HOME ? 12 : BB_PITCH_LEN - 1;
     int on_pitch = count_on_pitch(m, team);
+    // Placement discipline: until the line is filled (11 placed, or reserves
+    // exhausted for short-handed squads), ONLY fresh placements from the
+    // Reserves box are legal. Re-placing/removing an already-placed player
+    // before that point let undertrained policies shuffle one player back
+    // and forth for the whole budget (spectator finding). Rules-equivalent:
+    // every final formation is still reachable — place 11, then rearrange.
+    bool reserves_left = false;
+    for (int s = team * BB_TEAM_SLOTS; s < (team + 1) * BB_TEAM_SLOTS; s++) {
+        if (m->players[s].location == BB_LOC_RESERVES) {
+            reserves_left = true;
+            break;
+        }
+    }
+    bool placing_phase = on_pitch < 11 && reserves_left;
     for (int s = team * BB_TEAM_SLOTS; s < (team + 1) * BB_TEAM_SLOTS; s++) {
         const bb_player* p = &m->players[s];
         bool placed = p->location == BB_LOC_ON_PITCH;
         if (p->location != BB_LOC_RESERVES && !placed) continue;
         if (!placed && on_pitch >= 11) continue; // pitch full: may only move placed ones
+        if (placed && placing_phase) continue;   // fill the line first
         for (int x = xmin; x <= xmax; x++) {
             for (int y = 0; y < BB_PITCH_WID; y++) {
                 if (m->grid[x][y] && bb_slot_at(m, x, y) != s) continue;
@@ -304,7 +319,7 @@ static int setup_legal(const bb_match* m, bb_action* out) {
                 if (n < BB_LEGAL_MAX) out[n++] = (bb_action){BB_A_SETUP_PLACE, (uint8_t)s, (uint8_t)x, (uint8_t)y};
             }
         }
-        if (placed && n < BB_LEGAL_MAX) {
+        if (placed && !placing_phase && n < BB_LEGAL_MAX) {
             out[n++] = (bb_action){BB_A_SETUP_REMOVE, (uint8_t)s, 0, 0};
         }
     }

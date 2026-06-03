@@ -1789,3 +1789,59 @@ BB_TEST(struct_cheering_fans_assist_expires_at_drive_end) {
     BB_CHECK_EQ(m.cheer_assist[0], 0);
     BB_CHECK_EQ(m.cheer_assist[1], 0);
 }
+
+// Setup placement discipline: until the line is filled, only fresh
+// placements from Reserves are legal — no re-placing or removing already
+// placed players (kills the one-player setup shuffle; any final formation
+// stays reachable by placing 11 first, then rearranging).
+BB_TEST(structure_setup_reserves_first_discipline) {
+    bb_match m;
+    bb_match_init(&m, BB_TEAM_HUMAN, BB_TEAM_ORC);
+    bb_rng rng;
+    bb_rng_seed(&rng, 99, 1);
+    bb_status st = bb_advance(&m, &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+
+    bb_action legal[BB_LEGAL_MAX];
+    // Fast-forward through the pregame (coin toss, receive choice) until the
+    // setup phase surfaces placement actions.
+    int ff = 0;
+    while (ff++ < 8) {
+        int n = bb_legal_actions(&m, legal);
+        bool in_setup = false;
+        for (int i = 0; i < n; i++) {
+            if (legal[i].type == BB_A_SETUP_PLACE) in_setup = true;
+        }
+        if (in_setup) break;
+        st = bb_apply(&m, legal[0], &rng);
+    }
+    int placed = 0;
+    int guard = 0;
+    while (placed < 11 && guard++ < 64) {
+        int n = bb_legal_actions(&m, legal);
+        int n_remove = 0, n_replace = 0, pick = -1;
+        for (int i = 0; i < n; i++) {
+            if (legal[i].type == BB_A_SETUP_REMOVE) n_remove++;
+            if (legal[i].type == BB_A_SETUP_PLACE) {
+                if (m.players[legal[i].arg].location == BB_LOC_ON_PITCH) n_replace++;
+                else if (pick < 0) pick = i;
+            }
+        }
+        // Mid-fill: no removes, no re-placements offered.
+        BB_CHECK_EQ(n_remove, 0);
+        BB_CHECK_EQ(n_replace, 0);
+        BB_CHECK(pick >= 0);
+        st = bb_apply(&m, legal[pick], &rng);
+        placed++;
+    }
+    // Line filled: rearrangement unlocks.
+    int n = bb_legal_actions(&m, legal);
+    int n_remove = 0, n_replace = 0;
+    for (int i = 0; i < n; i++) {
+        if (legal[i].type == BB_A_SETUP_REMOVE) n_remove++;
+        if (legal[i].type == BB_A_SETUP_PLACE &&
+            m.players[legal[i].arg].location == BB_LOC_ON_PITCH) n_replace++;
+    }
+    BB_CHECK(n_remove > 0);
+    BB_CHECK(n_replace > 0);
+}
