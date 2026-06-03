@@ -255,10 +255,20 @@ static void move_advance(bb_match* m, bb_rng* rng) {
         // runs only after the full catch/bounce chain has settled, so it is
         // the correct place for the possession turnover check: a pass or
         // hand-off that the acting team does not end up holding is a turnover.
+        f->data &= (uint16_t)~MV_AWAIT_ACTION;
         if (f->b == BB_ACT_PASS || f->b == BB_ACT_HANDOFF) {
             int c = m->ball.carrier;
             if (c == BB_NO_PLAYER || BB_TEAM_OF(c) != m->active_team) {
                 bb_turnover(m);
+            }
+            // GIVE AND GO: after a Quick Pass or a Hand-off without a
+            // turnover, the player may continue moving.
+            if (!m->turnover && bb_has_skill(&p->skills, BB_SK_GIVE_AND_GO)) {
+                bool quick = f->b == BB_ACT_HANDOFF || (f->b == BB_ACT_PASS && f->x == 1);
+                if (quick) {
+                    bb_need_decision(m, BB_TEAM_OF(slot));
+                    return;
+                }
             }
         }
         finish_move(m);
@@ -375,8 +385,13 @@ static int move_legal(const bb_match* m, bb_action* out) {
 
     if (kind == BB_ACT_PASS && !(f->data & MV_ACTION_DONE) && (p->flags & BB_PF_HAS_BALL)) {
         // Ruler reach: 13.5 squares (d^2 <= 182.25). Blizzard: only Quick and
-        // Short passes may be attempted (d^2 <= 42.25).
+        // Short passes may be attempted (d^2 <= 42.25). HAIL MARY PASS: "may
+        // declare any square on the pitch as the target square".
         int max_d2 = m->weather == BB_WEATHER_BLIZZARD ? 42 : 182;
+        if (bb_has_skill(&p->skills, BB_SK_HAIL_MARY_PASS) &&
+            m->weather != BB_WEATHER_BLIZZARD) {
+            max_d2 = 32767;
+        }
         for (int x = 0; x < BB_PITCH_LEN; x++) {
             for (int y = 0; y < BB_PITCH_WID; y++) {
                 int dx = x - p->x, dy = y - p->y;
@@ -540,10 +555,14 @@ static void move_apply(bb_match* m, bb_action a, bb_rng* rng) {
             return;
         }
 
-        case BB_A_PASS_TARGET:
+        case BB_A_PASS_TARGET: {
             f->data |= MV_AWAIT_ACTION | MV_ACTION_DONE;
+            // Latch whether this is a Quick Pass (Give and Go continuation).
+            int qdx = a.x - p->x, qdy = a.y - p->y;
+            f->x = (uint8_t)(qdx * qdx + qdy * qdy <= 12 ? 1 : 0);
             bb_push(m, BB_PROC_PASS, slot, 0, a.x, a.y);
             return;
+        }
 
         case BB_A_HANDOFF_TARGET: {
             int rec = bb_slot_at(m, a.x, a.y);

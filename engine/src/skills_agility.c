@@ -55,3 +55,12 @@
 // instead of Bouncing the ball as normal." Blocked: replaces the bounce in
 // the ball-drop path with a coach placement choice.
 #include "bb/bb_hooks.h"
+
+// DIVING CATCH (partial): "+1 modifier to their Agility Test when attempting
+// to Catch the ball as part of a Pass Action if they are in the target
+// square." (The land-in-TZ diving attempt window remains in the
+// needs-proc-integration audit above.)
+BB_SKILL_MOD(DIVING_CATCH) {
+    (void)m;
+    return (c->kind == BB_TEST_CATCH && c->range_band == 1) ? 1 : 0;
+}

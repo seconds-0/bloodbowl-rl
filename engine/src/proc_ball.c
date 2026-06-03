@@ -139,7 +139,8 @@ static void catch_advance(bb_match* m, bb_rng* rng) {
             return;
         }
         bb_ctx c = {BB_TEST_CATCH, (uint8_t)slot, BB_NO_PLAYER,
-                    (int8_t)p->x, (int8_t)p->y, (int8_t)p->x, (int8_t)p->y, -1, 0};
+                    (int8_t)p->x, (int8_t)p->y, (int8_t)p->x, (int8_t)p->y,
+                    (int8_t)((f->data & 1) ? 1 : -1), 0};
         int mod = (int8_t)f->b;
         mod -= bb_tackle_zones(m, BB_TEAM_OF(slot), p->x, p->y);
         mod += bb_hook_mods(m, &c);
@@ -223,6 +224,7 @@ static void pass_resolve_flight(bb_match* m, bb_frame fr) {
     bb_ball_to(m, fr.x, fr.y);
     if (s >= 0) {
         bb_push(m, BB_PROC_CATCH, s, 0, 0, 0);
+        bb_top(m)->data |= 1; // catching an accurate pass in the target square
     } else {
         bb_push(m, BB_PROC_SCATTER, 0, 1, fr.x, fr.y); // bounces on landing
     }
@@ -240,7 +242,12 @@ static void pass_advance(bb_match* m, bb_rng* rng) {
             bb_turnover(m);
             return;
         }
-        int rmod = pass_range_mod(f->x - p->x, f->y - p->y);
+        int dx0 = f->x - p->x, dy0 = f->y - p->y;
+        if (bb_has_skill(&p->skills, BB_SK_HAIL_MARY_PASS) &&
+            dx0 * dx0 + dy0 * dy0 > 182) {
+            f->data |= 0x200; // HMP: any square; treated as a Long Bomb
+        }
+        int rmod = (f->data & 0x200) ? -3 : pass_range_mod(dx0, dy0);
         bb_ctx c = {BB_TEST_PASS, (uint8_t)slot, BB_NO_PLAYER,
                     (int8_t)p->x, (int8_t)p->y, (int8_t)f->x, (int8_t)f->y,
                     (int8_t)(-rmod), 0};
@@ -274,11 +281,26 @@ static void pass_advance(bb_match* m, bb_rng* rng) {
             return;
         }
         if (!(m->ret & 1)) f->data |= 0x100; // inaccurate latch
+        // HAIL MARY PASS: "treating any result of an Accurate Pass as an
+        // Inaccurate Pass. A Hail Mary Pass cannot be Intercepted."
+        bool hmp = (f->data & 0x200) != 0;
+        if (hmp) f->data |= 0x100;
         bb_drop_ball(m);
         // Interception window. Attempting is cost-free, so a single candidate
         // attempts automatically; with several the defending coach chooses.
         uint8_t cands[16];
-        int nc = ruler_candidates(m, slot, f->x, f->y, cands);
+        int nc = hmp ? 0 : ruler_candidates(m, slot, f->x, f->y, cands);
+        // CLOUD BURSTER: "opposition players may not attempt to Intercept" —
+        // but Very Long Legs "ignores the Cloud Burster Skill".
+        if (nc > 0 && bb_has_skill(&m->players[slot].skills, BB_SK_CLOUD_BURSTER)) {
+            int kept = 0;
+            for (int i = 0; i < nc; i++) {
+                if (bb_has_skill(&m->players[cands[i]].skills, BB_SK_VERY_LONG_LEGS)) {
+                    cands[kept++] = cands[i];
+                }
+            }
+            nc = kept;
+        }
         if (nc > 1) {
             f->phase = 2;
             bb_need_decision(m, 1 - BB_TEAM_OF(slot));
