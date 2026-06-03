@@ -514,6 +514,11 @@ static void push_advance(bb_match* m, bb_rng* rng) {
     }
     if (f->phase == 5) {
         // Final: crowd resolution, or pow knockdown / TD check.
+        // PSH_POW exists only on root (non-chain) frames, where f->a is the
+        // block attacker — snapshot it before the pop so the knockdown can
+        // carry the causer: the no-causer bb_knockdown dropped Mighty Blow,
+        // Claws and Saboteur on the main POW/Stumble path (review M5).
+        int att = f->a;
         int def = f->b;
         uint16_t data = f->data;
         bb_pop(m);
@@ -521,7 +526,7 @@ static void push_advance(bb_match* m, bb_rng* rng) {
             return; // crowd was resolved at relocation time
         }
         if (data & PSH_POW) {
-            bb_knockdown(m, def, BB_KD_BLOCK, 0);
+            bb_knockdown2(m, def, BB_KD_BLOCK, 0, att);
         } else {
             bb_check_td(m); // pushed into their own end zone while holding
         }

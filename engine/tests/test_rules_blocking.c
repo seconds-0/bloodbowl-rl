@@ -482,6 +482,59 @@ BB_TEST(blocking_stumble_without_dodge_is_pow) {
     BB_CHECK(!bb_rng_error(&rng));
 }
 
+// Regression (adversarial review M5): a POW knockdown must carry the CAUSER
+// so the attacker's armour/injury skills apply. SK#MIGHTY BLOW (+1): may be
+// applied to the Armour Roll (auto-policy: when it converts a miss into a
+// break, see DECISIONS.md D16). The engine's phase-5 POW used the no-causer
+// bb_knockdown, so Mighty Blow/Claws/Saboteur were dead on the main path.
+BB_TEST(blocking_pow_mighty_blow_converts_armour) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int h1 = fx_lineman(&m, BB_HOME, 0, 10, 7);
+    int a1 = fx_lineman(&m, BB_AWAY, 0, 11, 7); // AV9
+    fx_give_skill(&m, h1, BB_SK_MIGHTY_BLOW);
+
+    // POW; armour 4+4=8 < AV9 holds WITHOUT the causer — Mighty Blow +1
+    // makes 9 and breaks; injury 2+2=4 -> Stunned (MB consumed on armour).
+    uint8_t script[] = {6, 4, 4, 2, 2};
+    bb_rng rng;
+    bb_rng_script(&rng, script, 5);
+    start_block(&m, &rng, h1, 11, 7);
+    apply_ok(&m, &rng, mk(BB_A_CHOOSE_DIE, 0, 0, 0));
+    apply_ok(&m, &rng, mk(BB_A_PUSH_SQUARE, 0, 12, 7));
+    apply_ok(&m, &rng, mk(BB_A_FOLLOW_UP, 0, 0, 0));
+    BB_CHECK(fx_stunned(&m, a1)); // armour broken only via Mighty Blow
+    BB_CHECK_EQ(m.players[a1].x, 12);
+    BB_CHECK_EQ(m.players[a1].y, 7);
+    BB_CHECK_EQ(m.turnover, 0); // inactive player down: no turnover
+    BB_CHECK_EQ(rng.script_pos, 5); // the injury roll really happened
+    BB_CHECK(!bb_rng_error(&rng));
+}
+
+// Regression (adversarial review M5): SK#CLAWS — an unmodified Armour Roll of
+// 8+ breaks armour regardless of the target's AV. Requires the causer to ride
+// along on the POW knockdown.
+BB_TEST(blocking_pow_claws_breaks_high_av) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int h1 = fx_lineman(&m, BB_HOME, 0, 10, 7);
+    int a1 = fx_player(&m, BB_AWAY, 0, 11, 7, 6, 3, 3, 4, 10); // AV10
+    fx_give_skill(&m, h1, BB_SK_CLAWS);
+
+    // POW; armour 4+4 = natural 8 (< AV10, but Claws breaks on 8+);
+    // injury 2+2 -> Stunned.
+    uint8_t script[] = {6, 4, 4, 2, 2};
+    bb_rng rng;
+    bb_rng_script(&rng, script, 5);
+    start_block(&m, &rng, h1, 11, 7);
+    apply_ok(&m, &rng, mk(BB_A_CHOOSE_DIE, 0, 0, 0));
+    apply_ok(&m, &rng, mk(BB_A_PUSH_SQUARE, 0, 12, 7));
+    apply_ok(&m, &rng, mk(BB_A_FOLLOW_UP, 0, 0, 0));
+    BB_CHECK(fx_stunned(&m, a1)); // armour broken only via Claws
+    BB_CHECK_EQ(rng.script_pos, 5);
+    BB_CHECK(!bb_rng_error(&rng));
+}
+
 // ENGINE-DIVERGENCE: FAQ (May 2026, pg.127 entry) — a Distracted player cannot
 // use Dodge against a Stumble (Active skills are off while Distracted,
 // RR#DISTRACTED), and likewise a Distracted player's Block does not save them
