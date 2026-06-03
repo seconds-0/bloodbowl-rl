@@ -69,3 +69,29 @@ Fires when an opponent DECLARES a block/blitz/foul against your player
   realized ball/injury shaping.
 - Arbitration: `puffer match` round-robin between best checkpoints of each,
   plus spectator review. Whatever wins, wins.
+
+## Addendum (same session): the sequencing charge
+
+Turn-ordering doctrine ("all safe plays first; risky rolls last; carrier
+blocks dead last") is ALSO an exposure — of your own unbanked turn. A
+turnover destroys every unspent activation, so a risky roll taken early
+exposes the remainder of the turn to your own dice:
+
+    sequencing_charge = P(turnover of this roll) * pending_safe_activations * k_seq
+
+- Charged at declaration; dice-free; zero for risk taken last → no passivity
+  bias. Prices mis-ordering, never risk itself.
+- pending_safe_activations: unactivated players with a zero-roll action
+  available (the R1 predicate, evaluated at the declaration).
+- P(turnover): from the declared test's target + reroll availability; block
+  pools from the shared probability engine.
+- Subsumes memo R1 (its turnover-triggered form violated decision-time
+  pricing; this is the compliant version).
+
+Attacker-side target selection (Claws->high AV, MB->high value, blitz
+allocation) needs no separate knob: it is the +EV side of the zero-sum
+block-exposure transfer.
+
+Profile C (final): setup + surf + draw + block-exposure transfer (zero-sum)
++ sequencing charge. One shared closed-form probability engine, unit-tested
+against the ActionCalculator conformance odds.
