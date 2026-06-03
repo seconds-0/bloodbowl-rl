@@ -431,9 +431,66 @@ static bool kickoff_event(bb_match* m, bb_rng* rng) {
             bb_need_decision(m, 1 - f->a);
             return true;
         }
+        case BB_KO_GET_THE_REF:
+            // "Each team immediately receives one free Bribe Inducement."
+            m->bribes[0]++;
+            m->bribes[1]++;
+            break;
+        case BB_KO_CHEERING_FANS: {
+            // BB2025: D6 + cheerleaders each; the winner's FIRST Block next
+            // turn gets an extra offensive assist (both on a tie). Cheerleader
+            // counts are 0 until inducements exist; flag the buff per team.
+            int h = bb_d6(rng), a = bb_d6(rng);
+            if (h >= a) m->cheer_assist[BB_HOME] = 1;
+            if (a >= h) m->cheer_assist[BB_AWAY] = 1;
+            break;
+        }
+        case BB_KO_DODGY_SNACK: {
+            // Lowest D6 (both on tie): a random on-pitch player rolls D6:
+            // 2+ -> -1 MA and -1 AV for the drive; 1 -> Reserves.
+            int h = bb_d6(rng), a = bb_d6(rng);
+            for (int team = 0; team < 2; team++) {
+                if ((team == 0 && h > a) || (team == 1 && a > h)) continue;
+                int candidates[BB_TEAM_SLOTS];
+                int nc = 0;
+                for (int s2 = team * BB_TEAM_SLOTS; s2 < (team + 1) * BB_TEAM_SLOTS; s2++) {
+                    if (m->players[s2].location == BB_LOC_ON_PITCH) candidates[nc++] = s2;
+                }
+                if (!nc) continue;
+                int victim = candidates[bb_roll(rng, nc) - 1];
+                if (bb_d6(rng) >= 2) {
+                    bb_player* v = &m->players[victim];
+                    if (v->ma > 1) v->ma--;
+                    if (v->av > 3) v->av--; // restored at END_DRIVE via squad reset?
+                    // NOTE: stat restoration at drive end is handled by the
+                    // procedural-squad reinit in Phase 5; for now the debuff
+                    // persists for the match (flagged in DECISIONS.md).
+                } else {
+                    bb_remove_from_pitch(m, victim, BB_LOC_RESERVES);
+                }
+            }
+            break;
+        }
+        case BB_KO_SOLID_DEFENCE: {
+            // Kicking coach repositions up to D3+3 Open players. Auto-policy:
+            // no repositioning (formation kept). The D3 is still rolled for
+            // replay-stream fidelity. TODO: decision window.
+            (void)bb_d3(rng);
+            break;
+        }
+        case BB_KO_QUICK_SNAP: {
+            // Receiving coach: up to D3+3 Open players move one square.
+            // Auto-policy: no moves; D3 rolled for stream fidelity.
+            (void)bb_d3(rng);
+            break;
+        }
+        case BB_KO_CHARGE: {
+            // Kicking coach: D3+3 Open players take free Move actions (one
+            // may Blitz/TTM/KTM). Auto-policy: no moves; D3 rolled.
+            (void)bb_d3(rng);
+            break;
+        }
         default:
-            // TODO(phase3): GET_THE_REF (bribes), CHEERING_FANS (prayers),
-            // SOLID_DEFENCE / QUICK_SNAP / CHARGE (re-positioning), DODGY_SNACK.
             break;
     }
     return false;

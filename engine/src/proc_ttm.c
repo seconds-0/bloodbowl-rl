@@ -135,6 +135,7 @@ static void ttm_advance(bb_match* m, bb_rng* rng) {
             if (has_ball) {
                 mp->flags &= (uint16_t)~BB_PF_HAS_BALL;
                 m->ball.carrier = BB_NO_PLAYER;
+                m->ball.state = BB_BALL_OFF_PITCH; // until the throw-in lands
                 int ex = x < 0 ? 0 : (x >= BB_PITCH_LEN ? BB_PITCH_LEN - 1 : x);
                 int ey = y < 0 ? 0 : (y >= BB_PITCH_WID ? BB_PITCH_WID - 1 : y);
                 bb_push(m, BB_PROC_THROW_IN, 0, 0, (uint8_t)ex, (uint8_t)ey);

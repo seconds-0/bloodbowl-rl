@@ -12,6 +12,7 @@
 // errata removed the "modified below 1" floor — only targets are clamped).
 #include "bb/bb_proc.h"
 #include "bb/bb_skills.h"
+#include "bb/bb_hooks.h"
 
 enum {
     TF_TEAM_USED = 1 << 0,
@@ -87,6 +88,13 @@ static int test_legal(const bb_match* m, bb_action* out) {
     if (team_reroll_available(m, team) && !(f->data & TF_TEAM_USED)) {
         out[n++] = (bb_action){BB_A_USE_REROLL, BB_RR_TEAM, 0, 0};
     }
+    // PRO: once per activation, 3+ to re-roll a single die; using Pro locks
+    // out every other re-roll source for this roll.
+    if (!(f->data & TF_TEAM_USED) &&
+        bb_has_skill(&m->players[slot].skills, BB_SK_PRO) &&
+        !(m->players[slot].flags & BB_PF_USED_SKILL_B)) {
+        out[n++] = (bb_action){BB_A_USE_REROLL, BB_RR_PRO, 0, 0};
+    }
     int sk = (f->data & TF_SKILL_USED) ? -1 : bb_skill_reroll_for(m, slot, f->b);
     if (sk >= 0) {
         out[n++] = (bb_action){BB_A_USE_REROLL, BB_RR_SKILL, (uint8_t)sk, 0};
@@ -106,6 +114,17 @@ static void test_apply(bb_match* m, bb_action a, bb_rng* rng) {
         int target = f->x & 7;
         bb_pop(m);
         m->ret = (uint16_t)(0 | (die << 8) | (target << 12));
+        return;
+    }
+    if (a.arg == BB_RR_PRO) {
+        m->players[slot].flags |= BB_PF_USED_SKILL_B; // once per activation
+        bb_cover(BB_SK_PRO);
+        f->data |= TF_TEAM_USED | TF_SKILL_USED; // no other source after Pro
+        if (bb_d6(rng) >= 3) {
+            f->phase = 2; // may re-roll the die
+        } else {
+            f->phase = 3; // Pro failed: the result stands
+        }
         return;
     }
     if (a.arg == BB_RR_TEAM) {

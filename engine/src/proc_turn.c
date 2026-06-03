@@ -313,10 +313,64 @@ static int activation_legal(const bb_match* m, bb_action* out) {
 }
 
 static void activation_apply(bb_match* m, bb_action a, bb_rng* rng) {
-    (void)rng;
     bb_frame* f = bb_top(m);
     f->phase = 1;
     f->b = a.arg; // action kind
+    bb_player* pl = &m->players[f->a];
+    // BLOODLUST (X+): after declaring, roll D6 (+1 for Block/Blitz); failure
+    // downgrades to a Move Action (the once-per-turn declaration still
+    // counts). The end-of-activation Thrall bite is TODO (needs Thrall
+    // keyword data) — flagged in DECISIONS.md.
+    if (pl->p_bloodlust > 0 && bb_has_skill(&pl->skills, BB_SK_BLOODLUST)) {
+        int die = bb_d6(rng);
+        int bonus = (a.arg == BB_ACT_BLOCK || a.arg == BB_ACT_BLITZ) ? 1 : 0;
+        if (die == 1 || die + bonus < pl->p_bloodlust) {
+            f->b = BB_ACT_MOVE; // downgraded
+            bb_cover(BB_SK_BLOODLUST);
+        }
+    }
+    // ANIMAL SAVAGERY: D6 (+2 Block/Blitz): 1-3 -> lash out at an adjacent
+    // standing team-mate (first found; choice TODO), else Distracted.
+    if (bb_has_skill(&pl->skills, BB_SK_ANIMAL_SAVAGERY)) {
+        int die = bb_d6(rng);
+        int bonus = (a.arg == BB_ACT_BLOCK || a.arg == BB_ACT_BLITZ) ? 2 : 0;
+        if (die + bonus <= 3) {
+            bb_cover(BB_SK_ANIMAL_SAVAGERY);
+            int mate = -1;
+            for (int dx = -1; dx <= 1 && mate < 0; dx++) {
+                for (int dy = -1; dy <= 1; dy++) {
+                    if (!dx && !dy) continue;
+                    int nx = pl->x + dx, ny = pl->y + dy;
+                    if (!bb_on_pitch_xy(nx, ny)) continue;
+                    int s2 = bb_slot_at(m, nx, ny);
+                    if (s2 >= 0 && BB_TEAM_OF(s2) == BB_TEAM_OF(f->a) &&
+                        m->players[s2].stance == BB_STANCE_STANDING) {
+                        mate = s2;
+                        break;
+                    }
+                }
+            }
+            if (mate >= 0) {
+                // Knocked down; turnover only if the mate held the ball.
+                bb_knockdown2(m, mate, BB_KD_TTM_LANDING, 0, f->a);
+            } else {
+                pl->flags |= BB_PF_DISTRACTED;
+            }
+        }
+    }
+    // ANIMOSITY: when declaring a Pass/Hand-off, D6: on 1 the player refuses
+    // and the activation ends. (Keyword targeting is checked at throw time —
+    // approximation: the gate fires on declaration; see DECISIONS.md.)
+    if ((a.arg == BB_ACT_PASS || a.arg == BB_ACT_HANDOFF) &&
+        bb_has_skill(&pl->skills, BB_SK_ANIMOSITY)) {
+        if (bb_d6(rng) == 1) {
+            bb_cover(BB_SK_ANIMOSITY);
+            pl->flags &= (uint16_t)~BB_PF_ACTIVATING;
+            pl->flags |= BB_PF_USED;
+            f->phase = 1; // ACTIVATION advance pops on next entry
+            return;       // no MOVE pushed: activation over
+        }
+    }
     // Once-per-turn actions latch on DECLARATION, even if never performed.
     switch (a.arg) {
         case BB_ACT_BLITZ: m->blitz_used = 1; break;

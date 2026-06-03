@@ -101,6 +101,7 @@ typedef struct {
     uint8_t ktm_used;                 // Kick Team-mate: its own per-turn budget
     uint8_t secure_used;              // BB2025 Secure the Ball: once per turn
     uint8_t bribes[2];                // bribe tokens (Get the Ref / inducements)
+    uint8_t cheer_assist[2];          // Cheering Fans: +1 assist on next block
     uint8_t apothecary[2];            // remaining uses
     uint8_t coach_ejected[2];         // "You're Outta Here": no more arguing
 

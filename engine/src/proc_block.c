@@ -70,14 +70,95 @@ static void block_advance(bb_match* m, bb_rng* rng) {
         // FOUL APPEARANCE: "roll a D6 before any other dice ... On a 1, the
         // Block Action is immediately cancelled and the opposition player's
         // activation immediately ends." (No turnover.)
-        // (phase 0 runs once per BLOCK frame; a Frenzy second block is a new
-        // Block Action and correctly rolls Foul Appearance again.)
-        if (bb_has_skill(&m->players[def].skills, BB_SK_FOUL_APPEARANCE)) {
-            if (bb_d6(rng) == 1) {
-                bb_pop(m);
+        // TRICKSTER: before dice are determined, the defender may relocate
+        // to any unoccupied adjacent square (auto-policy: fewest markers;
+        // ties -> first). The block then proceeds against the new square.
+        if (bb_has_skill(&m->players[def].skills, BB_SK_TRICKSTER) &&
+            !(m->players[def].flags & BB_PF_DISTRACTED)) {
+            bb_player* dp2 = &m->players[def];
+            int bestx = -1, besty = -1, best_tz = 99;
+            for (int dx = -1; dx <= 1; dx++) {
+                for (int dy = -1; dy <= 1; dy++) {
+                    if (!dx && !dy) continue;
+                    int nx = dp2->x + dx, ny = dp2->y + dy;
+                    if (!bb_on_pitch_xy(nx, ny) || m->grid[nx][ny]) continue;
+                    int tz = bb_tackle_zones(m, BB_TEAM_OF(def), nx, ny);
+                    if (tz < best_tz) {
+                        best_tz = tz;
+                        bestx = nx;
+                        besty = ny;
+                    }
+                }
+            }
+            // Only worth it if it escapes adjacency to the attacker entirely
+            // (cancels the block) or reduces markers.
+            if (bestx >= 0 && !bb_adjacent(bestx, besty,
+                                           m->players[att].x, m->players[att].y)) {
+                bb_cover(BB_SK_TRICKSTER);
+                bb_place(m, def, bestx, besty);
+                if (dp2->flags & BB_PF_HAS_BALL) {
+                    m->ball.x = dp2->x;
+                    m->ball.y = dp2->y;
+                }
+                bb_pop(m); // target out of reach: the block fizzles
                 return;
             }
         }
+        // DUMP-OFF: a carrying defender may make an interruption Quick Pass
+        // that cannot cause a turnover (auto-policy: throw to the adjacent
+        // team-mate with the fewest markers, if any).
+        if ((m->players[def].flags & BB_PF_HAS_BALL) &&
+            bb_has_skill(&m->players[def].skills, BB_SK_DUMP_OFF) &&
+            !(m->players[def].flags & BB_PF_DISTRACTED) &&
+            m->players[def].pa > 0 && !(f->data & BLK_RR_USED /*once*/)) {
+            // Find a quick-range team-mate (d^2 <= 12), fewest markers.
+            bb_player* dp2 = &m->players[def];
+            int best = -1, best_tz = 99;
+            int dteam = BB_TEAM_OF(def);
+            for (int s2 = dteam * BB_TEAM_SLOTS; s2 < (dteam + 1) * BB_TEAM_SLOTS; s2++) {
+                if (s2 == def) continue;
+                const bb_player* q = &m->players[s2];
+                if (q->location != BB_LOC_ON_PITCH) continue;
+                if (!bb_can_catch(m, s2)) continue;
+                int ddx = q->x - dp2->x, ddy = q->y - dp2->y;
+                if (ddx * ddx + ddy * ddy > 12) continue;
+                int tz = bb_tackle_zones(m, dteam, q->x, q->y);
+                if (tz < best_tz) {
+                    best_tz = tz;
+                    best = s2;
+                }
+            }
+            if (best >= 0) {
+                bb_cover(BB_SK_DUMP_OFF);
+                // Resolve a simplified turnover-免 quick pass inline: PA test;
+                // accurate -> catch test by the receiver; any failure just
+                // drops the ball (bounce) with no turnover.
+                bb_player* rp = &m->players[best];
+                int pmod = -bb_tackle_zones(m, dteam, dp2->x, dp2->y);
+                int die = bb_d6(rng);
+                bool acc = die != 1 && (die == 6 || die >= bb_test_target(dp2->pa, pmod));
+                bb_drop_ball(m);
+                if (acc) {
+                    int cmod = -bb_tackle_zones(m, dteam, rp->x, rp->y);
+                    int cdie = bb_d6(rng);
+                    if (cdie != 1 && (cdie == 6 || cdie >= bb_test_target(rp->ag, cmod))) {
+                        bb_give_ball(m, best);
+                    } else {
+                        bb_ball_to(m, rp->x, rp->y);
+                        bb_push(m, BB_PROC_SCATTER, 0, 1, rp->x, rp->y);
+                    }
+                } else {
+                    bb_ball_to(m, dp2->x, dp2->y);
+                    bb_push(m, BB_PROC_SCATTER, 0, 1, dp2->x, dp2->y);
+                }
+                // No turnover from any of this. Return so the pass/scatter
+                // chain resolves; BLOCK re-enters phase 0 with the preamble
+                // latch set and proceeds to the dice.
+                return;
+            }
+        }
+    }
+    if (f->phase == 0) {
         // DAUNTLESS: against a higher unmodified ST, roll D6 + own ST; beat
         // the target's unmodified ST to match it for this block.
         int base_a = m->players[att].st;
@@ -89,6 +170,12 @@ static void block_advance(bb_match* m, bb_rng* rng) {
         }
         int st_a = ((f->data & BLK_DAUNTLESS_OK) ? base_d : base_a) +
                    count_assists(m, att, def);
+        // CHEERING FANS: the first Block of this team's turn gets an extra
+        // offensive assist.
+        if (m->cheer_assist[BB_TEAM_OF(att)] && BB_TEAM_OF(att) == m->active_team) {
+            m->cheer_assist[BB_TEAM_OF(att)] = 0;
+            st_a += 1;
+        }
         int st_d = base_d + count_assists(m, def, att);
         if (f->data & BLK_IS_BLITZ) st_a += bb_hook_st_mod_blitz(m, att); // Horns
         int nd = 1;
@@ -547,6 +634,22 @@ static void knockdown_advance(bb_match* m, bb_rng* rng) {
         bb_cover(BB_SK_STEADY_FOOTING);
         return;
     }
+    // SABOTEUR (block knockdowns): "before the Armour Roll ... On a 4+ ...
+    // the opposition player is also Knocked Down ... [the saboteur] is
+    // automatically Knocked Out and the Armour Roll is not made."
+    if (f.b == BB_KD_BLOCK && (int)f.y - 1 >= 0 &&
+        bb_has_skill(&p->skills, BB_SK_SABOTEUR) && bb_d6(rng) >= 4) {
+        bb_cover(BB_SK_SABOTEUR);
+        int attacker = (int)f.y - 1;
+        bool had = (p->flags & BB_PF_HAS_BALL) != 0;
+        int sx = p->x, sy = p->y;
+        if (had) bb_drop_ball(m);
+        bb_remove_from_pitch(m, f.a, BB_LOC_KO); // auto-KO, no armour
+        if (had) bb_push(m, BB_PROC_SCATTER, 0, 1, (uint8_t)sx, (uint8_t)sy);
+        // The attacker is also knocked down (turnover only if carrying).
+        bb_knockdown(m, attacker, BB_KD_TTM_LANDING, 0);
+        return;
+    }
     p->stance = BB_STANCE_PRONE;
     p->flags &= (uint16_t)~BB_PF_ROOTED; // going down un-roots
     if (f.b == BB_KD_TTM_LANDING) {
@@ -557,6 +660,22 @@ static void knockdown_advance(bb_match* m, bb_rng* rng) {
     }
     bool had_ball = (p->flags & BB_PF_HAS_BALL) != 0;
     int bx = p->x, by = p->y;
+    if (had_ball && bb_has_skill(&p->skills, BB_SK_SAFE_PAIR_OF_HANDS)) {
+        // SAFE PAIR OF HANDS: place the ball in an adjacent unoccupied
+        // square instead of bouncing (first empty square; choice TODO).
+        for (int dx = -1; dx <= 1 && had_ball; dx++) {
+            for (int dy = -1; dy <= 1; dy++) {
+                if (!dx && !dy) continue;
+                int nx = bx + dx, ny = by + dy;
+                if (!bb_on_pitch_xy(nx, ny) || m->grid[nx][ny]) continue;
+                bb_cover(BB_SK_SAFE_PAIR_OF_HANDS);
+                bb_drop_ball(m);
+                bb_ball_to(m, nx, ny);
+                had_ball = false;
+                break;
+            }
+        }
+    }
     if (had_ball) {
         bb_drop_ball(m);
         if (BB_TEAM_OF(f.a) != m->active_team) {
@@ -822,6 +941,19 @@ static void foul_advance(bb_match* m, bb_rng* rng) {
         if (!spotted) {
             bb_pop(m);
             return;
+        }
+        // BRIBE: may be used when a player is sent off — D6 2+: the player
+        // is not sent off (bribe spent either way). Auto-used before Argue
+        // the Call (FAQ: bribes usable even when arguing is unavailable).
+        if (m->bribes[BB_TEAM_OF(fouler)] > 0) {
+            m->bribes[BB_TEAM_OF(fouler)]--;
+            if (bb_d6(rng) >= 2) {
+                bb_pop(m);
+                bb_turnover(m); // the foul still turned over? No: a bribed
+                // send-off is cancelled entirely — no turnover from send-off.
+                m->turnover = 0;
+                return;
+            }
         }
         // Sent off: the fouling coach may Argue the Call (unless already
         // ejected from the dugout).
