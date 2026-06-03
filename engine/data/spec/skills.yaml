@@ -1,0 +1,798 @@
+# BB2025 skills & traits — extracted from
+# docs/vendor/bloodbowlbase/bloodbowlbase.ru/bb2025/core_rules/skills_and_traits/index.html
+# (errata-current mirror, May 2026; <del> struck text ignored).
+# Cross-checked against core_rules/latest_faq/index.html:
+#   - Elite Skills = Block, Dodge, Guard, Mighty Blow (exactly the 4 headings carrying
+#     elite_skill_small.jpg; FAQ pg.112 ruling: each may be taken up to 4x in Matched Play).
+#   - Errata "Page 122 - Traits!" (Prone Special Action declaration) and
+#     "Page 124 - Ball & Chain" (Chomped immunity) are already applied inline on the page.
+# mode: active = usable only while Standing and not Distracted (unless the text says
+# otherwise, e.g. Jump Up works while Prone); passive = always in effect.
+# compulsory: asterisk (*) in the rulebook — player must use the skill/trait when applicable.
+# value: default X for parameterized (X)/(X+) traits; null where the parameter is
+# per-player (Bloodlust 2+/3+) or a keyword (Animosity, Hatred). No 2025 skill is parameterized.
+
+skills:
+  # ---- AGILITY (12) ----
+  - name: catch
+    display: Catch
+    category: agility
+    mode: active
+    compulsory: false
+    elite: false
+    value: null
+  - name: diving_catch
+    display: Diving Catch
+    category: agility
+    mode: active
+    compulsory: false
+    elite: false
+    value: null
+  - name: diving_tackle
+    display: Diving Tackle
+    category: agility
+    mode: active
+    compulsory: false
+    elite: false
+    value: null
+  - name: dodge
+    display: Dodge
+    category: agility
+    mode: active
+    compulsory: false
+    elite: true
+    value: null
+  - name: defensive
+    display: Defensive
+    category: agility
+    mode: active
+    compulsory: false
+    elite: false
+    value: null
+  - name: hit_and_run
+    display: Hit and Run
+    category: agility
+    mode: active
+    compulsory: false
+    elite: false
+    value: null
+  - name: jump_up            # usable while Prone (stated in skill text)
+    display: Jump Up
+    category: agility
+    mode: active
+    compulsory: false
+    elite: false
+    value: null
+  - name: leap
+    display: Leap
+    category: agility
+    mode: active
+    compulsory: false
+    elite: false
+    value: null
+  - name: safe_pair_of_hands
+    display: Safe Pair of Hands
+    category: agility
+    mode: active
+    compulsory: false
+    elite: false
+    value: null
+  - name: sidestep
+    display: Sidestep
+    category: agility
+    mode: active
+    compulsory: false
+    elite: false
+    value: null
+  - name: sprint
+    display: Sprint
+    category: agility
+    mode: active
+    compulsory: false
+    elite: false
+    value: null
+  - name: sure_feet
+    display: Sure Feet
+    category: agility
+    mode: active
+    compulsory: false
+    elite: false
+    value: null
+
+  # ---- DEVIOUS (12) — new category in BB2025 ----
+  - name: dirty_player
+    display: Dirty Player
+    category: devious
+    mode: active
+    compulsory: false
+    elite: false
+    value: null
+  - name: eye_gouge
+    display: Eye Gouge
+    category: devious
+    mode: active
+    compulsory: false
+    elite: false
+    value: null
+  - name: fumblerooski
+    display: Fumblerooski
+    category: devious
+    mode: active
+    compulsory: false
+    elite: false
+    value: null
+  - name: lethal_flight      # requires the Right Stuff trait
+    display: Lethal Flight
+    category: devious
+    mode: active
+    compulsory: false
+    elite: false
+    value: null
+  - name: lone_fouler
+    display: Lone Fouler
+    category: devious
+    mode: active
+    compulsory: false
+    elite: false
+    value: null
+  - name: pile_driver
+    display: Pile Driver
+    category: devious
+    mode: active
+    compulsory: false
+    elite: false
+    value: null
+  - name: put_the_boot_in
+    display: Put the Boot In
+    category: devious
+    mode: active
+    compulsory: false
+    elite: false
+    value: null
+  - name: quick_foul
+    display: Quick Foul
+    category: devious
+    mode: active
+    compulsory: false
+    elite: false
+    value: null
+  - name: saboteur           # requires the Secret Weapon trait
+    display: Saboteur
+    category: devious
+    mode: active
+    compulsory: false
+    elite: false
+    value: null
+  - name: shadowing
+    display: Shadowing
+    category: devious
+    mode: active
+    compulsory: false
+    elite: false
+    value: null
+  - name: sneaky_git
+    display: Sneaky Git
+    category: devious
+    mode: active
+    compulsory: false
+    elite: false
+    value: null
+  - name: violent_innovator  # requires a trait granting a Special Action
+    display: Violent Innovator
+    category: devious
+    mode: active
+    compulsory: false
+    elite: false
+    value: null
+
+  # ---- GENERAL (12) ----
+  - name: block
+    display: Block
+    category: general
+    mode: active
+    compulsory: false
+    elite: true
+    value: null
+  - name: dauntless
+    display: Dauntless
+    category: general
+    mode: active
+    compulsory: false
+    elite: false
+    value: null
+  - name: fend
+    display: Fend
+    category: general
+    mode: active
+    compulsory: false
+    elite: false
+    value: null
+  - name: frenzy             # excludes Grab, Hit and Run, Multiple Block
+    display: Frenzy
+    category: general
+    mode: active
+    compulsory: true
+    elite: false
+    value: null
+  - name: kick
+    display: Kick
+    category: general
+    mode: active
+    compulsory: false
+    elite: false
+    value: null
+  - name: pro
+    display: Pro
+    category: general
+    mode: active
+    compulsory: false
+    elite: false
+    value: null
+  - name: steady_footing     # new in BB2025
+    display: Steady Footing
+    category: general
+    mode: active
+    compulsory: false
+    elite: false
+    value: null
+  - name: strip_ball
+    display: Strip Ball
+    category: general
+    mode: active
+    compulsory: false
+    elite: false
+    value: null
+  - name: sure_hands
+    display: Sure Hands
+    category: general
+    mode: active
+    compulsory: false
+    elite: false
+    value: null
+  - name: tackle
+    display: Tackle
+    category: general
+    mode: active
+    compulsory: false
+    elite: false
+    value: null
+  - name: taunt              # new in BB2025
+    display: Taunt
+    category: general
+    mode: active
+    compulsory: false
+    elite: false
+    value: null
+  - name: wrestle
+    display: Wrestle
+    category: general
+    mode: active
+    compulsory: false
+    elite: false
+    value: null
+
+  # ---- MUTATION (12) ----
+  - name: big_hand
+    display: Big Hand
+    category: mutation
+    mode: active
+    compulsory: false
+    elite: false
+    value: null
+  - name: claws
+    display: Claws
+    category: mutation
+    mode: passive
+    compulsory: false
+    elite: false
+    value: null
+  - name: disturbing_presence
+    display: Disturbing Presence
+    category: mutation
+    mode: passive
+    compulsory: true
+    elite: false
+    value: null
+  - name: extra_arms
+    display: Extra Arms
+    category: mutation
+    mode: active
+    compulsory: false
+    elite: false
+    value: null
+  - name: foul_appearance
+    display: Foul Appearance
+    category: mutation
+    mode: passive
+    compulsory: true
+    elite: false
+    value: null
+  - name: horns
+    display: Horns
+    category: mutation
+    mode: active
+    compulsory: false
+    elite: false
+    value: null
+  - name: iron_hard_skin
+    display: Iron Hard Skin
+    category: mutation
+    mode: passive
+    compulsory: false
+    elite: false
+    value: null
+  - name: monstrous_mouth    # new in BB2025; grants the Chomp Special Action
+    display: Monstrous Mouth
+    category: mutation
+    mode: active
+    compulsory: false
+    elite: false
+    value: null
+  - name: prehensile_tail
+    display: Prehensile Tail
+    category: mutation
+    mode: active
+    compulsory: false
+    elite: false
+    value: null
+  - name: tentacles
+    display: Tentacles
+    category: mutation
+    mode: active
+    compulsory: false
+    elite: false
+    value: null
+  - name: two_heads
+    display: Two Heads
+    category: mutation
+    mode: active
+    compulsory: false
+    elite: false
+    value: null
+  - name: very_long_legs
+    display: Very Long Legs
+    category: mutation
+    mode: active
+    compulsory: false
+    elite: false
+    value: null
+
+  # ---- PASSING (12) ----
+  - name: accurate
+    display: Accurate
+    category: passing
+    mode: active
+    compulsory: false
+    elite: false
+    value: null
+  - name: cannoneer
+    display: Cannoneer
+    category: passing
+    mode: active
+    compulsory: false
+    elite: false
+    value: null
+  - name: cloud_burster
+    display: Cloud Burster
+    category: passing
+    mode: active
+    compulsory: false
+    elite: false
+    value: null
+  - name: dump_off
+    display: Dump-off
+    category: passing
+    mode: active
+    compulsory: false
+    elite: false
+    value: null
+  - name: give_and_go        # new in BB2025 (replaces BB2020 Running Pass)
+    display: Give and Go
+    category: passing
+    mode: active
+    compulsory: false
+    elite: false
+    value: null
+  - name: hail_mary_pass
+    display: Hail Mary Pass
+    category: passing
+    mode: active
+    compulsory: false
+    elite: false
+    value: null
+  - name: leader
+    display: Leader
+    category: passing
+    mode: passive
+    compulsory: false
+    elite: false
+    value: null
+  - name: nerves_of_steel
+    display: Nerves of Steel
+    category: passing
+    mode: active
+    compulsory: false
+    elite: false
+    value: null
+  - name: on_the_ball
+    display: On the Ball
+    category: passing
+    mode: active
+    compulsory: false
+    elite: false
+    value: null
+  - name: pass
+    display: Pass
+    category: passing
+    mode: active
+    compulsory: false
+    elite: false
+    value: null
+  - name: punt               # new in BB2025; grants the Punt Special Action (1/turn)
+    display: Punt
+    category: passing
+    mode: active
+    compulsory: false
+    elite: false
+    value: null
+  - name: safe_pass
+    display: Safe Pass
+    category: passing
+    mode: active
+    compulsory: false
+    elite: false
+    value: null
+
+  # ---- STRENGTH (12) ----
+  - name: arm_bar
+    display: Arm Bar
+    category: strength
+    mode: active
+    compulsory: false
+    elite: false
+    value: null
+  - name: brawler            # FAQ: declared Block Action only (not Blitz); 1/activation
+    display: Brawler
+    category: strength
+    mode: active
+    compulsory: false
+    elite: false
+    value: null
+  - name: break_tackle
+    display: Break Tackle
+    category: strength
+    mode: active
+    compulsory: false
+    elite: false
+    value: null
+  - name: bullseye           # new in BB2025; requires the Throw Team-mate trait
+    display: Bullseye
+    category: strength
+    mode: active
+    compulsory: false
+    elite: false
+    value: null
+  - name: grab               # excludes Frenzy; FAQ: declared Block Action only (not Blitz)
+    display: Grab
+    category: strength
+    mode: active
+    compulsory: false
+    elite: false
+    value: null
+  - name: guard
+    display: Guard
+    category: strength
+    mode: active
+    compulsory: false
+    elite: true
+    value: null
+  - name: juggernaut
+    display: Juggernaut
+    category: strength
+    mode: active
+    compulsory: false
+    elite: false
+    value: null
+  - name: mighty_blow
+    display: Mighty Blow
+    category: strength
+    mode: active
+    compulsory: false
+    elite: true
+    value: null
+  - name: multiple_block     # excludes Frenzy; FAQ: declared Block Action only (not Blitz)
+    display: Multiple Block
+    category: strength
+    mode: active
+    compulsory: false
+    elite: false
+    value: null
+  - name: stand_firm
+    display: Stand Firm
+    category: strength
+    mode: active
+    compulsory: false
+    elite: false
+    value: null
+  - name: strong_arm         # requires the Throw Team-mate trait
+    display: Strong Arm
+    category: strength
+    mode: active
+    compulsory: false
+    elite: false
+    value: null
+  - name: thick_skull
+    display: Thick Skull
+    category: strength
+    mode: passive
+    compulsory: false
+    elite: false
+    value: null
+
+traits:
+  - name: always_hungry
+    display: Always Hungry
+    mode: active
+    compulsory: true
+    value: null
+  - name: animal_savagery
+    display: Animal Savagery
+    mode: passive
+    compulsory: true
+    value: null
+  - name: animosity          # X = keyword; Animosity (all) applies to every team-mate
+    display: Animosity (X)
+    mode: active
+    compulsory: true
+    value: null
+  - name: ball_and_chain     # forbids Diving Tackle, Eye Gouge, Frenzy, Grab, Hit and Run,
+                             # Leap, Multiple Block, On the Ball, Shadowing, Steady Footing
+    display: Ball & Chain
+    mode: active
+    compulsory: true
+    value: null
+  - name: bloodlust          # X+ varies per player: 2+ or 3+ on the Vampire roster
+    display: Bloodlust (X+)
+    mode: passive
+    compulsory: true
+    value: null
+  - name: bombardier         # grants Throw Bomb Special Action (1/turn)
+    display: Bombardier
+    mode: active
+    compulsory: false
+    value: null
+  - name: bone_head
+    display: Bone Head
+    mode: passive
+    compulsory: true
+    value: null
+  - name: breathe_fire       # new in BB2025; Special Action (unlimited/turn)
+    display: Breathe Fire
+    mode: active
+    compulsory: false
+    value: null
+  - name: chainsaw           # grants Chainsaw Attack Special Action (unlimited/turn)
+    display: Chainsaw
+    mode: active
+    compulsory: true
+    value: null
+  - name: decay
+    display: Decay
+    mode: passive
+    compulsory: true
+    value: null
+  - name: drunkard           # new in BB2025
+    display: Drunkard
+    mode: passive
+    compulsory: true
+    value: null
+  - name: hatred             # new in BB2025; X = keyword (e.g. Troll); gained via Getting Even
+    display: Hatred (X)
+    mode: passive
+    compulsory: true
+    value: null
+  - name: hypnotic_gaze      # Special Action (unlimited/turn, move first)
+    display: Hypnotic Gaze
+    mode: active
+    compulsory: false
+    value: null
+  - name: insignificant      # new in BB2025; draft-list constraint
+    display: Insignificant
+    mode: passive
+    compulsory: true
+    value: null
+  - name: kick_team_mate     # Special Action (1/turn, separate from the TTM action)
+    display: Kick Team-mate
+    mode: passive
+    compulsory: false
+    value: null
+  - name: loner              # 4+ on 19 of 22 roster occurrences (3+ on 3, incl. errata'd
+                             # Chaos Renegade Ogre)
+    display: Loner (X+)
+    mode: passive
+    compulsory: true
+    value: 4
+  - name: my_ball            # new in BB2025
+    display: My Ball
+    mode: passive
+    compulsory: true
+    value: null
+  - name: no_ball            # new in BB2025
+    display: No Ball
+    mode: passive
+    compulsory: true
+    value: null
+  - name: pick_me_up         # new in BB2025; FAQ: unusable while Distracted
+    display: Pick-Me-Up
+    mode: active
+    compulsory: false
+    value: null
+  - name: plague_ridden
+    display: Plague Ridden
+    mode: passive
+    compulsory: false
+    value: null
+  - name: pogo               # excludes the Leap skill
+    display: Pogo
+    mode: active
+    compulsory: false
+    value: null
+  - name: projectile_vomit   # Special Action (unlimited/turn)
+    display: Projectile Vomit
+    mode: active
+    compulsory: false
+    value: null
+  - name: really_stupid
+    display: Really Stupid
+    mode: passive
+    compulsory: true
+    value: null
+  - name: regeneration
+    display: Regeneration
+    mode: passive
+    compulsory: false
+    value: null
+  - name: right_stuff
+    display: Right Stuff
+    mode: passive
+    compulsory: true
+    value: null
+  - name: secret_weapon
+    display: Secret Weapon
+    mode: passive
+    compulsory: true
+    value: null
+  - name: stab               # Special Action (unlimited/turn)
+    display: Stab
+    mode: active
+    compulsory: false
+    value: null
+  - name: stunty
+    display: Stunty
+    mode: passive
+    compulsory: true
+    value: null
+  - name: swoop
+    display: Swoop
+    mode: active
+    compulsory: false
+    value: null
+  - name: take_root
+    display: Take Root
+    mode: passive
+    compulsory: true
+    value: null
+  - name: throw_team_mate
+    display: Throw Team-mate
+    mode: active
+    compulsory: false
+    value: null
+  - name: timmm_ber
+    display: Timmm-ber!
+    mode: passive
+    compulsory: false
+    value: null
+  - name: titchy
+    display: Titchy
+    mode: passive
+    compulsory: true
+    value: null
+  - name: trickster          # new in BB2025
+    display: Trickster
+    mode: active
+    compulsory: false
+    value: null
+  - name: unchannelled_fury
+    display: Unchannelled Fury
+    mode: passive
+    compulsory: true
+    value: null
+  - name: unsteady           # new in BB2025; gates the Secure the Ball action
+    display: Unsteady
+    mode: passive
+    compulsory: true
+    value: null
+
+# 2D6 random-skill table. Roll key 1-12: first D6 1-3 selects rows 1-6, first D6 4-6
+# selects rows 7-12; the second D6 is the row within that half.
+# (FAQ pg.97: pick category, generate two skills this way, choose one; re-roll results
+# the player cannot take.)
+random_table:
+  agility:
+    1: catch
+    2: diving_catch
+    3: diving_tackle
+    4: dodge
+    5: defensive
+    6: hit_and_run
+    7: jump_up
+    8: leap
+    9: safe_pair_of_hands
+    10: sidestep
+    11: sprint
+    12: sure_feet
+  devious:
+    1: dirty_player
+    2: eye_gouge
+    3: fumblerooski
+    4: lethal_flight
+    5: lone_fouler
+    6: pile_driver
+    7: put_the_boot_in
+    8: quick_foul
+    9: saboteur
+    10: shadowing
+    11: sneaky_git
+    12: violent_innovator
+  general:
+    1: block
+    2: dauntless
+    3: fend
+    4: frenzy
+    5: kick
+    6: pro
+    7: steady_footing
+    8: strip_ball
+    9: sure_hands
+    10: tackle
+    11: taunt
+    12: wrestle
+  mutation:
+    1: big_hand
+    2: claws
+    3: disturbing_presence
+    4: extra_arms
+    5: foul_appearance
+    6: horns
+    7: iron_hard_skin
+    8: monstrous_mouth
+    9: prehensile_tail
+    10: tentacles
+    11: two_heads
+    12: very_long_legs
+  passing:
+    1: accurate
+    2: cannoneer
+    3: cloud_burster
+    4: dump_off
+    5: give_and_go
+    6: hail_mary_pass
+    7: leader
+    8: nerves_of_steel
+    9: on_the_ball
+    10: pass
+    11: punt
+    12: safe_pass
+  strength:
+    1: arm_bar
+    2: brawler
+    3: break_tackle
+    4: bullseye
+    5: grab
+    6: guard
+    7: juggernaut
+    8: mighty_blow
+    9: multiple_block
+    10: stand_firm
+    11: strong_arm
+    12: thick_skull

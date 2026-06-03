@@ -1,0 +1,1284 @@
+# BB2025 team rosters — part B: last 15 of 30 teams (alphabetical: Khorne..Wood_Elf).
+# Hand-extracted from docs/vendor/bloodbowlbase/bloodbowlbase.ru/bb2025/teams/<Team>/index.html
+# (inline <del> errata stripped — values below are post-errata current law) with tiers from
+# the May 2026 tier table in core_rules/latest_faq/index.html.
+# Conventions per SCHEMA.md: AG/PA/AV are target numbers (PA '-' => 0); costs in k;
+# parameterized skills/traits as {name: ..., value: ...} (Loner (4+) => value 4);
+# big_guy reflects the explicit "Big Guy" keyword on the position row.
+
+teams:
+  - name: khorne
+    display: Khorne
+    tier: 3
+    reroll_cost: 60
+    apothecary: true
+    special_rules: [favoured_of_khorne, brawlin_brutes]
+    positions:
+      - name: khorne_bloodborn_marauder
+        display: Bloodborn Marauder
+        qty: [0, 16]
+        cost: 50
+        ma: 6
+        st: 3
+        ag: 3
+        pa: 4
+        av: 8
+        skills: [frenzy]
+        primary: [general, mutation]
+        secondary: [agility, strength, devious]
+        big_guy: false
+      - name: khorne_khorngor
+        display: Khorngor
+        qty: [0, 2]
+        cost: 70
+        ma: 6
+        st: 3
+        ag: 3
+        pa: 4
+        av: 9
+        skills: [horns, juggernaut, jump_up, thick_skull]
+        primary: [general, mutation, strength]
+        secondary: [agility, passing, devious]
+        big_guy: false
+      - name: khorne_bloodseeker
+        display: Bloodseeker
+        qty: [0, 4]
+        cost: 105
+        ma: 5
+        st: 4
+        ag: 4
+        pa: 6
+        av: 10
+        skills: [frenzy]
+        primary: [general, mutation, strength]
+        secondary: [agility, devious]
+        big_guy: false
+      - name: khorne_bloodspawn
+        display: Bloodspawn
+        qty: [0, 1]
+        cost: 160
+        ma: 5
+        st: 5
+        ag: 4
+        pa: 6
+        av: 9
+        skills:
+          - claws
+          - frenzy
+          - {name: loner, value: 4}
+          - mighty_blow
+          - unchannelled_fury
+        primary: [mutation, strength]
+        secondary: [agility, general]
+        big_guy: true
+
+  - name: lizardmen
+    display: Lizardmen
+    tier: 1
+    reroll_cost: 70
+    apothecary: true
+    special_rules: []
+    positions:
+      - name: lizardmen_skink_lineman
+        display: Skink Lineman
+        qty: [0, 16]
+        cost: 60
+        ma: 8
+        st: 2
+        ag: 3
+        pa: 4
+        av: 8
+        skills: [dodge, stunty]
+        primary: [agility]
+        secondary: [general, passing, strength, devious]
+        big_guy: false
+      - name: lizardmen_chameleon_skink
+        display: Chameleon Skink
+        qty: [0, 2]
+        cost: 70
+        ma: 7
+        st: 2
+        ag: 3
+        pa: 3
+        av: 8
+        skills: [dodge, on_the_ball, shadowing, stunty]
+        primary: [agility, passing]
+        secondary: [general, strength, devious]
+        big_guy: false
+      - name: lizardmen_saurus_blocker
+        display: Saurus Blocker
+        qty: [0, 6]
+        cost: 90
+        ma: 6
+        st: 4
+        ag: 5
+        pa: 6
+        av: 10
+        skills: [juggernaut, unsteady]
+        primary: [general, strength]
+        secondary: [agility]
+        big_guy: false
+      - name: lizardmen_kroxigor
+        display: Kroxigor
+        qty: [0, 1]
+        cost: 140
+        ma: 6
+        st: 5
+        ag: 5
+        pa: 6
+        av: 10
+        skills:
+          - bone_head
+          - {name: loner, value: 4}
+          - mighty_blow
+          - prehensile_tail
+          - thick_skull
+        primary: [strength]
+        secondary: [agility, general]
+        big_guy: true
+
+  - name: necromantic_horror
+    display: Necromantic Horror
+    tier: 2
+    reroll_cost: 70
+    apothecary: false
+    special_rules: [masters_of_undeath]
+    positions:
+      - name: necromantic_horror_zombie_lineman
+        display: Zombie Lineman
+        qty: [0, 16]
+        cost: 40
+        ma: 4
+        st: 3
+        ag: 4
+        pa: 6
+        av: 9
+        skills: [eye_gouge, regeneration, unsteady]
+        primary: [devious, general]
+        secondary: [agility, strength]
+        big_guy: false
+      - name: necromantic_horror_ghoul_runner
+        display: Ghoul Runner
+        qty: [0, 2]
+        cost: 75
+        ma: 7
+        st: 3
+        ag: 3
+        pa: 3
+        av: 8
+        skills: [dodge, regeneration]
+        primary: [agility, general]
+        secondary: [devious, passing, strength]
+        big_guy: false
+      - name: necromantic_horror_wraith
+        display: Wraith
+        qty: [0, 2]
+        cost: 85
+        ma: 6
+        st: 3
+        ag: 3
+        pa: 0          # PA '-'
+        av: 9
+        skills: [block, foul_appearance, no_ball, regeneration, sidestep]
+        primary: [general, strength]
+        secondary: [agility, devious]
+        big_guy: false
+      - name: necromantic_horror_flesh_golem
+        display: Flesh Golem
+        qty: [0, 2]
+        cost: 110
+        ma: 4
+        st: 4
+        ag: 4
+        pa: 6
+        av: 10
+        skills: [regeneration, stand_firm, thick_skull, unsteady]
+        primary: [general, strength]
+        secondary: [agility, devious]
+        big_guy: false
+      - name: necromantic_horror_werewolf
+        display: Werewolf
+        qty: [0, 2]
+        cost: 120
+        ma: 8
+        st: 3
+        ag: 3
+        pa: 3
+        av: 9
+        skills: [claws, frenzy, regeneration]
+        primary: [agility, general]
+        secondary: [devious, passing, strength]
+        big_guy: false
+
+  - name: norse
+    display: Norse
+    tier: 1
+    reroll_cost: 60
+    apothecary: true
+    special_rules: [favoured_of_khorne]   # page: "Favoured of Khorne (Chaos Clash)" — applies only when playing in the Chaos Clash league
+    positions:
+      - name: norse_raider
+        display: Norse Raider
+        qty: [0, 16]
+        cost: 50
+        ma: 6
+        st: 3
+        ag: 3
+        pa: 4
+        av: 8
+        skills: [block, drunkard, thick_skull, unsteady]
+        primary: [general]
+        secondary: [agility, passing, strength]
+        big_guy: false
+      - name: norse_beer_boar
+        display: Beer Boar
+        qty: [0, 2]
+        cost: 20
+        ma: 5
+        st: 1
+        ag: 3
+        pa: 0          # PA '-'
+        av: 6
+        skills: [dodge, no_ball, pick_me_up, stunty, titchy]
+        primary: []    # page lists no primary categories
+        secondary: [agility]
+        big_guy: false
+      - name: norse_berserker
+        display: Norse Berserker
+        qty: [0, 2]
+        cost: 90
+        ma: 6
+        st: 3
+        ag: 3
+        pa: 5
+        av: 8
+        skills: [block, frenzy, jump_up]
+        primary: [general, strength]
+        secondary: [agility, passing]
+        big_guy: false
+      - name: norse_valkyrie
+        display: Valkyrie
+        qty: [0, 2]
+        cost: 95
+        ma: 7
+        st: 3
+        ag: 3
+        pa: 3
+        av: 8
+        skills: [catch, dauntless, pass, strip_ball]
+        primary: [agility, general, passing]
+        secondary: [strength]
+        big_guy: false
+      - name: norse_ulfwerener
+        display: Ulfwerener
+        qty: [0, 2]
+        cost: 105
+        ma: 6
+        st: 4
+        ag: 4
+        pa: 6
+        av: 9
+        skills: [frenzy, unsteady]
+        primary: [general, strength]
+        secondary: [agility]
+        big_guy: false
+      - name: norse_yhetee
+        display: Yhetee
+        qty: [0, 1]
+        cost: 140
+        ma: 5
+        st: 5
+        ag: 4
+        pa: 6
+        av: 9
+        skills:
+          - claws
+          - disturbing_presence
+          - frenzy
+          - {name: loner, value: 4}
+          - unchannelled_fury
+        primary: [strength]
+        secondary: [agility, general]
+        big_guy: true
+
+  - name: nurgle
+    display: Nurgle
+    tier: 3
+    reroll_cost: 60
+    apothecary: false
+    special_rules: [favoured_of_nurgle, brawlin_brutes]
+    positions:
+      - name: nurgle_rotter
+        display: Rotter
+        qty: [0, 16]
+        cost: 40
+        ma: 5
+        st: 3
+        ag: 4
+        pa: 6
+        av: 9
+        skills: [decay, plague_ridden]
+        primary: [general, mutation, devious]
+        secondary: [agility, strength]
+        big_guy: false
+      - name: nurgle_pestigor
+        display: Pestigor
+        qty: [0, 2]
+        cost: 70
+        ma: 6
+        st: 3
+        ag: 3
+        pa: 4
+        av: 9
+        skills: [horns, plague_ridden, regeneration, steady_footing, thick_skull]
+        primary: [general, mutation, strength]
+        secondary: [agility, passing, devious]
+        big_guy: false
+      - name: nurgle_bloater
+        display: Bloater
+        qty: [0, 4]
+        cost: 110
+        ma: 4
+        st: 4
+        ag: 4
+        pa: 6
+        av: 10
+        skills: [disturbing_presence, foul_appearance, plague_ridden, regeneration, stand_firm, unsteady]
+        primary: [general, mutation, strength]
+        secondary: [agility, devious]
+        big_guy: false
+      - name: nurgle_rotspawn
+        display: Rotspawn
+        qty: [0, 1]
+        cost: 140
+        ma: 4
+        st: 5
+        ag: 5
+        pa: 6
+        av: 10
+        skills:
+          - disturbing_presence
+          - foul_appearance
+          - {name: loner, value: 4}
+          - mighty_blow
+          - pick_me_up
+          - plague_ridden
+          - really_stupid
+          - regeneration
+          - tentacles
+        primary: [strength]
+        secondary: [general, mutation, devious]
+        big_guy: true
+
+  - name: ogre
+    display: Ogre
+    tier: 4
+    reroll_cost: 70
+    apothecary: true
+    special_rules: [brawlin_brutes, low_cost_linemen]
+    positions:
+      - name: ogre_gnoblar_lineman
+        display: Gnoblar Lineman
+        qty: [0, 16]
+        cost: 15
+        ma: 5
+        st: 1
+        ag: 3
+        pa: 4
+        av: 6
+        skills: [dodge, right_stuff, sidestep, stunty, titchy]
+        primary: [agility, devious]
+        secondary: [general]
+        big_guy: false
+      - name: ogre_blocker
+        display: Ogre Blocker
+        qty: [0, 5]
+        cost: 140
+        ma: 5
+        st: 5
+        ag: 4
+        pa: 5
+        av: 10
+        skills: [bone_head, mighty_blow, thick_skull, throw_team_mate]   # no Loner on Ogre-team Ogres
+        primary: [strength]
+        secondary: [agility, devious, general, passing]
+        big_guy: true
+      - name: ogre_runt_punter
+        display: Ogre Runt Punter
+        qty: [0, 1]
+        cost: 145
+        ma: 5
+        st: 5
+        ag: 4
+        pa: 4
+        av: 10
+        skills: [bone_head, kick_team_mate, mighty_blow, thick_skull]
+        primary: [passing, strength]
+        secondary: [agility, devious, general]
+        big_guy: true
+
+  - name: old_world_alliance
+    display: Old World Alliance
+    tier: 1
+    reroll_cost: 70
+    apothecary: true
+    special_rules: []   # page has no Special Rules section (league: Old World Classic)
+    positions:
+      - name: old_world_alliance_human_lineman
+        display: Human Lineman
+        qty: [0, 16]
+        cost: 50
+        ma: 6
+        st: 3
+        ag: 3
+        pa: 4
+        av: 9
+        skills: []
+        primary: [general]
+        secondary: [agility, strength]
+        big_guy: false
+      - name: old_world_alliance_halfling_hopeful
+        display: Halfling Hopeful
+        qty: [0, 3]    # errata: was 0-5
+        cost: 30
+        ma: 5
+        st: 2
+        ag: 3
+        pa: 4
+        av: 7
+        skills: [dodge, right_stuff, stunty]
+        primary: [agility]
+        secondary: [general, strength]
+        big_guy: false
+      - name: old_world_alliance_human_catcher
+        display: Human Catcher
+        qty: [0, 1]
+        cost: 75
+        ma: 8
+        st: 3
+        ag: 3
+        pa: 4
+        av: 8
+        skills: [catch, dodge]
+        primary: [agility, general]
+        secondary: [passing, strength]
+        big_guy: false
+      - name: old_world_alliance_dwarf_lineman
+        display: Dwarf Lineman
+        qty: [0, 3]
+        cost: 70
+        ma: 4
+        st: 3
+        ag: 4
+        pa: 5
+        av: 10
+        skills: [block, defensive, thick_skull]
+        primary: [general, devious]
+        secondary: [strength]
+        big_guy: false
+      - name: old_world_alliance_human_thrower
+        display: Human Thrower
+        qty: [0, 1]
+        cost: 75
+        ma: 6
+        st: 3
+        ag: 3
+        pa: 3
+        av: 9
+        skills: [pass, sure_hands]
+        primary: [general, passing]
+        secondary: [agility, strength]
+        big_guy: false
+      - name: old_world_alliance_dwarf_runner
+        display: Dwarf Runner
+        qty: [0, 1]
+        cost: 80
+        ma: 6
+        st: 3
+        ag: 3
+        pa: 4
+        av: 9
+        skills: [sprint, sure_hands, thick_skull]
+        primary: [general, passing]
+        secondary: [agility, strength]
+        big_guy: false
+      - name: old_world_alliance_human_blitzer
+        display: Human Blitzer
+        qty: [0, 1]
+        cost: 85
+        ma: 7
+        st: 3
+        ag: 3
+        pa: 4
+        av: 9
+        skills: [block, tackle]
+        primary: [general, strength]
+        secondary: [agility]
+        big_guy: false
+      - name: old_world_alliance_dwarf_blitzer
+        display: Dwarf Blitzer
+        qty: [0, 1]
+        cost: 100
+        ma: 5
+        st: 3
+        ag: 4
+        pa: 4
+        av: 10
+        skills: [block, diving_tackle, tackle, thick_skull]
+        primary: [general, strength]
+        secondary: [passing]
+        big_guy: false
+      - name: old_world_alliance_troll_slayer
+        display: Troll Slayer
+        qty: [0, 1]
+        cost: 95
+        ma: 5
+        st: 3
+        ag: 4
+        pa: 5
+        av: 9
+        skills:
+          - block
+          - dauntless
+          - frenzy
+          - {name: hatred, value: troll}   # Hatred (Troll)
+          - thick_skull
+        primary: [general, strength]
+        secondary: [agility]
+        big_guy: false
+      # Roster note: an Old World Alliance team may have a SINGLE Big Guy,
+      # chosen from the Ogre or the Altern Forest Treeman below.
+      - name: old_world_alliance_ogre
+        display: Ogre
+        qty: [0, 1]
+        cost: 140
+        ma: 5
+        st: 5
+        ag: 4
+        pa: 5
+        av: 10
+        skills:
+          - bone_head
+          - {name: loner, value: 3}
+          - mighty_blow
+          - thick_skull
+          - throw_team_mate
+        primary: [strength]
+        secondary: [agility, general]   # errata: Mutation removed from secondary
+        big_guy: true
+      - name: old_world_alliance_altern_forest_treeman
+        display: Altern Forest Treeman
+        qty: [0, 1]
+        cost: 120
+        ma: 2
+        st: 6
+        ag: 5
+        pa: 5
+        av: 11
+        skills:
+          - {name: loner, value: 4}
+          - mighty_blow
+          - stand_firm
+          - strong_arm
+          - take_root
+          - thick_skull
+          - throw_team_mate
+          - timmm_ber
+        primary: [strength]
+        secondary: [agility, general, passing]
+        big_guy: true
+
+  - name: orc
+    display: Orc
+    tier: 2
+    reroll_cost: 60
+    apothecary: true
+    special_rules: [brawlin_brutes, team_captain]
+    positions:
+      - name: orc_lineman
+        display: Orc Lineman
+        qty: [0, 16]
+        cost: 50
+        ma: 5
+        st: 3
+        ag: 3
+        pa: 4
+        av: 10
+        skills: []
+        primary: [general, strength]
+        secondary: [agility, devious]
+        big_guy: false
+      - name: orc_goblin_lineman
+        display: Goblin Lineman
+        qty: [0, 4]
+        cost: 40
+        ma: 6
+        st: 2
+        ag: 3
+        pa: 4         # errata: was 3+
+        av: 8
+        skills: [dodge, right_stuff, stunty]
+        primary: [agility, devious]
+        secondary: [general, passing, strength]
+        big_guy: false
+      - name: orc_thrower
+        display: Orc Thrower
+        qty: [0, 2]
+        cost: 75
+        ma: 6
+        st: 3
+        ag: 3
+        pa: 3
+        av: 9
+        skills: [pass, sure_hands]
+        primary: [general, passing]
+        secondary: [agility, strength, devious]
+        big_guy: false
+      - name: orc_blitzer
+        display: Orc Blitzer
+        qty: [0, 2]
+        cost: 85
+        ma: 6
+        st: 3
+        ag: 3
+        pa: 4
+        av: 10
+        skills: [block, break_tackle]
+        primary: [general, strength]
+        secondary: [agility, devious]
+        big_guy: false
+      - name: orc_big_un_blocker
+        display: Big Un Blocker
+        qty: [0, 2]
+        cost: 95
+        ma: 5
+        st: 4
+        ag: 4
+        pa: 6
+        av: 10
+        skills: [mighty_blow, taunt, thick_skull, unsteady]
+        primary: [general, strength]
+        secondary: [agility, devious]
+        big_guy: false
+      - name: orc_troll
+        display: Troll
+        qty: [0, 1]
+        cost: 115
+        ma: 4
+        st: 5
+        ag: 5
+        pa: 5
+        av: 10
+        skills:
+          - always_hungry
+          - {name: loner, value: 4}
+          - mighty_blow
+          - projectile_vomit
+          - really_stupid
+          - regeneration
+          - throw_team_mate
+        primary: [strength]
+        secondary: [agility, general, passing]
+        big_guy: true
+
+  - name: shambling_undead
+    display: Shambling Undead
+    tier: 2
+    reroll_cost: 70
+    apothecary: false
+    special_rules: [masters_of_undeath]
+    positions:
+      - name: shambling_undead_skeleton_lineman
+        display: Skeleton Lineman
+        qty: [0, 16]
+        cost: 40
+        ma: 5
+        st: 3
+        ag: 4
+        pa: 6
+        av: 8
+        skills: [regeneration, thick_skull]
+        primary: [general]
+        secondary: [agility, devious, strength]
+        big_guy: false
+      - name: shambling_undead_zombie_lineman
+        display: Zombie Lineman
+        qty: [0, 16]
+        cost: 40
+        ma: 4
+        st: 3
+        ag: 4
+        pa: 6
+        av: 9
+        skills: [eye_gouge, regeneration, unsteady]
+        primary: [devious, general]
+        secondary: [agility, strength]
+        big_guy: false
+      - name: shambling_undead_ghoul_runner
+        display: Ghoul Runner
+        qty: [0, 2]
+        cost: 75
+        ma: 7
+        st: 3
+        ag: 3
+        pa: 3
+        av: 8
+        skills: [dodge, regeneration]
+        primary: [agility, general]
+        secondary: [devious, passing, strength]
+        big_guy: false
+      - name: shambling_undead_wight_blitzer
+        display: Wight Blitzer
+        qty: [0, 2]
+        cost: 95
+        ma: 6
+        st: 3
+        ag: 3
+        pa: 5
+        av: 9
+        skills: [block, regeneration, tackle, thick_skull]
+        primary: [general, strength]
+        secondary: [agility, devious]
+        big_guy: false
+      - name: shambling_undead_mummy
+        display: Mummy
+        qty: [0, 2]
+        cost: 125
+        ma: 3
+        st: 5
+        ag: 5
+        pa: 6
+        av: 10
+        skills: [mighty_blow, regeneration]   # Big Guy keyword, but no Loner
+        primary: [strength]
+        secondary: [agility, general]
+        big_guy: true
+
+  - name: skaven
+    display: Skaven
+    tier: 2
+    reroll_cost: 50
+    apothecary: true
+    special_rules: []
+    positions:
+      - name: skaven_clanrat
+        display: Skaven Clanrat
+        qty: [0, 16]
+        cost: 50
+        ma: 7
+        st: 3
+        ag: 3
+        pa: 4
+        av: 8
+        skills: []
+        primary: [general, devious]
+        secondary: [agility, mutation, strength]
+        big_guy: false
+      - name: skaven_thrower
+        display: Skaven Thrower
+        qty: [0, 2]
+        cost: 80
+        ma: 7
+        st: 3
+        ag: 3
+        pa: 2
+        av: 8
+        skills: [pass, sure_hands]
+        primary: [general, passing]
+        secondary: [agility, devious, mutation, strength]
+        big_guy: false
+      - name: skaven_gutter_runner
+        display: Gutter Runner
+        qty: [0, 2]
+        cost: 85
+        ma: 9
+        st: 2
+        ag: 2
+        pa: 4
+        av: 8
+        skills: [dodge, stab]
+        primary: [agility, general, devious]
+        secondary: [mutation, strength]
+        big_guy: false
+      - name: skaven_blitzer
+        display: Skaven Blitzer
+        qty: [0, 2]
+        cost: 90
+        ma: 8
+        st: 3
+        ag: 3
+        pa: 4
+        av: 9
+        skills: [block, strip_ball]
+        primary: [general, strength]
+        secondary: [agility, devious, mutation]
+        big_guy: false
+      - name: skaven_rat_ogre
+        display: Rat Ogre
+        qty: [0, 1]
+        cost: 150
+        ma: 6
+        st: 5
+        ag: 4
+        pa: 6
+        av: 9
+        skills:
+          - animal_savagery
+          - frenzy
+          - {name: loner, value: 4}
+          - mighty_blow
+          - prehensile_tail
+        primary: [strength]
+        secondary: [agility, general, mutation]
+        big_guy: true
+
+  - name: snotling
+    display: Snotling
+    tier: 4
+    reroll_cost: 70
+    apothecary: true
+    special_rules: [bribery_and_corruption, low_cost_linemen, swarming]
+    positions:
+      - name: snotling_lineman
+        display: Snotling Lineman
+        qty: [0, 16]
+        cost: 15
+        ma: 5
+        st: 1
+        ag: 3
+        pa: 4
+        av: 6
+        skills: [dodge, insignificant, right_stuff, sidestep, stunty, titchy]
+        primary: [agility, devious]
+        secondary: [general]
+        big_guy: false
+      - name: snotling_fun_hoppa
+        display: Fun-hoppa
+        qty: [0, 2]
+        cost: 20
+        ma: 6
+        st: 1
+        ag: 3
+        pa: 4
+        av: 6
+        skills: [dodge, pogo, right_stuff, sidestep, stunty]
+        primary: [agility, devious]
+        secondary: [general]
+        big_guy: false
+      - name: snotling_stilty_runna
+        display: Stilty Runna
+        qty: [0, 2]
+        cost: 20
+        ma: 6
+        st: 1
+        ag: 3
+        pa: 4
+        av: 6
+        skills: [dodge, right_stuff, sidestep, sprint, stunty]
+        primary: [agility, devious]
+        secondary: [general]
+        big_guy: false
+      - name: snotling_fungus_flinga
+        display: Fungus Flinga
+        qty: [0, 2]
+        cost: 30
+        ma: 5
+        st: 1
+        ag: 3
+        pa: 4
+        av: 6
+        skills: [bombardier, dodge, right_stuff, secret_weapon, sidestep, stunty, titchy]
+        primary: [agility, devious, passing]
+        secondary: [general]
+        big_guy: false
+      - name: snotling_pump_wagon
+        display: Pump Wagon
+        qty: [0, 2]
+        cost: 100
+        ma: 5
+        st: 5
+        ag: 5
+        pa: 6
+        av: 9
+        skills: [dirty_player, juggernaut, mighty_blow, really_stupid, stand_firm]   # Big Guy keyword, no Loner
+        primary: [devious, strength]
+        secondary: [agility, general]
+        big_guy: true
+      - name: snotling_trained_troll
+        display: Trained Troll
+        qty: [0, 2]
+        cost: 115
+        ma: 4
+        st: 5
+        ag: 5
+        pa: 5
+        av: 10
+        skills: [always_hungry, mighty_blow, projectile_vomit, really_stupid, regeneration, throw_team_mate]   # Big Guy keyword, no Loner (unlike Orc/Underworld Troll)
+        primary: [strength]
+        secondary: [agility, general, passing]
+        big_guy: true
+
+  - name: tomb_kings
+    display: Tomb Kings
+    tier: 2
+    reroll_cost: 60
+    apothecary: false
+    special_rules: [masters_of_undeath]
+    positions:
+      - name: tomb_kings_skeleton_lineman
+        display: Skeleton Lineman
+        qty: [0, 16]
+        cost: 40
+        ma: 5
+        st: 3
+        ag: 4
+        pa: 6
+        av: 8
+        skills: [regeneration, thick_skull]
+        primary: [general]
+        secondary: [agility, devious, strength]
+        big_guy: false
+      - name: tomb_kings_thrower
+        display: Tomb Kings Thrower
+        qty: [0, 2]
+        cost: 65
+        ma: 6
+        st: 3
+        ag: 4
+        pa: 3
+        av: 9
+        skills: [pass, regeneration, sure_hands, thick_skull]
+        primary: [general, passing]
+        secondary: [agility, devious, strength]
+        big_guy: false
+      - name: tomb_kings_blitzer
+        display: Tomb Kings Blitzer
+        qty: [0, 2]
+        cost: 85
+        ma: 6
+        st: 3
+        ag: 4
+        pa: 5
+        av: 9
+        skills: [block, regeneration, thick_skull]
+        primary: [general, strength]
+        secondary: [agility, devious]
+        big_guy: false
+      - name: tomb_kings_tomb_guardian
+        display: Tomb Guardian
+        qty: [0, 4]
+        cost: 115
+        ma: 4
+        st: 5
+        ag: 5
+        pa: 6
+        av: 10
+        skills: [brawler, decay, regeneration]   # Big Guy keyword, no Loner; 0-4 allowed
+        primary: [strength]
+        secondary: [agility, general]
+        big_guy: true
+
+  - name: underworld_denizens
+    display: Underworld Denizens
+    tier: 1
+    reroll_cost: 70
+    apothecary: true
+    special_rules: [bribery_and_corruption]
+    positions:
+      - name: underworld_denizens_goblin_lineman
+        display: Goblin Lineman
+        qty: [0, 16]
+        cost: 40
+        ma: 6
+        st: 2
+        ag: 3
+        pa: 4
+        av: 8
+        skills: [dodge, right_stuff, stunty]
+        primary: [agility, devious, mutation]
+        secondary: [general, passing, strength]
+        big_guy: false
+      - name: underworld_denizens_snotling_lineman
+        display: Snotling Lineman
+        qty: [0, 6]
+        cost: 15
+        ma: 5
+        st: 1
+        ag: 3
+        pa: 4
+        av: 6
+        skills: [dodge, insignificant, right_stuff, sidestep, stunty, titchy]
+        primary: [agility, devious, mutation]
+        secondary: [general]
+        big_guy: false
+      - name: underworld_denizens_skaven_clanrat
+        display: Skaven Clanrat
+        qty: [0, 3]
+        cost: 50
+        ma: 7
+        st: 3
+        ag: 3
+        pa: 4
+        av: 8
+        skills:
+          - {name: animosity, value: goblin}   # Animosity (Goblin)
+        primary: [general, mutation, devious]
+        secondary: [agility, strength]
+        big_guy: false
+      - name: underworld_denizens_skaven_thrower
+        display: Skaven Thrower
+        qty: [0, 1]
+        cost: 80
+        ma: 7
+        st: 3
+        ag: 3
+        pa: 2
+        av: 8
+        skills:
+          - {name: animosity, value: goblin}
+          - pass
+          - sure_hands
+        primary: [general, mutation, passing]
+        secondary: [agility, devious, strength]
+        big_guy: false
+      - name: underworld_denizens_gutter_runner
+        display: Gutter Runner
+        qty: [0, 1]
+        cost: 85
+        ma: 9
+        st: 2
+        ag: 2
+        pa: 4
+        av: 8
+        skills:
+          - {name: animosity, value: goblin}
+          - dodge
+          - stab
+        primary: [agility, general, mutation, devious]
+        secondary: [strength]
+        big_guy: false
+      - name: underworld_denizens_skaven_blitzer
+        display: Skaven Blitzer
+        qty: [0, 1]
+        cost: 90
+        ma: 8
+        st: 3
+        ag: 3
+        pa: 4
+        av: 9
+        skills:
+          - {name: animosity, value: goblin}
+          - block
+          - strip_ball
+        primary: [general, mutation, strength]
+        secondary: [agility, passing]
+        big_guy: false
+      # Roster note: an Underworld Denizens team may have a SINGLE Big Guy,
+      # chosen from the Troll or the Rat Ogre below.
+      - name: underworld_denizens_troll
+        display: Troll
+        qty: [0, 1]
+        cost: 115
+        ma: 4
+        st: 5
+        ag: 5
+        pa: 5
+        av: 10
+        skills:
+          - always_hungry
+          - {name: loner, value: 4}
+          - mighty_blow
+          - projectile_vomit
+          - really_stupid
+          - regeneration
+          - throw_team_mate
+        primary: [mutation, strength]
+        secondary: [agility, general, passing]
+        big_guy: true
+      - name: underworld_denizens_rat_ogre
+        display: Rat Ogre
+        qty: [0, 1]
+        cost: 150
+        ma: 6
+        st: 5
+        ag: 4
+        pa: 6
+        av: 9
+        skills:
+          - animal_savagery
+          - frenzy
+          - {name: loner, value: 4}
+          - mighty_blow
+          - prehensile_tail
+        primary: [mutation, strength]
+        secondary: [agility, general]
+        big_guy: true
+
+  - name: vampire
+    display: Vampire
+    tier: 2
+    reroll_cost: 60
+    apothecary: true   # page lists Apothecary 50K in Staff (despite Masters of Undeath)
+    special_rules: [masters_of_undeath]
+    positions:
+      - name: vampire_thrall_lineman
+        display: Thrall Lineman
+        qty: [0, 16]
+        cost: 40
+        ma: 6
+        st: 3
+        ag: 3
+        pa: 4
+        av: 8
+        skills: []
+        primary: [general]
+        secondary: [agility, strength]
+        big_guy: false
+      - name: vampire_runner
+        display: Vampire Runner
+        qty: [0, 2]
+        cost: 100
+        ma: 8
+        st: 3
+        ag: 2
+        pa: 3
+        av: 8
+        skills:
+          - {name: bloodlust, value: 2}   # Bloodlust (2+)
+          - hypnotic_gaze
+          - regeneration
+        primary: [agility, general]
+        secondary: [passing, strength]
+        big_guy: false
+      - name: vampire_thrower
+        display: Vampire Thrower
+        qty: [0, 2]
+        cost: 110
+        ma: 6
+        st: 4
+        ag: 2
+        pa: 2
+        av: 9
+        skills:
+          - {name: bloodlust, value: 2}
+          - hypnotic_gaze
+          - pass
+          - regeneration
+        primary: [agility, general, passing]
+        secondary: [strength]
+        big_guy: false
+      - name: vampire_blitzer
+        display: Vampire Blitzer
+        qty: [0, 2]
+        cost: 110
+        ma: 6
+        st: 4
+        ag: 2
+        pa: 4
+        av: 9
+        skills:
+          - {name: bloodlust, value: 3}   # Bloodlust (3+)
+          - hypnotic_gaze
+          - juggernaut
+          - regeneration
+        primary: [agility, general, strength]
+        secondary: []   # page lists no secondary categories
+        big_guy: false
+      - name: vampire_vargheist
+        display: Vargheist
+        qty: [0, 1]
+        cost: 150
+        ma: 5
+        st: 5
+        ag: 4
+        pa: 6
+        av: 10
+        skills:
+          - {name: bloodlust, value: 3}
+          - claws
+          - frenzy
+          - {name: loner, value: 4}
+          - regeneration
+        primary: [strength]
+        secondary: [agility, general]
+        big_guy: true
+
+  - name: wood_elf
+    display: Wood Elf
+    tier: 1
+    reroll_cost: 50
+    apothecary: true
+    special_rules: []
+    positions:
+      - name: wood_elf_lineman
+        display: Wood Elf Lineman
+        qty: [0, 16]
+        cost: 65
+        ma: 7
+        st: 3
+        ag: 2
+        pa: 4
+        av: 8
+        skills: []
+        primary: [agility, general]
+        secondary: [strength]
+        big_guy: false
+      - name: wood_elf_thrower
+        display: Wood Elf Thrower
+        qty: [0, 2]
+        cost: 85
+        ma: 7
+        st: 3
+        ag: 2
+        pa: 2
+        av: 8
+        skills: [pass, safe_pair_of_hands]
+        primary: [agility, general, passing]
+        secondary: [strength]
+        big_guy: false
+      - name: wood_elf_catcher
+        display: Wood Elf Catcher
+        qty: [0, 2]
+        cost: 90
+        ma: 8
+        st: 2
+        ag: 2
+        pa: 3
+        av: 8
+        skills: [catch, dodge, sprint]
+        primary: [agility, general]
+        secondary: [passing, strength]
+        big_guy: false
+      - name: wood_elf_wardancer
+        display: Wardancer
+        qty: [0, 2]
+        cost: 130
+        ma: 8
+        st: 3
+        ag: 2
+        pa: 3
+        av: 8
+        skills: [block, dodge, leap]
+        primary: [agility, general]
+        secondary: [passing, strength]
+        big_guy: false
+      - name: wood_elf_loren_forest_treeman
+        display: Loren Forest Treeman
+        qty: [0, 1]
+        cost: 120
+        ma: 2
+        st: 6
+        ag: 5
+        pa: 5
+        av: 11
+        skills:
+          - {name: loner, value: 4}
+          - mighty_blow
+          - stand_firm
+          - strong_arm
+          - take_root
+          - thick_skull
+          - throw_team_mate
+        primary: [strength]
+        secondary: [agility, general]   # no Timmm-ber! and no P secondary (unlike OWA Altern Forest Treeman)
+        big_guy: true

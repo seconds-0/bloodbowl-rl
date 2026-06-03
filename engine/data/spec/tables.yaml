@@ -1,0 +1,232 @@
+# BB2025 game tables — hand-extracted from the bloodbowlbase.ru mirror (errata applied inline there;
+# <del> struck-out text ignored). Cross-checked against core_rules/cheat_sheet and core_rules/latest_faq
+# (May 2026 — no errata touch these tables).
+# Sources:
+#   core_rules/the_game_of_blood_bowl/index.html  (weather, kick-off, injury, casualty, lasting injury,
+#                                                  argue the call, stalling, KO recovery, injury by crowd)
+#   core_rules/inducements/index.html             (Prayers to Nuffle D16)
+#   core_rules/league_play/index.html             (SPP earning, advancement, characteristic improvement,
+#                                                  value increase, expensive mistakes)
+#   core_rules/matched_play/index.html            (skill points / tier limits)
+# Conventions: snake_case ids, costs/values in thousands of gold (k), all effect text is paraphrase.
+
+# 2D6, rolled by the kicking team's coach immediately after the kick deviates.
+kickoff:
+  2:  {event: get_the_ref,
+       effect: "each team gains one free Bribe inducement; unused by end of game = lost"}
+  3:  {event: time_out,
+       effect: "if kicking team's turn marker is on 6, 7 or 8: both turn markers back one; otherwise both forward one"}
+  4:  {event: solid_defence, players: "d3+3",
+       effect: "kicking coach picks up to D3+3 Open players on their team and sets them up again under normal setup restrictions"}
+  5:  {event: high_kick,
+       effect: "one Open receiving-team player may be placed in the square the ball will land in"}
+  6:  {event: cheering_fans,
+       effect: "both coaches D6 + cheerleaders; highest (both on tie) gets +1 offensive assist on the first Block of their next turn"}
+  7:  {event: brilliant_coaching,
+       effect: "both coaches D6 + assistant coaches; highest (both on tie) gains a free team re-roll for the drive (lost if unused)"}
+  8:  {event: changing_weather,
+       effect: "re-roll on the weather table; if the new result is Perfect Conditions the ball Scatters (3) in the air before landing"}
+  9:  {event: quick_snap, players: "d3+3",
+       effect: "receiving coach picks up to D3+3 Open players; each may move one square in any direction, even across the line of scrimmage"}
+  10: {event: charge, players: "d3+3",
+       effect: "kicking coach picks up to D3+3 Open players; activate them one at a time for a free Move Action; one may instead Blitz, one may Throw Team-mate, one may Kick Team-mate; if a selected player Falls Over or is Knocked Down, the Charge ends"}
+  11: {event: dodgy_snack,
+       effect: "both coaches D6; lowest (both on tie) randomly selects one of their players on the pitch and rolls D6: on 2+ that player has -1 MA and -1 AV for the drive; on 1 the player goes to the Reserves box for the drive"}
+  12: {event: pitch_invasion, players: "d3",
+       effect: "both coaches D6 + Fan Factor; lowest (both on tie) randomly selects D3 of their on-pitch players, who are Placed Prone and become Stunned"}
+
+# 2D6 (each coach rolls a D6, added together) at the start of the game; re-rolled by the
+# Changing Weather kick-off event and the Weather Mage inducement.
+weather:
+  2:  {condition: sweltering_heat,
+       effect: "at the end of each drive one coach rolls a D3; each coach randomly puts that many of their on-pitch players in Reserves for the next drive"}
+  3:  {condition: very_sunny,
+       effect: "-1 modifier to all Passing Ability tests"}
+  4:  {condition: perfect_conditions, effect: null}
+  5:  {condition: perfect_conditions, effect: null}
+  6:  {condition: perfect_conditions, effect: null}
+  7:  {condition: perfect_conditions, effect: null}
+  8:  {condition: perfect_conditions, effect: null}
+  9:  {condition: perfect_conditions, effect: null}
+  10: {condition: perfect_conditions, effect: null}
+  11: {condition: pouring_rain,
+       effect: "-1 modifier when picking up the ball, catching, or intercepting a pass"}
+  12: {condition: blizzard,
+       effect: "additional -1 modifier to Rush rolls; Pass Actions limited to Quick Pass or Short Pass"}
+
+# 2D6 by the opposing coach after armour is broken.
+injury:  {stun: [2, 7], ko: [8, 9], casualty: [10, 12]}
+
+# Used instead of `injury` for players with the Stunty trait. The 9 (badly_hurt) result is a
+# casualty with NO casualty roll: in league play it automatically counts as Badly Hurt.
+injury_stunty: {stun: [2, 6], ko: [7, 8], badly_hurt: [9, 9], casualty: [10, 12]}
+
+# When a player risks Injury by the Crowd (pushed off pitch / lands in crowd): make a normal
+# Injury Roll, but a Stunned result puts the player in the Reserves box instead.
+injury_by_crowd: {table: injury, stunned_becomes: reserves}
+
+# D16 by the opposing coach when a player suffers a casualty. +1 per Niggling Injury the
+# victim already has. In all cases the player misses the rest of the current game.
+#   badly_hurt:      no long-term effect
+#   seriously_hurt:  miss next game
+#   serious_injury:  niggling injury + miss next game
+#   lasting_injury:  characteristic reduction (D6 table below) + miss next game
+#   dead:            removed from roster
+casualty:
+  badly_hurt: [1, 8]
+  seriously_hurt: [9, 10]
+  serious_injury: [11, 12]
+  lasting_injury: [13, 14]
+  dead: [15, 16]
+
+# D6 when a Lasting Injury casualty result is rolled; the named characteristic is reduced by 1
+# (AG/PA target number +1, AV target number -1, MA/ST value -1). If the reduction cannot be
+# applied (characteristic already at minimum), treat as Miss Next Game instead.
+lasting_injury:
+  1: {injury: head_injury, reduce: av}
+  2: {injury: head_injury, reduce: av}
+  3: {injury: smashed_knee, reduce: ma}
+  4: {injury: broken_arm, reduce: pa}
+  5: {injury: dislocated_hip, reduce: ag}
+  6: {injury: broken_shoulder, reduce: st}
+
+# D6 when any player is Sent-off, before any Bribe is used (FAQ: if you cannot Argue the
+# Call you may still use Bribes).
+argue_the_call:
+  1: {result: youre_outta_here, sent_off: true, coach_ejected: true}  # no further Argue the Call this game
+  2: {result: i_dont_care, sent_off: true}
+  3: {result: i_dont_care, sent_off: true}
+  4: {result: i_dont_care, sent_off: true}
+  5: {result: i_dont_care, sent_off: true}
+  6: {result: well_when_you_put_it_like_that, sent_off: false, turnover_still_caused: true}  # player returns to their square
+
+# Stalling / "Crowd Takes Action": a ball-carrier who, when activated, could score without
+# rolling any dice but ends their activation without scoring (and still holding the ball) is
+# Stalling. Not Stalling if any dice would be needed to score, or if a Pass/Hand-off Action
+# ends the activation without possession, or if the turn ends before the player could activate.
+stalling:
+  check_at: end_of_stalling_players_activation
+  die: d6
+  crowd_acts_if: gte_current_turn_number   # D6 >= team's current turn number
+  effect: knocked_down                     # the Stalling player is Knocked Down
+  causes_turnover: true
+  applies_when_forgoing_activation: true   # roll still made if the player forgoes their activation
+
+# End of Drive Sequence: D6 per Knocked-out player; 4+ -> Reserves box, else stays KO'd.
+ko_recovery: {die: d6, recover_on: 4}
+
+# D16 per Prayers to Nuffle inducement purchased (re-roll results already rolled this game).
+# Effects last until the end of the game; Star Players may never be selected by a prayer.
+prayers:
+  1:  {prayer: treacherous_trapdoor, display: Treacherous Trapdoor,
+       effect: "any player entering a trapdoor square rolls D6; on 1 they fall through: injury roll as if pushed into the crowd; a held ball bounces from the trapdoor square"}
+  2:  {prayer: friends_with_the_ref, display: Friends with the Ref,
+       effect: "when you Argue the Call, treat rolls of 5 or 6 as the 6 result"}
+  3:  {prayer: stiletto, display: Stiletto,
+       effect: "one random player on your team gains the Stab trait for the game"}
+  4:  {prayer: iron_man, display: Iron Man,
+       effect: "one chosen player on your team improves AV by 1 (max 11+) for the game"}
+  5:  {prayer: knuckle_dusters, display: Knuckle Dusters,
+       effect: "one chosen player on your team gains the Mighty Blow skill for the game"}
+  6:  {prayer: bad_habits, display: Bad Habits,
+       effect: "D3 random opposition players gain Loner (2+) for the game"}
+  7:  {prayer: greasy_cleats, display: Greasy Cleats,
+       effect: "one random opposition player has -1 MA (min 1) for the game"}
+  8:  {prayer: blessing_of_nuffle, display: Blessing of Nuffle,
+       effect: "one random player on your team gains the Pro skill for the game"}
+  9:  {prayer: moles_under_the_pitch, display: Moles Under the Pitch,
+       effect: "opposition players take a -1 modifier on Rush rolls"}
+  10: {prayer: perfect_passing, display: Perfect Passing,
+       effect: "your players earn 2 SPP per Completion instead of 1"}
+  11: {prayer: dazzling_catching, display: Dazzling Catching,
+       effect: "your players earn 1 SPP for each successful catch of a Pass Action"}
+  12: {prayer: fan_interaction, display: Fan Interaction,
+       effect: "if an opposition player suffers a casualty from being pushed into the crowd, the pusher earns 2 SPP"}
+  13: {prayer: fouling_frenzy, display: Fouling Frenzy,
+       effect: "your players earn 2 SPP for a casualty caused by a Foul Action"}
+  14: {prayer: throw_a_rock, display: Throw a Rock,
+       effect: "once per game at the start of any of your turns, randomly select an opposition player on the pitch and roll D6; on 4+ they are Knocked Down"}
+  15: {prayer: under_scrutiny, display: Under Scrutiny,
+       effect: "any opposition fouler that breaks armour is automatically Sent-off, double or not"}
+  16: {prayer: intensive_training, display: Intensive Training,
+       effect: "one random player on your team gains a chosen Primary skill for the game"}
+
+# League play: SPP earning and spending (core_rules/league_play).
+advancement:
+  spp_earning:
+    completion: 1            # accurate pass caught by a team-mate without bouncing
+    superb_throw: 1          # TTM superb throw where the team-mate lands on their feet (to the thrower)
+    ttm_safe_landing: 1      # to a thrown player who lands safely, any throw type
+    interception: 2
+    casualty: 2              # block-action knock-downs only; counts even if both went down or the casualty is healed; fouls/crowd/special actions earn nothing unless their rule says so
+    touchdown: 3             # conceding-awarded TDs: winning coach allocates the SPP
+    mvp: 4                   # post-game: nominate 6 players who played, D6 picks one
+  # SPP cost of a player's Nth advancement, by what is bought. A player MUST take an
+  # advancement once they have enough SPP for a characteristic improvement (any type counts).
+  levels:
+    - {level: 1, title: experienced,   random_primary: 3,  choose_primary: 6,  choose_secondary: 10, characteristic: 14}
+    - {level: 2, title: veteran,       random_primary: 4,  choose_primary: 8,  choose_secondary: 12, characteristic: 16}
+    - {level: 3, title: emerging_star, random_primary: 6,  choose_primary: 12, choose_secondary: 16, characteristic: 20}
+    - {level: 4, title: star,          random_primary: 8,  choose_primary: 16, choose_secondary: 20, characteristic: 24}
+    - {level: 5, title: superstar,     random_primary: 10, choose_primary: 20, choose_secondary: 24, characteristic: 28}
+    - {level: 6, title: legend,        random_primary: 15, choose_primary: 30, choose_secondary: 34, characteristic: 38}
+  # Random skill: roll 2D6 one after the other on the skill table (first die = half of table,
+  # second die = skill) twice, choose one of the two results; same skill twice = must take it;
+  # re-roll skills the player already has or cannot use.
+  # Characteristic improvement: D8, +1 to ONE of the listed characteristics; may take a
+  # primary/secondary skill instead but the SPP stays spent. Never improve a characteristic
+  # more than twice or above its maximum.
+  characteristic_improvement:
+    1: [av]
+    2: [av, pa]
+    3: [av, ma, pa]
+    4: [av, ma, pa]
+    5: [ma, pa]
+    6: [ag, ma]
+    7: [ag, st]
+    8: [any]
+  # Added to the player's Current Value, in k.
+  value_increase:
+    primary_skill: 20
+    secondary_skill: 40
+    elite_skill_surcharge: 10   # extra +10k on top whenever the skill gained is an Elite Skill
+    av: 10
+    ma: 20
+    pa: 20
+    ag: 30
+    st: 60
+  max_advancements: 6
+  max_improvements_per_characteristic: 2
+
+# League play post-game: roll if the treasury holds >= 100k at this step. D6 row, treasury
+# bracket column. Brackets in k, [min, max] (null = unbounded).
+expensive_mistakes:
+  brackets:
+    - [100, 195]
+    - [200, 295]
+    - [300, 395]
+    - [400, 495]
+    - [500, 595]
+    - [600, null]
+  rolls:   # D6 -> result per bracket, same order as `brackets`
+    1: [minor_incident, minor_incident, major_incident, major_incident, catastrophe, catastrophe]
+    2: [crisis_averted, minor_incident, minor_incident, major_incident, major_incident, catastrophe]
+    3: [crisis_averted, crisis_averted, minor_incident, minor_incident, major_incident, major_incident]
+    4: [crisis_averted, crisis_averted, crisis_averted, minor_incident, minor_incident, major_incident]
+    5: [crisis_averted, crisis_averted, crisis_averted, crisis_averted, minor_incident, minor_incident]
+    6: [crisis_averted, crisis_averted, crisis_averted, crisis_averted, crisis_averted, minor_incident]
+  outcomes:
+    crisis_averted: {loss: none}
+    minor_incident: {loss: "D3 x 10k"}
+    major_incident: {loss: "half the treasury, rounded down to the nearest 5k"}
+    catastrophe: {loss: "everything except 2D6 x 10k"}
+
+# Matched play (tournament) drafting: Skill Points by team tier and what they buy.
+matched_play:
+  skill_points_by_tier: {1: 6, 2: 8, 3: 9, 4: 10}
+  skill_point_costs: {primary_skill: 1, secondary_skill: 2, star_player: 2, mega_star: 4}
+  secondary_skill_max_by_tier: {1: 1, 2: 2, 3: 3, 4: 4}
+  star_player_max_by_tier: {1: 1, 2: 2, 3: 2, 4: 2}   # paired stars = one choice (2 SP), two roster slots
+  mega_star_max: 1                                    # counts against the star player maximum
+  elite_skill_purchase_cap: 4                         # each Elite Skill bought at most 4x per roster
+  added_skills_per_player_max: 1                      # purchased skills don't raise player value/TV
