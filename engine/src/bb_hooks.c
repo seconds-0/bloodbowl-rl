@@ -52,12 +52,17 @@ int bb_hook_mods(const bb_match* m, const bb_ctx* c) {
     return total;
 }
 
-int bb_hook_reroll(const bb_match* m, int slot, int kind) {
-    const bb_player* p = &m->players[slot];
-    if (p->skill_rr_used & (1u << kind)) return -1;
+int bb_hook_reroll(const bb_match* m, const bb_ctx* c) {
+    // BB2025 treats Intercept as a distinct test from Catch: no skill grants
+    // an interception re-roll (the Catch skill re-rolls a test "when
+    // attempting to Catch the ball" only). Interception ctxs carry the
+    // thrower in `other`. (adversarial review M11)
+    if (c->kind == BB_TEST_CATCH && c->other != BB_NO_PLAYER) return -1;
+    const bb_player* p = &m->players[c->player];
+    if (p->skill_rr_used & (1u << c->kind)) return -1;
     for (int sk = bb_next_skill(&p->skills, 0); sk >= 0;
          sk = bb_next_skill(&p->skills, sk + 1)) {
-        if (bb_hooks[sk].reroll_kinds & (1u << kind)) {
+        if (bb_hooks[sk].reroll_kinds & (1u << c->kind)) {
             bb_cover(sk);
             return sk;
         }

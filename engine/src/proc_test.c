@@ -1,7 +1,9 @@
 // proc_test.c — the generic D6 test with reroll window.
 //
 // Frame layout: a = player slot, b = bb_test_kind, x = needed target (2..6,
-// already including modifiers via bb_test_target), data bits:
+// already including modifiers via bb_test_target), y = the test ctx's
+// `other` slot + 1 (0 = none; interceptions carry the thrower so re-roll
+// grants can tell them apart from catches — review M11), data bits:
 //   bit0: team reroll consumed for this test
 //   bit1: skill reroll consumed for this test
 //   bit2: a reroll decision is pending
@@ -26,6 +28,14 @@ static bool test_pass(int die, int target) {
     return die >= target;
 }
 
+// Rebuild the re-roll-relevant test ctx (kind / player / other) from the
+// frame; `other` is stashed in frame y as slot + 1 (0 = none).
+static bb_ctx test_ctx(const bb_frame* f) {
+    bb_ctx c = {f->b, f->a, (uint8_t)(f->y ? f->y - 1 : BB_NO_PLAYER), f->a,
+                0, 0, 0, 0, -1, 0};
+    return c;
+}
+
 static bool team_reroll_available(const bb_match* m, int team) {
     // BB2025: any number of team re-rolls per turn; only during your own team
     // turn, and never re-rolling the same die twice (per-frame TF_TEAM_USED).
@@ -47,8 +57,9 @@ static void test_advance(bb_match* m, bb_rng* rng) {
             return;
         }
         // Failed: offer rerolls if any are available.
+        bb_ctx tc = test_ctx(f);
         bool team_rr = team_reroll_available(m, team) && !(f->data & TF_TEAM_USED);
-        bool skill_rr = !(f->data & TF_SKILL_USED) && bb_skill_reroll_for(m, slot, f->b) >= 0;
+        bool skill_rr = !(f->data & TF_SKILL_USED) && bb_hook_reroll(m, &tc) >= 0;
         if (team_rr || skill_rr) {
             f->data |= TF_WAITING;
             bb_need_decision(m, team);
@@ -95,7 +106,8 @@ static int test_legal(const bb_match* m, bb_action* out) {
         !(m->players[slot].flags & BB_PF_USED_SKILL_B)) {
         out[n++] = (bb_action){BB_A_USE_REROLL, BB_RR_PRO, 0, 0};
     }
-    int sk = (f->data & TF_SKILL_USED) ? -1 : bb_skill_reroll_for(m, slot, f->b);
+    bb_ctx tc = test_ctx(f);
+    int sk = (f->data & TF_SKILL_USED) ? -1 : bb_hook_reroll(m, &tc);
     if (sk >= 0) {
         out[n++] = (bb_action){BB_A_USE_REROLL, BB_RR_SKILL, (uint8_t)sk, 0};
     }

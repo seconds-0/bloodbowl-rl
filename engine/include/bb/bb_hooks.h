@@ -104,7 +104,11 @@ extern bb_skill_hooks bb_hooks[BB_SKILL_COUNT];
 int bb_hook_mods(const bb_match* m, const bb_ctx* c);
 
 // Skill granting a re-roll for this test, or -1 (honours once-per-turn).
-int bb_hook_reroll(const bb_match* m, int slot, int kind);
+// Takes the test ctx (kind / acting player / other) rather than a bare kind:
+// interception attempts are dispatched as CATCH-kind tests with the thrower
+// in ctx.other and are never re-rollable by skill (BB2025 treats Intercept
+// as distinct from Catch). (adversarial review M11)
+int bb_hook_reroll(const bb_match* m, const bb_ctx* c);
 
 // Activation gate for this player: fills *target and *gate_kind; returns the
 // gating skill id or -1.

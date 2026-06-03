@@ -18,7 +18,11 @@ BB_SKILL_REROLL(SURE_FEET, 1u << BB_TEST_RUSH)
 BB_SKILL_REROLL(SURE_HANDS, 1u << BB_TEST_PICKUP)
 // PASS: "may re-roll a failed Passing Ability Test when performing a Pass".
 BB_SKILL_REROLL(PASS, 1u << BB_TEST_PASS)
-// CATCH: "may re-roll a failed Agility Test when attempting to catch".
+// CATCH: "This player may re-roll any failed Agility Test when attempting to
+// Catch the ball." Interception attempts are NOT Catch attempts in BB2025
+// (Disturbing Presence / Extra Arms / Stunty name Intercept separately):
+// the dispatcher (bb_hook_reroll) excludes CATCH-kind tests whose ctx
+// carries a thrower in `other`. (adversarial review M11)
 BB_SKILL_REROLL(CATCH, 1u << BB_TEST_CATCH)
 
 // --- Test modifiers -------------------------------------------------------------
@@ -56,10 +60,16 @@ BB_SKILL_MOD(CANNONEER) {
     return (c->kind == BB_TEST_PASS && c->range_band >= 2) ? 1 : 0;
 }
 
-// NERVES OF STEEL: "ignore any modifiers for being Marked when they attempt
-// to perform a Pass Action, attempt to Catch ... or attempt to Intercept."
+// NERVES OF STEEL: "This player may ignore any modifiers for being Marked
+// when making an Agility Test to Catch the ball, or when making a Passing
+// Ability Test to Pass the ball." The BB2025 text has NO Intercept clause
+// (unlike BB2020): an interception attempt — a CATCH-kind test whose ctx
+// carries the thrower in `other` — keeps its Marking penalties.
+// (adversarial review M11)
 BB_SKILL_MOD(NERVES_OF_STEEL) {
     if (c->kind != BB_TEST_PASS && c->kind != BB_TEST_CATCH) return 0;
+    if (c->kind == BB_TEST_CATCH && c->other != BB_NO_PLAYER)
+        return 0; // interception, not a Catch
     const bb_player* p = &m->players[c->player];
     return bb_tackle_zones(m, BB_TEAM_OF(c->player), p->x, p->y);
 }

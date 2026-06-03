@@ -192,6 +192,131 @@ BB_TEST(skmp_very_long_legs_intercept_plus_two) {
     BB_CHECK_EQ(m.decision_team, BB_AWAY); // interception is always a turnover
 }
 
+// =============================================================================
+// Interceptions are not Catches (adversarial review M11)
+// =============================================================================
+
+// Regression (review M11): SK/CATCH "This player may re-roll any failed
+// Agility Test when attempting to Catch the ball" — an interception attempt
+// is NOT a Catch (DP/Extra Arms/Stunty all name Intercept separately), so a
+// Catch-skill interceptor gets NO re-roll window after a failed attempt: the
+// pass resolves straight through to the receiver.
+BB_TEST(skmp_catch_skill_no_reroll_on_interception) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0); // zero team re-rolls on both sides
+    int thrower = fx_player(&m, 0, 0, 5, 7, 6, 3, 3, 2, 9); // PA 2+
+    int receiver = fx_lineman(&m, 0, 1, 9, 7);              // AG 3+
+    int opp = fx_lineman(&m, 1, 0, 7, 7); // AG 3+, on the ruler
+    fx_give_skill(&m, opp, BB_SK_CATCH);
+    fx_ball_held(&m, thrower);
+    // Short pass (dx=4): PA 2+ -1, roll 5 -> Accurate. Interception (auto:
+    // single candidate): AG 3+ -3 -> needs 6; roll 5 FAILS. Pre-fix the Catch
+    // skill opened a re-roll window here; post-fix the flight resolves and
+    // the receiver catches unmodified (3+) on a 4.
+    static const uint8_t dice[] = {5, 5, 4};
+    bb_rng rng;
+    bb_rng_script(&rng, dice, 3);
+
+    fx_run(&m, &rng);
+    fx_activate(&m, &rng, thrower, BB_ACT_PASS);
+    bb_status st = fx_apply(&m, mk(BB_A_PASS_TARGET, 0, 9, 7), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK(!fx_has_type(&m, BB_A_USE_REROLL)); // no re-roll window opened
+    BB_CHECK(!bb_rng_error(&rng));
+    BB_CHECK_EQ(m.ball.state, BB_BALL_HELD);
+    BB_CHECK_EQ(m.ball.carrier, receiver);
+    BB_CHECK_EQ(m.decision_team, BB_HOME); // no turnover, home still acting
+}
+
+// Control for M11: the Catch skill still grants its re-roll on an ordinary
+// Catch — a failed catch of an accurate pass opens the window, and using the
+// skill re-roll catches the ball.
+BB_TEST(skmp_catch_skill_reroll_on_regular_catch) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int thrower = fx_player(&m, 0, 0, 5, 7, 6, 3, 3, 2, 9); // PA 2+
+    int receiver = fx_lineman(&m, 0, 1, 8, 7);              // AG 3+
+    fx_give_skill(&m, receiver, BB_SK_CATCH);
+    fx_lineman(&m, 1, 9, 24, 1); // far-away opponent bystander
+    fx_ball_held(&m, thrower);
+    // Quick pass: nat 6 Accurate; catch (unmodified 3+) rolls 2 -> FAIL ->
+    // Catch-skill re-roll window; re-roll 3 -> caught.
+    static const uint8_t dice[] = {6, 2, 3};
+    bb_rng rng;
+    bb_rng_script(&rng, dice, 3);
+
+    fx_run(&m, &rng);
+    fx_activate(&m, &rng, thrower, BB_ACT_PASS);
+    bb_status st = fx_apply(&m, mk(BB_A_PASS_TARGET, 0, 8, 7), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    bb_action use = mk(BB_A_USE_REROLL, BB_RR_SKILL, BB_SK_CATCH, 0);
+    BB_CHECK(fx_find(&m, use) >= 0); // the window IS offered for a real catch
+    st = fx_apply(&m, use, &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK(!bb_rng_error(&rng));
+    BB_CHECK_EQ(m.ball.state, BB_BALL_HELD);
+    BB_CHECK_EQ(m.ball.carrier, receiver);
+}
+
+// Regression (review M11): SK/NERVES OF STEEL "may ignore any modifiers for
+// being Marked when making an Agility Test to Catch the ball, or when making
+// a Passing Ability Test to Pass the ball" — BB2025 has NO Intercept clause,
+// so a Marked NoS interceptor keeps the marker's -1. AG 2+ vs an Accurate
+// pass while Marked once: -3 -1 -> needs 6; a 5 must FAIL (pre-fix NoS
+// wrongly refunded the marker and the 5 intercepted at 5+).
+BB_TEST(skmp_nerves_of_steel_no_effect_on_interception) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int thrower = fx_player(&m, 0, 0, 5, 7, 6, 3, 3, 2, 9); // PA 2+
+    int receiver = fx_lineman(&m, 0, 1, 9, 7);              // AG 3+
+    int opp = fx_player(&m, 1, 0, 7, 7, 6, 3, 2, 4, 9);     // AG 2+, on the ruler
+    fx_give_skill(&m, opp, BB_SK_NERVES_OF_STEEL);
+    fx_lineman(&m, 0, 2, 7, 8); // Marks the interceptor (off the ruler)
+    fx_ball_held(&m, thrower);
+    // Short pass: PA 2+ -1, roll 5 -> Accurate. Interception: AG 2+ -3
+    // (accurate) -1 (Marked, NOT ignored) -> needs 6; roll 5 FAILS. The
+    // receiver then catches unmodified (3+) on a 3.
+    static const uint8_t dice[] = {5, 5, 3};
+    bb_rng rng;
+    bb_rng_script(&rng, dice, 3);
+
+    fx_run(&m, &rng);
+    fx_activate(&m, &rng, thrower, BB_ACT_PASS);
+    bb_status st = fx_apply(&m, mk(BB_A_PASS_TARGET, 0, 9, 7), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK(!bb_rng_error(&rng));
+    BB_CHECK(!(m.players[opp].flags & BB_PF_HAS_BALL)); // no interception
+    BB_CHECK_EQ(m.ball.state, BB_BALL_HELD);
+    BB_CHECK_EQ(m.ball.carrier, receiver);
+    BB_CHECK_EQ(m.decision_team, BB_HOME); // no turnover
+}
+
+// Control for M11: Nerves of Steel still refunds the Marking -1 on an
+// ordinary Catch. AG 3+ receiver Marked once catching an accurate pass:
+// without NoS the target is 4+, with NoS a natural 3 catches.
+BB_TEST(skmp_nerves_of_steel_still_ignores_markers_on_catch) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int thrower = fx_player(&m, 0, 0, 5, 7, 6, 3, 3, 2, 9); // PA 2+
+    int receiver = fx_lineman(&m, 0, 1, 8, 7);              // AG 3+
+    fx_give_skill(&m, receiver, BB_SK_NERVES_OF_STEEL);
+    fx_lineman(&m, 1, 0, 8, 8); // Marks the receiver (not on the ruler)
+    fx_ball_held(&m, thrower);
+    // Quick pass: nat 6 Accurate (no interception candidate: the marker is
+    // off the ruler). Catch: base 0, Marked -1, NoS +1 -> bare 3+; 3 catches.
+    static const uint8_t dice[] = {6, 3};
+    bb_rng rng;
+    bb_rng_script(&rng, dice, 2);
+
+    fx_run(&m, &rng);
+    fx_activate(&m, &rng, thrower, BB_ACT_PASS);
+    bb_status st = fx_apply(&m, mk(BB_A_PASS_TARGET, 0, 8, 7), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK(!bb_rng_error(&rng));
+    BB_CHECK_EQ(m.ball.state, BB_BALL_HELD);
+    BB_CHECK_EQ(m.ball.carrier, receiver);
+}
+
 // SK/VERY LONG LEGS: the +2 is for Intercepting only — an ordinary Catch
 // (accurate pass to the VLL player) gets no bonus. AG 4+ catching an accurate
 // pass (no modifier) rolls a 2: it must FAIL (with a stray +2 the target

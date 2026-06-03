@@ -25,9 +25,8 @@ typedef enum {
     BB_TEST_KIND_COUNT
 } bb_test_kind;
 
-// Skill that grants a self-reroll for this test kind, if the player has it and
-// hasn't used it this activation. Returns skill id or -1.
-int bb_skill_reroll_for(const bb_match* m, int slot, int kind);
+// Skill-granted self-rerolls live in the hook table: see bb_hook_reroll
+// (bb_hooks.h), which takes the test ctx so interceptions are excluded.
 
 // Loner (X+) gate value for team rerolls; 0 if player has no Loner.
 int bb_loner_value(const bb_match* m, int slot);
