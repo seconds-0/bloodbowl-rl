@@ -121,6 +121,15 @@ typedef struct {
     // action (n_legal == 1) while a voluntary one always has alternatives.
     float reward_setup_done;
     float reward_setup_autofix;
+    // Ball-possession shaping (default 0 = off). Possession is judged only
+    // when the ball SETTLES (held or grounded) — a ball in the air is limbo,
+    // so a completed pass is neutral instead of loss-then-gain. Keep
+    // |reward_ball_loss| > reward_ball_gain or pickup/drop cycles farm reward.
+    float reward_ball_gain;
+    float reward_ball_loss;
+    // Injury shaping (default 0 = off): per opponent removed to KO/CAS.
+    float reward_injury_inflicted;
+    float reward_injury_taken;
     int max_decisions;
     // Spectator rendering (bbe_render.h); NULL until c_render is first called.
     int render_fps;
@@ -137,6 +146,8 @@ typedef struct {
     bb_action legal[BB_LEGAL_MAX];
     int n_legal;
     int score_prev[2];
+    int possessor;   // last settled possession: -1 none, else team; IN_AIR = limbo
+    int out_prev[2]; // players in the KO + casualty boxes (injury shaping)
 } Bloodbowl;
 
 static void bbe_refresh_legal(Bloodbowl* env) {
@@ -363,6 +374,16 @@ static void bbe_reset_match(Bloodbowl* env) {
     env->illegal = 0;
     env->ep_return[0] = env->ep_return[1] = 0;
     env->score_prev[0] = env->score_prev[1] = 0;
+    env->possessor = -1;
+    // Procgen can pre-injure players into the CAS box; baseline the counts.
+    for (int t = 0; t < 2; t++) {
+        int out = 0;
+        for (int s = t * BB_TEAM_SLOTS; s < (t + 1) * BB_TEAM_SLOTS; s++) {
+            int loc = env->match.players[s].location;
+            out += (loc == BB_LOC_KO || loc == BB_LOC_CAS);
+        }
+        env->out_prev[t] = out;
+    }
 }
 
 static void c_reset(Bloodbowl* env) {
@@ -438,14 +459,72 @@ static void c_step(Bloodbowl* env) {
         bb_apply(m, act, &env->rng);
         env->decisions++;
         // Touchdown rewards.
+        bool scored = false;
         for (int t = 0; t < 2; t++) {
             int d = m->score[t] - env->score_prev[t];
             if (d > 0) {
+                scored = true;
                 env->reward_ptr[t][0] += env->reward_td * (float)d;
                 env->reward_ptr[1 - t][0] -= env->reward_td * (float)d;
                 env->ep_return[t] += env->reward_td * (float)d;
                 env->ep_return[1 - t] -= env->reward_td * (float)d;
                 env->score_prev[t] = m->score[t];
+            }
+        }
+        // Ball-possession shaping on SETTLED transitions only. Scoring or a
+        // drive reset clears possession without penalty — losing the ball to
+        // a touchdown or the half-time whistle isn't a fumble.
+        if (env->reward_ball_gain != 0.0f || env->reward_ball_loss != 0.0f) {
+            if (scored) {
+                env->possessor = -1;
+            } else if (m->ball.state == BB_BALL_HELD) {
+                int cur = BB_TEAM_OF(m->ball.carrier);
+                if (cur != env->possessor) {
+                    if (env->possessor >= 0) {
+                        env->reward_ptr[env->possessor][0] += env->reward_ball_loss;
+                        env->ep_return[env->possessor] += env->reward_ball_loss;
+                    }
+                    env->reward_ptr[cur][0] += env->reward_ball_gain;
+                    env->ep_return[cur] += env->reward_ball_gain;
+                    env->possessor = cur;
+                }
+            } else if (m->ball.state == BB_BALL_ON_GROUND && env->possessor >= 0) {
+                env->reward_ptr[env->possessor][0] += env->reward_ball_loss;
+                env->ep_return[env->possessor] += env->reward_ball_loss;
+                env->possessor = -1;
+            } else if (m->ball.state == BB_BALL_OFF_PITCH && env->possessor >= 0) {
+                // Drive reset (setup/kickoff on the stack) clears silently; a
+                // crowd-surfed carrier's ball stays in limbo until the
+                // throw-in settles, which then emits the loss above.
+                for (int i = 0; i < m->stack_top; i++) {
+                    if (m->stack[i].proc == BB_PROC_SETUP ||
+                        m->stack[i].proc == BB_PROC_KICKOFF) {
+                        env->possessor = -1;
+                        break;
+                    }
+                }
+            }
+            // BB_BALL_IN_AIR: limbo — judged when it settles.
+        }
+        // Injury shaping: a player leaving the pitch to the KO or casualty
+        // box punishes his coach and rewards the opponent (crowd-shoves and
+        // failed-dodge self-injuries included — your attrition is always
+        // your opponent's gain in Blood Bowl).
+        if (env->reward_injury_inflicted != 0.0f || env->reward_injury_taken != 0.0f) {
+            for (int t = 0; t < 2; t++) {
+                int out = 0;
+                for (int s = t * BB_TEAM_SLOTS; s < (t + 1) * BB_TEAM_SLOTS; s++) {
+                    int loc = m->players[s].location;
+                    out += (loc == BB_LOC_KO || loc == BB_LOC_CAS);
+                }
+                int d = out - env->out_prev[t];
+                if (d > 0) {
+                    env->reward_ptr[t][0] += env->reward_injury_taken * (float)d;
+                    env->ep_return[t] += env->reward_injury_taken * (float)d;
+                    env->reward_ptr[1 - t][0] += env->reward_injury_inflicted * (float)d;
+                    env->ep_return[1 - t] += env->reward_injury_inflicted * (float)d;
+                }
+                env->out_prev[t] = out;
             }
         }
     }
