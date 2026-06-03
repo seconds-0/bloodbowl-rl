@@ -25,7 +25,9 @@
 //                [6]  frame a as row+1 when the proc stores a player slot
 //                     there (bbe_frame_a_is_slot), else 0
 //                [7]  frame b likewise (bbe_frame_b_is_slot)
-//                [8..9] spare
+//                [8]  pending TEST target number (2..6 when the top frame
+//                     is a TEST reroll window, else 0)
+//                [9]  spare
 //                [10] I am the deciding coach, [11] my team is active
 //                [12..15] spare
 //   [784..831] scalars (BBE_SCALAR_OFF):
@@ -299,6 +301,11 @@ static void bbe_encode_obs(Bloodbowl* env, int agent) {
         b[7] = (bbe_frame_b_is_slot(top->proc) && top->b < BB_NUM_PLAYERS)
                    ? (unsigned char)(1 + bbe_ego_slot(me, top->b))
                    : 0;
+        // [8] pending TEST target: at a TEST reroll window, the needed roll
+        // (2..6, modifiers already applied — proc_test.c keeps it in frame
+        // x), else 0. Lets the policy price a reroll directly instead of
+        // re-deriving stats/modifiers from the board rows.
+        b[8] = top->proc == BB_PROC_TEST ? top->x : 0;
     }
     b[10] = (unsigned char)(m->decision_team == me);
     b[11] = (unsigned char)(m->active_team == me);

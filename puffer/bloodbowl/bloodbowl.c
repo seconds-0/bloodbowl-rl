@@ -86,6 +86,13 @@ static void st_check_obs(const Bloodbowl* env) {
                  top->proc, agent, b[6], exp_a);
         ST_CHECK(b[7] == exp_b, "proc %d agent %d: ctx frame-b byte %d != %d",
                  top->proc, agent, b[7], exp_b);
+        // [8] pending-TEST target (2..6 at a TEST reroll window, else 0).
+        int exp_target = top->proc == BB_PROC_TEST ? top->x : 0;
+        ST_CHECK(b[8] == exp_target, "proc %d agent %d: test-target byte %d != %d",
+                 top->proc, agent, b[8], exp_target);
+        if (top->proc == BB_PROC_TEST) {
+            ST_CHECK(b[8] >= 2 && b[8] <= 6, "TEST target %d outside 2..6", b[8]);
+        }
         // Review M14's exact repro: at every ACTIVATE decision (TEAM_TURN on
         // top, a = team id 0/1) BOTH agents must see "no slot" — the away
         // agent used to see "opponent row 17" for the home team's turn.
