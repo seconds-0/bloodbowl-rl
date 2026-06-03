@@ -21,6 +21,13 @@ mkdir -p "$DST"
 cp -RL "$ROOT/puffer/bloodbowl/." "$DST/"
 cp "$ROOT/puffer/config/bloodbowl.ini" "$PUFFER/config/bloodbowl.ini"
 
+# Stage FFB spectator art (optional — needs vendor/ffb and a python with yaml;
+# training and the fallback circle renderer work fine without it).
+if [ -d "$ROOT/vendor/ffb" ] && [ -x "$PUFFER/.venv/bin/python" ]; then
+    "$PUFFER/.venv/bin/python" "$ROOT/tools/stage_spectator_art.py" || \
+        echo "warning: spectator art staging failed (renderer falls back to circles)"
+fi
+
 echo "installed: $DST"
 echo "           $PUFFER/config/bloodbowl.ini"
 echo "build:     cd $PUFFER && ./build.sh bloodbowl          # CUDA training backend"
