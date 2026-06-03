@@ -632,6 +632,70 @@ BB_TEST(blocking_push_must_choose_unoccupied) {
     BB_CHECK(!bb_rng_error(&rng));
 }
 
+// SK#SIDESTEP: a Pushed Back player with Side Step is moved to any adjacent
+// unoccupied square chosen by THEIR coach instead of the usual three.
+BB_TEST(blocking_side_step_defender_picks_any_free_square) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int h1 = fx_lineman(&m, BB_HOME, 0, 10, 7);
+    int a1 = fx_lineman(&m, BB_AWAY, 0, 11, 7);
+    fx_give_skill(&m, a1, BB_SK_SIDESTEP);
+
+    uint8_t script[] = {3};
+    bb_rng rng;
+    bb_rng_script(&rng, script, 1);
+    start_block(&m, &rng, h1, 11, 7);
+    apply_ok(&m, &rng, mk(BB_A_CHOOSE_DIE, 0, 0, 0));
+    // The DEFENDER's coach owns the choice: all 7 free adjacent squares.
+    BB_CHECK_EQ(m.decision_team, BB_AWAY);
+    BB_CHECK_EQ(count_type(&m, BB_A_PUSH_SQUARE), 7);
+    // Includes squares outside the normal push arc, e.g. beside the blocker.
+    BB_CHECK(fx_find(&m, mk(BB_A_PUSH_SQUARE, 0, 10, 6)) >= 0);
+    apply_ok(&m, &rng, mk(BB_A_PUSH_SQUARE, 0, 10, 6));
+    apply_ok(&m, &rng, mk(BB_A_FOLLOW_UP, 0, 0, 0));
+    BB_CHECK_EQ(m.players[a1].x, 10);
+    BB_CHECK_EQ(m.players[a1].y, 6);
+    BB_CHECK_EQ(m.players[a1].stance, BB_STANCE_STANDING);
+    BB_CHECK(!bb_rng_error(&rng));
+}
+
+// Regression (adversarial review M8): SK#SIDESTEP — "If there are no adjacent
+// unoccupied squares, then this Skill cannot be used." With every adjacent
+// square occupied/off-pitch the normal candidates apply (here: chain pushes
+// and a crowd push) and the choice belongs to the ATTACKING coach, not the
+// defender's. The engine assigned ownership on skill possession alone.
+BB_TEST(blocking_side_step_unusable_without_free_square) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int h1 = fx_lineman(&m, BB_HOME, 0, 10, 0); // blocker on the sideline row
+    int a1 = fx_lineman(&m, BB_AWAY, 0, 11, 0); // Side Step, fully boxed in
+    fx_give_skill(&m, a1, BB_SK_SIDESTEP);
+    fx_lineman(&m, BB_AWAY, 1, 12, 0);
+    fx_lineman(&m, BB_AWAY, 2, 10, 1);
+    fx_lineman(&m, BB_AWAY, 3, 11, 1);
+    fx_lineman(&m, BB_AWAY, 4, 12, 1);
+
+    // Two defensive assists -> two dice, defender's coach picks the die (that
+    // ownership is unrelated to the push-square ownership under test).
+    uint8_t script[] = {3, 4, /*crowd injury*/ 2, 2};
+    bb_rng rng;
+    bb_rng_script(&rng, script, 4);
+    start_block(&m, &rng, h1, 11, 0);
+    apply_ok(&m, &rng, mk(BB_A_CHOOSE_DIE, 0, 0, 0)); // push
+    // No free adjacent square: Side Step is off. The ATTACKING coach owns
+    // the chain/crowd choice among the normal three candidates.
+    BB_CHECK_EQ(m.decision_team, BB_HOME);
+    BB_CHECK_EQ(count_type(&m, BB_A_PUSH_SQUARE), 3);
+    BB_CHECK(fx_find(&m, mk(BB_A_PUSH_SQUARE, 1, 12, 0)) >= 0); // crowd
+    BB_CHECK(fx_find(&m, mk(BB_A_PUSH_SQUARE, 2, 12, 0)) >= 0); // chains
+    BB_CHECK(fx_find(&m, mk(BB_A_PUSH_SQUARE, 2, 12, 1)) >= 0);
+    apply_ok(&m, &rng, mk(BB_A_PUSH_SQUARE, 1, 12, 0)); // surf the defender
+    apply_ok(&m, &rng, mk(BB_A_FOLLOW_UP, 0, 0, 0));
+    BB_CHECK_EQ(m.players[a1].location, BB_LOC_RESERVES); // crowd: stunned
+    BB_CHECK_EQ(m.turnover, 0); // inactive player surfed: no turnover
+    BB_CHECK(!bb_rng_error(&rng));
+}
+
 // GB#CHAIN PUSHES: with no unoccupied square the pushed player moves into an
 // occupied one, chain-pushing its occupant as if pushed by the incoming
 // player; the ORIGINAL blocking coach chooses every push direction in the

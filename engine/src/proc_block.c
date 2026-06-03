@@ -367,6 +367,29 @@ static void resolve_face(bb_match* m, bb_frame* f, int face) {
 //       relocation, then overwrite with pushee's old square for follow-up.
 
 
+// SIDESTEP: usable only when an adjacent unoccupied square exists ("If there
+// are no adjacent unoccupied squares, then this Skill cannot be used").
+// Decision OWNERSHIP and the legal set must apply the same predicate: skill
+// possession alone handed the attacker's chain/crowd choice to the defending
+// coach when no free square existed (review M8).
+static bool side_step_active(const bb_match* m, const bb_frame* f) {
+    if (!(bb_hook_push_flags(m, f->b) & BB_PUSHF_SIDE_STEP)) return false;
+    if ((f->data & PSH_FROM_BLITZ) &&
+        bb_has_skill(&m->players[f->a].skills, BB_SK_JUGGERNAUT)) {
+        return false;
+    }
+    if (bb_has_skill(&m->players[f->a].skills, BB_SK_GRAB)) return false;
+    const bb_player* dp = &m->players[f->b];
+    for (int dx = -1; dx <= 1; dx++) {
+        for (int dy = -1; dy <= 1; dy++) {
+            if (!dx && !dy) continue;
+            int x = dp->x + dx, y = dp->y + dy;
+            if (bb_on_pitch_xy(x, y) && !m->grid[x][y]) return true;
+        }
+    }
+    return false;
+}
+
 static int push_candidates(const bb_match* m, const bb_frame* f, int cand[3][2]) {
     // Three squares "behind" the pushee relative to the push origin.
     int px = m->players[f->b].x, py = m->players[f->b].y;
@@ -409,12 +432,13 @@ static void push_advance(bb_match* m, bb_rng* rng) {
             f->phase = 5;
             return;
         }
-        bool side_step = (def_flags & BB_PUSHF_SIDE_STEP) && !jugg &&
-                         !bb_has_skill(&m->players[f->a].skills, BB_SK_GRAB);
         // Side Step: the DEFENDER's coach chooses the square (any adjacent
         // free square, not just the usual three) — handled in legal/apply via
-        // the decision owner.
-        bb_need_decision(m, side_step ? BB_TEAM_OF(f->b) : m->active_team);
+        // the decision owner. With no free adjacent square the skill cannot
+        // be used and the normal candidates (incl. chain/crowd) belong to the
+        // attacking coach (review M8).
+        bb_need_decision(m, side_step_active(m, f) ? BB_TEAM_OF(f->b)
+                                                   : m->active_team);
         return;
     }
     if (f->phase == 1) {
@@ -605,11 +629,10 @@ static int push_legal(const bb_match* m, bb_action* out) {
     int n = 0;
     if (f->phase == 0) {
         // Side Step (decision owner = defender): any unoccupied adjacent
-        // square instead of the usual three.
-        bool jugg = (f->data & PSH_FROM_BLITZ) &&
-                    bb_has_skill(&m->players[f->a].skills, BB_SK_JUGGERNAUT);
-        if ((bb_hook_push_flags(m, f->b) & BB_PUSHF_SIDE_STEP) && !jugg &&
-            !bb_has_skill(&m->players[f->a].skills, BB_SK_GRAB)) {
+        // square instead of the usual three. The predicate mirrors the
+        // ownership choice in push_advance so legal/advance can never
+        // disagree (review M8).
+        if (side_step_active(m, f)) {
             const bb_player* dp = &m->players[f->b];
             for (int dx = -1; dx <= 1; dx++) {
                 for (int dy = -1; dy <= 1; dy++) {
@@ -620,8 +643,7 @@ static int push_legal(const bb_match* m, bb_action* out) {
                     }
                 }
             }
-            if (n > 0) return n;
-            // No free square: fall through to the normal three candidates.
+            return n;
         }
         int cand[3][2];
         push_candidates(m, f, cand);
