@@ -1101,6 +1101,23 @@ class Mapper:
         except ValueError:
             return 0
 
+    def rep_mascotUsed(self, i, r, cmd):
+        """Team Mascot re-roll: FFB rolls a d6 activation check (4+) and on
+        success re-rolls like a team re-roll without spending one. The engine
+        has no mascot — map a successful use to A_USE_REROLL/RR_TEAM (which
+        spends an engine re-roll; mirrored below) and drop the activation d6
+        the engine never rolls."""
+        self.skips["mascot_activation_roll_dropped"] += 1
+        if not r.get("successful"):
+            return  # failed activation: no re-roll happened
+        team = 0 if str(r.get("teamId")) == str(self.meta["teamHome"]["teamId"]) else 1
+        if self.rerolls[team] > 0:
+            self.rerolls[team] -= 1  # mirror the ENGINE's reroll spend
+        if self.pending_block:
+            self.pending_block["team_rr"] = True
+            return
+        self.route_reroll(cmd, "team")
+
     def rep_blockReRoll(self, i, r, cmd):
         src = r.get("reRollSource") or ""
         if self.pending_block:
