@@ -114,6 +114,7 @@ typedef struct {
     // Reward shaping / episode bound ([env] kwargs in config/bloodbowl.ini).
     float reward_td;
     float reward_win;
+    float reward_draw; // applied to BOTH agents on equal scores (default 0)
     // Setup shaping (default 0 = off): a voluntary legal SETUP_DONE earns
     // reward_setup_done; exhausting the placement budget so the engine
     // autofixes the formation earns reward_setup_autofix (negative). The two
@@ -412,6 +413,11 @@ static void bbe_finish_episode(Bloodbowl* env) {
         int w = m->score[0] > m->score[1] ? 0 : 1;
         bonus[w] = env->reward_win;
         bonus[1 - w] = -env->reward_win;
+    } else {
+        // Slightly-negative draws (both sides) make mutual stalling a
+        // non-equilibrium while leaving draw >> loss, so securing a draw
+        // when behind stays correct play. Win > Draw >> Loss.
+        bonus[0] = bonus[1] = env->reward_draw;
     }
     for (int a = 0; a < BBE_AGENTS; a++) {
         env->reward_ptr[a][0] += bonus[a];

@@ -30,6 +30,7 @@ static double kw(Dict* kwargs, const char* key, double fallback) {
 static void apply_kwargs(Env* env, Dict* kwargs) {
     env->reward_td = (float)kw(kwargs, "reward_td", 1.0);
     env->reward_win = (float)kw(kwargs, "reward_win", 3.0);
+    env->reward_draw = (float)kw(kwargs, "reward_draw", 0.0);
     env->reward_setup_done = (float)kw(kwargs, "reward_setup_done", 0.0);
     env->reward_setup_autofix = (float)kw(kwargs, "reward_setup_autofix", 0.0);
     env->reward_ball_gain = (float)kw(kwargs, "reward_ball_gain", 0.0);
