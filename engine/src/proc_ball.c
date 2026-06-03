@@ -56,7 +56,15 @@ static void scatter_advance(bb_match* m, bb_rng* rng) {
         bb_push(m, BB_PROC_SCATTER, 0, 1, (uint8_t)x, (uint8_t)y);
         return;
     }
-    bb_ball_to(m, x, y); // comes to rest (scatter and bounce alike)
+    if (!is_bounce) {
+        // Pass-flight scatter landing in an unoccupied square: GAME/RESOLVE
+        // PASS ACTION — "If the ball lands in an unoccupied square, then it
+        // will Bounce from that square." One final Bounce (catch at -1).
+        bb_ball_to(m, x, y);
+        bb_push(m, BB_PROC_SCATTER, 0, 1, (uint8_t)x, (uint8_t)y);
+        return;
+    }
+    bb_ball_to(m, x, y); // a Bounce landing in an empty square comes to rest
 }
 
 // ===== THROW_IN ===============================================================
