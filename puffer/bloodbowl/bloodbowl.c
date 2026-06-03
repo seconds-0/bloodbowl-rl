@@ -28,6 +28,7 @@ static int sample_masked(const unsigned char* mask, int len, bb_rng* rng) {
 // encoder's own helper tables, so encoder regressions fail loudly.
 
 static int st_failures;
+static long st_tz_nonzero; // marking-TZ bytes observed > 0 (coverage)
 #define ST_CHECK(cond, ...)                                                    \
     do {                                                                       \
         if (!(cond)) {                                                         \
@@ -92,6 +93,20 @@ static void st_check_obs(const Bloodbowl* env) {
             ST_CHECK(b[6] == 0, "TEAM_TURN leaked team id as slot %d to agent %d",
                      b[6], agent);
         }
+        // Player records: [23] = opposing tackle zones marking the player's
+        // square (on-pitch only, else 0).
+        for (int row = 0; row < BB_NUM_PLAYERS; row++) {
+            int team = row < BB_TEAM_SLOTS ? agent : 1 - agent;
+            int slot = team * BB_TEAM_SLOTS + (row & 15);
+            const bb_player* p = &m->players[slot];
+            const unsigned char* t = env->obs_ptr[agent] + row * BBE_PLAYER_BYTES;
+            int exp_tz = p->location == BB_LOC_ON_PITCH
+                             ? bb_tackle_zones(m, team, p->x, p->y)
+                             : 0;
+            ST_CHECK(t[23] == exp_tz, "agent %d row %d: marking-TZ byte %d != %d",
+                     agent, row, t[23], exp_tz);
+            if (t[23] > 0) st_tz_nonzero++;
+        }
     }
 }
 
@@ -146,6 +161,8 @@ static int bbe_selftest(uint64_t seed, int episodes) {
                  "decision proc %d never reached in %d episodes",
                  st_required[i], episodes);
     }
+    ST_CHECK(st_tz_nonzero > 0,
+             "no marked player ever observed — TZ byte coverage is vacuous");
     // Defensive termination: a DECISION state whose legal enumeration came
     // back empty must end the episode instead of livelocking the env (the
     // mask path emits a null action, but the step path applies nothing and

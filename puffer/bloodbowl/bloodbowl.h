@@ -15,7 +15,8 @@
 //                [4]  flags low byte, [5] flags high byte (BB_PF_*)
 //                [6..10]  ma, st, ag, pa, av
 //                [11..22] skill ids x BBE_SKILL_SLOTS (12) (id+1, 0 = none)
-//                [23] pad
+//                [23] opposing tackle zones marking the player's square
+//                     (on-pitch only, else 0)
 //   [768..783] ball + decision context (BBE_CTX_OFF):
 //                [0]  ball state (bb_ball_state)
 //                [1]  ball x+1, [2] ball y+1 (0 = off pitch)
@@ -78,7 +79,7 @@
 #include "engine/proc_match.c"
 #undef DIR8
 
-#define BBE_PLAYER_BYTES 24    // 11 stat/state bytes + 12 skill-id slots + pad
+#define BBE_PLAYER_BYTES 24    // 11 stat/state bytes + 12 skill-id slots + TZ byte
 #define BBE_SKILL_SLOTS 12     // >= max base-roster skills (10) + procgen cap
 #define BBE_OBS_SIZE 832       // 32*24 players + 16 ball/ctx + 48 scalars
 #define BBE_CTX_OFF (BB_NUM_PLAYERS * BBE_PLAYER_BYTES) // 768
@@ -247,6 +248,10 @@ static void bbe_encode_obs(Bloodbowl* env, int agent) {
             int px = me == BB_HOME ? p->x : (BB_PITCH_LEN - 1 - p->x);
             t[0] = (unsigned char)(px + 1);
             t[1] = (unsigned char)(p->y + 1);
+            // [23] opposing tackle zones marking this player's square —
+            // dodge/pickup/catch difficulty and Marked/Open status without
+            // the policy re-deriving adjacency from 31 other rows.
+            t[23] = (unsigned char)bb_tackle_zones(m, team, p->x, p->y);
         }
         t[2] = p->location;
         t[3] = p->stance;
