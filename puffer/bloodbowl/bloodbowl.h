@@ -1,0 +1,387 @@
+// bloodbowl.h — PufferLib 4.0 native env wrapping the BB2025 engine.
+//
+// Two agents per match (home/away coach). Each c_step applies the DECIDING
+// agent's action (the other agent's action is ignored that step), advances the
+// engine to the next decision, and emits observations + per-head legality
+// masks. Episodes are full matches over procedurally generated rosters.
+//
+// Observation (uint8, 576B), egocentric (decision team first):
+//   [0..511]  32 players x 16B: x+1, y+1 (0 = off pitch), location, stance,
+//             flags lo/hi, ma, st, ag, pa, av, skill ids x5 (id+1, 0 = none)
+//   [512..527] ball + decision context: ball state, bx+1, by+1, carrier idx+1,
+//             top proc, phase, frame a/b/x/y, decision flags
+//   [528..575] scalars: half, my/opp turn, my/opp score, my/opp rerolls,
+//             weather, action-economy flags, apothecaries, bribes, spare
+//
+// Action heads (ACT_SIZES {30, 33, 391}): bb_action type | arg (0-31 direct,
+// 32 = sentinel for 0xFE/0xFF args) | square (y*26+x, 390 = none).
+// Decoding snaps to the nearest legal action (exact -> same-type -> first),
+// so even maskless backends (torch/MPS practice runs) stay legal.
+#pragma once
+
+#include <stdlib.h>
+#include <string.h>
+
+// --- Engine amalgamation (build.sh compiles binding.c as a single TU) -------
+// `engine/` and `bb/` next to this header are symlinks in the dev tree
+// (-> ../../engine/{src,include/bb}) and real copies in the installed
+// vendor/PufferLib/ocean/bloodbowl/ tree (tools/install_puffer_env.sh uses
+// cp -RL). Three sources define a file-local DIR8 table; rename per "TU".
+#define DIR8 DIR8_match_tu
+#include "engine/bb_match.c"
+#include "engine/bb_rng.c"
+#include "engine/bb_replay.c"
+#include "engine/bb_skills.c"
+#include "engine/bb_hooks.c"
+#include "engine/bb_procgen.c"
+#include "engine/gen_skills.c"
+#include "engine/gen_teams.c"
+#include "engine/gen_tables.c"
+#include "engine/skills_core.c"
+#include "engine/skills_agility.c"
+#include "engine/skills_devious_traits.c"
+#include "engine/skills_mutation_passing.c"
+#include "engine/proc_table.c"
+#include "engine/proc_test.c"
+#include "engine/proc_turn.c"
+#include "engine/proc_move.c"
+#include "engine/proc_block.c"
+#include "engine/proc_ttm.c"
+#undef DIR8
+#define DIR8 DIR8_ball_tu
+#include "engine/proc_ball.c"
+#undef DIR8
+#define DIR8 DIR8_kick_tu
+#include "engine/proc_match.c"
+#undef DIR8
+
+#define BBE_OBS_SIZE 576
+#define BBE_HEAD_TYPE 30
+#define BBE_HEAD_ARG 33
+#define BBE_HEAD_SQ 391
+#define BBE_MASK_SIZE (BBE_HEAD_TYPE + BBE_HEAD_ARG + BBE_HEAD_SQ)
+#define BBE_AGENTS 2
+#define BBE_MAX_DECISIONS 4096 // episode safety bound
+#define BBE_MAX_BANKS 8        // frozen selfplay-pool banks (matches selfplay.py)
+
+// Floats only; summed across envs then divided by n (vecenv.h). n must be last.
+typedef struct {
+    float perf;            // win = 1, draw = 0.5, loss = 0
+    float score_diff;      // own TDs - opponent TDs (home-agent perspective)
+    float tds;             // total touchdowns in the match
+    float episode_return;
+    float episode_length;
+    float illegal_frac;    // sampled actions that had to be snapped to legal
+    // Learner (slot 0) score vs frozen bank b on envs tagged b+1; selfplay.py
+    // reads hist_score_bank_<b>/hist_n_bank_<b> to drive bank swaps.
+    float hist_score_bank[BBE_MAX_BANKS];
+    float hist_n_bank[BBE_MAX_BANKS];
+    float n;
+} Log;
+
+typedef struct {
+    Log log;
+    // Base buffers assigned unconditionally by create_static_vec (identity
+    // layout). The env body uses the per-slot pointers below instead.
+    uint8_t* observations;
+    float* actions;
+    float* rewards;
+    float* terminals;
+    unsigned char* action_mask;
+    // Per-agent slot pointers (filled by my_setup_perm; perm-aware).
+    uint8_t* obs_ptr[BBE_AGENTS];
+    unsigned char* action_mask_ptr[BBE_AGENTS];
+    float* action_ptr[BBE_AGENTS];
+    float* reward_ptr[BBE_AGENTS];
+    float* terminal_ptr[BBE_AGENTS];
+    int num_agents;
+    // Selfplay pool (MY_USES_TAGS): tag 0 = pure selfplay; tag b+1 = slot 1
+    // plays frozen bank b, slot 0 = learner. boundary_reached set on episode
+    // end so selfplay.py can align bank swaps to game boundaries.
+    int tag;
+    int boundary_reached;
+    // Reward shaping / episode bound ([env] kwargs in config/bloodbowl.ini).
+    float reward_td;
+    float reward_win;
+    int max_decisions;
+
+    bb_match match;
+    bb_rng rng;     // in-match dice
+    bb_rng procgen; // roster generation stream
+    uint64_t seed;
+    uint32_t episode;
+    int decisions;
+    int illegal;
+    float ep_return[BBE_AGENTS];
+    bb_action legal[BB_LEGAL_MAX];
+    int n_legal;
+    int score_prev[2];
+} Bloodbowl;
+
+static void bbe_refresh_legal(Bloodbowl* env) {
+    env->n_legal = env->match.status == BB_STATUS_DECISION
+                       ? bb_legal_actions(&env->match, env->legal)
+                       : 0;
+}
+
+// --- Observation encoding ------------------------------------------------------
+static void bbe_encode_obs(Bloodbowl* env, int agent) {
+    unsigned char* o = env->obs_ptr[agent];
+    memset(o, 0, BBE_OBS_SIZE);
+    bb_match* m = &env->match;
+    int me = agent; // agent 0 = home coach, 1 = away
+
+    for (int i = 0; i < BB_NUM_PLAYERS; i++) {
+        // Egocentric ordering: my players first.
+        int team = i < BB_TEAM_SLOTS ? me : 1 - me;
+        int slot = team * BB_TEAM_SLOTS + (i & 15);
+        const bb_player* p = &m->players[slot];
+        unsigned char* t = o + i * 16;
+        if (p->location == BB_LOC_ON_PITCH) {
+            // Mirror x for the away coach so "forward" is always +x.
+            int px = me == BB_HOME ? p->x : (BB_PITCH_LEN - 1 - p->x);
+            t[0] = (unsigned char)(px + 1);
+            t[1] = (unsigned char)(p->y + 1);
+        }
+        t[2] = p->location;
+        t[3] = p->stance;
+        t[4] = (unsigned char)(p->flags & 0xFF);
+        t[5] = (unsigned char)(p->flags >> 8);
+        t[6] = (unsigned char)p->ma;
+        t[7] = (unsigned char)p->st;
+        t[8] = (unsigned char)p->ag;
+        t[9] = (unsigned char)p->pa;
+        t[10] = (unsigned char)p->av;
+        int k = 11;
+        for (int sk = bb_next_skill(&p->skills, 0); sk >= 0 && k < 16;
+             sk = bb_next_skill(&p->skills, sk + 1)) {
+            t[k++] = (unsigned char)(sk + 1);
+        }
+    }
+
+    unsigned char* b = o + 512;
+    b[0] = m->ball.state;
+    if (m->ball.state != BB_BALL_OFF_PITCH) {
+        int bx = me == BB_HOME ? m->ball.x : (BB_PITCH_LEN - 1 - m->ball.x);
+        b[1] = (unsigned char)(bx + 1);
+        b[2] = (unsigned char)(m->ball.y + 1);
+    }
+    if (m->ball.carrier != BB_NO_PLAYER) {
+        int cteam = BB_TEAM_OF(m->ball.carrier);
+        b[3] = (unsigned char)(1 + (cteam == me ? 0 : 16) + BB_SLOT_OF(m->ball.carrier));
+    }
+    const bb_frame* top = m->stack_top ? &m->stack[m->stack_top - 1] : 0;
+    if (top) {
+        b[4] = top->proc;
+        b[5] = top->phase;
+        b[6] = top->a;
+        b[7] = top->b;
+        b[8] = top->x;
+        b[9] = top->y;
+    }
+    b[10] = (unsigned char)(m->decision_team == me);
+    b[11] = (unsigned char)(m->active_team == me);
+
+    unsigned char* s = o + 528;
+    s[0] = m->half;
+    s[1] = m->turn[me];
+    s[2] = m->turn[1 - me];
+    s[3] = m->score[me];
+    s[4] = m->score[1 - me];
+    s[5] = m->rerolls[me];
+    s[6] = m->rerolls[1 - me];
+    s[7] = m->weather;
+    s[8] = m->blitz_used;
+    s[9] = m->pass_used;
+    s[10] = m->handoff_used;
+    s[11] = m->foul_used;
+    s[12] = m->ttm_used;
+    s[13] = m->secure_used;
+    s[14] = m->apothecary[me];
+    s[15] = m->apothecary[1 - me];
+    s[16] = m->bribes[me];
+    s[17] = m->bribes[1 - me];
+    s[18] = (unsigned char)(m->kicking_team == me);
+    s[19] = m->team_id[me];
+    s[20] = m->team_id[1 - me];
+}
+
+// --- Action encode/decode --------------------------------------------------------
+static int bbe_sq_index(int agent, int x, int y) {
+    int px = agent == BB_HOME ? x : (BB_PITCH_LEN - 1 - x);
+    return y * BB_PITCH_LEN + px;
+}
+
+static void bbe_fill_mask(Bloodbowl* env, int agent) {
+    unsigned char* mask = env->action_mask_ptr[agent];
+    memset(mask, 0, BBE_MASK_SIZE);
+    if (env->match.status != BB_STATUS_DECISION ||
+        env->match.decision_team != agent) {
+        // Waiting agent: only the null action.
+        mask[BB_A_NONE] = 1;
+        mask[BBE_HEAD_TYPE + 32] = 1;            // arg sentinel
+        mask[BBE_HEAD_TYPE + BBE_HEAD_ARG + 390] = 1; // square none
+        return;
+    }
+    for (int i = 0; i < env->n_legal; i++) {
+        bb_action a = env->legal[i];
+        mask[a.type] = 1;
+        int arg_idx = (a.arg == 0xFE || a.arg == 0xFF) ? 32
+                      : (a.arg < 32 ? a.arg : 32);
+        mask[BBE_HEAD_TYPE + arg_idx] = 1;
+        bool spatial = a.x || a.y;
+        int sq = spatial ? bbe_sq_index(agent, a.x, a.y) : 390;
+        mask[BBE_HEAD_TYPE + BBE_HEAD_ARG + sq] = 1;
+    }
+}
+
+static bb_action bbe_decode(Bloodbowl* env, int agent, const float* heads) {
+    int t = (int)heads[0];
+    int arg = (int)heads[1];
+    int sq = (int)heads[2];
+    // Map back to engine coordinates.
+    int x = 0, y = 0;
+    if (sq < 390) {
+        int px = sq % BB_PITCH_LEN;
+        y = sq / BB_PITCH_LEN;
+        x = agent == BB_HOME ? px : (BB_PITCH_LEN - 1 - px);
+    }
+    // Pass 1: exact match (type + arg-class + square).
+    for (int i = 0; i < env->n_legal; i++) {
+        bb_action a = env->legal[i];
+        if (a.type != t) continue;
+        int aidx = (a.arg == 0xFE || a.arg == 0xFF) ? 32 : (a.arg < 32 ? a.arg : 32);
+        if (aidx != arg) continue;
+        bool spatial = a.x || a.y;
+        if (spatial && (a.x != x || a.y != y)) continue;
+        if (!spatial && sq != 390) continue;
+        return a;
+    }
+    env->illegal++;
+    // Pass 2: same type, matching square if spatial.
+    for (int i = 0; i < env->n_legal; i++) {
+        bb_action a = env->legal[i];
+        if (a.type != t) continue;
+        bool spatial = a.x || a.y;
+        if (spatial && sq < 390 && a.x == x && a.y == y) return a;
+    }
+    for (int i = 0; i < env->n_legal; i++) {
+        if (env->legal[i].type == t) return env->legal[i];
+    }
+    // Pass 3: anything legal.
+    return env->legal[0];
+}
+
+// --- Lifecycle -------------------------------------------------------------------
+static void bbe_emit_all(Bloodbowl* env) {
+    for (int a = 0; a < BBE_AGENTS; a++) {
+        bbe_encode_obs(env, a);
+        bbe_fill_mask(env, a);
+    }
+}
+
+static void bbe_reset_match(Bloodbowl* env) {
+    env->episode++;
+    bb_rng_seed(&env->procgen, env->seed * 2654435761u + env->episode, 11);
+    bb_match_init_random(&env->match, &env->procgen);
+    bb_rng_seed(&env->rng, env->seed + env->episode * 7919u, 1);
+    bb_advance(&env->match, &env->rng);
+    bbe_refresh_legal(env);
+    env->decisions = 0;
+    env->illegal = 0;
+    env->ep_return[0] = env->ep_return[1] = 0;
+    env->score_prev[0] = env->score_prev[1] = 0;
+}
+
+static void c_reset(Bloodbowl* env) {
+    // Defaults for callers that skip apply_kwargs (standalone driver, tests).
+    if (env->max_decisions <= 0) env->max_decisions = BBE_MAX_DECISIONS;
+    if (env->reward_td == 0.0f && env->reward_win == 0.0f) {
+        env->reward_td = 1.0f;
+        env->reward_win = 3.0f;
+    }
+    bbe_reset_match(env);
+    bbe_emit_all(env);
+}
+
+static void bbe_finish_episode(Bloodbowl* env) {
+    bb_match* m = &env->match;
+#ifdef BBE_DEBUG_EPISODES
+    printf("episode end: status=%d half=%d turns=%d/%d score=%d-%d decisions=%d\n",
+           m->status, m->half, m->turn[0], m->turn[1], m->score[0], m->score[1],
+           env->decisions);
+#endif
+    float result = m->score[0] > m->score[1] ? 1.0f
+                   : (m->score[0] < m->score[1] ? 0.0f : 0.5f);
+    // Win bonus from each agent's perspective.
+    float bonus[2] = {0, 0};
+    if (m->score[0] != m->score[1]) {
+        int w = m->score[0] > m->score[1] ? 0 : 1;
+        bonus[w] = env->reward_win;
+        bonus[1 - w] = -env->reward_win;
+    }
+    for (int a = 0; a < BBE_AGENTS; a++) {
+        env->reward_ptr[a][0] += bonus[a];
+        env->ep_return[a] += bonus[a];
+        env->terminal_ptr[a][0] = 1.0f;
+    }
+    env->log.perf += result;
+    env->log.score_diff += (float)(m->score[0] - m->score[1]);
+    env->log.tds += (float)(m->score[0] + m->score[1]);
+    env->log.episode_return += env->ep_return[0];
+    env->log.episode_length += (float)env->decisions;
+    env->log.illegal_frac += env->decisions
+                                 ? (float)env->illegal / (float)env->decisions
+                                 : 0;
+    // Selfplay pool bookkeeping: on tagged envs slot 0 is the learner playing
+    // frozen bank tag-1; result is already slot-0 perspective.
+    if (env->tag > 0 && env->tag <= BBE_MAX_BANKS) {
+        env->log.hist_score_bank[env->tag - 1] += result;
+        env->log.hist_n_bank[env->tag - 1] += 1;
+    }
+    env->boundary_reached = 1;
+    env->log.n += 1;
+    bbe_reset_match(env);
+}
+
+static void c_step(Bloodbowl* env) {
+    for (int a = 0; a < BBE_AGENTS; a++) {
+        env->reward_ptr[a][0] = 0.0f;
+        env->terminal_ptr[a][0] = 0.0f;
+    }
+    bb_match* m = &env->match;
+    if (m->status == BB_STATUS_DECISION && env->n_legal > 0) {
+        int agent = m->decision_team;
+        bb_action act = bbe_decode(env, agent, env->action_ptr[agent]);
+        bb_apply(m, act, &env->rng);
+        env->decisions++;
+        // Touchdown rewards.
+        for (int t = 0; t < 2; t++) {
+            int d = m->score[t] - env->score_prev[t];
+            if (d > 0) {
+                env->reward_ptr[t][0] += env->reward_td * (float)d;
+                env->reward_ptr[1 - t][0] -= env->reward_td * (float)d;
+                env->ep_return[t] += env->reward_td * (float)d;
+                env->ep_return[1 - t] -= env->reward_td * (float)d;
+                env->score_prev[t] = m->score[t];
+            }
+        }
+    }
+    if (m->status == BB_STATUS_ERROR) {
+        // Should be unreachable (decode snaps to legal); reset defensively.
+        bbe_finish_episode(env);
+    } else if (m->status == BB_STATUS_MATCH_OVER ||
+               env->decisions >= env->max_decisions) {
+        bbe_finish_episode(env);
+    }
+    bbe_refresh_legal(env);
+    bbe_emit_all(env);
+}
+
+static void c_render(Bloodbowl* env) {
+    (void)env; // headless; the raylib replay viewer is a separate tool
+}
+
+static void c_close(Bloodbowl* env) {
+    (void)env; // no heap allocations beyond the struct itself
+}
