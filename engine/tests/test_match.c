@@ -184,3 +184,19 @@ BB_TEST(match_procgen_games_complete) {
         }
     }
 }
+
+// bb_fixtures self-test (review T1): fx_player's memset left the fresh
+// player looking ON_PITCH at (0,0), so bb_place's stale-square cleanup wiped
+// grid[0][0] on every fixture placement — silently corrupting any test that
+// stations a player at the origin.
+BB_TEST(fixtures_player_at_origin_survives_later_placements) {
+    bb_match m;
+    fx_match_midturn(&m, 0, 0);
+    int a = fx_lineman(&m, 0, 0, 0, 0);
+    int b = fx_lineman(&m, 0, 1, 5, 5);
+    int c = fx_lineman(&m, 1, 0, 20, 10);
+    BB_CHECK_EQ(bb_slot_at(&m, 0, 0), a);
+    BB_CHECK_EQ(bb_slot_at(&m, 5, 5), b);
+    BB_CHECK_EQ(bb_slot_at(&m, 20, 10), c);
+    BB_CHECK_EQ(m.players[a].location, BB_LOC_ON_PITCH);
+}
