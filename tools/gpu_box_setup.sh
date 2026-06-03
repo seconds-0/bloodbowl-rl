@@ -16,6 +16,15 @@ pip install --no-build-isolation -q -e .
 echo "=== [3/5] install bloodbowl env into PufferLib tree ==="
 bash "$ROOT/tools/install_puffer_env.sh"
 
+# build.sh's standalone (--fast/--local) path compiles ocean/bloodbowl/bloodbowl.c
+# WITHOUT -I$SRC_DIR (the binding path has it), so the engine's "bb/*.h"
+# header-to-header includes can't resolve. Idempotent one-line patch.
+if ! grep -q 'ocean/bloodbowl' "$ROOT/vendor/PufferLib/build.sh"; then
+    sed -i 's|^INCLUDES=(-I./\$RAYLIB_NAME/include -I./src -I./vendor)$|INCLUDES=(-I./$RAYLIB_NAME/include -I./src -I./vendor -I./ocean/bloodbowl)|' \
+        "$ROOT/vendor/PufferLib/build.sh"
+    grep -q 'ocean/bloodbowl' "$ROOT/vendor/PufferLib/build.sh" || { echo "build.sh include patch failed" >&2; exit 1; }
+fi
+
 echo "=== [4/5] standalone benchmark (sanity + throughput) ==="
 ./build.sh bloodbowl --fast
 ./bloodbowl 64
