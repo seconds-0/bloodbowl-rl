@@ -100,22 +100,23 @@ BB_TEST(ball_pass_quick_short_boundary) {
     }
     // (b) dx=2,dy=3 is Short: PA 3+ rolls 3, -1 -> modified 2 -> Inaccurate.
     // GAME/INACCURATE PASS: "The ball will Scatter (3) from the target square
-    // before landing." Then RR/THE TURNOVER: pass that no active player
-    // catches, ball comes to rest -> Turnover.
+    // before landing." GAME/RESOLVE PASS ACTION: an unoccupied landing square
+    // means one final Bounce. Then RR/THE TURNOVER: pass that no active
+    // player catches, ball comes to rest -> Turnover.
     {
         bb_match m;
         fx_match_midturn(&m, 0, 0);
         int thrower = fx_player(&m, 0, 0, 5, 7, 6, 3, 3, 3, 9);
         fx_lineman(&m, 1, 0, 20, 2);
         fx_ball_held(&m, thrower);
-        uint8_t script[] = {3, 5, 5, 5}; // PA 3; scatter (+1,0) x3
+        uint8_t script[] = {3, 5, 5, 5, 5}; // PA 3; scatter (+1,0) x3; bounce (+1,0)
         bb_rng rng;
-        bb_rng_script(&rng, script, 4);
+        bb_rng_script(&rng, script, 5);
         fx_run(&m, &rng);
         fx_activate(&m, &rng, thrower, BB_ACT_PASS);
         fx_apply(&m, mk(BB_A_PASS_TARGET, 0, 7, 10), &rng);
         BB_CHECK_EQ(m.ball.state, BB_BALL_ON_GROUND);
-        BB_CHECK_EQ(m.ball.x, 10);
+        BB_CHECK_EQ(m.ball.x, 11);
         BB_CHECK_EQ(m.ball.y, 10);
         BB_CHECK_EQ(m.decision_team, 1); // turnover ended team 0's turn
     }
@@ -173,14 +174,14 @@ BB_TEST(ball_pass_long_and_bomb_band_modifiers) {
         int thrower = fx_player(&m, 0, 0, 5, 7, 6, 3, 3, 3, 9);
         fx_lineman(&m, 1, 0, 20, 2);
         fx_ball_held(&m, thrower);
-        uint8_t script[] = {5, 5, 5, 5}; // PA 5; scatter (+1,0) x3
+        uint8_t script[] = {5, 5, 5, 5, 5}; // PA 5; scatter (+1,0) x3; bounce (+1,0)
         bb_rng rng;
-        bb_rng_script(&rng, script, 4);
+        bb_rng_script(&rng, script, 5);
         fx_run(&m, &rng);
         fx_activate(&m, &rng, thrower, BB_ACT_PASS);
         fx_apply(&m, mk(BB_A_PASS_TARGET, 0, 15, 7), &rng);
         BB_CHECK_EQ(m.ball.state, BB_BALL_ON_GROUND);
-        BB_CHECK_EQ(m.ball.x, 18);
+        BB_CHECK_EQ(m.ball.x, 19);
         BB_CHECK_EQ(m.ball.y, 7);
         BB_CHECK_EQ(m.decision_team, 1);
     }
@@ -328,14 +329,14 @@ BB_TEST(ball_pass_marked_thrower_modifier) {
         fx_lineman(&m, 1, 0, 5, 6);
         fx_lineman(&m, 1, 1, 20, 2);
         fx_ball_held(&m, thrower);
-        uint8_t script[] = {3, 5, 5, 5}; // scatter past the receiver
+        uint8_t script[] = {3, 5, 5, 5, 5}; // scatter past the receiver; bounce
         bb_rng rng;
-        bb_rng_script(&rng, script, 4);
+        bb_rng_script(&rng, script, 5);
         fx_run(&m, &rng);
         fx_activate(&m, &rng, thrower, BB_ACT_PASS);
         fx_apply(&m, mk(BB_A_PASS_TARGET, 0, 8, 7), &rng);
         BB_CHECK_EQ(m.ball.state, BB_BALL_ON_GROUND);
-        BB_CHECK_EQ(m.ball.x, 11);
+        BB_CHECK_EQ(m.ball.x, 12);
         BB_CHECK_EQ(m.ball.y, 7);
         BB_CHECK_EQ(m.decision_team, 1);
     }
@@ -359,6 +360,67 @@ BB_TEST(ball_pass_accurate_to_empty_square_bounces) {
     BB_CHECK_EQ(m.ball.x, 9);
     BB_CHECK_EQ(m.ball.y, 7);
     BB_CHECK_EQ(m.decision_team, 1); // no active player caught -> turnover
+}
+
+// GAME/RESOLVE PASS ACTION: "If the ball lands in an unoccupied square, then
+// it will Bounce from that square" — this applies to an INACCURATE pass too:
+// after the Scatter (3) the ball "lands", and an empty landing square takes
+// one final Bounce. (Regression: adversarial review M7 — the engine used to
+// let an inaccurate pass come to rest one D8 hop short.)
+BB_TEST(ball_pass_inaccurate_to_empty_square_bounces) {
+    // (a) Scatter (3) ends on an empty square -> exactly ONE final Bounce,
+    // then the ball comes to rest -> turnover.
+    {
+        bb_match m;
+        fx_match_midturn(&m, 0, 0);
+        int thrower = fx_player(&m, 0, 0, 5, 7, 6, 3, 3, 3, 9); // PA 3+
+        fx_lineman(&m, 1, 0, 20, 2);
+        fx_ball_held(&m, thrower);
+        // Quick to empty (8,7): roll 2 -> failed, not a fumble -> Inaccurate.
+        // Scatter (3): faces 5,5,5 -> (11,7) empty; final Bounce (+1,0) ->
+        // (12,7) rest. Exactly 5 dice (a second bounce would exhaust the
+        // script and error).
+        uint8_t script[] = {2, 5, 5, 5, 5};
+        bb_rng rng;
+        bb_rng_script(&rng, script, 5);
+        fx_run(&m, &rng);
+        fx_activate(&m, &rng, thrower, BB_ACT_PASS);
+        bb_status st = fx_apply(&m, mk(BB_A_PASS_TARGET, 0, 8, 7), &rng);
+        BB_CHECK_EQ(st, BB_STATUS_DECISION);
+        BB_CHECK(!bb_rng_error(&rng));
+        BB_CHECK_EQ(m.ball.state, BB_BALL_ON_GROUND);
+        BB_CHECK_EQ(m.ball.x, 12);
+        BB_CHECK_EQ(m.ball.y, 7);
+        BB_CHECK_EQ(m.decision_team, 1); // incomplete pass -> turnover
+    }
+    // (b) The final hop is a BOUNCE, not another pass-flight scatter: a
+    // player in the bounce square catches at -1 (GAME/CATCHING "a ball that
+    // has Bounced"), unlike the unmodified catch in the Scatter landing
+    // square. AG 3+ needs 4; roll 3 FAILS (pins the -1) -> Bounce on -> rest.
+    {
+        bb_match m;
+        fx_match_midturn(&m, 0, 0);
+        int thrower = fx_player(&m, 0, 0, 5, 7, 6, 3, 3, 3, 9); // PA 3+
+        int mate = fx_lineman(&m, 0, 1, 12, 7);                 // AG 3+
+        fx_lineman(&m, 1, 0, 20, 2);
+        fx_ball_held(&m, thrower);
+        // PA 2 -> Inaccurate; Scatter faces 5,5,5 -> (11,7) empty; final
+        // Bounce (+1,0) onto the mate; Bounced catch -1 -> AG 3+ needs 4;
+        // roll 3 fails; Bounce again (+1,0) -> (13,7) rest -> turnover.
+        uint8_t script[] = {2, 5, 5, 5, 5, 3, 5};
+        bb_rng rng;
+        bb_rng_script(&rng, script, 7);
+        fx_run(&m, &rng);
+        fx_activate(&m, &rng, thrower, BB_ACT_PASS);
+        bb_status st = fx_apply(&m, mk(BB_A_PASS_TARGET, 0, 8, 7), &rng);
+        BB_CHECK_EQ(st, BB_STATUS_DECISION);
+        BB_CHECK(!bb_rng_error(&rng));
+        BB_CHECK(!(m.players[mate].flags & BB_PF_HAS_BALL));
+        BB_CHECK_EQ(m.ball.state, BB_BALL_ON_GROUND);
+        BB_CHECK_EQ(m.ball.x, 13);
+        BB_CHECK_EQ(m.ball.y, 7);
+        BB_CHECK_EQ(m.decision_team, 1);
+    }
 }
 
 // ENGINE-DIVERGENCE: weather vs the PA test. GAME/WEATHER TABLE: POURING
@@ -410,10 +472,8 @@ BB_TEST(ball_pass_rain_catch_minus_one) {
     BB_CHECK_EQ(m.decision_team, 1);
 }
 
-// ENGINE-DIVERGENCE: GAME/WEATHER TABLE / VERY SUNNY: "Whenever a player
-// makes a Passing Ability Test, apply a -1 modifier to the roll." The engine
-// has no Very Sunny modifier (weather on passes is TODO(phase3) in
-// proc_ball.c).
+// GAME/WEATHER TABLE / VERY SUNNY: "Whenever a player makes a Passing
+// Ability Test, apply a -1 modifier to the roll."
 BB_TEST(ball_pass_very_sunny_minus_one) {
     bb_match m;
     fx_match_midturn(&m, 0, 0);
@@ -422,15 +482,16 @@ BB_TEST(ball_pass_very_sunny_minus_one) {
     fx_lineman(&m, 1, 0, 20, 2);
     fx_ball_held(&m, thrower);
     // Rulebook: roll 3, -1 (sunny) -> 2 -> Inaccurate -> Scatter (3) from the
-    // empty target (8,7): faces 5,5,5 -> (11,7), rest, turnover.
-    uint8_t script[] = {3, 5, 5, 5};
+    // empty target (8,7): faces 5,5,5 -> (11,7), final Bounce (+1,0) ->
+    // (12,7), rest, turnover.
+    uint8_t script[] = {3, 5, 5, 5, 5};
     bb_rng rng;
-    bb_rng_script(&rng, script, 4);
+    bb_rng_script(&rng, script, 5);
     fx_run(&m, &rng);
     fx_activate(&m, &rng, thrower, BB_ACT_PASS);
     fx_apply(&m, mk(BB_A_PASS_TARGET, 0, 8, 7), &rng);
     BB_CHECK_EQ(m.ball.state, BB_BALL_ON_GROUND);
-    BB_CHECK_EQ(m.ball.x, 11); // FAILS (engine: accurate -> bounce to (9,7))
+    BB_CHECK_EQ(m.ball.x, 12);
     BB_CHECK_EQ(m.ball.y, 7);
     BB_CHECK_EQ(m.decision_team, 1);
 }
