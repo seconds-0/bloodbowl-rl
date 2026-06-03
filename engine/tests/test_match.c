@@ -1,6 +1,7 @@
 // End-to-end engine tests: full random-agent matches must complete without
 // errors, deterministically, with invariants holding at every decision point.
 #include "bb/bb_match.h"
+#include "bb/bb_hooks.h"
 #include "bb/gen_teams.h"
 #include "bb_fixtures.h"
 #include "bb_test.h"
@@ -132,6 +133,28 @@ BB_TEST(match_init_well_formed) {
     }
     BB_CHECK(avail[0] >= 11);
     BB_CHECK(avail[1] >= 11);
+}
+
+// The RL observation has exactly 12 skill-id slots per player
+// (BBE_SKILL_SLOTS); procgen advancement must never exceed that or the env
+// silently drops skills from the obs (Codex review HIGH, 2026-06-03).
+BB_TEST(match_procgen_skill_cap) {
+    for (uint64_t seed = 1; seed <= 200; seed++) {
+        bb_match m;
+        bb_rng pg;
+        bb_rng_seed(&pg, seed * 977, 9);
+        bb_match_init_random(&m, &pg);
+        for (int s = 0; s < BB_NUM_PLAYERS; s++) {
+            if (m.players[s].location == BB_LOC_ABSENT) continue;
+            int n = 0;
+            for (int sk = bb_next_skill(&m.players[s].skills, 0); sk >= 0;
+                 sk = bb_next_skill(&m.players[s].skills, sk + 1)) {
+                n++;
+            }
+            BB_CHECK(n <= 12);
+            if (n > 12) return;
+        }
+    }
 }
 
 BB_TEST(match_procgen_games_complete) {

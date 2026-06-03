@@ -15,6 +15,18 @@ static int pg_pick(bb_rng* rng, int n) {
     return n > 0 ? (int)(bb_rng_next(rng) % (uint32_t)n) : 0;
 }
 
+// Total-skill cap for procgen players. The RL observation encodes skills as
+// a fixed list of 12 id slots (puffer/bloodbowl/bloodbowl.h BBE_SKILL_SLOTS);
+// the largest base roster list is 10, so capping advancement at 12 keeps the
+// obs lossless. Raise both together if star players ever exceed this.
+#define PG_MAX_SKILLS 12
+
+static int pg_skill_count(const bb_skillset* s) {
+    int n = 0;
+    for (int sk = bb_next_skill(s, 0); sk >= 0; sk = bb_next_skill(s, sk + 1)) n++;
+    return n;
+}
+
 // Build one team's squad: positionals first (random counts within limits),
 // topped up with the first listed position; 0-4 players get 1-2 random
 // advancement skills from their primary categories.
@@ -90,6 +102,7 @@ static void procgen_squad(bb_match* m, int team, int team_id, bb_rng* rng) {
         if (!pd->primary_mask) continue;
         int gains = 1 + pg_pick(rng, 2);
         for (int g = 0; g < gains; g++) {
+            if (pg_skill_count(&p->skills) >= PG_MAX_SKILLS) break;
             // Pick a random primary category bit.
             int cats[BB_CAT_COUNT];
             int nc = 0;

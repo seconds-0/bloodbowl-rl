@@ -7,7 +7,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 echo "=== [1/5] system deps (clang for build.sh, curl for raylib download) ==="
 apt-get update -qq
-DEBIAN_FRONTEND=noninteractive apt-get install -y -qq clang curl rsync libomp-dev ccache > /dev/null
+DEBIAN_FRONTEND=noninteractive apt-get install -y -qq clang curl rsync libomp-dev ccache libgl1-mesa-dev > /dev/null
 
 echo "=== [2/5] python deps (reuse image torch) ==="
 cd "$ROOT/vendor/PufferLib"

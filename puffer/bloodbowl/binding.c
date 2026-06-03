@@ -5,7 +5,7 @@
 // defines as plain literals.
 #include "bloodbowl.h"
 
-#define OBS_SIZE 576
+#define OBS_SIZE 832
 #define NUM_ATNS 3
 #define ACT_SIZES {30, 33, 391}
 #define OBS_TENSOR_T ByteTensor
@@ -53,6 +53,17 @@ Env* my_vec_init(int* num_envs_out, int* buffer_env_starts, int* buffer_env_coun
     int total_agents = (int)dict_get(vec_kwargs, "total_agents")->value;
     int num_buffers = (int)dict_get(vec_kwargs, "num_buffers")->value;
     int agents_per_buffer = total_agents / num_buffers;
+
+    // create_static_vec assumes buffer b's agent rows start at
+    // b * agents_per_buffer; with 2 agents per env any remainder would make
+    // buffers overlap agent rows. Fail loudly instead of corrupting training.
+    if (total_agents % (num_buffers * BBE_AGENTS) != 0) {
+        fprintf(stderr,
+                "bloodbowl: total_agents (%d) must be divisible by "
+                "num_buffers * %d (= %d)\n",
+                total_agents, BBE_AGENTS, num_buffers * BBE_AGENTS);
+        exit(1);
+    }
 
     int num_envs = total_agents / BBE_AGENTS;
     Env* envs = (Env*)calloc(num_envs, sizeof(Env));

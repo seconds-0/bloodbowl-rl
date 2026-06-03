@@ -55,7 +55,11 @@
 #include "engine/proc_match.c"
 #undef DIR8
 
-#define BBE_OBS_SIZE 576
+#define BBE_PLAYER_BYTES 24    // 11 stat/state bytes + 12 skill-id slots + pad
+#define BBE_SKILL_SLOTS 12     // >= max base-roster skills (10) + procgen cap
+#define BBE_OBS_SIZE 832       // 32*24 players + 16 ball/ctx + 48 scalars
+#define BBE_CTX_OFF (BB_NUM_PLAYERS * BBE_PLAYER_BYTES) // 768
+#define BBE_SCALAR_OFF (BBE_CTX_OFF + 16)               // 784
 #define BBE_HEAD_TYPE 30
 #define BBE_HEAD_ARG 33
 #define BBE_HEAD_SQ 391
@@ -63,6 +67,13 @@
 #define BBE_AGENTS 2
 #define BBE_MAX_DECISIONS 4096 // episode safety bound
 #define BBE_MAX_BANKS 8        // frozen selfplay-pool banks (matches selfplay.py)
+
+_Static_assert(BBE_HEAD_TYPE == BB_A_TYPE_COUNT,
+               "action-type head out of sync with bb_actions.h");
+_Static_assert(BBE_HEAD_SQ == BB_PITCH_LEN * BB_PITCH_WID + 1,
+               "square head out of sync with pitch dimensions");
+_Static_assert(BBE_OBS_SIZE == BBE_SCALAR_OFF + 48, "obs layout out of sync");
+_Static_assert(BB_SKILL_COUNT <= 254, "skill id + 1 must fit a byte");
 
 // Floats only; summed across envs then divided by n (vecenv.h). n must be last.
 typedef struct {
@@ -125,6 +136,13 @@ static void bbe_refresh_legal(Bloodbowl* env) {
 }
 
 // --- Observation encoding ------------------------------------------------------
+// Egocentric player index: my players are 0..15, opponents 16..31, in BOTH
+// the observation rows and the player-slot action args. XOR with 16 flips
+// team blocks for the away agent; identity for home.
+static int bbe_ego_slot(int agent, int slot) {
+    return agent == BB_AWAY ? (slot ^ BB_TEAM_SLOTS) : slot;
+}
+
 static void bbe_encode_obs(Bloodbowl* env, int agent) {
     unsigned char* o = env->obs_ptr[agent];
     memset(o, 0, BBE_OBS_SIZE);
@@ -132,11 +150,11 @@ static void bbe_encode_obs(Bloodbowl* env, int agent) {
     int me = agent; // agent 0 = home coach, 1 = away
 
     for (int i = 0; i < BB_NUM_PLAYERS; i++) {
-        // Egocentric ordering: my players first.
+        // Egocentric ordering: my players first (row = bbe_ego_slot(slot)).
         int team = i < BB_TEAM_SLOTS ? me : 1 - me;
         int slot = team * BB_TEAM_SLOTS + (i & 15);
         const bb_player* p = &m->players[slot];
-        unsigned char* t = o + i * 16;
+        unsigned char* t = o + i * BBE_PLAYER_BYTES;
         if (p->location == BB_LOC_ON_PITCH) {
             // Mirror x for the away coach so "forward" is always +x.
             int px = me == BB_HOME ? p->x : (BB_PITCH_LEN - 1 - p->x);
@@ -152,14 +170,18 @@ static void bbe_encode_obs(Bloodbowl* env, int agent) {
         t[8] = (unsigned char)p->ag;
         t[9] = (unsigned char)p->pa;
         t[10] = (unsigned char)p->av;
+        // Skill ids (+1, 0 = none). BBE_SKILL_SLOTS covers the largest base
+        // roster list (10) plus the procgen advancement cap (bb_procgen.c
+        // stops adding at 12 total) — no silent truncation.
         int k = 11;
-        for (int sk = bb_next_skill(&p->skills, 0); sk >= 0 && k < 16;
+        for (int sk = bb_next_skill(&p->skills, 0);
+             sk >= 0 && k < 11 + BBE_SKILL_SLOTS;
              sk = bb_next_skill(&p->skills, sk + 1)) {
             t[k++] = (unsigned char)(sk + 1);
         }
     }
 
-    unsigned char* b = o + 512;
+    unsigned char* b = o + BBE_CTX_OFF;
     b[0] = m->ball.state;
     if (m->ball.state != BB_BALL_OFF_PITCH) {
         int bx = me == BB_HOME ? m->ball.x : (BB_PITCH_LEN - 1 - m->ball.x);
@@ -167,22 +189,24 @@ static void bbe_encode_obs(Bloodbowl* env, int agent) {
         b[2] = (unsigned char)(m->ball.y + 1);
     }
     if (m->ball.carrier != BB_NO_PLAYER) {
-        int cteam = BB_TEAM_OF(m->ball.carrier);
-        b[3] = (unsigned char)(1 + (cteam == me ? 0 : 16) + BB_SLOT_OF(m->ball.carrier));
+        b[3] = (unsigned char)(1 + bbe_ego_slot(me, m->ball.carrier));
     }
     const bb_frame* top = m->stack_top ? &m->stack[m->stack_top - 1] : 0;
     if (top) {
         b[4] = top->proc;
         b[5] = top->phase;
-        b[6] = top->a;
-        b[7] = top->b;
-        b[8] = top->x;
-        b[9] = top->y;
+        // Frame a/b are player slots in every proc that surfaces decisions;
+        // remap egocentrically (+1, 0 = none/not-a-slot). Frame x/y are NOT
+        // exposed: their semantics vary per proc (squares, latch bits, skill
+        // payloads), so away-mirroring can't be applied consistently — the
+        // legal-action mask carries the spatial decision context instead.
+        b[6] = top->a < BB_NUM_PLAYERS ? (unsigned char)(1 + bbe_ego_slot(me, top->a)) : 0;
+        b[7] = top->b < BB_NUM_PLAYERS ? (unsigned char)(1 + bbe_ego_slot(me, top->b)) : 0;
     }
     b[10] = (unsigned char)(m->decision_team == me);
     b[11] = (unsigned char)(m->active_team == me);
 
-    unsigned char* s = o + 528;
+    unsigned char* s = o + BBE_SCALAR_OFF;
     s[0] = m->half;
     s[1] = m->turn[me];
     s[2] = m->turn[1 - me];
@@ -207,17 +231,71 @@ static void bbe_encode_obs(Bloodbowl* env, int agent) {
 }
 
 // --- Action encode/decode --------------------------------------------------------
+// Per-type action contract (mirrors the comments in bb_actions.h). x,y is a
+// pitch square ONLY for these types — for everything else x carries payloads
+// (skill ids for USE_REROLL) or nothing, and must never reach the square head.
+static bool bbe_type_spatial(int type) {
+    switch (type) {
+    case BB_A_SETUP_PLACE:
+    case BB_A_KICK_TARGET:
+    case BB_A_STEP:
+    case BB_A_JUMP:
+    case BB_A_BLOCK_TARGET:
+    case BB_A_PASS_TARGET:
+    case BB_A_HANDOFF_TARGET:
+    case BB_A_FOUL_TARGET:
+    case BB_A_TTM_TARGET:
+    case BB_A_PUSH_SQUARE:
+    case BB_A_SPECIAL_TARGET:
+        return true;
+    default:
+        return false;
+    }
+}
+
+// arg is a player slot for these types (egocentric remap applies).
+static bool bbe_arg_is_slot(int type) {
+    switch (type) {
+    case BB_A_SETUP_PLACE:
+    case BB_A_SETUP_REMOVE:
+    case BB_A_TOUCHBACK:
+    case BB_A_ACTIVATE:
+        return true;
+    default:
+        return false;
+    }
+}
+
 static int bbe_sq_index(int agent, int x, int y) {
     int px = agent == BB_HOME ? x : (BB_PITCH_LEN - 1 - x);
     return y * BB_PITCH_LEN + px;
+}
+
+// Head-space square index for a legal action: real square (incl. (0,0)) for
+// spatial types, the 390 "none" sentinel otherwise.
+static int bbe_action_sq(int agent, bb_action a) {
+    return bbe_type_spatial(a.type) ? bbe_sq_index(agent, a.x, a.y) : 390;
+}
+
+// Head-space arg index for a legal action: player slots remapped to the
+// agent's egocentric view (matching obs rows); 0xFE/0xFF markers and args
+// beyond the direct range collapse into sentinel 32.
+static int bbe_action_arg(int agent, bb_action a) {
+    int arg = a.arg;
+    if (bbe_arg_is_slot(a.type) && arg < BB_NUM_PLAYERS) {
+        arg = bbe_ego_slot(agent, arg);
+    }
+    if (arg == 0xFE || arg == 0xFF) return 32;
+    return arg < 32 ? arg : 32;
 }
 
 static void bbe_fill_mask(Bloodbowl* env, int agent) {
     unsigned char* mask = env->action_mask_ptr[agent];
     memset(mask, 0, BBE_MASK_SIZE);
     if (env->match.status != BB_STATUS_DECISION ||
-        env->match.decision_team != agent) {
-        // Waiting agent: only the null action.
+        env->match.decision_team != agent || env->n_legal <= 0) {
+        // Waiting agent (or defensive: no legal actions): only the null
+        // action — an all-zero mask row would NaN the masked sampler.
         mask[BB_A_NONE] = 1;
         mask[BBE_HEAD_TYPE + 32] = 1;            // arg sentinel
         mask[BBE_HEAD_TYPE + BBE_HEAD_ARG + 390] = 1; // square none
@@ -226,12 +304,8 @@ static void bbe_fill_mask(Bloodbowl* env, int agent) {
     for (int i = 0; i < env->n_legal; i++) {
         bb_action a = env->legal[i];
         mask[a.type] = 1;
-        int arg_idx = (a.arg == 0xFE || a.arg == 0xFF) ? 32
-                      : (a.arg < 32 ? a.arg : 32);
-        mask[BBE_HEAD_TYPE + arg_idx] = 1;
-        bool spatial = a.x || a.y;
-        int sq = spatial ? bbe_sq_index(agent, a.x, a.y) : 390;
-        mask[BBE_HEAD_TYPE + BBE_HEAD_ARG + sq] = 1;
+        mask[BBE_HEAD_TYPE + bbe_action_arg(agent, a)] = 1;
+        mask[BBE_HEAD_TYPE + BBE_HEAD_ARG + bbe_action_sq(agent, a)] = 1;
     }
 }
 
@@ -239,31 +313,19 @@ static bb_action bbe_decode(Bloodbowl* env, int agent, const float* heads) {
     int t = (int)heads[0];
     int arg = (int)heads[1];
     int sq = (int)heads[2];
-    // Map back to engine coordinates.
-    int x = 0, y = 0;
-    if (sq < 390) {
-        int px = sq % BB_PITCH_LEN;
-        y = sq / BB_PITCH_LEN;
-        x = agent == BB_HOME ? px : (BB_PITCH_LEN - 1 - px);
-    }
-    // Pass 1: exact match (type + arg-class + square).
+    // Pass 1: exact match in head space (type + arg-class + square).
     for (int i = 0; i < env->n_legal; i++) {
         bb_action a = env->legal[i];
         if (a.type != t) continue;
-        int aidx = (a.arg == 0xFE || a.arg == 0xFF) ? 32 : (a.arg < 32 ? a.arg : 32);
-        if (aidx != arg) continue;
-        bool spatial = a.x || a.y;
-        if (spatial && (a.x != x || a.y != y)) continue;
-        if (!spatial && sq != 390) continue;
+        if (bbe_action_arg(agent, a) != arg) continue;
+        if (bbe_action_sq(agent, a) != sq) continue;
         return a;
     }
     env->illegal++;
-    // Pass 2: same type, matching square if spatial.
+    // Pass 2: same type, matching square.
     for (int i = 0; i < env->n_legal; i++) {
         bb_action a = env->legal[i];
-        if (a.type != t) continue;
-        bool spatial = a.x || a.y;
-        if (spatial && sq < 390 && a.x == x && a.y == y) return a;
+        if (a.type == t && bbe_action_sq(agent, a) == sq) return a;
     }
     for (int i = 0; i < env->n_legal; i++) {
         if (env->legal[i].type == t) return env->legal[i];
