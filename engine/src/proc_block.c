@@ -2,6 +2,7 @@
 // INJURY, CASUALTY, FOUL.
 #include "bb/bb_proc.h"
 #include "bb/bb_skills.h"
+#include "bb/bb_hooks.h"
 #include "bb/gen_tables.h"
 
 // --- assists -----------------------------------------------------------------
@@ -18,6 +19,9 @@ static int count_assists(const bb_match* m, int for_slot, int against_slot) {
     return n;
 }
 
+enum { PSH_POW = 1 << 0, PSH_CHAIN = 1 << 1, PSH_MOVED = 1 << 2, PSH_FUP = 1 << 3,
+       PSH_CROWD = 1 << 4, PSH_FROM_BLITZ = 1 << 5, PSH_STOOD_FIRM = 1 << 6 };
+
 // ===== BLOCK ==================================================================
 // a = attacker, b = defender.
 // data: bits 0-2 die0, 3-5 die1, 6-8 die2, 9-10 ndice-1, bit11 chooser-is-defender,
@@ -25,7 +29,7 @@ static int count_assists(const bb_match* m, int for_slot, int against_slot) {
 // phase 0: compute pool, roll; 1: reroll window; 2: choose die; 3: resolving
 //          (wrestle window: phase 4).
 
-enum { BLK_RR_USED = 1 << 12, BLK_DEF_CHOOSES = 1 << 11 };
+enum { BLK_RR_USED = 1 << 12, BLK_DEF_CHOOSES = 1 << 11, BLK_IS_BLITZ = 1 << 13 };
 
 static int blk_die(const bb_frame* f, int i) { return (f->data >> (3 * i)) & 7; }
 static int blk_ndice(const bb_frame* f) { return ((f->data >> 9) & 3) + 1; }
@@ -47,6 +51,7 @@ static void block_advance(bb_match* m, bb_rng* rng) {
     if (f->phase == 0) {
         int st_a = m->players[att].st + count_assists(m, att, def);
         int st_d = m->players[def].st + count_assists(m, def, att);
+        if (f->data & BLK_IS_BLITZ) st_a += bb_hook_st_mod_blitz(m, att); // Horns
         int nd = 1;
         bool def_chooses = false;
         if (st_a > st_d) nd = st_a > 2 * st_d ? 3 : 2;
@@ -54,7 +59,8 @@ static void block_advance(bb_match* m, bb_rng* rng) {
             nd = st_d > 2 * st_a ? 3 : 2;
             def_chooses = true;
         }
-        f->data = (uint16_t)(((nd - 1) << 9) | (def_chooses ? BLK_DEF_CHOOSES : 0));
+        f->data = (uint16_t)((f->data & BLK_IS_BLITZ) | ((nd - 1) << 9) |
+                             (def_chooses ? BLK_DEF_CHOOSES : 0));
         blk_roll_pool(f, rng);
         // Reroll window for the attacking coach (team reroll only, own turn).
         int team = BB_TEAM_OF(att);
@@ -115,9 +121,18 @@ static void resolve_face(bb_match* m, bb_frame* f, int face) {
     switch (face) {
         case BB_BD_ATTACKER_DOWN:
             bb_pop(m);
-            bb_knockdown(m, att, BB_KD_BLOCK, 0);
+            bb_knockdown2(m, att, BB_KD_BLOCK, 0, def);
             return;
         case BB_BD_BOTH_DOWN: {
+            // Juggernaut (attacker, blitz): Both Down becomes a Push (also
+            // cancelling the defender's Wrestle for this block).
+            if ((f->data & BLK_IS_BLITZ) &&
+                bb_has_skill(&m->players[att].skills, BB_SK_JUGGERNAUT)) {
+                bb_pop(m);
+                bb_push(m, BB_PROC_PUSH, att, def, ax, ay);
+                if (f->data & BLK_IS_BLITZ) bb_top(m)->data |= PSH_FROM_BLITZ;
+                return;
+            }
             // Wrestle (either player): both players are PLACED Prone — no
             // armour rolls, no knockdown turnover. (Rules allow declining;
             // auto-applied here — see DECISIONS.md.) A carrier placed prone
@@ -143,29 +158,37 @@ static void resolve_face(bb_match* m, bb_frame* f, int face) {
             bool def_down = !(bb_has_block(m, def) && !(m->players[def].flags & BB_PF_DISTRACTED));
             bb_pop(m);
             // Defender resolves first, attacker's knockdown (turnover) after.
-            if (att_down) bb_knockdown(m, att, BB_KD_BLOCK, 0);
-            if (def_down) bb_knockdown(m, def, BB_KD_BLOCK, 0);
+            if (att_down) bb_knockdown2(m, att, BB_KD_BLOCK, 0, def);
+            if (def_down) bb_knockdown2(m, def, BB_KD_BLOCK, 0, att);
             return;
         }
         case BB_BD_PUSH_1:
-        case BB_BD_PUSH_2:
+        case BB_BD_PUSH_2: {
+            uint16_t blitz = f->data & BLK_IS_BLITZ;
             bb_pop(m);
             bb_push(m, BB_PROC_PUSH, att, def, ax, ay);
+            if (blitz) bb_top(m)->data |= PSH_FROM_BLITZ;
             return;
+        }
         case BB_BD_STUMBLE: {
             bool dodge = bb_has_dodge_skill(m, def) &&
                          !(m->players[def].flags & BB_PF_DISTRACTED) &&
                          !bb_has_skill(&m->players[att].skills, BB_SK_TACKLE);
+            uint16_t blitz = f->data & BLK_IS_BLITZ;
             bb_pop(m);
             bb_push(m, BB_PROC_PUSH, att, def, ax, ay);
             if (!dodge) bb_top(m)->data |= 1; // pow flag
+            if (blitz) bb_top(m)->data |= PSH_FROM_BLITZ;
             return;
         }
-        case BB_BD_POW:
+        case BB_BD_POW: {
+            uint16_t blitz = f->data & BLK_IS_BLITZ;
             bb_pop(m);
             bb_push(m, BB_PROC_PUSH, att, def, ax, ay);
             bb_top(m)->data |= 1; // pow flag
+            if (blitz) bb_top(m)->data |= PSH_FROM_BLITZ;
             return;
+        }
     }
     m->status = BB_STATUS_ERROR;
 }
@@ -179,8 +202,6 @@ static void resolve_face(bb_match* m, bb_frame* f, int face) {
 //       the origin; we need pushee original too — keep origin in (x,y) until
 //       relocation, then overwrite with pushee's old square for follow-up.
 
-enum { PSH_POW = 1 << 0, PSH_CHAIN = 1 << 1, PSH_MOVED = 1 << 2, PSH_FUP = 1 << 3,
-       PSH_CROWD = 1 << 4 };
 
 static int push_candidates(const bb_match* m, const bb_frame* f, int cand[3][2]) {
     // Three squares "behind" the pushee relative to the push origin.
@@ -212,7 +233,22 @@ static void push_advance(bb_match* m, bb_rng* rng) {
     (void)rng;
     bb_frame* f = bb_top(m);
     if (f->phase == 0) {
-        bb_need_decision(m, m->active_team); // attacking coach picks the square
+        int def_flags = bb_hook_push_flags(m, f->b);
+        bool jugg = (f->data & PSH_FROM_BLITZ) &&
+                    bb_has_skill(&m->players[f->a].skills, BB_SK_JUGGERNAUT);
+        if ((def_flags & BB_PUSHF_STAND_FIRM) && !jugg) {
+            // Stand Firm: the player is not moved; a POW still knocks them
+            // down in their own square; no follow-up (no square vacated).
+            f->data |= PSH_STOOD_FIRM;
+            f->phase = 5;
+            return;
+        }
+        bool side_step = (def_flags & BB_PUSHF_SIDE_STEP) && !jugg &&
+                         !bb_has_skill(&m->players[f->a].skills, BB_SK_GRAB);
+        // Side Step: the DEFENDER's coach chooses the square (any adjacent
+        // free square, not just the usual three) — handled in legal/apply via
+        // the decision owner.
+        bb_need_decision(m, side_step ? BB_TEAM_OF(f->b) : m->active_team);
         return;
     }
     if (f->phase == 1) {
@@ -266,6 +302,13 @@ static void push_advance(bb_match* m, bb_rng* rng) {
             f->phase = 5;
             return;
         }
+        // Fend: the attacker may not follow up (Juggernaut on a blitz cancels).
+        bool jugg = (f->data & PSH_FROM_BLITZ) &&
+                    bb_has_skill(&m->players[f->a].skills, BB_SK_JUGGERNAUT);
+        if (!jugg && (bb_hook_push_flags(m, f->b) & BB_PUSHF_FEND)) {
+            f->phase = 5;
+            return;
+        }
         bb_need_decision(m, BB_TEAM_OF(f->a));
         return;
     }
@@ -291,6 +334,25 @@ static int push_legal(const bb_match* m, bb_action* out) {
     const bb_frame* f = &m->stack[m->stack_top - 1];
     int n = 0;
     if (f->phase == 0) {
+        // Side Step (decision owner = defender): any unoccupied adjacent
+        // square instead of the usual three.
+        bool jugg = (f->data & PSH_FROM_BLITZ) &&
+                    bb_has_skill(&m->players[f->a].skills, BB_SK_JUGGERNAUT);
+        if ((bb_hook_push_flags(m, f->b) & BB_PUSHF_SIDE_STEP) && !jugg &&
+            !bb_has_skill(&m->players[f->a].skills, BB_SK_GRAB)) {
+            const bb_player* dp = &m->players[f->b];
+            for (int dx = -1; dx <= 1; dx++) {
+                for (int dy = -1; dy <= 1; dy++) {
+                    if (!dx && !dy) continue;
+                    int x = dp->x + dx, y = dp->y + dy;
+                    if (bb_on_pitch_xy(x, y) && !m->grid[x][y]) {
+                        out[n++] = (bb_action){BB_A_PUSH_SQUARE, 0, (uint8_t)x, (uint8_t)y};
+                    }
+                }
+            }
+            if (n > 0) return n;
+            // No free square: fall through to the normal three candidates.
+        }
         int cand[3][2];
         push_candidates(m, f, cand);
         // Empty on-pitch squares first; if none, chains/crowd become legal.
@@ -385,7 +447,7 @@ static void knockdown_advance(bb_match* m, bb_rng* rng) {
         }
         bb_push(m, BB_PROC_SCATTER, 0, 1, (uint8_t)bx, (uint8_t)by);
     }
-    bb_push(m, BB_PROC_ARMOUR, f.a, 0, f.x, 0); // resolves before the bounce
+    bb_push(m, BB_PROC_ARMOUR, f.a, 0, f.x, f.y); // y = causer+1; armour first
 }
 
 // ===== ARMOUR =================================================================
@@ -395,16 +457,36 @@ static void knockdown_advance(bb_match* m, bb_rng* rng) {
 static void armour_advance(bb_match* m, bb_rng* rng) {
     bb_frame f = *bb_top(m);
     bb_pop(m);
+    int causer = (int)f.y - 1;
     int d1 = bb_d6(rng), d2 = bb_d6(rng);
-    int total = d1 + d2 + (int8_t)f.x;
+    int total = d1 + d2 + (int8_t)f.x + bb_hook_armour_mod(m, f.a, causer);
     m->ret = 0;
     if (f.b) { // foul: report doubles to the FOUL parent via high bit
         if (d1 == d2) m->ret |= 2;
     }
-    if (total >= m->players[f.a].av) {
+    bool broken = total >= m->players[f.a].av;
+    bool mb_on_armour = false;
+    if (!broken && causer >= 0 &&
+        bb_has_skill(&m->players[causer].skills, BB_SK_MIGHTY_BLOW) &&
+        total + 1 >= m->players[f.a].av) {
+        // Mighty Blow (+1): auto-applied to the armour roll when that turns a
+        // miss into a break; otherwise saved for the injury roll (D-policy,
+        // see DECISIONS.md).
+        broken = true;
+        mb_on_armour = true;
+    }
+    // Claws: an unmodified armour roll of 8+ always breaks armour.
+    if (!broken && causer >= 0 && d1 + d2 >= 8 &&
+        bb_has_skill(&m->players[causer].skills, BB_SK_CLAWS)) {
+        broken = true;
+        mb_on_armour = true; // claws break leaves MB for... rules: MB cannot
+                             // be used with Claws on the same roll; spend it.
+    }
+    if (broken) {
         m->ret |= 1;
-        bb_push(m, BB_PROC_INJURY, f.a, 0, 0, 0);
+        bb_push(m, BB_PROC_INJURY, f.a, 0, 0, f.y);
         if (f.b) bb_top(m)->b = 2; // propagate foul context to injury
+        if (mb_on_armour) bb_top(m)->x = 1; // MB consumed on armour
     }
 }
 
@@ -415,9 +497,14 @@ static void injury_advance(bb_match* m, bb_rng* rng) {
     bb_frame f = *bb_top(m);
     bb_pop(m);
     int slot = f.a;
+    int causer = (int)f.y - 1;
     bb_player* p = &m->players[slot];
     int d1 = bb_d6(rng), d2 = bb_d6(rng);
-    int total = d1 + d2;
+    int total = d1 + d2 + bb_hook_injury_mod(m, slot, causer);
+    if (causer >= 0 && f.x == 0 &&
+        bb_has_skill(&m->players[causer].skills, BB_SK_MIGHTY_BLOW)) {
+        total += 1; // Mighty Blow not consumed on the armour roll
+    }
     bool stunty = bb_is_stunty(m, slot);
     bool foul = f.b == 2;
     if (foul && d1 == d2) m->ret |= 2; // doubles on injury: spotted by the ref

@@ -37,12 +37,27 @@ typedef struct {
 
 typedef int (*bb_mod_fn)(const bb_match* m, const bb_ctx* c);
 
+// Push-interaction flags (consulted by the PUSH/BLOCK procedures).
+enum {
+    BB_PUSHF_STAND_FIRM = 1 << 0, // may not be pushed
+    BB_PUSHF_SIDE_STEP = 1 << 1,  // defender's coach picks the push square
+    BB_PUSHF_FEND = 1 << 2,       // attacker may not follow up
+    BB_PUSHF_GRAB = 1 << 3,       // attacker: defender may not use Side Step
+    BB_PUSHF_JUGGERNAUT = 1 << 4, // attacker (blitz): Both Down = Push; cancels
+                                  // Fend/Stand Firm/Wrestle
+};
+
 typedef struct {
     bb_mod_fn mod;        // own-skill test modifier
     bb_mod_fn aura;       // modifier this skill inflicts on OTHERS' tests
+    bb_mod_fn armour_mod; // armour-roll modifier (c->player = downed player,
+                          // c->other = causer; positive helps the causer)
+    bb_mod_fn injury_mod; // injury-roll modifier (same convention)
     uint8_t reroll_kinds; // bitmask of bb_test_kind this skill lets you re-roll
     uint8_t activate_gate; // D6 target for the activation negatrait (0 = none)
     uint8_t gate_kind;     // bb_gate_kind behavior on failure
+    uint8_t push_flags;    // BB_PUSHF_* (owner's effect in pushes)
+    int8_t st_mod_blitz;   // ST bonus when blocking as part of a Blitz (Horns)
 } bb_skill_hooks;
 
 typedef enum {
@@ -94,5 +109,35 @@ int bb_hook_activation_gate(const bb_match* m, int slot, int* target, int* gk);
 
 // Iterate a player's skills: returns the next set skill id >= start, or -1.
 int bb_next_skill(const bb_skillset* s, int start);
+
+// Aggregate queries used by the block/push/injury procedures.
+int bb_hook_push_flags(const bb_match* m, int slot);
+int bb_hook_st_mod_blitz(const bb_match* m, int slot);
+int bb_hook_armour_mod(const bb_match* m, int downed, int causer);
+int bb_hook_injury_mod(const bb_match* m, int downed, int causer);
+
+#define BB_SKILL_PUSHF(skill, flags)                                         \
+    __attribute__((constructor)) static void bb_reg_pf_##skill(void) {       \
+        bb_hooks[BB_SK_##skill].push_flags = (flags);                        \
+    }
+
+#define BB_SKILL_ST_BLITZ(skill, bonus)                                      \
+    __attribute__((constructor)) static void bb_reg_stb_##skill(void) {      \
+        bb_hooks[BB_SK_##skill].st_mod_blitz = (bonus);                      \
+    }
+
+#define BB_SKILL_ARMOUR_MOD(skill)                                           \
+    static int bb_amod_##skill(const bb_match* m, const bb_ctx* c);          \
+    __attribute__((constructor)) static void bb_reg_am_##skill(void) {       \
+        bb_hooks[BB_SK_##skill].armour_mod = bb_amod_##skill;                \
+    }                                                                        \
+    static int bb_amod_##skill(const bb_match* m, const bb_ctx* c)
+
+#define BB_SKILL_INJURY_MOD(skill)                                           \
+    static int bb_imod_##skill(const bb_match* m, const bb_ctx* c);          \
+    __attribute__((constructor)) static void bb_reg_im_##skill(void) {       \
+        bb_hooks[BB_SK_##skill].injury_mod = bb_imod_##skill;                \
+    }                                                                        \
+    static int bb_imod_##skill(const bb_match* m, const bb_ctx* c)
 
 #endif // BB_HOOKS_H

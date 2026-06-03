@@ -64,3 +64,50 @@ int bb_hook_activation_gate(const bb_match* m, int slot, int* target, int* gk) {
     }
     return -1;
 }
+
+int bb_hook_push_flags(const bb_match* m, int slot) {
+    int flags = 0;
+    const bb_player* p = &m->players[slot];
+    for (int sk = bb_next_skill(&p->skills, 0); sk >= 0;
+         sk = bb_next_skill(&p->skills, sk + 1)) {
+        flags |= bb_hooks[sk].push_flags;
+    }
+    return flags;
+}
+
+int bb_hook_st_mod_blitz(const bb_match* m, int slot) {
+    int b = 0;
+    const bb_player* p = &m->players[slot];
+    for (int sk = bb_next_skill(&p->skills, 0); sk >= 0;
+         sk = bb_next_skill(&p->skills, sk + 1)) {
+        b += bb_hooks[sk].st_mod_blitz;
+    }
+    return b;
+}
+
+static int chain_mod(const bb_match* m, int downed, int causer, int which) {
+    int total = 0;
+    bb_ctx c = {0, (uint8_t)downed, (uint8_t)(causer < 0 ? BB_NO_PLAYER : causer),
+                0, 0, 0, 0, -1, 0};
+    // Causer's skills (Mighty Blow, Claws...) and victim's (Thick Skull is
+    // band-based, not a mod; but e.g. armour bonuses) both consulted.
+    int sides[2] = {causer, downed};
+    for (int i = 0; i < 2; i++) {
+        if (sides[i] < 0) continue;
+        const bb_player* p = &m->players[sides[i]];
+        for (int sk = bb_next_skill(&p->skills, 0); sk >= 0;
+             sk = bb_next_skill(&p->skills, sk + 1)) {
+            bb_mod_fn fn = which == 0 ? bb_hooks[sk].armour_mod : bb_hooks[sk].injury_mod;
+            if (fn) total += fn(m, &c);
+        }
+    }
+    return total;
+}
+
+int bb_hook_armour_mod(const bb_match* m, int downed, int causer) {
+    return chain_mod(m, downed, causer, 0);
+}
+
+int bb_hook_injury_mod(const bb_match* m, int downed, int causer) {
+    return chain_mod(m, downed, causer, 1);
+}

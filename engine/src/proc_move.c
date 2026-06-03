@@ -101,6 +101,7 @@ static void move_advance(bb_match* m, bb_rng* rng) {
             if (m->ret & 1) {
                 f->data |= MV_AWAIT_BLOCK;
                 bb_push(m, BB_PROC_BLOCK, slot, target, 0, 0);
+                bb_top(m)->data |= 1 << 13; // BLK_IS_BLITZ (rush-for-block)
             } else {
                 // Failed rush: knocked down in their own square, no block.
                 bb_pop(m); // MOVE
@@ -379,6 +380,7 @@ static void move_apply(bb_match* m, bb_action a, bb_rng* rng) {
                 p->moved++; // the blitz block costs one square of movement
             }
             bb_push(m, BB_PROC_BLOCK, slot, target, 0, 0);
+            if (f->b == BB_ACT_BLITZ) bb_top(m)->data |= 1 << 13; // BLK_IS_BLITZ
             return;
         }
 

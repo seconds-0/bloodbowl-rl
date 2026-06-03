@@ -112,6 +112,10 @@ void bb_knockdown(bb_match* m, int slot, int cause, int armour_mod) {
     bb_push(m, BB_PROC_KNOCKDOWN, slot, cause, armour_mod & 0xFF, 0);
 }
 
+void bb_knockdown2(bb_match* m, int slot, int cause, int armour_mod, int causer) {
+    bb_push(m, BB_PROC_KNOCKDOWN, slot, cause, armour_mod & 0xFF, causer + 1);
+}
+
 int bb_test_target(int stat_target, int modifiers) {
     int needed = stat_target - modifiers;
     if (needed < 2) needed = 2;

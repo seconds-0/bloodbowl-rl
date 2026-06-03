@@ -54,6 +54,9 @@ typedef enum {
     BB_KD_OTHER,
 } bb_kd_cause;
 void bb_knockdown(bb_match* m, int slot, int cause, int armour_mod);
+// Knockdown with a known causer (block/foul) so armour/injury skill mods
+// (Mighty Blow, Claws...) apply. causer = -1 for none.
+void bb_knockdown2(bb_match* m, int slot, int cause, int armour_mod, int causer);
 
 // Latch a turnover for the active team (takes effect as procs unwind).
 void bb_turnover(bb_match* m);

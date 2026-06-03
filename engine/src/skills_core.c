@@ -92,3 +92,21 @@ BB_SKILL_GATE(REALLY_STUPID, 4, BB_GATE_LOSE_ACT_AND_TZ)
 // Action-conditional gates are refined with the declaration rework; gate 4
 // approximates and is flagged for the differential harness.
 BB_SKILL_GATE(UNCHANNELLED_FURY, 4, BB_GATE_LOSE_ACTIVATION)
+
+// --- Push-interaction skills -----------------------------------------------------
+// STAND FIRM: "may choose to not be pushed back" (always-on here; the choice
+// to decline is a TODO decision window).
+BB_SKILL_PUSHF(STAND_FIRM, BB_PUSHF_STAND_FIRM)
+// SIDE STEP: "the player's coach chooses which square the player is moved to,
+// and it can be any adjacent unoccupied square."
+BB_SKILL_PUSHF(SIDE_STEP, BB_PUSHF_SIDE_STEP)
+// FEND: "the attacking player may not follow up."
+BB_SKILL_PUSHF(FEND, BB_PUSHF_FEND)
+// GRAB / JUGGERNAUT carry their effects via attacker-side checks in
+// proc_block.c (registered here for the table's completeness).
+BB_SKILL_PUSHF(GRAB, BB_PUSHF_GRAB)
+BB_SKILL_PUSHF(JUGGERNAUT, BB_PUSHF_JUGGERNAUT)
+
+// HORNS: "+1 to their Strength ... when they perform a Block as part of a
+// Blitz Action."
+BB_SKILL_ST_BLITZ(HORNS, 1)
