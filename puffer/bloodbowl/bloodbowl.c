@@ -146,6 +146,23 @@ static int bbe_selftest(uint64_t seed, int episodes) {
                  "decision proc %d never reached in %d episodes",
                  st_required[i], episodes);
     }
+    // Defensive termination: a DECISION state whose legal enumeration came
+    // back empty must end the episode instead of livelocking the env (the
+    // mask path emits a null action, but the step path applies nothing and
+    // would otherwise never advance or terminate).
+    ST_CHECK(env.match.status == BB_STATUS_DECISION,
+             "expected a decision state after the episode loop");
+    {
+        float n_before = env.log.n;
+        env.n_legal = 0; // simulate an enumerator returning no actions
+        c_step(&env);
+        ST_CHECK(terminals[0] == 1.0f && terminals[1] == 1.0f,
+                 "empty-legal decision did not terminate the episode");
+        ST_CHECK(env.log.n == n_before + 1,
+                 "defensive reset did not log the episode");
+        ST_CHECK(env.match.status == BB_STATUS_DECISION && env.n_legal > 0,
+                 "env did not reset to a fresh decision after defensive reset");
+    }
     printf("bloodbowl selftest: %d episodes, %d failure(s)\n", done, st_failures);
     return st_failures ? 1 : 0;
 }

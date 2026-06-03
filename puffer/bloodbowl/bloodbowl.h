@@ -577,8 +577,13 @@ static void c_step(Bloodbowl* env) {
             }
         }
     }
-    if (m->status == BB_STATUS_ERROR) {
-        // Should be unreachable (decode snaps to legal); reset defensively.
+    if (m->status == BB_STATUS_ERROR ||
+        (m->status == BB_STATUS_DECISION && env->n_legal <= 0)) {
+        // Both should be unreachable (decode snaps to legal; every decision
+        // window offers at least one action). The second guard matters: a
+        // DECISION whose legal set came back empty would otherwise livelock
+        // the env forever — the mask path emits a defensive null action, but
+        // the step path would never apply anything and never terminate.
         bbe_finish_episode(env);
     } else if (m->status == BB_STATUS_MATCH_OVER ||
                env->decisions >= env->max_decisions) {
