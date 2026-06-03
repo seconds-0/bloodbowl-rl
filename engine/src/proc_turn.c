@@ -154,18 +154,27 @@ static void activation_advance(bb_match* m, bb_rng* rng) {
         m->players[slot].flags |= BB_PF_ACTIVATING;
         // Negatrait activation gate (Bone Head, Unchannelled Fury, ...).
         int target = 0, gk = 0;
-        if (bb_hook_activation_gate(m, slot, &target, &gk) >= 0) {
+        if (bb_hook_activation_gate(m, slot, &target, &gk) >= 0 &&
+            !(gk == BB_GATE_ROOTED && (m->players[slot].flags & BB_PF_ROOTED))) {
             int die = bb_d6(rng);
             if (die < target && die != 6) {
                 bb_player* p = &m->players[slot];
-                if (gk == BB_GATE_LOSE_ACT_AND_TZ) p->flags |= BB_PF_DISTRACTED;
-                p->flags &= (uint16_t)~BB_PF_ACTIVATING;
-                p->flags |= BB_PF_USED; // activation lost
-                bb_pop(m);
-                return;
+                if (gk == BB_GATE_ROOTED) {
+                    // TAKE ROOT: rooted until the drive ends or they go down;
+                    // may still act from their square.
+                    p->flags |= BB_PF_ROOTED;
+                } else {
+                    if (gk == BB_GATE_LOSE_ACT_AND_TZ) p->flags |= BB_PF_DISTRACTED;
+                    p->flags &= (uint16_t)~BB_PF_ACTIVATING;
+                    p->flags |= BB_PF_USED; // activation lost
+                    bb_pop(m);
+                    return;
+                }
             }
             // Success clears a lingering Distracted state from earlier gates.
-            m->players[slot].flags &= (uint16_t)~BB_PF_DISTRACTED;
+            if (gk != BB_GATE_ROOTED) {
+                m->players[slot].flags &= (uint16_t)~BB_PF_DISTRACTED;
+            }
         }
         f->phase = 0; // continue to the declaration decision
         bb_need_decision(m, BB_TEAM_OF(slot));

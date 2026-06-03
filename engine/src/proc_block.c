@@ -251,11 +251,13 @@ static void push_advance(bb_match* m, bb_rng* rng) {
     bb_frame* f = bb_top(m);
     if (f->phase == 0) {
         int def_flags = bb_hook_push_flags(m, f->b);
+        if (m->players[f->b].flags & BB_PF_ROOTED) def_flags |= BB_PUSHF_STAND_FIRM;
         bool jugg = (f->data & PSH_FROM_BLITZ) &&
                     bb_has_skill(&m->players[f->a].skills, BB_SK_JUGGERNAUT);
-        if ((def_flags & BB_PUSHF_STAND_FIRM) && !jugg) {
-            // Stand Firm: the player is not moved; a POW still knocks them
-            // down in their own square; no follow-up (no square vacated).
+        if (((def_flags & BB_PUSHF_STAND_FIRM) && !jugg) ||
+            (m->players[f->b].flags & BB_PF_ROOTED)) {
+            // Stand Firm / Rooted: the player is not moved; a POW still
+            // knocks them down in place; no follow-up (no square vacated).
             f->data |= PSH_STOOD_FIRM;
             f->phase = 5;
             return;
@@ -327,6 +329,10 @@ static void push_advance(bb_match* m, bb_rng* rng) {
                     bb_has_skill(&m->players[f->a].skills, BB_SK_JUGGERNAUT);
         if (!jugg && (bb_hook_push_flags(m, f->b) & BB_PUSHF_FEND)) {
             f->phase = 5;
+            return;
+        }
+        if (m->players[f->a].flags & BB_PF_ROOTED) {
+            f->phase = 5; // rooted players may not follow up
             return;
         }
         if (frenzy) {
@@ -470,6 +476,7 @@ static void knockdown_advance(bb_match* m, bb_rng* rng) {
     bb_pop(m);
     bb_player* p = &m->players[f.a];
     p->stance = BB_STANCE_PRONE;
+    p->flags &= (uint16_t)~BB_PF_ROOTED; // going down un-roots
     if (BB_TEAM_OF(f.a) == m->active_team) bb_turnover(m);
     bool had_ball = (p->flags & BB_PF_HAS_BALL) != 0;
     int bx = p->x, by = p->y;
@@ -492,13 +499,18 @@ static void armour_advance(bb_match* m, bb_rng* rng) {
     bb_frame f = *bb_top(m);
     bb_pop(m);
     int causer = (int)f.y - 1;
+    // IRON HARD SKIN: "Opposition players cannot apply any modifiers when
+    // making an Armour Roll against this player. Additionally, the Claws
+    // Skill cannot be used against this player."
+    bool ihs = bb_has_skill(&m->players[f.a].skills, BB_SK_IRON_HARD_SKIN);
     int d1 = bb_d6(rng), d2 = bb_d6(rng);
-    int total = d1 + d2 + (int8_t)f.x + bb_hook_armour_mod(m, f.a, causer);
+    int ext = ihs ? 0 : (int8_t)f.x + bb_hook_armour_mod(m, f.a, causer);
+    int total = d1 + d2 + ext;
     m->ret = 0;
     bool foul_double = f.b && d1 == d2;
     bool broken = total >= m->players[f.a].av;
     bool mb_on_armour = false;
-    if (!broken && causer >= 0 &&
+    if (!broken && !ihs && causer >= 0 &&
         bb_has_skill(&m->players[causer].skills, BB_SK_MIGHTY_BLOW) &&
         total + 1 >= m->players[f.a].av) {
         // Mighty Blow (+1): auto-applied to the armour roll when that turns a
@@ -508,7 +520,7 @@ static void armour_advance(bb_match* m, bb_rng* rng) {
         mb_on_armour = true;
     }
     // Claws: an unmodified armour roll of 8+ always breaks armour.
-    if (!broken && causer >= 0 && d1 + d2 >= 8 &&
+    if (!broken && !ihs && causer >= 0 && d1 + d2 >= 8 &&
         bb_has_skill(&m->players[causer].skills, BB_SK_CLAWS)) {
         broken = true;
         mb_on_armour = true; // claws break leaves MB for... rules: MB cannot
@@ -595,7 +607,10 @@ static void casualty_advance(bb_match* m, bb_rng* rng) {
         return;
     }
     int roll = bb_d16(rng);
-    (void)bb_casualty_table[roll]; // outcome recorded for league mode later
+    // DECAY: "Apply a +1 modifier to any Casualty Roll made against this
+    // player."
+    if (bb_has_skill(&p->skills, BB_SK_DECAY) && roll < 16) roll += 1;
+    p->spp_game = (uint8_t)bb_casualty_table[roll]; // outcome (league mode)
     if (p->location == BB_LOC_ON_PITCH) bb_remove_from_pitch(m, slot, BB_LOC_CAS);
     else p->location = BB_LOC_CAS;
 }

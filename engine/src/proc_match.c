@@ -1,6 +1,7 @@
 // proc_match.c — MATCH driver, PREGAME, SETUP, KICKOFF, END_DRIVE, KO_RECOVERY,
 // TOUCHDOWN.
 #include "bb/bb_proc.h"
+#include "bb/bb_hooks.h"
 #include "bb/gen_tables.h"
 
 // ===== MATCH =================================================================
@@ -72,6 +73,18 @@ static void match_advance(bb_match* m, bb_rng* rng) {
                 m->turn[0] = m->turn[1] = 0;
                 m->rerolls[0] = m->rerolls_start[0];
                 m->rerolls[1] = m->rerolls_start[1];
+                // LEADER: the per-half bonus re-roll (if a Leader survives).
+                for (int t = 0; t < 2; t++) {
+                    for (int s2 = t * BB_TEAM_SLOTS; s2 < (t + 1) * BB_TEAM_SLOTS; s2++) {
+                        const bb_player* lp = &m->players[s2];
+                        if ((lp->location == BB_LOC_RESERVES || lp->location == BB_LOC_ON_PITCH ||
+                             lp->location == BB_LOC_KO) &&
+                            bb_has_skill(&lp->skills, BB_SK_LEADER)) {
+                            m->rerolls[t]++;
+                            break;
+                        }
+                    }
+                }
                 int h1_kicker = (f->data & MD_H1_KICKER) ? 1 : 0;
                 m->kicking_team = (uint8_t)(1 - h1_kicker);
             } else {
@@ -94,6 +107,16 @@ static void pregame_advance(bb_match* m, bb_rng* rng) {
     if (f->phase == 0) {
         int w = bb_2d6(rng);
         m->weather = bb_weather_table[w];
+        // LEADER: a team with a Leader gains one extra team re-roll per half.
+        for (int t = 0; t < 2; t++) {
+            for (int s2 = t * BB_TEAM_SLOTS; s2 < (t + 1) * BB_TEAM_SLOTS; s2++) {
+                if (m->players[s2].location != BB_LOC_ABSENT &&
+                    bb_has_skill(&m->players[s2].skills, BB_SK_LEADER)) {
+                    m->rerolls[t]++;
+                    break;
+                }
+            }
+        }
         int toss = bb_roll(rng, 2); // 1 = home wins toss, 2 = away
         f->a = (uint8_t)(toss - 1); // toss winner
         f->phase = 1;
@@ -447,9 +470,20 @@ static void kickoff_advance(bb_match* m, bb_rng* rng) {
         return;
     }
     if (f->phase == 1) {
-        // Deviate: D8 direction, D6 squares.
+        // Deviate: D8 direction, D6 squares. KICK: "you may choose to halve
+        // the result of the D6 to determine the number of squares that the
+        // ball Deviates, rounding any fractions down" (auto-applied when a
+        // kicking-team player with Kick is on the pitch; kicker nomination is
+        // TODO with the fans/nomination work).
         int dir = bb_roll(rng, 8) - 1;
         int dist = bb_d6(rng);
+        for (int s2 = f->a * BB_TEAM_SLOTS; s2 < (f->a + 1) * BB_TEAM_SLOTS; s2++) {
+            if (m->players[s2].location == BB_LOC_ON_PITCH &&
+                bb_has_skill(&m->players[s2].skills, BB_SK_KICK)) {
+                dist /= 2;
+                break;
+            }
+        }
         m->ball.state = BB_BALL_IN_AIR;
         m->ball.x = (uint8_t)(f->x + DIR8[dir][0] * dist);
         m->ball.y = (uint8_t)(f->y + DIR8[dir][1] * dist);
@@ -592,6 +626,13 @@ static void end_drive_advance(bb_match* m, bb_rng* rng) {
     for (int s = 0; s < BB_NUM_PLAYERS; s++) {
         bb_player* p = &m->players[s];
         if (p->location == BB_LOC_ON_PITCH) {
+            // SECRET WEAPON: "At the end of a Drive in which this player took
+            // part ... they are Sent-off." (On-pitch at drive end = took part;
+            // earlier-removed participants are handled when removed.)
+            if (bb_has_skill(&p->skills, BB_SK_SECRET_WEAPON)) {
+                bb_remove_from_pitch(m, s, BB_LOC_SENT_OFF);
+                continue;
+            }
             bb_remove_from_pitch(m, s, BB_LOC_RESERVES);
         }
         if (p->location == BB_LOC_KO) {

@@ -64,6 +64,8 @@ typedef enum {
     BB_GATE_NONE = 0,
     BB_GATE_LOSE_ACTIVATION,      // fails: activation ends (marked used)
     BB_GATE_LOSE_ACT_AND_TZ,      // fails: also Distracted-like (loses TZ)
+    BB_GATE_ROOTED,               // fails: player is Rooted (may still act in
+                                  // place; cannot move/follow-up/be pushed)
 } bb_gate_kind;
 
 extern bb_skill_hooks bb_hooks[BB_SKILL_COUNT];

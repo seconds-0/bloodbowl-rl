@@ -121,3 +121,8 @@ BB_SKILL_MOD(BREAK_TACKLE) {
     if (c->kind != BB_TEST_DODGE) return 0;
     return m->players[c->player].st >= 5 ? 2 : 1;
 }
+
+// TAKE ROOT: "roll a D6 ... On a 1, the player becomes Rooted" — gate target 2
+// with the ROOTED failure kind (acts in place; unpushable; un-roots on going
+// down or at the end of the drive).
+BB_SKILL_GATE(TAKE_ROOT, 2, BB_GATE_ROOTED)
