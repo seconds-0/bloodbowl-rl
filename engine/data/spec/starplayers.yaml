@@ -1,0 +1,1283 @@
+# BB2025 Star Players — extracted from docs/vendor/bloodbowlbase/bloodbowlbase.ru/bb2025/starplayers/
+# (63 pages -> 66 entries: Dribl & Drull, Grak & Crumbleberry, The Swift Twins are pairs
+#  with separate stat lines, modelled as separate entries sharing `hired_with`).
+#
+# Conventions (see SCHEMA.md):
+#   - AG/PA/AV are target numbers (e.g. 2 means 2+); PA '-' => 0; costs in k gold.
+#   - Parameterized skills/traits encode their value in the id: loner_3 / loner_4 = Loner (3+/4+),
+#     bloodlust_2 = Bloodlust (2+), hatred_<keyword> = Hatred (X).
+#   - `special_rule_text` is a paraphrase of the bespoke rule (no verbatim GW text).
+#   - `plays_for` = the page's "Plays For" entries (team special-rule keyword groups or any_team*).
+#   - `plays_for_teams` = the page's explicit "Accept to play for..." team list (resolved team ids).
+#   - `keywords` = the parenthesised keyword list under the stat line.
+#   - For paired stars `cost` is the COMBINED price of the pair (do not sum the two entries);
+#     `hired_with` names the partner who must be hired alongside.
+#   - `mega_star` per the May 2026 FAQ Mega-Stars list (core_rules/latest_faq).
+
+starplayers:
+  - name: akhorne_the_squirrel
+    display: Akhorne The Squirrel
+    cost: 80
+    ma: 7
+    st: 1
+    ag: 2
+    pa: 0
+    av: 6
+    keywords: [blitzer, squirrel]
+    skills: [claws, dauntless, dodge, frenzy, jump_up, loner_4, no_ball, sidestep, stunty, titchy]
+    special_rule: blind_rage
+    special_rule_text: >-
+      Akhorne may choose to re-roll the D6 rolled for his Dauntless skill.
+    plays_for: [any_team]
+    plays_for_teams: [amazon, black_orc, bretonnian, chaos_chosen, chaos_dwarf, chaos_renegades,
+      dark_elf, dwarf, elven_union, gnome, goblin, halfling, high_elf, human, imperial_nobility,
+      khorne, lizardmen, necromantic_horror, norse, nurgle, ogre, old_world_alliance, orc,
+      shambling_undead, skaven, snotling, tomb_kings, underworld_denizens, vampire, wood_elf]
+    mega_star: false
+
+  - name: anqi_panqi
+    display: Anqi Panqi
+    cost: 190
+    ma: 7
+    st: 4
+    ag: 5
+    pa: 6
+    av: 10
+    keywords: [blocker, lizardman]
+    skills: [block, grab, loner_4, stand_firm, unsteady]
+    special_rule: savage_blow
+    special_rule_text: >-
+      Once per game, when Anqi performs a Block action against an opposing player, he may
+      re-roll any number of the block dice.
+    plays_for: [lustrian_superleague]
+    plays_for_teams: [amazon, lizardmen]
+    mega_star: false
+
+  - name: barik_farblast
+    display: Barik Farblast
+    cost: 80
+    ma: 6
+    st: 3
+    ag: 4
+    pa: 3
+    av: 9
+    keywords: [dwarf, thrower]
+    skills: [cannoneer, hail_mary_pass, loner_4, pass, secret_weapon, sure_hands, thick_skull]
+    special_rule: blast_it
+    special_rule_text: >-
+      When Barik makes a Hail Mary Pass he may re-roll any of the scatter rolls that determine
+      where the ball lands, and a team-mate attempting to catch that ball adds +1 to the catch roll.
+    plays_for: [old_world_classic, worlds_edge_superleague]
+    plays_for_teams: [bretonnian, dwarf, human, imperial_nobility, norse, ogre, old_world_alliance]
+    mega_star: false
+
+  - name: bilerot_vomitflesh
+    display: Bilerot Vomitflesh
+    cost: 180
+    ma: 4
+    st: 5
+    ag: 4
+    pa: 6
+    av: 10
+    keywords: [blocker, human]
+    skills: [dirty_player, disturbing_presence, foul_appearance, lone_fouler, loner_4,
+      regeneration, unsteady]
+    special_rule: putrid_regurgitation
+    special_rule_text: >-
+      Once per half, Bilerot may perform the Projectile Vomit special action, even during a
+      turn in which he has already performed a Block action.
+    plays_for: [favoured_of_nurgle]
+    plays_for_teams: [chaos_chosen, chaos_renegades, nurgle]
+    mega_star: false
+
+  - name: boa_konssstriktr
+    display: "Boa Kon'ssstriktr"
+    cost: 180
+    ma: 6
+    st: 3
+    ag: 3
+    pa: 4
+    av: 9
+    keywords: [runner, snakeman]
+    skills: [dodge, fend, hypnotic_gaze, loner_4, prehensile_tail, safe_pair_of_hands, sidestep]
+    special_rule: look_into_my_eyes
+    special_rule_text: >-
+      Once per game, if Boa starts his activation Marking the opposing ball-carrier, he may roll
+      a D6: on a 2+ that player loses the ball, Boa immediately takes possession of it, and his
+      activation ends; on a 1 nothing happens.
+    plays_for: [lustrian_superleague]
+    plays_for_teams: [amazon, lizardmen]
+    mega_star: false
+
+  - name: bomber_dribblesnot
+    display: Bomber Dribblesnot
+    cost: 80
+    ma: 6
+    st: 2
+    ag: 3
+    pa: 3
+    av: 8
+    keywords: [goblin, special]
+    skills: [accurate, bombardier, dodge, loner_4, right_stuff, secret_weapon, stunty]
+    special_rule: kaboom
+    special_rule_text: >-
+      Once per game, when an opposing player catches a bomb thrown by Bomber, his coach may
+      declare that it explodes immediately instead of the opponent getting to throw it again.
+    plays_for: [badlands_brawl, underworld_challenge]
+    plays_for_teams: [black_orc, chaos_dwarf, goblin, ogre, orc, skaven, snotling,
+      underworld_denizens]
+    mega_star: false
+
+  - name: captain_karina_von_riesz
+    display: Captain Karina von Riesz
+    cost: 230
+    ma: 7
+    st: 4
+    ag: 2
+    pa: 3
+    av: 9
+    keywords: [runner, vampire]
+    skills: [bloodlust_2, dodge, hypnotic_gaze, jump_up, loner_4, regeneration]
+    special_rule: tasty_morsel
+    special_rule_text: >-
+      Once per game, after failing a Bloodlust roll, Karina may bite an opposing player with
+      ST 3 or lower as if they were a Thrall Lineman team-mate. She may not bite Star Players
+      this way.
+    plays_for: [sylvanian_spotlight]
+    plays_for_teams: [necromantic_horror, tomb_kings, shambling_undead, vampire]
+    mega_star: false
+
+  - name: cindy_piewhistle
+    display: Cindy Piewhistle
+    cost: 100
+    ma: 5
+    st: 2
+    ag: 3
+    pa: 3
+    av: 7
+    keywords: [halfling, special]
+    skills: [accurate, bombardier, dodge, loner_4, secret_weapon, stunty]
+    special_rule: all_you_can_eat
+    special_rule_text: >-
+      Once per game, Cindy may make two Throw Bomb special actions instead of one, committing
+      before the first is made. Immediately after the second, roll a D6: on a 1-3 she is
+      Sent-off.
+    plays_for: [halfling_thimble_cup, old_world_classic]
+    plays_for_teams: [bretonnian, gnome, halfling, human, imperial_nobility, norse,
+      old_world_alliance]
+    mega_star: false
+
+  - name: count_luthor_von_drakenborg
+    display: Count Luthor von Drakenborg
+    cost: 300
+    ma: 6
+    st: 5
+    ag: 2
+    pa: 3
+    av: 10
+    keywords: [blocker, vampire]
+    skills: [block, hypnotic_gaze, loner_4, regeneration, sidestep]
+    special_rule: star_of_the_show
+    special_rule_text: >-
+      Once per game, when Count Luthor scores a touchdown, his coach gains one Team Re-roll
+      that lasts until the end of the following drive (it is lost if unused by then).
+    plays_for: [sylvanian_spotlight]
+    plays_for_teams: [necromantic_horror, tomb_kings, shambling_undead, vampire]
+    mega_star: false
+
+  - name: deeproot_strongbranch
+    display: Deeproot Strongbranch
+    cost: 280
+    ma: 2
+    st: 7
+    ag: 5
+    pa: 4
+    av: 11
+    keywords: [big_guy, treeman]
+    skills: [block, bullseye, loner_4, mighty_blow, stand_firm, strong_arm, thick_skull,
+      throw_team_mate, timmm_ber]
+    special_rule: reliable
+    special_rule_text: >-
+      If Deeproot makes a Fumbled Throw on a Throw Team-mate action, the thrown player bounces
+      as normal but automatically lands safely.
+    plays_for: [woodland_league]
+    plays_for_teams: [gnome, halfling, wood_elf]
+    mega_star: false
+
+  # Dribl & Drull — hired as a pair; cost 230 is for BOTH players combined.
+  - name: dribl
+    display: Dribl
+    cost: 230
+    hired_with: drull
+    ma: 8
+    st: 2
+    ag: 3
+    pa: 4
+    av: 8
+    keywords: [skink, special]
+    skills: [dirty_player, dodge, loner_4, quick_foul, sidestep, sneaky_git, stunty]
+    special_rule: a_sneaky_pair
+    special_rule_text: >-
+      Dribl and Drull must be hired as a pair. When either of them performs a Foul action or a
+      Stab special action against an opposing player who is Marked by both of them, add +1 to
+      the roll.
+    plays_for: [lustrian_superleague]
+    plays_for_teams: [amazon, lizardmen]
+    mega_star: false
+
+  - name: drull
+    display: Drull
+    cost: 230
+    hired_with: dribl
+    ma: 8
+    st: 2
+    ag: 3
+    pa: 4
+    av: 8
+    keywords: [skink, special]
+    skills: [dodge, loner_4, sidestep, stab, stunty]
+    special_rule: a_sneaky_pair
+    special_rule_text: >-
+      Dribl and Drull must be hired as a pair. When either of them performs a Foul action or a
+      Stab special action against an opposing player who is Marked by both of them, add +1 to
+      the roll.
+    plays_for: [lustrian_superleague]
+    plays_for_teams: [amazon, lizardmen]
+    mega_star: false
+
+  - name: eldril_sidewinder
+    display: Eldril Sidewinder
+    cost: 220
+    ma: 8
+    st: 3
+    ag: 2
+    pa: 3
+    av: 8
+    keywords: [catcher, elf]
+    skills: [catch, dodge, hypnotic_gaze, loner_4, nerves_of_steel, on_the_ball]
+    special_rule: mesmerising_dance
+    special_rule_text: >-
+      Once per half, Eldril may re-roll the dice when performing a Hypnotic Gaze special action.
+    plays_for: [elven_kingdoms_league]
+    plays_for_teams: [dark_elf, elven_union, high_elf, wood_elf]
+    mega_star: false
+
+  - name: estelle_la_veneaux
+    display: Estelle la Veneaux
+    cost: 190
+    ma: 6
+    st: 3
+    ag: 3
+    pa: 4
+    av: 8
+    keywords: [human, lineman]
+    skills: [disturbing_presence, dodge, guard, loner_4, sidestep]
+    special_rule: baleful_hex
+    special_rule_text: >-
+      Once per game, at the start of her activation, Estelle selects an opposing player within
+      5 squares and rolls a D6: on a 2+ that player becomes Distracted and cannot be activated
+      during their team's next turn.
+    plays_for: [lustrian_superleague]
+    plays_for_teams: [amazon, lizardmen]
+    mega_star: false
+
+  - name: fungus_the_loon
+    display: Fungus the Loon
+    cost: 80
+    ma: 4
+    st: 7
+    ag: 3
+    pa: 0
+    av: 8
+    keywords: [goblin, special]
+    skills: [ball_and_chain, loner_4, mighty_blow, no_ball, secret_weapon, stunty]
+    special_rule: whirling_dervish
+    special_rule_text: >-
+      Once per activation, Fungus may re-roll the D6 that determines which direction he moves in.
+    plays_for: [badlands_brawl, underworld_challenge]
+    plays_for_teams: [black_orc, chaos_dwarf, goblin, ogre, orc, skaven, snotling,
+      underworld_denizens]
+    mega_star: false
+
+  - name: glart_smashrip
+    display: Glart Smashrip
+    cost: 175
+    ma: 5
+    st: 4
+    ag: 4
+    pa: 6
+    av: 9
+    keywords: [blocker, skaven]
+    skills: [block, claws, grab, juggernaut, loner_4, stand_firm]
+    special_rule: frenzied_rush
+    special_rule_text: >-
+      Once per half, when Glart declares a Blitz action he may gain Frenzy until the end of his
+      activation. He may not use Grab during a turn in which he uses this rule.
+    plays_for: [underworld_challenge]
+    plays_for_teams: [goblin, skaven, snotling, underworld_denizens]
+    mega_star: false
+
+  - name: gloriel_summerbloom
+    display: Gloriel Summerbloom
+    cost: 150
+    ma: 7
+    st: 2
+    ag: 2
+    pa: 2
+    av: 8
+    keywords: [elf, thrower]
+    skills: [accurate, dodge, loner_3, pass, sidestep, sure_hands]
+    special_rule: shot_to_nothing
+    special_rule_text: >-
+      Once per game, when Gloriel is activated she may gain the Hail Mary Pass skill until the
+      end of her activation.
+    plays_for: [elven_kingdoms_league]
+    plays_for_teams: [dark_elf, elven_union, high_elf, wood_elf]
+    mega_star: false
+
+  - name: glotl_stop
+    display: Glotl Stop
+    cost: 260
+    ma: 6
+    st: 6
+    ag: 5
+    pa: 6
+    av: 10
+    keywords: [big_guy, lizardman]
+    skills: [animal_savagery, frenzy, loner_4, mighty_blow, prehensile_tail, stand_firm,
+      thick_skull]
+    special_rule: primal_savagery
+    special_rule_text: >-
+      Once per game, when Glotl fails an Animal Savagery roll, he may lash out at an opposing
+      player instead of a team-mate.
+    plays_for: [lustrian_superleague]
+    plays_for_teams: [amazon, lizardmen]
+    mega_star: false
+
+  # Grak & Crumbleberry — hired as a pair; cost 250 is for BOTH players combined.
+  - name: grak
+    display: Grak
+    cost: 250
+    hired_with: crumbleberry
+    ma: 5
+    st: 5
+    ag: 4
+    pa: 4
+    av: 10
+    keywords: [big_guy, ogre]
+    skills: [bone_head, kick_team_mate, loner_4, mighty_blow, thick_skull]
+    special_rule: ill_carry_you
+    special_rule_text: >-
+      Grak and Crumbleberry must be hired as a pair. Once per half, if Grak starts his
+      activation adjacent to Crumbleberry, he may pick him up: Crumbleberry is temporarily
+      removed from the pitch and placed in an unoccupied square adjacent to Grak at the end of
+      Grak's activation.
+    plays_for: [any_team]
+    plays_for_teams: [amazon, black_orc, bretonnian, chaos_chosen, chaos_dwarf, chaos_renegades,
+      dark_elf, dwarf, elven_union, gnome, goblin, halfling, high_elf, human, imperial_nobility,
+      khorne, lizardmen, necromantic_horror, norse, nurgle, ogre, old_world_alliance, orc,
+      skaven, snotling, tomb_kings, shambling_undead, underworld_denizens, vampire, wood_elf]
+    mega_star: false
+
+  - name: crumbleberry
+    display: Crumbleberry
+    cost: 250
+    hired_with: grak
+    ma: 5
+    st: 2
+    ag: 3
+    pa: 5
+    av: 7
+    keywords: [halfling, lineman]
+    skills: [dodge, lethal_flight, loner_4, right_stuff, stunty, sure_hands]
+    special_rule: ill_carry_you
+    special_rule_text: >-
+      Grak and Crumbleberry must be hired as a pair. While Crumbleberry is being carried by
+      Grak, Grak gains the Break Tackle and Dodge skills.
+    plays_for: [any_team]
+    plays_for_teams: [amazon, black_orc, bretonnian, chaos_chosen, chaos_dwarf, chaos_renegades,
+      dark_elf, dwarf, elven_union, gnome, goblin, halfling, high_elf, human, imperial_nobility,
+      khorne, lizardmen, necromantic_horror, norse, nurgle, ogre, old_world_alliance, orc,
+      skaven, snotling, tomb_kings, shambling_undead, underworld_denizens, vampire, wood_elf]
+    mega_star: false
+
+  - name: grashnak_blackhoof
+    display: Grashnak Blackhoof
+    cost: 240
+    ma: 6
+    st: 6
+    ag: 4
+    pa: 6
+    av: 9
+    keywords: [big_guy, minotaur]
+    skills: [frenzy, horns, loner_4, mighty_blow, thick_skull, unchannelled_fury]
+    special_rule: gored_by_the_bull
+    special_rule_text: >-
+      Once per game, when Grashnak performs a Block action as part of a Blitz, he may roll one
+      additional block die regardless of the target's ST, to a maximum of three dice. A second
+      Block action from Frenzy in the same Blitz also benefits.
+    plays_for: [chaos_clash]
+    plays_for_teams: [chaos_chosen, chaos_dwarf, chaos_renegades, khorne, norse, nurgle]
+    mega_star: false
+
+  - name: gretchen_wachter
+    display: "Gretchen Wächter"
+    cost: 180
+    ma: 7
+    st: 3
+    ag: 2
+    pa: 0
+    av: 9
+    keywords: [special, undead, wraith]
+    skills: [disturbing_presence, dodge, foul_appearance, jump_up, loner_4, no_ball,
+      regeneration, shadowing, sidestep]
+    special_rule: incorporeal
+    special_rule_text: >-
+      Once per game, when Gretchen is activated she may use this rule: until the end of that
+      activation she does not have to make Dodge rolls for leaving squares inside opposing
+      Tackle Zones.
+    plays_for: [sylvanian_spotlight]
+    plays_for_teams: [necromantic_horror, tomb_kings, shambling_undead, vampire]
+    mega_star: false
+
+  - name: griff_oberwald
+    display: Griff Oberwald
+    cost: 300
+    ma: 7
+    st: 4
+    ag: 2
+    pa: 3
+    av: 9
+    keywords: [blitzer, human]
+    skills: [block, dodge, fend, loner_3, sprint, sure_feet]
+    special_rule: consummate_professional
+    special_rule_text: >-
+      Once per game, Griff may add a +1 modifier to an Agility test he has made; the modifier
+      may be applied after seeing the roll.
+    plays_for: [old_world_classic]
+    plays_for_teams: [bretonnian, human, imperial_nobility, norse, old_world_alliance]
+    mega_star: true
+
+  - name: grim_ironjaw
+    display: Grim Ironjaw
+    cost: 190
+    ma: 5
+    st: 4
+    ag: 3
+    pa: 6
+    av: 9
+    keywords: [dwarf, special]
+    # Star exception: legally has Frenzy + Multiple Block (May 2026 FAQ: Frenzy is ignored
+    # while resolving Multiple Block).
+    skills: [block, dauntless, frenzy, hatred_big_guy, loner_4, multiple_block, thick_skull]
+    special_rule: slayer
+    special_rule_text: >-
+      Once per game, when an opposing Big Guy is Knocked Down by a Block action from Grim, add
+      an extra +1 to either the Armour roll or the Injury roll; the modifier may be applied
+      after seeing the roll.
+    plays_for: [worlds_edge_superleague]
+    plays_for_teams: [dwarf, ogre]
+    mega_star: false
+
+  - name: grombrindal
+    display: Grombrindal
+    cost: 170
+    ma: 5
+    st: 3
+    ag: 3
+    pa: 4
+    av: 10
+    keywords: [blocker, dwarf]
+    skills: [block, break_tackle, dauntless, loner_4, mighty_blow, stand_firm, sure_feet,
+      thick_skull]
+    special_rule: wisdom_of_the_white_dwarf
+    special_rule_text: >-
+      Once per game, when Grombrindal is activated he may select one team-mate within 2
+      squares; that team-mate gains one of Break Tackle, Dauntless, Mighty Blow or Sure Feet
+      until the end of the turn.
+    # Page anomaly: the mirror also shows a second "Special Rules" list that adds
+    # lustrian_superleague, but its "Accept to play for..." team list excludes
+    # Amazon/Lizardmen, matching the 3-league "Plays For" list used here.
+    plays_for: [halfling_thimble_cup, old_world_classic, worlds_edge_superleague]
+    plays_for_teams: [bretonnian, dwarf, gnome, halfling, human, imperial_nobility, norse,
+      ogre, old_world_alliance]
+    mega_star: false
+
+  - name: guffle_pusmaw
+    display: Guffle Pusmaw
+    cost: 150
+    ma: 5
+    st: 4
+    ag: 4
+    pa: 6
+    av: 10
+    keywords: [blocker, human]
+    skills: [foul_appearance, loner_4, monstrous_mouth, nerves_of_steel, on_the_ball,
+      plague_ridden]
+    special_rule: quick_bite
+    special_rule_text: >-
+      Once per game, if an opposing player that Guffle is Marking catches the ball, Guffle may
+      immediately make an Armour roll against them; if their armour breaks, Guffle immediately
+      takes possession of the ball. This causes no Turnover.
+    plays_for: [favoured_of_nurgle]
+    plays_for_teams: [chaos_chosen, chaos_renegades, nurgle]
+    mega_star: false
+
+  - name: hthark_the_unstoppable
+    display: "H'thark the Unstoppable"
+    cost: 300
+    ma: 6
+    st: 6
+    ag: 4
+    pa: 6
+    av: 10
+    keywords: [blitzer, dwarf]
+    skills: [block, break_tackle, defensive, juggernaut, loner_4, sprint, sure_feet,
+      thick_skull, unsteady]
+    special_rule: unstoppable_momentum
+    special_rule_text: >-
+      Whenever H'thark performs a Block action as part of a Blitz action, he may re-roll a
+      single block die.
+    plays_for: [badlands_brawl, favoured_of_hashut]
+    plays_for_teams: [black_orc, chaos_chosen, chaos_dwarf, goblin, ogre, orc]
+    mega_star: true
+
+  - name: hakflem_skuttlespike
+    display: Hakflem Skuttlespike
+    cost: 200
+    ma: 8
+    st: 3
+    ag: 2
+    pa: 3
+    av: 8
+    keywords: [runner, skaven]
+    skills: [dodge, extra_arms, loner_4, prehensile_tail, two_heads]
+    special_rule: treacherous
+    special_rule_text: >-
+      Once per game, if Hakflem is adjacent to a team-mate in possession of the ball when he is
+      activated, he may take the ball; the team-mate is immediately Knocked Down. This causes
+      no Turnover, even if the team-mate suffers a Casualty.
+    plays_for: [underworld_challenge]
+    plays_for_teams: [goblin, skaven, snotling, underworld_denizens]
+    mega_star: true
+
+  - name: helmut_wulf
+    display: Helmut Wulf
+    cost: 140
+    ma: 6
+    st: 3
+    ag: 3
+    pa: 0
+    av: 9
+    keywords: [human, special]
+    skills: [chainsaw, loner_4, no_ball, pro, secret_weapon, stand_firm]
+    special_rule: old_pro
+    special_rule_text: >-
+      Once per game, Helmut may use his Pro skill to re-roll a single die rolled as part of an
+      Armour roll.
+    plays_for: [old_world_classic]
+    plays_for_teams: [bretonnian, human, imperial_nobility, norse, old_world_alliance]
+    mega_star: false
+
+  - name: ivan_deathshroud
+    display: "Ivan 'the Animal' Deathshroud"
+    cost: 210
+    ma: 6
+    st: 4
+    ag: 4
+    pa: 5
+    av: 9
+    keywords: [blitzer, human, skeleton, undead]
+    skills: [block, disturbing_presence, hatred_dwarf, juggernaut, loner_4, regeneration,
+      strip_ball, tackle]
+    special_rule: dwarven_scourge
+    special_rule_text: >-
+      Once per game, when an opposing player is Knocked Down by a Block action from Ivan, add
+      an extra +1 to the Armour roll or the Injury roll; against a Dwarf player this may be a
+      +2 modifier instead.
+    plays_for: [sylvanian_spotlight]
+    plays_for_teams: [necromantic_horror, tomb_kings, shambling_undead, vampire]
+    mega_star: true
+
+  - name: ivar_eriksson
+    display: Ivar Eriksson
+    cost: 215
+    ma: 6
+    st: 4
+    ag: 3
+    pa: 4
+    av: 9
+    keywords: [blitzer, human]
+    skills: [block, guard, loner_4, tackle]
+    special_rule: raiding_party
+    special_rule_text: >-
+      Once per drive, at the start of his activation, Ivar may select one Open team-mate within
+      5 squares; that player immediately moves 1 square but must end the move Marking an
+      opposing player.
+    plays_for: [old_world_classic]
+    plays_for_teams: [bretonnian, human, imperial_nobility, norse, old_world_alliance]
+    mega_star: false
+
+  - name: jeremiah_kool
+    display: Jeremiah Kool
+    cost: 300
+    ma: 8
+    st: 3
+    ag: 1
+    pa: 2
+    av: 9
+    keywords: [elf, runner]
+    skills: [block, dodge, diving_catch, dump_off, loner_4, nerves_of_steel, on_the_ball,
+      pass, sidestep]
+    special_rule: the_flashing_blade
+    special_rule_text: >-
+      Once per game, at the start of his activation, Jeremiah may declare a Stab special action
+      against an opposing player he is Marking; after resolving it he may then perform a Move
+      action before his activation ends.
+    plays_for: [elven_kingdoms_league]
+    plays_for_teams: [dark_elf, elven_union, high_elf, wood_elf]
+    mega_star: false
+
+  - name: jordell_freshbreeze
+    display: Jordell Freshbreeze
+    cost: 280
+    ma: 8
+    st: 3
+    ag: 1
+    pa: 3
+    av: 8
+    keywords: [blitzer, elf]
+    skills: [block, diving_catch, dodge, leap, loner_4, sidestep, steady_footing]
+    special_rule: swift_as_the_breeze
+    special_rule_text: >-
+      Once per game, Jordell may choose to pass a single Dodge, Leap or Rush test on a 2+,
+      regardless of any modifiers.
+    plays_for: [elven_kingdoms_league, woodland_league]
+    plays_for_teams: [dark_elf, elven_union, gnome, halfling, high_elf, wood_elf]
+    mega_star: false
+
+  - name: josef_bugman
+    display: Josef Bugman
+    cost: 180
+    ma: 5
+    st: 3
+    ag: 3
+    pa: 4
+    av: 9
+    keywords: [blocker, dwarf]
+    skills: [block, drunkard, fend, loner_3, tackle, taunt, thick_skull]
+    special_rule: dwarfen_grit
+    special_rule_text: >-
+      Once per game, when Josef's armour is broken by an Armour roll, his coach may have that
+      Armour roll re-rolled.
+    plays_for: [old_world_classic, worlds_edge_superleague]
+    plays_for_teams: [bretonnian, dwarf, human, imperial_nobility, norse, ogre,
+      old_world_alliance]
+    mega_star: false
+
+  - name: karla_von_kill
+    display: Karla von Kill
+    cost: 210
+    ma: 6
+    st: 4
+    ag: 3
+    pa: 3
+    av: 9
+    keywords: [blitzer, human]
+    skills: [block, dauntless, dodge, jump_up, loner_4]
+    special_rule: indomitable
+    special_rule_text: >-
+      Once per game, when Karla succeeds on a Dauntless roll, she may increase her ST to double
+      that of the target of the Block action.
+    plays_for: [lustrian_superleague, old_world_classic]
+    plays_for_teams: [amazon, bretonnian, human, imperial_nobility, lizardmen, norse,
+      old_world_alliance]
+    mega_star: false
+
+  - name: kiroth_krakeneye
+    display: Kiroth Krakeneye
+    cost: 160
+    ma: 7
+    st: 3
+    ag: 2
+    pa: 3
+    av: 8
+    keywords: [elf, runner]
+    skills: [disturbing_presence, foul_appearance, loner_4, on_the_ball, tackle, tentacles]
+    special_rule: black_ink
+    special_rule_text: >-
+      Once per game, at the start of any of his activations, Kiroth selects an opposing player
+      he is Marking; that player becomes Distracted until they are next activated.
+    plays_for: [elven_kingdoms_league]
+    plays_for_teams: [dark_elf, elven_union, high_elf, wood_elf]
+    mega_star: false
+
+  - name: kreek_rustgouger
+    display: Kreek Rustgouger
+    cost: 180
+    ma: 4
+    st: 7
+    ag: 4
+    pa: 0
+    av: 10
+    keywords: [big_guy, skaven, special]
+    skills: [ball_and_chain, loner_4, mighty_blow, no_ball, prehensile_tail, secret_weapon]
+    special_rule: ill_be_back
+    special_rule_text: >-
+      The first time in a game that Kreek would be Sent-off due to his Secret Weapon trait, he
+      is not Sent-off and keeps playing. His coach may not Argue the Call when this rule is
+      used.
+    plays_for: [underworld_challenge]
+    plays_for_teams: [goblin, skaven, snotling, underworld_denizens]
+    mega_star: false
+
+  - name: lord_borak_the_despoiler
+    display: Lord Borak the Despoiler
+    cost: 270
+    ma: 5
+    st: 5
+    ag: 3
+    pa: 5
+    av: 10
+    keywords: [blocker, human]
+    skills: [block, dirty_player, leader, loner_3, mighty_blow, put_the_boot_in, sneaky_git]
+    special_rule: lord_of_chaos
+    special_rule_text: >-
+      Once per game, when Lord Borak performs a Block action, he may re-roll a single block die.
+    plays_for: [chaos_clash]
+    plays_for_teams: [chaos_chosen, chaos_dwarf, chaos_renegades, khorne, norse, nurgle]
+    mega_star: false
+
+  - name: maple_highgrove
+    display: Maple Highgrove
+    cost: 210
+    ma: 3
+    st: 5
+    ag: 5
+    pa: 5
+    av: 11
+    keywords: [big_guy, treeman]
+    skills: [brawler, grab, loner_4, mighty_blow, stand_firm, tentacles, thick_skull]
+    special_rule: vicious_vines
+    special_rule_text: >-
+      Once per half, when Maple declares a Block action he may target an opposing player 2
+      squares away, following all the normal blocking rules, but he may not follow up.
+    plays_for: [woodland_league]
+    plays_for_teams: [gnome, halfling, wood_elf]
+    mega_star: false
+
+  - name: max_spleenripper
+    display: Max Spleenripper
+    cost: 130
+    ma: 5
+    st: 4
+    ag: 4
+    pa: 0
+    av: 9
+    keywords: [human, special]
+    skills: [chainsaw, loner_4, no_ball, secret_weapon]
+    special_rule: maximum_carnage
+    special_rule_text: >-
+      Once per game, after performing a Chainsaw Attack special action, Max may immediately
+      perform another Chainsaw Attack special action against a different opposing player.
+    plays_for: [favoured_of_khorne]
+    plays_for_teams: [chaos_chosen, chaos_renegades, khorne, norse]
+    mega_star: false
+
+  - name: morg_n_thorg
+    display: "Morg 'n' Thorg"
+    cost: 340
+    ma: 6
+    st: 6
+    ag: 3
+    pa: 4
+    av: 11
+    keywords: [big_guy, ogre]
+    skills: [block, bullseye, hatred_undead, loner_4, mighty_blow, thick_skull, throw_team_mate]
+    special_rule: the_ballista
+    special_rule_text: >-
+      Once per game, when Morg performs a Throw Team-mate action, he may re-roll the Passing
+      Ability test.
+    # Page lists 25 teams; gnome is absent from the page's "Accept to play for..." list even
+    # though it is not a Sylvanian Spotlight team — recorded as listed.
+    plays_for: [any_team_except_sylvanian_spotlight]
+    plays_for_teams: [amazon, black_orc, bretonnian, chaos_chosen, chaos_dwarf, chaos_renegades,
+      dark_elf, dwarf, elven_union, goblin, halfling, high_elf, human, imperial_nobility,
+      khorne, lizardmen, norse, nurgle, ogre, old_world_alliance, orc, skaven, snotling,
+      underworld_denizens, wood_elf]
+    mega_star: true
+
+  - name: nobbla_blackwart
+    display: Nobbla Blackwart
+    cost: 120
+    ma: 6
+    st: 2
+    ag: 3
+    pa: 0
+    av: 8
+    keywords: [goblin, special]
+    skills: [block, chainsaw, dodge, loner_4, no_ball, saboteur, secret_weapon, stunty]
+    special_rule: kick_em_while_theyre_down
+    special_rule_text: >-
+      Once per game, Nobbla may use the Chainsaw Attack special action against a Prone or
+      Stunned opposing player. This does not count as a Foul action, so he cannot be Sent-off
+      for it.
+    plays_for: [badlands_brawl, underworld_challenge]
+    plays_for_teams: [black_orc, chaos_dwarf, goblin, ogre, orc, skaven, snotling,
+      underworld_denizens]
+    mega_star: false
+
+  - name: puggy_baconbreath
+    display: Puggy Baconbreath
+    cost: 130
+    ma: 5
+    st: 3
+    ag: 3
+    pa: 3
+    av: 8
+    keywords: [blitzer, halfling]
+    skills: [block, dodge, loner_3, nerves_of_steel, right_stuff, stunty]
+    special_rule: halfling_luck
+    special_rule_text: >-
+      Once per game, Puggy may re-roll a single die from any single-die roll, multi-die roll or
+      dice pool, except dice rolled as part of an Armour, Injury or Casualty roll.
+    plays_for: [halfling_thimble_cup, old_world_classic]
+    plays_for_teams: [bretonnian, gnome, halfling, human, imperial_nobility, norse,
+      old_world_alliance]
+    mega_star: false
+
+  - name: rashnak_backstabber
+    display: Rashnak Backstabber
+    cost: 130
+    ma: 7
+    st: 3
+    ag: 3
+    pa: 5
+    av: 8
+    keywords: [goblin, special]
+    skills: [loner_4, shadowing, sidestep, sneaky_git, stab]
+    special_rule: toxin_connoisseur
+    special_rule_text: >-
+      Once per game, when Rashnak breaks an opposing player's armour with a Stab special
+      action, add an extra +1 to the Injury roll; the modifier may be applied after seeing the
+      roll.
+    plays_for: [badlands_brawl]
+    plays_for_teams: [black_orc, chaos_dwarf, goblin, ogre, orc]
+    mega_star: false
+
+  - name: ripper_bolgrot
+    display: Ripper Bolgrot
+    cost: 250
+    ma: 5
+    st: 6
+    ag: 5
+    pa: 4
+    av: 10
+    keywords: [big_guy, troll]
+    skills: [bullseye, grab, loner_4, mighty_blow, regeneration, throw_team_mate]
+    special_rule: thinking_mans_troll
+    special_rule_text: >-
+      Once per half, Ripper may re-roll a single die from any single-die roll, multi-die roll
+      or dice pool, except dice rolled as part of an Armour, Injury or Casualty roll.
+    plays_for: [badlands_brawl, underworld_challenge]
+    plays_for_teams: [black_orc, chaos_dwarf, goblin, ogre, orc, skaven, snotling,
+      underworld_denizens]
+    mega_star: false
+
+  - name: rodney_roachbait
+    display: Rodney Roachbait
+    cost: 70
+    ma: 6
+    st: 2
+    ag: 3
+    pa: 4
+    av: 7
+    keywords: [gnome, special]
+    skills: [catch, diving_catch, jump_up, loner_4, on_the_ball, sidestep, stunty, wrestle]
+    special_rule: catch_of_the_day
+    special_rule_text: >-
+      Once per half, if Rodney is Standing and starts his activation within 3 squares of a ball
+      on the ground, he may roll a D6: on a 3+ he immediately takes possession of the ball; on
+      a 1-2 nothing happens.
+    plays_for: [woodland_league]
+    plays_for_teams: [gnome, halfling, wood_elf]
+    mega_star: false
+
+  - name: rowana_forestfoot
+    display: Rowana Forestfoot
+    cost: 160
+    ma: 6
+    st: 3
+    ag: 3
+    pa: 4
+    av: 8
+    keywords: [blocker, gnome]
+    skills: [dodge, dump_off, guard, horns, jump_up, leap, loner_4]
+    special_rule: bounding_leap
+    special_rule_text: >-
+      Once per game, after declaring a Leap but before rolling, Rowana may use this rule: she
+      suffers no negative modifiers on the Agility test to Leap and may re-roll the result.
+    plays_for: [woodland_league]
+    plays_for_teams: [gnome, halfling, wood_elf]
+    mega_star: false
+
+  - name: roxanna_darknail
+    display: Roxanna Darknail
+    cost: 270
+    ma: 8
+    st: 3
+    ag: 1
+    pa: 3
+    av: 8
+    keywords: [elf, special]
+    skills: [dodge, frenzy, jump_up, juggernaut, leap, loner_4]
+    special_rule: slashing_nails
+    special_rule_text: >-
+      Once per half, when Roxanna declares a Blitz action, she gains the Claws skill until the
+      end of her activation.
+    plays_for: [elven_kingdoms_league]
+    plays_for_teams: [dark_elf, elven_union, high_elf, wood_elf]
+    mega_star: false
+
+  - name: rumbelow_sheepskin
+    display: Rumbelow Sheepskin
+    cost: 170
+    ma: 6
+    st: 3
+    ag: 3
+    pa: 5
+    av: 8
+    keywords: [blitzer, halfling]
+    skills: [block, horns, juggernaut, loner_4, tackle, thick_skull]
+    special_rule: ram
+    special_rule_text: >-
+      Once per game, when an opposing player is Knocked Down by a Block action from Rumbelow,
+      add an extra +1 to either the Armour roll or the Injury roll; the modifier may be applied
+      after seeing the roll.
+    plays_for: [halfling_thimble_cup]
+    plays_for_teams: [gnome, halfling]
+    mega_star: false
+
+  - name: scrappa_sorehead
+    display: Scrappa Sorehead
+    cost: 120
+    ma: 7
+    st: 2
+    ag: 3
+    pa: 4
+    av: 8
+    keywords: [goblin, special]
+    skills: [dirty_player, dodge, loner_4, pogo, right_stuff, sprint, stunty, sure_feet]
+    special_rule: yoink
+    special_rule_text: >-
+      Once per game, when Scrappa attempts to intercept a Pass action, he may roll a D6: on a
+      2+ he does not need to roll the interception — he automatically intercepts and takes
+      control of the ball.
+    plays_for: [badlands_brawl, underworld_challenge]
+    plays_for_teams: [black_orc, chaos_dwarf, goblin, ogre, orc, skaven, snotling,
+      underworld_denizens]
+    mega_star: false
+
+  - name: scyla_anfingrimm
+    display: Scyla Anfingrimm
+    cost: 200
+    ma: 5
+    st: 5
+    ag: 4
+    pa: 6
+    av: 10
+    keywords: [big_guy, spawn]
+    skills: [claws, frenzy, loner_4, mighty_blow, prehensile_tail, thick_skull,
+      unchannelled_fury]
+    special_rule: fury_of_the_blood_god
+    special_rule_text: >-
+      Once per game, if Scyla rolls a 1 for Unchannelled Fury after declaring a Block action,
+      then instead of the usual Unchannelled Fury effect he may perform two Block actions,
+      fully resolving the first (including Frenzy) before the second.
+    plays_for: [favoured_of_khorne]
+    plays_for_teams: [chaos_chosen, chaos_renegades, khorne, norse]
+    mega_star: false
+
+  - name: skitter_stab_stab
+    display: Skitter Stab-Stab
+    cost: 170
+    ma: 9
+    st: 2
+    ag: 2
+    pa: 4
+    av: 8
+    keywords: [runner, skaven]
+    skills: [dodge, loner_4, prehensile_tail, shadowing, stab]
+    special_rule: master_assassin
+    special_rule_text: >-
+      Once per game, when Skitter performs a Stab special action, he may choose to re-roll the
+      Armour roll.
+    plays_for: [underworld_challenge]
+    plays_for_teams: [goblin, skaven, snotling, underworld_denizens]
+    mega_star: false
+
+  - name: skrorg_snowpelt
+    display: Skrorg Snowpelt
+    cost: 240
+    ma: 5
+    st: 5
+    ag: 4
+    pa: 6
+    av: 9
+    keywords: [big_guy, yhetee]
+    skills: [block, claws, disturbing_presence, juggernaut, loner_4, mighty_blow]
+    special_rule: pump_up_the_crowd
+    special_rule_text: >-
+      Once per game, when Skrorg's Block action removes an opposing player as a Casualty, his
+      coach gains one Team Re-roll until the end of the current drive (it is lost if unused).
+    plays_for: [old_world_classic, worlds_edge_superleague]
+    plays_for_teams: [bretonnian, dwarf, halfling, human, imperial_nobility, norse, ogre,
+      old_world_alliance]
+    mega_star: false
+
+  - name: skrull_halfheight
+    display: Skrull Halfheight
+    cost: 150
+    ma: 6
+    st: 3
+    ag: 4
+    pa: 3
+    av: 9
+    keywords: [dwarf, skeleton, thrower, undead]
+    skills: [accurate, loner_4, nerves_of_steel, pass, regeneration, sure_hands, thick_skull]
+    special_rule: strong_passing_game
+    special_rule_text: >-
+      Once per game, on a Pass action Skrull may modify the result of the Passing Ability test
+      by the value of his ST characteristic, to a maximum result of 6.
+    plays_for: [sylvanian_spotlight, worlds_edge_superleague]
+    plays_for_teams: [dwarf, necromantic_horror, ogre, shambling_undead, tomb_kings, vampire]
+    mega_star: false
+
+  - name: swiftvine_glimmershard
+    display: Swiftvine Glimmershard
+    cost: 110
+    ma: 7
+    st: 2
+    ag: 3
+    pa: 5
+    av: 7
+    keywords: [special, spite]
+    skills: [disturbing_presence, fend, loner_4, sidestep, stab, stunty]
+    special_rule: furious_outburst
+    special_rule_text: >-
+      Once per half, if Standing at the start of her activation, Swiftvine may place herself
+      adjacent to a Standing opposing player within 3 squares and immediately Stab them, then
+      place herself in an unoccupied square within 3 squares of her new position. Her
+      activation then ends, and this counts as the team's Blitz action for the turn.
+    plays_for: [woodland_league]
+    plays_for_teams: [gnome, halfling, wood_elf]
+    mega_star: false
+
+  - name: the_black_gobbo
+    display: The Black Gobbo
+    cost: 210
+    ma: 6
+    st: 2
+    ag: 3
+    pa: 3
+    av: 8
+    keywords: [goblin, special]
+    skills: [bombardier, disturbing_presence, dodge, loner_3, sidestep, sneaky_git, stab]
+    special_rule: sneakiest_of_the_lot
+    special_rule_text: >-
+      A team that includes the Black Gobbo may declare two Foul actions per turn instead of
+      one, but one of them must be declared by the Black Gobbo himself.
+    plays_for: [badlands_brawl, underworld_challenge]
+    plays_for_teams: [black_orc, chaos_dwarf, goblin, ogre, orc, skaven, snotling,
+      underworld_denizens]
+    mega_star: false
+
+  - name: the_mighty_zug
+    display: The Mighty Zug
+    cost: 220
+    ma: 5
+    st: 5
+    ag: 4
+    pa: 6
+    av: 10
+    keywords: [blocker, human]
+    skills: [block, loner_4, mighty_blow, unsteady]
+    special_rule: crushing_blow
+    special_rule_text: >-
+      Once per game, when an opposing player is Knocked Down by a Block action from Zug, add an
+      extra +1 to the Armour roll; the modifier may be applied after seeing the roll.
+    plays_for: [old_world_classic, worlds_edge_superleague]
+    plays_for_teams: [amazon, bretonnian, human, imperial_nobility, lizardmen, norse,
+      old_world_alliance]
+    mega_star: false
+
+  # The Swift Twins — hired as a pair; cost 300 is for BOTH players combined.
+  - name: lucien_swift
+    display: Lucien Swift
+    cost: 300
+    hired_with: valen_swift
+    ma: 7
+    st: 3
+    ag: 2
+    pa: 3
+    av: 9
+    keywords: [blitzer, elf]
+    skills: [block, loner_4, mighty_blow, tackle]
+    special_rule: working_in_tandem
+    special_rule_text: >-
+      The Swift Twins must be hired as a pair. If Lucien performs a Block action against an
+      opposing player who is also Marked by Valen, Lucien may re-roll a single block die.
+    plays_for: [elven_kingdoms_league]
+    plays_for_teams: [dark_elf, elven_union, high_elf, wood_elf]
+    mega_star: false
+
+  - name: valen_swift
+    display: Valen Swift
+    cost: 300
+    hired_with: lucien_swift
+    ma: 7
+    st: 3
+    ag: 2
+    pa: 2
+    av: 9
+    keywords: [elf, thrower]
+    skills: [accurate, loner_4, nerves_of_steel, pass, safe_pass, sure_hands]
+    special_rule: working_in_tandem
+    special_rule_text: >-
+      The Swift Twins must be hired as a pair. If Valen performs a Pass action targeting a
+      square containing Lucien, he suffers no range modifiers on the Passing Ability test.
+    plays_for: [elven_kingdoms_league]
+    plays_for_teams: [dark_elf, elven_union, high_elf, wood_elf]
+    mega_star: false
+
+  - name: thorsson_stoutmead
+    display: Thorsson Stoutmead
+    cost: 170
+    ma: 6
+    st: 3
+    ag: 4
+    pa: 3
+    av: 8
+    keywords: [human, lineman]
+    skills: [block, drunkard, loner_4, thick_skull]
+    special_rule: beer_barrel_bash
+    special_rule_text: >-
+      Once per drive, at the start of his activation, Thorsson selects an opposing player
+      within 3 squares and rolls a D6: on a 3+ that player is immediately Knocked Down; on a 2
+      nothing happens; on a 1 Thorsson Falls Over. His activation then immediately ends.
+    plays_for: [old_world_classic, worlds_edge_superleague]
+    plays_for_teams: [bretonnian, dwarf, human, imperial_nobility, norse, ogre,
+      old_world_alliance]
+    mega_star: false
+
+  - name: varag_ghoul_chewer
+    display: Varag Ghoul-Chewer
+    cost: 260
+    ma: 6
+    st: 5
+    ag: 3
+    pa: 5
+    av: 10
+    keywords: [blocker, orc]
+    skills: [block, hatred_undead, jump_up, loner_4, mighty_blow, thick_skull, unsteady]
+    special_rule: krump_and_smash
+    special_rule_text: >-
+      Once per game, when an opposing player is Knocked Down by a Block action from Varag, he
+      may re-roll the Armour roll.
+    plays_for: [badlands_brawl]
+    plays_for_teams: [black_orc, chaos_dwarf, goblin, ogre, orc]
+    mega_star: false
+
+  - name: wilhelm_chaney
+    display: Wilhelm Chaney
+    cost: 220
+    ma: 8
+    st: 4
+    ag: 3
+    pa: 4
+    av: 9
+    keywords: [blitzer, undead, werewolf]
+    skills: [catch, claws, frenzy, loner_4, regeneration, wrestle]
+    special_rule: savage_mauling
+    special_rule_text: >-
+      Once per game, when Wilhelm makes an Injury roll against an opposing player, he may
+      choose to re-roll the result.
+    plays_for: [sylvanian_spotlight]
+    plays_for_teams: [necromantic_horror, tomb_kings, shambling_undead, vampire]
+    mega_star: false
+
+  - name: willow_rosebark
+    display: Willow Rosebark
+    cost: 160
+    ma: 6
+    st: 4
+    ag: 3
+    pa: 5
+    av: 9
+    keywords: [blitzer, dryad]
+    skills: [dauntless, loner_4, sidestep, thick_skull]
+    special_rule: woodland_fury
+    special_rule_text: >-
+      Once per game, when Willow performs a Block action that would result in her being Knocked
+      Down, she may choose to re-roll a single block die.
+    plays_for: [woodland_league]
+    plays_for_teams: [gnome, halfling, wood_elf]
+    mega_star: false
+
+  - name: withergrasp_doubledrool
+    display: Withergrasp Doubledrool
+    cost: 170
+    ma: 6
+    st: 3
+    ag: 3
+    pa: 4
+    av: 9
+    keywords: [beastman, blocker]
+    skills: [foul_appearance, loner_4, prehensile_tail, tackle, tentacles, two_heads, wrestle]
+    special_rule: watch_out
+    special_rule_text: >-
+      The first time each drive that Withergrasp is the target of a Block action by an opposing
+      player, he counts as having the Dodge skill.
+    plays_for: [favoured_of_nurgle]
+    plays_for_teams: [chaos_chosen, chaos_renegades, nurgle]
+    mega_star: false
+
+  - name: zolcath_the_zoat
+    display: Zolcath the Zoat
+    cost: 220
+    ma: 5
+    st: 5
+    ag: 4
+    pa: 5
+    av: 10
+    keywords: [big_guy, zoat]
+    skills: [disturbing_presence, juggernaut, loner_4, mighty_blow, prehensile_tail,
+      regeneration, sure_feet]
+    special_rule: excuse_me_are_you_a_zoat
+    special_rule_text: >-
+      Once per game, when Zolcath is activated he may select an opposing player within 3
+      squares; that player immediately becomes Distracted.
+    plays_for: [elven_kingdoms_league, lustrian_superleague]
+    plays_for_teams: [amazon, dark_elf, elven_union, high_elf, lizardmen, wood_elf]
+    mega_star: false
+
+  - name: zzharg_madeye
+    display: Zzharg Madeye
+    cost: 130
+    ma: 4
+    st: 4
+    ag: 4
+    pa: 3
+    av: 10
+    keywords: [dwarf, special]
+    skills: [cannoneer, hail_mary_pass, loner_4, nerves_of_steel, secret_weapon, thick_skull]
+    special_rule: blastin_solves_everything
+    special_rule_text: >-
+      Once per half, at the start of his activation, Zzharg selects a Standing opposing player
+      within 3 squares and rolls a D6: on a 3+ that player is hit; on a 2 the opposing coach
+      picks a player from either team (not Zzharg) within 3 squares of the original target to
+      be hit instead; on a 1 Zzharg himself is hit. Make an Armour roll against whoever is hit.
+      Zzharg's activation then immediately ends.
+    plays_for: [favoured_of_hashut]
+    plays_for_teams: [chaos_chosen, chaos_dwarf]
+    mega_star: false

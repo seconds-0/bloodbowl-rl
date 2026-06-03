@@ -1,0 +1,1169 @@
+# BB2025 team rosters — teams A (first 15 of 30, alphabetical by mirror directory).
+# Source: docs/vendor/bloodbowlbase/bloodbowlbase.ru/bb2025/teams/<Team>/index.html
+# (errata-current; <del> struck text ignored). Tiers from the May 2026 tier table in
+# core_rules/latest_faq/index.html.
+# Conventions per SCHEMA.md: AG/PA/AV are target numbers (PA '-' => 0); costs in k;
+# parameterized skills/traits use {name, value} (Loner (4+) => {name: loner, value: 4}).
+# Position `name` = team-prefixed snake id (display carries the exact printed name);
+# big_guy mirrors the "Big Guy" keyword printed in the position's keyword list.
+
+teams:
+  - name: amazon
+    display: Amazon
+    tier: 1
+    reroll_cost: 60
+    apothecary: true
+    special_rules: []
+    positions:
+      - name: amazon_eagle_warrior
+        display: Eagle Warrior
+        qty: [0, 16]
+        cost: 50
+        ma: 6
+        st: 3
+        ag: 3
+        pa: 4
+        av: 8
+        skills: [dodge]
+        primary: [general]
+        secondary: [agility, strength]
+        big_guy: false
+      - name: amazon_python_warrior
+        display: Python Warrior
+        qty: [0, 2]
+        cost: 80
+        ma: 6
+        st: 3
+        ag: 3
+        pa: 3
+        av: 8
+        skills: [dodge, on_the_ball, pass, safe_pass]
+        primary: [general, passing]
+        secondary: [agility, strength]
+        big_guy: false
+      - name: amazon_piranha_warrior
+        display: Piranha Warrior
+        qty: [0, 2]
+        cost: 90
+        ma: 7
+        st: 3
+        ag: 3
+        pa: 4
+        av: 8
+        skills: [dodge, hit_and_run, jump_up]
+        primary: [agility, general]
+        secondary: [strength]
+        big_guy: false
+      - name: amazon_jaguar_warrior
+        display: Jaguar Warrior
+        qty: [0, 2]
+        cost: 110
+        ma: 6
+        st: 4
+        ag: 3
+        pa: 4
+        av: 9
+        skills: [defensive, dodge]
+        primary: [general, strength]
+        secondary: [agility]
+        big_guy: false
+
+  - name: black_orc
+    display: Black Orc
+    tier: 3
+    reroll_cost: 60
+    apothecary: true
+    special_rules: [bribery_and_corruption, brawlin_brutes]
+    positions:
+      - name: black_orc_goblin_bruiser
+        display: Goblin Bruiser
+        qty: [0, 16]
+        cost: 45
+        ma: 6
+        st: 2
+        ag: 3
+        pa: 4
+        av: 8
+        skills: [dodge, right_stuff, stunty, thick_skull]
+        primary: [agility, devious]
+        secondary: [general, passing, strength]
+        big_guy: false
+      - name: black_orc_blocker        # printed position name is "Black Orc"
+        display: Black Orc
+        qty: [0, 6]
+        cost: 90
+        ma: 4
+        st: 4
+        ag: 4
+        pa: 5
+        av: 10
+        skills: [brawler, grab]
+        primary: [general, strength]
+        secondary: [agility, devious]
+        big_guy: false
+      - name: black_orc_trained_troll  # no Loner (unlike generic Trolls)
+        display: Trained Troll
+        qty: [0, 1]
+        cost: 115
+        ma: 4
+        st: 5
+        ag: 5
+        pa: 5
+        av: 10
+        skills: [always_hungry, mighty_blow, projectile_vomit, really_stupid,
+                 regeneration, throw_team_mate]
+        primary: [strength]
+        secondary: [agility, general, passing]
+        big_guy: true
+
+  - name: bretonnian
+    display: Bretonnian
+    tier: 2
+    reroll_cost: 60
+    apothecary: true
+    special_rules: []
+    positions:
+      - name: bretonnian_squire
+        display: Bretonnian Squire
+        qty: [0, 16]
+        cost: 50
+        ma: 6
+        st: 3
+        ag: 3
+        pa: 4
+        av: 8
+        skills: [wrestle]
+        primary: [general]
+        secondary: [agility, strength]
+        big_guy: false
+      - name: bretonnian_knight_catcher
+        display: Bretonnian Knight Catcher
+        qty: [0, 2]
+        cost: 85
+        ma: 7
+        st: 3
+        ag: 3
+        pa: 4
+        av: 9
+        skills: [catch, dauntless, nerves_of_steel]
+        primary: [agility, general]
+        secondary: [strength]
+        big_guy: false
+      - name: bretonnian_knight_thrower
+        display: Bretonnian Knight Thrower
+        qty: [0, 2]
+        cost: 80
+        ma: 6
+        st: 3
+        ag: 3
+        pa: 3
+        av: 9
+        skills: [dauntless, nerves_of_steel, pass]
+        primary: [general, passing]
+        secondary: [agility, strength]
+        big_guy: false
+      - name: bretonnian_grail_knight
+        display: Grail Knight
+        qty: [0, 2]
+        cost: 95
+        ma: 7
+        st: 3
+        ag: 3
+        pa: 4
+        av: 10
+        skills: [block, dauntless, steady_footing]
+        primary: [general, strength]
+        secondary: [agility]
+        big_guy: false
+
+  - name: chaos_chosen
+    display: Chaos Chosen
+    tier: 3
+    reroll_cost: 50
+    apothecary: true
+    # "Favoured of..." — team chooses one alignment at draft from
+    # Hashut/Khorne/Nurgle/Slaanesh/Tzeentch/Undivided (any alignment).
+    special_rules: [favoured_of]
+    # Roster note: a Chaos Chosen team may have a SINGLE Big Guy, chosen from
+    # Troll / Ogre / Minotaur (each printed 0-1, but max 1 Big Guy total).
+    positions:
+      - name: chaos_chosen_beastman_lineman
+        display: Beastman Lineman
+        qty: [0, 16]
+        cost: 55
+        ma: 6
+        st: 3
+        ag: 3
+        pa: 3
+        av: 9
+        skills: [horns, thick_skull]
+        primary: [general, mutation]
+        secondary: [agility, passing, strength, devious]
+        big_guy: false
+      - name: chaos_chosen_blocker      # printed position name is "Chaos Chosen"
+        display: Chaos Chosen
+        qty: [0, 4]
+        cost: 100
+        ma: 5
+        st: 4
+        ag: 3
+        pa: 5
+        av: 10
+        skills: [arm_bar]
+        primary: [general, mutation, strength]
+        secondary: [agility, devious]
+        big_guy: false
+      - name: chaos_chosen_troll
+        display: Troll
+        qty: [0, 1]
+        cost: 115
+        ma: 4
+        st: 5
+        ag: 5
+        pa: 5
+        av: 10
+        skills: [always_hungry, {name: loner, value: 4}, mighty_blow,
+                 projectile_vomit, really_stupid, regeneration, throw_team_mate]
+        primary: [mutation, strength]
+        secondary: [agility, general, passing]
+        big_guy: true
+      - name: chaos_chosen_ogre
+        display: Ogre
+        qty: [0, 1]
+        cost: 140
+        ma: 5
+        st: 5
+        ag: 4
+        pa: 5
+        av: 10
+        skills: [bone_head, {name: loner, value: 4}, mighty_blow, thick_skull,
+                 throw_team_mate]
+        primary: [mutation, strength]
+        secondary: [agility, general]
+        big_guy: true
+      - name: chaos_chosen_minotaur
+        display: Minotaur
+        qty: [0, 1]
+        cost: 150
+        ma: 5
+        st: 5
+        ag: 4
+        pa: 6
+        av: 9
+        skills: [frenzy, horns, {name: loner, value: 4}, mighty_blow,
+                 thick_skull, unchannelled_fury]
+        primary: [mutation, strength]
+        secondary: [agility, general]
+        big_guy: true
+
+  - name: chaos_dwarf
+    display: Chaos Dwarf
+    tier: 1
+    reroll_cost: 70
+    apothecary: true
+    special_rules: [favoured_of_hashut]
+    positions:
+      - name: chaos_dwarf_hobgoblin_lineman
+        display: Hobgoblin Lineman
+        qty: [0, 16]
+        cost: 40
+        ma: 6
+        st: 3
+        ag: 3
+        pa: 4
+        av: 8
+        skills: []
+        primary: [devious]
+        secondary: [agility, general, strength]
+        big_guy: false
+      - name: chaos_dwarf_sneaky_stabba
+        display: Sneaky Stabba
+        qty: [0, 2]
+        cost: 60
+        ma: 6
+        st: 3
+        ag: 3
+        pa: 5
+        av: 8
+        skills: [shadowing, stab]
+        primary: [devious, general]
+        secondary: [agility, strength]
+        big_guy: false
+      - name: chaos_dwarf_blocker
+        display: Chaos Dwarf Blocker
+        qty: [0, 4]
+        cost: 70
+        ma: 4
+        st: 3
+        ag: 4
+        pa: 6
+        av: 10
+        skills: [block, iron_hard_skin, thick_skull]
+        primary: [general, strength]
+        secondary: [agility, devious, mutation]
+        big_guy: false
+      - name: chaos_dwarf_flamesmith
+        display: Flamesmith
+        qty: [0, 2]
+        cost: 80
+        ma: 5
+        st: 3
+        ag: 4
+        pa: 6
+        av: 10
+        skills: [brawler, breathe_fire, disturbing_presence, thick_skull]
+        primary: [general, strength]
+        secondary: [agility, devious, mutation]
+        big_guy: false
+      - name: chaos_dwarf_bull_centaur
+        display: Bull Centaur
+        qty: [0, 2]
+        cost: 130
+        ma: 6
+        st: 4
+        ag: 4
+        pa: 6
+        av: 10
+        skills: [sprint, sure_feet, thick_skull, unsteady]
+        primary: [general, strength]
+        secondary: [agility, devious, mutation]
+        big_guy: false
+      - name: chaos_dwarf_minotaur
+        display: Minotaur
+        qty: [0, 1]
+        cost: 150
+        ma: 5
+        st: 5
+        ag: 4
+        pa: 6
+        av: 9
+        skills: [frenzy, horns, {name: loner, value: 4}, mighty_blow,
+                 thick_skull, unchannelled_fury]
+        primary: [mutation, strength]
+        secondary: [agility, general]
+        big_guy: true
+
+  - name: chaos_renegades
+    display: Chaos Renegades
+    tier: 3
+    reroll_cost: 70
+    apothecary: true
+    # "Favoured of..." choice — pick exactly ONE of the following at draft
+    # (page lists the five options; Hashut is not available to Renegades).
+    special_rules: [favoured_of_khorne, favoured_of_nurgle, favoured_of_slaanesh,
+                    favoured_of_tzeentch, favoured_of_undivided]
+    # Roster note: a Chaos Renegade team may have UP TO THREE Big Guys, chosen
+    # from Troll / Ogre / Minotaur / Rat Ogre (each printed 0-1).
+    positions:
+      - name: chaos_renegade_human
+        display: Renegade Human
+        qty: [0, 16]
+        cost: 50
+        ma: 6
+        st: 3
+        ag: 3
+        pa: 4
+        av: 9
+        skills: [{name: animosity, value: all}]
+        primary: [devious, general, mutation]
+        secondary: [agility, strength]
+        big_guy: false
+      - name: chaos_renegade_goblin
+        display: Renegade Goblin
+        qty: [0, 1]
+        cost: 40
+        ma: 6
+        st: 2
+        ag: 3
+        pa: 4
+        av: 8
+        skills: [{name: animosity, value: all}, dodge, right_stuff, stunty]
+        primary: [agility, devious, mutation]
+        secondary: [general, passing]
+        big_guy: false
+      - name: chaos_renegade_orc
+        display: Renegade Orc
+        qty: [0, 1]
+        cost: 50
+        ma: 5
+        st: 3
+        ag: 3
+        pa: 4
+        av: 10
+        skills: [{name: animosity, value: all}]
+        primary: [devious, general, mutation]
+        secondary: [agility, strength]
+        big_guy: false
+      - name: chaos_renegade_skaven
+        display: Renegade Skaven
+        qty: [0, 1]
+        cost: 50
+        ma: 7
+        st: 3
+        ag: 3
+        pa: 4
+        av: 8
+        skills: [{name: animosity, value: all}]
+        primary: [devious, general, mutation]
+        secondary: [agility, strength]
+        big_guy: false
+      - name: chaos_renegade_dark_elf
+        display: Renegade Dark Elf
+        qty: [0, 1]
+        cost: 65
+        ma: 6
+        st: 3
+        ag: 2
+        pa: 3
+        av: 9
+        skills: [{name: animosity, value: all}]
+        primary: [agility, devious, general, mutation]
+        secondary: [strength]
+        big_guy: false
+      - name: chaos_renegade_human_thrower
+        display: Renegade Human Thrower
+        qty: [0, 1]
+        cost: 75
+        ma: 6
+        st: 3
+        ag: 3
+        pa: 3
+        av: 9
+        skills: [{name: animosity, value: all}, pass, sure_hands]
+        primary: [devious, general, mutation, passing]
+        secondary: [agility, strength]
+        big_guy: false
+      - name: chaos_renegade_troll
+        display: Troll
+        qty: [0, 1]
+        cost: 115
+        ma: 4
+        st: 5
+        ag: 5
+        pa: 5
+        av: 10
+        skills: [always_hungry, {name: loner, value: 4}, mighty_blow,
+                 projectile_vomit, really_stupid, regeneration, throw_team_mate]
+        primary: [strength]
+        secondary: [agility, general, mutation, passing]
+        big_guy: true
+      - name: chaos_renegade_ogre   # Loner errata'd from (4+) to (3+)
+        display: Ogre
+        qty: [0, 1]
+        cost: 140
+        ma: 5
+        st: 5
+        ag: 4
+        pa: 5
+        av: 10
+        skills: [bone_head, {name: loner, value: 3}, mighty_blow, thick_skull,
+                 throw_team_mate]
+        primary: [strength]
+        secondary: [agility, general, mutation]
+        big_guy: true
+      - name: chaos_renegade_minotaur
+        display: Minotaur
+        qty: [0, 1]
+        cost: 150
+        ma: 5
+        st: 5
+        ag: 4
+        pa: 6
+        av: 9
+        skills: [frenzy, horns, {name: loner, value: 4}, mighty_blow,
+                 thick_skull, unchannelled_fury]
+        primary: [strength]
+        secondary: [agility, general, mutation]
+        big_guy: true
+      - name: chaos_renegade_rat_ogre
+        display: Rat Ogre
+        qty: [0, 1]
+        cost: 150
+        ma: 6
+        st: 5
+        ag: 4
+        pa: 6
+        av: 9
+        skills: [animal_savagery, frenzy, {name: loner, value: 4}, mighty_blow,
+                 prehensile_tail]
+        primary: [strength]
+        secondary: [agility, general, mutation]
+        big_guy: true
+
+  - name: dark_elf
+    display: Dark Elf
+    tier: 1
+    reroll_cost: 50
+    apothecary: true
+    special_rules: []
+    positions:
+      - name: dark_elf_lineman
+        display: Dark Elf Lineman
+        qty: [0, 16]
+        cost: 65
+        ma: 6
+        st: 3
+        ag: 2
+        pa: 3
+        av: 9
+        skills: []
+        primary: [agility, general]
+        secondary: [strength, devious]
+        big_guy: false
+      - name: dark_elf_runner
+        display: Dark Elf Runner
+        qty: [0, 2]
+        cost: 80
+        ma: 7
+        st: 3
+        ag: 2
+        pa: 3
+        av: 8
+        skills: [dump_off, punt]
+        primary: [agility, general, passing]
+        secondary: [strength, devious]
+        big_guy: false
+      - name: dark_elf_assassin
+        display: Dark Elf Assassin
+        qty: [0, 2]
+        cost: 90
+        ma: 7
+        st: 3
+        ag: 2
+        pa: 4
+        av: 8
+        skills: [hit_and_run, shadowing, stab]
+        primary: [agility, devious]
+        secondary: [general, strength]
+        big_guy: false
+      - name: dark_elf_blitzer
+        display: Dark Elf Blitzer
+        qty: [0, 2]
+        cost: 105
+        ma: 7
+        st: 3
+        ag: 2
+        pa: 3
+        av: 9
+        skills: [block]
+        primary: [agility, general]
+        secondary: [passing, strength, devious]
+        big_guy: false
+      - name: dark_elf_witch_elf
+        display: Witch Elf
+        qty: [0, 2]
+        cost: 110
+        ma: 7
+        st: 3
+        ag: 2
+        pa: 4
+        av: 8
+        skills: [dodge, frenzy, jump_up]
+        primary: [agility, general]
+        secondary: [strength, devious]
+        big_guy: false
+
+  - name: dwarf
+    display: Dwarf
+    tier: 2
+    reroll_cost: 60
+    apothecary: true
+    special_rules: [brawlin_brutes, bribery_and_corruption]
+    positions:
+      - name: dwarf_lineman
+        display: Dwarf Lineman
+        qty: [0, 16]
+        cost: 70
+        ma: 4
+        st: 3
+        ag: 4
+        pa: 5
+        av: 10
+        skills: [block, defensive, thick_skull]
+        primary: [devious, general]
+        secondary: [strength]
+        big_guy: false
+      - name: dwarf_runner
+        display: Dwarf Runner
+        qty: [0, 2]
+        cost: 80
+        ma: 6
+        st: 3
+        ag: 3
+        pa: 4
+        av: 9
+        skills: [sprint, sure_hands, thick_skull]
+        primary: [general, passing]
+        secondary: [agility, strength]
+        big_guy: false
+      - name: dwarf_blitzer
+        display: Dwarf Blitzer
+        qty: [0, 2]
+        cost: 100
+        ma: 5
+        st: 3
+        ag: 4
+        pa: 4
+        av: 10
+        skills: [block, diving_tackle, tackle, thick_skull]
+        primary: [general, strength]
+        secondary: [passing]
+        big_guy: false
+      - name: dwarf_troll_slayer
+        display: Troll Slayer
+        qty: [0, 2]
+        cost: 95
+        ma: 5
+        st: 3
+        ag: 4
+        pa: 5
+        av: 9
+        skills: [block, dauntless, frenzy, {name: hatred, value: troll},
+                 thick_skull]
+        primary: [general, strength]
+        secondary: [devious]
+        big_guy: false
+      - name: dwarf_deathroller
+        display: Deathroller
+        qty: [0, 1]
+        cost: 170
+        ma: 5
+        st: 7
+        ag: 5
+        pa: 0
+        av: 11
+        skills: [break_tackle, dirty_player, juggernaut, {name: loner, value: 4},
+                 mighty_blow, no_ball, secret_weapon, stand_firm]
+        primary: [devious, strength]
+        secondary: [general]
+        big_guy: true
+
+  - name: elven_union
+    display: Elven Union
+    tier: 2
+    reroll_cost: 50
+    apothecary: true
+    special_rules: []
+    positions:
+      - name: elven_union_lineman
+        display: Elf Lineman
+        qty: [0, 16]
+        cost: 65
+        ma: 6
+        st: 3
+        ag: 2
+        pa: 3
+        av: 8
+        skills: [fumblerooski]
+        primary: [agility, general]
+        secondary: [strength]
+        big_guy: false
+      - name: elven_union_thrower
+        display: Elf Thrower
+        qty: [0, 2]
+        cost: 75
+        ma: 6
+        st: 3
+        ag: 2
+        pa: 2
+        av: 8
+        skills: [hail_mary_pass, pass]
+        primary: [agility, general, passing]
+        secondary: [strength]
+        big_guy: false
+      - name: elven_union_catcher
+        display: Elf Catcher
+        qty: [0, 2]
+        cost: 100
+        ma: 8
+        st: 3
+        ag: 2
+        pa: 4
+        av: 8
+        skills: [catch, diving_catch, nerves_of_steel]
+        primary: [agility, general]
+        secondary: [strength]
+        big_guy: false
+      - name: elven_union_blitzer
+        display: Elf Blitzer
+        qty: [0, 2]
+        cost: 115
+        ma: 7
+        st: 3
+        ag: 2
+        pa: 3
+        av: 9
+        skills: [block, sidestep]
+        primary: [agility, general]
+        secondary: [passing, strength]
+        big_guy: false
+
+  - name: gnome
+    display: Gnome
+    tier: 4
+    reroll_cost: 50
+    apothecary: true
+    special_rules: []
+    positions:
+      - name: gnome_lineman
+        display: Gnome Lineman
+        qty: [0, 16]
+        cost: 40
+        ma: 5
+        st: 2
+        ag: 3
+        pa: 4
+        av: 7
+        skills: [jump_up, right_stuff, stunty, wrestle]
+        primary: [agility]
+        secondary: [general, strength, devious]
+        big_guy: false
+      - name: gnome_woodland_fox
+        display: Woodland Fox
+        qty: [0, 2]
+        cost: 50
+        ma: 7
+        st: 2
+        ag: 2
+        pa: 0
+        av: 6
+        skills: [dodge, my_ball, sidestep, stunty]
+        primary: []
+        secondary: [agility]
+        big_guy: false
+      - name: gnome_illusionist
+        display: Gnome Illusionist
+        qty: [0, 2]
+        cost: 50
+        ma: 5
+        st: 2
+        ag: 3
+        pa: 3
+        av: 7
+        skills: [jump_up, stunty, trickster, wrestle]
+        primary: [agility, passing]
+        secondary: [general, devious]
+        big_guy: false
+      - name: gnome_beastmaster
+        display: Gnome Beastmaster
+        qty: [0, 2]
+        cost: 55
+        ma: 5
+        st: 2
+        ag: 3
+        pa: 4
+        av: 8
+        skills: [guard, jump_up, stunty, wrestle]
+        primary: [agility]
+        secondary: [devious, general, strength]
+        big_guy: false
+      - name: gnome_altern_forest_treeman   # no Loner
+        display: Altern Forest Treeman
+        qty: [0, 2]
+        cost: 120
+        ma: 2
+        st: 6
+        ag: 5
+        pa: 5
+        av: 11
+        skills: [mighty_blow, stand_firm, strong_arm, take_root, thick_skull,
+                 throw_team_mate, timmm_ber]
+        primary: [strength]
+        secondary: [agility, general, passing]
+        big_guy: true
+
+  - name: goblin
+    display: Goblin
+    tier: 4
+    reroll_cost: 60
+    apothecary: true
+    special_rules: [bribery_and_corruption]
+    positions:
+      - name: goblin_lineman
+        display: Goblin Lineman
+        qty: [0, 16]
+        cost: 40
+        ma: 6
+        st: 2
+        ag: 3
+        pa: 4
+        av: 8
+        skills: [dodge, right_stuff, stunty]
+        primary: [agility, devious]
+        secondary: [general, passing, strength]
+        big_guy: false
+      - name: goblin_looney
+        display: Looney
+        qty: [0, 1]
+        cost: 40
+        ma: 6
+        st: 2
+        ag: 3
+        pa: 0
+        av: 8
+        skills: [chainsaw, no_ball, secret_weapon, stunty]
+        primary: [devious]
+        secondary: [agility, general, strength]
+        big_guy: false
+      - name: goblin_bomma
+        display: Bomma
+        qty: [0, 1]
+        cost: 45
+        ma: 6
+        st: 2
+        ag: 3
+        pa: 4
+        av: 8
+        skills: [bombardier, dodge, secret_weapon, stunty]
+        primary: [devious, passing]
+        secondary: [agility, general, strength]
+        big_guy: false
+      - name: goblin_ooligan
+        display: "'Ooligan"
+        qty: [0, 1]
+        cost: 60
+        ma: 6
+        st: 2
+        ag: 3
+        pa: 5
+        av: 8
+        skills: [{name: dirty_player, value: 1}, disturbing_presence, dodge,
+                 right_stuff, stunty, taunt]
+        primary: [agility, devious]
+        secondary: [general, strength]
+        big_guy: false
+      - name: goblin_doom_diver
+        display: Doom Diver
+        qty: [0, 1]
+        cost: 65
+        ma: 6
+        st: 2
+        ag: 3
+        pa: 6
+        av: 8
+        skills: [dodge, right_stuff, stunty, swoop]
+        primary: [agility]
+        secondary: [devious, general, strength]
+        big_guy: false
+      - name: goblin_fanatic
+        display: Fanatic
+        qty: [0, 1]
+        cost: 70
+        ma: 3
+        st: 7
+        ag: 3
+        pa: 0
+        av: 8
+        skills: [ball_and_chain, no_ball, secret_weapon, stunty]
+        primary: [devious, strength]
+        secondary: [agility, general]
+        big_guy: false
+      - name: goblin_pogoer
+        display: Pogoer
+        qty: [0, 1]
+        cost: 75
+        ma: 7
+        st: 2
+        ag: 3
+        pa: 4
+        av: 8
+        skills: [dodge, pogo, stunty]
+        primary: [agility]
+        secondary: [devious, general, strength]
+        big_guy: false
+      - name: goblin_trained_troll     # no Loner (unlike generic Trolls)
+        display: Trained Troll
+        qty: [0, 2]
+        cost: 115
+        ma: 4
+        st: 5
+        ag: 5
+        pa: 5
+        av: 10
+        skills: [always_hungry, mighty_blow, projectile_vomit, really_stupid,
+                 regeneration, throw_team_mate]
+        primary: [strength]
+        secondary: [agility, general, passing]
+        big_guy: true
+
+  - name: halfling
+    display: Halfling
+    tier: 4
+    reroll_cost: 60
+    apothecary: true
+    special_rules: []
+    positions:
+      - name: halfling_hopeful
+        display: Halfling Hopeful
+        qty: [0, 16]
+        cost: 30
+        ma: 5
+        st: 2
+        ag: 3
+        pa: 4
+        av: 7
+        skills: [dodge, right_stuff, stunty]
+        primary: [agility]
+        secondary: [general, strength, devious]
+        big_guy: false
+      - name: halfling_hefty
+        display: Halfling Hefty
+        qty: [0, 2]
+        cost: 50
+        ma: 5
+        st: 2
+        ag: 3
+        pa: 3
+        av: 8
+        skills: [dodge, fend, stunty]
+        primary: [agility, passing]
+        secondary: [general, strength, devious]
+        big_guy: false
+      - name: halfling_catcher
+        display: Halfling Catcher
+        qty: [0, 2]
+        cost: 55
+        ma: 5
+        st: 2
+        ag: 3
+        pa: 4
+        av: 7
+        skills: [catch, dodge, right_stuff, sprint, stunty]
+        primary: [agility]
+        secondary: [general, strength, devious]
+        big_guy: false
+      - name: halfling_athel_forest_treeman   # no Loner
+        display: Athel Forest Treeman
+        qty: [0, 2]
+        cost: 120
+        ma: 2
+        st: 6
+        ag: 5
+        pa: 5
+        av: 11
+        skills: [mighty_blow, stand_firm, strong_arm, take_root, thick_skull,
+                 throw_team_mate, timmm_ber]
+        primary: [strength]
+        secondary: [agility, general, passing, devious]
+        big_guy: true
+
+  - name: high_elf
+    display: High Elf
+    tier: 1                  # team page prints "TIER ?"; tier 1 per May 2026 FAQ table
+    reroll_cost: 50
+    apothecary: true
+    special_rules: []
+    positions:
+      - name: high_elf_lineman
+        display: High Elf Lineman
+        qty: [0, 16]
+        cost: 65
+        ma: 6
+        st: 3
+        ag: 2
+        pa: 3
+        av: 9
+        skills: []
+        primary: [agility, general]
+        secondary: [strength]
+        big_guy: false
+      - name: high_elf_phoenix_warrior
+        display: Phoenix Warrior
+        qty: [0, 2]
+        cost: 90
+        ma: 6
+        st: 3
+        ag: 2
+        pa: 2
+        av: 9
+        skills: [cloud_burster, pass, safe_pass]
+        primary: [agility, general, passing]
+        secondary: [strength]
+        big_guy: false
+      - name: high_elf_dragon_prince
+        display: Dragon Prince
+        qty: [0, 2]
+        cost: 110
+        ma: 8
+        st: 3
+        ag: 2
+        pa: 4
+        av: 9
+        skills: [block, my_ball, steady_footing]
+        primary: [agility, general]
+        secondary: [strength]
+        big_guy: false
+      - name: high_elf_white_lion
+        display: White Lion
+        qty: [0, 2]
+        cost: 110
+        ma: 7
+        st: 3
+        ag: 2
+        pa: 3
+        av: 9
+        skills: [claws, wrestle]
+        primary: [agility, general]
+        secondary: [passing, strength]
+        big_guy: false
+
+  - name: human
+    display: Human
+    tier: 2
+    reroll_cost: 50
+    apothecary: true
+    special_rules: [team_captain]
+    positions:
+      - name: human_lineman
+        display: Human Lineman
+        qty: [0, 16]
+        cost: 50
+        ma: 6
+        st: 3
+        ag: 3
+        pa: 4
+        av: 9
+        skills: []
+        primary: [general]
+        secondary: [agility, devious, strength]
+        big_guy: false
+      - name: human_halfling_hopeful
+        display: Halfling Hopeful
+        qty: [0, 3]
+        cost: 30
+        ma: 5
+        st: 2
+        ag: 3
+        pa: 4
+        av: 7
+        skills: [dodge, right_stuff, stunty]
+        primary: [agility]
+        secondary: [devious, general, strength]
+        big_guy: false
+      - name: human_catcher
+        display: Human Catcher
+        qty: [0, 2]
+        cost: 75
+        ma: 8
+        st: 3
+        ag: 3
+        pa: 4
+        av: 8
+        skills: [catch, dodge]
+        primary: [agility, general]
+        secondary: [devious, passing, strength]
+        big_guy: false
+      - name: human_thrower
+        display: Human Thrower
+        qty: [0, 2]
+        cost: 75
+        ma: 6
+        st: 3
+        ag: 3
+        pa: 3
+        av: 9
+        skills: [pass, sure_hands]
+        primary: [general, passing]
+        secondary: [agility, devious, strength]
+        big_guy: false
+      - name: human_blitzer
+        display: Human Blitzer
+        qty: [0, 2]
+        cost: 85
+        ma: 7
+        st: 3
+        ag: 3
+        pa: 4
+        av: 9
+        skills: [block, tackle]
+        primary: [general, strength]
+        secondary: [agility, devious]
+        big_guy: false
+      - name: human_ogre        # Mutation secondary removed by errata
+        display: Ogre
+        qty: [0, 1]
+        cost: 140
+        ma: 5
+        st: 5
+        ag: 4
+        pa: 5
+        av: 10
+        skills: [bone_head, {name: loner, value: 3}, mighty_blow, thick_skull,
+                 throw_team_mate]
+        primary: [strength]
+        secondary: [agility, general]
+        big_guy: true
+
+  - name: imperial_nobility
+    display: Imperial Nobility
+    tier: 2
+    reroll_cost: 60
+    apothecary: true
+    special_rules: []
+    positions:
+      - name: imperial_retainer
+        display: Imperial Retainer
+        qty: [0, 16]
+        cost: 45
+        ma: 6
+        st: 3
+        ag: 3
+        pa: 4
+        av: 8
+        skills: [fend]
+        primary: [general]
+        secondary: [agility, strength]
+        big_guy: false
+      - name: imperial_thrower
+        display: Imperial Thrower
+        qty: [0, 2]
+        cost: 75
+        ma: 6
+        st: 3
+        ag: 3
+        pa: 2
+        av: 9
+        skills: [give_and_go, pass, pro]
+        primary: [general, passing]
+        secondary: [agility, strength]
+        big_guy: false
+      - name: imperial_bodyguard
+        display: Bodyguard
+        qty: [0, 4]
+        cost: 85
+        ma: 5
+        st: 3
+        ag: 3
+        pa: 4
+        av: 9
+        skills: [stand_firm, wrestle]
+        primary: [general, strength]
+        secondary: [agility]
+        big_guy: false
+      - name: imperial_noble_blitzer
+        display: Noble Blitzer
+        qty: [0, 2]
+        cost: 90
+        ma: 7
+        st: 3
+        ag: 3
+        pa: 4
+        av: 9
+        skills: [block, catch, pro]
+        primary: [agility, general]
+        secondary: [passing, strength]
+        big_guy: false
+      - name: imperial_ogre      # Mutation secondary removed by errata
+        display: Ogre
+        qty: [0, 1]
+        cost: 140
+        ma: 5
+        st: 5
+        ag: 4
+        pa: 5
+        av: 10
+        skills: [bone_head, {name: loner, value: 3}, mighty_blow, thick_skull,
+                 throw_team_mate]
+        primary: [strength]
+        secondary: [agility, general]
+        big_guy: true

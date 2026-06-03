@@ -1,0 +1,19 @@
+name: CI
+on:
+  push: {branches: [main]}
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install deps
+        run: pip install pyyaml
+      - name: Codegen up to date
+        run: python3 tools/codegen.py --check
+      - name: Build + unit tests
+        run: make test
+      - name: ASan/UBSan tests
+        run: make asan
+  # nightly job (long fuzz, replay differential, chi-square) added in Phase 4

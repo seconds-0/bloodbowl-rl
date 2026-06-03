@@ -1,0 +1,181 @@
+# BB2025 common inducements — hand-extracted from the bloodbowlbase.ru mirror,
+# core_rules/inducements/index.html (errata applied inline there; May 2026 FAQ checked — no
+# errata touch this page). All 18 common inducements listed in the rulebook are present.
+# Conventions: snake_case ids, costs in thousands of gold (k), qty = [min, max] purchasable,
+# cost null = "price varies" (see cost_note / variants). `requires` = team special rule (or
+# capability) gating the purchase; null = available to any team. All effect text is paraphrase.
+#
+# League play: higher-CTV team may spend treasury (uncapped) first; lower-CTV team gets petty
+# cash (CTV difference + opponent's treasury spend) and may top up with at most 50k treasury.
+# Matched/exhibition play: bought from the team draft budget.
+
+inducements:
+  - name: prayers_to_nuffle
+    display: Prayers to Nuffle
+    qty: [0, 3]
+    cost: 10
+    cost_note: null
+    requires: null
+    effect: "per purchase, roll a D16 on the Prayers to Nuffle table (tables.yaml `prayers`), re-rolling results already rolled; lasts the whole game; Star Players can never be selected by a prayer"
+
+  - name: part_time_assistant_coaches
+    display: Part-time Assistant Coaches
+    qty: [0, 5]
+    cost: 20
+    cost_note: null
+    requires: null
+    effect: "+1 assistant coach each for the duration of the game"
+
+  - name: temp_agency_cheerleaders
+    display: Temp Agency Cheerleaders
+    qty: [0, 5]
+    cost: 5
+    cost_note: null
+    requires: null
+    effect: "+1 cheerleader each for the duration of the game"
+
+  - name: team_mascot
+    display: Team Mascot
+    qty: [0, 1]
+    cost: 25
+    cost_note: null
+    requires: null
+    effect: "one extra team re-roll each half, but to use it first roll D6: 4+ usable, 1-3 lost for the half (another re-roll may be used instead); also re-roll natural 1s on the Cheering Fans kick-off event D6"
+
+  - name: weather_mage
+    display: Weather Mage
+    qty: [0, 1]
+    cost: 25
+    cost_note: null
+    requires: null
+    effect: "once per game at the start of any of your turns, roll on the weather table with a modifier of up to +2 or -2; new weather applies immediately until the next Changing Weather kick-off result"
+
+  - name: blitzers_best_kegs
+    display: Blitzer's Best Kegs
+    qty: [0, 2]
+    cost: 50
+    cost_note: null
+    requires: null
+    effect: "+1 per keg to all rolls to recover Knocked-out players for the duration of the game"
+
+  - name: bribes
+    display: Bribes
+    qty: [0, 3]
+    qty_note: "0-6 for teams with bribery_and_corruption"
+    cost: 100
+    cost_note: "50 for teams with bribery_and_corruption"
+    requires: null
+    effect: "after any Argue the Call attempt, when a player is Sent-off you may use a Bribe: D6, on 2+ the player is not Sent-off and no turnover is caused; on a natural 1 the Bribe is lost and the player is still Sent-off"
+
+  - name: team_rerolls
+    display: Extra Team Training
+    qty: [0, 8]
+    cost: 100
+    cost_note: null
+    requires: null
+    effect: "each grants an additional team re-roll for the duration of the game"
+
+  - name: mortuary_assistant
+    display: Mortuary Assistant
+    qty: [0, 1]
+    cost: 100
+    cost_note: null
+    requires: masters_of_undeath
+    effect: "once per game, re-roll a failed Regeneration roll for one of your players"
+
+  - name: plague_doctor
+    display: Plague Doctor
+    qty: [0, 1]
+    cost: 100
+    cost_note: null
+    requires: favoured_of_nurgle
+    effect: "once per game, re-roll a failed Regeneration roll for one of your players, OR use them once in the same manner as an Apothecary"
+
+  - name: riotous_rookies
+    display: Riotous Rookies
+    qty: [0, 1]
+    cost: 150
+    cost_note: null
+    requires: low_cost_linemen
+    effect: "after taking journeymen up to 11 players, gain an additional 2D3+1 journeymen for the game (may exceed 16 on the draft list); treated as regular journeymen and leave after the game unless hired"
+
+  - name: wandering_apothecary
+    display: Wandering Apothecary
+    qty: [0, 2]
+    cost: 100
+    cost_note: null
+    requires: apothecary_allowed   # not available to teams that cannot hire an Apothecary
+    effect: "each may be used once per game in the same manner as a regular Apothecary"
+
+  - name: halfling_master_chef
+    display: Halfling Master Chef
+    qty: [0, 1]
+    cost: 300
+    cost_note: "100 for Halfling teams"
+    requires: null
+    effect: "at the start of each half before kick-off, roll 3D6; per 4+, your team gains a team re-roll for the half and the opposition loses one (re-rolls from skills/traits/special rules cannot be lost)"
+
+  - name: biased_referee
+    display: Biased Referee
+    qty: [0, 1]
+    cost: null
+    cost_note: "price varies by named referee; the rulebook provides the Dodgy League Rep (other publications add more); both teams may hire the same named referee"
+    requires: null
+    effect: "see named variant"
+    variants:
+      - name: dodgy_league_rep
+        display: "Biased Referee: Dodgy League Rep"
+        cost: 120
+        cost_note: "80 for teams with bribery_and_corruption"
+        requires: null
+        effect: "Close Scrutiny: after an opposition Foul Action, D6 - on 5+ the fouler is immediately Sent-off (1-4 nothing). I Didn't See a Thing!: +1 to your Argue the Call rolls (a natural 1 is still You're Outta Here!)"
+
+  - name: infamous_coaching_staff
+    display: Infamous Coaching Staff
+    qty: [0, 1]
+    cost: null
+    cost_note: "price varies by named staff; the rulebook provides Josef Bugman (other publications add more); both teams may hire the same named staff"
+    requires: null
+    effect: "see named variant"
+    variants:
+      - name: josef_bugman
+        display: "Infamous Coaching Staff: Josef Bugman"
+        cost: 100
+        cost_note: "a team that hires him cannot also hire Josef Bugman as a Star Player"
+        requires: null
+        effect: "Bugman's XXXX: +1 to rolls to recover Knocked-out players for the game. Dwarven Wisdom: once per game, after set-up but before kick-off, remove D3 of your players from the pitch and set them up again under normal restrictions"
+
+  - name: mercenary_players
+    display: Mercenary Players
+    qty: [0, 3]
+    cost: null
+    cost_note: "position cost from your team roster + 30; optionally one chosen Primary skill for +50"
+    requires: null
+    effect: "a player from your own team roster with Loner (4+) added; counts as their position type for roster limits (players missing this game don't count against the limit); cannot be hired permanently in the post-game sequence"
+
+  - name: star_players
+    display: Star Players
+    qty: [0, 2]
+    cost: null
+    cost_note: "per the star player's profile (see starplayers.yaml)"
+    requires: null
+    effect: "cannot take the team above 16 players (players missing the game don't count); pairs count as one choice but two roster slots; both teams may hire the same star; stars earn no SPP or MVP, never advance, and casualty rolls against them are waived after the game"
+
+  - name: wizard
+    display: Wizard
+    qty: [0, 1]
+    cost: null
+    cost_note: "price varies by named wizard; the rulebook provides the Sports-Wizard (other publications add more); both teams may hire the same named wizard"
+    requires: null
+    effect: "see named variant"
+    variants:
+      - name: sports_wizard
+        display: "Wizard: Sports-Wizard"
+        cost: 150
+        cost_note: null
+        requires: null
+        effect: "once per game, at the end of any turn before the next begins, cast ONE spell. Fireball: pick a square; D6 per player in or adjacent to it, on 4+ they are hit - standing players are Knocked Down, prone/stunned players take an armour roll, +1 to the armour roll in all cases. Zap!: pick a player and roll D6; a natural 1 always fails and a natural 6 always succeeds, otherwise success if the roll >= their ST; on success they become a Frog until the end of the drive (held ball bounces), then return unharmed to the Reserves box"
+        # Zap! Frog profile (Frog, Special) — target numbers per spec conventions:
+        frog: {ma: 5, st: 1, ag: 2, pa: 5, av: 9,
+               skills: [dodge, leap, no_ball, stunty, titchy, very_long_legs],
+               notes: "a Frog casualty is automatically Badly Hurt with no casualty roll; an Apothecary cannot be used on a Frog"}

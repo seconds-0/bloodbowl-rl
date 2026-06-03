@@ -540,7 +540,7 @@ traits:
     mode: passive
     compulsory: true
     value: null
-  - name: animosity          # X = keyword; Animosity (all) applies to every team-mate
+  - name: animosity          # X = keyword; Animosity (All) applies to every team-mate
     display: Animosity (X)
     mode: active
     compulsory: true
@@ -606,8 +606,8 @@ traits:
     mode: passive
     compulsory: false
     value: null
-  - name: loner              # 4+ on 19 of 22 roster occurrences (3+ on 3, incl. errata'd
-                             # Chaos Renegade Ogre)
+  - name: loner              # 4+ on 19 of 23 roster occurrences; 3+ on 4 (Human, Imperial
+                             # Nobility & Old World Alliance Ogres + errata'd Chaos Renegade Ogre)
     display: Loner (X+)
     mode: passive
     compulsory: true
@@ -623,7 +623,7 @@ traits:
     compulsory: true
     value: null
   - name: pick_me_up         # new in BB2025; FAQ: unusable while Distracted
-    display: Pick-Me-Up
+    display: Pick-me-up      # mirror's mixed-case form (team pages + FAQ pg.132)
     mode: active
     compulsory: false
     value: null
