@@ -75,7 +75,15 @@ Fires when an opponent DECLARES a block/blitz/foul against your player
   sits at the edge of the 0.995 horizon. Primary metric: TD-by-turn histogram
   split by team speed (dwarf-class late-half scoring rate), secondary: perf/
   Elo. `[sweep.train.gamma]` in config/bloodbowl.ini for Protein sweeps;
-  manual 3-point grid via tools/train_profile.sh <P> --train.gamma 0.998.
+  manual grid via tools/train_profile.sh <P> --train.gamma 0.998.
+  Extended ladder (Alex): 0.99975 ~= whole-game lookahead; gamma=1 is
+  legitimate for episodic tasks — the undiscounted objective IS the true
+  one; discounting is a variance-control corruption of it. Known-best
+  practice at this scale (OpenAI Five, AlphaStar): ANNEAL gamma upward over
+  training — learn local causality under tight credit first, extend the
+  horizon as the noise floor drops. Our chained-checkpoint runs fake the
+  schedule cheaply: 0.995 -> 0.999 -> 0.99975, each stage loading the
+  previous stage's checkpoint.
 
 ## Addendum (same session): the sequencing charge
 
