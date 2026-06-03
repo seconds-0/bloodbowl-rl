@@ -190,6 +190,24 @@ strip for Apple Silicon), has empty `SANITIZE_FLAGS` on Darwin, and the default 
 needs nvcc. On the Mac, only `--local/--fast` standalones and `--cpu` are viable; real
 training (and anything mask-dependent) happens on a Linux GPU box.
 
+**Mac practice runs — verified working recipe (2026-06, bloodbowl)**:
+- `tools/mac_practice_build.sh` in bloodbowl-rl, NOT `./build.sh --cpu`. Three walls:
+  1. `-mavx2` hard-errors on arm64 → guard SIMD_FLAGS (local vendored patch).
+  2. Apple clang lacks `-fopenmp`; using brew LLVM + `-lomp` links homebrew libomp while
+     torch loads its OWN libomp → 2 OpenMP runtimes in-process → SIGSEGV in
+     `__kmp_suspend_initialize_thread` during the first rollout. `KMP_DUPLICATE_LIB_OK=TRUE`
+     does NOT save you. Fix: compile _C with NO `-fopenmp` at all (vecenv/bindings_cpu use
+     only `#pragma omp`, zero `omp_*` API calls — pragmas degrade to single-threaded).
+     Keep `-I/opt/homebrew/opt/libomp/include` so `#include <omp.h>` resolves.
+  3. `selfplay.setup` raises RuntimeError on non-CUDA backends and pufferl catches it,
+     prints one WARNING and exits 0 having trained NOTHING (looks like success!) →
+     always pass `--selfplay.enabled 0` with `--slowly`.
+- venv: `uv venv .venv --python 3.12 && uv pip install -e .` in vendor/PufferLib.
+- Observed: MinGRU 2.9M params, ~15K SPS single-thread torch CPU, env stats on the
+  dashboard. Good enough to shake out binding/policy/config before renting the GPU.
+- lldb on a venv'd python: use `readlink -f .venv/bin/python` as the target, set
+  `settings set target.process.stop-on-exec false`, pass PYTHONPATH=repo:site-packages.
+
 ## 8. Self-play pool (pufferlib/selfplay.py) — we will use this
 
 Built-in pool: a fraction of envs play primary-vs-frozen-snapshot, rest pure self-play.
