@@ -655,6 +655,15 @@ static void injury_advance(bb_match* m, bb_rng* rng) {
         return;
     }
     if (total <= ko_max) {
+        // APOTHECARY (KO): once per game, the player stays on the pitch
+        // Stunned instead (crowd KOs go to Reserves). Auto-policy here would
+        // be wrong (saving it for casualties is usually better), so offer a
+        // decision via the KO-patch window.
+        int team = BB_TEAM_OF(slot);
+        if (m->apothecary[team] > 0) {
+            bb_push(m, BB_PROC_KO_RECOVERY, slot, f.b, 0, 0); // reuse id as KO-patch window
+            return;
+        }
         if (p->location == BB_LOC_ON_PITCH) bb_remove_from_pitch(m, slot, BB_LOC_KO);
         else p->location = BB_LOC_KO;
         return;
@@ -673,6 +682,10 @@ static void injury_advance(bb_match* m, bb_rng* rng) {
 // match terms every casualty is out for the game. TODO(phase3): apothecary.
 
 static void casualty_advance(bb_match* m, bb_rng* rng) {
+    if (bb_top(m)->phase == 1) {
+        bb_need_decision(m, BB_TEAM_OF(bb_top(m)->a));
+        return;
+    }
     bb_frame f = *bb_top(m);
     bb_pop(m);
     int slot = f.a;
@@ -688,7 +701,52 @@ static void casualty_advance(bb_match* m, bb_rng* rng) {
     // DECAY: "Apply a +1 modifier to any Casualty Roll made against this
     // player."
     if (bb_has_skill(&p->skills, BB_SK_DECAY) && roll < 16) roll += 1;
+    int team = BB_TEAM_OF(slot);
+    if (m->apothecary[team] > 0) {
+        // Apothecary window: coach may have a second Casualty Roll made and
+        // pick either result (Badly Hurt selected -> Reserves).
+        bb_push(m, BB_PROC_CASUALTY, slot, 1, (uint8_t)roll, 0);
+        bb_top(m)->phase = 1; // decision phase
+        return;
+    }
     p->spp_game = (uint8_t)bb_casualty_table[roll]; // outcome (league mode)
+    if (p->location == BB_LOC_ON_PITCH) bb_remove_from_pitch(m, slot, BB_LOC_CAS);
+    else p->location = BB_LOC_CAS;
+}
+
+static int casualty_legal(const bb_match* m, bb_action* out) {
+    (void)m;
+    out[0] = (bb_action){BB_A_APOTHECARY, 1, 0, 0};
+    out[1] = (bb_action){BB_A_APOTHECARY, 0, 0, 0};
+    return 2;
+}
+
+static void casualty_apply(bb_match* m, bb_action a, bb_rng* rng) {
+    bb_frame f = *bb_top(m);
+    bb_pop(m);
+    int slot = f.a;
+    bb_player* p = &m->players[slot];
+    int team = BB_TEAM_OF(slot);
+    int roll1 = f.x;
+    if (a.arg == 1) {
+        m->apothecary[team]--;
+        int roll2 = bb_d16(rng);
+        if (bb_has_skill(&p->skills, BB_SK_DECAY) && roll2 < 16) roll2 += 1;
+        // The controlling coach picks either result; auto-pick the better
+        // (lower) one — strictly dominant.
+        int pick = bb_casualty_table[roll1] <= bb_casualty_table[roll2] ? roll1 : roll2;
+        if (bb_casualty_table[pick] == BB_CAS_BADLY_HURT) {
+            if (p->location == BB_LOC_ON_PITCH) bb_remove_from_pitch(m, slot, BB_LOC_RESERVES);
+            else p->location = BB_LOC_RESERVES;
+            p->spp_game = BB_CAS_BADLY_HURT;
+            return;
+        }
+        p->spp_game = (uint8_t)bb_casualty_table[pick];
+        if (p->location == BB_LOC_ON_PITCH) bb_remove_from_pitch(m, slot, BB_LOC_CAS);
+        else p->location = BB_LOC_CAS;
+        return;
+    }
+    p->spp_game = (uint8_t)bb_casualty_table[roll1];
     if (p->location == BB_LOC_ON_PITCH) bb_remove_from_pitch(m, slot, BB_LOC_CAS);
     else p->location = BB_LOC_CAS;
 }
@@ -782,5 +840,5 @@ const bb_proc_vtable bb_proc_push_vtable = {push_advance, push_legal, push_apply
 const bb_proc_vtable bb_proc_knockdown_vtable = {knockdown_advance, 0, 0};
 const bb_proc_vtable bb_proc_armour_vtable = {armour_advance, 0, 0};
 const bb_proc_vtable bb_proc_injury_vtable = {injury_advance, 0, 0};
-const bb_proc_vtable bb_proc_casualty_vtable = {casualty_advance, 0, 0};
+const bb_proc_vtable bb_proc_casualty_vtable = {casualty_advance, casualty_legal, casualty_apply};
 const bb_proc_vtable bb_proc_foul_vtable = {foul_advance, foul_legal, foul_apply};

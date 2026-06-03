@@ -32,6 +32,25 @@ static void turn_start(bb_match* m, int team) {
     }
 }
 
+static void pick_me_up(bb_match* m, bb_rng* rng, int helping_team) {
+    for (int s = helping_team * BB_TEAM_SLOTS; s < (helping_team + 1) * BB_TEAM_SLOTS; s++) {
+        bb_player* p = &m->players[s];
+        if (p->location != BB_LOC_ON_PITCH || p->stance != BB_STANCE_PRONE) continue;
+        bool near = false;
+        for (int s2 = helping_team * BB_TEAM_SLOTS;
+             s2 < (helping_team + 1) * BB_TEAM_SLOTS && !near; s2++) {
+            const bb_player* q = &m->players[s2];
+            if (q->location != BB_LOC_ON_PITCH || q->stance != BB_STANCE_STANDING) continue;
+            if (!bb_has_skill(&q->skills, BB_SK_PICK_ME_UP)) continue;
+            int dx = q->x - p->x, dy = q->y - p->y;
+            if (dx < 0) dx = -dx;
+            if (dy < 0) dy = -dy;
+            if ((dx > dy ? dx : dy) <= 3) near = true;
+        }
+        if (near && bb_d6(rng) >= 5) p->stance = BB_STANCE_STANDING;
+    }
+}
+
 static void turn_end(bb_match* m, int team) {
     // Only players who STARTED this turn Stunned (marked at turn start) roll
     // over to Prone now.
@@ -55,7 +74,6 @@ static bool can_activate(const bb_match* m, int s) {
 }
 
 static void team_turn_advance(bb_match* m, bb_rng* rng) {
-    (void)rng;
     bb_frame* f = bb_top(m);
     int team = f->a;
     if (f->phase == 0) {
@@ -81,6 +99,10 @@ static void team_turn_advance(bb_match* m, bb_rng* rng) {
         }
         bb_need_decision(m, team);
         return;
+    }
+    {
+        bb_rng* prng = rng; // PICK-ME-UP rolls at the end of the opponent's turn
+        pick_me_up(m, prng, 1 - team);
     }
     turn_end(m, team);
     bb_pop(m);

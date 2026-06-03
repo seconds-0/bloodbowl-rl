@@ -658,3 +658,41 @@ const bb_proc_vtable bb_proc_setup_vtable = {setup_advance, setup_legal, setup_a
 const bb_proc_vtable bb_proc_kickoff_vtable = {kickoff_advance, kickoff_legal, kickoff_apply};
 const bb_proc_vtable bb_proc_touchdown_vtable = {touchdown_advance, 0, 0};
 const bb_proc_vtable bb_proc_end_drive_vtable = {end_drive_advance, 0, 0};
+
+// ===== KO-PATCH window (BB_PROC_KO_RECOVERY) =================================
+// a = player, b = injury context (1 = crowd). Apothecary decision: patch the
+// KO (player stays Stunned in square / Reserves if crowd) or send to KO box.
+
+static void ko_patch_advance(bb_match* m, bb_rng* rng) {
+    (void)rng;
+    bb_need_decision(m, BB_TEAM_OF(bb_top(m)->a));
+}
+
+static int ko_patch_legal(const bb_match* m, bb_action* out) {
+    (void)m;
+    out[0] = (bb_action){BB_A_APOTHECARY, 1, 0, 0};
+    out[1] = (bb_action){BB_A_APOTHECARY, 0, 0, 0};
+    return 2;
+}
+
+static void ko_patch_apply(bb_match* m, bb_action a, bb_rng* rng) {
+    (void)rng;
+    bb_frame f = *bb_top(m);
+    bb_pop(m);
+    int slot = f.a;
+    bb_player* p = &m->players[slot];
+    int team = BB_TEAM_OF(slot);
+    if (a.arg == 1) {
+        m->apothecary[team]--;
+        if (f.b == 1) { // crowd KO patched: Reserves
+            p->location = BB_LOC_RESERVES;
+        } else {
+            p->stance = BB_STANCE_STUNNED; // stays on the pitch, Stunned
+        }
+        return;
+    }
+    if (p->location == BB_LOC_ON_PITCH) bb_remove_from_pitch(m, slot, BB_LOC_KO);
+    else p->location = BB_LOC_KO;
+}
+
+const bb_proc_vtable bb_proc_ko_recovery_vtable = {ko_patch_advance, ko_patch_legal, ko_patch_apply};

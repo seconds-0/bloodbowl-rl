@@ -24,6 +24,7 @@ extern const bb_proc_vtable bb_proc_foul_vtable;
 extern const bb_proc_vtable bb_proc_touchdown_vtable;
 extern const bb_proc_vtable bb_proc_turnover_vtable;
 extern const bb_proc_vtable bb_proc_end_drive_vtable;
+extern const bb_proc_vtable bb_proc_ko_recovery_vtable;
 
 bb_proc_vtable bb_proc_table[BB_PROC_COUNT];
 
@@ -51,4 +52,5 @@ __attribute__((constructor)) static void bb_proc_table_init(void) {
     bb_proc_table[BB_PROC_TOUCHDOWN] = bb_proc_touchdown_vtable;
     bb_proc_table[BB_PROC_TURNOVER] = bb_proc_turnover_vtable;
     bb_proc_table[BB_PROC_END_DRIVE] = bb_proc_end_drive_vtable;
+    bb_proc_table[BB_PROC_KO_RECOVERY] = bb_proc_ko_recovery_vtable;
 }
