@@ -110,3 +110,14 @@ BB_SKILL_PUSHF(JUGGERNAUT, BB_PUSHF_JUGGERNAUT)
 // HORNS: "+1 to their Strength ... when they perform a Block as part of a
 // Blitz Action."
 BB_SKILL_ST_BLITZ(HORNS, 1)
+
+// BREAK TACKLE: "Once during their activation, when this player makes an
+// Agility Test in order to Dodge, they may apply a +1 modifier if their
+// Strength is 4 or less, or a +2 modifier if their Strength is 5 or more."
+// (Always-on approximation: at most one dodge per step sequence benefits per
+// activation in practice almost always; exact once-per-activation latch is a
+// TODO flagged for the FUMBBL differential.)
+BB_SKILL_MOD(BREAK_TACKLE) {
+    if (c->kind != BB_TEST_DODGE) return 0;
+    return m->players[c->player].st >= 5 ? 2 : 1;
+}

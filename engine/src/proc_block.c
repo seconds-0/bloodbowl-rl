@@ -29,7 +29,8 @@ enum { PSH_POW = 1 << 0, PSH_CHAIN = 1 << 1, PSH_MOVED = 1 << 2, PSH_FUP = 1 << 
 // phase 0: compute pool, roll; 1: reroll window; 2: choose die; 3: resolving
 //          (wrestle window: phase 4).
 
-enum { BLK_RR_USED = 1 << 12, BLK_DEF_CHOOSES = 1 << 11, BLK_IS_BLITZ = 1 << 13 };
+enum { BLK_RR_USED = 1 << 12, BLK_DEF_CHOOSES = 1 << 11, BLK_IS_BLITZ = 1 << 13,
+       BLK_DAUNTLESS_OK = 1 << 14, BLK_FRENZY_2ND = 1 << 15 };
 
 static int blk_die(const bb_frame* f, int i) { return (f->data >> (3 * i)) & 7; }
 static int blk_ndice(const bb_frame* f) { return ((f->data >> 9) & 3) + 1; }
@@ -49,8 +50,18 @@ static void block_advance(bb_match* m, bb_rng* rng) {
     bb_frame* f = bb_top(m);
     int att = f->a, def = f->b;
     if (f->phase == 0) {
-        int st_a = m->players[att].st + count_assists(m, att, def);
-        int st_d = m->players[def].st + count_assists(m, def, att);
+        // DAUNTLESS: against a higher unmodified ST, roll D6 + own ST; beat
+        // the target's unmodified ST to match it for this block.
+        int base_a = m->players[att].st;
+        int base_d = m->players[def].st;
+        if (bb_has_skill(&m->players[att].skills, BB_SK_DAUNTLESS) &&
+            base_d > base_a && !(f->data & BLK_DAUNTLESS_OK)) {
+            int roll = bb_d6(rng) + base_a;
+            if (roll > base_d) f->data |= BLK_DAUNTLESS_OK;
+        }
+        int st_a = ((f->data & BLK_DAUNTLESS_OK) ? base_d : base_a) +
+                   count_assists(m, att, def);
+        int st_d = base_d + count_assists(m, def, att);
         if (f->data & BLK_IS_BLITZ) st_a += bb_hook_st_mod_blitz(m, att); // Horns
         int nd = 1;
         bool def_chooses = false;
@@ -165,9 +176,11 @@ static void resolve_face(bb_match* m, bb_frame* f, int face) {
         case BB_BD_PUSH_1:
         case BB_BD_PUSH_2: {
             uint16_t blitz = f->data & BLK_IS_BLITZ;
+            uint16_t f2 = f->data & BLK_FRENZY_2ND;
             bb_pop(m);
             bb_push(m, BB_PROC_PUSH, att, def, ax, ay);
             if (blitz) bb_top(m)->data |= PSH_FROM_BLITZ;
+            if (f2) bb_top(m)->data |= 1 << 7; // PSH_FRENZY_DONE
             return;
         }
         case BB_BD_STUMBLE: {
@@ -175,18 +188,22 @@ static void resolve_face(bb_match* m, bb_frame* f, int face) {
                          !(m->players[def].flags & BB_PF_DISTRACTED) &&
                          !bb_has_skill(&m->players[att].skills, BB_SK_TACKLE);
             uint16_t blitz = f->data & BLK_IS_BLITZ;
+            uint16_t f2 = f->data & BLK_FRENZY_2ND;
             bb_pop(m);
             bb_push(m, BB_PROC_PUSH, att, def, ax, ay);
             if (!dodge) bb_top(m)->data |= 1; // pow flag
             if (blitz) bb_top(m)->data |= PSH_FROM_BLITZ;
+            if (f2) bb_top(m)->data |= 1 << 7;
             return;
         }
         case BB_BD_POW: {
             uint16_t blitz = f->data & BLK_IS_BLITZ;
+            uint16_t f2 = f->data & BLK_FRENZY_2ND;
             bb_pop(m);
             bb_push(m, BB_PROC_PUSH, att, def, ax, ay);
             bb_top(m)->data |= 1; // pow flag
             if (blitz) bb_top(m)->data |= PSH_FROM_BLITZ;
+            if (f2) bb_top(m)->data |= 1 << 7;
             return;
         }
     }
@@ -302,10 +319,27 @@ static void push_advance(bb_match* m, bb_rng* rng) {
             f->phase = 5;
             return;
         }
-        // Fend: the attacker may not follow up (Juggernaut on a blitz cancels).
+        // FRENZY: "must Follow-up if able" — no decision.
+        bool frenzy = bb_has_skill(&m->players[f->a].skills, BB_SK_FRENZY);
+        // Fend: the attacker may not follow up (Juggernaut on a blitz cancels;
+        // Frenzy does not cancel Fend).
         bool jugg = (f->data & PSH_FROM_BLITZ) &&
                     bb_has_skill(&m->players[f->a].skills, BB_SK_JUGGERNAUT);
         if (!jugg && (bb_hook_push_flags(m, f->b) & BB_PUSHF_FEND)) {
+            f->phase = 5;
+            return;
+        }
+        if (frenzy) {
+            // Forced follow-up into the vacated square.
+            bb_player* ap = &m->players[f->a];
+            if (ap->location == BB_LOC_ON_PITCH && ap->stance == BB_STANCE_STANDING &&
+                !m->grid[f->x][f->y]) {
+                bb_place(m, f->a, f->x, f->y);
+                if (ap->flags & BB_PF_HAS_BALL) {
+                    m->ball.x = ap->x;
+                    m->ball.y = ap->y;
+                }
+            }
             f->phase = 5;
             return;
         }
