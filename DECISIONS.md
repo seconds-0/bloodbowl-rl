@@ -1,0 +1,22 @@
+# Decisions scratchpad — autonomous calls for Alex to review
+
+Running log of judgment calls made while you were away. Newest at the bottom.
+Format: **D# — decision** · rationale · revisit?
+
+---
+
+**D1 — Setup action budget (64) + deterministic auto-fix.** Random/untrained agents livelock in the setup phase (can't randomly satisfy "exactly 11, 3+ on LoS, ≤2 per wide zone" and pick DONE). Real BB has setup clocks; FUMBBL enforces them. After 64 placement actions, only `SETUP_DONE` is legal and the engine deterministically repairs the formation (no dice → replay-safe). Full setup expressiveness retained below the budget. *Revisit:* budget size; whether RL policies should see a penalty signal for hitting autofix.
+
+**D2 — `BB_LEGAL_MAX` = 4096.** Setup enumerates ~3000 player×square placements. The RL action heads never materialize this list (factored heads); it's for replay validation/fuzzing/tests. 16KB stack per enumeration is fine.
+
+**D3 — Starter skill set in Phase 2 core** (loner, dodge, block, tackle, guard, thick_skull, stunty, sure_feet, sure_hands, pass, catch, sprint) wired through `bb_skills.h` hooks; everything else lands Phase 3 through the same hooks. Wrestle/Frenzy/Mighty Blow/apothecary deliberately deferred (decision windows not yet modeled) — each marked `TODO(phase3)` in source.
+
+**D4 — Kickoff events: 4 of 11 implemented** (Time-Out, Brilliant Coaching, Changing Weather, Pitch Invasion); the decision-heavy ones (Solid Defence, Quick Snap, High Kick, Charge, Cheering Fans→prayers, Get the Ref→bribes, Dodgy Snack) are rule-shaped no-ops marked `TODO(phase3)`. Phase 4 differential validation will quantify the gap.
+
+**D5 — Pass mechanics v1 approximations** (flagged for the rulebook-test campaign to correct): Euclidean range bands; natural-1≈fumble folded into the inaccurate path; interception deferred. The rulebook tests being written right now will force exactness; FUMBBL replays are the final word.
+
+**D6 — Golden traces: 8 matchups committed** (incl. Ogre vs Snotling for stunty/big-guy coverage). Regenerating goldens is an explicit `make goldens` — rules fixes are EXPECTED to break goldens; that's their job.
+
+**D7 — Vast.ai**: key stored at `~/.vast_api_key`, verified live ($96.26 credit). Spend capped at your authorized $50. No GPU spend until the PufferLib binding smoke test (Phase 5).
+
+**D8 — GitHub remote deferred.** Repo is local-only so far; creating a private GH repo is outward-facing and can wait for your morning review (CI workflow file is ready to go when pushed).
