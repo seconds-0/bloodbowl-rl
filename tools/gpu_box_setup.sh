@@ -30,6 +30,12 @@ echo "=== [4/5] standalone benchmark (sanity + throughput) ==="
 ./bloodbowl 64
 
 echo "=== [5/5] CUDA training backend ==="
+# pytorch wheel images ship libcudnn.so.9 without the unversioned dev symlink
+# that build.sh's -lcudnn link needs.
+CUDNN_LIB=$(python -c "import nvidia.cudnn, os; print(os.path.join(nvidia.cudnn.__path__[0], 'lib'))" 2>/dev/null || true)
+if [ -n "$CUDNN_LIB" ] && [ -f "$CUDNN_LIB/libcudnn.so.9" ] && [ ! -e "$CUDNN_LIB/libcudnn.so" ]; then
+    ln -s libcudnn.so.9 "$CUDNN_LIB/libcudnn.so"
+fi
 ./build.sh bloodbowl
 
 echo
