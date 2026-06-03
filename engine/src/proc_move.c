@@ -176,6 +176,34 @@ static void move_advance(bb_match* m, bb_rng* rng) {
         f->data &= (uint16_t)~MV_AWAIT_TEST;
         bool was_rush = (f->data & MV_RUSH_PEND) != 0;
         f->data &= (uint16_t)~MV_RUSH_PEND;
+        // DIVING TACKLE: "after ... re-rolls have been applied" a player
+        // marking the vacated square may apply -2 and be Placed Prone there.
+        // Auto-applied when it flips a passing dodge into a failure (the only
+        // rational use). The diver relocates AFTER the mover vacates.
+        int diver = -1;
+        if (!was_rush && (m->ret & 1)) {
+            int die = (m->ret >> 8) & 0xF;
+            int target = (m->ret >> 12) & 7;
+            if (die != 6 && die - 2 < target) {
+                for (int ddx = -1; ddx <= 1 && diver < 0; ddx++) {
+                    for (int ddy = -1; ddy <= 1; ddy++) {
+                        if (!ddx && !ddy) continue;
+                        int nx0 = p->x + ddx, ny0 = p->y + ddy;
+                        if (!bb_on_pitch_xy(nx0, ny0)) continue;
+                        int dts = bb_slot_at(m, nx0, ny0);
+                        if (dts < 0 || BB_TEAM_OF(dts) == BB_TEAM_OF(slot)) continue;
+                        if (!bb_exerts_tz(m, dts)) continue;
+                        if (!bb_has_skill(&m->players[dts].skills, BB_SK_DIVING_TACKLE)) continue;
+                        // Auto-policy: never dive with the ball carrier (a
+                        // carrier Placed Prone would drop the ball).
+                        if (m->players[dts].flags & BB_PF_HAS_BALL) continue;
+                        diver = dts;
+                        m->ret &= (uint16_t)~1u; // the dodge now fails
+                        break;
+                    }
+                }
+            }
+        }
         if (f->data & MV_BLOCK_RUSH) {
             // Rush-for-block resolved.
             int target = (f->data >> 9) & 31;
@@ -196,6 +224,7 @@ static void move_advance(bb_match* m, bb_rng* rng) {
             // knocked down there. Pop MOVE FIRST so the knockdown resolves on
             // top of the parent activation.
             int dx = f->x, dy = f->y;
+            int vx = p->x, vy = p->y; // vacated square (for Diving Tackle)
             f->data &= (uint16_t)~MV_DODGE_PEND;
             if (p->moved >= p->ma) p->rushes++;
             p->moved++;
@@ -203,6 +232,10 @@ static void move_advance(bb_match* m, bb_rng* rng) {
             if (p->flags & BB_PF_HAS_BALL) {
                 m->ball.x = (uint8_t)dx;
                 m->ball.y = (uint8_t)dy;
+            }
+            if (diver >= 0) {
+                bb_place(m, diver, vx, vy);
+                m->players[diver].stance = BB_STANCE_PRONE; // Placed Prone: no armour
             }
             bb_pop(m); // MOVE
             bb_knockdown(m, slot, was_rush ? BB_KD_FAILED_RUSH : BB_KD_FAILED_DODGE, 0);
@@ -502,6 +535,28 @@ static void move_apply(bb_match* m, bb_action a, bb_rng* rng) {
         }
 
         case BB_A_STEP: {
+            // TENTACLES: when leaving a tentacled player's TZ, that player
+            // may try to hold the mover: D6 + own ST - mover ST >= 6 (or a
+            // natural 6) cancels the move and ends the activation (no fall,
+            // no turnover). Resolves BEFORE the move and any dodge (FAQ).
+            for (int tdx = -1; tdx <= 1; tdx++) {
+                for (int tdy = -1; tdy <= 1; tdy++) {
+                    if (!tdx && !tdy) continue;
+                    int nx = p->x + tdx, ny = p->y + tdy;
+                    if (!bb_on_pitch_xy(nx, ny)) continue;
+                    int ts = bb_slot_at(m, nx, ny);
+                    if (ts < 0 || BB_TEAM_OF(ts) == BB_TEAM_OF(slot)) continue;
+                    if (!bb_exerts_tz(m, ts)) continue;
+                    if (!bb_has_skill(&m->players[ts].skills, BB_SK_TENTACLES)) continue;
+                    int die = bb_d6(rng);
+                    if (die == 6 || die + m->players[ts].st - p->st >= 6) {
+                        finish_move(m); // held: activation ends in place
+                        return;
+                    }
+                    tdx = 2; // one attempt per step (strongest-first TODO)
+                    break;
+                }
+            }
             f->x = a.x;
             f->y = a.y;
             bool rush = p->moved >= p->ma;

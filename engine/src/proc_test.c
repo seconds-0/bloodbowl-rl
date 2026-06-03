@@ -42,7 +42,7 @@ static void test_advance(bb_match* m, bb_rng* rng) {
         f->data = (uint16_t)((f->data & 0x0FFF) | (die << 12)); // stash the die
         if (test_pass(die, f->x)) {
             bb_pop(m);
-            m->ret = (uint16_t)(1 | (die << 8));
+            m->ret = (uint16_t)(1 | (die << 8) | ((f->x & 7) << 12));
             return;
         }
         // Failed: offer rerolls if any are available.
@@ -54,25 +54,25 @@ static void test_advance(bb_match* m, bb_rng* rng) {
             return;
         }
         bb_pop(m);
-        m->ret = (uint16_t)(0 | (die << 8));
+        m->ret = (uint16_t)(0 | (die << 8) | ((f->x & 7) << 12));
         return;
     }
     if (f->phase == 2) { // reroll the die after a reroll was used
         int die = bb_roll(rng, 6);
         if (test_pass(die, f->x)) {
             bb_pop(m);
-            m->ret = (uint16_t)(1 | (die << 8));
+            m->ret = (uint16_t)(1 | (die << 8) | ((f->x & 7) << 12));
             return;
         }
         // Each die may only be re-rolled once, by any means.
         bb_pop(m);
-        m->ret = (uint16_t)(0 | (die << 8));
+        m->ret = (uint16_t)(0 | (die << 8) | ((f->x & 7) << 12));
         return;
     }
     if (f->phase == 3) { // loner gate failed: reroll consumed, result stands
         int die = (f->data >> 12) & 0xF;
         bb_pop(m);
-        m->ret = (uint16_t)(0 | (die << 8));
+        m->ret = (uint16_t)(0 | (die << 8) | ((f->x & 7) << 12));
         return;
     }
     // phase 1 while waiting shouldn't advance; treat as error
