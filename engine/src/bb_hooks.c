@@ -3,6 +3,7 @@
 #include "bb/bb_proc.h"
 
 bb_skill_hooks bb_hooks[BB_SKILL_COUNT];
+uint64_t bb_skill_exercised[BB_SKILL_COUNT];
 
 int bb_next_skill(const bb_skillset* s, int start) {
     for (int w = start >> 6; w < BB_SKILL_WORDS; w++) {
@@ -24,7 +25,11 @@ int bb_hook_mods(const bb_match* m, const bb_ctx* c) {
     const bb_player* p = &m->players[c->player];
     for (int sk = bb_next_skill(&p->skills, 0); sk >= 0;
          sk = bb_next_skill(&p->skills, sk + 1)) {
-        if (bb_hooks[sk].mod) total += bb_hooks[sk].mod(m, c);
+        if (bb_hooks[sk].mod) {
+            int v = bb_hooks[sk].mod(m, c);
+            if (v) bb_cover(sk);
+            total += v;
+        }
     }
     // Auras from every other on-pitch player with an aura hook.
     for (int s = 0; s < BB_NUM_PLAYERS; s++) {
@@ -36,7 +41,9 @@ int bb_hook_mods(const bb_match* m, const bb_ctx* c) {
             if (!bb_hooks[sk].aura) continue;
             bb_ctx ac = *c;
             ac.other = (uint8_t)s; // aura source
-            total += bb_hooks[sk].aura(m, &ac);
+            int v = bb_hooks[sk].aura(m, &ac);
+            if (v) bb_cover(sk);
+            total += v;
         }
     }
     return total;
@@ -47,7 +54,10 @@ int bb_hook_reroll(const bb_match* m, int slot, int kind) {
     if (p->skill_rr_used & (1u << kind)) return -1;
     for (int sk = bb_next_skill(&p->skills, 0); sk >= 0;
          sk = bb_next_skill(&p->skills, sk + 1)) {
-        if (bb_hooks[sk].reroll_kinds & (1u << kind)) return sk;
+        if (bb_hooks[sk].reroll_kinds & (1u << kind)) {
+            bb_cover(sk);
+            return sk;
+        }
     }
     return -1;
 }
@@ -59,6 +69,7 @@ int bb_hook_activation_gate(const bb_match* m, int slot, int* target, int* gk) {
         if (bb_hooks[sk].activate_gate) {
             *target = bb_hooks[sk].activate_gate;
             *gk = bb_hooks[sk].gate_kind;
+            bb_cover(sk);
             return sk;
         }
     }
@@ -70,6 +81,7 @@ int bb_hook_push_flags(const bb_match* m, int slot) {
     const bb_player* p = &m->players[slot];
     for (int sk = bb_next_skill(&p->skills, 0); sk >= 0;
          sk = bb_next_skill(&p->skills, sk + 1)) {
+        if (bb_hooks[sk].push_flags) bb_cover(sk);
         flags |= bb_hooks[sk].push_flags;
     }
     return flags;
@@ -80,6 +92,7 @@ int bb_hook_st_mod_blitz(const bb_match* m, int slot) {
     const bb_player* p = &m->players[slot];
     for (int sk = bb_next_skill(&p->skills, 0); sk >= 0;
          sk = bb_next_skill(&p->skills, sk + 1)) {
+        if (bb_hooks[sk].st_mod_blitz) bb_cover(sk);
         b += bb_hooks[sk].st_mod_blitz;
     }
     return b;
@@ -98,7 +111,11 @@ static int chain_mod(const bb_match* m, int downed, int causer, int which) {
         for (int sk = bb_next_skill(&p->skills, 0); sk >= 0;
              sk = bb_next_skill(&p->skills, sk + 1)) {
             bb_mod_fn fn = which == 0 ? bb_hooks[sk].armour_mod : bb_hooks[sk].injury_mod;
-            if (fn) total += fn(m, &c);
+            if (fn) {
+                int v = fn(m, &c);
+                if (v) bb_cover(sk);
+                total += v;
+            }
         }
     }
     return total;

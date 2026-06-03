@@ -112,6 +112,12 @@ int bb_hook_activation_gate(const bb_match* m, int slot, int* target, int* gk);
 // Iterate a player's skills: returns the next set skill id >= start, or -1.
 int bb_next_skill(const bb_skillset* s, int start);
 
+// Rule-coverage instrumentation (validation layer 6): every time a skill's
+// effect actually fires, the engine bumps its counter. Always-on (one array
+// increment; negligible) — the report tool reads it after a corpus run.
+extern uint64_t bb_skill_exercised[BB_SKILL_COUNT];
+static inline void bb_cover(int skill_id) { bb_skill_exercised[skill_id]++; }
+
 // Aggregate queries used by the block/push/injury procedures.
 int bb_hook_push_flags(const bb_match* m, int slot);
 int bb_hook_st_mod_blitz(const bb_match* m, int slot);

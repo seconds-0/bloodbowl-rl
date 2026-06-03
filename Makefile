@@ -61,5 +61,9 @@ goldens: $(OBJ)
 	$(CC) $(CFLAGS) tools/gen_goldens.c $(OBJ) -o $(BUILD)/gen_goldens
 	./$(BUILD)/gen_goldens engine/tests/golden
 
+coverage: $(OBJ)
+	$(CC) $(CFLAGS) tools/coverage_report.c $(OBJ) -o $(BUILD)/coverage_report
+	./$(BUILD)/coverage_report
+
 clean:
 	rm -rf $(BUILD)
