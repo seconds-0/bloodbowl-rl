@@ -216,6 +216,7 @@ class Mapper:
         self.turnover = False
         self.setup_segments = 0
         self.pending_block = None  # block resolution state
+        self.stood_block = None    # engine auto-applied Stand Firm: {att,def,def_sq}
         self.pending_step = None   # buffered STEP awaiting its (later) rolls
         self.pre_dice = []         # dice before next STEP/JUMP/BLOCK_TARGET
         self.pre_route = False     # route dice/rerolls to pre_dice (block rush)
@@ -542,6 +543,13 @@ class Mapper:
                 self.act(cmd, A_FOLLOW_UP, 1)
                 self.pending_block = None
                 return
+        # FFB declined an auto-applied Stand Firm: the engine kept attacker
+        # and defender in place, so their FFB relocations cannot be mirrored.
+        sb = self.stood_block
+        if sb and (pid == sb["def"] or
+                   (pid == sb["att"] and sb["def_sq"] == (x, y))):
+            self.skip(cmd, "stand_firm_decline_divergence", f"{pid} -> {x},{y}")
+            return
         if mode not in ("regular", "blitz"):
             self.skip(cmd, f"move_in_mode_{mode}", f"{pid} -> {x},{y}")
             return
@@ -804,6 +812,7 @@ class Mapper:
         self.turnover = False
         self.activation = None
         self.pending_block = None
+        self.stood_block = None
         self.pending_step = None
         self.pre_dice = []
         self.pre_route = False
@@ -852,6 +861,7 @@ class Mapper:
         if self.activation and not self.activation.get("closed"):
             self.close_activation(cmd)
         self.pending_block = None
+        self.stood_block = None
         self.pre_dice = []
         self.pre_route = False
         self.active_team = team
@@ -1145,6 +1155,7 @@ class Mapper:
                              self.has_skill(a["pid"], "Frenzy"))
         self.resolve_pending_followup(cmd)
         self.flush_step(cmd)
+        self.stood_block = None
         self.pending_block = {"att": a["pid"], "def": defender, "pools": [],
                               "team_rr": False, "loner_die": None,
                               "loner_ok": True, "brawler": None,
@@ -1246,7 +1257,13 @@ class Mapper:
             stood = ("Stand Firm" in def_skills and not
                      (pb.get("from_blitz") and "Juggernaut" in att_skills))
             if stood:
-                self.pending_block = None  # engine: no push/follow-up decisions
+                # Engine auto-applies Stand Firm (no push/follow-up
+                # decisions). FFB lets the coach DECLINE it: if push/follow
+                # moves arrive next they are a known engine-policy
+                # divergence, flagged via stood_block in handle_move.
+                self.stood_block = {"att": att, "def": pb["def"],
+                                    "def_sq": self.pos.get(pb["def"])}
+                self.pending_block = None
                 return
             pb["phase"] = "push"
             # Engine PUSH phase 3 order: Fend (Juggernaut on a blitz cancels)
@@ -1290,8 +1307,10 @@ class Mapper:
     def rep_skillUse(self, i, r, cmd):
         sk = r.get("skill") or ""
         use = r.get("skillUse") or ""
-        if sk == "Stand Firm" and use == "avoidPush" and self.pending_block:
-            self.pending_block = None  # engine auto-applies Stand Firm
+        if sk == "Stand Firm" and use == "avoidPush":
+            # engine auto-applies Stand Firm; FFB agreed -> no divergence
+            self.pending_block = None
+            self.stood_block = None
             return
         self.skip(cmd, "skill_use_unmapped", f"{sk}/{use}")
 
