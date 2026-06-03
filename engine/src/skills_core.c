@@ -99,7 +99,7 @@ BB_SKILL_GATE(UNCHANNELLED_FURY, 4, BB_GATE_LOSE_ACTIVATION)
 BB_SKILL_PUSHF(STAND_FIRM, BB_PUSHF_STAND_FIRM)
 // SIDE STEP: "the player's coach chooses which square the player is moved to,
 // and it can be any adjacent unoccupied square."
-BB_SKILL_PUSHF(SIDE_STEP, BB_PUSHF_SIDE_STEP)
+BB_SKILL_PUSHF(SIDESTEP, BB_PUSHF_SIDE_STEP)
 // FEND: "the attacking player may not follow up."
 BB_SKILL_PUSHF(FEND, BB_PUSHF_FEND)
 // GRAB / JUGGERNAUT carry their effects via attacker-side checks in
