@@ -629,6 +629,16 @@ static void injury_advance(bb_match* m, bb_rng* rng) {
     int slot = f.a;
     int causer = (int)f.y - 1;
     bb_player* p = &m->players[slot];
+    // Direct injuries (Stab/Vomit/Chainsaw) reach here with the victim still
+    // standing and possibly holding the ball: any injury outcome makes them
+    // at best Stunned, so the ball drops and bounces (after resolution).
+    if (p->flags & BB_PF_HAS_BALL) {
+        int bx = p->x, by = p->y;
+        bool active_carrier = BB_TEAM_OF(slot) == m->active_team;
+        if (active_carrier) bb_turnover(m);
+        bb_drop_ball(m);
+        bb_push(m, BB_PROC_SCATTER, 0, 1, (uint8_t)bx, (uint8_t)by);
+    }
     int d1 = bb_d6(rng), d2 = bb_d6(rng);
     int total = d1 + d2 + bb_hook_injury_mod(m, slot, causer);
     if (causer >= 0 && f.x == 0 &&
