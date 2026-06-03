@@ -167,6 +167,13 @@ typedef struct {
     char ctx[CTX_OPS][512];
     int ctx_n;
     int unmapped_skills;
+    // -v / --pad
+    int verbose;
+    int pad;
+    long cur_cmd;
+    int die_idx;
+    int orig_nd;       // FUMBBL-recorded dice for the current op (pre-pad)
+    const char* cur_op;
 } runner;
 
 static void ctx_push(runner* R, const char* line) {
@@ -327,6 +334,53 @@ static int do_init(runner* R, const char* line) {
 
 // --- dice transitions --------------------------------------------------------------
 
+static const char* PROC_NAMES[] = {
+    "NONE", "MATCH", "PREGAME", "SETUP", "KICKOFF", "TEAM_TURN", "ACTIVATION",
+    "MOVE", "DODGE", "RUSH", "PICKUP", "BLOCK", "PUSH", "KNOCKDOWN", "ARMOUR",
+    "INJURY", "CASUALTY", "PASS", "CATCH", "SCATTER", "THROW_IN", "HANDOFF",
+    "FOUL", "TTM", "TEST", "TOUCHDOWN", "TURNOVER", "END_DRIVE", "KO_RECOVERY",
+};
+
+static void print_stack(FILE* out, const bb_match* m) {
+    for (int i = 0; i < m->stack_top; i++) {
+        const bb_frame* f = &m->stack[i];
+        fprintf(out, "%s%s.%d(%d,%d)", i ? ">" : "",
+                f->proc < BB_PROC_COUNT ? PROC_NAMES[f->proc] : "?",
+                f->phase, f->a, f->b);
+    }
+}
+
+// -v dice sink: one stderr line per consumed die, tagged with the live proc
+// stack at roll time. Dice past the FUMBBL-recorded count (--pad fillers)
+// are flagged EXTRA — the first EXTRA line is the roll that would have
+// underrun the script.
+static void dice_sink(void* user, int sides, int value) {
+    runner* R = user;
+    fprintf(stderr, "[die] cmd=%ld op=%s #%d d%d=%d%s stack=",
+            R->cur_cmd, R->cur_op ? R->cur_op : "?", R->die_idx, sides, value,
+            R->die_idx >= R->orig_nd ? " EXTRA" : "");
+    print_stack(stderr, &R->m);
+    fprintf(stderr, "\n");
+    R->die_idx++;
+}
+
+// Arm the rng for one op transition: verbose sink + --pad filler dice.
+// Returns the script length actually installed (orig nd + pad).
+static int arm_rng(runner* R, bb_rng* rng, uint8_t* script, int nd,
+                   long cmd, const char* opname) {
+    int total = nd;
+    for (int i = 0; i < R->pad && total < MAX_DICE; i++) {
+        script[total++] = 1; // valid face for every die type
+    }
+    bb_rng_script(rng, script, total);
+    R->cur_cmd = cmd;
+    R->cur_op = opname;
+    R->die_idx = 0;
+    R->orig_nd = nd;
+    if (R->verbose) bb_rng_set_sink(rng, dice_sink, R);
+    return total;
+}
+
 static const char* status_name(int st) {
     switch (st) {
         case BB_STATUS_RUNNING: return "RUNNING";
@@ -340,16 +394,18 @@ static const char* status_name(int st) {
 // Returns 0 ok; on divergence reports and returns -1.
 // NOTE: bb_rng script exhaustion does NOT stop the engine (it feeds 1s and
 // latches rng->error), so the rng error must be checked on every transition,
-// not only when the status is ERROR.
+// not only when the status is ERROR. Under/overrun is judged against the
+// FUMBBL-recorded count (R->orig_nd), not the --pad-extended script, so
+// padding never changes what is reported.
 static int check_transition(runner* R, long cmd, bb_rng* rng, bb_status st) {
     char ours[256], theirs[256];
+    int nd = R->orig_nd;
     if (bb_rng_error(rng)) {
         if (rng->script_pos >= rng->script_len) {
             snprintf(ours, sizeof ours,
                      "engine demanded die %d of script len %d",
-                     rng->script_pos, rng->script_len);
-            snprintf(theirs, sizeof theirs, "FUMBBL recorded %d dice",
-                     rng->script_len);
+                     rng->script_pos, nd);
+            snprintf(theirs, sizeof theirs, "FUMBBL recorded %d dice", nd);
             report_divergence(R, cmd, "dice_underrun", ours, theirs);
         } else {
             snprintf(ours, sizeof ours,
@@ -360,15 +416,22 @@ static int check_transition(runner* R, long cmd, bb_rng* rng, bb_status st) {
         }
         return -1;
     }
+    if (rng->script_pos > nd) {
+        snprintf(ours, sizeof ours, "engine demanded die %d of script len %d",
+                 rng->script_pos, nd);
+        snprintf(theirs, sizeof theirs, "FUMBBL recorded %d dice", nd);
+        report_divergence(R, cmd, "dice_underrun", ours, theirs);
+        return -1;
+    }
     if (st == BB_STATUS_ERROR) {
         snprintf(ours, sizeof ours, "engine status ERROR");
         report_divergence(R, cmd, "status", ours, "transition expected to succeed");
         return -1;
     }
-    if (rng->script_pos < rng->script_len) {
+    if (rng->script_pos < nd) {
         snprintf(ours, sizeof ours, "engine consumed %d dice", rng->script_pos);
         snprintf(theirs, sizeof theirs, "FUMBBL recorded %d dice for this op",
-                 rng->script_len);
+                 nd);
         report_divergence(R, cmd, "dice_overrun", ours, theirs);
         return -1;
     }
@@ -546,7 +609,7 @@ static int do_act(runner* R, const char* line, long cmd) {
         script[i] = (uint8_t)(dice[i] < 0 ? 0 : (dice[i] > 255 ? 255 : dice[i]));
     }
     bb_rng rng;
-    bb_rng_script(&rng, script, nd);
+    arm_rng(R, &rng, script, nd, cmd, "act");
     bb_status st = bb_apply(&R->m, a, &rng);
     return check_transition(R, cmd, &rng, st);
 }
@@ -580,47 +643,48 @@ static int do_place(runner* R, const char* line, long cmd) {
         return -1;
     }
     bb_rng rng;
-    bb_rng_script(&rng, 0, 0);
+    uint8_t script[MAX_DICE];
+    arm_rng(R, &rng, script, 0, cmd, "place");
     bb_status st = bb_apply(&R->m, a, &rng);
     return check_transition(R, cmd, &rng, st);
 }
 
 // --- trace (debug) -------------------------------------------------------------------
 
-static const char* PROC_NAMES[] = {
-    "NONE", "MATCH", "PREGAME", "SETUP", "KICKOFF", "TEAM_TURN", "ACTIVATION",
-    "MOVE", "DODGE", "RUSH", "PICKUP", "BLOCK", "PUSH", "KNOCKDOWN", "ARMOUR",
-    "INJURY", "CASUALTY", "PASS", "CATCH", "SCATTER", "THROW_IN", "HANDOFF",
-    "FOUL", "TTM", "TEST", "TOUCHDOWN", "TURNOVER", "END_DRIVE", "KO_RECOVERY",
-};
-
 static void trace_state(const runner* R, long cmd, const char* op) {
     fprintf(stderr, "cmd=%ld %s st=%s act=%d turn=[%d,%d] stack=", cmd, op,
             status_name(R->m.status), R->m.active_team, R->m.turn[0],
             R->m.turn[1]);
-    for (int i = 0; i < R->m.stack_top; i++) {
-        const bb_frame* f = &R->m.stack[i];
-        fprintf(stderr, "%s%s.%d(%d,%d)", i ? ">" : "",
-                f->proc < BB_PROC_COUNT ? PROC_NAMES[f->proc] : "?",
-                f->phase, f->a, f->b);
-    }
+    print_stack(stderr, &R->m);
     fprintf(stderr, "\n");
 }
 
 // --- main --------------------------------------------------------------------------
 
 int main(int argc, char** argv) {
-    if (argc < 2) {
-        fprintf(stderr, "usage: bb_lockstep <script.jsonl>\n");
-        return 2;
-    }
-    FILE* f = fopen(argv[1], "r");
-    if (!f) {
-        fprintf(stderr, "cannot open %s\n", argv[1]);
-        return 2;
-    }
     runner R;
     memset(&R, 0, sizeof R);
+    const char* path = 0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-v") == 0) R.verbose = 1;
+        else if (strcmp(argv[i], "--pad") == 0 && i + 1 < argc) {
+            R.pad = (int)strtol(argv[++i], 0, 10);
+        } else path = argv[i];
+    }
+    if (!path) {
+        fprintf(stderr,
+                "usage: bb_lockstep [-v] [--pad N] <script.jsonl>\n"
+                "  -v       stderr line per consumed die with the live proc stack\n"
+                "  --pad N  append N filler dice (value 1) per op so the roll that\n"
+                "           would underrun shows up as an EXTRA die in -v output;\n"
+                "           reported divergences are unchanged\n");
+        return 2;
+    }
+    FILE* f = fopen(path, "r");
+    if (!f) {
+        fprintf(stderr, "cannot open %s\n", path);
+        return 2;
+    }
     snprintf(R.replay, sizeof R.replay, "?");
     static char line[MAX_LINE];
     bool inited = false;
@@ -650,7 +714,7 @@ int main(int argc, char** argv) {
                 uint8_t script[MAX_DICE];
                 for (int i = 0; i < nd; i++) script[i] = (uint8_t)dice[i];
                 bb_rng rng;
-                bb_rng_script(&rng, script, nd);
+                arm_rng(&R, &rng, script, nd, cmd, "init");
                 bb_status st = bb_advance(&R.m, &rng);
                 rc = check_transition(&R, cmd, &rng, st);
                 if (rc == 0) {
