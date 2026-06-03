@@ -462,6 +462,45 @@ static int move_legal(const bb_match* m, bb_action* out) {
         }
     }
 
+    // STAB: target an adjacent standing opponent (no movement first — Stab
+    // is its own action); also offered during a Blitz as the block
+    // replacement (BB_A_SPECIAL_TARGET arg 1).
+    if ((kind == BB_ACT_STAB && !(f->data & MV_ACTION_DONE)) ||
+        (kind == BB_ACT_BLITZ && !(f->data & MV_BLOCK_DONE) &&
+         bb_has_skill(&p->skills, BB_SK_STAB) &&
+         (movement_left(m, slot) > 0 || kind == BB_ACT_STAB))) {
+        if (p->stance == BB_STANCE_STANDING) {
+            for (int dx = -1; dx <= 1; dx++) {
+                for (int dy = -1; dy <= 1; dy++) {
+                    if (!dx && !dy) continue;
+                    int nx = p->x + dx, ny = p->y + dy;
+                    if (!bb_on_pitch_xy(nx, ny)) continue;
+                    int s2 = bb_slot_at(m, nx, ny);
+                    if (s2 >= 0 && BB_TEAM_OF(s2) != BB_TEAM_OF(slot) &&
+                        m->players[s2].stance == BB_STANCE_STANDING) {
+                        out[n++] = (bb_action){BB_A_SPECIAL_TARGET, 1, (uint8_t)nx, (uint8_t)ny};
+                    }
+                }
+            }
+        }
+    }
+    // HYPNOTIC GAZE: after any movement, gaze an adjacent standing opponent.
+    if (kind == BB_ACT_GAZE && !(f->data & MV_ACTION_DONE) &&
+        p->stance == BB_STANCE_STANDING) {
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dy = -1; dy <= 1; dy++) {
+                if (!dx && !dy) continue;
+                int nx = p->x + dx, ny = p->y + dy;
+                if (!bb_on_pitch_xy(nx, ny)) continue;
+                int s2 = bb_slot_at(m, nx, ny);
+                if (s2 >= 0 && BB_TEAM_OF(s2) != BB_TEAM_OF(slot) &&
+                    m->players[s2].stance == BB_STANCE_STANDING) {
+                    out[n++] = (bb_action){BB_A_SPECIAL_TARGET, 2, (uint8_t)nx, (uint8_t)ny};
+                }
+            }
+        }
+    }
+
     bool block_ok = false;
     if (kind == BB_ACT_BLOCK && !(f->data & MV_BLOCK_DONE)) block_ok = true;
     if (kind == BB_ACT_BLITZ && !(f->data & MV_BLOCK_DONE) &&
@@ -704,6 +743,29 @@ static void move_apply(bb_match* m, bb_action a, bb_rng* rng) {
             int rec = bb_slot_at(m, a.x, a.y);
             f->data |= MV_AWAIT_ACTION | MV_ACTION_DONE;
             bb_push(m, BB_PROC_HANDOFF, slot, rec, 0, 0);
+            return;
+        }
+
+        case BB_A_SPECIAL_TARGET: {
+            int target = bb_slot_at(m, a.x, a.y);
+            if (a.arg == 1) {
+                // STAB: unmodifiable Armour Roll; armour broken -> Injury;
+                // the activation ends (even as a Blitz block replacement).
+                if (f->b == BB_ACT_BLITZ) {
+                    p->moved++; // replaces the blitz block: costs the square
+                    f->data |= MV_BLOCK_DONE;
+                }
+                f->data |= MV_ACTION_DONE | MV_AWAIT_ACTION;
+                bb_push(m, BB_PROC_ARMOUR, target, 3 /* unmodifiable */, 0,
+                        slot + 1);
+                return;
+            }
+            // GAZE (arg 2): D6 3+ -> target Distracted; activation ends.
+            f->data |= MV_ACTION_DONE;
+            if (bb_d6(rng) >= 3) {
+                m->players[target].flags |= BB_PF_DISTRACTED;
+            }
+            finish_move(m);
             return;
         }
 

@@ -259,7 +259,19 @@ static int activation_legal(const bb_match* m, bb_action* out) {
             out[n++] = (bb_action){BB_A_DECLARE, BB_ACT_SECURE_BALL, 0, 0};
         }
     }
-    // TODO(phase3): TTM declaration.
+    // STAB: "When this player is activated, they can declare a Stab Special
+    // Action; there is no limit to the number of players that can declare
+    // this Special Action each Turn."
+    if (p->stance == BB_STANCE_STANDING &&
+        bb_has_skill(&p->skills, BB_SK_STAB) &&
+        has_adjacent_standing_opponent(m, slot)) {
+        out[n++] = (bb_action){BB_A_DECLARE, BB_ACT_STAB, 0, 0};
+    }
+    // HYPNOTIC GAZE: declared like a Move Action; gaze ends the activation.
+    if (bb_has_skill(&p->skills, BB_SK_HYPNOTIC_GAZE)) {
+        out[n++] = (bb_action){BB_A_DECLARE, BB_ACT_GAZE, 0, 0};
+    }
+    // TODO: TTM declaration (task #10).
     return n;
 }
 

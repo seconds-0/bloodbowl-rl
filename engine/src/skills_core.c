@@ -167,3 +167,17 @@ BB_SKILL_MOD(TIMMM_BER) {
     }
     return n;
 }
+
+// STUNTY: "When this player attempts to Dodge, they do not suffer any
+// negative modifiers to their Agility Test for being Marked by opposition
+// players. Additionally, this player applies a -1 modifier to the Agility
+// Test when attempting to Intercept the ball."
+BB_SKILL_MOD(STUNTY) {
+    if (c->kind == BB_TEST_DODGE) {
+        return bb_tackle_zones(m, BB_TEAM_OF(c->player), c->to_x, c->to_y);
+    }
+    if (c->kind == BB_TEST_CATCH && c->other != BB_NO_PLAYER) {
+        return -1; // interception attempt (ctx carries the thrower)
+    }
+    return 0;
+}

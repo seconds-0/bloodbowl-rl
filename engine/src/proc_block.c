@@ -559,8 +559,10 @@ static void armour_advance(bb_match* m, bb_rng* rng) {
     // making an Armour Roll against this player. Additionally, the Claws
     // Skill cannot be used against this player."
     bool ihs = bb_has_skill(&m->players[f.a].skills, BB_SK_IRON_HARD_SKIN);
+    bool unmodifiable = f.b == 3; // Stab / Projectile Vomit: "cannot be
+                                  // modified in any way"
     int d1 = bb_d6(rng), d2 = bb_d6(rng);
-    int ext = ihs ? 0 : (int8_t)f.x + bb_hook_armour_mod(m, f.a, causer);
+    int ext = (ihs || unmodifiable) ? 0 : (int8_t)f.x + bb_hook_armour_mod(m, f.a, causer);
     int total = d1 + d2 + ext;
     m->ret = 0;
     bool foul_double = f.b && d1 == d2;
@@ -579,14 +581,14 @@ static void armour_advance(bb_match* m, bb_rng* rng) {
         foul_double = f.b && d1 == d2;
     }
     bool broken = total >= m->players[f.a].av;
-    bool mb_on_armour = false;
+    bool mb_on_armour = unmodifiable; // suppress MB/Claws on unmodifiable rolls
     bool dp = f.b == 1 && causer >= 0 &&
               bb_has_skill(&m->players[causer].skills, BB_SK_DIRTY_PLAYER);
-    if (!broken && !ihs && dp && total + 1 >= m->players[f.a].av) {
+    if (!broken && !ihs && !unmodifiable && dp && total + 1 >= m->players[f.a].av) {
         broken = true; // Dirty Player +1 spent on the armour roll
         mb_on_armour = true;
     }
-    if (!broken && !ihs && causer >= 0 &&
+    if (!broken && !ihs && !unmodifiable && causer >= 0 &&
         bb_has_skill(&m->players[causer].skills, BB_SK_MIGHTY_BLOW) &&
         total + 1 >= m->players[f.a].av) {
         // Mighty Blow (+1): auto-applied to the armour roll when that turns a
@@ -596,7 +598,7 @@ static void armour_advance(bb_match* m, bb_rng* rng) {
         mb_on_armour = true;
     }
     // Claws: an unmodified armour roll of 8+ always breaks armour.
-    if (!broken && !ihs && causer >= 0 && d1 + d2 >= 8 &&
+    if (!broken && !ihs && !unmodifiable && causer >= 0 && d1 + d2 >= 8 &&
         bb_has_skill(&m->players[causer].skills, BB_SK_CLAWS)) {
         broken = true;
         mb_on_armour = true; // claws break leaves MB for... rules: MB cannot

@@ -57,6 +57,8 @@ typedef enum {
     BB_A_CHOOSE_OPTION,  // arg = index into a procedure-defined option list
                          // (kickoff-event choices, casualty re-roll picks,
                          //  prayer targets, argue-the-call, etc.)
+    BB_A_SPECIAL_TARGET, // x,y = target of a declared Special Action (Stab,
+                         // Hypnotic Gaze, ...); arg = variant where needed
 
     BB_A_TYPE_COUNT
 } bb_action_type;
@@ -71,6 +73,8 @@ typedef enum {
     BB_ACT_FOUL,
     BB_ACT_TTM,          // throw team-mate
     BB_ACT_SECURE_BALL,  // BB2025
+    BB_ACT_STAB,         // Stab Special Action (also blitz-block replacement)
+    BB_ACT_GAZE,         // Hypnotic Gaze Special Action (move, then gaze)
     BB_ACT_KIND_COUNT
 } bb_act_kind;
 
