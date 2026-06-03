@@ -54,13 +54,42 @@ static void finish_move(bb_match* m) {
 }
 
 static void execute_step(bb_match* m, bb_rng* rng, bb_frame* f) {
-    (void)rng;
     int slot = f->a;
     bb_player* p = &m->players[slot];
     int x = f->x, y = f->y;
+    int vx = p->x, vy = p->y; // vacated square
     if (p->moved >= p->ma) p->rushes++;
     p->moved++;
     bb_place(m, slot, x, y);
+    // SHADOWING: a player whose TZ the mover just left may follow: D6 4+
+    // places them into the vacated square. (Per-turn use cap = MA is TODO;
+    // first eligible shadower follows; never auto-shadow with the carrier's
+    // marker... shadower may carry the ball - relocation keeps possession.)
+    for (int sdx = -1; sdx <= 1; sdx++) {
+        bool followed = false;
+        for (int sdy = -1; sdy <= 1; sdy++) {
+            if (!sdx && !sdy) continue;
+            int nx0 = vx + sdx, ny0 = vy + sdy;
+            if (!bb_on_pitch_xy(nx0, ny0)) continue;
+            if (nx0 == x && ny0 == y) continue;
+            int ss = bb_slot_at(m, nx0, ny0);
+            if (ss < 0 || BB_TEAM_OF(ss) == BB_TEAM_OF(slot)) continue;
+            if (!bb_exerts_tz(m, ss)) continue;
+            if (!bb_has_skill(&m->players[ss].skills, BB_SK_SHADOWING)) continue;
+            // Still adjacent to the mover's new square? Then no need.
+            if (bb_adjacent(nx0, ny0, x, y)) continue;
+            if (bb_d6(rng) >= 4 && !m->grid[vx][vy]) {
+                bb_place(m, ss, vx, vy);
+                if (m->players[ss].flags & BB_PF_HAS_BALL) {
+                    m->ball.x = (uint8_t)vx;
+                    m->ball.y = (uint8_t)vy;
+                }
+            }
+            followed = true;
+            break;
+        }
+        if (followed) break;
+    }
     if (p->flags & BB_PF_HAS_BALL) {
         m->ball.x = (uint8_t)x;
         m->ball.y = (uint8_t)y;
