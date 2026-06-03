@@ -151,6 +151,7 @@ static void activation_advance(bb_match* m, bb_rng* rng) {
     bb_frame* f = bb_top(m);
     int slot = f->a;
     if (f->phase == 0) {
+        m->players[slot].flags &= (uint16_t)~BB_PF_EYE_GOUGED; // recovers
         m->players[slot].flags |= BB_PF_ACTIVATING;
         // Negatrait activation gate (Bone Head, Unchannelled Fury, ...).
         int target = 0, gk = 0;

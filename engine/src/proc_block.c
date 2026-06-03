@@ -6,7 +6,7 @@
 #include "bb/gen_tables.h"
 
 // --- assists -----------------------------------------------------------------
-static int count_assists(const bb_match* m, int for_slot, int against_slot) {
+static int count_assists_ex(const bb_match* m, int for_slot, int against_slot, bool is_foul) {
     int n = 0;
     const bb_player* target = &m->players[against_slot];
     int team = BB_TEAM_OF(for_slot);
@@ -14,9 +14,26 @@ static int count_assists(const bb_match* m, int for_slot, int against_slot) {
         if (s == for_slot) continue;
         if (m->players[s].location != BB_LOC_ON_PITCH) continue;
         if (!bb_adjacent(m->players[s].x, m->players[s].y, target->x, target->y)) continue;
-        if (bb_can_assist(m, s, against_slot)) n++;
+        if (m->players[s].flags & BB_PF_EYE_GOUGED) continue; // cannot assist
+        if (bb_can_assist(m, s, against_slot)) {
+            n++;
+            continue;
+        }
+        // PUT THE BOOT IN: may give OFFENSIVE assists on a team-mate's Foul
+        // regardless of being Marked (DEFENSIVE on a marker cancels it during
+        // the opponent's turn, like Guard).
+        if (is_foul && BB_TEAM_OF(for_slot) == m->active_team &&
+            m->players[s].stance == BB_STANCE_STANDING &&
+            !(m->players[s].flags & BB_PF_DISTRACTED) &&
+            bb_has_skill(&m->players[s].skills, BB_SK_PUT_THE_BOOT_IN)) {
+            n++;
+        }
     }
     return n;
+}
+
+static int count_assists(const bb_match* m, int for_slot, int against_slot) {
+    return count_assists_ex(m, for_slot, against_slot, false);
 }
 
 enum { PSH_POW = 1 << 0, PSH_CHAIN = 1 << 1, PSH_MOVED = 1 << 2, PSH_FUP = 1 << 3,
@@ -298,6 +315,12 @@ static void push_advance(bb_match* m, bb_rng* rng) {
             return;
         }
         bb_place(m, def, f->x, f->y);
+        // EYE GOUGE: a player Pushed Back by this player cannot assist until
+        // next activated (chain-pushed players unaffected per FAQ).
+        if (!(f->data & PSH_CHAIN) &&
+            bb_has_skill(&m->players[f->a].skills, BB_SK_EYE_GOUGE)) {
+            dp->flags |= BB_PF_EYE_GOUGED;
+        }
         if (dp->flags & BB_PF_HAS_BALL) {
             m->ball.x = dp->x;
             m->ball.y = dp->y;
@@ -508,8 +531,28 @@ static void armour_advance(bb_match* m, bb_rng* rng) {
     int total = d1 + d2 + ext;
     m->ret = 0;
     bool foul_double = f.b && d1 == d2;
+    // LONE FOULER: "if there are no players providing an Offensive or
+    // Defensive Assist ... may re-roll a failed Armour Roll." (Auto-applied;
+    // FAQ: the re-rolled result overrides the original for send-off doubles.)
+    if (f.b == 1 && d1 + d2 + ext < m->players[f.a].av && causer >= 0 &&
+        (int8_t)f.x == 0 &&
+        bb_has_skill(&m->players[causer].skills, BB_SK_LONE_FOULER)) {
+        // Only when assists net to zero AND none existed (parent latched it
+        // via FOUL frame data; approximated by zero net mod here).
+        int n1 = bb_d6(rng), n2 = bb_d6(rng);
+        d1 = n1;
+        d2 = n2;
+        total = d1 + d2 + ext;
+        foul_double = f.b && d1 == d2;
+    }
     bool broken = total >= m->players[f.a].av;
     bool mb_on_armour = false;
+    bool dp = f.b == 1 && causer >= 0 &&
+              bb_has_skill(&m->players[causer].skills, BB_SK_DIRTY_PLAYER);
+    if (!broken && !ihs && dp && total + 1 >= m->players[f.a].av) {
+        broken = true; // Dirty Player +1 spent on the armour roll
+        mb_on_armour = true;
+    }
     if (!broken && !ihs && causer >= 0 &&
         bb_has_skill(&m->players[causer].skills, BB_SK_MIGHTY_BLOW) &&
         total + 1 >= m->players[f.a].av) {
@@ -556,6 +599,10 @@ static void injury_advance(bb_match* m, bb_rng* rng) {
     if (causer >= 0 && f.x == 0 &&
         bb_has_skill(&m->players[causer].skills, BB_SK_MIGHTY_BLOW)) {
         total += 1; // Mighty Blow not consumed on the armour roll
+    }
+    if (f.b == 2 && causer >= 0 && f.x == 0 &&
+        bb_has_skill(&m->players[causer].skills, BB_SK_DIRTY_PLAYER)) {
+        total += 1; // Dirty Player not consumed on the armour roll
     }
     bool stunty = bb_is_stunty(m, slot);
     bool foul = f.b == 2;
@@ -623,9 +670,16 @@ static void foul_advance(bb_match* m, bb_rng* rng) {
     (void)rng;
     bb_frame* f = bb_top(m);
     if (f->phase == 0) {
-        int off = count_assists(m, f->a, f->b);
-        int def = count_assists(m, f->b, f->a);
+        int off = count_assists_ex(m, f->a, f->b, true);
+        int def = count_assists_ex(m, f->b, f->a, true);
         int mod = off - def;
+        // DIRTY PLAYER (+1): "may apply a +1 modifier to either the Armour
+        // Roll or Injury Roll" — auto-policy like Mighty Blow (armour first
+        // if it converts; ARMOUR/INJURY procs read the causer's DP via the
+        // foul flag). Modelled by the same MB machinery: DP acts as MB for
+        // fouls. We pass it via the armour mod when no assists offset is
+        // pending: handled inside ARMOUR via causer skill check (foul ctx).
+        f->data = (uint16_t)((off == 0 && def == 0) ? 1 : 0); // lone-foul latch
         f->phase = 1;
         m->ret = 0;
         bb_push(m, BB_PROC_ARMOUR, f->b, 1, mod & 0xFF, f->a + 1); // y = fouler+1

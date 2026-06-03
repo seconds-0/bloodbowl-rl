@@ -256,6 +256,15 @@ static void move_advance(bb_match* m, bb_rng* rng) {
         // the correct place for the possession turnover check: a pass or
         // hand-off that the acting team does not end up holding is a turnover.
         f->data &= (uint16_t)~MV_AWAIT_ACTION;
+        // QUICK FOUL: "activation does not end after performing a Foul
+        // Action" — continue moving with remaining MA (unless sent off /
+        // turnover).
+        if (f->b == BB_ACT_FOUL && !m->turnover &&
+            p->location == BB_LOC_ON_PITCH &&
+            bb_has_skill(&p->skills, BB_SK_QUICK_FOUL)) {
+            bb_need_decision(m, BB_TEAM_OF(slot));
+            return;
+        }
         if (f->b == BB_ACT_PASS || f->b == BB_ACT_HANDOFF) {
             int c = m->ball.carrier;
             if (c == BB_NO_PLAYER || BB_TEAM_OF(c) != m->active_team) {

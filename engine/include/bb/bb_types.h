@@ -77,6 +77,7 @@ enum {
     BB_PF_SECURED_BALL  = 1 << 9,  // BB2025 Secure the Ball performed
     BB_PF_NO_TZ         = 1 << 10, // currently exerts no tackle zone (computed conditions
                                    // also apply; this latches e.g. Hypnotic Gaze)
+    BB_PF_EYE_GOUGED    = 1 << 11, // cannot assist until next activated
 } ;
 
 typedef struct {
