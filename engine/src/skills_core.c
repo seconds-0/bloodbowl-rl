@@ -40,11 +40,15 @@ BB_SKILL_MOD(EXTRA_ARMS) {
     return (c->kind == BB_TEST_PICKUP || c->kind == BB_TEST_CATCH) ? 1 : 0;
 }
 
-// BIG HAND: ignore Marking modifiers when picking up the ball (modelled as
-// +1 per opponent marking the ball square, cancelling the base -1s).
+// BIG HAND: "This player ignores all negative modifiers when attempting to
+// pick up the ball." The engine's negative pickup modifiers are the Marking
+// -1s and Pouring Rain's -1 (the call sites add rain BEFORE this hook runs),
+// so the refund covers both. (adversarial review M13)
 BB_SKILL_MOD(BIG_HAND) {
     if (c->kind != BB_TEST_PICKUP) return 0;
-    return bb_tackle_zones(m, BB_TEAM_OF(c->player), c->to_x, c->to_y);
+    int neg = bb_tackle_zones(m, BB_TEAM_OF(c->player), c->to_x, c->to_y);
+    if (m->weather == BB_WEATHER_RAIN) neg += 1;
+    return neg;
 }
 
 // ACCURATE: "+1 modifier when this player makes a Passing Ability Test for a

@@ -345,3 +345,114 @@ BB_TEST(skmp_very_long_legs_no_bonus_on_regular_catch) {
     BB_CHECK_EQ(m.ball.y, 7);
     BB_CHECK_EQ(m.decision_team, BB_AWAY); // turnover
 }
+
+// =============================================================================
+// BIG HAND (Mutation)
+// =============================================================================
+
+// Regression (adversarial review M13): SK/BIG HAND "This player ignores ALL
+// negative modifiers when attempting to pick up the ball" — Pouring Rain's
+// -1 included, not just the Marking -1s. Double-Marked ball square in
+// Pouring Rain: the pickup is a plain AG 3+ — a 3 picks up (pre-fix the rain
+// -1 leaked through and the 3 failed at 4+), and a 2 still fails (the refund
+// must net to exactly 0, never a bonus).
+BB_TEST(skmp_big_hand_ignores_rain_and_markers_on_pickup) {
+    { // (a) a natural 3 picks up: -2 (Marked) -1 (rain) fully refunded.
+        bb_match m;
+        fx_match_midturn(&m, BB_HOME, 0);
+        m.weather = BB_WEATHER_RAIN;
+        int mover = fx_lineman(&m, 0, 0, 10, 7); // AG 3+
+        fx_give_skill(&m, mover, BB_SK_BIG_HAND);
+        fx_lineman(&m, 1, 0, 12, 6); // marks ball square (11,7), not (10,7)
+        fx_lineman(&m, 1, 1, 12, 8); // marks ball square (11,7), not (10,7)
+        fx_ball_ground(&m, 11, 7);
+        static const uint8_t dice[] = {3};
+        bb_rng rng;
+        bb_rng_script(&rng, dice, 1);
+
+        bb_status st = begin_move(&m, &rng, mover);
+        BB_CHECK_EQ(st, BB_STATUS_DECISION);
+        BB_CHECK_EQ(bb_tackle_zones(&m, BB_HOME, 11, 7), 2);
+        st = fx_apply(&m, mk(BB_A_STEP, 0, 11, 7), &rng);
+        BB_CHECK_EQ(st, BB_STATUS_DECISION);
+        BB_CHECK(!bb_rng_error(&rng));
+        BB_CHECK_EQ(m.ball.state, BB_BALL_HELD);
+        BB_CHECK_EQ(m.ball.carrier, mover);
+        BB_CHECK_EQ(m.active_team, BB_HOME); // no turnover
+    }
+    { // (b) a natural 2 still fails: Big Hand cancels to 0, never past it.
+        bb_match m;
+        fx_match_midturn(&m, BB_HOME, 0);
+        m.weather = BB_WEATHER_RAIN;
+        int mover = fx_lineman(&m, 0, 0, 10, 7);
+        fx_give_skill(&m, mover, BB_SK_BIG_HAND);
+        fx_lineman(&m, 1, 0, 12, 6);
+        fx_lineman(&m, 1, 1, 12, 8);
+        fx_ball_ground(&m, 11, 7);
+        static const uint8_t dice[] = {2, 1}; // pickup fails; bounce d8
+        bb_rng rng;
+        bb_rng_script(&rng, dice, 2);
+
+        bb_status st = begin_move(&m, &rng, mover);
+        st = fx_apply(&m, mk(BB_A_STEP, 0, 11, 7), &rng);
+        BB_CHECK_EQ(st, BB_STATUS_DECISION);
+        BB_CHECK(!bb_rng_error(&rng));
+        BB_CHECK_EQ(m.ball.state, BB_BALL_ON_GROUND);
+        BB_CHECK_EQ(m.active_team, BB_AWAY); // failed pickup = turnover
+    }
+}
+
+// Control for M13: WEATHER "Pouring Rain" still applies to a pickup by a
+// player WITHOUT Big Hand after the call-site restructure — an unmarked
+// AG 3+ pickup in rain is a 4+, so a 3 fails and the ball bounces (turnover).
+BB_TEST(skmp_rain_pickup_minus1_without_big_hand) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    m.weather = BB_WEATHER_RAIN;
+    int mover = fx_lineman(&m, 0, 0, 10, 7); // AG 3+, no skills
+    fx_lineman(&m, 1, 9, 24, 1);             // far-away opponent bystander
+    fx_ball_ground(&m, 11, 7);
+    static const uint8_t dice[] = {3, 1}; // 3 fails the 4+; bounce d8
+    bb_rng rng;
+    bb_rng_script(&rng, dice, 2);
+
+    bb_status st = begin_move(&m, &rng, mover);
+    st = fx_apply(&m, mk(BB_A_STEP, 0, 11, 7), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK(!bb_rng_error(&rng));
+    BB_CHECK_EQ(m.ball.state, BB_BALL_ON_GROUND);
+    BB_CHECK_EQ(m.active_team, BB_AWAY); // turnover
+}
+
+// Regression (review M13, second call site): the jump-landing pickup applies
+// the same rule — Big Hand refunds Marking AND rain when landing on the ball
+// after Jumping over a Prone player. Jump (AG 3+, -2 landing markers) on a
+// 5, then pick up double-Marked in rain on a plain 3.
+BB_TEST(skmp_big_hand_rain_pickup_after_jump) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    m.weather = BB_WEATHER_RAIN;
+    int mover = fx_lineman(&m, 0, 0, 10, 7); // AG 3+
+    fx_give_skill(&m, mover, BB_SK_BIG_HAND);
+    int hurdle = fx_lineman(&m, 1, 2, 11, 7); // jumped over
+    m.players[hurdle].stance = BB_STANCE_PRONE;
+    fx_lineman(&m, 1, 0, 13, 6); // marks landing square (12,7) only
+    fx_lineman(&m, 1, 1, 13, 8); // marks landing square (12,7) only
+    fx_ball_ground(&m, 12, 7);
+    static const uint8_t dice[] = {5, 3}; // jump 5 vs 5+; pickup 3 vs 3+
+    bb_rng rng;
+    bb_rng_script(&rng, dice, 2);
+
+    bb_status st = begin_move(&m, &rng, mover);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    bb_action jump = mk(BB_A_JUMP, 0, 12, 7);
+    BB_CHECK(fx_find(&m, jump) >= 0);
+    st = fx_apply(&m, jump, &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK(!bb_rng_error(&rng));
+    BB_CHECK_EQ(m.players[mover].x, 12);
+    BB_CHECK_EQ(m.players[mover].y, 7);
+    BB_CHECK_EQ(m.ball.state, BB_BALL_HELD);
+    BB_CHECK_EQ(m.ball.carrier, mover);
+    BB_CHECK_EQ(m.active_team, BB_HOME); // no turnover
+}
