@@ -8,12 +8,12 @@
 static void turn_start(bb_match* m, int team) {
     m->active_team = (uint8_t)team;
     m->turn[team]++;
-    m->reroll_used_this_turn[team] = 0;
     m->blitz_used = 0;
     m->pass_used = 0;
     m->handoff_used = 0;
     m->foul_used = 0;
     m->ttm_used = 0;
+    m->secure_used = 0;
     m->turnover = 0;
     for (int s = team * BB_TEAM_SLOTS; s < (team + 1) * BB_TEAM_SLOTS; s++) {
         bb_player* p = &m->players[s];
@@ -21,14 +21,22 @@ static void turn_start(bb_match* m, int team) {
                                 BB_PF_USED_SKILL_B | BB_PF_BLITZED);
         p->moved = 0;
         p->rushes = 0;
+        p->skill_rr_used = 0;
+        // Players who START their team's turn Stunned are marked; only those
+        // roll over to Prone at the END of this turn (players stunned during
+        // the turn wait for the end of the NEXT turn).
+        if (p->location == BB_LOC_ON_PITCH && p->stance == BB_STANCE_STUNNED) {
+            p->stance = BB_STANCE_STUNNED_USED;
+        }
     }
 }
 
 static void turn_end(bb_match* m, int team) {
-    // Stunned players of the team whose turn is ending are turned face up.
+    // Only players who STARTED this turn Stunned (marked at turn start) roll
+    // over to Prone now.
     for (int s = team * BB_TEAM_SLOTS; s < (team + 1) * BB_TEAM_SLOTS; s++) {
         bb_player* p = &m->players[s];
-        if (p->location == BB_LOC_ON_PITCH && p->stance == BB_STANCE_STUNNED) {
+        if (p->location == BB_LOC_ON_PITCH && p->stance == BB_STANCE_STUNNED_USED) {
             p->stance = BB_STANCE_PRONE;
         }
     }
@@ -41,7 +49,7 @@ static bool can_activate(const bb_match* m, int s) {
     const bb_player* p = &m->players[s];
     if (p->location != BB_LOC_ON_PITCH) return false;
     if (p->flags & BB_PF_USED) return false;
-    if (p->stance == BB_STANCE_STUNNED) return false;
+    if (p->stance == BB_STANCE_STUNNED || p->stance == BB_STANCE_STUNNED_USED) return false;
     return true;
 }
 
@@ -166,16 +174,36 @@ static int activation_legal(const bb_match* m, bb_action* out) {
     if (!m->blitz_used) {
         out[n++] = (bb_action){BB_A_DECLARE, BB_ACT_BLITZ, 0, 0};
     }
-    if (!m->pass_used && (p->flags & BB_PF_HAS_BALL)) {
+    // A player need not hold the ball to declare a Pass/Hand-off action —
+    // they may pick it up during the move part (pick-up-then-throw).
+    if (!m->pass_used) {
         out[n++] = (bb_action){BB_A_DECLARE, BB_ACT_PASS, 0, 0};
     }
-    if (!m->handoff_used && (p->flags & BB_PF_HAS_BALL)) {
+    if (!m->handoff_used) {
         out[n++] = (bb_action){BB_A_DECLARE, BB_ACT_HANDOFF, 0, 0};
     }
     if (!m->foul_used && has_adjacent_downed_opponent(m, slot)) {
         out[n++] = (bb_action){BB_A_DECLARE, BB_ACT_FOUL, 0, 0};
     }
-    // TODO(phase3): TTM, SECURE_BALL declarations.
+    // Secure the Ball (BB2025): ball loose on the ground and not within two
+    // squares of any standing, non-distracted opposition player.
+    if (!m->secure_used && m->ball.state == BB_BALL_ON_GROUND) {
+        bool safe = true;
+        int opp = 1 - BB_TEAM_OF(slot);
+        for (int s2 = opp * BB_TEAM_SLOTS; s2 < (opp + 1) * BB_TEAM_SLOTS && safe; s2++) {
+            const bb_player* q = &m->players[s2];
+            if (q->location != BB_LOC_ON_PITCH) continue;
+            if (q->stance != BB_STANCE_STANDING) continue;
+            if (q->flags & BB_PF_DISTRACTED) continue;
+            int dx = q->x - m->ball.x, dy = q->y - m->ball.y;
+            if (dx < 0) dx = -dx;
+            if (dy < 0) dy = -dy;
+            int cheb = dx > dy ? dx : dy;
+            if (cheb <= 2) safe = false;
+        }
+        if (safe) out[n++] = (bb_action){BB_A_DECLARE, BB_ACT_SECURE_BALL, 0, 0};
+    }
+    // TODO(phase3): TTM declaration.
     return n;
 }
 
@@ -184,6 +212,15 @@ static void activation_apply(bb_match* m, bb_action a, bb_rng* rng) {
     bb_frame* f = bb_top(m);
     f->phase = 1;
     f->b = a.arg; // action kind
+    // Once-per-turn actions latch on DECLARATION, even if never performed.
+    switch (a.arg) {
+        case BB_ACT_BLITZ: m->blitz_used = 1; break;
+        case BB_ACT_PASS: m->pass_used = 1; break;
+        case BB_ACT_HANDOFF: m->handoff_used = 1; break;
+        case BB_ACT_FOUL: m->foul_used = 1; break;
+        case BB_ACT_SECURE_BALL: m->secure_used = 1; break;
+        default: break;
+    }
     bb_push(m, BB_PROC_MOVE, f->a, a.arg, 0, 0);
 }
 

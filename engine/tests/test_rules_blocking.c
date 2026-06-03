@@ -311,7 +311,7 @@ BB_TEST(blocking_both_down_plain_defender_resolves_first) {
     bb_rng_script(&rng, script, 7);
     start_block(&m, &rng, h1, 11, 7);
     apply_ok(&m, &rng, mk(BB_A_CHOOSE_DIE, 0, 0, 0));
-    BB_CHECK_EQ(m.players[a1].stance, BB_STANCE_STUNNED);
+    BB_CHECK(fx_stunned(&m, a1)); // stunned (turn-start marker allowed)
     BB_CHECK_EQ(m.players[h1].stance, BB_STANCE_PRONE);
     BB_CHECK_EQ(m.active_team, BB_AWAY); // turnover ended the home turn
     BB_CHECK(!bb_rng_error(&rng));
@@ -668,11 +668,12 @@ BB_TEST(blocking_crowd_push_carrier_ball_thrown_in) {
     int a1 = fx_lineman(&m, BB_AWAY, 0, 11, 0);
     fx_ball_held(&m, a1);
 
-    // die, throw-in dir d3=2 (straight in), distance 2d6=3+3, bounce d8=8,
-    // crowd injury 2+2.
-    uint8_t script[] = {3, 2, 3, 3, 8, 2, 2};
+    // die; throw-in dir D6=3 (template 1-2/3-4/5-6: straight in); distance
+    // 2D6=3+3 counting the boundary square as first (5 steps -> (11,5), an
+    // empty square: the thrown-in ball comes to rest); crowd injury 2+2.
+    uint8_t script[] = {3, 3, 3, 3, 2, 2};
     bb_rng rng;
-    bb_rng_script(&rng, script, 7);
+    bb_rng_script(&rng, script, 6);
     start_block(&m, &rng, h1, 11, 0);
     apply_ok(&m, &rng, mk(BB_A_CHOOSE_DIE, 0, 0, 0));
     apply_ok(&m, &rng, mk(BB_A_PUSH_SQUARE, 1, 11, 0));
@@ -680,8 +681,8 @@ BB_TEST(blocking_crowd_push_carrier_ball_thrown_in) {
     BB_CHECK_EQ(m.players[a1].location, BB_LOC_RESERVES);
     BB_CHECK_EQ(m.ball.state, BB_BALL_ON_GROUND);
     BB_CHECK_EQ(m.ball.carrier, BB_NO_PLAYER);
-    BB_CHECK_EQ(m.ball.x, 12); // thrown in to (11,6), bounced (1,1) to (12,7)
-    BB_CHECK_EQ(m.ball.y, 7);
+    BB_CHECK_EQ(m.ball.x, 11); // thrown in 5 squares to (11,5), comes to rest
+    BB_CHECK_EQ(m.ball.y, 5);
     BB_CHECK_EQ(m.turnover, 0);             // inactive carrier: no turnover
     BB_CHECK_EQ(m.decision_team, BB_HOME);  // home turn continues
     BB_CHECK(!bb_rng_error(&rng));

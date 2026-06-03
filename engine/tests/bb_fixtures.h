@@ -13,9 +13,11 @@
 #include "bb/gen_teams.h"
 #include <string.h>
 
-// A match mid-team-turn with an empty pitch: no procedures stacked except
-// MATCH(phase 3) + TEAM_TURN(phase 1) so decisions flow normally; both teams
-// have `rerolls` team re-rolls; weather perfect; half 1, turn 1 for both.
+// A match mid-team-turn with an empty pitch: MATCH(phase 3) + TEAM_TURN
+// (phase 0 — turn-start bookkeeping runs on the first advance, marking
+// pre-placed stunned players and clearing per-turn flags); both teams have
+// `rerolls` team re-rolls; weather perfect; half 1, turn 1 for both after the
+// first advance.
 static inline void fx_match_midturn(bb_match* m, int active_team, int rerolls) {
     memset(m, 0, sizeof(*m));
     m->team_id[0] = BB_TEAM_HUMAN;
@@ -25,8 +27,10 @@ static inline void fx_match_midturn(bb_match* m, int active_team, int rerolls) {
     }
     m->half = 1;
     m->turn[0] = m->turn[1] = 1;
+    m->turn[active_team] = 0; // turn_start increments it to 1
     m->weather = BB_WEATHER_PERFECT;
     m->rerolls[0] = m->rerolls[1] = (uint8_t)rerolls;
+    m->rerolls_start[0] = m->rerolls_start[1] = (uint8_t)rerolls;
     m->active_team = (uint8_t)active_team;
     m->ball.state = BB_BALL_OFF_PITCH;
     m->ball.carrier = BB_NO_PLAYER;
@@ -34,7 +38,7 @@ static inline void fx_match_midturn(bb_match* m, int active_team, int rerolls) {
     bb_push(m, BB_PROC_MATCH, 0, 0, 0, 0);
     bb_top(m)->phase = 3; // turn-dispatch loop
     bb_push(m, BB_PROC_TEAM_TURN, active_team, 0, 0, 0);
-    bb_top(m)->phase = 1; // activation loop (turn_start bookkeeping skipped)
+    // phase 0: turn_start runs on the first fx_run/advance
 }
 
 // Place a player: slot = team*16+i. Stats given as (ma, st, ag, pa, av) with
@@ -90,6 +94,14 @@ static inline int fx_find(const bb_match* m, bb_action want) {
 // Apply an action (asserting it is legal) with scripted dice; returns status.
 static inline bb_status fx_apply(bb_match* m, bb_action a, bb_rng* rng) {
     return bb_apply(m, a, rng);
+}
+
+// Is the player in the stunned family (STUNNED, or STUNNED_USED — i.e.
+// stunned and already marked to roll over at the end of their team's current
+// turn)? Tests asserting "still stunned, not yet prone" should use this.
+static inline bool fx_stunned(const bb_match* m, int slot) {
+    return m->players[slot].stance == BB_STANCE_STUNNED ||
+           m->players[slot].stance == BB_STANCE_STUNNED_USED;
 }
 
 // Does the legal set contain an action of this type?

@@ -451,7 +451,7 @@ BB_TEST(rules_stunned_flips_prone_at_end_of_own_team_turn) {
     BB_CHECK_EQ(st, BB_STATUS_DECISION);
     BB_CHECK_EQ(m.decision_team, 1);
     // End of team 0's turn does NOT flip a team-1 player.
-    BB_CHECK_EQ(m.players[DEF].stance, BB_STANCE_STUNNED);
+    BB_CHECK(fx_stunned(&m, DEF)); // still stunned (may carry the turn-start flip marker)
     // "cannot be activated during their team's turn":
     BB_CHECK_EQ(fx_find(&m, (bb_action){BB_A_ACTIVATE, DEF, 0, 0}), -1);
     BB_CHECK(fx_find(&m, (bb_action){BB_A_ACTIVATE, SPARE1, 0, 0}) >= 0);
@@ -629,6 +629,10 @@ BB_TEST(rules_foul_natural_double_on_unbroken_armour_sends_off) {
     bb_status st = run_foul(&m, &rng);
     BB_CHECK_EQ(st, BB_STATUS_DECISION);
     BB_CHECK_EQ(rng.script_pos, 2);
+    // BB2025: the send-off opens the Argue the Call window for the fouling
+    // coach; accept the call (no argue) and the send-off resolves.
+    BB_CHECK_EQ(m.decision_team, 0);
+    st = ap(&m, &rng, BB_A_CHOOSE_OPTION, 0, 0, 0);
     BB_CHECK_EQ(m.players[ATT].location, BB_LOC_SENT_OFF);
     BB_CHECK_EQ(m.players[DEF].stance, BB_STANCE_PRONE);  // no injury roll
     BB_CHECK_EQ(m.decision_team, 1);              // turnover ended the turn
@@ -647,7 +651,9 @@ BB_TEST(rules_foul_double_breaks_armour_injury_still_resolves) {
     bb_status st = run_foul(&m, &rng);
     BB_CHECK_EQ(st, BB_STATUS_DECISION);
     BB_CHECK_EQ(rng.script_pos, 4);               // injury WAS rolled
-    BB_CHECK_EQ(m.players[DEF].stance, BB_STANCE_STUNNED);
+    BB_CHECK(fx_stunned(&m, DEF));
+    BB_CHECK_EQ(m.decision_team, 0); // Argue the Call window
+    st = ap(&m, &rng, BB_A_CHOOSE_OPTION, 0, 0, 0);
     BB_CHECK_EQ(m.players[ATT].location, BB_LOC_SENT_OFF);
     BB_CHECK_EQ(m.decision_team, 1);
 }
@@ -668,6 +674,8 @@ BB_TEST(rules_foul_natural_double_on_injury_sends_off) {
     BB_CHECK_EQ(st, BB_STATUS_DECISION);
     BB_CHECK_EQ(rng.script_pos, 4);
     BB_CHECK_EQ(m.players[DEF].stance, BB_STANCE_STUNNED);
+    BB_CHECK_EQ(m.decision_team, 0); // Argue the Call window
+    st = ap(&m, &rng, BB_A_CHOOSE_OPTION, 0, 0, 0);
     BB_CHECK_EQ(m.players[ATT].location, BB_LOC_SENT_OFF);
     BB_CHECK_EQ(m.decision_team, 1);
 }

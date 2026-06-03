@@ -30,6 +30,8 @@ enum {
     MV_AWAIT_BLOCK = 1 << 6,
     MV_AWAIT_ACTION = 1 << 7,
     MV_STAND_PEND = 1 << 8,
+    // bit 9..13: target slot for a rush-for-block (5 bits, 0..31)
+    MV_BLOCK_RUSH = 1 << 14,
 };
 
 static int movement_left(const bb_match* m, int slot) {
@@ -64,11 +66,18 @@ static void execute_step(bb_match* m, bb_rng* rng, bb_frame* f) {
     }
     // Pick up the ball if it is on the destination square.
     if (m->ball.state == BB_BALL_ON_GROUND && m->ball.x == x && m->ball.y == y) {
-        int mod = -bb_tackle_zones(m, BB_TEAM_OF(slot), x, y);
-        if (m->weather == BB_WEATHER_RAIN) mod -= 1;
         f->data |= MV_AWAIT_PICKUP;
-        bb_push(m, BB_PROC_TEST, slot, BB_TEST_PICKUP,
-                bb_test_target(p->ag, mod), 0);
+        if (f->b == BB_ACT_SECURE_BALL) {
+            // Secure the Ball: a flat 2+ regardless of AG; weather still
+            // applies (May 2026 FAQ: pick-up modifiers like rain apply).
+            int target = m->weather == BB_WEATHER_RAIN ? 3 : 2;
+            bb_push(m, BB_PROC_TEST, slot, BB_TEST_GENERIC, target, 0);
+        } else {
+            int mod = -bb_tackle_zones(m, BB_TEAM_OF(slot), x, y);
+            if (m->weather == BB_WEATHER_RAIN) mod -= 1;
+            bb_push(m, BB_PROC_TEST, slot, BB_TEST_PICKUP,
+                    bb_test_target(p->ag, mod), 0);
+        }
     }
 }
 
@@ -81,7 +90,21 @@ static void move_advance(bb_match* m, bb_rng* rng) {
         f->data &= (uint16_t)~MV_AWAIT_TEST;
         bool was_rush = (f->data & MV_RUSH_PEND) != 0;
         f->data &= (uint16_t)~MV_RUSH_PEND;
-        if (m->ret == 0) {
+        if (f->data & MV_BLOCK_RUSH) {
+            // Rush-for-block resolved.
+            int target = (f->data >> 9) & 31;
+            f->data &= (uint16_t)~(MV_BLOCK_RUSH | (31u << 9));
+            if (m->ret & 1) {
+                f->data |= MV_AWAIT_BLOCK;
+                bb_push(m, BB_PROC_BLOCK, slot, target, 0, 0);
+            } else {
+                // Failed rush: knocked down in their own square, no block.
+                bb_pop(m); // MOVE
+                bb_knockdown(m, slot, BB_KD_FAILED_RUSH, 0);
+            }
+            return;
+        }
+        if (!(m->ret & 1)) {
             // Failed rush or dodge: player moves to the destination and is
             // knocked down there. Pop MOVE FIRST so the knockdown resolves on
             // top of the parent activation.
@@ -113,9 +136,13 @@ static void move_advance(bb_match* m, bb_rng* rng) {
 
     if (f->data & MV_AWAIT_PICKUP) {
         f->data &= (uint16_t)~MV_AWAIT_PICKUP;
-        if (m->ret == 1) {
+        if (m->ret & 1) {
             bb_give_ball(m, slot);
             if (bb_check_td(m)) return;
+            if (f->b == BB_ACT_SECURE_BALL) {
+                finish_move(m); // securing the ball ends the activation
+                return;
+            }
         } else {
             // Failed pickup: ball bounces, turnover. Pop MOVE first so the
             // bounce resolves cleanly above the activation.
@@ -149,7 +176,7 @@ static void move_advance(bb_match* m, bb_rng* rng) {
 
     if (f->data & MV_STAND_PEND) {
         f->data &= (uint16_t)~MV_STAND_PEND;
-        if (m->ret == 1) {
+        if (m->ret & 1) {
             // MA<3 stand-up: stands but may not move further this activation.
             p->stance = BB_STANCE_STANDING;
             p->moved = (uint8_t)p->ma;
@@ -164,7 +191,8 @@ static void move_advance(bb_match* m, bb_rng* rng) {
         finish_move(m);
         return;
     }
-    if (p->location != BB_LOC_ON_PITCH || p->stance == BB_STANCE_STUNNED) {
+    if (p->location != BB_LOC_ON_PITCH || p->stance == BB_STANCE_STUNNED ||
+        p->stance == BB_STANCE_STUNNED_USED) {
         finish_move(m);
         return;
     }
@@ -204,7 +232,10 @@ static int move_legal(const bb_match* m, bb_action* out) {
 
     bool block_ok = false;
     if (kind == BB_ACT_BLOCK && !(f->data & MV_BLOCK_DONE)) block_ok = true;
-    if (kind == BB_ACT_BLITZ && !(f->data & MV_BLOCK_DONE) && movement_left(m, slot) > 0) block_ok = true;
+    if (kind == BB_ACT_BLITZ && !(f->data & MV_BLOCK_DONE) &&
+        (movement_left(m, slot) > 0 || p->rushes < bb_max_rushes(m, slot))) {
+        block_ok = true; // may Rush to gain the movement for the block
+    }
     if (block_ok && p->stance == BB_STANCE_STANDING) {
         for (int dx = -1; dx <= 1; dx++) {
             for (int dy = -1; dy <= 1; dy++) {
@@ -221,12 +252,14 @@ static int move_legal(const bb_match* m, bb_action* out) {
     }
 
     if (kind == BB_ACT_PASS && !(f->data & MV_ACTION_DONE) && (p->flags & BB_PF_HAS_BALL)) {
-        // Any square within long-bomb range (distance bands handled by PASS).
+        // Ruler reach: 13.5 squares (d^2 <= 182.25). Blizzard: only Quick and
+        // Short passes may be attempted (d^2 <= 42.25).
+        int max_d2 = m->weather == BB_WEATHER_BLIZZARD ? 42 : 182;
         for (int x = 0; x < BB_PITCH_LEN; x++) {
             for (int y = 0; y < BB_PITCH_WID; y++) {
                 int dx = x - p->x, dy = y - p->y;
                 if (!dx && !dy) continue;
-                if (dx * dx + dy * dy <= 13 * 13 && n < BB_LEGAL_MAX - 2) {
+                if (dx * dx + dy * dy <= max_d2 && n < BB_LEGAL_MAX - 2) {
                     out[n++] = (bb_action){BB_A_PASS_TARGET, 0, (uint8_t)x, (uint8_t)y};
                 }
             }
@@ -240,8 +273,7 @@ static int move_legal(const bb_match* m, bb_action* out) {
                 int nx = p->x + dx, ny = p->y + dy;
                 if (!bb_on_pitch_xy(nx, ny)) continue;
                 int s = bb_slot_at(m, nx, ny);
-                if (s >= 0 && BB_TEAM_OF(s) == BB_TEAM_OF(slot) &&
-                    m->players[s].stance == BB_STANCE_STANDING) {
+                if (s >= 0 && BB_TEAM_OF(s) == BB_TEAM_OF(slot) && bb_can_catch(m, s)) {
                     out[n++] = (bb_action){BB_A_HANDOFF_TARGET, 0, (uint8_t)nx, (uint8_t)ny};
                 }
             }
@@ -295,10 +327,11 @@ static void move_apply(bb_match* m, bb_action a, bb_rng* rng) {
             if (rush) f->data |= MV_RUSH_PEND;
             if (dodge) f->data |= MV_DODGE_PEND;
             if (rush) {
-                // Rush first: 2+.
+                // Rush first: 2+ (Blizzard: an additional -1, so 3+).
+                int rush_target = m->weather == BB_WEATHER_BLIZZARD ? 3 : 2;
                 f->data &= (uint16_t)~MV_RUSH_PEND;
                 f->data |= MV_AWAIT_TEST | (dodge ? MV_DODGE_PEND : 0) | MV_RUSH_PEND;
-                bb_push(m, BB_PROC_TEST, slot, BB_TEST_RUSH, 2, 0);
+                bb_push(m, BB_PROC_TEST, slot, BB_TEST_RUSH, rush_target, 0);
                 return;
             }
             if (dodge) {
@@ -317,9 +350,21 @@ static void move_apply(bb_match* m, bb_action a, bb_rng* rng) {
             int target = bb_slot_at(m, a.x, a.y);
             f->data |= MV_AWAIT_BLOCK | MV_BLOCK_DONE;
             if (f->b == BB_ACT_BLITZ) {
-                p->moved++; // the blitz block costs one square of movement
-                m->blitz_used = 1;
+                bool rush_needed = movement_left(m, slot) == 0;
                 p->flags |= BB_PF_BLITZED;
+                if (rush_needed) {
+                    // Rush to gain the point of movement for the block: roll
+                    // first; failure = knocked down in place, no block.
+                    p->rushes++;
+                    f->x = p->x;
+                    f->y = p->y;
+                    f->data |= MV_AWAIT_TEST | MV_RUSH_PEND | MV_BLOCK_RUSH;
+                    int rush_target = m->weather == BB_WEATHER_BLIZZARD ? 3 : 2;
+                    bb_push(m, BB_PROC_TEST, slot, BB_TEST_RUSH, rush_target, 0);
+                    f->data = (uint16_t)(f->data | ((uint16_t)target << 9));
+                    return;
+                }
+                p->moved++; // the blitz block costs one square of movement
             }
             bb_push(m, BB_PROC_BLOCK, slot, target, 0, 0);
             return;
@@ -327,14 +372,12 @@ static void move_apply(bb_match* m, bb_action a, bb_rng* rng) {
 
         case BB_A_PASS_TARGET:
             f->data |= MV_AWAIT_ACTION | MV_ACTION_DONE;
-            m->pass_used = 1;
             bb_push(m, BB_PROC_PASS, slot, 0, a.x, a.y);
             return;
 
         case BB_A_HANDOFF_TARGET: {
             int rec = bb_slot_at(m, a.x, a.y);
             f->data |= MV_AWAIT_ACTION | MV_ACTION_DONE;
-            m->handoff_used = 1;
             bb_push(m, BB_PROC_HANDOFF, slot, rec, 0, 0);
             return;
         }
@@ -342,7 +385,6 @@ static void move_apply(bb_match* m, bb_action a, bb_rng* rng) {
         case BB_A_FOUL_TARGET: {
             int target = bb_slot_at(m, a.x, a.y);
             f->data |= MV_AWAIT_ACTION | MV_ACTION_DONE;
-            m->foul_used = 1;
             bb_push(m, BB_PROC_FOUL, slot, target, 0, 0);
             return;
         }

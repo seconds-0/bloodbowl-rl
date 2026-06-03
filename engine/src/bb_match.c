@@ -125,7 +125,7 @@ bool bb_exerts_tz(const bb_match* m, int slot) {
     const bb_player* p = &m->players[slot];
     if (p->location != BB_LOC_ON_PITCH) return false;
     if (p->stance != BB_STANCE_STANDING) return false;
-    if (p->flags & BB_PF_NO_TZ) return false;
+    if (p->flags & (BB_PF_NO_TZ | BB_PF_DISTRACTED)) return false;
     return true;
 }
 
@@ -141,6 +141,14 @@ int bb_tackle_zones(const bb_match* m, int team, int x, int y) {
         }
     }
     return n;
+}
+
+bool bb_can_catch(const bb_match* m, int slot) {
+    const bb_player* p = &m->players[slot];
+    if (p->location != BB_LOC_ON_PITCH) return false;
+    if (p->stance != BB_STANCE_STANDING) return false;
+    if (p->flags & (BB_PF_DISTRACTED | BB_PF_NO_TZ)) return false;
+    return true;
 }
 
 bool bb_is_marked(const bb_match* m, int slot) {
@@ -206,8 +214,8 @@ void bb_match_init(bb_match* m, int home_team_id, int away_team_id) {
     m->team_id[BB_AWAY] = (uint8_t)away_team_id;
     default_squad(m, BB_HOME, home_team_id);
     default_squad(m, BB_AWAY, away_team_id);
-    m->rerolls[BB_HOME] = 3; // baseline; team-value-driven builds come with
-    m->rerolls[BB_AWAY] = 3; // procedural generation (Phase 5)
+    m->rerolls[BB_HOME] = m->rerolls_start[BB_HOME] = 3; // baseline; team-value-
+    m->rerolls[BB_AWAY] = m->rerolls_start[BB_AWAY] = 3; // driven builds in Phase 5
     m->apothecary[BB_HOME] = bb_team_defs[home_team_id].apothecary ? 1 : 0;
     m->apothecary[BB_AWAY] = bb_team_defs[away_team_id].apothecary ? 1 : 0;
     m->half = 1;

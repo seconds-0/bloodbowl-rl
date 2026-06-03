@@ -66,9 +66,12 @@ static void match_advance(bb_match* m, bb_rng* rng) {
                     bb_pop(m); // match over
                     return;
                 }
-                // Second half: counters reset; H1 receiver kicks.
+                // Second half: counters reset; re-rolls replenish; H1
+                // receiver kicks.
                 m->half = 2;
                 m->turn[0] = m->turn[1] = 0;
+                m->rerolls[0] = m->rerolls_start[0];
+                m->rerolls[1] = m->rerolls_start[1];
                 int h1_kicker = (f->data & MD_H1_KICKER) ? 1 : 0;
                 m->kicking_team = (uint8_t)(1 - h1_kicker);
             } else {
@@ -309,45 +312,58 @@ static void setup_apply(bb_match* m, bb_action a, bb_rng* rng) {
 
 // ===== KICKOFF ===============================================================
 // a = kicking team.
-// phase 0: decision — nominate kick target square (receiving half)
-// phase 1: deviate ball (D8 dir, D6 distance), kickoff event (2D6), land ball
-// phase 2: waiting for touchback decision (if any)
-// Kickoff events: simple ones are applied inline; the involved ones are
-// TODO(phase3) and currently no-ops — each is marked.
+// phase 0: decision — nominate the kick target square (receiving half)
+// phase 1: deviate the ball (D8 dir, D6 distance) + kickoff event
+// phase 4: High Kick decision (receiving coach) before the ball lands
+// phase 3: settling — a landing catch/bounce chain is resolving below; when
+//          it finishes, check the touchback condition (ball out of play or in
+//          the kicking half, by ANY means, is a touchback)
+// phase 2: touchback decision (give to a standing player; if none, place the
+//          ball on any unoccupied square of the receiving half)
+// Events GET_THE_REF / CHEERING_FANS / SOLID_DEFENCE / QUICK_SNAP / CHARGE /
+// DODGY_SNACK remain TODO(phase3) no-ops.
 
 static const int8_t DIR8[8][2] = {
     {-1, -1}, {0, -1}, {1, -1}, {-1, 0}, {1, 0}, {-1, 1}, {0, 1}, {1, 1},
 };
 
-static void kickoff_land_ball(bb_match* m, int kicking) {
-    int x = m->ball.x, y = m->ball.y;
-    bool out_of_bounds = !bb_on_pitch_xy(x, y);
-    bool wrong_half = !out_of_bounds && bb_own_half_x(kicking, x);
-    if (out_of_bounds || wrong_half) {
-        // Touchback: receiving coach gives the ball to any player.
-        bb_top(m)->phase = 2;
-        bb_need_decision(m, 1 - kicking);
-        return;
+// Is a KICKOFF frame somewhere on the stack (ball still in kickoff
+// resolution)? Used by SCATTER to suppress throw-ins (kickoff balls that
+// leave the pitch are touchbacks, not throw-ins).
+bool bb_in_kickoff(const bb_match* m) {
+    for (int i = 0; i < m->stack_top; i++) {
+        if (m->stack[i].proc == BB_PROC_KICKOFF) return true;
     }
-    int s = bb_slot_at(m, x, y);
-    if (s >= 0 && BB_TEAM_OF(s) == 1 - kicking && m->players[s].stance == BB_STANCE_STANDING) {
-        // Catch attempt: kick landing on a standing receiver.
-        bb_pop(m);
-        bb_push(m, BB_PROC_CATCH, s, 0, 0, 0);
-        return;
-    }
-    // Bounce once.
-    bb_pop(m);
-    bb_push(m, BB_PROC_SCATTER, 0, 1, (uint8_t)x, (uint8_t)y);
+    return false;
 }
 
-static void kickoff_event(bb_match* m, bb_rng* rng) {
+static void stun_random_players(bb_match* m, bb_rng* rng, int team, int count) {
+    for (int i = 0; i < count; i++) {
+        int candidates[BB_TEAM_SLOTS];
+        int nc = 0;
+        for (int s = team * BB_TEAM_SLOTS; s < (team + 1) * BB_TEAM_SLOTS; s++) {
+            if (m->players[s].location == BB_LOC_ON_PITCH &&
+                m->players[s].stance == BB_STANCE_STANDING) {
+                candidates[nc++] = s;
+            }
+        }
+        if (!nc) return;
+        // Selection is random but not part of the scripted dice stream
+        // (FUMBBL records selections as separate commands; revisit in the
+        // replay harness).
+        int pick = (int)(bb_rng_next(rng) % (uint32_t)nc);
+        m->players[candidates[pick]].stance = BB_STANCE_STUNNED;
+    }
+}
+
+// Returns true if the event paused the kickoff with a decision (High Kick).
+static bool kickoff_event(bb_match* m, bb_rng* rng) {
+    bb_frame* f = bb_top(m);
     int roll = bb_2d6(rng);
     int ev = bb_kickoff_table[roll];
     switch (ev) {
         case BB_KO_TIME_OUT: {
-            // Kicking team's turn marker on 6-8: both move back one; else forward.
-            int kt = bb_top(m)->a;
+            int kt = f->a;
             if (m->turn[kt] >= 6) {
                 if (m->turn[0]) m->turn[0]--;
                 if (m->turn[1]) m->turn[1]--;
@@ -358,43 +374,70 @@ static void kickoff_event(bb_match* m, bb_rng* rng) {
             break;
         }
         case BB_KO_BRILLIANT_COACHING: {
-            // D6 per side (+assistant coaches TODO(phase3)); winner +1 reroll.
+            // D6 per side (+assistant coaches TODO(phase3)); winner +1 reroll
+            // for this drive (expires at END_DRIVE).
             int h = bb_d6(rng), a = bb_d6(rng);
             if (h > a) m->rerolls[BB_HOME]++;
             else if (a > h) m->rerolls[BB_AWAY]++;
             break;
         }
         case BB_KO_PITCH_INVASION: {
-            // D3 random players from each team are stunned.
-            for (int team = 0; team < 2; team++) {
-                int hits = bb_d3(rng);
-                for (int i = 0; i < hits; i++) {
-                    // Pick a random on-pitch player (by rolling a slot).
-                    int tries = 16;
-                    while (tries--) {
-                        int s = team * BB_TEAM_SLOTS + (int)(bb_rng_next(rng) % BB_TEAM_SLOTS);
-                        bb_player* p = &m->players[s];
-                        if (p->location == BB_LOC_ON_PITCH && p->stance == BB_STANCE_STANDING) {
-                            p->stance = BB_STANCE_STUNNED;
-                            break;
-                        }
-                    }
-                }
-            }
+            // Both coaches roll D6 (+fan factor TODO(phase3)); the lower (or
+            // both on a tie) has D3 random players stunned.
+            int h = bb_d6(rng), a = bb_d6(rng);
+            if (h <= a) stun_random_players(m, rng, BB_HOME, bb_d3(rng));
+            if (a <= h && a != h) stun_random_players(m, rng, BB_AWAY, bb_d3(rng));
+            else if (a == h) stun_random_players(m, rng, BB_AWAY, bb_d3(rng));
             break;
         }
         case BB_KO_CHANGING_WEATHER: {
             int w = bb_2d6(rng);
             m->weather = bb_weather_table[w];
+            if (m->weather == BB_WEATHER_PERFECT) {
+                // The ball scatters 3 squares in the air before landing.
+                for (int i = 0; i < 3; i++) {
+                    int dir = bb_roll(rng, 8) - 1;
+                    m->ball.x = (uint8_t)(m->ball.x + DIR8[dir][0]);
+                    m->ball.y = (uint8_t)(m->ball.y + DIR8[dir][1]);
+                }
+            }
             break;
         }
-        // TODO(phase3): GET_THE_REF (bribes), CHEERING_FANS (prayers),
-        // SOLID_DEFENCE / QUICK_SNAP / CHARGE / HIGH_KICK (re-setup decisions),
-        // DODGY_SNACK. Rule-shaped no-ops for now; differential validation
-        // will flag them.
+        case BB_KO_HIGH_KICK: {
+            // One Open receiving player may be placed under the ball.
+            f->phase = 4;
+            bb_need_decision(m, 1 - f->a);
+            return true;
+        }
         default:
+            // TODO(phase3): GET_THE_REF (bribes), CHEERING_FANS (prayers),
+            // SOLID_DEFENCE / QUICK_SNAP / CHARGE (re-positioning), DODGY_SNACK.
             break;
     }
+    return false;
+}
+
+static bool kickoff_ball_misplaced(const bb_match* m, int kicking) {
+    if (m->ball.state == BB_BALL_OFF_PITCH) return true;
+    if (!bb_on_pitch_xy(m->ball.x, m->ball.y)) return true;
+    return bb_own_half_x(kicking, m->ball.x);
+}
+
+static void kickoff_land(bb_match* m) {
+    bb_frame* f = bb_top(m);
+    int kicking = f->a;
+    f->phase = 3; // settling: re-checked when the children finish
+    if (kickoff_ball_misplaced(m, kicking)) {
+        return; // phase 3 will route to the touchback decision
+    }
+    int x = m->ball.x, y = m->ball.y;
+    int s = bb_slot_at(m, x, y);
+    if (s >= 0 && BB_TEAM_OF(s) == 1 - kicking && bb_can_catch(m, s)) {
+        bb_push(m, BB_PROC_CATCH, s, 0, 0, 0);
+        return;
+    }
+    // The kicked ball bounces on landing.
+    bb_push(m, BB_PROC_SCATTER, 0, 1, (uint8_t)x, (uint8_t)y);
 }
 
 static void kickoff_advance(bb_match* m, bb_rng* rng) {
@@ -407,13 +450,26 @@ static void kickoff_advance(bb_match* m, bb_rng* rng) {
         // Deviate: D8 direction, D6 squares.
         int dir = bb_roll(rng, 8) - 1;
         int dist = bb_d6(rng);
-        int x = f->x + DIR8[dir][0] * dist;
-        int y = f->y + DIR8[dir][1] * dist;
         m->ball.state = BB_BALL_IN_AIR;
-        m->ball.x = (uint8_t)x; // may be off pitch; land logic handles it
-        m->ball.y = (uint8_t)y;
-        kickoff_event(m, rng);
-        kickoff_land_ball(m, f->a);
+        m->ball.x = (uint8_t)(f->x + DIR8[dir][0] * dist);
+        m->ball.y = (uint8_t)(f->y + DIR8[dir][1] * dist);
+        if (kickoff_event(m, rng)) return; // paused for a High Kick decision
+        kickoff_land(m);
+        return;
+    }
+    if (f->phase == 3) {
+        // Landing chain settled.
+        int kicking = f->a;
+        bool held_ok = m->ball.state == BB_BALL_HELD &&
+                       !bb_own_half_x(kicking, m->players[m->ball.carrier].x);
+        if (!held_ok && kickoff_ball_misplaced(m, kicking)) {
+            bb_drop_ball(m);
+            m->ball.state = BB_BALL_OFF_PITCH;
+            f->phase = 2;
+            bb_need_decision(m, 1 - kicking);
+            return;
+        }
+        bb_pop(m);
         return;
     }
     m->status = BB_STATUS_ERROR;
@@ -433,12 +489,44 @@ static int kickoff_legal(const bb_match* m, bb_action* out) {
         }
         return n;
     }
-    // phase 2: touchback — any standing player of the receiving team.
+    if (f->phase == 4) {
+        // High Kick: any Open (standing, unmarked) receiving player may be
+        // placed in the (on-pitch, unoccupied, receiving-half) landing square.
+        int receiving = 1 - f->a;
+        bool sq_ok = bb_on_pitch_xy(m->ball.x, m->ball.y) &&
+                     !m->grid[m->ball.x][m->ball.y] &&
+                     !bb_own_half_x(f->a, m->ball.x);
+        if (sq_ok) {
+            for (int s = receiving * BB_TEAM_SLOTS; s < (receiving + 1) * BB_TEAM_SLOTS; s++) {
+                const bb_player* p = &m->players[s];
+                if (p->location != BB_LOC_ON_PITCH) continue;
+                if (p->stance != BB_STANCE_STANDING) continue;
+                if (bb_is_marked(m, s)) continue;
+                out[n++] = (bb_action){BB_A_CHOOSE_OPTION, (uint8_t)s, 0, 0};
+            }
+        }
+        out[n++] = (bb_action){BB_A_CHOOSE_OPTION, 0xFE, 0, 0}; // decline
+        return n;
+    }
+    // phase 2: touchback.
     int receiving = 1 - f->a;
     for (int s = receiving * BB_TEAM_SLOTS; s < (receiving + 1) * BB_TEAM_SLOTS; s++) {
         const bb_player* p = &m->players[s];
         if (p->location == BB_LOC_ON_PITCH && p->stance == BB_STANCE_STANDING) {
             out[n++] = (bb_action){BB_A_TOUCHBACK, (uint8_t)s, 0, 0};
+        }
+    }
+    if (n == 0) {
+        // No standing players: place the ball on any unoccupied square of the
+        // receiving half instead.
+        int xmin = receiving == BB_HOME ? 0 : 13;
+        int xmax = receiving == BB_HOME ? 12 : BB_PITCH_LEN - 1;
+        for (int x = xmin; x <= xmax; x++) {
+            for (int y = 0; y < BB_PITCH_WID; y++) {
+                if (!m->grid[x][y] && n < BB_LEGAL_MAX) {
+                    out[n++] = (bb_action){BB_A_TOUCHBACK, 0xFF, (uint8_t)x, (uint8_t)y};
+                }
+            }
         }
     }
     return n;
@@ -453,8 +541,19 @@ static void kickoff_apply(bb_match* m, bb_action a, bb_rng* rng) {
         f->phase = 1;
         return;
     }
-    // Touchback
-    bb_give_ball(m, a.arg);
+    if (f->phase == 4) { // High Kick placement
+        if (a.arg != 0xFE) {
+            bb_place(m, a.arg, m->ball.x, m->ball.y);
+        }
+        kickoff_land(m);
+        return;
+    }
+    // Touchback.
+    if (a.arg == 0xFF) {
+        bb_ball_to(m, a.x, a.y);
+    } else {
+        bb_give_ball(m, a.arg);
+    }
     bb_pop(m);
 }
 
@@ -468,6 +567,9 @@ static void touchdown_advance(bb_match* m, bb_rng* rng) {
     int slot = f->a;
     int team = BB_TEAM_OF(slot);
     m->score[team]++;
+    // Scoring during the OPPONENT's turn: the scorer skips their next turn
+    // entirely (advance their marker for the skipped turn).
+    if (team != m->active_team && m->turn[team] < 8) m->turn[team]++;
     m->kicking_team = (uint8_t)team; // scorer kicks the next drive
     bb_drop_ball(m);
     m->ball.state = BB_BALL_OFF_PITCH;
@@ -501,6 +603,10 @@ static void end_drive_advance(bb_match* m, bb_rng* rng) {
     m->ball.state = BB_BALL_OFF_PITCH;
     m->ball.carrier = BB_NO_PLAYER;
     m->turnover = 0;
+    // Bonus re-rolls (Brilliant Coaching) expire at the end of the drive.
+    for (int t = 0; t < 2; t++) {
+        if (m->rerolls[t] > m->rerolls_start[t]) m->rerolls[t] = m->rerolls_start[t];
+    }
     bb_pop(m);
 }
 

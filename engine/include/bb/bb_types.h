@@ -92,6 +92,8 @@ typedef struct {
     uint8_t star_id;           // 0 = regular player, else star player id + 1
     int8_t niggling;           // accumulated niggling injuries (league play)
     uint8_t spp_game;          // SPP events this match (for league mode)
+    uint8_t skill_rr_used;     // bitmask by bb_test_kind: skill re-rolls are
+                               // once per TURN per player (cleared at turn start)
 } bb_player;
 
 // --- Ball -------------------------------------------------------------------

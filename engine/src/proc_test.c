@@ -26,8 +26,9 @@ static bool test_pass(int die, int target) {
 }
 
 static bool team_reroll_available(const bb_match* m, int team) {
-    // One team re-roll per team turn; only during your own team turn.
-    return m->rerolls[team] > 0 && !m->reroll_used_this_turn[team] && m->active_team == team;
+    // BB2025: any number of team re-rolls per turn; only during your own team
+    // turn, and never re-rolling the same die twice (per-frame TF_TEAM_USED).
+    return m->rerolls[team] > 0 && m->active_team == team;
 }
 
 static void test_advance(bb_match* m, bb_rng* rng) {
@@ -38,9 +39,10 @@ static void test_advance(bb_match* m, bb_rng* rng) {
     if (f->phase == 0) { // initial roll
         int die = bb_roll(rng, 6);
         f->phase = 1;
+        f->data = (uint16_t)((f->data & 0x0FFF) | (die << 12)); // stash the die
         if (test_pass(die, f->x)) {
             bb_pop(m);
-            m->ret = 1;
+            m->ret = (uint16_t)(1 | (die << 8));
             return;
         }
         // Failed: offer rerolls if any are available.
@@ -52,25 +54,25 @@ static void test_advance(bb_match* m, bb_rng* rng) {
             return;
         }
         bb_pop(m);
-        m->ret = 0;
+        m->ret = (uint16_t)(0 | (die << 8));
         return;
     }
     if (f->phase == 2) { // reroll the die after a reroll was used
         int die = bb_roll(rng, 6);
         if (test_pass(die, f->x)) {
             bb_pop(m);
-            m->ret = 1;
+            m->ret = (uint16_t)(1 | (die << 8));
             return;
         }
-        // A failed reroll may still leave the other reroll type? No: each die
-        // may only be re-rolled once, by any means.
+        // Each die may only be re-rolled once, by any means.
         bb_pop(m);
-        m->ret = 0;
+        m->ret = (uint16_t)(0 | (die << 8));
         return;
     }
     if (f->phase == 3) { // loner gate failed: reroll consumed, result stands
+        int die = (f->data >> 12) & 0xF;
         bb_pop(m);
-        m->ret = 0;
+        m->ret = (uint16_t)(0 | (die << 8));
         return;
     }
     // phase 1 while waiting shouldn't advance; treat as error
@@ -100,13 +102,13 @@ static void test_apply(bb_match* m, bb_action a, bb_rng* rng) {
     f->data &= (uint16_t)~TF_WAITING;
 
     if (a.type == BB_A_DECLINE_REROLL) {
+        int die = (f->data >> 12) & 0xF;
         bb_pop(m);
-        m->ret = 0;
+        m->ret = (uint16_t)(0 | (die << 8));
         return;
     }
     if (a.arg == BB_RR_TEAM) {
         m->rerolls[team]--;
-        m->reroll_used_this_turn[team] = 1;
         f->data |= TF_TEAM_USED;
         int loner = bb_loner_value(m, slot);
         if (loner > 0) {
@@ -119,7 +121,8 @@ static void test_apply(bb_match* m, bb_action a, bb_rng* rng) {
         f->phase = 2;
         return;
     }
-    // Skill reroll
+    // Skill reroll: once per TURN per player per skill kind.
+    m->players[slot].skill_rr_used |= (uint8_t)(1u << f->b);
     f->data |= TF_SKILL_USED;
     f->phase = 2;
 }

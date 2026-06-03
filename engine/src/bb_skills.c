@@ -13,7 +13,9 @@ int bb_skill_reroll_for(const bb_match* m, int slot, int kind) {
         default: return -1;
     }
     if (!bb_has_skill(&p->skills, sk)) return -1;
-    // One self-reroll per skill per activation (latched by the TEST proc).
+    // Once per TURN per player (rulebook: "Once per Turn, this player may
+    // re-roll..."); latched in bb_player.skill_rr_used by the TEST proc.
+    if (p->skill_rr_used & (1u << kind)) return -1;
     return sk;
 }
 
@@ -69,6 +71,7 @@ bool bb_can_assist(const bb_match* m, int assister, int target_slot) {
     const bb_player* a = &m->players[assister];
     const bb_player* t = &m->players[target_slot];
     if (a->location != BB_LOC_ON_PITCH || a->stance != BB_STANCE_STANDING) return false;
+    if (a->flags & BB_PF_DISTRACTED) return false;
     if (!bb_adjacent(a->x, a->y, t->x, t->y)) return false;
     if (bb_has_skill(&a->skills, BB_SK_GUARD)) return true;
     // Without Guard: may not be marked by any standing opponent other than the

@@ -49,17 +49,16 @@ static void block_advance(bb_match* m, bb_rng* rng) {
         int st_d = m->players[def].st + count_assists(m, def, att);
         int nd = 1;
         bool def_chooses = false;
-        if (st_a > st_d) nd = st_a >= 2 * st_d ? 3 : 2;
+        if (st_a > st_d) nd = st_a > 2 * st_d ? 3 : 2;
         else if (st_d > st_a) {
-            nd = st_d >= 2 * st_a ? 3 : 2;
+            nd = st_d > 2 * st_a ? 3 : 2;
             def_chooses = true;
         }
         f->data = (uint16_t)(((nd - 1) << 9) | (def_chooses ? BLK_DEF_CHOOSES : 0));
         blk_roll_pool(f, rng);
         // Reroll window for the attacking coach (team reroll only, own turn).
         int team = BB_TEAM_OF(att);
-        if (m->rerolls[team] > 0 && !m->reroll_used_this_turn[team] &&
-            m->active_team == team && !(f->data & BLK_RR_USED)) {
+        if (m->rerolls[team] > 0 && m->active_team == team && !(f->data & BLK_RR_USED)) {
             f->phase = 1;
             bb_need_decision(m, team);
             return;
@@ -97,7 +96,6 @@ static void block_apply(bb_match* m, bb_action a, bb_rng* rng) {
         if (a.type == BB_A_USE_REROLL) {
             int team = BB_TEAM_OF(att);
             m->rerolls[team]--;
-            m->reroll_used_this_turn[team] = 1;
             f->data |= BLK_RR_USED;
             int loner = bb_loner_value(m, att);
             if (!(loner > 0 && bb_roll(rng, 6) < loner)) {
@@ -120,10 +118,29 @@ static void resolve_face(bb_match* m, bb_frame* f, int face) {
             bb_knockdown(m, att, BB_KD_BLOCK, 0);
             return;
         case BB_BD_BOTH_DOWN: {
-            // TODO(phase3): Wrestle decision window. Starter rule: apply Block
-            // skill automatically; Wrestle not yet offered.
-            bool att_down = !bb_has_block(m, att);
-            bool def_down = !bb_has_block(m, def);
+            // Wrestle (either player): both players are PLACED Prone — no
+            // armour rolls, no knockdown turnover. (Rules allow declining;
+            // auto-applied here — see DECISIONS.md.) A carrier placed prone
+            // drops the ball; an ACTIVE carrier placed prone is a turnover.
+            if ((bb_has_wrestle(m, att) && !(m->players[att].flags & BB_PF_DISTRACTED)) ||
+                (bb_has_wrestle(m, def) && !(m->players[def].flags & BB_PF_DISTRACTED))) {
+                bb_pop(m);
+                int both[2] = {def, att};
+                for (int i = 0; i < 2; i++) {
+                    bb_player* p = &m->players[both[i]];
+                    p->stance = BB_STANCE_PRONE;
+                    if (p->flags & BB_PF_HAS_BALL) {
+                        int bx = p->x, by = p->y;
+                        if (BB_TEAM_OF(both[i]) == m->active_team) bb_turnover(m);
+                        bb_drop_ball(m);
+                        bb_push(m, BB_PROC_SCATTER, 0, 1, (uint8_t)bx, (uint8_t)by);
+                    }
+                }
+                return;
+            }
+            // Block skill: a player with Block (not Distracted) stays up.
+            bool att_down = !(bb_has_block(m, att) && !(m->players[att].flags & BB_PF_DISTRACTED));
+            bool def_down = !(bb_has_block(m, def) && !(m->players[def].flags & BB_PF_DISTRACTED));
             bb_pop(m);
             // Defender resolves first, attacker's knockdown (turnover) after.
             if (att_down) bb_knockdown(m, att, BB_KD_BLOCK, 0);
@@ -137,6 +154,7 @@ static void resolve_face(bb_match* m, bb_frame* f, int face) {
             return;
         case BB_BD_STUMBLE: {
             bool dodge = bb_has_dodge_skill(m, def) &&
+                         !(m->players[def].flags & BB_PF_DISTRACTED) &&
                          !bb_has_skill(&m->players[att].skills, BB_SK_TACKLE);
             bb_pop(m);
             bb_push(m, BB_PROC_PUSH, att, def, ax, ay);
@@ -208,10 +226,13 @@ static void push_advance(bb_match* m, bb_rng* rng) {
         bb_player* dp = &m->players[def];
         int oldx = dp->x, oldy = dp->y;
         if (f->data & PSH_CROWD) {
-            // Pushed into the crowd: ball throw-in / injury without armour.
+            // Crowd resolution is immediate; the follow-up decision comes
+            // after. (FFB order; GAME/FOLLOW-UP's "before any other dice" is
+            // a known minor divergence — see DECISIONS.md.)
             bool had_ball = (dp->flags & BB_PF_HAS_BALL) != 0;
+            if (BB_TEAM_OF(def) == m->active_team) bb_turnover(m);
             bb_drop_ball(m);
-            bb_remove_from_pitch(m, def, BB_LOC_RESERVES); // injury proc may relocate
+            bb_remove_from_pitch(m, def, BB_LOC_RESERVES); // crowd injury relocates
             bb_push(m, BB_PROC_INJURY, def, 1 /* crowd */, 0, 0);
             if (had_ball) {
                 bb_push(m, BB_PROC_THROW_IN, 0, 0, (uint8_t)oldx, (uint8_t)oldy);
@@ -225,6 +246,11 @@ static void push_advance(bb_match* m, bb_rng* rng) {
         if (dp->flags & BB_PF_HAS_BALL) {
             m->ball.x = dp->x;
             m->ball.y = dp->y;
+        } else if (m->ball.state == BB_BALL_ON_GROUND && m->ball.x == dp->x &&
+                   m->ball.y == dp->y) {
+            // Involuntarily moved onto the loose ball: it bounces, no pickup,
+            // no turnover.
+            bb_push(m, BB_PROC_SCATTER, 0, 1, dp->x, dp->y);
         }
         f->x = (uint8_t)oldx; // remember vacated square for follow-up
         f->y = (uint8_t)oldy;
@@ -244,13 +270,16 @@ static void push_advance(bb_match* m, bb_rng* rng) {
         return;
     }
     if (f->phase == 5) {
-        // Final: pow knockdown + TD check for a standing pushed carrier.
+        // Final: crowd resolution, or pow knockdown / TD check.
         int def = f->b;
         uint16_t data = f->data;
         bb_pop(m);
-        if ((data & PSH_POW) && !(data & PSH_CROWD)) {
+        if (data & PSH_CROWD) {
+            return; // crowd was resolved at relocation time
+        }
+        if (data & PSH_POW) {
             bb_knockdown(m, def, BB_KD_BLOCK, 0);
-        } else if (!(data & PSH_CROWD)) {
+        } else {
             bb_check_td(m); // pushed into their own end zone while holding
         }
         return;
@@ -395,6 +424,9 @@ static void injury_advance(bb_match* m, bb_rng* rng) {
 
     int stun_max = stunty ? BB_INJ_STUNTY_STUN_MAX : BB_INJ_STUN_MAX;
     int ko_max = stunty ? BB_INJ_STUNTY_KO_MAX : BB_INJ_KO_MAX;
+    // Thick Skull (BB2025, deterministic): KO only on the top of the KO band;
+    // the bottom of the band becomes a Stunned result. No extra roll.
+    if (bb_has_skill(&p->skills, BB_SK_THICK_SKULL)) stun_max = ko_max - 1;
 
     if (total <= stun_max) {
         if (f.b == 1) {
@@ -406,12 +438,6 @@ static void injury_advance(bb_match* m, bb_rng* rng) {
         return;
     }
     if (total <= ko_max) {
-        // Thick Skull: on a KO result, 4+ keeps the player stunned instead.
-        if (bb_has_skill(&p->skills, BB_SK_THICK_SKULL) && bb_d6(rng) >= 4) {
-            if (f.b == 1) p->location = BB_LOC_RESERVES;
-            else p->stance = BB_STANCE_STUNNED;
-            return;
-        }
         if (p->location == BB_LOC_ON_PITCH) bb_remove_from_pitch(m, slot, BB_LOC_KO);
         else p->location = BB_LOC_KO;
         return;
@@ -456,15 +482,52 @@ static void foul_advance(bb_match* m, bb_rng* rng) {
         bb_push(m, BB_PROC_ARMOUR, f->b, 1, mod & 0xFF, 0);
         return;
     }
-    // Children done; check for the ref.
-    bool spotted = (m->ret & 2) != 0;
-    int fouler = f->a;
-    bb_pop(m);
-    if (spotted) {
-        bb_remove_from_pitch(m, fouler, BB_LOC_SENT_OFF);
-        bb_turnover(m);
+    if (f->phase == 1) {
+        // Children done; check for the ref.
+        bool spotted = (m->ret & 2) != 0;
+        int fouler = f->a;
+        if (!spotted) {
+            bb_pop(m);
+            return;
+        }
+        // Sent off: the fouling coach may Argue the Call (unless already
+        // ejected from the dugout).
+        if (m->coach_ejected[BB_TEAM_OF(fouler)]) {
+            bb_pop(m);
+            bb_remove_from_pitch(m, fouler, BB_LOC_SENT_OFF);
+            bb_turnover(m);
+            return;
+        }
+        f->phase = 2;
+        bb_need_decision(m, BB_TEAM_OF(fouler));
+        return;
     }
-    return;
+    m->status = BB_STATUS_ERROR;
+}
+
+static int foul_legal(const bb_match* m, bb_action* out) {
+    (void)m;
+    out[0] = (bb_action){BB_A_CHOOSE_OPTION, 1, 0, 0}; // argue the call
+    out[1] = (bb_action){BB_A_CHOOSE_OPTION, 0, 0, 0}; // accept the send-off
+    return 2;
+}
+
+static void foul_apply(bb_match* m, bb_action a, bb_rng* rng) {
+    bb_frame* f = bb_top(m);
+    int fouler = f->a;
+    int team = BB_TEAM_OF(fouler);
+    bool stays = false;
+    if (a.arg == 1) {
+        int die = bb_d6(rng);
+        if (die == 1) {
+            m->coach_ejected[team] = 1; // "You're outta here!"
+        } else if (die == 6) {
+            stays = true; // returned to the pitch; the turnover still stands
+        }
+    }
+    bb_pop(m);
+    if (!stays) bb_remove_from_pitch(m, fouler, BB_LOC_SENT_OFF);
+    bb_turnover(m);
 }
 
 const bb_proc_vtable bb_proc_block_vtable = {block_advance, block_legal, block_apply};
@@ -473,4 +536,4 @@ const bb_proc_vtable bb_proc_knockdown_vtable = {knockdown_advance, 0, 0};
 const bb_proc_vtable bb_proc_armour_vtable = {armour_advance, 0, 0};
 const bb_proc_vtable bb_proc_injury_vtable = {injury_advance, 0, 0};
 const bb_proc_vtable bb_proc_casualty_vtable = {casualty_advance, 0, 0};
-const bb_proc_vtable bb_proc_foul_vtable = {foul_advance, 0, 0};
+const bb_proc_vtable bb_proc_foul_vtable = {foul_advance, foul_legal, foul_apply};

@@ -62,6 +62,9 @@ void bb_turnover(bb_match* m);
 // and return true.
 bool bb_check_td(bb_match* m);
 
+// Is a KICKOFF frame on the stack (kicked ball still resolving)?
+bool bb_in_kickoff(const bb_match* m);
+
 // Squares / geometry.
 static inline bool bb_on_pitch_xy(int x, int y) {
     return x >= 0 && x < BB_PITCH_LEN && y >= 0 && y < BB_PITCH_WID;

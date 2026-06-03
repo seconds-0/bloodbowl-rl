@@ -87,15 +87,20 @@ typedef struct {
     uint8_t kicking_team;   // this drive
     uint8_t weather;        // bb_weather
 
-    // Team-turn resources
+    // Team-turn resources. BB2025: any number of team re-rolls per turn (the
+    // only limit is that no single die/pool is ever re-rolled twice).
     uint8_t rerolls[2];
-    uint8_t reroll_used_this_turn[2]; // one team re-roll per team turn
+    uint8_t rerolls_start[2]; // purchased complement; replenished at half-time,
+                              // and bonus re-rolls (Brilliant Coaching) expire
+                              // back to this at the end of each drive
     uint8_t blitz_used;               // team blitz action used this turn
     uint8_t pass_used;                // pass action used this turn
     uint8_t handoff_used;
     uint8_t foul_used;
     uint8_t ttm_used;
+    uint8_t secure_used;              // BB2025 Secure the Ball: once per turn
     uint8_t apothecary[2];            // remaining uses
+    uint8_t coach_ejected[2];         // "You're Outta Here": no more arguing
 
     // Procedure stack
     bb_frame stack[BB_STACK_MAX];
@@ -144,6 +149,10 @@ int bb_tackle_zones(const bb_match* m, int team, int x, int y);
 
 // Does this player currently exert a tackle zone?
 bool bb_exerts_tz(const bb_match* m, int slot);
+
+// May this player attempt catches / receive hand-offs (standing, has TZ,
+// not Distracted)?
+bool bb_can_catch(const bb_match* m, int slot);
 
 // Marked/Open (BB2025): a standing player is Marked while in an opposing TZ.
 bool bb_is_marked(const bb_match* m, int slot);

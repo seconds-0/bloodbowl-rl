@@ -807,6 +807,9 @@ BB_TEST(struct_turnover_foul_sent_off) {
     stx_activate(&m, fouler, BB_ACT_FOUL, &rng);
     bb_status st = fx_apply(&m, stx_act(BB_A_FOUL_TARGET, 0, 11, 7), &rng);
     BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    // Argue the Call window (BB2025): the fouling coach accepts the call.
+    BB_CHECK_EQ(m.decision_team, 0);
+    st = fx_apply(&m, stx_act(BB_A_CHOOSE_OPTION, 0, 0, 0), &rng);
     BB_CHECK_EQ(m.players[fouler].location, BB_LOC_SENT_OFF);
     BB_CHECK_EQ(m.grid[10][7], 0); // removed from the pitch
     stx_expect_turn_ended(&m, 0);
@@ -999,11 +1002,12 @@ BB_TEST(struct_turnover_active_carrier_chain_pushed_into_crowd) {
     fx_ball_held(&m, carrier);
     bb_rng rng;
     // Block die 3 (push). Chain: def -> carrier's square; carrier -> crowd.
-    // Throw-in from (10,0): d3=2 -> straight in, 2D6=2+1=3 -> (10,3);
-    // landing bounce d8=7 -> (0,1) -> (10,4). Crowd injury 2D6=1+1: Stunned
-    // band (player to the reserves/KO box per crowd rules).
-    const uint8_t dice[] = {3, 2, 2, 1, 7, 1, 1};
-    bb_rng_script(&rng, dice, 7);
+    // Throw-in from (10,0): D6=3 -> straight in (template 1-2/3-4/5-6),
+    // 2D6=2+2=4 counting the boundary square as first -> 3 steps -> (10,3),
+    // an empty square: the ball comes to rest ((10,2) holds the attacker).
+    // Crowd injury 2D6=1+1: Stunned band (player to the Reserves box).
+    const uint8_t dice[] = {3, 3, 2, 2, 1, 1};
+    bb_rng_script(&rng, dice, 6);
     fx_run(&m, &rng);
     stx_activate(&m, att, BB_ACT_BLOCK, &rng);
     fx_apply(&m, stx_act(BB_A_BLOCK_TARGET, 0, 10, 1), &rng);
@@ -1016,7 +1020,10 @@ BB_TEST(struct_turnover_active_carrier_chain_pushed_into_crowd) {
     BB_CHECK_EQ(m.players[def].x, 10); // chain relocated the defender
     BB_CHECK_EQ(m.players[def].y, 0);
     // Rulebook: the active team's carrier went off the pitch -> Turnover.
-    BB_CHECK_EQ(m.turnover, 1);
+    // The latch is consumed when the team turn ends, so observe the effect:
+    // home's turn is over and away is on the clock.
+    BB_CHECK_EQ(m.active_team, 1);
+    BB_CHECK_EQ(m.decision_team, 1);
 }
 
 // ===========================================================================
@@ -1198,7 +1205,7 @@ BB_TEST(struct_stunned_cannot_activate_and_flips_at_own_turn_end) {
     // Own team's turn ended: its stunned player rolls over to Prone...
     BB_CHECK_EQ(m.players[stunned].stance, BB_STANCE_PRONE);
     // ...but the OPPONENT's stunned player does not (not their turn end).
-    BB_CHECK_EQ(m.players[opp_stunned].stance, BB_STANCE_STUNNED);
+    BB_CHECK(fx_stunned(&m, opp_stunned)); // still stunned, not flipped
 }
 
 // ENGINE-DIVERGENCE: RR STUNNED: "any player that became Stunned during the
