@@ -705,6 +705,7 @@ static void end_drive_advance(bb_match* m, bb_rng* rng) {
     m->ball.state = BB_BALL_OFF_PITCH;
     m->ball.carrier = BB_NO_PLAYER;
     m->turnover = 0;
+    m->cheer_assist[0] = m->cheer_assist[1] = 0; // unspent Cheering Fans buff dies with the drive (review LOW)
     // Drive-scoped bonus re-rolls (Brilliant Coaching) expire with the drive.
     // Only the unspent bonuses are removed — the old clamp to rerolls_start
     // also deleted the Leader re-roll (HALF scope, granted by PREGAME without
