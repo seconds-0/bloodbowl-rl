@@ -319,6 +319,19 @@ static void move_advance(bb_match* m, bb_rng* rng) {
 
     if (f->data & MV_STAND_PEND) {
         f->data &= (uint16_t)~MV_STAND_PEND;
+        if (f->b == BB_ACT_BLOCK) {
+            // JUMP UP prone-block test resolved.
+            int target = (f->data >> 9) & 31;
+            f->data &= (uint16_t)~(31u << 9);
+            if (m->ret & 1) {
+                p->stance = BB_STANCE_STANDING;
+                f->data |= MV_AWAIT_BLOCK | MV_BLOCK_DONE;
+                bb_push(m, BB_PROC_BLOCK, slot, target, 0, 0);
+            } else {
+                finish_move(m); // stays prone; activation ends
+            }
+            return;
+        }
         if (m->ret & 1) {
             // MA<3 stand-up: stands but may not move further this activation.
             p->stance = BB_STANCE_STANDING;
@@ -355,7 +368,23 @@ static int move_legal(const bb_match* m, bb_action* out) {
 
     if (p->stance == BB_STANCE_PRONE) {
         // Standing up costs 3 movement (MA<3: 4+ roll, no further movement).
+        // JUMP UP: stands for free; may also declare a Block whilst Prone
+        // (AG test +1: stand and block, or stay down and end).
         out[n++] = (bb_action){BB_A_STAND_UP, 0, 0, 0};
+        if (kind == BB_ACT_BLOCK && bb_has_skill(&p->skills, BB_SK_JUMP_UP)) {
+            for (int dx = -1; dx <= 1; dx++) {
+                for (int dy = -1; dy <= 1; dy++) {
+                    if (!dx && !dy) continue;
+                    int nx = p->x + dx, ny = p->y + dy;
+                    if (!bb_on_pitch_xy(nx, ny)) continue;
+                    int s2 = bb_slot_at(m, nx, ny);
+                    if (s2 >= 0 && BB_TEAM_OF(s2) != BB_TEAM_OF(slot) &&
+                        m->players[s2].stance == BB_STANCE_STANDING) {
+                        out[n++] = (bb_action){BB_A_BLOCK_TARGET, 0, (uint8_t)nx, (uint8_t)ny};
+                    }
+                }
+            }
+        }
         out[n++] = (bb_action){BB_A_END_ACTIVATION, 0, 0, 0};
         return n;
     }
@@ -489,6 +518,10 @@ static void move_apply(bb_match* m, bb_action a, bb_rng* rng) {
             return;
 
         case BB_A_STAND_UP:
+            if (bb_has_skill(&p->skills, BB_SK_JUMP_UP)) {
+                p->stance = BB_STANCE_STANDING; // free
+                return;
+            }
             if (p->ma < 3) {
                 bb_ctx sc = {BB_TEST_STANDUP, (uint8_t)slot, BB_NO_PLAYER,
                              (int8_t)p->x, (int8_t)p->y, (int8_t)p->x, (int8_t)p->y, -1, 0};
@@ -593,6 +626,16 @@ static void move_apply(bb_match* m, bb_action a, bb_rng* rng) {
 
         case BB_A_BLOCK_TARGET: {
             int target = bb_slot_at(m, a.x, a.y);
+            if (p->stance == BB_STANCE_PRONE) {
+                // JUMP UP prone block: AG test +1; pass = stand and block.
+                bb_ctx jc = {BB_TEST_GENERIC, (uint8_t)slot, (uint8_t)target,
+                             (int8_t)p->x, (int8_t)p->y, (int8_t)a.x, (int8_t)a.y, -1, 0};
+                f->data |= MV_STAND_PEND;
+                f->data = (uint16_t)((f->data & ~(31u << 9)) | ((uint16_t)target << 9));
+                bb_push(m, BB_PROC_TEST, slot, BB_TEST_GENERIC,
+                        bb_test_target(p->ag, 1 + bb_hook_mods(m, &jc)), 0);
+                return;
+            }
             f->data |= MV_AWAIT_BLOCK | MV_BLOCK_DONE;
             if (f->b == BB_ACT_BLITZ) {
                 bool rush_needed = movement_left(m, slot) == 0;

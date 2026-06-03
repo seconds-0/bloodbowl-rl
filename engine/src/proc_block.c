@@ -67,6 +67,17 @@ static void block_advance(bb_match* m, bb_rng* rng) {
     bb_frame* f = bb_top(m);
     int att = f->a, def = f->b;
     if (f->phase == 0) {
+        // FOUL APPEARANCE: "roll a D6 before any other dice ... On a 1, the
+        // Block Action is immediately cancelled and the opposition player's
+        // activation immediately ends." (No turnover.)
+        // (phase 0 runs once per BLOCK frame; a Frenzy second block is a new
+        // Block Action and correctly rolls Foul Appearance again.)
+        if (bb_has_skill(&m->players[def].skills, BB_SK_FOUL_APPEARANCE)) {
+            if (bb_d6(rng) == 1) {
+                bb_pop(m);
+                return;
+            }
+        }
         // DAUNTLESS: against a higher unmodified ST, roll D6 + own ST; beat
         // the target's unmodified ST to match it for this block.
         int base_a = m->players[att].st;
@@ -90,6 +101,26 @@ static void block_advance(bb_match* m, bb_rng* rng) {
         f->data = (uint16_t)((f->data & BLK_IS_BLITZ) | ((nd - 1) << 9) |
                              (def_chooses ? BLK_DEF_CHOOSES : 0));
         blk_roll_pool(f, rng);
+        // BRAWLER: "may re-roll a single Both Down result" (without a team
+        // re-roll). Auto-policy: reroll the first Both Down when the pool has
+        // no plainly better face for the attacker.
+        if (bb_has_skill(&m->players[att].skills, BB_SK_BRAWLER)) {
+            bool better = false;
+            int bd_idx = -1;
+            for (int i = 0; i < blk_ndice(f); i++) {
+                int face = blk_die(f, i);
+                if (face == BB_BD_POW || face == BB_BD_STUMBLE ||
+                    face == BB_BD_PUSH_1 || face == BB_BD_PUSH_2) {
+                    better = true;
+                }
+                if (face == BB_BD_BOTH_DOWN && bd_idx < 0) bd_idx = i;
+            }
+            if (bd_idx >= 0 && !better) {
+                int nd = bb_roll_block_die(rng);
+                uint16_t mask = (uint16_t)~(7u << (3 * bd_idx));
+                f->data = (uint16_t)((f->data & mask) | ((uint16_t)nd << (3 * bd_idx)));
+            }
+        }
         // Reroll window for the attacking coach (team reroll only, own turn).
         int team = BB_TEAM_OF(att);
         if (m->rerolls[team] > 0 && m->active_team == team && !(f->data & BLK_RR_USED)) {

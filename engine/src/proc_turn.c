@@ -195,7 +195,9 @@ static int activation_legal(const bb_match* m, bb_action* out) {
     const bb_player* p = &m->players[slot];
     int n = 0;
     out[n++] = (bb_action){BB_A_DECLARE, BB_ACT_MOVE, 0, 0};
-    if (p->stance == BB_STANCE_STANDING && has_adjacent_standing_opponent(m, slot)) {
+    if ((p->stance == BB_STANCE_STANDING ||
+         (p->stance == BB_STANCE_PRONE && bb_has_skill(&p->skills, BB_SK_JUMP_UP))) &&
+        has_adjacent_standing_opponent(m, slot)) {
         out[n++] = (bb_action){BB_A_DECLARE, BB_ACT_BLOCK, 0, 0};
     }
     if (!m->blitz_used) {
