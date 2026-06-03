@@ -54,7 +54,7 @@ typedef struct {
     bb_mod_fn armour_mod; // armour-roll modifier (c->player = downed player,
                           // c->other = causer; positive helps the causer)
     bb_mod_fn injury_mod; // injury-roll modifier (same convention)
-    uint8_t reroll_kinds; // bitmask of bb_test_kind this skill lets you re-roll
+    uint16_t reroll_kinds; // bitmask of bb_test_kind this skill lets you re-roll
     uint8_t activate_gate; // D6 target for the activation negatrait (0 = none)
     uint8_t gate_kind;     // bb_gate_kind behavior on failure
     uint8_t push_flags;    // BB_PUSHF_* (owner's effect in pushes)
@@ -104,7 +104,11 @@ extern bb_skill_hooks bb_hooks[BB_SKILL_COUNT];
 int bb_hook_mods(const bb_match* m, const bb_ctx* c);
 
 // Skill granting a re-roll for this test, or -1 (honours once-per-turn).
-int bb_hook_reroll(const bb_match* m, int slot, int kind);
+// Takes the test ctx (kind / acting player / other) rather than a bare kind:
+// interception attempts are dispatched as CATCH-kind tests with the thrower
+// in ctx.other and are never re-rollable by skill (BB2025 treats Intercept
+// as distinct from Catch). (adversarial review M11)
+int bb_hook_reroll(const bb_match* m, const bb_ctx* c);
 
 // Activation gate for this player: fills *target and *gate_kind; returns the
 // gating skill id or -1.

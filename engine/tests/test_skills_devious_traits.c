@@ -174,6 +174,56 @@ BB_TEST(skdt_titchy_prone_no_aura) {
     BB_CHECK_EQ(m.active_team, BB_AWAY);
 }
 
+// Regression (adversarial review M9): a STUNTY dodger already ignores every
+// Marking -1 through its own modifier (Titchy markers included, since
+// bb_tackle_zones has no skill filter). The Titchy aura withholding the same
+// -1 must NOT also fire, or the two cancellations stack into a net +1.
+// Goblin-style dodger (Stunty, no Titchy, AG 3+) into a square Marked by a
+// single Titchy opponent: the dodge is a bare 3+ — a 2 fails (pre-fix it
+// wrongly passed at 2+), a 3 passes.
+BB_TEST(skdt_stunty_dodger_titchy_marker_no_double_cancel) {
+    { // A natural 2 must FAIL: net modifier is 0, not +1.
+        bb_match m;
+        fx_match_midturn(&m, BB_HOME, 0);
+        int mover = fx_lineman(&m, 0, 0, 10, 7); // AG 3+
+        fx_give_skill(&m, mover, BB_SK_STUNTY);
+        fx_lineman(&m, 1, 0, 10, 8);             // marks origin (10,7) only
+        int titchy = fx_lineman(&m, 1, 1, 9, 5); // marks dest (10,6) only
+        fx_give_skill(&m, titchy, BB_SK_TITCHY);
+        static const uint8_t dice[] = {2, 3, 3}; // dodge fails; armour holds
+        bb_rng rng;
+        bb_rng_script(&rng, dice, 3);
+
+        bb_status st = begin_move(&m, &rng, mover);
+        BB_CHECK_EQ(bb_tackle_zones(&m, BB_HOME, 10, 6), 1); // Titchy marks dest
+        st = fx_apply(&m, act(BB_A_STEP, 0, 10, 6), &rng);
+        BB_CHECK_EQ(st, BB_STATUS_DECISION);
+        BB_CHECK(!bb_rng_error(&rng));
+        BB_CHECK_EQ(m.players[mover].stance, BB_STANCE_PRONE);
+        BB_CHECK_EQ(m.active_team, BB_AWAY); // turnover
+    }
+    { // A natural 3 passes: Stunty's refund still cancels the Titchy -1 once.
+        bb_match m;
+        fx_match_midturn(&m, BB_HOME, 0);
+        int mover = fx_lineman(&m, 0, 0, 10, 7);
+        fx_give_skill(&m, mover, BB_SK_STUNTY);
+        fx_lineman(&m, 1, 0, 10, 8);
+        int titchy = fx_lineman(&m, 1, 1, 9, 5);
+        fx_give_skill(&m, titchy, BB_SK_TITCHY);
+        static const uint8_t dice[] = {3};
+        bb_rng rng;
+        bb_rng_script(&rng, dice, 1);
+
+        bb_status st = begin_move(&m, &rng, mover);
+        st = fx_apply(&m, act(BB_A_STEP, 0, 10, 6), &rng);
+        BB_CHECK_EQ(st, BB_STATUS_DECISION);
+        BB_CHECK(!bb_rng_error(&rng));
+        BB_CHECK_EQ(m.players[mover].stance, BB_STANCE_STANDING);
+        BB_CHECK_EQ(m.players[mover].y, 6);
+        BB_CHECK_EQ(m.active_team, BB_HOME);
+    }
+}
+
 // =============================================================================
 // Drunkard
 // =============================================================================

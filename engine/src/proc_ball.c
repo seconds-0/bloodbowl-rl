@@ -370,7 +370,10 @@ static void pass_start_interception(bb_match* m, bb_frame* f, int interceptor) {
     if (m->weather == BB_WEATHER_RAIN) mod -= 1; // rain affects interceptions
     f->b = (uint8_t)interceptor;
     f->phase = 3;
-    bb_push(m, BB_PROC_TEST, interceptor, BB_TEST_CATCH, bb_test_target(ip->ag, mod), 0);
+    // The TEST frame's y carries ctx.other + 1 (the thrower): an interception
+    // is not a Catch, so skill re-rolls must not apply (review M11).
+    bb_push(m, BB_PROC_TEST, interceptor, BB_TEST_CATCH,
+            bb_test_target(ip->ag, mod), f->a + 1);
 }
 
 static void pass_apply(bb_match* m, bb_action a, bb_rng* rng) {

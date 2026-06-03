@@ -115,9 +115,12 @@ static void execute_step(bb_match* m, bb_rng* rng, bb_frame* f) {
         } else {
             bb_ctx c = {BB_TEST_PICKUP, (uint8_t)slot, BB_NO_PLAYER, (uint8_t)slot,
                         (int8_t)x, (int8_t)y, (int8_t)x, (int8_t)y, -1, 0};
-            int mod = -bb_tackle_zones(m, BB_TEAM_OF(slot), x, y) +
-                      bb_hook_mods(m, &c);
+            // Pouring Rain joins the total BEFORE the skill hooks so Big Hand
+            // ("ignores all negative modifiers when attempting to pick up the
+            // ball") refunds it along with the Marking -1s (review M13).
+            int mod = -bb_tackle_zones(m, BB_TEAM_OF(slot), x, y);
             if (m->weather == BB_WEATHER_RAIN) mod -= 1;
+            mod += bb_hook_mods(m, &c);
             bb_push(m, BB_PROC_TEST, slot, BB_TEST_PICKUP,
                     bb_test_target(p->ag, mod), 0);
         }
@@ -193,8 +196,10 @@ static void move_advance(bb_match* m, bb_rng* rng) {
             }
             bb_ctx pc = {BB_TEST_PICKUP, (uint8_t)slot, BB_NO_PLAYER, (uint8_t)slot,
                          (int8_t)tx, (int8_t)ty, (int8_t)tx, (int8_t)ty, -1, 0};
-            int pmod = -bb_tackle_zones(m, BB_TEAM_OF(slot), tx, ty) + bb_hook_mods(m, &pc);
+            // Rain before the hooks: Big Hand refunds it too (review M13).
+            int pmod = -bb_tackle_zones(m, BB_TEAM_OF(slot), tx, ty);
             if (m->weather == BB_WEATHER_RAIN) pmod -= 1;
+            pmod += bb_hook_mods(m, &pc);
             f->data |= MV_AWAIT_PICKUP;
             bb_push(m, BB_PROC_TEST, slot, BB_TEST_PICKUP, bb_test_target(p->ag, pmod), 0);
         }

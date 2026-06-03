@@ -192,6 +192,131 @@ BB_TEST(skmp_very_long_legs_intercept_plus_two) {
     BB_CHECK_EQ(m.decision_team, BB_AWAY); // interception is always a turnover
 }
 
+// =============================================================================
+// Interceptions are not Catches (adversarial review M11)
+// =============================================================================
+
+// Regression (review M11): SK/CATCH "This player may re-roll any failed
+// Agility Test when attempting to Catch the ball" — an interception attempt
+// is NOT a Catch (DP/Extra Arms/Stunty all name Intercept separately), so a
+// Catch-skill interceptor gets NO re-roll window after a failed attempt: the
+// pass resolves straight through to the receiver.
+BB_TEST(skmp_catch_skill_no_reroll_on_interception) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0); // zero team re-rolls on both sides
+    int thrower = fx_player(&m, 0, 0, 5, 7, 6, 3, 3, 2, 9); // PA 2+
+    int receiver = fx_lineman(&m, 0, 1, 9, 7);              // AG 3+
+    int opp = fx_lineman(&m, 1, 0, 7, 7); // AG 3+, on the ruler
+    fx_give_skill(&m, opp, BB_SK_CATCH);
+    fx_ball_held(&m, thrower);
+    // Short pass (dx=4): PA 2+ -1, roll 5 -> Accurate. Interception (auto:
+    // single candidate): AG 3+ -3 -> needs 6; roll 5 FAILS. Pre-fix the Catch
+    // skill opened a re-roll window here; post-fix the flight resolves and
+    // the receiver catches unmodified (3+) on a 4.
+    static const uint8_t dice[] = {5, 5, 4};
+    bb_rng rng;
+    bb_rng_script(&rng, dice, 3);
+
+    fx_run(&m, &rng);
+    fx_activate(&m, &rng, thrower, BB_ACT_PASS);
+    bb_status st = fx_apply(&m, mk(BB_A_PASS_TARGET, 0, 9, 7), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK(!fx_has_type(&m, BB_A_USE_REROLL)); // no re-roll window opened
+    BB_CHECK(!bb_rng_error(&rng));
+    BB_CHECK_EQ(m.ball.state, BB_BALL_HELD);
+    BB_CHECK_EQ(m.ball.carrier, receiver);
+    BB_CHECK_EQ(m.decision_team, BB_HOME); // no turnover, home still acting
+}
+
+// Control for M11: the Catch skill still grants its re-roll on an ordinary
+// Catch — a failed catch of an accurate pass opens the window, and using the
+// skill re-roll catches the ball.
+BB_TEST(skmp_catch_skill_reroll_on_regular_catch) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int thrower = fx_player(&m, 0, 0, 5, 7, 6, 3, 3, 2, 9); // PA 2+
+    int receiver = fx_lineman(&m, 0, 1, 8, 7);              // AG 3+
+    fx_give_skill(&m, receiver, BB_SK_CATCH);
+    fx_lineman(&m, 1, 9, 24, 1); // far-away opponent bystander
+    fx_ball_held(&m, thrower);
+    // Quick pass: nat 6 Accurate; catch (unmodified 3+) rolls 2 -> FAIL ->
+    // Catch-skill re-roll window; re-roll 3 -> caught.
+    static const uint8_t dice[] = {6, 2, 3};
+    bb_rng rng;
+    bb_rng_script(&rng, dice, 3);
+
+    fx_run(&m, &rng);
+    fx_activate(&m, &rng, thrower, BB_ACT_PASS);
+    bb_status st = fx_apply(&m, mk(BB_A_PASS_TARGET, 0, 8, 7), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    bb_action use = mk(BB_A_USE_REROLL, BB_RR_SKILL, BB_SK_CATCH, 0);
+    BB_CHECK(fx_find(&m, use) >= 0); // the window IS offered for a real catch
+    st = fx_apply(&m, use, &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK(!bb_rng_error(&rng));
+    BB_CHECK_EQ(m.ball.state, BB_BALL_HELD);
+    BB_CHECK_EQ(m.ball.carrier, receiver);
+}
+
+// Regression (review M11): SK/NERVES OF STEEL "may ignore any modifiers for
+// being Marked when making an Agility Test to Catch the ball, or when making
+// a Passing Ability Test to Pass the ball" — BB2025 has NO Intercept clause,
+// so a Marked NoS interceptor keeps the marker's -1. AG 2+ vs an Accurate
+// pass while Marked once: -3 -1 -> needs 6; a 5 must FAIL (pre-fix NoS
+// wrongly refunded the marker and the 5 intercepted at 5+).
+BB_TEST(skmp_nerves_of_steel_no_effect_on_interception) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int thrower = fx_player(&m, 0, 0, 5, 7, 6, 3, 3, 2, 9); // PA 2+
+    int receiver = fx_lineman(&m, 0, 1, 9, 7);              // AG 3+
+    int opp = fx_player(&m, 1, 0, 7, 7, 6, 3, 2, 4, 9);     // AG 2+, on the ruler
+    fx_give_skill(&m, opp, BB_SK_NERVES_OF_STEEL);
+    fx_lineman(&m, 0, 2, 7, 8); // Marks the interceptor (off the ruler)
+    fx_ball_held(&m, thrower);
+    // Short pass: PA 2+ -1, roll 5 -> Accurate. Interception: AG 2+ -3
+    // (accurate) -1 (Marked, NOT ignored) -> needs 6; roll 5 FAILS. The
+    // receiver then catches unmodified (3+) on a 3.
+    static const uint8_t dice[] = {5, 5, 3};
+    bb_rng rng;
+    bb_rng_script(&rng, dice, 3);
+
+    fx_run(&m, &rng);
+    fx_activate(&m, &rng, thrower, BB_ACT_PASS);
+    bb_status st = fx_apply(&m, mk(BB_A_PASS_TARGET, 0, 9, 7), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK(!bb_rng_error(&rng));
+    BB_CHECK(!(m.players[opp].flags & BB_PF_HAS_BALL)); // no interception
+    BB_CHECK_EQ(m.ball.state, BB_BALL_HELD);
+    BB_CHECK_EQ(m.ball.carrier, receiver);
+    BB_CHECK_EQ(m.decision_team, BB_HOME); // no turnover
+}
+
+// Control for M11: Nerves of Steel still refunds the Marking -1 on an
+// ordinary Catch. AG 3+ receiver Marked once catching an accurate pass:
+// without NoS the target is 4+, with NoS a natural 3 catches.
+BB_TEST(skmp_nerves_of_steel_still_ignores_markers_on_catch) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int thrower = fx_player(&m, 0, 0, 5, 7, 6, 3, 3, 2, 9); // PA 2+
+    int receiver = fx_lineman(&m, 0, 1, 8, 7);              // AG 3+
+    fx_give_skill(&m, receiver, BB_SK_NERVES_OF_STEEL);
+    fx_lineman(&m, 1, 0, 8, 8); // Marks the receiver (not on the ruler)
+    fx_ball_held(&m, thrower);
+    // Quick pass: nat 6 Accurate (no interception candidate: the marker is
+    // off the ruler). Catch: base 0, Marked -1, NoS +1 -> bare 3+; 3 catches.
+    static const uint8_t dice[] = {6, 3};
+    bb_rng rng;
+    bb_rng_script(&rng, dice, 2);
+
+    fx_run(&m, &rng);
+    fx_activate(&m, &rng, thrower, BB_ACT_PASS);
+    bb_status st = fx_apply(&m, mk(BB_A_PASS_TARGET, 0, 8, 7), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK(!bb_rng_error(&rng));
+    BB_CHECK_EQ(m.ball.state, BB_BALL_HELD);
+    BB_CHECK_EQ(m.ball.carrier, receiver);
+}
+
 // SK/VERY LONG LEGS: the +2 is for Intercepting only — an ordinary Catch
 // (accurate pass to the VLL player) gets no bonus. AG 4+ catching an accurate
 // pass (no modifier) rolls a 2: it must FAIL (with a stray +2 the target
@@ -219,4 +344,206 @@ BB_TEST(skmp_very_long_legs_no_bonus_on_regular_catch) {
     BB_CHECK_EQ(m.ball.x, 9);
     BB_CHECK_EQ(m.ball.y, 7);
     BB_CHECK_EQ(m.decision_team, BB_AWAY); // turnover
+}
+
+// =============================================================================
+// BIG HAND (Mutation)
+// =============================================================================
+
+// Regression (adversarial review M13): SK/BIG HAND "This player ignores ALL
+// negative modifiers when attempting to pick up the ball" — Pouring Rain's
+// -1 included, not just the Marking -1s. Double-Marked ball square in
+// Pouring Rain: the pickup is a plain AG 3+ — a 3 picks up (pre-fix the rain
+// -1 leaked through and the 3 failed at 4+), and a 2 still fails (the refund
+// must net to exactly 0, never a bonus).
+BB_TEST(skmp_big_hand_ignores_rain_and_markers_on_pickup) {
+    { // (a) a natural 3 picks up: -2 (Marked) -1 (rain) fully refunded.
+        bb_match m;
+        fx_match_midturn(&m, BB_HOME, 0);
+        m.weather = BB_WEATHER_RAIN;
+        int mover = fx_lineman(&m, 0, 0, 10, 7); // AG 3+
+        fx_give_skill(&m, mover, BB_SK_BIG_HAND);
+        fx_lineman(&m, 1, 0, 12, 6); // marks ball square (11,7), not (10,7)
+        fx_lineman(&m, 1, 1, 12, 8); // marks ball square (11,7), not (10,7)
+        fx_ball_ground(&m, 11, 7);
+        static const uint8_t dice[] = {3};
+        bb_rng rng;
+        bb_rng_script(&rng, dice, 1);
+
+        bb_status st = begin_move(&m, &rng, mover);
+        BB_CHECK_EQ(st, BB_STATUS_DECISION);
+        BB_CHECK_EQ(bb_tackle_zones(&m, BB_HOME, 11, 7), 2);
+        st = fx_apply(&m, mk(BB_A_STEP, 0, 11, 7), &rng);
+        BB_CHECK_EQ(st, BB_STATUS_DECISION);
+        BB_CHECK(!bb_rng_error(&rng));
+        BB_CHECK_EQ(m.ball.state, BB_BALL_HELD);
+        BB_CHECK_EQ(m.ball.carrier, mover);
+        BB_CHECK_EQ(m.active_team, BB_HOME); // no turnover
+    }
+    { // (b) a natural 2 still fails: Big Hand cancels to 0, never past it.
+        bb_match m;
+        fx_match_midturn(&m, BB_HOME, 0);
+        m.weather = BB_WEATHER_RAIN;
+        int mover = fx_lineman(&m, 0, 0, 10, 7);
+        fx_give_skill(&m, mover, BB_SK_BIG_HAND);
+        fx_lineman(&m, 1, 0, 12, 6);
+        fx_lineman(&m, 1, 1, 12, 8);
+        fx_ball_ground(&m, 11, 7);
+        static const uint8_t dice[] = {2, 1}; // pickup fails; bounce d8
+        bb_rng rng;
+        bb_rng_script(&rng, dice, 2);
+
+        bb_status st = begin_move(&m, &rng, mover);
+        st = fx_apply(&m, mk(BB_A_STEP, 0, 11, 7), &rng);
+        BB_CHECK_EQ(st, BB_STATUS_DECISION);
+        BB_CHECK(!bb_rng_error(&rng));
+        BB_CHECK_EQ(m.ball.state, BB_BALL_ON_GROUND);
+        BB_CHECK_EQ(m.active_team, BB_AWAY); // failed pickup = turnover
+    }
+}
+
+// Control for M13: WEATHER "Pouring Rain" still applies to a pickup by a
+// player WITHOUT Big Hand after the call-site restructure — an unmarked
+// AG 3+ pickup in rain is a 4+, so a 3 fails and the ball bounces (turnover).
+BB_TEST(skmp_rain_pickup_minus1_without_big_hand) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    m.weather = BB_WEATHER_RAIN;
+    int mover = fx_lineman(&m, 0, 0, 10, 7); // AG 3+, no skills
+    fx_lineman(&m, 1, 9, 24, 1);             // far-away opponent bystander
+    fx_ball_ground(&m, 11, 7);
+    static const uint8_t dice[] = {3, 1}; // 3 fails the 4+; bounce d8
+    bb_rng rng;
+    bb_rng_script(&rng, dice, 2);
+
+    bb_status st = begin_move(&m, &rng, mover);
+    st = fx_apply(&m, mk(BB_A_STEP, 0, 11, 7), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK(!bb_rng_error(&rng));
+    BB_CHECK_EQ(m.ball.state, BB_BALL_ON_GROUND);
+    BB_CHECK_EQ(m.active_team, BB_AWAY); // turnover
+}
+
+// Regression (review M13, second call site): the jump-landing pickup applies
+// the same rule — Big Hand refunds Marking AND rain when landing on the ball
+// after Jumping over a Prone player. Jump (AG 3+, -2 landing markers) on a
+// 5, then pick up double-Marked in rain on a plain 3.
+BB_TEST(skmp_big_hand_rain_pickup_after_jump) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    m.weather = BB_WEATHER_RAIN;
+    int mover = fx_lineman(&m, 0, 0, 10, 7); // AG 3+
+    fx_give_skill(&m, mover, BB_SK_BIG_HAND);
+    int hurdle = fx_lineman(&m, 1, 2, 11, 7); // jumped over
+    m.players[hurdle].stance = BB_STANCE_PRONE;
+    fx_lineman(&m, 1, 0, 13, 6); // marks landing square (12,7) only
+    fx_lineman(&m, 1, 1, 13, 8); // marks landing square (12,7) only
+    fx_ball_ground(&m, 12, 7);
+    static const uint8_t dice[] = {5, 3}; // jump 5 vs 5+; pickup 3 vs 3+
+    bb_rng rng;
+    bb_rng_script(&rng, dice, 2);
+
+    bb_status st = begin_move(&m, &rng, mover);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    bb_action jump = mk(BB_A_JUMP, 0, 12, 7);
+    BB_CHECK(fx_find(&m, jump) >= 0);
+    st = fx_apply(&m, jump, &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK(!bb_rng_error(&rng));
+    BB_CHECK_EQ(m.players[mover].x, 12);
+    BB_CHECK_EQ(m.players[mover].y, 7);
+    BB_CHECK_EQ(m.ball.state, BB_BALL_HELD);
+    BB_CHECK_EQ(m.ball.carrier, mover);
+    BB_CHECK_EQ(m.active_team, BB_HOME); // no turnover
+}
+
+// =============================================================================
+// DISTURBING PRESENCE (Mutation) on Throw Team-mate
+// =============================================================================
+
+// Regression (adversarial review M12): SK/DISTURBING PRESENCE "Any opposition
+// player that performs a Pass Action, Throw Team-mate Action or a Throw Bomb
+// Special Action ... applies a -1 modifier to their Passing Ability Test ...
+// for each player on your team with this Skill within 3 squares of them."
+// Pre-fix the TTM PA test was computed fully inline and NO aura could touch
+// it. Same dice, PA 4+ thrower, Quick throw: with an opposing DP exactly 3
+// squares away the 4 is one pip short (5+) -> Subpar -> the -1 landing fails
+// and the mate Falls Over; without DP the same 4 is Superb and the mate lands
+// on its feet.
+BB_TEST(skmp_disturbing_presence_applies_to_ttm) {
+    { // (a) DP within 3 squares of the thrower: 4 vs 5+ -> Subpar landing falls.
+        bb_match m;
+        fx_match_midturn(&m, BB_HOME, 0);
+        int thrower = fx_lineman(&m, 0, 2, 10, 7); // PA 4+
+        fx_give_skill(&m, thrower, BB_SK_THROW_TEAM_MATE);
+        int mate = fx_lineman(&m, 0, 3, 10, 8); // adjacent Right Stuff mate
+        fx_give_skill(&m, mate, BB_SK_RIGHT_STUFF);
+        int dp = fx_lineman(&m, 1, 0, 13, 7); // Chebyshev 3 from thrower; not Marking
+        fx_give_skill(&m, dp, BB_SK_DISTURBING_PRESENCE);
+        // Dice: PA 4 (Subpar at 5+), scatter 3x d8=1 (NW: (12,7)->(9,4)),
+        // landing d6=3 vs 4+ (-1 Subpar) FAILS, armour 2D6 = 2,2 holds.
+        static const uint8_t dice[] = {4, 1, 1, 1, 3, 2, 2};
+        bb_rng rng;
+        bb_rng_script(&rng, dice, 7);
+
+        bb_status st = fx_run(&m, &rng);
+        st = fx_activate(&m, &rng, thrower, BB_ACT_TTM);
+        BB_CHECK_EQ(st, BB_STATUS_DECISION);
+        st = fx_apply(&m, mk(BB_A_SPECIAL_TARGET, 7, 10, 8), &rng); // pick mate
+        BB_CHECK_EQ(st, BB_STATUS_DECISION);
+        st = fx_apply(&m, mk(BB_A_TTM_TARGET, 0, 12, 7), &rng);
+        BB_CHECK_EQ(st, BB_STATUS_DECISION);
+        BB_CHECK(!bb_rng_error(&rng));
+        BB_CHECK_EQ(m.players[mate].x, 9);
+        BB_CHECK_EQ(m.players[mate].y, 4);
+        BB_CHECK_EQ(m.players[mate].stance, BB_STANCE_PRONE);
+        BB_CHECK_EQ(m.active_team, BB_HOME); // no ball held: no turnover
+    }
+    { // (b) control, no DP: the same 4 is Superb (4+) and the landing is a
+      // bare 3+ — the mate lands standing. Pins "exactly one pip worse".
+        bb_match m;
+        fx_match_midturn(&m, BB_HOME, 0);
+        int thrower = fx_lineman(&m, 0, 2, 10, 7);
+        fx_give_skill(&m, thrower, BB_SK_THROW_TEAM_MATE);
+        int mate = fx_lineman(&m, 0, 3, 10, 8);
+        fx_give_skill(&m, mate, BB_SK_RIGHT_STUFF);
+        fx_lineman(&m, 1, 0, 24, 1); // far-away opponent bystander, no DP
+        static const uint8_t dice[] = {4, 1, 1, 1, 3};
+        bb_rng rng;
+        bb_rng_script(&rng, dice, 5);
+
+        bb_status st = fx_run(&m, &rng);
+        st = fx_activate(&m, &rng, thrower, BB_ACT_TTM);
+        st = fx_apply(&m, mk(BB_A_SPECIAL_TARGET, 7, 10, 8), &rng);
+        st = fx_apply(&m, mk(BB_A_TTM_TARGET, 0, 12, 7), &rng);
+        BB_CHECK_EQ(st, BB_STATUS_DECISION);
+        BB_CHECK(!bb_rng_error(&rng));
+        BB_CHECK_EQ(m.players[mate].x, 9);
+        BB_CHECK_EQ(m.players[mate].y, 4);
+        BB_CHECK_EQ(m.players[mate].stance, BB_STANCE_STANDING);
+        BB_CHECK_EQ(m.active_team, BB_HOME);
+    }
+    { // (c) a DP player 4+ squares from the thrower contributes nothing:
+      // identical to the control even though DP is on the pitch.
+        bb_match m;
+        fx_match_midturn(&m, BB_HOME, 0);
+        int thrower = fx_lineman(&m, 0, 2, 10, 7);
+        fx_give_skill(&m, thrower, BB_SK_THROW_TEAM_MATE);
+        int mate = fx_lineman(&m, 0, 3, 10, 8);
+        fx_give_skill(&m, mate, BB_SK_RIGHT_STUFF);
+        int dp = fx_lineman(&m, 1, 0, 14, 7); // Chebyshev 4: out of range
+        fx_give_skill(&m, dp, BB_SK_DISTURBING_PRESENCE);
+        static const uint8_t dice[] = {4, 1, 1, 1, 3};
+        bb_rng rng;
+        bb_rng_script(&rng, dice, 5);
+
+        bb_status st = fx_run(&m, &rng);
+        st = fx_activate(&m, &rng, thrower, BB_ACT_TTM);
+        st = fx_apply(&m, mk(BB_A_SPECIAL_TARGET, 7, 10, 8), &rng);
+        st = fx_apply(&m, mk(BB_A_TTM_TARGET, 0, 12, 7), &rng);
+        BB_CHECK_EQ(st, BB_STATUS_DECISION);
+        BB_CHECK(!bb_rng_error(&rng));
+        BB_CHECK_EQ(m.players[mate].stance, BB_STANCE_STANDING);
+        BB_CHECK_EQ(m.active_team, BB_HOME);
+    }
 }

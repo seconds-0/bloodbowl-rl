@@ -18,7 +18,11 @@ BB_SKILL_REROLL(SURE_FEET, 1u << BB_TEST_RUSH)
 BB_SKILL_REROLL(SURE_HANDS, 1u << BB_TEST_PICKUP)
 // PASS: "may re-roll a failed Passing Ability Test when performing a Pass".
 BB_SKILL_REROLL(PASS, 1u << BB_TEST_PASS)
-// CATCH: "may re-roll a failed Agility Test when attempting to catch".
+// CATCH: "This player may re-roll any failed Agility Test when attempting to
+// Catch the ball." Interception attempts are NOT Catch attempts in BB2025
+// (Disturbing Presence / Extra Arms / Stunty name Intercept separately):
+// the dispatcher (bb_hook_reroll) excludes CATCH-kind tests whose ctx
+// carries a thrower in `other`. (adversarial review M11)
 BB_SKILL_REROLL(CATCH, 1u << BB_TEST_CATCH)
 
 // --- Test modifiers -------------------------------------------------------------
@@ -36,11 +40,15 @@ BB_SKILL_MOD(EXTRA_ARMS) {
     return (c->kind == BB_TEST_PICKUP || c->kind == BB_TEST_CATCH) ? 1 : 0;
 }
 
-// BIG HAND: ignore Marking modifiers when picking up the ball (modelled as
-// +1 per opponent marking the ball square, cancelling the base -1s).
+// BIG HAND: "This player ignores all negative modifiers when attempting to
+// pick up the ball." The engine's negative pickup modifiers are the Marking
+// -1s and Pouring Rain's -1 (the call sites add rain BEFORE this hook runs),
+// so the refund covers both. (adversarial review M13)
 BB_SKILL_MOD(BIG_HAND) {
     if (c->kind != BB_TEST_PICKUP) return 0;
-    return bb_tackle_zones(m, BB_TEAM_OF(c->player), c->to_x, c->to_y);
+    int neg = bb_tackle_zones(m, BB_TEAM_OF(c->player), c->to_x, c->to_y);
+    if (m->weather == BB_WEATHER_RAIN) neg += 1;
+    return neg;
 }
 
 // ACCURATE: "+1 modifier when this player makes a Passing Ability Test for a
@@ -56,20 +64,31 @@ BB_SKILL_MOD(CANNONEER) {
     return (c->kind == BB_TEST_PASS && c->range_band >= 2) ? 1 : 0;
 }
 
-// NERVES OF STEEL: "ignore any modifiers for being Marked when they attempt
-// to perform a Pass Action, attempt to Catch ... or attempt to Intercept."
+// NERVES OF STEEL: "This player may ignore any modifiers for being Marked
+// when making an Agility Test to Catch the ball, or when making a Passing
+// Ability Test to Pass the ball." The BB2025 text has NO Intercept clause
+// (unlike BB2020): an interception attempt — a CATCH-kind test whose ctx
+// carries the thrower in `other` — keeps its Marking penalties.
+// (adversarial review M11)
 BB_SKILL_MOD(NERVES_OF_STEEL) {
     if (c->kind != BB_TEST_PASS && c->kind != BB_TEST_CATCH) return 0;
+    if (c->kind == BB_TEST_CATCH && c->other != BB_NO_PLAYER)
+        return 0; // interception, not a Catch
     const bb_player* p = &m->players[c->player];
     return bb_tackle_zones(m, BB_TEAM_OF(c->player), p->x, p->y);
 }
 
 // --- Auras ----------------------------------------------------------------------
-// DISTURBING PRESENCE: "any opposition player ... must apply a -1 modifier
-// when they make a Passing Ability Test, or attempt to Catch or Intercept,
-// for each player on your team with this skill within three squares of them."
+// DISTURBING PRESENCE: "Any opposition player that performs a Pass Action,
+// Throw Team-mate Action or a Throw Bomb Special Action, or attempts to
+// Intercept or Catch the ball, applies a -1 modifier to their Passing
+// Ability Test or Agility Test for each player on your team with this Skill
+// within 3 squares of them." TTM included via the BB_TEST_TTM ctx (review
+// M12); interceptions are dispatched as CATCH-kind ctxs and so are covered.
 BB_SKILL_AURA(DISTURBING_PRESENCE) {
-    if (c->kind != BB_TEST_PASS && c->kind != BB_TEST_CATCH) return 0;
+    if (c->kind != BB_TEST_PASS && c->kind != BB_TEST_CATCH &&
+        c->kind != BB_TEST_TTM)
+        return 0;
     const bb_player* src = &m->players[c->other];   // aura source
     const bb_player* act = &m->players[c->player];  // acting player
     if (BB_TEAM_OF(c->other) == BB_TEAM_OF(c->player)) return 0;

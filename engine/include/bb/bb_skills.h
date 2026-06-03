@@ -22,12 +22,19 @@ typedef enum {
     BB_TEST_JUMP,       // jumping over a prone/stunned player (or Leap/Pogo)
     BB_TEST_STANDUP,    // MA<3 stand-up roll (Timmm-ber! modifies)
     BB_TEST_GENERIC,
+    BB_TEST_TTM,        // Throw/Kick Team-mate PA test (rolled inline in
+                        // proc_ttm; hook seam for auras like Disturbing
+                        // Presence — review M12)
     BB_TEST_KIND_COUNT
 } bb_test_kind;
 
-// Skill that grants a self-reroll for this test kind, if the player has it and
-// hasn't used it this activation. Returns skill id or -1.
-int bb_skill_reroll_for(const bb_match* m, int slot, int kind);
+// reroll_kinds (bb_hooks.h) and skill_rr_used (bb_types.h) are uint16 masks
+// indexed by bb_test_kind; a kind >= 16 would silently truncate to bit 0.
+_Static_assert(BB_TEST_KIND_COUNT <= 16,
+               "bb_test_kind must fit the uint16 re-roll masks");
+
+// Skill-granted self-rerolls live in the hook table: see bb_hook_reroll
+// (bb_hooks.h), which takes the test ctx so interceptions are excluded.
 
 // Loner (X+) gate value for team rerolls; 0 if player has no Loner.
 int bb_loner_value(const bb_match* m, int slot);

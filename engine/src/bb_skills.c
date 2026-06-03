@@ -2,13 +2,6 @@
 #include "bb/bb_proc.h"
 #include "bb/bb_hooks.h"
 
-int bb_skill_reroll_for(const bb_match* m, int slot, int kind) {
-    // Re-roll grants live in the hook registration table (skills_core.c
-    // registers Dodge/Sure Feet/Sure Hands/Pass/Catch; further skills register
-    // themselves). Once-per-turn latching is enforced by bb_hook_reroll.
-    return bb_hook_reroll(m, slot, kind);
-}
-
 int bb_loner_value(const bb_match* m, int slot) {
     const bb_player* p = &m->players[slot];
     if (!bb_has_skill(&p->skills, BB_SK_LONER)) return 0;
