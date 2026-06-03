@@ -179,3 +179,14 @@ ordered dice log. It does **not** yet mean the engine reproduces real games
 action-for-action — the layer-7 lockstep differential (normalized JSONL →
 engine `bb_replay` dice-script injection → state diff per command) is the
 next milestone and the reason the normalizer exists.
+
+## Lockstep differential v0 results (2026-06-03)
+
+First corpus run: 21 BB2025 replays replayed action-by-action through the
+engine with FUMBBL's dice injected. Mean 7.3% of ops consumed before first
+divergence (best replay 17.7%). Ranked divergence classes: dice_underrun (7),
+state (6), illegal (6), position (1), dice_overrun (1). Top unmapped
+mechanics (the v1 work queue): skill_use windows (535), moves outside
+activations (268 — follow-up/push trajectories), solidDefence/quickSnap
+repositioning (engine TODO per D21), chain pushes (43), unattached
+apothecary rolls (36). Full report: `python3 validation/lockstep_report.py`.
