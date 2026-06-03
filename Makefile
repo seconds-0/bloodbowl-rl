@@ -19,7 +19,7 @@ TEST_SRC := $(wildcard engine/tests/test_*.c)
 LIB      := $(BUILD)/libbb.a
 TESTBIN  := $(BUILD)/bb_tests
 
-.PHONY: all test asan fuzz coverage coverage-run clean
+.PHONY: all test asan fuzz coverage coverage-run lockstep clean
 
 all: test
 
@@ -57,6 +57,13 @@ fuzz:
 	$(FUZZ_CC) -std=c11 -O1 -g -fsanitize=fuzzer,address,undefined -Iengine/include \
 		engine/tests/fuzz_match.c $(SRC) -o build/fuzz/bb_fuzz
 	@echo "run: ./build/fuzz/bb_fuzz -max_total_time=300 engine/tests/corpus/"
+
+# FUMBBL lockstep differential runner (validation layer 7).
+# Links objects directly (constructor-registered skill hooks would be dropped
+# from a static archive).
+lockstep: $(OBJ)
+	$(CC) $(CFLAGS) tools/bb_lockstep.c $(OBJ) -o $(BUILD)/bb_lockstep
+	@echo "run: ./$(BUILD)/bb_lockstep validation/lockstep/<id>.jsonl"
 
 # Regenerate golden traces (explicit; goldens change when rules change).
 # Links objects directly (constructor-registered skill hooks would be dropped
