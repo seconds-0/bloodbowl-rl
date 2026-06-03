@@ -397,10 +397,15 @@ static bool kickoff_event(bb_match* m, bb_rng* rng) {
         }
         case BB_KO_BRILLIANT_COACHING: {
             // D6 per side (+assistant coaches TODO(phase3)); winner +1 reroll
-            // for this drive (expires at END_DRIVE).
+            // for this drive (tracked in bonus_rerolls; expires at END_DRIVE).
             int h = bb_d6(rng), a = bb_d6(rng);
-            if (h > a) m->rerolls[BB_HOME]++;
-            else if (a > h) m->rerolls[BB_AWAY]++;
+            if (h > a) {
+                m->rerolls[BB_HOME]++;
+                m->bonus_rerolls[BB_HOME]++;
+            } else if (a > h) {
+                m->rerolls[BB_AWAY]++;
+                m->bonus_rerolls[BB_AWAY]++;
+            }
             break;
         }
         case BB_KO_PITCH_INVASION: {
@@ -700,9 +705,15 @@ static void end_drive_advance(bb_match* m, bb_rng* rng) {
     m->ball.state = BB_BALL_OFF_PITCH;
     m->ball.carrier = BB_NO_PLAYER;
     m->turnover = 0;
-    // Bonus re-rolls (Brilliant Coaching) expire at the end of the drive.
+    // Drive-scoped bonus re-rolls (Brilliant Coaching) expire with the drive.
+    // Only the unspent bonuses are removed — the old clamp to rerolls_start
+    // also deleted the Leader re-roll (HALF scope, granted by PREGAME without
+    // touching rerolls_start) on any mid-half TD (review M2).
     for (int t = 0; t < 2; t++) {
-        if (m->rerolls[t] > m->rerolls_start[t]) m->rerolls[t] = m->rerolls_start[t];
+        uint8_t expire = m->bonus_rerolls[t] < m->rerolls[t] ? m->bonus_rerolls[t]
+                                                             : m->rerolls[t];
+        m->rerolls[t] = (uint8_t)(m->rerolls[t] - expire);
+        m->bonus_rerolls[t] = 0;
     }
     bb_pop(m);
 }

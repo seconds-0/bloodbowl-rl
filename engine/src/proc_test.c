@@ -140,6 +140,10 @@ static void test_apply(bb_match* m, bb_action a, bb_rng* rng) {
     }
     if (a.arg == BB_RR_TEAM) {
         m->rerolls[team]--;
+        // Drive-scoped bonuses (Brilliant Coaching) are spent first — they
+        // expire soonest (END_DRIVE), before the half-scoped Leader re-roll
+        // and the purchased complement.
+        if (m->bonus_rerolls[team]) m->bonus_rerolls[team]--;
         f->data |= TF_TEAM_USED;
         int loner = bb_loner_value(m, slot);
         if (loner > 0) {

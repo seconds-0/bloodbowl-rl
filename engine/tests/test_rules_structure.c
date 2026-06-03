@@ -1420,9 +1420,9 @@ BB_TEST(struct_opponent_turn_scorer_skips_next_turn) {
 // "END OF DRIVE SEQUENCE" / RR "TEAM RE-ROLLS"
 // ===========================================================================
 
-// MATCH frame private encoding (proc_match.c): data bit1 = "H1 kicker
-// latched", bit2 = the team that kicked first in half 1.
-enum { STX_MD_H1_SET = 1 << 1, STX_MD_H1_AWAY = 1 << 2 };
+// MATCH frame private encoding (proc_match.c): data bit0 = TD-scored latch,
+// bit1 = "H1 kicker latched", bit2 = the team that kicked first in half 1.
+enum { STX_MD_TD = 1 << 0, STX_MD_H1_SET = 1 << 1, STX_MD_H1_AWAY = 1 << 2 };
 
 // GAME ROUNDS: "At the start of the second half, the team that received the
 // ball at the start of the first half will become the kicking team" (also
@@ -1544,6 +1544,132 @@ BB_TEST(struct_team_rerolls_replenish_at_half_time) {
     // Rulebook: both teams restart the half with their full complement.
     BB_CHECK_EQ(m.rerolls[0], 3);
     BB_CHECK_EQ(m.rerolls[1], 3);
+}
+
+// SK "Leader (Passive)": "A team that has one or more players with this
+// Skill on the pitch at the start of a half may gain a single extra Team
+// Re-roll" — HALF scope. A TD that ends a drive mid-half must not delete an
+// unused Leader re-roll; the old END_DRIVE clamp to rerolls_start did
+// (adversarial review M2).
+BB_TEST(struct_leader_reroll_survives_mid_half_drive_end) {
+    bb_match m;
+    stx_base(&m);
+    int leader = stx_reserve(&m, BB_HOME, 0);
+    fx_give_skill(&m, leader, BB_SK_LEADER);
+    stx_reserve(&m, BB_AWAY, 0);
+    m.rerolls[0] = m.rerolls_start[0] = 3;
+    m.rerolls[1] = m.rerolls_start[1] = 3;
+    // PREGAME grants the Leader re-roll on top of the purchased complement
+    // (rerolls_start untouched).
+    bb_push(&m, BB_PROC_PREGAME, 0, 0, 0, 0);
+    bb_rng rng;
+    const uint8_t dice[] = {3, 4, 1}; // weather 2d6; toss: home wins
+    bb_rng_script(&rng, dice, 3);
+    bb_status st = fx_run(&m, &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    fx_apply(&m, stx_act(BB_A_CHOOSE_OPTION, 0, 0, 0), &rng); // home kicks
+    BB_CHECK(!bb_rng_error(&rng));
+    BB_CHECK_EQ(m.rerolls[BB_HOME], 4); // 3 purchased + Leader
+    BB_CHECK_EQ(m.rerolls_start[BB_HOME], 3);
+    BB_CHECK_EQ(m.rerolls[BB_AWAY], 3); // no Leader: no bonus
+    // Mid-half TD: the MATCH driver runs the end-of-drive sequence and starts
+    // the next drive. The Leader re-roll must still be in the pool.
+    m.stack_top = 0;
+    m.status = BB_STATUS_RUNNING;
+    m.half = 1;
+    m.turn[0] = m.turn[1] = 3; // mid-half
+    m.kicking_team = BB_HOME;  // the scorer kicks the next drive
+    bb_push(&m, BB_PROC_MATCH, 0, 0, 0, 0);
+    bb_top(&m)->phase = 3;
+    bb_top(&m)->data = STX_MD_TD | STX_MD_H1_SET;
+    bb_rng rng2;
+    bb_rng_script(&rng2, 0, 0); // no KO'd players: no recovery dice
+    st = fx_run(&m, &rng2);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK_EQ(stx_top_proc(&m), BB_PROC_SETUP); // next drive of the SAME half
+    BB_CHECK_EQ(m.half, 1);
+    BB_CHECK_EQ(m.rerolls[BB_HOME], 4); // Leader re-roll survived (was wiped)
+    BB_CHECK_EQ(m.rerolls[BB_AWAY], 3);
+}
+
+// GAME KICK-OFF EVENT 7 BRILLIANT COACHING: the winner "immediately gains a
+// free Team Re-roll for the Drive ahead" — DRIVE scope: an unused bonus
+// expires at the end of the drive; the purchased complement is untouched.
+BB_TEST(struct_brilliant_coaching_reroll_expires_at_drive_end) {
+    // Grant: tracked as a drive-scoped bonus on top of the pool.
+    bb_match m;
+    stx_kickoff_fixture(&m, BB_HOME);
+    fx_lineman(&m, 0, 0, 5, 5);
+    fx_lineman(&m, 1, 0, 20, 10);
+    m.rerolls[0] = m.rerolls[1] = 2;
+    m.rerolls_start[0] = m.rerolls_start[1] = 2;
+    bb_rng rng;
+    // d8=2,d6=3; event 3+4=7; home d6=5 vs away d6=2 -> home +1; bounce d8=1.
+    const uint8_t dice[] = {2, 3, 3, 4, 5, 2, 1};
+    bb_rng_script(&rng, dice, 7);
+    fx_run(&m, &rng);
+    bb_status st = fx_apply(&m, stx_act(BB_A_KICK_TARGET, 0, 18, 7), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK_EQ(m.rerolls[BB_HOME], 3);
+    BB_CHECK_EQ(m.bonus_rerolls[BB_HOME], 1);
+    BB_CHECK_EQ(m.rerolls[BB_AWAY], 2);
+    BB_CHECK_EQ(m.bonus_rerolls[BB_AWAY], 0);
+    // Expiry: END_DRIVE removes the unused drive bonus, nothing else.
+    bb_match m2;
+    stx_base(&m2);
+    m2.rerolls[0] = 3;
+    m2.rerolls_start[0] = 2;
+    m2.bonus_rerolls[0] = 1;
+    m2.rerolls[1] = 2;
+    m2.rerolls_start[1] = 2;
+    bb_push(&m2, BB_PROC_END_DRIVE, 0, 0, 0, 0);
+    bb_rng rng2;
+    bb_rng_script(&rng2, 0, 0);
+    st = fx_run(&m2, &rng2);
+    BB_CHECK(st == BB_STATUS_MATCH_OVER || st == BB_STATUS_DECISION);
+    BB_CHECK_EQ(m2.rerolls[0], 2);
+    BB_CHECK_EQ(m2.bonus_rerolls[0], 0);
+    BB_CHECK_EQ(m2.rerolls[1], 2);
+}
+
+// RR "Re-rolls" + SK "Leader": re-rolls are fungible in play, but their
+// scopes differ — a coach spends the soonest-expiring one first. A team
+// holding both a Brilliant Coaching bonus (drive) and a Leader re-roll
+// (half) that uses ONE team re-roll has consumed the Brilliant Coaching
+// bonus: the drive end must then leave the Leader re-roll in the pool.
+BB_TEST(struct_bonus_reroll_spent_before_leader) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 3);
+    int mover = fx_lineman(&m, 0, 0, 10, 7);
+    fx_lineman(&m, 1, 0, 10, 8);
+    // 3 purchased + 1 Leader (half scope) + 1 Brilliant Coaching (drive).
+    m.rerolls[BB_HOME] = 5;
+    m.bonus_rerolls[BB_HOME] = 1;
+    static const uint8_t dice[] = {2, 4}; // dodge fails; re-rolled 4 passes
+    bb_rng rng;
+    bb_rng_script(&rng, dice, 2);
+    bb_status st = fx_run(&m, &rng);
+    st = fx_apply(&m, stx_act(BB_A_ACTIVATE, mover, 0, 0), &rng);
+    st = fx_apply(&m, stx_act(BB_A_DECLARE, BB_ACT_MOVE, 0, 0), &rng);
+    st = fx_apply(&m, stx_act(BB_A_STEP, 0, 10, 6), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    st = fx_apply(&m, stx_act(BB_A_USE_REROLL, BB_RR_TEAM, 0, 0), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK(!bb_rng_error(&rng));
+    BB_CHECK_EQ(m.rerolls[BB_HOME], 4);
+    BB_CHECK_EQ(m.bonus_rerolls[BB_HOME], 0); // the drive bonus was the one spent
+    // At the drive end nothing more expires: the Leader re-roll survives.
+    bb_match m2;
+    stx_base(&m2);
+    m2.rerolls[0] = 4;
+    m2.rerolls_start[0] = 3;
+    m2.bonus_rerolls[0] = 0;
+    bb_push(&m2, BB_PROC_END_DRIVE, 0, 0, 0, 0);
+    bb_rng rng2;
+    bb_rng_script(&rng2, 0, 0);
+    st = fx_run(&m2, &rng2);
+    BB_CHECK(st == BB_STATUS_MATCH_OVER || st == BB_STATUS_DECISION);
+    BB_CHECK_EQ(m2.rerolls[0], 4);
 }
 
 // ENGINE-DIVERGENCE: GAME ARGUE THE CALL: "When a player is Sent-off for any
