@@ -165,6 +165,44 @@ static int bbe_ego_slot(int agent, int slot) {
     return agent == BB_AWAY ? (slot ^ BB_TEAM_SLOTS) : slot;
 }
 
+// Frame params a/b hold player slots only for SOME procs. The four
+// highest-frequency decision procs store TEAM IDS in a (PREGAME: toss winner;
+// SETUP/KICKOFF: kicking team; TEAM_TURN: acting team), and several store
+// kinds/flags in b (MOVE: bb_act_kind; TEST: bb_test_kind; CASUALTY /
+// KO_RECOVERY: apothecary-window flags). Team ids 0/1 pass a
+// `< BB_NUM_PLAYERS` check, so without a whitelist they get XOR-16
+// ego-remapped as if they were slots — the away agent would see "opponent
+// row 17" where the home agent sees "my player 0" for the same semantic
+// state, breaking the egocentric invariant on the modal decision type
+// (adversarial review M14). Whitelist per proc; non-slots encode as 0.
+static bool bbe_frame_a_is_slot(int proc) {
+    switch (proc) {
+    case BB_PROC_ACTIVATION:  // a = activating player
+    case BB_PROC_MOVE:        // a = mover
+    case BB_PROC_TEST:        // a = tested player
+    case BB_PROC_BLOCK:       // a = attacker
+    case BB_PROC_PUSH:        // a = pusher (direction origin)
+    case BB_PROC_CASUALTY:    // a = victim
+    case BB_PROC_FOUL:        // a = fouler
+    case BB_PROC_KO_RECOVERY: // a = KO-patch candidate
+    case BB_PROC_PASS:        // a = thrower (interception window)
+        return true;
+    default:
+        return false;
+    }
+}
+
+static bool bbe_frame_b_is_slot(int proc) {
+    switch (proc) {
+    case BB_PROC_BLOCK: // b = defender
+    case BB_PROC_PUSH:  // b = pushee
+    case BB_PROC_FOUL:  // b = victim
+        return true;
+    default:
+        return false;
+    }
+}
+
 static void bbe_encode_obs(Bloodbowl* env, int agent) {
     unsigned char* o = env->obs_ptr[agent];
     memset(o, 0, BBE_OBS_SIZE);
@@ -217,13 +255,18 @@ static void bbe_encode_obs(Bloodbowl* env, int agent) {
     if (top) {
         b[4] = top->proc;
         b[5] = top->phase;
-        // Frame a/b are player slots in every proc that surfaces decisions;
-        // remap egocentrically (+1, 0 = none/not-a-slot). Frame x/y are NOT
-        // exposed: their semantics vary per proc (squares, latch bits, skill
-        // payloads), so away-mirroring can't be applied consistently — the
-        // legal-action mask carries the spatial decision context instead.
-        b[6] = top->a < BB_NUM_PLAYERS ? (unsigned char)(1 + bbe_ego_slot(me, top->a)) : 0;
-        b[7] = top->b < BB_NUM_PLAYERS ? (unsigned char)(1 + bbe_ego_slot(me, top->b)) : 0;
+        // Frame a/b are player slots only for whitelisted procs (see
+        // bbe_frame_*_is_slot); remap those egocentrically (+1, 0 =
+        // none/not-a-slot). Frame x/y are NOT exposed: their semantics vary
+        // per proc (squares, latch bits, skill payloads), so away-mirroring
+        // can't be applied consistently — the legal-action mask carries the
+        // spatial decision context instead.
+        b[6] = (bbe_frame_a_is_slot(top->proc) && top->a < BB_NUM_PLAYERS)
+                   ? (unsigned char)(1 + bbe_ego_slot(me, top->a))
+                   : 0;
+        b[7] = (bbe_frame_b_is_slot(top->proc) && top->b < BB_NUM_PLAYERS)
+                   ? (unsigned char)(1 + bbe_ego_slot(me, top->b))
+                   : 0;
     }
     b[10] = (unsigned char)(m->decision_team == me);
     b[11] = (unsigned char)(m->active_team == me);
