@@ -19,7 +19,7 @@ TEST_SRC := $(wildcard engine/tests/test_*.c)
 LIB      := $(BUILD)/libbb.a
 TESTBIN  := $(BUILD)/bb_tests
 
-.PHONY: all test asan fuzz clean
+.PHONY: all test asan fuzz coverage coverage-run clean
 
 all: test
 
@@ -65,7 +65,14 @@ goldens: $(OBJ)
 	$(CC) $(CFLAGS) tools/gen_goldens.c $(OBJ) -o $(BUILD)/gen_goldens
 	./$(BUILD)/gen_goldens engine/tests/golden
 
-coverage: $(OBJ)
+# Coverage counters are compiled in ONLY here (-DBB_COVERAGE): the OpenMP
+# training build must not share-write the process-global counters (review P3).
+coverage:
+	$(MAKE) BUILD=build/coverage \
+		CFLAGS="-std=c11 -O2 -g -Wall -Wextra -Werror -Iengine/include -DBB_COVERAGE" \
+		coverage-run
+
+coverage-run: $(OBJ)
 	$(CC) $(CFLAGS) tools/coverage_report.c $(OBJ) -o $(BUILD)/coverage_report
 	./$(BUILD)/coverage_report
 

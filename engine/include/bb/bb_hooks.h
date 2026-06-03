@@ -118,10 +118,20 @@ int bb_hook_activation_gate(const bb_match* m, int slot, int* target, int* gk);
 int bb_next_skill(const bb_skillset* s, int start);
 
 // Rule-coverage instrumentation (validation layer 6): every time a skill's
-// effect actually fires, the engine bumps its counter. Always-on (one array
-// increment; negligible) — the report tool reads it after a corpus run.
+// effect actually fires, the engine bumps its counter — but only in
+// -DBB_COVERAGE builds (`make coverage`). The counters are one process-global
+// array, and the Linux training binding steps environments from multiple
+// OpenMP threads: unsynchronized cross-thread increments are a C11 data race
+// (UB, lost counts, cache ping-pong) that no sequential consumer ever reads
+// (review P3). Coverage reporting is sequential and opts in via the define.
 extern uint64_t bb_skill_exercised[BB_SKILL_COUNT];
-static inline void bb_cover(int skill_id) { bb_skill_exercised[skill_id]++; }
+static inline void bb_cover(int skill_id) {
+#ifdef BB_COVERAGE
+    bb_skill_exercised[skill_id]++;
+#else
+    (void)skill_id;
+#endif
+}
 
 // Aggregate queries used by the block/push/injury procedures.
 int bb_hook_push_flags(const bb_match* m, int slot);

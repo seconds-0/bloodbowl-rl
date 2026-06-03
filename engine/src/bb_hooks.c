@@ -63,7 +63,9 @@ int bb_hook_reroll(const bb_match* m, const bb_ctx* c) {
     for (int sk = bb_next_skill(&p->skills, 0); sk >= 0;
          sk = bb_next_skill(&p->skills, sk + 1)) {
         if (bb_hooks[sk].reroll_kinds & (1u << c->kind)) {
-            bb_cover(sk);
+            // No bb_cover here: this is a QUERY (also reached from const
+            // bb_legal_actions); coverage is recorded when the re-roll is
+            // actually consumed, in test_apply (review P3).
             return sk;
         }
     }
