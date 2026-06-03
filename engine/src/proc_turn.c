@@ -193,10 +193,12 @@ static int activation_legal(const bb_match* m, bb_action* out) {
     }
     // A player need not hold the ball to declare a Pass/Hand-off action —
     // they may pick it up during the move part (pick-up-then-throw).
-    if (!m->pass_used) {
+    // MY BALL: may not declare actions that would give up possession.
+    bool my_ball = bb_has_skill(&p->skills, BB_SK_MY_BALL) && (p->flags & BB_PF_HAS_BALL);
+    if (!m->pass_used && !my_ball) {
         out[n++] = (bb_action){BB_A_DECLARE, BB_ACT_PASS, 0, 0};
     }
-    if (!m->handoff_used) {
+    if (!m->handoff_used && !my_ball) {
         out[n++] = (bb_action){BB_A_DECLARE, BB_ACT_HANDOFF, 0, 0};
     }
     if (!m->foul_used && has_adjacent_downed_opponent(m, slot)) {
@@ -218,7 +220,10 @@ static int activation_legal(const bb_match* m, bb_action* out) {
             int cheb = dx > dy ? dx : dy;
             if (cheb <= 2) safe = false;
         }
-        if (safe) out[n++] = (bb_action){BB_A_DECLARE, BB_ACT_SECURE_BALL, 0, 0};
+        // UNSTEADY: "may not declare Secure the Ball Actions."
+        if (safe && !bb_has_skill(&p->skills, BB_SK_UNSTEADY)) {
+            out[n++] = (bb_action){BB_A_DECLARE, BB_ACT_SECURE_BALL, 0, 0};
+        }
     }
     // TODO(phase3): TTM declaration.
     return n;

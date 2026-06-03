@@ -67,6 +67,15 @@ static void execute_step(bb_match* m, bb_rng* rng, bb_frame* f) {
     }
     // Pick up the ball if it is on the destination square.
     if (m->ball.state == BB_BALL_ON_GROUND && m->ball.x == x && m->ball.y == y) {
+        if (bb_has_skill(&p->skills, BB_SK_NO_BALL)) {
+            // NO BALL: "will automatically fail ... as if they had rolled a
+            // natural 1" — the ball bounces, turnover.
+            int bx = x, by = y;
+            bb_turnover(m);
+            bb_pop(m); // MOVE
+            bb_push(m, BB_PROC_SCATTER, 0, 1, (uint8_t)bx, (uint8_t)by);
+            return;
+        }
         f->data |= MV_AWAIT_PICKUP;
         if (f->b == BB_ACT_SECURE_BALL) {
             // Secure the Ball: a flat 2+ regardless of AG; weather still
@@ -336,11 +345,15 @@ static void move_apply(bb_match* m, bb_action a, bb_rng* rng) {
             if (rush) f->data |= MV_RUSH_PEND;
             if (dodge) f->data |= MV_DODGE_PEND;
             if (rush) {
-                // Rush first: 2+ (Blizzard: an additional -1, so 3+).
-                int rush_target = m->weather == BB_WEATHER_BLIZZARD ? 3 : 2;
+                // Rush: 2+, Blizzard -1, plus skill mods (Drunkard...).
+                bb_ctx rc = {BB_TEST_RUSH, (uint8_t)slot, BB_NO_PLAYER,
+                             (int8_t)p->x, (int8_t)p->y, (int8_t)a.x, (int8_t)a.y, -1,
+                             f->b == BB_ACT_BLITZ};
+                int rmod = bb_hook_mods(m, &rc);
+                if (m->weather == BB_WEATHER_BLIZZARD) rmod -= 1;
                 f->data &= (uint16_t)~MV_RUSH_PEND;
                 f->data |= MV_AWAIT_TEST | (dodge ? MV_DODGE_PEND : 0) | MV_RUSH_PEND;
-                bb_push(m, BB_PROC_TEST, slot, BB_TEST_RUSH, rush_target, 0);
+                bb_push(m, BB_PROC_TEST, slot, BB_TEST_RUSH, bb_test_target(2, rmod), 0);
                 return;
             }
             if (dodge) {
@@ -372,8 +385,11 @@ static void move_apply(bb_match* m, bb_action a, bb_rng* rng) {
                     f->x = p->x;
                     f->y = p->y;
                     f->data |= MV_AWAIT_TEST | MV_RUSH_PEND | MV_BLOCK_RUSH;
-                    int rush_target = m->weather == BB_WEATHER_BLIZZARD ? 3 : 2;
-                    bb_push(m, BB_PROC_TEST, slot, BB_TEST_RUSH, rush_target, 0);
+                    bb_ctx rc = {BB_TEST_RUSH, (uint8_t)slot, BB_NO_PLAYER,
+                                 (int8_t)p->x, (int8_t)p->y, (int8_t)p->x, (int8_t)p->y, -1, 1};
+                    int rmod = bb_hook_mods(m, &rc);
+                    if (m->weather == BB_WEATHER_BLIZZARD) rmod -= 1;
+                    bb_push(m, BB_PROC_TEST, slot, BB_TEST_RUSH, bb_test_target(2, rmod), 0);
                     f->data = (uint16_t)(f->data | ((uint16_t)target << 9));
                     return;
                 }

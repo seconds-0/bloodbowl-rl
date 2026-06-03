@@ -131,7 +131,8 @@ static void catch_advance(bb_match* m, bb_rng* rng) {
     int slot = f->a;
     bb_player* p = &m->players[slot];
     if (f->phase == 0) {
-        if (!bb_can_catch(m, slot)) { // distracted/prone: auto-fail
+        if (!bb_can_catch(m, slot) ||
+            bb_has_skill(&p->skills, BB_SK_NO_BALL)) { // distracted/prone/No Ball: auto-fail
             int x = p->x, y = p->y;
             bb_pop(m);
             bb_push(m, BB_PROC_SCATTER, 0, 1, (uint8_t)x, (uint8_t)y);
@@ -258,6 +259,12 @@ static void pass_advance(bb_match* m, bb_rng* rng) {
         int mod = (int8_t)(f->data & 0xFF);
         bool fumble = die == 1 || die + mod <= 1;
         if (fumble) {
+            if (bb_has_skill(&p->skills, BB_SK_SAFE_PASS) && die == 1) {
+                // SAFE PASS: a natural 1 is not a Fumble — the player keeps
+                // the ball, the activation ends, no turnover.
+                bb_pop(m);
+                return;
+            }
             // Fumble: ball bounces from the thrower; unconditional turnover.
             int x = p->x, y = p->y;
             bb_pop(m);

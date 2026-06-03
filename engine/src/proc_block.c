@@ -461,9 +461,7 @@ static void armour_advance(bb_match* m, bb_rng* rng) {
     int d1 = bb_d6(rng), d2 = bb_d6(rng);
     int total = d1 + d2 + (int8_t)f.x + bb_hook_armour_mod(m, f.a, causer);
     m->ret = 0;
-    if (f.b) { // foul: report doubles to the FOUL parent via high bit
-        if (d1 == d2) m->ret |= 2;
-    }
+    bool foul_double = f.b && d1 == d2;
     bool broken = total >= m->players[f.a].av;
     bool mb_on_armour = false;
     if (!broken && causer >= 0 &&
@@ -481,6 +479,14 @@ static void armour_advance(bb_match* m, bb_rng* rng) {
         broken = true;
         mb_on_armour = true; // claws break leaves MB for... rules: MB cannot
                              // be used with Claws on the same roll; spend it.
+    }
+    if (foul_double) {
+        // SNEAKY GIT: "not Sent-off ... if a natural double is rolled for the
+        // Armour Roll, so long as the target player's Armour is not broken."
+        if (broken || causer < 0 ||
+            !bb_has_skill(&m->players[causer].skills, BB_SK_SNEAKY_GIT)) {
+            m->ret |= 2;
+        }
     }
     if (broken) {
         m->ret |= 1;
@@ -547,6 +553,13 @@ static void casualty_advance(bb_match* m, bb_rng* rng) {
     bb_pop(m);
     int slot = f.a;
     bb_player* p = &m->players[slot];
+    // REGENERATION: "before making the Casualty Roll ... On a 4+ this player
+    // regenerates and ignores the Casualty ... placed in the Reserves Box."
+    if (bb_has_skill(&p->skills, BB_SK_REGENERATION) && bb_d6(rng) >= 4) {
+        if (p->location == BB_LOC_ON_PITCH) bb_remove_from_pitch(m, slot, BB_LOC_RESERVES);
+        else p->location = BB_LOC_RESERVES;
+        return;
+    }
     int roll = bb_d16(rng);
     (void)bb_casualty_table[roll]; // outcome recorded for league mode later
     if (p->location == BB_LOC_ON_PITCH) bb_remove_from_pitch(m, slot, BB_LOC_CAS);
@@ -566,7 +579,7 @@ static void foul_advance(bb_match* m, bb_rng* rng) {
         int mod = off - def;
         f->phase = 1;
         m->ret = 0;
-        bb_push(m, BB_PROC_ARMOUR, f->b, 1, mod & 0xFF, 0);
+        bb_push(m, BB_PROC_ARMOUR, f->b, 1, mod & 0xFF, f->a + 1); // y = fouler+1
         return;
     }
     if (f->phase == 1) {
