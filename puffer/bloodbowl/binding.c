@@ -21,6 +21,37 @@ _Static_assert(OBS_SIZE == BBE_OBS_SIZE, "OBS_SIZE out of sync with bloodbowl.h"
 _Static_assert(MY_ACTION_MASK == BBE_MASK_SIZE,
                "MY_ACTION_MASK out of sync with bloodbowl.h");
 
+// ACT_SIZES must stay a plain brace literal (see the header comment above),
+// so tie its PARTITION to the BBE_HEAD_* source of truth instead of deriving
+// it: the MY_ACTION_MASK assert above only pins the sum, so a sum-preserving
+// drift (e.g. type head +1 / square head -1) would ship mis-partitioned masks
+// silently. Commas inside braces split macro arguments (only parens protect
+// them), which exposes the middle element to a _Static_assert; the outer
+// elements carry brace tokens the preprocessor can't strip, so they are
+// pinned at startup by bbe_check_act_sizes (called from both init entry
+// points).
+#define BBE_ACT_SECOND__(a, b, c) b
+#define BBE_ACT_SECOND_(...) BBE_ACT_SECOND__(__VA_ARGS__)
+#define BBE_ACT_SECOND(x) BBE_ACT_SECOND_(x)
+_Static_assert(NUM_ATNS == 3, "ACT_SIZES checks below assume 3 action heads");
+_Static_assert(sizeof((const int[])ACT_SIZES) == NUM_ATNS * sizeof(int),
+               "ACT_SIZES element count out of sync with NUM_ATNS");
+_Static_assert(BBE_ACT_SECOND(ACT_SIZES) == BBE_HEAD_ARG,
+               "ACT_SIZES arg head out of sync with BBE_HEAD_ARG");
+
+static const int bbe_act_sizes[] = ACT_SIZES;
+static void bbe_check_act_sizes(void) {
+    if (bbe_act_sizes[0] != BBE_HEAD_TYPE || bbe_act_sizes[1] != BBE_HEAD_ARG ||
+        bbe_act_sizes[2] != BBE_HEAD_SQ) {
+        fprintf(stderr,
+                "bloodbowl: ACT_SIZES {%d, %d, %d} out of sync with BBE_HEAD_* "
+                "{%d, %d, %d}\n",
+                bbe_act_sizes[0], bbe_act_sizes[1], bbe_act_sizes[2],
+                BBE_HEAD_TYPE, BBE_HEAD_ARG, BBE_HEAD_SQ);
+        exit(1);
+    }
+}
+
 // dict_get aborts on missing keys; tolerate sparse [env] config sections.
 static double kw(Dict* kwargs, const char* key, double fallback) {
     DictItem* item = dict_get_unsafe(kwargs, key);
@@ -58,6 +89,7 @@ void my_setup_perm(StaticVec* vec, Env* env, int slot_base) {
 
 Env* my_vec_init(int* num_envs_out, int* buffer_env_starts, int* buffer_env_counts,
                  Dict* vec_kwargs, Dict* env_kwargs) {
+    bbe_check_act_sizes();
     int total_agents = (int)dict_get(vec_kwargs, "total_agents")->value;
     int num_buffers = (int)dict_get(vec_kwargs, "num_buffers")->value;
     int agents_per_buffer = total_agents / num_buffers;
@@ -104,6 +136,7 @@ Env* my_vec_init(int* num_envs_out, int* buffer_env_starts, int* buffer_env_coun
 }
 
 void my_init(Env* env, Dict* kwargs) {
+    bbe_check_act_sizes();
     apply_kwargs(env, kwargs);
     env->num_agents = BBE_AGENTS;
     if (env->seed == 0) {
