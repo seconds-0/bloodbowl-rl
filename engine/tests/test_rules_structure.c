@@ -580,9 +580,10 @@ BB_TEST(struct_kickoff_event_pitch_invasion_rolloff) {
     bb_rng rng;
     // d8=2,d6=3 -> (18,4); event 6+6=12 PITCH INVASION.
     // Rulebook dice: home d6=6, away d6=1 -> away (lowest) selects d3=2
-    // players who become Stunned; home players are untouched. Bounce d8=1.
-    const uint8_t dice[] = {2, 3, 6, 6, 6, 1, 2, 1};
-    bb_rng_script(&rng, dice, 8);
+    // players who become Stunned (each selection consumes a scripted roll
+    // over the standing-candidate list — replay-faithful). Bounce d8=1.
+    const uint8_t dice[] = {2, 3, 6, 6, 6, 1, 2, 1, 1, 1};
+    bb_rng_script(&rng, dice, 10);
     fx_run(&m, &rng);
     bb_status st = fx_apply(&m, stx_act(BB_A_KICK_TARGET, 0, 18, 7), &rng);
     BB_CHECK_EQ(st, BB_STATUS_DECISION);
