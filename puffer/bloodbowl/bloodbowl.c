@@ -152,6 +152,8 @@ static int bbe_selftest(uint64_t seed, int episodes) {
     // would otherwise never advance or terminate).
     ST_CHECK(env.match.status == BB_STATUS_DECISION,
              "expected a decision state after the episode loop");
+    ST_CHECK(env.log.error_episodes == 0.0f,
+             "error episodes during normal play: %g", env.log.error_episodes);
     {
         float n_before = env.log.n;
         env.n_legal = 0; // simulate an enumerator returning no actions
@@ -160,8 +162,22 @@ static int bbe_selftest(uint64_t seed, int episodes) {
                  "empty-legal decision did not terminate the episode");
         ST_CHECK(env.log.n == n_before + 1,
                  "defensive reset did not log the episode");
+        ST_CHECK(env.log.error_episodes == 1.0f,
+                 "empty-legal defensive reset not counted: %g",
+                 env.log.error_episodes);
         ST_CHECK(env.match.status == BB_STATUS_DECISION && env.n_legal > 0,
                  "env did not reset to a fresh decision after defensive reset");
+    }
+    // BB_STATUS_ERROR mid-episode (the other defensive-reset trigger).
+    {
+        env.match.status = BB_STATUS_ERROR;
+        c_step(&env);
+        ST_CHECK(terminals[0] == 1.0f && terminals[1] == 1.0f,
+                 "ERROR status did not terminate the episode");
+        ST_CHECK(env.log.error_episodes == 2.0f,
+                 "ERROR defensive reset not counted: %g", env.log.error_episodes);
+        ST_CHECK(env.match.status == BB_STATUS_DECISION && env.n_legal > 0,
+                 "env did not reset to a fresh decision after ERROR reset");
     }
     printf("bloodbowl selftest: %d episodes, %d failure(s)\n", done, st_failures);
     return st_failures ? 1 : 0;

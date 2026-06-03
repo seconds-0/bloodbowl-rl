@@ -87,6 +87,10 @@ typedef struct {
     // reads hist_score_bank_<b>/hist_n_bank_<b> to drive bank swaps.
     float hist_score_bank[BBE_MAX_BANKS];
     float hist_n_bank[BBE_MAX_BANKS];
+    // Episodes ended by the defensive reset (BB_STATUS_ERROR or an empty
+    // legal set at a DECISION). Should stay at 0.0 on the dashboard; anything
+    // else means the engine/binding contract broke mid-training.
+    float error_episodes;
     float n;
 } Log;
 
@@ -584,6 +588,7 @@ static void c_step(Bloodbowl* env) {
         // DECISION whose legal set came back empty would otherwise livelock
         // the env forever — the mask path emits a defensive null action, but
         // the step path would never apply anything and never terminate.
+        env->log.error_episodes += 1;
         bbe_finish_episode(env);
     } else if (m->status == BB_STATUS_MATCH_OVER ||
                env->decisions >= env->max_decisions) {

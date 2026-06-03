@@ -119,6 +119,7 @@ void my_log(Log* log, Dict* out) {
     dict_set(out, "episode_return", log->episode_return);
     dict_set(out, "episode_length", log->episode_length);
     dict_set(out, "illegal_frac", log->illegal_frac);
+    dict_set(out, "error_episodes", log->error_episodes);
     dict_set(out, "hist_score_bank_0", log->hist_score_bank[0]);
     dict_set(out, "hist_score_bank_1", log->hist_score_bank[1]);
     dict_set(out, "hist_score_bank_2", log->hist_score_bank[2]);
