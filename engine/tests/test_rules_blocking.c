@@ -971,6 +971,166 @@ BB_TEST(blocking_blitz_may_rush_for_the_block) {
     BB_CHECK(fx_has_type(&m, BB_A_BLOCK_TARGET));
 }
 
+// ================================ FRENZY =====================================
+
+// SK#FRENZY (review M6): when the target of a Block Action is Pushed Back the
+// blocker must Follow-up if able; if the target is then still Standing, the
+// blocker MUST perform a second Block Action against the same player (again
+// following up on a push). There is never a third block.
+BB_TEST(blocking_frenzy_second_block_after_push) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int h1 = fx_lineman(&m, BB_HOME, 0, 10, 7);
+    int a1 = fx_lineman(&m, BB_AWAY, 0, 11, 7);
+    fx_give_skill(&m, h1, BB_SK_FRENZY);
+
+    uint8_t script[] = {3, 3}; // one push die per block, nothing else
+    bb_rng rng;
+    bb_rng_script(&rng, script, 2);
+    start_block(&m, &rng, h1, 11, 7);
+    apply_ok(&m, &rng, mk(BB_A_CHOOSE_DIE, 0, 0, 0));
+    apply_ok(&m, &rng, mk(BB_A_PUSH_SQUARE, 0, 12, 7));
+    // Frenzy: no follow-up decision (forced), and the second block's dice
+    // pool was rolled immediately — the next decision is a die choice.
+    BB_CHECK(!fx_has_type(&m, BB_A_FOLLOW_UP));
+    BB_CHECK_EQ(m.players[h1].x, 11); // followed up automatically
+    BB_CHECK_EQ(count_type(&m, BB_A_CHOOSE_DIE), 1);
+    apply_ok(&m, &rng, mk(BB_A_CHOOSE_DIE, 0, 0, 0));
+    apply_ok(&m, &rng, mk(BB_A_PUSH_SQUARE, 0, 13, 7));
+    // Second forced follow-up — and NO third block.
+    BB_CHECK(!fx_has_type(&m, BB_A_CHOOSE_DIE));
+    BB_CHECK(fx_has_type(&m, BB_A_END_ACTIVATION));
+    BB_CHECK_EQ(m.players[h1].x, 12);
+    BB_CHECK_EQ(m.players[a1].x, 13);
+    BB_CHECK_EQ(m.players[a1].stance, BB_STANCE_STANDING);
+    BB_CHECK_EQ(m.turnover, 0);
+    BB_CHECK(!bb_rng_error(&rng));
+}
+
+// SK#FRENZY during a Blitz: performing the second Block Action also costs a
+// square of movement (charged like the first block's square).
+BB_TEST(blocking_frenzy_blitz_second_block_costs_movement) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int h1 = fx_lineman(&m, BB_HOME, 0, 9, 7); // MA6
+    int a1 = fx_lineman(&m, BB_AWAY, 0, 11, 7);
+    fx_give_skill(&m, h1, BB_SK_FRENZY);
+
+    uint8_t script[] = {3, /*2nd block POW*/ 6, /*armour holds*/ 2, 2};
+    bb_rng rng;
+    bb_rng_script(&rng, script, 4);
+    bb_status st = fx_run(&m, &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    apply_ok(&m, &rng, mk(BB_A_ACTIVATE, h1, 0, 0));
+    apply_ok(&m, &rng, mk(BB_A_DECLARE, BB_ACT_BLITZ, 0, 0));
+    apply_ok(&m, &rng, mk(BB_A_STEP, 0, 10, 7));         // moved 1
+    apply_ok(&m, &rng, mk(BB_A_BLOCK_TARGET, 0, 11, 7)); // moved 2
+    apply_ok(&m, &rng, mk(BB_A_CHOOSE_DIE, 0, 0, 0));    // push
+    apply_ok(&m, &rng, mk(BB_A_PUSH_SQUARE, 0, 12, 7));  // forced follow-up
+    // The second block was rolled and charged one square of movement.
+    BB_CHECK_EQ(count_type(&m, BB_A_CHOOSE_DIE), 1);
+    BB_CHECK_EQ(m.players[h1].moved, 3);
+    apply_ok(&m, &rng, mk(BB_A_CHOOSE_DIE, 0, 0, 0)); // POW
+    apply_ok(&m, &rng, mk(BB_A_PUSH_SQUARE, 0, 13, 7));
+    BB_CHECK_EQ(m.players[h1].x, 12); // second forced follow-up
+    BB_CHECK_EQ(m.players[a1].x, 13);
+    BB_CHECK_EQ(m.players[a1].stance, BB_STANCE_PRONE); // POW knocked down
+    BB_CHECK_EQ(m.turnover, 0);
+    BB_CHECK(fx_has_type(&m, BB_A_STEP)); // blitz continues (moved 3 of 6)
+    BB_CHECK(!bb_rng_error(&rng));
+}
+
+// SK#FRENZY during a Blitz with no movement left: the player MUST Rush for
+// the second block. Passing the Rush performs the block.
+BB_TEST(blocking_frenzy_blitz_second_block_rush_pass) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int h1 = fx_player(&m, BB_HOME, 0, 10, 7, 1, 3, 3, 4, 9); // MA1
+    int a1 = fx_lineman(&m, BB_AWAY, 0, 11, 7);
+    fx_give_skill(&m, h1, BB_SK_FRENZY);
+
+    uint8_t script[] = {3, /*rush 2+*/ 2, /*2nd block die*/ 3};
+    bb_rng rng;
+    bb_rng_script(&rng, script, 3);
+    bb_status st = fx_run(&m, &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    apply_ok(&m, &rng, mk(BB_A_ACTIVATE, h1, 0, 0));
+    apply_ok(&m, &rng, mk(BB_A_DECLARE, BB_ACT_BLITZ, 0, 0));
+    apply_ok(&m, &rng, mk(BB_A_BLOCK_TARGET, 0, 11, 7)); // moved 1 = MA
+    apply_ok(&m, &rng, mk(BB_A_CHOOSE_DIE, 0, 0, 0));    // push
+    apply_ok(&m, &rng, mk(BB_A_PUSH_SQUARE, 0, 12, 7));  // forced follow-up
+    // Out of MA: the Rush was rolled (and passed) for the second block.
+    BB_CHECK_EQ(m.players[h1].rushes, 1);
+    BB_CHECK_EQ(count_type(&m, BB_A_CHOOSE_DIE), 1);
+    apply_ok(&m, &rng, mk(BB_A_CHOOSE_DIE, 0, 0, 0));
+    apply_ok(&m, &rng, mk(BB_A_PUSH_SQUARE, 0, 13, 7));
+    BB_CHECK_EQ(m.players[h1].x, 12);
+    BB_CHECK_EQ(m.players[a1].x, 13);
+    BB_CHECK_EQ(m.players[a1].stance, BB_STANCE_STANDING);
+    BB_CHECK_EQ(m.turnover, 0);
+    BB_CHECK(!bb_rng_error(&rng));
+}
+
+// SK#FRENZY + RR#THE TURNOVER: failing the forced Rush for the second block
+// knocks the blocker down in place — no second block, Turnover.
+BB_TEST(blocking_frenzy_blitz_second_block_rush_fail) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int h1 = fx_player(&m, BB_HOME, 0, 10, 7, 1, 3, 3, 4, 9); // MA1
+    int a1 = fx_lineman(&m, BB_AWAY, 0, 11, 7);
+    fx_give_skill(&m, h1, BB_SK_FRENZY);
+
+    uint8_t script[] = {3, /*rush fails*/ 1, /*blocker armour holds*/ 2, 2};
+    bb_rng rng;
+    bb_rng_script(&rng, script, 4);
+    bb_status st = fx_run(&m, &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    apply_ok(&m, &rng, mk(BB_A_ACTIVATE, h1, 0, 0));
+    apply_ok(&m, &rng, mk(BB_A_DECLARE, BB_ACT_BLITZ, 0, 0));
+    apply_ok(&m, &rng, mk(BB_A_BLOCK_TARGET, 0, 11, 7));
+    apply_ok(&m, &rng, mk(BB_A_CHOOSE_DIE, 0, 0, 0));   // push
+    apply_ok(&m, &rng, mk(BB_A_PUSH_SQUARE, 0, 12, 7)); // follow-up, rush fails
+    BB_CHECK_EQ(m.players[h1].stance, BB_STANCE_PRONE); // down in place
+    BB_CHECK_EQ(m.players[h1].x, 11);
+    BB_CHECK_EQ(m.players[a1].stance, BB_STANCE_STANDING); // never re-blocked
+    BB_CHECK_EQ(m.players[a1].x, 12);
+    BB_CHECK_EQ(m.active_team, BB_AWAY); // turnover ended the home turn
+    BB_CHECK(!bb_rng_error(&rng));
+}
+
+// SK#FRENZY during a Blitz: "If this player cannot Rush then they cannot
+// perform the second Block Action" — all Rushes already used: no second
+// block, the activation simply continues.
+BB_TEST(blocking_frenzy_blitz_second_block_cannot_rush) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int h1 = fx_player(&m, BB_HOME, 0, 8, 7, 1, 3, 3, 4, 9); // MA1
+    int a1 = fx_lineman(&m, BB_AWAY, 0, 11, 7);
+    fx_give_skill(&m, h1, BB_SK_FRENZY);
+
+    uint8_t script[] = {/*rush step*/ 2, /*rush for block*/ 2, /*die*/ 3};
+    bb_rng rng;
+    bb_rng_script(&rng, script, 3);
+    bb_status st = fx_run(&m, &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    apply_ok(&m, &rng, mk(BB_A_ACTIVATE, h1, 0, 0));
+    apply_ok(&m, &rng, mk(BB_A_DECLARE, BB_ACT_BLITZ, 0, 0));
+    apply_ok(&m, &rng, mk(BB_A_STEP, 0, 9, 7));          // MA spent
+    apply_ok(&m, &rng, mk(BB_A_STEP, 0, 10, 7));         // Rush #1
+    apply_ok(&m, &rng, mk(BB_A_BLOCK_TARGET, 0, 11, 7)); // Rush #2 (for block)
+    apply_ok(&m, &rng, mk(BB_A_CHOOSE_DIE, 0, 0, 0));    // push
+    apply_ok(&m, &rng, mk(BB_A_PUSH_SQUARE, 0, 12, 7));  // forced follow-up
+    // Both Rushes used: the second block cannot be performed.
+    BB_CHECK_EQ(m.players[h1].rushes, 2);
+    BB_CHECK(!fx_has_type(&m, BB_A_CHOOSE_DIE));
+    BB_CHECK(fx_has_type(&m, BB_A_END_ACTIVATION));
+    BB_CHECK_EQ(m.players[h1].x, 11);
+    BB_CHECK_EQ(m.players[a1].x, 12);
+    BB_CHECK_EQ(m.players[a1].stance, BB_STANCE_STANDING);
+    BB_CHECK_EQ(m.turnover, 0);
+    BB_CHECK(!bb_rng_error(&rng));
+}
+
 // ============================ TEAM RE-ROLLS ==================================
 
 // RR#TEAM RE-ROLLS: a team re-roll applied to a dice pool re-rolls ALL dice in

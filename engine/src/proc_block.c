@@ -37,7 +37,9 @@ static int count_assists(const bb_match* m, int for_slot, int against_slot) {
 }
 
 enum { PSH_POW = 1 << 0, PSH_CHAIN = 1 << 1, PSH_MOVED = 1 << 2, PSH_FUP = 1 << 3,
-       PSH_CROWD = 1 << 4, PSH_FROM_BLITZ = 1 << 5, PSH_STOOD_FIRM = 1 << 6 };
+       PSH_CROWD = 1 << 4, PSH_FROM_BLITZ = 1 << 5, PSH_STOOD_FIRM = 1 << 6,
+       // This push came from the Frenzy SECOND block: never a third (M6).
+       PSH_FRENZY_DONE = 1 << 7 };
 
 // ===== BLOCK ==================================================================
 // a = attacker, b = defender.
@@ -185,8 +187,11 @@ static void block_advance(bb_match* m, bb_rng* rng) {
             nd = st_d > 2 * st_a ? 3 : 2;
             def_chooses = true;
         }
-        f->data = (uint16_t)((f->data & BLK_IS_BLITZ) | ((nd - 1) << 9) |
-                             (def_chooses ? BLK_DEF_CHOOSES : 0));
+        // Keep BLK_FRENZY_2ND across the rebuild: resolve_face propagates it
+        // into the resulting PUSH (PSH_FRENZY_DONE) so the mandatory Frenzy
+        // second block can never spawn a third (review M6).
+        f->data = (uint16_t)((f->data & (BLK_IS_BLITZ | BLK_FRENZY_2ND)) |
+                             ((nd - 1) << 9) | (def_chooses ? BLK_DEF_CHOOSES : 0));
         blk_roll_pool(f, rng);
         // BRAWLER: "may re-roll a single Both Down result" (without a team
         // re-roll). Auto-policy: reroll the first Both Down when the pool has
@@ -279,9 +284,11 @@ static void resolve_face(bb_match* m, bb_frame* f, int face) {
                 bb_has_skill(&m->players[att].skills, BB_SK_JUGGERNAUT)) {
                 // Snapshot before pop: bb_push reuses the popped slot, so f
                 // would alias the new frame (Codex finding).
+                uint16_t f2 = f->data & BLK_FRENZY_2ND;
                 bb_pop(m);
                 bb_push(m, BB_PROC_PUSH, att, def, ax, ay);
                 bb_top(m)->data |= PSH_FROM_BLITZ;
+                if (f2) bb_top(m)->data |= PSH_FRENZY_DONE;
                 return;
             }
             // Wrestle (either player): both players are PLACED Prone — no
@@ -320,7 +327,7 @@ static void resolve_face(bb_match* m, bb_frame* f, int face) {
             bb_pop(m);
             bb_push(m, BB_PROC_PUSH, att, def, ax, ay);
             if (blitz) bb_top(m)->data |= PSH_FROM_BLITZ;
-            if (f2) bb_top(m)->data |= 1 << 7; // PSH_FRENZY_DONE
+            if (f2) bb_top(m)->data |= PSH_FRENZY_DONE;
             return;
         }
         case BB_BD_STUMBLE: {
@@ -333,7 +340,7 @@ static void resolve_face(bb_match* m, bb_frame* f, int face) {
             bb_push(m, BB_PROC_PUSH, att, def, ax, ay);
             if (!dodge) bb_top(m)->data |= 1; // pow flag
             if (blitz) bb_top(m)->data |= PSH_FROM_BLITZ;
-            if (f2) bb_top(m)->data |= 1 << 7;
+            if (f2) bb_top(m)->data |= PSH_FRENZY_DONE;
             return;
         }
         case BB_BD_POW: {
@@ -343,7 +350,7 @@ static void resolve_face(bb_match* m, bb_frame* f, int face) {
             bb_push(m, BB_PROC_PUSH, att, def, ax, ay);
             bb_top(m)->data |= 1; // pow flag
             if (blitz) bb_top(m)->data |= PSH_FROM_BLITZ;
-            if (f2) bb_top(m)->data |= 1 << 7;
+            if (f2) bb_top(m)->data |= PSH_FRENZY_DONE;
             return;
         }
     }
@@ -521,14 +528,72 @@ static void push_advance(bb_match* m, bb_rng* rng) {
         int att = f->a;
         int def = f->b;
         uint16_t data = f->data;
+        // FRENZY: after the original block's push (not a chain link) with the
+        // target still Standing and the attacker adjacent — via the forced
+        // follow-up, or Stand Firm leaving both in place — the attacker MUST
+        // perform a second Block Action against the same player. Pushes
+        // spawned by that second block carry PSH_FRENZY_DONE so a third can
+        // never happen (review M6).
+        bool frenzy2 =
+            !(data & (PSH_CHAIN | PSH_CROWD | PSH_POW | PSH_FRENZY_DONE)) &&
+            !m->turnover &&
+            bb_has_skill(&m->players[att].skills, BB_SK_FRENZY) &&
+            m->players[att].location == BB_LOC_ON_PITCH &&
+            m->players[att].stance == BB_STANCE_STANDING &&
+            m->players[def].location == BB_LOC_ON_PITCH &&
+            m->players[def].stance == BB_STANCE_STANDING &&
+            bb_adjacent(m->players[att].x, m->players[att].y,
+                        m->players[def].x, m->players[def].y);
+        bool blitz = (data & PSH_FROM_BLITZ) != 0;
+        if (frenzy2 && blitz && m->players[att].moved >= m->players[att].ma) {
+            // Blitz: the second block also costs a square of movement; with
+            // none left the player must Rush, and if they cannot Rush the
+            // second block cannot be performed.
+            if (m->players[att].rushes >= bb_max_rushes(m, att)) {
+                frenzy2 = false;
+            } else {
+                bb_player* ap = &m->players[att];
+                f->phase = 6; // consume the rush result before the block
+                ap->rushes++;
+                bb_ctx rc = {BB_TEST_RUSH, (uint8_t)att, BB_NO_PLAYER, (uint8_t)att,
+                             (int8_t)ap->x, (int8_t)ap->y, (int8_t)ap->x,
+                             (int8_t)ap->y, -1, 1};
+                int rmod = bb_hook_mods(m, &rc);
+                if (m->weather == BB_WEATHER_BLIZZARD) rmod -= 1;
+                bb_push(m, BB_PROC_TEST, att, BB_TEST_RUSH,
+                        bb_test_target(2, rmod), 0);
+                return;
+            }
+        }
         bb_pop(m);
         if (data & PSH_CROWD) {
             return; // crowd was resolved at relocation time
         }
         if (data & PSH_POW) {
             bb_knockdown2(m, def, BB_KD_BLOCK, 0, att);
+            return;
+        }
+        if (bb_check_td(m)) {
+            return; // pushed into their own end zone while holding: no block
+        }
+        if (frenzy2) {
+            if (blitz) m->players[att].moved++; // the second block's square
+            bb_push(m, BB_PROC_BLOCK, att, def, 0, 0);
+            bb_top(m)->data |= BLK_FRENZY_2ND | (blitz ? BLK_IS_BLITZ : 0);
+        }
+        return;
+    }
+    if (f->phase == 6) {
+        // Frenzy second-block Rush (blitz with no movement left) resolved.
+        int att = f->a;
+        int def = f->b;
+        bb_pop(m);
+        if (m->ret & 1) {
+            bb_push(m, BB_PROC_BLOCK, att, def, 0, 0);
+            bb_top(m)->data |= BLK_FRENZY_2ND | BLK_IS_BLITZ;
         } else {
-            bb_check_td(m); // pushed into their own end zone while holding
+            // Failed rush: knocked down in place, no second block (turnover).
+            bb_knockdown(m, att, BB_KD_FAILED_RUSH, 0);
         }
         return;
     }
