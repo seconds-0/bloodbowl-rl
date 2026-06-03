@@ -115,6 +115,9 @@ typedef struct {
     float reward_td;
     float reward_win;
     int max_decisions;
+    // Spectator rendering (bbe_render.h); NULL until c_render is first called.
+    int render_fps;
+    void* client;
 
     bb_match match;
     bb_rng rng;     // in-match dice
@@ -440,8 +443,26 @@ static void c_step(Bloodbowl* env) {
     bbe_emit_all(env);
 }
 
+// Spectator rendering (raylib). Included here, after the Bloodbowl struct, so
+// the client can draw straight from env state. Training never calls c_render;
+// builds without raylib on the include path (fuzzing, quick local compiles)
+// degrade to a no-op renderer.
+#if defined(__has_include)
+#if __has_include("raylib.h")
+#define BBE_HAVE_RAYLIB 1
+#endif
+#endif
+
+#ifdef BBE_HAVE_RAYLIB
+#include "bbe_render.h"
+#endif
+
 static void c_render(Bloodbowl* env) {
-    (void)env; // headless; the raylib replay viewer is a separate tool
+#ifdef BBE_HAVE_RAYLIB
+    bbe_render_draw(env);
+#else
+    (void)env;
+#endif
 }
 
 static void c_close(Bloodbowl* env) {

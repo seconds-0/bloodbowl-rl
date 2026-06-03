@@ -34,6 +34,7 @@ static void apply_kwargs(Env* env, Dict* kwargs) {
     if (env->max_decisions <= 0 || env->max_decisions > BBE_MAX_DECISIONS) {
         env->max_decisions = BBE_MAX_DECISIONS;
     }
+    env->render_fps = (int)kw(kwargs, "render_fps", 60.0);
 }
 
 void my_setup_perm(StaticVec* vec, Env* env, int slot_base) {
