@@ -353,8 +353,11 @@ static int pass_legal(const bb_match* m, bb_action* out) {
     uint8_t cands[16];
     int nc = interception_candidates(m, f->a, f->x, f->y, cands);
     int n = 0;
+    // CHOOSE_OPTION carries the candidate INDEX, not the player slot
+    // (bb_actions.h contract; raw slots leaked side-dependent arg semantics
+    // into the RL action heads — review M15). Resolved in pass_apply.
     for (int i = 0; i < nc; i++) {
-        out[n++] = (bb_action){BB_A_CHOOSE_OPTION, cands[i], 0, 0};
+        out[n++] = (bb_action){BB_A_CHOOSE_OPTION, (uint8_t)i, 0, 0};
     }
     out[n++] = (bb_action){BB_A_CHOOSE_OPTION, 0xFE, 0, 0}; // decline
     return n;
@@ -385,7 +388,14 @@ static void pass_apply(bb_match* m, bb_action a, bb_rng* rng) {
         pass_resolve_flight(m, fr);
         return;
     }
-    pass_start_interception(m, f, a.arg);
+    // a.arg is the candidate index; re-derive the (pure) candidate list.
+    uint8_t cands[16];
+    int nc = interception_candidates(m, f->a, f->x, f->y, cands);
+    if (a.arg >= nc) { // engine-bug canary: stale/foreign index
+        m->status = BB_STATUS_ERROR;
+        return;
+    }
+    pass_start_interception(m, f, cands[a.arg]);
 }
 
 // ===== HANDOFF ================================================================

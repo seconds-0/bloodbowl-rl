@@ -570,6 +570,26 @@ static void kickoff_advance(bb_match* m, bb_rng* rng) {
     m->status = BB_STATUS_ERROR;
 }
 
+
+// High Kick: enumerate Open (standing, unmarked) receiving players eligible
+// to be placed under the ball. Pure; shared by kickoff legal/apply (M15).
+static int high_kick_candidates(const bb_match* m, int kicking, uint8_t* out) {
+    int receiving = 1 - kicking;
+    if (!bb_on_pitch_xy(m->ball.x, m->ball.y) || m->grid[m->ball.x][m->ball.y] ||
+        bb_own_half_x(kicking, m->ball.x)) {
+        return 0;
+    }
+    int nc = 0;
+    for (int s = receiving * BB_TEAM_SLOTS; s < (receiving + 1) * BB_TEAM_SLOTS; s++) {
+        const bb_player* p = &m->players[s];
+        if (p->location != BB_LOC_ON_PITCH) continue;
+        if (p->stance != BB_STANCE_STANDING) continue;
+        if (bb_is_marked(m, s)) continue;
+        out[nc++] = (uint8_t)s;
+    }
+    return nc;
+}
+
 static int kickoff_legal(const bb_match* m, bb_action* out) {
     const bb_frame* f = &m->stack[m->stack_top - 1];
     int n = 0;
@@ -587,18 +607,12 @@ static int kickoff_legal(const bb_match* m, bb_action* out) {
     if (f->phase == 4) {
         // High Kick: any Open (standing, unmarked) receiving player may be
         // placed in the (on-pitch, unoccupied, receiving-half) landing square.
-        int receiving = 1 - f->a;
-        bool sq_ok = bb_on_pitch_xy(m->ball.x, m->ball.y) &&
-                     !m->grid[m->ball.x][m->ball.y] &&
-                     !bb_own_half_x(f->a, m->ball.x);
-        if (sq_ok) {
-            for (int s = receiving * BB_TEAM_SLOTS; s < (receiving + 1) * BB_TEAM_SLOTS; s++) {
-                const bb_player* p = &m->players[s];
-                if (p->location != BB_LOC_ON_PITCH) continue;
-                if (p->stance != BB_STANCE_STANDING) continue;
-                if (bb_is_marked(m, s)) continue;
-                out[n++] = (bb_action){BB_A_CHOOSE_OPTION, (uint8_t)s, 0, 0};
-            }
+        // CHOOSE_OPTION carries the candidate INDEX (review M15); resolved in
+        // kickoff_apply via the same (pure) enumeration.
+        uint8_t cands[BB_TEAM_SLOTS];
+        int nc = high_kick_candidates(m, f->a, cands);
+        for (int i = 0; i < nc; i++) {
+            out[n++] = (bb_action){BB_A_CHOOSE_OPTION, (uint8_t)i, 0, 0};
         }
         out[n++] = (bb_action){BB_A_CHOOSE_OPTION, 0xFE, 0, 0}; // decline
         return n;
@@ -636,9 +650,15 @@ static void kickoff_apply(bb_match* m, bb_action a, bb_rng* rng) {
         f->phase = 1;
         return;
     }
-    if (f->phase == 4) { // High Kick placement
+    if (f->phase == 4) { // High Kick placement (a.arg = candidate index)
         if (a.arg != 0xFE) {
-            bb_place(m, a.arg, m->ball.x, m->ball.y);
+            uint8_t cands[BB_TEAM_SLOTS];
+            int nc = high_kick_candidates(m, f->a, cands);
+            if (a.arg >= nc) { // engine-bug canary
+                m->status = BB_STATUS_ERROR;
+                return;
+            }
+            bb_place(m, cands[a.arg], m->ball.x, m->ball.y);
         }
         kickoff_land(m);
         return;

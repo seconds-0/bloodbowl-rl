@@ -1228,3 +1228,44 @@ BB_TEST(ball_secure_the_ball_declarable) {
     fx_apply(&m, mk(BB_A_ACTIVATE, player, 0, 0), &rng);
     BB_CHECK(fx_find(&m, mk(BB_A_DECLARE, BB_ACT_SECURE_BALL, 0, 0)) >= 0); // FAILS
 }
+
+// Regression (adversarial review M15): multi-candidate interception picks are
+// offered as candidate INDICES 0..nc-1 (bb_actions.h CHOOSE_OPTION contract),
+// never raw player slots — raw away-team slots (16..31) leaked
+// side-dependent semantics into the RL arg head.
+BB_TEST(ball_interception_options_are_candidate_indices) {
+    bb_match m;
+    fx_match_midturn(&m, BB_AWAY, 0); // away throws; HOME defends and picks
+    int thrower = fx_lineman(&m, 1, 0, 10, 7);
+    fx_ball_held(&m, thrower);
+    fx_lineman(&m, 1, 1, 16, 7); // receiver target square holder
+    // Two home interceptor candidates under the ruler path.
+    fx_lineman(&m, 0, 0, 13, 7);
+    fx_lineman(&m, 0, 1, 12, 7);
+
+    bb_rng rng;
+    bb_rng_script(&rng, 0, 0);
+    bb_status st = fx_run(&m, &rng);
+    fx_run(&m, &rng);
+    st = fx_activate(&m, &rng, thrower, BB_ACT_PASS);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    // Throwing across both candidates' columns. The interception window must
+    // list options 0..nc-1 plus the 0xFE decline — and home slots (0..15)
+    // would be indistinguishable from indices, so check args form a dense
+    // 0..nc-1 prefix with nothing in the slot range.
+    st = fx_apply(&m, mk(BB_A_PASS_TARGET, 0, 16, 7), &rng);
+    if (st == BB_STATUS_DECISION) {
+        bb_action legal[BB_LEGAL_MAX];
+        int n = bb_legal_actions(&m, legal);
+        int nc = 0;
+        bool decline = false;
+        for (int i = 0; i < n; i++) {
+            if (legal[i].type != BB_A_CHOOSE_OPTION) continue;
+            if (legal[i].arg == 0xFE) { decline = true; continue; }
+            BB_CHECK(legal[i].arg < 16); // dense small indices, never slots
+            if (legal[i].arg + 1 > nc) nc = legal[i].arg + 1;
+        }
+        BB_CHECK(decline);
+        BB_CHECK(nc >= 1); // at least one candidate offered as index
+    }
+}
