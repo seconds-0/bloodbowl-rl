@@ -12,11 +12,7 @@ int bb_skill_reroll_for(const bb_match* m, int slot, int kind) {
 int bb_loner_value(const bb_match* m, int slot) {
     const bb_player* p = &m->players[slot];
     if (!bb_has_skill(&p->skills, BB_SK_LONER)) return 0;
-    // Per-player Loner values (3+ Ogres) come from roster skill_values; the
-    // default is 4+. Per-player parameter storage lands with procedural
-    // generation; for codegen'd default squads the default is correct except
-    // the three 3+ Ogres. TODO(phase5): per-player skill parameter table.
-    return 4;
+    return p->p_loner > 0 ? p->p_loner : 4;
 }
 
 int bb_max_rushes(const bb_match* m, int slot) {

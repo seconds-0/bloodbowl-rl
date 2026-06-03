@@ -75,6 +75,10 @@ typedef enum {
     BB_ACT_SECURE_BALL,  // BB2025
     BB_ACT_STAB,         // Stab Special Action (also blitz-block replacement)
     BB_ACT_GAZE,         // Hypnotic Gaze Special Action (move, then gaze)
+    BB_ACT_KTM,          // Kick Team-mate (separate once-per-turn budget)
+    BB_ACT_CHAINSAW,     // Chainsaw Attack Special Action
+    BB_ACT_BREATHE_FIRE, // Breathe Fire Special Action
+    BB_ACT_VOMIT,        // Projectile Vomit Special Action
     BB_ACT_KIND_COUNT
 } bb_act_kind;
 

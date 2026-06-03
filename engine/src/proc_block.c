@@ -348,6 +348,17 @@ static void push_advance(bb_match* m, bb_rng* rng) {
             return;
         }
         bb_place(m, def, f->x, f->y);
+        // STRIP BALL: "if an opposition player [holding the ball] is Pushed
+        // Back then they will [drop the ball]" — bounce from the destination.
+        // Monstrous Mouth blocks it.
+        if ((dp->flags & BB_PF_HAS_BALL) && !(f->data & PSH_CHAIN) &&
+            bb_has_skill(&m->players[f->a].skills, BB_SK_STRIP_BALL) &&
+            !bb_has_skill(&dp->skills, BB_SK_MONSTROUS_MOUTH)) {
+            bb_cover(BB_SK_STRIP_BALL);
+            int sx = f->x, sy = f->y;
+            bb_drop_ball(m);
+            bb_push(m, BB_PROC_SCATTER, 0, 1, (uint8_t)sx, (uint8_t)sy);
+        }
         // EYE GOUGE: a player Pushed Back by this player cannot assist until
         // next activated (chain-pushed players unaffected per FAQ).
         if (!(f->data & PSH_CHAIN) &&
@@ -527,13 +538,23 @@ static void push_apply(bb_match* m, bb_action a, bb_rng* rng) {
 // a = slot, b = cause, x = armour modifier.
 
 static void knockdown_advance(bb_match* m, bb_rng* rng) {
-    (void)rng;
     bb_frame f = *bb_top(m);
     bb_pop(m);
     bb_player* p = &m->players[f.a];
+    // STEADY FOOTING: "Whenever this player would be Knocked Down or Fall
+    // Over, roll a D6. On a 6, this player does not get Knocked Down."
+    if (bb_has_skill(&p->skills, BB_SK_STEADY_FOOTING) && bb_d6(rng) == 6) {
+        bb_cover(BB_SK_STEADY_FOOTING);
+        return;
+    }
     p->stance = BB_STANCE_PRONE;
     p->flags &= (uint16_t)~BB_PF_ROOTED; // going down un-roots
-    if (BB_TEAM_OF(f.a) == m->active_team) bb_turnover(m);
+    if (f.b == BB_KD_TTM_LANDING) {
+        // TTM landing: turnover only when the thrown player held the ball.
+        if (p->flags & BB_PF_HAS_BALL) bb_turnover(m);
+    } else if (BB_TEAM_OF(f.a) == m->active_team) {
+        bb_turnover(m);
+    }
     bool had_ball = (p->flags & BB_PF_HAS_BALL) != 0;
     int bx = p->x, by = p->y;
     if (had_ball) {
@@ -563,6 +584,12 @@ static void armour_advance(bb_match* m, bb_rng* rng) {
                                   // modified in any way"
     int d1 = bb_d6(rng), d2 = bb_d6(rng);
     int ext = (ihs || unmodifiable) ? 0 : (int8_t)f.x + bb_hook_armour_mod(m, f.a, causer);
+    // CHAINSAW (victim side): "+3 ... when the opposition Coach makes an
+    // Armour Roll for this player. This +3 modifier must always be applied."
+    if (!unmodifiable && bb_has_skill(&m->players[f.a].skills, BB_SK_CHAINSAW)) {
+        ext += 3;
+        bb_cover(BB_SK_CHAINSAW);
+    }
     int total = d1 + d2 + ext;
     m->ret = 0;
     bool foul_double = f.b && d1 == d2;

@@ -51,6 +51,7 @@ typedef enum {
     BB_KD_FAILED_DODGE,
     BB_KD_FAILED_RUSH,
     BB_KD_FOUL,
+    BB_KD_TTM_LANDING, // failed TTM landing: turnover only if carrying
     BB_KD_OTHER,
 } bb_kd_cause;
 void bb_knockdown(bb_match* m, int slot, int cause, int armour_mod);

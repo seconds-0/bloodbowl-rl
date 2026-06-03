@@ -271,7 +271,44 @@ static int activation_legal(const bb_match* m, bb_action* out) {
     if (bb_has_skill(&p->skills, BB_SK_HYPNOTIC_GAZE)) {
         out[n++] = (bb_action){BB_A_DECLARE, BB_ACT_GAZE, 0, 0};
     }
-    // TODO: TTM declaration (task #10).
+    // THROW TEAM-MATE: one per turn; needs the trait + an adjacent Right
+    // Stuff team-mate (even Prone). KICK TEAM-MATE: separate budget.
+    {
+        bool mate_adjacent = false;
+        for (int dx = -1; dx <= 1 && !mate_adjacent; dx++) {
+            for (int dy = -1; dy <= 1; dy++) {
+                if (!dx && !dy) continue;
+                int nx = p->x + dx, ny = p->y + dy;
+                if (!bb_on_pitch_xy(nx, ny)) continue;
+                int s2 = bb_slot_at(m, nx, ny);
+                if (s2 >= 0 && BB_TEAM_OF(s2) == BB_TEAM_OF(slot) &&
+                    bb_has_skill(&m->players[s2].skills, BB_SK_RIGHT_STUFF)) {
+                    mate_adjacent = true;
+                    break;
+                }
+            }
+        }
+        if (mate_adjacent && p->stance == BB_STANCE_STANDING) {
+            if (!m->ttm_used && bb_has_skill(&p->skills, BB_SK_THROW_TEAM_MATE)) {
+                out[n++] = (bb_action){BB_A_DECLARE, BB_ACT_TTM, 0, 0};
+            }
+            if (!m->ktm_used && bb_has_skill(&p->skills, BB_SK_KICK_TEAM_MATE)) {
+                out[n++] = (bb_action){BB_A_DECLARE, BB_ACT_KTM, 0, 0};
+            }
+        }
+    }
+    // CHAINSAW / BREATHE FIRE: target a marked standing opponent.
+    if (p->stance == BB_STANCE_STANDING && has_adjacent_standing_opponent(m, slot)) {
+        if (bb_has_skill(&p->skills, BB_SK_CHAINSAW)) {
+            out[n++] = (bb_action){BB_A_DECLARE, BB_ACT_CHAINSAW, 0, 0};
+        }
+        if (bb_has_skill(&p->skills, BB_SK_BREATHE_FIRE)) {
+            out[n++] = (bb_action){BB_A_DECLARE, BB_ACT_BREATHE_FIRE, 0, 0};
+        }
+        if (bb_has_skill(&p->skills, BB_SK_PROJECTILE_VOMIT)) {
+            out[n++] = (bb_action){BB_A_DECLARE, BB_ACT_VOMIT, 0, 0};
+        }
+    }
     return n;
 }
 
@@ -287,6 +324,8 @@ static void activation_apply(bb_match* m, bb_action a, bb_rng* rng) {
         case BB_ACT_HANDOFF: m->handoff_used = 1; break;
         case BB_ACT_FOUL: m->foul_used = 1; break;
         case BB_ACT_SECURE_BALL: m->secure_used = 1; break;
+        case BB_ACT_TTM: m->ttm_used = 1; break;
+        case BB_ACT_KTM: m->ktm_used = 1; break;
         default: break;
     }
     bb_push(m, BB_PROC_MOVE, f->a, a.arg, 0, 0);

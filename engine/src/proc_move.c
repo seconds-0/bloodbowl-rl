@@ -484,6 +484,72 @@ static int move_legal(const bb_match* m, bb_action* out) {
             }
         }
     }
+    // CHAINSAW / BREATHE FIRE / PROJECTILE VOMIT: target selection (also as
+    // blitz block replacement is TODO for chainsaw; standalone here).
+    if ((kind == BB_ACT_CHAINSAW || kind == BB_ACT_BREATHE_FIRE ||
+         kind == BB_ACT_VOMIT) && !(f->data & MV_ACTION_DONE) &&
+        p->stance == BB_STANCE_STANDING) {
+        int variant = kind == BB_ACT_CHAINSAW ? 4 : (kind == BB_ACT_BREATHE_FIRE ? 5 : 6);
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dy = -1; dy <= 1; dy++) {
+                if (!dx && !dy) continue;
+                int nx = p->x + dx, ny = p->y + dy;
+                if (!bb_on_pitch_xy(nx, ny)) continue;
+                int s2 = bb_slot_at(m, nx, ny);
+                if (s2 >= 0 && BB_TEAM_OF(s2) != BB_TEAM_OF(slot) &&
+                    m->players[s2].stance == BB_STANCE_STANDING) {
+                    out[n++] = (bb_action){BB_A_SPECIAL_TARGET, (uint8_t)variant, (uint8_t)nx, (uint8_t)ny};
+                }
+            }
+        }
+    }
+    // TTM / KTM: pick the adjacent Right Stuff team-mate (arg 7), then the
+    // target square (BB_A_TTM_TARGET, quick/short range only).
+    if ((kind == BB_ACT_TTM || kind == BB_ACT_KTM) && !(f->data & MV_ACTION_DONE) &&
+        p->stance == BB_STANCE_STANDING) {
+        if (!(f->data & MV_BLOCK_DONE)) { // reuse the bit as "mate picked"
+            for (int dx = -1; dx <= 1; dx++) {
+                for (int dy = -1; dy <= 1; dy++) {
+                    if (!dx && !dy) continue;
+                    int nx = p->x + dx, ny = p->y + dy;
+                    if (!bb_on_pitch_xy(nx, ny)) continue;
+                    int s2 = bb_slot_at(m, nx, ny);
+                    if (s2 >= 0 && BB_TEAM_OF(s2) == BB_TEAM_OF(slot) &&
+                        bb_has_skill(&m->players[s2].skills, BB_SK_RIGHT_STUFF)) {
+                        out[n++] = (bb_action){BB_A_SPECIAL_TARGET, 7, (uint8_t)nx, (uint8_t)ny};
+                    }
+                }
+            }
+        } else {
+            // Quick/Short throw range: d^2 <= 42.25.
+            for (int x = 0; x < BB_PITCH_LEN; x++) {
+                for (int y = 0; y < BB_PITCH_WID; y++) {
+                    int ddx = x - p->x, ddy = y - p->y;
+                    if (!ddx && !ddy) continue;
+                    if (ddx * ddx + ddy * ddy <= 42 && n < BB_LEGAL_MAX - 2) {
+                        out[n++] = (bb_action){BB_A_TTM_TARGET, 0, (uint8_t)x, (uint8_t)y};
+                    }
+                }
+            }
+        }
+    }
+    // HIT AND RUN: after a resolved Block (plain Block action), one free
+    // square ignoring TZs that leaves the player unmarked and marking no one.
+    if (kind == BB_ACT_BLOCK && (f->data & MV_BLOCK_DONE) &&
+        p->stance == BB_STANCE_STANDING &&
+        bb_has_skill(&p->skills, BB_SK_HIT_AND_RUN)) {
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dy = -1; dy <= 1; dy++) {
+                if (!dx && !dy) continue;
+                int nx = p->x + dx, ny = p->y + dy;
+                if (!bb_on_pitch_xy(nx, ny)) continue;
+                if (m->grid[nx][ny]) continue;
+                if (bb_tackle_zones(m, BB_TEAM_OF(slot), nx, ny) > 0) continue;
+                out[n++] = (bb_action){BB_A_SPECIAL_TARGET, 9, (uint8_t)nx, (uint8_t)ny};
+            }
+        }
+    }
+
     // HYPNOTIC GAZE: after any movement, gaze an adjacent standing opponent.
     if (kind == BB_ACT_GAZE && !(f->data & MV_ACTION_DONE) &&
         p->stance == BB_STANCE_STANDING) {
@@ -746,8 +812,75 @@ static void move_apply(bb_match* m, bb_action a, bb_rng* rng) {
             return;
         }
 
+        case BB_A_TTM_TARGET: {
+            int mate = (f->data >> 9) & 31;
+            f->data |= MV_ACTION_DONE | MV_AWAIT_ACTION;
+            bb_push(m, BB_PROC_TTM, mate, slot, a.x, a.y);
+            if (f->b == BB_ACT_KTM) bb_top(m)->data |= 1;
+            return;
+        }
+
         case BB_A_SPECIAL_TARGET: {
             int target = bb_slot_at(m, a.x, a.y);
+            if (a.arg == 7) { // TTM: team-mate picked; stash in bits 9-13
+                f->data |= MV_BLOCK_DONE;
+                f->data = (uint16_t)((f->data & ~(31u << 9)) | ((uint16_t)target << 9));
+                return;
+            }
+            if (a.arg == 9) { // Hit and Run free square (ignores TZs)
+                bb_cover(BB_SK_HIT_AND_RUN);
+                bb_place(m, slot, a.x, a.y);
+                if (p->flags & BB_PF_HAS_BALL) {
+                    m->ball.x = p->x;
+                    m->ball.y = p->y;
+                    if (bb_check_td(m)) return;
+                }
+                finish_move(m);
+                return;
+            }
+            if (a.arg == 4) { // CHAINSAW: 2+ attack (+3 armour), 1 kick-back
+                f->data |= MV_ACTION_DONE | MV_AWAIT_ACTION;
+                bb_cover(BB_SK_CHAINSAW);
+                if (bb_d6(rng) == 1) {
+                    bb_knockdown(m, slot, BB_KD_OTHER, 0); // kick-back (victim-
+                    return;                                 // side +3 in ARMOUR)
+                }
+                bb_push(m, BB_PROC_ARMOUR, target, 0, 3, slot + 1);
+                return;
+            }
+            if (a.arg == 5) { // BREATHE FIRE
+                f->data |= MV_ACTION_DONE | MV_AWAIT_ACTION;
+                bb_cover(BB_SK_BREATHE_FIRE);
+                int mod = m->players[target].st >= 5 ? -1 : 0;
+                int die = bb_d6(rng);
+                if (die == 1) {
+                    bb_knockdown(m, slot, BB_KD_OTHER, 0);
+                    return;
+                }
+                if (die == 6) {
+                    bb_knockdown2(m, target, BB_KD_OTHER, 0, slot);
+                    return;
+                }
+                if (die + mod >= 4) {
+                    // Placed Prone: no armour; a carrier drops the ball.
+                    bb_player* t = &m->players[target];
+                    t->stance = BB_STANCE_PRONE;
+                    if (t->flags & BB_PF_HAS_BALL) {
+                        int bx = t->x, by = t->y;
+                        if (BB_TEAM_OF(target) == m->active_team) bb_turnover(m);
+                        bb_drop_ball(m);
+                        bb_push(m, BB_PROC_SCATTER, 0, 1, (uint8_t)bx, (uint8_t)by);
+                    }
+                }
+                return;
+            }
+            if (a.arg == 6) { // PROJECTILE VOMIT: 2+ target, 1 self; unmodifiable
+                f->data |= MV_ACTION_DONE | MV_AWAIT_ACTION;
+                bb_cover(BB_SK_PROJECTILE_VOMIT);
+                int victim = bb_d6(rng) >= 2 ? target : slot;
+                bb_push(m, BB_PROC_ARMOUR, victim, 3, 0, slot + 1);
+                return;
+            }
             if (a.arg == 1) {
                 // STAB: unmodifiable Armour Roll; armour broken -> Injury;
                 // the activation ends (even as a Blitz block replacement).

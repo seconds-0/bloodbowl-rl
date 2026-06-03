@@ -179,8 +179,15 @@ static void init_player_from_position(bb_player* p, const bb_position_def* pd, i
     p->position_id = (uint8_t)position_id;
     p->location = BB_LOC_RESERVES;
     p->stance = BB_STANCE_STANDING;
+    p->p_loner = 4;
+    p->p_bloodlust = 0;
     for (int s = 0; s < pd->num_skills; s++) {
         bb_add_skill(&p->skills, pd->skills[s]);
+        int v = pd->skill_values[s];
+        if (v > 0) { // per-player parameterized skill values from the roster
+            if (pd->skills[s] == BB_SK_LONER) p->p_loner = (int8_t)v;
+            if (pd->skills[s] == BB_SK_BLOODLUST) p->p_bloodlust = (int8_t)v;
+        }
     }
 }
 
