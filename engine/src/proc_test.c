@@ -29,7 +29,11 @@ static bool test_pass(int die, int target) {
 static bool team_reroll_available(const bb_match* m, int team) {
     // BB2025: any number of team re-rolls per turn; only during your own team
     // turn, and never re-rolling the same die twice (per-frame TF_TEAM_USED).
-    return m->rerolls[team] > 0 && m->active_team == team;
+    // The kick-off precedes turn 1: MATCH sets active_team to the receiver
+    // BEFORE pushing KICKOFF, so without the bb_in_kickoff exclusion every
+    // kick-off catch/bounce test offered the receiver a team re-roll
+    // (review M4). Skill re-rolls remain available.
+    return m->rerolls[team] > 0 && m->active_team == team && !bb_in_kickoff(m);
 }
 
 // PRO: "During this player's activation, they may attempt to re-roll a single

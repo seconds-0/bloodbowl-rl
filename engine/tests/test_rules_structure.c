@@ -372,6 +372,67 @@ BB_TEST(struct_kick_landing_on_receiver_is_caught) {
     BB_CHECK_EQ(m.ball.carrier, catcher);
 }
 
+// RR "Team Re-rolls": "Team Re-rolls can only be used when the team is
+// active" — the kick-off precedes the receiving team's turn 1, so a failed
+// kick-off catch must NOT open a team re-roll window even with re-rolls in
+// stock (the engine offered one because MATCH sets active_team to the
+// receiver before pushing KICKOFF — adversarial review M4). The ball just
+// bounces and the drive starts.
+BB_TEST(struct_kickoff_catch_no_team_reroll_window) {
+    bb_match m;
+    stx_kickoff_fixture(&m, BB_HOME);
+    fx_lineman(&m, 1, 0, 18, 4); // receiver under the landing square, AG 3+
+    fx_lineman(&m, 1, 1, 20, 10);
+    m.rerolls[0] = m.rerolls[1] = 3; // re-rolls in stock for both sides
+    m.rerolls_start[0] = m.rerolls_start[1] = 3;
+    bb_rng rng;
+    // Deviate (18,7) by d8=2/(0,-1) d6=3 -> (18,4); event 1+1 (Get the Ref);
+    // catch 2 vs 3+ FAILS -> no re-roll window -> bounce d8=5 -> (19,4).
+    const uint8_t dice[] = {2, 3, 1, 1, 2, 5};
+    bb_rng_script(&rng, dice, 6);
+    fx_run(&m, &rng);
+    bb_status st = fx_apply(&m, stx_act(BB_A_KICK_TARGET, 0, 18, 7), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK(!bb_rng_error(&rng)); // dice flowed straight through the bounce
+    // The next decision is the receiver's first activation, not a re-roll.
+    BB_CHECK_EQ(stx_top_proc(&m), BB_PROC_TEAM_TURN);
+    BB_CHECK(!fx_has_type(&m, BB_A_USE_REROLL));
+    BB_CHECK_EQ(m.ball.state, BB_BALL_ON_GROUND);
+    BB_CHECK_EQ(m.ball.x, 19);
+    BB_CHECK_EQ(m.ball.y, 4);
+    BB_CHECK_EQ(m.rerolls[BB_AWAY], 3); // untouched
+    BB_CHECK_EQ(m.decision_team, BB_AWAY);
+}
+
+// SK "Catch (Active)": the skill re-roll is the player's own and is NOT
+// turn-scoped like a Team Re-roll — a failed kick-off catch still offers it
+// (and only it: no team re-roll alongside, per M4 above).
+BB_TEST(struct_kickoff_catch_skill_reroll_still_offered) {
+    bb_match m;
+    stx_kickoff_fixture(&m, BB_HOME);
+    int catcher = fx_lineman(&m, 1, 0, 18, 4);
+    fx_give_skill(&m, catcher, BB_SK_CATCH);
+    fx_lineman(&m, 1, 1, 20, 10);
+    m.rerolls[0] = m.rerolls[1] = 3;
+    m.rerolls_start[0] = m.rerolls_start[1] = 3;
+    bb_rng rng;
+    // Deviate to (18,4); event 1+1; catch 2 fails -> Catch skill window;
+    // re-rolled 4 passes.
+    const uint8_t dice[] = {2, 3, 1, 1, 2, 4};
+    bb_rng_script(&rng, dice, 6);
+    fx_run(&m, &rng);
+    bb_status st = fx_apply(&m, stx_act(BB_A_KICK_TARGET, 0, 18, 7), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK(fx_find(&m, stx_act(BB_A_USE_REROLL, BB_RR_SKILL, BB_SK_CATCH, 0)) >= 0);
+    BB_CHECK_EQ(fx_find(&m, stx_act(BB_A_USE_REROLL, BB_RR_TEAM, 0, 0)), -1);
+    st = fx_apply(&m, stx_act(BB_A_USE_REROLL, BB_RR_SKILL, BB_SK_CATCH, 0), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK(!bb_rng_error(&rng));
+    BB_CHECK_EQ(m.ball.state, BB_BALL_HELD);
+    BB_CHECK_EQ(m.ball.carrier, catcher);
+    BB_CHECK_EQ(m.rerolls[BB_AWAY], 3); // team pool untouched
+}
+
 // GAME TOUCHBACKS: "The ball must land safely in the opposition half ... If
 // the ball ends up exiting the pitch ... it will result in a Touchback. ...
 // the Coach of the receiving team may give the ball to any of their Standing
