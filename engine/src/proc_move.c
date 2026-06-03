@@ -419,6 +419,12 @@ static int move_legal(const bb_match* m, bb_action* out) {
     }
 
     bool may_move = kind != BB_ACT_BLOCK; // a plain Block action has no movement
+    // TTM/KTM: once the team-mate is picked up, no further movement — the
+    // rules sequence is move-then-pick-then-throw, and BB_A_JUMP reuses data
+    // bits 9-13 (rush count) which hold the stashed mate slot (review H3).
+    if ((kind == BB_ACT_TTM || kind == BB_ACT_KTM) && (f->data & MV_BLOCK_DONE)) {
+        may_move = false;
+    }
     if (may_move && can_step(m, slot)) {
         for (int dx = -1; dx <= 1; dx++) {
             for (int dy = -1; dy <= 1; dy++) {
@@ -814,6 +820,18 @@ static void move_apply(bb_match* m, bb_action a, bb_rng* rng) {
 
         case BB_A_TTM_TARGET: {
             int mate = (f->data >> 9) & 31;
+            // Defense-in-depth (review H3): the stash shares bits with the
+            // rush counter; if anything clobbered it, throwing a bogus slot
+            // (off-pitch / wrong team / not adjacent / no Right Stuff) would
+            // corrupt the grid invisibly. Engine-bug canary, not a rule.
+            const bb_player* mp = &m->players[mate];
+            if (mp->location != BB_LOC_ON_PITCH ||
+                BB_TEAM_OF(mate) != BB_TEAM_OF(slot) ||
+                !bb_adjacent(mp->x, mp->y, p->x, p->y) ||
+                !bb_has_skill(&mp->skills, BB_SK_RIGHT_STUFF)) {
+                m->status = BB_STATUS_ERROR;
+                return;
+            }
             f->data |= MV_ACTION_DONE | MV_AWAIT_ACTION;
             bb_push(m, BB_PROC_TTM, mate, slot, a.x, a.y);
             if (f->b == BB_ACT_KTM) bb_top(m)->data |= 1;

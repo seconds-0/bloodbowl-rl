@@ -17,6 +17,14 @@ static bb_action act(int type, int arg, int x, int y) {
     return a;
 }
 
+static int count_type(const bb_match* m, int type) {
+    bb_action legal[BB_LEGAL_MAX];
+    int n = bb_legal_actions(m, legal);
+    int c = 0;
+    for (int i = 0; i < n; i++) c += legal[i].type == type;
+    return c;
+}
+
 // Drive the fixture to the mover's movement decision point:
 // run -> ACTIVATE slot -> DECLARE Move.
 static bb_status begin_move(bb_match* m, bb_rng* rng, int slot) {
@@ -272,4 +280,51 @@ BB_TEST(skdt_knockdown_offpitch_is_noop) {
     BB_CHECK_EQ(m.players[p].location, BB_LOC_CAS);
     BB_CHECK_EQ(m.players[p].stance, BB_STANCE_STANDING);
     BB_CHECK(!bb_rng_error(&rng)); // zero dice consumed
+}
+
+// Regression (adversarial review H3): the TTM mate stash (MOVE-frame data
+// bits 9-13) was clobbered by BB_A_JUMP's rush counter, making the engine
+// throw home slot 0 — including off-pitch players, corrupting the grid.
+// Fixed by (a) locking movement once the mate is picked and (b) validating
+// the stashed mate at throw time. This test pins both: after the pick, no
+// STEP/JUMP is offered, and the thrown player is the picked mate.
+BB_TEST(skdt_ttm_pick_locks_movement_and_throws_picked_mate) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int thrower = fx_lineman(&m, 0, 2, 10, 7);
+    fx_give_skill(&m, thrower, BB_SK_THROW_TEAM_MATE);
+    int mate = fx_lineman(&m, 0, 3, 10, 8); // adjacent Right Stuff mate
+    fx_give_skill(&m, mate, BB_SK_RIGHT_STUFF);
+    // A prone player adjacent to the thrower: pre-fix this enabled BB_A_JUMP
+    // (jump over prone) whose rush write zeroed the mate stash.
+    int prone = fx_lineman(&m, 0, 4, 11, 7);
+    fx_stunned(&m, prone);
+
+    // Dice: TTM PA test d6=6 (superb), scatter 3x d8, landing AG d6=6.
+    static const uint8_t dice[] = {6, 1, 1, 1, 6};
+    bb_rng rng;
+    bb_rng_script(&rng, dice, 5);
+    bb_status st = fx_run(&m, &rng);
+    st = fx_apply(&m, act(BB_A_ACTIVATE, thrower, 0, 0), &rng);
+    st = fx_apply(&m, act(BB_A_DECLARE, BB_ACT_TTM, 0, 0), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    // Pick the mate.
+    BB_CHECK(fx_find(&m, act(BB_A_SPECIAL_TARGET, 7, 10, 8)) >= 0);
+    st = fx_apply(&m, act(BB_A_SPECIAL_TARGET, 7, 10, 8), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    // After the pick: no movement actions remain (H3 fix part a).
+    BB_CHECK_EQ(count_type(&m, BB_A_STEP), 0);
+    BB_CHECK_EQ(count_type(&m, BB_A_JUMP), 0);
+    BB_CHECK(count_type(&m, BB_A_TTM_TARGET) > 0);
+    // Throw to (12,7): superb -> scatter 3 from target, all d8=1 (NW dir).
+    st = fx_apply(&m, act(BB_A_TTM_TARGET, 0, 12, 7), &rng);
+    // The PICKED mate moved (slot `mate`, not slot 0); thrower unmoved.
+    BB_CHECK(m.players[mate].x != 10 || m.players[mate].y != 8);
+    BB_CHECK_EQ(m.players[mate].location, BB_LOC_ON_PITCH);
+    // Grid consistency for every on-pitch player.
+    for (int s = 0; s < BB_NUM_PLAYERS; s++) {
+        if (m.players[s].location != BB_LOC_ON_PITCH) continue;
+        BB_CHECK_EQ(m.grid[m.players[s].x][m.players[s].y], s + 1);
+    }
+    BB_CHECK(!bb_rng_error(&rng));
 }
