@@ -482,6 +482,59 @@ BB_TEST(blocking_stumble_without_dodge_is_pow) {
     BB_CHECK(!bb_rng_error(&rng));
 }
 
+// Regression (adversarial review M5): a POW knockdown must carry the CAUSER
+// so the attacker's armour/injury skills apply. SK#MIGHTY BLOW (+1): may be
+// applied to the Armour Roll (auto-policy: when it converts a miss into a
+// break, see DECISIONS.md D16). The engine's phase-5 POW used the no-causer
+// bb_knockdown, so Mighty Blow/Claws/Saboteur were dead on the main path.
+BB_TEST(blocking_pow_mighty_blow_converts_armour) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int h1 = fx_lineman(&m, BB_HOME, 0, 10, 7);
+    int a1 = fx_lineman(&m, BB_AWAY, 0, 11, 7); // AV9
+    fx_give_skill(&m, h1, BB_SK_MIGHTY_BLOW);
+
+    // POW; armour 4+4=8 < AV9 holds WITHOUT the causer — Mighty Blow +1
+    // makes 9 and breaks; injury 2+2=4 -> Stunned (MB consumed on armour).
+    uint8_t script[] = {6, 4, 4, 2, 2};
+    bb_rng rng;
+    bb_rng_script(&rng, script, 5);
+    start_block(&m, &rng, h1, 11, 7);
+    apply_ok(&m, &rng, mk(BB_A_CHOOSE_DIE, 0, 0, 0));
+    apply_ok(&m, &rng, mk(BB_A_PUSH_SQUARE, 0, 12, 7));
+    apply_ok(&m, &rng, mk(BB_A_FOLLOW_UP, 0, 0, 0));
+    BB_CHECK(fx_stunned(&m, a1)); // armour broken only via Mighty Blow
+    BB_CHECK_EQ(m.players[a1].x, 12);
+    BB_CHECK_EQ(m.players[a1].y, 7);
+    BB_CHECK_EQ(m.turnover, 0); // inactive player down: no turnover
+    BB_CHECK_EQ(rng.script_pos, 5); // the injury roll really happened
+    BB_CHECK(!bb_rng_error(&rng));
+}
+
+// Regression (adversarial review M5): SK#CLAWS — an unmodified Armour Roll of
+// 8+ breaks armour regardless of the target's AV. Requires the causer to ride
+// along on the POW knockdown.
+BB_TEST(blocking_pow_claws_breaks_high_av) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int h1 = fx_lineman(&m, BB_HOME, 0, 10, 7);
+    int a1 = fx_player(&m, BB_AWAY, 0, 11, 7, 6, 3, 3, 4, 10); // AV10
+    fx_give_skill(&m, h1, BB_SK_CLAWS);
+
+    // POW; armour 4+4 = natural 8 (< AV10, but Claws breaks on 8+);
+    // injury 2+2 -> Stunned.
+    uint8_t script[] = {6, 4, 4, 2, 2};
+    bb_rng rng;
+    bb_rng_script(&rng, script, 5);
+    start_block(&m, &rng, h1, 11, 7);
+    apply_ok(&m, &rng, mk(BB_A_CHOOSE_DIE, 0, 0, 0));
+    apply_ok(&m, &rng, mk(BB_A_PUSH_SQUARE, 0, 12, 7));
+    apply_ok(&m, &rng, mk(BB_A_FOLLOW_UP, 0, 0, 0));
+    BB_CHECK(fx_stunned(&m, a1)); // armour broken only via Claws
+    BB_CHECK_EQ(rng.script_pos, 5);
+    BB_CHECK(!bb_rng_error(&rng));
+}
+
 // ENGINE-DIVERGENCE: FAQ (May 2026, pg.127 entry) — a Distracted player cannot
 // use Dodge against a Stumble (Active skills are off while Distracted,
 // RR#DISTRACTED), and likewise a Distracted player's Block does not save them
@@ -576,6 +629,70 @@ BB_TEST(blocking_push_must_choose_unoccupied) {
     apply_ok(&m, &rng, mk(BB_A_CHOOSE_DIE, 0, 0, 0));
     BB_CHECK_EQ(count_type(&m, BB_A_PUSH_SQUARE), 1);
     BB_CHECK(fx_find(&m, mk(BB_A_PUSH_SQUARE, 0, 12, 7)) >= 0);
+    BB_CHECK(!bb_rng_error(&rng));
+}
+
+// SK#SIDESTEP: a Pushed Back player with Side Step is moved to any adjacent
+// unoccupied square chosen by THEIR coach instead of the usual three.
+BB_TEST(blocking_side_step_defender_picks_any_free_square) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int h1 = fx_lineman(&m, BB_HOME, 0, 10, 7);
+    int a1 = fx_lineman(&m, BB_AWAY, 0, 11, 7);
+    fx_give_skill(&m, a1, BB_SK_SIDESTEP);
+
+    uint8_t script[] = {3};
+    bb_rng rng;
+    bb_rng_script(&rng, script, 1);
+    start_block(&m, &rng, h1, 11, 7);
+    apply_ok(&m, &rng, mk(BB_A_CHOOSE_DIE, 0, 0, 0));
+    // The DEFENDER's coach owns the choice: all 7 free adjacent squares.
+    BB_CHECK_EQ(m.decision_team, BB_AWAY);
+    BB_CHECK_EQ(count_type(&m, BB_A_PUSH_SQUARE), 7);
+    // Includes squares outside the normal push arc, e.g. beside the blocker.
+    BB_CHECK(fx_find(&m, mk(BB_A_PUSH_SQUARE, 0, 10, 6)) >= 0);
+    apply_ok(&m, &rng, mk(BB_A_PUSH_SQUARE, 0, 10, 6));
+    apply_ok(&m, &rng, mk(BB_A_FOLLOW_UP, 0, 0, 0));
+    BB_CHECK_EQ(m.players[a1].x, 10);
+    BB_CHECK_EQ(m.players[a1].y, 6);
+    BB_CHECK_EQ(m.players[a1].stance, BB_STANCE_STANDING);
+    BB_CHECK(!bb_rng_error(&rng));
+}
+
+// Regression (adversarial review M8): SK#SIDESTEP — "If there are no adjacent
+// unoccupied squares, then this Skill cannot be used." With every adjacent
+// square occupied/off-pitch the normal candidates apply (here: chain pushes
+// and a crowd push) and the choice belongs to the ATTACKING coach, not the
+// defender's. The engine assigned ownership on skill possession alone.
+BB_TEST(blocking_side_step_unusable_without_free_square) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int h1 = fx_lineman(&m, BB_HOME, 0, 10, 0); // blocker on the sideline row
+    int a1 = fx_lineman(&m, BB_AWAY, 0, 11, 0); // Side Step, fully boxed in
+    fx_give_skill(&m, a1, BB_SK_SIDESTEP);
+    fx_lineman(&m, BB_AWAY, 1, 12, 0);
+    fx_lineman(&m, BB_AWAY, 2, 10, 1);
+    fx_lineman(&m, BB_AWAY, 3, 11, 1);
+    fx_lineman(&m, BB_AWAY, 4, 12, 1);
+
+    // Two defensive assists -> two dice, defender's coach picks the die (that
+    // ownership is unrelated to the push-square ownership under test).
+    uint8_t script[] = {3, 4, /*crowd injury*/ 2, 2};
+    bb_rng rng;
+    bb_rng_script(&rng, script, 4);
+    start_block(&m, &rng, h1, 11, 0);
+    apply_ok(&m, &rng, mk(BB_A_CHOOSE_DIE, 0, 0, 0)); // push
+    // No free adjacent square: Side Step is off. The ATTACKING coach owns
+    // the chain/crowd choice among the normal three candidates.
+    BB_CHECK_EQ(m.decision_team, BB_HOME);
+    BB_CHECK_EQ(count_type(&m, BB_A_PUSH_SQUARE), 3);
+    BB_CHECK(fx_find(&m, mk(BB_A_PUSH_SQUARE, 1, 12, 0)) >= 0); // crowd
+    BB_CHECK(fx_find(&m, mk(BB_A_PUSH_SQUARE, 2, 12, 0)) >= 0); // chains
+    BB_CHECK(fx_find(&m, mk(BB_A_PUSH_SQUARE, 2, 12, 1)) >= 0);
+    apply_ok(&m, &rng, mk(BB_A_PUSH_SQUARE, 1, 12, 0)); // surf the defender
+    apply_ok(&m, &rng, mk(BB_A_FOLLOW_UP, 0, 0, 0));
+    BB_CHECK_EQ(m.players[a1].location, BB_LOC_RESERVES); // crowd: stunned
+    BB_CHECK_EQ(m.turnover, 0); // inactive player surfed: no turnover
     BB_CHECK(!bb_rng_error(&rng));
 }
 
@@ -916,6 +1033,166 @@ BB_TEST(blocking_blitz_may_rush_for_the_block) {
     apply_ok(&m, &rng, mk(BB_A_STEP, 0, 7, 7)); // MA exhausted, now adjacent
     // Rulebook: the block must still be offered (performing it forces a Rush).
     BB_CHECK(fx_has_type(&m, BB_A_BLOCK_TARGET));
+}
+
+// ================================ FRENZY =====================================
+
+// SK#FRENZY (review M6): when the target of a Block Action is Pushed Back the
+// blocker must Follow-up if able; if the target is then still Standing, the
+// blocker MUST perform a second Block Action against the same player (again
+// following up on a push). There is never a third block.
+BB_TEST(blocking_frenzy_second_block_after_push) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int h1 = fx_lineman(&m, BB_HOME, 0, 10, 7);
+    int a1 = fx_lineman(&m, BB_AWAY, 0, 11, 7);
+    fx_give_skill(&m, h1, BB_SK_FRENZY);
+
+    uint8_t script[] = {3, 3}; // one push die per block, nothing else
+    bb_rng rng;
+    bb_rng_script(&rng, script, 2);
+    start_block(&m, &rng, h1, 11, 7);
+    apply_ok(&m, &rng, mk(BB_A_CHOOSE_DIE, 0, 0, 0));
+    apply_ok(&m, &rng, mk(BB_A_PUSH_SQUARE, 0, 12, 7));
+    // Frenzy: no follow-up decision (forced), and the second block's dice
+    // pool was rolled immediately — the next decision is a die choice.
+    BB_CHECK(!fx_has_type(&m, BB_A_FOLLOW_UP));
+    BB_CHECK_EQ(m.players[h1].x, 11); // followed up automatically
+    BB_CHECK_EQ(count_type(&m, BB_A_CHOOSE_DIE), 1);
+    apply_ok(&m, &rng, mk(BB_A_CHOOSE_DIE, 0, 0, 0));
+    apply_ok(&m, &rng, mk(BB_A_PUSH_SQUARE, 0, 13, 7));
+    // Second forced follow-up — and NO third block.
+    BB_CHECK(!fx_has_type(&m, BB_A_CHOOSE_DIE));
+    BB_CHECK(fx_has_type(&m, BB_A_END_ACTIVATION));
+    BB_CHECK_EQ(m.players[h1].x, 12);
+    BB_CHECK_EQ(m.players[a1].x, 13);
+    BB_CHECK_EQ(m.players[a1].stance, BB_STANCE_STANDING);
+    BB_CHECK_EQ(m.turnover, 0);
+    BB_CHECK(!bb_rng_error(&rng));
+}
+
+// SK#FRENZY during a Blitz: performing the second Block Action also costs a
+// square of movement (charged like the first block's square).
+BB_TEST(blocking_frenzy_blitz_second_block_costs_movement) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int h1 = fx_lineman(&m, BB_HOME, 0, 9, 7); // MA6
+    int a1 = fx_lineman(&m, BB_AWAY, 0, 11, 7);
+    fx_give_skill(&m, h1, BB_SK_FRENZY);
+
+    uint8_t script[] = {3, /*2nd block POW*/ 6, /*armour holds*/ 2, 2};
+    bb_rng rng;
+    bb_rng_script(&rng, script, 4);
+    bb_status st = fx_run(&m, &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    apply_ok(&m, &rng, mk(BB_A_ACTIVATE, h1, 0, 0));
+    apply_ok(&m, &rng, mk(BB_A_DECLARE, BB_ACT_BLITZ, 0, 0));
+    apply_ok(&m, &rng, mk(BB_A_STEP, 0, 10, 7));         // moved 1
+    apply_ok(&m, &rng, mk(BB_A_BLOCK_TARGET, 0, 11, 7)); // moved 2
+    apply_ok(&m, &rng, mk(BB_A_CHOOSE_DIE, 0, 0, 0));    // push
+    apply_ok(&m, &rng, mk(BB_A_PUSH_SQUARE, 0, 12, 7));  // forced follow-up
+    // The second block was rolled and charged one square of movement.
+    BB_CHECK_EQ(count_type(&m, BB_A_CHOOSE_DIE), 1);
+    BB_CHECK_EQ(m.players[h1].moved, 3);
+    apply_ok(&m, &rng, mk(BB_A_CHOOSE_DIE, 0, 0, 0)); // POW
+    apply_ok(&m, &rng, mk(BB_A_PUSH_SQUARE, 0, 13, 7));
+    BB_CHECK_EQ(m.players[h1].x, 12); // second forced follow-up
+    BB_CHECK_EQ(m.players[a1].x, 13);
+    BB_CHECK_EQ(m.players[a1].stance, BB_STANCE_PRONE); // POW knocked down
+    BB_CHECK_EQ(m.turnover, 0);
+    BB_CHECK(fx_has_type(&m, BB_A_STEP)); // blitz continues (moved 3 of 6)
+    BB_CHECK(!bb_rng_error(&rng));
+}
+
+// SK#FRENZY during a Blitz with no movement left: the player MUST Rush for
+// the second block. Passing the Rush performs the block.
+BB_TEST(blocking_frenzy_blitz_second_block_rush_pass) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int h1 = fx_player(&m, BB_HOME, 0, 10, 7, 1, 3, 3, 4, 9); // MA1
+    int a1 = fx_lineman(&m, BB_AWAY, 0, 11, 7);
+    fx_give_skill(&m, h1, BB_SK_FRENZY);
+
+    uint8_t script[] = {3, /*rush 2+*/ 2, /*2nd block die*/ 3};
+    bb_rng rng;
+    bb_rng_script(&rng, script, 3);
+    bb_status st = fx_run(&m, &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    apply_ok(&m, &rng, mk(BB_A_ACTIVATE, h1, 0, 0));
+    apply_ok(&m, &rng, mk(BB_A_DECLARE, BB_ACT_BLITZ, 0, 0));
+    apply_ok(&m, &rng, mk(BB_A_BLOCK_TARGET, 0, 11, 7)); // moved 1 = MA
+    apply_ok(&m, &rng, mk(BB_A_CHOOSE_DIE, 0, 0, 0));    // push
+    apply_ok(&m, &rng, mk(BB_A_PUSH_SQUARE, 0, 12, 7));  // forced follow-up
+    // Out of MA: the Rush was rolled (and passed) for the second block.
+    BB_CHECK_EQ(m.players[h1].rushes, 1);
+    BB_CHECK_EQ(count_type(&m, BB_A_CHOOSE_DIE), 1);
+    apply_ok(&m, &rng, mk(BB_A_CHOOSE_DIE, 0, 0, 0));
+    apply_ok(&m, &rng, mk(BB_A_PUSH_SQUARE, 0, 13, 7));
+    BB_CHECK_EQ(m.players[h1].x, 12);
+    BB_CHECK_EQ(m.players[a1].x, 13);
+    BB_CHECK_EQ(m.players[a1].stance, BB_STANCE_STANDING);
+    BB_CHECK_EQ(m.turnover, 0);
+    BB_CHECK(!bb_rng_error(&rng));
+}
+
+// SK#FRENZY + RR#THE TURNOVER: failing the forced Rush for the second block
+// knocks the blocker down in place — no second block, Turnover.
+BB_TEST(blocking_frenzy_blitz_second_block_rush_fail) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int h1 = fx_player(&m, BB_HOME, 0, 10, 7, 1, 3, 3, 4, 9); // MA1
+    int a1 = fx_lineman(&m, BB_AWAY, 0, 11, 7);
+    fx_give_skill(&m, h1, BB_SK_FRENZY);
+
+    uint8_t script[] = {3, /*rush fails*/ 1, /*blocker armour holds*/ 2, 2};
+    bb_rng rng;
+    bb_rng_script(&rng, script, 4);
+    bb_status st = fx_run(&m, &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    apply_ok(&m, &rng, mk(BB_A_ACTIVATE, h1, 0, 0));
+    apply_ok(&m, &rng, mk(BB_A_DECLARE, BB_ACT_BLITZ, 0, 0));
+    apply_ok(&m, &rng, mk(BB_A_BLOCK_TARGET, 0, 11, 7));
+    apply_ok(&m, &rng, mk(BB_A_CHOOSE_DIE, 0, 0, 0));   // push
+    apply_ok(&m, &rng, mk(BB_A_PUSH_SQUARE, 0, 12, 7)); // follow-up, rush fails
+    BB_CHECK_EQ(m.players[h1].stance, BB_STANCE_PRONE); // down in place
+    BB_CHECK_EQ(m.players[h1].x, 11);
+    BB_CHECK_EQ(m.players[a1].stance, BB_STANCE_STANDING); // never re-blocked
+    BB_CHECK_EQ(m.players[a1].x, 12);
+    BB_CHECK_EQ(m.active_team, BB_AWAY); // turnover ended the home turn
+    BB_CHECK(!bb_rng_error(&rng));
+}
+
+// SK#FRENZY during a Blitz: "If this player cannot Rush then they cannot
+// perform the second Block Action" — all Rushes already used: no second
+// block, the activation simply continues.
+BB_TEST(blocking_frenzy_blitz_second_block_cannot_rush) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int h1 = fx_player(&m, BB_HOME, 0, 8, 7, 1, 3, 3, 4, 9); // MA1
+    int a1 = fx_lineman(&m, BB_AWAY, 0, 11, 7);
+    fx_give_skill(&m, h1, BB_SK_FRENZY);
+
+    uint8_t script[] = {/*rush step*/ 2, /*rush for block*/ 2, /*die*/ 3};
+    bb_rng rng;
+    bb_rng_script(&rng, script, 3);
+    bb_status st = fx_run(&m, &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    apply_ok(&m, &rng, mk(BB_A_ACTIVATE, h1, 0, 0));
+    apply_ok(&m, &rng, mk(BB_A_DECLARE, BB_ACT_BLITZ, 0, 0));
+    apply_ok(&m, &rng, mk(BB_A_STEP, 0, 9, 7));          // MA spent
+    apply_ok(&m, &rng, mk(BB_A_STEP, 0, 10, 7));         // Rush #1
+    apply_ok(&m, &rng, mk(BB_A_BLOCK_TARGET, 0, 11, 7)); // Rush #2 (for block)
+    apply_ok(&m, &rng, mk(BB_A_CHOOSE_DIE, 0, 0, 0));    // push
+    apply_ok(&m, &rng, mk(BB_A_PUSH_SQUARE, 0, 12, 7));  // forced follow-up
+    // Both Rushes used: the second block cannot be performed.
+    BB_CHECK_EQ(m.players[h1].rushes, 2);
+    BB_CHECK(!fx_has_type(&m, BB_A_CHOOSE_DIE));
+    BB_CHECK(fx_has_type(&m, BB_A_END_ACTIVATION));
+    BB_CHECK_EQ(m.players[h1].x, 11);
+    BB_CHECK_EQ(m.players[a1].x, 12);
+    BB_CHECK_EQ(m.players[a1].stance, BB_STANCE_STANDING);
+    BB_CHECK_EQ(m.turnover, 0);
+    BB_CHECK(!bb_rng_error(&rng));
 }
 
 // ============================ TEAM RE-ROLLS ==================================
