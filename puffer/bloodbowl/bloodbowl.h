@@ -5,13 +5,36 @@
 // engine to the next decision, and emits observations + per-head legality
 // masks. Episodes are full matches over procedurally generated rosters.
 //
-// Observation (uint8, 576B), egocentric (decision team first):
-//   [0..511]  32 players x 16B: x+1, y+1 (0 = off pitch), location, stance,
-//             flags lo/hi, ma, st, ag, pa, av, skill ids x5 (id+1, 0 = none)
-//   [512..527] ball + decision context: ball state, bx+1, by+1, carrier idx+1,
-//             top proc, phase, frame a/b/x/y, decision flags
-//   [528..575] scalars: half, my/opp turn, my/opp score, my/opp rerolls,
-//             weather, action-economy flags, apothecaries, bribes, spare
+// Observation (uint8, BBE_OBS_SIZE = 832B), egocentric: each agent sees its
+// own players first and the pitch x-mirrored for the away coach, so
+// "forward" is always +x. Layout (offsets from the BBE_* macros below):
+//   [0..767]   32 players x BBE_PLAYER_BYTES (24): rows 0-15 = my team,
+//              16-31 = opponent (row = slot, XOR 16 for the away agent):
+//                [0]  x+1, [1] y+1 (0 = off pitch; x mirrored for away)
+//                [2]  location (bb_loc), [3] stance (bb_stance)
+//                [4]  flags low byte, [5] flags high byte (BB_PF_*)
+//                [6..10]  ma, st, ag, pa, av
+//                [11..22] skill ids x BBE_SKILL_SLOTS (12) (id+1, 0 = none)
+//                [23] pad
+//   [768..783] ball + decision context (BBE_CTX_OFF):
+//                [0]  ball state (bb_ball_state)
+//                [1]  ball x+1, [2] ball y+1 (0 = off pitch)
+//                [3]  carrier row+1 (0 = none)
+//                [4]  top-frame proc (bb_proc), [5] its phase
+//                [6]  frame a as row+1 when the proc stores a player slot
+//                     there (bbe_frame_a_is_slot), else 0
+//                [7]  frame b likewise (bbe_frame_b_is_slot)
+//                [8..9] spare
+//                [10] I am the deciding coach, [11] my team is active
+//                [12..15] spare
+//   [784..831] scalars (BBE_SCALAR_OFF):
+//                [0]  half, [1] my turn, [2] opp turn
+//                [3]  my score, [4] opp score
+//                [5]  my rerolls, [6] opp rerolls, [7] weather
+//                [8..13] blitz/pass/handoff/foul/ttm/secure used this turn
+//                [14] my apothecaries, [15] opp apothecaries
+//                [16] my bribes, [17] opp bribes, [18] I am kicking
+//                [19] my team id, [20] opp team id, [21..47] spare
 //
 // Action heads (ACT_SIZES {30, 33, 391}): bb_action type | arg (0-31 direct,
 // 32 = sentinel for 0xFE/0xFF args) | square (y*26+x, 390 = none).
