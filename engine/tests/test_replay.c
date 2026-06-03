@@ -133,3 +133,46 @@ BB_TEST(replay_init_rejects_out_of_range_team_ids) {
     BB_CHECK_EQ(rec.home_team_id, 0);
     BB_CHECK_EQ(rec.away_team_id, 29);
 }
+
+// Hardening (review LOW): a truncated final line used to read one byte past
+// the buffer, and unbounded digit accumulation was signed-overflow UB that
+// silently truncated huge values into legal ones.
+BB_TEST(replay_truncated_final_line_no_oob) {
+    // Exact-size heap buffer: ASan flags any past-the-end read.
+    const char* src = "{\"t\":\"";
+    size_t len = strlen(src);
+    char* buf = (char*)malloc(len);
+    memcpy(buf, src, len);
+    bb_replay_reader r;
+    bb_replay_reader_init(&r, buf, len);
+    bb_record rec;
+    BB_CHECK(!bb_replay_next(&r, &rec));
+    BB_CHECK_EQ(rec.type, BB_REC_PARSE_ERROR);
+    free(buf);
+}
+
+BB_TEST(replay_rejects_overflowing_and_out_of_band_numbers) {
+    const char* bad[] = {
+        // 25 digits: would overflow int64 accumulation (UB before the clamp).
+        "{\"t\":\"d\",\"s\":6,\"v\":9999999999999999999999999}\n",
+        "{\"t\":\"d\",\"s\":6,\"v\":257}\n",   // v > s: not a legal d6 face
+        "{\"t\":\"d\",\"s\":6,\"v\":7}\n",     // v > s
+        "{\"t\":\"a\",\"u\":4294967296}\n",    // > UINT32_MAX: would truncate
+        "{\"t\":\"init\",\"v\":1,\"home\":99999999999999999999999999,\"away\":1,\"seed\":1}\n",
+    };
+    for (size_t i = 0; i < sizeof bad / sizeof bad[0]; i++) {
+        bb_replay_reader r;
+        bb_replay_reader_init(&r, bad[i], strlen(bad[i]));
+        bb_record rec;
+        BB_CHECK(!bb_replay_next(&r, &rec));
+        BB_CHECK_EQ(rec.type, BB_REC_PARSE_ERROR);
+    }
+    // Max-value seeds still round-trip (20 digits, no false overflow).
+    const char* good = "{\"t\":\"init\",\"v\":1,\"home\":0,\"away\":1,\"seed\":18446744073709551615}\n";
+    bb_replay_reader r;
+    bb_replay_reader_init(&r, good, strlen(good));
+    bb_record rec;
+    BB_CHECK(bb_replay_next(&r, &rec));
+    BB_CHECK_EQ(rec.type, BB_REC_INIT);
+    BB_CHECK(rec.seed == 18446744073709551615ULL);
+}

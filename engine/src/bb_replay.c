@@ -61,19 +61,30 @@ static const char* find_key(const char* s, const char* end, const char* key) {
     return 0;
 }
 
-static int64_t parse_int(const char* p, const char* end) {
+// Overflow-checked decimal parsers: unbounded digit accumulation was
+// signed-overflow UB and silently truncated huge values into legal ones
+// (review LOW). Overflow clears *ok; the caller fails the parse.
+static int64_t parse_int(const char* p, const char* end, bool* ok) {
     while (p < end && (*p == ' ' || *p == '"')) p++;
     int neg = 0;
     if (p < end && *p == '-') { neg = 1; p++; }
     int64_t v = 0;
-    while (p < end && *p >= '0' && *p <= '9') v = v * 10 + (*p++ - '0');
+    while (p < end && *p >= '0' && *p <= '9') {
+        int d = *p++ - '0';
+        if (v > (INT64_MAX - d) / 10) { *ok = false; return 0; }
+        v = v * 10 + d;
+    }
     return neg ? -v : v;
 }
 
-static uint64_t parse_u64(const char* p, const char* end) {
+static uint64_t parse_u64(const char* p, const char* end, bool* ok) {
     while (p < end && (*p == ' ' || *p == '"')) p++;
     uint64_t v = 0;
-    while (p < end && *p >= '0' && *p <= '9') v = v * 10 + (uint64_t)(*p++ - '0');
+    while (p < end && *p >= '0' && *p <= '9') {
+        uint64_t d = (uint64_t)(*p++ - '0');
+        if (v > (UINT64_MAX - d) / 10) { *ok = false; return 0; }
+        v = v * 10 + d;
+    }
     return v;
 }
 
@@ -95,17 +106,22 @@ bool bb_replay_next(bb_replay_reader* r, bb_record* out) {
     const char* t = find_key(s, end, "t");
     if (!t) { out->type = BB_REC_PARSE_ERROR; return false; }
     while (t < end && (*t == ' ' || *t == '"')) t++;
+    if (t >= end) { // truncated final line: *t would read past the buffer
+        out->type = BB_REC_PARSE_ERROR;
+        return false;
+    }
 
+    bool ok = true;
     if (*t == 'i') { // init
         const char* p;
         int64_t home = -1, away = -1; // missing key = malformed init
-        if ((p = find_key(s, end, "v")))    out->version = (int)parse_int(p, end);
-        if ((p = find_key(s, end, "home"))) home = parse_int(p, end);
-        if ((p = find_key(s, end, "away"))) away = parse_int(p, end);
-        if ((p = find_key(s, end, "seed"))) out->seed = parse_u64(p, end);
+        if ((p = find_key(s, end, "v")))    out->version = (int)parse_int(p, end, &ok);
+        if ((p = find_key(s, end, "home"))) home = parse_int(p, end, &ok);
+        if ((p = find_key(s, end, "away"))) away = parse_int(p, end, &ok);
+        if ((p = find_key(s, end, "seed"))) out->seed = parse_u64(p, end, &ok);
         // Range-check before the int truncation: these ids flow straight into
         // bb_team_defs[] lookups via bb_match_init (review Hd1).
-        if (home < 0 || home >= BB_TEAM_COUNT ||
+        if (!ok || home < 0 || home >= BB_TEAM_COUNT ||
             away < 0 || away >= BB_TEAM_COUNT) {
             out->type = BB_REC_PARSE_ERROR;
             return false;
@@ -116,25 +132,36 @@ bool bb_replay_next(bb_replay_reader* r, bb_record* out) {
         return true;
     }
     if (*t == 'a') {
-        out->type = BB_REC_ACTION;
         const char* p = find_key(s, end, "u");
         if (!p) { out->type = BB_REC_PARSE_ERROR; return false; }
-        out->action = bb_action_unpack((uint32_t)parse_u64(p, end));
+        uint64_t u = parse_u64(p, end, &ok);
+        if (!ok || u > UINT32_MAX) { out->type = BB_REC_PARSE_ERROR; return false; }
+        out->action = bb_action_unpack((uint32_t)u);
+        out->type = BB_REC_ACTION;
         return true;
     }
     if (*t == 'd') {
-        out->type = BB_REC_DICE;
         const char* p;
-        if ((p = find_key(s, end, "s"))) out->sides = (int)parse_int(p, end);
-        if ((p = find_key(s, end, "v"))) out->value = (int)parse_int(p, end);
-        if (out->sides <= 0 || out->value <= 0) { out->type = BB_REC_PARSE_ERROR; return false; }
+        int64_t sides = 0, value = 0;
+        if ((p = find_key(s, end, "s"))) sides = parse_int(p, end, &ok);
+        if ((p = find_key(s, end, "v"))) value = parse_int(p, end, &ok);
+        // A die with s sides rolled v: v in [1, s]. Out-of-band values must
+        // fail the parse, not truncate into legal faces (review LOW).
+        if (!ok || sides <= 0 || sides > 255 || value <= 0 || value > sides) {
+            out->type = BB_REC_PARSE_ERROR;
+            return false;
+        }
+        out->sides = (int)sides;
+        out->value = (int)value;
+        out->type = BB_REC_DICE;
         return true;
     }
     if (*t == 'e') {
-        out->type = BB_REC_END;
         const char* p;
-        if ((p = find_key(s, end, "home_score"))) out->home_score = (int)parse_int(p, end);
-        if ((p = find_key(s, end, "away_score"))) out->away_score = (int)parse_int(p, end);
+        if ((p = find_key(s, end, "home_score"))) out->home_score = (int)parse_int(p, end, &ok);
+        if ((p = find_key(s, end, "away_score"))) out->away_score = (int)parse_int(p, end, &ok);
+        if (!ok) { out->type = BB_REC_PARSE_ERROR; return false; }
+        out->type = BB_REC_END;
         return true;
     }
     out->type = BB_REC_PARSE_ERROR;
