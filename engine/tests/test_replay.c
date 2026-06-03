@@ -105,3 +105,31 @@ BB_TEST(replay_dice_sink_integration) {
     }
     remove(path);
 }
+
+// INIT records carry file-derived team ids that flow into bb_team_defs[]
+// lookups; the reader must reject out-of-range (or missing) ids, including
+// values that would silently truncate through (int) casts (review Hd1).
+BB_TEST(replay_init_rejects_out_of_range_team_ids) {
+    const char* bad[] = {
+        "{\"t\":\"init\",\"v\":1,\"home\":-1,\"away\":1,\"seed\":1}\n",
+        "{\"t\":\"init\",\"v\":1,\"home\":1,\"away\":99,\"seed\":1}\n",   // away never checked before
+        "{\"t\":\"init\",\"v\":1,\"home\":4294967299,\"away\":1,\"seed\":1}\n", // (int) truncates to 3
+        "{\"t\":\"init\",\"v\":1,\"away\":1,\"seed\":1}\n",              // missing home
+    };
+    for (size_t i = 0; i < sizeof bad / sizeof bad[0]; i++) {
+        bb_replay_reader r;
+        bb_replay_reader_init(&r, bad[i], strlen(bad[i]));
+        bb_record rec;
+        BB_CHECK(!bb_replay_next(&r, &rec));
+        BB_CHECK_EQ(rec.type, BB_REC_PARSE_ERROR);
+    }
+    // In-range ids still parse.
+    const char* good = "{\"t\":\"init\",\"v\":1,\"home\":0,\"away\":29,\"seed\":7}\n";
+    bb_replay_reader r;
+    bb_replay_reader_init(&r, good, strlen(good));
+    bb_record rec;
+    BB_CHECK(bb_replay_next(&r, &rec));
+    BB_CHECK_EQ(rec.type, BB_REC_INIT);
+    BB_CHECK_EQ(rec.home_team_id, 0);
+    BB_CHECK_EQ(rec.away_team_id, 29);
+}

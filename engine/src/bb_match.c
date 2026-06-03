@@ -227,6 +227,14 @@ static void default_squad(bb_match* m, int team, int team_id) {
 
 void bb_match_init(bb_match* m, int home_team_id, int away_team_id) {
     memset(m, 0, sizeof(*m));
+    // File-derived ids (replay INIT records, future FUMBBL/BC normalizers)
+    // flow here; an out-of-range id would index bb_team_defs[] out of bounds
+    // (review Hd1). Callers handle BB_STATUS_ERROR.
+    if ((unsigned)home_team_id >= (unsigned)BB_TEAM_COUNT ||
+        (unsigned)away_team_id >= (unsigned)BB_TEAM_COUNT) {
+        m->status = BB_STATUS_ERROR;
+        return;
+    }
     m->team_id[BB_HOME] = (uint8_t)home_team_id;
     m->team_id[BB_AWAY] = (uint8_t)away_team_id;
     default_squad(m, BB_HOME, home_team_id);

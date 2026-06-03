@@ -1,4 +1,5 @@
 #include "bb/bb_replay.h"
+#include "bb/gen_teams.h"
 #include <inttypes.h>
 #include <stdlib.h>
 #include <string.h>
@@ -96,12 +97,22 @@ bool bb_replay_next(bb_replay_reader* r, bb_record* out) {
     while (t < end && (*t == ' ' || *t == '"')) t++;
 
     if (*t == 'i') { // init
-        out->type = BB_REC_INIT;
         const char* p;
+        int64_t home = -1, away = -1; // missing key = malformed init
         if ((p = find_key(s, end, "v")))    out->version = (int)parse_int(p, end);
-        if ((p = find_key(s, end, "home"))) out->home_team_id = (int)parse_int(p, end);
-        if ((p = find_key(s, end, "away"))) out->away_team_id = (int)parse_int(p, end);
+        if ((p = find_key(s, end, "home"))) home = parse_int(p, end);
+        if ((p = find_key(s, end, "away"))) away = parse_int(p, end);
         if ((p = find_key(s, end, "seed"))) out->seed = parse_u64(p, end);
+        // Range-check before the int truncation: these ids flow straight into
+        // bb_team_defs[] lookups via bb_match_init (review Hd1).
+        if (home < 0 || home >= BB_TEAM_COUNT ||
+            away < 0 || away >= BB_TEAM_COUNT) {
+            out->type = BB_REC_PARSE_ERROR;
+            return false;
+        }
+        out->home_team_id = (int)home;
+        out->away_team_id = (int)away;
+        out->type = BB_REC_INIT;
         return true;
     }
     if (*t == 'a') {

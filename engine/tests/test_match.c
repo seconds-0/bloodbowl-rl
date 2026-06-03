@@ -200,3 +200,20 @@ BB_TEST(fixtures_player_at_origin_survives_later_placements) {
     BB_CHECK_EQ(bb_slot_at(&m, 20, 10), c);
     BB_CHECK_EQ(m.players[a].location, BB_LOC_ON_PITCH);
 }
+
+// bb_match_init indexes bb_team_defs[] with its team ids; out-of-range ids
+// (file-derived, e.g. replay INIT records) must be rejected, not looked up
+// out of bounds (review Hd1).
+BB_TEST(match_init_rejects_out_of_range_team_ids) {
+    bb_match m;
+    bb_match_init(&m, -1, BB_TEAM_ORC);
+    BB_CHECK_EQ(m.status, BB_STATUS_ERROR);
+    BB_CHECK_EQ(bb_advance(&m, 0), BB_STATUS_ERROR); // stays in ERROR
+    bb_match_init(&m, BB_TEAM_HUMAN, BB_TEAM_COUNT);
+    BB_CHECK_EQ(m.status, BB_STATUS_ERROR);
+    bb_match_init(&m, 0x7FFFFFFF, 0);
+    BB_CHECK_EQ(m.status, BB_STATUS_ERROR);
+    // Boundary ids are valid.
+    bb_match_init(&m, 0, BB_TEAM_COUNT - 1);
+    BB_CHECK_EQ(m.status, BB_STATUS_RUNNING);
+}
