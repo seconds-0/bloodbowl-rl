@@ -124,10 +124,19 @@ static void procgen_squad(bb_match* m, int team, int team_id, bb_rng* rng) {
     }
 
     // Pre-game injuries: 0-2 players start in the casualty box (simulating
-    // league attrition) — only if the squad stays >= 11.
+    // league attrition) — only if the squad stays >= 11. Picks are WITHOUT
+    // replacement: sampling the raw slot range could hit the same player
+    // twice, under-delivering 2-casualty squads ~7-9% (review LOW).
     int hurt = pg_pick(rng, 3);
     for (int i = 0; i < hurt && n - i > 11; i++) {
-        m->players[base + pg_pick(rng, n)].location = BB_LOC_CAS;
+        int pick = pg_pick(rng, n - i); // index among the still-healthy
+        for (int s = base; s < base + n; s++) {
+            if (m->players[s].location == BB_LOC_CAS) continue;
+            if (pick-- == 0) {
+                m->players[s].location = BB_LOC_CAS;
+                break;
+            }
+        }
     }
 }
 

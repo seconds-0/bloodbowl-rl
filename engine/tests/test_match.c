@@ -258,3 +258,35 @@ BB_TEST(match_procgen_keeps_roster_skill_values) {
         }
     }
 }
+
+// Pre-game injuries are dealt to DISTINCT players (review LOW): sampling the
+// raw slot range with replacement could hit the same player twice. At seed
+// 49 / stream 5 the home squad rolled 2 injuries but the old code
+// double-picked one player, leaving a single casualty.
+BB_TEST(match_procgen_pregame_injuries_without_replacement) {
+    bb_match m;
+    bb_rng pg;
+    bb_rng_seed(&pg, 49, 5);
+    bb_match_init_random(&m, &pg);
+    int cas = 0;
+    for (int s = 0; s < BB_TEAM_SLOTS; s++) {
+        if (m.players[s].location == BB_LOC_CAS) cas++;
+    }
+    BB_CHECK_EQ(cas, 2);
+    // Invariants: at most 2 pre-game casualties, and at least 11 healthy
+    // players always remain.
+    for (uint64_t seed = 1; seed <= 200; seed++) {
+        bb_rng pg2;
+        bb_rng_seed(&pg2, seed, 5);
+        bb_match_init_random(&m, &pg2);
+        for (int t = 0; t < 2; t++) {
+            int ncas = 0, healthy = 0;
+            for (int s = t * BB_TEAM_SLOTS; s < (t + 1) * BB_TEAM_SLOTS; s++) {
+                if (m.players[s].location == BB_LOC_CAS) ncas++;
+                if (m.players[s].location == BB_LOC_RESERVES) healthy++;
+            }
+            BB_CHECK(ncas <= 2);
+            BB_CHECK(healthy >= 11);
+        }
+    }
+}
