@@ -684,7 +684,9 @@ class Mapper:
                 self.act(cmd, A_CHOOSE_OPTION, 0xFE, note="high kick declined")
         elif result in ("Solid Defence", "Quick Snap", "Blitz", "Charge!", "Charge"):
             pass  # d3 attaches via the *Roll report that follows
-        elif result in ("Pitch Invasion", "Dodgy Snack", "Officious Ref"):
+        elif result == "Dodgy Snack":
+            pass  # fully mapped via rep_kickoffDodgySnack
+        elif result in ("Pitch Invasion", "Officious Ref"):
             self.skip(cmd, "kickoff_event_partial", result)
 
     def rep_quickSnapRoll(self, i, r, cmd):
@@ -711,7 +713,40 @@ class Mapper:
         self.skip(cmd, "pitch_invasion_selection", r.get("playerIds"))
 
     def rep_kickoffDodgySnack(self, i, r, cmd):
-        self.skip(cmd, "dodgy_snack_partial", "")
+        """Dodgy Snack (kickoff 11): engine rolls D6 home, D6 away, then for
+        each losing team (both on a tie, home first) a victim pick over its
+        on-pitch players sorted by slot, then the victim's D6 (2+ = -1 MA/AV
+        for the drive, 1 = Reserves). FFB reports the 2d6 + the victim ids +
+        a dodgySnackRoll per victim; the pick die is reconstructed from the
+        victim's index in the slot-ordered on-pitch list."""
+        rh, ra = r.get("rollHome"), r.get("rollAway")
+        if not rh or not ra:
+            self.skip(cmd, "dodgy_snack_partial", "missing 2d6")
+            return
+        dice = [int(rh), int(ra)]
+        victims = [str(p) for p in (r.get("playerIds") or [])]
+        losers = ([0] if rh <= ra else []) + ([1] if ra <= rh else [])
+        for team in losers:
+            vic = next((p for p in victims if self.pid_team(p) == team), None)
+            cands = sorted(sl for pid2, (t2, sl) in self.slot_of.items()
+                           if t2 == team and self.pos.get(pid2))
+            if vic is None or self.slot_of[vic][1] not in cands:
+                self.skip(cmd, "dodgy_snack_victim_unknown", f"team {team}")
+                return
+            dice.append(cands.index(self.slot_of[vic][1]) + 1)
+            j = self.lookahead(i, lambda x, v=vic:
+                               x.get("report") == "dodgySnackRoll" and
+                               str(x.get("playerId")) == v, limit=6)
+            if j < 0:
+                self.skip(cmd, "dodgy_snack_roll_missing", vic)
+                return
+            self.consumed.add(j)
+            roll = int(self.recs[j].get("roll") or 1)
+            dice.append(roll)
+            if roll >= 2 and self.ma_of.get(vic, 0) > 1:
+                self.ma_of[vic] -= 1  # mirror the engine's -1 MA debuff
+            # roll == 1: victim to Reserves — FFB state records mirror it.
+        self.attach(cmd, dice, "dodgy snack")
 
     def rep_kickoffOfficiousRef(self, i, r, cmd):
         self.skip(cmd, "officious_ref_unmapped", "")
