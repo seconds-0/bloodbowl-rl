@@ -217,3 +217,16 @@ BB_TEST(match_init_rejects_out_of_range_team_ids) {
     bb_match_init(&m, 0, BB_TEAM_COUNT - 1);
     BB_CHECK_EQ(m.status, BB_STATUS_RUNNING);
 }
+
+// bb_aura_skills must agree exactly with the registered aura hooks — it is
+// the fast-path mask that lets bb_hook_mods skip players with no aura skills;
+// a divergence would silently disable (or fail to skip) an aura (review P2).
+BB_TEST(aura_mask_matches_registered_aura_hooks) {
+    for (int sk = 0; sk < BB_SKILL_COUNT; sk++) {
+        BB_CHECK_EQ(bb_has_skill(&bb_aura_skills, sk), bb_hooks[sk].aura != 0);
+    }
+    // Sanity: the known aura carriers are in the mask.
+    BB_CHECK(bb_has_skill(&bb_aura_skills, BB_SK_DISTURBING_PRESENCE));
+    BB_CHECK(bb_has_skill(&bb_aura_skills, BB_SK_TITCHY));
+    BB_CHECK(bb_has_skill(&bb_aura_skills, BB_SK_PREHENSILE_TAIL));
+}
