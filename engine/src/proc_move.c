@@ -239,15 +239,27 @@ static void move_advance(bb_match* m, bb_rng* rng) {
             }
         }
         if (f->data & MV_BLOCK_RUSH) {
-            // Rush-for-block resolved.
+            // Rush-for-block resolved — or rush-for-stab (the blitz block
+            // replacement): only the stab path sets MV_ACTION_DONE before the
+            // rush, so it discriminates the two (review LOW, Stab rush
+            // parity). No other writer can race it: under a BLITZ frame,
+            // MV_ACTION_DONE is otherwise set only by the stab itself, which
+            // ends the activation.
             int target = (f->data >> 9) & 31;
+            bool stab = (f->data & MV_ACTION_DONE) != 0;
             f->data &= (uint16_t)~(MV_BLOCK_RUSH | (31u << 9));
             if (m->ret & 1) {
-                f->data |= MV_AWAIT_BLOCK;
-                bb_push(m, BB_PROC_BLOCK, slot, target, 0, 0);
-                bb_top(m)->data |= 1 << 13; // BLK_IS_BLITZ (rush-for-block)
+                if (stab) {
+                    f->data |= MV_AWAIT_ACTION;
+                    bb_push(m, BB_PROC_ARMOUR, target, 3 /* unmodifiable */, 0,
+                            slot + 1);
+                } else {
+                    f->data |= MV_AWAIT_BLOCK;
+                    bb_push(m, BB_PROC_BLOCK, slot, target, 0, 0);
+                    bb_top(m)->data |= 1 << 13; // BLK_IS_BLITZ (rush-for-block)
+                }
             } else {
-                // Failed rush: knocked down in their own square, no block.
+                // Failed rush: knocked down in their own square, no block/stab.
                 bb_pop(m); // MOVE
                 bb_knockdown(m, slot, BB_KD_FAILED_RUSH, 0);
             }
@@ -475,11 +487,14 @@ static int move_legal(const bb_match* m, bb_action* out) {
 
     // STAB: target an adjacent standing opponent (no movement first — Stab
     // is its own action); also offered during a Blitz as the block
-    // replacement (BB_A_SPECIAL_TARGET arg 1).
+    // replacement (BB_A_SPECIAL_TARGET arg 1). Rush parity with blitz+Block:
+    // with movement spent, a remaining Rush may pay for the stab (the old
+    // `|| kind == BB_ACT_STAB` term inside the BLITZ leg was statically dead;
+    // review LOW).
     if ((kind == BB_ACT_STAB && !(f->data & MV_ACTION_DONE)) ||
         (kind == BB_ACT_BLITZ && !(f->data & MV_BLOCK_DONE) &&
          bb_has_skill(&p->skills, BB_SK_STAB) &&
-         (movement_left(m, slot) > 0 || kind == BB_ACT_STAB))) {
+         (movement_left(m, slot) > 0 || p->rushes < bb_max_rushes(m, slot)))) {
         if (p->stance == BB_STANCE_STANDING) {
             for (int dx = -1; dx <= 1; dx++) {
                 for (int dy = -1; dy <= 1; dy++) {
@@ -908,8 +923,30 @@ static void move_apply(bb_match* m, bb_action a, bb_rng* rng) {
                 // STAB: unmodifiable Armour Roll; armour broken -> Injury;
                 // the activation ends (even as a Blitz block replacement).
                 if (f->b == BB_ACT_BLITZ) {
-                    p->moved++; // replaces the blitz block: costs the square
                     f->data |= MV_BLOCK_DONE;
+                    if (movement_left(m, slot) == 0) {
+                        // Rush to gain the movement for the stab — parity
+                        // with the blitz block path (review LOW): roll first;
+                        // failure = knocked down in place, no stab.
+                        // MV_ACTION_DONE alongside MV_BLOCK_RUSH marks this
+                        // as a stab-rush for the resolution branch.
+                        p->rushes++;
+                        f->x = p->x;
+                        f->y = p->y;
+                        f->data |= MV_AWAIT_TEST | MV_RUSH_PEND |
+                                   MV_BLOCK_RUSH | MV_ACTION_DONE;
+                        f->data = (uint16_t)((f->data & ~(31u << 9)) |
+                                             ((uint16_t)target << 9));
+                        bb_ctx rc = {BB_TEST_RUSH, (uint8_t)slot, BB_NO_PLAYER,
+                                     (uint8_t)slot, (int8_t)p->x, (int8_t)p->y,
+                                     (int8_t)p->x, (int8_t)p->y, -1, 1};
+                        int rmod = bb_hook_mods(m, &rc);
+                        if (m->weather == BB_WEATHER_BLIZZARD) rmod -= 1;
+                        bb_push(m, BB_PROC_TEST, slot, BB_TEST_RUSH,
+                                bb_test_target(2, rmod), 0);
+                        return;
+                    }
+                    p->moved++; // replaces the blitz block: costs the square
                 }
                 f->data |= MV_ACTION_DONE | MV_AWAIT_ACTION;
                 bb_push(m, BB_PROC_ARMOUR, target, 3 /* unmodifiable */, 0,
