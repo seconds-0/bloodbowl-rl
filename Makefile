@@ -40,7 +40,7 @@ $(LIB): $(OBJ)
 # NOTE: tests link the object files directly (not libbb.a) — skill hook
 # registrations live in constructor-only objects that a static archive would
 # drop. External consumers of libbb.a must use -force_load / --whole-archive.
-$(TESTBIN): $(TEST_SRC) engine/tests/bb_test.h engine/tests/bb_test_main.c $(OBJ)
+$(TESTBIN): $(TEST_SRC) engine/tests/bb_test.h engine/tests/bb_fixtures.h engine/tests/bb_test_main.c $(OBJ)
 	$(CC) $(CFLAGS) -Iengine/tests engine/tests/bb_test_main.c $(TEST_SRC) $(OBJ) -o $@ $(LDFLAGS)
 
 test: $(TESTBIN)
