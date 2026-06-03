@@ -20,3 +20,11 @@ Format: **D# — decision** · rationale · revisit?
 **D7 — Vast.ai**: key stored at `~/.vast_api_key`, verified live ($96.26 credit). Spend capped at your authorized $50. No GPU spend until the PufferLib binding smoke test (Phase 5).
 
 **D8 — GitHub remote deferred.** Repo is local-only so far; creating a private GH repo is outward-facing and can wait for your morning review (CI workflow file is ready to go when pushed).
+
+**D9 — Wrestle auto-applies on Both Down.** Rules make it optional ("may choose"); since declining is almost never right and the rulebook tests expect auto-application, the engine applies it when either player has it. Revisit if FUMBBL replays show declines.
+**D10 — Single-candidate interceptions auto-attempt.** Attempting is cost-free (no failure penalty), so with one eligible interceptor there's no real decision; with several, the defending coach chooses. Matches the rulebook tests.
+**D11 — Crowd-push dice order.** Crowd injury + throw-in resolve at relocation time, BEFORE the follow-up decision — FFB's order, and what the blocking tests encode. GAME/FOLLOW-UP's "decision before any other dice" reading is a known minor divergence to check against FUMBBL replays.
+**D12 — Pitch Invasion victim selection** uses the raw PRNG (not the scripted dice stream) — FUMBBL records selections as separate commands, so replay alignment handles it at the harness level. Fan-factor modifiers TODO with the fans/inducements work.
+**D13 — Secure the Ball failure = bounce + turnover** (consistent with the failed-pickup family). Rule text doesn't settle it; flagged for FFB differential adjudication.
+**D14 — Test-vs-test conflicts resolved toward the mirror**: throw-in direction die is a D6 over the 3 template arrows (corners: D3); distance counts the boundary square as the first; no bounce on an empty landing square. Two agent tests written with d3/full-distance/bounce assumptions were corrected.
+**D15 — BB2025 team re-rolls are UNLIMITED per turn** (the BB2020 once-per-turn cap is gone) and replenish at half-time; skill re-rolls (Dodge/Sure Feet/...) are once per TURN per player. Engine restructured accordingly.
