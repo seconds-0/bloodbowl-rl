@@ -287,3 +287,28 @@ surface, match() mechanics): `reference/vecenv-internals.md`.
   and BC warm starts. CUDA backend loads its OWN flat-fp32 .bin fine;
   state_dict-style .bins (BC pretrain output) need the converter noted in
   training/bc_pretrain.py before GPU warm-start.
+
+## BC-regularized PPO (local torch_pufferl.py patch)
+
+The AlphaStar-style human anchor (DECISIONS.md D27: selfplay PPO erodes the
+BC prior): when `[train] bc_coef > 0`, every PPO minibatch in the TORCH
+backend (`--slowly`) also pays `bc_coef *` masked 3-head CE on `bc_batch`
+human pairs sampled from the `.bbp` shards in `bc_pairs_dir`, zero recurrent
+state (= bc_pretrain v0). `bc_coef_anneal=1` cosine-decays bc_coef to 10%
+over total_timesteps. Dashboard/wandb keys: `loss/bc_loss`, `loss/bc_acc`,
+`loss/bc_coef`. TORCH BACKEND ONLY — the native CUDA trainer ignores bc_*.
+
+- Config keys live in `puffer/config/bloodbowl.ini` `[train]` (bc_coef
+  default 0.0 = off and bit-identical to unpatched; bc_pairs_dir; bc_batch;
+  bc_coef_anneal) and reach vendor via `tools/install_puffer_env.sh`.
+- **Reapply after any vendor re-clone** (vendor/*/ is gitignored):
+  `cd vendor/PufferLib && git apply ../../training/torch_pufferl_bcreg.patch`
+  then re-validate with
+  `vendor/PufferLib/.venv/bin/python training/test_bcreg_torch_pufferl.py`
+  (proves off-mode bit-identity vs pristine HEAD + on-mode bc_loss decrease).
+  `tools/run_bcreg.sh` auto-applies the patch if the marker is missing.
+- Launch recipe: `tools/run_bcreg.sh` — torch backend on the CUDA box
+  (`./build.sh bloodbowl --float`; bf16 default build refuses to import),
+  `--selfplay.enabled 0` (pool is native-only), warm start from
+  training/bc_v1.bin (state_dict loads directly in the torch backend — no
+  converter), B-profile reward knobs, bc_coef 1.0 annealed.
