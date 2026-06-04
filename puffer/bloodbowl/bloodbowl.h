@@ -205,6 +205,12 @@ typedef struct {
     bb_skillset skill_keys[BB_NUM_PLAYERS];
     uint8_t skill_rows[BB_NUM_PLAYERS][BBE_SKILL_SLOTS];
     uint8_t tz_scratch[BB_NUM_PLAYERS]; // valid only within bbe_emit_all's step
+    // Head-space projection of legal[] for the DECIDING agent, written by
+    // bbe_fill_mask (which had to compute it anyway) and reused by
+    // bbe_decode, which previously re-derived arg/sq per scanned action over
+    // up to three fallback passes (review LOW: decode 3-pass fold).
+    uint16_t legal_sq[BB_LEGAL_MAX];
+    uint8_t legal_arg[BB_LEGAL_MAX];
 } Bloodbowl;
 
 static void bbe_refresh_legal(Bloodbowl* env) {
@@ -445,34 +451,39 @@ static void bbe_fill_mask(Bloodbowl* env, int agent) {
     }
     for (int i = 0; i < env->n_legal; i++) {
         bb_action a = env->legal[i];
+        int ha = bbe_action_arg(agent, a);
+        int hs = bbe_action_sq(agent, a);
+        // Cache the head projection for bbe_decode (same agent, same list).
+        env->legal_arg[i] = (unsigned char)ha;
+        env->legal_sq[i] = (uint16_t)hs;
         mask[a.type] = 1;
-        mask[BBE_HEAD_TYPE + bbe_action_arg(agent, a)] = 1;
-        mask[BBE_HEAD_TYPE + BBE_HEAD_ARG + bbe_action_sq(agent, a)] = 1;
+        mask[BBE_HEAD_TYPE + ha] = 1;
+        mask[BBE_HEAD_TYPE + BBE_HEAD_ARG + hs] = 1;
     }
 }
 
+// Snap the sampled heads onto a legal action. Uses the head projections
+// bbe_fill_mask cached for the deciding agent on this exact legal list; one
+// scan replaces the old three recompute passes with identical selection:
+// first exact (type, arg, sq) match, else first same-type same-square, else
+// first same-type, else legal[0]. Only the exact tier is non-illegal.
 static bb_action bbe_decode(Bloodbowl* env, int agent, const float* heads) {
+    (void)agent; // projections were cached for the deciding agent
     int t = (int)heads[0];
     int arg = (int)heads[1];
     int sq = (int)heads[2];
-    // Pass 1: exact match in head space (type + arg-class + square).
+    int same_type_sq = -1, same_type = -1;
     for (int i = 0; i < env->n_legal; i++) {
-        bb_action a = env->legal[i];
-        if (a.type != t) continue;
-        if (bbe_action_arg(agent, a) != arg) continue;
-        if (bbe_action_sq(agent, a) != sq) continue;
-        return a;
+        if (env->legal[i].type != t) continue;
+        if (env->legal_sq[i] == sq) {
+            if (env->legal_arg[i] == arg) return env->legal[i]; // exact
+            if (same_type_sq < 0) same_type_sq = i;
+        }
+        if (same_type < 0) same_type = i;
     }
     env->illegal++;
-    // Pass 2: same type, matching square.
-    for (int i = 0; i < env->n_legal; i++) {
-        bb_action a = env->legal[i];
-        if (a.type == t && bbe_action_sq(agent, a) == sq) return a;
-    }
-    for (int i = 0; i < env->n_legal; i++) {
-        if (env->legal[i].type == t) return env->legal[i];
-    }
-    // Pass 3: anything legal.
+    if (same_type_sq >= 0) return env->legal[same_type_sq];
+    if (same_type >= 0) return env->legal[same_type];
     return env->legal[0];
 }
 
