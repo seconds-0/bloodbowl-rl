@@ -192,7 +192,7 @@ def fetch_team_matches(team_id, refresh=False):
 
 # --- discovery ---------------------------------------------------------------
 
-def discover_competitive_match_ids(want, refresh=False, max_teams=12):
+def discover_competitive_match_ids(want, refresh=False, max_teams=80):
     """Collect recent Competitive-division match ids, newest first.
 
     /api/match/current -> team ids playing Competitive right now ->
@@ -215,13 +215,26 @@ def discover_competitive_match_ids(want, refresh=False, max_teams=12):
           f"{len(team_ids)} Competitive team ids")
 
     candidates = {}
-    for tid in team_ids[:max_teams]:
+    # Snowball crawl: every match entry names two teams, so each page of
+    # results widens the frontier. BFS from the currently-playing seeds until
+    # we have enough candidates or hit the polite team cap.
+    queue = list(team_ids)
+    seen_teams = set(queue)
+    crawled = 0
+    while queue and crawled < max_teams and len(candidates) < want * 4:
+        tid = queue.pop(0)
+        crawled += 1
         page = fetch_team_matches(tid, refresh=refresh)
         kept = 0
         for entry in page:
             mid = entry.get("id")
             if not mid:
                 continue
+            for side in ("team1", "team2"):
+                t2 = (entry.get(side) or {}).get("id")
+                if t2 and t2 not in seen_teams:
+                    seen_teams.add(t2)
+                    queue.append(t2)
             # Filter on the cheap summary before fetching anything else.
             if entry.get("division") not in (None, "Competitive"):
                 continue
@@ -229,9 +242,8 @@ def discover_competitive_match_ids(want, refresh=False, max_teams=12):
                 continue
             candidates[mid] = entry
             kept += 1
-        print(f"  team {tid}: {len(page)} matches, {kept} candidates")
-        if len(candidates) >= want * 4:  # plenty of headroom for later filters
-            break
+        print(f"  team {tid}: {len(page)} matches, {kept} candidates "
+              f"(frontier {len(queue)}, total {len(candidates)})")
     return sorted(candidates.keys(), reverse=True)
 
 
