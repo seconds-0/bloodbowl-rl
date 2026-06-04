@@ -414,21 +414,27 @@ and the head projections `bbe_action_arg`/`bbe_action_sq` are byte-identical
 to training. Divergence reporting is unchanged; records stop at the first
 divergence (nothing past it is applied).
 
-### `.bbp` format v1 (binary, little-endian)
+### `.bbp` format v2 (binary, little-endian)
+
+v2 carries the obs-v3 observation (1612 B, tackle-zone planes appended);
+v1 carried the 832-B obs. Readers (`bc_pretrain.py`, `extract_pairs.py`)
+size records from the header's `obs_size`/`mask_size`, so v1 shards stay
+readable — but obs lineages must never be mixed in one corpus, and an
+obs-v3 policy needs a re-extracted (v2) corpus.
 
 ```
 header (16 bytes):
   magic     char[4]  "BBP1"
-  version   u32      1
-  obs_size  u32      832  (BBE_OBS_SIZE)
+  version   u32      2
+  obs_size  u32      1612 (BBE_OBS_SIZE; v1 wrote 832)
   mask_size u32      454  (BBE_MASK_SIZE = 30 + 33 + 391 head bits)
-record (1302 bytes each):
+record (12 + obs_size + mask_size + 4 = 2082 bytes each):
   replay_id u32      numeric FUMBBL replay id
   cmd       u32      FUMBBL commandNr of the op
   agent     u8       deciding team (0 home / 1 away); obs, mask and action
                      targets are all in this agent's egocentric frame
   pad       u8[3]    zero
-  obs       u8[832]  bbe_encode_obs at the decision, BEFORE the action
+  obs       u8[1612] bbe_encode_obs at the decision, BEFORE the action
   mask      u8[454]  bbe_fill_mask legality bits, heads packed 30|33|391
   type      u8       action-type head target (bb_action_type)
   arg       u8       arg head target via bbe_action_arg (player slots

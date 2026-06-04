@@ -7,13 +7,15 @@ with --dump-pairs, landing one shard per replay at validation/pairs/<id>.bbp.
 Prints per-replay yields and corpus totals (replays, pairs, pairs/replay,
 bytes).
 
-The .bbp format (v1) is documented in the comment block of
+The .bbp format (v2 = obs v3) is documented in the comment block of
 tools/bb_lockstep.c and in validation/README.md: a 16-byte header
-("BBP1", version u32, obs_size u32 = 832, mask_size u32 = 454) followed by
-1302-byte records (replay_id u32, cmd u32, agent u8, pad[3], obs[832],
-mask[454], type u8, arg u8, sq u16, little-endian). Each shard is
-re-validated here: header fields, size % record size, and the invariant
-that every record's action targets are set in its own mask slices.
+("BBP1", version u32, obs_size u32 = 1612, mask_size u32 = 454) followed
+by (12 + obs_size + mask_size + 4)-byte records (replay_id u32, cmd u32,
+agent u8, pad[3], obs[obs_size], mask[mask_size], type u8, arg u8, sq u16,
+little-endian). Record sizing honors the HEADER fields, so v1 shards
+(obs 832) still validate. Each shard is re-validated here: header fields,
+size % record size, and the invariant that every record's action targets
+are set in its own mask slices.
 
 Stock python3, stdlib only. Consumers needing torch use
 training/bc_pretrain.py with vendor/PufferLib/.venv/bin/python.
@@ -36,30 +38,32 @@ RUNNER = os.path.join(ROOT, "build", "bb_lockstep")
 PAIR_DIR = os.path.join(ROOT, "validation", "pairs")
 
 MAGIC = b"BBP1"
-VERSION = 1
-OBS_SIZE = 832
+KNOWN_VERSIONS = (1, 2)  # v1 = obs 832 B, v2 = obs v3 (1612 B, TZ planes)
 MASK_SIZE = 454
 HEAD_TYPE, HEAD_ARG, HEAD_SQ = 30, 33, 391
 HEADER_LEN = 16
-REC_LEN = 4 + 4 + 4 + OBS_SIZE + MASK_SIZE + 4  # 1302
 
 
 def validate_shard(path):
-    """Header + per-record invariant check; returns the record count."""
+    """Header + per-record invariant check; returns the record count.
+
+    Record size comes from the HEADER's obs_size/mask_size (backward-compat:
+    v1 obs-832 shards still validate; v2 = obs v3, 1612 B)."""
     with open(path, "rb") as f:
         raw = f.read()
     if len(raw) < HEADER_LEN:
         raise ValueError(f"{path}: truncated header")
     magic, ver, osz, msz = struct.unpack("<4sIII", raw[:HEADER_LEN])
-    if magic != MAGIC or ver != VERSION or osz != OBS_SIZE or msz != MASK_SIZE:
+    if magic != MAGIC or ver not in KNOWN_VERSIONS or msz != MASK_SIZE:
         raise ValueError(f"{path}: bad header {magic} v{ver} obs={osz} mask={msz}")
+    rec_len = 4 + 4 + 4 + osz + msz + 4  # v2: 2082, v1: 1302
     body = raw[HEADER_LEN:]
-    if len(body) % REC_LEN:
-        raise ValueError(f"{path}: body {len(body)}B not a multiple of {REC_LEN}")
-    n = len(body) // REC_LEN
+    if len(body) % rec_len:
+        raise ValueError(f"{path}: body {len(body)}B not a multiple of {rec_len}")
+    n = len(body) // rec_len
     for i in range(n):
-        rec = body[i * REC_LEN:(i + 1) * REC_LEN]
-        mask = rec[12 + OBS_SIZE:12 + OBS_SIZE + MASK_SIZE]
+        rec = body[i * rec_len:(i + 1) * rec_len]
+        mask = rec[12 + osz:12 + osz + msz]
         a_type, a_arg = rec[-4], rec[-3]
         (a_sq,) = struct.unpack("<H", rec[-2:])
         if not (a_type < HEAD_TYPE and a_arg < HEAD_ARG and a_sq < HEAD_SQ):

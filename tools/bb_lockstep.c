@@ -212,23 +212,28 @@ static void report_divergence(runner* R, long cmd, const char* cls,
 }
 
 // --- BC pair dump (--dump-pairs <out.bbp>) -----------------------------------
-// .bbp format v1: binary, little-endian, written by this runner; consumed by
+// .bbp format v2: binary, little-endian, written by this runner; consumed by
 // training/bc_pretrain.py (extraction orchestrated by
 // validation/extract_pairs.py). Also documented in validation/README.md.
+// v2 = obs v3 (1612 B, tackle-zone planes appended); v1 carried the 832-B
+// obs. Readers must size records from the HEADER's obs_size/mask_size, so
+// v1 shards stay readable — but v1 obs cannot feed an obs-v3 policy (the
+// encoder input dim changed); re-extract the corpus for obs-v3 BC.
 //
 //   header (16 bytes):
 //     magic     char[4]  "BBP1"
-//     version   u32      1
-//     obs_size  u32      BBE_OBS_SIZE  (832)
+//     version   u32      2
+//     obs_size  u32      BBE_OBS_SIZE  (1612; v1 wrote 832)
 //     mask_size u32      BBE_MASK_SIZE (454)
-//   record (1302 bytes), one per successfully applied act/place op (a place
-//   op is a BB_A_SETUP_PLACE action), for the DECIDING coach only:
+//   record (12 + obs_size + mask_size + 4 = 2082 bytes), one per
+//   successfully applied act/place op (a place op is a BB_A_SETUP_PLACE
+//   action), for the DECIDING coach only:
 //     replay_id u32      numeric FUMBBL replay id
 //     cmd       u32      FUMBBL commandNr of the op
 //     agent     u8       deciding team (0 home / 1 away); obs, mask and the
 //                        action targets are in this agent's egocentric frame
 //     pad       u8[3]    zero
-//     obs       u8[832]  bbe_encode_obs at the decision, BEFORE the action
+//     obs       u8[1612] bbe_encode_obs at the decision, BEFORE the action
 //     mask      u8[454]  bbe_fill_mask legality bits, heads packed 30|33|391
 //     type      u8       action-type head target (bb_action_type)
 //     arg       u8       arg head target via bbe_action_arg (player slots
@@ -286,7 +291,7 @@ static void pd_open(const char* path) {
         exit(2);
     }
     fwrite("BBP1", 1, 4, PD.f);
-    pd_u32(1);
+    pd_u32(2); // v2: obs v3 (TZ planes); readers size records via the header
     pd_u32(BBE_OBS_SIZE);
     pd_u32(BBE_MASK_SIZE);
     PD.env.num_agents = BBE_AGENTS;

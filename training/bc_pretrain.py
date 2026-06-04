@@ -66,14 +66,22 @@ import pufferlib.models  # noqa: E402
 # Mirrors ACT_SIZES in puffer/bloodbowl/binding.c (asserted against the .bbp
 # header's mask_size below — the shards only pin the sum).
 ACT_SIZES = (30, 33, 391)
-MAGIC, VERSION = b"BBP1", 1
+MAGIC = b"BBP1"
+KNOWN_VERSIONS = (1, 2)  # v1 = obs v2 (832 B), v2 = obs v3 (1612 B, TZ planes)
 HEADER_LEN = 16
 
-REC_DTYPE = np.dtype([
-    ("replay", "<u4"), ("cmd", "<u4"), ("agent", "u1"), ("pad", "u1", (3,)),
-    ("obs", "u1", (832,)), ("mask", "u1", (454,)),
-    ("type", "u1"), ("arg", "u1"), ("sq", "<u2"),
-])
+
+def rec_dtype(obs_size, mask_size):
+    """Record layout is header-driven: v1 (obs 832) and v2 (obs 1612) shards
+    both load, so old corpora stay readable. The POLICY built below takes its
+    input dim from the shards — an obs-v2 corpus trains an obs-v2 policy,
+    which is a different checkpoint lineage from obs v3 (encoder input dim
+    832 vs 1612 changes the parameter count)."""
+    return np.dtype([
+        ("replay", "<u4"), ("cmd", "<u4"), ("agent", "u1"), ("pad", "u1", (3,)),
+        ("obs", "u1", (obs_size,)), ("mask", "u1", (mask_size,)),
+        ("type", "u1"), ("arg", "u1"), ("sq", "<u2"),
+    ])
 
 
 def load_shards(pair_dir):
@@ -86,16 +94,16 @@ def load_shards(pair_dir):
         with open(p, "rb") as f:
             raw = f.read()
         magic, ver, osz, msz = struct.unpack("<4sIII", raw[:HEADER_LEN])
-        if magic != MAGIC or ver != VERSION:
+        if magic != MAGIC or ver not in KNOWN_VERSIONS:
             raise SystemExit(f"{p}: bad header {magic} v{ver}")
         if obs_size is None:
             obs_size, mask_size = osz, msz
-            if (osz, msz) != (832, 454):
-                raise SystemExit(f"{p}: obs/mask {osz}/{msz} unsupported by "
-                                 "REC_DTYPE (832/454)")
         elif (osz, msz) != (obs_size, mask_size):
-            raise SystemExit(f"{p}: header mismatch across shards")
-        shards.append(np.frombuffer(raw[HEADER_LEN:], dtype=REC_DTYPE))
+            raise SystemExit(f"{p}: header mismatch across shards — "
+                             f"{osz}/{msz} vs {obs_size}/{mask_size}; never "
+                             "mix obs lineages in one corpus")
+        shards.append(np.frombuffer(raw[HEADER_LEN:],
+                                    dtype=rec_dtype(osz, msz)))
     recs = np.concatenate(shards)
     assert sum(ACT_SIZES) == mask_size, (ACT_SIZES, mask_size)
     return recs, obs_size, mask_size
