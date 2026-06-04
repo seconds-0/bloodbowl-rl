@@ -267,6 +267,13 @@ class Mapper:
                 for p in ros.get("positionArray", []) or []:
                     pos_names[str(p.get("positionId"))] = p.get("positionName")
         self.ma_of = {}            # playerId -> MA (rush bookkeeping mirror)
+        # Rosters can exceed the engine's 16 slots (induced stars/mercs).
+        # Prioritize the players who actually take the pitch (any formation
+        # appearance) so the placements all have slots.
+        participants = set()
+        for rec in self.recs:
+            if rec.get("type") == "formation":
+                participants.update(str(p) for p in rec.get("players", {}))
         for team, key in ((0, "teamHome"), (1, "teamAway")):
             tm = self.meta[key]
             race = tm.get("race") or ""
@@ -278,7 +285,11 @@ class Mapper:
                     break
             positions = self.engine_teams[eteam]["positions"] if eteam >= 0 else []
             players = []
-            for i, p in enumerate(tm.get("players", [])):
+            roster = tm.get("players", [])
+            if len(roster) > 16:
+                roster = sorted(roster, key=lambda p: (
+                    str(p["playerId"]) not in participants))
+            for i, p in enumerate(roster):
                 if i >= 16:
                     self.skip(0, "roster_overflow", f"{key} player {p.get('name')}")
                     continue
@@ -1085,10 +1096,13 @@ class Mapper:
         if a and a["pid"] == pid and not a.get("closed"):
             # secondary report inside the same activation
             if action == "standUp":
+                if a.get("stood"):
+                    return  # implicit stand-up already emitted at DECLARE
                 self.resolve_pending_followup(cmd)
                 self.act(cmd, A_STAND_UP)
                 self.base[pid] = 0
                 a["moved"] = 3  # engine: standing up costs 3 MA
+                a["stood"] = True
                 return
             if action in ("blitzMove", "blitz", "passMove", "foulMove",
                           "handOverMove", "gazeMove", "throwTeamMateMove",
@@ -1192,6 +1206,7 @@ class Mapper:
             self.act(cmd, A_STAND_UP)
             self.base[pid] = 0
             self.activation["moved"] = 3  # engine: standing up costs 3 MA
+            self.activation["stood"] = True
         if action == "secureTheBall":
             pass  # steps follow; pickup test rides on the step
 
@@ -1777,22 +1792,40 @@ class Mapper:
             return
         is_ko = injured_base == 5
         is_cas = bool(cas) and not regen_ok
+        # FFB decline signature (StepApothecary DO_NOT_USE_APOTHECARY): an
+        # apothecaryRoll report with every field null. A used apothecary
+        # reports the new casualty roll (cas) or an apothecaryChoice (KO).
+        def apo_decline(x):
+            return (x.get("report") == "apothecaryRoll" and
+                    str(x.get("playerId")) == pid and
+                    not x.get("casualtyRoll") and x.get("playerState") is None)
         if is_ko and self.apo[team] > 0:
-            j = self.lookahead(i, lambda x: x.get("report") in
-                               ("apothecaryChoice", "apothecaryRoll") and
-                               str(x.get("playerId")) == pid, limit=10)
-            used = j >= 0
+            jd = self.lookahead(i, apo_decline, limit=10)
+            ju = self.lookahead(i, lambda x: x.get("report") == "apothecaryChoice"
+                                and str(x.get("playerId")) == pid, limit=10)
+            used = ju >= 0 and (jd < 0 or ju < jd)
             if used:
-                self.consumed.add(j)
+                self.consumed.add(ju)
                 self.apo[team] -= 1
+                self.stun_stage.setdefault(pid, "fresh")  # patched: stunned
+            elif jd >= 0:
+                self.consumed.add(jd)
             self.act(cmd, A_APOTHECARY, 1 if used else 0, note="ko window")
         elif is_cas and self.apo[team] > 0:
             j = self.lookahead(i, lambda x: x.get("report") == "apothecaryRoll"
                                and str(x.get("playerId")) == pid, limit=12)
-            if j >= 0:
+            if j >= 0 and apo_decline(self.recs[j]):
+                self.consumed.add(j)
+                self.act(cmd, A_APOTHECARY, 0, note="casualty apo declined")
+            elif j >= 0:
                 self.consumed.add(j)
                 self.apo[team] -= 1
                 cas2 = self.recs[j].get("casualtyRoll") or [1]
+                jc = self.lookahead(j, lambda x: x.get("report") ==
+                                    "apothecaryChoice" and
+                                    str(x.get("playerId")) == pid, limit=8)
+                if jc >= 0:
+                    self.consumed.add(jc)
                 self.act(cmd, A_APOTHECARY, 1, dice=[int(cas2[0])],
                          note="casualty apothecary")
             else:
