@@ -30,3 +30,4 @@ validation/replay_cache/
 .codex-reviews/
 # OS
 .DS_Store
+checkpoints-backup/
