@@ -114,6 +114,11 @@ typedef struct {
     // reads hist_score_bank_<b>/hist_n_bank_<b> to drive bank swaps.
     float hist_score_bank[BBE_MAX_BANKS];
     float hist_n_bank[BBE_MAX_BANKS];
+    // Per-slot results + draw rate: read by puffer match (pufferl.py match()
+    // consumes env/slot_0_score, env/slot_1_score, env/draw_rate).
+    float slot_0_score;
+    float slot_1_score;
+    float draw_rate;
     // Episodes ended by the defensive reset (BB_STATUS_ERROR or an empty
     // legal set at a DECISION). Should stay at 0.0 on the dashboard; anything
     // else means the engine/binding contract broke mid-training.
@@ -597,6 +602,9 @@ static void bbe_finish_episode(Bloodbowl* env) {
         env->terminal_ptr[a][0] = 1.0f;
     }
     env->log.perf += result;
+    env->log.slot_0_score += result;
+    env->log.slot_1_score += 1.0f - result;
+    env->log.draw_rate += (m->score[0] == m->score[1]) ? 1.0f : 0.0f;
     env->log.score_diff += (float)(m->score[0] - m->score[1]);
     env->log.tds += (float)(m->score[0] + m->score[1]);
     env->log.episode_return += env->ep_return[0];

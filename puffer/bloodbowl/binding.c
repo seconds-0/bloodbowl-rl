@@ -177,4 +177,7 @@ void my_log(Log* log, Dict* out) {
     dict_set(out, "hist_n_bank_5", log->hist_n_bank[5]);
     dict_set(out, "hist_n_bank_6", log->hist_n_bank[6]);
     dict_set(out, "hist_n_bank_7", log->hist_n_bank[7]);
+    dict_set(out, "slot_0_score", log->slot_0_score);
+    dict_set(out, "slot_1_score", log->slot_1_score);
+    dict_set(out, "draw_rate", log->draw_rate);
 }
