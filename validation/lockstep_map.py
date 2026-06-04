@@ -106,6 +106,14 @@ PLAYER_ACTION_KIND = {
 UNMAPPED_ACTIONS = {"throwBomb", "hailMaryBomb", "multipleBlock", "swoop",
                     "punt", "puntMove", "lookIntoMyEyes", "balefulHex"}
 
+# Kickoff-event free-action turn modes (engine treats the events as no-ops
+# past their dice, D21). Pure repositioning modes can be baked into the setup
+# placements when the result is still a legal formation.
+KICKOFF_FREE_MODES = {"blitz", "quickSnap", "solidDefence", "kickoffReturn"}
+KICKOFF_BAKE_MODES = {"quickSnap", "solidDefence", "kickoffReturn"}
+# The events' own D3 rolls ARE rolled by the engine — never drop these.
+KICKOFF_EVENT_ROLLS = {"blitzRoll", "solidDefenceRoll", "quickSnapRoll"}
+
 # Negatrait activation gates: engine D6 target (BB_SKILL_GATE registrations).
 # FFB applies situational modifiers (e.g. Really Stupid's +2 helper) that the
 # engine lacks; gate dice are outcome-adjusted against these flat targets.
@@ -242,6 +250,7 @@ class Mapper:
         self.move_from = None      # origin square of the current move record
         self.last_both_down = None # {att,def,cmd} of the last Both Down
         self.suppress_injury = set()  # pids whose next injury dice are FFB-only
+        self.baked_moves = {}      # pid -> final square baked into setup
 
     # --- roster ---------------------------------------------------------------
     def _build_roster(self):
@@ -455,6 +464,9 @@ class Mapper:
         a = self.activation
         self.activation = None
         self.flush_step(cmd)
+        # A block at the very end of an activation can leave the engine
+        # waiting on the follow-up (or push) decision: resolve it first.
+        self.resolve_pending_followup(cmd)
         if not a:
             return
         if a.get("closed"):
@@ -563,18 +575,83 @@ class Mapper:
         self.ball = (x, y)
 
     # --- formation / setup ----------------------------------------------------------
+    def kickoff_repositioning(self, i, r):
+        """Final positions of kickoff-event pure-repositioning moves (Solid
+        Defence / Quick Snap / Kick-off Return) following this formation.
+
+        The engine treats these events as no-ops (D21): baking the final
+        positions into the setup placements reproduces the post-event board
+        exactly — the landing catch then rolls against the same tackle zones
+        FFB used. Only applied when the result is still a setup-legal
+        formation (Solid Defence re-setups always are by rule; Quick Snap
+        single steps occasionally are not)."""
+        finals = {}
+        for j in range(i + 1, min(i + 600, len(self.recs))):
+            rj = self.recs[j]
+            if rj.get("type") == "formation":
+                break
+            if rj.get("report") == "turnEnd" or rj.get("mode") == "regular":
+                break
+            if rj.get("type") == "move" and rj.get("mode") in KICKOFF_BAKE_MODES:
+                pid = str(rj.get("player"))
+                x, y = rj["to"]
+                if 0 <= x <= 25 and 0 <= y <= 14 and pid in r["players"]:
+                    finals[pid] = (x, y)
+        return finals
+
+    @staticmethod
+    def setup_legal_formation(team, coords):
+        """Mirror of the engine's setup_constraints_ok for one team's
+        placement list [(x, y), ...] (count is unchanged by repositioning)."""
+        los_x = 12 if team == 0 else 13
+        xmin, xmax = (0, 12) if team == 0 else (13, 25)
+        los = wz_top = wz_bot = 0
+        for x, y in coords:
+            if not (xmin <= x <= xmax and 0 <= y <= 14):
+                return False
+            if x == los_x and 4 <= y <= 10:
+                los += 1
+            if y <= 3:
+                wz_top += 1
+            if y >= 11:
+                wz_bot += 1
+        need_los = min(3, len(coords))
+        return los >= need_los and wz_top <= 2 and wz_bot <= 2
+
     def handle_formation(self, i, r):
         cmd = r.get("cmd") or 0
         self.stun_stage.clear()    # drive boundary: everyone re-set-up
         self.ignore_pos.clear()    # repositioning divergences reset with it
+        finals = self.kickoff_repositioning(i, r)
+        if finals:
+            coords = dict(r["players"])
+            coords.update({p: list(v) for p, v in finals.items()})
+            ok = len({tuple(v) for v in coords.values()}) == len(coords)
+            for team in (0, 1):
+                tc = [tuple(v) for p, v in coords.items()
+                      if self.slot_of.get(str(p), (None,))[0] == team]
+                if tc and not self.setup_legal_formation(team, tc):
+                    ok = False
+            if ok:
+                self.baked_moves = dict(finals)
+                self.skips["kickoff_reposition_baked"] += len(finals)
+            else:
+                self.baked_moves = {}
+                for pid in finals:
+                    self.ignore_pos.add(pid)
+                self.skips["kickoff_reposition_unbakeable"] += len(finals)
+                finals = {}
+        else:
+            self.baked_moves = {}
         placements = {0: [], 1: []}
         for pid, (x, y) in r["players"].items():
             ts = self.slot_of.get(str(pid))
             if not ts:
                 self.skip(cmd, "formation_unknown_player", pid)
                 continue
-            placements[ts[0]].append((ts[1], x, y))
-            self.pos[str(pid)] = (x, y)
+            fx, fy = finals.get(str(pid), (x, y))
+            placements[ts[0]].append((ts[1], fx, fy))
+            self.pos[str(pid)] = (fx, fy)
             self.base[str(pid)] = 0
         order = [self.kicking, 1 - self.kicking]
         for team in order:
@@ -606,6 +683,16 @@ class Mapper:
             return
         if pid in self.ignore_all:
             return  # ghost player relocating: mirror tracks, engine ignores
+        if self.in_kickoff_resolution and mode in KICKOFF_FREE_MODES:
+            # Kickoff-event free move. Baked moves are already part of the
+            # setup placements; everything else is the documented D21
+            # repositioning divergence (engine keeps the kicked formation).
+            if pid in self.baked_moves:
+                self.skips["kickoff_reposition_baked_move"] += 1
+            else:
+                self.ignore_pos.add(pid)
+                self.skip(cmd, f"kickoff_free_move_{mode}", f"{pid} -> {x},{y}")
+            return
         # Block resolution relocations (push square / follow-up) take priority.
         if self.pending_block:
             pb = self.pending_block
@@ -723,6 +810,14 @@ class Mapper:
                 self.skip(cmd, "unrepresented_player_report",
                           f"{rep}/{pids[0]}")
                 return
+        if self.in_kickoff_resolution and r.get("mode") in KICKOFF_FREE_MODES \
+                and rep not in KICKOFF_EVENT_ROLLS:
+            # Rolls/blocks inside a kickoff free action (Blitz!/Charge runs
+            # whole activations): the engine never rolls these (D21 no-op).
+            if rep == "injury" and r.get("defenderId"):
+                self.ignore_state.add(str(r.get("defenderId")))
+            self.skip(cmd, "kickoff_free_report_dropped", rep)
+            return
         h = getattr(self, "rep_" + (rep or "none"), None)
         if h:
             h(i, r, cmd)
@@ -946,17 +1041,8 @@ class Mapper:
     def rep_playerAction(self, i, r, cmd):
         pid = str(r.get("actingPlayerId"))
         action = r.get("playerAction") or ""
-        # Kickoff-event free actions (Charge/"blitz", Quick Snap, Solid
-        # Defence, Kick-off Return): FFB runs them inside the kickoff
-        # resolution, but the engine treats these events as no-ops (D21) and
-        # has no decision window — mapping them as activations would steal
-        # the dice attachments of the kickoff landing chain. Drop them; the
-        # repositioning itself is a documented engine divergence.
-        if self.in_kickoff_resolution and r.get("mode") in (
-                "blitz", "quickSnap", "solidDefence", "kickoffReturn"):
-            self.skip(cmd, "kickoff_free_action_dropped",
-                      f"{r.get('mode')}/{action}")
-            return
+        # (Kickoff-event free actions are dropped wholesale by the
+        # KICKOFF_FREE_MODES guard in handle_report.)
         ts = self.slot_of.get(pid)
         if not ts:
             self.skip(cmd, "activation_unknown_player", pid)
