@@ -43,9 +43,21 @@ Wardancer to the MB blitzer = exposure.
 Fires when an opponent DECLARES a block/blitz/foul against your player
 (before any dice). Zero-sum transfer (collusion-proof in selfplay):
 
-    exposure = k_kd    * P(knockdown | matchup)
-             + k_value * P(removal  | matchup) * (victim_cost_k / 100)
-             + k_ball  * P(knockdown | matchup) * [victim is carrying]
+    exposure = k_kd    * P(knockdown      | matchup, skills)
+             + k_value * P(removal        | matchup, skills) * (victim_cost_k / 100)
+             + k_ball  * P(ball_dislodged | matchup, skills) * [victim is carrying]
+
+    P(ball_dislodged) is its OWN probability over the skill-transformed block
+    tree, NOT a rider on P(knockdown) (Alex, 2026-06-04): Strip Ball makes
+    plain PUSHES dislodge (the most common faces — roughly triples dislodge
+    odds vs a carrier with no knockdown required); Wrestle converts Both-Down
+    into a no-armour mutual takedown (ball out, minimal self-risk); Frenzy's
+    mandatory second block (engine: M6) compounds knockdown odds on any push;
+    Tackle/Juggernaut/Side Step/Stand Firm transform the tree from both sides.
+    The probability engine therefore evaluates the full face-distribution ->
+    skill-transform -> outcome-event tree and emits all three probabilities,
+    unit-tested against the ActionCalculator's 281 skill-interaction rows
+    (validation layer 2 oracle) before pricing any reward.
 
     (Alex, 2026-06-04: the knockdown itself is the tactical product — lost
     TZs, a wasted enemy activation, opened lanes — independent of the injury
