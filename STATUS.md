@@ -9,8 +9,11 @@
 - **Experiment toolkit**: `tools/train_profile.sh A|B`, holdout/forced-matchup procgen kwargs, `docs/homebrew-team-authoring.md` (Alex designs team id 30).
 - **Spectator v2**: real FUMBBL pitch/sprites (159/159 positions mapped), training progress bar, `tools/spectate.sh`.
 
-## In flight (box orchestrator, ~5-6h)
-legacy eval tail → archive log → rebuild fixed engine → profile A 10B → profile B 10B. Then: `puffer match` A-vs-B arbitration.
+## EXPERIMENT VERDICT (both profiles complete, 10B each, fixed engine)
+**Both arms converged to the mutual ball-avoidance draw equilibrium** (tds=0.000, perf=0.500 in A AND B; B's knobs shortened episodes 905→605 but did not break the basin). Decisive negative result: selfplay-from-scratch at 10B/γ=0.995 doesn't discover football regardless of event shaping → **BC warm-start from human replays is the main line** (Bot Bowl literature reproduced). The lockstep differential doubles as the BC extractor (every locked op = an (obs, human-action) pair).
+
+## Performance (measured, shipped)
+Env: 176K → 546K steps/sec/core today (setup discipline + perf prototypes, bit-identical, 280 tests). Vec config 8/1 → 20/2 (est. 1.5-2.7× more). Full plan: docs/sps-optimization-plan.md. Box ceiling est. 3-5M SPS.
 
 ## Queued
 - #22 Alex's Windows 2070 box via WSL2 tonight (baseload; build `--float`)
