@@ -563,7 +563,7 @@ class Mapper:
                 "receiving": receiving, "weather": 2,
                 "rerolls": [meta["teamHome"].get("reRolls") or 0,
                             meta["teamAway"].get("reRolls") or 0],
-                "apo": list(self.apo), "dice": []}
+                "apo": list(self.apo), "fans": [0, 0], "dice": []}
         self.ops.append(init)
         self.init_op = init
 
@@ -871,10 +871,16 @@ class Mapper:
 
     # pregame ------------------------------------------------------------------------------
     def rep_fanFactor(self, i, r, cmd):
-        self.skips["fan_factor_roll_dropped"] += 1  # engine rolls no fans
+        # The engine rolls no fans (D3 dropped) but carries the RESULT:
+        # Pitch Invasion adds Fan Factor to the roll-off (init op "fans").
+        self.skips["fan_factor_roll_dropped"] += 1
+        team = 0 if str(r.get("teamId")) == \
+            str(self.meta["teamHome"]["teamId"]) else 1
+        if r.get("dedicatedFansResult") is not None:
+            self.init_op["fans"][team] = int(r.get("dedicatedFansResult"))
 
     def rep_dedicatedFans(self, i, r, cmd):
-        self.skips["fan_factor_roll_dropped"] += 1
+        self.skips["fan_factor_roll_dropped"] += 1  # post-game update roll
 
     def rep_weather(self, i, r, cmd):
         roll = r.get("weatherRoll") or []
@@ -960,10 +966,10 @@ class Mapper:
         pass  # dice arrive via extraReRoll/cheeringFans
 
     def rep_kickoffPitchInvasion(self, i, r, cmd):
-        """Pitch Invasion: D6 home + D6 away (FFB adds Dedicated Fans the
-        engine lacks — outcome-adjusted), then per losing team a D3 count +
-        one pick roll per victim over its slot-sorted standing players
-        (mirrors stun_random_players exactly, like Dodgy Snack)."""
+        """Pitch Invasion: D6 home + D6 away, each + Fan Factor (the engine
+        carries fan_factor from the init op now), then per losing team a D3
+        count + one pick roll per victim over its slot-sorted standing
+        players (mirrors stun_random_players exactly, like Dodgy Snack)."""
         rh, ra = int(r.get("rollHome") or 0), int(r.get("rollAway") or 0)
         if not rh or not ra:
             self.skip(cmd, "pitch_invasion_partial", "missing 2d6")
@@ -972,13 +978,20 @@ class Mapper:
         vict_by_team = {0: [p for p in victims if self.pid_team(p) == 0],
                         1: [p for p in victims if self.pid_team(p) == 1]}
         losers = {t for t in (0, 1) if vict_by_team[t]}
-        # Engine loser rule from the raw dice: home iff rh<=ra, away iff
-        # ra<=rh. Adjust outcome-preservingly when fan modifiers flipped it.
-        want = losers or ({0, 1} if rh == ra else ({0} if rh < ra else {1}))
-        eng = {t for t, ok in ((0, rh <= ra), (1, ra <= rh)) if ok}
+        # Engine loser rule (fan-adjusted dice): home iff h<=a, away iff
+        # a<=h with h/a = D6 + fan factor. Adjust outcome-preservingly only
+        # if FFB's victim list still disagrees (e.g. FFB rolled with a fan
+        # count our init missed).
+        f0, f1 = self.init_op.get("fans", [0, 0])
+        want = losers or ({0, 1} if rh + f0 == ra + f1 else
+                          ({0} if rh + f0 < ra + f1 else {1}))
+        eng = {t for t, ok in ((0, rh + f0 <= ra + f1),
+                               (1, ra + f1 <= rh + f0)) if ok}
         if victims and want != eng:
-            rh, ra = {frozenset({0}): (1, 2), frozenset({1}): (2, 1),
-                      frozenset({0, 1}): (1, 1)}[frozenset(want)]
+            rh, ra = {frozenset({0}): (1, 2 + f0 - f1),
+                      frozenset({1}): (2 + f1 - f0, 1),
+                      frozenset({0, 1}): (1, 1 + f0 - f1)}[frozenset(want)]
+            rh, ra = min(max(rh, 1), 6), min(max(ra, 1), 6)
             self.skips["pitch_invasion_dice_adjusted"] += 1
         dice = [rh, ra]
         stunned = set()

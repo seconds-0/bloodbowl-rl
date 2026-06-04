@@ -652,12 +652,10 @@ BB_TEST(struct_kickoff_changing_weather_gust_stops_at_touchback) {
     BB_CHECK_EQ(m.ball.carrier, recv);
 }
 
-// ENGINE-DIVERGENCE: GAME KICK-OFF EVENT 12 PITCH INVASION: "Both Coaches
-// roll a D6 and add their Fan Factor. The Coach that rolled lowest, or both
-// Coaches in the result of a tie, randomly selects D3 of their players on the
-// pitch. The selected players are immediately Placed Prone and become
-// Stunned." The engine skips the roll-off and stuns D3 players of BOTH teams
-// unconditionally (and draws the victims from a non-dice RNG stream).
+// GAME KICK-OFF EVENT 12 PITCH INVASION: "Both Coaches roll a D6 and add
+// their Fan Factor. The Coach that rolled lowest, or both Coaches in the
+// result of a tie, randomly selects D3 of their players on the pitch. The
+// selected players are immediately Placed Prone and become Stunned."
 BB_TEST(struct_kickoff_event_pitch_invasion_rolloff) {
     bb_match m;
     stx_kickoff_fixture(&m, BB_HOME);
@@ -680,6 +678,35 @@ BB_TEST(struct_kickoff_event_pitch_invasion_rolloff) {
     }
     // Home rolled higher: no home player may be stunned by the invasion.
     BB_CHECK_EQ(home_stunned, 0);
+}
+
+// PITCH INVASION adds each team's FAN FACTOR to the roll-off: an away fan
+// advantage flips the same raw dice — home (6+0=6) now loses to away
+// (1+6=7) and must stun D3 of its own players instead.
+BB_TEST(struct_kickoff_event_pitch_invasion_fan_factor) {
+    bb_match m;
+    stx_kickoff_fixture(&m, BB_HOME);
+    for (int i = 0; i < 4; i++) fx_lineman(&m, 0, i, 5, 4 + i);
+    for (int i = 0; i < 4; i++) fx_lineman(&m, 1, i, 20, 4 + i);
+    m.fan_factor[BB_AWAY] = 6;
+    bb_rng rng;
+    // Same dice as the roll-off test: home d6=6, away d6=1 — but away's +6
+    // fans make home the loser; d3=2 home victims (picks 1,1), bounce d8=1.
+    const uint8_t dice[] = {2, 3, 6, 6, 6, 1, 2, 1, 1, 1};
+    bb_rng_script(&rng, dice, 10);
+    fx_run(&m, &rng);
+    bb_status st = fx_apply(&m, stx_act(BB_A_KICK_TARGET, 0, 18, 7), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    int home_stunned = 0, away_stunned = 0;
+    for (int s = 0; s < BB_NUM_PLAYERS; s++) {
+        if (m.players[s].location != BB_LOC_ON_PITCH) continue;
+        if (m.players[s].stance != BB_STANCE_STUNNED) continue;
+        if (s < BB_TEAM_SLOTS) home_stunned++;
+        else away_stunned++;
+    }
+    BB_CHECK_EQ(home_stunned, 2);
+    BB_CHECK_EQ(away_stunned, 0);
+    BB_CHECK(!bb_rng_error(&rng));
 }
 
 // ===========================================================================

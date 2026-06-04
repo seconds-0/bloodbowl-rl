@@ -444,9 +444,11 @@ static bool kickoff_event(bb_match* m, bb_rng* rng) {
             break;
         }
         case BB_KO_PITCH_INVASION: {
-            // Both coaches roll D6 (+fan factor TODO(phase3)); the lower (or
-            // both on a tie) has D3 random players stunned.
-            int h = bb_d6(rng), a = bb_d6(rng);
+            // "Both Coaches roll a D6 and add their Fan Factor. The Coach
+            // that rolled lowest, or both Coaches in the result of a tie,
+            // randomly selects D3 of their players" -> Stunned.
+            int h = bb_d6(rng) + m->fan_factor[BB_HOME];
+            int a = bb_d6(rng) + m->fan_factor[BB_AWAY];
             if (h <= a) stun_random_players(m, rng, BB_HOME, bb_d3(rng));
             if (a <= h && a != h) stun_random_players(m, rng, BB_AWAY, bb_d3(rng));
             else if (a == h) stun_random_players(m, rng, BB_AWAY, bb_d3(rng));
