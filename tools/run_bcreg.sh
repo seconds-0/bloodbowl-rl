@@ -18,6 +18,9 @@
 # Warm start: training/bc_v1.bin (torch state_dict, loads directly).
 # BC anchor: bc_coef 1.0, cosine-annealed to 0.1 over total_timesteps.
 set -euo pipefail
+# Mac uses the repo venv; GPU boxes install into system python.
+PYBIN="python3"
+[ -x "vendor/PufferLib/.venv/bin/python" ] && PYBIN="vendor/PufferLib/.venv/bin/python"
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT/vendor/PufferLib"
@@ -33,7 +36,7 @@ if ! grep -q 'BC-regularized PPO' pufferlib/torch_pufferl.py; then
 fi
 
 # Torch backend on GPU needs a float-precision, GPU-capable _C for this env.
-.venv/bin/python - <<'EOF' || { echo "fix: ./build.sh bloodbowl --float" >&2; exit 1; }
+$PYBIN - <<'EOF' || { echo "fix: ./build.sh bloodbowl --float" >&2; exit 1; }
 from pufferlib import _C
 assert getattr(_C, 'env_name', None) == 'bloodbowl', f"_C built for {getattr(_C, 'env_name', None)}, not bloodbowl"
 assert _C.precision_bytes == 4, "torch backend needs fp32: rebuild with ./build.sh bloodbowl --float"
