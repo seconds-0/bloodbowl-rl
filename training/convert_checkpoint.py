@@ -47,12 +47,19 @@ bias terms; the CUDA backend's layers are pure matmuls with NO biases.
     you can judge the warm-start fidelity loss).
   cuda -> torch: biases are zero-filled.
 
-Verified against a real artifact: a CUDA-backend checkpoint from a GPU
-training run is exactly 12,072,960 bytes = 3,018,240 fp32 = this layout's
-total for obs 832 / heads (30, 33, 391) / hidden 512 / 3 layers. The
-cuda -> torch -> cuda round trip is byte-identical and the converted
-state_dict loads + forwards in the real torch policy
-(training/test_convert_checkpoint.py).
+OBS-V3 LINEAGE: the default obs size is 1612 (obs v3, tackle-zone planes)
+— 13,670,400 bytes = 3,417,600 fp32 for heads (30, 33, 391) / hidden 512 /
+3 layers. The encoder input dim is part of the parameter count, so obs-v3
+checkpoints are a NEW LINEAGE: an 832-dim checkpoint can never be loaded
+into (or converted for) an obs-v3 policy. For legacy obs-v2 checkpoints
+pass --obs-size 832.
+
+Verified against a real artifact (obs-v2 lineage): a CUDA-backend
+checkpoint from a GPU training run is exactly 12,072,960 bytes =
+3,018,240 fp32 = this layout's total for obs 832 / heads (30, 33, 391) /
+hidden 512 / 3 layers. The cuda -> torch -> cuda round trip is
+byte-identical and the converted state_dict loads + forwards in the real
+torch policy (training/test_convert_checkpoint.py).
 
 Usage (PufferLib venv python):
   vendor/PufferLib/.venv/bin/python training/convert_checkpoint.py \\
@@ -73,7 +80,10 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # Mirrors ACT_SIZES in puffer/bloodbowl/binding.c and bc_pretrain.py.
 DEFAULT_ACT_SIZES = (30, 33, 391)
-DEFAULT_OBS_SIZE = 832
+# BBE_OBS_SIZE (obs v3). Legacy obs-v2 (832) checkpoints are a different
+# parameter count — convert them with an explicit --obs-size 832.
+DEFAULT_OBS_SIZE = 1612
+LEGACY_OBS_SIZE = 832
 DEFAULT_CONFIG = os.path.join(ROOT, "puffer", "config", "bloodbowl.ini")
 
 # fp32 tensors must start 16-byte aligned for the blob to stay dense
@@ -218,7 +228,10 @@ def main():
                     help="run config with [policy] hidden_size/num_layers")
     ap.add_argument("--hidden-size", type=int)
     ap.add_argument("--num-layers", type=int)
-    ap.add_argument("--obs-size", type=int, default=DEFAULT_OBS_SIZE)
+    ap.add_argument("--obs-size", type=int, default=DEFAULT_OBS_SIZE,
+                    help=f"encoder input dim (default {DEFAULT_OBS_SIZE} = "
+                         f"obs v3; pass {LEGACY_OBS_SIZE} for legacy obs-v2 "
+                         "lineage checkpoints)")
     ap.add_argument("--act-sizes", default=",".join(map(str, DEFAULT_ACT_SIZES)),
                     help="comma-separated action head sizes")
     args = ap.parse_args()
