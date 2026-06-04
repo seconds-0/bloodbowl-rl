@@ -151,3 +151,20 @@ Three layers, no special-case "desperation reward":
    win-probability surface. Policy-invariant (Ng et al.); desperation falls
    out of the curvature (P(win) ~= 0 when behind-late, so turnovers cost no
    potential while TDs spike it). Gated on the Phase-4 replay corpus.
+
+## Addendum 3: turnover risk is the primary block-selection axis (worked spec test)
+
+Alex, 2026-06-04: P(turnover) is a SKILL-MATRIX quantity, not a dice-count
+quantity — mandatory unit test for the probability engine:
+- 2d WITH Block vs Block defender: both-down faces harmless to attacker;
+  P(turnover) = P(skull,skull) = 1/36 ≈ 2.8%
+- 3d WITHOUT Block vs Block defender: both-down = attacker down;
+  P(turnover) = P(all 3 ∈ {skull, both-down}) = (2/6)^3 = 1/27 ≈ 3.7%
+More dice, MORE turnover risk — naive dice-count heuristics invert this;
+the skill-transformed tree must not. (Validate vs ActionCalculator rows.)
+
+Division of labor confirmed for "mandatory low-value blocks" (take the bad
+block or your carrier gets sacked / they score): the sequencing charge
+prices the action's own turnover risk x unbanked turn value (≈0 when taken
+last); the COUNTERFACTUAL of not acting is the critic's job via the
+objective. Shaping teaches risk accounting; the critic learns risk appetite.
