@@ -1939,17 +1939,21 @@ class Mapper:
     def rep_referee(self, i, r, cmd):
         a = self.activation
         if a and a.get("foul_suppressed"):
-            # Send-off from a demoted foul: the engine never saw the foul.
-            # The fouler stays on the engine pitch (engine_alive override
-            # keeps engine_turn_open truthful); FFB's turnover is mirrored
-            # by an explicit END_TURN at the boundary.
+            # Referee outcome of a demoted foul: the engine never saw the
+            # foul, so nothing is emitted. On an actual send-off the fouler
+            # stays on the engine pitch (engine_alive keeps engine_turn_open
+            # truthful); FFB's turnover is mirrored by the explicit END_TURN
+            # at the boundary.
             j = self.lookahead(i, lambda x: x.get("report") == "argueTheCall",
                                limit=6)
             if j >= 0:
                 self.consumed.add(j)
-            self.ignore_state.add(a["pid"])
-            self.engine_alive.add(a["pid"])
-            self.skip(cmd, "foul_send_off_divergence", a["pid"])
+            if r.get("foulingPlayerBanned"):
+                self.ignore_state.add(a["pid"])
+                self.engine_alive.add(a["pid"])
+                self.skip(cmd, "foul_send_off_divergence", a["pid"])
+            else:
+                self.skips["foul_referee_unseen"] += 1
             return
         # Engine asks Argue-the-Call only when the armour/injury dice showed a
         # natural double; mirror from the foul's last injury record.
