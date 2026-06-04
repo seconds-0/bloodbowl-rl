@@ -106,7 +106,11 @@ PLAYER_ACTION_KIND = {
 UNMAPPED_ACTIONS = {"throwBomb", "hailMaryBomb", "multipleBlock", "swoop",
                     "punt", "puntMove", "lookIntoMyEyes", "balefulHex"}
 
-GATE_SKILLS = {"Bone Head", "Really Stupid", "Unchannelled Fury", "Take Root"}
+# Negatrait activation gates: engine D6 target (BB_SKILL_GATE registrations).
+# FFB applies situational modifiers (e.g. Really Stupid's +2 helper) that the
+# engine lacks; gate dice are outcome-adjusted against these flat targets.
+GATE_SKILLS = {"Bone Head": 2, "Really Stupid": 4,
+               "Unchannelled Fury": 4, "Take Root": 2}
 DECLARE_ROLL_SKILLS = {"Animal Savagery", "Bloodlust", "Animosity"}
 TEST_RR_SKILL = {  # engine BB_SKILL_REROLL registrations
     "dodgeRoll": "Dodge", "goForItRoll": "Sure Feet", "pickUpRoll": "Sure Hands",
@@ -223,6 +227,21 @@ class Mapper:
         self.turnend_dice = []     # dice consumed during END_TURN transition
         self.last_injury_key = None
         self.in_kickoff_resolution = False
+        # Engine stun rollover mirror: pid -> "fresh" (stunned this turn) or
+        # "aged" (started its own team turn stunned = engine STUNNED_USED).
+        # The engine flips aged players to prone at the END of their own
+        # team's turn; FFB emits the prone record at the START of that turn —
+        # the mirror holds state 2 until the engine's boundary.
+        self.stun_stage = {}
+        # Known-divergence pids the engine cannot represent: positions and/or
+        # states excluded from expect ops (e.g. Swarming extra players,
+        # kickoff free-move repositioning the engine treats as a no-op).
+        self.ignore_pos = set()
+        self.ignore_state = set()
+        self.ignore_all = set()    # player absent engine-side (Swarming)
+        self.move_from = None      # origin square of the current move record
+        self.last_both_down = None # {att,def,cmd} of the last Both Down
+        self.suppress_injury = set()  # pids whose next injury dice are FFB-only
 
     # --- roster ---------------------------------------------------------------
     def _build_roster(self):
@@ -365,15 +384,30 @@ class Mapper:
                 return j
         return -1
 
-    def track(self, r):
+    def track(self, i, r):
         t = r["type"]
         if t == "move":
+            pid = str(r["player"])
             x, y = r["to"]
-            self.pos[str(r["player"])] = (x, y) if 0 <= x <= 25 and 0 <= y <= 14 else None
+            self.move_from = self.pos.get(pid)
+            self.pos[pid] = (x, y) if 0 <= x <= 25 and 0 <= y <= 14 else None
+            if self.carrier == pid:
+                # The ball travels with its carrier (FFB also emits a ball
+                # record, but it precedes the move — see the ball branch).
+                self.ball = self.pos[pid]
         elif t == "state":
             st = BASE_STATE.get(r["base"], -1)
             pid = str(r["player"])
             if st >= 0:
+                if st == 1 and self.stun_stage.get(pid):
+                    # FFB rolls stunned players over at the START of their
+                    # team's turn; the engine at the END. Hold the mirror at
+                    # stunned until the engine's flip boundary (rep_turnEnd).
+                    return
+                if st == 2:
+                    self.stun_stage.setdefault(pid, "fresh")
+                else:
+                    self.stun_stage.pop(pid, None)
                 self.base[pid] = st
                 if st != 0 and self.carrier == pid:
                     self.carrier = None
@@ -382,7 +416,20 @@ class Mapper:
         elif t == "ball":
             self.ball = tuple(r["at"]) if 0 <= r["at"][0] <= 25 else None
             if self.carrier and self.pos.get(self.carrier) != self.ball:
-                self.carrier = None
+                # FFB emits the ball-follows-carrier record BEFORE the
+                # carrier's own move record at the same cmd: only clear the
+                # carrier if no such move follows immediately.
+                pid = self.carrier
+                follows = False
+                for k in range(i + 1, min(i + 5, len(self.recs))):
+                    rk = self.recs[k]
+                    if rk.get("type") == "move" and str(rk.get("player")) == pid:
+                        follows = tuple(rk["to"]) == self.ball
+                        break
+                    if rk.get("type") not in ("ball", "state"):
+                        break
+                if not follows:
+                    self.carrier = None
 
     # --- expects -----------------------------------------------------------------
     def emit_expect(self, cmd, skip_ball=False):
@@ -391,8 +438,12 @@ class Mapper:
             p = self.pos.get(pid)
             st = self.base.get(pid, -1)
             x, y = (p if p else (255, 255))
+            if pid in self.ignore_all or pid in self.ignore_pos:
+                x, y = 255, 255
+            if pid in self.ignore_all or pid in self.ignore_state:
+                st = -1
             players.append([team, sl, x, y, st])
-        if skip_ball or self.ball is None:
+        if skip_ball or self.ball is None or self.carrier in self.ignore_all:
             ball = [255, 255, -1]
         else:
             ball = [self.ball[0], self.ball[1], 1 if self.carrier else 0]
@@ -415,6 +466,15 @@ class Mapper:
             self.turnover = True
             if self.activation and self.activation["pid"] == str(pid):
                 self.activation["closed"] = True
+
+    def age_stunned(self, team):
+        """Engine turn_start(team): stunned players of that team become
+        STUNNED_USED — they roll over to prone at the END of this turn."""
+        if team is None:
+            return
+        for pid, (t, _) in self.slot_of.items():
+            if t == team and self.stun_stage.get(pid) == "fresh":
+                self.stun_stage[pid] = "aged"
 
     def engine_turn_open(self):
         """True iff the engine still has an activatable player this turn.
@@ -468,11 +528,14 @@ class Mapper:
             if i in self.consumed:
                 continue
             r = self.recs[i]
-            self.track(r)
+            if r.get("type") == "ball" and r.get("mode") == "touchback" and \
+                    self.in_kickoff_resolution:
+                self.handle_touchback(r)
+            self.track(i, r)
             t = r["type"]
             cmd = r.get("cmd") or 0
             if t == "formation":
-                self.handle_formation(r)
+                self.handle_formation(i, r)
             elif t == "move":
                 self.handle_move(i, r)
             elif t in ("dice", "action", "event"):
@@ -480,9 +543,30 @@ class Mapper:
             # state/ball already tracked
         return self.ops
 
-    # --- formation / setup ----------------------------------------------------------
-    def handle_formation(self, r):
+    def handle_touchback(self, r):
+        """Kick went out of play / into the kicking half: the receiving coach
+        gives the ball to any standing player (engine KICKOFF phase 2,
+        A_TOUCHBACK arg = global slot; arg 0xFF + square if nobody stands)."""
         cmd = r.get("cmd") or 0
+        x, y = r["at"]
+        pid = next((p for p, q in self.pos.items() if q == (x, y)
+                    and self.slot_of.get(p)), None)
+        receiving = 1 - self.kicking if self.kicking is not None else None
+        if pid is not None and self.slot_of[pid][0] == receiving and \
+                self.base.get(pid, 0) == 0:
+            team, sl = self.slot_of[pid]
+            self.act(cmd, A_TOUCHBACK, team * 16 + sl)
+            self.carrier = pid
+        else:
+            self.act(cmd, A_TOUCHBACK, 0xFF, x, y)
+            self.carrier = None
+        self.ball = (x, y)
+
+    # --- formation / setup ----------------------------------------------------------
+    def handle_formation(self, i, r):
+        cmd = r.get("cmd") or 0
+        self.stun_stage.clear()    # drive boundary: everyone re-set-up
+        self.ignore_pos.clear()    # repositioning divergences reset with it
         placements = {0: [], 1: []}
         for pid, (x, y) in r["players"].items():
             ts = self.slot_of.get(str(pid))
@@ -513,6 +597,15 @@ class Mapper:
         on_pitch = 0 <= x <= 25 and 0 <= y <= 14
         if mode in ("startGame", "setup"):
             return
+        if mode == "swarming":
+            # Swarming: extra players enter the pitch during setup — the
+            # engine has no Swarming (setup wants exactly 11). Known engine
+            # divergence: the player exists only FFB-side from here on.
+            self.ignore_all.add(pid)
+            self.skip(cmd, "swarming_player_unrepresented", f"{pid} -> {x},{y}")
+            return
+        if pid in self.ignore_all:
+            return  # ghost player relocating: mirror tracks, engine ignores
         # Block resolution relocations (push square / follow-up) take priority.
         if self.pending_block:
             pb = self.pending_block
@@ -611,9 +704,25 @@ class Mapper:
             self.pending_block = None
 
     # --- reports -------------------------------------------------------------------------
+    REPORT_PID_KEYS = ("playerId", "actingPlayerId", "defenderId", "attackerId",
+                       "catcherId")
+
     def handle_report(self, i, r):
         rep = r.get("report")
         cmd = r.get("cmd") or 0
+        if self.ignore_all:
+            # Records about players the engine cannot represent (Swarming
+            # extras): consume without attaching dice or emitting acts.
+            pids = [str(r.get(k)) for k in self.REPORT_PID_KEYS if r.get(k)]
+            if pids and any(p in self.ignore_all for p in pids):
+                if rep == "injury" and str(r.get("attackerId")) in self.ignore_all \
+                        and str(r.get("defenderId")) not in self.ignore_all:
+                    # A ghost player injured a real one: the victim's state
+                    # diverges from here on; classify and stop checking it.
+                    self.ignore_state.add(str(r.get("defenderId")))
+                self.skip(cmd, "unrepresented_player_report",
+                          f"{rep}/{pids[0]}")
+                return
         h = getattr(self, "rep_" + (rep or "none"), None)
         if h:
             h(i, r, cmd)
@@ -775,6 +884,8 @@ class Mapper:
         # KO recovery (drive end): engine rolls per KO player in slot order.
         ko = []
         for e in r.get("knockoutRecoveryArray") or []:
+            if str(e.get("playerId")) in self.ignore_all:
+                continue  # engine never saw this player KO'd
             ts = self.slot_of.get(str(e.get("playerId")))
             if ts and e.get("roll"):
                 ko.append((ts[0] * 16 + ts[1], e["roll"]))
@@ -791,6 +902,9 @@ class Mapper:
             self.in_kickoff_resolution = False
             if ko_dice:
                 self.attach(cmd, ko_dice, "ko recovery")
+            # Engine turn_start(receiving): players who enter their own turn
+            # stunned become STUNNED_USED (flip at that turn's end).
+            self.age_stunned(1 - self.kicking if self.kicking is not None else None)
             self.emit_expect(cmd, skip_ball=bool(td))
             self.acts_this_turn = 0
             self.used_this_turn = set()
@@ -806,6 +920,15 @@ class Mapper:
             if self.turnend_dice or ko_dice:
                 self.attach(cmd, list(self.turnend_dice) + ko_dice, "turn end")
         self.turnend_dice = []
+        # Engine boundary bookkeeping: turn_end(T) flips T's aged stunned
+        # players to prone; turn_start(1-T) ages the next team's fresh ones.
+        ended = self.active_team
+        if ended is not None:
+            for pid, (t, _) in self.slot_of.items():
+                if t == ended and self.stun_stage.get(pid) == "aged":
+                    del self.stun_stage[pid]
+                    self.base[pid] = 1
+            self.age_stunned(1 - ended)
         self.emit_expect(cmd, skip_ball=bool(td))
         self.acts_this_turn = 0
         self.used_this_turn = set()
@@ -816,6 +939,9 @@ class Mapper:
         self.pending_step = None
         self.pre_dice = []
         self.pre_route = False
+
+    def rep_swarmingPlayersRoll(self, i, r, cmd):
+        self.skip(cmd, "swarming_divergence", f"d3={r.get('roll')}")
 
     def rep_playerAction(self, i, r, cmd):
         pid = str(r.get("actingPlayerId"))
@@ -873,8 +999,45 @@ class Mapper:
                                str(x.get("playerId")) == pid)
             if j >= 0:
                 self.consumed.add(j)
-                gate_dice = [self.recs[j].get("roll") or 1]
-                gate_failed = not self.recs[j].get("successful")
+                final = self.recs[j]
+                # FFB allows a team re-roll on a failed gate; the engine's
+                # gate is a single inline die. Consume the re-roll chain and
+                # feed the FINAL outcome through the one engine die.
+                for k in range(j + 1, min(j + 4, len(self.recs))):
+                    rk = self.recs[k]
+                    rep_k = rk.get("report")
+                    if rep_k == "reRoll" and str(rk.get("playerId")) == pid:
+                        self.consumed.add(k)
+                        src = rk.get("reRollSource") or ""
+                        if src in ("Team ReRoll", "Brilliant Coaching ReRoll",
+                                   "Leader", "Mascot TRR"):
+                            team_rr = self.pid_team(pid)
+                            if team_rr is not None and self.rerolls[team_rr] > 0:
+                                self.rerolls[team_rr] -= 1
+                        self.skips["gate_reroll_folded"] += 1
+                    elif rep_k == "confusionRoll" and \
+                            str(rk.get("playerId")) == pid:
+                        self.consumed.add(k)
+                        final = rk
+                    elif rk.get("type") in ("dice", "action", "event",
+                                            "formation"):
+                        break
+                roll = int(final.get("roll") or 1)
+                ok = bool(final.get("successful"))
+                gate_failed = not ok
+                # Outcome-preserving die adjustment: FFB applies situational
+                # modifiers (Really Stupid's +2 helper) the engine lacks —
+                # feed a die that reproduces FFB's pass/fail against the
+                # engine's flat target. Engine gap recorded for cycle 2.
+                target = min(GATE_SKILLS[s] for s in
+                             (self.skillnames.get(pid, set()) & set(GATE_SKILLS)))
+                if ok and roll < target:
+                    roll = target
+                    self.skips["gate_die_outcome_adjusted"] += 1
+                elif not ok and roll >= target:
+                    roll = target - 1
+                    self.skips["gate_die_outcome_adjusted"] += 1
+                gate_dice = [roll]
         self.act(cmd, A_ACTIVATE, gslot, dice=gate_dice,
                  note=f"activate {pid} {action}")
         self.used_this_turn.add(pid)
@@ -1278,6 +1441,7 @@ class Mapper:
             self.fail_likely_turnover(att)
             self.pending_block = None
         elif result == "BOTH DOWN":
+            self.last_both_down = {"att": att, "def": pb["def"], "cmd": cmd}
             wrestle = "Wrestle" in att_skills or "Wrestle" in def_skills
             att_block = "Block" in att_skills
             if not wrestle and not att_block:
@@ -1304,13 +1468,54 @@ class Mapper:
     def rep_pushback(self, i, r, cmd):
         pass  # the defender's move record carries the chosen square
 
+    # skillUse reports where the engine's automatic behavior matches what FFB
+    # reported (pure information for us — like move-square UI noise). Pairs
+    # are (skill, skillUse); a used:false record never matches this table.
+    SKILL_USE_AUTO = {
+        ("Dodge", "avoidFalling"),          # Dodge-on-Stumble, engine auto
+        ("Steady Footing", "avoidFalling"),
+        ("Horns", "increaseStrengthBy1"),   # blitz ST bonus, engine auto
+        ("Eye Gouge", "eyeGouged"),
+        ("Fend", "stayAwayFromOpponent"),   # mirrored via pb["no_followup"]
+        ("Tackle", "cancelDodge"),
+        ("Kick", "halveKickoffScatter"),    # mirrored in rep_kickoffScatter
+        ("Break Tackle", "wouldNotHelp"),
+        ("Diving Tackle", "wouldNotHelp"),
+        ("Stand Firm", "noTackleZone"),
+        ("Sidestep", "noTackleZone"),
+        ("Sure Hands", "noTackleZone"),
+        ("Sure Hands", "cancelStripBall"),  # engine Monstrous Mouth-style cancel
+        ("Strip Ball", "stealBall"),        # engine auto on push
+        ("Juggernaut", "cancelStandFirm"),
+        ("Juggernaut", "pushBackOpponent"),
+        ("Wrestle", "bringDownOppponent"),  # engine auto-applies on Both Down
+        ("Taunt", "forceFollowUp"),         # follow-up mapped from the move
+    }
+
     def rep_skillUse(self, i, r, cmd):
         sk = r.get("skill") or ""
         use = r.get("skillUse") or ""
+        used = bool(r.get("used"))
         if sk == "Stand Firm" and use == "avoidPush":
             # engine auto-applies Stand Firm; FFB agreed -> no divergence
             self.pending_block = None
             self.stood_block = None
+            return
+        if sk == "Wrestle" and not used:
+            # The coach declined Wrestle on a Both Down; the engine
+            # auto-applies it (both placed prone, no armour). Genuine engine
+            # divergence (no USE_SKILL window yet): the participants' states
+            # and the decline-path armour dice cannot be mirrored.
+            bd = self.last_both_down or {}
+            for pid in (bd.get("att"), bd.get("def")):
+                if pid:
+                    self.ignore_state.add(pid)
+                    self.suppress_injury.add(pid)
+            self.skip(cmd, "wrestle_decline_divergence",
+                      f"{bd.get('att')} vs {bd.get('def')}")
+            return
+        if used and (sk, use) in self.SKILL_USE_AUTO:
+            self.skips["skill_use_auto_matched"] += 1
             return
         self.skip(cmd, "skill_use_unmapped", f"{sk}/{use}")
 
@@ -1322,6 +1527,13 @@ class Mapper:
             return  # FFB duplicates injury reports verbatim
         self.last_injury_key = key
         pid = str(r.get("defenderId"))
+        if pid in self.suppress_injury:
+            # Injury from a path the engine resolved differently (declined
+            # Wrestle, demoted foul): FFB-only dice, never fed to the engine.
+            self.suppress_injury.discard(pid)
+            self.ignore_state.add(pid)
+            self.skip(cmd, "suppressed_injury_dice", pid)
+            return
         team = self.pid_team(pid)
         dice = []
         if r.get("armorRoll"):
