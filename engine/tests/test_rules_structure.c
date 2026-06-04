@@ -1897,3 +1897,103 @@ BB_TEST(structure_setup_reserves_first_discipline) {
     BB_CHECK(n_remove > 0);
     BB_CHECK(n_replace > 0);
 }
+
+// ===========================================================================
+// PICK-ME-UP — SK#PICK-ME-UP: "At the end of each of the opposition's Turns,
+// roll a D6 for each Prone team-mate within 3 squares of one or more
+// Standing players with this Trait. On a 5+, the Prone player may
+// immediately stand up. Should a player with this Trait stand up as a result
+// of a team-mate using this Trait, they may not also use this Trait during
+// the same Turn."
+// ===========================================================================
+
+// 5+ stands a prone team-mate within 3 squares at the end of the OPPONENT's
+// turn; a 4 leaves them prone.
+BB_TEST(struct_pick_me_up_5plus_stands_prone_teammate) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    fx_lineman(&m, 0, 0, 5, 5);
+    int helper = fx_lineman(&m, 1, 0, 20, 7);
+    int down = fx_lineman(&m, 1, 1, 22, 7); // within 3 of the helper
+    fx_give_skill(&m, helper, BB_SK_PICK_ME_UP);
+    m.players[down].stance = BB_STANCE_PRONE;
+    uint8_t script[] = {5};
+    bb_rng rng;
+    bb_rng_script(&rng, script, 1);
+    bb_status st = fx_run(&m, &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    bb_action et = {BB_A_END_TURN, 0, 0, 0};
+    st = fx_apply(&m, et, &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK_EQ(m.players[down].stance, BB_STANCE_STANDING);
+    BB_CHECK(!bb_rng_error(&rng));
+}
+
+BB_TEST(struct_pick_me_up_4_fails_stays_prone) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    fx_lineman(&m, 0, 0, 5, 5);
+    int helper = fx_lineman(&m, 1, 0, 20, 7);
+    int down = fx_lineman(&m, 1, 1, 22, 7);
+    fx_give_skill(&m, helper, BB_SK_PICK_ME_UP);
+    m.players[down].stance = BB_STANCE_PRONE;
+    uint8_t script[] = {4};
+    bb_rng rng;
+    bb_rng_script(&rng, script, 1);
+    fx_run(&m, &rng);
+    bb_action et = {BB_A_END_TURN, 0, 0, 0};
+    fx_apply(&m, et, &rng);
+    BB_CHECK_EQ(m.players[down].stance, BB_STANCE_PRONE);
+    BB_CHECK(!bb_rng_error(&rng));
+}
+
+// FFB boundary order (validated against live replays, item 8): the incoming
+// team's Stunned players roll over BEFORE the Pick-Me-Up rolls at the same
+// boundary — a player stunned during the opponent's turn gets a Pick-Me-Up
+// roll right away and can be stood up where the old engine kept them down.
+BB_TEST(struct_pick_me_up_rolls_for_just_rolled_over_stunned) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    fx_lineman(&m, 0, 0, 5, 5);
+    int helper = fx_lineman(&m, 1, 0, 20, 7);
+    int down = fx_lineman(&m, 1, 1, 22, 7);
+    fx_give_skill(&m, helper, BB_SK_PICK_ME_UP);
+    bb_rng rng;
+    bb_rng_script(&rng, 0, 0);
+    bb_status st = fx_run(&m, &rng); // home turn starts
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    m.players[down].stance = BB_STANCE_STUNNED; // stunned during home's turn
+    uint8_t script[] = {5};
+    bb_rng_script(&rng, script, 1);
+    bb_action et = {BB_A_END_TURN, 0, 0, 0};
+    st = fx_apply(&m, et, &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK_EQ(m.players[down].stance, BB_STANCE_STANDING);
+    BB_CHECK(!bb_rng_error(&rng));
+}
+
+// Helper snapshot: an owner stood up by a team-mate's use of the Trait "may
+// not also use this Trait during the same Turn" — a candidate only in range
+// of the freshly-stood owner gets NO roll.
+BB_TEST(struct_pick_me_up_stood_owner_cannot_help_same_turn) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    fx_lineman(&m, 0, 0, 5, 5);
+    int a = fx_lineman(&m, 1, 0, 20, 7);  // prone OWNER, within 3 of b
+    int b = fx_lineman(&m, 1, 1, 22, 7);  // standing owner (the helper)
+    int c = fx_lineman(&m, 1, 2, 17, 7);  // prone, within 3 of a ONLY
+    fx_give_skill(&m, a, BB_SK_PICK_ME_UP);
+    fx_give_skill(&m, b, BB_SK_PICK_ME_UP);
+    m.players[a].stance = BB_STANCE_PRONE;
+    m.players[c].stance = BB_STANCE_PRONE;
+    uint8_t script[] = {5}; // ONE roll: a stands; c gets no roll
+    bb_rng rng;
+    bb_rng_script(&rng, script, 1);
+    fx_run(&m, &rng);
+    bb_action et = {BB_A_END_TURN, 0, 0, 0};
+    bb_status st = fx_apply(&m, et, &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK_EQ(m.players[a].stance, BB_STANCE_STANDING);
+    BB_CHECK_EQ(m.players[c].stance, BB_STANCE_PRONE); // no second die
+    BB_CHECK(!bb_rng_error(&rng));
+}

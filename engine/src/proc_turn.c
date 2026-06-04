@@ -32,17 +32,38 @@ static void turn_start(bb_match* m, int team) {
     }
 }
 
+// PICK-ME-UP: "At the end of each of the opposition's Turns, roll a D6 for
+// each Prone team-mate within 3 squares of one or more Standing players with
+// this Trait. On a 5+, the Prone player may immediately stand up."
 static void pick_me_up(bb_match* m, bb_rng* rng, int helping_team) {
+    // Snapshot the helpers FIRST: "Should a player with this Trait stand up
+    // as a result of a team-mate using this Trait, they may not also use
+    // this Trait during the same Turn" — freshly stood owners cannot help
+    // later candidates. Distracted owners cannot use Active Traits.
+    int hx[BB_TEAM_SLOTS], hy[BB_TEAM_SLOTS], nh = 0;
+    for (int s = helping_team * BB_TEAM_SLOTS;
+         s < (helping_team + 1) * BB_TEAM_SLOTS; s++) {
+        const bb_player* q = &m->players[s];
+        if (q->location != BB_LOC_ON_PITCH || q->stance != BB_STANCE_STANDING) continue;
+        if (q->flags & BB_PF_DISTRACTED) continue;
+        if (!bb_has_skill(&q->skills, BB_SK_PICK_ME_UP)) continue;
+        hx[nh] = q->x;
+        hy[nh] = q->y;
+        nh++;
+    }
+    if (!nh) return;
     for (int s = helping_team * BB_TEAM_SLOTS; s < (helping_team + 1) * BB_TEAM_SLOTS; s++) {
         bb_player* p = &m->players[s];
-        if (p->location != BB_LOC_ON_PITCH || p->stance != BB_STANCE_PRONE) continue;
+        if (p->location != BB_LOC_ON_PITCH) continue;
+        // STUNNED_USED at this boundary = stunned players FFB already rolled
+        // over (the start of their team's turn happens inside the opponent's
+        // end-turn processing); FFB rolls Pick-Me-Up for them AFTER that
+        // flip, so they are candidates too (consumption-campaign item 8).
+        if (p->stance != BB_STANCE_PRONE &&
+            p->stance != BB_STANCE_STUNNED_USED) continue;
         bool near = false;
-        for (int s2 = helping_team * BB_TEAM_SLOTS;
-             s2 < (helping_team + 1) * BB_TEAM_SLOTS && !near; s2++) {
-            const bb_player* q = &m->players[s2];
-            if (q->location != BB_LOC_ON_PITCH || q->stance != BB_STANCE_STANDING) continue;
-            if (!bb_has_skill(&q->skills, BB_SK_PICK_ME_UP)) continue;
-            int dx = q->x - p->x, dy = q->y - p->y;
+        for (int h = 0; h < nh && !near; h++) {
+            int dx = hx[h] - p->x, dy = hy[h] - p->y;
             if (dx < 0) dx = -dx;
             if (dy < 0) dy = -dy;
             if ((dx > dy ? dx : dy) <= 3) near = true;
@@ -102,8 +123,22 @@ static void team_turn_advance(bb_match* m, bb_rng* rng) {
         return;
     }
     {
-        bb_rng* prng = rng; // PICK-ME-UP rolls at the end of the opponent's turn
-        pick_me_up(m, prng, 1 - team);
+        // FFB boundary order (StepEndTurn): the INCOMING team's stunned
+        // players roll over FIRST (the start of their turn runs inside the
+        // opponent's end-turn processing), THEN Pick-Me-Up rolls for that
+        // team — so the just-rolled-over players are candidates (item 8).
+        // Engine representation: STUNNED -> STUNNED_USED here (not
+        // activatable; flips to true PRONE at the end of their own turn,
+        // unchanged). turn_start's aging becomes a no-op for them.
+        for (int s = (1 - team) * BB_TEAM_SLOTS;
+             s < (2 - team) * BB_TEAM_SLOTS; s++) {
+            bb_player* p = &m->players[s];
+            if (p->location == BB_LOC_ON_PITCH &&
+                p->stance == BB_STANCE_STUNNED) {
+                p->stance = BB_STANCE_STUNNED_USED;
+            }
+        }
+        pick_me_up(m, rng, 1 - team); // at the end of the opponent's turn
     }
     turn_end(m, team);
     bb_pop(m);

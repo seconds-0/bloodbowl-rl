@@ -238,6 +238,7 @@ class Mapper:
         self.pre_route = False     # route dice/rerolls to pre_dice (block rush)
         self.turnend_dice = []     # dice consumed during END_TURN transition
         self.pickmeup = []         # (gslot, roll) Pick Me Up dice this boundary
+        self.pmu_stood = set()     # owners stood up by Pick-Me-Up this boundary
         self.last_ball_cmd = None  # cmd of the last ball record seen
         self.engine_alive = set()  # engine-side active players FFB removed
         self.ball_diverged = False # engine ball state unrepresentable (skill gap)
@@ -657,6 +658,7 @@ class Mapper:
         self.ignore_pos.clear()    # repositioning divergences reset with it
         self.ball_diverged = False
         self.pickmeup = []
+        self.pmu_stood = set()
         finals = self.kickoff_repositioning(i, r)
         if finals:
             coords = dict(r["players"])
@@ -1096,6 +1098,7 @@ class Mapper:
             # Engine turn_start(receiving): players who enter their own turn
             # stunned become STUNNED_USED (flip at that turn's end).
             self.age_stunned(1 - self.kicking if self.kicking is not None else None)
+            self.pmu_stood = set()
             self.emit_expect(cmd, skip_ball=bool(td))
             self.acts_this_turn = 0
             self.used_this_turn = set()
@@ -1114,6 +1117,7 @@ class Mapper:
                 self.attach(cmd, boundary_dice, "turn end")
         self.turnend_dice = []
         self.pickmeup = []
+        self.pmu_stood = set()
         # Engine boundary bookkeeping: turn_end(T) flips T's aged stunned
         # players to prone; turn_start(1-T) ages the next team's fresh ones.
         ended = self.active_team
@@ -1535,15 +1539,20 @@ class Mapper:
 
     def rep_pickMeUp(self, i, r, cmd):
         """Pick Me Up rolls at the end of the opponent's turn. The engine
-        only rolls for players that are PRONE when pick_me_up runs — players
-        still stunned/stunned_used at that moment (they flip later, in
-        turn_end) are not candidates even though FFB already rolled for
-        them. Engine rolls iterate slots ascending: buffer (slot, roll) and
-        sort at the boundary."""
+        rolls for PRONE candidates AND for stunned players FFB just rolled
+        over at this boundary (held at state 2 by stun_stage — engine
+        STUNNED_USED, a Pick-Me-Up candidate per item 8). Helpers are
+        snapshot at the boundary: an owner stood up by the trait cannot
+        help later candidates this turn. Engine rolls iterate slots
+        ascending: buffer (slot, roll) and sort at the boundary."""
         pid = str(r.get("playerId"))
         ts = self.slot_of.get(pid)
-        candidate = (ts is not None and self.base.get(pid) == 1 and
-                     not self.stun_stage.get(pid) and self.pos.get(pid))
+        # A successful roll's standing record precedes the report (FFB emits
+        # results first), so base is already 0 — the report itself proves
+        # the player was down.
+        down = (bool(r.get("successful")) or self.base.get(pid) == 1 or
+                (self.base.get(pid) == 2 and self.stun_stage.get(pid)))
+        candidate = ts is not None and down and self.pos.get(pid)
         if candidate:
             helped = False
             px, py = self.pos[pid]
@@ -1551,6 +1560,8 @@ class Mapper:
                 if ht != ts[0] or hid == pid:
                     continue
                 if self.base.get(hid) != 0 or not self.pos.get(hid):
+                    continue
+                if hid in self.pmu_stood or hid in self.distracted:
                     continue
                 if not self.has_skill(hid, "Pick Me Up"):
                     continue
@@ -1561,6 +1572,10 @@ class Mapper:
             candidate = helped
         if candidate:
             self.pickmeup.append((ts[0] * 16 + ts[1], int(r.get("roll") or 1)))
+            if r.get("successful"):
+                self.pmu_stood.add(pid)
+                self.stun_stage.pop(pid, None)
+                self.base[pid] = 0  # the held standing record lands now
         else:
             self.skip(cmd, "pick_me_up_engine_no_candidate", pid)
 
