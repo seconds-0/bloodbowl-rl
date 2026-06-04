@@ -150,6 +150,12 @@ typedef struct {
     // legal set at a DECISION). Should stay at 0.0 on the dashboard; anything
     // else means the engine/binding contract broke mid-training.
     float error_episodes;
+    // Demo-state reset curriculum: episodes started from a banked mid-game
+    // state (should track demo_reset_pct when the bank is staged), and bank
+    // draws that failed validation and silently fell back to procgen
+    // (should stay at 0.0 — anything else means a corrupt/stale bank).
+    float demo_episodes;
+    float demo_fallbacks;
     float n;
 } Log;
 
@@ -211,6 +217,15 @@ typedef struct {
     // charged at the (deterministic) push event regardless of injury dice.
     float reward_surf_taken;
     float reward_surf_inflicted;
+    // Demo-state reset curriculum (Backplay / chess fen_curric pattern,
+    // docs/rl-best-practices.md hole #2): with probability demo_reset_pct
+    // each episode starts from a uniformly drawn banked mid-game state
+    // (resources/bloodbowl/state_bank.bbs, built by
+    // validation/build_state_bank.py from FUMBBL replays) instead of a
+    // procgen kickoff. 0 = off (default). demo_started flags the CURRENT
+    // episode for the Log.
+    float demo_reset_pct;
+    int demo_started;
     // Procgen controls: held-out-team experiments and fixed-matchup eval.
     // -1 = unconstrained.
     int exclude_team;
@@ -238,6 +253,11 @@ typedef struct {
     bb_action legal[BB_LEGAL_MAX];
     int n_legal;
     int score_prev[2];
+    // Scores at episode START (0-0 from kickoff; the banked scores on a demo
+    // reset). The Log's tds/score_diff count only the DELTAS scored within
+    // the episode; win/draw/loss stays the ABSOLUTE final comparison (the
+    // match's real result, wherever it was resumed from).
+    int score_start[2];
     int possessor;   // last settled possession: -1 none, else team; IN_AIR = limbo
     // Bootstrap potentials, per channel: deltas emitted only WITHIN a regime
     // (ball stays loose / same team keeps carrying); regime transitions emit
@@ -540,6 +560,87 @@ static bb_action bbe_decode(Bloodbowl* env, int agent, const float* heads) {
     return env->legal[0];
 }
 
+// --- Demo-state bank (Backplay / chess-FEN curriculum) -----------------------
+// Shared, lazily loaded once per process (per TU — binding.c is the single
+// training TU, mirroring chess's SHARED_FEN_CURRICULUM in my_vec_init).
+// File: "BBS1" written by tools/bb_lockstep.c --dump-states, concatenated by
+// validation/build_state_bank.py, staged by tools/install_puffer_env.sh.
+// Missing file = curriculum silently off (the chess pattern); a header that
+// fails the match_size/fingerprint guards is reported and ignored — training
+// on stale-engine states would be silent corruption. Only BB_STATUS_DECISION
+// records are kept (resumable by definition).
+#define BBE_STATE_BANK_PATH "resources/bloodbowl/state_bank.bbs"
+#define BBE_STATE_BANK_REC_META 12 // replay_id u32, cmd u32, half, turn, pad[2]
+
+static const char* bbe_state_bank_path = BBE_STATE_BANK_PATH;
+static bb_match* bbe_state_bank = NULL;
+static int bbe_state_bank_n = 0;
+static int bbe_state_bank_tried = 0;
+
+static uint32_t bbe_le32(const uint8_t* b) {
+    return (uint32_t)b[0] | ((uint32_t)b[1] << 8) | ((uint32_t)b[2] << 16) |
+           ((uint32_t)b[3] << 24);
+}
+
+// Load the bank once. Call sites: the binding's init entry points (before
+// any stepping thread exists) and, for standalone callers (driver, tests),
+// lazily from the first bbe_reset_match with demo_reset_pct > 0.
+static void bbe_state_bank_load(void) {
+    if (bbe_state_bank_tried) return;
+    bbe_state_bank_tried = 1;
+    FILE* f = fopen(bbe_state_bank_path, "rb");
+    if (f == NULL) return; // no bank staged: curriculum off
+    uint8_t hdr[16];
+    size_t rec_len = BBE_STATE_BANK_REC_META + sizeof(bb_match);
+    if (fread(hdr, 1, sizeof hdr, f) != sizeof hdr ||
+        memcmp(hdr, "BBS1", 4) != 0 || bbe_le32(hdr + 4) != 1u ||
+        bbe_le32(hdr + 8) != (uint32_t)sizeof(bb_match) ||
+        bbe_le32(hdr + 12) != bbe_state_fingerprint()) {
+        fprintf(stderr,
+                "bloodbowl: state bank %s incompatible with this engine build "
+                "(stale bank? rebuild with validation/build_state_bank.py) — "
+                "demo resets disabled\n",
+                bbe_state_bank_path);
+        fclose(f);
+        return;
+    }
+    if (fseek(f, 0, SEEK_END) != 0) {
+        fclose(f);
+        return;
+    }
+    long size = ftell(f);
+    long n = size > 16 ? (size - 16) / (long)rec_len : 0;
+    if (n <= 0 || (size - 16) % (long)rec_len != 0) {
+        fprintf(stderr, "bloodbowl: state bank %s malformed (%ld bytes) — "
+                        "demo resets disabled\n",
+                bbe_state_bank_path, size);
+        fclose(f);
+        return;
+    }
+    bb_match* bank = (bb_match*)malloc((size_t)n * sizeof(bb_match));
+    int kept = 0;
+    for (long i = 0; i < n; i++) {
+        if (fseek(f, 16 + i * (long)rec_len + BBE_STATE_BANK_REC_META,
+                  SEEK_SET) != 0 ||
+            fread(&bank[kept], sizeof(bb_match), 1, f) != 1) {
+            break;
+        }
+        // Resumable points only; anything else would error out of c_step.
+        if (bank[kept].status == BB_STATUS_DECISION &&
+            bank[kept].stack_top > 0) {
+            kept++;
+        }
+    }
+    fclose(f);
+    if (kept == 0) {
+        free(bank);
+        return;
+    }
+    bbe_state_bank = bank;
+    bbe_state_bank_n = kept;
+    printf("Loaded %d demo states from %s\n", kept, bbe_state_bank_path);
+}
+
 // --- Lifecycle -------------------------------------------------------------------
 static void bbe_emit_all(Bloodbowl* env) {
     // Marking-TZ bytes are view-independent; compute once for both encodes.
@@ -560,30 +661,76 @@ static void bbe_emit_all(Bloodbowl* env) {
 static void bbe_reset_match(Bloodbowl* env) {
     env->episode++;
     bb_rng_seed(&env->procgen, env->seed * 2654435761u + env->episode, 11);
-    // Procgen controls: exclude_team bars a team from training draws
-    // (holdout); force_* pins a side for fixed-matchup eval.
-    if (env->exclude_team >= 0 || env->force_home_team >= 0 ||
-        env->force_away_team >= 0) {
-        bb_match_init_forced(&env->match, &env->procgen, env->force_home_team,
-                             env->force_away_team, env->exclude_team);
-    } else {
-        bb_match_init_random(&env->match, &env->procgen);
+    // Demo-state reset curriculum: with probability demo_reset_pct, resume
+    // from a uniformly drawn banked mid-game state instead of a procgen
+    // kickoff (both draws from the procgen stream). A banked state that
+    // fails validation falls back to procgen silently, counted in the Log.
+    env->demo_started = 0;
+    if (env->demo_reset_pct > 0.0f) {
+        bbe_state_bank_load(); // lazy once; no-op when already tried
+        if (bbe_state_bank_n > 0 &&
+            (float)(bb_rng_next(&env->procgen) >> 8) * (1.0f / 16777216.0f) <
+                env->demo_reset_pct) {
+            int idx = (int)(bb_rng_next(&env->procgen) %
+                            (uint32_t)bbe_state_bank_n);
+            env->match = bbe_state_bank[idx];
+            if (env->match.status == BB_STATUS_DECISION &&
+                env->match.stack_top > 0) {
+                env->demo_started = 1;
+            } else {
+                env->log.demo_fallbacks += 1.0f;
+            }
+        }
     }
+    if (!env->demo_started) {
+        // Procgen controls: exclude_team bars a team from training draws
+        // (holdout); force_* pins a side for fixed-matchup eval. NOTE: banked
+        // demo states carry their FUMBBL rosters — neither constraint is
+        // enforced on the demo path (keep demo_reset_pct = 0 for holdout
+        // evals).
+        if (env->exclude_team >= 0 || env->force_home_team >= 0 ||
+            env->force_away_team >= 0) {
+            bb_match_init_forced(&env->match, &env->procgen,
+                                 env->force_home_team, env->force_away_team,
+                                 env->exclude_team);
+        } else {
+            bb_match_init_random(&env->match, &env->procgen);
+        }
+    }
+    // Fresh in-match dice stream either way; a resumed state replays under
+    // new dice. bb_advance is a no-op for a banked state (already at a
+    // DECISION) and runs procgen kickoffs to their first decision.
     bb_rng_seed(&env->rng, env->seed + env->episode * 7919u, 1);
     bb_advance(&env->match, &env->rng);
     bbe_refresh_legal(env);
-    env->decisions = 0;
+    env->decisions = 0; // max_decisions budgets from the resume point
     env->illegal = 0;
     env->ep_blocks = env->ep_blitzes = 0;
     env->ep_dodge_attempts = env->ep_gfi_attempts = 0;
     env->ep_pickup_attempts = env->ep_pass_attempts = 0;
     env->ep_knockdowns_inflicted = env->ep_knockdowns_own = 0;
     env->ep_return[0] = env->ep_return[1] = 0;
-    env->score_prev[0] = env->score_prev[1] = 0;
-    env->possessor = -1;
+    // Baseline scores from the (possibly resumed) match so TD step rewards
+    // and the Log's tds/score_diff deltas count only what happens from here.
+    env->score_prev[0] = env->score_start[0] = env->match.score[0];
+    env->score_prev[1] = env->score_start[1] = env->match.score[1];
+    // Settled-possession baseline from the loaded ball state (a banked
+    // carrier must not pay reward_ball_loss for a pre-existing loose ball,
+    // nor earn reward_ball_gain for already holding it). Grounded/in-air/
+    // off-pitch all start as "no possessor" — exactly the from-kickoff
+    // semantics.
+    env->possessor = env->match.ball.state == BB_BALL_HELD
+                         ? BB_TEAM_OF(env->match.ball.carrier)
+                         : -1;
+    // Potentials start inactive in both channels: the first post-reset step
+    // primes them without emitting a delta, so a resumed carrier/loose ball
+    // never books a phantom potential jump against the -1 sentinel.
     env->pot_fetch_prev[0] = env->pot_fetch_prev[1] = -1.0f;
     env->pot_carry_prev[0] = env->pot_carry_prev[1] = -1.0f;
-    // Procgen can pre-injure players into the CAS box; baseline the counts.
+    // Procgen can pre-injure players into the CAS box, and banked demo
+    // states arrive with whatever KO/CAS boxes and surf counts the human
+    // game had reached; baseline all of it so injury/surf shaping prices
+    // only NEW events.
     for (int t = 0; t < 2; t++) {
         int out = 0;
         for (int s = t * BB_TEAM_SLOTS; s < (t + 1) * BB_TEAM_SLOTS; s++) {
@@ -642,8 +789,15 @@ static void bbe_finish_episode(Bloodbowl* env) {
     env->log.slot_0_score += result;
     env->log.slot_1_score += 1.0f - result;
     env->log.draw_rate += (m->score[0] == m->score[1]) ? 1.0f : 0.0f;
-    env->log.score_diff += (float)(m->score[0] - m->score[1]);
-    env->log.tds += (float)(m->score[0] + m->score[1]);
+    // tds/score_diff are EPISODE deltas: TDs scored from the start state,
+    // which is 0-0 from kickoff but the banked scores on a demo reset —
+    // pre-resume human TDs are not the policy's doing. perf/win/draw above
+    // stay on the absolute final scores (the match's real result).
+    int d0 = m->score[0] - env->score_start[0];
+    int d1 = m->score[1] - env->score_start[1];
+    env->log.score_diff += (float)(d0 - d1);
+    env->log.tds += (float)(d0 + d1);
+    if (env->demo_started) env->log.demo_episodes += 1.0f;
     env->log.episode_return += env->ep_return[0];
     env->log.episode_length += (float)env->decisions;
     env->log.illegal_frac += env->decisions

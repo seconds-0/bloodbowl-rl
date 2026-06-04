@@ -73,6 +73,7 @@ static void apply_kwargs(Env* env, Dict* kwargs) {
     env->reward_injury_value_scaled = (int)kw(kwargs, "reward_injury_value_scaled", 0.0);
     env->reward_surf_taken = (float)kw(kwargs, "reward_surf_taken", 0.0);
     env->reward_surf_inflicted = (float)kw(kwargs, "reward_surf_inflicted", 0.0);
+    env->demo_reset_pct = (float)kw(kwargs, "demo_reset_pct", 0.0);
     env->exclude_team = (int)kw(kwargs, "exclude_team", -1.0);
     env->force_home_team = (int)kw(kwargs, "force_home_team", -1.0);
     env->force_away_team = (int)kw(kwargs, "force_away_team", -1.0);
@@ -113,6 +114,13 @@ Env* my_vec_init(int* num_envs_out, int* buffer_env_starts, int* buffer_env_coun
         exit(1);
     }
 
+    // Demo-state curriculum: one shared load BEFORE any stepping thread
+    // exists (the chess SHARED_FEN_CURRICULUM pattern) — the lazy reset-time
+    // path then never races. Missing file degrades to plain procgen resets.
+    if ((float)kw(env_kwargs, "demo_reset_pct", 0.0) > 0.0f) {
+        bbe_state_bank_load();
+    }
+
     int num_envs = total_agents / BBE_AGENTS;
     Env* envs = (Env*)calloc(num_envs, sizeof(Env));
     uint64_t base_seed = (uint64_t)kw(env_kwargs, "seed", 1.0);
@@ -150,6 +158,9 @@ void my_init(Env* env, Dict* kwargs) {
     if (env->seed == 0) {
         env->seed = (uint64_t)kw(kwargs, "seed", 1.0);
     }
+    if (env->demo_reset_pct > 0.0f) {
+        bbe_state_bank_load(); // before stepping, mirroring my_vec_init
+    }
 }
 
 void my_log(Log* log, Dict* out) {
@@ -169,6 +180,8 @@ void my_log(Log* log, Dict* out) {
     dict_set(out, "knockdowns_inflicted", log->knockdowns_inflicted);
     dict_set(out, "knockdowns_own", log->knockdowns_own);
     dict_set(out, "error_episodes", log->error_episodes);
+    dict_set(out, "demo_episodes", log->demo_episodes);
+    dict_set(out, "demo_fallbacks", log->demo_fallbacks);
     dict_set(out, "hist_score_bank_0", log->hist_score_bank[0]);
     dict_set(out, "hist_score_bank_1", log->hist_score_bank[1]);
     dict_set(out, "hist_score_bank_2", log->hist_score_bank[2]);
