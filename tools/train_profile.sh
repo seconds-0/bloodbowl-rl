@@ -14,17 +14,17 @@ shift || true
 case "$PROFILE" in
   A) ARGS=() ;; # config defaults: win/draw(0)/TD only, all shaping 0
   B) ARGS=(
-       --env.reward-draw -0.5
+       --env.reward-draw -0.1
        --env.reward-setup-done 0.25 --env.reward-setup-autofix -0.25
-       --env.reward-ball-gain 0.1 --env.reward-ball-loss -0.5
+       --env.reward-ball-gain 0.1 --env.reward-ball-loss -0.2
        --env.reward-injury-inflicted 0.15 --env.reward-injury-taken -0.15
        --env.reward-injury-value-scaled 1
        --env.reward-surf-taken -0.1 --env.reward-surf-inflicted 0.1
      ) ;;
   D) ARGS=(
-       --env.reward-draw -0.5
+       --env.reward-draw -0.1
        --env.reward-setup-done 0.25 --env.reward-setup-autofix -0.25
-       --env.reward-ball-gain 0.1 --env.reward-ball-loss -0.5
+       --env.reward-ball-gain 0.1 --env.reward-ball-loss -0.2
        --env.reward-injury-inflicted 0.15 --env.reward-injury-taken -0.15
        --env.reward-injury-value-scaled 1
        --env.reward-surf-taken -0.1 --env.reward-surf-inflicted 0.1
