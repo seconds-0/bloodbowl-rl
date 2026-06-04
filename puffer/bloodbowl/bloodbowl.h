@@ -159,6 +159,16 @@ typedef struct {
     // |reward_ball_loss| > reward_ball_gain or pickup/drop cycles farm reward.
     float reward_ball_gain;
     float reward_ball_loss;
+    // Bootstrap curriculum potentials (default 0 = off). Potential-BASED
+    // (reward = delta-potential, telescoping -> un-farmable): while the ball
+    // is loose, each side's potential is -k_fetch * dist(nearest standing
+    // teammate, ball); while carrying, -k_advance * dist(carrier, opposing
+    // end zone). A ladder OUT of the mutual-avoidance basin (both 10B
+    // from-scratch arms converged to 0-0 draws) — anneal to 0 via chained
+    // runs once tds/match wakes up; NOT a permanent reward (see
+    // docs/reward-audit-decision-time.md doctrine vs scaffolding).
+    float reward_dist_ball;
+    float reward_dist_endzone;
     // Injury shaping (default 0 = off): per opponent removed to KO/CAS.
     float reward_injury_inflicted;
     float reward_injury_taken;
@@ -191,6 +201,11 @@ typedef struct {
     int n_legal;
     int score_prev[2];
     int possessor;   // last settled possession: -1 none, else team; IN_AIR = limbo
+    // Bootstrap potentials, per channel: deltas emitted only WITHIN a regime
+    // (ball stays loose / same team keeps carrying); regime transitions emit
+    // nothing — pickup itself is priced by reward_ball_gain. -1 = inactive.
+    float pot_fetch_prev[2];
+    float pot_carry_prev[2];
     int out_prev[2]; // players in the KO + casualty boxes (injury shaping)
     int surf_prev[2]; // m->surfs snapshot (surf shaping)
     uint32_t out_mask_prev[2]; // per-player out bits (value-scaled injuries)
@@ -524,6 +539,8 @@ static void bbe_reset_match(Bloodbowl* env) {
     env->ep_return[0] = env->ep_return[1] = 0;
     env->score_prev[0] = env->score_prev[1] = 0;
     env->possessor = -1;
+    env->pot_fetch_prev[0] = env->pot_fetch_prev[1] = -1.0f;
+    env->pot_carry_prev[0] = env->pot_carry_prev[1] = -1.0f;
     // Procgen can pre-injure players into the CAS box; baseline the counts.
     for (int t = 0; t < 2; t++) {
         int out = 0;
@@ -704,6 +721,47 @@ static void c_step(Bloodbowl* env) {
                 }
                 env->out_prev[t] = out;
                 env->out_mask_prev[t] = mask;
+            }
+        }
+        // Bootstrap potentials: emit delta-potential per side. Skip across
+        // score/drive boundaries (potential resets silently, like possession).
+        if (env->reward_dist_ball != 0.0f || env->reward_dist_endzone != 0.0f) {
+            for (int t = 0; t < 2; t++) {
+                // Fetch channel: active only while the ball is loose.
+                float pf = -1.0f;
+                if (m->ball.state == BB_BALL_ON_GROUND) {
+                    int best = 99;
+                    for (int sl = t * BB_TEAM_SLOTS; sl < (t + 1) * BB_TEAM_SLOTS; sl++) {
+                        const bb_player* p = &m->players[sl];
+                        if (p->location != BB_LOC_ON_PITCH ||
+                            p->stance != BB_STANCE_STANDING) continue;
+                        int dx = p->x > m->ball.x ? p->x - m->ball.x : m->ball.x - p->x;
+                        int dy = p->y > m->ball.y ? p->y - m->ball.y : m->ball.y - p->y;
+                        int d = dx > dy ? dx : dy;
+                        if (d < best) best = d;
+                    }
+                    if (best < 99) pf = -env->reward_dist_ball * (float)best;
+                }
+                if (!scored && pf > -1.0f && env->pot_fetch_prev[t] > -1.0f) {
+                    float dr = pf - env->pot_fetch_prev[t];
+                    env->reward_ptr[t][0] += dr;
+                    env->ep_return[t] += dr;
+                }
+                env->pot_fetch_prev[t] = pf;
+                // Carry channel: active only while this team holds the ball.
+                float pc = -1.0f;
+                if (m->ball.state == BB_BALL_HELD && BB_TEAM_OF(m->ball.carrier) == t) {
+                    const bb_player* c = &m->players[m->ball.carrier];
+                    int ez = bb_endzone_x(t);
+                    int d = c->x > ez ? c->x - ez : ez - c->x;
+                    pc = -env->reward_dist_endzone * (float)d;
+                }
+                if (!scored && pc > -1.0f && env->pot_carry_prev[t] > -1.0f) {
+                    float dr = pc - env->pot_carry_prev[t];
+                    env->reward_ptr[t][0] += dr;
+                    env->ep_return[t] += dr;
+                }
+                env->pot_carry_prev[t] = pc;
             }
         }
         // Surf shaping: charged at the (deterministic) crowd-push event,

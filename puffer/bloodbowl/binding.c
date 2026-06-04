@@ -66,6 +66,8 @@ static void apply_kwargs(Env* env, Dict* kwargs) {
     env->reward_setup_autofix = (float)kw(kwargs, "reward_setup_autofix", 0.0);
     env->reward_ball_gain = (float)kw(kwargs, "reward_ball_gain", 0.0);
     env->reward_ball_loss = (float)kw(kwargs, "reward_ball_loss", 0.0);
+    env->reward_dist_ball = (float)kw(kwargs, "reward_dist_ball", 0.0);
+    env->reward_dist_endzone = (float)kw(kwargs, "reward_dist_endzone", 0.0);
     env->reward_injury_inflicted = (float)kw(kwargs, "reward_injury_inflicted", 0.0);
     env->reward_injury_taken = (float)kw(kwargs, "reward_injury_taken", 0.0);
     env->reward_injury_value_scaled = (int)kw(kwargs, "reward_injury_value_scaled", 0.0);
