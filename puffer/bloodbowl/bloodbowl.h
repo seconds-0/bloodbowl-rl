@@ -110,6 +110,20 @@ typedef struct {
     float episode_return;
     float episode_length;
     float illegal_frac;    // sampled actions that had to be snapped to legal
+    // Behavioral micro-stats, summed per episode (dashboard shows per-episode
+    // means after the /n aggregation). Motivated by a spectator finding:
+    // policies never declared blocks and walked out of tackle zones
+    // obliviously — these make that visible on the dashboard instead of
+    // requiring a spectator session. Counting details: bbe_count_action /
+    // bbe_count_knockdowns.
+    float blocks;               // BB_A_DECLARE of BB_ACT_BLOCK
+    float blitzes;              // BB_A_DECLARE of BB_ACT_BLITZ
+    float dodge_attempts;       // STEPs out of >=1 opposing TZ (dodge test due)
+    float gfi_attempts;         // STEPs beyond MA (rush/GFI test due)
+    float pickup_attempts;      // STEPs onto the loose ball's square
+    float pass_attempts;        // BB_A_PASS_TARGET actions
+    float knockdowns_inflicted; // actor's opponents downed during his window
+    float knockdowns_own;       // actor's own players downed (failed dodges...)
     // Learner (slot 0) score vs frozen bank b on envs tagged b+1; selfplay.py
     // reads hist_score_bank_<b>/hist_n_bank_<b> to drive bank swaps.
     float hist_score_bank[BBE_MAX_BANKS];
@@ -201,6 +215,12 @@ typedef struct {
     uint32_t episode;
     int decisions;
     int illegal;
+    // Behavioral micro-stat counters for the CURRENT episode (summed into
+    // the Log by bbe_finish_episode, zeroed by bbe_reset_match).
+    int ep_blocks, ep_blitzes;
+    int ep_dodge_attempts, ep_gfi_attempts;
+    int ep_pickup_attempts, ep_pass_attempts;
+    int ep_knockdowns_inflicted, ep_knockdowns_own;
     float ep_return[BBE_AGENTS];
     bb_action legal[BB_LEGAL_MAX];
     int n_legal;
@@ -541,6 +561,10 @@ static void bbe_reset_match(Bloodbowl* env) {
     bbe_refresh_legal(env);
     env->decisions = 0;
     env->illegal = 0;
+    env->ep_blocks = env->ep_blitzes = 0;
+    env->ep_dodge_attempts = env->ep_gfi_attempts = 0;
+    env->ep_pickup_attempts = env->ep_pass_attempts = 0;
+    env->ep_knockdowns_inflicted = env->ep_knockdowns_own = 0;
     env->ep_return[0] = env->ep_return[1] = 0;
     env->score_prev[0] = env->score_prev[1] = 0;
     env->possessor = -1;
@@ -612,6 +636,14 @@ static void bbe_finish_episode(Bloodbowl* env) {
     env->log.illegal_frac += env->decisions
                                  ? (float)env->illegal / (float)env->decisions
                                  : 0;
+    env->log.blocks += (float)env->ep_blocks;
+    env->log.blitzes += (float)env->ep_blitzes;
+    env->log.dodge_attempts += (float)env->ep_dodge_attempts;
+    env->log.gfi_attempts += (float)env->ep_gfi_attempts;
+    env->log.pickup_attempts += (float)env->ep_pickup_attempts;
+    env->log.pass_attempts += (float)env->ep_pass_attempts;
+    env->log.knockdowns_inflicted += (float)env->ep_knockdowns_inflicted;
+    env->log.knockdowns_own += (float)env->ep_knockdowns_own;
     // Selfplay pool bookkeeping: on tagged envs slot 0 is the learner playing
     // frozen bank tag-1; result is already slot-0 perspective.
     if (env->tag > 0 && env->tag <= BBE_MAX_BANKS) {
@@ -621,6 +653,80 @@ static void bbe_finish_episode(Bloodbowl* env) {
     env->boundary_reached = 1;
     env->log.n += 1;
     bbe_reset_match(env);
+}
+
+// --- Behavioral micro-stats --------------------------------------------------
+// Decision-time counting from PRE-apply state — the same quantities the
+// engine derives internally when resolving the action (proc_move.c
+// BB_A_STEP: rush iff moved >= ma, dodge iff the ORIGIN square is marked).
+// dodge/gfi count INTENDED tests: a Tentacles hold or a failed rush can stop
+// the later rolls from ever happening. That's fine — this is behavioral
+// telemetry ("does the policy choose contact / risky moves at all"), not a
+// dice-roll census. gfi_attempts approximates: jump rushes and the
+// blitz-block rush are not counted, only over-MA STEPs.
+static void bbe_count_action(Bloodbowl* env, bb_action act) {
+    const bb_match* m = &env->match;
+    switch (act.type) {
+    case BB_A_DECLARE:
+        if (act.arg == BB_ACT_BLOCK) env->ep_blocks++;
+        else if (act.arg == BB_ACT_BLITZ) env->ep_blitzes++;
+        break;
+    case BB_A_STEP: {
+        // A STEP decision always comes from a MOVE frame (a = mover).
+        const bb_frame* top = m->stack_top ? &m->stack[m->stack_top - 1] : 0;
+        if (top && top->proc == BB_PROC_MOVE && top->a < BB_NUM_PLAYERS) {
+            const bb_player* p = &m->players[top->a];
+            if (p->moved >= p->ma) env->ep_gfi_attempts++;
+            if (bb_tackle_zones(m, BB_TEAM_OF(top->a), p->x, p->y) > 0) {
+                env->ep_dodge_attempts++;
+            }
+        }
+        if (m->ball.state == BB_BALL_ON_GROUND && m->ball.x == act.x &&
+            m->ball.y == act.y) {
+            env->ep_pickup_attempts++;
+        }
+        break;
+    }
+    case BB_A_PASS_TARGET:
+        env->ep_pass_attempts++;
+        break;
+    default:
+        break;
+    }
+}
+
+// Bitmask of players standing on the pitch, one bit per slot (32 slots).
+static uint32_t bbe_standing_mask(const bb_match* m) {
+    uint32_t mask = 0;
+    for (int s = 0; s < BB_NUM_PLAYERS; s++) {
+        const bb_player* p = &m->players[s];
+        if (p->location == BB_LOC_ON_PITCH && p->stance == BB_STANCE_STANDING) {
+            mask |= 1u << s;
+        }
+    }
+    return mask;
+}
+
+// Post-apply: every player who WAS standing on the pitch and is now prone/
+// stunned — or in the KO/CAS box, since bb_remove_from_pitch resets stance
+// on the way out — went down during this apply window. Attribution is by
+// the coach whose action drove the window: his opponents going down are
+// inflicted, his own players are own (failed dodges, skulls, both-downs).
+// A crowd-surfed player counts only when injured into a box (KO/CAS);
+// surfed-but-fine players return via RESERVES and are not knockdowns.
+static void bbe_count_knockdowns(Bloodbowl* env, uint32_t was_standing,
+                                 int actor) {
+    const bb_match* m = &env->match;
+    for (int s = 0; s < BB_NUM_PLAYERS; s++) {
+        if (!(was_standing & (1u << s))) continue;
+        const bb_player* p = &m->players[s];
+        bool down = (p->location == BB_LOC_ON_PITCH &&
+                     p->stance != BB_STANCE_STANDING) ||
+                    p->location == BB_LOC_KO || p->location == BB_LOC_CAS;
+        if (!down) continue;
+        if (BB_TEAM_OF(s) == actor) env->ep_knockdowns_own++;
+        else env->ep_knockdowns_inflicted++;
+    }
 }
 
 static void c_step(Bloodbowl* env) {
@@ -642,6 +748,8 @@ static void c_step(Bloodbowl* env) {
                 env->ep_return[agent] += r;
             }
         }
+        bbe_count_action(env, act);
+        uint32_t was_standing = bbe_standing_mask(m);
         // Trusted fast path: act came from bbe_decode, which only returns
         // elements of env->legal — the legal set enumerated on THIS state by
         // bbe_refresh_legal. Membership holds by construction, so skip
@@ -649,6 +757,7 @@ static void c_step(Bloodbowl* env) {
         // All other callers (tests, fuzz, lockstep) stay on checked bb_apply.
         bb_apply_trusted(m, act, &env->rng);
         env->decisions++;
+        bbe_count_knockdowns(env, was_standing, agent);
         // Touchdown rewards.
         bool scored = false;
         for (int t = 0; t < 2; t++) {

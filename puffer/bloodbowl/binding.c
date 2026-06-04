@@ -160,6 +160,14 @@ void my_log(Log* log, Dict* out) {
     dict_set(out, "episode_return", log->episode_return);
     dict_set(out, "episode_length", log->episode_length);
     dict_set(out, "illegal_frac", log->illegal_frac);
+    dict_set(out, "blocks", log->blocks);
+    dict_set(out, "blitzes", log->blitzes);
+    dict_set(out, "dodge_attempts", log->dodge_attempts);
+    dict_set(out, "gfi_attempts", log->gfi_attempts);
+    dict_set(out, "pickup_attempts", log->pickup_attempts);
+    dict_set(out, "pass_attempts", log->pass_attempts);
+    dict_set(out, "knockdowns_inflicted", log->knockdowns_inflicted);
+    dict_set(out, "knockdowns_own", log->knockdowns_own);
     dict_set(out, "error_episodes", log->error_episodes);
     dict_set(out, "hist_score_bank_0", log->hist_score_bank[0]);
     dict_set(out, "hist_score_bank_1", log->hist_score_bank[1]);
