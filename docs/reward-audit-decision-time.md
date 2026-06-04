@@ -55,7 +55,9 @@ Fires when an opponent DECLARES a block/blitz/foul against your player
     mandatory second block (engine: M6) compounds knockdown odds on any push;
     Tackle/Juggernaut/Side Step/Stand Firm transform the tree from both sides.
     The probability engine therefore evaluates the full face-distribution ->
-    skill-transform -> outcome-event tree and emits all three probabilities,
+    skill-transform -> outcome-event tree — resolving CHOICE nodes (Wrestle
+    use/decline per D29, die picks, follow-ups) owner-optimally, not by
+    fixed rule — and emits all three probabilities,
     unit-tested against the ActionCalculator's 281 skill-interaction rows
     (validation layer 2 oracle) before pricing any reward.
 
