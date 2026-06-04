@@ -697,7 +697,10 @@ class Mapper:
         if self.pending_block:
             pb = self.pending_block
             if pb["phase"] == "push" and pid == pb["def"]:
-                if on_pitch:
+                if pb.get("chain"):
+                    if not self.emit_chain_push(cmd, x, y, on_pitch):
+                        return
+                elif on_pitch:
                     self.act(cmd, A_PUSH_SQUARE, 0, x, y)
                 else:
                     self.emit_crowd_push(cmd)
@@ -714,10 +717,20 @@ class Mapper:
                 self.pending_block = None
                 return
             if pb["phase"] == "push" and pid != pb["def"] and \
-                    self.pid_team(pid) is not None and on_pitch:
-                # someone else relocating mid-push: chain push (v0 unmapped)
-                self.skip(cmd, "chain_push", f"{pid} -> {x},{y}")
-                self.pending_block = None
+                    self.pid_team(pid) is not None:
+                if pid == pb["att"]:
+                    # attacker relocating before the defender's push square
+                    # is known: not a chain shape we can reconstruct
+                    self.skip(cmd, "chain_push_unmatched", f"att {pid} moved")
+                    self.pending_block = None
+                    return
+                # Someone else relocating mid-push: a chain push. FFB emits
+                # the chained players innermost-first, the defender last —
+                # buffer the links; the defender's move triggers emission of
+                # the whole PUSH_SQUARE decision sequence (emit_chain_push).
+                pb.setdefault("chain", []).append(
+                    {"pid": pid, "from": self.move_from,
+                     "to": (x, y) if on_pitch else None})
                 return
             if pb["phase"] == "followup" and pid == pb["att"]:
                 self.act(cmd, A_FOLLOW_UP, 1)
@@ -1538,6 +1551,66 @@ class Mapper:
             self.pending_block = None
         else:
             self.pending_block = None
+
+    CHAIN_DIRS = [(-1, -1), (0, -1), (1, -1), (1, 0), (1, 1), (0, 1),
+                  (-1, 1), (-1, 0)]  # engine push_candidates ring order
+
+    def chain_crowd_square(self, origin, pushee):
+        """Engine crowd candidate for a chained player pushed off the pitch:
+        the off-pitch square among the three 'behind' candidates (primary
+        direction preferred), clamped exactly like push_legal encodes it."""
+        dx, dy = pushee[0] - origin[0], pushee[1] - origin[1]
+        try:
+            main = self.CHAIN_DIRS.index((dx, dy))
+        except ValueError:
+            return None
+        order = [main, (main + 7) % 8, (main + 1) % 8]
+        for k in order:
+            cx = pushee[0] + self.CHAIN_DIRS[k][0]
+            cy = pushee[1] + self.CHAIN_DIRS[k][1]
+            if not (0 <= cx <= 25 and 0 <= cy <= 14):
+                return (min(max(cx, 0), 25), min(max(cy, 0), 14))
+        return None
+
+    def emit_chain_push(self, cmd, x, y, on_pitch):
+        """The defender's relocation arrived with buffered chain links
+        (innermost players move first in FFB). Engine decision order is the
+        reverse: parent PUSH_SQUARE (arg 2 = occupied), then one decision per
+        chained pushee, deepest last (arg 0 empty / arg 1 crowd). Returns
+        False (with a classified skip) when the buffered moves do not form a
+        consistent chain."""
+        pb = self.pending_block
+        chain = pb.get("chain") or []
+        ok = on_pitch and chain and chain[-1]["from"] == (x, y)
+        for j in range(len(chain) - 1):
+            if chain[j + 1]["to"] != chain[j]["from"] or not chain[j]["from"]:
+                ok = False
+        if not (ok and chain[0]["from"]):
+            self.skip(cmd, "chain_push_unmatched",
+                      f"def->{x},{y} links={len(chain)}")
+            self.pending_block = None
+            return False
+        self.act(cmd, A_PUSH_SQUARE, 2, x, y)  # parent: into the occupied sq
+        rev = list(reversed(chain))            # decision order: shallow->deep
+        for idx, link in enumerate(rev):
+            deepest = idx == len(rev) - 1
+            if not deepest:
+                self.act(cmd, A_PUSH_SQUARE, 2, link["to"][0], link["to"][1])
+            elif link["to"] is not None:
+                self.act(cmd, A_PUSH_SQUARE, 0, link["to"][0], link["to"][1])
+            else:
+                # Chained player surfed: the push origin is the previous
+                # pushee's square BEFORE its own relocation (engine spawns
+                # the child before the parent relocates).
+                origin = rev[idx - 1]["from"] if idx else self.move_from
+                sq = self.chain_crowd_square(origin, link["from"]) \
+                    if origin else None
+                if sq is None:
+                    self.skip(cmd, "chain_push_unmatched", "crowd geometry")
+                    self.pending_block = None
+                    return False
+                self.act(cmd, A_PUSH_SQUARE, 1, sq[0], sq[1], note="chain crowd")
+        return True
 
     def emit_crowd_push(self, cmd):
         pb = self.pending_block
