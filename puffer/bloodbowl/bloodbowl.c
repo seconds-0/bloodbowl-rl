@@ -28,7 +28,8 @@ static int sample_masked(const unsigned char* mask, int len, bb_rng* rng) {
 // encoder's own helper tables, so encoder regressions fail loudly.
 
 static int st_failures;
-static long st_tz_nonzero; // marking-TZ bytes observed > 0 (coverage)
+static long st_tz_nonzero;    // marking-TZ bytes observed > 0 (coverage)
+static long st_plane_nonzero; // obs-v3 TZ-plane bytes observed > 0 (coverage)
 #define ST_CHECK(cond, ...)                                                    \
     do {                                                                       \
         if (!(cond)) {                                                         \
@@ -128,6 +129,39 @@ static void st_check_obs(const Bloodbowl* env) {
                      "agent %d row %d: skill row diverges from skillset",
                      agent, row);
         }
+        // [BBE_TZ_OFF..] obs-v3 tackle-zone planes (my coverage, then the
+        // opponent's), spot-checked against the engine's bb_tackle_zones —
+        // which counts the TZs the OPPOSING team of its `team` argument
+        // exerts on a square, so "my plane" must match a query for the
+        // opponent team and vice versa. Squares: every on-pitch player's
+        // square (where counts cluster) plus a fixed 24-point lattice
+        // (gcd(7,26)=1 / gcd(5,15)=5 walks cover empty regions and both
+        // mirrored edges). The away agent's check exercises the x-mirror.
+        const unsigned char* tz_my = env->obs_ptr[agent] + BBE_TZ_OFF;
+        const unsigned char* tz_op = tz_my + BBE_TZ_PLANE;
+        for (int i = 0; i < BB_NUM_PLAYERS + 24; i++) {
+            int x, y;
+            if (i < BB_NUM_PLAYERS) {
+                const bb_player* p = &m->players[i];
+                if (p->location != BB_LOC_ON_PITCH) continue;
+                x = p->x;
+                y = p->y;
+            } else {
+                x = ((i - BB_NUM_PLAYERS) * 7) % BB_PITCH_LEN;
+                y = ((i - BB_NUM_PLAYERS) * 5 + i) % BB_PITCH_WID;
+            }
+            int ex = agent == BB_AWAY ? BB_PITCH_LEN - 1 - x : x;
+            int idx = y * BB_PITCH_LEN + ex;
+            int mine = bb_tackle_zones(m, 1 - agent, x, y);
+            int theirs = bb_tackle_zones(m, agent, x, y);
+            ST_CHECK(tz_my[idx] == mine,
+                     "agent %d square %d,%d: my-TZ plane %d != %d",
+                     agent, x, y, tz_my[idx], mine);
+            ST_CHECK(tz_op[idx] == theirs,
+                     "agent %d square %d,%d: opp-TZ plane %d != %d",
+                     agent, x, y, tz_op[idx], theirs);
+            st_plane_nonzero += (mine > 0) + (theirs > 0);
+        }
     }
 }
 
@@ -219,6 +253,8 @@ static int bbe_selftest(uint64_t seed, int episodes) {
     }
     ST_CHECK(st_tz_nonzero > 0,
              "no marked player ever observed — TZ byte coverage is vacuous");
+    ST_CHECK(st_plane_nonzero > 0,
+             "no nonzero TZ-plane square ever checked — plane coverage vacuous");
     // Defensive termination: a DECISION state whose legal enumeration came
     // back empty must end the episode instead of livelocking the env (the
     // mask path emits a null action, but the step path applies nothing and
