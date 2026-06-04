@@ -312,3 +312,40 @@ over total_timesteps. Dashboard/wandb keys: `loss/bc_loss`, `loss/bc_acc`,
   `--selfplay.enabled 0` (pool is native-only), warm start from
   training/bc_v1.bin (state_dict loads directly in the torch backend — no
   converter), B-profile reward knobs, bc_coef 1.0 annealed.
+
+## Heterogeneous league seeding (local selfplay.py patch)
+
+Stock `selfplay.setup()` keeps pool state in memory only and UNCONDITIONALLY
+bootstraps: it saves the learner's current weights as
+`<ckpt>/<env>/<run_id>/pool/{global_step:016d}.bin` and loads that one file
+into every frozen bank (selfplay.py:169-175 at the 4.0 pin). The league
+patch adds a `[selfplay] league_preseed` key: when it names a pool dir built
+by `tools/build_league.py` (`league_seeds.json` manifest + one flat-fp32
+`.bin` per bank, named `{bank:016d}.bin`), each bank b loads seed b instead,
+the opponent pool starts as the ordered seed set, that dir becomes the run's
+pool_dir (snapshots accumulate next to the seeds), and the bootstrap save is
+skipped. Empty key = upstream behavior (the bootstrap case dedupes back to a
+single pool entry). Seed sizes are hard-verified in Python because the C
+loader (`pufferl_load_frozen_bank`, pufferlib.cu:1830) only fprintf-warns on
+size mismatch and silently keeps the bank's old weights.
+
+- **Reapply after any vendor re-clone** (vendor/*/ is gitignored):
+  `cd vendor/PufferLib && git apply ../../training/selfplay_league.patch`
+  then re-validate with `python3 training/test_selfplay_league.py`
+  (stubbed-backend proof that setup() loads each seed into its bank, plus
+  bootstrap-path upstream-equivalence). `tools/run_league.sh` auto-applies
+  the patch if the `league_preseed` marker is missing from selfplay.py.
+- Config key lives in `puffer/config/bloodbowl.ini` `[selfplay]`
+  (`league_preseed =`, empty default) and reaches vendor via
+  `tools/install_puffer_env.sh` — note the `--check` hash covers ocean/ only,
+  not the ini, so run_league.sh refreshes the ini itself when the key is
+  missing.
+- Launch recipe: `tools/run_league.sh` — native CUDA backend (pool/banks are
+  CUDA-only), 5 banks (profile-A final / profile-D final / BC-init / anneal
+  stage-1 / anneal graduate), warm start from the graduate,
+  `--vec.num-frozen-banks 5 --vec.frozen-bank-pct 0.08` (163 rows/bank, 815
+  total < apb/2 = 1024; 326 hist envs/bank arms min_games=2048 in ~105M
+  steps worst-case vs the 500M timeout — math derivation in the script
+  header), B-profile reward knobs, snapshot_interval 500M, tag
+  profile-league. Seed paths resolve from PROFILE markers with
+  `LEAGUE_SEED_*` env overrides.
