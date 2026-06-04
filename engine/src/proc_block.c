@@ -1046,10 +1046,23 @@ static void injury_advance(bb_match* m, bb_rng* rng) {
 
 // ===== CASUALTY ===============================================================
 // a = slot. D16 on the casualty table. League persistence comes later; in
-// match terms every casualty is out for the game. TODO(phase3): apothecary.
+// match terms every casualty is out for the game.
+// Apothecary window (phase 1: use/decline; phase 2: "may select either of
+// the two results" — a CHOOSE_OPTION decision, 0 = original roll in f->x,
+// 1 = the apothecary's new roll in f->y).
+
+// Apply one casualty result (rolls are post-Decay table indices). Every
+// casualty is out for the match; only the apothecary's Badly Hurt pick
+// (phase 2 below) routes to Reserves instead.
+static void casualty_resolve(bb_match* m, int slot, int roll) {
+    bb_player* p = &m->players[slot];
+    p->spp_game = (uint8_t)bb_casualty_table[roll]; // outcome (league mode)
+    if (p->location == BB_LOC_ON_PITCH) bb_remove_from_pitch(m, slot, BB_LOC_CAS);
+    else p->location = BB_LOC_CAS;
+}
 
 static void casualty_advance(bb_match* m, bb_rng* rng) {
-    if (bb_top(m)->phase == 1) {
+    if (bb_top(m)->phase == 1 || bb_top(m)->phase == 2) {
         bb_need_decision(m, BB_TEAM_OF(bb_top(m)->a));
         return;
     }
@@ -1070,52 +1083,58 @@ static void casualty_advance(bb_match* m, bb_rng* rng) {
     if (bb_has_skill(&p->skills, BB_SK_DECAY) && roll < 16) roll += 1;
     int team = BB_TEAM_OF(slot);
     if (m->apothecary[team] > 0) {
-        // Apothecary window: coach may have a second Casualty Roll made and
-        // pick either result (Badly Hurt selected -> Reserves).
+        // Apothecary window: the coach may have a second Casualty Roll made
+        // and "may select either of the two results to apply" (mirror
+        // GB#APOTHECARY; Badly Hurt selected -> Reserves).
         bb_push(m, BB_PROC_CASUALTY, slot, 1, (uint8_t)roll, 0);
-        bb_top(m)->phase = 1; // decision phase
+        bb_top(m)->phase = 1; // use/decline decision
         return;
     }
-    p->spp_game = (uint8_t)bb_casualty_table[roll]; // outcome (league mode)
-    if (p->location == BB_LOC_ON_PITCH) bb_remove_from_pitch(m, slot, BB_LOC_CAS);
-    else p->location = BB_LOC_CAS;
+    casualty_resolve(m, slot, roll);
 }
 
 static int casualty_legal(const bb_match* m, bb_action* out) {
-    (void)m;
+    const bb_frame* f = &m->stack[m->stack_top - 1];
+    if (f->phase == 2) { // pick either casualty result (FFB apothecaryChoice)
+        out[0] = (bb_action){BB_A_CHOOSE_OPTION, 0, 0, 0}; // original roll
+        out[1] = (bb_action){BB_A_CHOOSE_OPTION, 1, 0, 0}; // apothecary roll
+        return 2;
+    }
     out[0] = (bb_action){BB_A_APOTHECARY, 1, 0, 0};
     out[1] = (bb_action){BB_A_APOTHECARY, 0, 0, 0};
     return 2;
 }
 
 static void casualty_apply(bb_match* m, bb_action a, bb_rng* rng) {
-    bb_frame f = *bb_top(m);
-    bb_pop(m);
-    int slot = f.a;
+    bb_frame* f = bb_top(m);
+    int slot = f->a;
     bb_player* p = &m->players[slot];
     int team = BB_TEAM_OF(slot);
-    int roll1 = f.x;
-    if (a.arg == 1) {
-        m->apothecary[team]--;
-        int roll2 = bb_d16(rng);
-        if (bb_has_skill(&p->skills, BB_SK_DECAY) && roll2 < 16) roll2 += 1;
-        // The controlling coach picks either result; auto-pick the better
-        // (lower) one — strictly dominant.
-        int pick = bb_casualty_table[roll1] <= bb_casualty_table[roll2] ? roll1 : roll2;
-        if (bb_casualty_table[pick] == BB_CAS_BADLY_HURT) {
-            if (p->location == BB_LOC_ON_PITCH) bb_remove_from_pitch(m, slot, BB_LOC_RESERVES);
-            else p->location = BB_LOC_RESERVES;
-            p->spp_game = BB_CAS_BADLY_HURT;
+    if (f->phase == 1) {
+        if (a.arg == 1) { // use the apothecary: second roll, then the pick
+            m->apothecary[team]--;
+            int roll2 = bb_d16(rng);
+            if (bb_has_skill(&p->skills, BB_SK_DECAY) && roll2 < 16) roll2 += 1;
+            f->y = (uint8_t)roll2;
+            f->phase = 2; // "may select either of the two results to apply"
             return;
         }
-        p->spp_game = (uint8_t)bb_casualty_table[pick];
-        if (p->location == BB_LOC_ON_PITCH) bb_remove_from_pitch(m, slot, BB_LOC_CAS);
-        else p->location = BB_LOC_CAS;
+        int roll1 = f->x;
+        bb_pop(m);
+        casualty_resolve(m, slot, roll1);
         return;
     }
-    p->spp_game = (uint8_t)bb_casualty_table[roll1];
-    if (p->location == BB_LOC_ON_PITCH) bb_remove_from_pitch(m, slot, BB_LOC_CAS);
-    else p->location = BB_LOC_CAS;
+    // phase 2: result picked (0 = original f->x, 1 = new f->y).
+    int pick = a.arg ? f->y : f->x;
+    bb_pop(m);
+    if (bb_casualty_table[pick] == BB_CAS_BADLY_HURT) {
+        // Patched-up: "placed into their Reserves Box instead".
+        if (p->location == BB_LOC_ON_PITCH) bb_remove_from_pitch(m, slot, BB_LOC_RESERVES);
+        else p->location = BB_LOC_RESERVES;
+        p->spp_game = BB_CAS_BADLY_HURT;
+        return;
+    }
+    casualty_resolve(m, slot, pick);
 }
 
 // ===== FOUL ===================================================================

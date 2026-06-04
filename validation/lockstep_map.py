@@ -1948,8 +1948,29 @@ class Mapper:
                                     str(x.get("playerId")) == pid, limit=8)
                 if jc >= 0:
                     self.consumed.add(jc)
+                # Engine apothecary window is now two decisions: USE (rolls
+                # the second D16) then CHOOSE_OPTION 0 = original roll /
+                # 1 = new roll ("may select either of the two results").
+                # FFB's apothecaryChoice playerState reveals the pick:
+                # base 9 (Reserves) = a Badly Hurt result was selected.
+                decay = self.has_skill(pid, "Decay")
+
+                def cas_band(roll):
+                    rr = min(int(roll) + (1 if decay and roll < 16 else 0), 16)
+                    return 0 if rr <= 8 else (1 if rr <= 10 else
+                                              (2 if rr <= 12 else
+                                               (3 if rr <= 14 else 4)))
+                b1, b2 = cas_band(int(cas[0])), cas_band(int(cas2[0]))
+                if jc >= 0 and self.recs[jc].get("playerState") == 9:
+                    pick = 0 if b1 == 0 else 1   # Badly Hurt selected
+                elif jc >= 0:
+                    pick = 0 if b1 != 0 else 1   # a non-BH result selected
+                else:
+                    pick = 0 if b1 <= b2 else 1  # no report: better band
                 self.act(cmd, A_APOTHECARY, 1, dice=[int(cas2[0])],
                          note="casualty apothecary")
+                self.act(cmd, A_CHOOSE_OPTION, pick,
+                         note="apothecary result pick")
             else:
                 self.act(cmd, A_APOTHECARY, 0, note="casualty declined")
 
