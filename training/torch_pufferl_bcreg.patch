@@ -1,0 +1,181 @@
+diff --git a/pufferlib/torch_pufferl.py b/pufferlib/torch_pufferl.py
+index 4cf6184..2e35d43 100644
+--- a/pufferlib/torch_pufferl.py
++++ b/pufferlib/torch_pufferl.py
+@@ -99,6 +99,111 @@ _TORCH_TO_CTYPE = {
+     torch.float32: ctypes.c_float,
+ }
+ 
++# ===========================================================================
++# LOCAL PATCH (bloodbowl-rl): BC-regularized PPO — human-imitation anchor.
++#
++# Motivation (DECISIONS.md D27): 10B steps of selfplay PPO eroded the
++# BC-pretrained human prior (BC-init beat BC-final head-to-head). Fix is the
++# AlphaStar-style anchor: an auxiliary masked cross-entropy on human
++# (obs, mask, action) pairs added to the PPO loss DURING RL, so the prior
++# cannot be pruned as wasted entropy.
++#
++# Config ([train] in config/bloodbowl.ini):
++#   bc_coef        weight of the BC term (0.0 = OFF, bit-identical upstream)
++#   bc_pairs_dir   dir of .bbp shards (tools/bb_lockstep.c --dump-pairs)
++#   bc_batch       human pairs sampled per PPO minibatch
++#   bc_coef_anneal 1 = cosine-decay bc_coef to 10% over total_timesteps
++#
++# All .bbp records are preloaded to device tensors at create time
++# (24K records x ~1.3KB ~= 32MB). The BC forward uses zero initial recurrent
++# state, matching training/bc_pretrain.py v0 exactly. bc_loss/bc_acc/bc_coef
++# are exported through the losses dict to the dashboard and wandb.
++#
++# When bc_coef == 0.0 this patch performs no tensor ops and consumes no RNG —
++# behavior is bit-identical to unpatched upstream.
++#
++# NOTE: the BC term calls policy.forward_eval, which under DDP is bound to
++# the unwrapped module (create_pufferl), bypassing gradient sync — the BC
++# anchor is single-process-only for now (all bloodbowl runs are).
++#
++# Patch copy: training/torch_pufferl_bcreg.patch (reapply after a vendor
++# re-clone; see .claude/skills/puffer-env-dev/SKILL.md).
++# ===========================================================================
++import struct
++
++_BC_MAGIC, _BC_VERSION, _BC_HEADER_LEN = b'BBP1', 1, 16
++
++def _bc_resolve_pairs_dir(path):
++    '''Resolve a relative bc_pairs_dir against the CWD first, then the repo
++    root above vendor/PufferLib (puffer train usually runs from there).'''
++    if os.path.isabs(path) or os.path.isdir(path):
++        return path
++    here = os.path.realpath(__file__)
++    root = here
++    for _ in range(4):  # pufferlib/ -> PufferLib/ -> vendor/ -> <repo root>
++        root = os.path.dirname(root)
++    cand = os.path.join(root, path)
++    return cand if os.path.isdir(cand) else path
++
++def _bc_load_pairs(pairs_dir, obs_size, act_sizes, device):
++    '''Preload every .bbp shard (format: tools/bb_lockstep.c BBP1 header +
++    packed records; layout mirrors training/bc_pretrain.py REC_DTYPE) into
++    (obs u8, mask bool, target i64[3]) device tensors.'''
++    paths = sorted(glob.glob(os.path.join(pairs_dir, '*.bbp')))
++    if not paths:
++        raise FileNotFoundError(
++            f'bc_coef > 0 but no .bbp shards in {pairs_dir} — run '
++            'validation/extract_pairs.py or set --train.bc-pairs-dir')
++    shards, hdr = [], None
++    for p in paths:
++        with open(p, 'rb') as f:
++            raw = f.read()
++        magic, ver, osz, msz = struct.unpack('<4sIII', raw[:_BC_HEADER_LEN])
++        if magic != _BC_MAGIC or ver != _BC_VERSION:
++            raise ValueError(f'{p}: bad .bbp header {magic!r} v{ver}')
++        if hdr is None:
++            hdr = (osz, msz)
++        elif (osz, msz) != hdr:
++            raise ValueError(f'{p}: .bbp header mismatch across shards')
++        rec_dtype = np.dtype([
++            ('replay', '<u4'), ('cmd', '<u4'), ('agent', 'u1'), ('pad', 'u1', (3,)),
++            ('obs', 'u1', (osz,)), ('mask', 'u1', (msz,)),
++            ('type', 'u1'), ('arg', 'u1'), ('sq', '<u2'),
++        ])
++        shards.append(np.frombuffer(raw[_BC_HEADER_LEN:], dtype=rec_dtype))
++    osz, msz = hdr
++    if osz != obs_size:
++        raise ValueError(f'.bbp obs size {osz} != vec obs size {obs_size}')
++    if msz != int(sum(act_sizes)):
++        raise ValueError(f'.bbp mask size {msz} != sum(act_sizes) {tuple(act_sizes)}')
++    recs = np.concatenate(shards)
++    obs = torch.from_numpy(np.ascontiguousarray(recs['obs'])).to(device)
++    mask = torch.from_numpy(np.ascontiguousarray(recs['mask'])).to(device).bool()
++    tgt = torch.stack([
++        torch.from_numpy(recs['type'].astype(np.int64)),
++        torch.from_numpy(recs['arg'].astype(np.int64)),
++        torch.from_numpy(recs['sq'].astype(np.int64)),
++    ], dim=1).to(device)
++    return obs, mask, tgt
++
++def _bc_loss_and_acc(policy, obs, mask, tgt, act_sizes, device):
++    '''Masked per-head CE at zero recurrent state — numerically identical to
++    training/bc_pretrain.py masked_losses/forward_heads (v0 iid treatment).
++    Returns (summed CE loss [with graph], exact-match accuracy [no graph]).'''
++    state = policy.initial_state(obs.shape[0], device=device)
++    logits, _values, _state = policy.forward_eval(obs, state)
++    off, loss, exact = 0, None, None
++    for h, n in enumerate(act_sizes):
++        m = mask[:, off:off + n]
++        off += n
++        lg = logits[h].masked_fill(~m, -1e9)
++        ce = torch.nn.functional.cross_entropy(lg, tgt[:, h])
++        loss = ce if loss is None else loss + ce
++        hit = lg.argmax(dim=1) == tgt[:, h]
++        exact = hit if exact is None else (exact & hit)
++    return loss, exact.float().mean()
++# ======================= END LOCAL PATCH (BC-reg PPO) ======================
++
+ def _actions_for_vec_step(action):
+     if action.dim() == 1:
+         action = action.unsqueeze(-1)
+@@ -181,6 +286,24 @@ class PuffeRL:
+         self.profile = Profile(gpu=self.gpu)
+         self.verbose = verbose
+ 
++        # --- LOCAL PATCH (bloodbowl-rl): BC-regularized PPO ----------------
++        # bc_coef == 0.0 (default) leaves upstream behavior bit-identical:
++        # no tensor allocation, no RNG consumption, no extra loss terms.
++        self.bc_coef0 = float(config.get('bc_coef', 0.0) or 0.0)
++        self.bc_anneal = bool(config.get('bc_coef_anneal', 1))
++        self.bc_batch = int(config.get('bc_batch', 512))
++        if self.bc_coef0 > 0:
++            pairs_dir = _bc_resolve_pairs_dir(
++                str(config.get('bc_pairs_dir', 'validation/pairs')))
++            self.bc_act_sizes = tuple(vec.act_sizes)
++            self.bc_obs, self.bc_mask, self.bc_tgt = _bc_load_pairs(
++                pairs_dir, vec.obs_size, self.bc_act_sizes, device)
++            print(f'BC anchor: {self.bc_obs.shape[0]} human pairs from '
++                  f'{pairs_dir} | bc_coef {self.bc_coef0}'
++                  + (' (cosine -> 10%)' if self.bc_anneal else ' (constant)')
++                  + f' | bc_batch {self.bc_batch}/minibatch')
++        # --- END LOCAL PATCH ------------------------------------------------
++
+         self.model_size = sum(p.numel() for p in policy.parameters() if p.requires_grad)
+         if verbose:
+             pufferlib.pufferl.print_dashboard(args, self.model_size, {}, clear=True)
+@@ -270,6 +393,16 @@ class PuffeRL:
+             learning_rate = lr_min + 0.5*(learning_rate - lr_min) * (1 + np.cos(np.pi * lr_ratio))
+             self.optimizer.param_groups[0]['lr'] = learning_rate
+ 
++        # --- LOCAL PATCH (bloodbowl-rl): BC-regularized PPO ----------------
++        # Annealed BC weight, computed once per update (mirrors anneal_lr):
++        # cosine from bc_coef down to 10% of it over total_timesteps.
++        bc_coef = self.bc_coef0
++        if bc_coef > 0 and self.bc_anneal and self.epoch > 0:
++            bc_ratio = min(self.epoch / self.total_epochs, 1.0)
++            bc_min = 0.1 * self.bc_coef0
++            bc_coef = bc_min + 0.5*(self.bc_coef0 - bc_min) * (1 + np.cos(np.pi * bc_ratio))
++        # --- END LOCAL PATCH ------------------------------------------------
++
+         # Transpose from [horizon, agents] (contiguous writes) to [agents, horizon] (minibatch indexing)
+         obs = self.observations.transpose(0, 1).contiguous()
+         act = self.actions.transpose(0, 1).contiguous()
+@@ -333,6 +466,22 @@ class PuffeRL:
+ 
+             entropy_loss = entropy.mean()
+             loss = pg_loss + config['vf_coef']*v_loss - config['ent_coef']*entropy_loss
++
++            # --- LOCAL PATCH (bloodbowl-rl): BC-regularized PPO ------------
++            # Every PPO minibatch also pays a masked 3-head CE on a fresh
++            # sample of human pairs, so each optimizer step is anchored.
++            if bc_coef > 0:
++                bc_idx = torch.randint(0, self.bc_obs.shape[0],
++                    (self.bc_batch,), device=self.bc_obs.device)
++                bc_loss, bc_acc = _bc_loss_and_acc(self.policy,
++                    self.bc_obs[bc_idx], self.bc_mask[bc_idx],
++                    self.bc_tgt[bc_idx], self.bc_act_sizes, device)
++                loss = loss + bc_coef * bc_loss
++                losses['bc_loss'] += bc_loss.detach()
++                losses['bc_acc'] += bc_acc
++                losses['bc_coef'] += torch.as_tensor(float(bc_coef))
++            # --- END LOCAL PATCH --------------------------------------------
++
+             val[idx] = newvalue.detach().float()
+ 
+             losses['policy_loss'] += pg_loss
