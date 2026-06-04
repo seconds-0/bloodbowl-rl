@@ -51,7 +51,7 @@ import urllib.request
 
 BASE_URL = "https://fumbbl.com/api"
 USER_AGENT = "bloodbowl-rl-research/0.1 (alexander.t.huth@gmail.com)"
-THROTTLE_SECONDS = 2.0  # long-running background pull: extra-gentle
+THROTTLE_SECONDS = 1.0  # community norm ~1 req/s (Verhoeven ran 3/s sanctioned)
 MAX_RETRIES = 5
 CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "replay_cache")
 MANIFEST_PATH = os.path.join(CACHE_DIR, "manifest.json")
