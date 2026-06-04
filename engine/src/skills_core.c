@@ -114,8 +114,9 @@ BB_SKILL_GATE(REALLY_STUPID, 4, BB_GATE_LOSE_ACT_AND_TZ)
 BB_SKILL_GATE(UNCHANNELLED_FURY, 4, BB_GATE_LOSE_ACTIVATION)
 
 // --- Push-interaction skills -----------------------------------------------------
-// STAND FIRM: "may choose to not be pushed back" (always-on here; the choice
-// to decline is a TODO decision window).
+// STAND FIRM: "may choose to not be pushed back" — a real decision window
+// (USE_SKILL/DECLINE_SKILL, PUSH phase 4 in proc_block.c), incl. during
+// chain pushes; cancelled by Juggernaut on a blitz; unusable Distracted.
 BB_SKILL_PUSHF(STAND_FIRM, BB_PUSHF_STAND_FIRM)
 // SIDE STEP: "the player's coach chooses which square the player is moved to,
 // and it can be any adjacent unoccupied square."

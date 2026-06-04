@@ -229,7 +229,6 @@ class Mapper:
         self.turnover = False
         self.setup_segments = 0
         self.pending_block = None  # block resolution state
-        self.stood_block = None    # engine auto-applied Stand Firm: {att,def,def_sq}
         self.pending_step = None   # buffered STEP awaiting its (later) rolls
         self.pre_dice = []         # dice before next STEP/JUMP/BLOCK_TARGET
         self.pre_route = False     # route dice/rerolls to pre_dice (block rush)
@@ -768,13 +767,6 @@ class Mapper:
                 self.act(cmd, A_FOLLOW_UP, 1)
                 self.pending_block = None
                 return
-        # FFB declined an auto-applied Stand Firm: the engine kept attacker
-        # and defender in place, so their FFB relocations cannot be mirrored.
-        sb = self.stood_block
-        if sb and (pid == sb["def"] or
-                   (pid == sb["att"] and sb["def_sq"] == (x, y))):
-            self.skip(cmd, "stand_firm_decline_divergence", f"{pid} -> {x},{y}")
-            return
         if mode not in ("regular", "blitz"):
             self.skip(cmd, f"move_in_mode_{mode}", f"{pid} -> {x},{y}")
             return
@@ -1120,7 +1112,6 @@ class Mapper:
         self.turnover = False
         self.activation = None
         self.pending_block = None
-        self.stood_block = None
         self.pending_step = None
         self.pre_dice = []
         self.pre_route = False
@@ -1166,7 +1157,6 @@ class Mapper:
         if self.activation and not self.activation.get("closed"):
             self.close_activation(cmd)
         self.pending_block = None
-        self.stood_block = None
         self.pre_dice = []
         self.pre_route = False
         self.active_team = team
@@ -1559,7 +1549,6 @@ class Mapper:
                              self.has_skill(a["pid"], "Frenzy"))
         self.resolve_pending_followup(cmd)
         self.flush_step(cmd)
-        self.stood_block = None
         self.pending_block = {"att": a["pid"], "def": defender, "pools": [],
                               "team_rr": False, "loner_die": None,
                               "loner_ok": True, "brawler": None,
@@ -1658,17 +1647,34 @@ class Mapper:
         att_skills = self.skillnames.get(att, set())
         def_skills = self.skillnames.get(pb["def"], set())
         if result in ("PUSHBACK", "POW/PUSH", "POW"):
-            stood = ("Stand Firm" in def_skills and not
-                     (pb.get("from_blitz") and "Juggernaut" in att_skills))
-            if stood:
-                # Engine auto-applies Stand Firm (no push/follow-up
-                # decisions). FFB lets the coach DECLINE it: if push/follow
-                # moves arrive next they are a known engine-policy
-                # divergence, flagged via stood_block in handle_move.
-                self.stood_block = {"att": att, "def": pb["def"],
-                                    "def_sq": self.pos.get(pb["def"])}
-                self.pending_block = None
-                return
+            sf = ("Stand Firm" in def_skills and not
+                  (pb.get("from_blitz") and "Juggernaut" in att_skills))
+            if sf:
+                # Engine Stand Firm window (PUSH phase 4): FFB's avoidPush
+                # report is the use signature; a noTackleZone used:false
+                # report means the defender is Distracted (engine opens no
+                # window); silence means the coach declined — the defender's
+                # push move follows and maps as a normal push.
+                j = self.lookahead(i, lambda x: x.get("report") == "skillUse"
+                                   and (x.get("skill") or "") == "Stand Firm",
+                                   limit=8)
+                rj = self.recs[j] if j >= 0 else None
+                sfid = self.skill_id("Stand Firm")
+                if rj is not None and rj.get("used") and \
+                        (rj.get("skillUse") or "") == "avoidPush":
+                    self.consumed.add(j)
+                    self.act(cmd, A_USE_SKILL, sfid, note="stand firm")
+                    # Stood firm: no push/follow-up decisions; a POW's
+                    # knockdown dice (rep_injury) attach to this act; a
+                    # Frenzy second block may still follow.
+                    self.pending_block = None
+                    return
+                if rj is not None and not rj.get("used") and \
+                        (rj.get("skillUse") or "") == "noTackleZone":
+                    self.consumed.add(j)  # Distracted: no engine window
+                else:
+                    self.act(cmd, A_DECLINE_SKILL, sfid,
+                             note="stand firm declined")
             pb["phase"] = "push"
             # Engine PUSH phase 3 order: Fend (Juggernaut on a blitz cancels)
             # kills the follow-up; otherwise Frenzy FORCES it (no decision,
@@ -1771,6 +1777,12 @@ class Mapper:
         self.act(cmd, A_PUSH_SQUARE, 2, x, y)  # parent: into the occupied sq
         rev = list(reversed(chain))            # decision order: shallow->deep
         for idx, link in enumerate(rev):
+            # Stand Firm applies "including during a Chain Push": the engine
+            # opens a window for each chained pushee with the skill before
+            # its square decision. A link that MOVED in FFB declined it.
+            if self.has_skill(link["pid"], "Stand Firm"):
+                self.act(cmd, A_DECLINE_SKILL, self.skill_id("Stand Firm"),
+                         note="chain stand firm declined")
             deepest = idx == len(rev) - 1
             if not deepest:
                 self.act(cmd, A_PUSH_SQUARE, 2, link["to"][0], link["to"][1])
@@ -1834,9 +1846,11 @@ class Mapper:
         use = r.get("skillUse") or ""
         used = bool(r.get("used"))
         if sk == "Stand Firm" and use == "avoidPush":
-            # engine auto-applies Stand Firm; FFB agreed -> no divergence
+            # Normally consumed by rep_blockChoice's window lookahead; a
+            # leftover means the push context was lost (e.g. inside a chain
+            # shape the mapper could not reconstruct) — classify it.
+            self.skip(cmd, "stand_firm_window_unattached", r.get("playerId"))
             self.pending_block = None
-            self.stood_block = None
             return
         if sk == "Wrestle":
             # Wrestle skillUse reports are consumed by rep_blockChoice's

@@ -514,6 +514,153 @@ BB_TEST(blocking_both_down_wrestle_active_carrier_turnover) {
     BB_CHECK(!bb_rng_error(&rng));
 }
 
+// ============================== STAND FIRM ===================================
+
+// SK#STAND FIRM: "When this player would be Pushed Back during a Block
+// Action ... they can CHOOSE to not be Pushed Back and instead remain in
+// their current square" — a USE_SKILL/DECLINE_SKILL window for the pushee's
+// coach (D17 reversal; FFB allows the decline). Using it: not moved, and the
+// attacker cannot Follow-up (no square was vacated).
+BB_TEST(blocking_stand_firm_window_use_not_moved) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int h1 = fx_lineman(&m, BB_HOME, 0, 10, 7);
+    int a1 = fx_lineman(&m, BB_AWAY, 0, 11, 7);
+    fx_give_skill(&m, a1, BB_SK_STAND_FIRM);
+
+    uint8_t script[] = {3}; // Push Back
+    bb_rng rng;
+    bb_rng_script(&rng, script, 1);
+    start_block(&m, &rng, h1, 11, 7);
+    apply_ok(&m, &rng, mk(BB_A_CHOOSE_DIE, 0, 0, 0));
+    BB_CHECK_EQ(m.decision_team, BB_AWAY); // the pushee's coach decides
+    BB_CHECK(fx_find(&m, mk(BB_A_USE_SKILL, BB_SK_STAND_FIRM, 0, 0)) >= 0);
+    BB_CHECK(fx_find(&m, mk(BB_A_DECLINE_SKILL, BB_SK_STAND_FIRM, 0, 0)) >= 0);
+    fx_apply(&m, mk(BB_A_USE_SKILL, BB_SK_STAND_FIRM, 0, 0), &rng);
+    BB_CHECK_EQ(m.players[a1].x, 11); // not moved
+    BB_CHECK_EQ(m.players[a1].y, 7);
+    BB_CHECK_EQ(m.players[a1].stance, BB_STANCE_STANDING);
+    BB_CHECK_EQ(m.players[h1].x, 10); // no follow-up happened
+    BB_CHECK(!bb_rng_error(&rng));
+}
+
+// SK#STAND FIRM is optional: declining resolves the push as normal (the
+// usual three-square choice for the attacking coach, then the follow-up).
+BB_TEST(blocking_stand_firm_window_decline_normal_push) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int h1 = fx_lineman(&m, BB_HOME, 0, 10, 7);
+    int a1 = fx_lineman(&m, BB_AWAY, 0, 11, 7);
+    fx_give_skill(&m, a1, BB_SK_STAND_FIRM);
+
+    uint8_t script[] = {3}; // Push Back
+    bb_rng rng;
+    bb_rng_script(&rng, script, 1);
+    start_block(&m, &rng, h1, 11, 7);
+    apply_ok(&m, &rng, mk(BB_A_CHOOSE_DIE, 0, 0, 0));
+    apply_ok(&m, &rng, mk(BB_A_DECLINE_SKILL, BB_SK_STAND_FIRM, 0, 0));
+    BB_CHECK_EQ(m.decision_team, BB_HOME); // attacker picks the square
+    apply_ok(&m, &rng, mk(BB_A_PUSH_SQUARE, 0, 12, 7));
+    apply_ok(&m, &rng, mk(BB_A_FOLLOW_UP, 1, 0, 0));
+    BB_CHECK_EQ(m.players[a1].x, 12); // pushed normally
+    BB_CHECK_EQ(m.players[h1].x, 11); // followed up
+    BB_CHECK(!bb_rng_error(&rng));
+}
+
+// SK#STAND FIRM + POW: using the skill against a POW means the player is
+// Knocked Down in the square they remained in (armour rolls follow).
+BB_TEST(blocking_stand_firm_pow_use_knockdown_in_place) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int h1 = fx_lineman(&m, BB_HOME, 0, 10, 7);
+    int a1 = fx_lineman(&m, BB_AWAY, 0, 11, 7);
+    fx_give_skill(&m, a1, BB_SK_STAND_FIRM);
+
+    uint8_t script[] = {6, /*armour*/ 2, 2}; // POW, armour holds
+    bb_rng rng;
+    bb_rng_script(&rng, script, 3);
+    start_block(&m, &rng, h1, 11, 7);
+    apply_ok(&m, &rng, mk(BB_A_CHOOSE_DIE, 0, 0, 0));
+    BB_CHECK_EQ(m.decision_team, BB_AWAY);
+    fx_apply(&m, mk(BB_A_USE_SKILL, BB_SK_STAND_FIRM, 0, 0), &rng);
+    BB_CHECK_EQ(m.players[a1].x, 11); // down where they stood
+    BB_CHECK_EQ(m.players[a1].stance, BB_STANCE_PRONE);
+    BB_CHECK(!bb_rng_error(&rng));
+}
+
+// SK#JUGGERNAUT: "when this player performs a Block Action as part of a
+// Blitz Action, opposition players cannot use ... Stand Firm" -> no window.
+BB_TEST(blocking_stand_firm_juggernaut_blitz_no_window) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int h1 = fx_lineman(&m, BB_HOME, 0, 10, 7);
+    int a1 = fx_lineman(&m, BB_AWAY, 0, 11, 7);
+    fx_give_skill(&m, h1, BB_SK_JUGGERNAUT);
+    fx_give_skill(&m, a1, BB_SK_STAND_FIRM);
+
+    uint8_t script[] = {3}; // Push Back
+    bb_rng rng;
+    bb_rng_script(&rng, script, 1);
+    bb_status st = fx_run(&m, &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    apply_ok(&m, &rng, mk(BB_A_ACTIVATE, h1, 0, 0));
+    apply_ok(&m, &rng, mk(BB_A_DECLARE, BB_ACT_BLITZ, 0, 0));
+    apply_ok(&m, &rng, mk(BB_A_BLOCK_TARGET, 0, 11, 7));
+    apply_ok(&m, &rng, mk(BB_A_CHOOSE_DIE, 0, 0, 0));
+    // No Stand Firm window: straight to the attacker's push-square choice.
+    BB_CHECK_EQ(m.decision_team, BB_HOME);
+    BB_CHECK(fx_has_type(&m, BB_A_PUSH_SQUARE));
+    BB_CHECK(!bb_rng_error(&rng));
+}
+
+// RR#DISTRACTED: a Distracted player cannot use Active Skills — no Stand
+// Firm window; the push resolves normally.
+BB_TEST(blocking_stand_firm_distracted_no_window) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int h1 = fx_lineman(&m, BB_HOME, 0, 10, 7);
+    int a1 = fx_lineman(&m, BB_AWAY, 0, 11, 7);
+    fx_give_skill(&m, a1, BB_SK_STAND_FIRM);
+    m.players[a1].flags |= BB_PF_DISTRACTED;
+
+    uint8_t script[] = {3};
+    bb_rng rng;
+    bb_rng_script(&rng, script, 1);
+    start_block(&m, &rng, h1, 11, 7);
+    apply_ok(&m, &rng, mk(BB_A_CHOOSE_DIE, 0, 0, 0));
+    BB_CHECK_EQ(m.decision_team, BB_HOME); // straight to the push squares
+    BB_CHECK(fx_has_type(&m, BB_A_PUSH_SQUARE));
+}
+
+// SK#STAND FIRM "including during a Chain Push": a chained occupant gets the
+// window too; if they remain, the player being chain-pushed into their square
+// cannot move either — the push is absorbed with nobody relocated.
+BB_TEST(blocking_stand_firm_chain_occupant_absorbs_push) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int h1 = fx_lineman(&m, BB_HOME, 0, 10, 7);
+    int a1 = fx_lineman(&m, BB_AWAY, 0, 11, 7);
+    int a2 = fx_lineman(&m, BB_AWAY, 1, 12, 7); // occupant with Stand Firm
+    fx_lineman(&m, BB_AWAY, 2, 12, 6);          // block the other candidates
+    fx_lineman(&m, BB_AWAY, 3, 12, 8);
+    fx_give_skill(&m, a2, BB_SK_STAND_FIRM);
+
+    uint8_t script[] = {3}; // Push Back
+    bb_rng rng;
+    bb_rng_script(&rng, script, 1);
+    start_block(&m, &rng, h1, 11, 7);
+    apply_ok(&m, &rng, mk(BB_A_CHOOSE_DIE, 0, 0, 0));
+    // All three candidates occupied: chain push into (12,7).
+    apply_ok(&m, &rng, mk(BB_A_PUSH_SQUARE, 2, 12, 7));
+    BB_CHECK_EQ(m.decision_team, BB_AWAY); // the chained occupant's window
+    fx_apply(&m, mk(BB_A_USE_SKILL, BB_SK_STAND_FIRM, 0, 0), &rng);
+    BB_CHECK_EQ(m.players[a2].x, 12); // occupant stayed
+    BB_CHECK_EQ(m.players[a1].x, 11); // pushee absorbed in place
+    BB_CHECK_EQ(m.players[a1].stance, BB_STANCE_STANDING);
+    BB_CHECK_EQ(m.players[h1].x, 10); // no follow-up possible
+    BB_CHECK(!bb_rng_error(&rng));
+}
+
 // ================================ STUMBLE ====================================
 
 // GB#STUMBLE: if the target has Dodge, Stumble becomes Push Back — defender

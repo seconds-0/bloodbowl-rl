@@ -39,7 +39,9 @@ static int count_assists(const bb_match* m, int for_slot, int against_slot) {
 enum { PSH_POW = 1 << 0, PSH_CHAIN = 1 << 1, PSH_MOVED = 1 << 2, PSH_FUP = 1 << 3,
        PSH_CROWD = 1 << 4, PSH_FROM_BLITZ = 1 << 5, PSH_STOOD_FIRM = 1 << 6,
        // This push came from the Frenzy SECOND block: never a third (M6).
-       PSH_FRENZY_DONE = 1 << 7 };
+       PSH_FRENZY_DONE = 1 << 7,
+       // The pushee's coach declined Stand Firm for THIS push (window done).
+       PSH_SF_DECLINED = 1 << 8 };
 
 // ===== BLOCK ==================================================================
 // a = attacker, b = defender.
@@ -481,15 +483,25 @@ static void push_advance(bb_match* m, bb_rng* rng) {
     bb_frame* f = bb_top(m);
     if (f->phase == 0) {
         int def_flags = bb_hook_push_flags(m, f->b);
-        if (m->players[f->b].flags & BB_PF_ROOTED) def_flags |= BB_PUSHF_STAND_FIRM;
         bool jugg = (f->data & PSH_FROM_BLITZ) &&
                     bb_has_skill(&m->players[f->a].skills, BB_SK_JUGGERNAUT);
-        if (((def_flags & BB_PUSHF_STAND_FIRM) && !jugg) ||
-            (m->players[f->b].flags & BB_PF_ROOTED)) {
-            // Stand Firm / Rooted: the player is not moved; a POW still
-            // knocks them down in place; no follow-up (no square vacated).
+        if (m->players[f->b].flags & BB_PF_ROOTED) {
+            // Rooted: "cannot be Pushed Back" — mandatory, no window, not
+            // cancelled by Juggernaut (it is not the Stand Firm Skill).
             f->data |= PSH_STOOD_FIRM;
             f->phase = 5;
+            return;
+        }
+        if ((def_flags & BB_PUSHF_STAND_FIRM) && !jugg &&
+            !(f->data & PSH_SF_DECLINED) &&
+            !(m->players[f->b].flags & BB_PF_DISTRACTED)) {
+            // STAND FIRM: "they can CHOOSE to not be Pushed Back" — a real
+            // USE_SKILL/DECLINE_SKILL window for the pushee's coach,
+            // including during chain pushes (mirror SK#STAND FIRM); FFB
+            // allows the decline (v0 lockstep finding). Distracted players
+            // cannot use Active Skills (mirror PLAYER STATUS).
+            f->phase = 4;
+            bb_need_decision(m, BB_TEAM_OF(f->b));
             return;
         }
         // Side Step: the DEFENDER's coach chooses the square (any adjacent
@@ -501,8 +513,20 @@ static void push_advance(bb_match* m, bb_rng* rng) {
                                                    : m->active_team);
         return;
     }
+    if (f->phase == 4) { // Stand Firm window: re-issue on re-entry
+        bb_need_decision(m, BB_TEAM_OF(f->b));
+        return;
+    }
     if (f->phase == 1) {
-        // Chain child finished; destination square is now free — relocate.
+        // Chain child finished; destination square is normally now free.
+        // If the chained occupant STOOD FIRM the square is still occupied:
+        // this pushee is not moved either (the push is absorbed in place; a
+        // POW still knocks them down where they stand).
+        if (m->grid[f->x][f->y]) {
+            f->data |= PSH_STOOD_FIRM;
+            f->phase = 5;
+            return;
+        }
         f->phase = 2;
         return;
     }
@@ -688,6 +712,11 @@ static void push_advance(bb_match* m, bb_rng* rng) {
 static int push_legal(const bb_match* m, bb_action* out) {
     const bb_frame* f = &m->stack[m->stack_top - 1];
     int n = 0;
+    if (f->phase == 4) { // Stand Firm window (pushee's coach)
+        out[n++] = (bb_action){BB_A_USE_SKILL, BB_SK_STAND_FIRM, 0, 0};
+        out[n++] = (bb_action){BB_A_DECLINE_SKILL, BB_SK_STAND_FIRM, 0, 0};
+        return n;
+    }
     if (f->phase == 0) {
         // Side Step (decision owner = defender): any unoccupied adjacent
         // square instead of the usual three. The predicate mirrors the
@@ -741,6 +770,20 @@ static int push_legal(const bb_match* m, bb_action* out) {
 static void push_apply(bb_match* m, bb_action a, bb_rng* rng) {
     (void)rng;
     bb_frame* f = bb_top(m);
+    if (f->phase == 4) { // Stand Firm window
+        if (a.type == BB_A_USE_SKILL) {
+            // Not moved; a POW still knocks them down in place; no
+            // follow-up (no square vacated). Frenzy's second block can
+            // still happen (mirror SK#STAND FIRM).
+            bb_cover(BB_SK_STAND_FIRM);
+            f->data |= PSH_STOOD_FIRM;
+            f->phase = 5;
+        } else {
+            f->data |= PSH_SF_DECLINED;
+            f->phase = 0; // re-run: side step / push candidates as normal
+        }
+        return;
+    }
     if (f->phase == 0) {
         if (a.arg == 1) { // crowd
             f->data |= PSH_CROWD;
