@@ -41,6 +41,7 @@ while true; do
         load_args=(--load-model-path latest)
         steps=$(basename "$newest" .bin | sed 's/^0*//'); steps=${steps:-0}
         export BBE_BANNER="$(basename "$(dirname "$newest")")"
+        export BBE_PROFILE="$(cat "$(dirname "$newest")/PROFILE" 2>/dev/null || echo unlabeled run)"
         export BBE_CKPT_STEPS="$steps"
         export BBE_TOTAL_STEPS="${BBE_TOTAL_STEPS:-10000000000}"
         echo "spectating: $newest"

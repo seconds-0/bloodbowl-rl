@@ -38,4 +38,12 @@ tools_root="$(cd .. && cd .. && pwd)"
 bash "$tools_root/tools/install_puffer_env.sh" --check || {
   echo "stale env snapshot — run tools/install_puffer_env.sh first" >&2; exit 1; }
 
+# Drop a PROFILE marker into the run directory the trainer is about to
+# create (newest dir ~30s after launch) so the spectator can label the feed.
+(
+  sleep 30
+  d=$(ls -td checkpoints/bloodbowl/*/ 2>/dev/null | head -1)
+  [ -n "$d" ] && echo "profile-$PROFILE" > "${d}PROFILE"
+) &
+
 exec puffer train bloodbowl --tag "profile-$PROFILE" "${ARGS[@]}" "$@"

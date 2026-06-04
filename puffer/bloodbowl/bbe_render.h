@@ -35,6 +35,7 @@ static float bbe_scale = 1.6f;
 
 typedef struct {
     char banner[256];
+    char profile[64]; // run label (BBE_PROFILE): "profile-D (bootstrap)" etc.
     // Training progress (BBE_CKPT_STEPS / BBE_TOTAL_STEPS env vars, set by
     // tools/spectate.sh from the checkpoint being played). 0 = unknown.
     double ckpt_steps;
@@ -85,6 +86,8 @@ static void bbe_render_init(Bloodbowl* env) {
     BBEClient* c = (BBEClient*)calloc(1, sizeof(BBEClient));
     const char* banner = getenv("BBE_BANNER");
     snprintf(c->banner, sizeof(c->banner), "%s", banner ? banner : "live policy");
+    const char* prof = getenv("BBE_PROFILE");
+    snprintf(c->profile, sizeof(c->profile), "%s", prof ? prof : "");
     env->client = c;
     const char* sc = getenv("BBE_SCALE");
     if (sc) {
@@ -289,6 +292,15 @@ static void bbe_draw_hud(const Bloodbowl* env) {
              m->half, m->turn[0], m->turn[1], env->decisions, c->banner);
     DrawText(buf, BBE_MARGIN, BBE_S(38), BBE_S(10), (Color){170, 175, 185, 255});
 
+    // Center-top: run-type label (which experiment arm is on screen).
+    if (c->profile[0]) {
+        int fs = BBE_S(12);
+        int tw = MeasureText(c->profile, fs);
+        int cx = BBE_WIN_W / 2 - tw / 2;
+        DrawRectangle(cx - 8, BBE_S(8), tw + 16, fs + 8, (Color){50, 44, 20, 255});
+        DrawRectangleLines(cx - 8, BBE_S(8), tw + 16, fs + 8, BBE_GOLD);
+        DrawText(c->profile, cx, BBE_S(12), fs, BBE_GOLD);
+    }
     // Top-right: which checkpoint this policy is and how far through training.
     if (c->ckpt_steps > 0) {
         char prog[96];
