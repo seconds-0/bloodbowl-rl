@@ -3,6 +3,7 @@
 #include "bb/bb_proc.h"
 #include "bb/bb_hooks.h"
 #include "bb/gen_tables.h"
+#include <string.h>
 
 // ===== MATCH =================================================================
 // phase 0: push PREGAME
@@ -306,18 +307,35 @@ static int setup_legal(const bb_match* m, bb_action* out) {
         }
     }
     bool placing_phase = on_pitch < 11 && reserves_left;
+    // Every candidate has the SAME legal square set: exactly the free squares
+    // of the team's half. (A placed player's own square is occupied by
+    // himself, so it is excluded either way — the old per-player grid walk
+    // allowed the self-occupied square at the grid check only to skip it at
+    // the own-square check.) Enumerate the half ONCE into a template, then
+    // stamp it per candidate — the 16x195 per-player grid rescan was the
+    // hottest single loop in the env profile (~39% of random-play decisions
+    // are setup, ~1354 actions per enumeration).
+    bb_action tmpl[13 * BB_PITCH_WID];
+    int nf = 0;
+    for (int x = xmin; x <= xmax; x++) {
+        for (int y = 0; y < BB_PITCH_WID; y++) {
+            if (!m->grid[x][y]) {
+                tmpl[nf++] = (bb_action){BB_A_SETUP_PLACE, 0, (uint8_t)x, (uint8_t)y};
+            }
+        }
+    }
     for (int s = team * BB_TEAM_SLOTS; s < (team + 1) * BB_TEAM_SLOTS; s++) {
         const bb_player* p = &m->players[s];
         bool placed = p->location == BB_LOC_ON_PITCH;
         if (p->location != BB_LOC_RESERVES && !placed) continue;
         if (!placed && on_pitch >= 11) continue; // pitch full: may only move placed ones
         if (placed && placing_phase) continue;   // fill the line first
-        for (int x = xmin; x <= xmax; x++) {
-            for (int y = 0; y < BB_PITCH_WID; y++) {
-                if (m->grid[x][y] && bb_slot_at(m, x, y) != s) continue;
-                if (placed && p->x == x && p->y == y) continue;
-                if (n < BB_LEGAL_MAX) out[n++] = (bb_action){BB_A_SETUP_PLACE, (uint8_t)s, (uint8_t)x, (uint8_t)y};
-            }
+        int take = nf;
+        if (take > BB_LEGAL_MAX - n) take = BB_LEGAL_MAX - n;
+        if (take > 0) {
+            memcpy(out + n, tmpl, (size_t)take * sizeof(bb_action));
+            for (int i = 0; i < take; i++) out[n + i].arg = (uint8_t)s;
+            n += take;
         }
         if (placed && !placing_phase && n < BB_LEGAL_MAX) {
             out[n++] = (bb_action){BB_A_SETUP_REMOVE, (uint8_t)s, 0, 0};
