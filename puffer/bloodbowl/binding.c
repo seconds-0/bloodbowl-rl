@@ -5,7 +5,7 @@
 // defines as plain literals.
 #include "bloodbowl.h"
 
-#define OBS_SIZE 832
+#define OBS_SIZE 1612
 #define NUM_ATNS 3
 #define ACT_SIZES {30, 33, 391}
 #define OBS_TENSOR_T ByteTensor

@@ -5,8 +5,8 @@
 // engine to the next decision, and emits observations + per-head legality
 // masks. Episodes are full matches over procedurally generated rosters.
 //
-// Observation (uint8, BBE_OBS_SIZE = 832B), egocentric: each agent sees its
-// own players first and the pitch x-mirrored for the away coach, so
+// Observation (uint8, BBE_OBS_SIZE = 1612B, obs v3), egocentric: each agent
+// sees its own players first and the pitch x-mirrored for the away coach, so
 // "forward" is always +x. Layout (offsets from the BBE_* macros below):
 //   [0..767]   32 players x BBE_PLAYER_BYTES (24): rows 0-15 = my team,
 //              16-31 = opponent (row = slot, XOR 16 for the away agent):
@@ -39,6 +39,14 @@
 //                [16] my bribes, [17] opp bribes, [18] I am kicking
 //                [19..47] spare (team ids deliberately NOT observed — see
 //                         the encoder comment; forces roster-reading)
+//   [832..1611] tackle-zone planes (obs v3, BBE_TZ_OFF): two per-square
+//              TZ-count planes of 390 bytes each (index y*26 + x, x
+//              mirrored for the away agent like every spatial feature):
+//                [832..1221]  TZs exerted by MY players on each square
+//                [1222..1611] TZs exerted by OPPONENT players on each square
+//              The opponent plane is destination danger: dodging into /
+//              out of coverage was unobservable per-square before v3 (only
+//              the mover's own marked count, player byte [23], was visible).
 //
 // Action heads (ACT_SIZES {30, 33, 391}): bb_action type | arg (0-31 direct,
 // 32 = sentinel for 0xFE/0xFF args) | square (y*26+x, 390 = none).
@@ -84,9 +92,11 @@
 
 #define BBE_PLAYER_BYTES 24    // 11 stat/state bytes + 12 skill-id slots + TZ byte
 #define BBE_SKILL_SLOTS 12     // >= max base-roster skills (10) + procgen cap
-#define BBE_OBS_SIZE 832       // 32*24 players + 16 ball/ctx + 48 scalars
+#define BBE_OBS_SIZE 1612      // 32*24 players + 16 ball/ctx + 48 scalars + 2*390 TZ planes
 #define BBE_CTX_OFF (BB_NUM_PLAYERS * BBE_PLAYER_BYTES) // 768
 #define BBE_SCALAR_OFF (BBE_CTX_OFF + 16)               // 784
+#define BBE_TZ_OFF (BBE_SCALAR_OFF + 48)                // 832
+#define BBE_TZ_PLANE (BB_PITCH_LEN * BB_PITCH_WID)      // 390 bytes per plane
 #define BBE_HEAD_TYPE 30
 #define BBE_HEAD_ARG 33
 #define BBE_HEAD_SQ 391
@@ -99,7 +109,9 @@ _Static_assert(BBE_HEAD_TYPE == BB_A_TYPE_COUNT,
                "action-type head out of sync with bb_actions.h");
 _Static_assert(BBE_HEAD_SQ == BB_PITCH_LEN * BB_PITCH_WID + 1,
                "square head out of sync with pitch dimensions");
-_Static_assert(BBE_OBS_SIZE == BBE_SCALAR_OFF + 48, "obs layout out of sync");
+_Static_assert(BBE_TZ_OFF == BBE_SCALAR_OFF + 48, "obs layout out of sync");
+_Static_assert(BBE_OBS_SIZE == BBE_TZ_OFF + 2 * BBE_TZ_PLANE,
+               "obs size out of sync with the TZ-plane layout");
 _Static_assert(BB_SKILL_COUNT <= 254, "skill id + 1 must fit a byte");
 
 // Engine-compat stamp for demo-state bank files (.bbs "BBS1": written by
@@ -273,10 +285,13 @@ typedef struct {
     // whenever skill_keys[slot] != players[slot].skills (a 24-byte compare),
     // so future mid-match skill mutation stays correct by construction.
     // Zero-init is consistent: zero key + zero row == skill-less player.
-    // tz_scratch is the per-step marking-TZ byte per slot — identical for
-    // both agent views, so bbe_emit_all computes it once instead of twice.
+    // tz_plane / tz_scratch are the per-step tackle-zone scratch — counts
+    // are view-independent (mirroring is an indexing flip at encode), so
+    // bbe_compute_tz fills them once per step instead of twice.
     bb_skillset skill_keys[BB_NUM_PLAYERS];
     uint8_t skill_rows[BB_NUM_PLAYERS][BBE_SKILL_SLOTS];
+    // [team][y*26+x] (home view): TZs exerted BY team's players on a square.
+    uint8_t tz_plane[2][BBE_TZ_PLANE];  // valid only within bbe_emit_all's step
     uint8_t tz_scratch[BB_NUM_PLAYERS]; // valid only within bbe_emit_all's step
     // Head-space projection of legal[] for the DECIDING agent, written by
     // bbe_fill_mask (which had to compute it anyway) and reused by
@@ -449,6 +464,26 @@ static void bbe_encode_obs(Bloodbowl* env, int agent) {
     // is fully derivable from the visible per-player stats/skills, and hiding
     // the id forces the policy to read rosters — the structural guarantee
     // behind the held-out / homebrew team generalization tests.
+
+    // [BBE_TZ_OFF..] obs v3 tackle-zone planes: my coverage, then the
+    // opponent's (destination danger), per square, x-mirrored for the away
+    // agent. bbe_compute_tz filled tz_plane in home orientation this step.
+    unsigned char* tz = o + BBE_TZ_OFF;
+    if (me == BB_HOME) {
+        memcpy(tz, env->tz_plane[me], BBE_TZ_PLANE);
+        memcpy(tz + BBE_TZ_PLANE, env->tz_plane[1 - me], BBE_TZ_PLANE);
+    } else {
+        for (int y = 0; y < BB_PITCH_WID; y++) {
+            const uint8_t* my_row = env->tz_plane[me] + y * BB_PITCH_LEN;
+            const uint8_t* op_row = env->tz_plane[1 - me] + y * BB_PITCH_LEN;
+            unsigned char* out_my = tz + y * BB_PITCH_LEN;
+            unsigned char* out_op = out_my + BBE_TZ_PLANE;
+            for (int x = 0; x < BB_PITCH_LEN; x++) {
+                out_my[x] = my_row[BB_PITCH_LEN - 1 - x];
+                out_op[x] = op_row[BB_PITCH_LEN - 1 - x];
+            }
+        }
+    }
 }
 
 // --- Action encode/decode --------------------------------------------------------
@@ -642,16 +677,40 @@ static void bbe_state_bank_load(void) {
 }
 
 // --- Lifecycle -------------------------------------------------------------------
-static void bbe_emit_all(Bloodbowl* env) {
-    // Marking-TZ bytes are view-independent; compute once for both encodes.
+// Per-step tackle-zone scratch, computed ONCE for both agent views:
+// tz_plane[t][y*26+x] = TZs exerted BY team t's players on that square
+// (home orientation; the away mirror is an index flip at encode time), and
+// tz_scratch[s] = opposing TZs marking player s's square (player byte [23]).
+// One pass over on-pitch players (8 neighbor increments per TZ-exerting
+// player) builds both — never 390 bb_tackle_zones calls per plane.
+static void bbe_compute_tz(Bloodbowl* env) {
     const bb_match* m = &env->match;
+    memset(env->tz_plane, 0, sizeof env->tz_plane);
+    for (int s = 0; s < BB_NUM_PLAYERS; s++) {
+        if (!bb_exerts_tz(m, s)) continue; // off-pitch/prone/NO_TZ/Distracted
+        const bb_player* p = &m->players[s];
+        uint8_t* plane = env->tz_plane[BB_TEAM_OF(s)];
+        for (int dy = -1; dy <= 1; dy++) {
+            for (int dx = -1; dx <= 1; dx++) {
+                if (!dx && !dy) continue;
+                int nx = p->x + dx, ny = p->y + dy;
+                if (!bb_on_pitch_xy(nx, ny)) continue;
+                plane[ny * BB_PITCH_LEN + nx]++;
+            }
+        }
+    }
     for (int s = 0; s < BB_NUM_PLAYERS; s++) {
         const bb_player* p = &m->players[s];
+        // Marked count for s = TZs the OPPOSING team exerts on s's square.
         env->tz_scratch[s] =
             p->location == BB_LOC_ON_PITCH
-                ? (uint8_t)bb_tackle_zones(m, BB_TEAM_OF(s), p->x, p->y)
+                ? env->tz_plane[1 - BB_TEAM_OF(s)][p->y * BB_PITCH_LEN + p->x]
                 : 0;
     }
+}
+
+static void bbe_emit_all(Bloodbowl* env) {
+    bbe_compute_tz(env);
     for (int a = 0; a < BBE_AGENTS; a++) {
         bbe_encode_obs(env, a);
         bbe_fill_mask(env, a);

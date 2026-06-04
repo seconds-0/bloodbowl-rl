@@ -29,7 +29,7 @@ static int sample_masked(const unsigned char* mask, int len, bb_rng* rng) {
 
 // Per-phase accumulators (ns).
 static uint64_t t_sample, t_decode, t_enum_pre, t_eqscan, t_apply_inner,
-    t_refresh, t_encode, t_mask;
+    t_refresh, t_tz, t_encode, t_mask;
 // Per-proc enumeration attribution: time + calls + action counts, summed over
 // BOTH enumerations a step pays for (bb_apply re-validation ~= pre-proxy,
 // bbe_refresh_legal measured directly).
@@ -161,6 +161,12 @@ int main(int argc, char** argv) {
             enum_actions[p] += (uint64_t)env.n_legal;
         }
 
+        // Shared TZ scratch (bbe_emit_all does this once before the encodes).
+        t0 = now_ns();
+        bbe_compute_tz(&env);
+        t1 = now_ns();
+        t_tz += t1 - t0;
+
         for (int a = 0; a < BBE_AGENTS; a++) {
             t0 = now_ns();
             bbe_encode_obs(&env, a);
@@ -179,7 +185,7 @@ int main(int argc, char** argv) {
     }
     uint64_t t_total = now_ns() - t_total0;
 
-    uint64_t t_env = t_decode + t_apply_inner + t_refresh + t_encode + t_mask;
+    uint64_t t_env = t_decode + t_apply_inner + t_refresh + t_tz + t_encode + t_mask;
     double per_step = (double)t_env / (double)steps;
     printf("steps %ld  episodes %d  wall %.2fs  (timer overhead included)\n",
            steps, done, (double)t_total / 1e9);
@@ -194,6 +200,7 @@ int main(int argc, char** argv) {
     ROW("  ~re-enumeration", t_enum_pre);
     ROW("  ~membership eq-scan", t_eqscan);
     ROW("bbe_refresh_legal", t_refresh);
+    ROW("compute tz scratch", t_tz);
     ROW("encode obs x2", t_encode);
     ROW("fill mask x2", t_mask);
     printf("  %-26s %8.0f\n", "TOTAL env", per_step);
