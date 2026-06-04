@@ -166,9 +166,44 @@ static int bbe_selftest(uint64_t seed, int episodes) {
             env.action_ptr[a][2] = (float)sample_masked(
                 mk + BBE_HEAD_TYPE + BBE_HEAD_ARG, BBE_HEAD_SQ, &pol);
         }
+        // Behavioral micro-stat counters: monotone within an episode, zeroed
+        // by the episode reset (each step applies ONE action, so a counter
+        // may grow by at most a bounded amount, but never shrink mid-game).
+        int ep_prev[8] = {env.ep_blocks,          env.ep_blitzes,
+                          env.ep_dodge_attempts,  env.ep_gfi_attempts,
+                          env.ep_pickup_attempts, env.ep_pass_attempts,
+                          env.ep_knockdowns_inflicted, env.ep_knockdowns_own};
         c_step(&env);
-        if (terminals[0] != 0.0f) done++;
+        int ep_now[8] = {env.ep_blocks,          env.ep_blitzes,
+                         env.ep_dodge_attempts,  env.ep_gfi_attempts,
+                         env.ep_pickup_attempts, env.ep_pass_attempts,
+                         env.ep_knockdowns_inflicted, env.ep_knockdowns_own};
+        if (terminals[0] != 0.0f) {
+            done++;
+            for (int k = 0; k < 8; k++) {
+                ST_CHECK(ep_now[k] == 0,
+                         "micro-stat %d not reset by the episode reset (%d)",
+                         k, ep_now[k]);
+            }
+        } else {
+            for (int k = 0; k < 8; k++) {
+                ST_CHECK(ep_now[k] >= ep_prev[k],
+                         "micro-stat %d shrank mid-episode (%d -> %d)",
+                         k, ep_prev[k], ep_now[k]);
+            }
+        }
     }
+    // Coverage: random masked play must exercise every micro-stat counter
+    // (64 episodes ~ 17k decisions; each of these fires hundreds of times).
+    ST_CHECK(env.log.blocks > 0, "no block declared in random play");
+    ST_CHECK(env.log.blitzes > 0, "no blitz declared in random play");
+    ST_CHECK(env.log.dodge_attempts > 0, "no dodge attempted in random play");
+    ST_CHECK(env.log.gfi_attempts > 0, "no rush attempted in random play");
+    ST_CHECK(env.log.pickup_attempts > 0, "no pickup attempted in random play");
+    ST_CHECK(env.log.pass_attempts > 0, "no pass attempted in random play");
+    ST_CHECK(env.log.knockdowns_own > 0 && env.log.knockdowns_inflicted > 0,
+             "no knockdowns counted in random play (%g own / %g inflicted)",
+             env.log.knockdowns_own, env.log.knockdowns_inflicted);
     // Random play must have exercised the procs whose frame-param semantics
     // the checks above pin down (rarer windows — FOUL argue-the-call, PASS
     // interceptions, apothecary — are checked whenever they occur).
@@ -290,6 +325,15 @@ int main(int argc, char** argv) {
     printf("  episode_length   %.0f\n", lg->episode_length / n);
     printf("  episode_return   %+.2f\n", lg->episode_return / n);
     printf("  illegal_frac     %.4f\n", lg->illegal_frac / n);
+    printf("  -- behavioral micro-stats (per match) --\n");
+    printf("  blocks           %.2f\n", lg->blocks / n);
+    printf("  blitzes          %.2f\n", lg->blitzes / n);
+    printf("  dodge_attempts   %.2f\n", lg->dodge_attempts / n);
+    printf("  gfi_attempts     %.2f\n", lg->gfi_attempts / n);
+    printf("  pickup_attempts  %.2f\n", lg->pickup_attempts / n);
+    printf("  pass_attempts    %.2f\n", lg->pass_attempts / n);
+    printf("  knockdowns       %.2f inflicted / %.2f own\n",
+           lg->knockdowns_inflicted / n, lg->knockdowns_own / n);
     c_close(&env);
     return 0;
 }
