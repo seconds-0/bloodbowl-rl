@@ -233,6 +233,9 @@ class Mapper:
         self.pre_dice = []         # dice before next STEP/JUMP/BLOCK_TARGET
         self.pre_route = False     # route dice/rerolls to pre_dice (block rush)
         self.turnend_dice = []     # dice consumed during END_TURN transition
+        self.pickmeup = []         # (gslot, roll) Pick Me Up dice this boundary
+        self.last_ball_cmd = None  # cmd of the last ball record seen
+        self.ball_diverged = False # engine ball state unrepresentable (skill gap)
         self.last_injury_key = None
         self.in_kickoff_resolution = False
         # Engine stun rollover mirror: pid -> "fresh" (stunned this turn) or
@@ -401,9 +404,19 @@ class Mapper:
             self.move_from = self.pos.get(pid)
             self.pos[pid] = (x, y) if 0 <= x <= 25 and 0 <= y <= 14 else None
             if self.carrier == pid:
-                # The ball travels with its carrier (FFB also emits a ball
-                # record, but it precedes the move — see the ball branch).
-                self.ball = self.pos[pid]
+                if self.has_skill(pid, "Fumblerooski") and \
+                        (r.get("cmd") or 0) != self.last_ball_cmd:
+                    # No ball record accompanied the carrier's move: the
+                    # ball was deliberately left behind (Fumblerooski). The
+                    # engine has no such window — ball state diverges until
+                    # the next drive.
+                    self.carrier = None
+                    self.ball_diverged = True
+                    self.skip(r.get("cmd") or 0, "fumblerooski_divergence", pid)
+                else:
+                    # The ball travels with its carrier (FFB also emits a
+                    # ball record, but it precedes the move — see below).
+                    self.ball = self.pos[pid]
         elif t == "state":
             st = BASE_STATE.get(r["base"], -1)
             pid = str(r["player"])
@@ -423,6 +436,7 @@ class Mapper:
                 if st >= 3:
                     self.pos[pid] = None
         elif t == "ball":
+            self.last_ball_cmd = r.get("cmd") or 0
             self.ball = tuple(r["at"]) if 0 <= r["at"][0] <= 25 else None
             if self.carrier and self.pos.get(self.carrier) != self.ball:
                 # FFB emits the ball-follows-carrier record BEFORE the
@@ -452,7 +466,8 @@ class Mapper:
             if pid in self.ignore_all or pid in self.ignore_state:
                 st = -1
             players.append([team, sl, x, y, st])
-        if skip_ball or self.ball is None or self.carrier in self.ignore_all:
+        if skip_ball or self.ball is None or self.ball_diverged or \
+                self.carrier in self.ignore_all:
             ball = [255, 255, -1]
         else:
             ball = [self.ball[0], self.ball[1], 1 if self.carrier else 0]
@@ -622,6 +637,8 @@ class Mapper:
         cmd = r.get("cmd") or 0
         self.stun_stage.clear()    # drive boundary: everyone re-set-up
         self.ignore_pos.clear()    # repositioning divergences reset with it
+        self.ball_diverged = False
+        self.pickmeup = []
         finals = self.kickoff_repositioning(i, r)
         if finals:
             coords = dict(r["players"])
@@ -1019,15 +1036,18 @@ class Mapper:
             self.turnover = False
             self.activation = None
             return
+        boundary_dice = [v for _, v in sorted(self.pickmeup)] + \
+            list(self.turnend_dice) + ko_dice
         if not self.turnover and self.engine_turn_open():
-            self.act(cmd, A_END_TURN, dice=list(self.turnend_dice) + ko_dice)
+            self.act(cmd, A_END_TURN, dice=boundary_dice)
         else:
             # Turnover or every player used: the engine auto-ends the team
             # turn during the last act's advance — an explicit END_TURN here
             # would land on the NEXT team's fresh turn and skip it.
-            if self.turnend_dice or ko_dice:
-                self.attach(cmd, list(self.turnend_dice) + ko_dice, "turn end")
+            if boundary_dice:
+                self.attach(cmd, boundary_dice, "turn end")
         self.turnend_dice = []
+        self.pickmeup = []
         # Engine boundary bookkeeping: turn_end(T) flips T's aged stunned
         # players to prone; turn_start(1-T) ages the next team's fresh ones.
         ended = self.active_team
@@ -1319,7 +1339,35 @@ class Mapper:
         self.skips["foul_appearance_roll_dropped"] += 1  # engine: FA not implemented
 
     def rep_pickMeUp(self, i, r, cmd):
-        self.turnend_dice.append(int(r.get("roll") or 1))
+        """Pick Me Up rolls at the end of the opponent's turn. The engine
+        only rolls for players that are PRONE when pick_me_up runs — players
+        still stunned/stunned_used at that moment (they flip later, in
+        turn_end) are not candidates even though FFB already rolled for
+        them. Engine rolls iterate slots ascending: buffer (slot, roll) and
+        sort at the boundary."""
+        pid = str(r.get("playerId"))
+        ts = self.slot_of.get(pid)
+        candidate = (ts is not None and self.base.get(pid) == 1 and
+                     not self.stun_stage.get(pid) and self.pos.get(pid))
+        if candidate:
+            helped = False
+            px, py = self.pos[pid]
+            for hid, (ht, _) in self.slot_of.items():
+                if ht != ts[0] or hid == pid:
+                    continue
+                if self.base.get(hid) != 0 or not self.pos.get(hid):
+                    continue
+                if not self.has_skill(hid, "Pick Me Up"):
+                    continue
+                hx, hy = self.pos[hid]
+                if max(abs(hx - px), abs(hy - py)) <= 3:
+                    helped = True
+                    break
+            candidate = helped
+        if candidate:
+            self.pickmeup.append((ts[0] * 16 + ts[1], int(r.get("roll") or 1)))
+        else:
+            self.skip(cmd, "pick_me_up_engine_no_candidate", pid)
 
     def rep_regenerationRoll(self, i, r, cmd):
         self.skip(cmd, "regeneration_unattached", r.get("playerId"))
