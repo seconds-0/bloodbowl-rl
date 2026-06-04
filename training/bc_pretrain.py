@@ -26,8 +26,10 @@ BACKEND NOTE: this matches the TORCH backend's checkpoint layout
 --load-model-path bc.bin` (and any CPU-only _C build, where load_policy
 reads it at create time) warm-starts directly. The CUDA backend's
 save/load_weights (src/bindings.cu) is a raw flat-fp32 master_weights blob
-and its create_pufferl never reads load_model_path — GPU warm-start needs a
-state_dict -> flat blob converter in the CUDA backend's parameter order (v1).
+in CUDA parameter order — convert with training/convert_checkpoint.py
+(`--to-cuda bc.bin -o bc_cuda.bin`) and warm-start the native backend via
+the local load_model_path patch in pufferl.py. Note the CUDA layers carry
+no bias terms, so the converter drops the torch biases (warned).
 
 v0 LIMITATION — iid samples, zero recurrent state: each record is treated
 as an independent sample and the MinGRU state is zeroed, so the network
