@@ -115,11 +115,12 @@ KICKOFF_BAKE_MODES = {"quickSnap", "solidDefence", "kickoffReturn"}
 # The events' own D3 rolls ARE rolled by the engine — never drop these.
 KICKOFF_EVENT_ROLLS = {"blitzRoll", "solidDefenceRoll", "quickSnapRoll"}
 
-# Negatrait activation gates: engine D6 target (BB_SKILL_GATE registrations).
-# FFB applies situational modifiers (e.g. Really Stupid's +2 helper) that the
-# engine lacks; gate dice are outcome-adjusted against these flat targets.
-GATE_SKILLS = {"Bone Head": 2, "Really Stupid": 4,
-               "Unchannelled Fury": 4, "Take Root": 2}
+# Negatrait activation gates: engine D6 target + failure kind
+# (BB_SKILL_GATE registrations; the engine rolls during the A_DECLARE
+# transition, applies Really Stupid's +2 helper / Unchannelled Fury's +2
+# Block-or-Blitz modifier, and offers a team re-roll window on failure).
+GATE_SKILLS = {"Bone Head": (2, "tz"), "Really Stupid": (4, "tz"),
+               "Unchannelled Fury": (4, "plain"), "Take Root": (2, "root")}
 DECLARE_ROLL_SKILLS = {"Animal Savagery", "Bloodlust", "Animosity"}
 TEST_RR_SKILL = {  # engine BB_SKILL_REROLL registrations
     "dodgeRoll": "Dodge", "goForItRoll": "Sure Feet", "pickUpRoll": "Sure Hands",
@@ -222,6 +223,9 @@ class Mapper:
         self.rerolls = [0, 0]
         self.apo = [0, 0]
         self.skill_rr_used = collections.defaultdict(set)  # playerId -> kinds
+        self.distracted = set()    # pids the ENGINE holds Distracted (partial
+                                   # mirror: negatrait gate failures; cleared
+                                   # on activation like the engine)
         self.active_team = None
         self.activation = None     # dict: player, kind, gate_failed, ...
         self.acts_this_turn = 0
@@ -1163,64 +1167,12 @@ class Mapper:
         self.acts_this_turn += 1
         gslot = team * 16 + sl
         gate_dice, gate_failed = [], False
-        if self.skillnames.get(pid, set()) & {s for s in GATE_SKILLS}:
-            j = self.lookahead(i, lambda x: x.get("report") == "confusionRoll" and
-                               str(x.get("playerId")) == pid)
-            if j >= 0:
-                self.consumed.add(j)
-                final = self.recs[j]
-                # FFB allows a team re-roll on a failed gate; the engine's
-                # gate is a single inline die. Consume the re-roll chain and
-                # feed the FINAL outcome through the one engine die.
-                for k in range(j + 1, min(j + 4, len(self.recs))):
-                    rk = self.recs[k]
-                    rep_k = rk.get("report")
-                    if rep_k == "reRoll" and str(rk.get("playerId")) == pid:
-                        self.consumed.add(k)
-                        src = rk.get("reRollSource") or ""
-                        if src in ("Team ReRoll", "Brilliant Coaching ReRoll",
-                                   "Leader", "Mascot TRR"):
-                            team_rr = self.pid_team(pid)
-                            if team_rr is not None and self.rerolls[team_rr] > 0:
-                                self.rerolls[team_rr] -= 1
-                        self.skips["gate_reroll_folded"] += 1
-                    elif rep_k == "confusionRoll" and \
-                            str(rk.get("playerId")) == pid:
-                        self.consumed.add(k)
-                        final = rk
-                    elif rk.get("type") in ("dice", "action", "event",
-                                            "formation"):
-                        break
-                roll = int(final.get("roll") or 1)
-                ok = bool(final.get("successful"))
-                gate_failed = not ok
-                # Outcome-preserving die adjustment: FFB applies situational
-                # modifiers (Really Stupid's +2 helper) the engine lacks —
-                # feed a die that reproduces FFB's pass/fail against the
-                # engine's flat target. Engine gap recorded for cycle 2.
-                target = min(GATE_SKILLS[s] for s in
-                             (self.skillnames.get(pid, set()) & set(GATE_SKILLS)))
-                if ok and roll < target:
-                    roll = target
-                    self.skips["gate_die_outcome_adjusted"] += 1
-                elif not ok and roll >= target:
-                    roll = target - 1
-                    self.skips["gate_die_outcome_adjusted"] += 1
-                gate_dice = [roll]
-        self.act(cmd, A_ACTIVATE, gslot, dice=gate_dice,
-                 note=f"activate {pid} {action}")
+        self.act(cmd, A_ACTIVATE, gslot, note=f"activate {pid} {action}")
         self.used_this_turn.add(pid)
-        if gate_failed or action == "removeConfusion":
-            if not gate_failed and action == "removeConfusion":
-                # gate passed but FUMBBL only cleared confusion: burn the
-                # activation as a bare Move.
-                self.act(cmd, A_DECLARE, ACT_MOVE)
-                self.act(cmd, A_END_ACTIVATION)
-            self.activation = {"pid": pid, "kind": None, "closed": True}
-            return
+        self.distracted.discard(pid)  # engine clears Distracted on activation
         kind = PLAYER_ACTION_KIND.get(action)
         stand_first = action in ("standUp", "standUpBlitz")
-        if kind is None and action == "standUp":
+        if kind is None and action in ("standUp", "removeConfusion"):
             kind = ACT_MOVE
         if kind is None:
             self.skip(cmd, "player_action_unknown", action)
@@ -1256,7 +1208,20 @@ class Mapper:
                 kind = ACT_MOVE
                 foul_demoted = True
                 self.skips["foul_declare_demoted_to_move"] += 1
-        self.act(cmd, A_DECLARE, kind, dice=dec_dice)
+        # Negatrait gate: the engine rolls during the A_DECLARE transition
+        # (after declaring, per the mirror) with a possible re-roll window.
+        declare_dice, gate_acts, gate_failed = \
+            self.map_gate(i, cmd, pid, kind, dec_dice)
+        self.act(cmd, A_DECLARE, kind, dice=declare_dice)
+        for typ, arg, dice in gate_acts:
+            self.act(cmd, typ, arg, dice=dice)
+        if gate_failed or action == "removeConfusion":
+            if not gate_failed and action == "removeConfusion":
+                # gate passed but FUMBBL only cleared confusion: burn the
+                # activation as a bare Move.
+                self.act(cmd, A_END_ACTIVATION)
+            self.activation = {"pid": pid, "kind": None, "closed": True}
+            return
         self.activation = {"pid": pid, "kind": kind, "closed": False,
                            "blocks": 0, "moved": 0,
                            "foul_demoted": foul_demoted}
@@ -1269,6 +1234,139 @@ class Mapper:
             self.activation["stood"] = True
         if action == "secureTheBall":
             pass  # steps follow; pickup test rides on the step
+
+    def map_gate(self, i, cmd, pid, kind, dec_dice):
+        """Map FFB's confusionRoll chain onto the engine's declare-time gate.
+
+        Returns (declare_dice, extra_acts, gate_failed): dice for the
+        A_DECLARE op, [(type, arg, dice), ...] acts to emit after it (the
+        re-roll window), and whether the activation is lost. Dice are
+        outcome-adjusted against the engine's target AND situational
+        modifiers (Really Stupid's +2 helper from the position mirror,
+        Unchannelled Fury's +2 on Block/Blitz) so engine pass/fail always
+        reproduces FFB's."""
+        owned = self.skillnames.get(pid, set()) & set(GATE_SKILLS)
+        if not owned:
+            return list(dec_dice), [], False
+        # Engine picks the lowest skill id (bb_hook_activation_gate order).
+        gskill = min(owned, key=lambda s: self.skill_id(s))
+        target, gkind = GATE_SKILLS[gskill]
+        if gkind == "root" and self.base.get(pid, 0) != 0:
+            return list(dec_dice), [], False  # Take Root: Standing only
+        j = self.lookahead(i, lambda x: x.get("report") == "confusionRoll" and
+                           str(x.get("playerId")) == pid)
+        if j < 0:
+            # FFB rolled no gate where the engine will: classified; the
+            # dice_underrun that follows is honest.
+            self.skip(cmd, "gate_roll_missing", f"{pid}/{gskill}")
+            return list(dec_dice), [], False
+        self.consumed.add(j)
+        mod = 0
+        if gskill == "Unchannelled Fury" and kind in (ACT_BLOCK, ACT_BLITZ):
+            mod = 2
+        elif gskill == "Really Stupid":
+            ppos = self.pos.get(pid)
+            if ppos:
+                for hid, (ht, _) in self.slot_of.items():
+                    if ht != self.pid_team(pid) or hid == pid:
+                        continue
+                    hp = self.pos.get(hid)
+                    if not hp or self.base.get(hid, 0) != 0:
+                        continue
+                    if hid in self.distracted or \
+                            self.has_skill(hid, "Really Stupid"):
+                        continue
+                    if max(abs(hp[0] - ppos[0]), abs(hp[1] - ppos[1])) == 1:
+                        mod = 2
+                        break
+
+        def adj(roll, ok):
+            if ok and roll + mod < target:
+                self.skips["gate_die_outcome_adjusted"] += 1
+                return max(1, min(6, target - mod))
+            if not ok and roll + mod >= target:
+                self.skips["gate_die_outcome_adjusted"] += 1
+                return max(1, target - mod - 1)
+            return roll
+
+        first = self.recs[j]
+        roll1 = adj(int(first.get("roll") or 1), bool(first.get("successful")))
+        ok1 = bool(first.get("successful"))
+        team = self.pid_team(pid)
+
+        def fail_result(declare_dice, extra):
+            """Final gate failure. ROOTED continues the action — the engine
+            rolls the declare-roll dice (Bloodlust etc.) in that same
+            transition, so dec_dice ride on the last act."""
+            if gkind == "root":
+                if extra:
+                    extra[-1][2].extend(dec_dice)
+                else:
+                    declare_dice = declare_dice + list(dec_dice)
+                return declare_dice, extra, False
+            if gkind == "tz":
+                self.distracted.add(pid)
+            return declare_dice, extra, True
+
+        if ok1:
+            return [roll1] + list(dec_dice), [], False
+        # First roll failed: find FFB's re-roll chain (reRoll [+ Loner] then
+        # a second confusionRoll).
+        reroll_src, loner_die, loner_ok, second = None, None, True, None
+        for k in range(j + 1, min(j + 6, len(self.recs))):
+            if k in self.consumed:
+                continue
+            rk = self.recs[k]
+            rep_k = rk.get("report")
+            if rep_k == "reRoll" and str(rk.get("playerId")) == pid:
+                self.consumed.add(k)
+                src = rk.get("reRollSource") or ""
+                if src == "Loner":
+                    loner_die = int(rk.get("roll") or 1)
+                    loner_ok = bool(rk.get("successful"))
+                else:
+                    reroll_src = src
+            elif rep_k == "confusionRoll" and str(rk.get("playerId")) == pid:
+                self.consumed.add(k)
+                second = rk
+                break
+            elif rk.get("type") in ("dice", "action", "event", "formation"):
+                break
+        # Does the ENGINE offer the window? (Mirror of the engine's
+        # gate_team_reroll_available.)
+        offers = (team is not None and self.rerolls[team] > 0 and
+                  team == self.active_team and not self.in_kickoff_resolution)
+        if reroll_src is None and second is None:
+            # FFB kept the failure (decline the window when the engine has one).
+            return fail_result(
+                [roll1], [[A_DECLINE_REROLL, 0, []]] if offers else [])
+        team_like = reroll_src in ("Team ReRoll", "Brilliant Coaching ReRoll",
+                                   "Leader", "Mascot TRR")
+        if team_like and offers:
+            self.rerolls[team] -= 1  # mirror the engine's spend
+            rr_dice = [loner_die] if loner_die is not None else []
+            if not loner_ok:
+                # Loner waste: the failure stands, re-roll spent.
+                return fail_result([roll1], [[A_USE_REROLL, RR_TEAM, rr_dice]])
+            ok2 = bool((second or {}).get("successful"))
+            rr_dice.append(adj(int((second or {}).get("roll") or 1), ok2))
+            if ok2:
+                rr_dice.extend(dec_dice)
+                return [roll1], [[A_USE_REROLL, RR_TEAM, rr_dice]], False
+            return fail_result([roll1], [[A_USE_REROLL, RR_TEAM, rr_dice]])
+        # FFB re-rolled via a source the engine window lacks, or our mirror
+        # says the engine offers nothing: fold the FINAL outcome into the
+        # single gate die (classified).
+        self.skips["gate_reroll_folded"] += 1
+        if team_like and team is not None and self.rerolls[team] > 0:
+            self.rerolls[team] -= 1
+        final_ok = bool((second or {}).get("successful")) if second else False
+        roll_f = adj(int((second or {}).get("roll") or 1), final_ok) \
+            if second else roll1
+        if final_ok:
+            return [roll_f] + list(dec_dice), [], False
+        return fail_result(
+            [roll_f], [[A_DECLINE_REROLL, 0, []]] if offers else [])
 
     def activation_aborted(self, i, pid):
         """FFB lets a coach select a player, declare an action, and deselect
