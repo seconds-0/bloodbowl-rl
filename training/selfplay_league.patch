@@ -1,0 +1,86 @@
+diff --git a/pufferlib/selfplay.py b/pufferlib/selfplay.py
+index 19cc479..95fb14b 100644
+--- a/pufferlib/selfplay.py
++++ b/pufferlib/selfplay.py
+@@ -17,6 +17,7 @@ Pool storage is disk-only (paths held in memory; weights only on GPU when
+ loaded as the frozen bank). Stride-eviction preserves temporal coverage when
+ the pool exceeds its cap.
+ """
++import json
+ import os
+ 
+ import numpy as np
+@@ -166,13 +167,46 @@ def setup(pufferl, backend, args, run_id):
+     backend.set_agent_perm(pufferl, perm)
+     backend.set_env_tags(pufferl, tags)
+ 
+-    pool_dir = os.path.join(args['checkpoint_dir'], args['env_name'], run_id, 'pool')
+-    os.makedirs(pool_dir, exist_ok=True)
+-    bootstrap_path = os.path.join(pool_dir, f'{pufferl.global_step:016d}.bin')
+-    backend.save_weights(pufferl, bootstrap_path)
+-    # Load bootstrap into every bank — they'll diverge as each bank's swap fires.
+-    for b in range(num_banks):
+-        backend.load_frozen_bank(pufferl, b, bootstrap_path)
++    # LOCAL PATCH (bloodbowl-rl): heterogeneous league seeding. When
++    # [selfplay] league_preseed names a pool dir built by
++    # tools/build_league.py (league_seeds.json manifest + one flat-fp32 .bin
++    # per bank), the frozen banks start from those fixed checkpoints instead
++    # of bootstrap-clones of the learner, and that dir becomes pool_dir (run
++    # snapshots accumulate next to the seeds). Empty/absent key = upstream
++    # behavior. The Python-side size check matters: the C loader
++    # (pufferl_load_frozen_bank, pufferlib.cu:1830) only fprintf-warns on a
++    # size mismatch and silently keeps the bank's old weights.
++    # Patch copy: training/selfplay_league.patch (vendor/ is gitignored —
++    # reapply after a re-clone; see .claude/skills/puffer-env-dev/SKILL.md).
++    preseed = str(sp.get('league_preseed', '') or '').strip()
++    if preseed:
++        manifest_file = os.path.join(preseed, 'league_seeds.json')
++        with open(manifest_file) as f:
++            manifest = json.load(f)
++        seeds = manifest['seeds']
++        if len(seeds) != num_banks:
++            raise RuntimeError(f'league_preseed: {len(seeds)} seeds in '
++                f'{manifest_file} but num_frozen_banks is {num_banks}')
++        pool_dir = preseed
++        expected = int(manifest.get('expected_bytes', 0))
++        seed_paths = []
++        for b, seed in enumerate(seeds):
++            path = os.path.join(preseed, seed['file'])
++            size = os.path.getsize(path)
++            if expected and size != expected:
++                raise RuntimeError(f'league seed {seed.get("name", b)}: '
++                    f'{size} bytes != expected {expected}')
++            backend.load_frozen_bank(pufferl, b, path)
++            seed_paths.append(path)
++    else:
++        pool_dir = os.path.join(args['checkpoint_dir'], args['env_name'], run_id, 'pool')
++        os.makedirs(pool_dir, exist_ok=True)
++        bootstrap_path = os.path.join(pool_dir, f'{pufferl.global_step:016d}.bin')
++        backend.save_weights(pufferl, bootstrap_path)
++        # Load bootstrap into every bank — they'll diverge as each bank's swap fires.
++        for b in range(num_banks):
++            backend.load_frozen_bank(pufferl, b, bootstrap_path)
++        seed_paths = [bootstrap_path] * num_banks
+ 
+     elo_init = float(sp.get('elo_init', 0.0))
+     elo_k    = float(sp.get('elo_k',    16.0))
+@@ -181,7 +215,7 @@ def setup(pufferl, backend, args, run_id):
+     banks_state = []
+     for b in range(num_banks):
+         banks_state.append({
+-            'cur_opp_path': bootstrap_path,
++            'cur_opp_path': seed_paths[b],
+             'cur_opp_elo': elo_init,
+             'hist_score': 0.0,
+             'hist_n': 0.0,
+@@ -196,7 +230,9 @@ def setup(pufferl, backend, args, run_id):
+ 
+     return {
+         'pool_dir': pool_dir,
+-        'pool': [{'path': bootstrap_path, 'elo': elo_init}],
++        # Ordered oldest->newest; dict.fromkeys dedupes the bootstrap case
++        # back to a single entry (upstream-identical when not preseeded).
++        'pool': [{'path': p, 'elo': elo_init} for p in dict.fromkeys(seed_paths)],
+         'rng': rng,
+         'max_size': int(sp['max_size']),
+         'min_games': int(sp['min_games']),
