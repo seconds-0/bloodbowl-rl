@@ -194,6 +194,17 @@ typedef struct {
     int out_prev[2]; // players in the KO + casualty boxes (injury shaping)
     int surf_prev[2]; // m->surfs snapshot (surf shaping)
     uint32_t out_mask_prev[2]; // per-player out bits (value-scaled injuries)
+    // Obs-encode caches (perf; ~23% of step time was encode). skill_rows are
+    // the 12 obs skill-id bytes per slot — a pure function of the player's
+    // skillset, which the engine only writes at init/procgen. Rebuilt lazily
+    // whenever skill_keys[slot] != players[slot].skills (a 24-byte compare),
+    // so future mid-match skill mutation stays correct by construction.
+    // Zero-init is consistent: zero key + zero row == skill-less player.
+    // tz_scratch is the per-step marking-TZ byte per slot — identical for
+    // both agent views, so bbe_emit_all computes it once instead of twice.
+    bb_skillset skill_keys[BB_NUM_PLAYERS];
+    uint8_t skill_rows[BB_NUM_PLAYERS][BBE_SKILL_SLOTS];
+    uint8_t tz_scratch[BB_NUM_PLAYERS]; // valid only within bbe_emit_all's step
 } Bloodbowl;
 
 static void bbe_refresh_legal(Bloodbowl* env) {
@@ -267,8 +278,9 @@ static void bbe_encode_obs(Bloodbowl* env, int agent) {
             t[1] = (unsigned char)(p->y + 1);
             // [23] opposing tackle zones marking this player's square —
             // dodge/pickup/catch difficulty and Marked/Open status without
-            // the policy re-deriving adjacency from 31 other rows.
-            t[23] = (unsigned char)bb_tackle_zones(m, team, p->x, p->y);
+            // the policy re-deriving adjacency from 31 other rows. The count
+            // is view-independent; bbe_emit_all computed it once this step.
+            t[23] = env->tz_scratch[slot];
         }
         t[2] = p->location;
         t[3] = p->stance;
@@ -281,13 +293,22 @@ static void bbe_encode_obs(Bloodbowl* env, int agent) {
         t[10] = (unsigned char)p->av;
         // Skill ids (+1, 0 = none). BBE_SKILL_SLOTS covers the largest base
         // roster list (10) plus the procgen advancement cap (bb_procgen.c
-        // stops adding at 12 total) — no silent truncation.
-        int k = 11;
-        for (int sk = bb_next_skill(&p->skills, 0);
-             sk >= 0 && k < 11 + BBE_SKILL_SLOTS;
-             sk = bb_next_skill(&p->skills, sk + 1)) {
-            t[k++] = (unsigned char)(sk + 1);
+        // stops adding at 12 total) — no silent truncation. Rows are cached
+        // per slot (the bb_next_skill walk was ~300 bit-scans/step) behind a
+        // skillset dirty-check, so a hypothetical mid-match skill change
+        // still re-encodes.
+        if (memcmp(&env->skill_keys[slot], &p->skills, sizeof(bb_skillset)) != 0) {
+            env->skill_keys[slot] = p->skills;
+            uint8_t* row = env->skill_rows[slot];
+            memset(row, 0, BBE_SKILL_SLOTS);
+            int k = 0;
+            for (int sk = bb_next_skill(&p->skills, 0);
+                 sk >= 0 && k < BBE_SKILL_SLOTS;
+                 sk = bb_next_skill(&p->skills, sk + 1)) {
+                row[k++] = (unsigned char)(sk + 1);
+            }
         }
+        memcpy(t + 11, env->skill_rows[slot], BBE_SKILL_SLOTS);
     }
 
     unsigned char* b = o + BBE_CTX_OFF;
@@ -457,6 +478,15 @@ static bb_action bbe_decode(Bloodbowl* env, int agent, const float* heads) {
 
 // --- Lifecycle -------------------------------------------------------------------
 static void bbe_emit_all(Bloodbowl* env) {
+    // Marking-TZ bytes are view-independent; compute once for both encodes.
+    const bb_match* m = &env->match;
+    for (int s = 0; s < BB_NUM_PLAYERS; s++) {
+        const bb_player* p = &m->players[s];
+        env->tz_scratch[s] =
+            p->location == BB_LOC_ON_PITCH
+                ? (uint8_t)bb_tackle_zones(m, BB_TEAM_OF(s), p->x, p->y)
+                : 0;
+    }
     for (int a = 0; a < BBE_AGENTS; a++) {
         bbe_encode_obs(env, a);
         bbe_fill_mask(env, a);

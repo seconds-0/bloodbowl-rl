@@ -113,6 +113,20 @@ static void st_check_obs(const Bloodbowl* env) {
             ST_CHECK(t[23] == exp_tz, "agent %d row %d: marking-TZ byte %d != %d",
                      agent, row, t[23], exp_tz);
             if (t[23] > 0) st_tz_nonzero++;
+            // [11..22] skill ids: re-derive straight from the engine
+            // skillset. The encoder caches these rows per slot behind a
+            // skillset dirty-check; a stale or mis-keyed cache must fail
+            // loudly here, not silently feed the policy wrong skills.
+            unsigned char want[BBE_SKILL_SLOTS] = {0};
+            int k = 0;
+            for (int sk = bb_next_skill(&p->skills, 0);
+                 sk >= 0 && k < BBE_SKILL_SLOTS;
+                 sk = bb_next_skill(&p->skills, sk + 1)) {
+                want[k++] = (unsigned char)(sk + 1);
+            }
+            ST_CHECK(memcmp(t + 11, want, BBE_SKILL_SLOTS) == 0,
+                     "agent %d row %d: skill row diverges from skillset",
+                     agent, row);
         }
     }
 }
