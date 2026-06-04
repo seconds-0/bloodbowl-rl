@@ -305,8 +305,23 @@ bb_status bb_apply(bb_match* m, bb_action a, bb_rng* rng) {
         m->status = BB_STATUS_ERROR;
         return (bb_status)m->status;
     }
+    return bb_apply_trusted(m, a, rng);
+}
+
+bb_status bb_apply_trusted(bb_match* m, bb_action a, bb_rng* rng) {
+    // No legal-set membership check — see the bb_match.h contract. Keeps the
+    // cheap structural guards so a misuse degrades to BB_STATUS_ERROR (the
+    // binding's defensive-reset path) instead of indexing a stale frame.
+    if (m->status != BB_STATUS_DECISION || !m->stack_top) {
+        m->status = BB_STATUS_ERROR;
+        return (bb_status)m->status;
+    }
     bb_frame* top = bb_top(m);
     const bb_proc_vtable* vt = &bb_proc_table[top->proc];
+    if (!vt->apply) {
+        m->status = BB_STATUS_ERROR;
+        return (bb_status)m->status;
+    }
     m->status = BB_STATUS_RUNNING;
     m->step_count++;
     vt->apply(m, a, rng);

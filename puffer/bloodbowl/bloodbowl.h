@@ -576,7 +576,12 @@ static void c_step(Bloodbowl* env) {
                 env->ep_return[agent] += r;
             }
         }
-        bb_apply(m, act, &env->rng);
+        // Trusted fast path: act came from bbe_decode, which only returns
+        // elements of env->legal — the legal set enumerated on THIS state by
+        // bbe_refresh_legal. Membership holds by construction, so skip
+        // bb_apply's internal re-enumeration + eq-scan (~22% of step time).
+        // All other callers (tests, fuzz, lockstep) stay on checked bb_apply.
+        bb_apply_trusted(m, act, &env->rng);
         env->decisions++;
         // Touchdown rewards.
         bool scored = false;

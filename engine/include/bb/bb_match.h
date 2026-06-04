@@ -149,6 +149,15 @@ int bb_legal_actions(const bb_match* m, bb_action* out);
 // Applying an action not in bb_legal_actions sets BB_STATUS_ERROR.
 bb_status bb_apply(bb_match* m, bb_action a, bb_rng* rng);
 
+// Trusted fast path: bb_apply WITHOUT the legal-set re-validation. The caller
+// must guarantee `a` is an element of bb_legal_actions for the CURRENT state.
+// Only the RL binding's c_step qualifies (bbe_decode snaps onto the legal
+// list it just enumerated, so membership holds by construction, and the
+// re-validation was ~20% of env-step time). Everything else — tests, fuzzers,
+// replay/lockstep harnesses, external drivers — must keep using bb_apply:
+// its validation IS the mask-soundness invariant (adversarial review P1).
+bb_status bb_apply_trusted(bb_match* m, bb_action a, bb_rng* rng);
+
 // --- Queries (pure) --------------------------------------------------------------
 static inline const bb_player* bb_at(const bb_match* m, int x, int y) {
     uint8_t v = m->grid[x][y];

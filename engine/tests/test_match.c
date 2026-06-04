@@ -124,6 +124,54 @@ BB_TEST(match_deterministic_replay) {
     BB_CHECK_EQ(memcmp(&m1, &m2, sizeof(bb_match)), 0);
 }
 
+// bb_apply_trusted is the RL binding's fast path (no legal-set
+// re-validation; ~20% of env-step time). For every LEGAL action it must be
+// bit-identical to checked bb_apply — state, rng stream, and status — or the
+// binding's trajectories silently diverge from every validation layer that
+// replays through bb_apply. Differential over full matches.
+BB_TEST(apply_trusted_matches_checked_apply) {
+    for (uint64_t seed = 1; seed <= 6; seed++) {
+        bb_match m;
+        bb_match_init(&m, BB_TEAM_HUMAN, BB_TEAM_ORC);
+        bb_rng rng, pick;
+        bb_rng_seed(&rng, seed * 104729, 1);
+        bb_rng_seed(&pick, seed ^ 0xD1FF, 2);
+        bb_status st = bb_advance(&m, &rng);
+        int steps = 0;
+        while (st == BB_STATUS_DECISION && steps < 200000) {
+            bb_action legal[BB_LEGAL_MAX];
+            int n = bb_legal_actions(&m, legal);
+            BB_CHECK(n > 0);
+            if (n <= 0) break;
+            bb_action a = legal[fx_pick_smart(&m, legal, n, &pick)];
+            bb_match mt;
+            bb_rng rt;
+            memcpy(&mt, &m, sizeof m);
+            memcpy(&rt, &rng, sizeof rng);
+            st = bb_apply(&m, a, &rng);
+            bb_status st_t = bb_apply_trusted(&mt, a, &rt);
+            BB_CHECK_EQ(st, st_t);
+            BB_CHECK_EQ(memcmp(&m, &mt, sizeof(bb_match)), 0);
+            BB_CHECK_EQ(memcmp(&rng, &rt, sizeof(bb_rng)), 0);
+            if (st != st_t || memcmp(&m, &mt, sizeof(bb_match)) != 0) return;
+            steps++;
+        }
+        BB_CHECK_EQ(st, BB_STATUS_MATCH_OVER);
+    }
+}
+
+// Misusing the trusted path must degrade to BB_STATUS_ERROR (the binding's
+// defensive-reset trigger), never UB on a stale frame.
+BB_TEST(apply_trusted_guards_non_decision) {
+    bb_match m;
+    bb_match_init(&m, BB_TEAM_HUMAN, BB_TEAM_ORC);
+    bb_rng rng;
+    bb_rng_seed(&rng, 7, 1);
+    // Status is RUNNING (no decision demanded yet).
+    bb_status st = bb_apply_trusted(&m, (bb_action){BB_A_NONE, 0, 0, 0}, &rng);
+    BB_CHECK_EQ(st, BB_STATUS_ERROR);
+}
+
 BB_TEST(match_init_well_formed) {
     bb_match m;
     bb_match_init(&m, BB_TEAM_HUMAN, BB_TEAM_ORC);
