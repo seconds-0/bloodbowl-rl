@@ -603,10 +603,9 @@ BB_TEST(struct_kickoff_event_high_kick_offers_placement) {
     BB_CHECK_EQ(stx_top_proc(&m), BB_PROC_KICKOFF); // still inside the kick-off
 }
 
-// ENGINE-DIVERGENCE: GAME KICK-OFF EVENT 8 CHANGING WEATHER: "Immediately
-// make a new roll on the Weather Table. If the new result is Perfect
-// Conditions, the ball will Scatter (3) in the air before it lands." The
-// engine re-rolls the weather but never performs the Scatter (3).
+// GAME KICK-OFF EVENT 8 CHANGING WEATHER: "Immediately make a new roll on
+// the Weather Table. If the new result is Perfect Conditions, the ball will
+// Scatter (3) in the air before it lands."
 BB_TEST(struct_kickoff_event_changing_weather_scatters_three) {
     bb_match m;
     stx_kickoff_fixture(&m, BB_HOME);
@@ -625,6 +624,32 @@ BB_TEST(struct_kickoff_event_changing_weather_scatters_three) {
     BB_CHECK_EQ(m.ball.state, BB_BALL_ON_GROUND);
     BB_CHECK_EQ(m.ball.x, 22);
     BB_CHECK_EQ(m.ball.y, 5);
+}
+
+// CHANGING WEATHER gust early stop (FFB StepApplyKickoffResult, validated
+// against live FUMBBL dice logs): the Scatter (3) rolls one D8 at a time and
+// STOPS the moment the ball leaves the receiving half or the pitch — the
+// touchback is then certain and no further scatter dice are rolled.
+BB_TEST(struct_kickoff_changing_weather_gust_stops_at_touchback) {
+    bb_match m;
+    stx_kickoff_fixture(&m, BB_HOME);
+    fx_lineman(&m, 0, 0, 5, 5);
+    int recv = fx_lineman(&m, 1, 0, 20, 10);
+    bb_rng rng;
+    // Target (14,7); d8=4 -> (-1,0), d6=1 -> ball at (13,7). Event 4+4=8.
+    // Weather 3+4=7 -> Perfect -> gust d8=4 -> (12,7): KICKING half. The
+    // gust STOPS after ONE die; touchback decision for the receiving coach.
+    const uint8_t dice[] = {4, 1, 4, 4, 3, 4, 4};
+    bb_rng_script(&rng, dice, 7);
+    fx_run(&m, &rng);
+    bb_status st = fx_apply(&m, stx_act(BB_A_KICK_TARGET, 0, 14, 7), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK_EQ(m.decision_team, BB_AWAY); // touchback: receiving coach
+    BB_CHECK(fx_has_type(&m, BB_A_TOUCHBACK));
+    BB_CHECK(!bb_rng_error(&rng)); // exactly ONE gust die was consumed
+    st = fx_apply(&m, stx_act(BB_A_TOUCHBACK, recv, 0, 0), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK_EQ(m.ball.carrier, recv);
 }
 
 // ENGINE-DIVERGENCE: GAME KICK-OFF EVENT 12 PITCH INVASION: "Both Coaches

@@ -411,6 +411,8 @@ static void stun_random_players(bb_match* m, bb_rng* rng, int team, int count) {
     }
 }
 
+static bool kickoff_ball_misplaced(const bb_match* m, int kicking);
+
 // Returns true if the event paused the kickoff with a decision (High Kick).
 static bool kickoff_event(bb_match* m, bb_rng* rng) {
     bb_frame* f = bb_top(m);
@@ -453,12 +455,19 @@ static bool kickoff_event(bb_match* m, bb_rng* rng) {
         case BB_KO_CHANGING_WEATHER: {
             int w = bb_2d6(rng);
             m->weather = bb_weather_table[w];
-            if (m->weather == BB_WEATHER_PERFECT) {
-                // The ball scatters 3 squares in the air before landing.
+            if (m->weather == BB_WEATHER_PERFECT &&
+                !kickoff_ball_misplaced(m, f->a)) {
+                // Perfect Conditions: the ball Scatters (3) in the air —
+                // one D8 at a time, STOPPING the moment it leaves the
+                // receiving half / pitch (the touchback is then certain and
+                // FFB rolls no further dice; a kick already misplaced gusts
+                // not at all). The ball stays on the out square so the
+                // landing check routes to the touchback decision.
                 for (int i = 0; i < 3; i++) {
                     int dir = bb_roll(rng, 8) - 1;
                     m->ball.x = (uint8_t)(m->ball.x + DIR8[dir][0]);
                     m->ball.y = (uint8_t)(m->ball.y + DIR8[dir][1]);
+                    if (kickoff_ball_misplaced(m, f->a)) break;
                 }
             }
             break;
