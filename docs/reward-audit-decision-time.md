@@ -43,8 +43,15 @@ Wardancer to the MB blitzer = exposure.
 Fires when an opponent DECLARES a block/blitz/foul against your player
 (before any dice). Zero-sum transfer (collusion-proof in selfplay):
 
-    exposure = P(removal | matchup) * (victim_cost_k / 100) * k_value
-             + [victim is carrying] * P(knockdown | matchup) * k_ball
+    exposure = k_kd    * P(knockdown | matchup)
+             + k_value * P(removal  | matchup) * (victim_cost_k / 100)
+             + k_ball  * P(knockdown | matchup) * [victim is carrying]
+
+    (Alex, 2026-06-04: the knockdown itself is the tactical product — lost
+    TZs, a wasted enemy activation, opened lanes — independent of the injury
+    lottery. The k_kd term makes a well-chosen safe block positive EV at
+    declaration, directly curing the observed never-blocking meta, and
+    teaches target selection from both sides of the zero-sum transfer.)
 
     receiver: -exposure      attacker: +exposure
 
@@ -56,8 +63,10 @@ Fires when an opponent DECLARES a block/blitz/foul against your player
   (a knockdown strips the ball even when it doesn't injure), scaled by
   k_ball. "Getting hit with the ball is a double punishment" emerges from
   the two additive terms.
-- Suggested scales: k_value = 0.5 (Wardancer-vs-MB-blitzer ≈ −0.08/block),
-  k_ball = 0.3.
+- Suggested scales: k_kd = 0.06 (routine 2d+Block block ≈ +0.03), k_value =
+  0.5 (Wardancer-vs-MB-blitzer ≈ −0.08/block), k_ball = 0.3. Per-step sums
+  stay far inside the [-1,1] trainer clamp; per-game accumulation is zero-sum
+  so it cannot inflate either side's return systematically.
 - Dice outcomes carry ZERO shaping weight anywhere in v2: luck is priced at
   exposure time only. "Right play, bad result" costs the right-play price.
 
