@@ -102,6 +102,19 @@ _Static_assert(BBE_HEAD_SQ == BB_PITCH_LEN * BB_PITCH_WID + 1,
 _Static_assert(BBE_OBS_SIZE == BBE_SCALAR_OFF + 48, "obs layout out of sync");
 _Static_assert(BB_SKILL_COUNT <= 254, "skill id + 1 must fit a byte");
 
+// Engine-compat stamp for demo-state bank files (.bbs "BBS1": written by
+// tools/bb_lockstep.c --dump-states, consumed by the env's demo-state reset
+// curriculum). Any bb_match layout change (sizeof) or content-table resize
+// (teams, skills, action types) invalidates banked raw-struct snapshots.
+// Same-architecture only — the blob is a host-ABI memcpy, not a portable
+// serialization; this stamp plus the header's match_size are the guards.
+static inline uint32_t bbe_state_fingerprint(void) {
+    return (uint32_t)sizeof(bb_match) * 2654435761u
+         ^ ((uint32_t)BB_TEAM_COUNT << 20)
+         ^ ((uint32_t)BB_SKILL_COUNT << 10)
+         ^ (uint32_t)BB_A_TYPE_COUNT;
+}
+
 // Floats only; summed across envs then divided by n (vecenv.h). n must be last.
 typedef struct {
     float perf;            // win = 1, draw = 0.5, loss = 0

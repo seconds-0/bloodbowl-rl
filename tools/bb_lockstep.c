@@ -337,6 +337,106 @@ static void pd_abort(void) {
     PD.staged = 0;
 }
 
+// --- Demo-state dump (--dump-states <out.bbs>) ---------------------------------
+// .bbs format v1: raw bb_match snapshots at team-turn boundaries, consumed by
+// the env's demo-state reset curriculum (bbe_reset_match with
+// demo_reset_pct > 0; corpus bank built by validation/build_state_bank.py).
+// Also documented in validation/README.md.
+//
+//   header (16 bytes, little-endian):
+//     magic      char[4] "BBS1"
+//     version    u32     1
+//     match_size u32     sizeof(bb_match) of the writing build
+//     engine_fp  u32     bbe_state_fingerprint() (engine-compat stamp)
+//   record (12 + match_size bytes):
+//     replay_id  u32     numeric FUMBBL replay id
+//     cmd        u32     FUMBBL commandNr of the op that reached the state
+//     half       u8      match.half at the dumped decision
+//     turn       u8      match.turn[match.active_team]
+//     pad        u8[2]   zero
+//     match      u8[match_size]  raw bb_match blob (host ABI — same-arch
+//                        only; do_init zeroes the whole struct, so padding
+//                        bytes are deterministic)
+//
+// One record per TEAM-TURN boundary successfully reached in lockstep: the
+// first BB_STATUS_DECISION whose (half, active_team, turn[0], turn[1]) key
+// differs from the last staged one, with a TEAM_TURN frame on the stack —
+// i.e. the first decision of every team turn, which includes the first turn
+// of every drive (post-kickoff). Only DECISION states are dumped (resumable
+// points by definition). Records are STAGED at the boundary and committed
+// once the NEXT op also applies cleanly — the mapper emits its expect diff
+// at exactly these boundaries, so a state that diverges from FUMBBL is
+// never banked; nothing at or beyond the first divergence is written.
+
+typedef struct {
+    FILE* f;
+    uint32_t replay_id;
+    long states;
+    int staged;
+    uint32_t last_key; // (half, active_team, turn[0], turn[1]) last staged
+    uint32_t cmd;
+    uint8_t half, turn;
+    bb_match m;
+} state_dumper;
+
+static state_dumper SD;
+
+static void sd_u32(uint32_t v) {
+    uint8_t b[4] = {(uint8_t)v, (uint8_t)(v >> 8), (uint8_t)(v >> 16),
+                    (uint8_t)(v >> 24)};
+    fwrite(b, 1, 4, SD.f);
+}
+
+static void sd_open(const char* path) {
+    SD.f = fopen(path, "wb");
+    if (!SD.f) {
+        fprintf(stderr, "cannot open %s for writing\n", path);
+        exit(2);
+    }
+    fwrite("BBS1", 1, 4, SD.f);
+    sd_u32(1);
+    sd_u32((uint32_t)sizeof(bb_match));
+    sd_u32(bbe_state_fingerprint());
+}
+
+static void sd_commit(void) {
+    if (!SD.f || !SD.staged) return;
+    SD.staged = 0;
+    sd_u32(SD.replay_id);
+    sd_u32(SD.cmd);
+    uint8_t meta[4] = {SD.half, SD.turn, 0, 0};
+    fwrite(meta, 1, 4, SD.f);
+    fwrite(&SD.m, sizeof(bb_match), 1, SD.f);
+    SD.states++;
+}
+
+// Called after every successfully applied op: commit the previously staged
+// boundary (it just survived one more verified op), then stage a new record
+// if this op crossed into a fresh team turn.
+static void sd_on_op_applied(runner* R, long cmd) {
+    if (!SD.f) return;
+    sd_commit();
+    const bb_match* m = &R->m;
+    if (m->status != BB_STATUS_DECISION) return;
+    bool in_turn = false;
+    for (int i = 0; i < m->stack_top; i++) {
+        if (m->stack[i].proc == BB_PROC_TEAM_TURN) {
+            in_turn = true;
+            break;
+        }
+    }
+    if (!in_turn) return;
+    uint32_t key = ((uint32_t)m->half << 24) | ((uint32_t)m->active_team << 16) |
+                   ((uint32_t)m->turn[0] << 8) | (uint32_t)m->turn[1];
+    if (key == SD.last_key) return;
+    SD.last_key = key;
+    SD.cmd = (uint32_t)cmd;
+    SD.half = m->half;
+    SD.turn = m->turn[m->active_team & 1];
+    SD.m = *m;
+    SD.staged = 1;
+}
+
 // --- init -----------------------------------------------------------------------
 
 static void init_side(runner* R, const char* obj, int team) {
@@ -428,6 +528,7 @@ static int do_init(runner* R, const char* line) {
     if (jstr(line, "replay", rid, sizeof rid)) {
         snprintf(R->replay, sizeof R->replay, "%s", rid);
         PD.replay_id = (uint32_t)strtoul(rid, 0, 10);
+        SD.replay_id = PD.replay_id;
     }
     const char* home = jobj(line, "home");
     const char* away = jobj(line, "away");
@@ -800,12 +901,15 @@ int main(int argc, char** argv) {
     memset(&R, 0, sizeof R);
     const char* path = 0;
     const char* dump_path = 0;
+    const char* states_path = 0;
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-v") == 0) R.verbose = 1;
         else if (strcmp(argv[i], "--pad") == 0 && i + 1 < argc) {
             R.pad = (int)strtol(argv[++i], 0, 10);
         } else if (strcmp(argv[i], "--dump-pairs") == 0 && i + 1 < argc) {
             dump_path = argv[++i];
+        } else if (strcmp(argv[i], "--dump-states") == 0 && i + 1 < argc) {
+            states_path = argv[++i];
         } else path = argv[i];
     }
     if (!path) {
@@ -817,10 +921,15 @@ int main(int argc, char** argv) {
                 "           reported divergences are unchanged\n"
                 "  --dump-pairs <out.bbp>  write one BC (obs, mask, action) record\n"
                 "           per successfully applied act/place op (format: see the\n"
-                "           .bbp comment block in this file / validation/README.md)\n");
+                "           .bbp comment block in this file / validation/README.md)\n"
+                "  --dump-states <out.bbs>  write one raw bb_match snapshot per\n"
+                "           team-turn boundary reached in lockstep, for the env's\n"
+                "           demo-state reset curriculum (format: see the .bbs\n"
+                "           comment block in this file / validation/README.md)\n");
         return 2;
     }
     if (dump_path) pd_open(dump_path);
+    if (states_path) sd_open(states_path);
     FILE* f = fopen(path, "r");
     if (!f) {
         fprintf(stderr, "cannot open %s\n", path);
@@ -882,7 +991,10 @@ int main(int argc, char** argv) {
         } else if (strcmp(op, "expect") == 0) {
             rc = do_expect(&R, line, cmd);
         }
-        if (rc == 0) R.ops_applied++;
+        if (rc == 0) {
+            R.ops_applied++;
+            sd_on_op_applied(&R, cmd);
+        }
         if (getenv("BB_LOCKSTEP_TRACE")) trace_state(&R, cmd, op);
         ctx_push(&R, line);
     }
@@ -893,12 +1005,20 @@ int main(int argc, char** argv) {
         snprintf(pairs, sizeof pairs, ",\"pairs\":%ld", PD.pairs);
         fclose(PD.f);
     }
+    char states[32] = "";
+    if (SD.f) {
+        // A boundary staged by the final op of a fully consumed script has no
+        // following op to confirm it; commit it iff nothing diverged.
+        if (!R.diverged) sd_commit();
+        snprintf(states, sizeof states, ",\"states\":%ld", SD.states);
+        fclose(SD.f);
+    }
     printf("{\"summary\":true,\"replay\":\"%s\",\"ops_total\":%d,"
            "\"ops_applied\":%d,\"pct_consumed\":%.1f,\"skips\":%d,"
            "\"diverged\":%s,\"engine_score\":[%d,%d],\"engine_status\":\"%s\","
-           "\"unmapped_skills\":%d%s}\n",
+           "\"unmapped_skills\":%d%s%s}\n",
            R.replay, R.ops_total, R.ops_applied, pct, R.skips,
            R.diverged ? "true" : "false", R.m.score[0], R.m.score[1],
-           status_name(R.m.status), R.unmapped_skills, pairs);
+           status_name(R.m.status), R.unmapped_skills, pairs, states);
     return 0;
 }

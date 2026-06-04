@@ -276,6 +276,59 @@ python3 validation/extract_pairs.py          # map + run + dump whole corpus
 python3 validation/extract_pairs.py 1907296  # one replay
 ```
 
+## Demo-state dump — `bb_lockstep --dump-states` + `build_state_bank.py`
+
+`./build/bb_lockstep --dump-states <out.bbs> <script.jsonl>` additionally
+writes one **raw `bb_match` snapshot** per team-turn boundary successfully
+reached in lockstep: the first `BB_STATUS_DECISION` of every team turn —
+which includes the first turn of every drive (post-kickoff). Records are
+staged at the boundary and committed only after the next op also applies
+cleanly; the mapper emits its `expect` state diff at exactly these
+boundaries, so a state that diverges from FUMBBL is never banked. These are
+the resume points for the env's demo-state reset curriculum
+(`demo_reset_pct` — the Backplay / chess-FEN-curriculum pattern from
+`docs/rl-best-practices.md` hole #2).
+
+### `.bbs` format v1 (binary, little-endian header/meta, host-ABI blob)
+
+```
+header (16 bytes):
+  magic      char[4]  "BBS1"
+  version    u32      1
+  match_size u32      sizeof(bb_match) of the writing build
+  engine_fp  u32      bbe_state_fingerprint() — engine-compat stamp over
+                      sizeof(bb_match), BB_TEAM_COUNT, BB_SKILL_COUNT,
+                      BB_A_TYPE_COUNT; any drift invalidates the bank
+record (12 + match_size bytes each):
+  replay_id  u32      numeric FUMBBL replay id
+  cmd        u32      FUMBBL commandNr of the op that reached the state
+  half       u8       match.half at the dumped decision
+  turn       u8       match.turn[match.active_team]
+  pad        u8[2]    zero
+  match      u8[match_size]  raw bb_match memcpy blob (same-arch only)
+```
+
+The blob is a host-ABI struct copy, not a portable serialization —
+`match_size` + `engine_fp` are the load-time guards; the loader additionally
+rejects any record whose status is not `BB_STATUS_DECISION`.
+
+### Orchestration
+
+```sh
+make lockstep                                    # build the runner
+python3 validation/build_state_bank.py           # whole corpus -> bank.bbs
+python3 validation/build_state_bank.py 1907296   # specific replay id(s)
+```
+
+Output: one shard per replay at `validation/states/<replayId>.bbs` plus the
+concatenated `validation/states/bank.bbs` (both gitignored; regenerate at
+will), with corpus stats and a per-half/turn histogram of the banked states.
+**Read the histogram**: the lockstep currently consumes ~8-18% of each replay
+before first divergence, so the bank is opening-biased (mostly half 1, turns
+1-3) — it deepens automatically as mapper coverage improves. Stage into the
+training tree with `tools/install_puffer_env.sh` (lands at
+`resources/bloodbowl/state_bank.bbs`).
+
 Output: `validation/pairs/<replayId>.bbp` (gitignored; regenerate at will)
 plus corpus totals (replays, pairs, pairs/replay, bytes). Consumed by
 `training/bc_pretrain.py`. Current corpus (21 replays, 2026-06-03): 1766
