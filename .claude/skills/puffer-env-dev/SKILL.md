@@ -269,3 +269,21 @@ pushed via `_C.set_agent_perm` / `_C.set_env_tags`; full layout diagram in
 
 Deep internals (StaticVec walkthrough, threading, perm row layout, pybind export
 surface, match() mechanics): `reference/vecenv-internals.md`.
+
+## Operational gotchas discovered in production (2026-06-04)
+
+- **The post-training eval tail HANGS for long-episode envs.** After
+  total_timesteps, _train runs eval epochs until `env/n > eval_episodes`
+  (10000 default). Our episodes are 300-900 decisions, so this is hours —
+  and it pins the box silently at the final Steps count (log mtime frozen,
+  0% CPU pattern). Fix per run: `--eval-episodes 100`-ish, or just pkill
+  after the final checkpoint lands (checkpoints save during training; the
+  eval tail adds nothing we use).
+- **`puffer train` has NO upstream warm-start.** load_model_path is only
+  read by eval()/match(). We patch _train in the VENDORED pufferl.py
+  (gitignored — re-apply after any re-clone; patch lives right after
+  create_pufferl, resolves 'latest' like eval does, calls
+  backend.load_weights). Used for curriculum chaining (bootstrap → anneal)
+  and BC warm starts. CUDA backend loads its OWN flat-fp32 .bin fine;
+  state_dict-style .bins (BC pretrain output) need the converter noted in
+  training/bc_pretrain.py before GPU warm-start.
