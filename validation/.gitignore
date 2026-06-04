@@ -1,3 +1,5 @@
 # Normalized replay JSONL (regenerate with normalize_replay.py --all)
 normalized/
 lockstep/
+# BC pair shards (regenerate with extract_pairs.py)
+pairs/
