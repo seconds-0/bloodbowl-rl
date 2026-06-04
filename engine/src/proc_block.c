@@ -45,8 +45,9 @@ enum { PSH_POW = 1 << 0, PSH_CHAIN = 1 << 1, PSH_MOVED = 1 << 2, PSH_FUP = 1 << 
 // a = attacker, b = defender.
 // data: bits 0-2 die0, 3-5 die1, 6-8 die2, 9-10 ndice-1, bit11 chooser-is-defender,
 //       bit12 reroll used.
-// phase 0: compute pool, roll; 1: reroll window; 2: choose die; 3: resolving
-//          (wrestle window: phase 4).
+// phase 0: compute pool, roll; 1: reroll window; 2: choose die;
+// phase 4: Both Down — ATTACKER's Wrestle window (USE_SKILL/DECLINE_SKILL);
+// phase 5: Both Down — DEFENDER's Wrestle window (FFB asks attacker first).
 
 enum { BLK_RR_USED = 1 << 12, BLK_DEF_CHOOSES = 1 << 11, BLK_IS_BLITZ = 1 << 13,
        BLK_DAUNTLESS_OK = 1 << 14, BLK_FRENZY_2ND = 1 << 15 };
@@ -228,7 +229,57 @@ static void block_advance(bb_match* m, bb_rng* rng) {
         bb_need_decision(m, (f->data & BLK_DEF_CHOOSES) ? BB_TEAM_OF(def) : BB_TEAM_OF(att));
         return;
     }
+    if (f->phase == 4) { // Both Down: attacker's Wrestle window
+        bb_need_decision(m, BB_TEAM_OF(att));
+        return;
+    }
+    if (f->phase == 5) { // Both Down: defender's Wrestle window
+        bb_need_decision(m, BB_TEAM_OF(def));
+        return;
+    }
     m->status = BB_STATUS_ERROR;
+}
+
+// May this player offer the optional Wrestle choice on a Both Down?
+// "Whilst a player is Distracted, they cannot use Active Skills" (mirror
+// PLAYER STATUS); Wrestle is ACTIVE.
+static bool wrestle_eligible(const bb_match* m, int slot) {
+    return bb_has_wrestle(m, slot) && !(m->players[slot].flags & BB_PF_DISTRACTED);
+}
+
+// WRESTLE used: "both players in the Block Action are Placed Prone,
+// regardless of any other Skills they may possess" — no armour rolls, no
+// knockdown turnover. A carrier placed prone drops the ball; an ACTIVE
+// carrier placed prone is a turnover.
+static void both_down_wrestle(bb_match* m, bb_frame* f) {
+    int att = f->a, def = f->b;
+    bb_cover(BB_SK_WRESTLE);
+    bb_pop(m);
+    int both[2] = {def, att};
+    for (int i = 0; i < 2; i++) {
+        bb_player* p = &m->players[both[i]];
+        p->stance = BB_STANCE_PRONE;
+        p->flags &= (uint16_t)~BB_PF_ROOTED; // placed prone un-roots
+        if (p->flags & BB_PF_HAS_BALL) {
+            int bx = p->x, by = p->y;
+            if (BB_TEAM_OF(both[i]) == m->active_team) bb_turnover(m);
+            bb_drop_ball(m);
+            bb_push(m, BB_PROC_SCATTER, 0, 1, (uint8_t)bx, (uint8_t)by);
+        }
+    }
+}
+
+// Plain Both Down (no Wrestle, or every Wrestle owner declined): a player
+// with Block (not Distracted) stays up; everyone else is Knocked Down
+// (armour rolls; attacker down = turnover for the active team).
+static void both_down_plain(bb_match* m, bb_frame* f) {
+    int att = f->a, def = f->b;
+    bool att_down = !(bb_has_block(m, att) && !(m->players[att].flags & BB_PF_DISTRACTED));
+    bool def_down = !(bb_has_block(m, def) && !(m->players[def].flags & BB_PF_DISTRACTED));
+    bb_pop(m);
+    // Defender resolves first, attacker's knockdown (turnover) after.
+    if (att_down) bb_knockdown2(m, att, BB_KD_BLOCK, 0, def);
+    if (def_down) bb_knockdown2(m, def, BB_KD_BLOCK, 0, att);
 }
 
 static int block_legal(const bb_match* m, bb_action* out) {
@@ -237,6 +288,11 @@ static int block_legal(const bb_match* m, bb_action* out) {
     if (f->phase == 1) {
         out[n++] = (bb_action){BB_A_USE_REROLL, BB_RR_TEAM, 0, 0};
         out[n++] = (bb_action){BB_A_DECLINE_REROLL, 0, 0, 0};
+        return n;
+    }
+    if (f->phase == 4 || f->phase == 5) { // Wrestle window (owner's coach)
+        out[n++] = (bb_action){BB_A_USE_SKILL, BB_SK_WRESTLE, 0, 0};
+        out[n++] = (bb_action){BB_A_DECLINE_SKILL, BB_SK_WRESTLE, 0, 0};
         return n;
     }
     // phase 2: choose one of the rolled dice.
@@ -265,6 +321,21 @@ static void block_apply(bb_match* m, bb_action a, bb_rng* rng) {
         f->phase = 2;
         return;
     }
+    if (f->phase == 4) { // attacker's Wrestle window
+        if (a.type == BB_A_USE_SKILL) {
+            both_down_wrestle(m, f);
+        } else if (wrestle_eligible(m, f->b)) {
+            f->phase = 5; // attacker declined: defender's window
+        } else {
+            both_down_plain(m, f);
+        }
+        return;
+    }
+    if (f->phase == 5) { // defender's Wrestle window
+        if (a.type == BB_A_USE_SKILL) both_down_wrestle(m, f);
+        else both_down_plain(m, f);
+        return;
+    }
     // phase 2: die chosen.
     resolve_face(m, f, blk_die(f, a.arg));
 }
@@ -291,33 +362,22 @@ static void resolve_face(bb_match* m, bb_frame* f, int face) {
                 if (f2) bb_top(m)->data |= PSH_FRENZY_DONE;
                 return;
             }
-            // Wrestle (either player): both players are PLACED Prone — no
-            // armour rolls, no knockdown turnover. (Rules allow declining;
-            // auto-applied here — see DECISIONS.md.) A carrier placed prone
-            // drops the ball; an ACTIVE carrier placed prone is a turnover.
-            if ((bb_has_wrestle(m, att) && !(m->players[att].flags & BB_PF_DISTRACTED)) ||
-                (bb_has_wrestle(m, def) && !(m->players[def].flags & BB_PF_DISTRACTED))) {
-                bb_pop(m);
-                int both[2] = {def, att};
-                for (int i = 0; i < 2; i++) {
-                    bb_player* p = &m->players[both[i]];
-                    p->stance = BB_STANCE_PRONE;
-                    if (p->flags & BB_PF_HAS_BALL) {
-                        int bx = p->x, by = p->y;
-                        if (BB_TEAM_OF(both[i]) == m->active_team) bb_turnover(m);
-                        bb_drop_ball(m);
-                        bb_push(m, BB_PROC_SCATTER, 0, 1, (uint8_t)bx, (uint8_t)by);
-                    }
-                }
+            // Wrestle (either player): the OWNER may choose that both players
+            // are Placed Prone instead (D29: a real USE_SKILL/DECLINE_SKILL
+            // window — declining is correct play for a Wrestle defender vs a
+            // Block-less attacker, forcing the knockdown turnover). FFB asks
+            // the attacker first, then the defender (StepWrestle).
+            if (wrestle_eligible(m, att)) {
+                f->phase = 4;
+                bb_need_decision(m, BB_TEAM_OF(att));
                 return;
             }
-            // Block skill: a player with Block (not Distracted) stays up.
-            bool att_down = !(bb_has_block(m, att) && !(m->players[att].flags & BB_PF_DISTRACTED));
-            bool def_down = !(bb_has_block(m, def) && !(m->players[def].flags & BB_PF_DISTRACTED));
-            bb_pop(m);
-            // Defender resolves first, attacker's knockdown (turnover) after.
-            if (att_down) bb_knockdown2(m, att, BB_KD_BLOCK, 0, def);
-            if (def_down) bb_knockdown2(m, def, BB_KD_BLOCK, 0, att);
+            if (wrestle_eligible(m, def)) {
+                f->phase = 5;
+                bb_need_decision(m, BB_TEAM_OF(def));
+                return;
+            }
+            both_down_plain(m, f);
             return;
         }
         case BB_BD_PUSH_1:

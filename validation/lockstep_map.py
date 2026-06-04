@@ -59,6 +59,7 @@ A_HANDOFF_TARGET, A_FOUL_TARGET, A_TTM_TARGET, A_SECURE_BALL = 14, 15, 16, 17
 A_END_ACTIVATION = 19
 A_CHOOSE_DIE, A_PUSH_SQUARE, A_FOLLOW_UP = 20, 21, 22
 A_USE_REROLL, A_DECLINE_REROLL = 23, 24
+A_USE_SKILL, A_DECLINE_SKILL = 25, 26
 A_APOTHECARY, A_CHOOSE_OPTION, A_SPECIAL_TARGET = 27, 28, 29
 
 ACT_MOVE, ACT_BLOCK, ACT_BLITZ, ACT_PASS, ACT_HANDOFF, ACT_FOUL = 0, 1, 2, 3, 4, 5
@@ -1682,13 +1683,49 @@ class Mapper:
             self.pending_block = None
         elif result == "BOTH DOWN":
             self.last_both_down = {"att": att, "def": pb["def"], "cmd": cmd}
-            wrestle = "Wrestle" in att_skills or "Wrestle" in def_skills
             att_block = "Block" in att_skills
-            if not wrestle and not att_block:
+            jugg = bool(pb.get("from_blitz")) and "Juggernaut" in att_skills
+            att_w = (not jugg) and "Wrestle" in att_skills
+            def_w = (not jugg) and "Wrestle" in def_skills
+            if att_w or def_w:
+                # Engine D29 Wrestle window: attacker asked first, then the
+                # defender (FFB StepWrestle order). FFB emits exactly one
+                # skillUse Wrestle report: (used:true, playerId) on use;
+                # (used:false, playerId:null) when every eligible owner
+                # declined; (used:false, noTackleZone, playerId:def) when the
+                # defender is Distracted — the engine opens no defender
+                # window then (Distracted may not use Active Skills).
+                j = self.lookahead(i, lambda x: x.get("report") == "skillUse"
+                                   and (x.get("skill") or "") == "Wrestle",
+                                   limit=8)
+                used_pid, def_no_window = None, False
+                if j >= 0:
+                    self.consumed.add(j)
+                    rj = self.recs[j]
+                    if rj.get("used"):
+                        used_pid = str(rj.get("playerId"))
+                    elif (rj.get("skillUse") or "") == "noTackleZone":
+                        def_no_window = True
+                else:
+                    # No report (unexpected): assume the first eligible owner
+                    # used it — the dominant line and the pre-D29 auto-policy.
+                    used_pid = att if att_w else pb["def"]
+                    self.skips["wrestle_report_missing"] += 1
+                wid = self.skill_id("Wrestle")
+                if att_w:
+                    self.act(cmd, A_USE_SKILL if used_pid == att
+                             else A_DECLINE_SKILL, wid, note="wrestle att")
+                if def_w and not def_no_window and used_pid != att:
+                    self.act(cmd, A_USE_SKILL if used_pid == pb["def"]
+                             else A_DECLINE_SKILL, wid, note="wrestle def")
+                if used_pid is not None:
+                    if self.carrier in (att, pb["def"]) and \
+                            self.pid_team(self.carrier) == self.active_team:
+                        self.turnover = True
+                elif not att_block:
+                    self.fail_likely_turnover(att)
+            elif not att_block:
                 self.fail_likely_turnover(att)
-            if wrestle and self.carrier in (att, pb["def"]):
-                if self.pid_team(self.carrier) == self.active_team:
-                    self.turnover = True
             self.pending_block = None
         else:
             self.pending_block = None
@@ -1787,8 +1824,8 @@ class Mapper:
         ("Sure Hands", "cancelStripBall"),  # engine Monstrous Mouth-style cancel
         ("Strip Ball", "stealBall"),        # engine auto on push
         ("Juggernaut", "cancelStandFirm"),
+        ("Juggernaut", "cancelWrestle"),    # auto Both-Down->push kills the window
         ("Juggernaut", "pushBackOpponent"),
-        ("Wrestle", "bringDownOppponent"),  # engine auto-applies on Both Down
         ("Taunt", "forceFollowUp"),         # follow-up mapped from the move
     }
 
@@ -1801,18 +1838,11 @@ class Mapper:
             self.pending_block = None
             self.stood_block = None
             return
-        if sk == "Wrestle" and not used:
-            # The coach declined Wrestle on a Both Down; the engine
-            # auto-applies it (both placed prone, no armour). Genuine engine
-            # divergence (no USE_SKILL window yet): the participants' states
-            # and the decline-path armour dice cannot be mirrored.
-            bd = self.last_both_down or {}
-            for pid in (bd.get("att"), bd.get("def")):
-                if pid:
-                    self.ignore_state.add(pid)
-                    self.suppress_injury.add(pid)
-            self.skip(cmd, "wrestle_decline_divergence",
-                      f"{bd.get('att')} vs {bd.get('def')}")
+        if sk == "Wrestle":
+            # Wrestle skillUse reports are consumed by rep_blockChoice's
+            # Both-Down window lookahead (D29); a leftover here means the
+            # block context was lost — classify, never silent.
+            self.skip(cmd, "wrestle_skilluse_unattached", r.get("playerId"))
             return
         if used and (sk, use) in self.SKILL_USE_AUTO:
             self.skips["skill_use_auto_matched"] += 1

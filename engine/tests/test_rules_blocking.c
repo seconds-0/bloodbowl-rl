@@ -382,27 +382,136 @@ BB_TEST(blocking_both_down_both_block_nothing_happens) {
     BB_CHECK(!bb_rng_error(&rng));
 }
 
-// ENGINE-DIVERGENCE: SK#WRESTLE — when Both Down is applied, a player with
-// Wrestle may choose that BOTH players are Placed Prone instead (RR#PLACED
-// PRONE: no Armour Roll; a non-carrier active player Placed Prone is NOT a
-// Turnover). The engine has no Wrestle window (documented TODO(phase3) at
-// proc_block.c:123) and Knocks both players Down with armour + turnover.
-BB_TEST(blocking_both_down_wrestle_places_both_prone) {
+// SK#WRESTLE — when Both Down is applied, a player with Wrestle "may choose
+// to use this Skill" (D29: a real USE_SKILL/DECLINE_SKILL window for the
+// owner's coach). Using it: BOTH players are Placed Prone "regardless of any
+// other Skills" (RR#PLACED PRONE: no Armour Roll; a non-carrier active player
+// Placed Prone is NOT a Turnover).
+BB_TEST(blocking_both_down_wrestle_defender_window_use_places_both_prone) {
     bb_match m;
     fx_match_midturn(&m, BB_HOME, 0);
     int h1 = fx_lineman(&m, BB_HOME, 0, 10, 7);
     int a1 = fx_lineman(&m, BB_AWAY, 0, 11, 7);
     fx_give_skill(&m, a1, BB_SK_WRESTLE);
 
-    uint8_t script[] = {2}; // rulebook: Wrestle -> no armour dice at all
+    uint8_t script[] = {2}; // Both Down; Wrestle used -> no armour dice at all
     bb_rng rng;
     bb_rng_script(&rng, script, 1);
     start_block(&m, &rng, h1, 11, 7);
     apply_ok(&m, &rng, mk(BB_A_CHOOSE_DIE, 0, 0, 0));
+    // The DEFENDER owns the skill: the decision is the away coach's.
+    BB_CHECK_EQ(m.decision_team, BB_AWAY);
+    BB_CHECK(fx_find(&m, mk(BB_A_USE_SKILL, BB_SK_WRESTLE, 0, 0)) >= 0);
+    BB_CHECK(fx_find(&m, mk(BB_A_DECLINE_SKILL, BB_SK_WRESTLE, 0, 0)) >= 0);
+    bb_status st = fx_apply(&m, mk(BB_A_USE_SKILL, BB_SK_WRESTLE, 0, 0), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
     BB_CHECK_EQ(m.players[h1].stance, BB_STANCE_PRONE);
     BB_CHECK_EQ(m.players[a1].stance, BB_STANCE_PRONE);
     BB_CHECK(!bb_rng_error(&rng));        // no Armour Rolls were made
     BB_CHECK_EQ(m.active_team, BB_HOME);  // Placed Prone w/o ball: no turnover
+    BB_CHECK_EQ(m.turnover, 0);
+}
+
+// SK#WRESTLE is OPTIONAL ("may choose"): a Wrestle DEFENDER facing a
+// Block-less attacker should DECLINE — plain Both Down then Knocks the
+// attacker Down (RR#THE TURNOVER: active player Knocked Down = Turnover) at
+// the cost of mutual Armour Rolls. This is D29's motivating counterexample.
+BB_TEST(blocking_both_down_wrestle_defender_declines_forces_turnover) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int h1 = fx_lineman(&m, BB_HOME, 0, 10, 7);
+    int a1 = fx_lineman(&m, BB_AWAY, 0, 11, 7);
+    fx_give_skill(&m, a1, BB_SK_WRESTLE);
+
+    // Block die (Both Down); decline -> defender armour (2,2) + attacker
+    // armour (2,2).
+    uint8_t script[] = {2, 2, 2, 2, 2};
+    bb_rng rng;
+    bb_rng_script(&rng, script, 5);
+    start_block(&m, &rng, h1, 11, 7);
+    apply_ok(&m, &rng, mk(BB_A_CHOOSE_DIE, 0, 0, 0));
+    BB_CHECK_EQ(m.decision_team, BB_AWAY);
+    bb_status st = fx_apply(&m, mk(BB_A_DECLINE_SKILL, BB_SK_WRESTLE, 0, 0), &rng);
+    BB_CHECK_EQ(m.players[h1].stance, BB_STANCE_PRONE);
+    BB_CHECK_EQ(m.players[a1].stance, BB_STANCE_PRONE);
+    BB_CHECK(!bb_rng_error(&rng)); // both armour rolls were made
+    // Attacker (active team) Knocked Down: the team turn ends in a Turnover.
+    BB_CHECK_EQ(m.active_team, BB_AWAY); // turnover advanced to the away turn
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+}
+
+// SK#WRESTLE: the ATTACKER may own the window too; FFB (StepWrestle) asks the
+// attacker first, then the defender. An attacker's decline hands the choice
+// to a Wrestle defender; both declining resolves the plain Both Down (here
+// both have Block, so nobody goes down and no armour is rolled).
+BB_TEST(blocking_both_down_wrestle_attacker_window_then_defender) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int h1 = fx_lineman(&m, BB_HOME, 0, 10, 7);
+    int a1 = fx_lineman(&m, BB_AWAY, 0, 11, 7);
+    fx_give_skill(&m, h1, BB_SK_WRESTLE);
+    fx_give_skill(&m, h1, BB_SK_BLOCK);
+    fx_give_skill(&m, a1, BB_SK_WRESTLE);
+    fx_give_skill(&m, a1, BB_SK_BLOCK);
+
+    uint8_t script[] = {2}; // Both Down; both decline; Block keeps both up
+    bb_rng rng;
+    bb_rng_script(&rng, script, 1);
+    start_block(&m, &rng, h1, 11, 7);
+    apply_ok(&m, &rng, mk(BB_A_CHOOSE_DIE, 0, 0, 0));
+    BB_CHECK_EQ(m.decision_team, BB_HOME); // attacker's window first
+    apply_ok(&m, &rng, mk(BB_A_DECLINE_SKILL, BB_SK_WRESTLE, 0, 0));
+    BB_CHECK_EQ(m.decision_team, BB_AWAY); // then the defender's
+    apply_ok(&m, &rng, mk(BB_A_DECLINE_SKILL, BB_SK_WRESTLE, 0, 0));
+    BB_CHECK_EQ(m.players[h1].stance, BB_STANCE_STANDING);
+    BB_CHECK_EQ(m.players[a1].stance, BB_STANCE_STANDING);
+    BB_CHECK(!bb_rng_error(&rng));
+    BB_CHECK_EQ(m.turnover, 0);
+}
+
+// RR#DISTRACTED: "they cannot use Active Skills or Traits" — a Distracted
+// Wrestle defender gets NO window; the plain Both Down resolves directly.
+BB_TEST(blocking_both_down_wrestle_distracted_defender_no_window) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int h1 = fx_lineman(&m, BB_HOME, 0, 10, 7);
+    int a1 = fx_lineman(&m, BB_AWAY, 0, 11, 7);
+    fx_give_skill(&m, a1, BB_SK_WRESTLE);
+    m.players[a1].flags |= BB_PF_DISTRACTED;
+
+    uint8_t script[] = {2, 2, 2, 2, 2}; // Both Down + def armour + att armour
+    bb_rng rng;
+    bb_rng_script(&rng, script, 5);
+    start_block(&m, &rng, h1, 11, 7);
+    fx_apply(&m, mk(BB_A_CHOOSE_DIE, 0, 0, 0), &rng);
+    // No Wrestle window: both Knocked Down immediately, armour rolled.
+    BB_CHECK_EQ(m.players[h1].stance, BB_STANCE_PRONE);
+    BB_CHECK_EQ(m.players[a1].stance, BB_STANCE_PRONE);
+    BB_CHECK_EQ(m.active_team, BB_AWAY); // attacker down: turnover
+}
+
+// SK#WRESTLE + RR#THE TURNOVER: an ACTIVE ball carrier Placed Prone by
+// Wrestle drops the ball (bounce) and causes a Turnover.
+BB_TEST(blocking_both_down_wrestle_active_carrier_turnover) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int h1 = fx_lineman(&m, BB_HOME, 0, 10, 7);
+    int a1 = fx_lineman(&m, BB_AWAY, 0, 11, 7);
+    fx_give_skill(&m, a1, BB_SK_WRESTLE);
+    fx_ball_held(&m, h1);
+
+    uint8_t script[] = {2, /*bounce d8*/ 1};
+    bb_rng rng;
+    bb_rng_script(&rng, script, 2);
+    start_block(&m, &rng, h1, 11, 7);
+    apply_ok(&m, &rng, mk(BB_A_CHOOSE_DIE, 0, 0, 0));
+    BB_CHECK_EQ(m.decision_team, BB_AWAY);
+    fx_apply(&m, mk(BB_A_USE_SKILL, BB_SK_WRESTLE, 0, 0), &rng);
+    BB_CHECK_EQ(m.players[h1].stance, BB_STANCE_PRONE);
+    BB_CHECK_EQ(m.players[a1].stance, BB_STANCE_PRONE);
+    BB_CHECK_EQ(m.ball.state, BB_BALL_ON_GROUND); // dropped + bounced
+    BB_CHECK_EQ(m.active_team, BB_AWAY);          // carrier prone: turnover
+    BB_CHECK(!bb_rng_error(&rng));
 }
 
 // ================================ STUMBLE ====================================
