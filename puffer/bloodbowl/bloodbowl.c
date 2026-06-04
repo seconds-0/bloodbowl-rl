@@ -256,14 +256,61 @@ static int bbe_selftest(uint64_t seed, int episodes) {
     return st_failures ? 1 : 0;
 }
 
+// --- Demo-reset start telemetry (--demo) ---------------------------------------
+// Record the start state of each episode (the env resets itself inside
+// bbe_finish_episode, so right after c_reset / a terminal step env.match IS
+// the next episode's start). Prints a few sanity lines plus the half/turn
+// histogram of episode starts — should mirror the staged bank's histogram
+// when --demo forces demo_reset_pct = 1.
+#define DEMO_PRINT_STARTS 8
+static long demo_start_hist[3][9]; // [half-1][turn], halves 1..2 (+overtime)
+static long demo_starts;
+
+static void demo_note_start(const Bloodbowl* env) {
+    const bb_match* m = &env->match;
+    int half = m->half >= 1 && m->half <= 3 ? m->half : 3;
+    int turn = m->turn[m->active_team & 1];
+    if (turn > 8) turn = 8;
+    demo_start_hist[half - 1][turn]++;
+    if (demo_starts < DEMO_PRINT_STARTS) {
+        printf("  episode start: half=%d turn=%d score=%d-%d %s\n", m->half,
+               m->turn[m->active_team & 1], m->score[0], m->score[1],
+               env->demo_started ? "(banked state)" : "(procgen kickoff)");
+    }
+    demo_starts++;
+}
+
+static void demo_print_hist(void) {
+    printf("  -- episode-start half/turn histogram (%ld starts) --\n",
+           demo_starts);
+    printf("  turn    ");
+    for (int t = 1; t <= 8; t++) printf("%6d", t);
+    printf("\n");
+    for (int h = 0; h < 3; h++) {
+        long row = 0;
+        for (int t = 1; t <= 8; t++) row += demo_start_hist[h][t];
+        if (row == 0 && h >= 2) continue;
+        printf("  half %d  ", h + 1);
+        for (int t = 1; t <= 8; t++) printf("%6ld", demo_start_hist[h][t]);
+        printf("\n");
+    }
+}
+
 int main(int argc, char** argv) {
     int episodes = 64;
     int unmasked = 0;
     int selftest = 0;
+    int demo = 0;
     uint64_t seed = 42;
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--unmasked") == 0) unmasked = 1;
         else if (strcmp(argv[i], "--selftest") == 0) selftest = 1;
+        else if (strcmp(argv[i], "--demo") == 0) demo = 1;
+        else if (strcmp(argv[i], "--bank") == 0 && i + 1 < argc) {
+            // Override the staged-bank path (default BBE_STATE_BANK_PATH);
+            // lets repo-root runs point straight at validation/states/bank.bbs.
+            bbe_state_bank_path = argv[++i];
+        }
         else if (strcmp(argv[i], "--seed") == 0 && i + 1 < argc) seed = strtoull(argv[++i], 0, 10);
         else episodes = atoi(argv[i]);
     }
@@ -284,7 +331,11 @@ int main(int argc, char** argv) {
         env.reward_ptr[a] = rewards + a;
         env.terminal_ptr[a] = terminals + a;
     }
+    // --demo: every episode starts from a banked state (demo_reset_pct
+    // forced to 1.0); episodes must still complete and the Log stay sane.
+    if (demo) env.demo_reset_pct = 1.0f;
     c_reset(&env);
+    if (demo) demo_note_start(&env);
 
     bb_rng pol;
     bb_rng_seed(&pol, seed ^ 0xBADC0DE, 3);
@@ -309,7 +360,10 @@ int main(int argc, char** argv) {
         }
         c_step(&env);
         steps++;
-        if (terminals[0] != 0.0f) done++;
+        if (terminals[0] != 0.0f) {
+            done++;
+            if (demo && done < episodes) demo_note_start(&env);
+        }
     }
     clock_gettime(CLOCK_MONOTONIC, &t1);
     double secs = (double)(t1.tv_sec - t0.tv_sec) + (double)(t1.tv_nsec - t0.tv_nsec) / 1e9;
@@ -334,6 +388,13 @@ int main(int argc, char** argv) {
     printf("  pass_attempts    %.2f\n", lg->pass_attempts / n);
     printf("  knockdowns       %.2f inflicted / %.2f own\n",
            lg->knockdowns_inflicted / n, lg->knockdowns_own / n);
+    if (demo) {
+        printf("  -- demo-state resets --\n");
+        printf("  demo_episodes    %.2f (of %g episodes)\n",
+               lg->demo_episodes / n, n);
+        printf("  demo_fallbacks   %.2f (must be 0)\n", lg->demo_fallbacks / n);
+        demo_print_hist();
+    }
     c_close(&env);
     return 0;
 }
