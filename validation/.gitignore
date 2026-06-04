@@ -3,3 +3,5 @@ normalized/
 lockstep/
 # BC pair shards (regenerate with extract_pairs.py)
 pairs/
+# Demo-state shards + bank (regenerate with build_state_bank.py)
+states/
