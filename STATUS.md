@@ -1,4 +1,9 @@
-# Status — 2026-06-03 evening (Phase 6: experiment grid running)
+# Status — 2026-06-04 morning (experiment grid: COMPLETE, verdict in)
+
+**THE NIGHT'S RESULT:** Four 10B arms + tournament (20K games). The 0-0 avoidance equilibrium is UNIVERSAL — every cross-population match ≈100% draws. Decisive finding: **BC-init beats BC-final** — selfplay PPO actively eroded the human prior (D27). Your bootstrap potentials (profile D) were the only thing that ever made selfplay score (tds 0→0.06), but cold-anneal decayed it (D26). NEXT (in order): BC-regularized PPO (KL-anchor to human policy during RL — the AlphaStar fix), gradual anneal, asymmetric offense-vs-frozen-defense curriculum. All checkpoints + 24K-pair human corpus banked; box idle at $0.64/hr; total spend ~$18.
+
+--- (previous status below) ---
+
 
 **TL;DR:** Legacy 10B baseline trained (buggy engine, archived for reference). A 112-agent adversarial review found **31 confirmed issues (4 HIGH engine bugs)** — all fixed, tested, merged (277 tests, ASan clean). The box is now running **profile A (pure outcome)** then **profile B (event-shaped)** on the fixed engine, 10B steps each, unattended. Spectator shows real FUMBBL art with checkpoint progress.
 
