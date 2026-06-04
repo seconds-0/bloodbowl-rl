@@ -17,14 +17,13 @@
 // op are exactly the values the engine consumes during that op's
 // apply+advance transition; init dice cover the very first bb_advance
 // (pregame weather 2d6 + coin d2).
-#include "bb/bb_match.h"
-#include "bb/bb_proc.h"
-#include "bb/gen_teams.h"
-#include "bb/gen_skills.h"
+// Built as a single translation unit through the PufferLib env amalgamation
+// (bloodbowl.h #includes every engine .c): the runner links no objects and
+// gains the EXACT observation/mask encoders training uses (bbe_encode_obs,
+// bbe_fill_mask, bbe_action_arg/bbe_action_sq) for --dump-pairs.
+#include "bloodbowl.h"
 #include <ctype.h>
 #include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 
 #define MAX_LINE 65536
 #define MAX_DICE 64
@@ -32,7 +31,7 @@
 
 // --- tiny JSON field scanners (single-line objects from our own mapper) ------
 
-static const char* find_key(const char* s, const char* key) {
+static const char* ls_find_key(const char* s, const char* key) {
     char pat[64];
     snprintf(pat, sizeof pat, "\"%s\":", key);
     size_t plen = strlen(pat);
@@ -59,14 +58,14 @@ static const char* find_key(const char* s, const char* key) {
 }
 
 static long jint(const char* s, const char* key, long dflt) {
-    const char* p = find_key(s, key);
+    const char* p = ls_find_key(s, key);
     if (!p) return dflt;
     while (*p == ' ' || *p == '"') p++;
     return strtol(p, 0, 10);
 }
 
 static int jstr(const char* s, const char* key, char* out, int cap) {
-    const char* p = find_key(s, key);
+    const char* p = ls_find_key(s, key);
     if (!p) return 0;
     while (*p == ' ') p++;
     if (*p != '"') return 0;
@@ -82,7 +81,7 @@ static int jstr(const char* s, const char* key, char* out, int cap) {
 
 // Parse an int array "key":[a,b,...]; returns count.
 static int jarr(const char* s, const char* key, int* out, int cap) {
-    const char* p = find_key(s, key);
+    const char* p = ls_find_key(s, key);
     if (!p) return 0;
     while (*p == ' ') p++;
     if (*p != '[') return 0;
@@ -98,7 +97,7 @@ static int jarr(const char* s, const char* key, int* out, int cap) {
 
 // Find the start of a top-level object value for `key` ("home"/"away").
 static const char* jobj(const char* s, const char* key) {
-    const char* p = find_key(s, key);
+    const char* p = ls_find_key(s, key);
     if (!p) return 0;
     while (*p == ' ') p++;
     return *p == '{' ? p : 0;
@@ -212,6 +211,132 @@ static void report_divergence(runner* R, long cmd, const char* cls,
     printf("]}\n");
 }
 
+// --- BC pair dump (--dump-pairs <out.bbp>) -----------------------------------
+// .bbp format v1: binary, little-endian, written by this runner; consumed by
+// training/bc_pretrain.py (extraction orchestrated by
+// validation/extract_pairs.py). Also documented in validation/README.md.
+//
+//   header (16 bytes):
+//     magic     char[4]  "BBP1"
+//     version   u32      1
+//     obs_size  u32      BBE_OBS_SIZE  (832)
+//     mask_size u32      BBE_MASK_SIZE (454)
+//   record (1302 bytes), one per successfully applied act/place op (a place
+//   op is a BB_A_SETUP_PLACE action), for the DECIDING coach only:
+//     replay_id u32      numeric FUMBBL replay id
+//     cmd       u32      FUMBBL commandNr of the op
+//     agent     u8       deciding team (0 home / 1 away); obs, mask and the
+//                        action targets are in this agent's egocentric frame
+//     pad       u8[3]    zero
+//     obs       u8[832]  bbe_encode_obs at the decision, BEFORE the action
+//     mask      u8[454]  bbe_fill_mask legality bits, heads packed 30|33|391
+//     type      u8       action-type head target (bb_action_type)
+//     arg       u8       arg head target via bbe_action_arg (player slots
+//                        ego-remapped like obs rows; 32 = sentinel)
+//     sq        u16      square head target via bbe_action_sq (y*26 +
+//                        mirrored-x for the away agent; 390 = none)
+//
+// The targets are the binding's OWN head projections of the applied
+// bb_action — exactly what the policy heads must emit — never raw engine
+// fields. A record is staged before bb_apply (the obs is the pre-action
+// decision state) and committed only after the transition succeeds; nothing
+// is written for ops at or beyond the first divergence.
+//
+// Encoder-cache coherence: the obs caches inside Bloodbowl are pure
+// functions of the copied state — skill_rows are keyed by the player's
+// skillset bytes (memcmp dirty-check in bbe_encode_obs), tz_scratch is
+// recomputed by every bbe_emit_all, and legal_arg/legal_sq are filled by
+// bbe_fill_mask from the legal list bbe_refresh_legal just enumerated — so
+// mirroring the match with a plain struct copy per record is correct even
+// across replays. ~1 match copy + 1 legal enumeration + 2 encodes per pair;
+// measured ~2 ms total overhead across the 21-replay corpus.
+
+typedef struct {
+    FILE* f;
+    uint32_t replay_id;
+    long pairs;
+    int staged;
+    // Staged record fields (committed only after the transition succeeds).
+    uint32_t cmd;
+    uint8_t agent;
+    uint8_t obs[BBE_OBS_SIZE];
+    uint8_t mask[BBE_MASK_SIZE];
+    uint8_t a_type, a_arg;
+    uint16_t a_sq;
+    // Encoder shell: match mirrors the runner's bb_match per staged record.
+    Bloodbowl env;
+    uint8_t obs_buf[BBE_AGENTS * BBE_OBS_SIZE];
+    unsigned char mask_buf[BBE_AGENTS * BBE_MASK_SIZE];
+    float act_buf[BBE_AGENTS * 3];
+    float rew_buf[BBE_AGENTS], term_buf[BBE_AGENTS];
+} pair_dumper;
+
+static pair_dumper PD; // static: Bloodbowl carries ~30KB of legal buffers
+
+static void pd_u32(uint32_t v) {
+    uint8_t b[4] = {(uint8_t)v, (uint8_t)(v >> 8), (uint8_t)(v >> 16),
+                    (uint8_t)(v >> 24)};
+    fwrite(b, 1, 4, PD.f);
+}
+
+static void pd_open(const char* path) {
+    PD.f = fopen(path, "wb");
+    if (!PD.f) {
+        fprintf(stderr, "cannot open %s for writing\n", path);
+        exit(2);
+    }
+    fwrite("BBP1", 1, 4, PD.f);
+    pd_u32(1);
+    pd_u32(BBE_OBS_SIZE);
+    pd_u32(BBE_MASK_SIZE);
+    PD.env.num_agents = BBE_AGENTS;
+    for (int a = 0; a < BBE_AGENTS; a++) {
+        PD.env.obs_ptr[a] = PD.obs_buf + a * BBE_OBS_SIZE;
+        PD.env.action_mask_ptr[a] = PD.mask_buf + a * BBE_MASK_SIZE;
+        PD.env.action_ptr[a] = PD.act_buf + a * 3;
+        PD.env.reward_ptr[a] = PD.rew_buf + a;
+        PD.env.terminal_ptr[a] = PD.term_buf + a;
+    }
+}
+
+// Stage one (obs, mask, action) record for the deciding side. Called AFTER
+// the runner's legality check passed, BEFORE bb_apply.
+static void pd_stage(runner* R, bb_action a, long cmd) {
+    if (!PD.f) return;
+    PD.env.match = R->m; // mirror the lockstep match into the env shell
+    bbe_refresh_legal(&PD.env);
+    bbe_emit_all(&PD.env); // the exact per-step encode training runs
+    int agent = R->m.decision_team;
+    PD.cmd = (uint32_t)cmd;
+    PD.agent = (uint8_t)agent;
+    memcpy(PD.obs, PD.env.obs_ptr[agent], BBE_OBS_SIZE);
+    memcpy(PD.mask, PD.env.action_mask_ptr[agent], BBE_MASK_SIZE);
+    PD.a_type = a.type;
+    PD.a_arg = (uint8_t)bbe_action_arg(agent, a);
+    PD.a_sq = (uint16_t)bbe_action_sq(agent, a);
+    PD.staged = 1;
+}
+
+static void pd_commit(void) {
+    if (!PD.f || !PD.staged) return;
+    PD.staged = 0;
+    pd_u32(PD.replay_id);
+    pd_u32(PD.cmd);
+    uint8_t apad[4] = {PD.agent, 0, 0, 0};
+    fwrite(apad, 1, 4, PD.f);
+    fwrite(PD.obs, 1, BBE_OBS_SIZE, PD.f);
+    fwrite(PD.mask, 1, BBE_MASK_SIZE, PD.f);
+    fwrite(&PD.a_type, 1, 1, PD.f);
+    fwrite(&PD.a_arg, 1, 1, PD.f);
+    uint8_t sq[2] = {(uint8_t)PD.a_sq, (uint8_t)(PD.a_sq >> 8)};
+    fwrite(sq, 1, 2, PD.f);
+    PD.pairs++;
+}
+
+static void pd_abort(void) {
+    PD.staged = 0;
+}
+
 // --- init -----------------------------------------------------------------------
 
 static void init_side(runner* R, const char* obj, int team) {
@@ -227,7 +352,7 @@ static void init_side(runner* R, const char* obj, int team) {
         memset(&R->m.players[team * BB_TEAM_SLOTS + s], 0, sizeof(bb_player));
         R->m.players[team * BB_TEAM_SLOTS + s].location = BB_LOC_ABSENT;
     }
-    const char* pa = find_key(obj, "players");
+    const char* pa = ls_find_key(obj, "players");
     if (!pa) return;
     while (*pa == ' ') pa++;
     if (*pa != '[') return;
@@ -257,7 +382,7 @@ static void init_side(runner* R, const char* obj, int team) {
             long pos = jint(pobj, "pos", -1);
             pl->position_id = (uint8_t)(pos >= 0 && pos < BB_MAX_POSITIONS ? pos : 0);
             // skills: array of canonical display names
-            const char* sa = find_key(pobj, "skills");
+            const char* sa = ls_find_key(pobj, "skills");
             if (sa) {
                 while (*sa == ' ') sa++;
                 if (*sa == '[') {
@@ -302,6 +427,7 @@ static int do_init(runner* R, const char* line) {
     char rid[64];
     if (jstr(line, "replay", rid, sizeof rid)) {
         snprintf(R->replay, sizeof R->replay, "%s", rid);
+        PD.replay_id = (uint32_t)strtoul(rid, 0, 10);
     }
     const char* home = jobj(line, "home");
     const char* away = jobj(line, "away");
@@ -479,7 +605,7 @@ static int engine_state_code(const bb_player* p) {
 static int do_expect(runner* R, const char* line, long cmd) {
     char ours[256], theirs[256];
     // players: [[t,s,x,y,st],...] — walk the array entry by entry.
-    const char* pa = find_key(line, "players");
+    const char* pa = ls_find_key(line, "players");
     if (pa) {
         while (*pa == ' ') pa++;
         if (*pa == '[') {
@@ -608,10 +734,14 @@ static int do_act(runner* R, const char* line, long cmd) {
     for (int i = 0; i < nd; i++) {
         script[i] = (uint8_t)(dice[i] < 0 ? 0 : (dice[i] > 255 ? 255 : dice[i]));
     }
+    pd_stage(R, a, cmd); // BC pair: pre-action obs staged, committed on success
     bb_rng rng;
     arm_rng(R, &rng, script, nd, cmd, "act");
     bb_status st = bb_apply(&R->m, a, &rng);
-    return check_transition(R, cmd, &rng, st);
+    int rc = check_transition(R, cmd, &rng, st);
+    if (rc == 0) pd_commit();
+    else pd_abort();
+    return rc;
 }
 
 static int do_place(runner* R, const char* line, long cmd) {
@@ -642,11 +772,15 @@ static int do_place(runner* R, const char* line, long cmd) {
         report_divergence(R, cmd, "illegal", ours, theirs);
         return -1;
     }
+    pd_stage(R, a, cmd); // BC pair: setup placements are decisions too
     bb_rng rng;
     uint8_t script[MAX_DICE];
     arm_rng(R, &rng, script, 0, cmd, "place");
     bb_status st = bb_apply(&R->m, a, &rng);
-    return check_transition(R, cmd, &rng, st);
+    int rc = check_transition(R, cmd, &rng, st);
+    if (rc == 0) pd_commit();
+    else pd_abort();
+    return rc;
 }
 
 // --- trace (debug) -------------------------------------------------------------------
@@ -665,21 +799,28 @@ int main(int argc, char** argv) {
     runner R;
     memset(&R, 0, sizeof R);
     const char* path = 0;
+    const char* dump_path = 0;
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-v") == 0) R.verbose = 1;
         else if (strcmp(argv[i], "--pad") == 0 && i + 1 < argc) {
             R.pad = (int)strtol(argv[++i], 0, 10);
+        } else if (strcmp(argv[i], "--dump-pairs") == 0 && i + 1 < argc) {
+            dump_path = argv[++i];
         } else path = argv[i];
     }
     if (!path) {
         fprintf(stderr,
-                "usage: bb_lockstep [-v] [--pad N] <script.jsonl>\n"
+                "usage: bb_lockstep [-v] [--pad N] [--dump-pairs <out.bbp>] <script.jsonl>\n"
                 "  -v       stderr line per consumed die with the live proc stack\n"
                 "  --pad N  append N filler dice (value 1) per op so the roll that\n"
                 "           would underrun shows up as an EXTRA die in -v output;\n"
-                "           reported divergences are unchanged\n");
+                "           reported divergences are unchanged\n"
+                "  --dump-pairs <out.bbp>  write one BC (obs, mask, action) record\n"
+                "           per successfully applied act/place op (format: see the\n"
+                "           .bbp comment block in this file / validation/README.md)\n");
         return 2;
     }
+    if (dump_path) pd_open(dump_path);
     FILE* f = fopen(path, "r");
     if (!f) {
         fprintf(stderr, "cannot open %s\n", path);
@@ -747,12 +888,17 @@ int main(int argc, char** argv) {
     }
     fclose(f);
     double pct = R.ops_total ? 100.0 * R.ops_applied / R.ops_total : 0.0;
+    char pairs[32] = "";
+    if (PD.f) {
+        snprintf(pairs, sizeof pairs, ",\"pairs\":%ld", PD.pairs);
+        fclose(PD.f);
+    }
     printf("{\"summary\":true,\"replay\":\"%s\",\"ops_total\":%d,"
            "\"ops_applied\":%d,\"pct_consumed\":%.1f,\"skips\":%d,"
            "\"diverged\":%s,\"engine_score\":[%d,%d],\"engine_status\":\"%s\","
-           "\"unmapped_skills\":%d}\n",
+           "\"unmapped_skills\":%d%s}\n",
            R.replay, R.ops_total, R.ops_applied, pct, R.skips,
            R.diverged ? "true" : "false", R.m.score[0], R.m.score[1],
-           status_name(R.m.status), R.unmapped_skills);
+           status_name(R.m.status), R.unmapped_skills, pairs);
     return 0;
 }

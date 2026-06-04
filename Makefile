@@ -59,10 +59,13 @@ fuzz:
 	@echo "run: ./build/fuzz/bb_fuzz -max_total_time=300 engine/tests/corpus/"
 
 # FUMBBL lockstep differential runner (validation layer 7).
-# Links objects directly (constructor-registered skill hooks would be dropped
-# from a static archive).
-lockstep: $(OBJ)
-	$(CC) $(CFLAGS) tools/bb_lockstep.c $(OBJ) -o $(BUILD)/bb_lockstep
+# Single-TU build through the PufferLib env amalgamation (bloodbowl.h includes
+# every engine .c) so the runner carries the EXACT training encoders for
+# --dump-pairs. -Wno-unused-function: the env header defines the full binding
+# surface (c_step, c_render, ...); the runner only uses the encoders.
+lockstep:
+	$(CC) $(CFLAGS) -Ipuffer/bloodbowl -Wno-unused-function \
+		tools/bb_lockstep.c -o $(BUILD)/bb_lockstep
 	@echo "run: ./$(BUILD)/bb_lockstep validation/lockstep/<id>.jsonl"
 
 # Regenerate golden traces (explicit; goldens change when rules change).
