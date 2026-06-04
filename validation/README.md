@@ -228,3 +228,57 @@ catch; still `dice_underrun`), 1907928 (Charge free moves → `position` at
 the first boundary), 1908170 (Kick-off Return move → `position`).
 After: illegal (9), state (6), position (3), dice_overrun (2),
 dice_underrun (1).
+
+## BC pair extraction — `bb_lockstep --dump-pairs` + `extract_pairs.py`
+
+`./build/bb_lockstep --dump-pairs <out.bbp> <script.jsonl>` additionally
+writes one behavioral-cloning record per **successfully applied act/place
+op** (a place op is a `BB_A_SETUP_PLACE` action) for the **deciding** coach,
+using the PufferLib env's own encoders — the runner is built as a single TU
+through `puffer/bloodbowl/bloodbowl.h`, so `bbe_encode_obs`/`bbe_fill_mask`
+and the head projections `bbe_action_arg`/`bbe_action_sq` are byte-identical
+to training. Divergence reporting is unchanged; records stop at the first
+divergence (nothing past it is applied).
+
+### `.bbp` format v1 (binary, little-endian)
+
+```
+header (16 bytes):
+  magic     char[4]  "BBP1"
+  version   u32      1
+  obs_size  u32      832  (BBE_OBS_SIZE)
+  mask_size u32      454  (BBE_MASK_SIZE = 30 + 33 + 391 head bits)
+record (1302 bytes each):
+  replay_id u32      numeric FUMBBL replay id
+  cmd       u32      FUMBBL commandNr of the op
+  agent     u8       deciding team (0 home / 1 away); obs, mask and action
+                     targets are all in this agent's egocentric frame
+  pad       u8[3]    zero
+  obs       u8[832]  bbe_encode_obs at the decision, BEFORE the action
+  mask      u8[454]  bbe_fill_mask legality bits, heads packed 30|33|391
+  type      u8       action-type head target (bb_action_type)
+  arg       u8       arg head target via bbe_action_arg (player slots
+                     ego-remapped exactly like obs rows; 32 = sentinel)
+  sq        u16      square head target via bbe_action_sq (y*26 + x with x
+                     mirrored for the away agent; 390 = "no square")
+```
+
+The action targets are the binding's head projections of the applied
+`bb_action` — what the policy heads must emit — never raw engine fields.
+Invariant (asserted by `extract_pairs.py`): every record's three targets are
+set in its own mask slices.
+
+### Orchestration
+
+```sh
+make lockstep                                # build the runner (amalgamated)
+python3 validation/extract_pairs.py          # map + run + dump whole corpus
+python3 validation/extract_pairs.py 1907296  # one replay
+```
+
+Output: `validation/pairs/<replayId>.bbp` (gitignored; regenerate at will)
+plus corpus totals (replays, pairs, pairs/replay, bytes). Consumed by
+`training/bc_pretrain.py`. Current corpus (21 replays, 2026-06-03): 1766
+pairs — small (the lockstep consumes ~8% of each replay before first
+divergence) but enough to overfit for the BC smoke test; the count grows
+automatically as lockstep coverage improves.
