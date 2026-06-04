@@ -960,10 +960,52 @@ class Mapper:
         pass  # dice arrive via extraReRoll/cheeringFans
 
     def rep_kickoffPitchInvasion(self, i, r, cmd):
-        rh, ra = r.get("rollHome"), r.get("rollAway")
-        if rh and ra:
-            self.attach(cmd, [rh, ra], "pitch invasion")
-        self.skip(cmd, "pitch_invasion_selection", r.get("playerIds"))
+        """Pitch Invasion: D6 home + D6 away (FFB adds Dedicated Fans the
+        engine lacks — outcome-adjusted), then per losing team a D3 count +
+        one pick roll per victim over its slot-sorted standing players
+        (mirrors stun_random_players exactly, like Dodgy Snack)."""
+        rh, ra = int(r.get("rollHome") or 0), int(r.get("rollAway") or 0)
+        if not rh or not ra:
+            self.skip(cmd, "pitch_invasion_partial", "missing 2d6")
+            return
+        victims = [str(p) for p in (r.get("playerIds") or [])]
+        vict_by_team = {0: [p for p in victims if self.pid_team(p) == 0],
+                        1: [p for p in victims if self.pid_team(p) == 1]}
+        losers = {t for t in (0, 1) if vict_by_team[t]}
+        # Engine loser rule from the raw dice: home iff rh<=ra, away iff
+        # ra<=rh. Adjust outcome-preservingly when fan modifiers flipped it.
+        want = losers or ({0, 1} if rh == ra else ({0} if rh < ra else {1}))
+        eng = {t for t, ok in ((0, rh <= ra), (1, ra <= rh)) if ok}
+        if victims and want != eng:
+            rh, ra = {frozenset({0}): (1, 2), frozenset({1}): (2, 1),
+                      frozenset({0, 1}): (1, 1)}[frozenset(want)]
+            self.skips["pitch_invasion_dice_adjusted"] += 1
+        dice = [rh, ra]
+        stunned = set()
+        for team in (0, 1):
+            if team not in want or not victims:
+                continue
+            vs = vict_by_team[team]
+            if not vs or len(vs) > 3:
+                self.skip(cmd, "pitch_invasion_selection", r.get("playerIds"))
+                return
+            dice.append(len(vs))  # the engine's D3 count
+            vset = set(vs)
+            for vic in vs:
+                # Engine candidates: standing on-pitch players in slot order.
+                # FFB's stun state records can precede this report, so the
+                # event's own victims count as standing.
+                cands = sorted(sl for pid2, (t2, sl) in self.slot_of.items()
+                               if t2 == team and self.pos.get(pid2)
+                               and (pid2 in vset or
+                                    self.base.get(pid2, 0) == 0)
+                               and pid2 not in stunned)
+                if self.slot_of[vic][1] not in cands:
+                    self.skip(cmd, "pitch_invasion_selection", vic)
+                    return
+                dice.append(cands.index(self.slot_of[vic][1]) + 1)
+                stunned.add(vic)
+        self.attach(cmd, dice, "pitch invasion")
 
     def rep_kickoffDodgySnack(self, i, r, cmd):
         """Dodgy Snack (kickoff 11): engine rolls D6 home, D6 away, then for
@@ -1255,6 +1297,15 @@ class Mapper:
                 if self.mirror_reroll_available(pid, r.get("report")):
                     self.route_reroll(cmd, "decline")
                 self.fail_likely_turnover(pid)
+            else:
+                # A re-roll was attempted, but a failed Pro (3+) or a failed
+                # Loner gate wastes it: no second test record follows and the
+                # failure stands.
+                k = self.lookahead(j, lambda x: x.get("report") ==
+                                   r.get("report") and
+                                   str(x.get("playerId")) == pid, limit=4)
+                if k < 0:
+                    self.fail_likely_turnover(pid)
         if not ok and rerolled:
             self.fail_likely_turnover(pid)
 
@@ -1940,7 +1991,12 @@ class Mapper:
         pass
 
     def rep_raiseDead(self, i, r, cmd):
-        self.skip(cmd, "raise_dead_unmapped", "")
+        # A new player materializes mid-game (Necromancer raise): the engine
+        # roster is fixed at init — the zombie exists only FFB-side.
+        pid = str(r.get("playerId") or "")
+        if pid:
+            self.ignore_all.add(pid)
+        self.skip(cmd, "raise_dead_unrepresented", pid)
 
     def rep_hitAndRun(self, i, r, cmd):
         self.skip(cmd, "hit_and_run_unmapped", "")
