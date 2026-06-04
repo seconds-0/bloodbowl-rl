@@ -66,6 +66,16 @@ if [ -d "$ROOT/vendor/ffb" ] && [ -x "$PUFFER/.venv/bin/python" ]; then
         echo "warning: spectator art staging failed (renderer falls back to circles)"
 fi
 
+# Stage the demo-state reset bank (optional — built by
+# validation/build_state_bank.py; the env's demo_reset_pct curriculum loads
+# it from resources/bloodbowl/state_bank.bbs and degrades to plain procgen
+# resets when absent).
+if [ -f "$ROOT/validation/states/bank.bbs" ]; then
+    mkdir -p "$PUFFER/resources/bloodbowl"
+    cp "$ROOT/validation/states/bank.bbs" "$PUFFER/resources/bloodbowl/state_bank.bbs"
+    echo "staged:    $PUFFER/resources/bloodbowl/state_bank.bbs"
+fi
+
 echo "installed: $DST"
 echo "           $PUFFER/config/bloodbowl.ini"
 echo "build:     cd $PUFFER && ./build.sh bloodbowl          # CUDA training backend"
