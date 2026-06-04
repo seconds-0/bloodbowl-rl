@@ -235,6 +235,7 @@ class Mapper:
         self.turnend_dice = []     # dice consumed during END_TURN transition
         self.pickmeup = []         # (gslot, roll) Pick Me Up dice this boundary
         self.last_ball_cmd = None  # cmd of the last ball record seen
+        self.engine_alive = set()  # engine-side active players FFB removed
         self.ball_diverged = False # engine ball state unrepresentable (skill gap)
         self.last_injury_key = None
         self.in_kickoff_resolution = False
@@ -525,6 +526,8 @@ class Mapper:
         for pid, (t, _) in self.slot_of.items():
             if t != team or pid in self.used_this_turn:
                 continue
+            if pid in self.engine_alive:
+                return True  # engine still sees this player as activatable
             if self.pos.get(pid) and self.base.get(pid, 0) in (0, 1):
                 return True
         return False
@@ -1239,9 +1242,33 @@ class Mapper:
             if j >= 0:
                 self.consumed.add(j)
                 dec_dice = [self.recs[j].get("roll") or 1]
+        foul_demoted = False
+        if kind == ACT_FOUL:
+            # The engine only offers DECLARE FOUL with a downed opponent
+            # already adjacent (over-strict vs the rulebook's declare-then-
+            # move; cycle-2 engine fix). Reconcile a remote foul declare as
+            # a MOVE: the approach walks in lockstep, the foul tail becomes
+            # a classified divergence (rep_foul / rep_injury / rep_referee).
+            ppos = self.pos.get(pid)
+            opp = 1 - team
+            adjacent_downed = False
+            if ppos:
+                for pid2, (t2, _) in self.slot_of.items():
+                    p2 = self.pos.get(pid2)
+                    if t2 != opp or not p2 or \
+                            self.base.get(pid2, 0) not in (1, 2):
+                        continue
+                    if max(abs(p2[0] - ppos[0]), abs(p2[1] - ppos[1])) == 1:
+                        adjacent_downed = True
+                        break
+            if not adjacent_downed:
+                kind = ACT_MOVE
+                foul_demoted = True
+                self.skips["foul_declare_demoted_to_move"] += 1
         self.act(cmd, A_DECLARE, kind, dice=dec_dice)
         self.activation = {"pid": pid, "kind": kind, "closed": False,
-                           "blocks": 0, "moved": 0}
+                           "blocks": 0, "moved": 0,
+                           "foul_demoted": foul_demoted}
         # A prone player stands up first whatever the declared action; FFB
         # leaves the stand-up implicit unless the action IS "standUp".
         if stand_first or self.base.get(pid) == 1:
@@ -1893,6 +1920,15 @@ class Mapper:
         a = self.activation
         defender = str(r.get("defenderId"))
         dpos = self.pos.get(defender)
+        if a and a.get("foul_demoted") and not a.get("closed"):
+            # Demoted remote foul: the engine ran a plain MOVE; the foul
+            # itself (armour/injury on the victim, possible send-off) is the
+            # documented engine divergence. Suppress its dice and stop
+            # checking the victim's state.
+            self.skip(cmd, "foul_declare_remote_divergence", defender)
+            self.suppress_injury.add(defender)
+            a["foul_suppressed"] = True
+            return
         if not a or a.get("closed") or not dpos:
             self.skip(cmd, "foul_unmapped", defender)
             return
@@ -1901,6 +1937,20 @@ class Mapper:
         a["foul_def"] = defender
 
     def rep_referee(self, i, r, cmd):
+        a = self.activation
+        if a and a.get("foul_suppressed"):
+            # Send-off from a demoted foul: the engine never saw the foul.
+            # The fouler stays on the engine pitch (engine_alive override
+            # keeps engine_turn_open truthful); FFB's turnover is mirrored
+            # by an explicit END_TURN at the boundary.
+            j = self.lookahead(i, lambda x: x.get("report") == "argueTheCall",
+                               limit=6)
+            if j >= 0:
+                self.consumed.add(j)
+            self.ignore_state.add(a["pid"])
+            self.engine_alive.add(a["pid"])
+            self.skip(cmd, "foul_send_off_divergence", a["pid"])
+            return
         # Engine asks Argue-the-Call only when the armour/injury dice showed a
         # natural double; mirror from the foul's last injury record.
         if not self.last_injury_key:
