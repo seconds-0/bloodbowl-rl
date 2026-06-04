@@ -17,14 +17,13 @@
 // op are exactly the values the engine consumes during that op's
 // apply+advance transition; init dice cover the very first bb_advance
 // (pregame weather 2d6 + coin d2).
-#include "bb/bb_match.h"
-#include "bb/bb_proc.h"
-#include "bb/gen_teams.h"
-#include "bb/gen_skills.h"
+// Built as a single translation unit through the PufferLib env amalgamation
+// (bloodbowl.h #includes every engine .c): the runner links no objects and
+// gains the EXACT observation/mask encoders training uses (bbe_encode_obs,
+// bbe_fill_mask, bbe_action_arg/bbe_action_sq) for --dump-pairs.
+#include "bloodbowl.h"
 #include <ctype.h>
 #include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 
 #define MAX_LINE 65536
 #define MAX_DICE 64
@@ -32,7 +31,7 @@
 
 // --- tiny JSON field scanners (single-line objects from our own mapper) ------
 
-static const char* find_key(const char* s, const char* key) {
+static const char* ls_find_key(const char* s, const char* key) {
     char pat[64];
     snprintf(pat, sizeof pat, "\"%s\":", key);
     size_t plen = strlen(pat);
@@ -59,14 +58,14 @@ static const char* find_key(const char* s, const char* key) {
 }
 
 static long jint(const char* s, const char* key, long dflt) {
-    const char* p = find_key(s, key);
+    const char* p = ls_find_key(s, key);
     if (!p) return dflt;
     while (*p == ' ' || *p == '"') p++;
     return strtol(p, 0, 10);
 }
 
 static int jstr(const char* s, const char* key, char* out, int cap) {
-    const char* p = find_key(s, key);
+    const char* p = ls_find_key(s, key);
     if (!p) return 0;
     while (*p == ' ') p++;
     if (*p != '"') return 0;
@@ -82,7 +81,7 @@ static int jstr(const char* s, const char* key, char* out, int cap) {
 
 // Parse an int array "key":[a,b,...]; returns count.
 static int jarr(const char* s, const char* key, int* out, int cap) {
-    const char* p = find_key(s, key);
+    const char* p = ls_find_key(s, key);
     if (!p) return 0;
     while (*p == ' ') p++;
     if (*p != '[') return 0;
@@ -98,7 +97,7 @@ static int jarr(const char* s, const char* key, int* out, int cap) {
 
 // Find the start of a top-level object value for `key` ("home"/"away").
 static const char* jobj(const char* s, const char* key) {
-    const char* p = find_key(s, key);
+    const char* p = ls_find_key(s, key);
     if (!p) return 0;
     while (*p == ' ') p++;
     return *p == '{' ? p : 0;
@@ -227,7 +226,7 @@ static void init_side(runner* R, const char* obj, int team) {
         memset(&R->m.players[team * BB_TEAM_SLOTS + s], 0, sizeof(bb_player));
         R->m.players[team * BB_TEAM_SLOTS + s].location = BB_LOC_ABSENT;
     }
-    const char* pa = find_key(obj, "players");
+    const char* pa = ls_find_key(obj, "players");
     if (!pa) return;
     while (*pa == ' ') pa++;
     if (*pa != '[') return;
@@ -257,7 +256,7 @@ static void init_side(runner* R, const char* obj, int team) {
             long pos = jint(pobj, "pos", -1);
             pl->position_id = (uint8_t)(pos >= 0 && pos < BB_MAX_POSITIONS ? pos : 0);
             // skills: array of canonical display names
-            const char* sa = find_key(pobj, "skills");
+            const char* sa = ls_find_key(pobj, "skills");
             if (sa) {
                 while (*sa == ' ') sa++;
                 if (*sa == '[') {
@@ -479,7 +478,7 @@ static int engine_state_code(const bb_player* p) {
 static int do_expect(runner* R, const char* line, long cmd) {
     char ours[256], theirs[256];
     // players: [[t,s,x,y,st],...] — walk the array entry by entry.
-    const char* pa = find_key(line, "players");
+    const char* pa = ls_find_key(line, "players");
     if (pa) {
         while (*pa == ' ') pa++;
         if (*pa == '[') {
