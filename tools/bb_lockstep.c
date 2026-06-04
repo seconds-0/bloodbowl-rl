@@ -892,6 +892,18 @@ static void trace_state(const runner* R, long cmd, const char* op) {
             R->m.turn[1]);
     print_stack(stderr, &R->m);
     fprintf(stderr, "\n");
+    if (getenv("BB_LOCKSTEP_BOARD")) {
+        for (int s = 0; s < BB_NUM_PLAYERS; s++) {
+            const bb_player* p = &R->m.players[s];
+            if (p->location != BB_LOC_ON_PITCH) continue;
+            fprintf(stderr, "  [%d,%d] at %d,%d st=%d%s\n",
+                    s / BB_TEAM_SLOTS, s % BB_TEAM_SLOTS, p->x, p->y,
+                    engine_state_code(p),
+                    (p->flags & BB_PF_HAS_BALL) ? " BALL" : "");
+        }
+        fprintf(stderr, "  ball %d,%d state=%d\n", R->m.ball.x, R->m.ball.y,
+                R->m.ball.state);
+    }
 }
 
 // --- main --------------------------------------------------------------------------

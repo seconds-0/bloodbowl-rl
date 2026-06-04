@@ -229,6 +229,110 @@ the first boundary), 1908170 (Kick-off Return move → `position`).
 After: illegal (9), state (6), position (3), dice_overrun (2),
 dice_underrun (1).
 
+## Lockstep consumption campaign v1 (2026-06-04)
+
+The corpus grew from 21 to **401 normalized replays** (the box scraper's
+cache, all normalized locally). Baseline at the v0 code on the 401-replay
+corpus: **mean 7.8 % ops consumed** before first divergence (the original
+21-replay corpus measured 8.4 %). After the v1 mapper triage: **mean 11.9 %**
+(best replay 48.2 %; 1.5× the baseline), **58 079 BC pairs (144.8
+pairs/replay)** — v0 yielded 1 766 pairs over 21 replays (84/replay).
+
+| first-divergence class | v0 baseline (401) | v1 (401) |
+|---|---|---|
+| illegal | 139 | 179 |
+| dice_overrun | 59 | 90 |
+| dice_underrun | 39 | 69 |
+| state | 72 | 29 |
+| position | 71 | 28 |
+| ball | 21 | 6 |
+
+(The dice classes grew because walks now reach 50 % deeper before tripping;
+every replay still diverges before completion.)
+
+Mapper/runner fixes landed (each commit carries before/after means):
+
+- **Ball-carrier mirror**: FFB emits the ball-follows-carrier record before
+  the carrier's move — the mirror no longer drops possession on it.
+- **Stun rollover mirror**: the engine flips STUNNED→STUNNED_USED at the
+  owner's turn start and →PRONE at that turn's end; FFB reports prone at the
+  start. The mirror holds state 2 until the engine's boundary.
+- **Gate negatraits**: confusionRoll re-roll chains fold into the engine's
+  single inline gate die, outcome-adjusted against the engine's flat target
+  (FFB applies Really Stupid's +2 helper, which the engine lacks).
+- **Touchback**: ball records in mode `touchback` map to `A_TOUCHBACK`
+  (player slot, or 0xFF + square).
+- **Kickoff events**: Solid Defence / Quick Snap / Kick-off Return final
+  positions are **baked into the setup placements** whenever the result is
+  still setup-legal (the engine treats the events as no-ops, D21); Blitz!/
+  Charge free activations drop wholesale with their dice. Pitch Invasion and
+  Dodgy Snack map fully (slot-ordered victim picks; Pitch Invasion 2d6
+  outcome-adjusted vs FFB's Dedicated Fans modifier).
+- **Chain pushes**: FFB emits chained pushees innermost-first; the mapper
+  buffers the links and emits the engine's decision order (parent
+  `PUSH_SQUARE` arg 2, then per-pushee, deepest last with empty/crowd
+  geometry mirroring `push_legal`).
+- **Apothecary**: FFB's all-null `apothecaryRoll` is the decline signature
+  (`StepApothecary` DO_NOT_USE); KO and casualty windows now mirror
+  used-vs-declined exactly.
+- **Remote fouls**: the engine only offers DECLARE FOUL with a downed
+  opponent already adjacent; remote declares demote to MOVE so the approach
+  walks, with the foul tail (victim injury, send-off) skip-classified.
+  (Demoted-foul BC pairs record the declare as MOVE — the engine cannot
+  accept FOUL there until the cycle-2 engine fix.)
+- **Pick Me Up**: dice attach only when the engine's `pick_me_up` would roll
+  them (prone at roll time; held-stunned players excluded; slot-ordered).
+- **Star rosters**: >16-player rosters (induced stars/mercs) prioritize
+  formation participants for the 16 engine slots.
+- Misc: wasted Pro/Loner re-roll turnovers, single stand-up per activation,
+  follow-up resolution before END_ACTIVATION, Swarming/raise-dead players as
+  classified engine-unrepresentable ghosts, skillUse auto-match table.
+
+### Genuine engine divergences discovered (cycle-2 work queue, do-not-fix in the mapper)
+
+1. **DECLARE FOUL adjacency** (`proc_turn.c activation_legal`): the rulebook
+   declares first and moves after; the engine demands an adjacent downed
+   opponent at declare time. 734 fouls/corpus demoted.
+2. **Negatrait gate modifiers** (`BB_SKILL_GATE`): flat targets only — no
+   Really Stupid +2-helper, no team re-roll window on gate rolls.
+3. **Kickoff event windows (D21)**: Solid Defence / Quick Snap / Kick-off
+   Return / Blitz! are no-ops past their dice. Quick Snap steps may cross
+   the LoS, so setup bake-in cannot always reconcile; Blitz! runs full
+   activations (blocks, injuries) the engine never rolls.
+4. **Swarming**: not implemented; setup requires exactly min(11, available).
+5. **Wrestle decline** (D29 designed, unimplemented): engine auto-applies
+   Wrestle on Both Down; FFB coaches may decline (`used:false` skillUse).
+6. **Stand Firm decline** (v0 finding): engine auto-applies.
+7. **Changing Weather → Perfect Conditions**: engine scatters the ball 3×D8
+   in the air; FFB rolls one gust D8 (+landing bounce).
+8. **Pick Me Up timing**: engine rolls before `turn_end`'s stun flip, so
+   players FFB just rolled over are not engine candidates (they stay prone
+   engine-side where FFB stood them up).
+9. **Fumblerooski**: unimplemented — a deliberate ball drop diverges all
+   later ball state (13 rosters in corpus carry it).
+10. **Pitch Invasion fans**: engine compares raw D6s without Dedicated Fans
+    (mapper outcome-adjusts).
+11. **Block pool dice count**: scattered boards where the engine computes a
+    different nrOfDice than FFB (ST/assist calculation) —
+    `dice_underrun` at BLOCK_TARGET; needs board-level comparison
+    (`BB_LOCKSTEP_BOARD=1` runner trace added for this).
+12. **Apothecary result choice**: the engine consumes one new casualty die
+    and auto-applies; FFB offers original-vs-new (apothecaryChoice).
+13. **Mid-game roster additions** (Raise Dead) and bench overflow past 16
+    slots are unrepresentable in the fixed roster.
+
+### Top remaining blockers (v2)
+
+- `illegal` (179): mostly step/block-target mismatches downstream of
+  unbakeable kickoff repositioning and stance desyncs from items 3/5/8.
+- `dice_overrun` at STEP (23): engine rolls nothing where FFB rolled a
+  dodge/pickup — board/ball desync downstream effects.
+- `dice_underrun` at BLOCK_TARGET (16): item 11 (assist calculus).
+- Unmapped report tails: `unmapped_dice_report` 3 737,
+  `block_pro_reroll` 488, `block_reroll_unmapped` 394 (Pro/skill re-rolls
+  inside block pools), `scatter_player_unmapped` 777 (TTM scatters),
+  `apothecary_roll_unattached` (apo rolls outside the injury windows).
+
 ## BC pair extraction — `bb_lockstep --dump-pairs` + `extract_pairs.py`
 
 `./build/bb_lockstep --dump-pairs <out.bbp> <script.jsonl>` additionally
@@ -331,7 +435,6 @@ training tree with `tools/install_puffer_env.sh` (lands at
 
 Output: `validation/pairs/<replayId>.bbp` (gitignored; regenerate at will)
 plus corpus totals (replays, pairs, pairs/replay, bytes). Consumed by
-`training/bc_pretrain.py`. Current corpus (21 replays, 2026-06-03): 1766
-pairs — small (the lockstep consumes ~8% of each replay before first
-divergence) but enough to overfit for the BC smoke test; the count grows
-automatically as lockstep coverage improves.
+`training/bc_pretrain.py`. Current corpus (401 replays, 2026-06-04, post
+v1 triage): **58 079 pairs (144.8 pairs/replay)** — v0 yielded 1 766 over
+21 replays. The count grows automatically as lockstep coverage improves.
