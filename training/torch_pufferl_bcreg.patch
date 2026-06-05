@@ -1,8 +1,36 @@
 diff --git a/pufferlib/torch_pufferl.py b/pufferlib/torch_pufferl.py
-index 4cf6184..0dcc5a9 100644
+index 4cf6184..c4ea5e3 100644
 --- a/pufferlib/torch_pufferl.py
 +++ b/pufferlib/torch_pufferl.py
-@@ -99,6 +99,111 @@ _TORCH_TO_CTYPE = {
+@@ -46,6 +46,27 @@ def _entropy(logits):
+     p_log_p = logits * logits_to_probs(logits)
+     return -p_log_p.sum(-1)
+ 
++def apply_action_mask(logits, mask, act_sizes):
++    """LOCAL PATCH (bloodbowl-rl): restrict per-head logits to the env's
++    legal-action mask before sampling/scoring. The BC corpus and the bc_acc
++    aux loss are mask-restricted, and the CUDA backend samples masked — the
++    torch backend sampling RAW logits made every BC-anchored run play via
++    decode fallback (measured illegal_frac 1.000). Rows with an all-zero
++    head slice (shouldn't happen; the env asserts >=1 legal bit per head)
++    are left unmasked as a guard.
++
++    logits: list of per-head tensors [(B,n0),(B,n1),...]; mask: (B, sum(n))
++    uint8/bool; returns new list."""
++    out = []
++    off = 0
++    for h, n in enumerate(act_sizes):
++        mh = mask[:, off:off + n].bool()
++        off += n
++        ok = mh.any(dim=-1, keepdim=True)
++        out.append(logits[h].masked_fill((~mh) & ok, float('-inf')))
++    return out
++
++
+ def sample_logits(logits, action=None):
+     is_discrete = isinstance(logits, torch.Tensor)
+     if isinstance(logits, torch.distributions.Normal):
+@@ -99,6 +120,111 @@ _TORCH_TO_CTYPE = {
      torch.float32: ctypes.c_float,
  }
  
@@ -114,7 +142,38 @@ index 4cf6184..0dcc5a9 100644
  def _actions_for_vec_step(action):
      if action.dim() == 1:
          action = action.unsqueeze(-1)
-@@ -181,6 +286,24 @@ class PuffeRL:
+@@ -143,6 +269,19 @@ class PuffeRL:
+                 (total_agents,), torch.float32)
+             self.vec_terminals = _cpu_tensor(vec.terminals_ptr,
+                 (total_agents,), torch.float32)
++        # LOCAL PATCH (bloodbowl-rl): legal-action masks for masked sampling.
++        self.mask_size = int(getattr(vec, 'action_mask_size', 0) or 0)
++        if self.mask_size > 0:
++            if self.gpu:
++                self.vec_action_mask = torch.as_tensor(_CudaPtr(
++                    vec.gpu_action_mask_ptr, (total_agents, self.mask_size),
++                    torch.uint8))
++            else:
++                self.vec_action_mask = _cpu_tensor(vec.action_mask_ptr,
++                    (total_agents, self.mask_size), torch.uint8)
++            self.act_sizes_list = list(vec.act_sizes)
++        else:
++            self.vec_action_mask = None
+ 
+         vec.reset()
+         horizon = config['horizon']
+@@ -150,6 +289,10 @@ class PuffeRL:
+ 
+         self.observations = torch.zeros(horizon, total_agents, vec.obs_size,
+             dtype=obs_dtype, device=device)
++        # LOCAL PATCH (bloodbowl-rl): per-step masks stored so the train-time
++        # logit recompute scores the SAME masked distribution it sampled from.
++        self.masks = (torch.zeros(horizon, total_agents, self.mask_size,
++            dtype=torch.uint8, device=device) if self.mask_size > 0 else None)
+         self.actions = torch.zeros(horizon, total_agents, num_atns, device=device)
+         self.values = torch.zeros(horizon, total_agents, device=device)
+         self.logprobs = torch.zeros(horizon, total_agents, device=device)
+@@ -181,6 +324,24 @@ class PuffeRL:
          self.profile = Profile(gpu=self.gpu)
          self.verbose = verbose
  
@@ -139,7 +198,27 @@ index 4cf6184..0dcc5a9 100644
          self.model_size = sum(p.numel() for p in policy.parameters() if p.requires_grad)
          if verbose:
              pufferlib.pufferl.print_dashboard(args, self.model_size, {}, clear=True)
-@@ -270,6 +393,16 @@ class PuffeRL:
+@@ -219,12 +380,19 @@ class PuffeRL:
+             prof.mark(1)
+             with torch.no_grad():
+                 logits, value, state = self.policy.forward_eval(o_device, self.state)
++                if self.vec_action_mask is not None:
++                    m_device = torch.as_tensor(self.vec_action_mask,
++                                               device=device).clone()
++                    logits = apply_action_mask(logits, m_device,
++                                               self.act_sizes_list)
+                 action, logprob, _ = sample_logits(logits)
+             prof.mark(2)
+ 
+             with torch.no_grad():
+                 self.state = state
+                 self.observations[t] = o_device
++                if self.masks is not None:
++                    self.masks[t] = m_device
+                 self.actions[t] = action
+                 self.logprobs[t] = logprob
+                 self.rewards[t] = torch.as_tensor(r, device=device)
+@@ -270,9 +438,22 @@ class PuffeRL:
              learning_rate = lr_min + 0.5*(learning_rate - lr_min) * (1 + np.cos(np.pi * lr_ratio))
              self.optimizer.param_groups[0]['lr'] = learning_rate
  
@@ -156,7 +235,26 @@ index 4cf6184..0dcc5a9 100644
          # Transpose from [horizon, agents] (contiguous writes) to [agents, horizon] (minibatch indexing)
          obs = self.observations.transpose(0, 1).contiguous()
          act = self.actions.transpose(0, 1).contiguous()
-@@ -333,6 +466,22 @@ class PuffeRL:
++        # LOCAL PATCH (bloodbowl-rl): masks alongside, same agent-major layout.
++        masks_t = (self.masks.transpose(0, 1).contiguous()
++                   if self.masks is not None else None)
+         val = self.values.T.contiguous()
+         lp = self.logprobs.T.contiguous()
+         rew = self.rewards.T.contiguous().clamp(-1, 1)
+@@ -304,6 +485,12 @@ class PuffeRL:
+ 
+             prof.mark(1)
+             logits, newvalue = self.policy(mb_obs)
++            # LOCAL PATCH (bloodbowl-rl): score the SAME masked distribution
++            # the rollout sampled from — unmasked recompute would corrupt the
++            # PPO ratio and pay entropy on illegal probability mass.
++            if masks_t is not None:
++                mb_mask = masks_t[idx].reshape(-1, self.mask_size)
++                logits = apply_action_mask(logits, mb_mask, self.act_sizes_list)
+             actions, newlogprob, entropy = sample_logits(logits, action=mb_actions)
+             prof.mark(2)
+             prof.elapsed(P.TRAIN_FORWARD, 1, 2)
+@@ -333,6 +520,22 @@ class PuffeRL:
  
              entropy_loss = entropy.mean()
              loss = pg_loss + config['vf_coef']*v_loss - config['ent_coef']*entropy_loss

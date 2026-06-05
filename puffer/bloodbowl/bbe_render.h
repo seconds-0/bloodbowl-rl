@@ -16,6 +16,7 @@
 #pragma once
 
 #include <stdio.h>
+#include <time.h>
 #include "raylib.h"
 
 // FFB native geometry: 30px squares, pitch image 782x452 (26x15 + 1px border).

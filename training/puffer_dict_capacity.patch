@@ -1,5 +1,5 @@
 diff --git a/src/bindings.cu b/src/bindings.cu
-index 64be611..043a465 100644
+index 64be611..fa050a1 100644
 --- a/src/bindings.cu
 +++ b/src/bindings.cu
 @@ -370,7 +370,7 @@ void cpu_vec_step_py(VecEnv& ve, long long actions_ptr) {
@@ -11,8 +11,22 @@ index 64be611..043a465 100644
      static_vec_log(ve.vec, out);
      py::dict result;
      for (int i = 0; i < out->size; i++) {
+@@ -606,10 +606,13 @@ PYBIND11_MODULE(_C, m) {
+         .def_property_readonly("gpu_obs_ptr",       [](VecEnv& ve) { return (long long)ve.vec->gpu_observations; })
+         .def_property_readonly("gpu_rewards_ptr",   [](VecEnv& ve) { return (long long)ve.vec->gpu_rewards; })
+         .def_property_readonly("gpu_terminals_ptr", [](VecEnv& ve) { return (long long)ve.vec->gpu_terminals; })
++        .def_property_readonly("gpu_action_mask_ptr", [](VecEnv& ve) { return (long long)ve.vec->gpu_action_mask; })
+         // CPU buffer pointers (same as gpu_ in CPU mode since they alias)
+         .def_property_readonly("obs_ptr",       [](VecEnv& ve) { return (long long)ve.vec->observations; })
+         .def_property_readonly("rewards_ptr",   [](VecEnv& ve) { return (long long)ve.vec->rewards; })
+         .def_property_readonly("terminals_ptr", [](VecEnv& ve) { return (long long)ve.vec->terminals; })
++        .def_property_readonly("action_mask_ptr", [](VecEnv& ve) { return (long long)ve.vec->action_mask; })
++        .def_property_readonly("action_mask_size", [](VecEnv& ve) { return ve.vec->action_mask_size; })
+         .def("reset", &vec_reset)
+         .def("gpu_step", &gpu_vec_step_py)
+         .def("cpu_step", &cpu_vec_step_py)
 diff --git a/src/bindings_cpu.cpp b/src/bindings_cpu.cpp
-index 5ba4dc8..8d886d4 100644
+index 5ba4dc8..bcffc03 100644
 --- a/src/bindings_cpu.cpp
 +++ b/src/bindings_cpu.cpp
 @@ -141,7 +141,7 @@ static void cpu_vec_step_py(VecEnv& ve, long long actions_ptr) {
@@ -24,6 +38,33 @@ index 5ba4dc8..8d886d4 100644
      static_vec_log(ve.vec, out);
      py::dict result;
      for (int i = 0; i < out->size; i++)
+@@ -179,6 +179,8 @@ PYBIND11_MODULE(_C, m) {
+         .def_property_readonly("obs_ptr", [](VecEnv& ve) { return (long long)ve.vec->observations; })
+         .def_property_readonly("rewards_ptr", [](VecEnv& ve) { return (long long)ve.vec->rewards; })
+         .def_property_readonly("terminals_ptr", [](VecEnv& ve) { return (long long)ve.vec->terminals; })
++        .def_property_readonly("action_mask_ptr", [](VecEnv& ve) { return (long long)ve.vec->action_mask; })
++        .def_property_readonly("action_mask_size", [](VecEnv& ve) { return ve.vec->action_mask_size; })
+         .def("reset", &vec_reset)
+         .def("cpu_step", &cpu_vec_step_py)
+         .def("render", [](VecEnv& ve, int env_id) { static_vec_render(ve.vec, env_id); })
+diff --git a/src/kernels.cu b/src/kernels.cu
+index 0d878f0..934dfb0 100644
+--- a/src/kernels.cu
++++ b/src/kernels.cu
+@@ -320,9 +320,13 @@ __global__ void cast(precision_t* __restrict__ dst,
+ inline void cast_dispatch(precision_t* dst, const precision_t* src, int n, cudaStream_t stream) {
+     cudaMemcpyAsync(dst, src, n * sizeof(precision_t), cudaMemcpyDeviceToDevice, stream);
+ }
++// Local patch (bloodbowl-rl): under PRECISION_FLOAT precision_t == float and
++// this overload collides with the memcpy one above — guard it out.
++#ifndef PRECISION_FLOAT
+ inline void cast_dispatch(precision_t* dst, const float* src, int n, cudaStream_t stream) {
+     cast<<<grid_size(n), BLOCK_SIZE, 0, stream>>>(dst, src, n);
+ }
++#endif
+ 
+ #ifndef PRECISION_FLOAT
+ __global__ void cast(float* __restrict__ dst,
 diff --git a/src/vecenv.h b/src/vecenv.h
 index 42958d3..b920161 100644
 --- a/src/vecenv.h
