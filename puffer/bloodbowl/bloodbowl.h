@@ -281,6 +281,14 @@ typedef struct {
     // Behavioral micro-stat counters for the CURRENT episode (summed into
     // the Log by bbe_finish_episode, zeroed by bbe_reset_match).
     int ep_blocks, ep_blitzes;
+    // Per-team behavior counters for the spectator's live archetype plates
+    // ("BRUISER"/"BALLHAWK"/...): contact = block+blitz declarations, ball =
+    // weighted ball engagement (pickups, passes, squares moved carrying).
+    // Reset with the episode; turns_at_reset normalizes demo-started
+    // episodes (their turn counters start mid-game).
+    int ep_team_contact[2];
+    int ep_team_ball[2];
+    int turns_at_reset[2];
     int ep_dodge_attempts, ep_gfi_attempts;
     int ep_pickup_attempts, ep_pass_attempts;
     int ep_knockdowns_inflicted, ep_knockdowns_own;
@@ -791,6 +799,12 @@ static void bbe_reset_match(Bloodbowl* env) {
     env->ep_dodge_attempts = env->ep_gfi_attempts = 0;
     env->ep_pickup_attempts = env->ep_pass_attempts = 0;
     env->ep_knockdowns_inflicted = env->ep_knockdowns_own = 0;
+    for (int t = 0; t < 2; t++) {
+        env->ep_team_contact[t] = 0;
+        env->ep_team_ball[t] = 0;
+        env->turns_at_reset[t] =
+            (env->match.half - 1) * 8 + env->match.turn[t];
+    }
     env->ep_return[0] = env->ep_return[1] = 0;
     // Baseline scores from the (possibly resumed) match so TD step rewards
     // and the Log's tds/score_diff deltas count only what happens from here.
@@ -919,6 +933,9 @@ static void bbe_count_action(Bloodbowl* env, bb_action act) {
     case BB_A_DECLARE:
         if (act.arg == BB_ACT_BLOCK) env->ep_blocks++;
         else if (act.arg == BB_ACT_BLITZ) env->ep_blitzes++;
+        if (act.arg == BB_ACT_BLOCK || act.arg == BB_ACT_BLITZ) {
+            env->ep_team_contact[m->decision_team & 1]++;
+        }
         break;
     case BB_A_STEP: {
         // A STEP decision always comes from a MOVE frame (a = mover).
@@ -929,19 +946,48 @@ static void bbe_count_action(Bloodbowl* env, bb_action act) {
             if (bb_tackle_zones(m, BB_TEAM_OF(top->a), p->x, p->y) > 0) {
                 env->ep_dodge_attempts++;
             }
+            // Ball-engagement axis: carrying the ball forward counts 1/step,
+            // attempting a pickup counts 3 (rare, decisive events weigh more).
+            if (p->flags & BB_PF_HAS_BALL) {
+                env->ep_team_ball[BB_TEAM_OF(top->a)]++;
+            }
         }
         if (m->ball.state == BB_BALL_ON_GROUND && m->ball.x == act.x &&
             m->ball.y == act.y) {
             env->ep_pickup_attempts++;
+            if (top && top->proc == BB_PROC_MOVE && top->a < BB_NUM_PLAYERS) {
+                env->ep_team_ball[BB_TEAM_OF(top->a)] += 3;
+            }
         }
         break;
     }
     case BB_A_PASS_TARGET:
         env->ep_pass_attempts++;
+        env->ep_team_ball[m->decision_team & 1] += 3;
         break;
     default:
         break;
     }
+}
+
+// Live behavior archetype for the spectator's per-team plates. Pure read;
+// thresholds calibrated against measured baselines (D33 probe: random play
+// ~8 contact declarations/episode across both teams; D34 bruiser ~17;
+// trained scorers carry the ball every drive but rarely declare blocks).
+// turns_seen normalizes demo-started episodes that begin mid-game.
+static const char* bbe_team_archetype(const Bloodbowl* env, int t) {
+    const bb_match* m = &env->match;
+    int turns_now = (m->half - 1) * 8 + m->turn[t];
+    int turns_seen = turns_now - env->turns_at_reset[t] + 1;
+    if (turns_seen < 3) return "SIZING UP...";
+    float contact_rate = (float)env->ep_team_contact[t] / (float)turns_seen;
+    int ball_engaged = env->ep_team_ball[t] >= 6; // ~pickup + 3 carried squares
+    int contact_heavy = contact_rate >= 0.4f;     // ~6+ declarations/half
+    if (contact_heavy && ball_engaged) return "ALL-ROUNDER";
+    if (contact_heavy) return "BRUISER";
+    if (ball_engaged) return "BALLHAWK";
+    if (env->ep_team_contact[t] == 0 && turns_seen >= 5) return "COWARD";
+    return "TIMID";
 }
 
 // Bitmask of players standing on the pitch, one bit per slot (32 slots).

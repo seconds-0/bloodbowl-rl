@@ -87,7 +87,23 @@ static void bbe_render_init(Bloodbowl* env) {
     const char* banner = getenv("BBE_BANNER");
     snprintf(c->banner, sizeof(c->banner), "%s", banner ? banner : "live policy");
     const char* prof = getenv("BBE_PROFILE");
-    snprintf(c->profile, sizeof(c->profile), "%s", prof ? prof : "");
+    if (prof && prof[0]) {
+        // Friendly alias for the run chip (match most-specific first).
+        const char* alias = strstr(prof, "synthesis-c") ? "THE SCHOLAR-BRAWLER"
+                          : strstr(prof, "synthesis")   ? "THE SCHOLAR"
+                          : strstr(prof, "profile-C")   ? "THE BRUISER"
+                          : strstr(prof, "profile-D")   ? "THE BALL STUDENT"
+                          : strstr(prof, "profile-B")   ? "THE OPPORTUNIST"
+                          : strstr(prof, "profile-A")   ? "THE PURIST"
+                          : NULL;
+        if (alias) {
+            snprintf(c->profile, sizeof(c->profile), "%s  [%s]", alias, prof);
+        } else {
+            snprintf(c->profile, sizeof(c->profile), "%s", prof);
+        }
+    } else {
+        c->profile[0] = '\0';
+    }
     env->client = c;
     const char* sc = getenv("BBE_SCALE");
     if (sc) {
@@ -291,6 +307,25 @@ static void bbe_draw_hud(const Bloodbowl* env) {
     snprintf(buf, sizeof(buf), "half %d   turn %d/%d   decision %d   %s",
              m->half, m->turn[0], m->turn[1], env->decisions, c->banner);
     DrawText(buf, BBE_MARGIN, BBE_S(38), BBE_S(10), (Color){170, 175, 185, 255});
+
+    // Per-team personality plates: live behavior archetype (bbe_team_archetype
+    // — what this team is DOING this match, not what its profile hoped).
+    // Home plate sits under the left scoreline, away under the right.
+    for (int t = 0; t < 2; t++) {
+        const char* arch = bbe_team_archetype(env, t);
+        char plate[64];
+        snprintf(plate, sizeof(plate), "%s: %s",
+                 t == BB_HOME ? "HOME" : "AWAY", arch);
+        int fs = BBE_S(10);
+        int tw = MeasureText(plate, fs);
+        int px = t == BB_HOME ? BBE_MARGIN
+                              : BBE_WIN_W - BBE_MARGIN - tw - 16;
+        int py = BBE_S(52);
+        Color border = t == BB_HOME ? BBE_HOME : BBE_AWAY;
+        DrawRectangle(px, py, tw + 16, fs + 6, (Color){34, 36, 42, 255});
+        DrawRectangleLines(px, py, tw + 16, fs + 6, border);
+        DrawText(plate, px + 8, py + 3, fs, RAYWHITE);
+    }
 
     // Center-top: run-type label (which experiment arm is on screen).
     if (c->profile[0]) {
