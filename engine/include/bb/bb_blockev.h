@@ -74,8 +74,11 @@ typedef struct {
     int def_wrestles;  // defender's window (reached only if attacker declines)
 } bb_blockev_policy;
 
+// frenzy_done: evaluating the mandatory SECOND block (its push utility must
+// not chain a third) — pass 1 there, 0 for a fresh declaration.
 void bb_block_ev_policy(const bb_match* m, int att, int def, int is_blitz,
-                        const bb_blockev_w* w, bb_blockev_policy* out);
+                        int frenzy_done, const bb_blockev_w* w,
+                        bb_blockev_policy* out);
 
 // Shared closed forms (also used by tests and the foul exposure):
 // P(armour breaks | victim knocked down by causer); mb_on_injury_out (may be

@@ -563,10 +563,13 @@ static void push_advance(bb_match* m, bb_rng* rng) {
         bb_place(m, def, f->x, f->y);
         // STRIP BALL: "if an opposition player [holding the ball] is Pushed
         // Back then they will [drop the ball]" — bounce from the destination.
-        // Monstrous Mouth blocks it.
+        // Monstrous Mouth blocks it; SURE HANDS too ("Additionally, the
+        // Strip Ball Skill cannot be used against this player" — panel
+        // finding: every Thrower/Runner archetype carries it).
         if ((dp->flags & BB_PF_HAS_BALL) && !(f->data & PSH_CHAIN) &&
             bb_has_skill(&m->players[f->a].skills, BB_SK_STRIP_BALL) &&
-            !bb_has_skill(&dp->skills, BB_SK_MONSTROUS_MOUTH)) {
+            !bb_has_skill(&dp->skills, BB_SK_MONSTROUS_MOUTH) &&
+            !bb_has_skill(&dp->skills, BB_SK_SURE_HANDS)) {
             bb_cover(BB_SK_STRIP_BALL);
             int sx = f->x, sy = f->y;
             bb_drop_ball(m);
@@ -945,6 +948,16 @@ static void armour_advance(bb_match* m, bb_rng* rng) {
         broken = true; // Dirty Player +1 spent on the armour roll
         mb_on_armour = true;
     }
+    // Claws: an unmodified armour roll of 8+ always breaks armour. Checked
+    // BEFORE Mighty Blow so a natural 8+ never wastes the MB spend: Claws
+    // breaks for free and MB stays available for the injury roll — the
+    // mirror restricts neither skill against the other (panel finding
+    // amending D16; the old "MB cannot stack with Claws" comment had no
+    // rulebook basis and inverted the Claws->high-AV target gradient).
+    if (!broken && !ihs && !unmodifiable && causer >= 0 && d1 + d2 >= 8 &&
+        bb_has_skill(&m->players[causer].skills, BB_SK_CLAWS)) {
+        broken = true; // MB unspent: mb_on_armour stays false
+    }
     if (!broken && !ihs && !unmodifiable && causer >= 0 &&
         bb_has_skill(&m->players[causer].skills, BB_SK_MIGHTY_BLOW) &&
         total + 1 >= m->players[f.a].av) {
@@ -953,13 +966,6 @@ static void armour_advance(bb_match* m, bb_rng* rng) {
         // see DECISIONS.md).
         broken = true;
         mb_on_armour = true;
-    }
-    // Claws: an unmodified armour roll of 8+ always breaks armour.
-    if (!broken && !ihs && !unmodifiable && causer >= 0 && d1 + d2 >= 8 &&
-        bb_has_skill(&m->players[causer].skills, BB_SK_CLAWS)) {
-        broken = true;
-        mb_on_armour = true; // claws break leaves MB for... rules: MB cannot
-                             // be used with Claws on the same roll; spend it.
     }
     if (foul_double) {
         // SNEAKY GIT: "not Sent-off ... if a natural double is rolled for the

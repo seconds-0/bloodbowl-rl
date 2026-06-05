@@ -240,6 +240,10 @@ def main():
     ap.add_argument("--device", default="auto",
                     help="auto (mps if available, else cpu) | cpu | mps | cuda")
     ap.add_argument("--log-every", type=int, default=25)
+    ap.add_argument("--init", default=None,
+                    help="warm-start from an existing state_dict (resume)")
+    ap.add_argument("--cosine", action="store_true",
+                    help="cosine-decay the LR to 1%% over --steps")
     args = ap.parse_args()
 
     device = args.device
@@ -254,6 +258,9 @@ def main():
           f"{len(train_r)} train / {len(val_r)} val (held out: {val_ids})")
 
     policy, desc = load_policy_like_trainer(args.config, obs_size)
+    if args.init:
+        policy.load_state_dict(torch.load(args.init, map_location="cpu"))
+        print(f"warm-started from {args.init}")
     policy = policy.to(device).train()
     n_params = sum(p.numel() for p in policy.parameters())
     print(f"policy: {desc} | {n_params:,} params | device {device}")
@@ -261,6 +268,9 @@ def main():
     tr_obs, tr_mask, tr_tgt = to_tensors(train_r, device)
     va_obs, va_mask, va_tgt = to_tensors(val_r, device)
     opt = torch.optim.Adam(policy.parameters(), lr=args.lr)
+    sched = (torch.optim.lr_scheduler.CosineAnnealingLR(
+                 opt, T_max=args.steps, eta_min=args.lr * 0.01)
+             if args.cosine else None)
     gen = torch.Generator().manual_seed(args.seed)
 
     first_loss = last_loss = None
@@ -271,6 +281,8 @@ def main():
         opt.zero_grad()
         loss.backward()
         opt.step()
+        if sched is not None:
+            sched.step()
         if first_loss is None:
             first_loss = loss.item()
         last_loss = loss.item()

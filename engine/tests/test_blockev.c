@@ -212,3 +212,87 @@ BB_TEST(blockev_assists_shift_pool) {
     EV_NEAR(ev.p_turnover, 1.0f / 9.0f);
     EV_NEAR(ev.p_def_down, 23.0f / 36.0f);
 }
+
+// --- Panel-driven fixes (adversarial review wf_13fb2bd1) ----------------------
+
+BB_TEST(blockev_mb_claws_leaves_mb_for_injury) {
+    bb_match m;
+    int att, def;
+    ev_fixture(&m, &att, &def);
+    fx_give_skill(&m, att, BB_SK_MIGHTY_BLOW);
+    fx_give_skill(&m, att, BB_SK_CLAWS);
+    float mb_unspent = -1.0f;
+    // Claws first: natural 8+ breaks free (15/36) with MB unspent; the
+    // 9+ subset broke plain anyway; no 8-total wastes the MB spend.
+    EV_NEAR(bb_ev_armour_break(&m, def, att, &mb_unspent), 15.0f / 36.0f);
+    EV_NEAR(mb_unspent, 1.0f);
+    // Removal: all breaks carry MB into injury: 15/36 x 21/36 = 315/1296.
+    // The old "MB cannot stack with Claws" policy priced 285/1296 and made
+    // AV11 targets look WORSE than AV9 to a Claws attacker (panel: the
+    // Claws->high-AV gradient was inverted).
+    EV_NEAR(bb_ev_removal(&m, def, att), 315.0f / 1296.0f);
+    // AV11: Claws is the only break path; same 315/1296 — high-AV parity.
+    m.players[def].av = 11;
+    EV_NEAR(bb_ev_removal(&m, def, att), 315.0f / 1296.0f);
+}
+
+BB_TEST(blockev_sure_hands_blocks_strip_ball) {
+    bb_match m;
+    int att, def;
+    ev_fixture(&m, &att, &def);
+    fx_ball_held(&m, def);
+    fx_give_skill(&m, att, BB_SK_STRIP_BALL);
+    fx_give_skill(&m, def, BB_SK_SURE_HANDS);
+    bb_blockev ev;
+    bb_block_ev(&m, att, def, 0, NULL, &ev);
+    // Sure Hands: "the Strip Ball Skill cannot be used against this player"
+    // — ball out on knockdown faces only, as if Strip Ball were absent.
+    EV_NEAR(ev.p_ball_out, 3.0f / 6.0f);
+}
+
+BB_TEST(blockev_juggernaut_blitz_cancels_stand_firm_strip) {
+    bb_match m;
+    int att, def;
+    ev_fixture(&m, &att, &def);
+    fx_ball_held(&m, def);
+    fx_give_skill(&m, att, BB_SK_STRIP_BALL);
+    fx_give_skill(&m, att, BB_SK_JUGGERNAUT);
+    fx_give_skill(&m, def, BB_SK_STAND_FIRM);
+    bb_blockev ev;
+    // Non-blitz: Stand Firm declines every pushback — knockdown faces only.
+    bb_block_ev(&m, att, def, 0, NULL, &ev);
+    EV_NEAR(ev.p_ball_out, 3.0f / 6.0f);
+    // Blitz: Juggernaut cancels Stand Firm; pushes strip again. Both-down
+    // also becomes a Push (Juggernaut), which strips too: 5/6.
+    bb_block_ev(&m, att, def, 1, NULL, &ev);
+    EV_NEAR(ev.p_ball_out, 5.0f / 6.0f);
+}
+
+BB_TEST(blockev_brawler_rerolls_lone_both_down) {
+    bb_match m;
+    int att, def;
+    ev_fixture(&m, &att, &def);
+    fx_give_skill(&m, att, BB_SK_BRAWLER);
+    bb_blockev ev;
+    bb_block_ev(&m, att, def, 0, NULL, &ev);
+    // 1d Brawler, no other skills: BD (1/6) redraws uniformly. Final face
+    // distribution: skull 7/36, BD 1/36, push 8/36, stumble 7/36, pow 7/36.
+    // att_down = skull + BD = 8/36; def_down = BD + stumble + pow = 15/36.
+    EV_NEAR(ev.p_att_down, 8.0f / 36.0f);
+    EV_NEAR(ev.p_def_down, 15.0f / 36.0f);
+    EV_NEAR(ev.p_turnover, 8.0f / 36.0f);
+}
+
+BB_TEST(blockev_fend_cancels_frenzy_second_block) {
+    bb_match m;
+    int att, def;
+    ev_fixture(&m, &att, &def);
+    fx_give_skill(&m, att, BB_SK_FRENZY);
+    fx_give_skill(&m, def, BB_SK_FEND);
+    bb_blockev ev;
+    bb_block_ev(&m, att, def, 0, NULL, &ev);
+    // Fend forbids the follow-up -> no adjacency -> no second block: plain
+    // 1d numbers, no Frenzy compounding (cf. blockev_frenzy_compounds).
+    EV_NEAR(ev.p_def_down, 3.0f / 6.0f);
+    EV_NEAR(ev.p_att_down, 2.0f / 6.0f);
+}

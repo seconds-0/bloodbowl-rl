@@ -50,6 +50,14 @@ static const mc_case CASES[] = {
     {"juggernaut_blitz_vs_wrestle", 4, 3, {BB_SK_JUGGERNAUT, 0}, {BB_SK_WRESTLE, 0}, 0, 1, 0},
     {"assist_2d", 3, 3, {0}, {0}, 0, 0, 1},
     {"steady_footing_def", 4, 3, {0}, {BB_SK_STEADY_FOOTING, 0}, 0, 0, 0},
+    // Panel-fix batteries (adversarial review wf_13fb2bd1):
+    {"mb_claws_av9", 4, 3, {BB_SK_MIGHTY_BLOW, BB_SK_CLAWS, 0}, {0}, 0, 0, 0},
+    {"strip_vs_sure_hands", 3, 3, {BB_SK_STRIP_BALL, 0}, {BB_SK_SURE_HANDS, 0}, 1, 0, 0},
+    {"jugg_blitz_strips_sf_carrier", 3, 3, {BB_SK_STRIP_BALL, BB_SK_JUGGERNAUT, 0}, {BB_SK_STAND_FIRM, 0}, 1, 1, 0},
+    {"brawler_1d", 3, 3, {BB_SK_BRAWLER, 0}, {0}, 0, 0, 0},
+    {"brawler_2d_vs_block", 4, 3, {BB_SK_BRAWLER, 0}, {BB_SK_BLOCK, 0}, 0, 0, 0},
+    {"frenzy_vs_fend", 3, 3, {BB_SK_FRENZY, 0}, {BB_SK_FEND, 0}, 0, 0, 0},
+    {"frenzy_2d", 4, 3, {BB_SK_FRENZY, 0}, {0}, 0, 0, 0},
 };
 
 typedef struct {
@@ -81,8 +89,6 @@ static int run_case(const mc_case* tc) {
 
     bb_blockev ev;
     bb_block_ev(&base, att, def, tc->is_blitz, NULL, &ev);
-    bb_blockev_policy pol;
-    bb_block_ev_policy(&base, att, def, tc->is_blitz, NULL, &pol);
 
     tally t = {0};
     for (int trial = 0; trial < TRIALS; trial++) {
@@ -94,6 +100,7 @@ static int run_case(const mc_case* tc) {
         if (tc->is_blitz) bb_top(&m)->data |= 1 << 13; // BLK_IS_BLITZ
         m.status = BB_STATUS_RUNNING; // clear the parked activation decision
         int wrestled = 0;
+        int blocks_resolved = 0; // CHOOSE_DIE count: >=1 => frenzy 2nd block
         bb_status st = bb_advance(&m, &rng);
         while (st == BB_STATUS_DECISION && m.stack_top > base_depth) {
             const bb_frame* f = &m.stack[m.stack_top - 1];
@@ -101,27 +108,38 @@ static int run_case(const mc_case* tc) {
             int n = bb_legal_actions(&m, legal);
             if (n <= 0) break;
             bb_action pick = legal[0];
-            if (f->proc == BB_PROC_BLOCK && f->phase == 2) {
-                int def_chooses = (f->data >> 11) & 1;
-                float best = def_chooses ? 1e9f : -1e9f;
-                for (int i = 0; i < n; i++) {
-                    int face = (f->data >> (3 * legal[i].arg)) & 7;
-                    float u = pol.face_u[face];
-                    if (def_chooses ? u < best : u > best) {
-                        best = u;
-                        pick = legal[i];
+            if (f->proc == BB_PROC_BLOCK &&
+                (f->phase == 2 || f->phase == 4 || f->phase == 5)) {
+                // Recompute the choice policy from the CURRENT state with the
+                // matching frenzy_done — the second block's positions and
+                // carrying state differ from declaration time (panel: reusing
+                // the first block's utilities tested the wrong policy).
+                bb_blockev_policy pol;
+                bb_block_ev_policy(&m, att, def, tc->is_blitz,
+                                   blocks_resolved >= 1, NULL, &pol);
+                if (f->phase == 2) {
+                    int def_chooses = (f->data >> 11) & 1;
+                    float best = def_chooses ? 1e9f : -1e9f;
+                    for (int i = 0; i < n; i++) {
+                        int face = (f->data >> (3 * legal[i].arg)) & 7;
+                        float u = pol.face_u[face];
+                        if (def_chooses ? u < best : u > best) {
+                            best = u;
+                            pick = legal[i];
+                        }
                     }
-                }
-            } else if (f->proc == BB_PROC_BLOCK &&
-                       (f->phase == 4 || f->phase == 5)) {
-                int use = f->phase == 4 ? pol.att_wrestles : pol.def_wrestles;
-                for (int i = 0; i < n; i++) {
-                    if (legal[i].type ==
-                        (use ? BB_A_USE_SKILL : BB_A_DECLINE_SKILL)) {
-                        pick = legal[i];
+                    blocks_resolved++;
+                } else {
+                    int use =
+                        f->phase == 4 ? pol.att_wrestles : pol.def_wrestles;
+                    for (int i = 0; i < n; i++) {
+                        if (legal[i].type ==
+                            (use ? BB_A_USE_SKILL : BB_A_DECLINE_SKILL)) {
+                            pick = legal[i];
+                        }
                     }
+                    if (use) wrestled = 1;
                 }
-                if (use) wrestled = 1;
             }
             // Everything else (push square, follow-up, Stand Firm windows the
             // battery never reaches): first legal action.

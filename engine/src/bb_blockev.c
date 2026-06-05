@@ -42,8 +42,15 @@ bb_blockev_w bb_blockev_w_default(void) {
 }
 
 static float player_cost_100k(const bb_match* m, int slot) {
-    const bb_team_def* td = &bb_team_defs[m->team_id[BB_TEAM_OF(slot)]];
-    return (float)td->positions[m->players[slot].position_id].cost_k / 100.0f;
+    // Bounds-clamped: demo-bank states carry raw FUMBBL-derived bytes
+    // (panel: team_id/position_id are unvalidated record content — an
+    // out-of-range byte must price as a lineman, not read out of bounds).
+    int tid = m->team_id[BB_TEAM_OF(slot)];
+    if (tid < 0 || tid >= BB_TEAM_COUNT) return 0.5f;
+    const bb_team_def* td = &bb_team_defs[tid];
+    int pid = m->players[slot].position_id;
+    if (pid < 0 || pid >= BB_MAX_POSITIONS) return 0.5f;
+    return (float)td->positions[pid].cost_k / 100.0f;
 }
 
 static float utility(const ev_vec* v, const bb_blockev_w* w, float cd, float ca) {
@@ -71,13 +78,15 @@ float bb_ev_armour_break(const bb_match* m, int victim, int causer,
             int total = d1 + d2 + ext;
             bool broken = total >= av;
             bool mb_used = false;
+            // Claws BEFORE the MB spend, mirroring armour_advance: a natural
+            // 8+ breaks for free and MB stays for the injury roll (panel
+            // finding amending D16 — no stacking restriction in the mirror).
+            if (!broken && claws && d1 + d2 >= 8) {
+                broken = true;
+            }
             if (!broken && mb && total + 1 >= av) {
                 broken = true; // MB spent converting the miss into a break
                 mb_used = true;
-            }
-            if (!broken && claws && d1 + d2 >= 8) {
-                broken = true; // Claws: unmodified 8+ always breaks
-                mb_used = true; // MB cannot stack with Claws on the same roll
             }
             if (broken) {
                 n_break++;
@@ -122,13 +131,18 @@ float bb_ev_removal(const bb_match* m, int victim, int causer) {
 // --- pool computation (mirrors block_advance phase 0) --------------------------
 
 static void pool_dice(const bb_match* m, int att, int def, int is_blitz,
-                      int dauntless_matched, int* nd_out, int* def_chooses_out) {
+                      int dauntless_matched, int no_cheer, int* nd_out,
+                      int* def_chooses_out) {
     int base_a = m->players[att].st;
     int base_d = m->players[def].st;
     int st_a = (dauntless_matched ? base_d : base_a) +
                bb_count_assists(m, att, def);
     int att_team = BB_TEAM_OF(att);
-    if (m->cheer_assist[att_team] && att_team == m->active_team) st_a += 1;
+    // Cheering Fans is a once-per-turn latch the engine consumes on the
+    // FIRST block (proc_block.c zeroes it before computing st_a); the pure
+    // evaluator must not re-grant it to the Frenzy second block (panel).
+    if (!no_cheer && m->cheer_assist[att_team] && att_team == m->active_team)
+        st_a += 1;
     int st_d = base_d + bb_count_assists(m, def, att);
     if (is_blitz) st_a += bb_hook_st_mod_blitz(m, att); // Horns
     int nd = 1;
@@ -282,32 +296,47 @@ static void eval_pool(const ev_ctx* c, int nd, int def_chooses, int carrying,
     for (int f = 1; f <= 6; f++) {
         fu[f] = utility(&fv[f], c->w, c->cost_def, c->cost_att);
     }
-    // Chooser takes the best face among the rolled pool. With nd iid dice,
-    // P(best-rank face = i-th preferred) = (i/6)^nd - ((i-1)/6)^nd over the
-    // preference ordering (attacker descending, defender ascending).
-    int order[6] = {1, 2, 3, 4, 5, 6};
-    for (int i = 0; i < 6; i++) { // insertion sort by utility
-        int j = i;
-        while (j > 0 &&
-               (def_chooses ? fu[order[j]] < fu[order[j - 1]]
-                            : fu[order[j]] > fu[order[j - 1]])) {
-            int t = order[j];
-            order[j] = order[j - 1];
-            order[j - 1] = t;
-            j--;
-        }
-    }
+    // Exact enumeration over all 6^nd pools (max 216): the chooser takes the
+    // best rolled face by utility (attacker max, defender min). Enumeration
+    // (vs the closed-form rank formula it replaced) lets pool TRANSFORMS be
+    // modeled exactly — Brawler's engine auto-policy (proc_block.c phase 0:
+    // reroll the first Both Down when the pool has no push/stumble/pow,
+    // regardless of who picks) becomes a 1/6-weighted redraw branch.
+    int brawler =
+        bb_has_skill(&c->m->players[c->att].skills, BB_SK_BRAWLER);
+    int total = 1;
+    for (int k = 0; k < nd; k++) total *= 6;
     *out = (ev_vec){0};
-    for (int i = 0; i < 6; i++) {
-        // order[i] is picked iff every die lands in {order[i..5]} and not all
-        // in {order[i+1..5]}: ((6-i)/6)^nd - ((5-i)/6)^nd.
-        float hi = (float)(6 - i) / 6.0f, lo = (float)(5 - i) / 6.0f;
-        float p_hi = 1.0f, p_lo = 1.0f;
+    float w = 1.0f / (float)total;
+    for (int pool = 0; pool < total; pool++) {
+        int d[3], rem = pool;
         for (int k = 0; k < nd; k++) {
-            p_hi *= hi;
-            p_lo *= lo;
+            d[k] = rem % 6 + 1;
+            rem /= 6;
         }
-        vec_add_scaled(out, &fv[order[i]], p_hi - p_lo);
+        int better = 0, bd_idx = -1;
+        for (int k = 0; k < nd; k++) {
+            if (d[k] >= BB_BD_PUSH_1) better = 1; // push/stumble/pow
+            if (d[k] == BB_BD_BOTH_DOWN && bd_idx < 0) bd_idx = k;
+        }
+        if (brawler && bd_idx >= 0 && !better) {
+            for (int r = 1; r <= 6; r++) { // redraw the first Both Down
+                d[bd_idx] = r;
+                int best = d[0];
+                for (int k = 1; k < nd; k++) {
+                    if (def_chooses ? fu[d[k]] < fu[best] : fu[d[k]] > fu[best])
+                        best = d[k];
+                }
+                vec_add_scaled(out, &fv[best], w / 6.0f);
+            }
+            continue;
+        }
+        int best = d[0];
+        for (int k = 1; k < nd; k++) {
+            if (def_chooses ? fu[d[k]] < fu[best] : fu[d[k]] > fu[best])
+                best = d[k];
+        }
+        vec_add_scaled(out, &fv[best], w);
     }
 }
 
@@ -330,15 +359,15 @@ static void eval_block(const bb_match* m, const bb_blockev_w* w, int att,
         float p_match = (float)(diff >= 6 ? 0 : 6 - diff) / 6.0f;
         int nd, dc;
         ev_vec v;
-        pool_dice(m, att, def, is_blitz, 1, &nd, &dc);
+        pool_dice(m, att, def, is_blitz, 1, frenzy_done, &nd, &dc);
         eval_pool(&c, nd, dc, carrying, frenzy_done, &v);
         vec_add_scaled(out, &v, p_match);
-        pool_dice(m, att, def, is_blitz, 0, &nd, &dc);
+        pool_dice(m, att, def, is_blitz, 0, frenzy_done, &nd, &dc);
         eval_pool(&c, nd, dc, carrying, frenzy_done, &v);
         vec_add_scaled(out, &v, 1.0f - p_match);
     } else {
         int nd, dc;
-        pool_dice(m, att, def, is_blitz, 0, &nd, &dc);
+        pool_dice(m, att, def, is_blitz, 0, frenzy_done, &nd, &dc);
         eval_pool(&c, nd, dc, carrying, frenzy_done, out);
     }
 }
@@ -363,22 +392,42 @@ static void init_ctx(ev_ctx* cp, const bb_match* m, const bb_blockev_w* w,
     c.att_carrying = (m->players[att].flags & BB_PF_HAS_BALL) != 0;
     c.cost_att = player_cost_100k(m, att);
     c.cost_def = player_cost_100k(m, def);
-    // Strip Ball strips on any pushback unless Monstrous Mouth blocks it or
-    // the carrier can (and so will) Stand Firm the pushback away.
+    // Strip Ball strips on any pushback unless the carrier is immune
+    // (Monstrous Mouth or Sure Hands — both carry the "cannot be used
+    // against this player" clause) or can (and so will) Stand Firm the
+    // pushback away. A Juggernaut BLITZ cancels Stand Firm (mirror text;
+    // proc_block.c push_advance's !jugg gate), so the decline is off then.
+    int sf_declines =
+        bb_has_skill(&m->players[def].skills, BB_SK_STAND_FIRM) &&
+        !distracted(m, def) &&
+        !(is_blitz &&
+          bb_has_skill(&m->players[att].skills, BB_SK_JUGGERNAUT));
     c.strip_fires =
         bb_has_skill(&m->players[att].skills, BB_SK_STRIP_BALL) &&
         !bb_has_skill(&m->players[def].skills, BB_SK_MONSTROUS_MOUTH) &&
-        !(bb_has_skill(&m->players[def].skills, BB_SK_STAND_FIRM) &&
-          !distracted(m, def));
+        !bb_has_skill(&m->players[def].skills, BB_SK_SURE_HANDS) &&
+        !sf_declines;
     c.dodge_saves = bb_has_dodge_skill(m, def) && !distracted(m, def) &&
                     !bb_has_skill(&m->players[att].skills, BB_SK_TACKLE);
-    c.frenzy = bb_has_skill(&m->players[att].skills, BB_SK_FRENZY);
+    // Frenzy's mandatory second block requires post-push adjacency, which
+    // the resolver only reaches via the forced follow-up (proc_block.c
+    // phase 3/5): Fend forbids the follow-up (Juggernaut-on-blitz cancels
+    // Fend; Frenzy does NOT), and a Rooted attacker can't move — either way
+    // the second block never happens (panel: pricing it anyway inflated
+    // p_def_down ~8pp on every Frenzy-vs-Fend matchup).
+    int fend_stops =
+        (bb_hook_push_flags(m, def) & BB_PUSHF_FEND) &&
+        !(is_blitz &&
+          bb_has_skill(&m->players[att].skills, BB_SK_JUGGERNAUT));
+    c.frenzy = bb_has_skill(&m->players[att].skills, BB_SK_FRENZY) &&
+               !fend_stops && !(m->players[att].flags & BB_PF_ROOTED);
     c.cap = NULL;
     *cp = c;
 }
 
 void bb_block_ev_policy(const bb_match* m, int att, int def, int is_blitz,
-                        const bb_blockev_w* w, bb_blockev_policy* out) {
+                        int frenzy_done, const bb_blockev_w* w,
+                        bb_blockev_policy* out) {
     bb_blockev_w wd;
     if (!w) {
         wd = bb_blockev_w_default();
@@ -392,8 +441,8 @@ void bb_block_ev_policy(const bb_match* m, int att, int def, int is_blitz,
     int carrying = (m->players[def].flags & BB_PF_HAS_BALL) != 0;
     ev_vec fv[7];
     face_skull(&c, &fv[BB_BD_ATTACKER_DOWN]);
-    face_both_down(&c, carrying, 0, &fv[BB_BD_BOTH_DOWN]);
-    face_push(&c, carrying, 0, &fv[BB_BD_PUSH_1]);
+    face_both_down(&c, carrying, frenzy_done, &fv[BB_BD_BOTH_DOWN]);
+    face_push(&c, carrying, frenzy_done, &fv[BB_BD_PUSH_1]);
     fv[BB_BD_PUSH_2] = fv[BB_BD_PUSH_1];
     if (c.dodge_saves) {
         fv[BB_BD_STUMBLE] = fv[BB_BD_PUSH_1];

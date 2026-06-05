@@ -143,6 +143,7 @@ typedef struct {
     // requiring a spectator session. Counting details: bbe_count_action /
     // bbe_count_knockdowns.
     float blocks;               // BB_A_DECLARE of BB_ACT_BLOCK
+    float blocks_thrown;        // resolved block dice pools (CHOOSE_DIE)
     float blitzes;              // BB_A_DECLARE of BB_ACT_BLITZ
     float dodge_attempts;       // STEPs out of >=1 opposing TZ (dodge test due)
     float gfi_attempts;         // STEPs beyond MA (rush/GFI test due)
@@ -281,6 +282,7 @@ typedef struct {
     // Behavioral micro-stat counters for the CURRENT episode (summed into
     // the Log by bbe_finish_episode, zeroed by bbe_reset_match).
     int ep_blocks, ep_blitzes;
+    int ep_blocks_thrown;
     // Per-team behavior counters for the spectator's live archetype plates
     // ("BRUISER"/"BALLHAWK"/...): contact = block+blitz declarations, ball =
     // weighted ball engagement (pickups, passes, squares moved carrying).
@@ -692,9 +694,21 @@ static void bbe_state_bank_load(void) {
             break;
         }
         // Resumable points only; anything else would error out of c_step.
+        // Index-bearing bytes are validated too: reward pricing and obs
+        // encoding index team/position tables with them, and the BBS1
+        // fingerprint guards the engine BUILD, not record content (panel).
         if (bank[kept].status == BB_STATUS_DECISION &&
-            bank[kept].stack_top > 0) {
-            kept++;
+            bank[kept].stack_top > 0 &&
+            bank[kept].team_id[0] < BB_TEAM_COUNT &&
+            bank[kept].team_id[1] < BB_TEAM_COUNT) {
+            int ok = 1;
+            for (int s = 0; s < BB_NUM_PLAYERS; s++) {
+                if (bank[kept].players[s].position_id >= BB_MAX_POSITIONS) {
+                    ok = 0;
+                    break;
+                }
+            }
+            kept += ok;
         }
     }
     fclose(f);
@@ -796,6 +810,7 @@ static void bbe_reset_match(Bloodbowl* env) {
     env->decisions = 0; // max_decisions budgets from the resume point
     env->illegal = 0;
     env->ep_blocks = env->ep_blitzes = 0;
+    env->ep_blocks_thrown = 0;
     env->ep_dodge_attempts = env->ep_gfi_attempts = 0;
     env->ep_pickup_attempts = env->ep_pass_attempts = 0;
     env->ep_knockdowns_inflicted = env->ep_knockdowns_own = 0;
@@ -900,6 +915,7 @@ static void bbe_finish_episode(Bloodbowl* env) {
                                  ? (float)env->illegal / (float)env->decisions
                                  : 0;
     env->log.blocks += (float)env->ep_blocks;
+    env->log.blocks_thrown += (float)env->ep_blocks_thrown;
     env->log.blitzes += (float)env->ep_blitzes;
     env->log.dodge_attempts += (float)env->ep_dodge_attempts;
     env->log.gfi_attempts += (float)env->ep_gfi_attempts;
@@ -964,6 +980,12 @@ static void bbe_count_action(Bloodbowl* env, bb_action act) {
     case BB_A_PASS_TARGET:
         env->ep_pass_attempts++;
         env->ep_team_ball[m->decision_team & 1] += 3;
+        break;
+    case BB_A_CHOOSE_DIE:
+        // Exactly one die pick per RESOLVED block (incl. the Frenzy second
+        // block) — the clean denominator for knockdown-conversion claims
+        // (panel: declarations include blitzes that never reach a block).
+        env->ep_blocks_thrown++;
         break;
     default:
         break;
@@ -1059,20 +1081,51 @@ static void c_step(Bloodbowl* env) {
                 bb_blockev ev;
                 // Choice nodes use the spec-default weights (stable play
                 // model); the env knobs only scale the priced transfer.
-                bb_block_ev(m, batt, bdef, mf->b == BB_ACT_BLITZ, NULL, &ev);
+                int is_blitz = mf->b == BB_ACT_BLITZ;
+                bb_block_ev(m, batt, bdef, is_blitz, NULL, &ev);
                 int bteam = BB_TEAM_OF(batt);
+                // Rush gate (panel HIGH): a blitz block declared with no
+                // movement left rolls a 2+ Rush FIRST; failure = knocked
+                // down in place, NO block (proc_move.c BB_A_BLOCK_TARGET).
+                // Price the block tree scaled by P(rush succeeds) — else the
+                // attacker banks exposure for blocks that fizzle 1/6+ of the
+                // time (a farmable zero-sum subsidy) — and fold the
+                // rush-failure turnover (knockdown of the active blitzer,
+                // saved only by Steady Footing) into the sequencing charge.
+                float p_deliver = 1.0f;
+                float p_own_to = ev.p_turnover;
+                if (is_blitz && movement_left(m, batt) == 0) {
+                    const bb_player* bp = &m->players[batt];
+                    bb_ctx rc = {BB_TEST_RUSH, (uint8_t)batt, BB_NO_PLAYER,
+                                 (uint8_t)batt, (int8_t)bp->x, (int8_t)bp->y,
+                                 (int8_t)bp->x, (int8_t)bp->y, -1, 1};
+                    int rmod = bb_hook_mods(m, &rc);
+                    if (m->weather == BB_WEATHER_BLIZZARD) rmod -= 1;
+                    p_deliver = (float)(7 - bb_test_target(2, rmod)) / 6.0f;
+                    float sf =
+                        bb_has_skill(&bp->skills, BB_SK_STEADY_FOOTING)
+                            ? 5.0f / 6.0f
+                            : 1.0f;
+                    p_own_to = p_deliver * ev.p_turnover +
+                               (1.0f - p_deliver) * sf;
+                }
                 float exposure =
-                    env->reward_k_kd * ev.p_def_down +
-                    env->reward_k_value * ev.p_def_removed *
-                        player_cost_100k(m, bdef) + // bb_blockev.c (same TU)
-                    env->reward_k_ball * ev.p_ball_out;
+                    p_deliver *
+                    (env->reward_k_kd * ev.p_def_down +
+                     env->reward_k_value * ev.p_def_removed *
+                         player_cost_100k(m, bdef) + // bb_blockev.c (same TU)
+                     env->reward_k_ball * ev.p_ball_out);
                 env->reward_ptr[bteam][0] += exposure;
                 env->reward_ptr[1 - bteam][0] -= exposure;
                 env->ep_return[bteam] += exposure;
                 env->ep_return[1 - bteam] -= exposure;
                 // Sequencing charge: own-turnover risk x unbanked safe
-                // activations; exempt on the team's last turn of the half.
-                if (env->reward_k_seq != 0.0f && m->turn[bteam] < 8) {
+                // activations; exempt on the team's last turn of the half
+                // and during Charge! free activations (panel: a Charge!
+                // turnover ends only the few free activations, not the
+                // team's real turn — full `pending` overstates the stake).
+                if (env->reward_k_seq != 0.0f && m->turn[bteam] < 8 &&
+                    !bb_in_kickoff_charge(m)) {
                     int pending = 0;
                     for (int s = bteam * BB_TEAM_SLOTS;
                          s < (bteam + 1) * BB_TEAM_SLOTS; s++) {
@@ -1082,8 +1135,7 @@ static void c_step(Bloodbowl* env) {
                                    sp->stance == BB_STANCE_STANDING &&
                                    !(sp->flags & BB_PF_USED);
                     }
-                    float seq = env->reward_k_seq * ev.p_turnover *
-                                (float)pending;
+                    float seq = env->reward_k_seq * p_own_to * (float)pending;
                     env->reward_ptr[bteam][0] -= seq;
                     env->ep_return[bteam] -= seq;
                 }
@@ -1163,9 +1215,9 @@ static void c_step(Bloodbowl* env) {
                     mask |= 1u << s;
                     if (!(env->out_mask_prev[t] & (1u << s)) &&
                         env->reward_injury_value_scaled) {
-                        const bb_team_def* td = &bb_team_defs[m->team_id[t]];
-                        weight += (float)td->positions[m->players[s].position_id]
-                                      .cost_k / 100.0f;
+                        // Bounds-clamped lookup (bb_blockev.c, same TU) —
+                        // demo-bank records carry raw index bytes.
+                        weight += player_cost_100k(m, s);
                     }
                 }
                 int d = out - env->out_prev[t];
