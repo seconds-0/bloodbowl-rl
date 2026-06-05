@@ -105,17 +105,19 @@ BB_SKILL_AURA(DISTURBING_PRESENCE) {
 // BONE HEAD: "roll a D6 ... on a 1, the player forgets what they are doing:
 // their activation ends immediately and they lose their Tackle Zone."
 BB_SKILL_GATE(BONE_HEAD, 2, BB_GATE_LOSE_ACT_AND_TZ)
-// REALLY STUPID: fails on 1-3 unless assisted by a team-mate (assist handling
-// is a TODO refine: gate target 4 without adjacency check yet).
+// REALLY STUPID: 4+, "+2 ... if they have any Standing team-mates who are
+// not Distracted, and do not have the Really Stupid Trait, adjacent" — the
+// helper bonus lives in proc_turn.c gate_modifier().
 BB_SKILL_GATE(REALLY_STUPID, 4, BB_GATE_LOSE_ACT_AND_TZ)
-// UNCHANNELLED FURY: "on a 1-3 ... unless taking a Block or Blitz action".
-// Action-conditional gates are refined with the declaration rework; gate 4
-// approximates and is flagged for the differential harness.
+// UNCHANNELLED FURY: 4+, "+2 ... if they have declared a Block Action or a
+// Blitz Action" — the gate rolls after the declaration (proc_turn.c), so
+// the bonus sees the declared kind (gate_modifier()).
 BB_SKILL_GATE(UNCHANNELLED_FURY, 4, BB_GATE_LOSE_ACTIVATION)
 
 // --- Push-interaction skills -----------------------------------------------------
-// STAND FIRM: "may choose to not be pushed back" (always-on here; the choice
-// to decline is a TODO decision window).
+// STAND FIRM: "may choose to not be pushed back" — a real decision window
+// (USE_SKILL/DECLINE_SKILL, PUSH phase 4 in proc_block.c), incl. during
+// chain pushes; cancelled by Juggernaut on a blitz; unusable Distracted.
 BB_SKILL_PUSHF(STAND_FIRM, BB_PUSHF_STAND_FIRM)
 // SIDE STEP: "the player's coach chooses which square the player is moved to,
 // and it can be any adjacent unoccupied square."
@@ -142,9 +144,10 @@ BB_SKILL_MOD(BREAK_TACKLE) {
     return m->players[c->player].st >= 5 ? 2 : 1;
 }
 
-// TAKE ROOT: "roll a D6 ... On a 1, the player becomes Rooted" — gate target 2
-// with the ROOTED failure kind (acts in place; unpushable; un-roots on going
-// down or at the end of the drive).
+// TAKE ROOT: "after declaring their Action, if they are Standing they must
+// roll a D6. On a 2+ ... as normal. On a 1, the player becomes Rooted" (acts
+// in place; unpushable; un-roots on going down or at the end of the drive).
+// Prone treemen skip the roll (gate_skill_for() in proc_turn.c).
 BB_SKILL_GATE(TAKE_ROOT, 2, BB_GATE_ROOTED)
 
 // LEAP: jumping may cross ANY single adjacent square (legality in proc_move)

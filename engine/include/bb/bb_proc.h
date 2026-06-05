@@ -68,6 +68,9 @@ bool bb_check_td(bb_match* m);
 
 // Is a KICKOFF frame on the stack (kicked ball still resolving)?
 bool bb_in_kickoff(const bb_match* m);
+// Inside the Charge! kick-off event's free-activation loop (team re-rolls
+// available to the charging team there)?
+bool bb_in_kickoff_charge(const bb_match* m);
 
 // Squares / geometry.
 static inline bool bb_on_pitch_xy(int x, int y) {

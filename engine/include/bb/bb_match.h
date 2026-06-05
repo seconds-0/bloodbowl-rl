@@ -105,6 +105,10 @@ typedef struct {
     uint8_t ktm_used;                 // Kick Team-mate: its own per-turn budget
     uint8_t secure_used;              // BB2025 Secure the Ball: once per turn
     uint8_t bribes[2];                // bribe tokens (Get the Ref / inducements)
+    uint8_t fan_factor[2];            // pregame Fan Factor (D3 + Dedicated
+                                      // Fans); Pitch Invasion adds it to the
+                                      // roll-off. 0 until the fans/inducement
+                                      // work lands (replay init injects it)
     uint8_t cheer_assist[2];          // Cheering Fans: +1 assist on next block
     uint8_t surfs[2];                 // players of team t crowd-pushed off (cumulative)
     uint8_t apothecary[2];            // remaining uses

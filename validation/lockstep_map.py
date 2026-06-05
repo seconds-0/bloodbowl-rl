@@ -59,6 +59,7 @@ A_HANDOFF_TARGET, A_FOUL_TARGET, A_TTM_TARGET, A_SECURE_BALL = 14, 15, 16, 17
 A_END_ACTIVATION = 19
 A_CHOOSE_DIE, A_PUSH_SQUARE, A_FOLLOW_UP = 20, 21, 22
 A_USE_REROLL, A_DECLINE_REROLL = 23, 24
+A_USE_SKILL, A_DECLINE_SKILL = 25, 26
 A_APOTHECARY, A_CHOOSE_OPTION, A_SPECIAL_TARGET = 27, 28, 29
 
 ACT_MOVE, ACT_BLOCK, ACT_BLITZ, ACT_PASS, ACT_HANDOFF, ACT_FOUL = 0, 1, 2, 3, 4, 5
@@ -106,19 +107,23 @@ PLAYER_ACTION_KIND = {
 UNMAPPED_ACTIONS = {"throwBomb", "hailMaryBomb", "multipleBlock", "swoop",
                     "punt", "puntMove", "lookIntoMyEyes", "balefulHex"}
 
-# Kickoff-event free-action turn modes (engine treats the events as no-ops
-# past their dice, D21). Pure repositioning modes can be baked into the setup
-# placements when the result is still a legal formation.
+# Kickoff-event free-action turn modes. Solid Defence and Quick Snap map to
+# REAL engine repositioning windows (KICKOFF phases 5/6, D21); Blitz!/Charge
+# free activations are still dropped (engine no-op); Kick-off Return is a
+# FUMBBL BB2020-ruleset relic absent from the BB2025 mirror — its moves bake
+# into the setup placements when still formation-legal.
 KICKOFF_FREE_MODES = {"blitz", "quickSnap", "solidDefence", "kickoffReturn"}
-KICKOFF_BAKE_MODES = {"quickSnap", "solidDefence", "kickoffReturn"}
+KICKOFF_WINDOW_MODES = {"solidDefence", "quickSnap"}
+KICKOFF_BAKE_MODES = {"kickoffReturn"}
 # The events' own D3 rolls ARE rolled by the engine — never drop these.
 KICKOFF_EVENT_ROLLS = {"blitzRoll", "solidDefenceRoll", "quickSnapRoll"}
 
-# Negatrait activation gates: engine D6 target (BB_SKILL_GATE registrations).
-# FFB applies situational modifiers (e.g. Really Stupid's +2 helper) that the
-# engine lacks; gate dice are outcome-adjusted against these flat targets.
-GATE_SKILLS = {"Bone Head": 2, "Really Stupid": 4,
-               "Unchannelled Fury": 4, "Take Root": 2}
+# Negatrait activation gates: engine D6 target + failure kind
+# (BB_SKILL_GATE registrations; the engine rolls during the A_DECLARE
+# transition, applies Really Stupid's +2 helper / Unchannelled Fury's +2
+# Block-or-Blitz modifier, and offers a team re-roll window on failure).
+GATE_SKILLS = {"Bone Head": (2, "tz"), "Really Stupid": (4, "tz"),
+               "Unchannelled Fury": (4, "plain"), "Take Root": (2, "root")}
 DECLARE_ROLL_SKILLS = {"Animal Savagery", "Bloodlust", "Animosity"}
 TEST_RR_SKILL = {  # engine BB_SKILL_REROLL registrations
     "dodgeRoll": "Dodge", "goForItRoll": "Sure Feet", "pickUpRoll": "Sure Hands",
@@ -153,6 +158,7 @@ def load_yaml_lite(path):
         if not m:
             continue
         indent, dash, key, val = len(m.group(1)), m.group(2), m.group(3), m.group(4)
+        val = re.sub(r"\s+#.*$", "", val)  # inline comments are not values
         val = val.strip().strip('"').strip("'")
         if key == "name" and dash and indent == 2:       # new team / skill
             cur_team = {"name": val, "display": val, "positions": []}
@@ -221,6 +227,9 @@ class Mapper:
         self.rerolls = [0, 0]
         self.apo = [0, 0]
         self.skill_rr_used = collections.defaultdict(set)  # playerId -> kinds
+        self.distracted = set()    # pids the ENGINE holds Distracted (partial
+                                   # mirror: negatrait gate failures; cleared
+                                   # on activation like the engine)
         self.active_team = None
         self.activation = None     # dict: player, kind, gate_failed, ...
         self.acts_this_turn = 0
@@ -228,17 +237,19 @@ class Mapper:
         self.turnover = False
         self.setup_segments = 0
         self.pending_block = None  # block resolution state
-        self.stood_block = None    # engine auto-applied Stand Firm: {att,def,def_sq}
         self.pending_step = None   # buffered STEP awaiting its (later) rolls
         self.pre_dice = []         # dice before next STEP/JUMP/BLOCK_TARGET
         self.pre_route = False     # route dice/rerolls to pre_dice (block rush)
         self.turnend_dice = []     # dice consumed during END_TURN transition
         self.pickmeup = []         # (gslot, roll) Pick Me Up dice this boundary
+        self.pmu_stood = set()     # owners stood up by Pick-Me-Up this boundary
         self.last_ball_cmd = None  # cmd of the last ball record seen
         self.engine_alive = set()  # engine-side active players FFB removed
         self.ball_diverged = False # engine ball state unrepresentable (skill gap)
         self.last_injury_key = None
         self.in_kickoff_resolution = False
+        self.kickoff_window = None # {"mode": solidDefence|quickSnap} open window
+        self.charge = None         # Charge! loop: {"budget", "used", "pids"}
         # Engine stun rollover mirror: pid -> "fresh" (stunned this turn) or
         # "aged" (started its own team turn stunned = engine STUNNED_USED).
         # The engine flips aged players to prone at the END of their own
@@ -559,7 +570,7 @@ class Mapper:
                 "receiving": receiving, "weather": 2,
                 "rerolls": [meta["teamHome"].get("reRolls") or 0,
                             meta["teamAway"].get("reRolls") or 0],
-                "apo": list(self.apo), "dice": []}
+                "apo": list(self.apo), "fans": [0, 0], "dice": []}
         self.ops.append(init)
         self.init_op = init
 
@@ -584,11 +595,65 @@ class Mapper:
             # state/ball already tracked
         return self.ops
 
+    def flush_kickoff_window(self, cmd):
+        """Close an open Solid Defence / Quick Snap engine window: the
+        SETUP_DONE act resumes the kick landing (its dice ride on it)."""
+        if self.kickoff_window:
+            self.kickoff_window = None
+            self.act(cmd, A_SETUP_DONE, note="kickoff window done")
+
+    def mirror_marked(self, pid):
+        """Marked per the mirror: any standing, non-Distracted opponent
+        adjacent (partial Distracted tracking)."""
+        p = self.pos.get(pid)
+        team = self.pid_team(pid)
+        if not p or team is None:
+            return False
+        for q, (t, _) in self.slot_of.items():
+            if t == team or q in self.ignore_all:
+                continue
+            qp = self.pos.get(q)
+            if not qp or self.base.get(q, 0) != 0 or q in self.distracted:
+                continue
+            if max(abs(qp[0] - p[0]), abs(qp[1] - p[1])) == 1:
+                return True
+        return False
+
+    def flush_charge(self, cmd):
+        """Close the Charge! loop. The engine ends it WITHOUT a decision on
+        a turnover (a selected player fell), an exhausted budget, or no
+        eligible Open player left; otherwise the coach's stop is an explicit
+        END_TURN act."""
+        ch, self.charge = self.charge, None
+        if ch is None:
+            return
+        self.flush_step(cmd)
+        if self.activation and not self.activation.get("closed"):
+            self.close_activation(cmd)
+        else:
+            self.resolve_pending_followup(cmd)
+        self.activation = None
+        if self.turnover:
+            self.turnover = False  # engine clears the latch at charge end
+            return
+        if ch["used"] >= ch["budget"]:
+            return
+        eligible = any(
+            t == self.kicking and pid not in ch["pids"] and
+            pid not in self.ignore_all and self.pos.get(pid) and
+            self.base.get(pid, 0) == 0 and not self.mirror_marked(pid)
+            for pid, (t, _) in self.slot_of.items())
+        if eligible:
+            self.act(cmd, A_END_TURN, note="charge done")
+
     def handle_touchback(self, r):
         """Kick went out of play / into the kicking half: the receiving coach
         gives the ball to any standing player (engine KICKOFF phase 2,
         A_TOUCHBACK arg = global slot; arg 0xFF + square if nobody stands)."""
         cmd = r.get("cmd") or 0
+        self.flush_kickoff_window(cmd)
+        if self.charge is not None:
+            self.flush_charge(cmd)
         x, y = r["at"]
         pid = next((p for p, q in self.pos.items() if q == (x, y)
                     and self.slot_of.get(p)), None)
@@ -605,15 +670,14 @@ class Mapper:
 
     # --- formation / setup ----------------------------------------------------------
     def kickoff_repositioning(self, i, r):
-        """Final positions of kickoff-event pure-repositioning moves (Solid
-        Defence / Quick Snap / Kick-off Return) following this formation.
+        """Final positions of Kick-off Return moves following this formation
+        (the one remaining baked mode: a FUMBBL BB2020-ruleset relic absent
+        from the BB2025 mirror, so the engine has no window for it).
 
-        The engine treats these events as no-ops (D21): baking the final
-        positions into the setup placements reproduces the post-event board
-        exactly — the landing catch then rolls against the same tackle zones
-        FFB used. Only applied when the result is still a setup-legal
-        formation (Solid Defence re-setups always are by rule; Quick Snap
-        single steps occasionally are not)."""
+        Baking the final positions into the setup placements reproduces the
+        post-event board exactly — the landing catch then rolls against the
+        same tackle zones FFB used. Only applied when the result is still a
+        setup-legal formation."""
         finals = {}
         for j in range(i + 1, min(i + 600, len(self.recs))):
             rj = self.recs[j]
@@ -653,6 +717,9 @@ class Mapper:
         self.ignore_pos.clear()    # repositioning divergences reset with it
         self.ball_diverged = False
         self.pickmeup = []
+        self.pmu_stood = set()
+        self.kickoff_window = None
+        self.charge = None
         finals = self.kickoff_repositioning(i, r)
         if finals:
             coords = dict(r["players"])
@@ -714,10 +781,43 @@ class Mapper:
             return
         if pid in self.ignore_all:
             return  # ghost player relocating: mirror tracks, engine ignores
-        if self.in_kickoff_resolution and mode in KICKOFF_FREE_MODES:
-            # Kickoff-event free move. Baked moves are already part of the
-            # setup placements; everything else is the documented D21
-            # repositioning divergence (engine keeps the kicked formation).
+        if self.in_kickoff_resolution and mode == "blitz" and \
+                self.charge is not None and self.charge.get("ttm_drop"):
+            self.ignore_pos.add(pid)
+            self.skip(cmd, "charge_ttm_move_dropped", f"{pid} -> {x},{y}")
+            return
+        if self.in_kickoff_resolution and mode in KICKOFF_FREE_MODES and \
+                not (mode == "blitz" and self.charge is not None):
+            if mode in KICKOFF_WINDOW_MODES:
+                # Solid Defence / Quick Snap: a real engine window decision.
+                # FFB stages Solid Defence players OFF the pitch first (a
+                # dugout-coordinate move), then re-places them — mapped to
+                # the window's SETUP_REMOVE so swaps reconcile.
+                ts = self.slot_of.get(pid)
+                if ts and self.kickoff_window and \
+                        self.kickoff_window["mode"] == mode:
+                    staged = self.kickoff_window.setdefault("staged", set())
+                    if on_pitch:
+                        if self.move_from == (x, y):
+                            return  # FFB duplicate/no-op move record
+                        staged.discard(pid)
+                        self.act(cmd, A_SETUP_PLACE, ts[0] * 16 + ts[1], x, y,
+                                 note=f"kickoff {mode}")
+                        return
+                    if mode == "solidDefence":
+                        if pid not in staged:
+                            staged.add(pid)
+                            self.act(cmd, A_SETUP_REMOVE, ts[0] * 16 + ts[1],
+                                     note="kickoff solidDefence stage")
+                        # else: dugout-internal shuffle — already staged off
+                        return
+                self.ignore_pos.add(pid)
+                self.skip(cmd, f"kickoff_window_move_unattached_{mode}",
+                          f"{pid} -> {x},{y}")
+                return
+            # Blitz!/Charge free activations and Kick-off Return moves stay
+            # engine no-ops. Baked moves are already part of the setup
+            # placements; everything else is a documented divergence.
             if pid in self.baked_moves:
                 self.skips["kickoff_reposition_baked_move"] += 1
             else:
@@ -767,13 +867,6 @@ class Mapper:
                 self.act(cmd, A_FOLLOW_UP, 1)
                 self.pending_block = None
                 return
-        # FFB declined an auto-applied Stand Firm: the engine kept attacker
-        # and defender in place, so their FFB relocations cannot be mirrored.
-        sb = self.stood_block
-        if sb and (pid == sb["def"] or
-                   (pid == sb["att"] and sb["def_sq"] == (x, y))):
-            self.skip(cmd, "stand_firm_decline_divergence", f"{pid} -> {x},{y}")
-            return
         if mode not in ("regular", "blitz"):
             self.skip(cmd, f"move_in_mode_{mode}", f"{pid} -> {x},{y}")
             return
@@ -854,14 +947,36 @@ class Mapper:
                 self.skip(cmd, "unrepresented_player_report",
                           f"{rep}/{pids[0]}")
                 return
+        if self.kickoff_window and \
+                r.get("mode") != self.kickoff_window["mode"]:
+            # First record outside the repositioning window: close it (the
+            # SETUP_DONE act carries the landing dice that follow).
+            self.flush_kickoff_window(cmd)
+        if self.charge is not None and r.get("mode") != "blitz":
+            self.flush_charge(cmd)
+        if self.in_kickoff_resolution and \
+                r.get("mode") in KICKOFF_WINDOW_MODES and \
+                rep not in KICKOFF_EVENT_ROLLS:
+            # Window-internal bookkeeping reports (playerAction shells): the
+            # engine window has no per-player activations.
+            self.skips["kickoff_window_report_dropped"] += 1
+            return
         if self.in_kickoff_resolution and r.get("mode") in KICKOFF_FREE_MODES \
                 and rep not in KICKOFF_EVENT_ROLLS:
-            # Rolls/blocks inside a kickoff free action (Blitz!/Charge runs
-            # whole activations): the engine never rolls these (D21 no-op).
-            if rep == "injury" and r.get("defenderId"):
-                self.ignore_state.add(str(r.get("defenderId")))
-            self.skip(cmd, "kickoff_free_report_dropped", rep)
-            return
+            if r.get("mode") == "blitz" and self.charge is not None:
+                if self.charge.get("ttm_drop") and rep != "playerAction":
+                    if rep == "injury" and r.get("defenderId"):
+                        self.ignore_state.add(str(r.get("defenderId")))
+                    self.skip(cmd, "charge_ttm_report_dropped", rep)
+                    return
+                # otherwise: real engine activations — map normally
+            else:
+                # Kick-off Return moves / orphaned free-action rolls: the
+                # engine never rolls these.
+                if rep == "injury" and r.get("defenderId"):
+                    self.ignore_state.add(str(r.get("defenderId")))
+                self.skip(cmd, "kickoff_free_report_dropped", rep)
+                return
         h = getattr(self, "rep_" + (rep or "none"), None)
         if h:
             h(i, r, cmd)
@@ -874,10 +989,16 @@ class Mapper:
 
     # pregame ------------------------------------------------------------------------------
     def rep_fanFactor(self, i, r, cmd):
-        self.skips["fan_factor_roll_dropped"] += 1  # engine rolls no fans
+        # The engine rolls no fans (D3 dropped) but carries the RESULT:
+        # Pitch Invasion adds Fan Factor to the roll-off (init op "fans").
+        self.skips["fan_factor_roll_dropped"] += 1
+        team = 0 if str(r.get("teamId")) == \
+            str(self.meta["teamHome"]["teamId"]) else 1
+        if r.get("dedicatedFansResult") is not None:
+            self.init_op["fans"][team] = int(r.get("dedicatedFansResult"))
 
     def rep_dedicatedFans(self, i, r, cmd):
-        self.skips["fan_factor_roll_dropped"] += 1
+        self.skips["fan_factor_roll_dropped"] += 1  # post-game update roll
 
     def rep_weather(self, i, r, cmd):
         roll = r.get("weatherRoll") or []
@@ -945,12 +1066,23 @@ class Mapper:
         elif result in ("Pitch Invasion", "Officious Ref"):
             self.skip(cmd, "kickoff_event_partial", result)
 
-    def rep_quickSnapRoll(self, i, r, cmd):
+    def _kickoff_d3(self, cmd, r, what):
         v = int(r.get("roll") or 1)
-        self.attach(cmd, [v if 1 <= v <= 3 else 1], "quick snap d3")
+        v = v if 1 <= v <= 3 else 1
+        self.attach(cmd, [v], what)
+        return v
 
-    rep_solidDefenceRoll = rep_quickSnapRoll
-    rep_blitzRoll = rep_quickSnapRoll
+    def rep_quickSnapRoll(self, i, r, cmd):
+        self._kickoff_d3(cmd, r, "quick snap d3")
+        self.kickoff_window = {"mode": "quickSnap"}
+
+    def rep_solidDefenceRoll(self, i, r, cmd):
+        self._kickoff_d3(cmd, r, "solid defence d3")
+        self.kickoff_window = {"mode": "solidDefence"}
+
+    def rep_blitzRoll(self, i, r, cmd):
+        v = self._kickoff_d3(cmd, r, "charge d3")
+        self.charge = {"budget": v + 3, "used": 0, "pids": set()}
 
     def rep_cheeringFans(self, i, r, cmd):
         rh, ra = r.get("rollHome"), r.get("rollAway")
@@ -963,10 +1095,10 @@ class Mapper:
         pass  # dice arrive via extraReRoll/cheeringFans
 
     def rep_kickoffPitchInvasion(self, i, r, cmd):
-        """Pitch Invasion: D6 home + D6 away (FFB adds Dedicated Fans the
-        engine lacks — outcome-adjusted), then per losing team a D3 count +
-        one pick roll per victim over its slot-sorted standing players
-        (mirrors stun_random_players exactly, like Dodgy Snack)."""
+        """Pitch Invasion: D6 home + D6 away, each + Fan Factor (the engine
+        carries fan_factor from the init op now), then per losing team a D3
+        count + one pick roll per victim over its slot-sorted standing
+        players (mirrors stun_random_players exactly, like Dodgy Snack)."""
         rh, ra = int(r.get("rollHome") or 0), int(r.get("rollAway") or 0)
         if not rh or not ra:
             self.skip(cmd, "pitch_invasion_partial", "missing 2d6")
@@ -975,13 +1107,20 @@ class Mapper:
         vict_by_team = {0: [p for p in victims if self.pid_team(p) == 0],
                         1: [p for p in victims if self.pid_team(p) == 1]}
         losers = {t for t in (0, 1) if vict_by_team[t]}
-        # Engine loser rule from the raw dice: home iff rh<=ra, away iff
-        # ra<=rh. Adjust outcome-preservingly when fan modifiers flipped it.
-        want = losers or ({0, 1} if rh == ra else ({0} if rh < ra else {1}))
-        eng = {t for t, ok in ((0, rh <= ra), (1, ra <= rh)) if ok}
+        # Engine loser rule (fan-adjusted dice): home iff h<=a, away iff
+        # a<=h with h/a = D6 + fan factor. Adjust outcome-preservingly only
+        # if FFB's victim list still disagrees (e.g. FFB rolled with a fan
+        # count our init missed).
+        f0, f1 = self.init_op.get("fans", [0, 0])
+        want = losers or ({0, 1} if rh + f0 == ra + f1 else
+                          ({0} if rh + f0 < ra + f1 else {1}))
+        eng = {t for t, ok in ((0, rh + f0 <= ra + f1),
+                               (1, ra + f1 <= rh + f0)) if ok}
         if victims and want != eng:
-            rh, ra = {frozenset({0}): (1, 2), frozenset({1}): (2, 1),
-                      frozenset({0, 1}): (1, 1)}[frozenset(want)]
+            rh, ra = {frozenset({0}): (1, 2 + f0 - f1),
+                      frozenset({1}): (2 + f1 - f0, 1),
+                      frozenset({0, 1}): (1, 1 + f0 - f1)}[frozenset(want)]
+            rh, ra = min(max(rh, 1), 6), min(max(ra, 1), 6)
             self.skips["pitch_invasion_dice_adjusted"] += 1
         dice = [rh, ra]
         stunned = set()
@@ -1086,6 +1225,7 @@ class Mapper:
             # Engine turn_start(receiving): players who enter their own turn
             # stunned become STUNNED_USED (flip at that turn's end).
             self.age_stunned(1 - self.kicking if self.kicking is not None else None)
+            self.pmu_stood = set()
             self.emit_expect(cmd, skip_ball=bool(td))
             self.acts_this_turn = 0
             self.used_this_turn = set()
@@ -1104,6 +1244,7 @@ class Mapper:
                 self.attach(cmd, boundary_dice, "turn end")
         self.turnend_dice = []
         self.pickmeup = []
+        self.pmu_stood = set()
         # Engine boundary bookkeeping: turn_end(T) flips T's aged stunned
         # players to prone; turn_start(1-T) ages the next team's fresh ones.
         ended = self.active_team
@@ -1119,7 +1260,6 @@ class Mapper:
         self.turnover = False
         self.activation = None
         self.pending_block = None
-        self.stood_block = None
         self.pending_step = None
         self.pre_dice = []
         self.pre_route = False
@@ -1160,76 +1300,42 @@ class Mapper:
             return
         if self.activation_aborted(i, pid):
             return  # select-then-deselect: FFB does not consume the activation
+        if self.charge is not None and r.get("mode") == "blitz" and \
+                action not in ("move", "blitz", "blitzMove", "blitzSelect"):
+            # Non-Move/Blitz inside a Charge (TTM/KTM, or FFB leniencies
+            # like Stab): the mapper cannot express TTM dice yet and the
+            # engine's mirror-faithful menu has no Special Actions — drop
+            # the whole activation (engine never activates the player; any
+            # relocations are classified divergences).
+            self.resolve_pending_followup(cmd)
+            if self.activation and not self.activation.get("closed"):
+                self.close_activation(cmd)
+            self.charge["ttm_drop"] = True
+            self.activation = {"pid": pid, "kind": None, "closed": True}
+            self.skip(cmd, "charge_ttm_activation_dropped", pid)
+            return
         # new activation
         self.resolve_pending_followup(cmd)
         if self.activation and not self.activation.get("closed"):
             self.close_activation(cmd)
         self.pending_block = None
-        self.stood_block = None
         self.pre_dice = []
         self.pre_route = False
         self.active_team = team
         self.acts_this_turn += 1
         gslot = team * 16 + sl
         gate_dice, gate_failed = [], False
-        if self.skillnames.get(pid, set()) & {s for s in GATE_SKILLS}:
-            j = self.lookahead(i, lambda x: x.get("report") == "confusionRoll" and
-                               str(x.get("playerId")) == pid)
-            if j >= 0:
-                self.consumed.add(j)
-                final = self.recs[j]
-                # FFB allows a team re-roll on a failed gate; the engine's
-                # gate is a single inline die. Consume the re-roll chain and
-                # feed the FINAL outcome through the one engine die.
-                for k in range(j + 1, min(j + 4, len(self.recs))):
-                    rk = self.recs[k]
-                    rep_k = rk.get("report")
-                    if rep_k == "reRoll" and str(rk.get("playerId")) == pid:
-                        self.consumed.add(k)
-                        src = rk.get("reRollSource") or ""
-                        if src in ("Team ReRoll", "Brilliant Coaching ReRoll",
-                                   "Leader", "Mascot TRR"):
-                            team_rr = self.pid_team(pid)
-                            if team_rr is not None and self.rerolls[team_rr] > 0:
-                                self.rerolls[team_rr] -= 1
-                        self.skips["gate_reroll_folded"] += 1
-                    elif rep_k == "confusionRoll" and \
-                            str(rk.get("playerId")) == pid:
-                        self.consumed.add(k)
-                        final = rk
-                    elif rk.get("type") in ("dice", "action", "event",
-                                            "formation"):
-                        break
-                roll = int(final.get("roll") or 1)
-                ok = bool(final.get("successful"))
-                gate_failed = not ok
-                # Outcome-preserving die adjustment: FFB applies situational
-                # modifiers (Really Stupid's +2 helper) the engine lacks —
-                # feed a die that reproduces FFB's pass/fail against the
-                # engine's flat target. Engine gap recorded for cycle 2.
-                target = min(GATE_SKILLS[s] for s in
-                             (self.skillnames.get(pid, set()) & set(GATE_SKILLS)))
-                if ok and roll < target:
-                    roll = target
-                    self.skips["gate_die_outcome_adjusted"] += 1
-                elif not ok and roll >= target:
-                    roll = target - 1
-                    self.skips["gate_die_outcome_adjusted"] += 1
-                gate_dice = [roll]
-        self.act(cmd, A_ACTIVATE, gslot, dice=gate_dice,
-                 note=f"activate {pid} {action}")
+        if self.charge is not None and r.get("mode") == "blitz" and \
+                pid not in self.charge["pids"]:
+            self.charge["ttm_drop"] = False
+            self.charge["pids"].add(pid)
+            self.charge["used"] += 1
+        self.act(cmd, A_ACTIVATE, gslot, note=f"activate {pid} {action}")
         self.used_this_turn.add(pid)
-        if gate_failed or action == "removeConfusion":
-            if not gate_failed and action == "removeConfusion":
-                # gate passed but FUMBBL only cleared confusion: burn the
-                # activation as a bare Move.
-                self.act(cmd, A_DECLARE, ACT_MOVE)
-                self.act(cmd, A_END_ACTIVATION)
-            self.activation = {"pid": pid, "kind": None, "closed": True}
-            return
+        self.distracted.discard(pid)  # engine clears Distracted on activation
         kind = PLAYER_ACTION_KIND.get(action)
         stand_first = action in ("standUp", "standUpBlitz")
-        if kind is None and action == "standUp":
+        if kind is None and action in ("standUp", "removeConfusion"):
             kind = ACT_MOVE
         if kind is None:
             self.skip(cmd, "player_action_unknown", action)
@@ -1265,7 +1371,20 @@ class Mapper:
                 kind = ACT_MOVE
                 foul_demoted = True
                 self.skips["foul_declare_demoted_to_move"] += 1
-        self.act(cmd, A_DECLARE, kind, dice=dec_dice)
+        # Negatrait gate: the engine rolls during the A_DECLARE transition
+        # (after declaring, per the mirror) with a possible re-roll window.
+        declare_dice, gate_acts, gate_failed = \
+            self.map_gate(i, cmd, pid, kind, dec_dice)
+        self.act(cmd, A_DECLARE, kind, dice=declare_dice)
+        for typ, arg, dice in gate_acts:
+            self.act(cmd, typ, arg, dice=dice)
+        if gate_failed or action == "removeConfusion":
+            if not gate_failed and action == "removeConfusion":
+                # gate passed but FUMBBL only cleared confusion: burn the
+                # activation as a bare Move.
+                self.act(cmd, A_END_ACTIVATION)
+            self.activation = {"pid": pid, "kind": None, "closed": True}
+            return
         self.activation = {"pid": pid, "kind": kind, "closed": False,
                            "blocks": 0, "moved": 0,
                            "foul_demoted": foul_demoted}
@@ -1278,6 +1397,141 @@ class Mapper:
             self.activation["stood"] = True
         if action == "secureTheBall":
             pass  # steps follow; pickup test rides on the step
+
+    def map_gate(self, i, cmd, pid, kind, dec_dice):
+        """Map FFB's confusionRoll chain onto the engine's declare-time gate.
+
+        Returns (declare_dice, extra_acts, gate_failed): dice for the
+        A_DECLARE op, [(type, arg, dice), ...] acts to emit after it (the
+        re-roll window), and whether the activation is lost. Dice are
+        outcome-adjusted against the engine's target AND situational
+        modifiers (Really Stupid's +2 helper from the position mirror,
+        Unchannelled Fury's +2 on Block/Blitz) so engine pass/fail always
+        reproduces FFB's."""
+        owned = self.skillnames.get(pid, set()) & set(GATE_SKILLS)
+        if not owned:
+            return list(dec_dice), [], False
+        # Engine picks the lowest skill id (bb_hook_activation_gate order).
+        gskill = min(owned, key=lambda s: self.skill_id(s))
+        target, gkind = GATE_SKILLS[gskill]
+        if gkind == "root" and self.base.get(pid, 0) != 0:
+            return list(dec_dice), [], False  # Take Root: Standing only
+        j = self.lookahead(i, lambda x: x.get("report") == "confusionRoll" and
+                           str(x.get("playerId")) == pid)
+        if j < 0:
+            # FFB rolled no gate where the engine will: classified; the
+            # dice_underrun that follows is honest.
+            self.skip(cmd, "gate_roll_missing", f"{pid}/{gskill}")
+            return list(dec_dice), [], False
+        self.consumed.add(j)
+        mod = 0
+        if gskill == "Unchannelled Fury" and kind in (ACT_BLOCK, ACT_BLITZ):
+            mod = 2
+        elif gskill == "Really Stupid":
+            ppos = self.pos.get(pid)
+            if ppos:
+                for hid, (ht, _) in self.slot_of.items():
+                    if ht != self.pid_team(pid) or hid == pid:
+                        continue
+                    hp = self.pos.get(hid)
+                    if not hp or self.base.get(hid, 0) != 0:
+                        continue
+                    if hid in self.distracted or \
+                            self.has_skill(hid, "Really Stupid"):
+                        continue
+                    if max(abs(hp[0] - ppos[0]), abs(hp[1] - ppos[1])) == 1:
+                        mod = 2
+                        break
+
+        def adj(roll, ok):
+            if ok and roll + mod < target:
+                self.skips["gate_die_outcome_adjusted"] += 1
+                return max(1, min(6, target - mod))
+            if not ok and roll + mod >= target:
+                self.skips["gate_die_outcome_adjusted"] += 1
+                return max(1, target - mod - 1)
+            return roll
+
+        first = self.recs[j]
+        roll1 = adj(int(first.get("roll") or 1), bool(first.get("successful")))
+        ok1 = bool(first.get("successful"))
+        team = self.pid_team(pid)
+
+        def fail_result(declare_dice, extra):
+            """Final gate failure. ROOTED continues the action — the engine
+            rolls the declare-roll dice (Bloodlust etc.) in that same
+            transition, so dec_dice ride on the last act."""
+            if gkind == "root":
+                if extra:
+                    extra[-1][2].extend(dec_dice)
+                else:
+                    declare_dice = declare_dice + list(dec_dice)
+                return declare_dice, extra, False
+            if gkind == "tz":
+                self.distracted.add(pid)
+            return declare_dice, extra, True
+
+        if ok1:
+            return [roll1] + list(dec_dice), [], False
+        # First roll failed: find FFB's re-roll chain (reRoll [+ Loner] then
+        # a second confusionRoll).
+        reroll_src, loner_die, loner_ok, second = None, None, True, None
+        for k in range(j + 1, min(j + 6, len(self.recs))):
+            if k in self.consumed:
+                continue
+            rk = self.recs[k]
+            rep_k = rk.get("report")
+            if rep_k == "reRoll" and str(rk.get("playerId")) == pid:
+                self.consumed.add(k)
+                src = rk.get("reRollSource") or ""
+                if src == "Loner":
+                    loner_die = int(rk.get("roll") or 1)
+                    loner_ok = bool(rk.get("successful"))
+                else:
+                    reroll_src = src
+            elif rep_k == "confusionRoll" and str(rk.get("playerId")) == pid:
+                self.consumed.add(k)
+                second = rk
+                break
+            elif rk.get("type") in ("dice", "action", "event", "formation"):
+                break
+        # Does the ENGINE offer the window? (Mirror of the engine's
+        # gate_team_reroll_available.)
+        offers = (team is not None and self.rerolls[team] > 0 and
+                  team == self.active_team and
+                  (not self.in_kickoff_resolution or
+                   self.charge is not None))
+        if reroll_src is None and second is None:
+            # FFB kept the failure (decline the window when the engine has one).
+            return fail_result(
+                [roll1], [[A_DECLINE_REROLL, 0, []]] if offers else [])
+        team_like = reroll_src in ("Team ReRoll", "Brilliant Coaching ReRoll",
+                                   "Leader", "Mascot TRR")
+        if team_like and offers:
+            self.rerolls[team] -= 1  # mirror the engine's spend
+            rr_dice = [loner_die] if loner_die is not None else []
+            if not loner_ok:
+                # Loner waste: the failure stands, re-roll spent.
+                return fail_result([roll1], [[A_USE_REROLL, RR_TEAM, rr_dice]])
+            ok2 = bool((second or {}).get("successful"))
+            rr_dice.append(adj(int((second or {}).get("roll") or 1), ok2))
+            if ok2:
+                rr_dice.extend(dec_dice)
+                return [roll1], [[A_USE_REROLL, RR_TEAM, rr_dice]], False
+            return fail_result([roll1], [[A_USE_REROLL, RR_TEAM, rr_dice]])
+        # FFB re-rolled via a source the engine window lacks, or our mirror
+        # says the engine offers nothing: fold the FINAL outcome into the
+        # single gate die (classified).
+        self.skips["gate_reroll_folded"] += 1
+        if team_like and team is not None and self.rerolls[team] > 0:
+            self.rerolls[team] -= 1
+        final_ok = bool((second or {}).get("successful")) if second else False
+        roll_f = adj(int((second or {}).get("roll") or 1), final_ok) \
+            if second else roll1
+        if final_ok:
+            return [roll_f] + list(dec_dice), [], False
+        return fail_result(
+            [roll_f], [[A_DECLINE_REROLL, 0, []]] if offers else [])
 
     def activation_aborted(self, i, pid):
         """FFB lets a coach select a player, declare an action, and deselect
@@ -1341,7 +1595,8 @@ class Mapper:
         if team is None:
             return False
         team_ok = (self.rerolls[team] > 0 and team == self.active_team and
-                   not self.in_kickoff_resolution)
+                   (not self.in_kickoff_resolution or
+                    self.charge is not None))
         sk = TEST_RR_SKILL.get(report)
         skill_ok = sk and self.has_skill(pid, sk) and \
             sk not in self.skill_rr_used[pid]
@@ -1433,15 +1688,20 @@ class Mapper:
 
     def rep_pickMeUp(self, i, r, cmd):
         """Pick Me Up rolls at the end of the opponent's turn. The engine
-        only rolls for players that are PRONE when pick_me_up runs — players
-        still stunned/stunned_used at that moment (they flip later, in
-        turn_end) are not candidates even though FFB already rolled for
-        them. Engine rolls iterate slots ascending: buffer (slot, roll) and
-        sort at the boundary."""
+        rolls for PRONE candidates AND for stunned players FFB just rolled
+        over at this boundary (held at state 2 by stun_stage — engine
+        STUNNED_USED, a Pick-Me-Up candidate per item 8). Helpers are
+        snapshot at the boundary: an owner stood up by the trait cannot
+        help later candidates this turn. Engine rolls iterate slots
+        ascending: buffer (slot, roll) and sort at the boundary."""
         pid = str(r.get("playerId"))
         ts = self.slot_of.get(pid)
-        candidate = (ts is not None and self.base.get(pid) == 1 and
-                     not self.stun_stage.get(pid) and self.pos.get(pid))
+        # A successful roll's standing record precedes the report (FFB emits
+        # results first), so base is already 0 — the report itself proves
+        # the player was down.
+        down = (bool(r.get("successful")) or self.base.get(pid) == 1 or
+                (self.base.get(pid) == 2 and self.stun_stage.get(pid)))
+        candidate = ts is not None and down and self.pos.get(pid)
         if candidate:
             helped = False
             px, py = self.pos[pid]
@@ -1450,7 +1710,9 @@ class Mapper:
                     continue
                 if self.base.get(hid) != 0 or not self.pos.get(hid):
                     continue
-                if not self.has_skill(hid, "Pick Me Up"):
+                if hid in self.pmu_stood or hid in self.distracted:
+                    continue
+                if not self.has_skill(hid, "Pick-me-up"):
                     continue
                 hx, hy = self.pos[hid]
                 if max(abs(hx - px), abs(hy - py)) <= 3:
@@ -1459,6 +1721,10 @@ class Mapper:
             candidate = helped
         if candidate:
             self.pickmeup.append((ts[0] * 16 + ts[1], int(r.get("roll") or 1)))
+            if r.get("successful"):
+                self.pmu_stood.add(pid)
+                self.stun_stage.pop(pid, None)
+                self.base[pid] = 0  # the held standing record lands now
         else:
             self.skip(cmd, "pick_me_up_engine_no_candidate", pid)
 
@@ -1558,7 +1824,6 @@ class Mapper:
                              self.has_skill(a["pid"], "Frenzy"))
         self.resolve_pending_followup(cmd)
         self.flush_step(cmd)
-        self.stood_block = None
         self.pending_block = {"att": a["pid"], "def": defender, "pools": [],
                               "team_rr": False, "loner_die": None,
                               "loner_ok": True, "brawler": None,
@@ -1648,7 +1913,8 @@ class Mapper:
                 if pb["brawler"]:
                     rr_dice += pb["brawler"]
             self.act(cmd, A_USE_REROLL, RR_TEAM, dice=rr_dice)
-        elif engine_offers and mirror_has_rr and not self.in_kickoff_resolution:
+        elif engine_offers and mirror_has_rr and \
+                (not self.in_kickoff_resolution or self.charge is not None):
             self.act(cmd, A_DECLINE_REROLL)
         idx = int(r.get("diceIndex") or 0)
         nd = abs(int(r.get("nrOfDice") or len(final_pool)) or 1)
@@ -1657,17 +1923,34 @@ class Mapper:
         att_skills = self.skillnames.get(att, set())
         def_skills = self.skillnames.get(pb["def"], set())
         if result in ("PUSHBACK", "POW/PUSH", "POW"):
-            stood = ("Stand Firm" in def_skills and not
-                     (pb.get("from_blitz") and "Juggernaut" in att_skills))
-            if stood:
-                # Engine auto-applies Stand Firm (no push/follow-up
-                # decisions). FFB lets the coach DECLINE it: if push/follow
-                # moves arrive next they are a known engine-policy
-                # divergence, flagged via stood_block in handle_move.
-                self.stood_block = {"att": att, "def": pb["def"],
-                                    "def_sq": self.pos.get(pb["def"])}
-                self.pending_block = None
-                return
+            sf = ("Stand Firm" in def_skills and not
+                  (pb.get("from_blitz") and "Juggernaut" in att_skills))
+            if sf:
+                # Engine Stand Firm window (PUSH phase 4): FFB's avoidPush
+                # report is the use signature; a noTackleZone used:false
+                # report means the defender is Distracted (engine opens no
+                # window); silence means the coach declined — the defender's
+                # push move follows and maps as a normal push.
+                j = self.lookahead(i, lambda x: x.get("report") == "skillUse"
+                                   and (x.get("skill") or "") == "Stand Firm",
+                                   limit=8)
+                rj = self.recs[j] if j >= 0 else None
+                sfid = self.skill_id("Stand Firm")
+                if rj is not None and rj.get("used") and \
+                        (rj.get("skillUse") or "") == "avoidPush":
+                    self.consumed.add(j)
+                    self.act(cmd, A_USE_SKILL, sfid, note="stand firm")
+                    # Stood firm: no push/follow-up decisions; a POW's
+                    # knockdown dice (rep_injury) attach to this act; a
+                    # Frenzy second block may still follow.
+                    self.pending_block = None
+                    return
+                if rj is not None and not rj.get("used") and \
+                        (rj.get("skillUse") or "") == "noTackleZone":
+                    self.consumed.add(j)  # Distracted: no engine window
+                else:
+                    self.act(cmd, A_DECLINE_SKILL, sfid,
+                             note="stand firm declined")
             pb["phase"] = "push"
             # Engine PUSH phase 3 order: Fend (Juggernaut on a blitz cancels)
             # kills the follow-up; otherwise Frenzy FORCES it (no decision,
@@ -1682,13 +1965,49 @@ class Mapper:
             self.pending_block = None
         elif result == "BOTH DOWN":
             self.last_both_down = {"att": att, "def": pb["def"], "cmd": cmd}
-            wrestle = "Wrestle" in att_skills or "Wrestle" in def_skills
             att_block = "Block" in att_skills
-            if not wrestle and not att_block:
+            jugg = bool(pb.get("from_blitz")) and "Juggernaut" in att_skills
+            att_w = (not jugg) and "Wrestle" in att_skills
+            def_w = (not jugg) and "Wrestle" in def_skills
+            if att_w or def_w:
+                # Engine D29 Wrestle window: attacker asked first, then the
+                # defender (FFB StepWrestle order). FFB emits exactly one
+                # skillUse Wrestle report: (used:true, playerId) on use;
+                # (used:false, playerId:null) when every eligible owner
+                # declined; (used:false, noTackleZone, playerId:def) when the
+                # defender is Distracted — the engine opens no defender
+                # window then (Distracted may not use Active Skills).
+                j = self.lookahead(i, lambda x: x.get("report") == "skillUse"
+                                   and (x.get("skill") or "") == "Wrestle",
+                                   limit=8)
+                used_pid, def_no_window = None, False
+                if j >= 0:
+                    self.consumed.add(j)
+                    rj = self.recs[j]
+                    if rj.get("used"):
+                        used_pid = str(rj.get("playerId"))
+                    elif (rj.get("skillUse") or "") == "noTackleZone":
+                        def_no_window = True
+                else:
+                    # No report (unexpected): assume the first eligible owner
+                    # used it — the dominant line and the pre-D29 auto-policy.
+                    used_pid = att if att_w else pb["def"]
+                    self.skips["wrestle_report_missing"] += 1
+                wid = self.skill_id("Wrestle")
+                if att_w:
+                    self.act(cmd, A_USE_SKILL if used_pid == att
+                             else A_DECLINE_SKILL, wid, note="wrestle att")
+                if def_w and not def_no_window and used_pid != att:
+                    self.act(cmd, A_USE_SKILL if used_pid == pb["def"]
+                             else A_DECLINE_SKILL, wid, note="wrestle def")
+                if used_pid is not None:
+                    if self.carrier in (att, pb["def"]) and \
+                            self.pid_team(self.carrier) == self.active_team:
+                        self.turnover = True
+                elif not att_block:
+                    self.fail_likely_turnover(att)
+            elif not att_block:
                 self.fail_likely_turnover(att)
-            if wrestle and self.carrier in (att, pb["def"]):
-                if self.pid_team(self.carrier) == self.active_team:
-                    self.turnover = True
             self.pending_block = None
         else:
             self.pending_block = None
@@ -1734,6 +2053,12 @@ class Mapper:
         self.act(cmd, A_PUSH_SQUARE, 2, x, y)  # parent: into the occupied sq
         rev = list(reversed(chain))            # decision order: shallow->deep
         for idx, link in enumerate(rev):
+            # Stand Firm applies "including during a Chain Push": the engine
+            # opens a window for each chained pushee with the skill before
+            # its square decision. A link that MOVED in FFB declined it.
+            if self.has_skill(link["pid"], "Stand Firm"):
+                self.act(cmd, A_DECLINE_SKILL, self.skill_id("Stand Firm"),
+                         note="chain stand firm declined")
             deepest = idx == len(rev) - 1
             if not deepest:
                 self.act(cmd, A_PUSH_SQUARE, 2, link["to"][0], link["to"][1])
@@ -1787,8 +2112,8 @@ class Mapper:
         ("Sure Hands", "cancelStripBall"),  # engine Monstrous Mouth-style cancel
         ("Strip Ball", "stealBall"),        # engine auto on push
         ("Juggernaut", "cancelStandFirm"),
+        ("Juggernaut", "cancelWrestle"),    # auto Both-Down->push kills the window
         ("Juggernaut", "pushBackOpponent"),
-        ("Wrestle", "bringDownOppponent"),  # engine auto-applies on Both Down
         ("Taunt", "forceFollowUp"),         # follow-up mapped from the move
     }
 
@@ -1797,22 +2122,17 @@ class Mapper:
         use = r.get("skillUse") or ""
         used = bool(r.get("used"))
         if sk == "Stand Firm" and use == "avoidPush":
-            # engine auto-applies Stand Firm; FFB agreed -> no divergence
+            # Normally consumed by rep_blockChoice's window lookahead; a
+            # leftover means the push context was lost (e.g. inside a chain
+            # shape the mapper could not reconstruct) — classify it.
+            self.skip(cmd, "stand_firm_window_unattached", r.get("playerId"))
             self.pending_block = None
-            self.stood_block = None
             return
-        if sk == "Wrestle" and not used:
-            # The coach declined Wrestle on a Both Down; the engine
-            # auto-applies it (both placed prone, no armour). Genuine engine
-            # divergence (no USE_SKILL window yet): the participants' states
-            # and the decline-path armour dice cannot be mirrored.
-            bd = self.last_both_down or {}
-            for pid in (bd.get("att"), bd.get("def")):
-                if pid:
-                    self.ignore_state.add(pid)
-                    self.suppress_injury.add(pid)
-            self.skip(cmd, "wrestle_decline_divergence",
-                      f"{bd.get('att')} vs {bd.get('def')}")
+        if sk == "Wrestle":
+            # Wrestle skillUse reports are consumed by rep_blockChoice's
+            # Both-Down window lookahead (D29); a leftover here means the
+            # block context was lost — classify, never silent.
+            self.skip(cmd, "wrestle_skilluse_unattached", r.get("playerId"))
             return
         if used and (sk, use) in self.SKILL_USE_AUTO:
             self.skips["skill_use_auto_matched"] += 1
@@ -1904,8 +2224,29 @@ class Mapper:
                                     str(x.get("playerId")) == pid, limit=8)
                 if jc >= 0:
                     self.consumed.add(jc)
+                # Engine apothecary window is now two decisions: USE (rolls
+                # the second D16) then CHOOSE_OPTION 0 = original roll /
+                # 1 = new roll ("may select either of the two results").
+                # FFB's apothecaryChoice playerState reveals the pick:
+                # base 9 (Reserves) = a Badly Hurt result was selected.
+                decay = self.has_skill(pid, "Decay")
+
+                def cas_band(roll):
+                    rr = min(int(roll) + (1 if decay and roll < 16 else 0), 16)
+                    return 0 if rr <= 8 else (1 if rr <= 10 else
+                                              (2 if rr <= 12 else
+                                               (3 if rr <= 14 else 4)))
+                b1, b2 = cas_band(int(cas[0])), cas_band(int(cas2[0]))
+                if jc >= 0 and self.recs[jc].get("playerState") == 9:
+                    pick = 0 if b1 == 0 else 1   # Badly Hurt selected
+                elif jc >= 0:
+                    pick = 0 if b1 != 0 else 1   # a non-BH result selected
+                else:
+                    pick = 0 if b1 <= b2 else 1  # no report: better band
                 self.act(cmd, A_APOTHECARY, 1, dice=[int(cas2[0])],
                          note="casualty apothecary")
+                self.act(cmd, A_CHOOSE_OPTION, pick,
+                         note="apothecary result pick")
             else:
                 self.act(cmd, A_APOTHECARY, 0, note="casualty declined")
 

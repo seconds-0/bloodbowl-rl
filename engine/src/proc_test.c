@@ -42,8 +42,11 @@ static bool team_reroll_available(const bb_match* m, int team) {
     // The kick-off precedes turn 1: MATCH sets active_team to the receiver
     // BEFORE pushing KICKOFF, so without the bb_in_kickoff exclusion every
     // kick-off catch/bounce test offered the receiver a team re-roll
-    // (review M4). Skill re-rolls remain available.
-    return m->rerolls[team] > 0 && m->active_team == team && !bb_in_kickoff(m);
+    // (review M4). Skill re-rolls remain available. The Charge! event's
+    // free activations run "exactly as if it was their team's Turn":
+    // the charging (active) team keeps its team re-rolls there.
+    return m->rerolls[team] > 0 && m->active_team == team &&
+           (!bb_in_kickoff(m) || bb_in_kickoff_charge(m));
 }
 
 // PRO: "During this player's activation, they may attempt to re-roll a single

@@ -544,12 +544,14 @@ static int do_init(runner* R, const char* line) {
     abuf[al] = 0;
     init_side(R, hbuf, BB_HOME);
     init_side(R, abuf, BB_AWAY);
-    int rr[2] = {3, 3}, apo[2] = {0, 0};
+    int rr[2] = {3, 3}, apo[2] = {0, 0}, fans[2] = {0, 0};
     jarr(line, "rerolls", rr, 2);
     jarr(line, "apo", apo, 2);
+    jarr(line, "fans", fans, 2);
     for (int t = 0; t < 2; t++) {
         R->m.rerolls[t] = R->m.rerolls_start[t] = (uint8_t)rr[t];
         R->m.apothecary[t] = (uint8_t)apo[t];
+        R->m.fan_factor[t] = (uint8_t)fans[t];
     }
     R->m.half = 1;
     R->m.ball.state = BB_BALL_OFF_PITCH;

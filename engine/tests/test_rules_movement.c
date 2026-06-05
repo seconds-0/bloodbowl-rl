@@ -1169,3 +1169,222 @@ BB_TEST(movement_distracted_opponent_not_marking) {
         BB_CHECK_EQ(m.players[mover].y, 6);
     }
 }
+
+// ====================== NEGATRAIT ACTIVATION GATES ===========================
+// Mirror SK#BONE HEAD / REALLY STUPID / UNCHANNELLED FURY / TAKE ROOT: the
+// D6 rolls "after declaring their Action"; failures confer Distracted (whose
+// definition ends the activation, RR#DISTRACTED) or end it outright (UF), or
+// Root the player (the declared Action continues in place). RR#TEAM RE-ROLLS:
+// gate rolls are not on the no-re-roll list, so a failed gate offers the
+// team re-roll window during the owner's turn.
+
+// SK#BONE HEAD: 2+ passes; on a 1 the player becomes Distracted -> the
+// activation immediately ends (RR#DISTRACTED) and the player counts as
+// activated.
+BB_TEST(gate_bone_head_fail_distracted_ends_activation) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int h1 = fx_lineman(&m, 0, 0, 10, 7);
+    fx_lineman(&m, 0, 1, 2, 2); // keeps the team turn alive
+    fx_give_skill(&m, h1, BB_SK_BONE_HEAD);
+    uint8_t script[] = {1};
+    bb_rng rng;
+    bb_rng_script(&rng, script, 1);
+    bb_status st = begin_move(&m, &rng, h1);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK(m.players[h1].flags & BB_PF_DISTRACTED);
+    BB_CHECK(m.players[h1].flags & BB_PF_USED);
+    BB_CHECK(!bb_rng_error(&rng));
+}
+
+// RR#YOUR TURN: declared once-per-turn actions are used even if never
+// performed — the gate rolls AFTER the declaration, so a failed Bone Head
+// still burns the team's Blitz.
+BB_TEST(gate_rolls_after_declaration_burns_blitz) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int h1 = fx_lineman(&m, 0, 0, 10, 7);
+    fx_lineman(&m, 0, 1, 2, 2);
+    fx_lineman(&m, 1, 0, 11, 7);
+    fx_give_skill(&m, h1, BB_SK_BONE_HEAD);
+    uint8_t script[] = {1};
+    bb_rng rng;
+    bb_rng_script(&rng, script, 1);
+    bb_status st = fx_run(&m, &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    fx_apply(&m, act(BB_A_ACTIVATE, h1, 0, 0), &rng);
+    fx_apply(&m, act(BB_A_DECLARE, BB_ACT_BLITZ, 0, 0), &rng);
+    BB_CHECK(m.players[h1].flags & BB_PF_USED); // gate failed
+    BB_CHECK_EQ(m.blitz_used, 1);               // the Blitz is spent anyway
+}
+
+// SK#REALLY STUPID: 4+, with +2 when an adjacent Standing team-mate is not
+// Distracted and not itself Really Stupid: a roll of 2 passes WITH a helper
+// and the action proceeds.
+BB_TEST(gate_really_stupid_helper_gives_plus2) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int h1 = fx_lineman(&m, 0, 0, 10, 7);
+    fx_lineman(&m, 0, 1, 10, 8); // adjacent standing helper
+    fx_give_skill(&m, h1, BB_SK_REALLY_STUPID);
+    uint8_t script[] = {2}; // 2 + 2 = 4 -> pass
+    bb_rng rng;
+    bb_rng_script(&rng, script, 1);
+    bb_status st = begin_move(&m, &rng, h1);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK(!(m.players[h1].flags & BB_PF_USED));      // acting normally
+    BB_CHECK(fx_has_type(&m, BB_A_STEP));               // movement offered
+    BB_CHECK(!bb_rng_error(&rng));
+}
+
+// SK#REALLY STUPID: a Really Stupid team-mate does NOT help — the same roll
+// of 2 fails without a valid helper and the player becomes Distracted.
+BB_TEST(gate_really_stupid_rs_helper_does_not_count) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int h1 = fx_lineman(&m, 0, 0, 10, 7);
+    int h2 = fx_lineman(&m, 0, 1, 10, 8);
+    fx_lineman(&m, 0, 2, 2, 2);
+    fx_give_skill(&m, h1, BB_SK_REALLY_STUPID);
+    fx_give_skill(&m, h2, BB_SK_REALLY_STUPID);
+    uint8_t script[] = {2}; // no +2: 2 < 4 -> fail
+    bb_rng rng;
+    bb_rng_script(&rng, script, 1);
+    begin_move(&m, &rng, h1);
+    BB_CHECK(m.players[h1].flags & BB_PF_DISTRACTED);
+    BB_CHECK(m.players[h1].flags & BB_PF_USED);
+}
+
+// SK#UNCHANNELLED FURY: 4+ with +2 "if they have declared a Block Action or
+// a Blitz Action" — a roll of 2 passes for a Block declaration...
+BB_TEST(gate_unchannelled_fury_block_gets_plus2) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int h1 = fx_lineman(&m, 0, 0, 10, 7);
+    fx_lineman(&m, 0, 1, 2, 2);
+    int a1 = fx_lineman(&m, 1, 0, 11, 7);
+    (void)a1;
+    fx_give_skill(&m, h1, BB_SK_UNCHANNELLED_FURY);
+    uint8_t script[] = {2, /*1d block pool*/ 3};
+    bb_rng rng;
+    bb_rng_script(&rng, script, 2);
+    bb_status st = fx_run(&m, &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    fx_apply(&m, act(BB_A_ACTIVATE, h1, 0, 0), &rng);
+    fx_apply(&m, act(BB_A_DECLARE, BB_ACT_BLOCK, 0, 0), &rng);
+    BB_CHECK(!(m.players[h1].flags & BB_PF_USED));
+    BB_CHECK(fx_has_type(&m, BB_A_BLOCK_TARGET));
+}
+
+// ... and the same roll of 2 FAILS for a plain Move declaration: "their
+// activation immediately ends" (no Distracted condition for UF).
+BB_TEST(gate_unchannelled_fury_move_no_bonus_fails) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int h1 = fx_lineman(&m, 0, 0, 10, 7);
+    fx_lineman(&m, 0, 1, 2, 2);
+    fx_give_skill(&m, h1, BB_SK_UNCHANNELLED_FURY);
+    uint8_t script[] = {2};
+    bb_rng rng;
+    bb_rng_script(&rng, script, 1);
+    begin_move(&m, &rng, h1);
+    BB_CHECK(m.players[h1].flags & BB_PF_USED);
+    BB_CHECK(!(m.players[h1].flags & BB_PF_DISTRACTED)); // UF: no Distracted
+}
+
+// RR#TEAM RE-ROLLS on a failed gate: the owner's coach may re-roll the gate
+// die with a team re-roll; a successful re-roll lets the action proceed.
+BB_TEST(gate_failure_offers_team_reroll_window) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 2);
+    int h1 = fx_lineman(&m, 0, 0, 10, 7);
+    fx_lineman(&m, 0, 1, 2, 2);
+    fx_give_skill(&m, h1, BB_SK_BONE_HEAD);
+    uint8_t script[] = {1, /*re-rolled gate die*/ 5};
+    bb_rng rng;
+    bb_rng_script(&rng, script, 2);
+    bb_status st = begin_move(&m, &rng, h1);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK_EQ(m.decision_team, BB_HOME);
+    BB_CHECK(fx_find(&m, act(BB_A_USE_REROLL, BB_RR_TEAM, 0, 0)) >= 0);
+    BB_CHECK(fx_find(&m, act(BB_A_DECLINE_REROLL, 0, 0, 0)) >= 0);
+    fx_apply(&m, act(BB_A_USE_REROLL, BB_RR_TEAM, 0, 0), &rng);
+    BB_CHECK_EQ(m.rerolls[0], 1);                    // spent
+    BB_CHECK(!(m.players[h1].flags & BB_PF_USED));   // passed: acting
+    BB_CHECK(fx_has_type(&m, BB_A_STEP));
+    BB_CHECK(!bb_rng_error(&rng));
+}
+
+// Declining the gate re-roll applies the failure (and keeps the re-roll).
+BB_TEST(gate_reroll_declined_failure_stands) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 2);
+    int h1 = fx_lineman(&m, 0, 0, 10, 7);
+    fx_lineman(&m, 0, 1, 2, 2);
+    fx_give_skill(&m, h1, BB_SK_BONE_HEAD);
+    uint8_t script[] = {1};
+    bb_rng rng;
+    bb_rng_script(&rng, script, 1);
+    begin_move(&m, &rng, h1);
+    fx_apply(&m, act(BB_A_DECLINE_REROLL, 0, 0, 0), &rng);
+    BB_CHECK(m.players[h1].flags & BB_PF_USED);
+    BB_CHECK(m.players[h1].flags & BB_PF_DISTRACTED);
+    BB_CHECK_EQ(m.rerolls[0], 2); // not spent
+}
+
+// SK#LONER (X+): a failed Loner roll wastes the team re-roll — the gate
+// failure stands and the re-roll is spent.
+BB_TEST(gate_reroll_loner_waste) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 2);
+    int h1 = fx_lineman(&m, 0, 0, 10, 7);
+    fx_lineman(&m, 0, 1, 2, 2);
+    fx_give_skill(&m, h1, BB_SK_BONE_HEAD);
+    fx_give_skill(&m, h1, BB_SK_LONER);
+    m.players[h1].p_loner = 4;
+    uint8_t script[] = {1, /*loner*/ 2};
+    bb_rng rng;
+    bb_rng_script(&rng, script, 2);
+    begin_move(&m, &rng, h1);
+    fx_apply(&m, act(BB_A_USE_REROLL, BB_RR_TEAM, 0, 0), &rng);
+    BB_CHECK(m.players[h1].flags & BB_PF_USED); // failure stands
+    BB_CHECK_EQ(m.rerolls[0], 1);               // re-roll wasted
+    BB_CHECK(!bb_rng_error(&rng));
+}
+
+// SK#TAKE ROOT: the D6 is only rolled "if they are Standing" — a Prone
+// treeman's stand-up activation consumes no gate die.
+BB_TEST(gate_take_root_prone_no_roll) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int h1 = fx_lineman(&m, 0, 0, 10, 7);
+    fx_lineman(&m, 0, 1, 2, 2);
+    fx_give_skill(&m, h1, BB_SK_TAKE_ROOT);
+    m.players[h1].stance = BB_STANCE_PRONE;
+    bb_rng rng;
+    bb_rng_script(&rng, 0, 0); // no dice may be consumed
+    bb_status st = begin_move(&m, &rng, h1);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK(!bb_rng_error(&rng));
+    BB_CHECK(fx_has_type(&m, BB_A_STAND_UP));
+}
+
+// SK#TAKE ROOT: on a 1 the player becomes Rooted but "may perform the
+// declared Action as normal" otherwise — the activation CONTINUES in place
+// (no movement offered; ending the activation stays legal).
+BB_TEST(gate_take_root_fail_rooted_continues_in_place) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int h1 = fx_lineman(&m, 0, 0, 10, 7);
+    fx_lineman(&m, 0, 1, 2, 2);
+    fx_give_skill(&m, h1, BB_SK_TAKE_ROOT);
+    uint8_t script[] = {1};
+    bb_rng rng;
+    bb_rng_script(&rng, script, 1);
+    bb_status st = begin_move(&m, &rng, h1);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK(m.players[h1].flags & BB_PF_ROOTED);
+    BB_CHECK(!(m.players[h1].flags & BB_PF_USED)); // still activating
+    BB_CHECK(!fx_has_type(&m, BB_A_STEP));         // rooted: no movement
+    BB_CHECK(fx_has_type(&m, BB_A_END_ACTIVATION));
+}

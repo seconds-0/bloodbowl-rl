@@ -371,13 +371,18 @@ static void setup_apply(bb_match* m, bb_action a, bb_rng* rng) {
 // phase 0: decision — nominate the kick target square (receiving half)
 // phase 1: deviate the ball (D8 dir, D6 distance) + kickoff event
 // phase 4: High Kick decision (receiving coach) before the ball lands
+// phase 5: Solid Defence window (kicking coach repositions up to D3+3 Open
+//          players within their half; x = remaining player budget, y =
+//          action budget (D1/D25-style livelock guard), data = bitmask of
+//          team slots already repositioned)
+// phase 6: Quick Snap window (receiving coach: up to D3+3 Open players move
+//          one square each, any direction, even across the halfway line;
+//          same frame fields, each player moves at most once)
 // phase 3: settling — a landing catch/bounce chain is resolving below; when
 //          it finishes, check the touchback condition (ball out of play or in
 //          the kicking half, by ANY means, is a touchback)
 // phase 2: touchback decision (give to a standing player; if none, place the
 //          ball on any unoccupied square of the receiving half)
-// Events GET_THE_REF / CHEERING_FANS / SOLID_DEFENCE / QUICK_SNAP / CHARGE /
-// DODGY_SNACK remain TODO(phase3) no-ops.
 
 static const int8_t DIR8[8][2] = {
     {-1, -1}, {0, -1}, {1, -1}, {-1, 0}, {1, 0}, {-1, 1}, {0, 1}, {1, 1},
@@ -389,6 +394,18 @@ static const int8_t DIR8[8][2] = {
 bool bb_in_kickoff(const bb_match* m) {
     for (int i = 0; i < m->stack_top; i++) {
         if (m->stack[i].proc == BB_PROC_KICKOFF) return true;
+    }
+    return false;
+}
+
+// Inside the Charge! free-activation loop (KICKOFF phase 7)? The charging
+// team plays "exactly as if it was their team's Turn", so team re-rolls are
+// available there even though the kick-off is still resolving.
+bool bb_in_kickoff_charge(const bb_match* m) {
+    for (int i = 0; i < m->stack_top; i++) {
+        if (m->stack[i].proc == BB_PROC_KICKOFF && m->stack[i].phase == 7) {
+            return true;
+        }
     }
     return false;
 }
@@ -410,6 +427,11 @@ static void stun_random_players(bb_match* m, bb_rng* rng, int team, int count) {
         m->players[candidates[pick]].stance = BB_STANCE_STUNNED;
     }
 }
+
+static bool kickoff_ball_misplaced(const bb_match* m, int kicking);
+static void charge_end(bb_match* m, bb_frame* f);
+static bool ko_open(const bb_match* m, int slot);
+static int ko_popcount16(uint16_t v);
 
 // Returns true if the event paused the kickoff with a decision (High Kick).
 static bool kickoff_event(bb_match* m, bb_rng* rng) {
@@ -442,9 +464,11 @@ static bool kickoff_event(bb_match* m, bb_rng* rng) {
             break;
         }
         case BB_KO_PITCH_INVASION: {
-            // Both coaches roll D6 (+fan factor TODO(phase3)); the lower (or
-            // both on a tie) has D3 random players stunned.
-            int h = bb_d6(rng), a = bb_d6(rng);
+            // "Both Coaches roll a D6 and add their Fan Factor. The Coach
+            // that rolled lowest, or both Coaches in the result of a tie,
+            // randomly selects D3 of their players" -> Stunned.
+            int h = bb_d6(rng) + m->fan_factor[BB_HOME];
+            int a = bb_d6(rng) + m->fan_factor[BB_AWAY];
             if (h <= a) stun_random_players(m, rng, BB_HOME, bb_d3(rng));
             if (a <= h && a != h) stun_random_players(m, rng, BB_AWAY, bb_d3(rng));
             else if (a == h) stun_random_players(m, rng, BB_AWAY, bb_d3(rng));
@@ -453,12 +477,19 @@ static bool kickoff_event(bb_match* m, bb_rng* rng) {
         case BB_KO_CHANGING_WEATHER: {
             int w = bb_2d6(rng);
             m->weather = bb_weather_table[w];
-            if (m->weather == BB_WEATHER_PERFECT) {
-                // The ball scatters 3 squares in the air before landing.
+            if (m->weather == BB_WEATHER_PERFECT &&
+                !kickoff_ball_misplaced(m, f->a)) {
+                // Perfect Conditions: the ball Scatters (3) in the air —
+                // one D8 at a time, STOPPING the moment it leaves the
+                // receiving half / pitch (the touchback is then certain and
+                // FFB rolls no further dice; a kick already misplaced gusts
+                // not at all). The ball stays on the out square so the
+                // landing check routes to the touchback decision.
                 for (int i = 0; i < 3; i++) {
                     int dir = bb_roll(rng, 8) - 1;
                     m->ball.x = (uint8_t)(m->ball.x + DIR8[dir][0]);
                     m->ball.y = (uint8_t)(m->ball.y + DIR8[dir][1]);
+                    if (kickoff_ball_misplaced(m, f->a)) break;
                 }
             }
             break;
@@ -510,23 +541,48 @@ static bool kickoff_event(bb_match* m, bb_rng* rng) {
             break;
         }
         case BB_KO_SOLID_DEFENCE: {
-            // Kicking coach repositions up to D3+3 Open players. Auto-policy:
-            // no repositioning (formation kept). The D3 is still rolled for
-            // replay-stream fidelity. TODO: decision window.
-            (void)bb_d3(rng);
-            break;
+            // "The Coach of the kicking team selects up to D3+3 Open players
+            // on their team. The selected players are then removed from the
+            // pitch and can be set up again following all the usual
+            // restrictions for setting up the team."
+            f->x = (uint8_t)(bb_d3(rng) + 3); // player budget
+            f->y = SETUP_ACTION_BUDGET;       // livelock guard (D1/D25)
+            f->data = 0;                      // repositioned-slot bitmask
+            f->phase = 5;
+            bb_need_decision(m, f->a);
+            return true;
         }
         case BB_KO_QUICK_SNAP: {
-            // Receiving coach: up to D3+3 Open players move one square.
-            // Auto-policy: no moves; D3 rolled for stream fidelity.
-            (void)bb_d3(rng);
-            break;
+            // "The Coach of the receiving team selects up to D3+3 Open
+            // players on their team. The selected players may immediately
+            // move one square in any direction, even if this takes them
+            // into the opposition's half."
+            f->x = (uint8_t)(bb_d3(rng) + 3);
+            f->y = 0;
+            f->data = 0;
+            f->phase = 6;
+            bb_need_decision(m, 1 - f->a);
+            return true;
         }
         case BB_KO_CHARGE: {
-            // Kicking coach: D3+3 Open players take free Move actions (one
-            // may Blitz/TTM/KTM). Auto-policy: no moves; D3 rolled.
-            (void)bb_d3(rng);
-            break;
+            // "The Coach of the kicking team selects up to D3+3 Open players
+            // ... activated one at a time, exactly as if it was their team's
+            // Turn, and perform a free Move Action. One of the selected
+            // players may instead perform a free Blitz Action, one may
+            // perform a free Throw Team-mate Action, and one may perform a
+            // free Kick Team-mate Action. If a selected player Falls Over or
+            // is Knocked Down during their activation, no further selected
+            // players can be activated and the Charge ends."
+            f->x = (uint8_t)(bb_d3(rng) + 3); // remaining activations
+            f->y = 0;                         // bit0 blitz / 1 ttm / 2 ktm used
+            f->data = 0;                      // activated-slot bitmask
+            f->phase = 7;
+            // "exactly as if it was their team's Turn": the kicking team is
+            // active for the duration (team re-rolls, turnover latching as
+            // the end-of-charge signal); restored when the charge ends.
+            m->active_team = (uint8_t)f->a;
+            bb_need_decision(m, f->a);
+            return true;
         }
         default:
             break;
@@ -585,6 +641,30 @@ static void kickoff_advance(bb_match* m, bb_rng* rng) {
         kickoff_land(m);
         return;
     }
+    if (f->phase == 5 || f->phase == 6) { // repositioning windows: re-issue
+        bb_need_decision(m, f->phase == 5 ? f->a : 1 - f->a);
+        return;
+    }
+    if (f->phase == 7) { // Charge! free-activation loop
+        // End: a selected player Fell Over / was Knocked Down (the active-
+        // team turnover latch), the budget ran out, or nobody eligible
+        // remains. Otherwise the kicking coach picks the next activation.
+        bool any = false;
+        if (!m->turnover && f->x > 0) {
+            for (int s = f->a * BB_TEAM_SLOTS; s < (f->a + 1) * BB_TEAM_SLOTS; s++) {
+                if (!((f->data >> (s % BB_TEAM_SLOTS)) & 1) && ko_open(m, s)) {
+                    any = true;
+                    break;
+                }
+            }
+        }
+        if (m->turnover || f->x == 0 || !any) {
+            charge_end(m, f);
+            return;
+        }
+        bb_need_decision(m, f->a);
+        return;
+    }
     if (f->phase == 3) {
         // Landing chain settled.
         int kicking = f->a;
@@ -601,6 +681,30 @@ static void kickoff_advance(bb_match* m, bb_rng* rng) {
         return;
     }
     m->status = BB_STATUS_ERROR;
+}
+
+// The Charge! loop is over: clear the end-of-charge turnover latch, hand
+// the active flag back to the receiving team and land the kick.
+static void charge_end(bb_match* m, bb_frame* f) {
+    m->turnover = 0;
+    m->active_team = (uint8_t)(1 - f->a);
+    kickoff_land(m);
+}
+
+// Open (mirror RR#OPEN PLAYERS): Standing and not Marked.
+static bool ko_open(const bb_match* m, int slot) {
+    return m->players[slot].location == BB_LOC_ON_PITCH &&
+           m->players[slot].stance == BB_STANCE_STANDING &&
+           !bb_is_marked(m, slot);
+}
+
+static int ko_popcount16(uint16_t v) {
+    int n = 0;
+    while (v) {
+        n += v & 1;
+        v >>= 1;
+    }
+    return n;
 }
 
 
@@ -650,6 +754,78 @@ static int kickoff_legal(const bb_match* m, bb_action* out) {
         out[n++] = (bb_action){BB_A_CHOOSE_OPTION, 0xFE, 0, 0}; // decline
         return n;
     }
+    if (f->phase == 5) {
+        // Solid Defence: re-set-up up to D3+3 Open kicking-team players
+        // "following all the usual restrictions". DONE requires a legal
+        // formation unless the action budget ran out (then autofix repairs,
+        // like SETUP — D1/D25 livelock guard).
+        int team = f->a;
+        if (f->y == 0) {
+            out[n++] = (bb_action){BB_A_SETUP_DONE, 0, 0, 0};
+            return n;
+        }
+        if (setup_constraints_ok(m, team)) {
+            out[n++] = (bb_action){BB_A_SETUP_DONE, 0, 0, 0};
+        }
+        int xmin = team == BB_HOME ? 0 : 13;
+        int xmax = team == BB_HOME ? 12 : BB_PITCH_LEN - 1;
+        bool fresh_ok = ko_popcount16(f->data) < (int)f->x;
+        for (int s = team * BB_TEAM_SLOTS; s < (team + 1) * BB_TEAM_SLOTS; s++) {
+            bool selected = (f->data >> (s % BB_TEAM_SLOTS)) & 1;
+            // Already-selected players may be re-placed freely; new picks
+            // need budget AND must be Open at selection time. "Removed from
+            // the pitch and set up again": staging a selected player off the
+            // pitch first is legal (FFB removes, then re-places — needed for
+            // swaps), and DONE stays blocked until everyone is back.
+            if (!selected && (!fresh_ok || !ko_open(m, s))) continue;
+            if (m->players[s].location == BB_LOC_ON_PITCH &&
+                n < BB_LEGAL_MAX) {
+                out[n++] = (bb_action){BB_A_SETUP_REMOVE, (uint8_t)s, 0, 0};
+            }
+            for (int x = xmin; x <= xmax; x++) {
+                for (int y = 0; y < BB_PITCH_WID; y++) {
+                    if (!m->grid[x][y] && n < BB_LEGAL_MAX) {
+                        out[n++] = (bb_action){BB_A_SETUP_PLACE, (uint8_t)s,
+                                               (uint8_t)x, (uint8_t)y};
+                    }
+                }
+            }
+        }
+        return n;
+    }
+    if (f->phase == 7) {
+        // Charge!: pick the next Open kicking player to activate, or end.
+        for (int s = f->a * BB_TEAM_SLOTS; s < (f->a + 1) * BB_TEAM_SLOTS; s++) {
+            if (((f->data >> (s % BB_TEAM_SLOTS)) & 1) || !ko_open(m, s)) continue;
+            out[n++] = (bb_action){BB_A_ACTIVATE, (uint8_t)s, 0, 0};
+        }
+        out[n++] = (bb_action){BB_A_END_TURN, 0, 0, 0};
+        return n;
+    }
+    if (f->phase == 6) {
+        // Quick Snap: up to D3+3 Open receiving players move ONE square in
+        // any direction (across the halfway line too); each at most once.
+        out[n++] = (bb_action){BB_A_SETUP_DONE, 0, 0, 0};
+        int team = 1 - f->a;
+        if (ko_popcount16(f->data) >= (int)f->x) return n;
+        for (int s = team * BB_TEAM_SLOTS; s < (team + 1) * BB_TEAM_SLOTS; s++) {
+            if ((f->data >> (s % BB_TEAM_SLOTS)) & 1) continue; // moved already
+            if (!ko_open(m, s)) continue;
+            const bb_player* p = &m->players[s];
+            for (int dx = -1; dx <= 1; dx++) {
+                for (int dy = -1; dy <= 1; dy++) {
+                    if (!dx && !dy) continue;
+                    int x = p->x + dx, y = p->y + dy;
+                    if (bb_on_pitch_xy(x, y) && !m->grid[x][y] &&
+                        n < BB_LEGAL_MAX) {
+                        out[n++] = (bb_action){BB_A_SETUP_PLACE, (uint8_t)s,
+                                               (uint8_t)x, (uint8_t)y};
+                    }
+                }
+            }
+        }
+        return n;
+    }
     // phase 2: touchback.
     int receiving = 1 - f->a;
     for (int s = receiving * BB_TEAM_SLOTS; s < (receiving + 1) * BB_TEAM_SLOTS; s++) {
@@ -681,6 +857,32 @@ static void kickoff_apply(bb_match* m, bb_action a, bb_rng* rng) {
         f->x = a.x;
         f->y = a.y;
         f->phase = 1;
+        return;
+    }
+    if (f->phase == 7) { // Charge!: activate the picked player, or end
+        if (a.type == BB_A_END_TURN) {
+            charge_end(m, f);
+            return;
+        }
+        f->data |= (uint16_t)(1u << (a.arg % BB_TEAM_SLOTS));
+        f->x--;
+        bb_push(m, BB_PROC_ACTIVATION, a.arg, 0, 0, 0);
+        bb_top(m)->x = 1; // charge activation: MOVE (+one BLITZ/TTM/KTM)
+        return;
+    }
+    if (f->phase == 5 || f->phase == 6) { // Solid Defence / Quick Snap
+        if (a.type == BB_A_SETUP_PLACE || a.type == BB_A_SETUP_REMOVE) {
+            f->data |= (uint16_t)(1u << (a.arg % BB_TEAM_SLOTS));
+            if (f->phase == 5 && f->y) f->y--;
+            if (a.type == BB_A_SETUP_PLACE) bb_place(m, a.arg, a.x, a.y);
+            else bb_remove_from_pitch(m, a.arg, BB_LOC_RESERVES);
+            return; // advance() re-issues the window decision
+        }
+        // SETUP_DONE: Solid Defence must end on a legal formation.
+        if (f->phase == 5 && !setup_constraints_ok(m, f->a)) {
+            setup_autofix(m, f->a);
+        }
+        kickoff_land(m);
         return;
     }
     if (f->phase == 4) { // High Kick placement (a.arg = candidate index)

@@ -321,6 +321,76 @@ Mapper/runner fixes landed (each commit carries before/after means):
 13. **Mid-game roster additions** (Raise Dead) and bench overflow past 16
     slots are unrepresentable in the fixed roster.
 
+## Cycle-2 engine campaign (2026-06-04): auto-policies become decision windows
+
+The consumption campaign's vote drove the engine work this time (mapper
+fixes only where the engine grew real windows). Baseline at v1 on the same
+401-replay corpus: **mean 11.9 %**; after the cycle-2 engine windows:
+**mean 12.8 %** (same runner/metric; note the metric counts skip ops as
+consumed, so converting wholesale-dropped mechanics — e.g. Charge! free
+activations — into real act ops *deflates* pct in unreached regions; the
+rise is conservative).
+
+| first-divergence class | v1 (401) | cycle-2 (401) |
+|---|---|---|
+| illegal | 179 | 174 |
+| dice_overrun | 90 | 105 |
+| dice_underrun | 69 | 73 |
+| state | 29 | 15 |
+| position | 28 | 32 |
+| ball | 6 | 2 |
+
+(Dice classes again grew because walks reach deeper before tripping.)
+
+Genuine-divergence list status (numbers from the v1 list above):
+
+- **2 (negatrait gates) CLOSED**: gates roll at declare time with Really
+  Stupid's +2 helper and Unchannelled Fury's +2 on Block/Blitz; Take Root
+  rolls only when Standing; failed gates offer the team re-roll window
+  (Loner gate applies). Mapper outcome-adjusts per-die against the engine's
+  modified target and emits the window acts.
+- **3 (kickoff event windows, D21) CLOSED for Solid Defence / Quick Snap /
+  Charge!**: SD = SETUP_PLACE/REMOVE re-setup window (off-pitch staging so
+  swaps reconcile; D1/D25 budget + autofix guard); QS = one-square steps,
+  cross-half legal; Charge! = real ACTIVATION machinery (free Move, one-of
+  Blitz/TTM/KTM budgets, active-team handover so team re-rolls work, the
+  turnover latch is the falls-end-the-event signal). *Deferred*: Kick-off
+  Return (a FUMBBL BB2020-ruleset relic absent from the BB2025 mirror —
+  stays a baked/classified mapper divergence), up-front Charge selection
+  (we check Open lazily at activation time), TTM/KTM dice mapping (charge
+  TTM activations drop, classified).
+- **5 (Wrestle, D29) CLOSED**: attacker-then-defender USE/DECLINE windows at
+  Both Down (FFB StepWrestle order; Distracted owners excluded); declining
+  resolves the plain Both Down with the knockdown turnover.
+- **6 (Stand Firm) CLOSED**: decline window on every push incl. chains; a
+  chain occupant who stands firm now absorbs the parent push in place.
+- **7 (Changing Weather) CLOSED**: the gust rolls per-die and stops at the
+  touchback boundary (FFB rolls no further dice once the ball leaves the
+  receiving half — the "1 D8" vote was the common early-exit case; the
+  mirror's flat Scatter (3) over-rolls).
+- **8 (Pick Me Up) CLOSED**: the incoming team's stun roll-over runs before
+  the Pick-Me-Up rolls at the same boundary (FFB StepEndTurn order), helpers
+  snapshot (a freshly-stood owner cannot help), Distracted owners excluded.
+  Two mapper bugs fixed en route: the canonical skill name never matched
+  ("Pick Me Up" vs "Pick-me-up") and the yaml-lite loader swallowed inline
+  comments into display names — ALL 686 corpus pickMeUp rolls had been
+  no-candidate skips.
+- **10 (Pitch Invasion fans) CLOSED**: `bb_match.fan_factor[2]` (init-op
+  `fans`, from FFB's dedicatedFansResult) joins the roll-off. **engine_fp
+  changed** — the demo-state bank must be regenerated.
+- **11 (block pool nrOfDice) root-caused**: the Defensive-cancels-Guard turn
+  check was inverted (cancelled defensive Guard assists, granted offensive
+  ones) — fixed, FFB's ServerUtilPlayer confirms the polarity. Residual
+  cases are FFB star specials (canAddBlockDie / "Gored By The Bull" grants
+  an extra block die) absent from our roster spec — documented, not
+  modelled.
+- **12 (apothecary result choice, D20 reversal) CLOSED**: CHOOSE_OPTION
+  between the original and the apothecary's second casualty roll; the
+  mapper picks the side whose band matches FFB's apothecaryChoice
+  playerState.
+- Open (untouched this cycle): 1 (DECLARE FOUL adjacency), 4 (Swarming),
+  9 (Fumblerooski), 13 (mid-game roster additions / bench overflow).
+
 ### Top remaining blockers (v2)
 
 - `illegal` (179): mostly step/block-target mismatches downstream of

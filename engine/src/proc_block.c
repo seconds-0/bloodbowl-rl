@@ -39,14 +39,17 @@ static int count_assists(const bb_match* m, int for_slot, int against_slot) {
 enum { PSH_POW = 1 << 0, PSH_CHAIN = 1 << 1, PSH_MOVED = 1 << 2, PSH_FUP = 1 << 3,
        PSH_CROWD = 1 << 4, PSH_FROM_BLITZ = 1 << 5, PSH_STOOD_FIRM = 1 << 6,
        // This push came from the Frenzy SECOND block: never a third (M6).
-       PSH_FRENZY_DONE = 1 << 7 };
+       PSH_FRENZY_DONE = 1 << 7,
+       // The pushee's coach declined Stand Firm for THIS push (window done).
+       PSH_SF_DECLINED = 1 << 8 };
 
 // ===== BLOCK ==================================================================
 // a = attacker, b = defender.
 // data: bits 0-2 die0, 3-5 die1, 6-8 die2, 9-10 ndice-1, bit11 chooser-is-defender,
 //       bit12 reroll used.
-// phase 0: compute pool, roll; 1: reroll window; 2: choose die; 3: resolving
-//          (wrestle window: phase 4).
+// phase 0: compute pool, roll; 1: reroll window; 2: choose die;
+// phase 4: Both Down — ATTACKER's Wrestle window (USE_SKILL/DECLINE_SKILL);
+// phase 5: Both Down — DEFENDER's Wrestle window (FFB asks attacker first).
 
 enum { BLK_RR_USED = 1 << 12, BLK_DEF_CHOOSES = 1 << 11, BLK_IS_BLITZ = 1 << 13,
        BLK_DAUNTLESS_OK = 1 << 14, BLK_FRENZY_2ND = 1 << 15 };
@@ -228,7 +231,57 @@ static void block_advance(bb_match* m, bb_rng* rng) {
         bb_need_decision(m, (f->data & BLK_DEF_CHOOSES) ? BB_TEAM_OF(def) : BB_TEAM_OF(att));
         return;
     }
+    if (f->phase == 4) { // Both Down: attacker's Wrestle window
+        bb_need_decision(m, BB_TEAM_OF(att));
+        return;
+    }
+    if (f->phase == 5) { // Both Down: defender's Wrestle window
+        bb_need_decision(m, BB_TEAM_OF(def));
+        return;
+    }
     m->status = BB_STATUS_ERROR;
+}
+
+// May this player offer the optional Wrestle choice on a Both Down?
+// "Whilst a player is Distracted, they cannot use Active Skills" (mirror
+// PLAYER STATUS); Wrestle is ACTIVE.
+static bool wrestle_eligible(const bb_match* m, int slot) {
+    return bb_has_wrestle(m, slot) && !(m->players[slot].flags & BB_PF_DISTRACTED);
+}
+
+// WRESTLE used: "both players in the Block Action are Placed Prone,
+// regardless of any other Skills they may possess" — no armour rolls, no
+// knockdown turnover. A carrier placed prone drops the ball; an ACTIVE
+// carrier placed prone is a turnover.
+static void both_down_wrestle(bb_match* m, bb_frame* f) {
+    int att = f->a, def = f->b;
+    bb_cover(BB_SK_WRESTLE);
+    bb_pop(m);
+    int both[2] = {def, att};
+    for (int i = 0; i < 2; i++) {
+        bb_player* p = &m->players[both[i]];
+        p->stance = BB_STANCE_PRONE;
+        p->flags &= (uint16_t)~BB_PF_ROOTED; // placed prone un-roots
+        if (p->flags & BB_PF_HAS_BALL) {
+            int bx = p->x, by = p->y;
+            if (BB_TEAM_OF(both[i]) == m->active_team) bb_turnover(m);
+            bb_drop_ball(m);
+            bb_push(m, BB_PROC_SCATTER, 0, 1, (uint8_t)bx, (uint8_t)by);
+        }
+    }
+}
+
+// Plain Both Down (no Wrestle, or every Wrestle owner declined): a player
+// with Block (not Distracted) stays up; everyone else is Knocked Down
+// (armour rolls; attacker down = turnover for the active team).
+static void both_down_plain(bb_match* m, bb_frame* f) {
+    int att = f->a, def = f->b;
+    bool att_down = !(bb_has_block(m, att) && !(m->players[att].flags & BB_PF_DISTRACTED));
+    bool def_down = !(bb_has_block(m, def) && !(m->players[def].flags & BB_PF_DISTRACTED));
+    bb_pop(m);
+    // Defender resolves first, attacker's knockdown (turnover) after.
+    if (att_down) bb_knockdown2(m, att, BB_KD_BLOCK, 0, def);
+    if (def_down) bb_knockdown2(m, def, BB_KD_BLOCK, 0, att);
 }
 
 static int block_legal(const bb_match* m, bb_action* out) {
@@ -237,6 +290,11 @@ static int block_legal(const bb_match* m, bb_action* out) {
     if (f->phase == 1) {
         out[n++] = (bb_action){BB_A_USE_REROLL, BB_RR_TEAM, 0, 0};
         out[n++] = (bb_action){BB_A_DECLINE_REROLL, 0, 0, 0};
+        return n;
+    }
+    if (f->phase == 4 || f->phase == 5) { // Wrestle window (owner's coach)
+        out[n++] = (bb_action){BB_A_USE_SKILL, BB_SK_WRESTLE, 0, 0};
+        out[n++] = (bb_action){BB_A_DECLINE_SKILL, BB_SK_WRESTLE, 0, 0};
         return n;
     }
     // phase 2: choose one of the rolled dice.
@@ -265,6 +323,21 @@ static void block_apply(bb_match* m, bb_action a, bb_rng* rng) {
         f->phase = 2;
         return;
     }
+    if (f->phase == 4) { // attacker's Wrestle window
+        if (a.type == BB_A_USE_SKILL) {
+            both_down_wrestle(m, f);
+        } else if (wrestle_eligible(m, f->b)) {
+            f->phase = 5; // attacker declined: defender's window
+        } else {
+            both_down_plain(m, f);
+        }
+        return;
+    }
+    if (f->phase == 5) { // defender's Wrestle window
+        if (a.type == BB_A_USE_SKILL) both_down_wrestle(m, f);
+        else both_down_plain(m, f);
+        return;
+    }
     // phase 2: die chosen.
     resolve_face(m, f, blk_die(f, a.arg));
 }
@@ -291,33 +364,22 @@ static void resolve_face(bb_match* m, bb_frame* f, int face) {
                 if (f2) bb_top(m)->data |= PSH_FRENZY_DONE;
                 return;
             }
-            // Wrestle (either player): both players are PLACED Prone — no
-            // armour rolls, no knockdown turnover. (Rules allow declining;
-            // auto-applied here — see DECISIONS.md.) A carrier placed prone
-            // drops the ball; an ACTIVE carrier placed prone is a turnover.
-            if ((bb_has_wrestle(m, att) && !(m->players[att].flags & BB_PF_DISTRACTED)) ||
-                (bb_has_wrestle(m, def) && !(m->players[def].flags & BB_PF_DISTRACTED))) {
-                bb_pop(m);
-                int both[2] = {def, att};
-                for (int i = 0; i < 2; i++) {
-                    bb_player* p = &m->players[both[i]];
-                    p->stance = BB_STANCE_PRONE;
-                    if (p->flags & BB_PF_HAS_BALL) {
-                        int bx = p->x, by = p->y;
-                        if (BB_TEAM_OF(both[i]) == m->active_team) bb_turnover(m);
-                        bb_drop_ball(m);
-                        bb_push(m, BB_PROC_SCATTER, 0, 1, (uint8_t)bx, (uint8_t)by);
-                    }
-                }
+            // Wrestle (either player): the OWNER may choose that both players
+            // are Placed Prone instead (D29: a real USE_SKILL/DECLINE_SKILL
+            // window — declining is correct play for a Wrestle defender vs a
+            // Block-less attacker, forcing the knockdown turnover). FFB asks
+            // the attacker first, then the defender (StepWrestle).
+            if (wrestle_eligible(m, att)) {
+                f->phase = 4;
+                bb_need_decision(m, BB_TEAM_OF(att));
                 return;
             }
-            // Block skill: a player with Block (not Distracted) stays up.
-            bool att_down = !(bb_has_block(m, att) && !(m->players[att].flags & BB_PF_DISTRACTED));
-            bool def_down = !(bb_has_block(m, def) && !(m->players[def].flags & BB_PF_DISTRACTED));
-            bb_pop(m);
-            // Defender resolves first, attacker's knockdown (turnover) after.
-            if (att_down) bb_knockdown2(m, att, BB_KD_BLOCK, 0, def);
-            if (def_down) bb_knockdown2(m, def, BB_KD_BLOCK, 0, att);
+            if (wrestle_eligible(m, def)) {
+                f->phase = 5;
+                bb_need_decision(m, BB_TEAM_OF(def));
+                return;
+            }
+            both_down_plain(m, f);
             return;
         }
         case BB_BD_PUSH_1:
@@ -421,15 +483,25 @@ static void push_advance(bb_match* m, bb_rng* rng) {
     bb_frame* f = bb_top(m);
     if (f->phase == 0) {
         int def_flags = bb_hook_push_flags(m, f->b);
-        if (m->players[f->b].flags & BB_PF_ROOTED) def_flags |= BB_PUSHF_STAND_FIRM;
         bool jugg = (f->data & PSH_FROM_BLITZ) &&
                     bb_has_skill(&m->players[f->a].skills, BB_SK_JUGGERNAUT);
-        if (((def_flags & BB_PUSHF_STAND_FIRM) && !jugg) ||
-            (m->players[f->b].flags & BB_PF_ROOTED)) {
-            // Stand Firm / Rooted: the player is not moved; a POW still
-            // knocks them down in place; no follow-up (no square vacated).
+        if (m->players[f->b].flags & BB_PF_ROOTED) {
+            // Rooted: "cannot be Pushed Back" — mandatory, no window, not
+            // cancelled by Juggernaut (it is not the Stand Firm Skill).
             f->data |= PSH_STOOD_FIRM;
             f->phase = 5;
+            return;
+        }
+        if ((def_flags & BB_PUSHF_STAND_FIRM) && !jugg &&
+            !(f->data & PSH_SF_DECLINED) &&
+            !(m->players[f->b].flags & BB_PF_DISTRACTED)) {
+            // STAND FIRM: "they can CHOOSE to not be Pushed Back" — a real
+            // USE_SKILL/DECLINE_SKILL window for the pushee's coach,
+            // including during chain pushes (mirror SK#STAND FIRM); FFB
+            // allows the decline (v0 lockstep finding). Distracted players
+            // cannot use Active Skills (mirror PLAYER STATUS).
+            f->phase = 4;
+            bb_need_decision(m, BB_TEAM_OF(f->b));
             return;
         }
         // Side Step: the DEFENDER's coach chooses the square (any adjacent
@@ -441,8 +513,20 @@ static void push_advance(bb_match* m, bb_rng* rng) {
                                                    : m->active_team);
         return;
     }
+    if (f->phase == 4) { // Stand Firm window: re-issue on re-entry
+        bb_need_decision(m, BB_TEAM_OF(f->b));
+        return;
+    }
     if (f->phase == 1) {
-        // Chain child finished; destination square is now free — relocate.
+        // Chain child finished; destination square is normally now free.
+        // If the chained occupant STOOD FIRM the square is still occupied:
+        // this pushee is not moved either (the push is absorbed in place; a
+        // POW still knocks them down where they stand).
+        if (m->grid[f->x][f->y]) {
+            f->data |= PSH_STOOD_FIRM;
+            f->phase = 5;
+            return;
+        }
         f->phase = 2;
         return;
     }
@@ -628,6 +712,11 @@ static void push_advance(bb_match* m, bb_rng* rng) {
 static int push_legal(const bb_match* m, bb_action* out) {
     const bb_frame* f = &m->stack[m->stack_top - 1];
     int n = 0;
+    if (f->phase == 4) { // Stand Firm window (pushee's coach)
+        out[n++] = (bb_action){BB_A_USE_SKILL, BB_SK_STAND_FIRM, 0, 0};
+        out[n++] = (bb_action){BB_A_DECLINE_SKILL, BB_SK_STAND_FIRM, 0, 0};
+        return n;
+    }
     if (f->phase == 0) {
         // Side Step (decision owner = defender): any unoccupied adjacent
         // square instead of the usual three. The predicate mirrors the
@@ -681,6 +770,20 @@ static int push_legal(const bb_match* m, bb_action* out) {
 static void push_apply(bb_match* m, bb_action a, bb_rng* rng) {
     (void)rng;
     bb_frame* f = bb_top(m);
+    if (f->phase == 4) { // Stand Firm window
+        if (a.type == BB_A_USE_SKILL) {
+            // Not moved; a POW still knocks them down in place; no
+            // follow-up (no square vacated). Frenzy's second block can
+            // still happen (mirror SK#STAND FIRM).
+            bb_cover(BB_SK_STAND_FIRM);
+            f->data |= PSH_STOOD_FIRM;
+            f->phase = 5;
+        } else {
+            f->data |= PSH_SF_DECLINED;
+            f->phase = 0; // re-run: side step / push candidates as normal
+        }
+        return;
+    }
     if (f->phase == 0) {
         if (a.arg == 1) { // crowd
             f->data |= PSH_CROWD;
@@ -943,10 +1046,23 @@ static void injury_advance(bb_match* m, bb_rng* rng) {
 
 // ===== CASUALTY ===============================================================
 // a = slot. D16 on the casualty table. League persistence comes later; in
-// match terms every casualty is out for the game. TODO(phase3): apothecary.
+// match terms every casualty is out for the game.
+// Apothecary window (phase 1: use/decline; phase 2: "may select either of
+// the two results" — a CHOOSE_OPTION decision, 0 = original roll in f->x,
+// 1 = the apothecary's new roll in f->y).
+
+// Apply one casualty result (rolls are post-Decay table indices). Every
+// casualty is out for the match; only the apothecary's Badly Hurt pick
+// (phase 2 below) routes to Reserves instead.
+static void casualty_resolve(bb_match* m, int slot, int roll) {
+    bb_player* p = &m->players[slot];
+    p->spp_game = (uint8_t)bb_casualty_table[roll]; // outcome (league mode)
+    if (p->location == BB_LOC_ON_PITCH) bb_remove_from_pitch(m, slot, BB_LOC_CAS);
+    else p->location = BB_LOC_CAS;
+}
 
 static void casualty_advance(bb_match* m, bb_rng* rng) {
-    if (bb_top(m)->phase == 1) {
+    if (bb_top(m)->phase == 1 || bb_top(m)->phase == 2) {
         bb_need_decision(m, BB_TEAM_OF(bb_top(m)->a));
         return;
     }
@@ -967,52 +1083,58 @@ static void casualty_advance(bb_match* m, bb_rng* rng) {
     if (bb_has_skill(&p->skills, BB_SK_DECAY) && roll < 16) roll += 1;
     int team = BB_TEAM_OF(slot);
     if (m->apothecary[team] > 0) {
-        // Apothecary window: coach may have a second Casualty Roll made and
-        // pick either result (Badly Hurt selected -> Reserves).
+        // Apothecary window: the coach may have a second Casualty Roll made
+        // and "may select either of the two results to apply" (mirror
+        // GB#APOTHECARY; Badly Hurt selected -> Reserves).
         bb_push(m, BB_PROC_CASUALTY, slot, 1, (uint8_t)roll, 0);
-        bb_top(m)->phase = 1; // decision phase
+        bb_top(m)->phase = 1; // use/decline decision
         return;
     }
-    p->spp_game = (uint8_t)bb_casualty_table[roll]; // outcome (league mode)
-    if (p->location == BB_LOC_ON_PITCH) bb_remove_from_pitch(m, slot, BB_LOC_CAS);
-    else p->location = BB_LOC_CAS;
+    casualty_resolve(m, slot, roll);
 }
 
 static int casualty_legal(const bb_match* m, bb_action* out) {
-    (void)m;
+    const bb_frame* f = &m->stack[m->stack_top - 1];
+    if (f->phase == 2) { // pick either casualty result (FFB apothecaryChoice)
+        out[0] = (bb_action){BB_A_CHOOSE_OPTION, 0, 0, 0}; // original roll
+        out[1] = (bb_action){BB_A_CHOOSE_OPTION, 1, 0, 0}; // apothecary roll
+        return 2;
+    }
     out[0] = (bb_action){BB_A_APOTHECARY, 1, 0, 0};
     out[1] = (bb_action){BB_A_APOTHECARY, 0, 0, 0};
     return 2;
 }
 
 static void casualty_apply(bb_match* m, bb_action a, bb_rng* rng) {
-    bb_frame f = *bb_top(m);
-    bb_pop(m);
-    int slot = f.a;
+    bb_frame* f = bb_top(m);
+    int slot = f->a;
     bb_player* p = &m->players[slot];
     int team = BB_TEAM_OF(slot);
-    int roll1 = f.x;
-    if (a.arg == 1) {
-        m->apothecary[team]--;
-        int roll2 = bb_d16(rng);
-        if (bb_has_skill(&p->skills, BB_SK_DECAY) && roll2 < 16) roll2 += 1;
-        // The controlling coach picks either result; auto-pick the better
-        // (lower) one — strictly dominant.
-        int pick = bb_casualty_table[roll1] <= bb_casualty_table[roll2] ? roll1 : roll2;
-        if (bb_casualty_table[pick] == BB_CAS_BADLY_HURT) {
-            if (p->location == BB_LOC_ON_PITCH) bb_remove_from_pitch(m, slot, BB_LOC_RESERVES);
-            else p->location = BB_LOC_RESERVES;
-            p->spp_game = BB_CAS_BADLY_HURT;
+    if (f->phase == 1) {
+        if (a.arg == 1) { // use the apothecary: second roll, then the pick
+            m->apothecary[team]--;
+            int roll2 = bb_d16(rng);
+            if (bb_has_skill(&p->skills, BB_SK_DECAY) && roll2 < 16) roll2 += 1;
+            f->y = (uint8_t)roll2;
+            f->phase = 2; // "may select either of the two results to apply"
             return;
         }
-        p->spp_game = (uint8_t)bb_casualty_table[pick];
-        if (p->location == BB_LOC_ON_PITCH) bb_remove_from_pitch(m, slot, BB_LOC_CAS);
-        else p->location = BB_LOC_CAS;
+        int roll1 = f->x;
+        bb_pop(m);
+        casualty_resolve(m, slot, roll1);
         return;
     }
-    p->spp_game = (uint8_t)bb_casualty_table[roll1];
-    if (p->location == BB_LOC_ON_PITCH) bb_remove_from_pitch(m, slot, BB_LOC_CAS);
-    else p->location = BB_LOC_CAS;
+    // phase 2: result picked (0 = original f->x, 1 = new f->y).
+    int pick = a.arg ? f->y : f->x;
+    bb_pop(m);
+    if (bb_casualty_table[pick] == BB_CAS_BADLY_HURT) {
+        // Patched-up: "placed into their Reserves Box instead".
+        if (p->location == BB_LOC_ON_PITCH) bb_remove_from_pitch(m, slot, BB_LOC_RESERVES);
+        else p->location = BB_LOC_RESERVES;
+        p->spp_game = BB_CAS_BADLY_HURT;
+        return;
+    }
+    casualty_resolve(m, slot, pick);
 }
 
 // ===== FOUL ===================================================================

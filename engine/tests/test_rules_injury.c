@@ -14,6 +14,7 @@
 #include "bb/bb_match.h"
 #include "bb/bb_proc.h"
 #include "bb/bb_skills.h"
+#include "bb/gen_tables.h"
 #include "bb_fixtures.h"
 #include "bb_test.h"
 
@@ -760,5 +761,93 @@ BB_TEST(rules_foul_sendoff_offers_argue_the_call) {
     // Rulebook: the next decision belongs to the fouling coach (Argue the
     // Call: roll the D6 or decline). Engine: decision_team is already 1.
     BB_CHECK_EQ(m.decision_team, 0);
+}
+
+// ===== APOTHECARY: CASUALTY RESULT CHOICE ====================================
+
+// [GAME] APOTHECARY: "After a Casualty Roll is made ... their Coach may
+// declare they are using their Apothecary. The opposing Coach makes a second
+// Casualty Roll for the player, and the player's controlling Coach may
+// select EITHER of the two results to apply." Keeping the original D16=9
+// (Seriously Hurt) over a new D16=16 (DEAD) — the FFB-faithful CHOOSE_OPTION
+// replaces D20's auto-better pick.
+BB_TEST(rules_apothecary_casualty_pick_original_result) {
+    bb_match m;
+    build_block_fixture(&m);
+    m.apothecary[1] = 1;
+    static const uint8_t dice[] = {6, 5, 5, 5, 5 /*injury 10*/, 9 /*D16*/};
+    bb_rng rng;
+    bb_rng_script(&rng, dice, 6);
+    bb_status st = run_pow_block(&m, &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK_EQ(m.decision_team, 1); // the victim's coach decides
+    static const uint8_t dice2[] = {16 /*second D16: DEAD*/};
+    bb_rng_script(&rng, dice2, 1);
+    st = ap(&m, &rng, BB_A_APOTHECARY, 1, 0, 0);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION); // now the result pick
+    BB_CHECK_EQ(m.decision_team, 1);
+    st = ap(&m, &rng, BB_A_CHOOSE_OPTION, 0, 0, 0); // keep the original 9
+    BB_CHECK_EQ(m.players[DEF].location, BB_LOC_CAS);
+    BB_CHECK_EQ(m.players[DEF].spp_game, BB_CAS_SERIOUSLY_HURT);
+    BB_CHECK_EQ(m.apothecary[1], 0);
+    BB_CHECK(!bb_rng_error(&rng));
+}
+
+// [GAME] APOTHECARY: "If a Badly Hurt result is selected, then the player is
+// successfully Patched-up and placed into their Reserves Box."
+BB_TEST(rules_apothecary_casualty_pick_new_badly_hurt_reserves) {
+    bb_match m;
+    build_block_fixture(&m);
+    m.apothecary[1] = 1;
+    static const uint8_t dice[] = {6, 5, 5, 5, 5, 9 /*D16: SH*/};
+    bb_rng rng;
+    bb_rng_script(&rng, dice, 6);
+    bb_status st = run_pow_block(&m, &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    static const uint8_t dice2[] = {3 /*second D16: Badly Hurt*/};
+    bb_rng_script(&rng, dice2, 1);
+    ap(&m, &rng, BB_A_APOTHECARY, 1, 0, 0);
+    ap(&m, &rng, BB_A_CHOOSE_OPTION, 1, 0, 0); // select the new BH result
+    BB_CHECK_EQ(m.players[DEF].location, BB_LOC_RESERVES);
+    BB_CHECK_EQ(m.players[DEF].spp_game, BB_CAS_BADLY_HURT);
+    BB_CHECK(!bb_rng_error(&rng));
+}
+
+// [GAME] APOTHECARY: "may select either" is a free choice — the coach may
+// even keep the WORSE result (no auto-better pick).
+BB_TEST(rules_apothecary_casualty_worse_pick_is_legal) {
+    bb_match m;
+    build_block_fixture(&m);
+    m.apothecary[1] = 1;
+    static const uint8_t dice[] = {6, 5, 5, 5, 5, 3 /*D16: Badly Hurt*/};
+    bb_rng rng;
+    bb_rng_script(&rng, dice, 6);
+    bb_status st = run_pow_block(&m, &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    static const uint8_t dice2[] = {15 /*second D16: DEAD*/};
+    bb_rng_script(&rng, dice2, 1);
+    ap(&m, &rng, BB_A_APOTHECARY, 1, 0, 0);
+    ap(&m, &rng, BB_A_CHOOSE_OPTION, 1, 0, 0); // pick the new (worse) result
+    BB_CHECK_EQ(m.players[DEF].location, BB_LOC_CAS);
+    BB_CHECK_EQ(m.players[DEF].spp_game, BB_CAS_DEAD);
+    BB_CHECK(!bb_rng_error(&rng));
+}
+
+// Declining the apothecary applies the original roll unchanged (no second
+// D16 is rolled) and keeps the apothecary.
+BB_TEST(rules_apothecary_casualty_decline_keeps_apothecary) {
+    bb_match m;
+    build_block_fixture(&m);
+    m.apothecary[1] = 1;
+    static const uint8_t dice[] = {6, 5, 5, 5, 5, 9};
+    bb_rng rng;
+    bb_rng_script(&rng, dice, 6);
+    bb_status st = run_pow_block(&m, &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    st = ap(&m, &rng, BB_A_APOTHECARY, 0, 0, 0);
+    BB_CHECK_EQ(m.players[DEF].location, BB_LOC_CAS);
+    BB_CHECK_EQ(m.players[DEF].spp_game, BB_CAS_SERIOUSLY_HURT);
+    BB_CHECK_EQ(m.apothecary[1], 1);
+    BB_CHECK_EQ(rng.script_pos, 6); // no extra D16 was rolled
 }
 

@@ -603,10 +603,9 @@ BB_TEST(struct_kickoff_event_high_kick_offers_placement) {
     BB_CHECK_EQ(stx_top_proc(&m), BB_PROC_KICKOFF); // still inside the kick-off
 }
 
-// ENGINE-DIVERGENCE: GAME KICK-OFF EVENT 8 CHANGING WEATHER: "Immediately
-// make a new roll on the Weather Table. If the new result is Perfect
-// Conditions, the ball will Scatter (3) in the air before it lands." The
-// engine re-rolls the weather but never performs the Scatter (3).
+// GAME KICK-OFF EVENT 8 CHANGING WEATHER: "Immediately make a new roll on
+// the Weather Table. If the new result is Perfect Conditions, the ball will
+// Scatter (3) in the air before it lands."
 BB_TEST(struct_kickoff_event_changing_weather_scatters_three) {
     bb_match m;
     stx_kickoff_fixture(&m, BB_HOME);
@@ -627,12 +626,36 @@ BB_TEST(struct_kickoff_event_changing_weather_scatters_three) {
     BB_CHECK_EQ(m.ball.y, 5);
 }
 
-// ENGINE-DIVERGENCE: GAME KICK-OFF EVENT 12 PITCH INVASION: "Both Coaches
-// roll a D6 and add their Fan Factor. The Coach that rolled lowest, or both
-// Coaches in the result of a tie, randomly selects D3 of their players on the
-// pitch. The selected players are immediately Placed Prone and become
-// Stunned." The engine skips the roll-off and stuns D3 players of BOTH teams
-// unconditionally (and draws the victims from a non-dice RNG stream).
+// CHANGING WEATHER gust early stop (FFB StepApplyKickoffResult, validated
+// against live FUMBBL dice logs): the Scatter (3) rolls one D8 at a time and
+// STOPS the moment the ball leaves the receiving half or the pitch — the
+// touchback is then certain and no further scatter dice are rolled.
+BB_TEST(struct_kickoff_changing_weather_gust_stops_at_touchback) {
+    bb_match m;
+    stx_kickoff_fixture(&m, BB_HOME);
+    fx_lineman(&m, 0, 0, 5, 5);
+    int recv = fx_lineman(&m, 1, 0, 20, 10);
+    bb_rng rng;
+    // Target (14,7); d8=4 -> (-1,0), d6=1 -> ball at (13,7). Event 4+4=8.
+    // Weather 3+4=7 -> Perfect -> gust d8=4 -> (12,7): KICKING half. The
+    // gust STOPS after ONE die; touchback decision for the receiving coach.
+    const uint8_t dice[] = {4, 1, 4, 4, 3, 4, 4};
+    bb_rng_script(&rng, dice, 7);
+    fx_run(&m, &rng);
+    bb_status st = fx_apply(&m, stx_act(BB_A_KICK_TARGET, 0, 14, 7), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK_EQ(m.decision_team, BB_AWAY); // touchback: receiving coach
+    BB_CHECK(fx_has_type(&m, BB_A_TOUCHBACK));
+    BB_CHECK(!bb_rng_error(&rng)); // exactly ONE gust die was consumed
+    st = fx_apply(&m, stx_act(BB_A_TOUCHBACK, recv, 0, 0), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK_EQ(m.ball.carrier, recv);
+}
+
+// GAME KICK-OFF EVENT 12 PITCH INVASION: "Both Coaches roll a D6 and add
+// their Fan Factor. The Coach that rolled lowest, or both Coaches in the
+// result of a tie, randomly selects D3 of their players on the pitch. The
+// selected players are immediately Placed Prone and become Stunned."
 BB_TEST(struct_kickoff_event_pitch_invasion_rolloff) {
     bb_match m;
     stx_kickoff_fixture(&m, BB_HOME);
@@ -655,6 +678,35 @@ BB_TEST(struct_kickoff_event_pitch_invasion_rolloff) {
     }
     // Home rolled higher: no home player may be stunned by the invasion.
     BB_CHECK_EQ(home_stunned, 0);
+}
+
+// PITCH INVASION adds each team's FAN FACTOR to the roll-off: an away fan
+// advantage flips the same raw dice — home (6+0=6) now loses to away
+// (1+6=7) and must stun D3 of its own players instead.
+BB_TEST(struct_kickoff_event_pitch_invasion_fan_factor) {
+    bb_match m;
+    stx_kickoff_fixture(&m, BB_HOME);
+    for (int i = 0; i < 4; i++) fx_lineman(&m, 0, i, 5, 4 + i);
+    for (int i = 0; i < 4; i++) fx_lineman(&m, 1, i, 20, 4 + i);
+    m.fan_factor[BB_AWAY] = 6;
+    bb_rng rng;
+    // Same dice as the roll-off test: home d6=6, away d6=1 — but away's +6
+    // fans make home the loser; d3=2 home victims (picks 1,1), bounce d8=1.
+    const uint8_t dice[] = {2, 3, 6, 6, 6, 1, 2, 1, 1, 1};
+    bb_rng_script(&rng, dice, 10);
+    fx_run(&m, &rng);
+    bb_status st = fx_apply(&m, stx_act(BB_A_KICK_TARGET, 0, 18, 7), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    int home_stunned = 0, away_stunned = 0;
+    for (int s = 0; s < BB_NUM_PLAYERS; s++) {
+        if (m.players[s].location != BB_LOC_ON_PITCH) continue;
+        if (m.players[s].stance != BB_STANCE_STUNNED) continue;
+        if (s < BB_TEAM_SLOTS) home_stunned++;
+        else away_stunned++;
+    }
+    BB_CHECK_EQ(home_stunned, 2);
+    BB_CHECK_EQ(away_stunned, 0);
+    BB_CHECK(!bb_rng_error(&rng));
 }
 
 // ===========================================================================
@@ -1844,4 +1896,370 @@ BB_TEST(structure_setup_reserves_first_discipline) {
     }
     BB_CHECK(n_remove > 0);
     BB_CHECK(n_replace > 0);
+}
+
+// ===========================================================================
+// PICK-ME-UP — SK#PICK-ME-UP: "At the end of each of the opposition's Turns,
+// roll a D6 for each Prone team-mate within 3 squares of one or more
+// Standing players with this Trait. On a 5+, the Prone player may
+// immediately stand up. Should a player with this Trait stand up as a result
+// of a team-mate using this Trait, they may not also use this Trait during
+// the same Turn."
+// ===========================================================================
+
+// 5+ stands a prone team-mate within 3 squares at the end of the OPPONENT's
+// turn; a 4 leaves them prone.
+BB_TEST(struct_pick_me_up_5plus_stands_prone_teammate) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    fx_lineman(&m, 0, 0, 5, 5);
+    int helper = fx_lineman(&m, 1, 0, 20, 7);
+    int down = fx_lineman(&m, 1, 1, 22, 7); // within 3 of the helper
+    fx_give_skill(&m, helper, BB_SK_PICK_ME_UP);
+    m.players[down].stance = BB_STANCE_PRONE;
+    uint8_t script[] = {5};
+    bb_rng rng;
+    bb_rng_script(&rng, script, 1);
+    bb_status st = fx_run(&m, &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    bb_action et = {BB_A_END_TURN, 0, 0, 0};
+    st = fx_apply(&m, et, &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK_EQ(m.players[down].stance, BB_STANCE_STANDING);
+    BB_CHECK(!bb_rng_error(&rng));
+}
+
+BB_TEST(struct_pick_me_up_4_fails_stays_prone) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    fx_lineman(&m, 0, 0, 5, 5);
+    int helper = fx_lineman(&m, 1, 0, 20, 7);
+    int down = fx_lineman(&m, 1, 1, 22, 7);
+    fx_give_skill(&m, helper, BB_SK_PICK_ME_UP);
+    m.players[down].stance = BB_STANCE_PRONE;
+    uint8_t script[] = {4};
+    bb_rng rng;
+    bb_rng_script(&rng, script, 1);
+    fx_run(&m, &rng);
+    bb_action et = {BB_A_END_TURN, 0, 0, 0};
+    fx_apply(&m, et, &rng);
+    BB_CHECK_EQ(m.players[down].stance, BB_STANCE_PRONE);
+    BB_CHECK(!bb_rng_error(&rng));
+}
+
+// FFB boundary order (validated against live replays, item 8): the incoming
+// team's Stunned players roll over BEFORE the Pick-Me-Up rolls at the same
+// boundary — a player stunned during the opponent's turn gets a Pick-Me-Up
+// roll right away and can be stood up where the old engine kept them down.
+BB_TEST(struct_pick_me_up_rolls_for_just_rolled_over_stunned) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    fx_lineman(&m, 0, 0, 5, 5);
+    int helper = fx_lineman(&m, 1, 0, 20, 7);
+    int down = fx_lineman(&m, 1, 1, 22, 7);
+    fx_give_skill(&m, helper, BB_SK_PICK_ME_UP);
+    bb_rng rng;
+    bb_rng_script(&rng, 0, 0);
+    bb_status st = fx_run(&m, &rng); // home turn starts
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    m.players[down].stance = BB_STANCE_STUNNED; // stunned during home's turn
+    uint8_t script[] = {5};
+    bb_rng_script(&rng, script, 1);
+    bb_action et = {BB_A_END_TURN, 0, 0, 0};
+    st = fx_apply(&m, et, &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK_EQ(m.players[down].stance, BB_STANCE_STANDING);
+    BB_CHECK(!bb_rng_error(&rng));
+}
+
+// Helper snapshot: an owner stood up by a team-mate's use of the Trait "may
+// not also use this Trait during the same Turn" — a candidate only in range
+// of the freshly-stood owner gets NO roll.
+BB_TEST(struct_pick_me_up_stood_owner_cannot_help_same_turn) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    fx_lineman(&m, 0, 0, 5, 5);
+    int a = fx_lineman(&m, 1, 0, 20, 7);  // prone OWNER, within 3 of b
+    int b = fx_lineman(&m, 1, 1, 22, 7);  // standing owner (the helper)
+    int c = fx_lineman(&m, 1, 2, 17, 7);  // prone, within 3 of a ONLY
+    fx_give_skill(&m, a, BB_SK_PICK_ME_UP);
+    fx_give_skill(&m, b, BB_SK_PICK_ME_UP);
+    m.players[a].stance = BB_STANCE_PRONE;
+    m.players[c].stance = BB_STANCE_PRONE;
+    uint8_t script[] = {5}; // ONE roll: a stands; c gets no roll
+    bb_rng rng;
+    bb_rng_script(&rng, script, 1);
+    fx_run(&m, &rng);
+    bb_action et = {BB_A_END_TURN, 0, 0, 0};
+    bb_status st = fx_apply(&m, et, &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK_EQ(m.players[a].stance, BB_STANCE_STANDING);
+    BB_CHECK_EQ(m.players[c].stance, BB_STANCE_PRONE); // no second die
+    BB_CHECK(!bb_rng_error(&rng));
+}
+
+// ===========================================================================
+// KICK-OFF EVENT 4 SOLID DEFENCE — "The Coach of the kicking team selects up
+// to D3+3 Open players on their team. The selected players are then removed
+// from the pitch and can be set up again following all the usual
+// restrictions for setting up the team." (D21 window)
+// ===========================================================================
+
+BB_TEST(struct_kickoff_solid_defence_reposition_window) {
+    bb_match m;
+    stx_kickoff_fixture(&m, BB_HOME);
+    // Kicking (home) legal 3-man formation on the LoS centre.
+    int h0 = fx_lineman(&m, 0, 0, 12, 5);
+    fx_lineman(&m, 0, 1, 12, 6);
+    fx_lineman(&m, 0, 2, 12, 7);
+    fx_lineman(&m, 1, 0, 20, 10); // receiver, far away (home players Open)
+    bb_rng rng;
+    // d8=2,d6=3 -> ball (18,4); event 1+3=4 SOLID DEFENCE; D3=1 -> 4 players.
+    const uint8_t dice[] = {2, 3, 1, 3, 1};
+    bb_rng_script(&rng, dice, 5);
+    fx_run(&m, &rng);
+    bb_status st = fx_apply(&m, stx_act(BB_A_KICK_TARGET, 0, 18, 7), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK_EQ(m.decision_team, BB_HOME); // the KICKING coach repositions
+    BB_CHECK(fx_has_type(&m, BB_A_SETUP_PLACE));
+    BB_CHECK(fx_has_type(&m, BB_A_SETUP_DONE)); // formation legal: may pass
+    // Move h0 off the LoS: only 2 remain there -> DONE must disappear.
+    st = fx_apply(&m, stx_act(BB_A_SETUP_PLACE, h0, 10, 5), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK_EQ(m.players[h0].x, 10);
+    BB_CHECK(!fx_has_type(&m, BB_A_SETUP_DONE));
+    // Put him back on the LoS (re-placing a selected player is free).
+    st = fx_apply(&m, stx_act(BB_A_SETUP_PLACE, h0, 12, 4), &rng);
+    BB_CHECK(fx_has_type(&m, BB_A_SETUP_DONE));
+    // Confirm: the kick lands (bounce d8) and the kickoff settles.
+    const uint8_t dice2[] = {1};
+    bb_rng_script(&rng, dice2, 1);
+    st = fx_apply(&m, stx_act(BB_A_SETUP_DONE, 0, 0, 0), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK_EQ(m.players[h0].x, 12);
+    BB_CHECK_EQ(m.players[h0].y, 4);
+    BB_CHECK(!bb_rng_error(&rng));
+}
+
+// Solid Defence selects only OPEN players: a kicking player Marked across
+// the line of scrimmage cannot be repositioned.
+BB_TEST(struct_kickoff_solid_defence_marked_player_ineligible) {
+    bb_match m;
+    stx_kickoff_fixture(&m, BB_HOME);
+    int h0 = fx_lineman(&m, 0, 0, 12, 5); // marked by the away LoS player
+    fx_lineman(&m, 0, 1, 12, 6);
+    fx_lineman(&m, 0, 2, 12, 7);
+    fx_lineman(&m, 1, 0, 13, 5); // away player marking h0
+    bb_rng rng;
+    const uint8_t dice[] = {2, 3, 1, 3, 1};
+    bb_rng_script(&rng, dice, 5);
+    fx_run(&m, &rng);
+    fx_apply(&m, stx_act(BB_A_KICK_TARGET, 0, 18, 7), &rng);
+    bb_action legal[BB_LEGAL_MAX];
+    int n = bb_legal_actions(&m, legal);
+    for (int i = 0; i < n; i++) {
+        if (legal[i].type == BB_A_SETUP_PLACE) {
+            BB_CHECK(legal[i].arg != (uint8_t)h0); // not Open: ineligible
+        }
+    }
+}
+
+// ===========================================================================
+// KICK-OFF EVENT 9 QUICK SNAP! — "The Coach of the receiving team selects up
+// to D3+3 Open players on their team. The selected players may immediately
+// move one square in any direction, even if this takes them into the
+// opposition's half." (D21 window)
+// ===========================================================================
+
+BB_TEST(struct_kickoff_quick_snap_one_square_each_any_direction) {
+    bb_match m;
+    stx_kickoff_fixture(&m, BB_HOME);
+    fx_lineman(&m, 0, 0, 5, 5);
+    int a0 = fx_lineman(&m, 1, 0, 13, 7);  // receiving, on their LoS
+    int a1 = fx_lineman(&m, 1, 1, 20, 10);
+    bb_rng rng;
+    // d8=2,d6=3 -> ball (18,4); event 4+5=9 QUICK SNAP; D3=1 -> 4 players.
+    const uint8_t dice[] = {2, 3, 4, 5, 1};
+    bb_rng_script(&rng, dice, 5);
+    fx_run(&m, &rng);
+    bb_status st = fx_apply(&m, stx_act(BB_A_KICK_TARGET, 0, 18, 7), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK_EQ(m.decision_team, BB_AWAY); // the RECEIVING coach moves
+    // a0 steps ACROSS the halfway line into the kicking half (12,7).
+    st = fx_apply(&m, stx_act(BB_A_SETUP_PLACE, a0, 12, 7), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK_EQ(m.players[a0].x, 12);
+    // One square each: a0 may not move again.
+    bb_action legal[BB_LEGAL_MAX];
+    int n = bb_legal_actions(&m, legal);
+    for (int i = 0; i < n; i++) {
+        if (legal[i].type == BB_A_SETUP_PLACE) {
+            BB_CHECK(legal[i].arg != (uint8_t)a0);
+        }
+    }
+    // a1 may still move (budget 4); a two-square jump is not offered.
+    BB_CHECK(fx_find(&m, stx_act(BB_A_SETUP_PLACE, a1, 21, 10)) >= 0);
+    BB_CHECK(fx_find(&m, stx_act(BB_A_SETUP_PLACE, a1, 22, 10)) < 0);
+    const uint8_t dice2[] = {1};
+    bb_rng_script(&rng, dice2, 1);
+    st = fx_apply(&m, stx_act(BB_A_SETUP_DONE, 0, 0, 0), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK(!bb_rng_error(&rng)); // landing bounce consumed
+}
+
+// Quick Snap honours the D3+3 player budget: with D3=1 only 4 distinct
+// players may move; the fifth gets no placement actions.
+BB_TEST(struct_kickoff_quick_snap_player_budget) {
+    bb_match m;
+    stx_kickoff_fixture(&m, BB_HOME);
+    fx_lineman(&m, 0, 0, 5, 5);
+    int as[5];
+    for (int i = 0; i < 5; i++) as[i] = fx_lineman(&m, 1, i, 20, 4 + 2 * i);
+    bb_rng rng;
+    const uint8_t dice[] = {2, 3, 4, 5, 1};
+    bb_rng_script(&rng, dice, 5);
+    fx_run(&m, &rng);
+    fx_apply(&m, stx_act(BB_A_KICK_TARGET, 0, 18, 7), &rng);
+    for (int i = 0; i < 4; i++) {
+        bb_status st = fx_apply(&m,
+            stx_act(BB_A_SETUP_PLACE, as[i], 19, 4 + 2 * i), &rng);
+        BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    }
+    BB_CHECK(!fx_has_type(&m, BB_A_SETUP_PLACE)); // budget exhausted
+    BB_CHECK(fx_has_type(&m, BB_A_SETUP_DONE));
+    (void)as;
+}
+
+// ===========================================================================
+// KICK-OFF EVENT 10 CHARGE! — "The Coach of the kicking team selects up to
+// D3+3 Open players on their team. The selected players may then be
+// activated one at a time, exactly as if it was their team's Turn, and
+// perform a free Move Action. One of the selected players may instead
+// perform a free Blitz Action, one may perform a free Throw Team-mate
+// Action, and one may perform a free Kick Team-mate Action. If a selected
+// player Falls Over or is Knocked Down during their activation, no further
+// selected players can be activated and the Charge ends." (D21 window)
+// ===========================================================================
+
+static void stx_apply_ok(bb_match* m, bb_rng* rng, bb_action a) {
+    bb_status st = fx_apply(m, a, rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+}
+
+BB_TEST(struct_kickoff_charge_move_and_single_blitz) {
+    bb_match m;
+    stx_kickoff_fixture(&m, BB_HOME);
+    int h0 = fx_lineman(&m, 0, 0, 10, 5);
+    int h1 = fx_lineman(&m, 0, 1, 10, 9);
+    fx_lineman(&m, 0, 2, 3, 3); // stays eligible so END_TURN is a choice
+    int a0 = fx_lineman(&m, 1, 0, 13, 9); // blitz target on the away LoS
+    (void)a0;
+    bb_rng rng;
+    // d8=2,d6=3 -> ball (18,4); event 5+5=10 CHARGE!; D3=1 -> 4 activations.
+    const uint8_t dice[] = {2, 3, 5, 5, 1};
+    bb_rng_script(&rng, dice, 5);
+    fx_run(&m, &rng);
+    bb_status st = fx_apply(&m, stx_act(BB_A_KICK_TARGET, 0, 18, 7), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK_EQ(m.decision_team, BB_HOME);   // the KICKING coach activates
+    BB_CHECK_EQ(m.active_team, BB_HOME);     // "as if it was their Turn"
+    BB_CHECK(fx_has_type(&m, BB_A_ACTIVATE));
+    BB_CHECK(fx_has_type(&m, BB_A_END_TURN));
+    // First activation: a free MOVE (Block/Pass/Foul kinds must not exist).
+    stx_apply_ok(&m, &rng, stx_act(BB_A_ACTIVATE, h0, 0, 0));
+    BB_CHECK(fx_find(&m, stx_act(BB_A_DECLARE, BB_ACT_MOVE, 0, 0)) >= 0);
+    BB_CHECK(fx_find(&m, stx_act(BB_A_DECLARE, BB_ACT_BLITZ, 0, 0)) >= 0);
+    BB_CHECK(fx_find(&m, stx_act(BB_A_DECLARE, BB_ACT_PASS, 0, 0)) < 0);
+    BB_CHECK(fx_find(&m, stx_act(BB_A_DECLARE, BB_ACT_FOUL, 0, 0)) < 0);
+    stx_apply_ok(&m, &rng, stx_act(BB_A_DECLARE, BB_ACT_MOVE, 0, 0));
+    stx_apply_ok(&m, &rng, stx_act(BB_A_STEP, 0, 10, 6));
+    stx_apply_ok(&m, &rng, stx_act(BB_A_END_ACTIVATION, 0, 0, 0));
+    BB_CHECK_EQ(m.players[h0].y, 6); // the free move happened
+    // h0 cannot be activated again; h1 may BLITZ (the one-of budget).
+    BB_CHECK(fx_find(&m, stx_act(BB_A_ACTIVATE, h0, 0, 0)) < 0);
+    stx_apply_ok(&m, &rng, stx_act(BB_A_ACTIVATE, h1, 0, 0));
+    BB_CHECK(fx_find(&m, stx_act(BB_A_DECLARE, BB_ACT_BLITZ, 0, 0)) >= 0);
+    const uint8_t dice2[] = {/*1d block*/ 3};
+    bb_rng_script(&rng, dice2, 1);
+    stx_apply_ok(&m, &rng, stx_act(BB_A_DECLARE, BB_ACT_BLITZ, 0, 0));
+    stx_apply_ok(&m, &rng, stx_act(BB_A_STEP, 0, 11, 9));
+    stx_apply_ok(&m, &rng, stx_act(BB_A_STEP, 0, 12, 9));
+    stx_apply_ok(&m, &rng, stx_act(BB_A_BLOCK_TARGET, 0, 13, 9));
+    stx_apply_ok(&m, &rng, stx_act(BB_A_CHOOSE_DIE, 0, 0, 0));
+    stx_apply_ok(&m, &rng, stx_act(BB_A_PUSH_SQUARE, 0, 14, 9));
+    stx_apply_ok(&m, &rng, stx_act(BB_A_FOLLOW_UP, 0, 0, 0));
+    stx_apply_ok(&m, &rng, stx_act(BB_A_END_ACTIVATION, 0, 0, 0));
+    BB_CHECK_EQ(m.players[a0].x, 14); // pushed by the charge blitz
+    // END_TURN closes the event: the kick lands (bounce) and the receiving
+    // team is active again.
+    const uint8_t dice3[] = {1};
+    bb_rng_script(&rng, dice3, 1);
+    bb_status st2 = fx_apply(&m, stx_act(BB_A_END_TURN, 0, 0, 0), &rng);
+    BB_CHECK_EQ(st2, BB_STATUS_DECISION);
+    BB_CHECK_EQ(m.active_team, BB_AWAY);
+    BB_CHECK(!bb_rng_error(&rng));
+}
+
+// "If a selected player Falls Over ... the Charge ends": a failed Rush
+// knocks the charging player down and the event ends without further
+// activations (and WITHOUT a real turnover for the receiving team's turn).
+BB_TEST(struct_kickoff_charge_ends_when_player_falls) {
+    bb_match m;
+    stx_kickoff_fixture(&m, BB_HOME);
+    int h0 = fx_player(&m, 0, 0, 1, 5, 1, 3, 3, 4, 9); // MA 1: rush early
+    fx_lineman(&m, 0, 1, 10, 9);
+    fx_lineman(&m, 1, 0, 20, 10);
+    bb_rng rng;
+    const uint8_t dice[] = {2, 3, 5, 5, 1};
+    bb_rng_script(&rng, dice, 5);
+    fx_run(&m, &rng);
+    fx_apply(&m, stx_act(BB_A_KICK_TARGET, 0, 18, 7), &rng);
+    stx_apply_ok(&m, &rng, stx_act(BB_A_ACTIVATE, h0, 0, 0));
+    stx_apply_ok(&m, &rng, stx_act(BB_A_DECLARE, BB_ACT_MOVE, 0, 0));
+    stx_apply_ok(&m, &rng, stx_act(BB_A_STEP, 0, 2, 5));
+    // Second step = Rush (MA 1): natural 1 -> falls. Armour 2,2 holds.
+    // Charge ends; landing bounce d8=1; away turn 1 begins.
+    const uint8_t dice2[] = {1, 2, 2, 1};
+    bb_rng_script(&rng, dice2, 4);
+    bb_status st = fx_apply(&m, stx_act(BB_A_STEP, 0, 3, 5), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK_EQ(m.players[h0].stance, BB_STANCE_PRONE);
+    BB_CHECK_EQ(m.active_team, BB_AWAY);  // event over, receiver active
+    BB_CHECK_EQ(m.decision_team, BB_AWAY);
+    BB_CHECK_EQ(m.turnover, 0);           // the latch must not leak
+    BB_CHECK(!bb_rng_error(&rng));
+}
+
+// "exactly as if it was their team's Turn": the charging team may spend
+// TEAM RE-ROLLS on its charge dice (validated against live FUMBBL replays).
+BB_TEST(struct_kickoff_charge_team_reroll_available) {
+    bb_match m;
+    stx_kickoff_fixture(&m, BB_HOME);
+    m.rerolls[0] = m.rerolls_start[0] = 2;
+    int h0 = fx_player(&m, 0, 0, 1, 5, 1, 3, 3, 4, 9);
+    fx_lineman(&m, 0, 1, 10, 9);
+    fx_lineman(&m, 1, 0, 20, 10);
+    bb_rng rng;
+    const uint8_t dice[] = {2, 3, 5, 5, 1};
+    bb_rng_script(&rng, dice, 5);
+    fx_run(&m, &rng);
+    fx_apply(&m, stx_act(BB_A_KICK_TARGET, 0, 18, 7), &rng);
+    stx_apply_ok(&m, &rng, stx_act(BB_A_ACTIVATE, h0, 0, 0));
+    stx_apply_ok(&m, &rng, stx_act(BB_A_DECLARE, BB_ACT_MOVE, 0, 0));
+    stx_apply_ok(&m, &rng, stx_act(BB_A_STEP, 0, 2, 5));
+    const uint8_t dice2[] = {2 /*rush 2+: fail? no — 2 passes... use 1*/};
+    (void)dice2;
+    const uint8_t dice3[] = {1}; // rush natural 1: fail -> re-roll window
+    bb_rng_script(&rng, dice3, 1);
+    bb_status st = fx_apply(&m, stx_act(BB_A_STEP, 0, 3, 5), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK(fx_find(&m, stx_act(BB_A_USE_REROLL, BB_RR_TEAM, 0, 0)) >= 0);
+    const uint8_t dice4[] = {6}; // re-rolled rush passes
+    bb_rng_script(&rng, dice4, 1);
+    st = fx_apply(&m, stx_act(BB_A_USE_REROLL, BB_RR_TEAM, 0, 0), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK_EQ(m.players[h0].stance, BB_STANCE_STANDING);
+    BB_CHECK_EQ(m.players[h0].x, 3);
+    BB_CHECK_EQ(m.rerolls[0], 1);
+    BB_CHECK(!bb_rng_error(&rng));
 }
