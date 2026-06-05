@@ -95,6 +95,18 @@ field by summed `n`, then memsets all env logs to zero. So: store **sums**, bump
 `my_log` via `dict_set` — these become `env/<key>` in the dashboard, wandb, and
 selfplay.py.
 
+**HARD KEY LIMIT (bit us 2026-06-05):** `vec_log` in `src/bindings_cpu.cpp` AND
+`src/bindings.cu` allocates the output dict with a FIXED capacity (upstream: 32;
+ours: 64 via `training/puffer_dict_capacity.patch`) and appends `"n"` after
+`my_log` returns. `dict_set`'s capacity check is a bare `assert` upstream —
+**compiles out under NDEBUG**, so exceeding capacity is a silent 24-bytes-per-key
+heap overrun that surfaces as `free(): corrupted unsorted chunks` at the FIRST
+log aggregation with completed episodes (~epoch 3 / ~786K steps, `n==0`
+early-returns before that). It reproduces at any thread count / cwd / config —
+do not chase those. Our vendored `dict_set` now aborts loudly with the key name.
+When adding Log keys: count `dict_set` calls in `my_log` (+1 for `"n"`) against
+the `create_dict` capacity at both vec_log call sites.
+
 ## 4. Two-player self-play (the chess pattern)
 
 One `c_step` = one ply. Layout: `num_agents = 2`, both slots belong to one env.

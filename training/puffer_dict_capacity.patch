@@ -1,0 +1,54 @@
+diff --git a/src/bindings.cu b/src/bindings.cu
+index 64be611..043a465 100644
+--- a/src/bindings.cu
++++ b/src/bindings.cu
+@@ -370,7 +370,7 @@ void cpu_vec_step_py(VecEnv& ve, long long actions_ptr) {
+ }
+ 
+ py::dict vec_log(VecEnv& ve) {
+-    Dict* out = create_dict(32);
++    Dict* out = create_dict(64); // bloodbowl my_log emits 36 keys + "n"; 32 overflowed (heap corruption)
+     static_vec_log(ve.vec, out);
+     py::dict result;
+     for (int i = 0; i < out->size; i++) {
+diff --git a/src/bindings_cpu.cpp b/src/bindings_cpu.cpp
+index 5ba4dc8..8d886d4 100644
+--- a/src/bindings_cpu.cpp
++++ b/src/bindings_cpu.cpp
+@@ -141,7 +141,7 @@ static void cpu_vec_step_py(VecEnv& ve, long long actions_ptr) {
+ }
+ 
+ static py::dict vec_log(VecEnv& ve) {
+-    Dict* out = create_dict(32);
++    Dict* out = create_dict(64); // bloodbowl my_log emits 36 keys + "n"; 32 overflowed (heap corruption)
+     static_vec_log(ve.vec, out);
+     py::dict result;
+     for (int i = 0; i < out->size; i++)
+diff --git a/src/vecenv.h b/src/vecenv.h
+index 42958d3..b920161 100644
+--- a/src/vecenv.h
++++ b/src/vecenv.h
+@@ -52,12 +52,22 @@ static inline DictItem* dict_get(Dict* dict, const char* key) {
+ }
+ 
+ static inline void dict_set(Dict* dict, const char* key, double value) {
+-    assert(dict->size < dict->capacity);
+     DictItem* item = dict_get_unsafe(dict, key);
+     if (item != NULL) {
+         item->value = value;
+         return;
+     }
++    // Hard runtime check: the upstream assert() compiles out under NDEBUG,
++    // turning a too-small create_dict() into silent heap corruption that
++    // surfaces as "free(): corrupted unsorted chunks" epochs later (seen
++    // when my_log key count outgrew vec_log's capacity). Fail loudly here.
++    if (dict->size >= dict->capacity) {
++        fprintf(stderr,
++                "dict_set: capacity %d exceeded adding key '%s' — bump "
++                "create_dict() at the call site\n",
++                dict->capacity, key);
++        abort();
++    }
+     dict->items[dict->size].key = key;
+     dict->items[dict->size].value = value;
+     dict->size++;

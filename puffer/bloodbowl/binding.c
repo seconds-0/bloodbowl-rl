@@ -165,6 +165,15 @@ void my_init(Env* env, Dict* kwargs) {
 
 void my_log(Log* log, Dict* out) {
     // dict_set stores the key POINTER (vecenv.h), so string literals only.
+    //
+    // CAPACITY: vec_log (src/bindings_cpu.cpp / bindings.cu) hands us a
+    // create_dict(64) and appends "n" after we return — keep total keys < 64.
+    // We emit 36. Growing past the call-site capacity is SILENT HEAP
+    // CORRUPTION upstream (assert compiles out under NDEBUG); our vendored
+    // dict_set aborts loudly instead (training/puffer_dict_capacity.patch).
+    // History: key count hit 37 vs capacity 32 when slot scores + demo
+    // counters landed → "free(): corrupted unsorted chunks" at first episode
+    // completion (~786K steps), masquerading as a thread-count bug.
     dict_set(out, "perf", log->perf);
     dict_set(out, "score_diff", log->score_diff);
     dict_set(out, "tds", log->tds);
