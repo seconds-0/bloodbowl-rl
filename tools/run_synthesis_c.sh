@@ -9,7 +9,7 @@
 #   - synthesis-v4 finished or killed (this script refuses to double-launch)
 #   - vendor/PufferLib built with --float (torch backend requirement) and the
 #     dict-capacity patch (training/puffer_dict_capacity.patch)
-#   - anchor model training/bc_v3.bin (override: ANCHOR=...; PINNED, not
+#   - anchor model training/bc_v3b.bin (override: ANCHOR=...; PINNED, not
 #     mtime-glob-resolved — panel: bc_v1/bc_v15 are dead-lineage 832-obs
 #     checkpoints that an `ls -t` glob can mis-resolve to)
 #   - demo bank staged at vendor/PufferLib/resources/bloodbowl/state_bank.bbs
@@ -23,7 +23,7 @@ if pgrep -f 'puffer [t]rain' > /dev/null; then
   exit 1
 fi
 
-ANCHOR="${ANCHOR:-$ROOT/training/bc_v3.bin}"
+ANCHOR="${ANCHOR:-$ROOT/training/bc_v3b.bin}"
 [ -f "$ANCHOR" ] || { echo "anchor model missing: $ANCHOR" >&2; exit 1; }
 # obs-v3 torch state_dicts are ~13.68 MB; the dead 832-obs lineage is ~12.08.
 asize=$(wc -c < "$ANCHOR")
