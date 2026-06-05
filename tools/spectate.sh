@@ -23,6 +23,7 @@ CYCLE="${CYCLE_SECS:-180}"
 
 cd "$PUFFER"
 source .venv/bin/activate
+export BBE_MEMORIAL="${BBE_MEMORIAL:-$ROOT/MEMORIAL.md}"
 
 while true; do
     rsync -az -e "ssh -p $PORT -i $HOME/.ssh/id_ed25519 -o StrictHostKeyChecking=no -o ConnectTimeout=15" \

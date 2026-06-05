@@ -94,4 +94,13 @@ static inline bool bb_own_half_x(int team, int x) {
 // always succeeds — callers compare the raw die separately.
 int bb_test_target(int stat_target, int modifiers);
 
+
+// Casualty telemetry (spectator memorial / eval coroners): fired by
+// casualty_resolve with the victim slot, the knockdown causer (-1 = none),
+// the post-Decay D16 roll (15-16 = DEAD), and ctx (0 block-family attack,
+// 1 crowd, 2 foul). Process-global, default NULL — never part of match
+// state, so banks/replays/fingerprints are unaffected.
+extern void (*bb_casualty_hook)(const bb_match*, int slot, int causer,
+                                int roll, int ctx);
+
 #endif // BB_PROC_H

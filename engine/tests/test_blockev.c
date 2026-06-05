@@ -296,3 +296,47 @@ BB_TEST(blockev_fend_cancels_frenzy_second_block) {
     EV_NEAR(ev.p_def_down, 3.0f / 6.0f);
     EV_NEAR(ev.p_att_down, 2.0f / 6.0f);
 }
+
+// --- Casualty telemetry hook (memorial) ----------------------------------------
+
+static int hk_fired, hk_slot, hk_causer, hk_roll, hk_ctx;
+static void hk_capture(const bb_match* m, int slot, int causer, int roll,
+                       int ctx) {
+    (void)m;
+    hk_fired++;
+    hk_slot = slot;
+    hk_causer = causer;
+    hk_roll = roll;
+    hk_ctx = ctx;
+}
+
+BB_TEST(casualty_hook_block_kill_attribution) {
+    bb_match m;
+    int att, def;
+    ev_fixture(&m, &att, &def);
+    bb_rng rng;
+    // Scripted dice: block die POW(6); armour 6+6 breaks AV9; injury 6+6
+    // -> casualty; D16 roll 16 = DEAD.
+    const uint8_t dice[] = {6, 6, 6, 6, 6, 16};
+    bb_rng_script(&rng, dice, 6);
+    hk_fired = 0;
+    bb_casualty_hook = hk_capture;
+    bb_push(&m, BB_PROC_BLOCK, att, def, 0, 0);
+    m.status = BB_STATUS_RUNNING;
+    bb_status st = bb_advance(&m, &rng);
+    // Drive choices (die pick, push square, follow-up) until resolution.
+    int guard = 0;
+    while (st == BB_STATUS_DECISION && guard++ < 16) {
+        bb_action legal[BB_LEGAL_MAX];
+        int n = bb_legal_actions(&m, legal);
+        BB_CHECK(n > 0);
+        st = bb_apply(&m, legal[0], &rng);
+    }
+    bb_casualty_hook = 0; // never leak into other tests
+    BB_CHECK_EQ(hk_fired, 1);
+    BB_CHECK_EQ(hk_slot, def);
+    BB_CHECK_EQ(hk_causer, att);   // the block thrower — memorial attribution
+    BB_CHECK_EQ(hk_roll, 16);      // DEAD
+    BB_CHECK_EQ(hk_ctx, 0);        // block-family context
+    BB_CHECK_EQ(m.players[def].location, BB_LOC_CAS);
+}

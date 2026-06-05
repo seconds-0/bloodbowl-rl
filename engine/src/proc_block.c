@@ -1051,7 +1051,7 @@ static void injury_advance(bb_match* m, bb_rng* rng) {
         else p->location = BB_LOC_CAS;
         return;
     }
-    bb_push(m, BB_PROC_CASUALTY, slot, f.b, 0, 0);
+    bb_push(m, BB_PROC_CASUALTY, slot, f.b, 0, f.y); // y = causer+1
 }
 
 // ===== CASUALTY ===============================================================
@@ -1061,14 +1061,25 @@ static void injury_advance(bb_match* m, bb_rng* rng) {
 // the two results" — a CHOOSE_OPTION decision, 0 = original roll in f->x,
 // 1 = the apothecary's new roll in f->y).
 
+// Casualty telemetry hook (spectator memorial, eval coroners). Process-wide
+// function pointer, NOT match state: bb_match stays memcpy-clean and the
+// demo-bank fingerprint is untouched. causer = slot that caused the
+// knockdown (-1 = self-inflicted: failed dodge/GFI etc.); ctx mirrors the
+// INJURY frame's b (0 = block-family attack, 1 = crowd, 2 = foul); roll is
+// the post-Decay D16 index (15-16 = DEAD).
+void (*bb_casualty_hook)(const bb_match*, int slot, int causer, int roll,
+                         int ctx) = 0;
+
 // Apply one casualty result (rolls are post-Decay table indices). Every
 // casualty is out for the match; only the apothecary's Badly Hurt pick
 // (phase 2 below) routes to Reserves instead.
-static void casualty_resolve(bb_match* m, int slot, int roll) {
+static void casualty_resolve(bb_match* m, int slot, int roll, int causer,
+                             int ctx) {
     bb_player* p = &m->players[slot];
     p->spp_game = (uint8_t)bb_casualty_table[roll]; // outcome (league mode)
     if (p->location == BB_LOC_ON_PITCH) bb_remove_from_pitch(m, slot, BB_LOC_CAS);
     else p->location = BB_LOC_CAS;
+    if (bb_casualty_hook) bb_casualty_hook(m, slot, causer, roll, ctx);
 }
 
 static void casualty_advance(bb_match* m, bb_rng* rng) {
@@ -1095,12 +1106,14 @@ static void casualty_advance(bb_match* m, bb_rng* rng) {
     if (m->apothecary[team] > 0) {
         // Apothecary window: the coach may have a second Casualty Roll made
         // and "may select either of the two results to apply" (mirror
-        // GB#APOTHECARY; Badly Hurt selected -> Reserves).
+        // GB#APOTHECARY; Badly Hurt selected -> Reserves). x/y hold the two
+        // rolls, so the telemetry chain (ctx, causer+1) rides `data`.
         bb_push(m, BB_PROC_CASUALTY, slot, 1, (uint8_t)roll, 0);
         bb_top(m)->phase = 1; // use/decline decision
+        bb_top(m)->data = (uint16_t)(((uint16_t)f.b << 8) | f.y);
         return;
     }
-    casualty_resolve(m, slot, roll);
+    casualty_resolve(m, slot, roll, (int)f.y - 1, f.b);
 }
 
 static int casualty_legal(const bb_match* m, bb_action* out) {
@@ -1130,12 +1143,14 @@ static void casualty_apply(bb_match* m, bb_action a, bb_rng* rng) {
             return;
         }
         int roll1 = f->x;
+        int cs = (int)(f->data & 0xFF) - 1, cx = f->data >> 8;
         bb_pop(m);
-        casualty_resolve(m, slot, roll1);
+        casualty_resolve(m, slot, roll1, cs, cx);
         return;
     }
     // phase 2: result picked (0 = original f->x, 1 = new f->y).
     int pick = a.arg ? f->y : f->x;
+    int cs = (int)(f->data & 0xFF) - 1, cx = f->data >> 8;
     bb_pop(m);
     if (bb_casualty_table[pick] == BB_CAS_BADLY_HURT) {
         // Patched-up: "placed into their Reserves Box instead".
@@ -1144,7 +1159,7 @@ static void casualty_apply(bb_match* m, bb_action a, bb_rng* rng) {
         p->spp_game = BB_CAS_BADLY_HURT;
         return;
     }
-    casualty_resolve(m, slot, pick);
+    casualty_resolve(m, slot, pick, cs, cx);
 }
 
 // ===== FOUL ===================================================================

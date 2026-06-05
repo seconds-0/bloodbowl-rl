@@ -42,6 +42,14 @@ typedef struct {
     double total_steps;
     bool art_ok;
     char art_dir[512];
+    // Memorial (bb_casualty_hook): banner text + countdown, the memorial
+    // file path (BBE_MEMORIAL env, empty = no file), and first-blood flags
+    // for this viewer session.
+    char memorial_line1[160];
+    char memorial_line2[160];
+    int memorial_frames;
+    char memorial_path[512];
+    int seen_block_cas, seen_block_death;
     Texture2D pitch, ball, holdball, prone, stunned;
     Texture2D disk_normal[2], disk_large[2], disk_small[2]; // [home, away]
     Texture2D icon[BB_TEAM_COUNT][BB_MAX_POSITIONS];
@@ -82,6 +90,77 @@ static void bbe_load_iconmap(BBEClient* c) {
     fclose(f);
 }
 
+static BBEClient* bbe_memorial_client = 0;
+
+static const char* bbe_cas_band(int roll) {
+    if (roll >= 15) return "DEAD";
+    if (roll >= 13) return "Lasting Injury";
+    if (roll >= 11) return "Serious Injury";
+    if (roll >= 9) return "Seriously Hurt";
+    return "Badly Hurt";
+}
+
+static void bbe_player_name(const bb_match* m, int slot, char* out, int n) {
+    int t = BB_TEAM_OF(slot);
+    int tid = m->team_id[t];
+    int pid = m->players[slot].position_id;
+    const char* team = tid < BB_TEAM_COUNT ? bb_team_defs[tid].display : "?";
+    const char* pos = (tid < BB_TEAM_COUNT && pid < BB_MAX_POSITIONS)
+                          ? bb_team_defs[tid].positions[pid].display
+                          : "Player";
+    snprintf(out, (size_t)n, "%s %s #%d (%s)", team, pos,
+             slot % BB_TEAM_SLOTS + 1, t == BB_HOME ? "HOME" : "AWAY");
+}
+
+// bb_casualty_hook target: banner + MEMORIAL.md append. ctx 0 with a real
+// causer = block-family attack (failed dodges have causer -1); ctx 1 =
+// crowd surf; ctx 2 = foul.
+static void bbe_on_casualty(const bb_match* m, int slot, int causer, int roll,
+                            int ctx) {
+    BBEClient* c = bbe_memorial_client;
+    if (!c) return;
+    char victim[96], killer[96];
+    bbe_player_name(m, slot, victim, sizeof victim);
+    if (causer >= 0) bbe_player_name(m, causer, killer, sizeof killer);
+    else snprintf(killer, sizeof killer, "their own dice");
+    const char* how = ctx == 1 ? "surfed into the crowd by"
+                    : ctx == 2 ? "fouled by"
+                               : "struck down by";
+    int dead = roll >= 15;
+    int block_kill = ctx == 0 && causer >= 0;
+    // Banner: every death gets one; first block-casualty and first
+    // block-death of the session get the ceremony.
+    if (dead || (block_kill && !c->seen_block_cas)) {
+        const char* head =
+            block_kill && dead && !c->seen_block_death ? "*** FIRST BLOOD — A DEATH ***"
+            : dead                                     ? "*** A DEATH ON THE PITCH ***"
+                                                       : "*** FIRST BLOOD ***";
+        snprintf(c->memorial_line1, sizeof c->memorial_line1, "%s", head);
+        snprintf(c->memorial_line2, sizeof c->memorial_line2,
+                 "%s %s %s  (D16: %d — %s)", victim, how, killer, roll,
+                 bbe_cas_band(roll));
+        c->memorial_frames = 240; // ~4s at 60fps
+    }
+    if (block_kill) c->seen_block_cas = 1;
+    if (block_kill && dead) c->seen_block_death = 1;
+    // Memorial file: every block-family casualty, deaths flagged.
+    if (c->memorial_path[0] && (block_kill || dead)) {
+        FILE* f = fopen(c->memorial_path, "a");
+        if (f) {
+            time_t now = time(0);
+            struct tm tmv;
+            localtime_r(&now, &tmv);
+            char ts[32];
+            strftime(ts, sizeof ts, "%Y-%m-%d %H:%M:%S", &tmv);
+            fprintf(f, "- %s — %s%s %s **%s** (D16: %d — %s)%s\n", ts,
+                    dead ? "💀 " : "", victim, how, killer, roll,
+                    bbe_cas_band(roll),
+                    block_kill && dead ? "  ← intentional block kill" : "");
+            fclose(f);
+        }
+    }
+}
+
 static void bbe_render_init(Bloodbowl* env) {
     BBEClient* c = (BBEClient*)calloc(1, sizeof(BBEClient));
     const char* banner = getenv("BBE_BANNER");
@@ -104,6 +183,10 @@ static void bbe_render_init(Bloodbowl* env) {
     } else {
         c->profile[0] = '\0';
     }
+    const char* mem = getenv("BBE_MEMORIAL");
+    if (mem) snprintf(c->memorial_path, sizeof c->memorial_path, "%s", mem);
+    bbe_memorial_client = c;
+    bb_casualty_hook = bbe_on_casualty;
     env->client = c;
     const char* sc = getenv("BBE_SCALE");
     if (sc) {
@@ -325,6 +408,24 @@ static void bbe_draw_hud(const Bloodbowl* env) {
         DrawRectangle(px, py, tw + 16, fs + 6, (Color){34, 36, 42, 255});
         DrawRectangleLines(px, py, tw + 16, fs + 6, border);
         DrawText(plate, px + 8, py + 3, fs, RAYWHITE);
+    }
+
+    // Memorial banner: centered, can't-miss red box for deaths/first blood.
+    if (((BBEClient*)env->client)->memorial_frames > 0) {
+        BBEClient* mc = (BBEClient*)env->client;
+        mc->memorial_frames--;
+        int f1m = BBE_S(18), f2m = BBE_S(12);
+        int w1 = MeasureText(mc->memorial_line1, f1m);
+        int w2 = MeasureText(mc->memorial_line2, f2m);
+        int bw = (w1 > w2 ? w1 : w2) + 48;
+        int bx = BBE_WIN_W / 2 - bw / 2;
+        int by = BBE_S(BBE_HUD_H) + BBE_S(40);
+        DrawRectangle(bx, by, bw, f1m + f2m + 28, (Color){20, 8, 8, 235});
+        DrawRectangleLines(bx, by, bw, f1m + f2m + 28, (Color){220, 40, 40, 255});
+        DrawText(mc->memorial_line1, BBE_WIN_W / 2 - w1 / 2, by + 8, f1m,
+                 (Color){240, 60, 60, 255});
+        DrawText(mc->memorial_line2, BBE_WIN_W / 2 - w2 / 2, by + f1m + 16,
+                 f2m, RAYWHITE);
     }
 
     // Center-top: run-type label (which experiment arm is on screen).
