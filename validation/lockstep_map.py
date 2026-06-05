@@ -107,11 +107,14 @@ PLAYER_ACTION_KIND = {
 UNMAPPED_ACTIONS = {"throwBomb", "hailMaryBomb", "multipleBlock", "swoop",
                     "punt", "puntMove", "lookIntoMyEyes", "balefulHex"}
 
-# Kickoff-event free-action turn modes (engine treats the events as no-ops
-# past their dice, D21). Pure repositioning modes can be baked into the setup
-# placements when the result is still a legal formation.
+# Kickoff-event free-action turn modes. Solid Defence and Quick Snap map to
+# REAL engine repositioning windows (KICKOFF phases 5/6, D21); Blitz!/Charge
+# free activations are still dropped (engine no-op); Kick-off Return is a
+# FUMBBL BB2020-ruleset relic absent from the BB2025 mirror — its moves bake
+# into the setup placements when still formation-legal.
 KICKOFF_FREE_MODES = {"blitz", "quickSnap", "solidDefence", "kickoffReturn"}
-KICKOFF_BAKE_MODES = {"quickSnap", "solidDefence", "kickoffReturn"}
+KICKOFF_WINDOW_MODES = {"solidDefence", "quickSnap"}
+KICKOFF_BAKE_MODES = {"kickoffReturn"}
 # The events' own D3 rolls ARE rolled by the engine — never drop these.
 KICKOFF_EVENT_ROLLS = {"blitzRoll", "solidDefenceRoll", "quickSnapRoll"}
 
@@ -244,6 +247,7 @@ class Mapper:
         self.ball_diverged = False # engine ball state unrepresentable (skill gap)
         self.last_injury_key = None
         self.in_kickoff_resolution = False
+        self.kickoff_window = None # {"mode": solidDefence|quickSnap} open window
         # Engine stun rollover mirror: pid -> "fresh" (stunned this turn) or
         # "aged" (started its own team turn stunned = engine STUNNED_USED).
         # The engine flips aged players to prone at the END of their own
@@ -589,11 +593,19 @@ class Mapper:
             # state/ball already tracked
         return self.ops
 
+    def flush_kickoff_window(self, cmd):
+        """Close an open Solid Defence / Quick Snap engine window: the
+        SETUP_DONE act resumes the kick landing (its dice ride on it)."""
+        if self.kickoff_window:
+            self.kickoff_window = None
+            self.act(cmd, A_SETUP_DONE, note="kickoff window done")
+
     def handle_touchback(self, r):
         """Kick went out of play / into the kicking half: the receiving coach
         gives the ball to any standing player (engine KICKOFF phase 2,
         A_TOUCHBACK arg = global slot; arg 0xFF + square if nobody stands)."""
         cmd = r.get("cmd") or 0
+        self.flush_kickoff_window(cmd)
         x, y = r["at"]
         pid = next((p for p, q in self.pos.items() if q == (x, y)
                     and self.slot_of.get(p)), None)
@@ -610,15 +622,14 @@ class Mapper:
 
     # --- formation / setup ----------------------------------------------------------
     def kickoff_repositioning(self, i, r):
-        """Final positions of kickoff-event pure-repositioning moves (Solid
-        Defence / Quick Snap / Kick-off Return) following this formation.
+        """Final positions of Kick-off Return moves following this formation
+        (the one remaining baked mode: a FUMBBL BB2020-ruleset relic absent
+        from the BB2025 mirror, so the engine has no window for it).
 
-        The engine treats these events as no-ops (D21): baking the final
-        positions into the setup placements reproduces the post-event board
-        exactly — the landing catch then rolls against the same tackle zones
-        FFB used. Only applied when the result is still a setup-legal
-        formation (Solid Defence re-setups always are by rule; Quick Snap
-        single steps occasionally are not)."""
+        Baking the final positions into the setup placements reproduces the
+        post-event board exactly — the landing catch then rolls against the
+        same tackle zones FFB used. Only applied when the result is still a
+        setup-legal formation."""
         finals = {}
         for j in range(i + 1, min(i + 600, len(self.recs))):
             rj = self.recs[j]
@@ -659,6 +670,7 @@ class Mapper:
         self.ball_diverged = False
         self.pickmeup = []
         self.pmu_stood = set()
+        self.kickoff_window = None
         finals = self.kickoff_repositioning(i, r)
         if finals:
             coords = dict(r["players"])
@@ -721,9 +733,36 @@ class Mapper:
         if pid in self.ignore_all:
             return  # ghost player relocating: mirror tracks, engine ignores
         if self.in_kickoff_resolution and mode in KICKOFF_FREE_MODES:
-            # Kickoff-event free move. Baked moves are already part of the
-            # setup placements; everything else is the documented D21
-            # repositioning divergence (engine keeps the kicked formation).
+            if mode in KICKOFF_WINDOW_MODES:
+                # Solid Defence / Quick Snap: a real engine window decision.
+                # FFB stages Solid Defence players OFF the pitch first (a
+                # dugout-coordinate move), then re-places them — mapped to
+                # the window's SETUP_REMOVE so swaps reconcile.
+                ts = self.slot_of.get(pid)
+                if ts and self.kickoff_window and \
+                        self.kickoff_window["mode"] == mode:
+                    staged = self.kickoff_window.setdefault("staged", set())
+                    if on_pitch:
+                        if self.move_from == (x, y):
+                            return  # FFB duplicate/no-op move record
+                        staged.discard(pid)
+                        self.act(cmd, A_SETUP_PLACE, ts[0] * 16 + ts[1], x, y,
+                                 note=f"kickoff {mode}")
+                        return
+                    if mode == "solidDefence":
+                        if pid not in staged:
+                            staged.add(pid)
+                            self.act(cmd, A_SETUP_REMOVE, ts[0] * 16 + ts[1],
+                                     note="kickoff solidDefence stage")
+                        # else: dugout-internal shuffle — already staged off
+                        return
+                self.ignore_pos.add(pid)
+                self.skip(cmd, f"kickoff_window_move_unattached_{mode}",
+                          f"{pid} -> {x},{y}")
+                return
+            # Blitz!/Charge free activations and Kick-off Return moves stay
+            # engine no-ops. Baked moves are already part of the setup
+            # placements; everything else is a documented divergence.
             if pid in self.baked_moves:
                 self.skips["kickoff_reposition_baked_move"] += 1
             else:
@@ -853,6 +892,18 @@ class Mapper:
                 self.skip(cmd, "unrepresented_player_report",
                           f"{rep}/{pids[0]}")
                 return
+        if self.kickoff_window and \
+                r.get("mode") != self.kickoff_window["mode"]:
+            # First record outside the repositioning window: close it (the
+            # SETUP_DONE act carries the landing dice that follow).
+            self.flush_kickoff_window(cmd)
+        if self.in_kickoff_resolution and \
+                r.get("mode") in KICKOFF_WINDOW_MODES and \
+                rep not in KICKOFF_EVENT_ROLLS:
+            # Window-internal bookkeeping reports (playerAction shells): the
+            # engine window has no per-player activations.
+            self.skips["kickoff_window_report_dropped"] += 1
+            return
         if self.in_kickoff_resolution and r.get("mode") in KICKOFF_FREE_MODES \
                 and rep not in KICKOFF_EVENT_ROLLS:
             # Rolls/blocks inside a kickoff free action (Blitz!/Charge runs
@@ -950,12 +1001,22 @@ class Mapper:
         elif result in ("Pitch Invasion", "Officious Ref"):
             self.skip(cmd, "kickoff_event_partial", result)
 
-    def rep_quickSnapRoll(self, i, r, cmd):
+    def _kickoff_d3(self, cmd, r, what):
         v = int(r.get("roll") or 1)
-        self.attach(cmd, [v if 1 <= v <= 3 else 1], "quick snap d3")
+        v = v if 1 <= v <= 3 else 1
+        self.attach(cmd, [v], what)
+        return v
 
-    rep_solidDefenceRoll = rep_quickSnapRoll
-    rep_blitzRoll = rep_quickSnapRoll
+    def rep_quickSnapRoll(self, i, r, cmd):
+        self._kickoff_d3(cmd, r, "quick snap d3")
+        self.kickoff_window = {"mode": "quickSnap"}
+
+    def rep_solidDefenceRoll(self, i, r, cmd):
+        self._kickoff_d3(cmd, r, "solid defence d3")
+        self.kickoff_window = {"mode": "solidDefence"}
+
+    def rep_blitzRoll(self, i, r, cmd):
+        self._kickoff_d3(cmd, r, "charge d3")
 
     def rep_cheeringFans(self, i, r, cmd):
         rh, ra = r.get("rollHome"), r.get("rollAway")

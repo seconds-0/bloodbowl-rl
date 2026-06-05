@@ -1997,3 +1997,135 @@ BB_TEST(struct_pick_me_up_stood_owner_cannot_help_same_turn) {
     BB_CHECK_EQ(m.players[c].stance, BB_STANCE_PRONE); // no second die
     BB_CHECK(!bb_rng_error(&rng));
 }
+
+// ===========================================================================
+// KICK-OFF EVENT 4 SOLID DEFENCE — "The Coach of the kicking team selects up
+// to D3+3 Open players on their team. The selected players are then removed
+// from the pitch and can be set up again following all the usual
+// restrictions for setting up the team." (D21 window)
+// ===========================================================================
+
+BB_TEST(struct_kickoff_solid_defence_reposition_window) {
+    bb_match m;
+    stx_kickoff_fixture(&m, BB_HOME);
+    // Kicking (home) legal 3-man formation on the LoS centre.
+    int h0 = fx_lineman(&m, 0, 0, 12, 5);
+    fx_lineman(&m, 0, 1, 12, 6);
+    fx_lineman(&m, 0, 2, 12, 7);
+    fx_lineman(&m, 1, 0, 20, 10); // receiver, far away (home players Open)
+    bb_rng rng;
+    // d8=2,d6=3 -> ball (18,4); event 1+3=4 SOLID DEFENCE; D3=1 -> 4 players.
+    const uint8_t dice[] = {2, 3, 1, 3, 1};
+    bb_rng_script(&rng, dice, 5);
+    fx_run(&m, &rng);
+    bb_status st = fx_apply(&m, stx_act(BB_A_KICK_TARGET, 0, 18, 7), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK_EQ(m.decision_team, BB_HOME); // the KICKING coach repositions
+    BB_CHECK(fx_has_type(&m, BB_A_SETUP_PLACE));
+    BB_CHECK(fx_has_type(&m, BB_A_SETUP_DONE)); // formation legal: may pass
+    // Move h0 off the LoS: only 2 remain there -> DONE must disappear.
+    st = fx_apply(&m, stx_act(BB_A_SETUP_PLACE, h0, 10, 5), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK_EQ(m.players[h0].x, 10);
+    BB_CHECK(!fx_has_type(&m, BB_A_SETUP_DONE));
+    // Put him back on the LoS (re-placing a selected player is free).
+    st = fx_apply(&m, stx_act(BB_A_SETUP_PLACE, h0, 12, 4), &rng);
+    BB_CHECK(fx_has_type(&m, BB_A_SETUP_DONE));
+    // Confirm: the kick lands (bounce d8) and the kickoff settles.
+    const uint8_t dice2[] = {1};
+    bb_rng_script(&rng, dice2, 1);
+    st = fx_apply(&m, stx_act(BB_A_SETUP_DONE, 0, 0, 0), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK_EQ(m.players[h0].x, 12);
+    BB_CHECK_EQ(m.players[h0].y, 4);
+    BB_CHECK(!bb_rng_error(&rng));
+}
+
+// Solid Defence selects only OPEN players: a kicking player Marked across
+// the line of scrimmage cannot be repositioned.
+BB_TEST(struct_kickoff_solid_defence_marked_player_ineligible) {
+    bb_match m;
+    stx_kickoff_fixture(&m, BB_HOME);
+    int h0 = fx_lineman(&m, 0, 0, 12, 5); // marked by the away LoS player
+    fx_lineman(&m, 0, 1, 12, 6);
+    fx_lineman(&m, 0, 2, 12, 7);
+    fx_lineman(&m, 1, 0, 13, 5); // away player marking h0
+    bb_rng rng;
+    const uint8_t dice[] = {2, 3, 1, 3, 1};
+    bb_rng_script(&rng, dice, 5);
+    fx_run(&m, &rng);
+    fx_apply(&m, stx_act(BB_A_KICK_TARGET, 0, 18, 7), &rng);
+    bb_action legal[BB_LEGAL_MAX];
+    int n = bb_legal_actions(&m, legal);
+    for (int i = 0; i < n; i++) {
+        if (legal[i].type == BB_A_SETUP_PLACE) {
+            BB_CHECK(legal[i].arg != (uint8_t)h0); // not Open: ineligible
+        }
+    }
+}
+
+// ===========================================================================
+// KICK-OFF EVENT 9 QUICK SNAP! — "The Coach of the receiving team selects up
+// to D3+3 Open players on their team. The selected players may immediately
+// move one square in any direction, even if this takes them into the
+// opposition's half." (D21 window)
+// ===========================================================================
+
+BB_TEST(struct_kickoff_quick_snap_one_square_each_any_direction) {
+    bb_match m;
+    stx_kickoff_fixture(&m, BB_HOME);
+    fx_lineman(&m, 0, 0, 5, 5);
+    int a0 = fx_lineman(&m, 1, 0, 13, 7);  // receiving, on their LoS
+    int a1 = fx_lineman(&m, 1, 1, 20, 10);
+    bb_rng rng;
+    // d8=2,d6=3 -> ball (18,4); event 4+5=9 QUICK SNAP; D3=1 -> 4 players.
+    const uint8_t dice[] = {2, 3, 4, 5, 1};
+    bb_rng_script(&rng, dice, 5);
+    fx_run(&m, &rng);
+    bb_status st = fx_apply(&m, stx_act(BB_A_KICK_TARGET, 0, 18, 7), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK_EQ(m.decision_team, BB_AWAY); // the RECEIVING coach moves
+    // a0 steps ACROSS the halfway line into the kicking half (12,7).
+    st = fx_apply(&m, stx_act(BB_A_SETUP_PLACE, a0, 12, 7), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK_EQ(m.players[a0].x, 12);
+    // One square each: a0 may not move again.
+    bb_action legal[BB_LEGAL_MAX];
+    int n = bb_legal_actions(&m, legal);
+    for (int i = 0; i < n; i++) {
+        if (legal[i].type == BB_A_SETUP_PLACE) {
+            BB_CHECK(legal[i].arg != (uint8_t)a0);
+        }
+    }
+    // a1 may still move (budget 4); a two-square jump is not offered.
+    BB_CHECK(fx_find(&m, stx_act(BB_A_SETUP_PLACE, a1, 21, 10)) >= 0);
+    BB_CHECK(fx_find(&m, stx_act(BB_A_SETUP_PLACE, a1, 22, 10)) < 0);
+    const uint8_t dice2[] = {1};
+    bb_rng_script(&rng, dice2, 1);
+    st = fx_apply(&m, stx_act(BB_A_SETUP_DONE, 0, 0, 0), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK(!bb_rng_error(&rng)); // landing bounce consumed
+}
+
+// Quick Snap honours the D3+3 player budget: with D3=1 only 4 distinct
+// players may move; the fifth gets no placement actions.
+BB_TEST(struct_kickoff_quick_snap_player_budget) {
+    bb_match m;
+    stx_kickoff_fixture(&m, BB_HOME);
+    fx_lineman(&m, 0, 0, 5, 5);
+    int as[5];
+    for (int i = 0; i < 5; i++) as[i] = fx_lineman(&m, 1, i, 20, 4 + 2 * i);
+    bb_rng rng;
+    const uint8_t dice[] = {2, 3, 4, 5, 1};
+    bb_rng_script(&rng, dice, 5);
+    fx_run(&m, &rng);
+    fx_apply(&m, stx_act(BB_A_KICK_TARGET, 0, 18, 7), &rng);
+    for (int i = 0; i < 4; i++) {
+        bb_status st = fx_apply(&m,
+            stx_act(BB_A_SETUP_PLACE, as[i], 19, 4 + 2 * i), &rng);
+        BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    }
+    BB_CHECK(!fx_has_type(&m, BB_A_SETUP_PLACE)); // budget exhausted
+    BB_CHECK(fx_has_type(&m, BB_A_SETUP_DONE));
+    (void)as;
+}
