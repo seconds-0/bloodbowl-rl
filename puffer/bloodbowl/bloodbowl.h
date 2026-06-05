@@ -82,6 +82,7 @@
 #include "engine/proc_move.c"
 #include "engine/proc_block.c"
 #include "engine/proc_ttm.c"
+#include "engine/bb_blockev.c"
 #undef DIR8
 #define DIR8 DIR8_ball_tu
 #include "engine/proc_ball.c"
@@ -229,6 +230,28 @@ typedef struct {
     // charged at the (deterministic) push event regardless of injury dice.
     float reward_surf_taken;
     float reward_surf_inflicted;
+    // Profile C exposure-EV transfer (default 0 = off; D33 motivation,
+    // docs/reward-audit-decision-time.md). Fires at BB_A_BLOCK_TARGET —
+    // BEFORE any dice — as a zero-sum transfer priced by the closed-form
+    // block tree (bb_blockev, choice nodes resolved with spec-default
+    // weights):
+    //   exposure = k_kd    * P(def knocked down)
+    //            + k_value * P(def removed) * def_cost_k/100
+    //            + k_ball  * P(ball dislodged)   [0 unless def carries]
+    //   attacker team: +exposure   defender team: -exposure
+    // Dice outcomes carry no shaping anywhere on this path: a well-chosen
+    // 2d+Block throw is +EV at declaration, curing the never-blocking meta.
+    float reward_k_kd;
+    float reward_k_value;
+    float reward_k_ball;
+    // Sequencing charge (same doc, Addendum 1): risky rolls taken while safe
+    // activations remain unspent expose the rest of your turn to your own
+    // dice. Charged to the acting team at the block declaration:
+    //   k_seq * P(turnover of this roll) * pending_safe_activations
+    // Exempt on the team's LAST turn of the half (Addendum 2: a turnover
+    // then destroys nothing the whistle wasn't about to). v1 scope: block
+    // declarations only (movement-roll sequencing is a follow-up).
+    float reward_k_seq;
     // Demo-state reset curriculum (Backplay / chess fen_curric pattern,
     // docs/rl-best-practices.md hole #2): with probability demo_reset_pct
     // each episode starts from a uniformly drawn banked mid-game state
@@ -975,6 +998,51 @@ static void c_step(Bloodbowl* env) {
             }
         }
         bbe_count_action(env, act);
+        // Profile C: decision-time exposure transfer + sequencing charge,
+        // priced on the PRE-apply state (the declaration IS the decision —
+        // no dice have rolled yet). Standing attackers only: a prone Jump-Up
+        // block routes through an extra gating test (rare; unpriced v1).
+        if ((env->reward_k_kd != 0.0f || env->reward_k_value != 0.0f ||
+             env->reward_k_ball != 0.0f || env->reward_k_seq != 0.0f) &&
+            act.type == BB_A_BLOCK_TARGET && m->stack_top > 0) {
+            const bb_frame* mf = &m->stack[m->stack_top - 1];
+            int batt = mf->a;
+            int bdef = bb_slot_at(m, act.x, act.y);
+            if (mf->proc == BB_PROC_MOVE && bdef != BB_NO_PLAYER &&
+                m->players[batt].stance == BB_STANCE_STANDING) {
+                bb_blockev ev;
+                // Choice nodes use the spec-default weights (stable play
+                // model); the env knobs only scale the priced transfer.
+                bb_block_ev(m, batt, bdef, mf->b == BB_ACT_BLITZ, NULL, &ev);
+                int bteam = BB_TEAM_OF(batt);
+                float exposure =
+                    env->reward_k_kd * ev.p_def_down +
+                    env->reward_k_value * ev.p_def_removed *
+                        player_cost_100k(m, bdef) + // bb_blockev.c (same TU)
+                    env->reward_k_ball * ev.p_ball_out;
+                env->reward_ptr[bteam][0] += exposure;
+                env->reward_ptr[1 - bteam][0] -= exposure;
+                env->ep_return[bteam] += exposure;
+                env->ep_return[1 - bteam] -= exposure;
+                // Sequencing charge: own-turnover risk x unbanked safe
+                // activations; exempt on the team's last turn of the half.
+                if (env->reward_k_seq != 0.0f && m->turn[bteam] < 8) {
+                    int pending = 0;
+                    for (int s = bteam * BB_TEAM_SLOTS;
+                         s < (bteam + 1) * BB_TEAM_SLOTS; s++) {
+                        if (s == batt) continue;
+                        const bb_player* sp = &m->players[s];
+                        pending += sp->location == BB_LOC_ON_PITCH &&
+                                   sp->stance == BB_STANCE_STANDING &&
+                                   !(sp->flags & BB_PF_USED);
+                    }
+                    float seq = env->reward_k_seq * ev.p_turnover *
+                                (float)pending;
+                    env->reward_ptr[bteam][0] -= seq;
+                    env->ep_return[bteam] -= seq;
+                }
+            }
+        }
         uint32_t was_standing = bbe_standing_mask(m);
         // Trusted fast path: act came from bbe_decode, which only returns
         // elements of env->legal — the legal set enumerated on THIS state by

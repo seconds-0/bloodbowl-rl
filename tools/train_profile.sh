@@ -2,11 +2,13 @@
 # Launch a training run under a named reward profile (the A/B/C experiment).
 #   tools/train_profile.sh A [extra puffer args...]   # pure outcome
 #   tools/train_profile.sh B [extra puffer args...]   # event-realized knobs
+#   tools/train_profile.sh C [extra puffer args...]   # exposure-EV (v2, D33)
 #   tools/train_profile.sh D [extra puffer args...]   # B + bootstrap curriculum
 #                                                       (stage 1; anneal via chained run)
-# Profile C (exposure-EV) is gated on B beating A — see
-# docs/reward-audit-decision-time.md. A and B both converged to the 0-0
-# avoidance basin at 10B; D is the potential-ladder out of it.
+# A and B both converged to the 0-0 avoidance basin at 10B; D is the
+# potential-ladder out of it. C (docs/reward-audit-decision-time.md, ungated
+# by D33) prices block/blitz declarations by the closed-form exposure tree —
+# no realized ball/injury shaping, dice outcomes carry zero weight.
 set -euo pipefail
 PROFILE="${1:?usage: train_profile.sh A|B [extra args]}"
 shift || true
@@ -21,6 +23,13 @@ case "$PROFILE" in
        --env.reward-injury-value-scaled 1
        --env.reward-surf-taken -0.1 --env.reward-surf-inflicted 0.1
      ) ;;
+  C) ARGS=(
+       --env.reward-draw -0.1
+       --env.reward-setup-done 0.25 --env.reward-setup-autofix -0.25
+       --env.reward-surf-taken -0.1 --env.reward-surf-inflicted 0.1
+       --env.reward-k-kd 0.06 --env.reward-k-value 0.5
+       --env.reward-k-ball 0.3 --env.reward-k-seq 0.02
+     ) ;; # NO realized ball/injury knobs: exposure replaces them (audit table)
   D) ARGS=(
        --env.reward-draw -0.1
        --env.reward-setup-done 0.25 --env.reward-setup-autofix -0.25

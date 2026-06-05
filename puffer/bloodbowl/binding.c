@@ -73,6 +73,12 @@ static void apply_kwargs(Env* env, Dict* kwargs) {
     env->reward_injury_value_scaled = (int)kw(kwargs, "reward_injury_value_scaled", 0.0);
     env->reward_surf_taken = (float)kw(kwargs, "reward_surf_taken", 0.0);
     env->reward_surf_inflicted = (float)kw(kwargs, "reward_surf_inflicted", 0.0);
+    // Profile C exposure-EV + sequencing knobs (bb_blockev; spec defaults
+    // when enabled: k_kd 0.06, k_value 0.5, k_ball 0.3, k_seq ~0.02).
+    env->reward_k_kd = (float)kw(kwargs, "reward_k_kd", 0.0);
+    env->reward_k_value = (float)kw(kwargs, "reward_k_value", 0.0);
+    env->reward_k_ball = (float)kw(kwargs, "reward_k_ball", 0.0);
+    env->reward_k_seq = (float)kw(kwargs, "reward_k_seq", 0.0);
     env->demo_reset_pct = (float)kw(kwargs, "demo_reset_pct", 0.0);
     env->exclude_team = (int)kw(kwargs, "exclude_team", -1.0);
     env->force_home_team = (int)kw(kwargs, "force_home_team", -1.0);
