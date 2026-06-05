@@ -403,6 +403,43 @@ Genuine-divergence list status (numbers from the v1 list above):
   inside block pools), `scatter_player_unmapped` 777 (TTM scatters),
   `apothecary_roll_unattached` (apo rolls outside the injury windows).
 
+## Cycle-2 integration (2026-06-04): obs v3 lands, full chain regenerated
+
+The parked obs-v3 branch (1612-byte observation: two 390-byte tackle-zone
+planes appended after the unchanged 832 layout; `.bbp` v2; selftest plane
+checks; converter default 1612) was brought onto cycle-2 main and the whole
+artifact chain regenerated against the cycle-2 engine. **This is a lineage
+cutover**: every pre-cycle-2 checkpoint is obs-832 and can never load into
+the obs-v3 policy (archived in `checkpoints-backup/`; see the obs-v3 note in
+`.claude/skills/puffer-env-dev`).
+
+Regenerated chain (401-replay corpus, this engine, this obs):
+
+- **Lockstep**: mean consumption 12.8 % — identical to the cycle-2 campaign
+  number and class breakdown (illegal 174 / dice_overrun 105 /
+  dice_underrun 73 / position 32 / state 15 / ball 2): the obs encoder is
+  engine-neutral, as expected.
+- **BC pairs (.bbp v2)**: **70 231 pairs** (175.1 pairs/replay,
+  146 227 358 B) — up from 58 079 v1 pairs; the cycle-2 decision windows
+  deepen the walks.
+- **Demo-state bank**: **1 057 states** (2.6 states/replay,
+  `engine_fp 0x64897cde`, match_size 2240). Half/turn histogram (half 2
+  still unreached — best walk stops at half-1 turn 8):
+  `h1: 573/272/116/52/22/13/7/2` for turns 1–8.
+- **bc_v2** (`training/bc_v2.bin`, 12 000 steps × batch 512, mps): train
+  loss 3.65 → 0.70, train exact-action 0.767; **held-out-replay val: loss
+  6.41, acc type/arg/sq 0.893/0.797/0.516, exact 0.324** (v0 iid-BC
+  generalization gap — the documented sequence-BC follow-up, not a
+  regression). save_weights round-trip: max param diff 0.0, max logit
+  diff 0.0. CUDA blob (`--to-cuda`): **13 670 400 bytes** = 3 417 600 fp32,
+  the exact obs-1612 layout pinned by `training/test_convert_checkpoint.py`.
+
+Validation at the merge: engine suite 320/320; standalone driver masked +
+unmasked + ASan/UBSan clean; `--selftest` (TZ-plane spot-checks, micro-stat
+counter sanity) 0 failures across seeds; `--demo` against the fresh bank
+resumes banked states with 0 fallbacks (ASan too); binding compiles under
+build.sh-equivalent flags.
+
 ## BC pair extraction — `bb_lockstep --dump-pairs` + `extract_pairs.py`
 
 `./build/bb_lockstep --dump-pairs <out.bbp> <script.jsonl>` additionally
@@ -456,6 +493,13 @@ python3 validation/extract_pairs.py          # map + run + dump whole corpus
 python3 validation/extract_pairs.py 1907296  # one replay
 ```
 
+Output: `validation/pairs/<replayId>.bbp` (gitignored; regenerate at will)
+plus corpus totals (replays, pairs, pairs/replay, bytes). Consumed by
+`training/bc_pretrain.py`. Current corpus (401 replays, 2026-06-04, .bbp
+v2 on the cycle-2 engine): **70 231 pairs (175.1 pairs/replay)** — v1
+yielded 58 079 pre-cycle-2; v0 yielded 1 766 over 21 replays. The count
+grows automatically as lockstep coverage improves.
+
 ## Demo-state dump — `bb_lockstep --dump-states` + `build_state_bank.py`
 
 `./build/bb_lockstep --dump-states <out.bbs> <script.jsonl>` additionally
@@ -508,9 +552,3 @@ before first divergence, so the bank is opening-biased (mostly half 1, turns
 1-3) — it deepens automatically as mapper coverage improves. Stage into the
 training tree with `tools/install_puffer_env.sh` (lands at
 `resources/bloodbowl/state_bank.bbs`).
-
-Output: `validation/pairs/<replayId>.bbp` (gitignored; regenerate at will)
-plus corpus totals (replays, pairs, pairs/replay, bytes). Consumed by
-`training/bc_pretrain.py`. Current corpus (401 replays, 2026-06-04, post
-v1 triage): **58 079 pairs (144.8 pairs/replay)** — v0 yielded 1 766 over
-21 replays. The count grows automatically as lockstep coverage improves.
