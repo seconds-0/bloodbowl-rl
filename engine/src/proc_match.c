@@ -398,6 +398,18 @@ bool bb_in_kickoff(const bb_match* m) {
     return false;
 }
 
+// Inside the Charge! free-activation loop (KICKOFF phase 7)? The charging
+// team plays "exactly as if it was their team's Turn", so team re-rolls are
+// available there even though the kick-off is still resolving.
+bool bb_in_kickoff_charge(const bb_match* m) {
+    for (int i = 0; i < m->stack_top; i++) {
+        if (m->stack[i].proc == BB_PROC_KICKOFF && m->stack[i].phase == 7) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static void stun_random_players(bb_match* m, bb_rng* rng, int team, int count) {
     for (int i = 0; i < count; i++) {
         int candidates[BB_TEAM_SLOTS];
@@ -417,6 +429,9 @@ static void stun_random_players(bb_match* m, bb_rng* rng, int team, int count) {
 }
 
 static bool kickoff_ball_misplaced(const bb_match* m, int kicking);
+static void charge_end(bb_match* m, bb_frame* f);
+static bool ko_open(const bb_match* m, int slot);
+static int ko_popcount16(uint16_t v);
 
 // Returns true if the event paused the kickoff with a decision (High Kick).
 static bool kickoff_event(bb_match* m, bb_rng* rng) {
@@ -550,10 +565,24 @@ static bool kickoff_event(bb_match* m, bb_rng* rng) {
             return true;
         }
         case BB_KO_CHARGE: {
-            // Kicking coach: D3+3 Open players take free Move actions (one
-            // may Blitz/TTM/KTM). Auto-policy: no moves; D3 rolled.
-            (void)bb_d3(rng);
-            break;
+            // "The Coach of the kicking team selects up to D3+3 Open players
+            // ... activated one at a time, exactly as if it was their team's
+            // Turn, and perform a free Move Action. One of the selected
+            // players may instead perform a free Blitz Action, one may
+            // perform a free Throw Team-mate Action, and one may perform a
+            // free Kick Team-mate Action. If a selected player Falls Over or
+            // is Knocked Down during their activation, no further selected
+            // players can be activated and the Charge ends."
+            f->x = (uint8_t)(bb_d3(rng) + 3); // remaining activations
+            f->y = 0;                         // bit0 blitz / 1 ttm / 2 ktm used
+            f->data = 0;                      // activated-slot bitmask
+            f->phase = 7;
+            // "exactly as if it was their team's Turn": the kicking team is
+            // active for the duration (team re-rolls, turnover latching as
+            // the end-of-charge signal); restored when the charge ends.
+            m->active_team = (uint8_t)f->a;
+            bb_need_decision(m, f->a);
+            return true;
         }
         default:
             break;
@@ -616,6 +645,26 @@ static void kickoff_advance(bb_match* m, bb_rng* rng) {
         bb_need_decision(m, f->phase == 5 ? f->a : 1 - f->a);
         return;
     }
+    if (f->phase == 7) { // Charge! free-activation loop
+        // End: a selected player Fell Over / was Knocked Down (the active-
+        // team turnover latch), the budget ran out, or nobody eligible
+        // remains. Otherwise the kicking coach picks the next activation.
+        bool any = false;
+        if (!m->turnover && f->x > 0) {
+            for (int s = f->a * BB_TEAM_SLOTS; s < (f->a + 1) * BB_TEAM_SLOTS; s++) {
+                if (!((f->data >> (s % BB_TEAM_SLOTS)) & 1) && ko_open(m, s)) {
+                    any = true;
+                    break;
+                }
+            }
+        }
+        if (m->turnover || f->x == 0 || !any) {
+            charge_end(m, f);
+            return;
+        }
+        bb_need_decision(m, f->a);
+        return;
+    }
     if (f->phase == 3) {
         // Landing chain settled.
         int kicking = f->a;
@@ -632,6 +681,14 @@ static void kickoff_advance(bb_match* m, bb_rng* rng) {
         return;
     }
     m->status = BB_STATUS_ERROR;
+}
+
+// The Charge! loop is over: clear the end-of-charge turnover latch, hand
+// the active flag back to the receiving team and land the kick.
+static void charge_end(bb_match* m, bb_frame* f) {
+    m->turnover = 0;
+    m->active_team = (uint8_t)(1 - f->a);
+    kickoff_land(m);
 }
 
 // Open (mirror RR#OPEN PLAYERS): Standing and not Marked.
@@ -736,6 +793,15 @@ static int kickoff_legal(const bb_match* m, bb_action* out) {
         }
         return n;
     }
+    if (f->phase == 7) {
+        // Charge!: pick the next Open kicking player to activate, or end.
+        for (int s = f->a * BB_TEAM_SLOTS; s < (f->a + 1) * BB_TEAM_SLOTS; s++) {
+            if (((f->data >> (s % BB_TEAM_SLOTS)) & 1) || !ko_open(m, s)) continue;
+            out[n++] = (bb_action){BB_A_ACTIVATE, (uint8_t)s, 0, 0};
+        }
+        out[n++] = (bb_action){BB_A_END_TURN, 0, 0, 0};
+        return n;
+    }
     if (f->phase == 6) {
         // Quick Snap: up to D3+3 Open receiving players move ONE square in
         // any direction (across the halfway line too); each at most once.
@@ -791,6 +857,17 @@ static void kickoff_apply(bb_match* m, bb_action a, bb_rng* rng) {
         f->x = a.x;
         f->y = a.y;
         f->phase = 1;
+        return;
+    }
+    if (f->phase == 7) { // Charge!: activate the picked player, or end
+        if (a.type == BB_A_END_TURN) {
+            charge_end(m, f);
+            return;
+        }
+        f->data |= (uint16_t)(1u << (a.arg % BB_TEAM_SLOTS));
+        f->x--;
+        bb_push(m, BB_PROC_ACTIVATION, a.arg, 0, 0, 0);
+        bb_top(m)->x = 1; // charge activation: MOVE (+one BLITZ/TTM/KTM)
         return;
     }
     if (f->phase == 5 || f->phase == 6) { // Solid Defence / Quick Snap

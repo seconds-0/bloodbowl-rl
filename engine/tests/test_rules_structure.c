@@ -2129,3 +2129,137 @@ BB_TEST(struct_kickoff_quick_snap_player_budget) {
     BB_CHECK(fx_has_type(&m, BB_A_SETUP_DONE));
     (void)as;
 }
+
+// ===========================================================================
+// KICK-OFF EVENT 10 CHARGE! — "The Coach of the kicking team selects up to
+// D3+3 Open players on their team. The selected players may then be
+// activated one at a time, exactly as if it was their team's Turn, and
+// perform a free Move Action. One of the selected players may instead
+// perform a free Blitz Action, one may perform a free Throw Team-mate
+// Action, and one may perform a free Kick Team-mate Action. If a selected
+// player Falls Over or is Knocked Down during their activation, no further
+// selected players can be activated and the Charge ends." (D21 window)
+// ===========================================================================
+
+static void stx_apply_ok(bb_match* m, bb_rng* rng, bb_action a) {
+    bb_status st = fx_apply(m, a, rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+}
+
+BB_TEST(struct_kickoff_charge_move_and_single_blitz) {
+    bb_match m;
+    stx_kickoff_fixture(&m, BB_HOME);
+    int h0 = fx_lineman(&m, 0, 0, 10, 5);
+    int h1 = fx_lineman(&m, 0, 1, 10, 9);
+    fx_lineman(&m, 0, 2, 3, 3); // stays eligible so END_TURN is a choice
+    int a0 = fx_lineman(&m, 1, 0, 13, 9); // blitz target on the away LoS
+    (void)a0;
+    bb_rng rng;
+    // d8=2,d6=3 -> ball (18,4); event 5+5=10 CHARGE!; D3=1 -> 4 activations.
+    const uint8_t dice[] = {2, 3, 5, 5, 1};
+    bb_rng_script(&rng, dice, 5);
+    fx_run(&m, &rng);
+    bb_status st = fx_apply(&m, stx_act(BB_A_KICK_TARGET, 0, 18, 7), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK_EQ(m.decision_team, BB_HOME);   // the KICKING coach activates
+    BB_CHECK_EQ(m.active_team, BB_HOME);     // "as if it was their Turn"
+    BB_CHECK(fx_has_type(&m, BB_A_ACTIVATE));
+    BB_CHECK(fx_has_type(&m, BB_A_END_TURN));
+    // First activation: a free MOVE (Block/Pass/Foul kinds must not exist).
+    stx_apply_ok(&m, &rng, stx_act(BB_A_ACTIVATE, h0, 0, 0));
+    BB_CHECK(fx_find(&m, stx_act(BB_A_DECLARE, BB_ACT_MOVE, 0, 0)) >= 0);
+    BB_CHECK(fx_find(&m, stx_act(BB_A_DECLARE, BB_ACT_BLITZ, 0, 0)) >= 0);
+    BB_CHECK(fx_find(&m, stx_act(BB_A_DECLARE, BB_ACT_PASS, 0, 0)) < 0);
+    BB_CHECK(fx_find(&m, stx_act(BB_A_DECLARE, BB_ACT_FOUL, 0, 0)) < 0);
+    stx_apply_ok(&m, &rng, stx_act(BB_A_DECLARE, BB_ACT_MOVE, 0, 0));
+    stx_apply_ok(&m, &rng, stx_act(BB_A_STEP, 0, 10, 6));
+    stx_apply_ok(&m, &rng, stx_act(BB_A_END_ACTIVATION, 0, 0, 0));
+    BB_CHECK_EQ(m.players[h0].y, 6); // the free move happened
+    // h0 cannot be activated again; h1 may BLITZ (the one-of budget).
+    BB_CHECK(fx_find(&m, stx_act(BB_A_ACTIVATE, h0, 0, 0)) < 0);
+    stx_apply_ok(&m, &rng, stx_act(BB_A_ACTIVATE, h1, 0, 0));
+    BB_CHECK(fx_find(&m, stx_act(BB_A_DECLARE, BB_ACT_BLITZ, 0, 0)) >= 0);
+    const uint8_t dice2[] = {/*1d block*/ 3};
+    bb_rng_script(&rng, dice2, 1);
+    stx_apply_ok(&m, &rng, stx_act(BB_A_DECLARE, BB_ACT_BLITZ, 0, 0));
+    stx_apply_ok(&m, &rng, stx_act(BB_A_STEP, 0, 11, 9));
+    stx_apply_ok(&m, &rng, stx_act(BB_A_STEP, 0, 12, 9));
+    stx_apply_ok(&m, &rng, stx_act(BB_A_BLOCK_TARGET, 0, 13, 9));
+    stx_apply_ok(&m, &rng, stx_act(BB_A_CHOOSE_DIE, 0, 0, 0));
+    stx_apply_ok(&m, &rng, stx_act(BB_A_PUSH_SQUARE, 0, 14, 9));
+    stx_apply_ok(&m, &rng, stx_act(BB_A_FOLLOW_UP, 0, 0, 0));
+    stx_apply_ok(&m, &rng, stx_act(BB_A_END_ACTIVATION, 0, 0, 0));
+    BB_CHECK_EQ(m.players[a0].x, 14); // pushed by the charge blitz
+    // END_TURN closes the event: the kick lands (bounce) and the receiving
+    // team is active again.
+    const uint8_t dice3[] = {1};
+    bb_rng_script(&rng, dice3, 1);
+    bb_status st2 = fx_apply(&m, stx_act(BB_A_END_TURN, 0, 0, 0), &rng);
+    BB_CHECK_EQ(st2, BB_STATUS_DECISION);
+    BB_CHECK_EQ(m.active_team, BB_AWAY);
+    BB_CHECK(!bb_rng_error(&rng));
+}
+
+// "If a selected player Falls Over ... the Charge ends": a failed Rush
+// knocks the charging player down and the event ends without further
+// activations (and WITHOUT a real turnover for the receiving team's turn).
+BB_TEST(struct_kickoff_charge_ends_when_player_falls) {
+    bb_match m;
+    stx_kickoff_fixture(&m, BB_HOME);
+    int h0 = fx_player(&m, 0, 0, 1, 5, 1, 3, 3, 4, 9); // MA 1: rush early
+    fx_lineman(&m, 0, 1, 10, 9);
+    fx_lineman(&m, 1, 0, 20, 10);
+    bb_rng rng;
+    const uint8_t dice[] = {2, 3, 5, 5, 1};
+    bb_rng_script(&rng, dice, 5);
+    fx_run(&m, &rng);
+    fx_apply(&m, stx_act(BB_A_KICK_TARGET, 0, 18, 7), &rng);
+    stx_apply_ok(&m, &rng, stx_act(BB_A_ACTIVATE, h0, 0, 0));
+    stx_apply_ok(&m, &rng, stx_act(BB_A_DECLARE, BB_ACT_MOVE, 0, 0));
+    stx_apply_ok(&m, &rng, stx_act(BB_A_STEP, 0, 2, 5));
+    // Second step = Rush (MA 1): natural 1 -> falls. Armour 2,2 holds.
+    // Charge ends; landing bounce d8=1; away turn 1 begins.
+    const uint8_t dice2[] = {1, 2, 2, 1};
+    bb_rng_script(&rng, dice2, 4);
+    bb_status st = fx_apply(&m, stx_act(BB_A_STEP, 0, 3, 5), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK_EQ(m.players[h0].stance, BB_STANCE_PRONE);
+    BB_CHECK_EQ(m.active_team, BB_AWAY);  // event over, receiver active
+    BB_CHECK_EQ(m.decision_team, BB_AWAY);
+    BB_CHECK_EQ(m.turnover, 0);           // the latch must not leak
+    BB_CHECK(!bb_rng_error(&rng));
+}
+
+// "exactly as if it was their team's Turn": the charging team may spend
+// TEAM RE-ROLLS on its charge dice (validated against live FUMBBL replays).
+BB_TEST(struct_kickoff_charge_team_reroll_available) {
+    bb_match m;
+    stx_kickoff_fixture(&m, BB_HOME);
+    m.rerolls[0] = m.rerolls_start[0] = 2;
+    int h0 = fx_player(&m, 0, 0, 1, 5, 1, 3, 3, 4, 9);
+    fx_lineman(&m, 0, 1, 10, 9);
+    fx_lineman(&m, 1, 0, 20, 10);
+    bb_rng rng;
+    const uint8_t dice[] = {2, 3, 5, 5, 1};
+    bb_rng_script(&rng, dice, 5);
+    fx_run(&m, &rng);
+    fx_apply(&m, stx_act(BB_A_KICK_TARGET, 0, 18, 7), &rng);
+    stx_apply_ok(&m, &rng, stx_act(BB_A_ACTIVATE, h0, 0, 0));
+    stx_apply_ok(&m, &rng, stx_act(BB_A_DECLARE, BB_ACT_MOVE, 0, 0));
+    stx_apply_ok(&m, &rng, stx_act(BB_A_STEP, 0, 2, 5));
+    const uint8_t dice2[] = {2 /*rush 2+: fail? no — 2 passes... use 1*/};
+    (void)dice2;
+    const uint8_t dice3[] = {1}; // rush natural 1: fail -> re-roll window
+    bb_rng_script(&rng, dice3, 1);
+    bb_status st = fx_apply(&m, stx_act(BB_A_STEP, 0, 3, 5), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK(fx_find(&m, stx_act(BB_A_USE_REROLL, BB_RR_TEAM, 0, 0)) >= 0);
+    const uint8_t dice4[] = {6}; // re-rolled rush passes
+    bb_rng_script(&rng, dice4, 1);
+    st = fx_apply(&m, stx_act(BB_A_USE_REROLL, BB_RR_TEAM, 0, 0), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK_EQ(m.players[h0].stance, BB_STANCE_STANDING);
+    BB_CHECK_EQ(m.players[h0].x, 3);
+    BB_CHECK_EQ(m.rerolls[0], 1);
+    BB_CHECK(!bb_rng_error(&rng));
+}

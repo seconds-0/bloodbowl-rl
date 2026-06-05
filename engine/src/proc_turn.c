@@ -298,7 +298,8 @@ static bool gate_fail(bb_match* m, bb_frame* f, int gk) {
 // mirror's exclusion list covers only Scatter/Armour/Injury/Casualty/
 // Throw-in/Bribe/Argue the Call/Crowd).
 static bool gate_team_reroll_available(const bb_match* m, int team) {
-    return m->rerolls[team] > 0 && m->active_team == team && !bb_in_kickoff(m);
+    return m->rerolls[team] > 0 && m->active_team == team &&
+           (!bb_in_kickoff(m) || bb_in_kickoff_charge(m));
 }
 
 static int activation_legal(const bb_match* m, bb_action* out) {
@@ -312,6 +313,39 @@ static int activation_legal(const bb_match* m, bb_action* out) {
         return n;
     }
     out[n++] = (bb_action){BB_A_DECLARE, BB_ACT_MOVE, 0, 0};
+    if (f->x == 1) {
+        // Charge! activation (KICKOFF phase 7): a free MOVE Action; ONE of
+        // the selected players may instead Blitz, one may Throw Team-mate,
+        // one may Kick Team-mate (budget bits in the parent KICKOFF frame's
+        // y). No other action kinds exist during the Charge.
+        const bb_frame* ko = &m->stack[m->stack_top - 2];
+        if (!(ko->y & 1)) {
+            out[n++] = (bb_action){BB_A_DECLARE, BB_ACT_BLITZ, 0, 0};
+        }
+        bool mate_adj = false;
+        for (int dx = -1; dx <= 1 && !mate_adj; dx++) {
+            for (int dy = -1; dy <= 1; dy++) {
+                if (!dx && !dy) continue;
+                int nx = p->x + dx, ny = p->y + dy;
+                if (!bb_on_pitch_xy(nx, ny)) continue;
+                int s2 = bb_slot_at(m, nx, ny);
+                if (s2 >= 0 && BB_TEAM_OF(s2) == BB_TEAM_OF(slot) &&
+                    bb_has_skill(&m->players[s2].skills, BB_SK_RIGHT_STUFF)) {
+                    mate_adj = true;
+                    break;
+                }
+            }
+        }
+        if (mate_adj && p->stance == BB_STANCE_STANDING) {
+            if (!(ko->y & 2) && bb_has_skill(&p->skills, BB_SK_THROW_TEAM_MATE)) {
+                out[n++] = (bb_action){BB_A_DECLARE, BB_ACT_TTM, 0, 0};
+            }
+            if (!(ko->y & 4) && bb_has_skill(&p->skills, BB_SK_KICK_TEAM_MATE)) {
+                out[n++] = (bb_action){BB_A_DECLARE, BB_ACT_KTM, 0, 0};
+            }
+        }
+        return n;
+    }
     if ((p->stance == BB_STANCE_STANDING ||
          (p->stance == BB_STANCE_PRONE && bb_has_skill(&p->skills, BB_SK_JUMP_UP))) &&
         has_adjacent_standing_opponent(m, slot)) {
@@ -444,6 +478,12 @@ static void activation_apply(bb_match* m, bb_action a, bb_rng* rng) {
     }
     f->phase = 1;
     f->b = a.arg; // action kind
+    if (f->x == 1) { // Charge! activation: spend the parent's one-of budgets
+        bb_frame* ko = &m->stack[m->stack_top - 2];
+        if (a.arg == BB_ACT_BLITZ) ko->y |= 1;
+        else if (a.arg == BB_ACT_TTM) ko->y |= 2;
+        else if (a.arg == BB_ACT_KTM) ko->y |= 4;
+    }
     // Once-per-turn actions latch on DECLARATION, even if never performed —
     // a failed negatrait gate still burns the declared Blitz/Pass/... .
     switch (a.arg) {

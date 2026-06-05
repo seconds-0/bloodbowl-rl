@@ -248,6 +248,7 @@ class Mapper:
         self.last_injury_key = None
         self.in_kickoff_resolution = False
         self.kickoff_window = None # {"mode": solidDefence|quickSnap} open window
+        self.charge = None         # Charge! loop: {"budget", "used", "pids"}
         # Engine stun rollover mirror: pid -> "fresh" (stunned this turn) or
         # "aged" (started its own team turn stunned = engine STUNNED_USED).
         # The engine flips aged players to prone at the END of their own
@@ -600,12 +601,58 @@ class Mapper:
             self.kickoff_window = None
             self.act(cmd, A_SETUP_DONE, note="kickoff window done")
 
+    def mirror_marked(self, pid):
+        """Marked per the mirror: any standing, non-Distracted opponent
+        adjacent (partial Distracted tracking)."""
+        p = self.pos.get(pid)
+        team = self.pid_team(pid)
+        if not p or team is None:
+            return False
+        for q, (t, _) in self.slot_of.items():
+            if t == team or q in self.ignore_all:
+                continue
+            qp = self.pos.get(q)
+            if not qp or self.base.get(q, 0) != 0 or q in self.distracted:
+                continue
+            if max(abs(qp[0] - p[0]), abs(qp[1] - p[1])) == 1:
+                return True
+        return False
+
+    def flush_charge(self, cmd):
+        """Close the Charge! loop. The engine ends it WITHOUT a decision on
+        a turnover (a selected player fell), an exhausted budget, or no
+        eligible Open player left; otherwise the coach's stop is an explicit
+        END_TURN act."""
+        ch, self.charge = self.charge, None
+        if ch is None:
+            return
+        self.flush_step(cmd)
+        if self.activation and not self.activation.get("closed"):
+            self.close_activation(cmd)
+        else:
+            self.resolve_pending_followup(cmd)
+        self.activation = None
+        if self.turnover:
+            self.turnover = False  # engine clears the latch at charge end
+            return
+        if ch["used"] >= ch["budget"]:
+            return
+        eligible = any(
+            t == self.kicking and pid not in ch["pids"] and
+            pid not in self.ignore_all and self.pos.get(pid) and
+            self.base.get(pid, 0) == 0 and not self.mirror_marked(pid)
+            for pid, (t, _) in self.slot_of.items())
+        if eligible:
+            self.act(cmd, A_END_TURN, note="charge done")
+
     def handle_touchback(self, r):
         """Kick went out of play / into the kicking half: the receiving coach
         gives the ball to any standing player (engine KICKOFF phase 2,
         A_TOUCHBACK arg = global slot; arg 0xFF + square if nobody stands)."""
         cmd = r.get("cmd") or 0
         self.flush_kickoff_window(cmd)
+        if self.charge is not None:
+            self.flush_charge(cmd)
         x, y = r["at"]
         pid = next((p for p, q in self.pos.items() if q == (x, y)
                     and self.slot_of.get(p)), None)
@@ -671,6 +718,7 @@ class Mapper:
         self.pickmeup = []
         self.pmu_stood = set()
         self.kickoff_window = None
+        self.charge = None
         finals = self.kickoff_repositioning(i, r)
         if finals:
             coords = dict(r["players"])
@@ -732,7 +780,13 @@ class Mapper:
             return
         if pid in self.ignore_all:
             return  # ghost player relocating: mirror tracks, engine ignores
-        if self.in_kickoff_resolution and mode in KICKOFF_FREE_MODES:
+        if self.in_kickoff_resolution and mode == "blitz" and \
+                self.charge is not None and self.charge.get("ttm_drop"):
+            self.ignore_pos.add(pid)
+            self.skip(cmd, "charge_ttm_move_dropped", f"{pid} -> {x},{y}")
+            return
+        if self.in_kickoff_resolution and mode in KICKOFF_FREE_MODES and \
+                not (mode == "blitz" and self.charge is not None):
             if mode in KICKOFF_WINDOW_MODES:
                 # Solid Defence / Quick Snap: a real engine window decision.
                 # FFB stages Solid Defence players OFF the pitch first (a
@@ -897,6 +951,8 @@ class Mapper:
             # First record outside the repositioning window: close it (the
             # SETUP_DONE act carries the landing dice that follow).
             self.flush_kickoff_window(cmd)
+        if self.charge is not None and r.get("mode") != "blitz":
+            self.flush_charge(cmd)
         if self.in_kickoff_resolution and \
                 r.get("mode") in KICKOFF_WINDOW_MODES and \
                 rep not in KICKOFF_EVENT_ROLLS:
@@ -906,12 +962,20 @@ class Mapper:
             return
         if self.in_kickoff_resolution and r.get("mode") in KICKOFF_FREE_MODES \
                 and rep not in KICKOFF_EVENT_ROLLS:
-            # Rolls/blocks inside a kickoff free action (Blitz!/Charge runs
-            # whole activations): the engine never rolls these (D21 no-op).
-            if rep == "injury" and r.get("defenderId"):
-                self.ignore_state.add(str(r.get("defenderId")))
-            self.skip(cmd, "kickoff_free_report_dropped", rep)
-            return
+            if r.get("mode") == "blitz" and self.charge is not None:
+                if self.charge.get("ttm_drop") and rep != "playerAction":
+                    if rep == "injury" and r.get("defenderId"):
+                        self.ignore_state.add(str(r.get("defenderId")))
+                    self.skip(cmd, "charge_ttm_report_dropped", rep)
+                    return
+                # otherwise: real engine activations — map normally
+            else:
+                # Kick-off Return moves / orphaned free-action rolls: the
+                # engine never rolls these.
+                if rep == "injury" and r.get("defenderId"):
+                    self.ignore_state.add(str(r.get("defenderId")))
+                self.skip(cmd, "kickoff_free_report_dropped", rep)
+                return
         h = getattr(self, "rep_" + (rep or "none"), None)
         if h:
             h(i, r, cmd)
@@ -1016,7 +1080,8 @@ class Mapper:
         self.kickoff_window = {"mode": "solidDefence"}
 
     def rep_blitzRoll(self, i, r, cmd):
-        self._kickoff_d3(cmd, r, "charge d3")
+        v = self._kickoff_d3(cmd, r, "charge d3")
+        self.charge = {"budget": v + 3, "used": 0, "pids": set()}
 
     def rep_cheeringFans(self, i, r, cmd):
         rh, ra = r.get("rollHome"), r.get("rollAway")
@@ -1234,6 +1299,20 @@ class Mapper:
             return
         if self.activation_aborted(i, pid):
             return  # select-then-deselect: FFB does not consume the activation
+        if self.charge is not None and r.get("mode") == "blitz" and \
+                action not in ("move", "blitz", "blitzMove", "blitzSelect"):
+            # Non-Move/Blitz inside a Charge (TTM/KTM, or FFB leniencies
+            # like Stab): the mapper cannot express TTM dice yet and the
+            # engine's mirror-faithful menu has no Special Actions — drop
+            # the whole activation (engine never activates the player; any
+            # relocations are classified divergences).
+            self.resolve_pending_followup(cmd)
+            if self.activation and not self.activation.get("closed"):
+                self.close_activation(cmd)
+            self.charge["ttm_drop"] = True
+            self.activation = {"pid": pid, "kind": None, "closed": True}
+            self.skip(cmd, "charge_ttm_activation_dropped", pid)
+            return
         # new activation
         self.resolve_pending_followup(cmd)
         if self.activation and not self.activation.get("closed"):
@@ -1245,6 +1324,11 @@ class Mapper:
         self.acts_this_turn += 1
         gslot = team * 16 + sl
         gate_dice, gate_failed = [], False
+        if self.charge is not None and r.get("mode") == "blitz" and \
+                pid not in self.charge["pids"]:
+            self.charge["ttm_drop"] = False
+            self.charge["pids"].add(pid)
+            self.charge["used"] += 1
         self.act(cmd, A_ACTIVATE, gslot, note=f"activate {pid} {action}")
         self.used_this_turn.add(pid)
         self.distracted.discard(pid)  # engine clears Distracted on activation
@@ -1413,7 +1497,9 @@ class Mapper:
         # Does the ENGINE offer the window? (Mirror of the engine's
         # gate_team_reroll_available.)
         offers = (team is not None and self.rerolls[team] > 0 and
-                  team == self.active_team and not self.in_kickoff_resolution)
+                  team == self.active_team and
+                  (not self.in_kickoff_resolution or
+                   self.charge is not None))
         if reroll_src is None and second is None:
             # FFB kept the failure (decline the window when the engine has one).
             return fail_result(
@@ -1508,7 +1594,8 @@ class Mapper:
         if team is None:
             return False
         team_ok = (self.rerolls[team] > 0 and team == self.active_team and
-                   not self.in_kickoff_resolution)
+                   (not self.in_kickoff_resolution or
+                    self.charge is not None))
         sk = TEST_RR_SKILL.get(report)
         skill_ok = sk and self.has_skill(pid, sk) and \
             sk not in self.skill_rr_used[pid]
@@ -1825,7 +1912,8 @@ class Mapper:
                 if pb["brawler"]:
                     rr_dice += pb["brawler"]
             self.act(cmd, A_USE_REROLL, RR_TEAM, dice=rr_dice)
-        elif engine_offers and mirror_has_rr and not self.in_kickoff_resolution:
+        elif engine_offers and mirror_has_rr and \
+                (not self.in_kickoff_resolution or self.charge is not None):
             self.act(cmd, A_DECLINE_REROLL)
         idx = int(r.get("diceIndex") or 0)
         nd = abs(int(r.get("nrOfDice") or len(final_pool)) or 1)
