@@ -1,5 +1,5 @@
 diff --git a/pufferlib/torch_pufferl.py b/pufferlib/torch_pufferl.py
-index 4cf6184..2e35d43 100644
+index 4cf6184..0dcc5a9 100644
 --- a/pufferlib/torch_pufferl.py
 +++ b/pufferlib/torch_pufferl.py
 @@ -99,6 +99,111 @@ _TORCH_TO_CTYPE = {
@@ -38,7 +38,7 @@ index 4cf6184..2e35d43 100644
 +# ===========================================================================
 +import struct
 +
-+_BC_MAGIC, _BC_VERSION, _BC_HEADER_LEN = b'BBP1', 1, 16
++_BC_MAGIC, _BC_VERSIONS, _BC_HEADER_LEN = b'BBP1', (1, 2), 16
 +
 +def _bc_resolve_pairs_dir(path):
 +    '''Resolve a relative bc_pairs_dir against the CWD first, then the repo
@@ -66,7 +66,7 @@ index 4cf6184..2e35d43 100644
 +        with open(p, 'rb') as f:
 +            raw = f.read()
 +        magic, ver, osz, msz = struct.unpack('<4sIII', raw[:_BC_HEADER_LEN])
-+        if magic != _BC_MAGIC or ver != _BC_VERSION:
++        if magic != _BC_MAGIC or ver not in _BC_VERSIONS:
 +            raise ValueError(f'{p}: bad .bbp header {magic!r} v{ver}')
 +        if hdr is None:
 +            hdr = (osz, msz)
