@@ -32,8 +32,12 @@ static int count_assists_ex(const bb_match* m, int for_slot, int against_slot, b
     return n;
 }
 
-static int count_assists(const bb_match* m, int for_slot, int against_slot) {
+int bb_count_assists(const bb_match* m, int for_slot, int against_slot) {
     return count_assists_ex(m, for_slot, against_slot, false);
+}
+
+static int count_assists(const bb_match* m, int for_slot, int against_slot) {
+    return bb_count_assists(m, for_slot, against_slot);
 }
 
 enum { PSH_POW = 1 << 0, PSH_CHAIN = 1 << 1, PSH_MOVED = 1 << 2, PSH_FUP = 1 << 3,

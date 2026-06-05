@@ -78,6 +78,11 @@ static inline bool bb_on_pitch_xy(int x, int y) {
 }
 bool bb_adjacent(int x1, int y1, int x2, int y2);
 
+// Block/foul assist count for `for_slot` against `against_slot` (proc_block.c
+// owns the definition; bb_blockev.c shares it so declaration-time pricing can
+// never drift from the resolver's dice-pool math).
+int bb_count_assists(const bb_match* m, int for_slot, int against_slot);
+
 // End-zone x for scoring direction of `team` (home scores at x==25).
 static inline int bb_endzone_x(int team) { return team == BB_HOME ? BB_PITCH_LEN - 1 : 0; }
 static inline bool bb_own_half_x(int team, int x) {
