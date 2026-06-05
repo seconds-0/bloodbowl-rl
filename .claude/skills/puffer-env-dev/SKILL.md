@@ -287,6 +287,20 @@ surface, match() mechanics): `reference/vecenv-internals.md`.
   and BC warm starts. CUDA backend loads its OWN flat-fp32 .bin fine;
   state_dict-style .bins (BC pretrain output) need the converter noted in
   training/bc_pretrain.py before GPU warm-start.
+- **obs v3 = LINEAGE BREAK (cycle-2 integration, 2026-06-04).**
+  `BBE_OBS_SIZE` went 832 → 1612 (two 390-byte tackle-zone planes appended
+  after the unchanged 832 layout; offsets documented in
+  `puffer/bloodbowl/bloodbowl.h`). The encoder input dim is part of the
+  parameter count, so EVERY pre-cycle-2 checkpoint (CUDA flat blob
+  12,072,960 B; torch state_dicts incl. training/bc_v1.bin / bc_v15.bin) is
+  incompatible with the obs-v3 binding — they are archived in
+  `checkpoints-backup/`, never warm-start from them. The obs-v3 blob is
+  13,670,400 B (3,417,600 fp32); `training/convert_checkpoint.py` and
+  `tools/build_league.py` default to it, and converting an archived 832
+  artifact stays possible with an explicit `--obs-size 832` /
+  `--expect-bytes 12072960`. BC pairs must be .bbp v2 (re-extracted;
+  obs lineages never mix in one corpus) — current anchor checkpoint:
+  training/bc_v2.bin.
 
 ## BC-regularized PPO (local torch_pufferl.py patch)
 
