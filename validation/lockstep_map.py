@@ -158,6 +158,7 @@ def load_yaml_lite(path):
         if not m:
             continue
         indent, dash, key, val = len(m.group(1)), m.group(2), m.group(3), m.group(4)
+        val = re.sub(r"\s+#.*$", "", val)  # inline comments are not values
         val = val.strip().strip('"').strip("'")
         if key == "name" and dash and indent == 2:       # new team / skill
             cur_team = {"name": val, "display": val, "positions": []}
