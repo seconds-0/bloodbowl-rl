@@ -19,7 +19,7 @@ TEST_SRC := $(wildcard engine/tests/test_*.c)
 LIB      := $(BUILD)/libbb.a
 TESTBIN  := $(BUILD)/bb_tests
 
-.PHONY: all test asan fuzz coverage coverage-run lockstep clean
+.PHONY: all test asan fuzz coverage coverage-run lockstep blockev-mc clean
 
 all: test
 
@@ -45,6 +45,10 @@ $(TESTBIN): $(TEST_SRC) engine/tests/bb_test.h engine/tests/bb_fixtures.h engine
 
 test: $(TESTBIN)
 	./$(TESTBIN) $(TEST)
+
+blockev-mc: $(OBJ)
+	$(CC) $(CFLAGS) -Iengine/tests tools/blockev_mc.c $(OBJ) -o $(BUILD)/blockev_mc -lm
+	./$(BUILD)/blockev_mc
 
 asan:
 	$(MAKE) BUILD=build/asan CFLAGS="-std=c11 $(SAN_FLAGS) -Wall -Wextra -Werror -Iengine/include" test

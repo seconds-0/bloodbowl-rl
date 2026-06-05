@@ -62,6 +62,21 @@ bb_blockev_w bb_blockev_w_default(void);
 void bb_block_ev(const bb_match* m, int att, int def, int is_blitz,
                  const bb_blockev_w* w, bb_blockev* out);
 
+// Choice-policy introspection for the Monte Carlo differential
+// (tools/blockev_mc.c): the per-face utilities (attacker's perspective,
+// indexed by bb_block_die 1..6, Both Down already minimax-resolved) and the
+// Wrestle-window decisions. The MC driver replays the REAL engine making
+// exactly these choices, so any frequency mismatch is tree-math drift, not
+// policy disagreement.
+typedef struct {
+    float face_u[7];   // [1..6]; chooser takes max (attacker) / min (defender)
+    int att_wrestles;  // attacker's Both-Down window: use Wrestle?
+    int def_wrestles;  // defender's window (reached only if attacker declines)
+} bb_blockev_policy;
+
+void bb_block_ev_policy(const bb_match* m, int att, int def, int is_blitz,
+                        const bb_blockev_w* w, bb_blockev_policy* out);
+
 // Shared closed forms (also used by tests and the foul exposure):
 // P(armour breaks | victim knocked down by causer); mb_on_injury_out (may be
 // NULL) receives P(Mighty Blow still unspent | broken) for the injury stage.

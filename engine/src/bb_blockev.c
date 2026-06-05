@@ -17,6 +17,7 @@
 // differential vs the real engine).
 #include "bb/bb_blockev.h"
 #include "bb/bb_skills.h"
+#include <stddef.h>
 #include "bb/bb_hooks.h"
 #include "bb/bb_proc.h"
 #include "bb/gen_tables.h"
@@ -156,6 +157,7 @@ typedef struct {
     int strip_fires;   // Strip Ball strips on any pushback of the carrier
     int dodge_saves;   // Stumble degrades to Push (Dodge minus Tackle)
     int frenzy;        // attacker must throw the mandatory second block
+    bb_blockev_policy* cap; // optional choice-policy capture (MC differential)
 } ev_ctx;
 
 static int distracted(const bb_match* m, int slot) {
@@ -238,10 +240,16 @@ static void face_both_down(const ev_ctx* c, int carrying, int frenzy_done,
     float u_wrestle = utility(&wrestle, c->w, c->cost_def, c->cost_att);
     // FFB order (D29/D31): attacker's window first, then the defender's.
     // Defender (minimizer) picks between wrestle and plain.
-    const ev_vec* def_choice = (def_w && u_wrestle < u_plain) ? &wrestle : &plain;
-    float u_def_choice = (def_w && u_wrestle < u_plain) ? u_wrestle : u_plain;
+    int def_uses = def_w && u_wrestle < u_plain;
+    const ev_vec* def_choice = def_uses ? &wrestle : &plain;
+    float u_def_choice = def_uses ? u_wrestle : u_plain;
     // Attacker (maximizer) picks between wrestle and the defender's line.
-    if (att_w && u_wrestle > u_def_choice) {
+    int att_uses = att_w && u_wrestle > u_def_choice;
+    if (c->cap) {
+        c->cap->att_wrestles = att_uses;
+        c->cap->def_wrestles = def_uses;
+    }
+    if (att_uses) {
         *out = wrestle;
     } else {
         *out = *def_choice;
@@ -303,9 +311,40 @@ static void eval_pool(const ev_ctx* c, int nd, int def_chooses, int carrying,
     }
 }
 
+static void init_ctx(ev_ctx* cp, const bb_match* m, const bb_blockev_w* w,
+                     int att, int def, int is_blitz);
+
 static void eval_block(const bb_match* m, const bb_blockev_w* w, int att,
                        int def, int is_blitz, int carrying, int frenzy_done,
                        ev_vec* out) {
+    ev_ctx c;
+    init_ctx(&c, m, w, att, def, is_blitz);
+
+    int base_a = m->players[att].st;
+    int base_d = m->players[def].st;
+    int dauntless = bb_has_skill(&m->players[att].skills, BB_SK_DAUNTLESS) &&
+                    base_d > base_a;
+    *out = (ev_vec){0};
+    if (dauntless) {
+        int diff = base_d - base_a; // d6 + base_a > base_d  <=>  d6 > diff
+        float p_match = (float)(diff >= 6 ? 0 : 6 - diff) / 6.0f;
+        int nd, dc;
+        ev_vec v;
+        pool_dice(m, att, def, is_blitz, 1, &nd, &dc);
+        eval_pool(&c, nd, dc, carrying, frenzy_done, &v);
+        vec_add_scaled(out, &v, p_match);
+        pool_dice(m, att, def, is_blitz, 0, &nd, &dc);
+        eval_pool(&c, nd, dc, carrying, frenzy_done, &v);
+        vec_add_scaled(out, &v, 1.0f - p_match);
+    } else {
+        int nd, dc;
+        pool_dice(m, att, def, is_blitz, 0, &nd, &dc);
+        eval_pool(&c, nd, dc, carrying, frenzy_done, out);
+    }
+}
+
+static void init_ctx(ev_ctx* cp, const bb_match* m, const bb_blockev_w* w,
+                     int att, int def, int is_blitz) {
     ev_ctx c;
     c.m = m;
     c.w = w;
@@ -334,27 +373,37 @@ static void eval_block(const bb_match* m, const bb_blockev_w* w, int att,
     c.dodge_saves = bb_has_dodge_skill(m, def) && !distracted(m, def) &&
                     !bb_has_skill(&m->players[att].skills, BB_SK_TACKLE);
     c.frenzy = bb_has_skill(&m->players[att].skills, BB_SK_FRENZY);
+    c.cap = NULL;
+    *cp = c;
+}
 
-    int base_a = m->players[att].st;
-    int base_d = m->players[def].st;
-    int dauntless = bb_has_skill(&m->players[att].skills, BB_SK_DAUNTLESS) &&
-                    base_d > base_a;
-    *out = (ev_vec){0};
-    if (dauntless) {
-        int diff = base_d - base_a; // d6 + base_a > base_d  <=>  d6 > diff
-        float p_match = (float)(diff >= 6 ? 0 : 6 - diff) / 6.0f;
-        int nd, dc;
-        ev_vec v;
-        pool_dice(m, att, def, is_blitz, 1, &nd, &dc);
-        eval_pool(&c, nd, dc, carrying, frenzy_done, &v);
-        vec_add_scaled(out, &v, p_match);
-        pool_dice(m, att, def, is_blitz, 0, &nd, &dc);
-        eval_pool(&c, nd, dc, carrying, frenzy_done, &v);
-        vec_add_scaled(out, &v, 1.0f - p_match);
+void bb_block_ev_policy(const bb_match* m, int att, int def, int is_blitz,
+                        const bb_blockev_w* w, bb_blockev_policy* out) {
+    bb_blockev_w wd;
+    if (!w) {
+        wd = bb_blockev_w_default();
+        w = &wd;
+    }
+    ev_ctx c;
+    init_ctx(&c, m, w, att, def, is_blitz);
+    out->att_wrestles = 0;
+    out->def_wrestles = 0;
+    c.cap = out; // face_both_down records the Wrestle-window minimax
+    int carrying = (m->players[def].flags & BB_PF_HAS_BALL) != 0;
+    ev_vec fv[7];
+    face_skull(&c, &fv[BB_BD_ATTACKER_DOWN]);
+    face_both_down(&c, carrying, 0, &fv[BB_BD_BOTH_DOWN]);
+    face_push(&c, carrying, 0, &fv[BB_BD_PUSH_1]);
+    fv[BB_BD_PUSH_2] = fv[BB_BD_PUSH_1];
+    if (c.dodge_saves) {
+        fv[BB_BD_STUMBLE] = fv[BB_BD_PUSH_1];
     } else {
-        int nd, dc;
-        pool_dice(m, att, def, is_blitz, 0, &nd, &dc);
-        eval_pool(&c, nd, dc, carrying, frenzy_done, out);
+        face_pow(&c, carrying, &fv[BB_BD_STUMBLE]);
+    }
+    face_pow(&c, carrying, &fv[BB_BD_POW]);
+    out->face_u[0] = 0.0f;
+    for (int f = 1; f <= 6; f++) {
+        out->face_u[f] = utility(&fv[f], w, c.cost_def, c.cost_att);
     }
 }
 
