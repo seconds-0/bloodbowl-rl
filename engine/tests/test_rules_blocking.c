@@ -1572,3 +1572,50 @@ BB_TEST(blocking_loner_gates_team_reroll) {
     BB_CHECK_EQ(m.rerolls[BB_HOME], 0);
     BB_CHECK(!bb_rng_error(&rng));
 }
+
+// SK#DEFENSIVE: "During your opponent's Turns, opposition players Marked by
+// this player cannot use the Guard or Put the Boot In Skills." The owner's
+// "opponent's Turn" is when the GUARD player's team is active — an OFFENSIVE
+// Guard assist by a player the Defensive owner Marks is cancelled. (Item 11
+// regression: the inverted turn check granted the assist and rolled 3 dice
+// where FFB rolled 2.)
+BB_TEST(blocking_defensive_cancels_offensive_guard_assist) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int h1 = fx_lineman(&m, BB_HOME, 0, 10, 7);  // attacker ST3
+    int h2 = fx_lineman(&m, BB_HOME, 1, 11, 8);  // Guard assister
+    int a1 = fx_lineman(&m, BB_AWAY, 0, 11, 7);  // block target ST3
+    int a2 = fx_lineman(&m, BB_AWAY, 1, 12, 8);  // marks h2, has Defensive
+    fx_give_skill(&m, h2, BB_SK_GUARD);
+    fx_give_skill(&m, a2, BB_SK_DEFENSIVE);
+    (void)a1;
+    uint8_t script[] = {3}; // exactly ONE block die may be rolled
+    bb_rng rng;
+    bb_rng_script(&rng, script, 1);
+    start_block(&m, &rng, h1, 11, 7);
+    BB_CHECK_EQ(count_type(&m, BB_A_CHOOSE_DIE), 1); // 3v3: assist cancelled
+    BB_CHECK(!bb_rng_error(&rng));
+}
+
+// ... and the cancel does NOT apply on the Defensive owner's own turn: a
+// DEFENSIVE Guard assist (inactive team) goes through even when the owner
+// marks the assister.
+BB_TEST(blocking_defensive_no_cancel_on_own_turn_guard_assist) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int h1 = fx_lineman(&m, BB_HOME, 0, 10, 7);  // attacker ST3 (active)
+    int h2 = fx_lineman(&m, BB_HOME, 1, 9, 8);   // has Defensive, marks a2
+    int a1 = fx_lineman(&m, BB_AWAY, 0, 11, 7);  // block target ST3
+    int a2 = fx_lineman(&m, BB_AWAY, 1, 10, 8);  // Guard: defensive assist
+    fx_give_skill(&m, a2, BB_SK_GUARD);
+    fx_give_skill(&m, h2, BB_SK_DEFENSIVE);
+    (void)a1;
+    uint8_t script[] = {3, 3}; // defender stronger: TWO dice
+    bb_rng rng;
+    bb_rng_script(&rng, script, 2);
+    start_block(&m, &rng, h1, 11, 7);
+    // 3 vs 3+1: two dice, defender chooses.
+    BB_CHECK_EQ(count_type(&m, BB_A_CHOOSE_DIE), 2);
+    BB_CHECK_EQ(m.decision_team, BB_AWAY);
+    BB_CHECK(!bb_rng_error(&rng));
+}

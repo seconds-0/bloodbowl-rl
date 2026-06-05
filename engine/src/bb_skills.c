@@ -55,9 +55,13 @@ bool bb_can_assist(const bb_match* m, int assister, int target_slot) {
     if (!bb_adjacent(a->x, a->y, t->x, t->y)) return false;
     if (bb_has_skill(&a->skills, BB_SK_GUARD)) {
         // DEFENSIVE: "During your opponent's Turns, opposition players Marked
-        // by this player cannot use the Guard ... Skill."
+        // by this player cannot use the Guard ... Skill." The owner's
+        // "opponent's Turn" is when the GUARD player's team is ACTIVE — i.e.
+        // Defensive cancels OFFENSIVE Guard assists and never defensive ones
+        // (the inverted check was item 11's nrOfDice divergence: FFB rolled
+        // 2 dice where we granted a cancelled Guard assist and rolled 3).
         bool cancelled = false;
-        if (BB_TEAM_OF(assister) != m->active_team) {
+        if (BB_TEAM_OF(assister) == m->active_team) {
             for (int dx = -1; dx <= 1 && !cancelled; dx++) {
                 for (int dy = -1; dy <= 1; dy++) {
                     if (!dx && !dy) continue;
