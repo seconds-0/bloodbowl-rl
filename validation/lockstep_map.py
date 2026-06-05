@@ -1711,7 +1711,7 @@ class Mapper:
                     continue
                 if hid in self.pmu_stood or hid in self.distracted:
                     continue
-                if not self.has_skill(hid, "Pick Me Up"):
+                if not self.has_skill(hid, "Pick-me-up"):
                     continue
                 hx, hy = self.pos[hid]
                 if max(abs(hx - px), abs(hy - py)) <= 3:
