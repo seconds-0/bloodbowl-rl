@@ -19,7 +19,7 @@ PUFFER="$ROOT/vendor/PufferLib"
 HOST="${BBE_SSH_HOST:-root@ssh3.vast.ai}"
 PORT="${BBE_SSH_PORT:-12464}"
 FPS="${BBE_FPS:-60}"
-CYCLE="${CYCLE_SECS:-180}"
+CYCLE="${CYCLE_SECS:-600}"
 
 cd "$PUFFER"
 source .venv/bin/activate

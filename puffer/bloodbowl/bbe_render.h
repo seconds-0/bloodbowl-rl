@@ -113,24 +113,67 @@ static void bbe_player_name(const bb_match* m, int slot, char* out, int n) {
              slot % BB_TEAM_SLOTS + 1, t == BB_HOME ? "HOME" : "AWAY");
 }
 
-// bb_casualty_hook target: banner + MEMORIAL.md append. ctx 0 with a real
-// causer = block-family attack (failed dodges have causer -1); ctx 1 =
-// crowd surf; ctx 2 = foul.
+// bb_casualty_hook target — THREAD SAFETY (fixed after two real SIGSEGVs,
+// 2026-06-05 15:47/15:55): the hook fires from OMP env-stepping worker
+// threads, while raylib text functions run on the render thread; formatting
+// shared strings here raced MeasureText/DrawText reads. The hook now only
+// RECORDS the casualty into a single staging slot (plain ints + the
+// identity bytes needed for naming, copied under a busy flag); the RENDER
+// thread consumes it in bbe_draw_hud — all formatting, drawing, and the
+// MEMORIAL.md append happen there. A casualty landing while the slot is
+// occupied is dropped (banner-worthy events are rare enough).
+typedef struct {
+    volatile int state; // 0 free, 1 writing, 2 ready
+    int slot, causer, roll, ctx;
+    uint8_t team_id[2];
+    uint8_t victim_pos, causer_pos;
+} BBEMemorialEvent;
+
+static BBEMemorialEvent bbe_memorial_event;
+
 static void bbe_on_casualty(const bb_match* m, int slot, int causer, int roll,
                             int ctx) {
-    BBEClient* c = bbe_memorial_client;
-    if (!c) return;
+    BBEMemorialEvent* e = &bbe_memorial_event;
+    if (!__sync_bool_compare_and_swap(&e->state, 0, 1)) return; // occupied
+    e->slot = slot;
+    e->causer = causer;
+    e->roll = roll;
+    e->ctx = ctx;
+    e->team_id[0] = m->team_id[0];
+    e->team_id[1] = m->team_id[1];
+    e->victim_pos = m->players[slot].position_id;
+    e->causer_pos = causer >= 0 ? m->players[causer].position_id : 0;
+    __sync_synchronize();
+    e->state = 2; // ready for the render thread
+}
+
+static void bbe_name_from_event(const BBEMemorialEvent* e, int slot, int pos,
+                                char* out, int n) {
+    int t = BB_TEAM_OF(slot);
+    int tid = e->team_id[t];
+    const char* team = tid < BB_TEAM_COUNT ? bb_team_defs[tid].display : "?";
+    const char* pname = (tid < BB_TEAM_COUNT && pos < BB_MAX_POSITIONS)
+                            ? bb_team_defs[tid].positions[pos].display
+                            : "Player";
+    snprintf(out, (size_t)n, "%s %s #%d (%s)", team, pname,
+             slot % BB_TEAM_SLOTS + 1, t == BB_HOME ? "HOME" : "AWAY");
+}
+
+// Render-thread consumer: formats the banner + appends MEMORIAL.md.
+static void bbe_memorial_consume(BBEClient* c) {
+    BBEMemorialEvent* e = &bbe_memorial_event;
+    if (e->state != 2) return;
     char victim[96], killer[96];
-    bbe_player_name(m, slot, victim, sizeof victim);
-    if (causer >= 0) bbe_player_name(m, causer, killer, sizeof killer);
-    else snprintf(killer, sizeof killer, "their own dice");
-    const char* how = ctx == 1 ? "surfed into the crowd by"
-                    : ctx == 2 ? "fouled by"
-                               : "struck down by";
-    int dead = roll >= 15;
-    int block_kill = ctx == 0 && causer >= 0;
-    // Banner: every death gets one; first block-casualty and first
-    // block-death of the session get the ceremony.
+    bbe_name_from_event(e, e->slot, e->victim_pos, victim, sizeof victim);
+    if (e->causer >= 0)
+        bbe_name_from_event(e, e->causer, e->causer_pos, killer, sizeof killer);
+    else
+        snprintf(killer, sizeof killer, "their own dice");
+    const char* how = e->ctx == 1 ? "surfed into the crowd by"
+                    : e->ctx == 2 ? "fouled by"
+                                  : "struck down by";
+    int dead = e->roll >= 15;
+    int block_kill = e->ctx == 0 && e->causer >= 0;
     if (dead || (block_kill && !c->seen_block_cas)) {
         const char* head =
             block_kill && dead && !c->seen_block_death ? "*** FIRST BLOOD — A DEATH ***"
@@ -138,13 +181,12 @@ static void bbe_on_casualty(const bb_match* m, int slot, int causer, int roll,
                                                        : "*** FIRST BLOOD ***";
         snprintf(c->memorial_line1, sizeof c->memorial_line1, "%s", head);
         snprintf(c->memorial_line2, sizeof c->memorial_line2,
-                 "%s %s %s  (D16: %d — %s)", victim, how, killer, roll,
-                 bbe_cas_band(roll));
+                 "%s %s %s  (D16: %d — %s)", victim, how, killer, e->roll,
+                 bbe_cas_band(e->roll));
         c->memorial_frames = 240; // ~4s at 60fps
     }
     if (block_kill) c->seen_block_cas = 1;
     if (block_kill && dead) c->seen_block_death = 1;
-    // Memorial file: every block-family casualty, deaths flagged.
     if (c->memorial_path[0] && (block_kill || dead)) {
         FILE* f = fopen(c->memorial_path, "a");
         if (f) {
@@ -154,12 +196,14 @@ static void bbe_on_casualty(const bb_match* m, int slot, int causer, int roll,
             char ts[32];
             strftime(ts, sizeof ts, "%Y-%m-%d %H:%M:%S", &tmv);
             fprintf(f, "- %s — %s%s %s **%s** (D16: %d — %s)%s\n", ts,
-                    dead ? "💀 " : "", victim, how, killer, roll,
-                    bbe_cas_band(roll),
+                    dead ? "💀 " : "", victim, how, killer, e->roll,
+                    bbe_cas_band(e->roll),
                     block_kill && dead ? "  ← intentional block kill" : "");
             fclose(f);
         }
     }
+    __sync_synchronize();
+    e->state = 0; // slot free
 }
 
 static void bbe_render_init(Bloodbowl* env) {
@@ -411,6 +455,7 @@ static void bbe_draw_hud(const Bloodbowl* env) {
         DrawText(plate, px + 8, py + 3, fs, RAYWHITE);
     }
 
+    bbe_memorial_consume((BBEClient*)env->client);
     // Memorial banner: centered, can't-miss red box for deaths/first blood.
     if (((BBEClient*)env->client)->memorial_frames > 0) {
         BBEClient* mc = (BBEClient*)env->client;
