@@ -81,6 +81,8 @@ setup)
         --exclude vendor/PufferLib/.venv --exclude 'vendor/PufferLib/raylib*' \
         --exclude vendor/PufferLib/build --exclude vendor/ffb \
         --exclude vendor/jervis-ffb --exclude runs --exclude 'training/*.bin' \
+        --exclude checkpoints-backup --exclude docs/vendor \
+        --exclude validation/normalized --exclude vendor/botbowl \
         --exclude .git "$ROOT/" "root@$host:/root/bloodbowl-rl/"
     ssh -i "$KEY" -p "$port" -o StrictHostKeyChecking=no "root@$host" \
         "cd /root/bloodbowl-rl && bash tools/gpu_box_setup.sh"
