@@ -78,6 +78,9 @@ setup)
     [ -n "${host:-}" ] || { echo "no running instance labeled bb-$name" >&2; exit 1; }
     rsync -az -e "ssh -i $KEY -p $port -o StrictHostKeyChecking=no" \
         --exclude vendor/PufferLib/checkpoints --exclude validation/replay_cache \
+        --exclude vendor/PufferLib/.venv --exclude 'vendor/PufferLib/raylib*' \
+        --exclude vendor/PufferLib/build --exclude vendor/ffb \
+        --exclude vendor/jervis-ffb --exclude runs --exclude 'training/*.bin' \
         --exclude .git "$ROOT/" "root@$host:/root/bloodbowl-rl/"
     ssh -i "$KEY" -p "$port" -o StrictHostKeyChecking=no "root@$host" \
         "cd /root/bloodbowl-rl && bash tools/gpu_box_setup.sh"
