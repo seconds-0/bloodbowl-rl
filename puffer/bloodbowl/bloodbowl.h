@@ -257,6 +257,17 @@ typedef struct {
     // then destroys nothing the whistle wasn't about to). v1 scope: block
     // declarations only (movement-roll sequencing is a follow-up).
     float reward_k_seq;
+    // Possession annuity (Alex, 2026-06-06 — the reward-chain redesign):
+    // ending your own team turn HOLDING the ball pays +p to the holder and
+    // -p to the opponent (zero-sum transfer at the turn boundary). Holding
+    // is an income STREAM, not a lump sum: the free kickoff scoop becomes
+    // the entry ticket, protecting the carrier protects the income, and the
+    // defense bleeds until it takes the ball away. Max 16 events/side/game,
+    // binary each — structurally unfarmable. Replaces the ball_loss fine
+    // (the measured possession-poison: every masked arm converged to
+    // rational ball-avoidance under loss-fines; kzero@1.7B attempted ZERO
+    // kickoff pickups).
+    float reward_possession;
     // Demo-state reset curriculum (Backplay / chess fen_curric pattern,
     // docs/rl-best-practices.md hole #2): with probability demo_reset_pct
     // each episode starts from a uniformly drawn banked mid-game state
@@ -1178,13 +1189,20 @@ static void c_step(Bloodbowl* env) {
             env->pending_pickup_slot = -1;
         }
         // Possession-rate bookkeeping: when the active team flips, the
-        // previous team's turn ENDED — score whether they ended it holding.
+        // previous team's turn ENDED — score whether they ended it holding,
+        // and pay the possession annuity transfer (see reward_possession).
         if ((int)m->active_team != env->prev_active_team) {
             int t = env->prev_active_team & 1;
             env->ep_turns[t]++;
             if (m->ball.state == BB_BALL_HELD &&
                 BB_TEAM_OF(m->ball.carrier) == t) {
                 env->ep_turns_with_ball[t]++;
+                if (env->reward_possession != 0.0f) {
+                    env->reward_ptr[t][0] += env->reward_possession;
+                    env->reward_ptr[1 - t][0] -= env->reward_possession;
+                    env->ep_return[t] += env->reward_possession;
+                    env->ep_return[1 - t] -= env->reward_possession;
+                }
             }
             env->prev_active_team = (int)m->active_team;
         }
