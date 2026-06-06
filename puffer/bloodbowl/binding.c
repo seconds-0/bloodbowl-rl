@@ -188,6 +188,8 @@ void my_log(Log* log, Dict* out) {
     dict_set(out, "illegal_frac", log->illegal_frac);
     dict_set(out, "blocks", log->blocks);
     dict_set(out, "blocks_thrown", log->blocks_thrown);
+    dict_set(out, "pickup_success", log->pickup_success);
+    dict_set(out, "possession_rate", log->possession_rate);
     dict_set(out, "blitzes", log->blitzes);
     dict_set(out, "dodge_attempts", log->dodge_attempts);
     dict_set(out, "gfi_attempts", log->gfi_attempts);

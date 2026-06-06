@@ -144,6 +144,10 @@ typedef struct {
     // bbe_count_knockdowns.
     float blocks;               // BB_A_DECLARE of BB_ACT_BLOCK
     float blocks_thrown;        // resolved block dice pools (CHOOSE_DIE)
+    float pickup_success;       // pickup attempts that ended holding the ball
+    float possession_rate;      // fraction of team-turns ENDED holding the ball
+                                // (Alex 2026-06-06: integrates pickup success +
+                                // ball security; can't be farmed by attempts)
     float blitzes;              // BB_A_DECLARE of BB_ACT_BLITZ
     float dodge_attempts;       // STEPs out of >=1 opposing TZ (dodge test due)
     float gfi_attempts;         // STEPs beyond MA (rush/GFI test due)
@@ -283,6 +287,10 @@ typedef struct {
     // the Log by bbe_finish_episode, zeroed by bbe_reset_match).
     int ep_blocks, ep_blitzes;
     int ep_blocks_thrown;
+    int ep_pickup_success;
+    int pending_pickup_slot;    // mover of THIS step's pickup attempt (-1 none)
+    int ep_turns[2], ep_turns_with_ball[2];
+    int prev_active_team;       // turn-boundary detector for possession_rate
     // Per-team behavior counters for the spectator's live archetype plates
     // ("BRUISER"/"BALLHAWK"/...): contact = block+blitz declarations, ball =
     // weighted ball engagement (pickups, passes, squares moved carrying).
@@ -811,6 +819,11 @@ static void bbe_reset_match(Bloodbowl* env) {
     env->illegal = 0;
     env->ep_blocks = env->ep_blitzes = 0;
     env->ep_blocks_thrown = 0;
+    env->ep_pickup_success = 0;
+    env->pending_pickup_slot = -1;
+    env->ep_turns[0] = env->ep_turns[1] = 0;
+    env->ep_turns_with_ball[0] = env->ep_turns_with_ball[1] = 0;
+    env->prev_active_team = env->match.active_team;
     env->ep_dodge_attempts = env->ep_gfi_attempts = 0;
     env->ep_pickup_attempts = env->ep_pass_attempts = 0;
     env->ep_knockdowns_inflicted = env->ep_knockdowns_own = 0;
@@ -916,6 +929,12 @@ static void bbe_finish_episode(Bloodbowl* env) {
                                  : 0;
     env->log.blocks += (float)env->ep_blocks;
     env->log.blocks_thrown += (float)env->ep_blocks_thrown;
+    env->log.pickup_success += (float)env->ep_pickup_success;
+    {
+        int turns = env->ep_turns[0] + env->ep_turns[1];
+        int held = env->ep_turns_with_ball[0] + env->ep_turns_with_ball[1];
+        if (turns > 0) env->log.possession_rate += (float)held / (float)turns;
+    }
     env->log.blitzes += (float)env->ep_blitzes;
     env->log.dodge_attempts += (float)env->ep_dodge_attempts;
     env->log.gfi_attempts += (float)env->ep_gfi_attempts;
@@ -973,6 +992,7 @@ static void bbe_count_action(Bloodbowl* env, bb_action act) {
             env->ep_pickup_attempts++;
             if (top && top->proc == BB_PROC_MOVE && top->a < BB_NUM_PLAYERS) {
                 env->ep_team_ball[BB_TEAM_OF(top->a)] += 3;
+                env->pending_pickup_slot = top->a; // success judged post-apply
             }
         }
         break;
@@ -1149,6 +1169,25 @@ static void c_step(Bloodbowl* env) {
         // All other callers (tests, fuzz, lockstep) stay on checked bb_apply.
         bb_apply_trusted(m, act, &env->rng);
         env->decisions++;
+        // Pickup success: the attempted scooper holds the ball post-apply.
+        if (env->pending_pickup_slot >= 0) {
+            if (m->ball.state == BB_BALL_HELD &&
+                m->ball.carrier == (uint8_t)env->pending_pickup_slot) {
+                env->ep_pickup_success++;
+            }
+            env->pending_pickup_slot = -1;
+        }
+        // Possession-rate bookkeeping: when the active team flips, the
+        // previous team's turn ENDED — score whether they ended it holding.
+        if ((int)m->active_team != env->prev_active_team) {
+            int t = env->prev_active_team & 1;
+            env->ep_turns[t]++;
+            if (m->ball.state == BB_BALL_HELD &&
+                BB_TEAM_OF(m->ball.carrier) == t) {
+                env->ep_turns_with_ball[t]++;
+            }
+            env->prev_active_team = (int)m->active_team;
+        }
         bbe_count_knockdowns(env, was_standing, agent);
         // Touchdown rewards.
         bool scored = false;
