@@ -1,5 +1,5 @@
 diff --git a/pufferlib/torch_pufferl.py b/pufferlib/torch_pufferl.py
-index 4cf6184..c4ea5e3 100644
+index 4cf6184..29bb538 100644
 --- a/pufferlib/torch_pufferl.py
 +++ b/pufferlib/torch_pufferl.py
 @@ -46,6 +46,27 @@ def _entropy(logits):
@@ -142,27 +142,54 @@ index 4cf6184..c4ea5e3 100644
  def _actions_for_vec_step(action):
      if action.dim() == 1:
          action = action.unsqueeze(-1)
-@@ -143,6 +269,19 @@ class PuffeRL:
+@@ -143,6 +269,46 @@ class PuffeRL:
                  (total_agents,), torch.float32)
              self.vec_terminals = _cpu_tensor(vec.terminals_ptr,
                  (total_agents,), torch.float32)
 +        # LOCAL PATCH (bloodbowl-rl): legal-action masks for masked sampling.
++        # ALWAYS read the HOST mask buffer: env threads step on CPU and write
++        # masks there every step in both vec modes; the gpu_action_mask
++        # mirror is only maintained for the native CUDA sampler and reads
++        # stale/zero under torch gpu-stepping (observed: masking silently
++        # off, illegal_frac ~1.0). The per-step H2D copy is ~2MB.
 +        self.mask_size = int(getattr(vec, 'action_mask_size', 0) or 0)
-+        if self.mask_size > 0:
-+            if self.gpu:
-+                self.vec_action_mask = torch.as_tensor(_CudaPtr(
-+                    vec.gpu_action_mask_ptr, (total_agents, self.mask_size),
-+                    torch.uint8))
-+            else:
-+                self.vec_action_mask = _cpu_tensor(vec.action_mask_ptr,
-+                    (total_agents, self.mask_size), torch.uint8)
++        if self.mask_size > 0 and int(vec.action_mask_ptr) != 0:
++            self.vec_action_mask = _cpu_tensor(vec.action_mask_ptr,
++                (total_agents, self.mask_size), torch.uint8)
 +            self.act_sizes_list = list(vec.act_sizes)
 +        else:
 +            self.vec_action_mask = None
++
++        # LOCAL PATCH (bloodbowl-rl): ASYMMETRIC TRAINING (frozen enemy).
++        # config frozen_enemy_path: slot-1-equivalent rows play a FROZEN
++        # policy (no grad, excluded from PPO) so the learner's offense faces
++        # a defense that does NOT co-evolve — mirror selfplay provably makes
++        # possession futures net-negative (D43). Learner alternates sides by
++        # env parity (row r: env=r//2, agent=r%2; learner iff (env+agent)%2==0)
++        # so home/away exposure stays balanced. Empty path = upstream behavior.
++        import copy as _copy
++        self.frozen_path = str(config.get('frozen_enemy_path', '') or '')
++        if self.frozen_path:
++            self.frozen_policy = _copy.deepcopy(policy)
++            _sd = torch.load(self.frozen_path, map_location=device)
++            self.frozen_policy.load_state_dict(_sd)
++            self.frozen_policy.eval()
++            for _p in self.frozen_policy.parameters():
++                _p.requires_grad_(False)
++            _rows = torch.arange(total_agents)
++            _is_learner = ((_rows // 2) + (_rows % 2)) % 2 == 0
++            self.learner_rows = _rows[_is_learner].to(device)
++            self.train_rows = int(self.learner_rows.shape[0])
++            print(f'ASYMMETRIC: frozen enemy {self.frozen_path} | '
++                  f'learner rows {self.train_rows}/{total_agents}')
++        else:
++            self.frozen_policy = None
++            self.learner_rows = None
++            self.train_rows = total_agents
  
          vec.reset()
          horizon = config['horizon']
-@@ -150,6 +289,10 @@ class PuffeRL:
+@@ -150,15 +316,21 @@ class PuffeRL:
  
          self.observations = torch.zeros(horizon, total_agents, vec.obs_size,
              dtype=obs_dtype, device=device)
@@ -173,7 +200,20 @@ index 4cf6184..c4ea5e3 100644
          self.actions = torch.zeros(horizon, total_agents, num_atns, device=device)
          self.values = torch.zeros(horizon, total_agents, device=device)
          self.logprobs = torch.zeros(horizon, total_agents, device=device)
-@@ -181,6 +324,24 @@ class PuffeRL:
+         self.rewards = torch.zeros(horizon, total_agents, device=device)
+         self.terminals = torch.zeros(horizon, total_agents, device=device)
+-        self.ratio = torch.ones(total_agents, horizon, device=device)
++        self.ratio = torch.ones(self.train_rows, horizon, device=device)
+         self.state = policy.initial_state(total_agents, device=device)
++        self.frozen_state = (self.frozen_policy.initial_state(total_agents,
++            device=device) if self.frozen_policy is not None else None)
+ 
+-        self.batch_size = total_agents * horizon
++        self.batch_size = self.train_rows * horizon
+         self.minibatch_segments = config['minibatch_size'] // horizon
+         self.total_epochs = max(1, config['total_timesteps'] // self.batch_size)
+ 
+@@ -181,6 +353,24 @@ class PuffeRL:
          self.profile = Profile(gpu=self.gpu)
          self.verbose = verbose
  
@@ -198,7 +238,16 @@ index 4cf6184..c4ea5e3 100644
          self.model_size = sum(p.numel() for p in policy.parameters() if p.requires_grad)
          if verbose:
              pufferlib.pufferl.print_dashboard(args, self.model_size, {}, clear=True)
-@@ -219,12 +380,19 @@ class PuffeRL:
+@@ -207,6 +397,8 @@ class PuffeRL:
+         horizon = config['horizon']
+ 
+         self.state = tuple(torch.zeros_like(s) for s in self.state) if self.state else ()
++        if self.frozen_state is not None:
++            self.frozen_state = tuple(torch.zeros_like(s) for s in self.frozen_state) if self.frozen_state else ()
+         o = self.vec_obs
+         r = torch.zeros(self.total_agents, device=device)
+         d = torch.zeros(self.total_agents, device=device)
+@@ -219,12 +411,33 @@ class PuffeRL:
              prof.mark(1)
              with torch.no_grad():
                  logits, value, state = self.policy.forward_eval(o_device, self.state)
@@ -208,6 +257,20 @@ index 4cf6184..c4ea5e3 100644
 +                    logits = apply_action_mask(logits, m_device,
 +                                               self.act_sizes_list)
                  action, logprob, _ = sample_logits(logits)
++                if self.frozen_policy is not None:
++                    f_logits, _fv, f_state = self.frozen_policy.forward_eval(
++                        o_device, self.frozen_state)
++                    self.frozen_state = f_state
++                    if self.vec_action_mask is not None:
++                        f_logits = apply_action_mask(f_logits, m_device,
++                                                     self.act_sizes_list)
++                    f_action, _flp, _fe = sample_logits(f_logits)
++                    # Learner rows keep their actions; all other rows play
++                    # the frozen policy's choices.
++                    keep = torch.zeros(action.shape[0], dtype=torch.bool,
++                                       device=action.device)
++                    keep[self.learner_rows] = True
++                    action = torch.where(keep.unsqueeze(-1), action, f_action)
              prof.mark(2)
  
              with torch.no_grad():
@@ -218,7 +281,7 @@ index 4cf6184..c4ea5e3 100644
                  self.actions[t] = action
                  self.logprobs[t] = logprob
                  self.rewards[t] = torch.as_tensor(r, device=device)
-@@ -270,9 +438,22 @@ class PuffeRL:
+@@ -270,13 +483,36 @@ class PuffeRL:
              learning_rate = lr_min + 0.5*(learning_rate - lr_min) * (1 + np.cos(np.pi * lr_ratio))
              self.optimizer.param_groups[0]['lr'] = learning_rate
  
@@ -241,7 +304,30 @@ index 4cf6184..c4ea5e3 100644
          val = self.values.T.contiguous()
          lp = self.logprobs.T.contiguous()
          rew = self.rewards.T.contiguous().clamp(-1, 1)
-@@ -304,6 +485,12 @@ class PuffeRL:
+         ter = self.terminals.T.contiguous()
++        # LOCAL PATCH (bloodbowl-rl): asymmetric — train on learner rows only.
++        if self.learner_rows is not None:
++            obs = obs[self.learner_rows]
++            act = act[self.learner_rows]
++            if masks_t is not None:
++                masks_t = masks_t[self.learner_rows]
++            val = val[self.learner_rows]
++            lp = lp[self.learner_rows]
++            rew = rew[self.learner_rows]
++            ter = ter[self.learner_rows]
+ 
+         P = Profile
+         prof.mark(0)
+@@ -293,7 +529,7 @@ class PuffeRL:
+             prio_probs = (prio_weights + 1e-6)/(prio_weights.sum() + 1e-6)
+             idx = torch.multinomial(prio_probs,
+                 self.minibatch_segments, replacement=True)
+-            mb_prio = (self.total_agents*prio_probs[idx, None])**-anneal_beta
++            mb_prio = (self.train_rows*prio_probs[idx, None])**-anneal_beta
+ 
+             mb_obs = obs[idx]
+             mb_actions = act[idx]
+@@ -304,6 +540,12 @@ class PuffeRL:
  
              prof.mark(1)
              logits, newvalue = self.policy(mb_obs)
@@ -254,7 +340,7 @@ index 4cf6184..c4ea5e3 100644
              actions, newlogprob, entropy = sample_logits(logits, action=mb_actions)
              prof.mark(2)
              prof.elapsed(P.TRAIN_FORWARD, 1, 2)
-@@ -333,6 +520,22 @@ class PuffeRL:
+@@ -333,6 +575,22 @@ class PuffeRL:
  
              entropy_loss = entropy.mean()
              loss = pg_loss + config['vf_coef']*v_loss - config['ent_coef']*entropy_loss
