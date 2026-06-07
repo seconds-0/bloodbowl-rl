@@ -25,7 +25,22 @@ cd "$PUFFER"
 source .venv/bin/activate
 export BBE_MEMORIAL="${BBE_MEMORIAL:-$ROOT/MEMORIAL.md}"
 
+# raylib's InitWindow segfaults (NULL GL proc via rlglInit) when the display
+# is asleep — overnight the cycle loop was generating a crash report every
+# 10 min. Gate cycles on the panel being awake; fail-safe to "awake" if the
+# ioreg class ever disappears so a probe change can't brick the viewer.
+display_awake() {
+    local st
+    st=$(ioreg -w0 -r -c IOMobileFramebufferShim 2>/dev/null \
+        | grep -o '"CurrentPowerState"=[0-9]' | head -1 | grep -o '[0-9]$')
+    [ -z "$st" ] || [ "$st" != "0" ]
+}
+
+crashes=0
 while true; do
+    until display_awake; do
+        sleep 120
+    done
     rsync -az -e "ssh -p $PORT -i $HOME/.ssh/id_ed25519 -o StrictHostKeyChecking=no -o ConnectTimeout=15" \
         "$HOST:~/bloodbowl-rl/vendor/PufferLib/checkpoints/bloodbowl/" \
         checkpoints/bloodbowl/ 2>/dev/null \
@@ -57,5 +72,17 @@ while true; do
     if [ "$code" -eq 7 ]; then
         echo "window closed — bye"
         exit 0
+    fi
+    # Backoff on repeated abnormal exits (segfault=139 etc.; timeout's
+    # cycle-end exit 124 is the normal case) so a persistent failure can't
+    # spam macOS crash reports every cycle.
+    if [ "$code" -ne 0 ] && [ "$code" -ne 124 ]; then
+        crashes=$((crashes + 1))
+        if [ "$crashes" -ge 3 ]; then
+            echo "eval exited $code x$crashes — backing off 15 min"
+            sleep 900
+        fi
+    else
+        crashes=0
     fi
 done
