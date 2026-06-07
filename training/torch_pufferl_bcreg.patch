@@ -1,5 +1,5 @@
 diff --git a/pufferlib/torch_pufferl.py b/pufferlib/torch_pufferl.py
-index 4cf6184..ff66e2b 100644
+index 4cf6184..2011a63 100644
 --- a/pufferlib/torch_pufferl.py
 +++ b/pufferlib/torch_pufferl.py
 @@ -46,6 +46,27 @@ def _entropy(logits):
@@ -189,7 +189,7 @@ index 4cf6184..ff66e2b 100644
  
          vec.reset()
          horizon = config['horizon']
-@@ -150,15 +316,21 @@ class PuffeRL:
+@@ -150,17 +316,28 @@ class PuffeRL:
  
          self.observations = torch.zeros(horizon, total_agents, vec.obs_size,
              dtype=obs_dtype, device=device)
@@ -211,9 +211,17 @@ index 4cf6184..ff66e2b 100644
 -        self.batch_size = total_agents * horizon
 +        self.batch_size = self.train_rows * horizon
          self.minibatch_segments = config['minibatch_size'] // horizon
-         self.total_epochs = max(1, config['total_timesteps'] // self.batch_size)
+-        self.total_epochs = max(1, config['total_timesteps'] // self.batch_size)
++        # Schedules (lr/bc/prio anneals) must track WALL env-steps, not the
++        # train batch: under asymmetric training batch_size is half-width
++        # while global_step advances full-width — dividing by batch_size
++        # would double total_epochs and leave anneals half-finished at the
++        # step cap (caught live on the first release run, 2026-06-07).
++        self.total_epochs = max(1, config['total_timesteps'] // (total_agents * horizon))
  
-@@ -181,6 +353,24 @@ class PuffeRL:
+         self.policy = policy
+         self.optimizer = Muon(
+@@ -181,6 +358,24 @@ class PuffeRL:
          self.profile = Profile(gpu=self.gpu)
          self.verbose = verbose
  
@@ -238,7 +246,7 @@ index 4cf6184..ff66e2b 100644
          self.model_size = sum(p.numel() for p in policy.parameters() if p.requires_grad)
          if verbose:
              pufferlib.pufferl.print_dashboard(args, self.model_size, {}, clear=True)
-@@ -207,6 +397,8 @@ class PuffeRL:
+@@ -207,6 +402,8 @@ class PuffeRL:
          horizon = config['horizon']
  
          self.state = tuple(torch.zeros_like(s) for s in self.state) if self.state else ()
@@ -247,7 +255,7 @@ index 4cf6184..ff66e2b 100644
          o = self.vec_obs
          r = torch.zeros(self.total_agents, device=device)
          d = torch.zeros(self.total_agents, device=device)
-@@ -219,12 +411,33 @@ class PuffeRL:
+@@ -219,12 +416,33 @@ class PuffeRL:
              prof.mark(1)
              with torch.no_grad():
                  logits, value, state = self.policy.forward_eval(o_device, self.state)
@@ -281,7 +289,7 @@ index 4cf6184..ff66e2b 100644
                  self.actions[t] = action
                  self.logprobs[t] = logprob
                  self.rewards[t] = torch.as_tensor(r, device=device)
-@@ -270,13 +483,38 @@ class PuffeRL:
+@@ -270,13 +488,38 @@ class PuffeRL:
              learning_rate = lr_min + 0.5*(learning_rate - lr_min) * (1 + np.cos(np.pi * lr_ratio))
              self.optimizer.param_groups[0]['lr'] = learning_rate
  
@@ -320,7 +328,7 @@ index 4cf6184..ff66e2b 100644
  
          P = Profile
          prof.mark(0)
-@@ -293,7 +531,7 @@ class PuffeRL:
+@@ -293,7 +536,7 @@ class PuffeRL:
              prio_probs = (prio_weights + 1e-6)/(prio_weights.sum() + 1e-6)
              idx = torch.multinomial(prio_probs,
                  self.minibatch_segments, replacement=True)
@@ -329,7 +337,7 @@ index 4cf6184..ff66e2b 100644
  
              mb_obs = obs[idx]
              mb_actions = act[idx]
-@@ -304,6 +542,12 @@ class PuffeRL:
+@@ -304,6 +547,12 @@ class PuffeRL:
  
              prof.mark(1)
              logits, newvalue = self.policy(mb_obs)
@@ -342,7 +350,7 @@ index 4cf6184..ff66e2b 100644
              actions, newlogprob, entropy = sample_logits(logits, action=mb_actions)
              prof.mark(2)
              prof.elapsed(P.TRAIN_FORWARD, 1, 2)
-@@ -333,6 +577,22 @@ class PuffeRL:
+@@ -333,6 +582,22 @@ class PuffeRL:
  
              entropy_loss = entropy.mean()
              loss = pg_loss + config['vf_coef']*v_loss - config['ent_coef']*entropy_loss
