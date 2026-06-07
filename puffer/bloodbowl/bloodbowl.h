@@ -143,7 +143,12 @@ typedef struct {
     // requiring a spectator session. Counting details: bbe_count_action /
     // bbe_count_knockdowns.
     float blocks;               // BB_A_DECLARE of BB_ACT_BLOCK
-    float blocks_thrown;        // resolved block dice pools (CHOOSE_DIE)
+    float blocks_thrown;
+    float block_1d_frac;
+    float block_2d_frac;
+    float block_3d_frac;
+    float block_2dred_frac;
+    float block_3dred_frac;        // resolved block dice pools (CHOOSE_DIE)
     float pickup_success;       // pickup attempts that ended holding the ball
     float possession_rate;      // fraction of team-turns ENDED holding the ball
                                 // (Alex 2026-06-06: integrates pickup success +
@@ -304,6 +309,12 @@ typedef struct {
     // the Log by bbe_finish_episode, zeroed by bbe_reset_match).
     int ep_blocks, ep_blitzes;
     int ep_blocks_thrown;
+    // Block-dice tier distribution (Alex's blocking-rationality gauge): a
+    // healthy game trends toward 2d/3d attacker-choice and away from red
+    // (defender-choice) and 1d. Classified at the CHOOSE_DIE window from
+    // the block frame: nd in data bits 9-10, defender-chooses in bit 11
+    // (proc_block.c layout).
+    int ep_block_tier[5]; // 0=1d, 1=2d, 2=3d, 3=2d-red, 4=3d-red
     int ep_pickup_success;
     int pending_pickup_slot;    // mover of THIS step's pickup attempt (-1 none)
     int ep_turns[2], ep_turns_with_ball[2];
@@ -860,6 +871,7 @@ static void bbe_reset_match(Bloodbowl* env) {
     env->illegal = 0;
     env->ep_blocks = env->ep_blitzes = 0;
     env->ep_blocks_thrown = 0;
+    memset(env->ep_block_tier, 0, sizeof env->ep_block_tier);
     env->ep_pickup_success = 0;
     env->pending_pickup_slot = -1;
     env->ep_turns[0] = env->ep_turns[1] = 0;
@@ -1068,6 +1080,12 @@ static void bbe_count_action(Bloodbowl* env, bb_action act) {
         env->ep_blocks_thrown++;
         const bb_frame* bf = m->stack_top ? &m->stack[m->stack_top - 1] : 0;
         BBE_FEED(env, BBE_EV_BLOCK_THROWN, bf ? bf->a : -1, bf ? bf->b : -1);
+        if (bf) {
+            int nd = ((bf->data >> 9) & 3) + 1;
+            int red = (bf->data & (1u << 11)) != 0; // BLK_DEF_CHOOSES
+            int tier = nd == 1 ? 0 : (nd == 2 ? (red ? 3 : 1) : (red ? 4 : 2));
+            env->ep_block_tier[tier]++;
+        }
         break;
     }
     default:
