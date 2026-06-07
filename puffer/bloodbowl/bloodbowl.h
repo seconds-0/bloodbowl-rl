@@ -268,6 +268,12 @@ typedef struct {
     // rational ball-avoidance under loss-fines; kzero@1.7B attempted ZERO
     // kickoff pickups).
     float reward_possession;
+    // Rush (GFI) tax: charged per rush square AT DECLARATION (decision-time,
+    // dice-independent — the exposure-pricing family). Exists because under
+    // scoring scarcity the critic prices failed GFIs at ~nothing (the
+    // opponent can't convert turnovers either), so potentials make rushing
+    // free income and the policy GFI-spams (~17/ep observed; humans ~2-5).
+    float reward_rush_cost;
     // Demo-state reset curriculum (Backplay / chess fen_curric pattern,
     // docs/rl-best-practices.md hole #2): with probability demo_reset_pct
     // each episode starts from a uniformly drawn banked mid-game state
@@ -1018,6 +1024,11 @@ static void bbe_count_action(Bloodbowl* env, bb_action act) {
             if (p->moved >= p->ma) {
                 env->ep_gfi_attempts++;
                 BBE_FEED(env, BBE_EV_GFI, top->a, -1);
+                if (env->reward_rush_cost != 0.0f) {
+                    int rt = BB_TEAM_OF(top->a);
+                    env->reward_ptr[rt][0] -= env->reward_rush_cost;
+                    env->ep_return[rt] -= env->reward_rush_cost;
+                }
             }
             if (bb_tackle_zones(m, BB_TEAM_OF(top->a), p->x, p->y) > 0) {
                 env->ep_dodge_attempts++;
