@@ -31,7 +31,8 @@
 static float bbe_scale = 1.6f;
 
 #define BBE_S(v) ((int)((v) * bbe_scale + 0.5f))
-#define BBE_WIN_W (BBE_S(BBE_PITCH_W) + 2 * BBE_MARGIN)
+#define BBE_SIDEBAR_W 270
+#define BBE_WIN_W (BBE_S(BBE_PITCH_W) + BBE_S(BBE_SIDEBAR_W) + 3 * BBE_MARGIN)
 #define BBE_WIN_H (BBE_S(BBE_PITCH_H) + BBE_S(BBE_HUD_H) + 2 * BBE_MARGIN)
 
 typedef struct {
@@ -92,6 +93,76 @@ static void bbe_load_iconmap(BBEClient* c) {
 }
 
 static BBEClient* bbe_memorial_client = 0;
+
+// --- Event feed (sidebar) ----------------------------------------------------
+// POD ring written by the env-stepping thread via bbe_feed_hook; the render
+// thread formats text (memorial-SIGSEGV doctrine: no cross-thread strings).
+// Only the RENDERED env's events are recorded.
+#define BBE_FEED_CAP 64
+typedef struct {
+    int kind;
+    int a, b;                 // slots (-1 = n/a)
+    uint8_t team_id[2];
+    uint8_t a_pos, b_pos;
+    uint8_t turn, half;
+} BBEFeedEvent;
+static BBEFeedEvent bbe_feed_ring[BBE_FEED_CAP];
+static volatile unsigned bbe_feed_widx = 0; // writer bumps after fill
+static const Bloodbowl* bbe_feed_env = 0;   // rendered env filter
+
+static void bbe_on_feed(const Bloodbowl* env, int kind, int a, int b) {
+    if (env != bbe_feed_env) return;
+    const bb_match* m = &env->match;
+    unsigned i = bbe_feed_widx;
+    BBEFeedEvent* e = &bbe_feed_ring[i % BBE_FEED_CAP];
+    e->kind = kind;
+    e->a = a;
+    e->b = b;
+    e->team_id[0] = m->team_id[0];
+    e->team_id[1] = m->team_id[1];
+    e->a_pos = (a >= 0 && a < BB_NUM_PLAYERS) ? m->players[a].position_id : 0;
+    e->b_pos = (b >= 0 && b < BB_NUM_PLAYERS) ? m->players[b].position_id : 0;
+    e->turn = m->turn[m->active_team & 1];
+    e->half = m->half;
+    __sync_synchronize();
+    bbe_feed_widx = i + 1;
+}
+
+static void bbe_feed_name(const BBEFeedEvent* e, int slot, int pos, char* out,
+                          int n) {
+    if (slot < 0) { snprintf(out, (size_t)n, "?"); return; }
+    int t = BB_TEAM_OF(slot);
+    int tid = e->team_id[t];
+    const char* pname = (tid < BB_TEAM_COUNT && pos < BB_MAX_POSITIONS)
+                            ? bb_team_defs[tid].positions[pos].display
+                            : "Player";
+    snprintf(out, (size_t)n, "%s#%d", pname, slot % BB_TEAM_SLOTS + 1);
+}
+
+// kind -> label + color (render thread only).
+static const char* bbe_feed_fmt(const BBEFeedEvent* e, char* buf, int n,
+                                Color* col) {
+    char an[40], bn[40];
+    bbe_feed_name(e, e->a, e->a_pos, an, sizeof an);
+    bbe_feed_name(e, e->b, e->b_pos, bn, sizeof bn);
+    const char* side = e->a >= 0 ? (BB_TEAM_OF(e->a) == BB_HOME ? "H" : "A") : "-";
+    switch (e->kind) {
+    case BBE_EV_BLOCK_DECL:  *col = (Color){235, 90, 80, 255};  snprintf(buf, n, "BLOCK declared"); break;
+    case BBE_EV_BLITZ_DECL:  *col = (Color){255, 150, 60, 255}; snprintf(buf, n, "BLITZ declared"); break;
+    case BBE_EV_BLOCK_THROWN:*col = (Color){235, 90, 80, 255};  snprintf(buf, n, "[%s] %s blocks %s", side, an, bn); break;
+    case BBE_EV_DODGE:       *col = (Color){240, 220, 90, 255}; snprintf(buf, n, "[%s] %s dodges", side, an); break;
+    case BBE_EV_GFI:         *col = (Color){190, 175, 80, 255}; snprintf(buf, n, "[%s] %s goes-for-it", side, an); break;
+    case BBE_EV_PICKUP_TRY:  *col = (Color){120, 230, 120, 255};snprintf(buf, n, "[%s] %s reaches for ball", side, an); break;
+    case BBE_EV_PICKUP_OK:   *col = (Color){60, 255, 60, 255};  snprintf(buf, n, "[%s] %s PICKS UP!", side, an); break;
+    case BBE_EV_PASS:        *col = (Color){100, 160, 255, 255};snprintf(buf, n, "[%s] %s passes", side, an); break;
+    case BBE_EV_HANDOFF:     *col = (Color){90, 220, 230, 255}; snprintf(buf, n, "[%s] %s hands off", side, an); break;
+    case BBE_EV_KNOCKDOWN:   *col = (Color){200, 40, 40, 255};  snprintf(buf, n, "[%s] %s GOES DOWN", side, an); break;
+    case BBE_EV_TD:          *col = (Color){255, 204, 64, 255}; snprintf(buf, n, "[%s] TOUCHDOWN — %s!", side, an); break;
+    case BBE_EV_TURNOVER:    *col = (Color){150, 150, 160, 255};snprintf(buf, n, "TURNOVER"); break;
+    default:                 *col = RAYWHITE; snprintf(buf, n, "event %d", e->kind); break;
+    }
+    return buf;
+}
 
 static const char* bbe_cas_band(int roll) {
     if (roll >= 15) return "DEAD";
@@ -232,6 +303,8 @@ static void bbe_render_init(Bloodbowl* env) {
     if (mem) snprintf(c->memorial_path, sizeof c->memorial_path, "%s", mem);
     bbe_memorial_client = c;
     bb_casualty_hook = bbe_on_casualty;
+    bbe_feed_env = env;
+    bbe_feed_hook = bbe_on_feed;
     env->client = c;
     const char* sc = getenv("BBE_SCALE");
     if (sc) {
@@ -453,6 +526,32 @@ static void bbe_draw_hud(const Bloodbowl* env) {
         DrawRectangle(px, py, tw + 16, fs + 6, (Color){34, 36, 42, 255});
         DrawRectangleLines(px, py, tw + 16, fs + 6, border);
         DrawText(plate, px + 8, py + 3, fs, RAYWHITE);
+    }
+
+    // Event-feed sidebar: newest at top, color-coded.
+    {
+        int sx = BBE_S(BBE_PITCH_W) + 2 * BBE_MARGIN;
+        int sw = BBE_S(BBE_SIDEBAR_W);
+        DrawRectangle(sx, BBE_MARGIN, sw, BBE_WIN_H - 2 * BBE_MARGIN,
+                      (Color){22, 24, 28, 255});
+        DrawRectangleLines(sx, BBE_MARGIN, sw, BBE_WIN_H - 2 * BBE_MARGIN,
+                           (Color){70, 74, 84, 255});
+        int fs = BBE_S(9);
+        DrawText("EVENTS", sx + 10, BBE_MARGIN + 8, BBE_S(11), BBE_GOLD);
+        int y = BBE_MARGIN + 8 + BBE_S(16);
+        unsigned w = bbe_feed_widx;
+        int rows = (BBE_WIN_H - 2 * BBE_MARGIN - BBE_S(28)) / (fs + 5);
+        if (rows > BBE_FEED_CAP - 2) rows = BBE_FEED_CAP - 2;
+        char line[120];
+        Color col;
+        for (int r = 0; r < rows && (unsigned)r < w; r++) {
+            const BBEFeedEvent* e = &bbe_feed_ring[(w - 1 - (unsigned)r) % BBE_FEED_CAP];
+            bbe_feed_fmt(e, line, sizeof line, &col);
+            char full[140];
+            snprintf(full, sizeof full, "T%d.%d %s", e->half, e->turn, line);
+            DrawText(full, sx + 10, y, fs, Fade(col, r < 3 ? 1.0f : 0.75f));
+            y += fs + 5;
+        }
     }
 
     bbe_memorial_consume((BBEClient*)env->client);

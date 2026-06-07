@@ -647,6 +647,30 @@ static bb_action bbe_decode(Bloodbowl* env, int agent, const float* heads) {
     return env->legal[0];
 }
 
+// --- Spectator event feed ----------------------------------------------------
+// Lightweight render-feed hook (viewer sidebar): fired from c_step's event
+// sites with POD identifiers only — the RENDER thread formats text (the
+// memorial SIGSEGV lesson: never share strings across the env/render
+// threads). Training never registers it; the `if` is the entire cost.
+enum {
+    BBE_EV_BLOCK_DECL = 0, // a = actor slot, b = -1
+    BBE_EV_BLITZ_DECL,
+    BBE_EV_BLOCK_THROWN,   // a = attacker, b = defender
+    BBE_EV_DODGE,          // a = mover
+    BBE_EV_GFI,
+    BBE_EV_PICKUP_TRY,     // a = mover
+    BBE_EV_PICKUP_OK,
+    BBE_EV_PASS,           // a = passer
+    BBE_EV_HANDOFF,        // a = actor
+    BBE_EV_KNOCKDOWN,      // a = victim, b = causer window owner
+    BBE_EV_TD,             // a = scorer
+    BBE_EV_TURNOVER,       // a = team (0/1)
+};
+extern void (*bbe_feed_hook)(const Bloodbowl* env, int kind, int a, int b);
+void (*bbe_feed_hook)(const Bloodbowl* env, int kind, int a, int b) = 0;
+#define BBE_FEED(env, kind, a, b) \
+    do { if (bbe_feed_hook) bbe_feed_hook((env), (kind), (a), (b)); } while (0)
+
 // --- Demo-state bank (Backplay / chess-FEN curriculum) -----------------------
 // Shared, lazily loaded once per process (per TU — binding.c is the single
 // training TU, mirroring chess's SHARED_FEN_CURRICULUM in my_vec_init).
@@ -981,6 +1005,9 @@ static void bbe_count_action(Bloodbowl* env, bb_action act) {
         else if (act.arg == BB_ACT_BLITZ) env->ep_blitzes++;
         if (act.arg == BB_ACT_BLOCK || act.arg == BB_ACT_BLITZ) {
             env->ep_team_contact[m->decision_team & 1]++;
+            BBE_FEED(env, act.arg == BB_ACT_BLOCK ? BBE_EV_BLOCK_DECL
+                                                  : BBE_EV_BLITZ_DECL,
+                     -1, -1);
         }
         break;
     case BB_A_STEP: {
@@ -988,9 +1015,13 @@ static void bbe_count_action(Bloodbowl* env, bb_action act) {
         const bb_frame* top = m->stack_top ? &m->stack[m->stack_top - 1] : 0;
         if (top && top->proc == BB_PROC_MOVE && top->a < BB_NUM_PLAYERS) {
             const bb_player* p = &m->players[top->a];
-            if (p->moved >= p->ma) env->ep_gfi_attempts++;
+            if (p->moved >= p->ma) {
+                env->ep_gfi_attempts++;
+                BBE_FEED(env, BBE_EV_GFI, top->a, -1);
+            }
             if (bb_tackle_zones(m, BB_TEAM_OF(top->a), p->x, p->y) > 0) {
                 env->ep_dodge_attempts++;
+                BBE_FEED(env, BBE_EV_DODGE, top->a, -1);
             }
             // Ball-engagement axis: carrying the ball forward counts 1/step,
             // attempting a pickup counts 3 (rare, decisive events weigh more).
@@ -1004,6 +1035,7 @@ static void bbe_count_action(Bloodbowl* env, bb_action act) {
             if (top && top->proc == BB_PROC_MOVE && top->a < BB_NUM_PLAYERS) {
                 env->ep_team_ball[BB_TEAM_OF(top->a)] += 3;
                 env->pending_pickup_slot = top->a; // success judged post-apply
+                BBE_FEED(env, BBE_EV_PICKUP_TRY, top->a, -1);
             }
         }
         break;
@@ -1011,13 +1043,22 @@ static void bbe_count_action(Bloodbowl* env, bb_action act) {
     case BB_A_PASS_TARGET:
         env->ep_pass_attempts++;
         env->ep_team_ball[m->decision_team & 1] += 3;
+        BBE_FEED(env, BBE_EV_PASS,
+                 m->ball.state == BB_BALL_HELD ? m->ball.carrier : -1, -1);
         break;
-    case BB_A_CHOOSE_DIE:
+    case BB_A_HANDOFF_TARGET:
+        BBE_FEED(env, BBE_EV_HANDOFF,
+                 m->ball.state == BB_BALL_HELD ? m->ball.carrier : -1, -1);
+        break;
+    case BB_A_CHOOSE_DIE: {
         // Exactly one die pick per RESOLVED block (incl. the Frenzy second
         // block) — the clean denominator for knockdown-conversion claims
         // (panel: declarations include blitzes that never reach a block).
         env->ep_blocks_thrown++;
+        const bb_frame* bf = m->stack_top ? &m->stack[m->stack_top - 1] : 0;
+        BBE_FEED(env, BBE_EV_BLOCK_THROWN, bf ? bf->a : -1, bf ? bf->b : -1);
         break;
+    }
     default:
         break;
     }
@@ -1185,6 +1226,7 @@ static void c_step(Bloodbowl* env) {
             if (m->ball.state == BB_BALL_HELD &&
                 m->ball.carrier == (uint8_t)env->pending_pickup_slot) {
                 env->ep_pickup_success++;
+                BBE_FEED(env, BBE_EV_PICKUP_OK, env->pending_pickup_slot, -1);
             }
             env->pending_pickup_slot = -1;
         }
@@ -1213,6 +1255,9 @@ static void c_step(Bloodbowl* env) {
             int d = m->score[t] - env->score_prev[t];
             if (d > 0) {
                 scored = true;
+                BBE_FEED(env, BBE_EV_TD,
+                         m->ball.state == BB_BALL_HELD ? m->ball.carrier : -1,
+                         -1);
                 env->reward_ptr[t][0] += env->reward_td * (float)d;
                 env->reward_ptr[1 - t][0] -= env->reward_td * (float)d;
                 env->ep_return[t] += env->reward_td * (float)d;
