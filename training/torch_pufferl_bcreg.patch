@@ -1,5 +1,5 @@
 diff --git a/pufferlib/torch_pufferl.py b/pufferlib/torch_pufferl.py
-index 4cf6184..29bb538 100644
+index 4cf6184..ff66e2b 100644
 --- a/pufferlib/torch_pufferl.py
 +++ b/pufferlib/torch_pufferl.py
 @@ -46,6 +46,27 @@ def _entropy(logits):
@@ -281,7 +281,7 @@ index 4cf6184..29bb538 100644
                  self.actions[t] = action
                  self.logprobs[t] = logprob
                  self.rewards[t] = torch.as_tensor(r, device=device)
-@@ -270,13 +483,36 @@ class PuffeRL:
+@@ -270,13 +483,38 @@ class PuffeRL:
              learning_rate = lr_min + 0.5*(learning_rate - lr_min) * (1 + np.cos(np.pi * lr_ratio))
              self.optimizer.param_groups[0]['lr'] = learning_rate
  
@@ -291,7 +291,9 @@ index 4cf6184..29bb538 100644
 +        bc_coef = self.bc_coef0
 +        if bc_coef > 0 and self.bc_anneal and self.epoch > 0:
 +            bc_ratio = min(self.epoch / self.total_epochs, 1.0)
-+            bc_min = 0.1 * self.bc_coef0
++            # bc_coef_floor: fraction of bc_coef0 the cosine decays TO
++            # (default 0.1; 0 = full anchor release — the D45 test).
++            bc_min = float(self.config.get('bc_coef_floor', 0.1)) * self.bc_coef0
 +            bc_coef = bc_min + 0.5*(self.bc_coef0 - bc_min) * (1 + np.cos(np.pi * bc_ratio))
 +        # --- END LOCAL PATCH ------------------------------------------------
 +
@@ -318,7 +320,7 @@ index 4cf6184..29bb538 100644
  
          P = Profile
          prof.mark(0)
-@@ -293,7 +529,7 @@ class PuffeRL:
+@@ -293,7 +531,7 @@ class PuffeRL:
              prio_probs = (prio_weights + 1e-6)/(prio_weights.sum() + 1e-6)
              idx = torch.multinomial(prio_probs,
                  self.minibatch_segments, replacement=True)
@@ -327,7 +329,7 @@ index 4cf6184..29bb538 100644
  
              mb_obs = obs[idx]
              mb_actions = act[idx]
-@@ -304,6 +540,12 @@ class PuffeRL:
+@@ -304,6 +542,12 @@ class PuffeRL:
  
              prof.mark(1)
              logits, newvalue = self.policy(mb_obs)
@@ -340,7 +342,7 @@ index 4cf6184..29bb538 100644
              actions, newlogprob, entropy = sample_logits(logits, action=mb_actions)
              prof.mark(2)
              prof.elapsed(P.TRAIN_FORWARD, 1, 2)
-@@ -333,6 +575,22 @@ class PuffeRL:
+@@ -333,6 +577,22 @@ class PuffeRL:
  
              entropy_loss = entropy.mean()
              loss = pg_loss + config['vf_coef']*v_loss - config['ent_coef']*entropy_loss
