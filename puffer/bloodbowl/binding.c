@@ -83,6 +83,8 @@ static void apply_kwargs(Env* env, Dict* kwargs) {
     env->reward_possession = (float)kw(kwargs, "reward_possession", 0.0);
     // Rush tax per GFI square at declaration (suggested 0.01-0.02)
     env->reward_rush_cost = (float)kw(kwargs, "reward_rush_cost", 0.0);
+    // Backplay curriculum: scoring-proximal demo resets (0 = uniform)
+    env->demo_endzone_maxdist = (int)kw(kwargs, "demo_endzone_maxdist", 0.0);
     env->demo_reset_pct = (float)kw(kwargs, "demo_reset_pct", 0.0);
     env->exclude_team = (int)kw(kwargs, "exclude_team", -1.0);
     env->force_home_team = (int)kw(kwargs, "force_home_team", -1.0);

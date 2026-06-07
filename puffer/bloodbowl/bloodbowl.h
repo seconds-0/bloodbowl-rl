@@ -279,6 +279,13 @@ typedef struct {
     // opponent can't convert turnovers either), so potentials make rushing
     // free income and the policy GFI-spams (~17/ep observed; humans ~2-5).
     float reward_rush_cost;
+    // Backplay curriculum (D47): when >0, demo resets rejection-sample the
+    // bank for SCORING-PROXIMAL states — a standing carrier within this
+    // many squares of their endzone — so the policy experiences touchdowns
+    // densely before the start distribution expands backward. 0 = uniform
+    // bank sampling (default). Stages launched manually (6 -> 12 -> 0),
+    // like the k-anneal chain.
+    int demo_endzone_maxdist;
     // Demo-state reset curriculum (Backplay / chess fen_curric pattern,
     // docs/rl-best-practices.md hole #2): with probability demo_reset_pct
     // each episode starts from a uniformly drawn banked mid-game state
@@ -837,6 +844,27 @@ static void bbe_reset_match(Bloodbowl* env) {
                 env->demo_reset_pct) {
             int idx = (int)(bb_rng_next(&env->procgen) %
                             (uint32_t)bbe_state_bank_n);
+            // Backplay: rejection-sample for a standing carrier within
+            // demo_endzone_maxdist of their endzone; fall back to the last
+            // uniform draw if the bank tier is thin (loud via demo stats
+            // would lie — count fallbacks separately below).
+            if (env->demo_endzone_maxdist > 0) {
+                for (int try = 0; try < 256; try++) {
+                    const bb_match* cand = &bbe_state_bank[idx];
+                    int c = cand->ball.carrier;
+                    if (cand->ball.state == BB_BALL_HELD && c != BB_NO_PLAYER) {
+                        const bb_player* cp = &cand->players[c];
+                        if (cp->location == BB_LOC_ON_PITCH &&
+                            cp->stance == BB_STANCE_STANDING) {
+                            int d = cp->x - bb_endzone_x(BB_TEAM_OF(c));
+                            if (d < 0) d = -d;
+                            if (d <= env->demo_endzone_maxdist) break;
+                        }
+                    }
+                    idx = (int)(bb_rng_next(&env->procgen) %
+                                (uint32_t)bbe_state_bank_n);
+                }
+            }
             env->match = bbe_state_bank[idx];
             if (env->match.status == BB_STATUS_DECISION &&
                 env->match.stack_top > 0) {
