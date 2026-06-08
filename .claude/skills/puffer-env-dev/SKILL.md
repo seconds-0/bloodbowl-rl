@@ -141,10 +141,17 @@ into obs features (`O_VALID_FROM`/`O_VALID_TO` square lists) so the net can lear
 All-zero mask doesn't crash (uniform over -1e4 logits) but samples garbage — always
 leave ≥1 bit set (give BB an explicit end-turn/no-op action that is always legal).
 
-**Masks exist only in the native CUDA backend.** `pufferlib/torch_pufferl.py` (the
-`--slowly` / `--cpu` path) has zero mask plumbing — invalid actions WILL be sampled
-there, so `c_step` must tolerate any in-range action value (chess answers invalid picks
-with `reward_invalid_*` penalties, binding.c kwargs).
+**Masked sampling is now the default in BOTH backends** (D38, the unmasked-sampler
+bug: pre-fix torch runs played at illegal_frac 1.000 through the decode fallback —
+all intuitions from that era are rebased). Upstream `pufferlib/torch_pufferl.py`
+(the `--slowly` / `--cpu` path) still has zero mask plumbing, but our
+`training/torch_pufferl_bcreg.patch` adds it: the bindings expose the vec
+`action_mask` (cpu+gpu) and `apply_action_mask` does a per-head
+`masked_fill(-inf)` BEFORE rollout sampling, stores masks in experience, and
+re-applies them at train-time recompute (mask-consistent ratios/entropy, all-zero
+head-row guard). An UNPATCHED torch backend samples raw logits, so `c_step` must
+still tolerate any in-range action value (chess answers invalid picks with
+`reward_invalid_*` penalties, binding.c kwargs).
 
 ## 6. MultiDiscrete actions
 
@@ -163,19 +170,30 @@ env is **statically linked** into `pufferlib/_C.so` per build (`m.attr("env_name
 src/bindings.cu:510; `_resolve_backend` asserts it matches, pufferl.py:172-174).
 
 ```bash
+# (paths below are repo-root-relative; run the installer from repo root)
+# 1. "Register" = install the snapshot. NEVER symlink or hand-copy — use the installer:
+bash tools/install_puffer_env.sh           # cp -RL puffer/bloodbowl -> ocean/bloodbowl
+                                           # (+ puffer/config/bloodbowl.ini + stages the
+                                           # demo state bank), writes .content_hash
+bash tools/install_puffer_env.sh --check   # drift guard: ALL builds (incl. --fast/--local
+                                           # standalones) compile the installed SNAPSHOT,
+                                           # never puffer/ or engine/src — exit 1 = re-install
 cd vendor/PufferLib
-# 1. "Register" = create the directory + config. For our env, symlink out of the repo:
-ln -s ../../../engine ocean/bloodbowl        # or a puffer/bloodbowl dir holding binding.c + bloodbowl.h
-cp config/squared.ini config/bloodbowl.ini   # set [base] env_name = bloodbowl; add [env] keys
 # config discovery: load_config scans config/**/*.ini for env_name in [base] (pufferl.py:620-625)
 
 # 2. Iterate in pure C first (fastest builds, ASan on Linux):
 ./build.sh bloodbowl --local     # debug standalone from ocean/bloodbowl/bloodbowl.c (needs a main())
 ./build.sh bloodbowl --fast      # optimized standalone
 
-# 3. Training backend:
+# 3. Training backend. After ANY env code change the full liturgy (from repo root) is:
+#    bash tools/install_puffer_env.sh \
+#      && cd vendor/PufferLib && rm -rf build && ./build.sh bloodbowl --float
+#    NEVER skip the install (builds compile the snapshot, not puffer/) and NEVER
+#    skip `rm -rf build` — stale objects survive a plain rebuild and bite.
 ./build.sh bloodbowl             # CUDA backend (Linux + nvcc), bf16 by default
-./build.sh bloodbowl --float     # fp32 precision
+./build.sh bloodbowl --float     # fp32 — REQUIRED for the torch backend (bf16 build refuses
+                                 # to import; verify: python -c 'from pufferlib import _C;
+                                 # assert _C.precision_bytes==4')
 ./build.sh bloodbowl --debug     # -O0 -g
 ./build.sh bloodbowl --cpu       # Mac/CPU: torch-only backend (<200k sps, no masks)
 
@@ -265,6 +283,20 @@ pushed via `_C.set_agent_perm` / `_C.set_env_tags`; full layout diagram in
 12. **MY_ACTION_MASK must equal sum(ACT_SIZES)** — it's indexed by flattened logit offset.
 13. **raylib is always linked** — `c_render` may be a stub but must exist; keep
     rendering out of the training hot path (`client == NULL` until first render, chess).
+14. **Hash the env before/after every change** — the standalone has an FNV mode
+    (`puffer/bloodbowl/bloodbowl.c`) folding obs, action masks, legal-action
+    buffers (`legal_arg`/`legal_sq`/`n_legal`/`illegal`), and sampled actions
+    into one FNV-1a hash. Procedure (the install step is NOT optional — build.sh
+    compiles the installed snapshot, so skipping it hashes STALE code and a real
+    change reads as "no-op"):
+      bash tools/install_puffer_env.sh && cd vendor/PufferLib \
+        && ./build.sh bloodbowl --fast && ./bloodbowl --fnv --seed 42 100
+    The binary is `./bloodbowl` in vendor/PufferLib; run it FROM vendor/PufferLib
+    both times — the state bank resolves via the cwd-relative
+    `resources/bloodbowl/state_bank.bbs` and a missing bank is SILENT
+    (procgen-only episodes) and changes the hash. Same seed/episodes/cwd
+    before and after: intended-no-op refactor ⇒ identical hash; intended
+    obs/mask change ⇒ hash changes and NOTHING else does.
 
 ## 10. Where 4.0 differs from 3.0 articles online
 
@@ -299,20 +331,23 @@ surface, match() mechanics): `reference/vecenv-internals.md`.
   and BC warm starts. CUDA backend loads its OWN flat-fp32 .bin fine;
   state_dict-style .bins (BC pretrain output) need the converter noted in
   training/bc_pretrain.py before GPU warm-start.
-- **obs v3 = LINEAGE BREAK (cycle-2 integration, 2026-06-04).**
-  `BBE_OBS_SIZE` went 832 → 1612 (two 390-byte tackle-zone planes appended
-  after the unchanged 832 layout; offsets documented in
-  `puffer/bloodbowl/bloodbowl.h`). The encoder input dim is part of the
-  parameter count, so EVERY pre-cycle-2 checkpoint (CUDA flat blob
-  12,072,960 B; torch state_dicts incl. training/bc_v1.bin / bc_v15.bin) is
-  incompatible with the obs-v3 binding — they are archived in
-  `checkpoints-backup/`, never warm-start from them. The obs-v3 blob is
-  13,670,400 B (3,417,600 fp32); `training/convert_checkpoint.py` and
-  `tools/build_league.py` default to it, and converting an archived 832
-  artifact stays possible with an explicit `--obs-size 832` /
-  `--expect-bytes 12072960`. BC pairs must be .bbp v2 (re-extracted;
-  obs lineages never mix in one corpus) — current anchor checkpoint:
-  training/bc_v2.bin.
+- **Every obs bump = LINEAGE BREAK. Current: obs-v4, `BBE_OBS_SIZE` = 2782**
+  (v3 1612 + 3×390 decision-support probability planes; spec
+  `docs/obs-v4-spec.md`, offsets in `puffer/bloodbowl/bloodbowl.h`).
+  Lineage history: v2 832 → v3 1612 (tackle-zone planes) → v4 2782. The
+  encoder input dim is part of the parameter count, so checkpoints NEVER
+  cross lineages — pre-v4 artifacts are archived in `checkpoints-backup/`,
+  never warm-start from them. THREE OBS_SIZE sync points must agree
+  (static asserts catch 2 of 3): `BBE_OBS_SIZE` in `bloodbowl.h`,
+  `#define OBS_SIZE` in `binding.c`, and `training/convert_checkpoint.py`
+  (`DEFAULT_OBS_SIZE = 2782`; converting an older artifact needs an
+  explicit `--obs-size 1612` for v3 / `--obs-size 832` for v2 — binding.c's
+  literal once lagged at 1612 and the `_Static_assert` caught it exactly as
+  designed, D54). BC pairs never mix obs lineages in one corpus — current
+  corpus is 2,085,330 v4 pairs from 12,304 replays (`validation/pairs_v4`;
+  the `pairs` symlink on v4 boxes points at it). Current anchor lineage:
+  **bc_v4** (val exact 0.508; lives on the training boxes — local
+  `training/` only holds ≤ bc_v3b).
 
 ## BC-regularized PPO (local torch_pufferl.py patch)
 
@@ -324,6 +359,14 @@ state (= bc_pretrain v0). `bc_coef_anneal=1` cosine-decays bc_coef to 10%
 over total_timesteps. Dashboard/wandb keys: `loss/bc_loss`, `loss/bc_acc`,
 `loss/bc_coef`. TORCH BACKEND ONLY — the native CUDA trainer ignores bc_*.
 
+The same patch now also carries (a) **masked sampling** (`apply_action_mask`,
+D38 — see §5) and (b) **asymmetric training** via `[train] frozen_enemy_path`
+(D44): non-learner rows play a FROZEN policy (deepcopy + state_dict load, no
+grad, masked sampling, its own recurrent state), the learner alternates
+home/away by env parity, and PPO slices ratio/prio/batch math to learner rows
+only (`train_rows`). CLI: `--train.frozen-enemy-path <ckpt>`; empty (the
+`puffer/config/bloodbowl.ini` default) = symmetric self-play, upstream behavior.
+
 - Config keys live in `puffer/config/bloodbowl.ini` `[train]` (bc_coef
   default 0.0 = off and bit-identical to unpatched; bc_pairs_dir; bc_batch;
   bc_coef_anneal) and reach vendor via `tools/install_puffer_env.sh`.
@@ -334,10 +377,25 @@ over total_timesteps. Dashboard/wandb keys: `loss/bc_loss`, `loss/bc_acc`,
   (proves off-mode bit-identity vs pristine HEAD + on-mode bc_loss decrease).
   `tools/run_bcreg.sh` auto-applies the patch if the marker is missing.
 - Launch recipe: `tools/run_bcreg.sh` — torch backend on the CUDA box
-  (`./build.sh bloodbowl --float`; bf16 default build refuses to import),
-  `--selfplay.enabled 0` (pool is native-only), warm start from
-  training/bc_v1.bin (state_dict loads directly in the torch backend — no
-  converter), B-profile reward knobs, bc_coef 1.0 annealed.
+  (`rm -rf build && ./build.sh bloodbowl --float`; bf16 default build refuses
+  to import), `--selfplay.enabled 0` (pool is native-only), warm start from a
+  CURRENT-lineage anchor (state_dict loads directly in the torch backend — no
+  converter; the script's hardcoded training/bc_v1.bin is dead obs-v2 lineage,
+  pass a bc_v4 checkpoint), B-profile reward knobs, bc_coef 1.0 annealed.
+- Current arms launch via `tools/run_synthesis_c.sh`, run ON the box from the
+  repo root. Contract: `ANCHOR=<path>` `STEPS=<n>` env vars + extra
+  `--env.*` / `--train.frozen-enemy-path <ckpt>` args forwarded via `"$@"`.
+  **In the v4 era ANCHOR is effectively MANDATORY**: the script's default
+  (training/bc_v3b.bin) is dead obs-v3 lineage, and its size guard
+  (`> 13 MB`, run_synthesis_c.sh:31) only rejects the obs-832 era — a
+  13.68 MB v3 state_dict passes the guard and then fails against the
+  2782-input net. The script also refuses to double-launch, hard-fails on a
+  missing/small demo bank, and prints LIVE / TRAINER DIED at ~40s — always
+  read that line.
+- Warm relaunch: checkpoints land under `vendor/PufferLib/checkpoints/`
+  (`[base] checkpoint_dir` in config/default.ini) per run dir; pick the
+  anchor by the STEP NUMBER in the filename (e.g. 0000014942470144.bin) —
+  **newest mtime ≠ highest step across run dirs.**
 
 ## Heterogeneous league seeding (local selfplay.py patch)
 

@@ -96,6 +96,18 @@ reportIds observed in `example_input/1559380.json` with real payload shapes (ful
 
 ## 5. Curation recipe for BC corpus
 
+**Current corpus (obs-v4 era, 2026-06): 12,304 replays → 2,085,330 .bbp pairs**
+(D53; `validation/pairs_v4`, with the `pairs` symlink on v4 training boxes
+pointing at it). The ~27K-file raw replay cache (`validation/replay_cache/`
+layout, fetch_replays.py header) has its SOLE COPY on the bb-japan-native box —
+never re-scrape what is already cached there. Extracted pairs are
+obs-lineage-specific: an obs bump (v3→v4 etc.) means re-extracting the whole
+corpus from the cached replays — entry point `validation/extract_pairs.py`,
+run on bb-japan-native where the cache lives; lineages never mix in one
+corpus. The demo STATE bank (`validation/build_state_bank.py` → `bank.bbs`)
+stores engine `bb_match` states, NOT observations — it is obs-independent and
+does NOT need rebuilding on an obs bump.
+
 Filter on the cheap match JSON **before** downloading any replay:
 
 1. `division` / `divisionId` — pick the ladder you want (example file: `divisionId: 5, division: "League"`; Competitive/Blackbox are the high-signal ladders). Filter on the `division` string.

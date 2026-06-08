@@ -101,7 +101,19 @@ re-derive by hand; (b) RNG misuse (reuse/bias) — check `bb_rng` consumption co
 6. **Mask-soundness** — `step()` accepts action ⟺ bit set in legal mask. Metamorphic
    half: sampled masked-out actions are rejected *without state mutation* (memcmp).
 7. **Dice-script conformance** — injected script consumed exactly; over/under-read = bug.
-8. **Determinism** — same seed + action trace ⇒ identical state hash.
+8. **Determinism** — same seed + action trace ⇒ identical state hash. The
+   binding-level harness for this is the standalone's `--fnv` mode
+   (`puffer/bloodbowl/bloodbowl.c`): from repo root,
+   `bash tools/install_puffer_env.sh && cd vendor/PufferLib &&
+   ./build.sh bloodbowl --fast && ./bloodbowl --fnv --seed 42 100` — folds
+   obs, action masks, legal-action buffers, and sampled actions into one
+   FNV-1a hash. The install step is mandatory (build.sh compiles the
+   installed snapshot, not puffer/) and the run must happen from
+   vendor/PufferLib with the same seed/episode count both times (the state
+   bank resolves cwd-relative; a missing bank silently changes the hash).
+   Run before AND after every env change: intended-no-op refactor ⇒
+   identical hash; intended obs/mask change ⇒ hash changes and nothing
+   else does. Full liturgy: puffer-env-dev skill, footgun 14.
 9. **Procedure-stack sanity** — bounded depth; empty between activations; no leaks.
 10. **Stat bounds** — MA/ST/AG/PA/AV within rulebook ranges; score monotonic.
 
