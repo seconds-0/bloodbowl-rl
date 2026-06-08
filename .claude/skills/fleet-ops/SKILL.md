@@ -676,3 +676,36 @@ Procedure:
   the teacher (max_size 200 never fires).
 
 ---
+
+## CPU thread-pool cap (D59) — REQUIRED on every launch, automatic via the scripts
+
+**The trap:** Vast boxes report VISIBLE logical CPUs via `nproc` (one box reads
+**255**) but cap actual CPU TIME via a cgroup CFS quota (that same box: **61**
+CPUs). With `OMP_NUM_THREADS` unset, PyTorch + OpenBLAS auto-size their intra-op
+pools to `nproc`, spawning hundreds of threads that thrash on the quota — a
+**measured 5x SPS loss** (114K vs 592K on identical configs; fixed → 500K). The
+env-stepping OMP is independent (PufferLib vec `num_threads`) and is NOT the cause.
+
+**The fix is `tools/cpu_cap.sh`** — the single source of truth. It derives the
+cgroup quota (v1 `cpu.cfs_quota_us` AND v2 `cpu.max`, clamped ≤ nproc) and exports
+`OMP_NUM_THREADS` / `OPENBLAS_NUM_THREADS` / `MKL_NUM_THREADS` /
+`NUMEXPR_NUM_THREADS`. It is **already sourced automatically by**:
+`tools/run_synthesis_c.sh`, `tools/run_native_asym.sh`, `fleet.sh launch`, and
+(via `gpu_box_setup.sh` → `~/.bashrc`) any interactive ssh session.
+
+**Verify it took** after any launch:
+```bash
+pid=$(pgrep -f 'puffer [t]rain' | head -1)
+tr '\0' '\n' < /proc/$pid/environ | grep OMP_NUM_THREADS   # should = the quota, NOT nproc
+ls /proc/$pid/task | wc -l                                  # hundreds = thrash; ~150-190 = healthy
+```
+
+**If you EVER launch `puffer train` by hand outside the scripts**, source the cap first:
+```bash
+cd /root/bloodbowl-rl && . tools/cpu_cap.sh && cd vendor/PufferLib && puffer train ...
+```
+
+**Quick health triage** for a slow box: compare `nproc` to the cgroup quota
+(`awk '{print $1/$2}' /sys/fs/cgroup/cpu.max` or
+`echo $(($(cat /sys/fs/cgroup/cpu/cpu.cfs_quota_us)/100000))`). If nproc ≫ quota and
+the trainer has >300 threads, the cap didn't apply — re-source and relaunch.

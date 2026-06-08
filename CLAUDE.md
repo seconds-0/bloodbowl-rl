@@ -62,6 +62,7 @@ RL training harness for **Blood Bowl Third Season Edition (BB2025)**: determinis
 8. raylib `InitWindow` segfaults when the Mac display is asleep — `spectate.sh` gates on display-awake.
 9. Monitor/SSH loops need `ssh -n` and `ConnectTimeout`.
 10. "Newest checkpoint" by mtime ≠ highest step across run dirs — check the step number in the filename before warm-relaunching.
+11. **CPU thread cap (D59):** `nproc` (visible CPUs) ≫ cgroup quota (allowed CPUs) on some boxes → unpinned torch/BLAS pools thrash (5x SPS loss). `tools/cpu_cap.sh` fixes it and is auto-sourced by all launch scripts + `~/.bashrc`; any manual `puffer train` must `. tools/cpu_cap.sh` first. Verify: live trainer's `OMP_NUM_THREADS` == quota, thread count ~150-190 not hundreds.
 
 ## Conventions
 

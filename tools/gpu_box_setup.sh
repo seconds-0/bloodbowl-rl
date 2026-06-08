@@ -38,6 +38,13 @@ if [ -n "$CUDNN_LIB" ] && [ -f "$CUDNN_LIB/libcudnn.so.9" ] && [ ! -e "$CUDNN_LI
 fi
 ./build.sh bloodbowl
 
+# D59: persist the CPU thread cap for INTERACTIVE/manual launches too (the
+# run scripts source tools/cpu_cap.sh themselves; this covers a human/
+# successor who sshes in and runs `puffer train` by hand). Idempotent.
+if ! grep -q 'bloodbowl-rl/tools/cpu_cap.sh' ~/.bashrc 2>/dev/null; then
+    echo '[ -f /root/bloodbowl-rl/tools/cpu_cap.sh ] && . /root/bloodbowl-rl/tools/cpu_cap.sh' >> ~/.bashrc
+fi
+
 echo
-echo "ready. smoke run:"
+echo "ready. smoke run (cpu cap auto-applies via run scripts or ~/.bashrc):"
 echo "  cd vendor/PufferLib && puffer train bloodbowl --train.total-timesteps 20000000"
