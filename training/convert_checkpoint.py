@@ -80,9 +80,10 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # Mirrors ACT_SIZES in puffer/bloodbowl/binding.c and bc_pretrain.py.
 DEFAULT_ACT_SIZES = (30, 33, 391)
-# BBE_OBS_SIZE (obs v3). Legacy obs-v2 (832) checkpoints are a different
-# parameter count — convert them with an explicit --obs-size 832.
-DEFAULT_OBS_SIZE = 1612
+# BBE_OBS_SIZE (obs v4, decision-support planes). Older lineages are a
+# different parameter count — convert with an explicit --obs-size:
+# obs-v3 (TZ planes) = 1612, obs-v2 = 832.
+DEFAULT_OBS_SIZE = 2782
 LEGACY_OBS_SIZE = 832
 DEFAULT_CONFIG = os.path.join(ROOT, "puffer", "config", "bloodbowl.ini")
 
