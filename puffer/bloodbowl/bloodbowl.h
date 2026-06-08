@@ -1010,6 +1010,14 @@ static void bbe_finish_episode(Bloodbowl* env) {
                                  : 0;
     env->log.blocks += (float)env->ep_blocks;
     env->log.blocks_thrown += (float)env->ep_blocks_thrown;
+    if (env->ep_blocks_thrown > 0) {
+        float tb = (float)env->ep_blocks_thrown;
+        env->log.block_1d_frac += (float)env->ep_block_tier[0] / tb;
+        env->log.block_2d_frac += (float)env->ep_block_tier[1] / tb;
+        env->log.block_3d_frac += (float)env->ep_block_tier[2] / tb;
+        env->log.block_2dred_frac += (float)env->ep_block_tier[3] / tb;
+        env->log.block_3dred_frac += (float)env->ep_block_tier[4] / tb;
+    }
     env->log.pickup_success += (float)env->ep_pickup_success;
     {
         int turns = env->ep_turns[0] + env->ep_turns[1];
