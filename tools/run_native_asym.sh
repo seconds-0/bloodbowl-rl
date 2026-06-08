@@ -285,6 +285,28 @@ echo "tag=$TAG steps=$STEPS warm=${WARM:-<fresh>} log=$LOG"
 # economy/stage knobs via trailing args (they append last and win).
 WARM_ARGS=()
 [ -n "${WARM:-}" ] && WARM_ARGS=(--load-model-path "$WARM")
+# --- CPU thread cap (D59): cap BLAS/torch pools to the cgroup CPU quota, not
+# the visible nproc. On shared boxes nproc can be 255 while the container
+# only gets ~61 CPUs; unpinned, torch/OpenBLAS spawn nproc-wide pools and
+# thrash (measured 5x SPS loss). The env-stepping OMP is independent (vec
+# num_threads). Safe everywhere: caps to quota, never below 1.
+_quota=0
+if [ -r /sys/fs/cgroup/cpu.max ]; then            # cgroup v2
+  read _q _p < /sys/fs/cgroup/cpu.max
+  [ "$_q" != "max" ] && _quota=$(( _q / _p ))
+fi
+if [ "${_quota:-0}" -lt 1 ] && [ -r /sys/fs/cgroup/cpu/cpu.cfs_quota_us ]; then  # cgroup v1
+  _q=$(cat /sys/fs/cgroup/cpu/cpu.cfs_quota_us); _p=$(cat /sys/fs/cgroup/cpu/cpu.cfs_period_us)
+  [ "${_q:-0}" -gt 0 ] && _quota=$(( _q / _p ))
+fi
+[ "${_quota:-0}" -ge 1 ] || _quota=$(nproc)
+[ "$_quota" -gt "$(nproc)" ] && _quota=$(nproc)
+export OMP_NUM_THREADS="$_quota"
+export OPENBLAS_NUM_THREADS="$_quota"
+export MKL_NUM_THREADS="$_quota"
+export NUMEXPR_NUM_THREADS="$_quota"
+echo "cpu thread cap: $_quota (nproc=$(nproc), quota-derived)"
+
 nohup puffer train bloodbowl --tag "$TAG" \
   --selfplay.enabled 1 \
   --selfplay.league-preseed "$POOL" \
