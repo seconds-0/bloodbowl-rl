@@ -309,7 +309,8 @@ static void eval_pool(const ev_ctx* c, int nd, int def_chooses, int carrying,
     *out = (ev_vec){0};
     float w = 1.0f / (float)total;
     for (int pool = 0; pool < total; pool++) {
-        int d[3], rem = pool;
+        int d[3] = {0, 0, 0}; // gcc -Werror=maybe-uninitialized
+        int rem = pool;
         for (int k = 0; k < nd; k++) {
             d[k] = rem % 6 + 1;
             rem /= 6;
