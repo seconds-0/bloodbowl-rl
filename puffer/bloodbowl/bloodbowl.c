@@ -69,6 +69,8 @@ static void st_frame_param_kinds(int proc, int* a_is_slot, int* b_is_slot) {
 
 // Validate both agents' encoded observations against the current decision
 // state. Called when env obs/masks correspond to env->match (loop top).
+static long st_v4_b_bytes, st_v4_a_bytes;
+
 static void st_check_obs(const Bloodbowl* env) {
     const bb_match* m = &env->match;
     if (m->status != BB_STATUS_DECISION || m->stack_top == 0) return;
@@ -97,6 +99,42 @@ static void st_check_obs(const Bloodbowl* env) {
         // Review M14's exact repro: at every ACTIVATE decision (TEAM_TURN on
         // top, a = team id 0/1) BOTH agents must see "no slot" — the away
         // agent used to see "opponent row 17" for the home team's turn.
+        // Obs-v4 plane invariants (docs/obs-v4-spec.md): planes belong to
+        // the DECIDING agent at MOVE-proc decisions only; fill counts must
+        // track the legal list (B bytes <= legal steps; A nonempty iff
+        // block targets legal — min realistic P(def down) is ~3%, byte 7).
+        {
+            const unsigned char* o = env->obs_ptr[agent];
+            int bfill = 0, afill = 0;
+            for (int k = 0; k < BBE_TZ_PLANE; k++) {
+                if (o[BBE_B_OFF + k]) bfill++;
+                if (o[BBE_A1_OFF + k] || o[BBE_A2_OFF + k]) afill++;
+            }
+            int deciding = (m->decision_team & 1) == agent;
+            int moveproc = top->proc == BB_PROC_MOVE && top->a < BB_NUM_PLAYERS;
+            if (!deciding || !moveproc) {
+                ST_CHECK(bfill == 0 && afill == 0,
+                         "v4 planes filled out of context (proc %d agent %d "
+                         "deciding %d: B=%d A=%d)",
+                         top->proc, agent, deciding, bfill, afill);
+            } else {
+                int steps = 0, tgts = 0;
+                for (int i = 0; i < env->n_legal; i++) {
+                    if (env->legal[i].type == BB_A_STEP) steps++;
+                    if (env->legal[i].type == BB_A_BLOCK_TARGET) tgts++;
+                }
+                ST_CHECK(bfill <= steps, "plane B overfilled (%d > %d legal)",
+                         bfill, steps);
+                ST_CHECK(afill <= tgts, "plane A overfilled (%d > %d legal)",
+                         afill, tgts);
+                ST_CHECK(steps == 0 || bfill > 0,
+                         "steps legal but plane B empty (%d steps)", steps);
+                ST_CHECK(tgts == 0 || afill > 0,
+                         "block targets legal but plane A empty (%d)", tgts);
+                st_v4_b_bytes += bfill;
+                st_v4_a_bytes += afill;
+            }
+        }
         if (top->proc == BB_PROC_TEAM_TURN) {
             ST_CHECK(b[6] == 0, "TEAM_TURN leaked team id as slot %d to agent %d",
                      b[6], agent);
@@ -288,7 +326,11 @@ static int bbe_selftest(uint64_t seed, int episodes) {
         ST_CHECK(env.match.status == BB_STATUS_DECISION && env.n_legal > 0,
                  "env did not reset to a fresh decision after ERROR reset");
     }
-    printf("bloodbowl selftest: %d episodes, %d failure(s)\n", done, st_failures);
+    ST_CHECK(st_v4_b_bytes > 0 && st_v4_a_bytes > 0,
+             "v4 planes never exercised (B=%ld A=%ld)", st_v4_b_bytes,
+             st_v4_a_bytes);
+    printf("bloodbowl selftest: %d episodes, %d failure(s), v4 planes B=%ld A=%ld\n",
+           done, st_failures, st_v4_b_bytes, st_v4_a_bytes);
     return st_failures ? 1 : 0;
 }
 

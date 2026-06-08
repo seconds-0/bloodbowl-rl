@@ -5,7 +5,7 @@
 // engine to the next decision, and emits observations + per-head legality
 // masks. Episodes are full matches over procedurally generated rosters.
 //
-// Observation (uint8, BBE_OBS_SIZE = 1612B, obs v3), egocentric: each agent
+// Observation (uint8, BBE_OBS_SIZE = 2782B, obs v4), egocentric: each agent
 // sees its own players first and the pitch x-mirrored for the away coach, so
 // "forward" is always +x. Layout (offsets from the BBE_* macros below):
 //   [0..767]   32 players x BBE_PLAYER_BYTES (24): rows 0-15 = my team,
@@ -93,7 +93,7 @@
 
 #define BBE_PLAYER_BYTES 24    // 11 stat/state bytes + 12 skill-id slots + TZ byte
 #define BBE_SKILL_SLOTS 12     // >= max base-roster skills (10) + procgen cap
-#define BBE_OBS_SIZE 1612      // 32*24 players + 16 ball/ctx + 48 scalars + 2*390 TZ planes
+#define BBE_OBS_SIZE 2782      // v3 1612 + 3*390 decision-support planes (obs v4)
 #define BBE_CTX_OFF (BB_NUM_PLAYERS * BBE_PLAYER_BYTES) // 768
 #define BBE_SCALAR_OFF (BBE_CTX_OFF + 16)               // 784
 #define BBE_TZ_OFF (BBE_SCALAR_OFF + 48)                // 832
@@ -111,8 +111,15 @@ _Static_assert(BBE_HEAD_TYPE == BB_A_TYPE_COUNT,
 _Static_assert(BBE_HEAD_SQ == BB_PITCH_LEN * BB_PITCH_WID + 1,
                "square head out of sync with pitch dimensions");
 _Static_assert(BBE_TZ_OFF == BBE_SCALAR_OFF + 48, "obs layout out of sync");
-_Static_assert(BBE_OBS_SIZE == BBE_TZ_OFF + 2 * BBE_TZ_PLANE,
-               "obs size out of sync with the TZ-plane layout");
+// Obs-v4 decision-support planes (docs/obs-v4-spec.md): exact outcome
+// probabilities for the pending decision's candidates — A1/A2 block
+// P(def down)/P(att down) from bb_blockev's closed form, B step-success
+// from the move proc's own test math. Probabilities, never values.
+#define BBE_A1_OFF (BBE_TZ_OFF + 2 * BBE_TZ_PLANE)  // 1612
+#define BBE_A2_OFF (BBE_A1_OFF + BBE_TZ_PLANE)      // 2002
+#define BBE_B_OFF (BBE_A2_OFF + BBE_TZ_PLANE)       // 2392
+_Static_assert(BBE_OBS_SIZE == BBE_B_OFF + BBE_TZ_PLANE,
+               "obs size out of sync with the v4 plane layout");
 _Static_assert(BB_SKILL_COUNT <= 254, "skill id + 1 must fit a byte");
 
 // Engine-compat stamp for demo-state bank files (.bbs "BBS1": written by
@@ -557,6 +564,38 @@ static void bbe_encode_obs(Bloodbowl* env, int agent) {
             for (int x = 0; x < BB_PITCH_LEN; x++) {
                 out_my[x] = my_row[BB_PITCH_LEN - 1 - x];
                 out_op[x] = op_row[BB_PITCH_LEN - 1 - x];
+            }
+        }
+    }
+
+    // Obs-v4 planes: only for the DECIDING agent (zero otherwise), only at
+    // MOVE-proc decisions whose legal list offers steps / block targets.
+    // x is ego-mirrored exactly like the TZ planes above.
+    if (m->decision_team == me && top && top->proc == BB_PROC_MOVE &&
+        top->a < BB_NUM_PLAYERS && env->n_legal > 0) {
+        int mover = top->a;
+        int is_blitz = top->b == BB_ACT_BLITZ;
+        unsigned char* a1 = o + BBE_A1_OFF;
+        unsigned char* a2 = o + BBE_A2_OFF;
+        unsigned char* bp = o + BBE_B_OFF;
+        for (int i = 0; i < env->n_legal; i++) {
+            bb_action act = env->legal[i];
+            if (act.type != BB_A_STEP && act.type != BB_A_BLOCK_TARGET) {
+                continue;
+            }
+            int ex = me == BB_HOME ? act.x : (BB_PITCH_LEN - 1 - act.x);
+            int idx = act.y * BB_PITCH_LEN + ex;
+            if (act.type == BB_A_BLOCK_TARGET) {
+                int def = bb_slot_at(m, act.x, act.y);
+                if (def >= 0) {
+                    bb_blockev ev;
+                    bb_block_ev(m, mover, def, is_blitz, NULL, &ev);
+                    a1[idx] = (unsigned char)(ev.p_def_down * 255.0f + 0.5f);
+                    a2[idx] = (unsigned char)(ev.p_att_down * 255.0f + 0.5f);
+                }
+            } else {
+                bp[idx] = (unsigned char)bb_step_success_p255(
+                    m, mover, act.x, act.y, is_blitz);
             }
         }
     }

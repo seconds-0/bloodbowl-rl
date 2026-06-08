@@ -93,6 +93,10 @@ static inline bool bb_own_half_x(int team, int x) {
 // style target-number test with modifiers. Natural 1 always fails, natural 6
 // always succeeds — callers compare the raw die separately.
 int bb_test_target(int stat_target, int modifiers);
+// Obs-v4 decision support: P(x255) of slot stepping to (to_x,to_y) — the
+// rush/dodge/pickup tests the move proc would push (same hook math). Pure.
+int bb_step_success_p255(const bb_match* m, int slot, int to_x, int to_y,
+                         int is_blitz);
 
 
 // Casualty telemetry (spectator memorial / eval coroners): fired by

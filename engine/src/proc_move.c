@@ -973,3 +973,43 @@ static void move_apply(bb_match* m, bb_action a, bb_rng* rng) {
 }
 
 const bb_proc_vtable bb_proc_move_vtable = {move_advance, move_legal, move_apply};
+
+// --- Obs-v4 decision support (docs/obs-v4-spec.md) ---------------------------
+// Success probability (x255) of `slot` stepping to (to_x, to_y): the product
+// of the rush / dodge / pickup tests the STEP apply path above would push,
+// each built from the SAME bb_ctx + bb_hook_mods + bb_test_target math (no
+// modifier law duplicated). Pure — no RNG, no mutation. Tentacles excluded
+// (opponent-conditional pre-move interrupt, not a test the mover rolls).
+// Nat-1/nat-6 law bounds each test's probability to [1/6, 5/6].
+int bb_step_success_p255(const bb_match* m, int slot, int to_x, int to_y,
+                         int is_blitz) {
+    const bb_player* p = &m->players[slot];
+    float prob = 1.0f;
+    if (p->moved >= p->ma) {
+        bb_ctx rc = {BB_TEST_RUSH, (uint8_t)slot, BB_NO_PLAYER, (uint8_t)slot,
+                     (int8_t)p->x, (int8_t)p->y, (int8_t)to_x, (int8_t)to_y,
+                     -1, (uint8_t)is_blitz};
+        int rmod = bb_hook_mods((bb_match*)m, &rc);
+        if (m->weather == BB_WEATHER_BLIZZARD) rmod -= 1;
+        prob *= (float)(7 - bb_test_target(2, rmod)) / 6.0f;
+    }
+    if (bb_tackle_zones(m, BB_TEAM_OF(slot), p->x, p->y) > 0) {
+        bb_ctx c = {BB_TEST_DODGE, (uint8_t)slot, BB_NO_PLAYER, (uint8_t)slot,
+                    (int8_t)p->x, (int8_t)p->y, (int8_t)to_x, (int8_t)to_y,
+                    -1, (uint8_t)is_blitz};
+        int mod = -bb_tackle_zones(m, BB_TEAM_OF(slot), to_x, to_y) +
+                  bb_hook_mods((bb_match*)m, &c);
+        prob *= (float)(7 - bb_test_target(p->ag, mod)) / 6.0f;
+    }
+    if (m->ball.state == BB_BALL_ON_GROUND && m->ball.x == to_x &&
+        m->ball.y == to_y) {
+        bb_ctx pc = {BB_TEST_PICKUP, (uint8_t)slot, BB_NO_PLAYER, (uint8_t)slot,
+                     (int8_t)to_x, (int8_t)to_y, (int8_t)to_x, (int8_t)to_y,
+                     -1, 0};
+        int mod = -bb_tackle_zones(m, BB_TEAM_OF(slot), to_x, to_y);
+        if (m->weather == BB_WEATHER_RAIN) mod -= 1;
+        mod += bb_hook_mods((bb_match*)m, &pc);
+        prob *= (float)(7 - bb_test_target(p->ag, mod)) / 6.0f;
+    }
+    return (int)(prob * 255.0f + 0.5f);
+}
