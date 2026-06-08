@@ -404,3 +404,275 @@ tournament, (C) restart after credit-out. Stalls/wrong-guesses found and fixed a
 9. Minor: knob-name mapping (underscore env names vs `--env.` dash CLI form), LOG
    default, "k-half" defined, restart-doesn't-resume-training, ssh host/port can
    change across stop/start.
+
+
+---
+
+## 11. Native anchor-free architecture (the 4x path)
+
+The production RL architecture as of D57 (verified live: `profile-v4-native-asym` on
+box-1, 2.1M SPS vs torch's 0.6–0.77M). Native CUDA backend, **no BC aux loss**, frozen
+`bc_v4` teacher injected through the selfplay league pool and **provably pinned** for
+the whole run (Audit 1, 2026-06-08). Read this whole section before launching — the
+pinning only works if every knob below is set exactly. The launch script
+`tools/run_native_asym.sh` automates almost all of it; prefer the script and read its
+output rather than re-deriving the checks by hand.
+
+### When native vs torch
+
+- **Native CUDA backend = ALL RL stages.** Curriculum stages, asymmetric runs,
+  frozen-teacher runs, tournaments — everything that is "train the policy with PPO"
+  runs native. It is ~4x faster, and the selfplay pool / frozen banks and
+  `puffer match` are CUDA-backend-only anyway (selfplay.py raises on any other
+  backend).
+- **Torch backend = ONLY two jobs:** (1) training new `bc_vN` anchors
+  (`training/bc_pretrain.py` is torch-side), and (2) aux-loss research — any
+  experiment that needs the BC regularizer or other torch-only loss terms.
+- Do not "just use torch because the checkpoint is torch-format" — convert instead
+  (see checkpoint formats below).
+
+### Build difference — one backend per box (FOOTGUN)
+
+- **Native build:** `cd vendor/PufferLib && rm -rf build && ./build.sh bloodbowl` —
+  **plain, NO `--float`**. Plain = bf16 native CUDA artifact.
+- **Torch build:** same but **with `--float`** (§3c; `--float` is required for
+  `--slowly`/torch and forfeits the 4x).
+- **The two artifacts are MUTUALLY EXCLUSIVE on a box.** Both builds write the SAME
+  output files (`pufferlib/_C<EXT_SUFFIX>.so` and `build/bindings.o` — see build.sh):
+  rebuilding for one backend silently replaces the other's artifact, and the other
+  backend's trainer dies (or worse, misbehaves) at its NEXT launch — possibly days
+  later, long after you forgot the rebuild. **Rule: one backend per box.** If a box
+  runs native arms, never `--float`-build on it; do torch work (bc_vN training) on a
+  designated torch box. If you must flip a box, kill its trainer first, rebuild, and
+  treat it as converted — update the box's role in §1.
+- Which build is installed (the script checks this for you):
+  `cd vendor/PufferLib && python3 -c "from pufferlib import _C; print(_C.precision_bytes)"`
+  → `2` = native bf16, `4` = `--float`/torch build, import error = not built.
+- The §3c rules still apply unchanged: `install_puffer_env.sh` + `--check` before any
+  build, never skip `rm -rf build`.
+
+### Pre-launch: the vendored patches (fresh-re-clone footgun)
+
+`vendor/` is gitignored — a re-clone or vendor refresh silently loses the local
+patches this architecture depends on. `run_native_asym.sh` does NOT guard all of
+these (run_league.sh does — same machinery); check them yourself after any re-clone,
+from `vendor/PufferLib`:
+
+- `grep -q league_preseed pufferlib/selfplay.py` — if missing:
+  `git apply ../../training/selfplay_league.patch`.
+- `grep -q '^league_preseed' config/bloodbowl.ini` — if missing, refresh:
+  `cp ../../puffer/config/bloodbowl.ini config/bloodbowl.ini`. (puffer's
+  `load_config` only accepts CLI args for keys present in the ini — without this key
+  the `--selfplay.league-preseed` flag itself is rejected.)
+- `grep -q 'Warm-started training from' pufferlib/pufferl.py` — the warm-start patch;
+  required for `WARM`. Reapply per `.claude/skills/puffer-env-dev/SKILL.md`.
+
+### Launch — `tools/run_native_asym.sh` (the TEACHER/WARM contract)
+
+Run ON the box from `/root/bloodbowl-rl`:
+
+```bash
+TAG=<run-tag> TEACHER=training/bc_v4_cuda.bin WARM=<ckpt_cuda.bin> bash tools/run_native_asym.sh [trailing puffer args...]
+```
+
+Env-var contract (read the script header for the full text):
+
+- `TAG=<name>` — **REQUIRED.** Also names the default pool dir
+  (`training/league_$TAG`) and default log (`/tmp/$TAG.log`).
+- `TEACHER=<path>` — the frozen teacher's **CUDA flat blob** (default
+  `training/bc_v4_cuda.bin`). The script builds/refreshes the league preseed dir
+  around it: copies the blob in, sweeps dead learner snapshots from earlier attempts,
+  and writes `league_seeds.json` with `expected_bytes` set to the blob's ACTUAL byte
+  size. `expected_bytes` is **mandatory** — it is the Python-side guard against the
+  C loader's silent-keep-old-weights failure mode (see TROUBLESHOOTING). bc anchors
+  live PER-BOX only (`fleet.sh setup` excludes `training/*.bin`) — ship box-to-box
+  via `ssh -A` (§4); if a box only has `bc_v4.bin` (torch), convert:
+  `python training/convert_checkpoint.py --to-cuda training/bc_v4.bin -o training/bc_v4_cuda.bin`
+  (obs-size default 2782 is correct for v4).
+- `WARM=<path>` — optional learner warm-start **CUDA flat blob** (becomes
+  `--load-model-path`). Same lineage rules as §3b; v3-lineage blobs are input-shape
+  incompatible with v4, and newest mtime ≠ highest step — read the step number in
+  the filename.
+- `STEPS=` (default 30B) / `LOG=` as in §3a. Asymmetric/frozen-bank runs
+  **overshoot STEPS ~1.5x** (30B requested ≈ 45B run) — known, benign, don't kill it.
+- `POOL=` (override the pool dir), `EXPECT_BYTES=` (default 16066560 = obs-v4;
+  override only for a genuinely new architecture), `SKIP_DRIFT_CHECK=1` (skip the
+  `install_puffer_env.sh --check` gate — only for known-cosmetic drift).
+- Trailing args pass through to `puffer train` LAST and puffer's CLI is last-wins —
+  that is the override mechanism for reward/stage knobs, **and it also means a
+  trailing `--selfplay.swap-winrate` / `--selfplay.opp-timeout-steps` /
+  `--selfplay.snapshot-interval` would silently UN-PIN the teacher. Never pass the
+  pinning knobs as trailing args.**
+
+Both TEACHER and WARM must already be CUDA flat blobs — the script rejects torch
+zips (`PK` magic) and wrong sizes (16,066,560 B = current v4; 13,670,400 = v3
+lineage; 12,072,960 = dead obs-832 — both incompatible).
+
+The script then runs its own guards (one-trainer-per-box, source drift, native-build
+precision check, blob checks, demo bank presence) and at **40s** prints either
+`LIVE: pid ...` or `TRAINER DIED` + log tail, and greps the log for
+`pufferl_load_frozen_bank` stderr (any hit = the C loader REFUSED the teacher; the
+script tells you to kill the run) and for the `Warm-started` line when WARM was set.
+**Read that output before walking away.** Then confirm on the dashboard:
+`hist_score_bank_0` nonzero and moving = teacher loaded and playing.
+
+Canonical underlying command (verified live on box-1 — if the script ever drifts or
+is missing, this is the contract it expands to; note it does NOT build the pool dir,
+see the fallback below):
+
+```bash
+cd /root/bloodbowl-rl/vendor/PufferLib && puffer train bloodbowl --tag <TAG> \
+  --selfplay.enabled 1 \
+  --selfplay.league-preseed /root/bloodbowl-rl/training/league_<TAG> \
+  --selfplay.swap-winrate 1.1 \
+  --selfplay.opp-timeout-steps 100000000000 \
+  --selfplay.snapshot-interval 1000000000000 \
+  --vec.num-frozen-banks 1 --vec.frozen-bank-pct 0.48 \
+  --load-model-path <WARM_CUDA_BLOB> \
+  --env.reward-possession 0.03 --env.reward-ball-gain 0.05 --env.reward-ball-loss 0 \
+  --env.reward-dist-ball 0.05 --env.reward-dist-endzone 0.2 \
+  --env.reward-k-kd 0.03 --env.reward-k-value 0.25 --env.reward-k-ball 0.15 --env.reward-k-seq 0.01 \
+  --env.demo-reset-pct 0.9 --env.demo-endzone-maxdist <STAGE> \
+  --train.total-timesteps <STEPS>
+```
+
+Note what is ABSENT: no `--bc-coef`, no BC aux of any kind, no
+`--train.frozen-enemy-path`. The teacher arrives through the league pool, not the
+frozen-enemy path. Liveness: `pgrep -af 'puffer [t]rain'` + the echoed config at the
+head of `$LOG`. Healthy = zero `pufferl_load_frozen_bank` warnings in the log + a
+nonzero `hist_score_bank_0` on the dashboard.
+
+**Fallback — hand-building the 1-seed pool** (only if the script is gone): make the
+dir, copy the teacher blob in, and write `<POOL>/league_seeds.json`. The keys
+selfplay.py actually consumes are `expected_bytes` (int, the blob's REAL byte size —
+never omit) and `seeds`: a list of exactly `num_frozen_banks` entries, each with at
+least `"file"` (basename of the blob in the pool dir); `"name"`/`"bank"`/`"sha256"`
+are documentation. One bank → one seed entry.
+
+### The pinning knobs — WHY the teacher can never rotate
+
+The selfplay league normally swaps a bank's opponent when the learner beats it. We pin
+by making every rotation trigger unsatisfiable (proven against
+`vendor/PufferLib/pufferlib/selfplay.py` + `src/pufferlib.cu`, Audit 1; line numbers
+are from the patched vendored copy):
+
+- `--selfplay.swap-winrate 1.1` — per-game score is {1.0 win, 0.5 draw, 0.0 loss}
+  (bloodbowl.h, episode-end result), so winrate ≤ 1.0 **strictly**. The winrate
+  trigger (`selfplay.py:295`, `winrate >= swap_winrate`) requires ≥ 1.1.
+  Unsatisfiable. Do NOT "round it down to 1.0" — the comparison is `>=`, so 1.0 is
+  reachable and would un-pin the teacher.
+- `--selfplay.opp-timeout-steps 100000000000` — the timeout trigger
+  (`selfplay.py:298`) needs 1e11 steps on one opponent; the run is ~45B total.
+  Unsatisfiable.
+- `--selfplay.snapshot-interval 1000000000000` — suppresses interval snapshots
+  (gate at `selfplay.py:279`); they are pure dead weight under pinning (ini default
+  200M would drop ~150 × 16MB files into the pool dir over 30B). Keep the
+  verified-live huge-value convention; don't relitigate it to 0 mid-era.
+- With both swap triggers dead, the swap branch (`selfplay.py:315-330`) never arms
+  `pending_opp_path`, so `load_frozen_bank` is called exactly ONCE, at setup, with the
+  manifest's teacher blob. Eviction, Elo updates, and snapshot saves are all
+  bookkeeping-only — none of them touch bank weights. The teacher is immutable for the
+  entire run.
+- `zero_frozen_advantages_cuda` (pufferlib.cu:1382, called at :1559) zeroes
+  advantages on all teacher-controlled rows — the learner never receives policy
+  gradient from the teacher's actions.
+
+### The 48% cap (why frozen-bank-pct ≈ 0.48, not more)
+
+`frozen-bank-pct` allocates **agent rows**, but each env carries 2 agents and only ONE
+slot per env can be the frozen bank — the other slot is always the learner (it's the
+learner's opponent seat). So the meaningful ceiling is **apb/2 = 50% of agent rows**
+(setup raises past it; `selfplay.py:160`). At 0.48 (current config: 4096 agents,
+2 buffers → 2048 rows/buffer, frozen_size = ⌊2048×0.48⌋ = 983):
+**96% of envs play learner-vs-teacher, 4% are pure mirror, 48% of agent slots run the
+teacher.** Pushing pct toward 0.50 just squeezes out the last mirror envs; it cannot
+give the learner "more teacher than opponent seats exist". Don't chase it.
+
+### Checkpoint formats
+
+- **Native runs save flat fp32/bf16 blobs** (the `master_weights` dump) under
+  `vendor/PufferLib/checkpoints/bloodbowl/<run>/` — directly usable as
+  `--load-model-path` / `--load-enemy-model-path` for `puffer match` and as
+  TEACHER/WARM for future native launches. **No conversion step.**
+- **Torch-side needs** (bc_vN work, weight surgery, research): the direction flags
+  are `--to-torch` (cuda→torch) and `--to-cuda` (torch→cuda) — there is no
+  `--from-cuda`:
+  `python training/convert_checkpoint.py --to-torch <BLOB> -o <OUT>.bin` and
+  `python training/convert_checkpoint.py --to-cuda <TORCH>.bin -o <OUT>_cuda.bin`.
+  **Mind `--obs-size`** — default 2782 (v4); v3 needs 1612, legacy 832. The CUDA
+  backend has no bias terms: conversion **drops biases** going torch→cuda (with a
+  max|bias| warning) and **zero-fills** them going cuda→torch — treat round-trips as
+  lossy and convert both tournament sides the same way (D45).
+- The current v4 blob size is **16,066,560 bytes** (4,016,640 fp32 params) — use it
+  as a sanity check and as `expected_bytes` in league manifests.
+
+### Parity verdict — `tools/parity_report.py`
+
+The gate for "native replaces torch for this stage": learning parity at matched
+steps, not SPS. The harness is `tools/parity_report.py` (NOT under `training/`).
+Procedure:
+
+1. Fetch both logs to the Mac (exact scp commands, including the box-1 hop for the
+   pathologically slow Mac→ssh4 route, are in the script's docstring), then:
+   `tools/parity_report.py /tmp/native.log /tmp/torch.log`
+   (two positional args: log A = native, log B = torch reference twin; tune with
+   `--interval` / `--tolerance` / `--parity-band` / `--target-tds` if needed).
+2. It parses both dashboards, aligns frames at matched **global agent-steps** (NOT
+   wall clock — native covers steps ~4x faster; default tolerance 200M, well above
+   the ~100M display granularity at B scale) and prints a matched-step table, SPS
+   ratio, per-metric verdicts (±15% band default), and wall-clock-to-target-tds
+   projections.
+3. The verdict metric is **`tds` at matched steps within the parity band** of the
+   torch twin. Remember §7: tds is only comparable at the SAME maxdist stage — never
+   feed it logs from different stages. A relaunched arm restarts its step counter:
+   concatenate old+new logs or pass only the segment you want judged.
+4. `block_2dred_frac` LOWER than torch is a finding in native's favor, not a parity
+   failure (live early read: 0.105 native vs ~0.2 torch — half). Falling 2dred =
+   planes working (§7). `gfi_attempts` is informational only (D46 artifact).
+5. Verdict PARITY (or native ahead) → torch retires to bc_vN training + aux research
+   only, and this section's launch becomes the default for all subsequent stages.
+   Verdict FAIL → keep torch for RL, file the native log for diagnosis, and do NOT
+   flip box build artifacts back and forth while investigating (one backend per box).
+
+### TROUBLESHOOTING (from Audit 1 — verified failure modes)
+
+- **The C bank loader fails SILENTLY on size mismatch** —
+  `pufferl_load_frozen_bank` (pufferlib.cu:1830) only fprintf-warns and keeps the
+  bank's previous weights (garbage at first load). The guards are `expected_bytes` in
+  `league_seeds.json` (checked Python-side at setup, run aborts) plus the launch
+  script's own blob-size/zip checks and its 40s log grep. Never hand-write a manifest
+  without `expected_bytes`; never ignore a loader warning in the log. Healthy launch
+  = zero loader warnings + `hist_score_bank_0` moving on the dashboard.
+- **Liveness check for "is the teacher actually playing":** `hist_score_bank_0` on
+  the dashboard is the learner's score rate vs the teacher (live run: ~0.59). A
+  drifting bank Elo proves games ARE being scored every window. `hist_score_bank_0`
+  stuck at exactly 0.000 with no Elo drift = bank not routed — recheck
+  `--vec.num-frozen-banks` / `--vec.frozen-bank-pct` and the preseed path.
+- **16-digit `.bin` files in the league dir = stale snapshots from an old launch.**
+  The current script suppresses snapshots (`--selfplay.snapshot-interval 1e12`) and
+  sweeps leftovers at launch; if they're accumulating DURING a run, you launched
+  without the script or overrode the interval — harmless dead weight under pinning
+  (never consumed: the only consumer sits behind the never-armed swap branch;
+  restarts load from the manifest alone), safe to `rm`, but check what else you
+  overrode.
+- **Warm relaunch overwrites old snapshots silently.** `global_step` resets on
+  relaunch, so new snapshots reuse old step-numbered filenames in the pool dir.
+  Irrelevant while pinned (snapshots are suppressed/dead weight) but would CORRUPT
+  pool history in a real rotating-pool run that restarts. Don't repurpose a
+  relaunched run's league dir as a genuine pool.
+- **Do not "fix" the swap-winrate to a reachable value.** 1.1 looks like a typo; it
+  is the pin. Same for opp-timeout-steps 1e11 and snapshot-interval 1e12. And don't
+  pass any of them as trailing args (last-wins would re-enable rotation).
+- **`--selfplay.league-preseed` rejected at launch / preseed silently ignored** =
+  vendored patches lost to a re-clone — run the pre-launch grep checks above and
+  reapply `training/selfplay_league.patch` + refresh `config/bloodbowl.ini`.
+- **Latent (only if banks are ever reused for team_size>1 envs):** Python aligns
+  frozen_size down to a team_size multiple (`selfplay.py:155`) but the C allocator
+  does not — for bloodbowl (team_size 1) both compute identically, but a
+  multi-agent-team env could route learner rows into the frozen inference slice. Add
+  an assert before reusing banks elsewhere.
+- **Eviction can't hurt you here:** pool eviction trims only the in-memory list,
+  never bank weights, never files; and with snapshots suppressed the pool holds just
+  the teacher (max_size 200 never fires).
+
+---
