@@ -42,3 +42,21 @@ below is computable for humans with a pairs-scan script.
   by a headless coroner eval for attrition-quality stats)
 - Tournament arbitration (`puffer match`, 4096 games) — the only
   selfplay-confound-free skill measure (D27/D39)
+
+## Human block-tier reference (MEASURED — 2026-06-07)
+
+From 12,187 cached FUMBBL BB2025 replays, 1,084,168 block rolls
+(`choosingTeamId` vs acting player's team; rerolled pools counted per roll):
+
+| tier | share |
+|------|-------|
+| 1d | 12.37% |
+| **2d** | **77.45%** |
+| 2d-red | 1.69% |
+| 3d | 8.45% |
+| 3d-red | 0.05% |
+
+Headline ratios: **2d:2d-red ≈ 46:1**; red total <1.8%; humans set up
+assists until the 2d is there. Dashboard `block_*_frac` keys compare
+directly. Alex's gauge: 2dred% falling + 2d% rising = blocking turning
+rational.
