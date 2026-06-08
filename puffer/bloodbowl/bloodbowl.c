@@ -379,9 +379,11 @@ int main(int argc, char** argv) {
     int unmasked = 0;
     int selftest = 0;
     int demo = 0;
+    int fnv_mode = 0;
     uint64_t seed = 42;
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--unmasked") == 0) unmasked = 1;
+        else if (strcmp(argv[i], "--fnv") == 0) fnv_mode = 1;
         else if (strcmp(argv[i], "--selftest") == 0) selftest = 1;
         else if (strcmp(argv[i], "--demo") == 0) demo = 1;
         else if (strcmp(argv[i], "--bank") == 0 && i + 1 < argc) {
@@ -422,6 +424,15 @@ int main(int argc, char** argv) {
     clock_gettime(CLOCK_MONOTONIC, &t0);
     long steps = 0;
     int done = 0;
+    uint64_t fnv = 1469598103934665603ULL;
+#define FNV_BYTES(ptr, len)                                                    \
+    do {                                                                       \
+        const unsigned char* fb_ = (const unsigned char*)(ptr);               \
+        for (size_t fi_ = 0; fi_ < (size_t)(len); fi_++) {                    \
+            fnv ^= fb_[fi_];                                                  \
+            fnv *= 1099511628211ULL;                                          \
+        }                                                                      \
+    } while (0)
     while (done < episodes) {
         for (int a = 0; a < BBE_AGENTS; a++) {
             const unsigned char* m = env.action_mask_ptr[a];
@@ -436,14 +447,23 @@ int main(int argc, char** argv) {
                     m + BBE_HEAD_TYPE + BBE_HEAD_ARG, BBE_HEAD_SQ, &pol);
             }
         }
+        if (fnv_mode) {
+            FNV_BYTES(mask, sizeof mask);
+            FNV_BYTES(env.legal_arg, (size_t)env.n_legal);
+            FNV_BYTES(env.legal_sq, (size_t)env.n_legal * sizeof(uint16_t));
+            FNV_BYTES(&env.n_legal, sizeof env.n_legal);
+            FNV_BYTES(&env.illegal, sizeof env.illegal);
+        }
         c_step(&env);
         steps++;
+        if (fnv_mode) FNV_BYTES(actions, sizeof actions);
         if (terminals[0] != 0.0f) {
             done++;
             if (demo && done < episodes) demo_note_start(&env);
         }
     }
     clock_gettime(CLOCK_MONOTONIC, &t1);
+    if (fnv_mode) printf("  fnv              %016llx\n", (unsigned long long)fnv);
     double secs = (double)(t1.tv_sec - t0.tv_sec) + (double)(t1.tv_nsec - t0.tv_nsec) / 1e9;
 
     Log* lg = &env.log;
