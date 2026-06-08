@@ -41,21 +41,28 @@ METRICS = [
     ("possession_rate",    None,                  "higher",  "fraction of turns ending with ball held"),
 ]
 
-DASH_RE = re.compile(r"^\s*([a-z_0-9]+)\s+([-+]?\d+\.?\d*)\s*$")
+# Puffer dashboard is a TWO-COLUMN box: "| key  val    key  val |". Find all
+# key/number pairs per line after stripping ANSI + box-drawing bytes.
+PAIR_RE = re.compile(r"([a-z_][a-z_0-9]*)\s+([-+]?\d+\.\d+|[-+]?\d+)")
 
 
 def strip_ansi(s):
-    return re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", s)
+    s = re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", s)
+    return s.replace("\u2502", " ").replace("\u2503", " ")  # box verticals
 
 
 def latest_dashboard(path):
-    """Return {key: float} from the LAST full dashboard block in the log."""
+    """Return {key: float} accumulating pairs from the LAST dashboard block.
+    The dashboard reprints periodically; later prints overwrite earlier keys,
+    so the final dict reflects the most recent (most-converged) block."""
     vals = {}
-    with open(path, errors="ignore") as f:
+    with open(path, errors="ignore", encoding="utf-8") as f:
         for line in f:
-            m = DASH_RE.match(strip_ansi(line))
-            if m:
-                vals[m.group(1)] = float(m.group(2))
+            for k, v in PAIR_RE.findall(strip_ansi(line)):
+                try:
+                    vals[k] = float(v)
+                except ValueError:
+                    pass
     return vals
 
 
