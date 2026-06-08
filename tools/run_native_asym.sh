@@ -291,7 +291,7 @@ WARM_ARGS=()
 # CPU thread cap (D59) — single source of truth in tools/cpu_cap.sh
 . "$(cd "$(dirname "$0")" && pwd)/cpu_cap.sh"
 
-nohup puffer train bloodbowl --tag "$TAG" \
+setsid nohup puffer train bloodbowl --tag "$TAG" \
   --selfplay.enabled 1 \
   --selfplay.league-preseed "$POOL" \
   --selfplay.swap-winrate 1.1 \
