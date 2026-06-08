@@ -2,7 +2,7 @@
   "_source": "FUMBBL BB2025 replay corpus, measured 2026-06-08 (D61)",
   "_games": 12722,
   "_team_turns": 453617,
-  "_note": "Per-game rates from full human games (kickoff to end). Compare ONLY against full-game-from-kickoff agent eval (tools/eval_game_stats.sh, demo_reset_pct 0) — training dashboards use curriculum starts and are NOT comparable. Human is a PLAUSIBLY-OPTIMAL reference, not a ceiling: a superhuman policy may legitimately diverge on context metrics (fewer/better blocks, more ball security, fewer GFIs).",
+  "_note": "Per-game rates from full human games (kickoff to end). Compare ONLY against full-game-from-kickoff agent eval (tools/eval_game_stats.sh, demo_reset_pct 0) \u2014 training dashboards use curriculum starts and are NOT comparable. Human is a PLAUSIBLY-OPTIMAL reference, not a ceiling: a superhuman policy may legitimately diverge on context metrics (fewer/better blocks, more ball security, fewer GFIs).",
   "tds_per_game": 2.217,
   "tds_per_team_turn": 0.0622,
   "blockRoll_per_game": 88.83,
@@ -17,5 +17,7 @@
   "block_2dred_frac": 0.0169,
   "block_3d_frac": 0.0845,
   "block_1d_frac": 0.1237,
-  "pickup_success_rate": 0.670
+  "pickup_success_rate": 0.67,
+  "pickUp_success_per_game": 4.88,
+  "dodge_success_per_game": "~unknown (dodgeRoll has no success flag in corpus; attempts only)"
 }

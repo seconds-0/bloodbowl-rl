@@ -36,7 +36,7 @@ METRICS = [
     ("dodge_attempts",     "dodgeRoll_per_game",  "context", "dodges / game"),
     ("gfi_attempts",       "goForItRoll_per_game","context", "go-for-its / game"),
     ("pickup_attempts",    "pickUpRoll_per_game", "context", "pickup attempts / game"),
-    ("pickup_success",     None,                  "higher",  "successful pickups / game"),
+    ("pickup_success",     "pickUp_success_per_game", "higher", "successful pickups / game"),
     ("pass_attempts",      "passRoll_per_game",   "context", "passes / game"),
     ("possession_rate",    None,                  "higher",  "fraction of turns ending with ball held"),
 ]
