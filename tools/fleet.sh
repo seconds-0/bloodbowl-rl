@@ -95,7 +95,7 @@ launch)
     ssh -i "$KEY" -p "$port" -o StrictHostKeyChecking=no "root@$host" \
         "cd /root/bloodbowl-rl/vendor/PufferLib && \
          . /root/bloodbowl-rl/tools/cpu_cap.sh && \
-         nohup env OMP_NUM_THREADS=\"$OMP_NUM_THREADS\" OPENBLAS_NUM_THREADS=\"$OMP_NUM_THREADS\" MKL_NUM_THREADS=\"$OMP_NUM_THREADS\" NUMEXPR_NUM_THREADS=\"$OMP_NUM_THREADS\" puffer train bloodbowl --tag '$tag' $* > /tmp/$tag.log 2>&1 < /dev/null & \
+         nohup puffer train bloodbowl --tag '$tag' $* > /tmp/$tag.log 2>&1 < /dev/null & \
          echo LAUNCHED-\$!; sleep 30; \
          if ! pgrep -f 'puffer [t]rain' > /dev/null; then \
              echo 'TRAINER DIED:'; tail -10 /tmp/$tag.log; exit 1; fi; \

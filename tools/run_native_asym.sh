@@ -64,6 +64,9 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 : "${TAG:?TAG is required (run tag; also names the pool dir and log)}"
 TEACHER="${TEACHER:-$ROOT/training/bc_v4_cuda.bin}"
 STEPS="${STEPS:-30000000000}"
+# Teacher pin (Codex HIGH): opp-timeout must exceed STEPS for ANY override,
+# else a timeout swap could rotate the frozen teacher. 10x STEPS is unreachable.
+OPP_TIMEOUT=$(( STEPS * 10 ))
 LOG="${LOG:-/tmp/${TAG}.log}"
 POOL="${POOL:-$ROOT/training/league_${TAG}}"
 EXPECT_BYTES="${EXPECT_BYTES:-16066560}"
@@ -258,7 +261,7 @@ echo "tag=$TAG steps=$STEPS warm=${WARM:-<fresh>} log=$LOG"
 #       per-game score is {1.0 win, 0.5 draw, 0.0 loss} (bloodbowl.h:1144),
 #       so winrate <= 1.0 strictly; threshold 1.1 is UNSATISFIABLE — the
 #       winrate swap (selfplay.py:295-297) can never fire.
-#   --selfplay.opp-timeout-steps 100000000000
+#   --selfplay.opp-timeout-steps <10*STEPS, always unreachable>
 #       timeout swap (selfplay.py:298-300) needs 1e11 elapsed steps; the run
 #       is 30B (~45B with the 1.5x overshoot) — never reached. Together these
 #       leave pending_opp_path=None forever, so load_frozen_bank runs exactly
@@ -292,7 +295,7 @@ nohup puffer train bloodbowl --tag "$TAG" \
   --selfplay.enabled 1 \
   --selfplay.league-preseed "$POOL" \
   --selfplay.swap-winrate 1.1 \
-  --selfplay.opp-timeout-steps 100000000000 \
+  --selfplay.opp-timeout-steps "$OPP_TIMEOUT" \
   --selfplay.snapshot-interval 1000000000000 \
   --vec.num-frozen-banks 1 --vec.frozen-bank-pct 0.48 \
   ${WARM_ARGS[@]+"${WARM_ARGS[@]}"} \

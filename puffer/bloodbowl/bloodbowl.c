@@ -457,7 +457,11 @@ int main(int argc, char** argv) {
         }
         c_step(&env);
         steps++;
-        if (fnv_mode) FNV_BYTES(actions, sizeof actions);
+        if (fnv_mode) {
+            FNV_BYTES(actions, sizeof actions);
+            FNV_BYTES(rewards, sizeof rewards);     // Codex: prove reward equiv
+            FNV_BYTES(terminals, sizeof terminals);
+        }
         if (terminals[0] != 0.0f) {
             done++;
             if (demo && done < episodes) demo_note_start(&env);

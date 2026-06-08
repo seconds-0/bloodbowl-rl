@@ -22,12 +22,12 @@ bb_cpu_cap() {
     quota=0
     if [ -r /sys/fs/cgroup/cpu.max ]; then            # cgroup v2
         read -r q p < /sys/fs/cgroup/cpu.max
-        [ "$q" != "max" ] && quota=$(( q / p ))
+        [ "$q" != "max" ] && { quota=$(( q / p )); [ "$quota" -lt 1 ] && [ "$q" -gt 0 ] && quota=1; }
     fi
     if [ "${quota:-0}" -lt 1 ] && [ -r /sys/fs/cgroup/cpu/cpu.cfs_quota_us ]; then  # cgroup v1
         q=$(cat /sys/fs/cgroup/cpu/cpu.cfs_quota_us)
         p=$(cat /sys/fs/cgroup/cpu/cpu.cfs_period_us)
-        [ "${q:-0}" -gt 0 ] && quota=$(( q / p ))
+        [ "${q:-0}" -gt 0 ] && { quota=$(( q / p )); [ "$quota" -lt 1 ] && quota=1; }
     fi
     np=$(nproc 2>/dev/null || echo 1)
     [ "${quota:-0}" -ge 1 ] || quota=$np
