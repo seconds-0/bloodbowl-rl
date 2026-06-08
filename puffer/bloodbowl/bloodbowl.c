@@ -448,6 +448,7 @@ int main(int argc, char** argv) {
             }
         }
         if (fnv_mode) {
+            FNV_BYTES(obs, sizeof obs);
             FNV_BYTES(mask, sizeof mask);
             FNV_BYTES(env.legal_arg, (size_t)env.n_legal);
             FNV_BYTES(env.legal_sq, (size_t)env.n_legal * sizeof(uint16_t));

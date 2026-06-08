@@ -98,6 +98,9 @@ static void apply_kwargs(Env* env, Dict* kwargs) {
 
 void my_setup_perm(StaticVec* vec, Env* env, int slot_base) {
     size_t obs_elem_size = obs_element_size();
+    // Re-pointed obs rows may hold another agent's stale v4 plane bytes.
+    env->v4_dirty[0] = 1;
+    env->v4_dirty[1] = 1;
     for (int s = 0; s < env->num_agents; s++) {
         int phys = vec->agent_perm ? vec->agent_perm[slot_base + s] : (slot_base + s);
         env->obs_ptr[s]         = (uint8_t*)vec->observations + (size_t)phys * OBS_SIZE * obs_elem_size;

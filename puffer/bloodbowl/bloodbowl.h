@@ -382,6 +382,28 @@ typedef struct {
     // up to three fallback passes (review LOW: decode 3-pass fold).
     uint16_t legal_sq[BB_LEGAL_MAX];
     uint8_t legal_arg[BB_LEGAL_MAX];
+    // SETUP fast-path cache (SPS pass): setup_legal stamps identical square
+    // templates per candidate; the mask fill projects block 0 once and
+    // stamps later blocks after a masked-u32 verification (irregular lists
+    // — e.g. Quick Snap — fall back per block; no proc heuristics trusted).
+    // bbe_decode then resolves SETUP_PLACE heads arithmetically. Written
+    // ONLY by the deciding agent's fill (the waiting agent's early-return
+    // must not clobber them — both fills precede the decode).
+    int setup_t0;                          // first SETUP_PLACE block start (-1)
+    int setup_len;                         // template length
+    uint8_t setup_fast;                    // every PLACE entry block-stamped
+    uint8_t v4_dirty[2];                   // per-agent: v4 planes hold bytes
+    // Encode->pricing bb_block_ev cache: the obs-v4 fill evaluates every
+    // candidate target on the SAME pre-apply state the Profile-C pricing
+    // later prices, so pricing is a structural cache hit. Keyed by
+    // (mover, blitz); validity cleared at each refill and after every
+    // apply. Lives in the env (never bb_match — bank fingerprint safe).
+    bb_blockev ev_cache[BB_NUM_PLAYERS];
+    uint32_t ev_valid;                     // bit per defender slot
+    int ev_mover;
+    int ev_blitz;
+    int setup_block_start[BBE_HEAD_ARG];   // projected arg -> block start (-1)
+    uint16_t setup_sq_off[BBE_HEAD_SQ];    // sq -> template offset (0xFFFF)
 } Bloodbowl;
 
 static void bbe_refresh_legal(Bloodbowl* env) {
@@ -438,7 +460,15 @@ static bool bbe_frame_b_is_slot(int proc) {
 
 static void bbe_encode_obs(Bloodbowl* env, int agent) {
     unsigned char* o = env->obs_ptr[agent];
-    memset(o, 0, BBE_OBS_SIZE);
+    // Zero only the conditionally-written regions: player/ctx/scalars
+    // (0..BBE_TZ_OFF). The TZ planes are fully rewritten below, and the v4
+    // planes are cleared lazily via v4_dirty (set when filled; forced on
+    // reset and on perm re-pointing in my_setup_perm).
+    memset(o, 0, BBE_TZ_OFF);
+    if (env->v4_dirty[agent]) {
+        memset(o + BBE_A1_OFF, 0, BBE_OBS_SIZE - BBE_A1_OFF);
+        env->v4_dirty[agent] = 0;
+    }
     bb_match* m = &env->match;
     int me = agent; // agent 0 = home coach, 1 = away
 
@@ -578,6 +608,10 @@ static void bbe_encode_obs(Bloodbowl* env, int agent) {
         unsigned char* a1 = o + BBE_A1_OFF;
         unsigned char* a2 = o + BBE_A2_OFF;
         unsigned char* bp = o + BBE_B_OFF;
+        env->v4_dirty[agent] = 1;
+        env->ev_valid = 0;
+        env->ev_mover = mover;
+        env->ev_blitz = is_blitz;
         for (int i = 0; i < env->n_legal; i++) {
             bb_action act = env->legal[i];
             if (act.type != BB_A_STEP && act.type != BB_A_BLOCK_TARGET) {
@@ -590,6 +624,8 @@ static void bbe_encode_obs(Bloodbowl* env, int agent) {
                 if (def >= 0) {
                     bb_blockev ev;
                     bb_block_ev(m, mover, def, is_blitz, NULL, &ev);
+                    env->ev_cache[def] = ev;
+                    env->ev_valid |= 1u << def;
                     a1[idx] = (unsigned char)(ev.p_def_down * 255.0f + 0.5f);
                     a2[idx] = (unsigned char)(ev.p_att_down * 255.0f + 0.5f);
                 }
@@ -660,6 +696,19 @@ static int bbe_action_arg(int agent, bb_action a) {
     return arg < 32 ? arg : 32;
 }
 
+// Same square template? Compare actions as u32 with the arg byte masked
+// off (bb_action is 4 packed bytes: type, arg, x, y).
+static int bbe_setup_blocks_match(const bb_action* a, const bb_action* b,
+                                  int len) {
+    for (int k = 0; k < len; k++) {
+        uint32_t ua, ub;
+        memcpy(&ua, &a[k], 4);
+        memcpy(&ub, &b[k], 4);
+        if ((ua ^ ub) & 0xFFFF00FFu) return 0;
+    }
+    return 1;
+}
+
 static void bbe_fill_mask(Bloodbowl* env, int agent) {
     unsigned char* mask = env->action_mask_ptr[agent];
     memset(mask, 0, BBE_MASK_SIZE);
@@ -672,17 +721,82 @@ static void bbe_fill_mask(Bloodbowl* env, int agent) {
         mask[BBE_HEAD_TYPE + BBE_HEAD_ARG + 390] = 1; // square none
         return;
     }
-    for (int i = 0; i < env->n_legal; i++) {
+    env->setup_t0 = -1;
+    env->setup_len = 0;
+    int setup_fast = 1;
+    int i = 0;
+    while (i < env->n_legal) {
         bb_action a = env->legal[i];
-        int ha = bbe_action_arg(agent, a);
-        int hs = bbe_action_sq(agent, a);
-        // Cache the head projection for bbe_decode (same agent, same list).
-        env->legal_arg[i] = (unsigned char)ha;
-        env->legal_sq[i] = (uint16_t)hs;
-        mask[a.type] = 1;
-        mask[BBE_HEAD_TYPE + ha] = 1;
-        mask[BBE_HEAD_TYPE + BBE_HEAD_ARG + hs] = 1;
+        if (a.type != BB_A_SETUP_PLACE) {
+            int ha = bbe_action_arg(agent, a);
+            int hs = bbe_action_sq(agent, a);
+            env->legal_arg[i] = (unsigned char)ha;
+            env->legal_sq[i] = (uint16_t)hs;
+            mask[a.type] = 1;
+            mask[BBE_HEAD_TYPE + ha] = 1;
+            mask[BBE_HEAD_TYPE + BBE_HEAD_ARG + hs] = 1;
+            i++;
+            continue;
+        }
+        // SETUP_PLACE run for one candidate (same arg).
+        int j = i + 1;
+        while (j < env->n_legal && env->legal[j].type == BB_A_SETUP_PLACE &&
+               env->legal[j].arg == a.arg) {
+            j++;
+        }
+        int len = j - i;
+        if (env->setup_t0 < 0) {
+            // Block 0: full projection + the decode maps.
+            env->setup_t0 = i;
+            env->setup_len = len;
+            for (int k = i; k < j; k++) {
+                bb_action b = env->legal[k];
+                int ha = bbe_action_arg(agent, b);
+                int hs = bbe_action_sq(agent, b);
+                env->legal_arg[k] = (unsigned char)ha;
+                env->legal_sq[k] = (uint16_t)hs;
+                mask[b.type] = 1;
+                mask[BBE_HEAD_TYPE + ha] = 1;
+                mask[BBE_HEAD_TYPE + BBE_HEAD_ARG + hs] = 1;
+            }
+            memset(env->setup_sq_off, 0xFF, sizeof env->setup_sq_off);
+            for (int k = 0; k < BBE_HEAD_ARG; k++) {
+                env->setup_block_start[k] = -1;
+            }
+            for (int k = 0; k < len; k++) {
+                env->setup_sq_off[env->legal_sq[i + k]] = (uint16_t)k;
+            }
+            env->setup_block_start[env->legal_arg[i]] = i;
+        } else if (len == env->setup_len &&
+                   bbe_setup_blocks_match(env->legal + env->setup_t0,
+                                          env->legal + i, len)) {
+            // Verified identical square template: stamp instead of project.
+            // Type + square-head mask bits were set by block 0; only the
+            // arg bit and the cached projections differ.
+            int ha = bbe_action_arg(agent, a);
+            memcpy(env->legal_sq + i, env->legal_sq + env->setup_t0,
+                   (size_t)len * sizeof(uint16_t));
+            memset(env->legal_arg + i, ha, (size_t)len);
+            mask[BBE_HEAD_TYPE + ha] = 1;
+            env->setup_block_start[ha] = i;
+        } else {
+            // Irregular block (e.g. Quick Snap per-player squares): generic
+            // projection, arithmetic decode off for this list.
+            setup_fast = 0;
+            for (int k = i; k < j; k++) {
+                bb_action b = env->legal[k];
+                int ha = bbe_action_arg(agent, b);
+                int hs = bbe_action_sq(agent, b);
+                env->legal_arg[k] = (unsigned char)ha;
+                env->legal_sq[k] = (uint16_t)hs;
+                mask[b.type] = 1;
+                mask[BBE_HEAD_TYPE + ha] = 1;
+                mask[BBE_HEAD_TYPE + BBE_HEAD_ARG + hs] = 1;
+            }
+        }
+        i = j;
     }
+    env->setup_fast = (uint8_t)(env->setup_t0 >= 0 && setup_fast);
 }
 
 // Snap the sampled heads onto a legal action. Uses the head projections
@@ -695,6 +809,18 @@ static bb_action bbe_decode(Bloodbowl* env, int agent, const float* heads) {
     int t = (int)heads[0];
     int arg = (int)heads[1];
     int sq = (int)heads[2];
+    if (t == BB_A_SETUP_PLACE && env->setup_fast) {
+        // Arithmetic resolution against the stamped template — selection
+        // tiers identical to the generic scan below (incl. illegal++).
+        int bs = (arg >= 0 && arg < BBE_HEAD_ARG)
+                     ? env->setup_block_start[arg] : -1;
+        uint16_t off = (sq >= 0 && sq < BBE_HEAD_SQ)
+                           ? env->setup_sq_off[sq] : (uint16_t)0xFFFF;
+        if (bs >= 0 && off != 0xFFFF) return env->legal[bs + off];
+        env->illegal++;
+        if (off != 0xFFFF) return env->legal[env->setup_t0 + off];
+        return env->legal[env->setup_t0];
+    }
     int same_type_sq = -1, same_type = -1;
     for (int i = 0; i < env->n_legal; i++) {
         if (env->legal[i].type != t) continue;
@@ -993,6 +1119,11 @@ static void bbe_reset_match(Bloodbowl* env) {
 }
 
 static void c_reset(Bloodbowl* env) {
+    // Force a full v4-plane clear on the first encode of a (re)pointed obs
+    // buffer (my_setup_perm also sets these — vecenv re-points obs_ptr
+    // without a reset).
+    env->v4_dirty[0] = 1;
+    env->v4_dirty[1] = 1;
     // Defaults for callers that skip apply_kwargs (standalone driver, tests).
     if (env->max_decisions <= 0) env->max_decisions = BBE_MAX_DECISIONS;
     if (env->reward_td == 0.0f && env->reward_win == 0.0f) {
@@ -1258,7 +1389,21 @@ static void c_step(Bloodbowl* env) {
                 // Choice nodes use the spec-default weights (stable play
                 // model); the env knobs only scale the priced transfer.
                 int is_blitz = mf->b == BB_ACT_BLITZ;
-                bb_block_ev(m, batt, bdef, is_blitz, NULL, &ev);
+                if (env->ev_mover == batt && env->ev_blitz == is_blitz &&
+                    ((env->ev_valid >> bdef) & 1u)) {
+                    ev = env->ev_cache[bdef]; // filled by this decision's encode
+#ifdef BBE_EV_CACHE_CHECK
+                    bb_blockev chk;
+                    bb_block_ev(m, batt, bdef, is_blitz, NULL, &chk);
+                    if (memcmp(&chk, &ev, sizeof ev) != 0) {
+                        fprintf(stderr, "EV CACHE MISMATCH att=%d def=%d\n",
+                                batt, bdef);
+                        abort();
+                    }
+#endif
+                } else {
+                    bb_block_ev(m, batt, bdef, is_blitz, NULL, &ev);
+                }
                 int bteam = BB_TEAM_OF(batt);
                 // Rush gate (panel HIGH): a blitz block declared with no
                 // movement left rolls a 2+ Rush FIRST; failure = knocked
@@ -1324,6 +1469,7 @@ static void c_step(Bloodbowl* env) {
         // bb_apply's internal re-enumeration + eq-scan (~22% of step time).
         // All other callers (tests, fuzz, lockstep) stay on checked bb_apply.
         bb_apply_trusted(m, act, &env->rng);
+        env->ev_valid = 0; // state advanced: encode-time EVs are stale
         env->decisions++;
         // Pickup success: the attempted scooper holds the ball post-apply.
         if (env->pending_pickup_slot >= 0) {
