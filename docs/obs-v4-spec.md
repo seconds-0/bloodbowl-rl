@@ -62,7 +62,7 @@ and prices pickup-in-traffic exactly where the scrum standoff lives.
 
 ## Compatibility & rollout
 
-- `BBE_OBS_SIZE` 1612 → 2392 is compile-time: old torch checkpoints are
+- `BBE_OBS_SIZE` 1612 → 2782 is compile-time: old torch checkpoints are
   input-shape incompatible. Obs-v4 is therefore a NEW LINEAGE boundary:
   - re-extract BC pairs (same 12K-replay corpus, lockstep replayer picks
     up the new encoder automatically) → `bc_v4` anchor retrain;
@@ -84,4 +84,4 @@ and prices pickup-in-traffic exactly where the scrum standoff lives.
   blockev-mc harness tolerance) + plane fill consistency with the block
   proc's own nd at CHOOSE_DIE for 10K random blocks.
 - Perf gate: obs encode budget stays <2µs (planes fill only on their
-  decision types; default path is two extra memsets).
+  decision types; default path is three extra memsets).
