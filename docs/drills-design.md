@@ -69,6 +69,26 @@ is phase 2.
 | 5 | Sideline surf | surf rewards exist, behavior rare | authored: opponent on sideline lane, our players in push position | surfs_inflicted |
 | 6 | Screen / cage formation | carrier exposed on offense | authored: our carrier midfield, defenders incoming; success = carrier safe N turns | possession retained N turns |
 
+## ⚠️ The mix-ratio doctrine (D67 — learned the hard way)
+
+**Drills must be mixed with scrimmage.** The pickup drill at `demo-reset-pct
+0.9` (90% drill episodes) produced a drill-locked skill that NEVER deployed
+from kickoff, and from-kickoff play regressed on every axis (pickup_attempts
+0.714 → 0.000 vs ancestor, equal-treatment eval) — catastrophic forgetting of
+game-context behavior. Meanwhile the flagship ladder (backplay → uniform →
+kickoff) taught scooping in-context (0.532/game) with no dedicated drill.
+Real football practice is ~30% drills / ~70% integrated play for exactly this
+reason. Rules:
+
+- **Never run a drill above ~0.5 episode share**; fix-test pickup-s3mix
+  (demo-reset-pct 0.5) measures whether 50/50 transfers.
+- **Every drill lineage must graduate back to full games** before its skill
+  is assessed — drill-context metrics do NOT measure transfer (pickup-s2
+  scored ~0.6 attempts/ep in drills while scoring 0.000 from kickoff).
+- **Assess transfer ONLY via from-kickoff eval** (eval_game_stats.sh) against
+  the lineage ancestor with equal checkpoint treatment (bias round-trip both
+  sides; stripping measured harmless, D67).
+
 ## Practice schedule (phase 2)
 
 Mixture over drills per episode draw, weights annealed by per-drill success
