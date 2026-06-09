@@ -293,6 +293,14 @@ typedef struct {
     // bank sampling (default). Stages launched manually (6 -> 12 -> 0),
     // like the k-anneal chain.
     int demo_endzone_maxdist;
+    // Pickup curriculum (D64): when >0, demo resets rejection-sample the bank
+    // for BALL-ACQUISITION states — a LOOSE ball (on the ground) within this
+    // many Chebyshev squares of a standing player of the team-to-move — so the
+    // policy densely experiences the scoop that backplay skips (backplay starts
+    // with the ball already HELD). 0 = off (default). Mutually exclusive with
+    // demo_endzone_maxdist (backplay takes precedence if both >0). Stages
+    // launched manually, expanding outward like the backplay ladder.
+    int demo_pickup_maxdist;
     // Demo-state reset curriculum (Backplay / chess fen_curric pattern,
     // docs/rl-best-practices.md hole #2): with probability demo_reset_pct
     // each episode starts from a uniformly drawn banked mid-game state
@@ -1025,6 +1033,33 @@ static void bbe_reset_match(Bloodbowl* env) {
                             if (d < 0) d = -d;
                             if (d <= env->demo_endzone_maxdist) break;
                         }
+                    }
+                    idx = (int)(bb_rng_next(&env->procgen) %
+                                (uint32_t)bbe_state_bank_n);
+                }
+            } else if (env->demo_pickup_maxdist > 0) {
+                // Pickup curriculum (D64): rejection-sample for a LOOSE ball
+                // with a standing player of the team-to-move within
+                // demo_pickup_maxdist (Chebyshev) — the scoop backplay skips.
+                // Fall back to the last uniform draw if the tier is thin
+                // (counted in demo_fallbacks below, same as backplay).
+                for (int try = 0; try < 256; try++) {
+                    const bb_match* cand = &bbe_state_bank[idx];
+                    if (cand->ball.state == BB_BALL_ON_GROUND) {
+                        int bx = cand->ball.x, by = cand->ball.y;
+                        int at = cand->active_team;
+                        int hit = 0;
+                        for (int s = 0; s < BB_NUM_PLAYERS; s++) {
+                            if (BB_TEAM_OF(s) != at) continue;
+                            const bb_player* p = &cand->players[s];
+                            if (p->location != BB_LOC_ON_PITCH ||
+                                p->stance != BB_STANCE_STANDING) continue;
+                            int dx = (int)p->x - bx; if (dx < 0) dx = -dx;
+                            int dy = (int)p->y - by; if (dy < 0) dy = -dy;
+                            int d = dx > dy ? dx : dy;
+                            if (d <= env->demo_pickup_maxdist) { hit = 1; break; }
+                        }
+                        if (hit) break;
                     }
                     idx = (int)(bb_rng_next(&env->procgen) %
                                 (uint32_t)bbe_state_bank_n);
