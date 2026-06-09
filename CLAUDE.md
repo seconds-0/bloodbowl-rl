@@ -50,7 +50,7 @@ RL training harness for **Blood Bowl Third Season Edition (BB2025)**: determinis
 - FUMBBL replays: `game` = END-of-game snapshot; kickoff state from setup-phase `fieldModelSetPlayerCoordinate`; dice/decisions in `reportList.reports`. `vendor/ffb/.../PlayerState.java` is the authoritative bit table.
 - Jervis: parallel bb2020/bb2025 suites (~174 files, diff for deltas); foul conversion broken (@Ignore). ActionCalculator (281 rows) defaults Season3=BB2025 — valid oracle odds. FFB headless needs MySQL ≤5.6/MariaDB ≤10.4; `gamestate/get` is the differential extraction point.
 
-## Top-10 footguns (each cost real hours)
+## Top footguns (each cost real hours)
 
 1. `python str.replace` silently no-ops on anchor mismatch — ALWAYS grep the file after scripted edits.
 2. zsh does NOT word-split unquoted vars (`set -- $hp` fails).
@@ -63,6 +63,9 @@ RL training harness for **Blood Bowl Third Season Edition (BB2025)**: determinis
 9. Monitor/SSH loops need `ssh -n` and `ConnectTimeout`.
 10. "Newest checkpoint" by mtime ≠ highest step across run dirs — check the step number in the filename before warm-relaunching.
 11. **CPU thread cap (D59):** `nproc` (visible CPUs) ≫ cgroup quota (allowed CPUs) on some boxes → unpinned torch/BLAS pools thrash (5x SPS loss). `tools/cpu_cap.sh` fixes it and is auto-sourced by all launch scripts + `~/.bashrc`; any manual `puffer train` must `. tools/cpu_cap.sh` first. Verify: live trainer's `OMP_NUM_THREADS` == quota, thread count ~150-190 not hundreds.
+12. **A run completes/dies but the box keeps billing — detect via LOG MTIME, not log content (D65).** A finished `puffer train` leaves its log frozen at the final dashboard; any monitor that greps log *content* reports it "running" forever. Two flagship arms idle-billed 8–13h this way. ALWAYS gate liveness on `stat -c %Y <log>` age (>360s stale = dead/done) AND `pgrep -xc puffer` (the trainer process is named exactly `puffer`; `pgrep -f "puffer [t]rain"` matches its own shell). A run hitting its STEPS cap exits cleanly (not a crash) — advance the ladder or reassign/stop the box.
+13. **`fleet.sh setup` clobbers a box's demo bank with the Mac's (D65).** The rsync excludes don't cover `validation/states/` or `resources/bloodbowl/`, so setup overwrites the box's `state_bank.bbs` with whatever the Mac repo holds. Keep the canonical (largest) bank in the Mac's `validation/states/bank.bbs` (gitignored) so syncs ship it; after any setup, re-check `Loaded N demo states` / bank byte-size on the box.
+14. **`fleet.sh <cmd> <name>` exact-matches `bb-<name>` and SILENTLY no-ops on a miss (D65).** `bb-taiwan-anchor` ≠ `bb-taiwan` → `setup taiwan` prints "no running instance labeled bb-taiwan" and the sync never runs (the box stays on stale code, e.g. obs-v3). Always pass the exact label suffix (`taiwan-anchor`) and confirm the rsync/build actually ran.
 
 ## Conventions
 
