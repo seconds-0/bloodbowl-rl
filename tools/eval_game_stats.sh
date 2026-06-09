@@ -21,6 +21,11 @@ CKPT="${1:?usage: eval_game_stats.sh <checkpoint.bin> [steps] [log]}"
 STEPS="${2:-8000000}"
 LOG="${3:-/tmp/game_stats_eval.log}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# Anchor relative paths NOW — the cd to vendor/PufferLib below breaks them
+# (same footgun as run_synthesis_c.sh's ANCHOR: the file-exists check passes
+# pre-cd, then puffer FileNotFoundErrors post-cd).
+case "$CKPT" in /*) ;; *) CKPT="$PWD/$CKPT" ;; esac
+case "$LOG"  in /*) ;; *) LOG="$PWD/$LOG"   ;; esac
 [ -f "$CKPT" ] || { echo "checkpoint not found: $CKPT" >&2; exit 1; }
 
 # Same CPU thread cap as the training launchers (D59).
