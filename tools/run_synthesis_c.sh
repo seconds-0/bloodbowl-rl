@@ -41,7 +41,7 @@ bsize=$(wc -c < "$BANK")
 echo "bank: $BANK ($bsize B)"
 
 # CPU thread cap (D59) — single source of truth in tools/cpu_cap.sh
-. "$(cd "$(dirname "$0")" && pwd)/cpu_cap.sh"
+. "$ROOT/tools/cpu_cap.sh"
 
 LOG="${LOG:-/tmp/synthesis_c.log}"
 nohup puffer train bloodbowl --slowly --selfplay.enabled 0 \

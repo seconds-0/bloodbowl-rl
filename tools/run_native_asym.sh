@@ -289,7 +289,7 @@ echo "tag=$TAG steps=$STEPS warm=${WARM:-<fresh>} log=$LOG"
 WARM_ARGS=()
 [ -n "${WARM:-}" ] && WARM_ARGS=(--load-model-path "$WARM")
 # CPU thread cap (D59) — single source of truth in tools/cpu_cap.sh
-. "$(cd "$(dirname "$0")" && pwd)/cpu_cap.sh"
+. "$ROOT/tools/cpu_cap.sh"
 
 setsid nohup puffer train bloodbowl --tag "$TAG" \
   --selfplay.enabled 1 \
