@@ -87,6 +87,8 @@ static void apply_kwargs(Env* env, Dict* kwargs) {
     env->demo_endzone_maxdist = (int)kw(kwargs, "demo_endzone_maxdist", 0.0);
     // Pickup curriculum (D64): loose-ball-near-mover demo resets (0 = off)
     env->demo_pickup_maxdist = (int)kw(kwargs, "demo_pickup_maxdist", 0.0);
+    // Post-kickoff scoop drill (D68): loose ball at team-turn <= N (0 = off)
+    env->demo_postkick_maxturn = (int)kw(kwargs, "demo_postkick_maxturn", 0.0);
     env->demo_reset_pct = (float)kw(kwargs, "demo_reset_pct", 0.0);
     env->exclude_team = (int)kw(kwargs, "exclude_team", -1.0);
     env->force_home_team = (int)kw(kwargs, "force_home_team", -1.0);

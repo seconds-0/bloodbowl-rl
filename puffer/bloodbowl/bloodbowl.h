@@ -301,6 +301,14 @@ typedef struct {
     // demo_endzone_maxdist (backplay takes precedence if both >0). Stages
     // launched manually, expanding outward like the backplay ladder.
     int demo_pickup_maxdist;
+    // Post-kickoff pickup drill (Alex, D68): when >0, demo resets
+    // rejection-sample the bank for the natural game opening — a LOOSE ball
+    // with the team-to-move on team-turn <= this value (1 = strict
+    // post-kickoff scoop, 2 = + early recoveries). Unlike the mid-game pickup
+    // drill (D67 context-lock failure), the drill state here IS the game's
+    // real starting context — 28.5% of the bank qualifies at maxturn 1.
+    // Precedence: endzone > pickup > postkick (first nonzero wins).
+    int demo_postkick_maxturn;
     // Demo-state reset curriculum (Backplay / chess fen_curric pattern,
     // docs/rl-best-practices.md hole #2): with probability demo_reset_pct
     // each episode starts from a uniformly drawn banked mid-game state
@@ -1061,6 +1069,18 @@ static void bbe_reset_match(Bloodbowl* env) {
                         }
                         if (hit) break;
                     }
+                    idx = (int)(bb_rng_next(&env->procgen) %
+                                (uint32_t)bbe_state_bank_n);
+                }
+            } else if (env->demo_postkick_maxturn > 0) {
+                // Post-kickoff scoop drill (D68): loose ball at the top of a
+                // drive — the team-to-move's turn counter is still <= N.
+                for (int try = 0; try < 256; try++) {
+                    const bb_match* cand = &bbe_state_bank[idx];
+                    if (cand->ball.state == BB_BALL_ON_GROUND &&
+                        (int)cand->turn[cand->active_team & 1] <=
+                            env->demo_postkick_maxturn)
+                        break;
                     idx = (int)(bb_rng_next(&env->procgen) %
                                 (uint32_t)bbe_state_bank_n);
                 }
