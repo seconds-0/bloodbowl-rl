@@ -15,13 +15,61 @@ import torch
 from pufferlib import pufferl as pufferl_mod
 from pufferlib import torch_pufferl as tp
 
+import json
+import os
+
 import decoder as dec
 
 ACT_SIZES = [30, 33, 391]
 
 
+def greedy_logits(logits):
+    """Argmax per head — broadcast mode plays its best move, no exploration."""
+    return torch.stack([lg.argmax(-1).reshape(-1) for lg in logits], -1).int()
+
+_ROSTERS = json.load(open(os.path.join(os.path.dirname(__file__), "rosters.json")))
+TEAM_COLORS = {
+    "Wood Elf": "#2e7d32", "Dwarf": "#b8860b", "Orc": "#33691e",
+    "Human": "#1565c0", "Skaven": "#6d4c41", "Dark Elf": "#4a148c",
+    "High Elf": "#90caf9", "Elven Union": "#00897b", "Amazon": "#c62828",
+    "Norse": "#455a64", "Chaos Chosen": "#7b1fa2", "Khorne": "#b71c1c",
+    "Shambling Undead": "#37474f", "Necromantic Horror": "#263238",
+    "Lizardmen": "#00acc1", "Goblin": "#558b2f", "Halfling": "#8d6e63",
+    "Ogre": "#5d4037", "Snotling": "#7cb342", "Vampire": "#880e4f",
+    "Tomb Kings": "#c0a060", "Nurgle": "#827717", "Black Orc": "#212121",
+    "Imperial Nobility": "#9e9d24", "Bretonnian": "#283593",
+    "Old World Alliance": "#6a1b9a", "Chaos Dwarf": "#bf360c",
+    "Chaos Renegades": "#4e342e", "Underworld Denizens": "#33691e",
+    "Gnome": "#00695c",
+}
+
+
+def tag_positions(players, home_team, away_team):
+    """Attach position name + icon to player dicts by nearest stat-line
+    against the pinned roster (obs carries no position/team identity)."""
+    for p in players:
+        if not p.get("present"):
+            continue
+        tid = home_team if p["side"] == "home" else away_team
+        if tid is None or tid < 0 or tid >= len(_ROSTERS):
+            continue
+        best, bd = None, 1e9
+        st = p["stats"]
+        for pos in _ROSTERS[tid]["positions"]:
+            d = (abs(pos["ma"] - st["ma"]) + 2 * abs(pos["st"] - st["st"])
+                 + abs(pos["ag"] - st["ag"]) + abs(pos["pa"] - st["pa"])
+                 + abs(pos["av"] - st["av"])
+                 + 0.25 * abs(pos["nskills"] - len(p["skills"])))
+            if d < bd:
+                bd, best = d, pos
+        if best:
+            p["position"] = best["name"]
+            p["icon"] = best["icon"]
+    return players
+
+
 class Match:
-    def __init__(self, ckpt_a, ckpt_b, seed=None):
+    def __init__(self, ckpt_a, ckpt_b, seed=None, home_team=-1, away_team=-1):
         _argv = sys.argv
         sys.argv = [_argv[0], "--slowly"]   # load_config parses argv; shield ours
         try:
@@ -33,6 +81,8 @@ class Match:
         args["vec"]["num_buffers"] = 1
         args["vec"]["num_threads"] = 1
         args["selfplay"]["enabled"] = 0
+        args["env"]["force_home_team"] = home_team
+        args["env"]["force_away_team"] = away_team
         args["load_model_path"] = ckpt_a
         if seed is not None:
             args["env"]["seed"] = seed
@@ -45,6 +95,7 @@ class Match:
         self.mask = self.p.vec_action_mask         # (2,454) HOST view
         self.terms = self.p.vec_terminals
 
+        self.home_team, self.away_team = home_team, away_team
         pol_b = copy.deepcopy(self.p.policy)
         sd = torch.load(ckpt_b, map_location=self.device)
         sd = {k.replace("module.", ""): v for k, v in sd.items()}
@@ -73,15 +124,21 @@ class Match:
 
     def match_start_msg(self):
         st = dec.decode_state(self._home_obs_bytes())
+        tag_positions(st["players"], self.home_team, self.away_team)
+        hr = _ROSTERS[self.home_team]["name"] if 0 <= self.home_team < 30 else "procgen"
+        ar = _ROSTERS[self.away_team]["name"] if 0 <= self.away_team < 30 else "procgen"
         return {"t": "match_start", "match_id": self.match_id,
-                "home": {"name": self.names[self.home_key], "roster": "procgen",
-                         "color": "#8b1a1a", "agent": self.names[self.home_key]},
-                "away": {"name": self.names[self.away_key], "roster": "procgen",
-                         "color": "#1a4d8b", "agent": self.names[self.away_key]},
+                "home": {"name": f"{hr} ({self.names[self.home_key]})", "roster": hr,
+                         "color": TEAM_COLORS.get(hr, "#8b1a1a"),
+                         "agent": self.names[self.home_key]},
+                "away": {"name": f"{ar} ({self.names[self.away_key]})", "roster": ar,
+                         "color": TEAM_COLORS.get(ar, "#1a4d8b"),
+                         "agent": self.names[self.away_key]},
                 "players": st["players"]}
 
     def snapshot_msg(self):
         st = dec.decode_state(self._home_obs_bytes())
+        tag_positions(st["players"], self.home_team, self.away_team)
         st.update({"t": "snapshot", "match_id": self.match_id,
                    "win_prob": self._win_prob_cache})
         return st
@@ -102,8 +159,11 @@ class Match:
             o[[1]], self.state_a)
         lg_h = tp.apply_action_mask(lg_h, m[[0]], ACT_SIZES)
         lg_a = tp.apply_action_mask(lg_a, m[[1]], ACT_SIZES)
-        act_h, _, _ = tp.sample_logits(lg_h)
-        act_a, _, _ = tp.sample_logits(lg_a)
+        if getattr(self, "greedy", True):
+            act_h, act_a = greedy_logits(lg_h), greedy_logits(lg_a)
+        else:
+            act_h, _, _ = tp.sample_logits(lg_h)
+            act_a, _, _ = tp.sample_logits(lg_a)
 
         lg = lg_h if deciding_home else lg_a
         act_raw = (act_h if deciding_home else act_a).reshape(-1).tolist()
