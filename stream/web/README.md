@@ -9,4 +9,6 @@ Canvas renderer for the bbstream WebSocket protocol (`docs/stream-protocol.md`).
 
 **WebSocket URL:** defaults to `ws://localhost:8787/ws`; override with `?ws=wss://bbstream.seconds0.com/ws`.
 
-**Mock vs real:** `mock/fixture_synthetic.jsonl` is generated fake-but-protocol-valid data for renderer dev; the real recorded fixture (`mock/fixture_match.jsonl`) and the live server replace it with zero frontend changes. Sprites deferred — players render as numbered circles (swap in an atlas inside `drawPlayer()` in `app.js`).
+**Mock vs real:** `mock/fixture_synthetic.jsonl` is generated fake-but-protocol-valid data for renderer dev; the real recorded fixture (`mock/fixture_match.jsonl`) and the live server replace it with zero frontend changes.
+
+**Sprites:** FFB iconset sheets, served relative to `hello.sprite_base` (mock: `art/`, a few sample sheets + `pitch.png` committed under `web/art/`). Sheet layout: 4 columns `[home, home-active, away, away-active]`, square cells (`width/4`), rows = cosmetic variants picked by `slot % rows`. Players without a loaded sprite fall back to numbered circles.

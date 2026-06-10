@@ -26,8 +26,8 @@ const ELF_STATS = { ma: 7, st: 3, ag: 2, pa: 3, av: 8 };
 // ---- mutable game state ----
 const P = [];   // 22 players: home slots 0..10, away slots 16..26
 for (let i = 0; i < 11; i++) {
-  P.push({ slot: i, side: 'home', x: -1, y: -1, stance: 'standing', position: ORC[i], num: i + 1, icon: 'orc_' + ORC[i].toLowerCase().replace(/ /g, '_') + '_' + (i + 1), name: HN[i], stats: ORC_STATS, skills: i < 2 ? ['Block'] : [] });
-  P.push({ slot: 16 + i, side: 'away', x: -1, y: -1, stance: 'standing', position: ELF[i], num: i + 1, icon: 'welf_' + ELF[i].toLowerCase() + '_' + (i + 1), name: AN[i], stats: ELF_STATS, skills: i < 2 ? ['Dodge'] : [] });
+  P.push({ slot: i, side: 'home', x: -1, y: -1, stance: 'standing', position: ORC[i], num: i + 1, icon: 'iconsets/orc_lineman.png', name: HN[i], stats: ORC_STATS, skills: i < 2 ? ['Block'] : [] });
+  P.push({ slot: 16 + i, side: 'away', x: -1, y: -1, stance: 'standing', position: ELF[i], num: i + 1, icon: 'iconsets/woodelf_lineman.png', name: AN[i], stats: ELF_STATS, skills: i < 2 ? ['Dodge'] : [] });
 }
 const bySlot = (s) => P.find(p => p.slot === s);
 let ball = { x: -1, y: -1, state: 'off_pitch', carrier: null };
@@ -243,7 +243,7 @@ function runDrive(receiving, budget) {
 }
 
 // ---- build the match ----
-emit({ t: 'hello', match_id: MATCH_ID, proto: 1, server: 'bbstream-mock/0.1', sprite_base: '' });
+emit({ t: 'hello', match_id: MATCH_ID, proto: 1, server: 'bbstream-mock/0.1', sprite_base: 'art/' });
 emit({ t: 'match_start', match_id: MATCH_ID, home: HOME, away: AWAY, players: snapPlayers() });
 snapshot();
 
