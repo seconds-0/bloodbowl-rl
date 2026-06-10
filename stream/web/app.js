@@ -597,14 +597,19 @@ const ACTION_LABELS = {
 };
 // pure bookkeeping decisions that would spam the log
 const QUIET_ACTIONS = new Set(['END_ACTIVATION', 'SETUP_PLACE', 'SETUP_REMOVE',
-                               'FOLLOW_UP', 'CHOOSE_OPTION']);
+                               'FOLLOW_UP', 'CHOOSE_OPTION', 'ACTIVATE']);
 
 /* One line per decision: team chip + actor + readable verb + confidence,
  * e.g. "Wardancer #3 throws a block 87%". Skips NONE + bookkeeping. */
 function addLogAction(action) {
   const verb = String(action.type || '').toUpperCase();
   if (!verb || verb === 'NONE' || QUIET_ACTIONS.has(verb)) return;
-  const actor = S.players.get(action.actor);
+  // DECLARE merges the suppressed ACTIVATE: "steps up to BLITZ"
+  let label = ACTION_LABELS[verb] || verb.toLowerCase().replace(/_/g, ' ');
+  if (verb === 'DECLARE') {
+    label = action.kind ? 'steps up to ' + action.kind : 'steps up';
+  }
+  const actor = S.players.get(action.actor != null ? action.actor : S.actorSlot);
   let conf = null;
   if (Array.isArray(action.probs) && action.probs.length && typeof action.probs[0][1] === 'number') {
     conf = Math.round(action.probs[0][1] * 100);
@@ -615,7 +620,7 @@ function addLogAction(action) {
   div.innerHTML =
     '<span class="chip" style="background:' + sideColor(actor && actor.side) + '"></span>' +
     (who ? '<span class="log-who">' + esc(who) + '</span><span class="log-dash">—</span>' : '') +
-    '<span class="log-verb">' + esc(ACTION_LABELS[verb] || verb.toLowerCase().replace(/_/g, ' ')) + '</span>' +
+    '<span class="log-verb">' + esc(label) + '</span>' +
     (conf != null ? '<span class="log-conf">' + conf + '%</span>' : '');
   pushLog(div);
 }

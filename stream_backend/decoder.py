@@ -36,6 +36,11 @@ ACTION_TYPES = {
 }
 SPATIAL_TYPES = {1, 4, 9, 11, 12, 13, 14, 15, 16, 21, 29}
 
+ACT_KINDS = ["MOVE", "BLOCK", "BLITZ", "PASS", "HANDOFF", "FOUL",
+             "THROW TEAM-MATE", "SECURE THE BALL", "STAB", "HYPNOTIC GAZE",
+             "KICK TEAM-MATE", "CHAINSAW", "BREATHE FIRE", "PROJECTILE VOMIT"]
+SLOT_ARG_TYPES = {1, 2, 5, 6}  # SETUP_PLACE/REMOVE, TOUCHBACK, ACTIVATE — arg is a player slot
+
 # skill id+1 table is engine-internal; expose ids, frontend shows numbers v1.
 
 def sq_xy(idx):
@@ -122,6 +127,8 @@ def describe_action(atype, arg, sq, actor_hint=None):
         d["target"] = list(sq_xy(sq))
     if atype in (6,) and arg < 32:  # ACTIVATE names a player slot
         d["actor"] = arg
+    if atype == 7 and arg < len(ACT_KINDS):  # DECLARE carries the act kind
+        d["kind"] = ACT_KINDS[arg]
     return d
 
 
@@ -135,8 +142,9 @@ def unmirror_sq(sq):
 
 def unmirror_action(atype, arg, sq):
     """Away-agent action heads -> absolute (type, arg_slot, sq).
-    arg slots are ego (slot^16 for away); spatial sq is x-mirrored."""
-    if arg < 32:
+    arg slots are ego (slot^16 for away); spatial sq is x-mirrored.
+    Only SLOT-valued args are ego-encoded — kind/die/skill args pass through."""
+    if atype in SLOT_ARG_TYPES and arg < 32:
         arg = arg ^ 16
     if atype in SPATIAL_TYPES:
         sq = unmirror_sq(sq)
