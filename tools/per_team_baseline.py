@@ -25,8 +25,7 @@ from collections import defaultdict
 
 CACHE = "validation/replay_cache"
 
-ROLL_KEYS = {  # reportId -> metric name
-    "blockRoll": "blocks",
+ROLL_KEYS = {  # reportId -> metric name (blockRoll handled separately via choosingTeamId)
     "dodgeRoll": "dodges",
     "goForItRoll": "gfis",
     "pickUpRoll": "pickups",
@@ -70,11 +69,16 @@ def replay_stats(rid):
     game = d.get("game", {})
     # playerId -> side map from the end-state snapshot
     side_of = {}
+    team_side = {}
     for side, key in (("home", "teamHome"), ("away", "teamAway")):
-        for pl in (game.get(key, {}) or {}).get("playerArray", []) or []:
+        t = game.get(key, {}) or {}
+        tid = t.get("teamId")
+        if tid is not None:
+            team_side[str(tid)] = side
+        for pl in t.get("playerArray", []) or []:
             pid = pl.get("playerId")
-            if pid:
-                side_of[pid] = side
+            if pid is not None:
+                side_of[str(pid)] = side
     S = {s: defaultdict(int) for s in ("home", "away")}
     cmds = (d.get("gameLog", {}) or {}).get("commandArray", []) or []
     for c in cmds:
@@ -92,9 +96,13 @@ def replay_stats(rid):
         rl = (c.get("reportList", {}) or {}).get("reports", []) or []
         for r in rl:
             rid_ = r.get("reportId", "")
-            if rid_ in ROLL_KEYS:
+            if rid_ == "blockRoll":
+                side = team_side.get(str(r.get("choosingTeamId")))
+                if side:
+                    S[side]["blocks"] += 1
+            elif rid_ in ROLL_KEYS:
                 pid = r.get("playerId") or r.get("actingPlayerId")
-                side = side_of.get(pid)
+                side = side_of.get(str(pid))
                 if side:
                     S[side][ROLL_KEYS[rid_]] += 1
     return S
