@@ -525,7 +525,21 @@ function renderDugouts() {
   for (const side of ['home', 'away']) {
     const box = $('dugout-' + side).querySelector('.groups');
     const off = [...S.players.values()].filter(p => p.side === side && (!onPitch(p) || ['ko', 'cas', 'sent_off'].includes(p.stance)));
+    const color = side === 'home' ? S.home.color : S.away.color;
+    // ON PITCH roster first — who's in play right now (Alex, 2026-06-10)
+    const inplay = [...S.players.values()]
+      .filter(p => p.side === side && onPitch(p) && !['ko', 'cas', 'sent_off'].includes(p.stance))
+      .sort((a, b) => a.num - b.num);
     let html = '';
+    if (inplay.length) {
+      html += '<div class="grp-title">On Pitch (' + inplay.length + ')</div>';
+      for (const p of inplay) {
+        const mark = (S.ball && S.ball.carrier === p.slot) ? ' <span class="ballmark">●</span>'
+                   : (p.stance === 'prone' ? ' <span class="downmark">▾</span>'
+                   : (p.stance === 'stunned' ? ' <span class="downmark">✶</span>' : ''));
+        html += '<div class="chip onpitch"><span class="pnum" style="background:' + color + '">' + p.num + '</span><span>' + esc(p.position) + mark + '</span></div>';
+      }
+    }
     for (const [st, label] of STANCE_GROUPS) {
       const grp = off.filter(p => p.stance === st);
       if (!grp.length) continue;

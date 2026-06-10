@@ -359,3 +359,8 @@ footer {
   #score { font-size: 30px; }
   .tname { font-size: 15px; }
 }
+
+/* on-pitch roster section (above dugout groups) */
+.dugout .chip.onpitch { opacity: 0.95; }
+.dugout .ballmark { color: #d4af37; font-size: 10px; }
+.dugout .downmark { color: #b35a4a; font-size: 10px; }
