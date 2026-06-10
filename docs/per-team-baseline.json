@@ -1,0 +1,306 @@
+{
+  "_games_processed": 13987,
+  "_note": "per-roster per-game rates; side-attributed",
+  "rosters": {
+    "Orc": {
+      "games": 2387,
+      "passes_per_game": 0.705,
+      "handoffs_per_game": 0.494,
+      "tds_per_game": 1.15,
+      "blocks_per_game": 50.602,
+      "dodges_per_game": 7.147,
+      "gfis_per_game": 9.218,
+      "pickups_per_game": 3.838
+    },
+    "Nurgle": {
+      "games": 1848,
+      "passes_per_game": 0.397,
+      "handoffs_per_game": 0.243,
+      "tds_per_game": 0.937,
+      "blocks_per_game": 53.119,
+      "dodges_per_game": 3.309,
+      "gfis_per_game": 7.622,
+      "pickups_per_game": 3.181
+    },
+    "Human": {
+      "games": 1519,
+      "passes_per_game": 1.273,
+      "handoffs_per_game": 0.766,
+      "tds_per_game": 1.448,
+      "blocks_per_game": 43.849,
+      "dodges_per_game": 12.473,
+      "gfis_per_game": 9.151,
+      "pickups_per_game": 4.153
+    },
+    "High Elf": {
+      "games": 1479,
+      "passes_per_game": 1.568,
+      "handoffs_per_game": 0.82,
+      "tds_per_game": 1.356,
+      "blocks_per_game": 34.746,
+      "dodges_per_game": 26.642,
+      "gfis_per_game": 8.169,
+      "pickups_per_game": 3.338
+    },
+    "Shambling Undead": {
+      "games": 1319,
+      "passes_per_game": 0.393,
+      "handoffs_per_game": 0.312,
+      "tds_per_game": 1.202,
+      "blocks_per_game": 48.575,
+      "dodges_per_game": 5.872,
+      "gfis_per_game": 9.237,
+      "pickups_per_game": 3.418
+    },
+    "Skaven": {
+      "games": 1280,
+      "passes_per_game": 1.294,
+      "handoffs_per_game": 0.762,
+      "tds_per_game": 1.516,
+      "blocks_per_game": 35.319,
+      "dodges_per_game": 17.545,
+      "gfis_per_game": 8.241,
+      "pickups_per_game": 4.171
+    },
+    "Necromantic Horror": {
+      "games": 1157,
+      "passes_per_game": 0.425,
+      "handoffs_per_game": 0.372,
+      "tds_per_game": 1.063,
+      "blocks_per_game": 48.988,
+      "dodges_per_game": 7.212,
+      "gfis_per_game": 7.812,
+      "pickups_per_game": 3.397
+    },
+    "Tomb Kings": {
+      "games": 1113,
+      "passes_per_game": 0.561,
+      "handoffs_per_game": 0.208,
+      "tds_per_game": 0.977,
+      "blocks_per_game": 58.019,
+      "dodges_per_game": 1.966,
+      "gfis_per_game": 8.37,
+      "pickups_per_game": 3.981
+    },
+    "Chaos Chosen": {
+      "games": 1073,
+      "passes_per_game": 0.619,
+      "handoffs_per_game": 0.461,
+      "tds_per_game": 0.954,
+      "blocks_per_game": 49.686,
+      "dodges_per_game": 5.788,
+      "gfis_per_game": 7.578,
+      "pickups_per_game": 3.433
+    },
+    "Old World Alliance": {
+      "games": 922,
+      "passes_per_game": 0.909,
+      "handoffs_per_game": 0.709,
+      "tds_per_game": 1.28,
+      "blocks_per_game": 48.201,
+      "dodges_per_game": 7.312,
+      "gfis_per_game": 7.987,
+      "pickups_per_game": 3.89
+    },
+    "Dwarf": {
+      "games": 921,
+      "passes_per_game": 0.516,
+      "handoffs_per_game": 0.246,
+      "tds_per_game": 0.727,
+      "blocks_per_game": 52.062,
+      "dodges_per_game": 2.442,
+      "gfis_per_game": 8.125,
+      "pickups_per_game": 3.598
+    },
+    "Black Orc": {
+      "games": 915,
+      "passes_per_game": 0.459,
+      "handoffs_per_game": 0.633,
+      "tds_per_game": 0.854,
+      "blocks_per_game": 51.435,
+      "dodges_per_game": 11.878,
+      "gfis_per_game": 9.322,
+      "pickups_per_game": 3.604
+    },
+    "Lizardmen": {
+      "games": 877,
+      "passes_per_game": 0.586,
+      "handoffs_per_game": 0.584,
+      "tds_per_game": 1.049,
+      "blocks_per_game": 45.737,
+      "dodges_per_game": 13.075,
+      "gfis_per_game": 6.688,
+      "pickups_per_game": 3.58
+    },
+    "Khorne": {
+      "games": 875,
+      "passes_per_game": 0.654,
+      "handoffs_per_game": 0.384,
+      "tds_per_game": 0.855,
+      "blocks_per_game": 55.426,
+      "dodges_per_game": 5.017,
+      "gfis_per_game": 8.366,
+      "pickups_per_game": 3.589
+    },
+    "Dark Elf": {
+      "games": 856,
+      "passes_per_game": 0.935,
+      "handoffs_per_game": 0.935,
+      "tds_per_game": 1.211,
+      "blocks_per_game": 33.75,
+      "dodges_per_game": 25.928,
+      "gfis_per_game": 8.186,
+      "pickups_per_game": 3.214
+    },
+    "Norse": {
+      "games": 856,
+      "passes_per_game": 0.731,
+      "handoffs_per_game": 0.447,
+      "tds_per_game": 1.174,
+      "blocks_per_game": 53.606,
+      "dodges_per_game": 8.027,
+      "gfis_per_game": 5.896,
+      "pickups_per_game": 3.558
+    },
+    "Snotling": {
+      "games": 793,
+      "passes_per_game": 0.396,
+      "handoffs_per_game": 0.709,
+      "tds_per_game": 1.057,
+      "blocks_per_game": 30.148,
+      "dodges_per_game": 25.953,
+      "gfis_per_game": 8.554,
+      "pickups_per_game": 3.734
+    },
+    "Goblin": {
+      "games": 763,
+      "passes_per_game": 0.773,
+      "handoffs_per_game": 1.183,
+      "tds_per_game": 0.855,
+      "blocks_per_game": 26.526,
+      "dodges_per_game": 26.048,
+      "gfis_per_game": 9.138,
+      "pickups_per_game": 3.983
+    },
+    "Chaos Dwarf": {
+      "games": 734,
+      "passes_per_game": 0.512,
+      "handoffs_per_game": 0.425,
+      "tds_per_game": 0.913,
+      "blocks_per_game": 50.106,
+      "dodges_per_game": 3.636,
+      "gfis_per_game": 13.669,
+      "pickups_per_game": 3.775
+    },
+    "Wood Elf": {
+      "games": 716,
+      "passes_per_game": 1.539,
+      "handoffs_per_game": 1.052,
+      "tds_per_game": 1.274,
+      "blocks_per_game": 28.927,
+      "dodges_per_game": 28.845,
+      "gfis_per_game": 8.704,
+      "pickups_per_game": 3.522
+    },
+    "Ogre": {
+      "games": 703,
+      "passes_per_game": 0.542,
+      "handoffs_per_game": 0.795,
+      "tds_per_game": 0.754,
+      "blocks_per_game": 36.842,
+      "dodges_per_game": 22.387,
+      "gfis_per_game": 8.775,
+      "pickups_per_game": 3.731
+    },
+    "Amazon": {
+      "games": 672,
+      "passes_per_game": 0.814,
+      "handoffs_per_game": 0.618,
+      "tds_per_game": 1.205,
+      "blocks_per_game": 41.964,
+      "dodges_per_game": 19.79,
+      "gfis_per_game": 8.579,
+      "pickups_per_game": 3.262
+    },
+    "Bretonnian": {
+      "games": 664,
+      "passes_per_game": 1.542,
+      "handoffs_per_game": 0.63,
+      "tds_per_game": 1.053,
+      "blocks_per_game": 44.764,
+      "dodges_per_game": 9.292,
+      "gfis_per_game": 8.741,
+      "pickups_per_game": 3.7
+    },
+    "Chaos Renegade": {
+      "games": 621,
+      "passes_per_game": 0.868,
+      "handoffs_per_game": 0.543,
+      "tds_per_game": 1.069,
+      "blocks_per_game": 43.746,
+      "dodges_per_game": 9.725,
+      "gfis_per_game": 7.409,
+      "pickups_per_game": 3.367
+    },
+    "Imperial Nobility": {
+      "games": 617,
+      "passes_per_game": 1.285,
+      "handoffs_per_game": 0.574,
+      "tds_per_game": 0.987,
+      "blocks_per_game": 44.344,
+      "dodges_per_game": 9.183,
+      "gfis_per_game": 9.006,
+      "pickups_per_game": 3.721
+    },
+    "Gnome": {
+      "games": 495,
+      "passes_per_game": 0.998,
+      "handoffs_per_game": 0.735,
+      "tds_per_game": 1.095,
+      "blocks_per_game": 35.257,
+      "dodges_per_game": 22.568,
+      "gfis_per_game": 12.192,
+      "pickups_per_game": 3.873
+    },
+    "Vampire": {
+      "games": 495,
+      "passes_per_game": 1.762,
+      "handoffs_per_game": 0.679,
+      "tds_per_game": 1.424,
+      "blocks_per_game": 35.687,
+      "dodges_per_game": 18.477,
+      "gfis_per_game": 11.574,
+      "pickups_per_game": 4.006
+    },
+    "Elven Union": {
+      "games": 480,
+      "passes_per_game": 2.031,
+      "handoffs_per_game": 1.023,
+      "tds_per_game": 1.221,
+      "blocks_per_game": 30.827,
+      "dodges_per_game": 26.617,
+      "gfis_per_game": 9.123,
+      "pickups_per_game": 3.415
+    },
+    "Underworld Denizens": {
+      "games": 438,
+      "passes_per_game": 1.251,
+      "handoffs_per_game": 0.589,
+      "tds_per_game": 1.418,
+      "blocks_per_game": 32.737,
+      "dodges_per_game": 29.162,
+      "gfis_per_game": 9.836,
+      "pickups_per_game": 4.089
+    },
+    "Halfling": {
+      "games": 386,
+      "passes_per_game": 1.407,
+      "handoffs_per_game": 1.117,
+      "tds_per_game": 0.858,
+      "blocks_per_game": 33.0,
+      "dodges_per_game": 24.635,
+      "gfis_per_game": 12.583,
+      "pickups_per_game": 3.72
+    }
+  }
+}
