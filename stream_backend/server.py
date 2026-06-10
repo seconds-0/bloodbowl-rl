@@ -16,9 +16,15 @@ import asyncio
 import json
 import time
 
+import random
+
 import websockets
 
 from game import Match
+
+# curated rotation: (home, away) team ids — contrast-heavy matchups for TV
+MATCHUPS = [(29, 7), (22, 12), (13, 24), (6, 18), (8, 22), (16, 11),
+            (3, 29), (26, 10), (15, 0), (23, 13), (28, 7), (2, 19)]
 
 PROTO = 1
 
@@ -65,7 +71,7 @@ async def client_handler(hub, match, ws):
     hub.clients.add(ws)
     await hub.send_one(ws, {"v": PROTO, "t": "hello", "seq": hub.seq,
                             "proto": PROTO, "server": "bbstream/0.1",
-                            "match_id": match.match_id, "sprite_base": ""})
+                            "match_id": match.match_id, "sprite_base": "art/"})
     # replay match_start so mid-match joiners get team names/colors
     await hub.send_one(ws, hub.stamp(match.match_start_msg()))
     snap = hub.stamp(match.snapshot_msg())
@@ -122,11 +128,14 @@ async def main():
     ap.add_argument("--port", type=int, default=8787)
     ap.add_argument("--pace", type=float, default=0.6)
     ap.add_argument("--record", default=None)
-    ap.add_argument("--max-games", type=int, default=0)
+    ap.add_argument("--max-games", type=int, default=2)
     ap.add_argument("--seed", type=int, default=None)
     a = ap.parse_args()
 
-    match = Match(a.ckpt_a, a.ckpt_b, seed=a.seed)
+    home, away = random.choice(MATCHUPS)
+    if random.random() < 0.5:
+        home, away = away, home
+    match = Match(a.ckpt_a, a.ckpt_b, seed=a.seed, home_team=home, away_team=away)
     hub = Hub()
     if a.record:
         hub.record_fh = open(a.record, "w")
@@ -134,10 +143,13 @@ async def main():
     async with websockets.serve(lambda ws: client_handler(hub, match, ws),
                                 "0.0.0.0", a.port):
         print(f"bbstream live on :{a.port} (pace {a.pace}s)", flush=True)
+        hb = asyncio.create_task(heartbeat(hub))
         try:
-            await asyncio.gather(game_loop(hub, match, a.pace, a.max_games),
-                                 heartbeat(hub))
+            # exits after max_games -> process ends -> systemd respawns with a
+            # fresh random matchup (the rotation mechanism)
+            await game_loop(hub, match, a.pace, a.max_games)
         finally:
+            hb.cancel()
             if hub.record_fh:
                 hub.record_fh.close()
 
