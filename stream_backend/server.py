@@ -66,6 +66,8 @@ async def client_handler(hub, match, ws):
     await hub.send_one(ws, {"v": PROTO, "t": "hello", "seq": hub.seq,
                             "proto": PROTO, "server": "bbstream/0.1",
                             "match_id": match.match_id, "sprite_base": ""})
+    # replay match_start so mid-match joiners get team names/colors
+    await hub.send_one(ws, hub.stamp(match.match_start_msg()))
     snap = hub.stamp(match.snapshot_msg())
     hub.last_snapshot = snap
     await hub.send_one(ws, snap)
