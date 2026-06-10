@@ -309,6 +309,10 @@ typedef struct {
     // real starting context — 28.5% of the bank qualifies at maxturn 1.
     // Precedence: endzone > pickup > postkick (first nonzero wins).
     int demo_postkick_maxturn;
+    // Passing ladder (D72): >0 = demo resets prefer states where the
+    // team-to-move holds the ball with a standing downfield receiver within
+    // this Chebyshev pass-range. Pure ladder, graduates to kickoff (D69).
+    int demo_pass_maxrange;
     // Demo-state reset curriculum (Backplay / chess fen_curric pattern,
     // docs/rl-best-practices.md hole #2): with probability demo_reset_pct
     // each episode starts from a uniformly drawn banked mid-game state
@@ -1081,6 +1085,40 @@ static void bbe_reset_match(Bloodbowl* env) {
                         (int)cand->turn[cand->active_team & 1] <=
                             env->demo_postkick_maxturn)
                         break;
+                    idx = (int)(bb_rng_next(&env->procgen) %
+                                (uint32_t)bbe_state_bank_n);
+                }
+            } else if (env->demo_pass_maxrange > 0) {
+                // Passing ladder (D72): team-to-move HOLDS the ball and has a
+                // standing friendly receiver DOWNFIELD (closer to the enemy
+                // endzone than the carrier) within Chebyshev pass-range N — a
+                // state where throwing is a live option. Pure ladder, meant to
+                // GRADUATE to kickoff (demo_reset_pct -> 0) per D69, not to be
+                // mixed in perpetuity. ~15% of bank qualifies at range 6.
+                for (int try = 0; try < 256; try++) {
+                    const bb_match* cand = &bbe_state_bank[idx];
+                    int c = cand->ball.carrier;
+                    if (cand->ball.state == BB_BALL_HELD && c != BB_NO_PLAYER &&
+                        BB_TEAM_OF(c) == cand->active_team) {
+                        const bb_player* cp = &cand->players[c];
+                        int tgt0 = (bb_endzone_x(BB_TEAM_OF(c)) == 0);
+                        int cx = tgt0 ? cp->x : (BB_PITCH_LEN - 1 - cp->x);
+                        int hit = 0;
+                        for (int s = 0; s < BB_NUM_PLAYERS; s++) {
+                            if (BB_TEAM_OF(s) != cand->active_team || s == c)
+                                continue;
+                            const bb_player* p = &cand->players[s];
+                            if (p->location != BB_LOC_ON_PITCH ||
+                                p->stance != BB_STANCE_STANDING) continue;
+                            int rx = tgt0 ? p->x : (BB_PITCH_LEN - 1 - p->x);
+                            if (rx >= cx) continue;  // not downfield of carrier
+                            int dx = (int)p->x - cp->x; if (dx < 0) dx = -dx;
+                            int dy = (int)p->y - cp->y; if (dy < 0) dy = -dy;
+                            int rng = dx > dy ? dx : dy;
+                            if (rng <= env->demo_pass_maxrange) { hit = 1; break; }
+                        }
+                        if (hit) break;
+                    }
                     idx = (int)(bb_rng_next(&env->procgen) %
                                 (uint32_t)bbe_state_bank_n);
                 }
