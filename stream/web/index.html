@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Blood Bowl Live</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header id="hud">
+  <div class="team" id="team-home">
+    <span class="arrow" id="arrow-home">&#9654;</span>
+    <span class="swatch" id="swatch-home"></span>
+    <span class="tname" id="name-home">Home</span>
+    <span class="tturn" id="turn-home">T0</span>
+  </div>
+  <div id="center-hud">
+    <div id="score">0 &ndash; 0</div>
+    <div id="half">Half 1</div>
+  </div>
+  <div class="team away" id="team-away">
+    <span class="tturn" id="turn-away">T0</span>
+    <span class="tname" id="name-away">Away</span>
+    <span class="swatch" id="swatch-away"></span>
+    <span class="arrow" id="arrow-away">&#9664;</span>
+  </div>
+</header>
+
+<div id="winprob">
+  <div id="winprob-fill"></div>
+  <span id="winprob-label">50%</span>
+</div>
+
+<main>
+  <aside class="dugout" id="dugout-home"><h3>Home dugout</h3><div class="groups"></div></aside>
+  <div id="pitch-wrap">
+    <canvas id="pitch"></canvas>
+    <div id="banner" class="hidden"></div>
+  </div>
+  <aside class="dugout" id="dugout-away"><h3>Away dugout</h3><div class="groups"></div></aside>
+  <aside id="sidebar">
+    <div id="evcard" class="hidden"></div>
+    <div id="ticker"></div>
+  </aside>
+</main>
+
+<footer>
+  <span id="f-match">match: &mdash;</span>
+  <span id="f-conn" class="conn-connecting">connecting&hellip;</span>
+  <span id="f-rate">0.0 dec/s</span>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>

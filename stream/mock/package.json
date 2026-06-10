@@ -1,0 +1,13 @@
+{
+  "name": "bbstream-mock",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Mock WebSocket server replaying Blood Bowl Live protocol fixtures (docs/stream-protocol.md)",
+  "scripts": {
+    "fixture": "node make_fixture.js",
+    "start": "node play.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
