@@ -20,6 +20,8 @@ set -euo pipefail
 CKPT="${1:?usage: eval_game_stats.sh <checkpoint.bin> [steps] [log]}"
 STEPS="${2:-8000000}"
 LOG="${3:-/tmp/game_stats_eval.log}"
+# consume the positionals so "$@" below carries ONLY trailing puffer args
+for _ in 1 2 3; do [ $# -gt 0 ] && shift; done
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # Anchor relative paths NOW — the cd to vendor/PufferLib below breaks them
 # (same footgun as run_synthesis_c.sh's ANCHOR: the file-exists check passes
