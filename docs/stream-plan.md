@@ -105,10 +105,10 @@ fine; no GPU needed in the serving container.
 ## Open decisions (cheap to defer)
 
 - Exact event schema (write PROTOCOL.md first thing in Phase 1).
-- Rendering style: clean 2D vector look vs FFB sprite art (sprites exist in
-  the repo's art dir but check license posture before public use — engine
-  rule: no GW assets shipped; the procedural token fallback at
-  `bbe_render.h:362-407` is the safe default).
+- Rendering style: **FFB sprite art CLEARED for use (Alex, 2026-06-10)** —
+  the frontend renders the real sprite sheets (same iconmap.txt mapping the
+  raylib viewer uses); the procedural token fallback at `bbe_render.h:362-407`
+  stays as the loading/missing-art fallback only.
 - Server language: Python first (reuses the torch eval path directly); a C
   inference rewrite is possible later but unnecessary at 2 decisions/sec.
 - Whether the stream server doubles as the eval-tournament runner (same
