@@ -578,11 +578,32 @@ function sideColor(side) {
   return side === 'away' ? S.away.color : side === 'home' ? S.home.color : '#777';
 }
 
-/* One line per decision: team chip + actor + verb + chosen-action confidence,
- * e.g. "Wardancer #3 — MOVE 87%". Skips NONE. */
+/* Human-readable verbs for the action log (FFB play-by-play phrasing). */
+const ACTION_LABELS = {
+  MOVE: 'moves', STEP: 'moves', JUMP: 'leaps over',
+  ACTIVATE: 'steps up', DECLARE: 'declares an action',
+  END_ACTIVATION: 'is done', END_TURN: 'ends the turn',
+  STAND_UP: 'gets back up', BLOCK: 'throws a block',
+  PASS: 'throws a pass!', HANDOFF: 'hands off the ball',
+  FOUL: 'puts the boot in!', TTM: 'hurls a teammate!',
+  PUSH: 'shoves them back', FOLLOW_UP: 'follows up',
+  CHOOSE_DIE: 'picks a block die', USE_REROLL: 'burns a re-roll',
+  DECLINE_REROLL: 'keeps the roll', USE_SKILL: 'uses a skill',
+  DECLINE_SKILL: 'declines a skill', APOTHECARY: 'calls the apothecary!',
+  KICK_TARGET: 'kicks off', TOUCHBACK: 'takes the touchback',
+  SETUP_PLACE: 'sets up', SETUP_REMOVE: 'repositions', SETUP_DONE: 'is set',
+  SECURE_BALL: 'secures the ball', PICKUP_DECLINE: 'leaves the ball',
+  CHOOSE_OPTION: 'weighs the options', SPECIAL_TARGET: 'tries something special',
+};
+// pure bookkeeping decisions that would spam the log
+const QUIET_ACTIONS = new Set(['END_ACTIVATION', 'SETUP_PLACE', 'SETUP_REMOVE',
+                               'FOLLOW_UP', 'CHOOSE_OPTION']);
+
+/* One line per decision: team chip + actor + readable verb + confidence,
+ * e.g. "Wardancer #3 throws a block 87%". Skips NONE + bookkeeping. */
 function addLogAction(action) {
   const verb = String(action.type || '').toUpperCase();
-  if (!verb || verb === 'NONE') return;
+  if (!verb || verb === 'NONE' || QUIET_ACTIONS.has(verb)) return;
   const actor = S.players.get(action.actor);
   let conf = null;
   if (Array.isArray(action.probs) && action.probs.length && typeof action.probs[0][1] === 'number') {
@@ -594,7 +615,7 @@ function addLogAction(action) {
   div.innerHTML =
     '<span class="chip" style="background:' + sideColor(actor && actor.side) + '"></span>' +
     (who ? '<span class="log-who">' + esc(who) + '</span><span class="log-dash">—</span>' : '') +
-    '<span class="log-verb">' + esc(verb) + '</span>' +
+    '<span class="log-verb">' + esc(ACTION_LABELS[verb] || verb.toLowerCase().replace(/_/g, ' ')) + '</span>' +
     (conf != null ? '<span class="log-conf">' + conf + '%</span>' : '');
   pushLog(div);
 }
