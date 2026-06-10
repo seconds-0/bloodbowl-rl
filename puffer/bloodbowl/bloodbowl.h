@@ -678,8 +678,8 @@ static void bbe_encode_obs(Bloodbowl* env, int agent) {
         // v5 macro-moves: destination-level success approximations for all
         // reachable squares (base-test math, no skill hooks — advisory;
         // adjacents keep their exact values from the loop above).
-        if (env->macro_moves) {
-            bbe_macro_reach(env, m, mover, is_blitz);
+        if (env->macro_moves && env->reach_mover == mover &&
+            env->reach_blitz == is_blitz) {  // read-only: fill_mask computed it
             for (int d = 0; d < 390; d++) {
                 if (env->reach_parent[d] < 0) continue;
                 int dx2 = d % BB_PITCH_LEN, dy2 = d / BB_PITCH_LEN;
@@ -764,6 +764,7 @@ static int bbe_setup_blocks_match(const bb_action* a, const bb_action* b,
 }
 
 
+static long bbe_macro_dbg_plans, bbe_macro_dbg_steps;  // diag, remove post-balloon
 // ---- v5 macro-move reachability (D82) ---------------------------------------
 // Dijkstra over the 8-connected pitch from the mover's square, bounded by
 // movement_left + remaining rushes. Cost prefers safe paths: each step costs
@@ -1002,11 +1003,15 @@ static bb_action bbe_decode(Bloodbowl* env, int agent, const float* heads) {
     // v5 macro-moves (D82): a STEP to a reachable non-adjacent destination
     // is a PLANNED PATH, not an illegal pick. Ego->absolute, then route.
     if (env->macro_moves && t == BB_A_STEP && same_type_sq < 0 &&
-        sq >= 0 && sq < 390 && env->reach_mover >= 0) {
+        sq >= 0 && sq < 390 && env->reach_mover >= 0 &&
+        env->match.stack_top > 0 &&
+        env->match.stack[env->match.stack_top - 1].proc == BB_PROC_MOVE &&
+        (int)env->match.stack[env->match.stack_top - 1].a == env->reach_mover) {
         int ax = sq % BB_PITCH_LEN, ay = sq / BB_PITCH_LEN;
         if (agent == BB_AWAY) ax = BB_PITCH_LEN - 1 - ax;
         int abs_sq = ay * BB_PITCH_LEN + ax;
         if (env->reach_parent[abs_sq] >= 0) {
+            bbe_macro_dbg_plans++;
             return bbe_macro_plan(env, env->reach_mover, abs_sq);
         }
     }
@@ -1181,6 +1186,9 @@ static void bbe_reset_match(Bloodbowl* env) {
     // from a uniformly drawn banked mid-game state instead of a procgen
     // kickoff (both draws from the procgen stream). A banked state that
     // fails validation falls back to procgen silently, counted in the Log.
+    env->reach_mover = -1;          // v5 scratch: new match = stale reach
+    env->macro_len = env->macro_pos = 0;
+    env->macro_mover = -1;
     env->demo_started = 0;
     if (env->demo_reset_pct > 0.0f) {
         bbe_state_bank_load(); // lazy once; no-op when already tried
@@ -1743,10 +1751,14 @@ static void c_step(Bloodbowl* env) {
         // macro; per-step metrics/taxes go through bbe_count_action.
         if (env->macro_moves && env->macro_pos < env->macro_len) {
             while (env->macro_pos < env->macro_len &&
+                   env->decisions < env->max_decisions &&
                    m->status == BB_STATUS_DECISION && m->stack_top > 0) {
                 const bb_frame* tf = &m->stack[m->stack_top - 1];
                 if (tf->proc != BB_PROC_MOVE ||
                     (int)tf->a != env->macro_mover) break;
+                // mirror move_legal's may_move gate (Codex HIGH): plain
+                // BLOCK activations and post-pickup TTM/KTM cannot step
+                if (tf->b == BB_ACT_BLOCK || (tf->data & MV_BLOCK_DONE)) break;
                 int nx = env->macro_px[env->macro_pos];
                 int ny = env->macro_py[env->macro_pos];
                 if (!bb_on_pitch_xy(nx, ny) || m->grid[nx][ny]) break;
@@ -1754,6 +1766,10 @@ static void c_step(Bloodbowl* env) {
                 bb_action mact = {BB_A_STEP, 0, (uint8_t)nx, (uint8_t)ny};
                 bbe_count_action(env, mact);
                 bb_apply_trusted(m, mact, &env->rng);
+                bbe_macro_dbg_steps++;
+                if ((bbe_macro_dbg_steps % 200000) == 1)
+                    fprintf(stderr, "[MACRO] plans=%ld cont_steps=%ld\n",
+                            bbe_macro_dbg_plans, bbe_macro_dbg_steps);
                 env->ev_valid = 0;
                 env->reach_mover = -1;
                 env->decisions++;
