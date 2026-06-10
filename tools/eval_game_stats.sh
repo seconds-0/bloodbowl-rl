@@ -44,6 +44,7 @@ puffer train bloodbowl --slowly --selfplay.enabled 0 \
   --env.demo-reset-pct 0 \
   --vec.total-agents 256 --vec.num-threads "${OMP_NUM_THREADS:-8}" \
   --train.minibatch-size 2048 \
+  "$@" \
   > "$LOG" 2>&1
 
 echo "done. compare with:  python3 $ROOT/tools/game_stats.py $LOG" >&2
