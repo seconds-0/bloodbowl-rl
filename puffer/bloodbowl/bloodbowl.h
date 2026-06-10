@@ -314,6 +314,21 @@ typedef struct {
     // team-to-move holds the ball with a standing downfield receiver within
     // this Chebyshev pass-range. Pure ladder, graduates to kickoff (D69).
     int demo_pass_maxrange;
+    // v5 path-actions (D82): when 1, the STEP square head selects ANY
+    // reachable destination; the env routes a min-risk path (Dijkstra over
+    // dodge/rush costs) and auto-applies it step-by-step, returning control
+    // on any interruption (TEST window, knockdown, activation end). The
+    // ENGINE is untouched — steps stay atomic and validated. 0 = v4
+    // semantics, bit-identical (all macro code is gated on this knob).
+    int macro_moves;
+    // macro scratch: planned path + reachability of the current MOVE window
+    uint8_t macro_px[40], macro_py[40];
+    int macro_len, macro_pos, macro_mover;
+    int reach_mover, reach_blitz;        // -1 = reach arrays invalid
+    float reach_cost[390];
+    uint8_t reach_p255[390];             // approx P(path succeeds) for obs B
+    int16_t reach_parent[390];           // square idx -> predecessor idx
+    uint8_t reach_len[390];
     // Demo-state reset curriculum (Backplay / chess fen_curric pattern,
     // docs/rl-best-practices.md hole #2): with probability demo_reset_pct
     // each episode starts from a uniformly drawn banked mid-game state
@@ -426,6 +441,11 @@ typedef struct {
     int setup_block_start[BBE_HEAD_ARG];   // projected arg -> block start (-1)
     uint16_t setup_sq_off[BBE_HEAD_SQ];    // sq -> template offset (0xFFFF)
 } Bloodbowl;
+
+// v5 macro-moves (D82): forward decls — used by obs encode before definition
+static void bbe_macro_reach(Bloodbowl* env, const bb_match* m, int mover,
+                            int is_blitz);
+static bb_action bbe_macro_plan(Bloodbowl* env, int mover, int dst);
 
 static void bbe_refresh_legal(Bloodbowl* env) {
     env->n_legal = env->match.status == BB_STATUS_DECISION
@@ -655,6 +675,19 @@ static void bbe_encode_obs(Bloodbowl* env, int agent) {
                     m, mover, act.x, act.y, is_blitz);
             }
         }
+        // v5 macro-moves: destination-level success approximations for all
+        // reachable squares (base-test math, no skill hooks — advisory;
+        // adjacents keep their exact values from the loop above).
+        if (env->macro_moves) {
+            bbe_macro_reach(env, m, mover, is_blitz);
+            for (int d = 0; d < 390; d++) {
+                if (env->reach_parent[d] < 0) continue;
+                int dx2 = d % BB_PITCH_LEN, dy2 = d / BB_PITCH_LEN;
+                int ex3 = me == BB_HOME ? dx2 : (BB_PITCH_LEN - 1 - dx2);
+                int idx3 = dy2 * BB_PITCH_LEN + ex3;
+                if (bp[idx3] == 0) bp[idx3] = env->reach_p255[d];
+            }
+        }
     }
 }
 
@@ -728,6 +761,102 @@ static int bbe_setup_blocks_match(const bb_action* a, const bb_action* b,
         if ((ua ^ ub) & 0xFFFF00FFu) return 0;
     }
     return 1;
+}
+
+
+// ---- v5 macro-move reachability (D82) ---------------------------------------
+// Dijkstra over the 8-connected pitch from the mover's square, bounded by
+// movement_left + remaining rushes. Cost prefers safe paths: each step costs
+// 1, +50 if it leaves a marked square (dodge), +12 if beyond MA (rush).
+// reach_p255 accumulates an APPROXIMATE success probability (base test math,
+// no skill hooks — advisory for the obs B plane only; the engine rolls the
+// real dice). Engine statics (movement_left, bb_max_rushes, bb_tackle_zones)
+// are visible: the binding compiles env+engine as one TU.
+static void bbe_macro_reach(Bloodbowl* env, const bb_match* m, int mover,
+                            int is_blitz) {
+    if (env->reach_mover == mover && env->reach_blitz == is_blitz) return;
+    env->reach_mover = mover;
+    env->reach_blitz = is_blitz;
+    const bb_player* p = &m->players[mover];
+    int team = BB_TEAM_OF(mover);
+    int ma_left = movement_left(m, mover);
+    int rush_left = bb_max_rushes(m, mover) - p->rushes;
+    if (rush_left < 0) rush_left = 0;
+    int budget = ma_left + rush_left;
+    if (budget > 39) budget = 39;
+    for (int i = 0; i < 390; i++) {
+        env->reach_cost[i] = 1e9f;
+        env->reach_parent[i] = -1;
+        env->reach_p255[i] = 0;
+        env->reach_len[i] = 0;
+    }
+    int src = p->y * BB_PITCH_LEN + p->x;
+    env->reach_cost[src] = 0.0f;
+    env->reach_p255[src] = 255;
+    // simple O(V^2) Dijkstra — 390 nodes, called once per MOVE window
+    uint8_t done[390] = {0};
+    for (;;) {
+        int u = -1; float best = 1e9f;
+        for (int i = 0; i < 390; i++)
+            if (!done[i] && env->reach_cost[i] < best) { best = env->reach_cost[i]; u = i; }
+        if (u < 0) break;
+        done[u] = 1;
+        int ux = u % BB_PITCH_LEN, uy = u / BB_PITCH_LEN;
+        int steps = env->reach_len[u];
+        if (steps >= budget) continue;
+        int from_tz = bb_tackle_zones(m, team, ux, uy) > 0;
+        for (int dy = -1; dy <= 1; dy++) for (int dx = -1; dx <= 1; dx++) {
+            if (!dx && !dy) continue;
+            int nx = ux + dx, ny = uy + dy;
+            if (!bb_on_pitch_xy(nx, ny)) continue;
+            if (m->grid[nx][ny]) continue;
+            int v = ny * BB_PITCH_LEN + nx;
+            int is_rush = steps >= ma_left;
+            float c = 1.0f + (from_tz ? 50.0f : 0.0f) + (is_rush ? 12.0f : 0.0f);
+            if (env->reach_cost[u] + c < env->reach_cost[v]) {
+                env->reach_cost[v] = env->reach_cost[u] + c;
+                env->reach_parent[v] = (int16_t)u;
+                env->reach_len[v] = (uint8_t)(steps + 1);
+                float pstep = 1.0f;
+                if (from_tz) {
+                    int tzd = bb_tackle_zones(m, team, nx, ny);
+                    int tgt = bb_test_target(p->ag, -tzd);
+                    pstep *= (float)(7 - tgt) / 6.0f;
+                }
+                if (is_rush) pstep *= 5.0f / 6.0f;
+                if (m->ball.state == BB_BALL_ON_GROUND && m->ball.x == nx &&
+                    m->ball.y == ny) {
+                    int tzb = bb_tackle_zones(m, team, nx, ny);
+                    int tgt = bb_test_target(p->ag, -tzb);
+                    pstep *= (float)(7 - tgt) / 6.0f;
+                }
+                float pp = (float)env->reach_p255[u] / 255.0f * pstep;
+                env->reach_p255[v] = (uint8_t)(pp * 255.0f + 0.5f);
+            }
+        }
+    }
+    env->reach_p255[src] = 0;      // staying put is not a STEP
+    env->reach_cost[src] = 1e9f;
+}
+
+// Build env->macro_* from reach_parent for destination square dst (abs idx).
+// Returns the FIRST step as a bb_action (adjacent, unoccupied — same
+// conditions move_legal enumerates, so safe for bb_apply_trusted).
+static bb_action bbe_macro_plan(Bloodbowl* env, int mover, int dst) {
+    int chain[40]; int n = 0;
+    for (int v = dst; v >= 0 && n < 40; v = env->reach_parent[v]) {
+        if (env->reach_parent[v] < 0) break;  // reached source
+        chain[n++] = v;
+    }
+    env->macro_len = 0;
+    for (int i = n - 1; i >= 0; i--) {
+        env->macro_px[env->macro_len] = (uint8_t)(chain[i] % BB_PITCH_LEN);
+        env->macro_py[env->macro_len] = (uint8_t)(chain[i] / BB_PITCH_LEN);
+        env->macro_len++;
+    }
+    env->macro_pos = 1;            // [0] is applied immediately by c_step
+    env->macro_mover = mover;
+    return (bb_action){BB_A_STEP, 0, env->macro_px[0], env->macro_py[0]};
 }
 
 static void bbe_fill_mask(Bloodbowl* env, int agent) {
@@ -818,6 +947,25 @@ static void bbe_fill_mask(Bloodbowl* env, int agent) {
         i = j;
     }
     env->setup_fast = (uint8_t)(env->setup_t0 >= 0 && setup_fast);
+    // v5 macro-moves (D82): in a MOVE window, additionally mark every
+    // REACHABLE destination square legal for the STEP head; decode routes
+    // non-adjacent picks via bbe_macro_plan.
+    if (env->macro_moves) {
+        const bb_match* mm = &env->match;
+        if (mm->stack_top > 0 && mm->decision_team == agent) {
+            const bb_frame* tf = &mm->stack[mm->stack_top - 1];
+            if (tf->proc == BB_PROC_MOVE && tf->a < BB_NUM_PLAYERS &&
+                can_step(mm, tf->a) && mask[BB_A_STEP]) {
+                bbe_macro_reach(env, mm, tf->a, tf->b == BB_ACT_BLITZ);
+                for (int d = 0; d < 390; d++) {
+                    if (env->reach_parent[d] < 0) continue;
+                    int dx = d % BB_PITCH_LEN, dy = d / BB_PITCH_LEN;
+                    int ex2 = agent == BB_HOME ? dx : (BB_PITCH_LEN - 1 - dx);
+                    mask[BBE_HEAD_TYPE + BBE_HEAD_ARG + dy * BB_PITCH_LEN + ex2] = 1;
+                }
+            }
+        }
+    }
 }
 
 // Snap the sampled heads onto a legal action. Uses the head projections
@@ -850,6 +998,17 @@ static bb_action bbe_decode(Bloodbowl* env, int agent, const float* heads) {
             if (same_type_sq < 0) same_type_sq = i;
         }
         if (same_type < 0) same_type = i;
+    }
+    // v5 macro-moves (D82): a STEP to a reachable non-adjacent destination
+    // is a PLANNED PATH, not an illegal pick. Ego->absolute, then route.
+    if (env->macro_moves && t == BB_A_STEP && same_type_sq < 0 &&
+        sq >= 0 && sq < 390 && env->reach_mover >= 0) {
+        int ax = sq % BB_PITCH_LEN, ay = sq / BB_PITCH_LEN;
+        if (agent == BB_AWAY) ax = BB_PITCH_LEN - 1 - ax;
+        int abs_sq = ay * BB_PITCH_LEN + ax;
+        if (env->reach_parent[abs_sq] >= 0) {
+            return bbe_macro_plan(env, env->reach_mover, abs_sq);
+        }
     }
     env->illegal++;
     if (same_type_sq >= 0) return env->legal[same_type_sq];
@@ -1577,6 +1736,42 @@ static void c_step(Bloodbowl* env) {
             }
             env->pending_pickup_slot = -1;
         }
+        // v5 macro-moves (D82): follow the planned path while uninterrupted.
+        // One policy decision = the whole move; control returns on any TEST
+        // window, knockdown, occupied square, or activation end. Post-loop
+        // accounting is state-diff based so it stays correct across the
+        // macro; per-step metrics/taxes go through bbe_count_action.
+        if (env->macro_moves && env->macro_pos < env->macro_len) {
+            while (env->macro_pos < env->macro_len &&
+                   m->status == BB_STATUS_DECISION && m->stack_top > 0) {
+                const bb_frame* tf = &m->stack[m->stack_top - 1];
+                if (tf->proc != BB_PROC_MOVE ||
+                    (int)tf->a != env->macro_mover) break;
+                int nx = env->macro_px[env->macro_pos];
+                int ny = env->macro_py[env->macro_pos];
+                if (!bb_on_pitch_xy(nx, ny) || m->grid[nx][ny]) break;
+                if (!can_step(m, env->macro_mover)) break;
+                bb_action mact = {BB_A_STEP, 0, (uint8_t)nx, (uint8_t)ny};
+                bbe_count_action(env, mact);
+                bb_apply_trusted(m, mact, &env->rng);
+                env->ev_valid = 0;
+                env->reach_mover = -1;
+                env->decisions++;
+                env->macro_pos++;
+                if (env->pending_pickup_slot >= 0) {
+                    if (m->ball.state == BB_BALL_HELD &&
+                        m->ball.carrier == (uint8_t)env->pending_pickup_slot) {
+                        env->ep_pickup_success++;
+                        BBE_FEED(env, BBE_EV_PICKUP_OK,
+                                 env->pending_pickup_slot, -1);
+                    }
+                    env->pending_pickup_slot = -1;
+                }
+            }
+            env->macro_len = 0;
+            env->macro_pos = 0;
+        }
+        env->reach_mover = -1;  // state advanced: reachability is stale
         // Possession-rate bookkeeping: when the active team flips, the
         // previous team's turn ENDED — score whether they ended it holding,
         // and pay the possession annuity transfer (see reward_possession).
