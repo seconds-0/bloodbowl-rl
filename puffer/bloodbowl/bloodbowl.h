@@ -165,6 +165,7 @@ typedef struct {
     float gfi_attempts;         // STEPs beyond MA (rush/GFI test due)
     float pickup_attempts;      // STEPs onto the loose ball's square
     float pass_attempts;        // BB_A_PASS_TARGET actions
+    float handoff_attempts;     // BB_A_HANDOFF_TARGET actions
     float knockdowns_inflicted; // actor's opponents downed during his window
     float knockdowns_own;       // actor's own players downed (failed dodges...)
     // Learner (slot 0) score vs frozen bank b on envs tagged b+1; selfplay.py
@@ -362,7 +363,7 @@ typedef struct {
     int ep_team_ball[2];
     int turns_at_reset[2];
     int ep_dodge_attempts, ep_gfi_attempts;
-    int ep_pickup_attempts, ep_pass_attempts;
+    int ep_pickup_attempts, ep_pass_attempts, ep_handoff_attempts;
     int ep_knockdowns_inflicted, ep_knockdowns_own;
     float ep_return[BBE_AGENTS];
     bb_action legal[BB_LEGAL_MAX];
@@ -1165,6 +1166,7 @@ static void bbe_reset_match(Bloodbowl* env) {
     env->prev_active_team = env->match.active_team;
     env->ep_dodge_attempts = env->ep_gfi_attempts = 0;
     env->ep_pickup_attempts = env->ep_pass_attempts = 0;
+    env->ep_handoff_attempts = 0;
     env->ep_knockdowns_inflicted = env->ep_knockdowns_own = 0;
     for (int t = 0; t < 2; t++) {
         env->ep_team_contact[t] = 0;
@@ -1292,6 +1294,7 @@ static void bbe_finish_episode(Bloodbowl* env) {
     env->log.gfi_attempts += (float)env->ep_gfi_attempts;
     env->log.pickup_attempts += (float)env->ep_pickup_attempts;
     env->log.pass_attempts += (float)env->ep_pass_attempts;
+    env->log.handoff_attempts += (float)env->ep_handoff_attempts;
     env->log.knockdowns_inflicted += (float)env->ep_knockdowns_inflicted;
     env->log.knockdowns_own += (float)env->ep_knockdowns_own;
     // Selfplay pool bookkeeping: on tagged envs slot 0 is the learner playing
@@ -1369,6 +1372,7 @@ static void bbe_count_action(Bloodbowl* env, bb_action act) {
                  m->ball.state == BB_BALL_HELD ? m->ball.carrier : -1, -1);
         break;
     case BB_A_HANDOFF_TARGET:
+        env->ep_handoff_attempts++;
         BBE_FEED(env, BBE_EV_HANDOFF,
                  m->ball.state == BB_BALL_HELD ? m->ball.carrier : -1, -1);
         break;

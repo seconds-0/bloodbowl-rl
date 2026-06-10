@@ -19,5 +19,7 @@
   "block_1d_frac": 0.1237,
   "pickup_success_rate": 0.67,
   "pickUp_success_per_game": 4.88,
-  "dodge_success_per_game": "~unknown (dodgeRoll has no success flag in corpus; attempts only)"
+  "dodge_success_per_game": "~unknown (dodgeRoll has no success flag in corpus; attempts only)",
+  "handoff_per_game": 1.33,
+  "_handoff_note": "measured 2026-06-10 via turnDataSetHandOverUsed=true over 500-replay sample (663 uses); handoff has no thrower roll so the D61 roll-type count missed it"
 }

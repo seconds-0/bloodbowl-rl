@@ -215,6 +215,7 @@ void my_log(Log* log, Dict* out) {
     dict_set(out, "gfi_attempts", log->gfi_attempts);
     dict_set(out, "pickup_attempts", log->pickup_attempts);
     dict_set(out, "pass_attempts", log->pass_attempts);
+    dict_set(out, "handoff_attempts", log->handoff_attempts);
     dict_set(out, "knockdowns_inflicted", log->knockdowns_inflicted);
     dict_set(out, "knockdowns_own", log->knockdowns_own);
     dict_set(out, "error_episodes", log->error_episodes);

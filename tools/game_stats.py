@@ -38,6 +38,7 @@ METRICS = [
     ("pickup_attempts",    "pickUpRoll_per_game", "context", "pickup attempts / game"),
     ("pickup_success",     "pickUp_success_per_game", "higher", "successful pickups / game"),
     ("pass_attempts",      "passRoll_per_game",   "context", "passes / game"),
+    ("handoff_attempts",   "handoff_per_game",    "context", "hand-offs / game"),
     ("possession_rate",    None,                  "higher",  "fraction of turns ending with ball held"),
 ]
 
