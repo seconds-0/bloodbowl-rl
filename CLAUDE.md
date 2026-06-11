@@ -15,8 +15,8 @@ RL training harness for **Blood Bowl Third Season Edition (BB2025)**: determinis
 
 ## Current program state (v5 path-actions era, 2026-06-11 — verify vs DECISIONS tail)
 
-- **v5 PATH-ACTIONS ADOPTED (D85-FINAL):** the STEP square head selects ANY reachable destination; env routes a min-risk path and auto-executes it (knob `macro_moves=1`, engine untouched). Matched controlled A/B: +26% from-kickoff tds (1.438 vs v4 1.143), healthier mobility. ALL new arms run macro_moves=1. Launch via run_native_asym.sh with `--env.macro-moves 1`; eval ckpts with the same trailing arg.
-- Flagship tds curve (v4 kickoff lineage, training metric): 0.616→0.743→0.826→0.940→1.045→1.192 (D70-D84), no plateau at 180B. v5-kickoff is the new flagship line (warm from v5-ab cap).
+- **v5 PATH-ACTIONS (D85/D91 — status REVISED):** macro_moves=1 = STEP head selects any reachable destination, env auto-routes (engine untouched). Wins MIRROR offense evals (+26%, 1.625 from-kickoff) but LOST the first head-to-head tournament to the v4 lineage (~45% of decisive games, both env configs, D91). Mirror evals = offense diagnostics only; TOURNAMENTS are the strength scoreboard. Macro question re-opens under contested training (D90): v5-contested (ballhawk, macro) vs v4-contested (japan, stepwise) settle it at matched caps. Eval/launch macro ckpts with trailing `--env.macro-moves 1`.
+- v4 kickoff lineage (training tds): 0.616→...→1.360 (D88, 240B, still climbing) — head-to-head CHAMPION as of D91. CONTESTED ERA (D90): frozen-bc_v4-teacher era over; arms now train vs their own caps; possession metric counts TD-ends as held (pre/post-D90 not comparable).
 
 ### v4 lineage reference (2026-06-08)
 
