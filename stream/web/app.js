@@ -321,6 +321,8 @@ function rebuildPlayers(list) {
       stance: p.stance || 'standing',
       num: p.num != null ? p.num : (p.slot % 16) + 1,
       position: p.position || '', icon: p.icon || '',
+      stats: p.stats || null, skills: p.skills || [],
+      has_ball: !!p.has_ball, loc: p.loc || 'pitch',
     });
   }
 }
