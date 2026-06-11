@@ -30,6 +30,8 @@ def replay_possession(path):
     bx = by = None
     ball_moving = False
     playing = None      # "home"/"away" currently acting
+    score = {"home": 0, "away": 0}
+    scored_this_turn = None   # side that scored since last flip
     turn_ends = held_ends = 0
     for c in (d.get("gameLog", {}) or {}).get("commandArray", []) or []:
         for mc in (c.get("modelChangeList", {}) or {}).get("modelChangeArray", []) or []:
@@ -40,16 +42,24 @@ def replay_possession(path):
                 bx, by = v[0], v[1]
             elif mid == "fieldModelSetBallMoving":
                 ball_moving = bool(v)
+            elif mid == "teamResultSetScore":
+                if k in score and isinstance(v, int) and v > score[k]:
+                    score[k] = v
+                    scored_this_turn = k
             elif mid == "gameSetHomePlaying":
                 # the team that WAS playing just ended its turn
-                if playing is not None and bx is not None and not ball_moving:
-                    holder = None
-                    for pid, (px, py) in pos.items():
-                        if px == bx and py == by:
-                            holder = side.get(pid); break
+                if playing is not None and bx is not None:
                     turn_ends += 1
-                    if holder == playing:
-                        held_ends += 1
+                    if scored_this_turn == playing:
+                        held_ends += 1          # D90: carried it in = held
+                    elif not ball_moving:
+                        holder = None
+                        for pid, (px, py) in pos.items():
+                            if px == bx and py == by:
+                                holder = side.get(pid); break
+                        if holder == playing:
+                            held_ends += 1
+                scored_this_turn = None
                 playing = "home" if v is True else "away" if v is False else playing
     return (turn_ends, held_ends)
 

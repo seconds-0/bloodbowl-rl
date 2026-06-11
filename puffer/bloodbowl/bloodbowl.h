@@ -1794,7 +1794,13 @@ static void c_step(Bloodbowl* env) {
         if ((int)m->active_team != env->prev_active_team) {
             int t = env->prev_active_team & 1;
             env->ep_turns[t]++;
-            if (m->ball.state == BB_BALL_HELD &&
+            // Possession METRIC (D90, Alex): a turn that ends in your own
+            // touchdown counts as ending WITH possession — you carried it in.
+            // Metric only; the annuity transfer below still requires HELD
+            // (reward_td already pays the score).
+            if (m->score[t] > env->score_prev[t]) {
+                env->ep_turns_with_ball[t]++;
+            } else if (m->ball.state == BB_BALL_HELD &&
                 BB_TEAM_OF(m->ball.carrier) == t) {
                 env->ep_turns_with_ball[t]++;
                 if (env->reward_possession != 0.0f) {
