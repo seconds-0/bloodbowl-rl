@@ -13,7 +13,12 @@ RL training harness for **Blood Bowl Third Season Edition (BB2025)**: determinis
 | `fumbbl-data` | Fetching/parsing FUMBBL API data or replays; BC corpus curation |
 | `bb-validation` | Running/triaging the 7 validation layers; oracle setup (FFB/Jervis/Calculator) |
 
-## Current program state (v4 era, 2026-06-08 — verify against DECISIONS.md tail)
+## Current program state (v5 path-actions era, 2026-06-11 — verify vs DECISIONS tail)
+
+- **v5 PATH-ACTIONS ADOPTED (D85-FINAL):** the STEP square head selects ANY reachable destination; env routes a min-risk path and auto-executes it (knob `macro_moves=1`, engine untouched). Matched controlled A/B: +26% from-kickoff tds (1.438 vs v4 1.143), healthier mobility. ALL new arms run macro_moves=1. Launch via run_native_asym.sh with `--env.macro-moves 1`; eval ckpts with the same trailing arg.
+- Flagship tds curve (v4 kickoff lineage, training metric): 0.616→0.743→0.826→0.940→1.045→1.192 (D70-D84), no plateau at 180B. v5-kickoff is the new flagship line (warm from v5-ab cap).
+
+ (v4 era, 2026-06-08 — verify against DECISIONS.md tail)
 
 - **Era: obs-v4 + bc_v4.** Sighted stage-1 dominated the v3 lineage on every axis at matched 15B (D55: ~6x faster tds, 2dred falling through the v3 plateau). Mid-curriculum kickoff tournament drew 98.8% — expected per D50/D56, not failure.
 - **Running:** `v4_s2` flagship (bb-ballhawk, maxdist 9 from v4_s1_final 15B ckpt `0000014942470144.bin`) · `v4_s2tax` twin (bb-possession, + `reward_rush_cost 0.015`) · `v3_tax` completion (box-2) · **`profile-v4-native-asym` (box-1, D57): the 4x SPS lever FIRED — native CUDA backend, NO bc aux, frozen bc_v4 as selfplay teacher, 2.1M SPS vs torch's 0.6–0.77M. Open question: parity of its tds curve vs the torch flagship at matched steps; if parity holds, torch retires to bc_vN training only.**
