@@ -1,0 +1,1772 @@
+[
+ {
+  "id": 0,
+  "name": "Amazon",
+  "positions": [
+   {
+    "name": "Eagle Warrior",
+    "ma": 6,
+    "st": 3,
+    "ag": 3,
+    "pa": 4,
+    "av": 8,
+    "nskills": 1,
+    "icon": "iconsets/amazon_triballinewoman.png"
+   },
+   {
+    "name": "Python Warrior",
+    "ma": 6,
+    "st": 3,
+    "ag": 3,
+    "pa": 3,
+    "av": 8,
+    "nskills": 4,
+    "icon": "iconsets/amazon_eaglewarriorthrower.png"
+   },
+   {
+    "name": "Piranha Warrior",
+    "ma": 7,
+    "st": 3,
+    "ag": 3,
+    "pa": 4,
+    "av": 8,
+    "nskills": 3,
+    "icon": "iconsets/amazon_piranhawarriorblitzer.png"
+   },
+   {
+    "name": "Jaguar Warrior",
+    "ma": 6,
+    "st": 4,
+    "ag": 3,
+    "pa": 4,
+    "av": 9,
+    "nskills": 2,
+    "icon": "iconsets/amazon_jaguarwarriorblocker.png"
+   }
+  ]
+ },
+ {
+  "id": 1,
+  "name": "Black Orc",
+  "positions": [
+   {
+    "name": "Goblin Bruiser",
+    "ma": 6,
+    "st": 2,
+    "ag": 3,
+    "pa": 4,
+    "av": 8,
+    "nskills": 4,
+    "icon": "iconsets/blackorc_goblinbruiserlineman.png"
+   },
+   {
+    "name": "Black Orc",
+    "ma": 4,
+    "st": 4,
+    "ag": 4,
+    "pa": 5,
+    "av": 10,
+    "nskills": 2,
+    "icon": "iconsets/blackorc_blackorc.png"
+   },
+   {
+    "name": "Trained Troll",
+    "ma": 4,
+    "st": 5,
+    "ag": 5,
+    "pa": 5,
+    "av": 10,
+    "nskills": 6,
+    "icon": "iconsets/blackorc_trainedtroll.png"
+   }
+  ]
+ },
+ {
+  "id": 2,
+  "name": "Bretonnian",
+  "positions": [
+   {
+    "name": "Bretonnian Squire",
+    "ma": 6,
+    "st": 3,
+    "ag": 3,
+    "pa": 4,
+    "av": 8,
+    "nskills": 1,
+    "icon": "iconsets/bretonnian_linemen.png"
+   },
+   {
+    "name": "Bretonnian Knight Catcher",
+    "ma": 7,
+    "st": 3,
+    "ag": 3,
+    "pa": 4,
+    "av": 9,
+    "nskills": 3,
+    "icon": "iconsets/bretonnian_yeomen.png"
+   },
+   {
+    "name": "Bretonnian Knight Thrower",
+    "ma": 6,
+    "st": 3,
+    "ag": 3,
+    "pa": 3,
+    "av": 9,
+    "nskills": 3,
+    "icon": "iconsets/bretonnian_yeomen.png"
+   },
+   {
+    "name": "Grail Knight",
+    "ma": 7,
+    "st": 3,
+    "ag": 3,
+    "pa": 4,
+    "av": 10,
+    "nskills": 3,
+    "icon": "iconsets/bretonnian_blitzers.png"
+   }
+  ]
+ },
+ {
+  "id": 3,
+  "name": "Chaos Chosen",
+  "positions": [
+   {
+    "name": "Beastman Lineman",
+    "ma": 6,
+    "st": 3,
+    "ag": 3,
+    "pa": 3,
+    "av": 9,
+    "nskills": 2,
+    "icon": "iconsets/chaoschosen_beastmanrunner.png"
+   },
+   {
+    "name": "Chaos Chosen",
+    "ma": 5,
+    "st": 4,
+    "ag": 3,
+    "pa": 5,
+    "av": 10,
+    "nskills": 1,
+    "icon": "iconsets/chaoschosen_chosenblocker.png"
+   },
+   {
+    "name": "Troll",
+    "ma": 4,
+    "st": 5,
+    "ag": 5,
+    "pa": 5,
+    "av": 10,
+    "nskills": 7,
+    "icon": "iconsets/chaoschosen_chaostroll.png"
+   },
+   {
+    "name": "Ogre",
+    "ma": 5,
+    "st": 5,
+    "ag": 4,
+    "pa": 5,
+    "av": 10,
+    "nskills": 5,
+    "icon": "iconsets/chaoschosen_chaosogre.png"
+   },
+   {
+    "name": "Minotaur",
+    "ma": 5,
+    "st": 5,
+    "ag": 4,
+    "pa": 6,
+    "av": 9,
+    "nskills": 6,
+    "icon": "iconsets/chaoschosen_minotaur.png"
+   }
+  ]
+ },
+ {
+  "id": 4,
+  "name": "Chaos Dwarf",
+  "positions": [
+   {
+    "name": "Hobgoblin Lineman",
+    "ma": 6,
+    "st": 3,
+    "ag": 3,
+    "pa": 4,
+    "av": 8,
+    "nskills": 0,
+    "icon": "iconsets/chaosdwarf_hobgoblin.png"
+   },
+   {
+    "name": "Sneaky Stabba",
+    "ma": 6,
+    "st": 3,
+    "ag": 3,
+    "pa": 5,
+    "av": 8,
+    "nskills": 2,
+    "icon": "iconsets/chaosdwarf_hobgoblinsneakystabba.png"
+   },
+   {
+    "name": "Chaos Dwarf Blocker",
+    "ma": 4,
+    "st": 3,
+    "ag": 4,
+    "pa": 6,
+    "av": 10,
+    "nskills": 3,
+    "icon": "iconsets/chaosdwarf_chaosdwarfblocker.png"
+   },
+   {
+    "name": "Flamesmith",
+    "ma": 5,
+    "st": 3,
+    "ag": 4,
+    "pa": 6,
+    "av": 10,
+    "nskills": 4,
+    "icon": "iconsets/chaosdwarf_chaosdwarfflamesmith.png"
+   },
+   {
+    "name": "Bull Centaur",
+    "ma": 6,
+    "st": 4,
+    "ag": 4,
+    "pa": 6,
+    "av": 10,
+    "nskills": 4,
+    "icon": "iconsets/chaosdwarf_bullcentaurblitzer.png"
+   },
+   {
+    "name": "Minotaur",
+    "ma": 5,
+    "st": 5,
+    "ag": 4,
+    "pa": 6,
+    "av": 9,
+    "nskills": 6,
+    "icon": "iconsets/chaosdwarf_enslavedminotaur.png"
+   }
+  ]
+ },
+ {
+  "id": 5,
+  "name": "Chaos Renegades",
+  "positions": [
+   {
+    "name": "Renegade Human",
+    "ma": 6,
+    "st": 3,
+    "ag": 3,
+    "pa": 4,
+    "av": 9,
+    "nskills": 1,
+    "icon": "iconsets/chaosrenegade_renegadehumanlineman.png"
+   },
+   {
+    "name": "Renegade Goblin",
+    "ma": 6,
+    "st": 2,
+    "ag": 3,
+    "pa": 4,
+    "av": 8,
+    "nskills": 4,
+    "icon": "iconsets/chaosrenegade_renegadegoblin.png"
+   },
+   {
+    "name": "Renegade Orc",
+    "ma": 5,
+    "st": 3,
+    "ag": 3,
+    "pa": 4,
+    "av": 10,
+    "nskills": 1,
+    "icon": "iconsets/chaosrenegade_renegadeorclineman.png"
+   },
+   {
+    "name": "Renegade Skaven",
+    "ma": 7,
+    "st": 3,
+    "ag": 3,
+    "pa": 4,
+    "av": 8,
+    "nskills": 1,
+    "icon": "iconsets/chaosrenegade_renegadeskavenlineman.png"
+   },
+   {
+    "name": "Renegade Dark Elf",
+    "ma": 6,
+    "st": 3,
+    "ag": 2,
+    "pa": 3,
+    "av": 9,
+    "nskills": 1,
+    "icon": "iconsets/chaosrenegade_renegadedarkelflineman.png"
+   },
+   {
+    "name": "Renegade Human Thrower",
+    "ma": 6,
+    "st": 3,
+    "ag": 3,
+    "pa": 3,
+    "av": 9,
+    "nskills": 3,
+    "icon": "iconsets/chaosrenegade_renegadehumanthrower.png"
+   },
+   {
+    "name": "Troll",
+    "ma": 4,
+    "st": 5,
+    "ag": 5,
+    "pa": 5,
+    "av": 10,
+    "nskills": 7,
+    "icon": "iconsets/chaosrenegade_troll.png"
+   },
+   {
+    "name": "Ogre",
+    "ma": 5,
+    "st": 5,
+    "ag": 4,
+    "pa": 5,
+    "av": 10,
+    "nskills": 5,
+    "icon": "iconsets/chaosrenegade_ogre.png"
+   },
+   {
+    "name": "Minotaur",
+    "ma": 5,
+    "st": 5,
+    "ag": 4,
+    "pa": 6,
+    "av": 9,
+    "nskills": 6,
+    "icon": "iconsets/chaosrenegade_minotaur.png"
+   },
+   {
+    "name": "Rat Ogre",
+    "ma": 6,
+    "st": 5,
+    "ag": 4,
+    "pa": 6,
+    "av": 9,
+    "nskills": 5,
+    "icon": "iconsets/chaosrenegade_ogre.png"
+   }
+  ]
+ },
+ {
+  "id": 6,
+  "name": "Dark Elf",
+  "positions": [
+   {
+    "name": "Dark Elf Lineman",
+    "ma": 6,
+    "st": 3,
+    "ag": 2,
+    "pa": 3,
+    "av": 9,
+    "nskills": 0,
+    "icon": "iconsets/darkelf_darkelflineman.png"
+   },
+   {
+    "name": "Dark Elf Runner",
+    "ma": 7,
+    "st": 3,
+    "ag": 2,
+    "pa": 3,
+    "av": 8,
+    "nskills": 2,
+    "icon": "iconsets/darkelf_runner.png"
+   },
+   {
+    "name": "Dark Elf Assassin",
+    "ma": 7,
+    "st": 3,
+    "ag": 2,
+    "pa": 4,
+    "av": 8,
+    "nskills": 3,
+    "icon": "iconsets/darkelf_assassin.png"
+   },
+   {
+    "name": "Dark Elf Blitzer",
+    "ma": 7,
+    "st": 3,
+    "ag": 2,
+    "pa": 3,
+    "av": 9,
+    "nskills": 1,
+    "icon": "iconsets/darkelf_blitzer.png"
+   },
+   {
+    "name": "Witch Elf",
+    "ma": 7,
+    "st": 3,
+    "ag": 2,
+    "pa": 4,
+    "av": 8,
+    "nskills": 3,
+    "icon": "iconsets/darkelf_witchelf.png"
+   }
+  ]
+ },
+ {
+  "id": 7,
+  "name": "Dwarf",
+  "positions": [
+   {
+    "name": "Dwarf Lineman",
+    "ma": 4,
+    "st": 3,
+    "ag": 4,
+    "pa": 5,
+    "av": 10,
+    "nskills": 3,
+    "icon": "iconsets/dwarf_blocker.png"
+   },
+   {
+    "name": "Dwarf Runner",
+    "ma": 6,
+    "st": 3,
+    "ag": 3,
+    "pa": 4,
+    "av": 9,
+    "nskills": 3,
+    "icon": "iconsets/dwarf_runner.png"
+   },
+   {
+    "name": "Dwarf Blitzer",
+    "ma": 5,
+    "st": 3,
+    "ag": 4,
+    "pa": 4,
+    "av": 10,
+    "nskills": 4,
+    "icon": "iconsets/dwarf_blitzer.png"
+   },
+   {
+    "name": "Troll Slayer",
+    "ma": 5,
+    "st": 3,
+    "ag": 4,
+    "pa": 5,
+    "av": 9,
+    "nskills": 5,
+    "icon": "iconsets/dwarf_trollslayer.png"
+   },
+   {
+    "name": "Deathroller",
+    "ma": 5,
+    "st": 7,
+    "ag": 5,
+    "pa": 0,
+    "av": 11,
+    "nskills": 8,
+    "icon": "iconsets/dwarf_deathroller.png"
+   }
+  ]
+ },
+ {
+  "id": 8,
+  "name": "Elven Union",
+  "positions": [
+   {
+    "name": "Elf Lineman",
+    "ma": 6,
+    "st": 3,
+    "ag": 2,
+    "pa": 3,
+    "av": 8,
+    "nskills": 1,
+    "icon": "iconsets/elvenunion_lineman.png"
+   },
+   {
+    "name": "Elf Thrower",
+    "ma": 6,
+    "st": 3,
+    "ag": 2,
+    "pa": 2,
+    "av": 8,
+    "nskills": 2,
+    "icon": "iconsets/elvenunion_thrower.png"
+   },
+   {
+    "name": "Elf Catcher",
+    "ma": 8,
+    "st": 3,
+    "ag": 2,
+    "pa": 4,
+    "av": 8,
+    "nskills": 3,
+    "icon": "iconsets/elvenunion_catcher.png"
+   },
+   {
+    "name": "Elf Blitzer",
+    "ma": 7,
+    "st": 3,
+    "ag": 2,
+    "pa": 3,
+    "av": 9,
+    "nskills": 2,
+    "icon": "iconsets/elvenunion_blitzer.png"
+   }
+  ]
+ },
+ {
+  "id": 9,
+  "name": "Gnome",
+  "positions": [
+   {
+    "name": "Gnome Lineman",
+    "ma": 5,
+    "st": 2,
+    "ag": 3,
+    "pa": 4,
+    "av": 7,
+    "nskills": 4,
+    "icon": "iconsets/gnome_gnomelineman.png"
+   },
+   {
+    "name": "Woodland Fox",
+    "ma": 7,
+    "st": 2,
+    "ag": 2,
+    "pa": 0,
+    "av": 6,
+    "nskills": 4,
+    "icon": "iconsets/gnome_woodlandfox.png"
+   },
+   {
+    "name": "Gnome Illusionist",
+    "ma": 5,
+    "st": 2,
+    "ag": 3,
+    "pa": 3,
+    "av": 7,
+    "nskills": 4,
+    "icon": "iconsets/gnome_gnomeillusionist.png"
+   },
+   {
+    "name": "Gnome Beastmaster",
+    "ma": 5,
+    "st": 2,
+    "ag": 3,
+    "pa": 4,
+    "av": 8,
+    "nskills": 4,
+    "icon": "iconsets/gnome_gnomebeastmaster.png"
+   },
+   {
+    "name": "Altern Forest Treeman",
+    "ma": 2,
+    "st": 6,
+    "ag": 5,
+    "pa": 5,
+    "av": 11,
+    "nskills": 7,
+    "icon": "iconsets/gnome_alternforesttreeman.png"
+   }
+  ]
+ },
+ {
+  "id": 10,
+  "name": "Goblin",
+  "positions": [
+   {
+    "name": "Goblin Lineman",
+    "ma": 6,
+    "st": 2,
+    "ag": 3,
+    "pa": 4,
+    "av": 8,
+    "nskills": 3,
+    "icon": "iconsets/goblin_goblin.png"
+   },
+   {
+    "name": "Looney",
+    "ma": 6,
+    "st": 2,
+    "ag": 3,
+    "pa": 0,
+    "av": 8,
+    "nskills": 4,
+    "icon": "iconsets/goblin_looney.png"
+   },
+   {
+    "name": "Bomma",
+    "ma": 6,
+    "st": 2,
+    "ag": 3,
+    "pa": 4,
+    "av": 8,
+    "nskills": 4,
+    "icon": "iconsets/goblin_bomma.png"
+   },
+   {
+    "name": "'Ooligan",
+    "ma": 6,
+    "st": 2,
+    "ag": 3,
+    "pa": 5,
+    "av": 8,
+    "nskills": 6,
+    "icon": "iconsets/goblin_ooligan.png"
+   },
+   {
+    "name": "Doom Diver",
+    "ma": 6,
+    "st": 2,
+    "ag": 3,
+    "pa": 6,
+    "av": 8,
+    "nskills": 4,
+    "icon": "iconsets/goblin_doomdiver.png"
+   },
+   {
+    "name": "Fanatic",
+    "ma": 3,
+    "st": 7,
+    "ag": 3,
+    "pa": 0,
+    "av": 8,
+    "nskills": 4,
+    "icon": "iconsets/goblin_fanatic.png"
+   },
+   {
+    "name": "Pogoer",
+    "ma": 7,
+    "st": 2,
+    "ag": 3,
+    "pa": 4,
+    "av": 8,
+    "nskills": 3,
+    "icon": "iconsets/goblin_pogoer.png"
+   },
+   {
+    "name": "Trained Troll",
+    "ma": 4,
+    "st": 5,
+    "ag": 5,
+    "pa": 5,
+    "av": 10,
+    "nskills": 6,
+    "icon": "iconsets/goblin_troll.png"
+   }
+  ]
+ },
+ {
+  "id": 11,
+  "name": "Halfling",
+  "positions": [
+   {
+    "name": "Halfling Hopeful",
+    "ma": 5,
+    "st": 2,
+    "ag": 3,
+    "pa": 4,
+    "av": 7,
+    "nskills": 3,
+    "icon": "iconsets/halfling_halflinghopeful.png"
+   },
+   {
+    "name": "Halfling Hefty",
+    "ma": 5,
+    "st": 2,
+    "ag": 3,
+    "pa": 3,
+    "av": 8,
+    "nskills": 3,
+    "icon": "iconsets/halfling_halflinghefty.png"
+   },
+   {
+    "name": "Halfling Catcher",
+    "ma": 5,
+    "st": 2,
+    "ag": 3,
+    "pa": 4,
+    "av": 7,
+    "nskills": 5,
+    "icon": "iconsets/halfling_halflingcatcher.png"
+   },
+   {
+    "name": "Athel Forest Treeman",
+    "ma": 2,
+    "st": 6,
+    "ag": 5,
+    "pa": 5,
+    "av": 11,
+    "nskills": 7,
+    "icon": "iconsets/halfling_treeman.png"
+   }
+  ]
+ },
+ {
+  "id": 12,
+  "name": "High Elf",
+  "positions": [
+   {
+    "name": "High Elf Lineman",
+    "ma": 6,
+    "st": 3,
+    "ag": 2,
+    "pa": 3,
+    "av": 9,
+    "nskills": 0,
+    "icon": "iconsets/highelf_lineman.png"
+   },
+   {
+    "name": "Phoenix Warrior",
+    "ma": 6,
+    "st": 3,
+    "ag": 2,
+    "pa": 2,
+    "av": 9,
+    "nskills": 3,
+    "icon": "iconsets/highelf_thrower.png"
+   },
+   {
+    "name": "Dragon Prince",
+    "ma": 8,
+    "st": 3,
+    "ag": 2,
+    "pa": 4,
+    "av": 9,
+    "nskills": 3,
+    "icon": "iconsets/highelf_blitzer.png"
+   },
+   {
+    "name": "White Lion",
+    "ma": 7,
+    "st": 3,
+    "ag": 2,
+    "pa": 3,
+    "av": 9,
+    "nskills": 2,
+    "icon": "iconsets/highelf_catcher.png"
+   }
+  ]
+ },
+ {
+  "id": 13,
+  "name": "Human",
+  "positions": [
+   {
+    "name": "Human Lineman",
+    "ma": 6,
+    "st": 3,
+    "ag": 3,
+    "pa": 4,
+    "av": 9,
+    "nskills": 0,
+    "icon": "iconsets/human_lineman.png"
+   },
+   {
+    "name": "Halfling Hopeful",
+    "ma": 5,
+    "st": 2,
+    "ag": 3,
+    "pa": 4,
+    "av": 7,
+    "nskills": 3,
+    "icon": "iconsets/human_halflinghopeful.png"
+   },
+   {
+    "name": "Human Catcher",
+    "ma": 8,
+    "st": 3,
+    "ag": 3,
+    "pa": 4,
+    "av": 8,
+    "nskills": 2,
+    "icon": "iconsets/human_catcher.png"
+   },
+   {
+    "name": "Human Thrower",
+    "ma": 6,
+    "st": 3,
+    "ag": 3,
+    "pa": 3,
+    "av": 9,
+    "nskills": 2,
+    "icon": "iconsets/human_thrower.png"
+   },
+   {
+    "name": "Human Blitzer",
+    "ma": 7,
+    "st": 3,
+    "ag": 3,
+    "pa": 4,
+    "av": 9,
+    "nskills": 2,
+    "icon": "iconsets/human_blitzer.png"
+   },
+   {
+    "name": "Ogre",
+    "ma": 5,
+    "st": 5,
+    "ag": 4,
+    "pa": 5,
+    "av": 10,
+    "nskills": 5,
+    "icon": "iconsets/human_ogre.png"
+   }
+  ]
+ },
+ {
+  "id": 14,
+  "name": "Imperial Nobility",
+  "positions": [
+   {
+    "name": "Imperial Retainer",
+    "ma": 6,
+    "st": 3,
+    "ag": 3,
+    "pa": 4,
+    "av": 8,
+    "nskills": 1,
+    "icon": "iconsets/imperialnobility_imperialretainerlineman.png"
+   },
+   {
+    "name": "Imperial Thrower",
+    "ma": 6,
+    "st": 3,
+    "ag": 3,
+    "pa": 2,
+    "av": 9,
+    "nskills": 3,
+    "icon": "iconsets/imperialnobility_imperialthrower.png"
+   },
+   {
+    "name": "Bodyguard",
+    "ma": 5,
+    "st": 3,
+    "ag": 3,
+    "pa": 4,
+    "av": 9,
+    "nskills": 2,
+    "icon": "iconsets/imperialnobility_bodyguard.png"
+   },
+   {
+    "name": "Noble Blitzer",
+    "ma": 7,
+    "st": 3,
+    "ag": 3,
+    "pa": 4,
+    "av": 9,
+    "nskills": 3,
+    "icon": "iconsets/imperialnobility_nobleblitzer.png"
+   },
+   {
+    "name": "Ogre",
+    "ma": 5,
+    "st": 5,
+    "ag": 4,
+    "pa": 5,
+    "av": 10,
+    "nskills": 5,
+    "icon": "iconsets/imperialnobility_ogre.png"
+   }
+  ]
+ },
+ {
+  "id": 15,
+  "name": "Khorne",
+  "positions": [
+   {
+    "name": "Bloodborn Marauder",
+    "ma": 6,
+    "st": 3,
+    "ag": 3,
+    "pa": 4,
+    "av": 8,
+    "nskills": 1,
+    "icon": "iconsets/khorne_bloodbornmarauderlineman.png"
+   },
+   {
+    "name": "Khorngor",
+    "ma": 6,
+    "st": 3,
+    "ag": 3,
+    "pa": 4,
+    "av": 9,
+    "nskills": 4,
+    "icon": "iconsets/khorne_khorngor.png"
+   },
+   {
+    "name": "Bloodseeker",
+    "ma": 5,
+    "st": 4,
+    "ag": 4,
+    "pa": 6,
+    "av": 10,
+    "nskills": 1,
+    "icon": "iconsets/khorne_bloodseeker.png"
+   },
+   {
+    "name": "Bloodspawn",
+    "ma": 5,
+    "st": 5,
+    "ag": 4,
+    "pa": 6,
+    "av": 9,
+    "nskills": 5,
+    "icon": "iconsets/khorne_bloodspawn.png"
+   }
+  ]
+ },
+ {
+  "id": 16,
+  "name": "Lizardmen",
+  "positions": [
+   {
+    "name": "Skink Lineman",
+    "ma": 8,
+    "st": 2,
+    "ag": 3,
+    "pa": 4,
+    "av": 8,
+    "nskills": 2,
+    "icon": "iconsets/lizardmen_skinkrunner.png"
+   },
+   {
+    "name": "Chameleon Skink",
+    "ma": 7,
+    "st": 2,
+    "ag": 3,
+    "pa": 3,
+    "av": 8,
+    "nskills": 4,
+    "icon": "iconsets/lizardmen_chameleonskink.png"
+   },
+   {
+    "name": "Saurus Blocker",
+    "ma": 6,
+    "st": 4,
+    "ag": 5,
+    "pa": 6,
+    "av": 10,
+    "nskills": 2,
+    "icon": "iconsets/lizardmen_saurusblocker.png"
+   },
+   {
+    "name": "Kroxigor",
+    "ma": 6,
+    "st": 5,
+    "ag": 5,
+    "pa": 6,
+    "av": 10,
+    "nskills": 5,
+    "icon": "iconsets/lizardmen_kroxigor.png"
+   }
+  ]
+ },
+ {
+  "id": 17,
+  "name": "Necromantic Horror",
+  "positions": [
+   {
+    "name": "Zombie Lineman",
+    "ma": 4,
+    "st": 3,
+    "ag": 4,
+    "pa": 6,
+    "av": 9,
+    "nskills": 3,
+    "icon": "iconsets/necromantichorror_zombie.png"
+   },
+   {
+    "name": "Ghoul Runner",
+    "ma": 7,
+    "st": 3,
+    "ag": 3,
+    "pa": 3,
+    "av": 8,
+    "nskills": 2,
+    "icon": "iconsets/necromantichorror_ghoulrunner.png"
+   },
+   {
+    "name": "Wraith",
+    "ma": 6,
+    "st": 3,
+    "ag": 3,
+    "pa": 0,
+    "av": 9,
+    "nskills": 5,
+    "icon": "iconsets/necromantichorror_wraith.png"
+   },
+   {
+    "name": "Flesh Golem",
+    "ma": 4,
+    "st": 4,
+    "ag": 4,
+    "pa": 6,
+    "av": 10,
+    "nskills": 4,
+    "icon": "iconsets/necromantichorror_fleshgolem.png"
+   },
+   {
+    "name": "Werewolf",
+    "ma": 8,
+    "st": 3,
+    "ag": 3,
+    "pa": 3,
+    "av": 9,
+    "nskills": 3,
+    "icon": "iconsets/necromantichorror_werewolf.png"
+   }
+  ]
+ },
+ {
+  "id": 18,
+  "name": "Norse",
+  "positions": [
+   {
+    "name": "Norse Raider",
+    "ma": 6,
+    "st": 3,
+    "ag": 3,
+    "pa": 4,
+    "av": 8,
+    "nskills": 4,
+    "icon": "iconsets/norse_lineman.png"
+   },
+   {
+    "name": "Beer Boar",
+    "ma": 5,
+    "st": 1,
+    "ag": 3,
+    "pa": 0,
+    "av": 6,
+    "nskills": 5,
+    "icon": "iconsets/norse_beerboar.png"
+   },
+   {
+    "name": "Norse Berserker",
+    "ma": 6,
+    "st": 3,
+    "ag": 3,
+    "pa": 5,
+    "av": 8,
+    "nskills": 3,
+    "icon": "iconsets/norse_berserker.png"
+   },
+   {
+    "name": "Valkyrie",
+    "ma": 7,
+    "st": 3,
+    "ag": 3,
+    "pa": 3,
+    "av": 8,
+    "nskills": 4,
+    "icon": "iconsets/norse_valkyrie.png"
+   },
+   {
+    "name": "Ulfwerener",
+    "ma": 6,
+    "st": 4,
+    "ag": 4,
+    "pa": 6,
+    "av": 9,
+    "nskills": 2,
+    "icon": "iconsets/norse_ulfwerenar.png"
+   },
+   {
+    "name": "Yhetee",
+    "ma": 5,
+    "st": 5,
+    "ag": 4,
+    "pa": 6,
+    "av": 9,
+    "nskills": 5,
+    "icon": "iconsets/norse_snowtroll.png"
+   }
+  ]
+ },
+ {
+  "id": 19,
+  "name": "Nurgle",
+  "positions": [
+   {
+    "name": "Rotter",
+    "ma": 5,
+    "st": 3,
+    "ag": 4,
+    "pa": 6,
+    "av": 9,
+    "nskills": 2,
+    "icon": "iconsets/nurgle_rotter.png"
+   },
+   {
+    "name": "Pestigor",
+    "ma": 6,
+    "st": 3,
+    "ag": 3,
+    "pa": 4,
+    "av": 9,
+    "nskills": 5,
+    "icon": "iconsets/nurgle_pestigor.png"
+   },
+   {
+    "name": "Bloater",
+    "ma": 4,
+    "st": 4,
+    "ag": 4,
+    "pa": 6,
+    "av": 10,
+    "nskills": 6,
+    "icon": "iconsets/nurgle_bloater.png"
+   },
+   {
+    "name": "Rotspawn",
+    "ma": 4,
+    "st": 5,
+    "ag": 5,
+    "pa": 6,
+    "av": 10,
+    "nskills": 9,
+    "icon": "iconsets/nurgle_rotspawn.png"
+   }
+  ]
+ },
+ {
+  "id": 20,
+  "name": "Ogre",
+  "positions": [
+   {
+    "name": "Gnoblar Lineman",
+    "ma": 5,
+    "st": 1,
+    "ag": 3,
+    "pa": 4,
+    "av": 6,
+    "nskills": 5,
+    "icon": "iconsets/ogre_gnoblarlineman.png"
+   },
+   {
+    "name": "Ogre Blocker",
+    "ma": 5,
+    "st": 5,
+    "ag": 4,
+    "pa": 5,
+    "av": 10,
+    "nskills": 4,
+    "icon": "iconsets/ogre_ogre.png"
+   },
+   {
+    "name": "Ogre Runt Punter",
+    "ma": 5,
+    "st": 5,
+    "ag": 4,
+    "pa": 4,
+    "av": 10,
+    "nskills": 4,
+    "icon": "iconsets/ogre_ogreruntpunter.png"
+   }
+  ]
+ },
+ {
+  "id": 21,
+  "name": "Old World Alliance",
+  "positions": [
+   {
+    "name": "Human Lineman",
+    "ma": 6,
+    "st": 3,
+    "ag": 3,
+    "pa": 4,
+    "av": 9,
+    "nskills": 0,
+    "icon": "iconsets/oldworldalliance_humanlineman.png"
+   },
+   {
+    "name": "Halfling Hopeful",
+    "ma": 5,
+    "st": 2,
+    "ag": 3,
+    "pa": 4,
+    "av": 7,
+    "nskills": 3,
+    "icon": "iconsets/oldworldalliance_halflinghopeful.png"
+   },
+   {
+    "name": "Human Catcher",
+    "ma": 8,
+    "st": 3,
+    "ag": 3,
+    "pa": 4,
+    "av": 8,
+    "nskills": 2,
+    "icon": "iconsets/oldworldalliance_humancatcher.png"
+   },
+   {
+    "name": "Dwarf Lineman",
+    "ma": 4,
+    "st": 3,
+    "ag": 4,
+    "pa": 5,
+    "av": 10,
+    "nskills": 3,
+    "icon": "iconsets/oldworldalliance_dwarfblocker.png"
+   },
+   {
+    "name": "Human Thrower",
+    "ma": 6,
+    "st": 3,
+    "ag": 3,
+    "pa": 3,
+    "av": 9,
+    "nskills": 2,
+    "icon": "iconsets/oldworldalliance_humanthrower.png"
+   },
+   {
+    "name": "Dwarf Runner",
+    "ma": 6,
+    "st": 3,
+    "ag": 3,
+    "pa": 4,
+    "av": 9,
+    "nskills": 3,
+    "icon": "iconsets/oldworldalliance_dwarfrunner.png"
+   },
+   {
+    "name": "Human Blitzer",
+    "ma": 7,
+    "st": 3,
+    "ag": 3,
+    "pa": 4,
+    "av": 9,
+    "nskills": 2,
+    "icon": "iconsets/oldworldalliance_humanblitzer.png"
+   },
+   {
+    "name": "Dwarf Blitzer",
+    "ma": 5,
+    "st": 3,
+    "ag": 4,
+    "pa": 4,
+    "av": 10,
+    "nskills": 4,
+    "icon": "iconsets/oldworldalliance_dwarfblitzer.png"
+   },
+   {
+    "name": "Troll Slayer",
+    "ma": 5,
+    "st": 3,
+    "ag": 4,
+    "pa": 5,
+    "av": 9,
+    "nskills": 5,
+    "icon": "iconsets/oldworldalliance_dwarftrollslayer.png"
+   },
+   {
+    "name": "Ogre",
+    "ma": 5,
+    "st": 5,
+    "ag": 4,
+    "pa": 5,
+    "av": 10,
+    "nskills": 5,
+    "icon": "iconsets/oldworldalliance_ogre.png"
+   },
+   {
+    "name": "Altern Forest Treeman",
+    "ma": 2,
+    "st": 6,
+    "ag": 5,
+    "pa": 5,
+    "av": 11,
+    "nskills": 8,
+    "icon": "iconsets/oldworldalliance_alternforesttreeman.png"
+   }
+  ]
+ },
+ {
+  "id": 22,
+  "name": "Orc",
+  "positions": [
+   {
+    "name": "Orc Lineman",
+    "ma": 5,
+    "st": 3,
+    "ag": 3,
+    "pa": 4,
+    "av": 10,
+    "nskills": 0,
+    "icon": "iconsets/orc_lineman.png"
+   },
+   {
+    "name": "Goblin Lineman",
+    "ma": 6,
+    "st": 2,
+    "ag": 3,
+    "pa": 4,
+    "av": 8,
+    "nskills": 3,
+    "icon": "iconsets/orc_lineman.png"
+   },
+   {
+    "name": "Orc Thrower",
+    "ma": 6,
+    "st": 3,
+    "ag": 3,
+    "pa": 3,
+    "av": 9,
+    "nskills": 2,
+    "icon": "iconsets/orc_thrower.png"
+   },
+   {
+    "name": "Orc Blitzer",
+    "ma": 6,
+    "st": 3,
+    "ag": 3,
+    "pa": 4,
+    "av": 10,
+    "nskills": 2,
+    "icon": "iconsets/orc_blitzer.png"
+   },
+   {
+    "name": "Big Un Blocker",
+    "ma": 5,
+    "st": 4,
+    "ag": 4,
+    "pa": 6,
+    "av": 10,
+    "nskills": 4,
+    "icon": "iconsets/orc_bigunblocker.png"
+   },
+   {
+    "name": "Troll",
+    "ma": 4,
+    "st": 5,
+    "ag": 5,
+    "pa": 5,
+    "av": 10,
+    "nskills": 7,
+    "icon": "iconsets/orc_troll.png"
+   }
+  ]
+ },
+ {
+  "id": 23,
+  "name": "Shambling Undead",
+  "positions": [
+   {
+    "name": "Skeleton Lineman",
+    "ma": 5,
+    "st": 3,
+    "ag": 4,
+    "pa": 6,
+    "av": 8,
+    "nskills": 2,
+    "icon": "iconsets/shamblingundead_skeleton.png"
+   },
+   {
+    "name": "Zombie Lineman",
+    "ma": 4,
+    "st": 3,
+    "ag": 4,
+    "pa": 6,
+    "av": 9,
+    "nskills": 3,
+    "icon": "iconsets/shamblingundead_zombie.png"
+   },
+   {
+    "name": "Ghoul Runner",
+    "ma": 7,
+    "st": 3,
+    "ag": 3,
+    "pa": 3,
+    "av": 8,
+    "nskills": 2,
+    "icon": "iconsets/shamblingundead_ghoulrunner.png"
+   },
+   {
+    "name": "Wight Blitzer",
+    "ma": 6,
+    "st": 3,
+    "ag": 3,
+    "pa": 5,
+    "av": 9,
+    "nskills": 4,
+    "icon": "iconsets/shamblingundead_wightblitzer.png"
+   },
+   {
+    "name": "Mummy",
+    "ma": 3,
+    "st": 5,
+    "ag": 5,
+    "pa": 6,
+    "av": 10,
+    "nskills": 2,
+    "icon": "iconsets/shamblingundead_mummy.png"
+   }
+  ]
+ },
+ {
+  "id": 24,
+  "name": "Skaven",
+  "positions": [
+   {
+    "name": "Skaven Clanrat",
+    "ma": 7,
+    "st": 3,
+    "ag": 3,
+    "pa": 4,
+    "av": 8,
+    "nskills": 0,
+    "icon": "iconsets/skaven_lineman.png"
+   },
+   {
+    "name": "Skaven Thrower",
+    "ma": 7,
+    "st": 3,
+    "ag": 3,
+    "pa": 2,
+    "av": 8,
+    "nskills": 2,
+    "icon": "iconsets/skaven_thrower.png"
+   },
+   {
+    "name": "Gutter Runner",
+    "ma": 9,
+    "st": 2,
+    "ag": 2,
+    "pa": 4,
+    "av": 8,
+    "nskills": 2,
+    "icon": "iconsets/skaven_gutterrunner.png"
+   },
+   {
+    "name": "Skaven Blitzer",
+    "ma": 8,
+    "st": 3,
+    "ag": 3,
+    "pa": 4,
+    "av": 9,
+    "nskills": 2,
+    "icon": "iconsets/skaven_blitzer.png"
+   },
+   {
+    "name": "Rat Ogre",
+    "ma": 6,
+    "st": 5,
+    "ag": 4,
+    "pa": 6,
+    "av": 9,
+    "nskills": 5,
+    "icon": "iconsets/skaven_ratogre.png"
+   }
+  ]
+ },
+ {
+  "id": 25,
+  "name": "Snotling",
+  "positions": [
+   {
+    "name": "Snotling Lineman",
+    "ma": 5,
+    "st": 1,
+    "ag": 3,
+    "pa": 4,
+    "av": 6,
+    "nskills": 6,
+    "icon": "iconsets/snotling_snotling.png"
+   },
+   {
+    "name": "Fun-hoppa",
+    "ma": 6,
+    "st": 1,
+    "ag": 3,
+    "pa": 4,
+    "av": 6,
+    "nskills": 5,
+    "icon": "iconsets/snotling_funhoppa.png"
+   },
+   {
+    "name": "Stilty Runna",
+    "ma": 6,
+    "st": 1,
+    "ag": 3,
+    "pa": 4,
+    "av": 6,
+    "nskills": 5,
+    "icon": "iconsets/snotling_stiltyrunna.png"
+   },
+   {
+    "name": "Fungus Flinga",
+    "ma": 5,
+    "st": 1,
+    "ag": 3,
+    "pa": 4,
+    "av": 6,
+    "nskills": 7,
+    "icon": "iconsets/snotling_fungusflinga.png"
+   },
+   {
+    "name": "Pump Wagon",
+    "ma": 5,
+    "st": 5,
+    "ag": 5,
+    "pa": 6,
+    "av": 9,
+    "nskills": 5,
+    "icon": "iconsets/snotling_pumpwagon.png"
+   },
+   {
+    "name": "Trained Troll",
+    "ma": 4,
+    "st": 5,
+    "ag": 5,
+    "pa": 5,
+    "av": 10,
+    "nskills": 6,
+    "icon": "iconsets/snotling_troll.png"
+   }
+  ]
+ },
+ {
+  "id": 26,
+  "name": "Tomb Kings",
+  "positions": [
+   {
+    "name": "Skeleton Lineman",
+    "ma": 5,
+    "st": 3,
+    "ag": 4,
+    "pa": 6,
+    "av": 8,
+    "nskills": 2,
+    "icon": "iconsets/tombkings_skeletonlineman.png"
+   },
+   {
+    "name": "Tomb Kings Thrower",
+    "ma": 6,
+    "st": 3,
+    "ag": 4,
+    "pa": 3,
+    "av": 9,
+    "nskills": 4,
+    "icon": "iconsets/tombkings_anointedthrower.png"
+   },
+   {
+    "name": "Tomb Kings Blitzer",
+    "ma": 6,
+    "st": 3,
+    "ag": 4,
+    "pa": 5,
+    "av": 9,
+    "nskills": 3,
+    "icon": "iconsets/tombkings_anointedblitzer.png"
+   },
+   {
+    "name": "Tomb Guardian",
+    "ma": 4,
+    "st": 5,
+    "ag": 5,
+    "pa": 6,
+    "av": 10,
+    "nskills": 3,
+    "icon": "iconsets/tombkings_tombguardian.png"
+   }
+  ]
+ },
+ {
+  "id": 27,
+  "name": "Underworld Denizens",
+  "positions": [
+   {
+    "name": "Goblin Lineman",
+    "ma": 6,
+    "st": 2,
+    "ag": 3,
+    "pa": 4,
+    "av": 8,
+    "nskills": 3,
+    "icon": "iconsets/underworlddenizens_goblin.png"
+   },
+   {
+    "name": "Snotling Lineman",
+    "ma": 5,
+    "st": 1,
+    "ag": 3,
+    "pa": 4,
+    "av": 6,
+    "nskills": 6,
+    "icon": "iconsets/underworlddenizens_underworldsnotlings.png"
+   },
+   {
+    "name": "Skaven Clanrat",
+    "ma": 7,
+    "st": 3,
+    "ag": 3,
+    "pa": 4,
+    "av": 8,
+    "nskills": 1,
+    "icon": "iconsets/underworlddenizens_skavenlineman.png"
+   },
+   {
+    "name": "Skaven Thrower",
+    "ma": 7,
+    "st": 3,
+    "ag": 3,
+    "pa": 2,
+    "av": 8,
+    "nskills": 3,
+    "icon": "iconsets/underworlddenizens_skaventhrower.png"
+   },
+   {
+    "name": "Gutter Runner",
+    "ma": 9,
+    "st": 2,
+    "ag": 2,
+    "pa": 4,
+    "av": 8,
+    "nskills": 3,
+    "icon": "iconsets/underworlddenizens_gutterrunner.png"
+   },
+   {
+    "name": "Skaven Blitzer",
+    "ma": 8,
+    "st": 3,
+    "ag": 3,
+    "pa": 4,
+    "av": 9,
+    "nskills": 3,
+    "icon": "iconsets/underworlddenizens_skavenblitzer.png"
+   },
+   {
+    "name": "Troll",
+    "ma": 4,
+    "st": 5,
+    "ag": 5,
+    "pa": 5,
+    "av": 10,
+    "nskills": 7,
+    "icon": "iconsets/underworlddenizens_underworldtroll.png"
+   },
+   {
+    "name": "Rat Ogre",
+    "ma": 6,
+    "st": 5,
+    "ag": 4,
+    "pa": 6,
+    "av": 9,
+    "nskills": 5,
+    "icon": "iconsets/underworlddenizens_mutantratogre.png"
+   }
+  ]
+ },
+ {
+  "id": 28,
+  "name": "Vampire",
+  "positions": [
+   {
+    "name": "Thrall Lineman",
+    "ma": 6,
+    "st": 3,
+    "ag": 3,
+    "pa": 4,
+    "av": 8,
+    "nskills": 0,
+    "icon": "iconsets/vampire_thrall.png"
+   },
+   {
+    "name": "Vampire Runner",
+    "ma": 8,
+    "st": 3,
+    "ag": 2,
+    "pa": 3,
+    "av": 8,
+    "nskills": 3,
+    "icon": "iconsets/vampire_vampirerunner.png"
+   },
+   {
+    "name": "Vampire Thrower",
+    "ma": 6,
+    "st": 4,
+    "ag": 2,
+    "pa": 2,
+    "av": 9,
+    "nskills": 4,
+    "icon": "iconsets/vampire_vampirethrower.png"
+   },
+   {
+    "name": "Vampire Blitzer",
+    "ma": 6,
+    "st": 4,
+    "ag": 2,
+    "pa": 4,
+    "av": 9,
+    "nskills": 4,
+    "icon": "iconsets/vampire_vampireblitzer.png"
+   },
+   {
+    "name": "Vargheist",
+    "ma": 5,
+    "st": 5,
+    "ag": 4,
+    "pa": 6,
+    "av": 10,
+    "nskills": 5,
+    "icon": "iconsets/vampire_vargheist.png"
+   }
+  ]
+ },
+ {
+  "id": 29,
+  "name": "Wood Elf",
+  "positions": [
+   {
+    "name": "Wood Elf Lineman",
+    "ma": 7,
+    "st": 3,
+    "ag": 2,
+    "pa": 4,
+    "av": 8,
+    "nskills": 0,
+    "icon": "iconsets/woodelf_lineman.png"
+   },
+   {
+    "name": "Wood Elf Thrower",
+    "ma": 7,
+    "st": 3,
+    "ag": 2,
+    "pa": 2,
+    "av": 8,
+    "nskills": 2,
+    "icon": "iconsets/woodelf_thrower.png"
+   },
+   {
+    "name": "Wood Elf Catcher",
+    "ma": 8,
+    "st": 2,
+    "ag": 2,
+    "pa": 3,
+    "av": 8,
+    "nskills": 3,
+    "icon": "iconsets/woodelf_catcher.png"
+   },
+   {
+    "name": "Wardancer",
+    "ma": 8,
+    "st": 3,
+    "ag": 2,
+    "pa": 3,
+    "av": 8,
+    "nskills": 3,
+    "icon": "iconsets/woodelf_wardancer.png"
+   },
+   {
+    "name": "Loren Forest Treeman",
+    "ma": 2,
+    "st": 6,
+    "ag": 5,
+    "pa": 5,
+    "av": 11,
+    "nskills": 7,
+    "icon": "iconsets/woodelf_lorenforesttreeman.png"
+   }
+  ]
+ }
+]

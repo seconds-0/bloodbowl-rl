@@ -69,7 +69,8 @@ def tag_positions(players, home_team, away_team):
 
 
 class Match:
-    def __init__(self, ckpt_a, ckpt_b, seed=None, home_team=-1, away_team=-1):
+    def __init__(self, ckpt_a, ckpt_b, seed=None, home_team=-1, away_team=-1,
+                 macro=False):
         _argv = sys.argv
         sys.argv = [_argv[0], "--slowly"]   # load_config parses argv; shield ours
         try:
@@ -81,6 +82,7 @@ class Match:
         args["vec"]["num_buffers"] = 1
         args["vec"]["num_threads"] = 1
         args["selfplay"]["enabled"] = 0
+        args["env"]["macro_moves"] = 1 if macro else 0
         args["env"]["force_home_team"] = home_team
         args["env"]["force_away_team"] = away_team
         args["load_model_path"] = ckpt_a

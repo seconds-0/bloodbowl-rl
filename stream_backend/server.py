@@ -130,12 +130,14 @@ async def main():
     ap.add_argument("--record", default=None)
     ap.add_argument("--max-games", type=int, default=2)
     ap.add_argument("--seed", type=int, default=None)
+    ap.add_argument("--macro", action="store_true", help="v5 path-actions env")
     a = ap.parse_args()
 
     home, away = random.choice(MATCHUPS)
     if random.random() < 0.5:
         home, away = away, home
-    match = Match(a.ckpt_a, a.ckpt_b, seed=a.seed, home_team=home, away_team=away)
+    match = Match(a.ckpt_a, a.ckpt_b, seed=a.seed, home_team=home, away_team=away,
+                  macro=a.macro)
     hub = Hub()
     if a.record:
         hub.record_fh = open(a.record, "w")
