@@ -73,6 +73,62 @@ function getSprite(icon) {
   return e.ready ? e.img : null;
 }
 
+// ---------------------------------------------------------------- player card
+let SKILLS = [];
+fetch('skills.json').then(r => r.json()).then(j => { SKILLS = j; }).catch(() => {});
+let cardSlot = null;   // selected player slot or null
+
+canvas.addEventListener('click', (ev) => {
+  const r = canvas.getBoundingClientRect();
+  const cx = (ev.clientX - r.left) * (W / r.width);
+  const cy = (ev.clientY - r.top) * (H / r.height);
+  let best = null, bd = 1e9;
+  const now = performance.now();
+  for (const p of S.players.values()) {
+    if (!onPitch(p)) continue;
+    const d = displayPos(p, now);
+    const [px, py] = cellCenter(d.x, d.y);
+    const dist = Math.hypot(px - cx, py - cy);
+    if (dist < bd) { bd = dist; best = p; }
+  }
+  cardSlot = (best && bd <= CELL * 0.9) ? (cardSlot === best.slot ? null : best.slot) : null;
+  renderPlayerCard();
+});
+
+function renderPlayerCard() {
+  let el = document.getElementById('playercard');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'playercard';
+    document.body.appendChild(el);
+  }
+  const p = cardSlot != null ? S.players.get(cardSlot) : null;
+  if (!p) { el.style.display = 'none'; return; }
+  const team = p.side === 'home' ? S.home : S.away;
+  const st = p.stats || {};
+  const skills = (p.skills || []).map(id => SKILLS[id] || ('Skill #' + id));
+  el.innerHTML =
+    '<div class="pc-head" style="border-color:' + (team.color || '#888') + '">' +
+      '<span class="pc-num" style="background:' + (team.color || '#888') + '">' + p.num + '</span>' +
+      '<span class="pc-name">' + esc(p.position || 'Player') + '</span>' +
+      '<span class="pc-x" onclick="document.getElementById(\'playercard\').style.display=\'none\'">✕</span>' +
+    '</div>' +
+    '<div class="pc-stats">' +
+      ['MA', 'ST', 'AG', 'PA', 'AV'].map((k) => {
+        const v = st[k.toLowerCase()];
+        const shown = (k === 'AG' || k === 'PA' || k === 'AV')
+          ? (v ? v + '+' : '-') : (v != null ? v : '-');
+        return '<span class="pc-stat"><b>' + k + '</b>' + shown + '</span>';
+      }).join('') +
+    '</div>' +
+    '<div class="pc-skills">' +
+      (skills.length ? skills.map(n => '<span class="pc-skill">' + esc(n) + '</span>').join('')
+                     : '<span class="pc-noskill">no skills</span>') +
+    '</div>' +
+    '<div class="pc-state">' + esc(p.stance) + (p.has_ball || (S.ball && S.ball.carrier === p.slot) ? ' · 🏈 carrying' : '') + '</div>';
+  el.style.display = 'block';
+}
+
 // ---------------------------------------------------------------- websocket
 let ws = null, backoff = 1000;
 
@@ -151,6 +207,7 @@ function onSnapshot(msg) {
   rebuildPlayers(msg.players || []);
   tweens.clear();                      // snapshot = authoritative, no stale tweens
   updateHud(); renderDugouts(); updateFooter();
+  renderPlayerCard();
 }
 
 function onDelta(msg) {
