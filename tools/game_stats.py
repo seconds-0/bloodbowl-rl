@@ -39,7 +39,7 @@ METRICS = [
     ("pickup_success",     "pickUp_success_per_game", "higher", "successful pickups / game"),
     ("pass_attempts",      "passRoll_per_game",   "context", "passes / game"),
     ("handoff_attempts",   "handoff_per_game",    "context", "hand-offs / game"),
-    ("possession_rate",    None,                  "higher",  "fraction of turns ending with ball held"),
+    ("possession_rate",    "possession_rate_d90", "context", "turns ending held (incl. TD-ends, D90)"),
 ]
 
 # Puffer dashboard is a TWO-COLUMN box: "| key  val    key  val |". Find all

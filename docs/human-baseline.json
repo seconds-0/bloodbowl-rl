@@ -21,5 +21,7 @@
   "pickUp_success_per_game": 4.88,
   "dodge_success_per_game": "~unknown (dodgeRoll has no success flag in corpus; attempts only)",
   "handoff_per_game": 1.33,
-  "_handoff_note": "measured 2026-06-10 via turnDataSetHandOverUsed=true over 500-replay sample (663 uses); handoff has no thrower roll so the D61 roll-type count missed it"
+  "_handoff_note": "measured 2026-06-10 via turnDataSetHandOverUsed=true over 500-replay sample (663 uses); handoff has no thrower roll so the D61 roll-type count missed it",
+  "possession_rate_d90": 0.378,
+  "_possession_note": "D90 definition (TD-ending turns count as held; ALL team-turn flips counted, matching the env metric). 14,285 games / 1.43M turn-ends. DEFINITION-SENSITIVE (0.38-0.48 by turn universe) and confounded by drive length/defense quality (D89/D91) \u2014 context diagnostic, not a target."
 }
