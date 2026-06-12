@@ -314,6 +314,11 @@ typedef struct {
     // team-to-move holds the ball with a standing downfield receiver within
     // this Chebyshev pass-range. Pure ladder, graduates to kickoff (D69).
     int demo_pass_maxrange;
+    // Procgen skill-entropy knobs. Defaults reproduce historical procgen:
+    // 0-4 advancement draws/team, 1-2 skills/draw, primary categories only.
+    int skillup_max_players;
+    int skillup_max_each;
+    float skillup_secondary_pct;
     // v5 path-actions (D82): when 1, the STEP square head selects ANY
     // reachable destination; the env routes a min-risk path (Dijkstra over
     // dodge/rush costs) and auto-applies it step-by-step, returning control
@@ -1308,11 +1313,21 @@ static void bbe_reset_match(Bloodbowl* env) {
         // evals).
         if (env->exclude_team >= 0 || env->force_home_team >= 0 ||
             env->force_away_team >= 0) {
-            bb_match_init_forced(&env->match, &env->procgen,
-                                 env->force_home_team, env->force_away_team,
-                                 env->exclude_team);
+            bb_procgen_params pp = {
+                env->skillup_max_players,
+                env->skillup_max_each,
+                env->skillup_secondary_pct
+            };
+            bb_match_init_forced_p(&env->match, &env->procgen,
+                                   env->force_home_team, env->force_away_team,
+                                   env->exclude_team, &pp);
         } else {
-            bb_match_init_random(&env->match, &env->procgen);
+            bb_procgen_params pp = {
+                env->skillup_max_players,
+                env->skillup_max_each,
+                env->skillup_secondary_pct
+            };
+            bb_match_init_random_p(&env->match, &env->procgen, &pp);
         }
     }
     // Fresh in-match dice stream either way; a resumed state replays under

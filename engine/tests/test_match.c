@@ -205,6 +205,298 @@ BB_TEST(match_procgen_skill_cap) {
     }
 }
 
+static bb_skillset base_position_skills(const bb_position_def* pd) {
+    bb_skillset s;
+    memset(&s, 0, sizeof s);
+    for (int i = 0; i < pd->num_skills; i++) bb_add_skill(&s, pd->skills[i]);
+    return s;
+}
+
+static int procgen_squad_total(const bb_match* m, int team) {
+    int n = 0;
+    for (int s = team * BB_TEAM_SLOTS; s < (team + 1) * BB_TEAM_SLOTS; s++) {
+        if (m->players[s].location != BB_LOC_ABSENT) n++;
+    }
+    return n;
+}
+
+static void check_procgen_structure(const bb_match* m) {
+    for (int t = 0; t < 2; t++) {
+        int counts[BB_MAX_POSITIONS] = {0};
+        const bb_team_def* td = &bb_team_defs[m->team_id[t]];
+        int total = 0;
+        for (int s = t * BB_TEAM_SLOTS; s < (t + 1) * BB_TEAM_SLOTS; s++) {
+            const bb_player* p = &m->players[s];
+            if (p->location == BB_LOC_ABSENT) continue;
+            BB_CHECK(p->position_id < td->num_positions);
+            if (p->position_id < td->num_positions) counts[p->position_id]++;
+            total++;
+        }
+        BB_CHECK(total >= 11);
+        BB_CHECK(total <= 14);
+        for (int pi = 0; pi < td->num_positions; pi++) {
+            BB_CHECK(counts[pi] <= td->positions[pi].qty_max);
+        }
+    }
+}
+
+static int procgen_count_skills(const bb_skillset* s) {
+    int n = 0;
+    for (int sk = bb_next_skill(s, 0); sk >= 0; sk = bb_next_skill(s, sk + 1)) n++;
+    return n;
+}
+
+static int procgen_rng_same_state(const bb_rng* a, const bb_rng* b) {
+    return a->state == b->state && a->inc == b->inc &&
+           a->script == b->script && a->script_len == b->script_len &&
+           a->script_pos == b->script_pos && a->mode == b->mode &&
+           a->error == b->error && a->sink == b->sink &&
+           a->sink_user == b->sink_user;
+}
+
+static void check_procgen_grants_in_mask(const bb_match* m, int secondary_only) {
+    for (int s = 0; s < BB_NUM_PLAYERS; s++) {
+        const bb_player* p = &m->players[s];
+        if (p->location == BB_LOC_ABSENT) continue;
+        const bb_team_def* td = &bb_team_defs[m->team_id[BB_TEAM_OF(s)]];
+        const bb_position_def* pd = &td->positions[p->position_id];
+        bb_skillset base = base_position_skills(pd);
+        uint8_t want = secondary_only && pd->secondary_mask ? pd->secondary_mask : pd->primary_mask;
+        if (!want) want = secondary_only ? pd->primary_mask : pd->secondary_mask;
+        for (int sk = bb_next_skill(&p->skills, 0); sk >= 0;
+             sk = bb_next_skill(&p->skills, sk + 1)) {
+            if (bb_has_skill(&base, sk)) continue;
+            uint8_t cat = bb_skill_defs[sk].category;
+            BB_CHECK(cat < BB_CAT_COUNT);
+            BB_CHECK(want & (1 << cat));
+            if (!(want & (1 << cat))) {
+                printf("  team %d pos %d skill %d cat %d want 0x%x\n",
+                       m->team_id[BB_TEAM_OF(s)], p->position_id, sk, cat, want);
+                return;
+            }
+        }
+    }
+}
+
+static int procgen_find_secondary_only_teams(int* out, int cap) {
+    int n = 0;
+    for (int t = 0; t < BB_TEAM_COUNT; t++) {
+        const bb_team_def* td = &bb_team_defs[t];
+        int has_secondary_only = 0;
+        for (int pi = 0; pi < td->num_positions; pi++) {
+            const bb_position_def* pd = &td->positions[pi];
+            if (pd->primary_mask == 0 && pd->secondary_mask != 0) {
+                has_secondary_only = 1;
+                break;
+            }
+        }
+        if (has_secondary_only && n < cap) out[n++] = t;
+    }
+    return n;
+}
+
+static int procgen_check_secondary_only_grants(const bb_match* m) {
+    int seen = 0;
+    for (int s = 0; s < BB_NUM_PLAYERS; s++) {
+        const bb_player* p = &m->players[s];
+        if (p->location == BB_LOC_ABSENT) continue;
+        const bb_team_def* td = &bb_team_defs[m->team_id[BB_TEAM_OF(s)]];
+        const bb_position_def* pd = &td->positions[p->position_id];
+        if (pd->primary_mask != 0) continue;
+        bb_skillset base = base_position_skills(pd);
+        for (int sk = bb_next_skill(&p->skills, 0); sk >= 0;
+             sk = bb_next_skill(&p->skills, sk + 1)) {
+            if (bb_has_skill(&base, sk)) continue;
+            uint8_t cat = bb_skill_defs[sk].category;
+            BB_CHECK(cat < BB_CAT_COUNT);
+            BB_CHECK(pd->secondary_mask & (1 << cat));
+            if (!(pd->secondary_mask & (1 << cat))) {
+                printf("  team %d pos %d skill %d cat %d secondary 0x%x\n",
+                       m->team_id[BB_TEAM_OF(s)], p->position_id, sk, cat,
+                       pd->secondary_mask);
+                return seen;
+            }
+            seen = 1;
+        }
+    }
+    return seen;
+}
+
+BB_TEST(match_procgen_default_params_match_legacy_api) {
+    bb_procgen_params pp = bb_procgen_params_default();
+    for (uint64_t seed = 1; seed <= 300; seed++) {
+        bb_match a, b;
+        bb_rng r1, r2;
+        bb_rng_seed(&r1, seed * 0x515A5EEDu, 17 + seed);
+        bb_rng_seed(&r2, seed * 0x515A5EEDu, 17 + seed);
+        bb_match_init_random(&a, &r1);
+        bb_match_init_random_p(&b, &r2, &pp);
+        BB_CHECK_EQ(memcmp(&a, &b, sizeof(bb_match)), 0);
+        BB_CHECK(procgen_rng_same_state(&r1, &r2));
+        if (memcmp(&a, &b, sizeof(bb_match)) != 0 ||
+            !procgen_rng_same_state(&r1, &r2)) {
+            printf("  seed %llu failed\n", (unsigned long long)seed);
+            break;
+        }
+    }
+}
+
+BB_TEST(match_procgen_secondary_only_positions_inert_at_defaults) {
+    int teams[BB_TEAM_COUNT];
+    int nteams = procgen_find_secondary_only_teams(teams, BB_TEAM_COUNT);
+    BB_CHECK(nteams >= 2);
+    if (nteams < 2) {
+        printf("  found %d teams with secondary-only positions\n", nteams);
+        return;
+    }
+
+    bb_procgen_params pp = bb_procgen_params_default();
+    for (uint64_t seed = 1; seed <= 100; seed++) {
+        bb_match m;
+        bb_rng pg;
+        bb_rng_seed(&pg, seed * 2654435761u, 53 + seed);
+        bb_match_init_forced_p(&m, &pg, teams[0], teams[1], -1, &pp);
+        for (int s = 0; s < BB_NUM_PLAYERS; s++) {
+            const bb_player* p = &m.players[s];
+            if (p->location == BB_LOC_ABSENT) continue;
+            const bb_team_def* td = &bb_team_defs[m.team_id[BB_TEAM_OF(s)]];
+            const bb_position_def* pd = &td->positions[p->position_id];
+            if (pd->primary_mask != 0) continue;
+            bb_skillset base = base_position_skills(pd);
+            BB_CHECK_EQ(memcmp(&p->skills, &base, sizeof(bb_skillset)), 0);
+            if (memcmp(&p->skills, &base, sizeof(bb_skillset)) != 0) {
+                printf("  seed %llu team %d pos %d gained at defaults\n",
+                       (unsigned long long)seed, m.team_id[BB_TEAM_OF(s)],
+                       p->position_id);
+                return;
+            }
+        }
+    }
+}
+
+BB_TEST(match_procgen_secondary_only_positions_advance_with_pct) {
+    int teams[BB_TEAM_COUNT];
+    int nteams = procgen_find_secondary_only_teams(teams, BB_TEAM_COUNT);
+    BB_CHECK(nteams >= 2);
+    if (nteams < 2) {
+        printf("  found %d teams with secondary-only positions\n", nteams);
+        return;
+    }
+
+    bb_procgen_params pp = {11, 3, 0.5f};
+    int seen = 0;
+    for (uint64_t seed = 1; seed <= 2000 && !seen; seed++) {
+        bb_match m;
+        bb_rng pg;
+        bb_rng_seed(&pg, seed * 11400714819323198485ull, 59 + seed);
+        bb_match_init_forced_p(&m, &pg, teams[0], teams[1], -1, &pp);
+        seen = procgen_check_secondary_only_grants(&m);
+    }
+    BB_CHECK(seen);
+    if (!seen) printf("  no secondary-only position advanced within 2000 seeds\n");
+}
+
+BB_TEST(match_procgen_skillups_off_keeps_base_skills) {
+    bb_procgen_params pp = {0, 2, 0.0f};
+    for (uint64_t seed = 1; seed <= 50; seed++) {
+        bb_match m;
+        bb_rng pg;
+        bb_rng_seed(&pg, seed * 2654435761u, 23);
+        bb_match_init_random_p(&m, &pg, &pp);
+        for (int s = 0; s < BB_NUM_PLAYERS; s++) {
+            const bb_player* p = &m.players[s];
+            if (p->location == BB_LOC_ABSENT) continue;
+            const bb_team_def* td = &bb_team_defs[m.team_id[BB_TEAM_OF(s)]];
+            bb_skillset base = base_position_skills(&td->positions[p->position_id]);
+            BB_CHECK_EQ(memcmp(&p->skills, &base, sizeof(bb_skillset)), 0);
+        }
+    }
+}
+
+BB_TEST(match_procgen_primary_only_uses_primary_categories) {
+    bb_procgen_params pp = {11, 3, 0.0f};
+    for (uint64_t seed = 1; seed <= 250; seed++) {
+        bb_match m;
+        bb_rng pg;
+        bb_rng_seed(&pg, seed * 7919, 29);
+        bb_match_init_random_p(&m, &pg, &pp);
+        check_procgen_grants_in_mask(&m, 0);
+    }
+}
+
+BB_TEST(match_procgen_secondary_only_uses_secondary_or_primary_fallback) {
+    bb_procgen_params pp = {11, 3, 1.0f};
+    for (uint64_t seed = 1; seed <= 250; seed++) {
+        bb_match m;
+        bb_rng pg;
+        bb_rng_seed(&pg, seed * 104729, 31);
+        bb_match_init_random_p(&m, &pg, &pp);
+        check_procgen_grants_in_mask(&m, 1);
+    }
+}
+
+BB_TEST(match_procgen_skillups_reach_full_learnable_catalogue) {
+    bb_procgen_params pp = {11, 3, 0.5f};
+    uint8_t seen[BB_NUM_SKILLS] = {0};
+    int nseen = 0;
+    for (uint64_t seed = 1; seed <= 10000 && nseen < BB_NUM_SKILLS; seed++) {
+        bb_match m;
+        bb_rng pg;
+        bb_rng_seed(&pg, 0xC0FFEEu + seed * 17, 37);
+        bb_match_init_random_p(&m, &pg, &pp);
+        for (int s = 0; s < BB_NUM_PLAYERS; s++) {
+            const bb_player* p = &m.players[s];
+            if (p->location == BB_LOC_ABSENT) continue;
+            const bb_team_def* td = &bb_team_defs[m.team_id[BB_TEAM_OF(s)]];
+            const bb_position_def* pd = &td->positions[p->position_id];
+            bb_skillset base = base_position_skills(pd);
+            for (int sk = bb_next_skill(&p->skills, 0); sk >= 0;
+                 sk = bb_next_skill(&p->skills, sk + 1)) {
+                if (sk >= BB_NUM_SKILLS || bb_has_skill(&base, sk)) continue;
+                if (!seen[sk]) {
+                    seen[sk] = 1;
+                    nseen++;
+                }
+            }
+        }
+    }
+    BB_CHECK_EQ(nseen, BB_NUM_SKILLS);
+    if (nseen != BB_NUM_SKILLS) {
+        for (int sk = 0; sk < BB_NUM_SKILLS; sk++) {
+            if (!seen[sk]) printf("  missing skill %d (%s)\n", sk, bb_skill_defs[sk].id);
+        }
+    }
+}
+
+BB_TEST(match_procgen_cranked_params_respect_cap_and_structure) {
+    bb_procgen_params pp = {16, 12, 0.5f};
+    for (uint64_t seed = 1; seed <= 200; seed++) {
+        bb_match m;
+        bb_rng pg;
+        bb_rng_seed(&pg, seed * 16127, 41);
+        bb_match_init_random_p(&m, &pg, &pp);
+        check_procgen_structure(&m);
+        for (int s = 0; s < BB_NUM_PLAYERS; s++) {
+            if (m.players[s].location == BB_LOC_ABSENT) continue;
+            BB_CHECK(procgen_count_skills(&m.players[s].skills) <= 12);
+        }
+        BB_CHECK(procgen_squad_total(&m, BB_HOME) >= 11);
+        BB_CHECK(procgen_squad_total(&m, BB_AWAY) >= 11);
+    }
+}
+
+BB_TEST(match_procgen_params_are_deterministic) {
+    bb_procgen_params pp = {11, 3, 0.35f};
+    bb_match a, b;
+    bb_rng r1, r2;
+    bb_rng_seed(&r1, 0x12345678u, 43);
+    bb_rng_seed(&r2, 0x12345678u, 43);
+    bb_match_init_random_p(&a, &r1, &pp);
+    bb_match_init_random_p(&b, &r2, &pp);
+    BB_CHECK_EQ(memcmp(&a, &b, sizeof(bb_match)), 0);
+    BB_CHECK(procgen_rng_same_state(&r1, &r2));
+}
+
 BB_TEST(match_procgen_games_complete) {
     for (uint64_t seed = 1; seed <= 12; seed++) {
         bb_match m;

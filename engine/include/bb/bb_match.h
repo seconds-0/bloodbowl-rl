@@ -137,9 +137,19 @@ void bb_match_init(bb_match* m, int home_team_id, int away_team_id);
 
 // Procedural match: random rosters/skills/injuries/re-rolls drawn from `rng`
 // (the procgen stream, not the in-match dice stream).
+typedef struct {
+    int skillup_max_players;   // advancement draws per team, with replacement
+    int skillup_max_each;      // max skills gained per draw, uniform 1..N
+    float skillup_secondary_pct; // P(draw category from secondary_mask)
+} bb_procgen_params;
+
+bb_procgen_params bb_procgen_params_default(void);
 void bb_match_init_random(bb_match* m, bb_rng* rng);
+void bb_match_init_random_p(bb_match* m, bb_rng* rng, const bb_procgen_params* pp);
 // home/away >= 0 pin that side; exclude >= 0 bars a team from random draws.
 void bb_match_init_forced(bb_match* m, bb_rng* rng, int home, int away, int exclude);
+void bb_match_init_forced_p(bb_match* m, bb_rng* rng, int home, int away, int exclude,
+                            const bb_procgen_params* pp);
 
 // Advance the engine until a coach decision is required or the match ends.
 // All dice are drawn from `rng`. Returns the resulting status.

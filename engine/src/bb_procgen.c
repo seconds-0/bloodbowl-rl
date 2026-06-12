@@ -27,10 +27,19 @@ static int pg_skill_count(const bb_skillset* s) {
     return n;
 }
 
+static float pg_float01(bb_rng* rng) {
+    return (float)(bb_rng_next(rng) >> 8) * (1.0f / 16777216.0f);
+}
+
+bb_procgen_params bb_procgen_params_default(void) {
+    return (bb_procgen_params){4, 2, 0.0f};
+}
+
 // Build one team's squad: positionals first (random counts within limits),
-// topped up with the first listed position; 0-4 players get 1-2 random
-// advancement skills from their primary categories.
-static void procgen_squad(bb_match* m, int team, int team_id, bb_rng* rng) {
+// topped up with the first listed position; then configured random
+// advancement skills from primary/secondary categories.
+static void procgen_squad(bb_match* m, int team, int team_id, bb_rng* rng,
+                          const bb_procgen_params* pp) {
     const bb_team_def* td = &bb_team_defs[team_id];
     int base = team * BB_TEAM_SLOTS;
     int n = 0;
@@ -100,22 +109,33 @@ static void procgen_squad(bb_match* m, int team, int team_id, bb_rng* rng) {
         m->players[base + s].location = BB_LOC_ABSENT;
     }
 
-    // Advancement: 0-4 players gain 1-2 random skills from a primary category
+    // Advancement: players gain random skills from configured category access
     // (the 2D6 random-skill table run "fairly" via the procgen stream).
-    int advanced = pg_pick(rng, 5);
+    int advanced = pp->skillup_max_players > 0 ? pg_pick(rng, pp->skillup_max_players + 1) : 0;
     for (int i = 0; i < advanced; i++) {
         int who = base + pg_pick(rng, n);
         bb_player* p = &m->players[who];
         const bb_position_def* pd = &td->positions[p->position_id];
-        if (!pd->primary_mask) continue;
-        int gains = 1 + pg_pick(rng, 2);
+        uint8_t access = pd->primary_mask;
+        if (pp->skillup_secondary_pct > 0.0f) access |= pd->secondary_mask;
+        if (!access) continue;
+        int gains = pp->skillup_max_each >= 1 ? 1 + pg_pick(rng, pp->skillup_max_each) : 0;
         for (int g = 0; g < gains; g++) {
             if (pg_skill_count(&p->skills) >= PG_MAX_SKILLS) break;
-            // Pick a random primary category bit.
+            uint8_t mask = pd->primary_mask;
+            if (pp->skillup_secondary_pct > 0.0f &&
+                pg_float01(rng) < pp->skillup_secondary_pct) {
+                mask = pd->secondary_mask;
+            }
+            if (!mask) {
+                mask = (mask == pd->primary_mask) ? pd->secondary_mask : pd->primary_mask;
+            }
+            if (!mask) continue;
+            // Pick a random category bit.
             int cats[BB_CAT_COUNT];
             int nc = 0;
             for (int c = 0; c < BB_CAT_COUNT; c++) {
-                if (pd->primary_mask & (1 << c)) cats[nc++] = c;
+                if (mask & (1 << c)) cats[nc++] = c;
             }
             int cat = cats[pg_pick(rng, nc)];
             int sk = bb_random_skill_table[cat][pg_pick(rng, 12)];
@@ -140,11 +160,12 @@ static void procgen_squad(bb_match* m, int team, int team_id, bb_rng* rng) {
     }
 }
 
-static void pg_init_match(bb_match* m, bb_rng* rng, int home, int away) {
+static void pg_init_match(bb_match* m, bb_rng* rng, int home, int away,
+                          const bb_procgen_params* pp) {
     m->team_id[BB_HOME] = (uint8_t)home;
     m->team_id[BB_AWAY] = (uint8_t)away;
-    procgen_squad(m, BB_HOME, home, rng);
-    procgen_squad(m, BB_AWAY, away, rng);
+    procgen_squad(m, BB_HOME, home, rng, pp);
+    procgen_squad(m, BB_AWAY, away, rng, pp);
     for (int t = 0; t < 2; t++) {
         m->rerolls[t] = m->rerolls_start[t] = (uint8_t)(2 + pg_pick(rng, 3));
         m->apothecary[t] = bb_team_defs[m->team_id[t]].apothecary ? 1 : 0;
@@ -157,10 +178,15 @@ static void pg_init_match(bb_match* m, bb_rng* rng, int home, int away) {
 }
 
 void bb_match_init_random(bb_match* m, bb_rng* rng) {
+    bb_procgen_params pp = bb_procgen_params_default();
+    bb_match_init_random_p(m, rng, &pp);
+}
+
+void bb_match_init_random_p(bb_match* m, bb_rng* rng, const bb_procgen_params* pp) {
     memset(m, 0, sizeof(*m));
     int home = pg_pick(rng, BB_TEAM_COUNT);
     int away = pg_pick(rng, BB_TEAM_COUNT);
-    pg_init_match(m, rng, home, away);
+    pg_init_match(m, rng, home, away, pp);
 }
 
 // Holdout / fixed-matchup variant: home/away >= 0 pin that side's team;
@@ -168,6 +194,12 @@ void bb_match_init_random(bb_match* m, bb_rng* rng) {
 // held-out-team generalization experiments train with exclude set and
 // evaluate with force_* set).
 void bb_match_init_forced(bb_match* m, bb_rng* rng, int home, int away, int exclude) {
+    bb_procgen_params pp = bb_procgen_params_default();
+    bb_match_init_forced_p(m, rng, home, away, exclude, &pp);
+}
+
+void bb_match_init_forced_p(bb_match* m, bb_rng* rng, int home, int away, int exclude,
+                            const bb_procgen_params* pp) {
     memset(m, 0, sizeof(*m));
     int h = home;
     while (h < 0 || (home < 0 && h == exclude)) {
@@ -179,5 +211,5 @@ void bb_match_init_forced(bb_match* m, bb_rng* rng, int home, int away, int excl
         a = pg_pick(rng, BB_TEAM_COUNT);
         if (away < 0 && a == exclude) a = -1;
     }
-    pg_init_match(m, rng, h, a);
+    pg_init_match(m, rng, h, a, pp);
 }

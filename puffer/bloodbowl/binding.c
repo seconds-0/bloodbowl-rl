@@ -91,6 +91,9 @@ static void apply_kwargs(Env* env, Dict* kwargs) {
     env->demo_postkick_maxturn = (int)kw(kwargs, "demo_postkick_maxturn", 0.0);
     // Passing ladder (D72): held-ball + downfield-receiver demo resets (0=off)
     env->demo_pass_maxrange = (int)kw(kwargs, "demo_pass_maxrange", 0.0);
+    env->skillup_max_players = (int)kw(kwargs, "skillup_max_players", 4.0);
+    env->skillup_max_each = (int)kw(kwargs, "skillup_max_each", 2.0);
+    env->skillup_secondary_pct = (float)kw(kwargs, "skillup_secondary_pct", 0.0);
     // v5 path-actions (D82): STEP head = any reachable destination (0 = v4)
     env->macro_moves = (int)kw(kwargs, "macro_moves", 0.0);
     env->reach_mover = -1;
