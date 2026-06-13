@@ -100,6 +100,34 @@ def decisive_counts(rows):
     return names, wins, games, raw, skipped
 
 
+def score_counts(rows):
+    names = []
+    seen = set()
+    wins = defaultdict(float)
+    games = defaultdict(float)
+    skipped = []
+
+    for row in rows:
+        a, b = row["a"], row["b"]
+        for name in (a, b):
+            if name not in seen:
+                seen.add(name)
+                names.append(name)
+
+        total = float(row["total"])
+        if total <= 0:
+            skipped.append((a, b, "zero total games"))
+            continue
+
+        w_a = max(0.0, min(total, row["a_rate"] * total))
+        w_b = max(0.0, min(total, row["b_rate"] * total))
+        wins[(a, b)] += w_a
+        wins[(b, a)] += w_b
+        games[frozenset((a, b))] += total
+
+    return names, wins, games, skipped
+
+
 def row_decisive_summary(row):
     denom = 1.0 - row["draw"]
     if denom <= EPS:
@@ -112,6 +140,16 @@ def row_decisive_summary(row):
     w_a = int(round(n_decisive * p_a))
     w_a = max(0, min(n_decisive, w_a))
     return n_decisive, w_a, n_decisive - w_a, p_a
+
+
+def wilson_interval(k, n, z=1.96):
+    if n <= 0:
+        return None
+    phat = k / n
+    denom = 1.0 + z * z / n
+    center = (phat + z * z / (2.0 * n)) / denom
+    half = (z * math.sqrt(phat * (1.0 - phat) / n + z * z / (4.0 * n * n))) / denom
+    return center - half, center + half
 
 
 def connected_components(fit_names, games):
@@ -182,6 +220,94 @@ def empirical_between(stronger, weaker, wins, games):
     return wins.get((stronger, weaker), 0.0) / n, int(round(n))
 
 
+def anchored_elo(fit_names, pi, anchor, scale):
+    raw_elo = {name: scale * math.log10(pi[name]) for name in fit_names}
+    anchor_elo = raw_elo[anchor]
+    return {name: raw_elo[name] - anchor_elo for name in fit_names}
+
+
+def full_residuals(raw, fit_names, pi):
+    fit_set = set(fit_names)
+    residuals = []
+    for pair_raw in raw.values():
+        a, b = pair_raw["a"], pair_raw["b"]
+        if a not in fit_set or b not in fit_set:
+            continue
+        fit_p = pi[a] / (pi[a] + pi[b])
+        empirical_p = pair_raw["p_a"]
+        residuals.append({
+            "a": a,
+            "b": b,
+            "fit_p": fit_p,
+            "empirical_p": empirical_p,
+            "n": pair_raw["n"],
+            "abs_err": abs(fit_p - empirical_p),
+        })
+    return sorted(residuals, key=lambda r: r["abs_err"], reverse=True)
+
+
+def print_score_table(rows, anchor, scale, decisive_order):
+    score_names, score_wins, score_games, score_skipped = score_counts(rows)
+    total_score_games = {
+        name: sum(n for pair, n in score_games.items() if name in pair)
+        for name in score_names
+    }
+    score_excluded = [name for name in score_names if total_score_games[name] <= 0]
+    fit_score_names = [name for name in score_names if name not in set(score_excluded)]
+    if len(fit_score_names) < 2 or anchor not in fit_score_names:
+        print("score-based Elo ranked table (draws=0.5, no draw-stripping)")
+        print("skipped: need at least two score-connected anchors including anchor")
+        return
+
+    comps = connected_components(fit_score_names, score_games)
+    if len(comps) > 1:
+        keep = set(max(comps, key=len))
+        fit_score_names = [name for name in fit_score_names if name in keep]
+        if anchor not in fit_score_names:
+            print("score-based Elo ranked table (draws=0.5, no draw-stripping)")
+            print("skipped: anchor is not in the largest score-connected component")
+            return
+
+    score_pi = fit_bt(fit_score_names, score_wins, score_games)
+    score_elo = anchored_elo(fit_score_names, score_pi, anchor, scale)
+    decisive_rank = {name: i for i, name in enumerate(decisive_order)}
+    ordered = sorted(
+        fit_score_names,
+        key=lambda name: (score_elo[name], -decisive_rank.get(name, len(decisive_rank))),
+        reverse=True,
+    )
+
+    print("score-based Elo ranked table (draws=0.5, no draw-stripping)")
+    print(f"{'name':<16}{'elo':>10}{'raw_strength':>16}{'score_games':>18}")
+    print("-" * 60)
+    for name in ordered:
+        print(f"{name:<16}{score_elo[name]:>10.1f}"
+              f"{score_pi[name]:>16.6g}{total_score_games[name]:>18.0f}")
+    for a, b, why in score_skipped:
+        warn(f"skipping {a} vs {b} for score fit: {why}")
+
+
+def print_draw_matrix(rows, ordered, all_names):
+    draw_by_pair = {}
+    for row in rows:
+        draw_by_pair[frozenset((row["a"], row["b"]))] = row["draw"]
+
+    ordered_set = set(ordered)
+    names = list(ordered) + [name for name in all_names if name not in ordered_set]
+    width = max(8, max(len(name) for name in names) + 1) if names else 8
+    print("draw-rate matrix")
+    print(" " * width + "".join(f"{name:>{width}}" for name in names))
+    for a in names:
+        cells = []
+        for b in names:
+            if a == b:
+                cells.append("--")
+            else:
+                draw = draw_by_pair.get(frozenset((a, b)))
+                cells.append("--" if draw is None else f"{draw:.3f}")
+        print(f"{a:<{width}}" + "".join(f"{cell:>{width}}" for cell in cells))
+
+
 def main():
     ap = argparse.ArgumentParser(
         description="Fit a Bradley-Terry/Elo ladder from anchored_ladder.csv.")
@@ -230,9 +356,7 @@ def main():
         raise SystemExit(f"anchor {anchor!r} is not in the fitted component")
 
     pi = fit_bt(fit_names, wins, games)
-    raw_elo = {name: args.scale * math.log10(pi[name]) for name in fit_names}
-    anchor_elo = raw_elo[anchor]
-    elo = {name: raw_elo[name] - anchor_elo for name in fit_names}
+    elo = anchored_elo(fit_names, pi, anchor, args.scale)
     ordered = sorted(fit_names, key=lambda name: elo[name], reverse=True)
 
     print("raw pair table")
@@ -270,6 +394,39 @@ def main():
         else:
             emp_s, n_s = f"{emp[0]:.3f}", str(emp[1])
         print(f"{hi + ' > ' + lo:<35}{fit_p:>10.3f}{emp_s:>14}{n_s:>8}")
+
+    print()
+    print("full pairwise residuals (decisive-Elo model)")
+    print(f"{'pair':<35}{'fit_p':>10}{'empirical_p':>14}{'n':>8}{'abs_err':>10}")
+    print("-" * 77)
+    for r in full_residuals(raw, fit_names, pi):
+        print(f"{r['a'] + ' vs ' + r['b']:<35}"
+              f"{r['fit_p']:>10.3f}{r['empirical_p']:>14.3f}"
+              f"{r['n']:>8}{r['abs_err']:>10.3f}")
+
+    print()
+    print("Wilson 95% CI per pairing on decisive A win-rate")
+    print(f"{'pair':<35}{'A_dec_p':>10}{'ci_lo':>10}{'ci_hi':>10}{'n':>8}")
+    print("-" * 73)
+    for row in rows:
+        summary = row_decisive_summary(row)
+        if summary is None:
+            p_s, lo_s, hi_s, n_s = "--", "--", "--", "--"
+        else:
+            n_decisive, w_a, _, _ = summary
+            ci = wilson_interval(w_a, n_decisive)
+            p_s = f"{w_a / n_decisive:.3f}"
+            lo_s = f"{ci[0]:.3f}"
+            hi_s = f"{ci[1]:.3f}"
+            n_s = str(n_decisive)
+        print(f"{row['a'] + ' vs ' + row['b']:<35}"
+              f"{p_s:>10}{lo_s:>10}{hi_s:>10}{n_s:>8}")
+
+    print()
+    print_score_table(rows, anchor, args.scale, ordered)
+
+    print()
+    print_draw_matrix(rows, ordered, names)
 
     if excluded:
         print()
