@@ -58,7 +58,7 @@
       "filename": "gen2cont1_cap.bin",
       "lineage": "ratchet-continuation diagnostic, TEACHER=WARM=gen2, exact gen2->gen3 recipe repeated (D110, regressed -57.3 Elo from gen2)",
       "elo_d109": 43.9,
-      "status": "diversity candidate -- DEAD-END recipe (ratchet-vs-frozen-self from a tier1 checkpoint), retired as a warm-start/champion lineage per D110"
+      "status": "diversity candidate -- NOT viable as a warm-start/champion (D110: ratchet-vs-frozen-self from a tier1 checkpoint regresses), but the checkpoint itself remains a valid diversity pool member"
     },
     "league2": {
       "b2_key": "league2_cap.bin",
