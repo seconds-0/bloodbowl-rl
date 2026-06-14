@@ -1,0 +1,120 @@
+{
+  "_comment": "Durable lookup table for the anchored ladder (tools/anchored_ladder.csv) and pool-building automation (tools/build_pool_from_ladder.py). Maps ladder node names to B2 checkpoint keys (bbr:bloodbowl-rl/checkpoints/<b2_key>), local training/ filenames, and one-line provenance. All entries are flat-fp32 CUDA blobs, 16066560 bytes (obs-v4, hidden 512x3, heads 30/33/391). Updated D111.",
+  "_format_version": 1,
+  "_ladder_csv": "tools/anchored_ladder.csv",
+  "_decisions": "DECISIONS.md D90-D111 (contested era through hard-opponents doctrine)",
+  "nodes": {
+    "bc_v4": {
+      "b2_key": null,
+      "filename": "bc_v4_cuda.bin",
+      "lineage": "human-imitation BC anchor",
+      "elo_d109": -1571.4,
+      "status": "degenerate (0% decisive vs everything, D98) -- floor candidate ONLY for BC-prior style diversity, no training signal"
+    },
+    "v5contested": {
+      "b2_key": "v5_contested_cap.bin",
+      "filename": "v5_contested_cap.bin",
+      "lineage": "v5 path-actions/macro lineage, contested era",
+      "elo_d109": -330.3,
+      "status": "retired (macro retired D93) -- weak, near-degenerate"
+    },
+    "kickoff8": {
+      "b2_key": "v4_kickoff9_cap.bin",
+      "filename": "v4_kickoff9_cap.bin",
+      "lineage": "v4 dead-teacher-era kickoff ladder, final (D92, the 9th and last dead-teacher record, tds 1.438)",
+      "elo_d109": -111.5,
+      "status": "diversity candidate -- old-era style, weak but stable"
+    },
+    "gen1": {
+      "b2_key": "v4_contested_cap.bin",
+      "filename": "v4_contested_cap.bin",
+      "lineage": "v4-contested gen1 (D92/D93, warm=teacher=kickoff9 cap, 30B)",
+      "elo_d109": 0.0,
+      "status": "FLOOR anchor -- stable, non-degenerate reference point (anchor=gen1 in all ladder fits)"
+    },
+    "exploiter2": {
+      "b2_key": "v4_exploiter2_cap.bin",
+      "filename": "v4_exploiter2_cap.bin",
+      "lineage": "H3 AlphaStar-exploiter, champion=exploiter1, warm=gen4 (D103, flat 0.504 vs champion)",
+      "elo_d109": -31.7,
+      "status": "diversity candidate -- weak overall but non-transitive (beats league4 despite -93.6 Elo gap, D107)"
+    },
+    "exploiter4": {
+      "b2_key": "v4_exploiter4_cap.bin",
+      "filename": "v4_exploiter4_cap.bin",
+      "lineage": "H3 AlphaStar-exploiter, champion=league4, warm=gen1 (D108, flat 0.367 vs champion)",
+      "elo_d109": 13.2,
+      "status": "diversity candidate -- marginal vs gen1 warm-start, non-transitive (beats gen2/gen3 despite ~85-90 Elo gap, D108)"
+    },
+    "exploiter3": {
+      "b2_key": "v4_exploiter3_cap.bin",
+      "filename": "v4_exploiter3_cap.bin",
+      "lineage": "H3 AlphaStar-exploiter, champion=exploiter1, warm=league2 (D106, flat 0.493 vs champion)",
+      "elo_d109": 22.0,
+      "status": "diversity candidate"
+    },
+    "gen2cont1": {
+      "b2_key": "gen2cont1_cap.bin",
+      "filename": "gen2cont1_cap.bin",
+      "lineage": "ratchet-continuation diagnostic, TEACHER=WARM=gen2, exact gen2->gen3 recipe repeated (D110, regressed -57.3 Elo from gen2)",
+      "elo_d109": 43.9,
+      "status": "diversity candidate -- DEAD-END recipe (ratchet-vs-frozen-self from a tier1 checkpoint), retired as a warm-start/champion lineage per D110"
+    },
+    "league2": {
+      "b2_key": "league2_cap.bin",
+      "filename": "league2_cap.bin",
+      "lineage": "league pool gen2, warm=league1, skillup exposure probe (D96-A/D99, lost to predecessor league1)",
+      "elo_d109": 47.1,
+      "status": "diversity candidate -- pool member of league5/6/6b"
+    },
+    "exploiter1": {
+      "b2_key": "v4_exploiter1_cap.bin",
+      "filename": "v4_exploiter1_cap.bin",
+      "lineage": "H3 AlphaStar-exploiter, champion=gen2, warm=league1 (D102, SUCCESS: 0.587 vs champion, the only exploiter win)",
+      "elo_d109": 58.0,
+      "status": "TIER2/diversity -- pool member of league5/6/6b"
+    },
+    "league4": {
+      "b2_key": "league4_cap.bin",
+      "filename": "league4_cap.bin",
+      "lineage": "league pool gen4, warm=league3 (D106, partial recovery from league2's dip, still below league1)",
+      "elo_d109": 61.9,
+      "status": "TIER2 -- superseded as a pool member by league5 in league6/6b (D109-A)"
+    },
+    "gen4": {
+      "b2_key": "v4_contested4_cap.bin",
+      "filename": "v4_contested4_cap.bin",
+      "lineage": "v4-contested ratchet gen4, warm=teacher=gen3 (D100, landed within/below {gen2,gen3,league1} cluster -- ratchet plateau confirmed)",
+      "elo_d109": 64.0,
+      "status": "TIER2 -- pool member of league5/6/6b"
+    },
+    "league1": {
+      "b2_key": "league_cap.bin",
+      "filename": "league_cap.bin",
+      "lineage": "league pool gen1, warm=v4-contested gen1 cap, first rotating-pool arm (D96, dead heat vs gen2-ratchet at matched steps)",
+      "elo_d109": 77.5,
+      "status": "TIER2 -- the league lineage's high-water-mark BEFORE league5 (league2-4 all below it)"
+    },
+    "gen3": {
+      "b2_key": "v4_contested3_cap.bin",
+      "filename": "v4_contested3_cap.bin",
+      "lineage": "v4-contested ratchet gen3, warm=teacher=gen2 (D97/D98, the original tier1-tie with gen2 -- 6.1 Elo apart, noise-band)",
+      "elo_d109": 98.3,
+      "status": "TIER1/hard-opponent candidate -- pool member of league5/6/6b; warm-start for league6b (D109-A)"
+    },
+    "gen2": {
+      "b2_key": "v4_contested2_cap.bin",
+      "filename": "v4_contested2_cap.bin",
+      "lineage": "v4-contested ratchet gen2, warm=teacher=gen1 (D95, the original +100 Elo jump, gen1->gen2)",
+      "elo_d109": 101.2,
+      "status": "TIER1/hard-opponent candidate -- pool member of league5/6/6b"
+    },
+    "league5": {
+      "b2_key": "league5_cap.bin",
+      "filename": "league5_cap.bin",
+      "lineage": "league pool gen5, warm=league4, FIRST pool to include gen2+gen3 as opponents (D106-A)",
+      "elo_d109": 178.7,
+      "status": "TIER1/hard-opponent, ALL-TIME #1 (D109, +116.8 Elo jump from league4) -- warm-start for league6 (D109-A); the result that motivated D111's doctrine"
+    }
+  }
+}
