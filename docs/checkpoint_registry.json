@@ -2,7 +2,7 @@
   "_comment": "Durable lookup table for the anchored ladder (tools/anchored_ladder.csv) and pool-building automation (tools/build_pool_from_ladder.py). Maps ladder node names to B2 checkpoint keys (bbr:bloodbowl-rl/checkpoints/<b2_key>), local training/ filenames, and one-line provenance. All entries are flat-fp32 CUDA blobs, 16066560 bytes (obs-v4, hidden 512x3, heads 30/33/391). Updated D111.",
   "_format_version": 1,
   "_ladder_csv": "tools/anchored_ladder.csv",
-  "_decisions": "DECISIONS.md D90-D111 (contested era through hard-opponents doctrine)",
+  "_decisions": "DECISIONS.md D90-D122 (contested era through hard-opponents doctrine; D122 = league6/6b generalization verdict + reward-probe placement, elo_d122 fields)",
   "nodes": {
     "bc_v4": {
       "b2_key": null,
@@ -114,21 +114,48 @@
       "filename": "league5_cap.bin",
       "lineage": "league pool gen5, warm=league4, FIRST pool to include gen2+gen3 as opponents (D106-A)",
       "elo_d109": 178.7,
-      "status": "TIER1/hard-opponent, ALL-TIME #1 (D109, +116.8 Elo jump from league4) -- warm-start for league6 (D109-A); the result that motivated D111's doctrine"
+      "elo_d122": 199.6,
+      "status": "TIER1/hard-opponent -- warm-start for league6 (D109-A); the result that motivated D111's doctrine. Was ALL-TIME #1 at D109; superseded at D122 by statmatch1/league6/tdmaniac1 on the extended ladder (still solidly top-4)."
     },
     "league6": {
       "b2_key": "league6_cap.bin",
       "filename": "league6_cap.bin",
       "lineage": "league pool gen6, warm=league5 (D109-A continuation, SAME D111 hard-opponents pool {gen2,gen3,league5,gen4,league2,gen1,exploiter1,kickoff8}). Capped at 28.03B/30B (D116, PufferLib post-train KeyError ate the last 2B).",
       "elo_d109": null,
-      "status": "PENDING LADDER EXTENSION -- not yet placed on the anchored ladder. Used as warm-start for TD-maniac (D116-A) on the strong prior that it >= league5."
+      "elo_d122": 248.3,
+      "status": "TIER1/hard-opponent -- league5 continuation that JUMPED +48.7 Elo above league5 (D122, +69.7 over league5's D109 value), confirming the D111 recipe keeps ratcheting. Beats league5 0.529 H2H. Best non-reward-probe checkpoint on the extended ladder; recommended warm-start/champion (used as warm for TD-maniac, D116-A)."
     },
     "league6b": {
       "b2_key": "league6b_cap.bin",
       "filename": "league6b_cap.bin",
       "lineage": "league pool, warm=gen3 (D109-A generalization arm, SAME D111 pool as league6 but different starting lineage). Capped at 28.03B/30B (D116, PufferLib post-train KeyError ate the last 2B).",
       "elo_d109": null,
-      "status": "PENDING LADDER EXTENSION -- not yet placed on the anchored ladder. Used as warm-start for stakes1 (D116-B) on the strong prior that it >= gen3."
+      "elo_d122": 156.6,
+      "status": "TIER1/hard-opponent -- D109-A GENERALIZATION ARM. Starting from gen3 (+95.8) it climbed to +156.6 (D122, +60.8 over gen3), clearly above the gen2/gen3 cluster, confirming the D111 hard-opponents recipe generalizes across starting lineages. But it lands BELOW league5 (loses 0.461 H2H) and league6 (loses 0.452): the jump from gen3 is real but smaller than league5's from league4 -- starting state matters, the recipe is not lineage-invariant in magnitude."
+    },
+    "tdmaniac1": {
+      "b2_key": "tdmaniac1_cap.bin",
+      "filename": "tdmaniac1_cap.bin",
+      "lineage": "reward-economy probe (D116-A, 15B), warm/teacher=league6, reward_possession 0 + reward_td 1.2 + dist_endzone 0.3, frozen-self kickoff-pure (no D111 pool).",
+      "elo_d109": null,
+      "elo_d122": 215.6,
+      "status": "TIER1/hard-opponent -- the reward-td-maniac probe lands #3 on the extended ladder (+215.6), between league6 and league5. Loses to statmatch1 (0.553) but beats league5/league6b H2H. A strong checkpoint; reward-td-up did not hurt tournament strength."
+    },
+    "stakes1": {
+      "b2_key": "stakes1_cap.bin",
+      "filename": "stakes1_cap.bin",
+      "lineage": "reward-economy probe (D116-B, 15B), warm/teacher=league6b, reward_win 1.4 (win/loss spread 1.2->2.8), reward_possession left ON, frozen-self kickoff-pure (no D111 pool).",
+      "elo_d109": null,
+      "elo_d122": 190.5,
+      "status": "TIER1/hard-opponent -- raised-stakes probe lands +190.5 (just below league5). Beats league6b (its warm-start, 0.516 H2H) and the gen2/gen3 cluster; loses to statmatch1/tdmaniac1/league6. Top-5 strong checkpoint."
+    },
+    "statmatch1": {
+      "b2_key": "statmatch1_cap.bin",
+      "filename": "statmatch1_cap.bin",
+      "lineage": "aggregate-stat-matching reward probe (D114-A, 5B only), warm=league5, reward_possession 0 + reward-statmatch-scale 0.01, frozen-self kickoff-pure (no D111 pool). Produced on the rig with a --float build; flat-fp32 format loads in puffer match with NO conversion (verified D122).",
+      "elo_d109": null,
+      "elo_d122": 326.5,
+      "status": "TIER1/hard-opponent -- NEW ALL-TIME LADDER #1 (+326.5) despite only 5B steps. Beats EVERY opponent decisively incl. league5 (0.543), league6 (0.513), tdmaniac1 (0.553), stakes1 (0.600). Consistent across all 12 pairings (not a weak-opponent artifact). The aggregate-stat-matching reward is the single strongest lever measured. CAVEAT: 5B-only, warm=league5; high decisive win-rate vs weak nodes (bc_v4 0.883) does inflate BT strength somewhat, but top-cluster H2H wins confirm the #1 placement is real."
     }
   }
 }
