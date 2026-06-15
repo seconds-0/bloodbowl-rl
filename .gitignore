@@ -31,3 +31,4 @@ validation/replay_cache/
 # OS
 .DS_Store
 checkpoints-backup/
+.claude/worktrees/
