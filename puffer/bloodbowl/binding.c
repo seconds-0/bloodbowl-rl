@@ -83,6 +83,11 @@ static void apply_kwargs(Env* env, Dict* kwargs) {
     env->reward_possession = (float)kw(kwargs, "reward_possession", 0.0);
     // Rush tax per GFI square at declaration (suggested 0.01-0.02)
     env->reward_rush_cost = (float)kw(kwargs, "reward_rush_cost", 0.0);
+    // Aggregate-stat-matching pseudo-reward scale (D114). 0 = off (default).
+    // When >0, an episode-end -scale*||z||_2 penalty pulls the 7-stat full-game
+    // vector toward docs/human-baseline.json. Kickoff-pure only; pair with
+    // --env.reward-possession 0. See bloodbowl.h reward_statmatch_scale.
+    env->reward_statmatch_scale = (float)kw(kwargs, "reward_statmatch_scale", 0.0);
     // Backplay curriculum: scoring-proximal demo resets (0 = uniform)
     env->demo_endzone_maxdist = (int)kw(kwargs, "demo_endzone_maxdist", 0.0);
     // Pickup curriculum (D64): loose-ball-near-mover demo resets (0 = off)
@@ -207,6 +212,7 @@ void my_log(Log* log, Dict* out) {
     dict_set(out, "tds", log->tds);
     dict_set(out, "episode_return", log->episode_return);
     dict_set(out, "episode_length", log->episode_length);
+    dict_set(out, "statmatch_term", log->statmatch_term);
     dict_set(out, "illegal_frac", log->illegal_frac);
     dict_set(out, "blocks", log->blocks);
     dict_set(out, "blocks_thrown", log->blocks_thrown);

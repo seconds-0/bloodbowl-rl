@@ -56,6 +56,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>   // sqrtf — aggregate-stat-matching pseudo-reward (D114)
 
 // --- Engine amalgamation (build.sh compiles binding.c as a single TU) -------
 // `engine/` and `bb/` next to this header are symlinks in the dev tree
@@ -142,6 +143,13 @@ typedef struct {
     float tds;             // total touchdowns in the match
     float episode_return;
     float episode_length;
+    // Aggregate-statistic-matching pseudo-reward (D114): the per-agent
+    // episode-end term added when reward_statmatch_scale > 0 on a kickoff-pure
+    // episode. <= 0 always (a penalty proportional to z-score L2 distance from
+    // the human baseline). Stays 0.0 on the dashboard when the knob is off or
+    // on curriculum-start episodes. Watch it converge toward 0 during a
+    // statmatch arm; a stuck-large value means an untracked-dimension exploit.
+    float statmatch_term;
     float illegal_frac;    // sampled actions that had to be snapped to legal
     // Behavioral micro-stats, summed per episode (dashboard shows per-episode
     // means after the /n aggregation). Motivated by a spectator finding:
@@ -287,6 +295,19 @@ typedef struct {
     // opponent can't convert turnovers either), so potentials make rushing
     // free income and the policy GFI-spams (~17/ep observed; humans ~2-5).
     float reward_rush_cost;
+    // Aggregate-statistic matching (D114): episode-end pseudo-reward that pulls
+    // the full-game behavioral stat vector toward the FIXED human baseline
+    // (docs/human-baseline.json). term = -scale * sqrt(sum_i z_i^2) over the 7
+    // stats {tds, dodgeRoll, pickUpRoll, passRoll, goForItRoll, block_2dred_frac,
+    // possession_rate}, z_i = (agent_i - human_mean_i)/human_std_i (diagonal
+    // Mahalanobis / Z-score L2, raw episodic term, NOT PBRS). Stats are
+    // MATCH-LEVEL (both teams summed, matching how the baseline was measured),
+    // so the single term is applied SYMMETRICALLY to both self-play agents.
+    // Activates ONLY on kickoff-pure episodes (demo_started == 0) — curriculum
+    // episodes are too short for full-game stat targets. MUST run with
+    // reward_possession == 0 (the annuity's dense gradient would dominate the
+    // joint possession_rate target). 0 = off (default). See D114.
+    float reward_statmatch_scale;
     // Backplay curriculum (D47): when >0, demo resets rejection-sample the
     // bank for SCORING-PROXIMAL states — a standing carrier within this
     // many squares of their endzone — so the policy experiences touchdowns
@@ -1479,6 +1500,64 @@ static void bbe_finish_episode(Bloodbowl* env) {
     env->log.handoff_attempts += (float)env->ep_handoff_attempts;
     env->log.knockdowns_inflicted += (float)env->ep_knockdowns_inflicted;
     env->log.knockdowns_own += (float)env->ep_knockdowns_own;
+    // --- Aggregate-statistic-matching pseudo-reward (D114) ------------------
+    // Episode-end term = -scale * sqrt(sum_i z_i^2) over the 7 full-game stats,
+    // z_i = (agent_stat_i - human_mean_i)/human_std_i. Pulls the policy's
+    // full-game behavioral profile toward the FIXED human baseline
+    // (docs/human-baseline.json). Diagonal-Mahalanobis / Z-score L2 — a RAW
+    // episodic term, NOT PBRS. Stats are MATCH-LEVEL (both teams summed), the
+    // same quantities the dashboard reports and the baseline was measured on,
+    // so the single term is applied SYMMETRICALLY to both self-play agents.
+    // Gate: only on kickoff-pure episodes (demo_started == 0) — curriculum
+    // episodes are too short for full-game stat targets to be meaningful. MUST
+    // be run with reward_possession == 0 (the annuity would dominate the joint
+    // possession_rate target). See D114 for std-derivation reasoning.
+    float statmatch = 0.0f;
+    if (env->reward_statmatch_scale > 0.0f && !env->demo_started) {
+        // Human baseline means (docs/human-baseline.json) and stds. No per-game
+        // corpus was retained, so stds are a principled fallback (D114):
+        //   counts (Poisson-like): std = sqrt(mean);
+        //   fractions over n events: std = sqrt(p(1-p)/n)
+        //     block_2dred over ~88.83 blocks/game; possession over ~35.66
+        //     team-turns/game (453617 team-turns / 12722 games).
+        // Order: tds, dodgeRoll, pickUpRoll, passRoll, goForItRoll,
+        //        block_2dred_frac, possession_rate.
+        static const float HB_MEAN[7] = {
+            2.217f, 25.68f, 7.29f, 1.97f, 17.38f, 0.0169f, 0.378f };
+        static const float HB_STD[7] = {
+            1.4890f, 5.0675f, 2.7000f, 1.4036f, 4.1689f, 0.01368f, 0.08120f };
+        // This episode's match-level stat vector (both teams).
+        float ep_tds   = (float)((m->score[0] - env->score_start[0]) +
+                                 (m->score[1] - env->score_start[1]));
+        float ep_2dred = env->ep_blocks_thrown > 0
+            ? (float)env->ep_block_tier[3] / (float)env->ep_blocks_thrown : 0.0f;
+        int   tot_turns = env->ep_turns[0] + env->ep_turns[1];
+        int   tot_held  = env->ep_turns_with_ball[0] + env->ep_turns_with_ball[1];
+        float ep_poss  = tot_turns > 0 ? (float)tot_held / (float)tot_turns : 0.0f;
+        float stat[7] = {
+            ep_tds,
+            (float)env->ep_dodge_attempts,
+            (float)env->ep_pickup_attempts,
+            (float)env->ep_pass_attempts,
+            (float)env->ep_gfi_attempts,
+            ep_2dred,
+            ep_poss,
+        };
+        float ss = 0.0f;
+        for (int i = 0; i < 7; i++) {
+            float z = (stat[i] - HB_MEAN[i]) / HB_STD[i];
+            ss += z * z;
+        }
+        statmatch = -env->reward_statmatch_scale * sqrtf(ss);
+    }
+    for (int a = 0; a < BBE_AGENTS; a++) {
+        env->reward_ptr[a][0] += statmatch;
+        env->ep_return[a]     += statmatch;
+    }
+    env->log.statmatch_term += statmatch;
+    // episode_return was logged above from slot 0's pre-statmatch ep_return;
+    // fold the statmatch term in so the dashboard's episode_return is total.
+    env->log.episode_return += statmatch;
     // Selfplay pool bookkeeping: on tagged envs slot 0 is the learner playing
     // frozen bank tag-1; result is already slot-0 perspective.
     if (env->tag > 0 && env->tag <= BBE_MAX_BANKS) {
