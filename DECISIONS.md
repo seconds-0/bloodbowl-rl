@@ -540,3 +540,21 @@ FLEET STATE: league7 (japan, ~30B, statmatch-continued) + league7b (ballhawk, ~3
 10. Fix the "tight cage" test case (codex): all-8-adjacent-occupied = UNREACHABLE, not "must dodge" -- use occupied corners + open-but-TZ'd adjacent squares to test the dodge-cost path.
 
 **VERDICT**: implementation-ready after these 10 fixes (applied as a revision appendix to the spec, not a rewrite). Next: codex-implementer build per the standing pattern, GPU-decoupled (doesn't compete with league7/league7b/statmatch2). Separately: the BBTV/seconds0.com security-review codex job (D125-adjacent) was killed after 80+ min with zero output (past the 35min ceiling, unlike this thread's codex which completed cleanly in ~25min) -- Opus's completed security review (SAFE to publish, only LOW findings) stands as the verdict; codex was non-cooperative on THAT task specifically, consistent with the prior session's note that codex's unproductiveness is task-specific, not categorical.**
+
+**D127 — R6v1 IMPLEMENTATION COMPLETE (codex implementer, 2026-06-15): 361 tests pass, puffer-side wired, defaulting to 0.0 (inert to current runs).** Dispatched codex from `.codex-impl/brief-r6v1-carrier-exposure.md` (the D126-revised spec). Output log at `.codex-impl/r6v1-implementation.log` (31,857 lines). All 10 revision-appendix fixes applied cleanly in the implementation:
+
+**Engine (commits `127ab51` + `322444f`, 478 lines across 6 files):**
+- `engine/src/bb_reachability.c` + `engine/include/bb/bb_reachability.h`: pure-engine 8-connected 2D Dijkstra adapted from `bbe_macro_reach`'s proven algorithm (no `Bloodbowl*`, no env coupling, no caching). Per-node `(dodges, gfis)` cost tracked via `reach_len`; dodge counted on exit via `bb_tackle_zones`; GFI boundary from budget (`ma + bb_max_rushes`); `BB_PF_ROOTED` gates both the carrier and reaching opponents. Aggregation via boolean ORs (`any_free`, `any_one_roll`) across standing non-rooted opponents -- avoids the lex-min aggregation bug (D126 fix #3).
+- `engine/tests/test_reachability.c`: 15 tests (open-field, tight-screened, marked carrier, one-dodge soft, one-GFI soft, aggregation regression, unreachable, endzone exemption, Sprint-aware, rooted adjacent/non-adjacent, prone opponent, diagonal adjacency, prone carrier guard).
+- `bb_carrier_exposure_eval` pure-engine classifier + endzone-exemption helper exposed for direct testability from the Mac suite.
+
+**Puffer wiring (`puffer/bloodbowl/bloodbowl.h`, `binding.c`, `puffer/config/bloodbowl.ini`):**
+- Fields `reward_carrier_exposure` + `reward_carrier_exposure_soft`, both defaulting to `0.0` (fully backward-compatible with all current runs). Applied at the settled own-turn-end hook (after possession bookkeeping), one-sided penalty only (no opponent credit).
+- `bb_reachability.c` added to the puffer amalgamation with its own `DIR8_reachability_tu` rename block; amalgamation comment updated.
+- Telemetry keys `ep_carrier_exposed_full` and `ep_carrier_exposed_soft` in the log dict (capacity 38 keys).
+
+**Verification (Mac):** `make test` → 361 tests, 0 failures. Reachability slice: 15/15. `make lockstep` → clean build. Binding syntax check → clean. Snapshot drift check shows stale vendor copy (expected -- run `install_puffer_env.sh` on boxes before next build).
+
+**Sign convention (D126 fix #2 applied correctly):** positive magnitudes in config, subtracted in hook -- matches `reward_rush_cost` convention. Codex's sign-double-negate bug from the original spec does NOT appear in the implementation.
+
+**NEXT:** (a) Push commits + install on box for a build+smoke-test (run `install_puffer_env.sh` + `./build.sh bloodbowl --float` + a short `--env.reward-carrier-exposure 0.05` run to confirm the reward fires and `ep_carrier_exposed_full` logs non-zero); then (b) when league7/league7b cap (~3-4h), extend the ladder, record the D124 A/B verdict (does statmatch-continued beat proven-economy?), and launch league8 with `--env.reward-carrier-exposure 0.05 --env.reward-carrier-exposure-soft 0.02` as the first live R6v1 arm. Statmatch2 caps later (~10h, 8B); back it up and add to the ladder before league8 launch.**
