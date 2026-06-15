@@ -1524,8 +1524,14 @@ static void bbe_finish_episode(Bloodbowl* env) {
         //        block_2dred_frac, possession_rate.
         static const float HB_MEAN[7] = {
             2.217f, 25.68f, 7.29f, 1.97f, 17.38f, 0.0169f, 0.378f };
+        // block_2dred_frac's raw std (0.01368) is smaller than its mean and the
+        // agent sits ~10x human, so its z dominates ~84% of ||z||^2 (D114's
+        // flagged caveat) -- statmatch1 was effectively a 1-axis 2dred pull.
+        // Floored to 0.05 (D118-A) for a more balanced 7-way pull in statmatch2;
+        // statmatch1's own progress (0.0169 target, agent ~0.125 after 5B) means
+        // this floor matters less than it did at the start.
         static const float HB_STD[7] = {
-            1.4890f, 5.0675f, 2.7000f, 1.4036f, 4.1689f, 0.01368f, 0.08120f };
+            1.4890f, 5.0675f, 2.7000f, 1.4036f, 4.1689f, 0.05000f, 0.08120f };
         // This episode's match-level stat vector (both teams).
         float ep_tds   = (float)((m->score[0] - env->score_start[0]) +
                                  (m->score[1] - env->score_start[1]));
