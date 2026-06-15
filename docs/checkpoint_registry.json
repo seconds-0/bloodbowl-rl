@@ -115,6 +115,20 @@
       "lineage": "league pool gen5, warm=league4, FIRST pool to include gen2+gen3 as opponents (D106-A)",
       "elo_d109": 178.7,
       "status": "TIER1/hard-opponent, ALL-TIME #1 (D109, +116.8 Elo jump from league4) -- warm-start for league6 (D109-A); the result that motivated D111's doctrine"
+    },
+    "league6": {
+      "b2_key": "league6_cap.bin",
+      "filename": "league6_cap.bin",
+      "lineage": "league pool gen6, warm=league5 (D109-A continuation, SAME D111 hard-opponents pool {gen2,gen3,league5,gen4,league2,gen1,exploiter1,kickoff8}). Capped at 28.03B/30B (D116, PufferLib post-train KeyError ate the last 2B).",
+      "elo_d109": null,
+      "status": "PENDING LADDER EXTENSION -- not yet placed on the anchored ladder. Used as warm-start for TD-maniac (D116-A) on the strong prior that it >= league5."
+    },
+    "league6b": {
+      "b2_key": "league6b_cap.bin",
+      "filename": "league6b_cap.bin",
+      "lineage": "league pool, warm=gen3 (D109-A generalization arm, SAME D111 pool as league6 but different starting lineage). Capped at 28.03B/30B (D116, PufferLib post-train KeyError ate the last 2B).",
+      "elo_d109": null,
+      "status": "PENDING LADDER EXTENSION -- not yet placed on the anchored ladder. Used as warm-start for stakes1 (D116-B) on the strong prior that it >= gen3."
     }
   }
 }
