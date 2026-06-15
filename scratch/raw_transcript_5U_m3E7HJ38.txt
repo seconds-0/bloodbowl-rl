@@ -1,0 +1,402 @@
+[0.16 + 4.48] for our opponents turn up this is a good
+[2.24 + 6.08] segue so this is bloodball puzzle corner
+[4.64 + 3.68] and we're gonna solve puzzles
+[15.20 + 2.80] watching the puzzle on this one is it
+[16.48 + 4.08] right at the end of the game so we just
+[18.00 + 2.56] pile through
+[28.72 + 3.12] faster way doing this
+[33.36 + 5.84] gonna have to close my eye walrus why
+[36.08 + 3.12] don't you want to see the puzzle
+[43.20 + 6.24] there we go coach
+[46.64 + 2.80] finish his turn
+[56.72 + 2.24] i think
+[67.60 + 4.40] okay right this this one is a little
+[70.80 + 2.88] more difficult than a normal
+[72.00 + 3.20] puzzle and the reason that this is
+[73.68 + 3.36] slightly more difficult than a normal
+[75.20 + 4.80] puzzle for me to show you
+[77.04 + 3.68] is that the first action um that is
+[80.00 + 3.76] taken here
+[80.72 + 4.08] is not you can't take it if you're gonna
+[83.76 + 3.76] solve the puzzle
+[84.80 + 4.80] you can't take this first action um so
+[87.52 + 4.40] the goal of this quest the goal of this
+[89.60 + 4.24] is uh within the next two minutes can
+[91.92 + 5.28] you can you find
+[93.84 + 3.36] a two dice block on the ball
+[97.28 + 3.76] you're only allowed to roll two plus
+[98.80 + 3.60] dodge rolls so no three plus four plus
+[101.04 + 2.96] five plus dodges
+[102.40 + 3.52] because you've got a witch half with
+[104.00 + 5.04] jump up and you could dodge there on a
+[105.92 + 4.80] uh four plus five plus sorry um through
+[109.04 + 3.44] tackle that that's not allowed yes it's
+[110.72 + 5.20] there but no it's too difficult
+[112.48 + 5.04] um and if you're gonna throw a block um
+[115.92 + 5.12] you have to throw a two dice block
+[117.52 + 6.56] rather than a than a one dice block
+[121.04 + 4.48] um i need you to all remember where this
+[124.08 + 3.44] blitzer is because this blitzer runs
+[125.52 + 4.32] away
+[127.52 + 2.32] and
+[130.80 + 4.40] um that's important
+[134.00 + 3.44] i knew he thought so he said about
+[135.20 + 5.04] rerolls uh i like i mean what do you
+[137.44 + 4.16] mean army builder
+[140.24 + 2.88] what they said about rerolls army
+[141.60 + 2.56] builder you need to give me an example
+[143.12 + 3.12] i'm not not sure
+[144.16 + 3.20] hello everyone so the goal of these as
+[146.24 + 2.08] you just come in you need to get two
+[147.36 + 2.88] dice on the ball
+[148.32 + 3.04] you're not allowed to um roll a three
+[150.24 + 2.32] plus or more dodge
+[151.36 + 3.36] you're only allowed to roll two dice
+[152.56 + 4.24] blocks um
+[154.72 + 3.44] and we're looking for but two dice on
+[156.80 + 2.64] ball
+[158.16 + 4.40] i'll give you a moment to just look
+[159.44 + 6.16] through this um i'm also then gonna
+[162.56 + 5.20] let the turn play out um because
+[165.60 + 3.04] at the moment it's very very difficult
+[167.76 + 2.40] to solve
+[168.64 + 4.24] and we need i need the board state to
+[170.16 + 2.72] alter slightly
+[179.44 + 6.40] remember this blitzer he's actually
+[181.12 + 4.72] stood there
+[187.68 + 3.04] there we go right that's the actual
+[189.12 + 2.96] board state except this blitzer is not
+[190.72 + 4.64] there this blitzer is there
+[192.08 + 6.32] and he hasn't moved um [ __ ]
+[195.36 + 4.24] he's wizard um now
+[198.40 + 3.20] what i'm going to do now is take a
+[199.60 + 4.88] moment to explain what
+[201.60 + 4.48] the thought process is about how you go
+[204.48 + 4.24] about solving this
+[206.08 + 3.44] um and therefore if you can't see it
+[208.72 + 2.64] straight away
+[209.52 + 3.76] maybe by explaining the thought process
+[211.36 + 4.56] you'll be able to solve it
+[213.28 + 3.92] so um first things first what strength
+[215.92 + 4.32] is the ball carrier
+[217.20 + 5.12] five months lucky you
+[220.24 + 3.12] broadsword thank you very much um i
+[222.32 + 2.32] can't believe being around
+[223.36 + 3.92] learning this for five months
+[224.64 + 4.08] unbelievable thank you very very much
+[227.28 + 2.32] uh so the first thing to consider is the
+[228.72 + 1.84] strength of the ball carry you should
+[229.60 + 2.40] always consider this because obviously
+[230.56 + 2.80] it's strength four then it's much more
+[232.00 + 2.72] difficult to deal with in this instance
+[233.36 + 3.12] it's only strength two
+[234.72 + 3.76] um so that gives us a little bit of
+[236.48 + 4.40] something to play around with
+[238.48 + 3.36] um the next thing i would go away and
+[240.88 + 4.16] think about
+[241.84 + 4.96] um is can we um
+[245.04 + 3.36] are we looking to block into the cage
+[246.80 + 3.20] we're in this sonnet scenario
+[248.40 + 3.20] and so push things out of the way so we
+[250.00 + 4.96] can go and hit stuff
+[251.60 + 4.32] or because the cage is based and we push
+[254.96 + 3.44] a cage piece
+[255.92 + 4.00] into the ball carrier and move the ball
+[258.40 + 3.20] carrier around ourselves
+[259.92 + 2.88] right so that's the two different ways
+[261.60 + 2.16] you should be thinking about it you're
+[262.80 + 3.68] looking at
+[263.76 + 3.60] uh moving something out or crushing
+[266.48 + 4.16] something in like
+[267.36 + 3.84] rocks on a shoreline um and the way to
+[270.64 + 3.04] do that
+[271.20 + 4.16] normally to think about the second one
+[273.68 + 3.68] is can you find any boxes or t
+[275.36 + 3.52] shapes um or just things you can just
+[277.36 + 4.32] generally chain push
+[278.88 + 3.28] um and so let's go through this the turn
+[281.68 + 1.76] that
+[282.16 + 3.04] is gonna get pushed into there there's
+[283.44 + 3.44] no viable way of filling that square in
+[285.20 + 3.44] so that is not helpful and we need to
+[286.88 + 3.92] just stop thinking about it
+[288.64 + 3.44] this um there is a chain push here
+[290.80 + 2.48] unfortunately that's got stand firm so
+[292.08 + 1.68] that's not helpful so i don't have to
+[293.28 + 2.72] waste any
+[293.76 + 3.04] mental energy thinking about that player
+[296.00 + 2.96] next
+[296.80 + 3.36] um this well there's a guard player here
+[298.96 + 2.24] and i've got a player here and i can't
+[300.16 + 2.16] fill this square in
+[301.20 + 3.68] and i might need to fill this square in
+[302.32 + 5.60] so maybe that's the thing to think about
+[304.88 + 4.96] we can also push him this way um
+[307.92 + 3.60] but he's got blodge and we have got no
+[309.84 + 3.04] tackle on either these players so viably
+[311.52 + 5.04] knocking this guy over is not
+[312.88 + 4.40] very helpful um can we push anything
+[316.56 + 4.16] else
+[317.28 + 4.64] not easily um or not directly should i
+[320.72 + 3.28] say
+[321.92 + 3.68] what you can see however is on the back
+[324.00 + 5.92] cage corner this is strength two
+[325.60 + 5.60] so um make a box no we can't make a box
+[329.92 + 3.76] um can we do something that way not
+[331.20 + 4.40] really um but what we could start to
+[333.68 + 3.44] think about is this shape here
+[335.60 + 2.80] yeah can we fill in these two squares
+[337.12 + 3.12] here because then if we could we've got
+[338.40 + 3.44] a t-shape
+[340.24 + 4.00] and if we can fill in these two players
+[341.84 + 5.84] here um
+[344.24 + 5.20] then we could push the ball carrier down
+[347.68 + 4.64] equally if we pushed here and followed
+[349.44 + 4.72] up um
+[352.32 + 4.72] that would also give us the t shape so
+[354.16 + 5.52] we can either block here and follow
+[357.04 + 3.92] and then run round the trouble is that
+[359.68 + 2.88] square's available
+[360.96 + 2.96] so really what i'm looking at is i want
+[362.56 + 2.48] to fill in these two squares that's the
+[363.92 + 3.52] solve here
+[365.04 + 3.60] is you fill in those squares there and
+[367.44 + 3.20] you blitz from here
+[368.64 + 3.52] and you can push the ball carrier down
+[370.64 + 3.12] and we can go here and we actually know
+[372.16 + 2.48] that which elf he's effectively stood up
+[373.76 + 5.04] because
+[374.64 + 6.64] he's got jump up so
+[378.80 + 4.56] how you would go around solving this now
+[381.28 + 4.24] the final little bit of the methodology
+[383.36 + 4.16] well you take this guy and plonk him
+[385.52 + 3.68] here we know we've got
+[387.52 + 3.20] we put this guy here we've got two dice
+[389.20 + 3.84] here
+[390.72 + 3.52] if we get a pal fine it's just stood
+[393.04 + 4.32] there
+[394.24 + 4.08] um if we get a push it's still stood
+[397.36 + 2.56] there
+[398.32 + 3.28] frenzy then carries this to them because
+[399.92 + 4.00] we put player here
+[401.60 + 3.60] that's still two dice and so the witch
+[403.92 + 2.40] health all that all the
+[405.20 + 3.12] blitzer is going to be stood in this
+[406.32 + 3.12] square here we also know we can block
+[408.32 + 3.20] here because of our guard
+[409.44 + 3.28] which fills in this square so guaranteed
+[411.52 + 2.56] we fill in these squares
+[412.72 + 3.36] the worst thing that can happen is they
+[414.08 + 3.44] fall over and die because then we don't
+[416.08 + 2.88] get our shape
+[417.52 + 3.36] at that point the player that we have
+[418.96 + 4.00] moved over here runs around the top
+[420.88 + 3.36] smashes into this player pushes here he
+[422.96 + 5.04] goes there
+[424.24 + 3.76] and we jump up for two dice
+[428.08 + 2.24] oh
+[431.20 + 6.64] but more importantly we talked about how
+[432.64 + 5.20] we solve it rather than just solve
+[444.24 + 4.96] now that segues quite nicely into um
+[449.28 + 3.04] clever yeah um that still goes quite
+[451.44 + 3.68] nicely into
+[452.32 + 4.48] joey being back for our occ game i hope
+[455.12 + 4.40] but there we have it
+[456.80 + 2.72] a quick replay
+[462.96 + 3.36] i hope i might go to do another one
+[465.36 + 2.16] actually let's see if we can do it
+[466.32 + 2.64] quickly knock out another blue ball
+[467.52 + 3.68] puzzle
+[468.96 + 3.60] uh a real pinned at the top weren't they
+[471.20 + 7.76] so
+[472.56 + 10.00] that was the next puzzle
+[478.96 + 7.44] ah oh yeah kislev what game was this in
+[482.56 + 6.72] his lead versus norse all right okay
+[486.40 + 2.88] i remember this game
+[490.00 + 5.44] okay there history places
+[499.92 + 8.88] bars i think he gets these
+[504.32 + 8.88] both of the first i'm going to post that
+[508.80 + 4.40] second one
+[518.16 + 3.68] oh james that sucks
+[560.56 + 5.84] that will suit people who are
+[563.84 + 4.16] very careful with their rerolls um and
+[566.40 + 5.28] in fact will let people who get
+[568.00 + 9.20] bitten by or look early on
+[571.68 + 7.68] um do all right
+[577.20 + 2.16] no
+[581.60 + 8.88] hold on um
+[585.52 + 7.68] [ __ ] bobo's grotto thank you very much
+[590.48 + 5.92] okay right um let's do the next next
+[593.20 + 3.20] puzzle i think it's this turn
+[597.12 + 9.52] back to one more circle don't know if
+[604.24 + 5.12] it's not this time
+[606.64 + 2.72] not this term
+[609.92 + 3.44] oh it was there hang on
+[616.56 + 6.32] oh yeah
+[619.68 + 3.20] i need the board state to be right
+[623.44 + 3.60] right let that play through because it's
+[624.80 + 2.24] here
+[629.04 + 3.44] don't worry james you'll just finish up
+[630.40 + 5.44] in tier tier five
+[632.48 + 3.36] you'll be fine um
+[635.92 + 2.80] grotto thank you very much by the way i
+[637.60 + 2.64] can't tell if that's the first time
+[638.72 + 4.00] subscription which i think it is
+[640.24 + 3.60] so thank you very very much um if i
+[642.72 + 1.76] didn't have my daughter on my knee i
+[643.84 + 2.88] would um
+[644.48 + 4.48] would do like sub piping and stuff thank
+[646.72 + 5.28] you very much
+[648.96 + 3.04] right this
+[652.48 + 6.56] this is the next puzzle and this puzzle
+[655.60 + 5.44] is solvable in many different ways
+[659.04 + 3.20] and so the question the question we're
+[661.04 + 4.32] asking ourselves
+[662.24 + 5.84] is serve
+[665.36 + 5.52] one or both of these players with as few
+[668.08 + 6.40] dice rolls as possible
+[670.88 + 6.64] um thank you um
+[674.48 + 4.48] and i reckon it can be done and i didn't
+[677.52 + 6.64] post this in the solution
+[678.96 + 5.20] but i reckon this can be done with one
+[687.04 + 5.04] yeah one two plus uh two two pluses
+[690.48 + 2.00] sorry two two pluses i reckon i can do
+[692.08 + 2.48] it
+[692.48 + 3.20] with two two pluses the board state's
+[694.56 + 4.24] not great
+[695.68 + 4.88] afterwards but it can be done um
+[698.80 + 3.12] just for the other rule you're not
+[700.56 + 2.64] allowed to move the ball carrier so the
+[701.92 + 3.20] ball carrier has to come over here and
+[703.20 + 5.76] be down here
+[705.12 + 3.84] because um that's cheating
+[710.08 + 8.08] so can you do better than a two plus
+[714.32 + 5.92] um two two pluses to surf
+[718.16 + 3.28] both of these players assuming that the
+[720.24 + 9.76] role you roll
+[721.44 + 10.00] is a push
+[730.00 + 3.60] i've found three different ways of doing
+[731.44 + 3.44] this
+[733.60 + 2.48] health plate's like yeah i can actually
+[734.88 + 2.08] thanks very much thanks for that
+[736.08 + 3.84] question
+[736.96 + 5.88] um holy moly gimlich with a two years
+[739.92 + 5.76] thank you very much emma
+[742.84 + 6.20] takao gao
+[745.68 + 5.44] jim lick you got a cow um
+[749.04 + 5.20] be sure to claim your free gimlic um
+[751.12 + 3.12] when you're on the way out zunk
+[755.84 + 3.52] thank you very much kimberly that is
+[757.52 + 4.72] absolutely amazing thank you
+[759.36 + 2.88] thank you very much
+[764.24 + 9.12] so um solvi solvi on this one
+[768.80 + 6.72] um is a little bit on the fun side
+[773.36 + 3.44] and the way that i could the way you can
+[775.52 + 4.80] solve this
+[776.80 + 3.52] um is
+[780.88 + 3.68] if you're prepared to throw lots of dice
+[782.56 + 6.32] at it if
+[784.56 + 6.40] um you can step this blodge guy here
+[788.88 + 3.52] you can take this guy and stand him here
+[790.96 + 3.84] and what you've then started to create
+[792.40 + 4.48] is you've got a box here
+[794.80 + 3.76] and if you've got a box when this guy
+[796.88 + 3.04] pushes this guy you could also create a
+[798.56 + 2.24] t-shape so you need to fill in this
+[799.92 + 3.20] square here
+[800.80 + 3.76] you create a box with these four squares
+[803.12 + 2.80] here then you create a t-shape for these
+[804.56 + 3.36] four squares here
+[805.92 + 3.28] then this guy gets pushed into here so
+[807.92 + 3.36] you need another box here
+[809.20 + 3.20] so this square needs to be filled in
+[811.28 + 2.24] this square needs to be filled in and
+[812.40 + 2.64] this square needs to be filled in and
+[813.52 + 4.40] you blitz leap
+[815.04 + 3.44] into there and you block here push push
+[817.92 + 2.88] push
+[818.48 + 4.08] gone that guarantees one player gone
+[820.80 + 2.96] it's a three plus like but it is
+[822.56 + 4.64] possible
+[823.76 + 5.04] um the problem with this play
+[827.20 + 3.12] is that the next hit which is the jump
+[828.80 + 2.48] up hit here we haven't filled in this
+[830.32 + 3.68] square here
+[831.28 + 4.16] because we've gone one two three go for
+[834.00 + 2.72] it go for it so that's three plus
+[835.44 + 3.44] two plus two plus to get into that
+[836.72 + 3.92] square um for
+[838.88 + 4.00] for bulleting here so it's possible but
+[840.64 + 4.32] it's not great of course we can
+[842.88 + 3.84] um improve the situation by leaping the
+[844.96 + 3.28] guardian behind
+[846.72 + 3.52] awful board state considering this he's
+[848.24 + 4.16] got jump up um
+[850.24 + 3.68] so i think the optimal play here the
+[852.40 + 3.28] optimal play is pretty dull
+[853.92 + 3.84] which is take the agility four pla
+[855.68 + 5.12] player one two three four
+[857.76 + 4.64] five six leap over into this square here
+[860.80 + 3.52] pull in this square here so you have a
+[862.40 + 4.80] t-shape
+[864.32 + 4.16] blitz here pushing into the guard um
+[867.20 + 3.28] until you're getting a knock down then
+[868.48 + 3.84] the jump up here happens here
+[870.48 + 3.60] and and everything's happy the problem
+[872.32 + 4.16] with this board state is
+[874.08 + 3.52] that you've got a player here um who's
+[876.48 + 2.96] against the sideline
+[877.60 + 3.60] and it's very very very difficult to
+[879.44 + 3.20] defend him so what it means is this
+[881.20 + 2.80] guy's got to stand up
+[882.64 + 3.12] and the dirty player is gonna have to
+[884.00 + 3.20] stand here and
+[885.76 + 3.36] you need to fill in all these squares
+[887.20 + 2.80] and then jump up yeah dirty player foul
+[889.12 + 3.60] this
+[890.00 + 2.72] one plus three
+[893.28 + 4.16] um so yeah the first one is very
+[896.08 + 3.04] complicated and not very good
+[897.44 + 3.52] the second one is much more simplistic
+[899.12 + 4.96] which is two plus jump over
+[900.96 + 4.64] blitz two plus jump up cool
+[904.08 + 3.28] uh well not score get rid of both
+[905.60 + 3.44] players and and again it's the same
+[907.36 + 3.04] principle you go looking for a box
+[909.04 + 3.52] you're looking for a t
+[910.40 + 3.92] you go looking for a box so boxes and
+[912.56 + 4.48] tees
+[914.32 + 4.00] you don't need the leap yes you do
+[917.04 + 1.68] because if you want to go and dodge to
+[918.32 + 5.84] there
+[918.72 + 9.12] that's a three plus dodge roll is enough
+[924.16 + 3.68] you can't stand in that square there
+[929.68 + 4.16] you can't get there oh play you cannot
+[932.00 + 3.68] stand in that square
+[933.84 + 3.44] not without leaping unless you want to
+[935.68 + 2.08] dodge this lineman out who's a three
+[937.28 + 2.16] plus
+[937.76 + 3.60] anyone that these linemen are three
+[939.44 + 5.68] pluses
+[941.36 + 3.76] argentina point square first
+[945.52 + 3.28] what an unoccupied square
+[949.76 + 4.00] it's one two plus leap from here to
+[951.68 + 4.00] there
+[953.76 + 4.08] no no that's a three plus that's the
+[955.68 + 5.60] three plus this guy over here is threes
+[957.84 + 5.28] nice stride but no it's a threes
+[961.28 + 4.00] so there we go so that's two problems
+[963.12 + 4.80] there's there's two blood bowl solutions
+[965.28 + 4.56] um that we've posted for you all if
+[967.92 + 3.36] anyone does have any interesting
+[969.84 + 2.96] um game states that they want to talk
+[971.28 + 3.04] about and say hey andy can you solve
+[972.80 + 3.60] this as a board state
+[974.32 + 5.76] um then feel free send me a message on
+[976.40 + 3.68] discord and i will
+[981.04 + 3.12] file download tell me what turn it is
+[982.80 + 2.88] i'll go and look at it
+[984.16 + 3.12] and i'll i'll do it as a puzzle and
+[985.68 + 2.16] we'll solve solve interesting board
+[987.28 + 10.56] states as
+[987.84 + 10.00] puzzles on this channel
