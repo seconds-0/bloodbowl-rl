@@ -62,7 +62,7 @@
 // `engine/` and `bb/` next to this header are symlinks in the dev tree
 // (-> ../../engine/{src,include/bb}) and real copies in the installed
 // vendor/PufferLib/ocean/bloodbowl/ tree (tools/install_puffer_env.sh uses
-// cp -RL). Three sources define a file-local DIR8 table; rename per "TU".
+// cp -RL). Four sources define a file-local DIR8 table; rename per "TU".
 #define DIR8 DIR8_match_tu
 #include "engine/bb_match.c"
 #include "engine/bb_rng.c"
@@ -90,6 +90,9 @@
 #undef DIR8
 #define DIR8 DIR8_kick_tu
 #include "engine/proc_match.c"
+#undef DIR8
+#define DIR8 DIR8_reachability_tu
+#include "engine/bb_reachability.c"
 #undef DIR8
 
 #define BBE_PLAYER_BYTES 24    // 11 stat/state bytes + 12 skill-id slots + TZ byte
@@ -176,6 +179,8 @@ typedef struct {
     float handoff_attempts;     // BB_A_HANDOFF_TARGET actions
     float knockdowns_inflicted; // actor's opponents downed during his window
     float knockdowns_own;       // actor's own players downed (failed dodges...)
+    float carrier_exposed_full; // R6v1 full carrier-exposure firings
+    float carrier_exposed_soft; // R6v1 one-roll carrier-exposure firings
     // Learner (slot 0) score vs frozen bank b on envs tagged b+1; selfplay.py
     // reads hist_score_bank_<b>/hist_n_bank_<b> to drive bank swaps.
     float hist_score_bank[BBE_MAX_BANKS];
@@ -295,6 +300,15 @@ typedef struct {
     // opponent can't convert turnovers either), so potentials make rushing
     // free income and the policy GFI-spams (~17/ep observed; humans ~2-5).
     float reward_rush_cost;
+    // Carrier-exposure penalty (R6v1, D120/D123-A): positive magnitudes
+    // charged via subtraction at settled own-turn-end when a standing carrier
+    // is not scoring-exempt and gives the opponent free adjacent access.
+    // One-sided only: no opponent credit, no reward for being safe. 0 = off.
+    float reward_carrier_exposure;
+    // Optional softer one-sided tier, charged instead of the full tier when
+    // adjacent access requires exactly one dodge or GFI. Positive magnitude;
+    // 0 = off.
+    float reward_carrier_exposure_soft;
     // Aggregate-statistic matching (D114): episode-end pseudo-reward that pulls
     // the full-game behavioral stat vector toward the FIXED human baseline
     // (docs/human-baseline.json). term = -scale * sqrt(sum_i z_i^2) over the 7
@@ -395,6 +409,7 @@ typedef struct {
     int pending_pickup_slot;    // mover of THIS step's pickup attempt (-1 none)
     int ep_turns[2], ep_turns_with_ball[2];
     int prev_active_team;       // turn-boundary detector for possession_rate
+    int ep_carrier_exposed_full, ep_carrier_exposed_soft;
     // Per-team behavior counters for the spectator's live archetype plates
     // ("BRUISER"/"BALLHAWK"/...): contact = block+blitz declarations, ball =
     // weighted ball engagement (pickups, passes, squares moved carrying).
@@ -1367,6 +1382,7 @@ static void bbe_reset_match(Bloodbowl* env) {
     env->ep_turns[0] = env->ep_turns[1] = 0;
     env->ep_turns_with_ball[0] = env->ep_turns_with_ball[1] = 0;
     env->prev_active_team = env->match.active_team;
+    env->ep_carrier_exposed_full = env->ep_carrier_exposed_soft = 0;
     env->ep_dodge_attempts = env->ep_gfi_attempts = 0;
     env->ep_pickup_attempts = env->ep_pass_attempts = 0;
     env->ep_handoff_attempts = 0;
@@ -1500,6 +1516,8 @@ static void bbe_finish_episode(Bloodbowl* env) {
     env->log.handoff_attempts += (float)env->ep_handoff_attempts;
     env->log.knockdowns_inflicted += (float)env->ep_knockdowns_inflicted;
     env->log.knockdowns_own += (float)env->ep_knockdowns_own;
+    env->log.carrier_exposed_full += (float)env->ep_carrier_exposed_full;
+    env->log.carrier_exposed_soft += (float)env->ep_carrier_exposed_soft;
     // --- Aggregate-statistic-matching pseudo-reward (D114) ------------------
     // Episode-end term = -scale * sqrt(sum_i z_i^2) over the 7 full-game stats,
     // z_i = (agent_stat_i - human_mean_i)/human_std_i. Pulls the policy's
@@ -1908,6 +1926,21 @@ static void c_step(Bloodbowl* env) {
                     env->reward_ptr[1 - t][0] -= env->reward_possession;
                     env->ep_return[t] += env->reward_possession;
                     env->ep_return[1 - t] -= env->reward_possession;
+                }
+            }
+            if (env->reward_carrier_exposure != 0.0f ||
+                env->reward_carrier_exposure_soft != 0.0f) {
+                bb_carrier_exposure ex = bb_carrier_exposure_eval(m, t);
+                if (ex.full) {
+                    if (env->reward_carrier_exposure != 0.0f) {
+                        env->reward_ptr[t][0] -= env->reward_carrier_exposure;
+                        env->ep_return[t] -= env->reward_carrier_exposure;
+                        env->ep_carrier_exposed_full++;
+                    }
+                } else if (ex.soft && env->reward_carrier_exposure_soft != 0.0f) {
+                    env->reward_ptr[t][0] -= env->reward_carrier_exposure_soft;
+                    env->ep_return[t] -= env->reward_carrier_exposure_soft;
+                    env->ep_carrier_exposed_soft++;
                 }
             }
             env->prev_active_team = (int)m->active_team;
