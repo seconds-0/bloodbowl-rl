@@ -1,0 +1,31 @@
+diff --git a/pufferlib/pufferl.py b/pufferlib/pufferl.py
+index 0000000..0000000 100644
+--- a/pufferlib/pufferl.py
++++ b/pufferlib/pufferl.py
+@@ -345,18 +345,23 @@
+     next_bin = logged_timesteps / (n - 1) if n > 1 else np.inf
+     for log in all_logs:
+         for k, v in log.items():
+-            metrics[k][-1].append(v)
++            metrics.setdefault(k, [[]])[-1].append(v)
+ 
+         if log['agent_steps'] < next_bin:
+             continue
+ 
+         next_bin += logged_timesteps / (n - 1)
+         for k in metrics:
+-            metrics[k][-1] = np.mean(metrics[k][-1])
++            metrics[k][-1] = np.mean(metrics[k][-1]) if metrics[k][-1] else float("nan")
+             metrics[k].append([])
+ 
+     for k in metrics:
+-        metrics[k][-1] = all_logs[-1][k]
++        if k in all_logs[-1]:
++            metrics[k][-1] = all_logs[-1][k]
++        elif metrics[k][-1]:
++            metrics[k][-1] = np.mean(metrics[k][-1])
++        else:
++            metrics[k][-1] = float("nan")
+ 
+     # Match-mode: single observation at final-training cost. Protein's curve
+     # fit collapses to one point — we only trust the match winrate, not any

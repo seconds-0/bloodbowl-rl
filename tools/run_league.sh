@@ -71,6 +71,15 @@ if ! grep -q 'league_preseed' pufferlib/selfplay.py; then
   git apply "$ROOT/training/selfplay_league.patch"
 fi
 
+# Post-training metrics KeyError fix (D116): a run that reaches
+# --train.total-timesteps crashes in the downsample loop with
+# KeyError: 'pool/winrate_bank_N' before saving its FINAL checkpoint.
+# Auto-reapply (vendor/*/ is gitignored — a re-clone loses it).
+if ! grep -q 'metrics.setdefault' pufferlib/pufferl.py; then
+  echo "applying training/pufferl_metrics_keyerror.patch to vendored pufferl.py"
+  git apply "$ROOT/training/pufferl_metrics_keyerror.patch"
+fi
+
 # Warm start is a separate local pufferl.py patch (gitignored; see
 # .claude/skills/puffer-env-dev/SKILL.md) — required for the graduate start.
 grep -q 'Warm-started training from' pufferlib/pufferl.py || {

@@ -143,6 +143,20 @@ grep -q 'league_preseed' pufferlib/selfplay.py || {
   echo "vendored selfplay.py still lacks league_preseed after git apply — fix by hand" >&2
   echo "(see .claude/skills/puffer-env-dev/SKILL.md)" >&2; exit 1; }
 
+# ---- auto-fix: post-training metrics KeyError in vendored pufferl.py (D116
+# -- a run that reaches --train.total-timesteps crashes in the downsample
+# loop with KeyError: 'pool/winrate_bank_N' before saving its FINAL
+# checkpoint, because `metrics` is keyed from all_logs[0] but a later log
+# can carry an extra pool/winrate_bank_N key once that bank gets its first
+# eval games. Costs the last snapshot_interval of every capped run.) ----
+if ! grep -q 'metrics.setdefault' pufferlib/pufferl.py; then
+  echo "applying training/pufferl_metrics_keyerror.patch to vendored pufferl.py"
+  git apply "$ROOT/training/pufferl_metrics_keyerror.patch"
+fi
+grep -q 'metrics.setdefault' pufferlib/pufferl.py || {
+  echo "vendored pufferl.py still lacks the metrics-KeyError fix after git apply — fix by hand" >&2
+  echo "(see training/pufferl_metrics_keyerror.patch, D116)" >&2; exit 1; }
+
 # ---- guard: WARM needs the warm-start patch in vendored pufferl.py ----------
 # Without it --load-model-path is silently ignored and the learner starts
 # FRESH (the 40s 'Warm-started' grep below is the runtime confirmation).
