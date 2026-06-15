@@ -42,6 +42,12 @@ BACKEND="${BACKEND:-native}"
 LOG="${LOG:-/tmp/${TAG}.log}"
 WARM="${WARM:?set WARM=<ladder-top ckpt> (e.g. training/league5_cap.bin on the rig)}"
 
+# Absolutize WARM/POOL: the launch cd's into vendor/PufferLib before invoking
+# puffer, so a repo-root-relative path (training/foo.bin) would not resolve.
+case "$WARM" in /*) ;; *) WARM="$HOME/bloodbowl-rl/$WARM" ;; esac
+if [ -n "${POOL:-}" ]; then case "$POOL" in /*) ;; *) POOL="$HOME/bloodbowl-rl/$POOL" ;; esac; fi
+[ -f "$WARM" ] || { echo "REFUSING: warm-start ckpt not found: $WARM"; exit 1; }
+
 if pgrep -f 'puffer [t]rain' >/dev/null; then
   echo "REFUSING: a puffer train is already running on this box. pkill it first if intended."
   exit 1
