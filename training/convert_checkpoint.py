@@ -250,7 +250,9 @@ def main():
             f"heads {act_sizes} -> {total} fp32 ({total * 4} bytes)")
 
     if args.to_cuda:
-        sd = torch.load(args.to_cuda, map_location="cpu")
+        # weights_only=False: our own trusted checkpoint, full-pickle (PyTorch
+        # 2.6+ defaults weights_only=True, which rejects the training-state pickle).
+        sd = torch.load(args.to_cuda, map_location="cpu", weights_only=False)
         blob = torch_to_cuda(sd, hidden, num_layers, args.obs_size, act_sizes)
         blob.tofile(args.out)
         print(f"torch -> cuda: {args.to_cuda} -> {args.out} ({desc})")
