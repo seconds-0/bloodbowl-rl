@@ -76,6 +76,22 @@ if [ -f "$ROOT/validation/states/bank.bbs" ]; then
     echo "staged:    $PUFFER/resources/bloodbowl/state_bank.bbs"
 fi
 
+# Apply the match-mode sweep fix to vendored pufferlib/sweep.py (D131). Upstream
+# (PufferAI/PufferLib 4.0, incl. current HEAD) omits the match_* keys from
+# _params_from_puffer_sweep's skip-list, so a match-mode `puffer sweep` crashes with
+# 'Param match_enemy_model_path is not a dict'. Idempotent; sweeps don't go through
+# the run_*.sh scripts that apply the other patches, so wire it in here.
+SWEEP_PY="$PUFFER/pufferlib/sweep.py"
+if [ -f "$SWEEP_PY" ] && ! grep -q "match_enemy_model_path" "$SWEEP_PY"; then
+    if git -C "$PUFFER" apply "$ROOT/training/sweep_match_mode_exclusion.patch" 2>/dev/null; then
+        echo "applied:   training/sweep_match_mode_exclusion.patch -> pufferlib/sweep.py"
+    else
+        echo "warning: sweep_match_mode_exclusion.patch did not apply — match-mode sweeps will crash; fix by hand" >&2
+    fi
+    # stale bytecode would shadow the patched source (a real gotcha hit live)
+    rm -f "$PUFFER/pufferlib/__pycache__/sweep.cpython-"*.pyc 2>/dev/null
+fi
+
 echo "installed: $DST"
 echo "           $PUFFER/config/bloodbowl.ini"
 echo "build:     cd $PUFFER && ./build.sh bloodbowl          # CUDA training backend"
