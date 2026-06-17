@@ -18,6 +18,7 @@ OBJ      := $(SRC:engine/src/%.c=$(BUILD)/obj/%.o)
 TEST_SRC := $(wildcard engine/tests/test_*.c)
 LIB      := $(BUILD)/libbb.a
 TESTBIN  := $(BUILD)/bb_tests
+PUFFER_TESTBIN := $(BUILD)/puffer_reward_tests
 
 .PHONY: all test asan fuzz coverage coverage-run lockstep blockev-mc clean
 
@@ -43,8 +44,12 @@ $(LIB): $(OBJ)
 $(TESTBIN): $(TEST_SRC) engine/tests/bb_test.h engine/tests/bb_fixtures.h engine/tests/bb_test_main.c $(OBJ)
 	$(CC) $(CFLAGS) -Iengine/tests engine/tests/bb_test_main.c $(TEST_SRC) $(OBJ) -o $@ $(LDFLAGS)
 
-test: $(TESTBIN)
+$(PUFFER_TESTBIN): puffer/bloodbowl/test_reward_send_off.c puffer/bloodbowl/bloodbowl.h engine/tests/bb_test.h engine/tests/bb_fixtures.h
+	$(CC) $(CFLAGS) -Iengine/tests -Ipuffer/bloodbowl -Wno-unused-function $< -o $@ -lm $(LDFLAGS)
+
+test: $(TESTBIN) $(PUFFER_TESTBIN)
 	./$(TESTBIN) $(TEST)
+	./$(PUFFER_TESTBIN) $(TEST)
 
 blockev-mc: $(OBJ)
 	$(CC) $(CFLAGS) -Iengine/tests tools/blockev_mc.c $(OBJ) -o $(BUILD)/blockev_mc -lm

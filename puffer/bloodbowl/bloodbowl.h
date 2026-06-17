@@ -179,6 +179,7 @@ typedef struct {
     float handoff_attempts;     // BB_A_HANDOFF_TARGET actions
     float knockdowns_inflicted; // actor's opponents downed during his window
     float knockdowns_own;       // actor's own players downed (failed dodges...)
+    float ep_send_offs;         // own-team players finally Sent-off this episode
     float carrier_exposed_full; // R6v1 full carrier-exposure firings
     float carrier_exposed_soft; // R6v1 one-roll carrier-exposure firings
     float def_threats_1t;       // R12v1 unmitigated 1-turn deep threats (per ep)
@@ -259,6 +260,9 @@ typedef struct {
     // Scale injury rewards by victim gold cost / 100k (price-weighted
     // attrition: a 125k Mummy pays ~3x a 40k Skeleton). 0 = flat.
     int reward_injury_value_scaled;
+    // Send-off shaping (default 0 = off): one-sided penalty when an own player
+    // is finally removed to the Sent-off box after Bribe / Argue-the-Call saves.
+    float reward_send_off;
     // Surf shaping (default 0 = off): per player crowd-pushed off the pitch,
     // charged at the (deterministic) push event regardless of injury dice.
     float reward_surf_taken;
@@ -435,6 +439,7 @@ typedef struct {
     int ep_dodge_attempts, ep_gfi_attempts;
     int ep_pickup_attempts, ep_pass_attempts, ep_handoff_attempts;
     int ep_knockdowns_inflicted, ep_knockdowns_own;
+    int ep_send_offs;
     float ep_return[BBE_AGENTS];
     bb_action legal[BB_LEGAL_MAX];
     int n_legal;
@@ -451,6 +456,7 @@ typedef struct {
     float pot_fetch_prev[2];
     float pot_carry_prev[2];
     int out_prev[2]; // players in the KO + casualty boxes (injury shaping)
+    int sent_off_prev[2]; // players in the Sent-off box (send-off shaping)
     int surf_prev[2]; // m->surfs snapshot (surf shaping)
     uint32_t out_mask_prev[2]; // per-player out bits (value-scaled injuries)
     // Obs-encode caches (perf; ~23% of step time was encode). skill_rows are
@@ -1402,6 +1408,7 @@ static void bbe_reset_match(Bloodbowl* env) {
     env->ep_pickup_attempts = env->ep_pass_attempts = 0;
     env->ep_handoff_attempts = 0;
     env->ep_knockdowns_inflicted = env->ep_knockdowns_own = 0;
+    env->ep_send_offs = 0;
     for (int t = 0; t < 2; t++) {
         env->ep_team_contact[t] = 0;
         env->ep_team_ball[t] = 0;
@@ -1427,16 +1434,19 @@ static void bbe_reset_match(Bloodbowl* env) {
     env->pot_fetch_prev[0] = env->pot_fetch_prev[1] = -1.0f;
     env->pot_carry_prev[0] = env->pot_carry_prev[1] = -1.0f;
     // Procgen can pre-injure players into the CAS box, and banked demo
-    // states arrive with whatever KO/CAS boxes and surf counts the human
-    // game had reached; baseline all of it so injury/surf shaping prices
-    // only NEW events.
+    // states arrive with whatever KO/CAS/Sent-off boxes and surf counts the
+    // human game had reached; baseline all of it so shaping prices only NEW
+    // events.
     for (int t = 0; t < 2; t++) {
         int out = 0;
+        int sent = 0;
         for (int s = t * BB_TEAM_SLOTS; s < (t + 1) * BB_TEAM_SLOTS; s++) {
             int loc = env->match.players[s].location;
             out += (loc == BB_LOC_KO || loc == BB_LOC_CAS);
+            sent += (loc == BB_LOC_SENT_OFF);
         }
         env->out_prev[t] = out;
+        env->sent_off_prev[t] = sent;
         env->surf_prev[t] = env->match.surfs[t];
         uint32_t mask = 0;
         for (int sl = t * BB_TEAM_SLOTS; sl < (t + 1) * BB_TEAM_SLOTS; sl++) {
@@ -1531,6 +1541,7 @@ static void bbe_finish_episode(Bloodbowl* env) {
     env->log.handoff_attempts += (float)env->ep_handoff_attempts;
     env->log.knockdowns_inflicted += (float)env->ep_knockdowns_inflicted;
     env->log.knockdowns_own += (float)env->ep_knockdowns_own;
+    env->log.ep_send_offs += (float)env->ep_send_offs;
     env->log.carrier_exposed_full += (float)env->ep_carrier_exposed_full;
     env->log.carrier_exposed_soft += (float)env->ep_carrier_exposed_soft;
     env->log.def_threats_1t += (float)env->ep_def_threats_1t;
@@ -2095,6 +2106,27 @@ static void c_step(Bloodbowl* env) {
                 env->out_prev[t] = out;
                 env->out_mask_prev[t] = mask;
             }
+        }
+        // Send-off shaping: count only FINAL dugout removals. Foul doubles that
+        // are saved by Bribe or Argue-the-Call never enter BB_LOC_SENT_OFF and
+        // therefore emit nothing. One-sided by design: the losing team receives
+        // reward_send_off (typically negative); the opponent gets no mirror
+        // credit, avoiding self-play bait/farm loops.
+        for (int t = 0; t < 2; t++) {
+            int sent = 0;
+            for (int s = t * BB_TEAM_SLOTS; s < (t + 1) * BB_TEAM_SLOTS; s++) {
+                sent += (m->players[s].location == BB_LOC_SENT_OFF);
+            }
+            int d = sent - env->sent_off_prev[t];
+            if (d > 0) {
+                env->ep_send_offs += d;
+                if (env->reward_send_off != 0.0f) {
+                    float r = env->reward_send_off * (float)d;
+                    env->reward_ptr[t][0] += r;
+                    env->ep_return[t] += r;
+                }
+            }
+            env->sent_off_prev[t] = sent;
         }
         // Bootstrap potentials: emit delta-potential per side. Skip across
         // score/drive boundaries (potential resets silently, like possession).
