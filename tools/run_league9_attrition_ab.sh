@@ -8,6 +8,13 @@
 # Watch condition: SCORING RETENTION. TDs must not collapse back into the
 # D34/D39 contact-vs-scoring failure mode while block volume and foul rate climb
 # toward the human reference.
+#
+# ISOLATION (per the D142 contact-economy pressure-test): this A/B changes ONE
+# thing vs league9 — the attrition paycheck (injury 0.15/-0.15, value_scaled 1,
+# send_off -0.15). The k-knobs stay at k-HALF (0.03/0.25), NOT Profile-C, so we
+# don't stack two density increases at once and re-trigger the D39 crowd-out.
+# Bumping k toward Profile-C (0.06/0.5) is a SEPARATE follow-up arm, gated on this
+# one retaining scoring.
 set -u
 cd /root/bloodbowl-rl
 . tools/cpu_cap.sh 2>/dev/null || true
@@ -24,9 +31,9 @@ POOL=/root/bloodbowl-rl/vendor/PufferLib/checkpoints/bloodbowl/league7-20260615-
   --env.reward-surf-taken 0 --env.reward-surf-inflicted 0 \
   --env.reward-possession 0.03 --env.reward-ball-gain 0.05 --env.reward-ball-loss 0 \
   --env.reward-dist-ball 0.05 --env.reward-dist-endzone 0.2 \
-  --env.reward-k-kd 0.06 --env.reward-k-value 0.5 --env.reward-k-ball 0.15 --env.reward-k-seq 0.01 \
+  --env.reward-k-kd 0.03 --env.reward-k-value 0.25 --env.reward-k-ball 0.15 --env.reward-k-seq 0.01 \
   --env.reward-rush-cost 0.015 \
   --env.reward-carrier-exposure 0.05 --env.reward-carrier-exposure-soft 0.02 \
   --env.demo-reset-pct 0 --env.demo-endzone-maxdist 0 --env.demo-pickup-maxdist 0 --env.demo-postkick-maxturn 0 \
-  > /tmp/league9.log 2>&1
-echo "LEAGUE9_EXIT $?" >> /tmp/league9.log
+  > /tmp/league9_attrition_ab.log 2>&1
+echo "ATTRITION_AB_EXIT $?" >> /tmp/league9_attrition_ab.log
