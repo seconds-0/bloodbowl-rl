@@ -87,6 +87,11 @@ static void apply_kwargs(Env* env, Dict* kwargs) {
     env->reward_carrier_exposure = (float)kw(kwargs, "reward_carrier_exposure", 0.0);
     env->reward_carrier_exposure_soft =
         (float)kw(kwargs, "reward_carrier_exposure_soft", 0.0);
+    // R12v1 defensive scoring-lane threat penalties (D133-A), positive
+    // magnitudes charged via -=. 1-turn (hard) + optional 2-turn (soft) tiers.
+    env->reward_defensive_threat = (float)kw(kwargs, "reward_defensive_threat", 0.0);
+    env->reward_defensive_threat_soft =
+        (float)kw(kwargs, "reward_defensive_threat_soft", 0.0);
     // Aggregate-stat-matching pseudo-reward scale (D114). 0 = off (default).
     // When >0, an episode-end -scale*||z||_2 penalty pulls the 7-stat full-game
     // vector toward docs/human-baseline.json. Kickoff-pure only; pair with
@@ -205,7 +210,7 @@ void my_log(Log* log, Dict* out) {
     //
     // CAPACITY: vec_log (src/bindings_cpu.cpp / bindings.cu) hands us a
     // create_dict(64) and appends "n" after we return — keep total keys < 64.
-    // We emit 38. Growing past the call-site capacity is SILENT HEAP
+    // We emit 40. Growing past the call-site capacity is SILENT HEAP
     // CORRUPTION upstream (assert compiles out under NDEBUG); our vendored
     // dict_set aborts loudly instead (training/puffer_dict_capacity.patch).
     // History: key count hit 37 vs capacity 32 when slot scores + demo
@@ -237,6 +242,8 @@ void my_log(Log* log, Dict* out) {
     dict_set(out, "knockdowns_own", log->knockdowns_own);
     dict_set(out, "carrier_exposed_full", log->carrier_exposed_full);
     dict_set(out, "carrier_exposed_soft", log->carrier_exposed_soft);
+    dict_set(out, "ep_def_threats_1t", log->def_threats_1t);
+    dict_set(out, "ep_def_threats_2t", log->def_threats_2t);
     dict_set(out, "error_episodes", log->error_episodes);
     dict_set(out, "demo_episodes", log->demo_episodes);
     dict_set(out, "demo_fallbacks", log->demo_fallbacks);

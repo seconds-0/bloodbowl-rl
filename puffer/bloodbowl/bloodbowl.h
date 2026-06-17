@@ -181,6 +181,8 @@ typedef struct {
     float knockdowns_own;       // actor's own players downed (failed dodges...)
     float carrier_exposed_full; // R6v1 full carrier-exposure firings
     float carrier_exposed_soft; // R6v1 one-roll carrier-exposure firings
+    float def_threats_1t;       // R12v1 unmitigated 1-turn deep threats (per ep)
+    float def_threats_2t;       // R12v1 unmitigated 2-turn deep threats (per ep)
     // Learner (slot 0) score vs frozen bank b on envs tagged b+1; selfplay.py
     // reads hist_score_bank_<b>/hist_n_bank_<b> to drive bank swaps.
     float hist_score_bank[BBE_MAX_BANKS];
@@ -309,6 +311,17 @@ typedef struct {
     // adjacent access requires exactly one dodge or GFI. Positive magnitude;
     // 0 = off.
     float reward_carrier_exposure_soft;
+    // Defensive scoring-lane threat penalty (R12v1, D133-A): the DUAL of R6v1.
+    // At settled own-turn-end, charge the team-whose-turn-just-ended a positive
+    // magnitude (via subtraction) for each UNMITIGATED (unmarked) opposing
+    // player that can reach OUR defensive endzone in <= 1 of its own turns by
+    // raw movement (MA + max rushes). Per-player, O(players), ball-agnostic.
+    // One-sided only: no opponent credit, no reward for safe coverage. 0 = off.
+    float reward_defensive_threat;
+    // Optional softer 2-turn tier (D133-A v2): per unmitigated opponent that can
+    // reach our endzone in <= 2 turns. Counted separately from the 1-turn tier
+    // so a 1-turn threat is NOT also charged the soft fine. Positive; 0 = off.
+    float reward_defensive_threat_soft;
     // Aggregate-statistic matching (D114): episode-end pseudo-reward that pulls
     // the full-game behavioral stat vector toward the FIXED human baseline
     // (docs/human-baseline.json). term = -scale * sqrt(sum_i z_i^2) over the 7
@@ -410,6 +423,7 @@ typedef struct {
     int ep_turns[2], ep_turns_with_ball[2];
     int prev_active_team;       // turn-boundary detector for possession_rate
     int ep_carrier_exposed_full, ep_carrier_exposed_soft;
+    int ep_def_threats_1t, ep_def_threats_2t; // R12v1 unmitigated deep threats
     // Per-team behavior counters for the spectator's live archetype plates
     // ("BRUISER"/"BALLHAWK"/...): contact = block+blitz declarations, ball =
     // weighted ball engagement (pickups, passes, squares moved carrying).
@@ -1383,6 +1397,7 @@ static void bbe_reset_match(Bloodbowl* env) {
     env->ep_turns_with_ball[0] = env->ep_turns_with_ball[1] = 0;
     env->prev_active_team = env->match.active_team;
     env->ep_carrier_exposed_full = env->ep_carrier_exposed_soft = 0;
+    env->ep_def_threats_1t = env->ep_def_threats_2t = 0;
     env->ep_dodge_attempts = env->ep_gfi_attempts = 0;
     env->ep_pickup_attempts = env->ep_pass_attempts = 0;
     env->ep_handoff_attempts = 0;
@@ -1518,6 +1533,8 @@ static void bbe_finish_episode(Bloodbowl* env) {
     env->log.knockdowns_own += (float)env->ep_knockdowns_own;
     env->log.carrier_exposed_full += (float)env->ep_carrier_exposed_full;
     env->log.carrier_exposed_soft += (float)env->ep_carrier_exposed_soft;
+    env->log.def_threats_1t += (float)env->ep_def_threats_1t;
+    env->log.def_threats_2t += (float)env->ep_def_threats_2t;
     // --- Aggregate-statistic-matching pseudo-reward (D114) ------------------
     // Episode-end term = -scale * sqrt(sum_i z_i^2) over the 7 full-game stats,
     // z_i = (agent_stat_i - human_mean_i)/human_std_i. Pulls the policy's
@@ -1942,6 +1959,30 @@ static void c_step(Bloodbowl* env) {
                     env->ep_return[t] -= env->reward_carrier_exposure_soft;
                     env->ep_carrier_exposed_soft++;
                 }
+            }
+            // R12v1 defensive scoring-lane threat (D133-A): the DUAL of R6v1.
+            // `t` is the team whose own turn just ended; it is on defense for
+            // the opponent's upcoming turn. Charge it per UNMITIGATED opposing
+            // deep mover that can reach OUR endzone within its reach budget.
+            // 1-turn and 2-turn are charged on disjoint sets: a 1-turn threat
+            // is in n_threats_2turn too, so subtract it out for the soft tier.
+            if (env->reward_defensive_threat != 0.0f ||
+                env->reward_defensive_threat_soft != 0.0f) {
+                bb_def_threat dt = bb_def_threat_eval(m, t);
+                int hard = dt.n_threats_1turn;
+                int soft = dt.n_threats_2turn - dt.n_threats_1turn;
+                if (hard > 0 && env->reward_defensive_threat != 0.0f) {
+                    float pen = env->reward_defensive_threat * (float)hard;
+                    env->reward_ptr[t][0] -= pen;
+                    env->ep_return[t] -= pen;
+                }
+                if (soft > 0 && env->reward_defensive_threat_soft != 0.0f) {
+                    float pen = env->reward_defensive_threat_soft * (float)soft;
+                    env->reward_ptr[t][0] -= pen;
+                    env->ep_return[t] -= pen;
+                }
+                env->ep_def_threats_1t += hard;
+                env->ep_def_threats_2t += dt.n_threats_2turn;
             }
             env->prev_active_team = (int)m->active_team;
         }

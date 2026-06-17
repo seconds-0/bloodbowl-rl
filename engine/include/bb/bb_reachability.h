@@ -46,4 +46,26 @@ typedef struct {
 // not apply reward magnitudes; it only reports which tier, if any, should fire.
 bb_carrier_exposure bb_carrier_exposure_eval(const bb_match* m, int team);
 
+// R12 v1 (D133-A): per-PLAYER downfield scoring threat, NOT a reachability
+// Dijkstra. `turns_to_score(p) = ceil(dist_to_our_endzone / (MA + max_rushes))`
+// for each STANDING, on-pitch, non-rooted opposing player; an UNMITIGATED
+// threat at horizon N is one with turns_to_score <= N that is NOT marked
+// (a marked deep mover must dodge to leave, so it is treated as covered).
+typedef struct {
+    uint8_t n_threats_1turn;  // unmarked opponents that can score in <= 1 turn
+    uint8_t n_threats_2turn;  // unmarked opponents that can score in <= 2 turns
+} bb_def_threat;
+
+// Single-player horizon: minimum number of own activations (each worth
+// MA + max rushes squares of straight-line movement) for `slot` to reach its
+// scoring endzone column, ignoring tackle zones (ball-agnostic, per D133-A).
+// Returns -1 for an INELIGIBLE player (off-pitch / non-standing / rooted / zero
+// reach); 0 means already standing on the endzone column (turns_to_score 0).
+int bb_def_threat_turns(const bb_match* m, int slot);
+
+// Count UNMITIGATED 1-turn and 2-turn downfield scoring threats that `team`
+// (the defending team, i.e. the team whose own turn just ended) faces from the
+// OTHER team. Pure geometry, O(players), no ball model, no Dijkstra.
+bb_def_threat bb_def_threat_eval(const bb_match* m, int team);
+
 #endif // BB_REACHABILITY_H

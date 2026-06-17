@@ -157,3 +157,39 @@ bb_carrier_exposure bb_carrier_exposure_eval(const bb_match* m, int team) {
     }
     return ex;
 }
+
+int bb_def_threat_turns(const bb_match* m, int slot) {
+    if (slot < 0 || slot >= BB_NUM_PLAYERS) return -1;
+    const bb_player* p = &m->players[slot];
+    if (p->location != BB_LOC_ON_PITCH) return -1;
+    if (p->stance != BB_STANCE_STANDING) return -1;
+    if (p->flags & BB_PF_ROOTED) return -1;
+
+    // Per-turn straight-line reach: full MA plus the GFI/Sprint budget. Use the
+    // raw stat (not remaining), per D133-A this is a positional threat readout,
+    // not an in-activation move plan. bb_max_rushes is Sprint-aware.
+    int reach = (int)p->ma + bb_max_rushes(m, slot);
+    if (reach <= 0) return -1; // immobile (MA 0, no rushes): cannot get downfield
+
+    // x-axis distance to the player's OWN scoring endzone column (= our
+    // defensive endzone), mirroring the R6v1 endzone-exemption measure.
+    int ez = bb_endzone_x(BB_TEAM_OF(slot));
+    int dist = p->x > ez ? p->x - ez : ez - p->x;
+
+    return (dist + reach - 1) / reach; // ceil(dist / reach); 0 if already there
+}
+
+bb_def_threat bb_def_threat_eval(const bb_match* m, int team) {
+    bb_def_threat dt = {0, 0};
+    if (team != BB_HOME && team != BB_AWAY) return dt;
+
+    int opp = 1 - team;
+    for (int s = opp * BB_TEAM_SLOTS; s < (opp + 1) * BB_TEAM_SLOTS; s++) {
+        int turns = bb_def_threat_turns(m, s);
+        if (turns < 0) continue;           // ineligible (off-pitch/down/rooted)
+        if (bb_is_marked(m, s)) continue;  // mitigated: must dodge to leave
+        if (turns <= 1) dt.n_threats_1turn++;
+        if (turns <= 2) dt.n_threats_2turn++;
+    }
+    return dt;
+}
