@@ -145,6 +145,8 @@ typedef struct {
     float perf;            // win = 1, draw = 0.5, loss = 0
     float score_diff;      // own TDs - opponent TDs (home-agent perspective)
     float tds;             // total touchdowns in the match
+    float tds_t0;          // HOME/team 0 touchdowns in the match
+    float tds_t1;          // AWAY/team 1 touchdowns in the match
     float episode_return;
     float episode_length;
     // Aggregate-statistic-matching pseudo-reward (D114): the per-agent
@@ -163,6 +165,8 @@ typedef struct {
     // bbe_count_knockdowns.
     float blocks;               // BB_A_DECLARE of BB_ACT_BLOCK
     float blocks_thrown;
+    float blocks_thrown_t0;
+    float blocks_thrown_t1;
     float block_1d_frac;
     float block_2d_frac;
     float block_3d_frac;
@@ -401,10 +405,12 @@ typedef struct {
     int exclude_team;
     int force_home_team;
     int force_away_team;
-    // Evaluation/training-pressure opponent: when set, AWAY/team 1 ignores the
-    // policy action heads and chooses directly from the current legal bb_action
-    // list with bbe_contact_bot_pick. HOME/team 0 stays policy-controlled.
+    // Evaluation/training-pressure opponent: when set, scripted_opponent_team
+    // ignores the policy action heads and chooses directly from the current
+    // legal bb_action list with bbe_contact_bot_pick. The other team stays
+    // policy-controlled. Default is AWAY/team 1 via the binding/config.
     int scripted_opponent;
+    int scripted_opponent_team;
     int max_decisions;
     // Spectator rendering (bbe_render.h); NULL until c_render is first called.
     int render_fps;
@@ -421,6 +427,8 @@ typedef struct {
     // the Log by bbe_finish_episode, zeroed by bbe_reset_match).
     int ep_blocks, ep_blitzes;
     int ep_blocks_thrown;
+    int ep_blocks_thrown_team[2];
+    int ep_tds_team[2];
     // Block-dice tier distribution (Alex's blocking-rationality gauge): a
     // healthy game trends toward 2d/3d attacker-choice and away from red
     // (defender-choice) and 1d. Classified at the CHOOSE_DIE window from
@@ -1401,6 +1409,8 @@ static void bbe_reset_match(Bloodbowl* env) {
     env->illegal = 0;
     env->ep_blocks = env->ep_blitzes = 0;
     env->ep_blocks_thrown = 0;
+    env->ep_blocks_thrown_team[0] = env->ep_blocks_thrown_team[1] = 0;
+    env->ep_tds_team[0] = env->ep_tds_team[1] = 0;
     memset(env->ep_block_tier, 0, sizeof env->ep_block_tier);
     env->ep_pickup_success = 0;
     env->pending_pickup_slot = -1;
@@ -1516,6 +1526,8 @@ static void bbe_finish_episode(Bloodbowl* env) {
     int d1 = m->score[1] - env->score_start[1];
     env->log.score_diff += (float)(d0 - d1);
     env->log.tds += (float)(d0 + d1);
+    env->log.tds_t0 += (float)env->ep_tds_team[0];
+    env->log.tds_t1 += (float)env->ep_tds_team[1];
     if (env->demo_started) env->log.demo_episodes += 1.0f;
     env->log.episode_return += env->ep_return[0];
     env->log.episode_length += (float)env->decisions;
@@ -1524,6 +1536,8 @@ static void bbe_finish_episode(Bloodbowl* env) {
                                  : 0;
     env->log.blocks += (float)env->ep_blocks;
     env->log.blocks_thrown += (float)env->ep_blocks_thrown;
+    env->log.blocks_thrown_t0 += (float)env->ep_blocks_thrown_team[0];
+    env->log.blocks_thrown_t1 += (float)env->ep_blocks_thrown_team[1];
     if (env->ep_blocks_thrown > 0) {
         float tb = (float)env->ep_blocks_thrown;
         env->log.block_1d_frac += (float)env->ep_block_tier[0] / tb;
@@ -1699,6 +1713,7 @@ static void bbe_count_action(Bloodbowl* env, bb_action act) {
         // block) — the clean denominator for knockdown-conversion claims
         // (panel: declarations include blitzes that never reach a block).
         env->ep_blocks_thrown++;
+        env->ep_blocks_thrown_team[m->decision_team & 1]++;
         const bb_frame* bf = m->stack_top ? &m->stack[m->stack_top - 1] : 0;
         BBE_FEED(env, BBE_EV_BLOCK_THROWN, bf ? bf->a : -1, bf ? bf->b : -1);
         if (bf) {
@@ -1776,7 +1791,10 @@ static void c_step(Bloodbowl* env) {
     bb_match* m = &env->match;
     if (m->status == BB_STATUS_DECISION && env->n_legal > 0) {
         int agent = m->decision_team;
-        bb_action act = (env->scripted_opponent && agent == BB_AWAY)
+        int scripted_team = env->scripted_opponent_team == BB_HOME
+                                ? BB_HOME : BB_AWAY;
+        bb_action act = (env->scripted_opponent &&
+                         agent == scripted_team)
                             ? bbe_contact_bot_pick(m, env->legal, env->n_legal)
                             : bbe_decode(env, agent, env->action_ptr[agent]);
         // Setup shaping: forced DONE (budget exhausted -> sole legal action)
@@ -2042,6 +2060,7 @@ static void c_step(Bloodbowl* env) {
                 env->reward_ptr[1 - t][0] -= env->reward_td * (float)d;
                 env->ep_return[t] += env->reward_td * (float)d;
                 env->ep_return[1 - t] -= env->reward_td * (float)d;
+                env->ep_tds_team[t] += d;
                 env->score_prev[t] = m->score[t];
             }
         }

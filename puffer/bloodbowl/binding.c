@@ -118,6 +118,10 @@ static void apply_kwargs(Env* env, Dict* kwargs) {
     env->force_home_team = (int)kw(kwargs, "force_home_team", -1.0);
     env->force_away_team = (int)kw(kwargs, "force_away_team", -1.0);
     env->scripted_opponent = (int)kw(kwargs, "scripted_opponent", 0.0);
+    env->scripted_opponent_team = (int)kw(kwargs, "scripted_opponent_team", 1.0);
+    if (env->scripted_opponent_team < 0 || env->scripted_opponent_team > 1) {
+        env->scripted_opponent_team = 1;
+    }
     env->max_decisions = (int)kw(kwargs, "max_decisions", BBE_MAX_DECISIONS);
     if (env->max_decisions <= 0 || env->max_decisions > BBE_MAX_DECISIONS) {
         env->max_decisions = BBE_MAX_DECISIONS;
@@ -212,7 +216,7 @@ void my_log(Log* log, Dict* out) {
     //
     // CAPACITY: vec_log (src/bindings_cpu.cpp / bindings.cu) hands us a
     // create_dict(64) and appends "n" after we return — keep total keys < 64.
-    // We emit 50. Growing past the call-site capacity is SILENT HEAP
+    // We emit 55. Growing past the call-site capacity is SILENT HEAP
     // CORRUPTION upstream (assert compiles out under NDEBUG); our vendored
     // dict_set aborts loudly instead (training/puffer_dict_capacity.patch).
     // History: key count hit 37 vs capacity 32 when slot scores + demo
@@ -221,12 +225,16 @@ void my_log(Log* log, Dict* out) {
     dict_set(out, "perf", log->perf);
     dict_set(out, "score_diff", log->score_diff);
     dict_set(out, "tds", log->tds);
+    dict_set(out, "tds_t0", log->tds_t0);
+    dict_set(out, "tds_t1", log->tds_t1);
     dict_set(out, "episode_return", log->episode_return);
     dict_set(out, "episode_length", log->episode_length);
     dict_set(out, "statmatch_term", log->statmatch_term);
     dict_set(out, "illegal_frac", log->illegal_frac);
     dict_set(out, "blocks", log->blocks);
     dict_set(out, "blocks_thrown", log->blocks_thrown);
+    dict_set(out, "blocks_thrown_t0", log->blocks_thrown_t0);
+    dict_set(out, "blocks_thrown_t1", log->blocks_thrown_t1);
     dict_set(out, "block_1d_frac", log->block_1d_frac);
     dict_set(out, "block_2d_frac", log->block_2d_frac);
     dict_set(out, "block_3d_frac", log->block_3d_frac);

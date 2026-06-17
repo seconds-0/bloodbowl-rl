@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # eval_vs_contact_bot.sh - measure a frozen champion's ABSOLUTE strength against
 # the deterministic contact-bot opponent (AWAY/team 1), the first non-self-play
-# signal. The dashboard log also exposes contact stats such as blocks_thrown and
-# tds; compare them with the human baseline via tools/game_stats.py.
+# signal. The final dashboard must expose team0/team1 TD and block splits so
+# team0=champion engagement is not hidden by the bot's contact volume.
 #
 #   bash tools/eval_vs_contact_bot.sh <CHECKPOINT.bin> [STEPS] [LOG]
 #       CHECKPOINT  torch state_dict .bin (training-side format).
@@ -19,6 +19,12 @@ case "$CKPT" in /*) ;; *) CKPT="$PWD/$CKPT" ;; esac
 case "$LOG"  in /*) ;; *) LOG="$PWD/$LOG"   ;; esac
 [ -f "$CKPT" ] || { echo "checkpoint not found: $CKPT" >&2; exit 1; }
 
+if ! "$ROOT/tools/install_puffer_env.sh" --check "$ROOT/vendor/PufferLib"; then
+  echo "stale PufferLib bloodbowl snapshot; reinstall before eval:" >&2
+  echo "  $ROOT/tools/install_puffer_env.sh $ROOT/vendor/PufferLib" >&2
+  exit 1
+fi
+
 . "$ROOT/tools/cpu_cap.sh"
 
 cd "$ROOT/vendor/PufferLib"
@@ -31,9 +37,12 @@ puffer train bloodbowl --slowly --selfplay.enabled 0 \
   --train.bc-coef 0 \
   --env.demo-reset-pct 0 \
   --env.scripted-opponent 1 \
+  --env.scripted-opponent-team 1 \
   --vec.total-agents 256 --vec.num-threads "${OMP_NUM_THREADS:-8}" \
   --train.minibatch-size 2048 \
   "$@" \
   > "$LOG" 2>&1
 
-echo "done. compare with:  python3 $ROOT/tools/game_stats.py $LOG" >&2
+echo "done. contact-bot strength readout:" >&2
+python3 "$ROOT/tools/contact_bot_stats.py" "$LOG" >&2
+echo "generic behavior comparison:  python3 $ROOT/tools/game_stats.py $LOG" >&2
