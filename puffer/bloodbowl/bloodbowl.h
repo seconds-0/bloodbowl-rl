@@ -1862,6 +1862,14 @@ static void c_step(Bloodbowl* env) {
             }
         }
         uint32_t was_standing = bbe_standing_mask(m);
+        // R12 turn-boundary gate (D136): capture, BEFORE the apply that may flip
+        // active_team, whether the acting team is genuinely inside its own
+        // BB_PROC_TEAM_TURN. The generic active_team-flip hook below also fires
+        // at the setup->kickoff flip and on kickoff Charge! events, where the
+        // ball is off-pitch and turn counters are 0/0 — charging R12 there is a
+        // phantom penalty. R6v1's carrier-exposure block does not need this gate
+        // (its ball-HELD check already filters to settled own-turn-ends).
+        int pre_in_team_turn = bb_in_team_turn(m, m->active_team);
         // Trusted fast path: act came from bbe_decode, which only returns
         // elements of env->legal — the legal set enumerated on THIS state by
         // bbe_refresh_legal. Membership holds by construction, so skip
@@ -1966,11 +1974,27 @@ static void c_step(Bloodbowl* env) {
             // deep mover that can reach OUR endzone within its reach budget.
             // 1-turn and 2-turn are charged on disjoint sets: a 1-turn threat
             // is in n_threats_2turn too, so subtract it out for the soft tier.
-            if (env->reward_defensive_threat != 0.0f ||
-                env->reward_defensive_threat_soft != 0.0f) {
+            // GATE (D136 BLOCKER): only charge/count R12 when the just-ended
+            // transition was a genuine own-team-turn end. `pre_in_team_turn`
+            // was captured before bb_apply_trusted, when the acting team was
+            // still inside its BB_PROC_TEAM_TURN. This filters the setup->kickoff
+            // flip and kickoff Charge! active-team changes (ball off-pitch,
+            // counters 0/0) that the bare active_team-flip hook also catches.
+            if (pre_in_team_turn &&
+                (env->reward_defensive_threat != 0.0f ||
+                 env->reward_defensive_threat_soft != 0.0f)) {
                 bb_def_threat dt = bb_def_threat_eval(m, t);
-                int hard = dt.n_threats_1turn;
-                int soft = dt.n_threats_2turn - dt.n_threats_1turn;
+                int hard_true = dt.n_threats_1turn;
+                int soft_true = dt.n_threats_2turn - dt.n_threats_1turn;
+                // CAP (D136 FOLLOW-UP 1): per-step rewards are clamped to [-1,1]
+                // on the SUM, and R12 lands on the same step as the win/loss
+                // terminal bonus + possession + carrier-exposure. Cap the
+                // CHARGED count at 4 per tier so the worst case (terminal loss +
+                // many deep threats) stays inside the clamp and does not corrupt
+                // the loss gradient. Telemetry below records the TRUE uncapped
+                // counts so the real threat level stays visible.
+                int hard = hard_true < 4 ? hard_true : 4;
+                int soft = soft_true < 4 ? soft_true : 4;
                 if (hard > 0 && env->reward_defensive_threat != 0.0f) {
                     float pen = env->reward_defensive_threat * (float)hard;
                     env->reward_ptr[t][0] -= pen;
@@ -1981,7 +2005,7 @@ static void c_step(Bloodbowl* env) {
                     env->reward_ptr[t][0] -= pen;
                     env->ep_return[t] -= pen;
                 }
-                env->ep_def_threats_1t += hard;
+                env->ep_def_threats_1t += hard_true;
                 env->ep_def_threats_2t += dt.n_threats_2turn;
             }
             env->prev_active_team = (int)m->active_team;

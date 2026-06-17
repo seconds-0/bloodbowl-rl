@@ -185,3 +185,82 @@ BB_TEST(defthreat_on_endzone_is_zero_turns) {
     BB_CHECK_EQ(dt.n_threats_1turn, 1); // 0 <= 1
     BB_CHECK_EQ(dt.n_threats_2turn, 1);
 }
+
+// --- R12 turn-boundary gate (D136 BLOCKER): bb_in_team_turn ------------------
+// The R12 reward hook in puffer/bloodbowl/bloodbowl.h fires on EVERY active_team
+// flip, including setup->kickoff and kickoff Charge! events, where no real team
+// turn has ended (ball off-pitch, counters 0/0). bb_in_team_turn is the pure
+// engine seam that gates those out: it returns true only when the queried team
+// is genuinely inside its own BB_PROC_TEAM_TURN on the stack. These tests pin
+// that seam directly (the puffer selftest drives the full reward hook).
+
+// Inside a real team turn, the gate is true for the acting team only.
+BB_TEST(defthreat_gate_true_during_team_turn) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0); // pushes MATCH + TEAM_TURN(HOME)
+    BB_CHECK(bb_in_team_turn(&m, BB_HOME));   // acting team: gated IN
+    BB_CHECK(!bb_in_team_turn(&m, BB_AWAY));  // not the team on the stack
+}
+
+// At the setup->kickoff phase there is NO TEAM_TURN frame: the gate is false for
+// both teams, so the R12 hook must not charge the kicking team for the
+// receiver's setup formation (the exact bug Codex reproduced).
+BB_TEST(defthreat_gate_false_during_setup_kickoff) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    // Rebuild the stack to a setup/kickoff drive state (no TEAM_TURN frame).
+    m.stack_top = 0;
+    bb_push(&m, BB_PROC_MATCH, 0, 0, 0, 0);
+    bb_push(&m, BB_PROC_KICKOFF, BB_HOME, 0, 0, 0); // kicking team = HOME
+    bb_push(&m, BB_PROC_SETUP, BB_HOME, 0, 0, 0);
+
+    BB_CHECK(!bb_in_team_turn(&m, BB_HOME));
+    BB_CHECK(!bb_in_team_turn(&m, BB_AWAY));
+}
+
+// A bare KICKOFF frame (e.g. a Charge! active-team change resolves under it) is
+// likewise not a team turn for either side.
+BB_TEST(defthreat_gate_false_during_kickoff_only) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    m.stack_top = 0;
+    bb_push(&m, BB_PROC_MATCH, 0, 0, 0, 0);
+    bb_push(&m, BB_PROC_KICKOFF, BB_HOME, 0, 0, 0);
+
+    BB_CHECK(!bb_in_team_turn(&m, BB_HOME));
+    BB_CHECK(!bb_in_team_turn(&m, BB_AWAY));
+}
+
+// --- R12 charged-count cap (D136 FOLLOW-UP 1) -------------------------------
+// The reward hook caps the CHARGED count per tier at 4 (min(n,4)) so the R12
+// penalty stays inside the per-step [-1,1] clamp even alongside a terminal
+// loss bonus; the TELEMETRY must still record the TRUE uncapped count. The
+// evaluator itself is uncapped (it is the source of the true count); this test
+// pins both the true count (>4) and the capped value the hook computes from it.
+BB_TEST(defthreat_eval_uncapped_cap_is_hook_side) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    // Six unmarked AWAY 1-turn movers (x<=8, distinct rows) -> true 1t == 6.
+    fx_lineman(&m, BB_AWAY, 0, 4, 1);
+    fx_lineman(&m, BB_AWAY, 1, 5, 3);
+    fx_lineman(&m, BB_AWAY, 2, 6, 5);
+    fx_lineman(&m, BB_AWAY, 3, 7, 7);
+    fx_lineman(&m, BB_AWAY, 4, 8, 9);
+    fx_lineman(&m, BB_AWAY, 5, 3, 11);
+
+    bb_def_threat dt = bb_def_threat_eval(&m, BB_HOME);
+    BB_CHECK_EQ(dt.n_threats_1turn, 6); // evaluator/telemetry: TRUE, uncapped
+    BB_CHECK_EQ(dt.n_threats_2turn, 6);
+
+    // Hook-side cap (mirrors bloodbowl.h): charged count is min(true, 4).
+    int hard_true = dt.n_threats_1turn;
+    int soft_true = dt.n_threats_2turn - dt.n_threats_1turn;
+    int hard = hard_true < 4 ? hard_true : 4;
+    int soft = soft_true < 4 ? soft_true : 4;
+    BB_CHECK_EQ(hard, 4); // 6 capped to 4
+    BB_CHECK_EQ(soft, 0); // all six are 1-turn, so the soft tier is empty
+    // Worst-case R12 magnitude at the live scales (0.05 / 0.02) stays small.
+    float scale = 0.05f, soft_scale = 0.02f;
+    float pen = (float)hard * scale + (float)soft * soft_scale;
+    BB_CHECK(pen <= 0.20001f); // <= 4*0.05; comfortably inside the [-1,1] clamp
+}

@@ -374,10 +374,122 @@ static void demo_print_hist(void) {
     }
 }
 
+// --- R12 reward-hook gate test (--r12test) ----------------------------------
+// Drives the FULL c_step reward hook with R12 enabled and asserts the D136
+// BLOCKER fix end-to-end: the R12 reward + telemetry must fire ONLY on genuine
+// own-team-turn ends, never on the setup->kickoff flip or kickoff Charge!
+// active-team changes. The pure bb_in_team_turn seam is unit-tested in
+// engine/tests/test_defthreat.c; this exercises the actual hook the trainer
+// runs. Invariants checked per step over seeded random-masked play:
+//   (1) telemetry (ep_def_threats_*) only ever increments on a transition where
+//       the team whose turn just ended was inside a real BB_PROC_TEAM_TURN
+//       pre-step (== the gate condition the hook uses);
+//   (2) no R12 telemetry fires while the match is still in its opening
+//       setup/kickoff (before EITHER team has completed a turn) — the exact
+//       Codex repro (charging the kicker for the receiver's setup formation);
+//   (3) the per-transition charged count is capped (<=4/tier) while telemetry
+//       records the true uncapped count (FOLLOW-UP 1).
+static int bbe_r12_selftest(uint64_t seed, int episodes) {
+    static Bloodbowl env;
+    static uint8_t obs[BBE_AGENTS * BBE_OBS_SIZE];
+    static float actions[BBE_AGENTS * 3];
+    static unsigned char mask[BBE_AGENTS * BBE_MASK_SIZE];
+    static float rewards[BBE_AGENTS];
+    static float terminals[BBE_AGENTS];
+    env.num_agents = BBE_AGENTS;
+    env.seed = seed;
+    // Enable R12 at the live A/B scales (and possession/exposure off so the
+    // telemetry deltas are unambiguous; td/win defaulted on by c_reset).
+    env.reward_defensive_threat = 0.05f;
+    env.reward_defensive_threat_soft = 0.02f;
+    for (int a = 0; a < BBE_AGENTS; a++) {
+        env.obs_ptr[a] = obs + a * BBE_OBS_SIZE;
+        env.action_ptr[a] = actions + a * 3;
+        env.action_mask_ptr[a] = mask + a * BBE_MASK_SIZE;
+        env.reward_ptr[a] = rewards + a;
+        env.terminal_ptr[a] = terminals + a;
+    }
+    c_reset(&env);
+
+    bb_rng pol;
+    bb_rng_seed(&pol, seed ^ 0x12B12B12, 7);
+    long transitions_fired = 0; // R12 telemetry actually moved (coverage)
+    long setup_kickoff_flips = 0; // active-team flips with no team turn (coverage)
+    int done = 0;
+    while (done < episodes) {
+        bb_match* m = &env.match;
+        // Pre-step snapshot for the gate invariant.
+        int pre_active = m->active_team & 1;
+        int pre_in_tt = bb_in_team_turn(m, m->active_team);
+        int pre_1t = env.ep_def_threats_1t;
+        int pre_2t = env.ep_def_threats_2t;
+        int pre_turns = env.ep_turns[0] + env.ep_turns[1];
+        for (int a = 0; a < BBE_AGENTS; a++) {
+            const unsigned char* mk = env.action_mask_ptr[a];
+            env.action_ptr[a][0] = (float)sample_masked(mk, BBE_HEAD_TYPE, &pol);
+            env.action_ptr[a][1] =
+                (float)sample_masked(mk + BBE_HEAD_TYPE, BBE_HEAD_ARG, &pol);
+            env.action_ptr[a][2] = (float)sample_masked(
+                mk + BBE_HEAD_TYPE + BBE_HEAD_ARG, BBE_HEAD_SQ, &pol);
+        }
+        c_step(&env);
+        // The episode reset zeroes the per-episode telemetry, so deltas are only
+        // meaningful on NON-terminal steps (a terminal step's "delta" is just the
+        // reset to 0). All gate/cap invariants below are checked only then.
+        if (terminals[0] == 0.0f) {
+            int d1 = env.ep_def_threats_1t - pre_1t;
+            int d2 = env.ep_def_threats_2t - pre_2t;
+            // A telemetry increment means the R12 block fired this step. It must
+            // only happen when the team whose turn just ended was inside a real
+            // team turn pre-step (the gate). If it fired, that team also cannot
+            // be in the opening pre-first-turn window.
+            if (d1 != 0 || d2 != 0) {
+                transitions_fired++;
+                ST_CHECK(pre_in_tt,
+                         "R12 telemetry moved (%d/%d) but pre-step active team "
+                         "%d was NOT in a team turn (gate bypassed)",
+                         d1, d2, pre_active);
+                ST_CHECK(pre_turns > 0 || pre_in_tt,
+                         "R12 fired in the opening setup/kickoff window "
+                         "(pre_turns=%d)", pre_turns);
+                // Telemetry is the TRUE uncapped count, so deltas are >=0 and the
+                // 2-turn (inclusive) tier never increments by less than the
+                // 1-turn tier on a single transition.
+                ST_CHECK(d1 >= 0 && d2 >= 0 && d2 >= d1,
+                         "telemetry delta malformed (d1=%d d2=%d)", d1, d2);
+            }
+            // Coverage: count opening-phase active-team flips so we know the
+            // gate's negative path is actually exercised (a flip while neither
+            // team has yet completed a turn — the setup->kickoff / Charge! case).
+            if ((m->active_team & 1) != pre_active && pre_turns == 0 &&
+                !pre_in_tt) {
+                setup_kickoff_flips++;
+                // The whole point of the fix: such a flip must NOT charge R12.
+                ST_CHECK(d1 == 0 && d2 == 0,
+                         "R12 charged on an opening setup/kickoff flip "
+                         "(d1=%d d2=%d)", d1, d2);
+            }
+        }
+        if (terminals[0] != 0.0f) done++;
+    }
+    ST_CHECK(transitions_fired > 0,
+             "R12 telemetry never fired in %d episodes — test is vacuous",
+             episodes);
+    ST_CHECK(setup_kickoff_flips > 0,
+             "no opening setup/kickoff active-team flip ever observed — the "
+             "gate's negative path was not exercised");
+    printf("bloodbowl R12-gate selftest: %d episodes, %d failure(s), "
+           "%ld R12-firings, %ld opening flips gated\n",
+           done, st_failures, transitions_fired, setup_kickoff_flips);
+    c_close(&env);
+    return st_failures ? 1 : 0;
+}
+
 int main(int argc, char** argv) {
     int episodes = 64;
     int unmasked = 0;
     int selftest = 0;
+    int r12test = 0;
     int demo = 0;
     int fnv_mode = 0;
     uint64_t seed = 42;
@@ -385,6 +497,7 @@ int main(int argc, char** argv) {
         if (strcmp(argv[i], "--unmasked") == 0) unmasked = 1;
         else if (strcmp(argv[i], "--fnv") == 0) fnv_mode = 1;
         else if (strcmp(argv[i], "--selftest") == 0) selftest = 1;
+        else if (strcmp(argv[i], "--r12test") == 0) r12test = 1;
         else if (strcmp(argv[i], "--demo") == 0) demo = 1;
         else if (strcmp(argv[i], "--bank") == 0 && i + 1 < argc) {
             // Override the staged-bank path (default BBE_STATE_BANK_PATH);
@@ -395,6 +508,7 @@ int main(int argc, char** argv) {
         else episodes = atoi(argv[i]);
     }
     if (selftest) return bbe_selftest(seed, episodes);
+    if (r12test) return bbe_r12_selftest(seed, episodes);
 
     static Bloodbowl env; // ~20KB of legal-action buffer; keep off the stack
     static uint8_t obs[BBE_AGENTS * BBE_OBS_SIZE];

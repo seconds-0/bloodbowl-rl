@@ -68,6 +68,10 @@ bool bb_check_td(bb_match* m);
 
 // Is a KICKOFF frame on the stack (kicked ball still resolving)?
 bool bb_in_kickoff(const bb_match* m);
+// Is a real BB_PROC_TEAM_TURN frame on the stack for `team` (the acting team
+// is genuinely inside its own team turn, not setup / kickoff / end-drive)?
+// Used as the turn-boundary gate for ball-agnostic reward hooks (R12).
+bool bb_in_team_turn(const bb_match* m, int team);
 // Inside the Charge! kick-off event's free-activation loop (team re-rolls
 // available to the charging team there)?
 bool bb_in_kickoff_charge(const bb_match* m);

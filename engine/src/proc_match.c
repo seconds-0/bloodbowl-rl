@@ -409,6 +409,21 @@ bool bb_in_kickoff(const bb_match* m) {
     return false;
 }
 
+// Is the acting team genuinely inside its own BB_PROC_TEAM_TURN? The turn proc
+// stores the acting team id in frame param `a` (see the bb_push above). Used as
+// the turn-boundary gate for ball-agnostic reward hooks (R12): the generic
+// active_team flip also fires at setup->kickoff and on kickoff Charge! events,
+// where no real team turn has ended, so those must NOT be charged.
+bool bb_in_team_turn(const bb_match* m, int team) {
+    for (int i = 0; i < m->stack_top; i++) {
+        if (m->stack[i].proc == BB_PROC_TEAM_TURN &&
+            (int)m->stack[i].a == team) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // Inside the Charge! free-activation loop (KICKOFF phase 7)? The charging
 // team plays "exactly as if it was their team's Turn", so team re-rolls are
 // available there even though the kick-off is still resolving.
