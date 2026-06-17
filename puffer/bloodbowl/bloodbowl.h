@@ -94,6 +94,7 @@
 #define DIR8 DIR8_reachability_tu
 #include "engine/bb_reachability.c"
 #undef DIR8
+#include "contact_bot.h"
 
 #define BBE_PLAYER_BYTES 24    // 11 stat/state bytes + 12 skill-id slots + TZ byte
 #define BBE_SKILL_SLOTS 12     // >= max base-roster skills (10) + procgen cap
@@ -400,6 +401,10 @@ typedef struct {
     int exclude_team;
     int force_home_team;
     int force_away_team;
+    // Evaluation/training-pressure opponent: when set, AWAY/team 1 ignores the
+    // policy action heads and chooses directly from the current legal bb_action
+    // list with bbe_contact_bot_pick. HOME/team 0 stays policy-controlled.
+    int scripted_opponent;
     int max_decisions;
     // Spectator rendering (bbe_render.h); NULL until c_render is first called.
     int render_fps;
@@ -1771,7 +1776,9 @@ static void c_step(Bloodbowl* env) {
     bb_match* m = &env->match;
     if (m->status == BB_STATUS_DECISION && env->n_legal > 0) {
         int agent = m->decision_team;
-        bb_action act = bbe_decode(env, agent, env->action_ptr[agent]);
+        bb_action act = (env->scripted_opponent && agent == BB_AWAY)
+                            ? bbe_contact_bot_pick(m, env->legal, env->n_legal)
+                            : bbe_decode(env, agent, env->action_ptr[agent]);
         // Setup shaping: forced DONE (budget exhausted -> sole legal action)
         // vs voluntary legal DONE. Must inspect n_legal BEFORE bb_apply.
         if (act.type == BB_A_SETUP_DONE) {
@@ -1881,11 +1888,11 @@ static void c_step(Bloodbowl* env) {
         // phantom penalty. R6v1's carrier-exposure block does not need this gate
         // (its ball-HELD check already filters to settled own-turn-ends).
         int pre_in_team_turn = bb_in_team_turn(m, m->active_team);
-        // Trusted fast path: act came from bbe_decode, which only returns
-        // elements of env->legal — the legal set enumerated on THIS state by
-        // bbe_refresh_legal. Membership holds by construction, so skip
-        // bb_apply's internal re-enumeration + eq-scan (~22% of step time).
-        // All other callers (tests, fuzz, lockstep) stay on checked bb_apply.
+        // Trusted fast path: act came from bbe_decode or the scripted contact
+        // bot, both of which only return elements of env->legal — the legal set
+        // enumerated on THIS state by bbe_refresh_legal. Membership holds by
+        // construction, so skip bb_apply's internal re-enumeration + eq-scan
+        // (~22% of step time). All other callers stay on checked bb_apply.
         bb_apply_trusted(m, act, &env->rng);
         env->ev_valid = 0; // state advanced: encode-time EVs are stale
         env->decisions++;
