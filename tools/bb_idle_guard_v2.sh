@@ -7,128 +7,132 @@
 # unreachable TRAINING box read as "no trainer" -> idle -> stopped. That killed
 # an active 30B run repeatedly and cost a reclaimed GPU.
 #
-# v2 design (incorporates an adversarial review + Alex's N-consecutive-zeros idea):
-#   1. SIGNAL = the Vast API (`vastai show instances --raw`), NO SSH. We read
-#      BOTH gpu_util AND cpu_util. This env is CPU-heavy (reachability Dijkstra),
-#      so a working box shows high CPU even when GPU dips; an idle box shows ~0
-#      on both.
-#   2. STALE-TELEMETRY DEFENSE (the critical fix): the API's gpu_util is a
-#      coarsely-cached field that intermittently publishes a stale 0.0 on a
-#      fully-working box (adversarial review measured 2/7 reads = 0.0 at 90% GPU).
-#      So a SINGLE read is untrustworthy. Within each cycle we take SAMPLES_PER_CHECK
-#      fresh API snapshots spaced SAMPLE_GAP_S apart, and a box counts as "idle
-#      this check" ONLY IF EVERY sample shows BOTH gpu_util<=IDLE_GPU_PCT AND
-#      cpu_util<=IDLE_CPU_PCT. ANY sample with work on EITHER signal => working
-#      => reset. (Alex: "maybe it has to hit 0 three consecutive times.")
-#   3. SUSTAINED grace ACROSS cycles: even after a check is "idle", require
+# v2 design (adversarial Opus review + Codex review + Alex's N-consecutive-zeros):
+#   1. SIGNAL = the Vast API (`vastai show instances --raw`), NO SSH. Read BOTH
+#      gpu_util AND cpu_util. This env is CPU-heavy (reachability Dijkstra), so a
+#      working box shows high CPU even when GPU dips; an idle box shows ~0 on both.
+#   2. STALE-TELEMETRY DEFENSE: the API's gpu_util is a coarsely-cached field that
+#      intermittently publishes a stale 0.0 on a fully-working box (measured 2/7
+#      reads = 0.0 at 90% GPU). So a SINGLE read is untrustworthy. Each cycle we
+#      take SAMPLES_PER_CHECK fresh API snapshots spaced SAMPLE_GAP_S apart.
+#   3. STRICT idle invariant (Codex): a box counts "idle this check" ONLY IF it
+#      was PRESENT IN EVERY snapshot AND every sample had gpu_util<=IDLE_GPU_PCT
+#      AND cpu_util<=IDLE_CPU_PCT (FLOAT comparison, no truncation). Any missing
+#      sample, any busy sample on EITHER signal, or unknown util => WORKING =>
+#      reset. The idle/working verdict is computed in Python; bash only acts on it.
+#      And: if any of the SAMPLES_PER_CHECK API calls fails, the whole cycle is
+#      skipped (never decide on partial data).
+#   4. SUSTAINED grace ACROSS cycles: even after an idle check, require
 #      GRACE_CHECKS consecutive idle checks (~2h) before acting. Any working
 #      check resets the counter to 0.
-#   4. WARN-FIRST, opt-in STOP: default is warn-only (desktop notification). It
-#      only issues `vastai stop` if the arm-file exists. Cost of leaving an idle
-#      box running (~$0.65/hr) << cost of stopping a working one (lost run +
-#      GPU reclaim), so the default never pulls the trigger.
-#   5. EXCLUDE unique-state boxes (japan's sole replay cache) from auto-stop.
-#   6. SAFETY plumbing: flock (no overlapping cycles corrupting state); check
-#      `vastai stop` exit status before announcing/clearing; do nothing on an
-#      empty/failed API response (never stop blind).
+#   5. WARN-FIRST, opt-in STOP: default warn-only (desktop notification). Issues
+#      `vastai stop` only if the arm-file exists, and only on checked success.
+#   6. EXCLUDE unique-state boxes (japan's sole replay cache) from auto-stop.
+#   7. PID-tokenized mkdir lock (no flock on macOS); the EXIT trap removes the
+#      lock only if we still own it; stale lock reclaimed only if the owner PID
+#      is dead or the lock is >20min old.
 set -u
 
 STATE=/tmp/bb_idle_guard_v2.state
 LOG=/tmp/bb_idle_guard_v2.log
 LOCK=/tmp/bb_idle_guard_v2.lock
-IDLE_GPU_PCT=5            # a single sample with gpu_util > this => working
-IDLE_CPU_PCT=15          # a single sample with cpu_util > this => working
-SAMPLES_PER_CHECK=3      # fresh API snapshots per cycle; ALL must be idle to count
+IDLE_GPU_PCT=5            # a sample with gpu_util > this => working
+IDLE_CPU_PCT=15          # a sample with cpu_util > this => working
+SAMPLES_PER_CHECK=3      # fresh API snapshots per cycle; box must be idle in ALL
 SAMPLE_GAP_S=15          # spacing (s) so each snapshot is a distinct cached value
 WARN_CHECKS=6            # consecutive idle checks -> warn (~1h)
 GRACE_CHECKS=12          # consecutive idle checks -> stop IF armed (~2h)
 EXCLUDE_LABELS="bb-japan-native"          # never auto-stop (sole replay cache)
 ARMED_FILE="$HOME/.bb_idle_guard_armed"   # must exist to actually STOP; else warn-only
+SNAP="/tmp/bb_idle_guard_v2.snap.$$"
 
 ts(){ date '+%F %T'; }
 note(){ command -v osascript >/dev/null 2>&1 && \
   osascript -e "display notification \"$1\" with title \"bb-idle-guard\"" >/dev/null 2>&1 || true; }
+cleanup(){ rm -f "$SNAP" 2>/dev/null; [ "$(cat "$LOCK/pid" 2>/dev/null)" = "$$" ] && rm -rf "$LOCK" 2>/dev/null; }
 
-# Single-instance lock (portable: atomic mkdir; no flock — absent on macOS).
-# A stale lock (>20 min, i.e. a crashed prior cycle) is reclaimed.
-if ! mkdir "$LOCK" 2>/dev/null; then
-  if [ -d "$LOCK" ]; then
-    age=$(( $(date +%s) - $(stat -f %m "$LOCK" 2>/dev/null || stat -c %Y "$LOCK" 2>/dev/null || echo 0) ))
-    if [ "$age" -gt 1200 ]; then rmdir "$LOCK" 2>/dev/null; mkdir "$LOCK" 2>/dev/null || exit 0
-    else echo "$(ts) lock held, skipping cycle" >> "$LOG"; exit 0; fi
-  else exit 0; fi
-fi
-trap 'rmdir "$LOCK" 2>/dev/null' EXIT
+# --- PID-tokenized lock: only one cycle at a time; reclaim only if dead/stale.
+acquire_lock(){
+  if mkdir "$LOCK" 2>/dev/null; then echo $$ > "$LOCK/pid"; return 0; fi
+  local opid age
+  opid="$(cat "$LOCK/pid" 2>/dev/null)"
+  age=$(( $(date +%s) - $(stat -f %m "$LOCK" 2>/dev/null || stat -c %Y "$LOCK" 2>/dev/null || echo 0) ))
+  if { [ -n "$opid" ] && ! kill -0 "$opid" 2>/dev/null; } || [ "$age" -gt 1200 ]; then
+    rm -rf "$LOCK" 2>/dev/null
+    if mkdir "$LOCK" 2>/dev/null; then echo $$ > "$LOCK/pid"; return 0; fi
+  fi
+  return 1
+}
+acquire_lock || { echo "$(ts) lock held by a live cycle, skipping" >> "$LOG"; exit 0; }
+trap cleanup EXIT
 touch "$STATE"
 
 armed=0; [ -f "$ARMED_FILE" ] && armed=1
 
-# --- Collect SAMPLES_PER_CHECK API snapshots, spaced out. Accumulate per-id the
-#     MAX gpu_util and MAX cpu_util seen across the samples (max defeats stale 0s).
-#     Also record the last-seen status. ---
-snap="/tmp/bb_idle_guard_v2.snap.$$"; : > "$snap"
-got_any=0
+# --- Take SAMPLES_PER_CHECK API snapshots. If ANY call fails -> skip the cycle
+#     (never decide on partial data).
+: > "$SNAP"
+ok=0
 for s in $(seq 1 "$SAMPLES_PER_CHECK"); do
   out="$(vastai show instances --raw 2>/dev/null | python3 -c "
 import json,sys
 try: data=json.load(sys.stdin)
-except Exception: sys.exit(0)
+except Exception: sys.exit(1)
+n=0
 for i in data:
     lbl=i.get('label') or ''
     if not lbl.startswith('bb-'): continue
     g=i.get('gpu_util'); c=i.get('cpu_util')
-    g=-1 if g is None else g
-    c=-1 if c is None else c
-    print(i['id'], lbl, i.get('actual_status') or 'unknown', g, c)
+    g='nan' if g is None else g
+    c='nan' if c is None else c
+    print(i['id'], lbl, i.get('actual_status') or 'unknown', g, c); n+=1
+sys.exit(0)
 ")"
-  [ -n "$out" ] && { got_any=1; printf '%s\n' "$out" >> "$snap"; }
+  [ $? -eq 0 ] || { echo "$(ts) API snapshot $s failed, skipping cycle" >> "$LOG"; exit 0; }
+  printf '%s\n' "$out" >> "$SNAP"; ok=$((ok+1))
   [ "$s" -lt "$SAMPLES_PER_CHECK" ] && sleep "$SAMPLE_GAP_S"
 done
-# API never answered this cycle -> do nothing (never stop blind).
-[ "$got_any" = 1 ] || { echo "$(ts) API empty all samples, skipping cycle" >> "$LOG"; rm -f "$snap"; exit 0; }
 
-# Reduce to one line per id: id label status max_gpu max_cpu  (max over samples).
-agg="$(python3 - "$snap" <<'PY'
+# --- Decide per-id in Python: idle ONLY IF present in ALL snapshots AND every
+#     sample had gpu<=GPU AND cpu<=CPU (float). Else working. Output: id label status idle.
+verdict="$(python3 - "$SNAP" "$SAMPLES_PER_CHECK" "$IDLE_GPU_PCT" "$IDLE_CPU_PCT" <<'PY'
 import sys
-mx={}
-for ln in open(sys.argv[1]):
+path, need, gthr, cthr = sys.argv[1], int(sys.argv[2]), float(sys.argv[3]), float(sys.argv[4])
+inst={}
+for ln in open(path):
     p=ln.split()
     if len(p)<5: continue
-    i,lbl,st=p[0],p[1],p[2]
-    try: g=float(p[3]); c=float(p[4])
-    except: g=c=-1.0
-    e=mx.setdefault(i,{'lbl':lbl,'st':st,'g':-1.0,'c':-1.0})
-    e['st']=st                          # last-seen status
-    if g>e['g']: e['g']=g
-    if c>e['c']: e['c']=c
-for i,e in mx.items():
-    print(i,e['lbl'],e['st'],int(e['g']),int(e['c']))
+    i,lbl,st,gs,cs=p[0],p[1],p[2],p[3],p[4]
+    try: g=float(gs); c=float(cs)
+    except: g=c=float('nan')
+    e=inst.setdefault(i,{'lbl':lbl,'st':st,'n':0,'idle_all':True})
+    e['st']=st; e['n']+=1
+    # this sample is "idle" only if both signals are valid numbers <= threshold
+    import math
+    sample_idle = (not math.isnan(g) and not math.isnan(c) and g<=gthr and c<=cthr)
+    if not sample_idle: e['idle_all']=False
+for i,e in inst.items():
+    idle = 1 if (e['n']==need and e['idle_all']) else 0
+    print(i, e['lbl'], e['st'], idle)
 PY
 )"
-rm -f "$snap"
+rm -f "$SNAP"
+[ -n "$verdict" ] || { echo "$(ts) no bb-* instances, nothing to do" >> "$LOG"; exit 0; }
 
-printf '%s\n' "$agg" | while read -r id label status gmax cmax; do
+printf '%s\n' "$verdict" | while read -r id label status idle; do
   [ -n "$id" ] || continue
 
-  # Not cleanly running (stopped / loading / mid-transition) -> clear state, skip.
-  if [ "$status" != "running" ]; then
-    grep -v "^$id " "$STATE" > "$STATE.tmp" 2>/dev/null; mv "$STATE.tmp" "$STATE" 2>/dev/null
+  # Not cleanly running, or Python judged it working -> clear idle state, skip.
+  if [ "$status" != "running" ] || [ "$idle" != "1" ]; then
+    grep -v "^$id " "$STATE" > "$STATE.$$" 2>/dev/null; mv "$STATE.$$" "$STATE" 2>/dev/null
     continue
   fi
 
-  # WORKING if EITHER signal shows activity in ANY sample (gmax/cmax are maxima).
-  # Unknown (-1) is treated as working (never idle). This is the reset path.
-  if [ "$gmax" -lt 0 ] || [ "$cmax" -lt 0 ] \
-     || [ "$gmax" -gt "$IDLE_GPU_PCT" ] || [ "$cmax" -gt "$IDLE_CPU_PCT" ]; then
-    grep -v "^$id " "$STATE" > "$STATE.tmp" 2>/dev/null; mv "$STATE.tmp" "$STATE" 2>/dev/null
-    continue
-  fi
-
-  # Confirmed idle this check (every sample quiet on both signals): bump counter.
+  # Confirmed idle this check (present in all samples, all quiet): bump counter.
   miss="$(grep "^$id " "$STATE" 2>/dev/null | awk '{print $2+0}')"; miss=$(( ${miss:-0} + 1 ))
-  grep -v "^$id " "$STATE" > "$STATE.tmp" 2>/dev/null; mv "$STATE.tmp" "$STATE" 2>/dev/null
+  grep -v "^$id " "$STATE" > "$STATE.$$" 2>/dev/null; mv "$STATE.$$" "$STATE" 2>/dev/null
   echo "$id $miss" >> "$STATE"
-  echo "$(ts) $label ($id): idle (gpu_max ${gmax}% cpu_max ${cmax}%) $miss/$GRACE_CHECKS" >> "$LOG"
+  echo "$(ts) $label ($id): idle (all $SAMPLES_PER_CHECK samples quiet) $miss/$GRACE_CHECKS" >> "$LOG"
 
   excluded=0; for e in $EXCLUDE_LABELS; do [ "$label" = "$e" ] && excluded=1; done
 
@@ -143,7 +147,7 @@ printf '%s\n' "$agg" | while read -r id label status gmax cmax; do
       if vastai stop instance "$id" >> "$LOG" 2>&1; then
         note "$label STOPPED after ~2h idle (gpu+cpu ~0)"
         echo "$(ts) $label ($id): STOPPED after $miss idle checks (armed)" >> "$LOG"
-        grep -v "^$id " "$STATE" > "$STATE.tmp" 2>/dev/null; mv "$STATE.tmp" "$STATE" 2>/dev/null
+        grep -v "^$id " "$STATE" > "$STATE.$$" 2>/dev/null; mv "$STATE.$$" "$STATE" 2>/dev/null
       else
         note "$label stop FAILED (API) — will retry next cycle"
         echo "$(ts) $label ($id): vastai stop FAILED, counter kept" >> "$LOG"
@@ -153,7 +157,7 @@ printf '%s\n' "$agg" | while read -r id label status gmax cmax; do
       echo "$(ts) $label ($id): idle $miss, NOT armed (warn-only)" >> "$LOG"
     fi
   elif [ "$miss" -ge "$WARN_CHECKS" ] && [ "$miss" -lt "$((WARN_CHECKS+1))" ]; then
-    note "$label idle ~1h (gpu_max ${gmax}% cpu_max ${cmax}%); stops at ~2h if armed"
+    note "$label idle ~1h; stops at ~2h if armed"
   fi
 done
-rm -f "$STATE.tmp" 2>/dev/null
+rm -f "$STATE".[0-9]* 2>/dev/null
