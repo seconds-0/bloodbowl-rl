@@ -16,6 +16,7 @@ x-mirrored and team-swapped (ego encoding). All protocol output is absolute.
 
 PITCH_W, PITCH_H = 26, 15
 CTX, SCAL = 768, 784
+TZ_OFF, TZ_PLANE = 832, 390
 A1_OFF, A2_OFF, B_OFF = 1612, 2002, 2392
 
 LOC = {0: "off", 1: "pitch", 2: "reserves", 3: "ko", 4: "cas"}

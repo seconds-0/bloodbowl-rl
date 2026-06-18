@@ -266,15 +266,21 @@ function onDelta(msg) {
   }
 
   // ---- dice & odds panel ----
+  const diceItems = (Array.isArray(msg.dice_seq) && msg.dice_seq.length)
+    ? msg.dice_seq
+    : (msg.dice ? [msg.dice] : []);
   let card = null;
   if (msg.ev) {                        // block (or blitz) declaration: open an odds card
     const label = msg.action && msg.action.type ? String(msg.action.type).toUpperCase() : 'BLOCK';
     card = newDiceCard(label, msg.ev);
   }
-  if (msg.dice) {
-    if (card) appendDice(card, msg.dice);
-    else if (msg.dice.kind === 'block' && diceCards[0] && diceCards[0].open) appendDice(diceCards[0], msg.dice);
-    else { card = newDiceCard(String(msg.dice.label || msg.dice.kind || 'ROLL').toUpperCase(), null); appendDice(card, msg.dice); }
+  for (const d of diceItems) {
+    if (card) appendDice(card, d);
+    else if (d.kind === 'block' && diceCards[0] && diceCards[0].open) appendDice(diceCards[0], d);
+    else {
+      card = newDiceCard(String(d.label || d.kind || 'ROLL').toUpperCase(), null);
+      appendDice(card, d);
+    }
   }
 
   if (Array.isArray(msg.feed)) {
@@ -294,10 +300,13 @@ function onDelta(msg) {
     }
   }
   // a block result with no injury feed still resolves the card
-  if (msg.dice && msg.dice.kind === 'block' && msg.dice.result && diceCards[0] && diceCards[0].open) {
-    const r = msg.dice.result;
+  const blockResult = diceItems.find(d => d && d.kind === 'block' && d.result);
+  if (blockResult && diceCards[0] && diceCards[0].open) {
+    const r = blockResult.result;
     if (r === 'Defender Down') appendOutcome('→ Defender down!', 'out-down');
     else if (r === 'Both Down') appendOutcome('→ Both down!', 'out-down');
+    else if (r === 'Attacker Down') appendOutcome('→ Attacker down!', 'out-turnover');
+    else if (r === 'Resolving') appendOutcome('→ Resolving...', 'out-push');
     else appendOutcome('→ ' + r, 'out-push');
   }
 
@@ -390,6 +399,55 @@ function drawVignette() {
   ctx.fillRect(0, 0, W, H);
 }
 
+function drawDownBase(stance, r) {
+  if (stance !== 'prone' && stance !== 'stunned') return;
+  ctx.save();
+  ctx.globalAlpha = stance === 'stunned' ? 0.92 : 0.72;
+  ctx.fillStyle = stance === 'stunned' ? 'rgba(94, 42, 120, .70)' : 'rgba(34, 24, 15, .66)';
+  ctx.strokeStyle = stance === 'stunned' ? '#e8c563' : '#d9caa6';
+  ctx.lineWidth = stance === 'stunned' ? 2.2 : 1.6;
+  ctx.beginPath();
+  ctx.ellipse(0, r * 0.18, r * 1.08, r * 0.62, -0.18, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawDownOverlay(stance, r) {
+  if (stance === 'prone') {
+    ctx.save();
+    ctx.strokeStyle = '#f0e3c4';
+    ctx.lineWidth = 2.4;
+    ctx.globalAlpha = 0.9;
+    ctx.beginPath();
+    ctx.moveTo(-r * 0.78, r * 0.72);
+    ctx.lineTo(r * 0.78, r * 0.72);
+    ctx.stroke();
+    ctx.restore();
+  } else if (stance === 'stunned') {
+    ctx.save();
+    ctx.globalAlpha = 0.96;
+    ctx.fillStyle = 'rgba(94, 42, 120, .34)';
+    ctx.beginPath();
+    ctx.arc(0, 0, r * 1.02, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#ffedd0';
+    ctx.lineWidth = 2.8;
+    ctx.beginPath();
+    ctx.moveTo(-r * .72, -r * .72); ctx.lineTo(r * .72, r * .72);
+    ctx.moveTo(r * .72, -r * .72); ctx.lineTo(-r * .72, r * .72);
+    ctx.stroke();
+    ctx.fillStyle = '#e8c563';
+    ctx.font = '900 ' + Math.round(CELL * 0.26) + 'px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('✦', -r * .55, -r * .96);
+    ctx.fillText('✦', 0, -r * 1.16);
+    ctx.fillText('✦', r * .55, -r * .96);
+    ctx.restore();
+  }
+}
+
 /* Single player draw entry point. FFB sheet slicing: 4 columns
  * [home, home-active, away, away-active], cell = imageWidth/4, row =
  * slot % (imageHeight/cell) for cosmetic variety. Circle fallback when the
@@ -400,6 +458,7 @@ function drawPlayer(p, px, py, isCarrier) {
   const img = getSprite(p.icon);
   ctx.save();
   ctx.translate(px, py);
+  drawDownBase(p.stance, r);
   if (img) {
     const cw = Math.max(1, Math.floor(img.width / 4));
     const rows = Math.max(1, Math.floor(img.height / cw));
@@ -407,8 +466,10 @@ function drawPlayer(p, px, py, isCarrier) {
     const row = p.slot % rows;
     const size = CELL * 0.95;
     ctx.save();
+    if (p.stance === 'prone') ctx.globalAlpha = 0.72;
+    else if (p.stance === 'stunned') ctx.globalAlpha = 0.58;
     if (p.stance === 'prone') ctx.rotate(Math.PI / 2);
-    else if (p.stance === 'stunned') ctx.rotate(Math.PI);
+    else if (p.stance === 'stunned') ctx.rotate(Math.PI / 2);
     ctx.imageSmoothingEnabled = false;  // crisp pixel art
     ctx.drawImage(img, col * cw, row * cw, cw, cw, -size / 2, -size / 2, size, size);
     ctx.restore();
@@ -439,20 +500,13 @@ function drawPlayer(p, px, py, isCarrier) {
     ctx.restore();
     ctx.globalAlpha = 1;
   }
+  drawDownOverlay(p.stance, r);
   if (isCarrier) {                      // gold ring on the ball carrier
     ctx.beginPath();
     ctx.arc(0, 0, r + 2.5, 0, Math.PI * 2);
     ctx.lineWidth = 2.5;
     ctx.strokeStyle = '#e3b341';
     ctx.stroke();
-  }
-  if (img && p.stance === 'stunned') {  // small "seeing stars" marker
-    ctx.fillStyle = '#e8c563';
-    for (let i = -1; i <= 1; i++) {
-      ctx.beginPath();
-      ctx.arc(i * 5, -CELL * 0.46, 1.6, 0, Math.PI * 2);
-      ctx.fill();
-    }
   }
   ctx.restore();
 }
@@ -748,7 +802,9 @@ const ACTION_LABELS = {
 };
 // pure bookkeeping decisions that would spam the log
 const QUIET_ACTIONS = new Set(['END_ACTIVATION', 'SETUP_PLACE', 'SETUP_REMOVE',
-                               'FOLLOW_UP', 'CHOOSE_OPTION', 'ACTIVATE']);
+                               'FOLLOW_UP', 'CHOOSE_OPTION', 'ACTIVATE',
+                               'DECLARE', 'CHOOSE_DIE', 'USE_REROLL',
+                               'DECLINE_REROLL', 'USE_SKILL', 'DECLINE_SKILL']);
 
 /* One line per decision: team chip + actor + readable verb + confidence,
  * e.g. "Wardancer #3 throws a block 87%". Skips NONE + bookkeeping. */
@@ -821,15 +877,18 @@ const DIE_FACES = ['⚀', '⚁', '⚂', '⚃', '⚄', '⚅'];
 const face = (n) => (n >= 1 && n <= 6 ? DIE_FACES[n - 1] : String(n));
 
 function diceText(d) {
-  if (d.kind === 'block' && Array.isArray(d.rolls)) {
-    let s = d.rolls.map(face).join(' ');
+  if (d.kind === 'block') {
+    let s = Array.isArray(d.rolls) ? d.rolls.map(face).join(' ') : 'Block';
+    if (d.ndice && !Array.isArray(d.rolls)) s += ' ' + d.ndice + 'd';
     if (d.result) s += '  ' + d.result;
     if (d.reroll_used) s += ' (reroll)';
     return s;
   }
-  if (d.roll != null) {
-    let s = (d.label || d.kind || 'Roll') + ': ' + d.roll + (d.target != null ? ' vs ' + d.target + '+' : '');
-    if (d.ok != null) s += d.ok ? '  ✓' : '  ✗';
+  if (d.kind === 'd6' || d.roll != null || d.ok != null) {
+    let s = d.label || d.kind || 'Roll';
+    if (d.roll != null) s += ': ' + d.roll;
+    if (d.target != null) s += (d.roll != null ? ' vs ' : ' ') + d.target + '+';
+    if (d.ok != null) s += d.ok ? '  OK' : '  FAIL';
     return s;
   }
   return d.label || d.kind || 'dice';

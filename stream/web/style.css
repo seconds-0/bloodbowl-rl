@@ -369,9 +369,10 @@ main {
 /* feed-line colorings (dark variants for parchment) */
 .log-entry.fl-move    { color: var(--parch-dim); }
 .log-entry.fl-kickoff { color: var(--parch-ink); font-weight: 700; }
-.log-entry.fl-block, .log-entry.fl-blitz { color: #8c1f1f; font-weight: 600; }
-.log-entry.fl-dodge, .log-entry.fl-gfi { color: #7c5c0e; }
-.log-entry.fl-pickup, .log-entry.fl-pass, .log-entry.fl-handoff { color: #1d5a6e; }
+.log-entry.fl-block, .log-entry.fl-blitz { color: #8c1f1f; font-weight: 700; }
+.log-entry.fl-blitz { background: rgba(140, 31, 31, .08); }
+.log-entry.fl-dodge, .log-entry.fl-gfi { color: #7c5c0e; font-weight: 700; }
+.log-entry.fl-pickup, .log-entry.fl-pass, .log-entry.fl-handoff { color: #1d5a6e; font-weight: 700; }
 .log-entry.fl-foul { color: #7c3f18; font-weight: 700; }
 .log-entry.fl-td { color: #6e5200; background: rgba(201, 166, 72, .28); font-weight: 900; }
 .log-entry.fl-turnover { color: #5e2a78; font-weight: 800; }
@@ -408,7 +409,7 @@ main {
 .odds-gold .odds-bar i { background: linear-gradient(90deg, #8a6a14, var(--gold)); }
 .odds-pct { width: 34px; flex: none; text-align: right; font-weight: 800; font-variant-numeric: tabular-nums; }
 .dcard-extra { margin-top: 4px; font-size: 11px; color: var(--parch-dim); }
-.dcard-dice { margin-top: 4px; font-weight: 700; color: #3c2d17; }
+.dcard-dice { margin-top: 4px; font-weight: 700; color: #3c2d17; font-variant-numeric: tabular-nums; }
 .dcard-outcome { margin-top: 4px; font-weight: 900; letter-spacing: .04em; }
 .dcard-outcome.out-down { color: #8c1f1f; }
 .dcard-outcome.out-turnover { color: #5e2a78; }

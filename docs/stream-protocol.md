@@ -126,6 +126,29 @@ odds card ("AI saw: 73% knockdown, 22% ball out"). `dice.kind`:
 `block | d6 | 2d6 | scatter`. For non-block d6 tests include
 `{"target":4,"roll":5,"ok":true,"label":"Dodge"}`.
 
+Current `stream_backend/game.py` runs from the Python vec observation/action
+surface, not from inside the engine frame stack. For movement tests
+(`GFI`/rush, `Dodge`, `Pickup`) that surface exposes the pre-step board,
+target square, weather, player stats/skills, and post-step outcome, so the
+backend emits inferred d6 objects such as:
+
+```json
+{"kind":"d6","label":"GFI","target":2,"roll":null,"ok":true,
+ "source":"inferred_from_state"}
+```
+
+The exact consumed D6 face is not exported after `vec.step()`: successful
+tests are popped immediately, failed tests may pause only at a reroll decision
+with the target exposed, and the final die/result is consumed into parent
+procedure state before Python receives the next observation. Block die faces
+are likewise stored in the internal block frame data and are not exposed to
+the Python stream; block dice may therefore include `rolls:null` plus
+`result`, `ndice`, and `tier`.
+
+When one engine decision resolves more than one inferred roll, the first item
+is also placed in `dice` for old clients and the full ordered list is emitted
+as additive `dice_seq:[...]`.
+
 `feed`: pre-formatted ticker lines, color-key by `kind`:
 `move|block|blitz|dodge|gfi|pickup|pass|handoff|foul|td|turnover|injury|ko|cas|kickoff`.
 TD/turnover/cas lines deserve banner treatment (cas = the "memorial" —
