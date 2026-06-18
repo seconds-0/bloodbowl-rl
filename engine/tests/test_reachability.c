@@ -235,6 +235,21 @@ static void threat_fixture(bb_match* m, int* carrier) {
     fx_ball_held(m, *carrier);
 }
 
+static int threat_prone_lineman(bb_match* m, int team, int idx, int x, int y) {
+    int slot = fx_lineman(m, team, idx, x, y);
+    m->players[slot].stance = BB_STANCE_PRONE;
+    return slot;
+}
+
+static float threat_block_p_def_down_at(const bb_match* m, int enemy,
+                                        int carrier, int x, int y) {
+    bb_match sim = *m;
+    bb_place(&sim, enemy, x, y);
+    bb_blockev ev;
+    bb_block_ev(&sim, enemy, carrier, 1, NULL, &ev);
+    return ev.p_def_down;
+}
+
 BB_TEST(carrier_threat_prone_stunned_enemies_zero) {
     bb_match m;
     int carrier;
@@ -299,6 +314,77 @@ BB_TEST(carrier_threat_three_dodge_path_much_less_than_one_dodge) {
     bb_carrier_threat_eval(&three, &th3);
     BB_CHECK(th1.blitz_excess > 0.0f);
     BB_CHECK(th3.blitz_excess < th1.blitz_excess * 0.6f);
+}
+
+BB_TEST(carrier_threat_uses_max_of_cost_and_shortest_path_success) {
+    bb_match m;
+    int carrier;
+    threat_fixture(&m, &carrier);
+    int enemy = fx_player(&m, BB_AWAY, 0, 13, 2, 4, 3, 2, 4, 9);
+    fx_give_skill(&m, enemy, BB_SK_DODGE);
+    fx_give_skill(&m, enemy, BB_SK_TITCHY);
+
+    fx_lineman(&m, BB_HOME, 1, 11, 5);
+    fx_lineman(&m, BB_HOME, 2, 12, 4);
+    threat_prone_lineman(&m, BB_HOME, 3, 13, 5);
+    threat_prone_lineman(&m, BB_HOME, 4, 14, 3);
+    threat_prone_lineman(&m, BB_HOME, 5, 14, 4);
+    threat_prone_lineman(&m, BB_HOME, 6, 12, 6);
+    threat_prone_lineman(&m, BB_HOME, 7, 14, 6);
+    threat_prone_lineman(&m, BB_HOME, 8, 12, 7);
+    threat_prone_lineman(&m, BB_HOME, 9, 14, 7);
+    threat_prone_lineman(&m, BB_HOME, 10, 12, 8);
+    threat_prone_lineman(&m, BB_HOME, 11, 13, 8);
+    threat_prone_lineman(&m, BB_HOME, 12, 14, 8);
+
+    bb_reach_field field;
+    bb_reach_field_compute(&m, enemy, &field);
+    BB_CHECK_EQ(field.cost[13][6].dodges, 0);
+    BB_CHECK_EQ(field.cost[13][6].gfis, 1);
+
+    float pkd = threat_block_p_def_down_at(&m, enemy, carrier, 13, 6);
+    float want = (25.0f / 27.0f) * pkd - bb_carrier_threat_baseline();
+    if (want < 0.0f) want = 0.0f;
+
+    bb_carrier_threat_breakdown th;
+    float t = bb_carrier_threat_eval(&m, &th);
+    threat_near(th.blitz_excess, want);
+    threat_near(t, want);
+    BB_CHECK_EQ(th.reachable_enemies, 1);
+}
+
+BB_TEST(carrier_threat_checks_all_adjacent_squares_in_best_cost_tier) {
+    bb_match m;
+    int carrier;
+    threat_fixture(&m, &carrier);
+    int enemy = fx_lineman(&m, BB_AWAY, 0, 13, 3);
+
+    fx_lineman(&m, BB_HOME, 1, 12, 7); // defensive assist vs north square only
+    threat_prone_lineman(&m, BB_HOME, 2, 12, 6);
+    threat_prone_lineman(&m, BB_HOME, 3, 14, 6);
+    threat_prone_lineman(&m, BB_HOME, 4, 12, 8);
+    threat_prone_lineman(&m, BB_HOME, 5, 13, 8);
+    threat_prone_lineman(&m, BB_HOME, 6, 14, 8);
+
+    bb_reach_field field;
+    bb_reach_field_compute(&m, enemy, &field);
+    BB_CHECK_EQ(field.cost[13][6].dodges, 0);
+    BB_CHECK_EQ(field.cost[13][6].gfis, 0);
+    BB_CHECK_EQ(field.cost[14][7].dodges, 0);
+    BB_CHECK_EQ(field.cost[14][7].gfis, 0);
+    BB_CHECK(field.len[14][7] > field.len[13][6]);
+
+    float short_pkd = threat_block_p_def_down_at(&m, enemy, carrier, 13, 6);
+    float long_pkd = threat_block_p_def_down_at(&m, enemy, carrier, 14, 7);
+    BB_CHECK(long_pkd > short_pkd);
+    float want = long_pkd - bb_carrier_threat_baseline();
+    if (want < 0.0f) want = 0.0f;
+
+    bb_carrier_threat_breakdown th;
+    float t = bb_carrier_threat_eval(&m, &th);
+    threat_near(th.blitz_excess, want);
+    threat_near(t, want);
+    BB_CHECK_EQ(th.reachable_enemies, 1);
 }
 
 BB_TEST(carrier_threat_baseline_dive_yields_no_excess) {

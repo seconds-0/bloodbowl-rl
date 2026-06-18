@@ -22,11 +22,20 @@ static int reach_cost_less(bb_reach_cost a, uint8_t alen,
     return alen < blen;
 }
 
+static int reach_len_less(bb_reach_cost a, uint8_t alen,
+                          bb_reach_cost b, uint8_t blen) {
+    if (alen != blen) return alen < blen;
+    if (a.dodges != b.dodges) return a.dodges < b.dodges;
+    return a.gfis < b.gfis;
+}
+
 static int reach_cost_reachable(bb_reach_cost c) {
     return c.dodges != BB_REACH_UNREACHABLE;
 }
 
-void bb_reach_field_compute(const bb_match* m, int mover, bb_reach_field* out) {
+static void reach_field_compute_ordered(const bb_match* m, int mover,
+                                        int prefer_len,
+                                        bb_reach_field* out) {
     uint8_t done[BB_PITCH_LEN][BB_PITCH_WID];
     for (int x = 0; x < BB_PITCH_LEN; x++) {
         for (int y = 0; y < BB_PITCH_WID; y++) {
@@ -64,7 +73,10 @@ void bb_reach_field_compute(const bb_match* m, int mover, bb_reach_field* out) {
             for (int y = 0; y < BB_PITCH_WID; y++) {
                 bb_reach_cost c = out->cost[x][y];
                 if (done[x][y] || !reach_cost_reachable(c)) continue;
-                if (ux < 0 || reach_cost_less(c, out->len[x][y], best, best_len)) {
+                int better = prefer_len ?
+                    reach_len_less(c, out->len[x][y], best, best_len) :
+                    reach_cost_less(c, out->len[x][y], best, best_len);
+                if (ux < 0 || better) {
                     ux = x;
                     uy = y;
                     best = c;
@@ -93,8 +105,11 @@ void bb_reach_field_compute(const bb_match* m, int mover, bb_reach_field* out) {
                 continue;
             }
             uint8_t nlen = (uint8_t)(steps + 1);
+            int better = prefer_len ?
+                reach_len_less(nc, nlen, out->cost[nx][ny], out->len[nx][ny]) :
+                reach_cost_less(nc, nlen, out->cost[nx][ny], out->len[nx][ny]);
             if (!reach_cost_reachable(out->cost[nx][ny]) ||
-                reach_cost_less(nc, nlen, out->cost[nx][ny], out->len[nx][ny])) {
+                better) {
                 out->cost[nx][ny] = nc;
                 out->len[nx][ny] = nlen;
                 out->prev_x[nx][ny] = (int8_t)ux;
@@ -102,6 +117,10 @@ void bb_reach_field_compute(const bb_match* m, int mover, bb_reach_field* out) {
             }
         }
     }
+}
+
+void bb_reach_field_compute(const bb_match* m, int mover, bb_reach_field* out) {
+    reach_field_compute_ordered(m, mover, 0, out);
 }
 
 bb_reach_access bb_min_access_cost(const bb_match* m, int team, int tx, int ty) {
@@ -318,6 +337,19 @@ static float carrier_threat_path_probability(const bb_match* m, int slot,
     return state[0][0] + state[0][1] + state[1][0] + state[1][1];
 }
 
+static float carrier_threat_best_path_probability(const bb_match* m, int slot,
+                                                  const bb_reach_field* cost_field,
+                                                  const bb_reach_field* len_field,
+                                                  int tx, int ty) {
+    float best = carrier_threat_path_probability(m, slot, cost_field, tx, ty);
+    // The public reach field stores the cheapest (dodges,gfis,len) predecessor
+    // chain. For carrier threat, that can under-price a high-success shorter
+    // route with more formal "cost", so replay a private length-first field
+    // as well and keep the higher pure success probability.
+    float by_len = carrier_threat_path_probability(m, slot, len_field, tx, ty);
+    return by_len > best ? by_len : best;
+}
+
 static float carrier_threat_block_p_def_down_at(const bb_match* m, int enemy,
                                                 int carrier, int x, int y,
                                                 int is_blitz) {
@@ -447,28 +479,38 @@ float bb_carrier_threat_eval(const bb_match* m,
 
         bb_reach_field field;
         bb_reach_field_compute(m, s, &field);
+        bb_reach_field len_field;
+        reach_field_compute_ordered(m, s, 1, &len_field);
         float best_enemy = 0.0f;
         int reached = 0;
         bb_reach_cost best_cost = reach_unreachable();
-        uint8_t best_len = 0xFF;
         for (int d = 0; d < 8; d++) {
             int ax = c->x + DIR8[d][0];
             int ay = c->y + DIR8[d][1];
             if (!bb_on_pitch_xy(ax, ay)) continue;
             bb_reach_cost rc = field.cost[ax][ay];
             if (!reach_cost_reachable(rc)) continue;
-            uint8_t len = field.len[ax][ay];
-            if (!reached || reach_cost_less(rc, len, best_cost, best_len)) {
+            if (!reached ||
+                rc.dodges < best_cost.dodges ||
+                (rc.dodges == best_cost.dodges && rc.gfis < best_cost.gfis)) {
                 best_cost = rc;
-                best_len = len;
-                best_enemy = 0.0f;
                 reached = 1;
-            } else if (rc.dodges != best_cost.dodges ||
-                       rc.gfis != best_cost.gfis || len != best_len) {
+            }
+        }
+        if (!reached) continue;
+
+        for (int d = 0; d < 8; d++) {
+            int ax = c->x + DIR8[d][0];
+            int ay = c->y + DIR8[d][1];
+            if (!bb_on_pitch_xy(ax, ay)) continue;
+            bb_reach_cost rc = field.cost[ax][ay];
+            if (!reach_cost_reachable(rc)) continue;
+            if (rc.dodges != best_cost.dodges || rc.gfis != best_cost.gfis) {
                 continue;
             }
 
-            float preach = carrier_threat_path_probability(m, s, &field, ax, ay);
+            float preach = carrier_threat_best_path_probability(
+                m, s, &field, &len_field, ax, ay);
             if (preach <= 0.0f) continue;
             float pkd = carrier_threat_block_p_def_down_at(m, s, carrier, ax, ay, 1);
             float threat = preach * pkd;
@@ -476,10 +518,8 @@ float bb_carrier_threat_eval(const bb_match* m,
             if (excess < 0.0f) excess = 0.0f;
             if (excess > best_enemy) best_enemy = excess;
         }
-        if (reached) {
-            if (out) out->reachable_enemies++;
-            if (best_enemy > best_blitz) best_blitz = best_enemy;
-        }
+        if (out) out->reachable_enemies++;
+        if (best_enemy > best_blitz) best_blitz = best_enemy;
     }
 
     float total = adjacent_sum + best_blitz;
