@@ -36,17 +36,47 @@ display_awake() {
     [ -z "$st" ] || [ "$st" != "0" ]
 }
 
+# The torch-backend viewer can only load torch state_dict checkpoints. Native
+# (CUDA) league runs save FLAT fp32 blobs (`invalid load key` under torch.load);
+# convert those to a sibling *.torch.bin on demand. Echoes a loadable path.
+resolve_loadable() {
+    local ckpt="$1"
+    if "$PUFFER/.venv/bin/python" -c "import torch,sys; torch.load(sys.argv[1],map_location='cpu',weights_only=False)" "$ckpt" >/dev/null 2>&1; then
+        echo "$ckpt"; return 0          # already a torch checkpoint
+    fi
+    local out="${ckpt%.bin}.torch.bin"  # excluded from newest-selection below
+    if [ ! -f "$out" ] || [ "$ckpt" -nt "$out" ]; then
+        "$PUFFER/.venv/bin/python" "$ROOT/training/convert_checkpoint.py" \
+            --to-torch "$ckpt" -o "$out" >/dev/null 2>&1 || return 1
+    fi
+    echo "$out"
+}
+
 crashes=0
 while true; do
     until display_awake; do
         sleep 120
     done
-    rsync -az -e "ssh -p $PORT -i $HOME/.ssh/id_ed25519 -o StrictHostKeyChecking=no -o ConnectTimeout=15" \
-        "$HOST:~/bloodbowl-rl/vendor/PufferLib/checkpoints/bloodbowl/" \
-        checkpoints/bloodbowl/ 2>/dev/null \
-        || echo "(checkpoint sync failed — playing newest local weights)"
+    # Fetch ONLY the newest checkpoint from each remote root (a full rsync of a
+    # native run dir is GBs — league9 alone has ~190 ckpts). Check BOTH roots:
+    # vendor/PufferLib/checkpoints (torch-backend runs) AND the repo-root
+    # checkpoints dir (native runs write there, cwd-relative — league8/9 etc.).
+    # Missing the latter is why the viewer used to play stale wrong-era weights.
+    SSH="ssh -p $PORT -i $HOME/.ssh/id_ed25519 -o StrictHostKeyChecking=no -o ConnectTimeout=15"
+    mkdir -p checkpoints/bloodbowl/live
+    for root in "vendor/PufferLib/checkpoints/bloodbowl" "checkpoints/bloodbowl"; do
+        rnew=$($SSH "$HOST" "ls -t ~/bloodbowl-rl/$root/*/0*.bin 2>/dev/null | head -1" 2>/dev/null || true)
+        [ -n "$rnew" ] || continue
+        # Preserve the run-dir name so the PROFILE/banner lookup still works.
+        rundir=$(basename "$(dirname "$rnew")")
+        mkdir -p "checkpoints/bloodbowl/live/$rundir"
+        rsync -az -e "$SSH" "$HOST:$rnew" "checkpoints/bloodbowl/live/$rundir/" 2>/dev/null || true
+        rsync -az -e "$SSH" "$HOST:~/bloodbowl-rl/$root/$rundir/PROFILE" "checkpoints/bloodbowl/live/$rundir/" 2>/dev/null || true
+    done
 
-    newest=$(find checkpoints/bloodbowl -name '*.bin' -print0 2>/dev/null \
+    # Newest SOURCE checkpoint (exclude our own *.torch.bin conversions so we
+    # always reconvert from the canonical file, never a stale conversion).
+    newest=$(find checkpoints/bloodbowl -name '*.bin' ! -name '*.torch.bin' -print0 2>/dev/null \
         | xargs -0 ls -t 2>/dev/null | head -1 || true)
     if [ -z "$newest" ]; then
         echo "no checkpoints yet — playing randomly initialized policy"
@@ -54,13 +84,20 @@ while true; do
         export BBE_BANNER="untrained (random init)"
         unset BBE_CKPT_STEPS
     else
-        load_args=(--load-model-path latest)
+        # Convert native->torch if needed, then load the EXPLICIT path (not
+        # `latest`, which would re-resolve to the native source and crash).
+        loadable=$(resolve_loadable "$newest" || true)
+        if [ -z "$loadable" ]; then
+            echo "(could not load/convert $newest — skipping cycle)"
+            sleep 30; continue
+        fi
+        load_args=(--load-model-path "$loadable")
         steps=$(basename "$newest" .bin | sed 's/^0*//'); steps=${steps:-0}
         export BBE_BANNER="$(basename "$(dirname "$newest")")"
         export BBE_PROFILE="$(cat "$(dirname "$newest")/PROFILE" 2>/dev/null || echo unlabeled run)"
         export BBE_CKPT_STEPS="$steps"
         export BBE_TOTAL_STEPS="${BBE_TOTAL_STEPS:-10000000000}"
-        echo "spectating: $newest"
+        echo "spectating: $newest$([ "$loadable" != "$newest" ] && echo ' (native->torch converted)')"
     fi
 
     timeout "$CYCLE" puffer eval bloodbowl --slowly \
