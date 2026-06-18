@@ -486,6 +486,118 @@ static void bbe_draw_ball_fallback(const bb_match* m) {
     }
 }
 
+static void bbe_draw_right_text(const char* text, int right_x, int y, int fs, Color col) {
+    DrawText(text, right_x - MeasureText(text, fs), y, fs, col);
+}
+
+// Tiny stacked block-tier bar (good/even/bad), RIGHT edge anchored at col_x so it
+// sits directly under that team's Blocks number; the "g-e-b" count sits dim to its
+// left. Traffic-light colors are team-independent (amber, NOT red, for bad — HOME's
+// token color is red and a red segment would read as "about HOME").
+static void bbe_draw_tier_bar(const Bloodbowl* env, int team, int col_x, int y) {
+    int small_fs = BBE_S(8);
+    int bar_w = BBE_S(46);
+    int bar_h = BBE_S(7);
+    int gap = BBE_S(5);
+    int good = env->ep_block_tier_team[team][1] + env->ep_block_tier_team[team][2];
+    int even = env->ep_block_tier_team[team][0];
+    int bad = env->ep_block_tier_team[team][3] + env->ep_block_tier_team[team][4];
+    int total = good + even + bad;
+    int bx = col_x - bar_w; // bar right edge aligns with the team's number column
+
+    Color border = (Color){70, 74, 84, 255};
+    if (total > 0) {
+        int good_w = bar_w * good / total;
+        int even_w = bar_w * even / total;
+        int bad_w = bar_w - good_w - even_w;
+        int x = bx;
+        if (good_w > 0) { DrawRectangle(x, y, good_w, bar_h, (Color){90, 200, 90, 255}); x += good_w; }
+        if (even_w > 0) { DrawRectangle(x, y, even_w, bar_h, (Color){150, 150, 160, 255}); x += even_w; }
+        if (bad_w  > 0) { DrawRectangle(x, y, bad_w,  bar_h, (Color){230, 160, 40, 255}); }
+    }
+    DrawRectangleLines(bx, y, bar_w, bar_h, border);
+    char counts[32];
+    snprintf(counts, sizeof counts, "%d-%d-%d", good, even, bad);
+    int cw = MeasureText(counts, small_fs);
+    DrawText(counts, bx - gap - cw, y - BBE_S(1), small_fs, (Color){140, 145, 155, 255});
+}
+
+// Two balanced number columns (HOME ~64% width, AWAY at the right edge) so each
+// team reads as its own lane instead of both clustering on the right.
+#define BBE_STATS_HOME_X(sx, sw) ((sx) + (int)((sw) * 0.64f))
+#define BBE_STATS_AWAY_X(sx, sw) ((sx) + (sw) - 14)
+static void bbe_draw_stats_row(const char* label, const char* home, const char* away,
+                               int sx, int sw, int y, int fs, Color col) {
+    DrawText(label, sx + 10, y, fs, col);
+    bbe_draw_right_text(home, BBE_STATS_HOME_X(sx, sw), y, fs, col);
+    bbe_draw_right_text(away, BBE_STATS_AWAY_X(sx, sw), y, fs, col);
+}
+
+static void bbe_draw_stats_panel(const Bloodbowl* env, int sx, int sw, int y0) {
+    int hfs = BBE_S(11);
+    int fs = BBE_S(9);
+    int line_step = fs + 5;
+    int y = y0 + 8;
+    int home_x = BBE_STATS_HOME_X(sx, sw);
+    int away_x = BBE_STATS_AWAY_X(sx, sw);
+    DrawText("STATS", sx + 10, y, hfs, BBE_GOLD);
+    DrawCircle(home_x - BBE_S(6), y + BBE_S(8), 5, BBE_HOME);
+    DrawCircle(away_x - BBE_S(6), y + BBE_S(8), 5, BBE_AWAY);
+
+    char home[32], away[32];
+    Color primary = RAYWHITE;
+    Color secondary = (Color){150, 155, 165, 255};
+    y += BBE_S(20);
+
+    snprintf(home, sizeof home, "%d", env->ep_blocks_thrown_team[BB_HOME]);
+    snprintf(away, sizeof away, "%d", env->ep_blocks_thrown_team[BB_AWAY]);
+    bbe_draw_stats_row("Blocks", home, away, sx, sw, y, fs, primary);
+    y += line_step;
+    bbe_draw_tier_bar(env, BB_HOME, BBE_STATS_HOME_X(sx, sw), y + BBE_S(2));
+    bbe_draw_tier_bar(env, BB_AWAY, BBE_STATS_AWAY_X(sx, sw), y + BBE_S(2));
+    y += line_step;
+
+    snprintf(home, sizeof home, "%d/%d", env->ep_dodge_ok[BB_HOME],
+             env->ep_dodge_att[BB_HOME]);
+    snprintf(away, sizeof away, "%d/%d", env->ep_dodge_ok[BB_AWAY],
+             env->ep_dodge_att[BB_AWAY]);
+    bbe_draw_stats_row("Dodge", home, away, sx, sw, y, fs, primary);
+    y += line_step;
+
+    snprintf(home, sizeof home, "%d/%d", env->ep_gfi_ok[BB_HOME],
+             env->ep_gfi_att[BB_HOME]);
+    snprintf(away, sizeof away, "%d/%d", env->ep_gfi_ok[BB_AWAY],
+             env->ep_gfi_att[BB_AWAY]);
+    bbe_draw_stats_row("GFI", home, away, sx, sw, y, fs, primary);
+    y += line_step;
+
+    snprintf(home, sizeof home, "%d/%d", env->ep_pickup_ok[BB_HOME],
+             env->ep_pickup_att[BB_HOME]);
+    snprintf(away, sizeof away, "%d/%d", env->ep_pickup_ok[BB_AWAY],
+             env->ep_pickup_att[BB_AWAY]);
+    bbe_draw_stats_row("Pickup", home, away, sx, sw, y, fs, primary);
+    y += line_step;
+
+    snprintf(home, sizeof home, "%d", env->ep_turnovers[BB_HOME]);
+    snprintf(away, sizeof away, "%d", env->ep_turnovers[BB_AWAY]);
+    bbe_draw_stats_row("Turnovers", home, away, sx, sw, y, fs, primary);
+    y += line_step + BBE_S(5);
+
+    snprintf(home, sizeof home, "%d", env->ep_pass_att[BB_HOME]);
+    snprintf(away, sizeof away, "%d", env->ep_pass_att[BB_AWAY]);
+    bbe_draw_stats_row("Pass", home, away, sx, sw, y, fs, secondary);
+    y += line_step;
+
+    snprintf(home, sizeof home, "%d", env->ep_handoff_att[BB_HOME]);
+    snprintf(away, sizeof away, "%d", env->ep_handoff_att[BB_AWAY]);
+    bbe_draw_stats_row("Handoff", home, away, sx, sw, y, fs, secondary);
+    y += line_step;
+
+    snprintf(home, sizeof home, "%d", env->ep_foul_att[BB_HOME]);
+    snprintf(away, sizeof away, "%d", env->ep_foul_att[BB_AWAY]);
+    bbe_draw_stats_row("Foul", home, away, sx, sw, y, fs, secondary);
+}
+
 static void bbe_draw_hud(const Bloodbowl* env) {
     const bb_match* m = &env->match;
     const BBEClient* c = (const BBEClient*)env->client;
@@ -528,19 +640,23 @@ static void bbe_draw_hud(const Bloodbowl* env) {
         DrawText(plate, px + 8, py + 3, fs, RAYWHITE);
     }
 
+    int sx = BBE_S(BBE_PITCH_W) + 2 * BBE_MARGIN;
+    int sw = BBE_S(BBE_SIDEBAR_W);
+    int sidebar_h = BBE_WIN_H - 2 * BBE_MARGIN;
+    int events_h = (int)((float)sidebar_h * 0.62f);
+    int divider_y = BBE_MARGIN + events_h;
+    Color sidebar_border = (Color){70, 74, 84, 255};
+
+    DrawRectangle(sx, BBE_MARGIN, sw, sidebar_h, (Color){22, 24, 28, 255});
+    DrawRectangleLines(sx, BBE_MARGIN, sw, sidebar_h, sidebar_border);
+
     // Event-feed sidebar: newest at top, color-coded.
     {
-        int sx = BBE_S(BBE_PITCH_W) + 2 * BBE_MARGIN;
-        int sw = BBE_S(BBE_SIDEBAR_W);
-        DrawRectangle(sx, BBE_MARGIN, sw, BBE_WIN_H - 2 * BBE_MARGIN,
-                      (Color){22, 24, 28, 255});
-        DrawRectangleLines(sx, BBE_MARGIN, sw, BBE_WIN_H - 2 * BBE_MARGIN,
-                           (Color){70, 74, 84, 255});
         int fs = BBE_S(9);
         DrawText("EVENTS", sx + 10, BBE_MARGIN + 8, BBE_S(11), BBE_GOLD);
         int y = BBE_MARGIN + 8 + BBE_S(16);
         unsigned w = bbe_feed_widx;
-        int rows = (BBE_WIN_H - 2 * BBE_MARGIN - BBE_S(28)) / (fs + 5);
+        int rows = (events_h - BBE_S(28)) / (fs + 5);
         if (rows > BBE_FEED_CAP - 2) rows = BBE_FEED_CAP - 2;
         char line[120];
         Color col;
@@ -553,6 +669,8 @@ static void bbe_draw_hud(const Bloodbowl* env) {
             y += fs + 5;
         }
     }
+    DrawRectangle(sx, divider_y, sw, 1, sidebar_border);
+    bbe_draw_stats_panel(env, sx, sw, divider_y + 1);
 
     bbe_memorial_consume((BBEClient*)env->client);
     // Memorial banner: centered, can't-miss red box for deaths/first blood.

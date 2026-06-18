@@ -55,6 +55,8 @@ static void build_foul_env(RewardFixture* f, float reward_send_off,
     bbe_refresh_legal(env);
     env->prev_active_team = env->match.active_team;
     env->pending_pickup_slot = -1;
+    env->pending_gfi_slot = -1;
+    env->pending_dodge_slot = -1;
     env->possessor = -1;
     env->pot_fetch_prev[0] = env->pot_fetch_prev[1] = -1.0f;
     env->pot_carry_prev[0] = env->pot_carry_prev[1] = -1.0f;

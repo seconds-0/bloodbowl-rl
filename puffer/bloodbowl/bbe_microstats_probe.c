@@ -62,10 +62,10 @@ int main(int argc, char** argv) {
         }
         prev[0] = env.ep_blocks;
         prev[1] = env.ep_blitzes;
-        prev[2] = env.ep_dodge_attempts;
-        prev[3] = env.ep_gfi_attempts;
-        prev[4] = env.ep_pickup_attempts;
-        prev[5] = env.ep_pass_attempts;
+        prev[2] = env.ep_dodge_att[0] + env.ep_dodge_att[1];
+        prev[3] = env.ep_gfi_att[0] + env.ep_gfi_att[1];
+        prev[4] = env.ep_pickup_att[0] + env.ep_pickup_att[1];
+        prev[5] = env.ep_pass_att[0] + env.ep_pass_att[1];
         prev[6] = env.ep_knockdowns_inflicted;
         prev[7] = env.ep_knockdowns_own;
         c_step(&env);

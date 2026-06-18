@@ -241,15 +241,27 @@ static int bbe_selftest(uint64_t seed, int episodes) {
         // Behavioral micro-stat counters: monotone within an episode, zeroed
         // by the episode reset (each step applies ONE action, so a counter
         // may grow by at most a bounded amount, but never shrink mid-game).
-        int ep_prev[8] = {env.ep_blocks,          env.ep_blitzes,
-                          env.ep_dodge_attempts,  env.ep_gfi_attempts,
-                          env.ep_pickup_attempts, env.ep_pass_attempts,
-                          env.ep_knockdowns_inflicted, env.ep_knockdowns_own};
+        int ep_prev[8] = {
+            env.ep_blocks,
+            env.ep_blitzes,
+            env.ep_dodge_att[0] + env.ep_dodge_att[1],
+            env.ep_gfi_att[0] + env.ep_gfi_att[1],
+            env.ep_pickup_att[0] + env.ep_pickup_att[1],
+            env.ep_pass_att[0] + env.ep_pass_att[1],
+            env.ep_knockdowns_inflicted,
+            env.ep_knockdowns_own,
+        };
         c_step(&env);
-        int ep_now[8] = {env.ep_blocks,          env.ep_blitzes,
-                         env.ep_dodge_attempts,  env.ep_gfi_attempts,
-                         env.ep_pickup_attempts, env.ep_pass_attempts,
-                         env.ep_knockdowns_inflicted, env.ep_knockdowns_own};
+        int ep_now[8] = {
+            env.ep_blocks,
+            env.ep_blitzes,
+            env.ep_dodge_att[0] + env.ep_dodge_att[1],
+            env.ep_gfi_att[0] + env.ep_gfi_att[1],
+            env.ep_pickup_att[0] + env.ep_pickup_att[1],
+            env.ep_pass_att[0] + env.ep_pass_att[1],
+            env.ep_knockdowns_inflicted,
+            env.ep_knockdowns_own,
+        };
         if (terminals[0] != 0.0f) {
             done++;
             for (int k = 0; k < 8; k++) {

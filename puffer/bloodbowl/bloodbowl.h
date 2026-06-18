@@ -434,9 +434,9 @@ typedef struct {
     // (defender-choice) and 1d. Classified at the CHOOSE_DIE window from
     // the block frame: nd in data bits 9-10, defender-chooses in bit 11
     // (proc_block.c layout).
-    int ep_block_tier[5]; // 0=1d, 1=2d, 2=3d, 3=2d-red, 4=3d-red
-    int ep_pickup_success;
+    int ep_block_tier_team[2][5]; // 0=1d, 1=2d, 2=3d, 3=2d-red, 4=3d-red
     int pending_pickup_slot;    // mover of THIS step's pickup attempt (-1 none)
+    int pending_gfi_slot, pending_dodge_slot; // mover of THIS step's roll (-1 none)
     int ep_turns[2], ep_turns_with_ball[2];
     int prev_active_team;       // turn-boundary detector for possession_rate
     int ep_carrier_exposed_full, ep_carrier_exposed_soft;
@@ -449,8 +449,11 @@ typedef struct {
     int ep_team_contact[2];
     int ep_team_ball[2];
     int turns_at_reset[2];
-    int ep_dodge_attempts, ep_gfi_attempts;
-    int ep_pickup_attempts, ep_pass_attempts, ep_handoff_attempts;
+    int ep_dodge_att[2], ep_dodge_ok[2];
+    int ep_gfi_att[2], ep_gfi_ok[2];
+    int ep_pickup_att[2], ep_pickup_ok[2];
+    int ep_pass_att[2], ep_handoff_att[2], ep_foul_att[2];
+    int ep_turnovers[2];
     int ep_knockdowns_inflicted, ep_knockdowns_own;
     int ep_send_offs;
     float ep_return[BBE_AGENTS];
@@ -1411,17 +1414,25 @@ static void bbe_reset_match(Bloodbowl* env) {
     env->ep_blocks_thrown = 0;
     env->ep_blocks_thrown_team[0] = env->ep_blocks_thrown_team[1] = 0;
     env->ep_tds_team[0] = env->ep_tds_team[1] = 0;
-    memset(env->ep_block_tier, 0, sizeof env->ep_block_tier);
-    env->ep_pickup_success = 0;
+    memset(env->ep_block_tier_team, 0, sizeof env->ep_block_tier_team);
     env->pending_pickup_slot = -1;
+    env->pending_gfi_slot = -1;
+    env->pending_dodge_slot = -1;
     env->ep_turns[0] = env->ep_turns[1] = 0;
     env->ep_turns_with_ball[0] = env->ep_turns_with_ball[1] = 0;
     env->prev_active_team = env->match.active_team;
     env->ep_carrier_exposed_full = env->ep_carrier_exposed_soft = 0;
     env->ep_def_threats_1t = env->ep_def_threats_2t = 0;
-    env->ep_dodge_attempts = env->ep_gfi_attempts = 0;
-    env->ep_pickup_attempts = env->ep_pass_attempts = 0;
-    env->ep_handoff_attempts = 0;
+    memset(env->ep_dodge_att, 0, sizeof env->ep_dodge_att);
+    memset(env->ep_dodge_ok, 0, sizeof env->ep_dodge_ok);
+    memset(env->ep_gfi_att, 0, sizeof env->ep_gfi_att);
+    memset(env->ep_gfi_ok, 0, sizeof env->ep_gfi_ok);
+    memset(env->ep_pickup_att, 0, sizeof env->ep_pickup_att);
+    memset(env->ep_pickup_ok, 0, sizeof env->ep_pickup_ok);
+    memset(env->ep_pass_att, 0, sizeof env->ep_pass_att);
+    memset(env->ep_handoff_att, 0, sizeof env->ep_handoff_att);
+    memset(env->ep_foul_att, 0, sizeof env->ep_foul_att);
+    memset(env->ep_turnovers, 0, sizeof env->ep_turnovers);
     env->ep_knockdowns_inflicted = env->ep_knockdowns_own = 0;
     env->ep_send_offs = 0;
     for (int t = 0; t < 2; t++) {
@@ -1538,26 +1549,37 @@ static void bbe_finish_episode(Bloodbowl* env) {
     env->log.blocks_thrown += (float)env->ep_blocks_thrown;
     env->log.blocks_thrown_t0 += (float)env->ep_blocks_thrown_team[0];
     env->log.blocks_thrown_t1 += (float)env->ep_blocks_thrown_team[1];
+    int block_tier_sum[5];
+    for (int i = 0; i < 5; i++) {
+        block_tier_sum[i] = env->ep_block_tier_team[0][i] +
+                            env->ep_block_tier_team[1][i];
+    }
+    int ep_dodge_attempts = env->ep_dodge_att[0] + env->ep_dodge_att[1];
+    int ep_gfi_attempts = env->ep_gfi_att[0] + env->ep_gfi_att[1];
+    int ep_pickup_attempts = env->ep_pickup_att[0] + env->ep_pickup_att[1];
+    int ep_pickup_success = env->ep_pickup_ok[0] + env->ep_pickup_ok[1];
+    int ep_pass_attempts = env->ep_pass_att[0] + env->ep_pass_att[1];
+    int ep_handoff_attempts = env->ep_handoff_att[0] + env->ep_handoff_att[1];
     if (env->ep_blocks_thrown > 0) {
         float tb = (float)env->ep_blocks_thrown;
-        env->log.block_1d_frac += (float)env->ep_block_tier[0] / tb;
-        env->log.block_2d_frac += (float)env->ep_block_tier[1] / tb;
-        env->log.block_3d_frac += (float)env->ep_block_tier[2] / tb;
-        env->log.block_2dred_frac += (float)env->ep_block_tier[3] / tb;
-        env->log.block_3dred_frac += (float)env->ep_block_tier[4] / tb;
+        env->log.block_1d_frac += (float)block_tier_sum[0] / tb;
+        env->log.block_2d_frac += (float)block_tier_sum[1] / tb;
+        env->log.block_3d_frac += (float)block_tier_sum[2] / tb;
+        env->log.block_2dred_frac += (float)block_tier_sum[3] / tb;
+        env->log.block_3dred_frac += (float)block_tier_sum[4] / tb;
     }
-    env->log.pickup_success += (float)env->ep_pickup_success;
+    env->log.pickup_success += (float)ep_pickup_success;
     {
         int turns = env->ep_turns[0] + env->ep_turns[1];
         int held = env->ep_turns_with_ball[0] + env->ep_turns_with_ball[1];
         if (turns > 0) env->log.possession_rate += (float)held / (float)turns;
     }
     env->log.blitzes += (float)env->ep_blitzes;
-    env->log.dodge_attempts += (float)env->ep_dodge_attempts;
-    env->log.gfi_attempts += (float)env->ep_gfi_attempts;
-    env->log.pickup_attempts += (float)env->ep_pickup_attempts;
-    env->log.pass_attempts += (float)env->ep_pass_attempts;
-    env->log.handoff_attempts += (float)env->ep_handoff_attempts;
+    env->log.dodge_attempts += (float)ep_dodge_attempts;
+    env->log.gfi_attempts += (float)ep_gfi_attempts;
+    env->log.pickup_attempts += (float)ep_pickup_attempts;
+    env->log.pass_attempts += (float)ep_pass_attempts;
+    env->log.handoff_attempts += (float)ep_handoff_attempts;
     env->log.knockdowns_inflicted += (float)env->ep_knockdowns_inflicted;
     env->log.knockdowns_own += (float)env->ep_knockdowns_own;
     env->log.ep_send_offs += (float)env->ep_send_offs;
@@ -1601,16 +1623,16 @@ static void bbe_finish_episode(Bloodbowl* env) {
         float ep_tds   = (float)((m->score[0] - env->score_start[0]) +
                                  (m->score[1] - env->score_start[1]));
         float ep_2dred = env->ep_blocks_thrown > 0
-            ? (float)env->ep_block_tier[3] / (float)env->ep_blocks_thrown : 0.0f;
+            ? (float)block_tier_sum[3] / (float)env->ep_blocks_thrown : 0.0f;
         int   tot_turns = env->ep_turns[0] + env->ep_turns[1];
         int   tot_held  = env->ep_turns_with_ball[0] + env->ep_turns_with_ball[1];
         float ep_poss  = tot_turns > 0 ? (float)tot_held / (float)tot_turns : 0.0f;
         float stat[7] = {
             ep_tds,
-            (float)env->ep_dodge_attempts,
-            (float)env->ep_pickup_attempts,
-            (float)env->ep_pass_attempts,
-            (float)env->ep_gfi_attempts,
+            (float)ep_dodge_attempts,
+            (float)ep_pickup_attempts,
+            (float)ep_pass_attempts,
+            (float)ep_gfi_attempts,
             ep_2dred,
             ep_poss,
         };
@@ -1667,17 +1689,19 @@ static void bbe_count_action(Bloodbowl* env, bb_action act) {
         const bb_frame* top = m->stack_top ? &m->stack[m->stack_top - 1] : 0;
         if (top && top->proc == BB_PROC_MOVE && top->a < BB_NUM_PLAYERS) {
             const bb_player* p = &m->players[top->a];
+            int team = BB_TEAM_OF(top->a);
             if (p->moved >= p->ma) {
-                env->ep_gfi_attempts++;
+                env->ep_gfi_att[team]++;
+                env->pending_gfi_slot = top->a;
                 BBE_FEED(env, BBE_EV_GFI, top->a, -1);
                 if (env->reward_rush_cost != 0.0f) {
-                    int rt = BB_TEAM_OF(top->a);
-                    env->reward_ptr[rt][0] -= env->reward_rush_cost;
-                    env->ep_return[rt] -= env->reward_rush_cost;
+                    env->reward_ptr[team][0] -= env->reward_rush_cost;
+                    env->ep_return[team] -= env->reward_rush_cost;
                 }
             }
             if (bb_tackle_zones(m, BB_TEAM_OF(top->a), p->x, p->y) > 0) {
-                env->ep_dodge_attempts++;
+                env->ep_dodge_att[team]++;
+                env->pending_dodge_slot = top->a;
                 BBE_FEED(env, BBE_EV_DODGE, top->a, -1);
             }
             // Ball-engagement axis: carrying the ball forward counts 1/step,
@@ -1688,7 +1712,10 @@ static void bbe_count_action(Bloodbowl* env, bb_action act) {
         }
         if (m->ball.state == BB_BALL_ON_GROUND && m->ball.x == act.x &&
             m->ball.y == act.y) {
-            env->ep_pickup_attempts++;
+            int team = (top && top->proc == BB_PROC_MOVE && top->a < BB_NUM_PLAYERS)
+                           ? BB_TEAM_OF(top->a)
+                           : (m->decision_team & 1);
+            env->ep_pickup_att[team]++;
             if (top && top->proc == BB_PROC_MOVE && top->a < BB_NUM_PLAYERS) {
                 env->ep_team_ball[BB_TEAM_OF(top->a)] += 3;
                 env->pending_pickup_slot = top->a; // success judged post-apply
@@ -1698,15 +1725,18 @@ static void bbe_count_action(Bloodbowl* env, bb_action act) {
         break;
     }
     case BB_A_PASS_TARGET:
-        env->ep_pass_attempts++;
+        env->ep_pass_att[m->decision_team & 1]++;
         env->ep_team_ball[m->decision_team & 1] += 3;
         BBE_FEED(env, BBE_EV_PASS,
                  m->ball.state == BB_BALL_HELD ? m->ball.carrier : -1, -1);
         break;
     case BB_A_HANDOFF_TARGET:
-        env->ep_handoff_attempts++;
+        env->ep_handoff_att[m->decision_team & 1]++;
         BBE_FEED(env, BBE_EV_HANDOFF,
                  m->ball.state == BB_BALL_HELD ? m->ball.carrier : -1, -1);
+        break;
+    case BB_A_FOUL_TARGET:
+        env->ep_foul_att[m->decision_team & 1]++;
         break;
     case BB_A_CHOOSE_DIE: {
         // Exactly one die pick per RESOLVED block (incl. the Frenzy second
@@ -1720,7 +1750,7 @@ static void bbe_count_action(Bloodbowl* env, bb_action act) {
             int nd = ((bf->data >> 9) & 3) + 1;
             int red = (bf->data & (1u << 11)) != 0; // BLK_DEF_CHOOSES
             int tier = nd == 1 ? 0 : (nd == 2 ? (red ? 3 : 1) : (red ? 4 : 2));
-            env->ep_block_tier[tier]++;
+            env->ep_block_tier_team[m->decision_team & 1][tier]++;
         }
         break;
     }
@@ -1906,6 +1936,7 @@ static void c_step(Bloodbowl* env) {
         // phantom penalty. R6v1's carrier-exposure block does not need this gate
         // (its ball-HELD check already filters to settled own-turn-ends).
         int pre_in_team_turn = bb_in_team_turn(m, m->active_team);
+        int pre_turnover_latch = m->turnover;
         // Trusted fast path: act came from bbe_decode or the scripted contact
         // bot, both of which only return elements of env->legal — the legal set
         // enumerated on THIS state by bbe_refresh_legal. Membership holds by
@@ -1914,11 +1945,29 @@ static void c_step(Bloodbowl* env) {
         bb_apply_trusted(m, act, &env->rng);
         env->ev_valid = 0; // state advanced: encode-time EVs are stale
         env->decisions++;
+        // Rush and dodge success: the mover must still be standing post-apply.
+        // Rush resolves before dodge; a failed rush prevents the queued dodge.
+        if (env->pending_gfi_slot >= 0) {
+            int slot = env->pending_gfi_slot;
+            if (m->players[slot].stance == BB_STANCE_STANDING) {
+                env->ep_gfi_ok[BB_TEAM_OF(slot)]++;
+            } else {
+                env->pending_dodge_slot = -1;
+            }
+            env->pending_gfi_slot = -1;
+        }
+        if (env->pending_dodge_slot >= 0) {
+            int slot = env->pending_dodge_slot;
+            if (m->players[slot].stance == BB_STANCE_STANDING) {
+                env->ep_dodge_ok[BB_TEAM_OF(slot)]++;
+            }
+            env->pending_dodge_slot = -1;
+        }
         // Pickup success: the attempted scooper holds the ball post-apply.
         if (env->pending_pickup_slot >= 0) {
             if (m->ball.state == BB_BALL_HELD &&
                 m->ball.carrier == (uint8_t)env->pending_pickup_slot) {
-                env->ep_pickup_success++;
+                env->ep_pickup_ok[BB_TEAM_OF(env->pending_pickup_slot)]++;
                 BBE_FEED(env, BBE_EV_PICKUP_OK, env->pending_pickup_slot, -1);
             }
             env->pending_pickup_slot = -1;
@@ -1953,10 +2002,26 @@ static void c_step(Bloodbowl* env) {
                 env->reach_mover = -1;
                 env->decisions++;
                 env->macro_pos++;
+                if (env->pending_gfi_slot >= 0) {
+                    int slot = env->pending_gfi_slot;
+                    if (m->players[slot].stance == BB_STANCE_STANDING) {
+                        env->ep_gfi_ok[BB_TEAM_OF(slot)]++;
+                    } else {
+                        env->pending_dodge_slot = -1;
+                    }
+                    env->pending_gfi_slot = -1;
+                }
+                if (env->pending_dodge_slot >= 0) {
+                    int slot = env->pending_dodge_slot;
+                    if (m->players[slot].stance == BB_STANCE_STANDING) {
+                        env->ep_dodge_ok[BB_TEAM_OF(slot)]++;
+                    }
+                    env->pending_dodge_slot = -1;
+                }
                 if (env->pending_pickup_slot >= 0) {
                     if (m->ball.state == BB_BALL_HELD &&
                         m->ball.carrier == (uint8_t)env->pending_pickup_slot) {
-                        env->ep_pickup_success++;
+                        env->ep_pickup_ok[BB_TEAM_OF(env->pending_pickup_slot)]++;
                         BBE_FEED(env, BBE_EV_PICKUP_OK,
                                  env->pending_pickup_slot, -1);
                     }
@@ -1972,6 +2037,9 @@ static void c_step(Bloodbowl* env) {
         // and pay the possession annuity transfer (see reward_possession).
         if ((int)m->active_team != env->prev_active_team) {
             int t = env->prev_active_team & 1;
+            if (pre_in_team_turn && pre_turnover_latch) {
+                env->ep_turnovers[t]++;
+            }
             env->ep_turns[t]++;
             // Possession METRIC (D90, Alex): a turn that ends in your own
             // touchdown counts as ending WITH possession — you carried it in.
