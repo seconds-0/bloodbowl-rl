@@ -25,6 +25,7 @@ const S = {
   players: new Map(),                 // slot -> player object
   ball: { x: -1, y: -1, state: 'off_pitch', carrier: null },
   score: [0, 0], half: 1, turn: [0, 0], active: 0,
+  teamstats: null,
   winProb: 0.5, winProbShown: 0.5,
   lastSeq: -1, resyncPending: false,
   spriteBase: '',                     // hello.sprite_base; '' = circles only
@@ -188,11 +189,12 @@ function onMatchStart(msg) {
   S.winProb = 0.5;
   S.ball = { x: -1, y: -1, state: 'off_pitch', carrier: null };
   S.actorSlot = null;
+  S.teamstats = null;
   rebuildPlayers(msg.players || []);
   tweens.clear(); probsCard = null; passArc = null;
   addFeedLine({ kind: 'sys', text: '— New match: ' + S.home.name + ' vs ' + S.away.name + ' —' });
   showBanner(S.home.name + '  vs  ' + S.away.name, 'b-info', 2500);
-  updateHud(); renderDugouts(); updateFooter();
+  updateHud(); renderDugouts(); renderTeamStats(); updateFooter();
 }
 
 function onSnapshot(msg) {
@@ -204,6 +206,7 @@ function onSnapshot(msg) {
   if (msg.active_team != null) S.active = msg.active_team;
   if (msg.ball) S.ball = msg.ball;
   if (msg.win_prob != null) S.winProb = msg.win_prob;
+  applyTeamStats(msg, true);
   rebuildPlayers(msg.players || []);
   tweens.clear();                      // snapshot = authoritative, no stale tweens
   updateHud(); renderDugouts(); updateFooter();
@@ -236,6 +239,7 @@ function onDelta(msg) {
   if (msg.turn) S.turn = msg.turn;
   if (msg.active_team != null) S.active = msg.active_team;
   if (msg.win_prob != null) S.winProb = msg.win_prob;
+  applyTeamStats(msg, false);
 
   if (msg.action) {
     const ty = String(msg.action.type || '').toUpperCase();
@@ -554,6 +558,8 @@ function pipsHtml(n) {
 }
 
 function updateHud() {
+  document.documentElement.style.setProperty('--team-home', S.home.color || DEFAULT_HOME);
+  document.documentElement.style.setProperty('--team-away', S.away.color || DEFAULT_AWAY);
   const nh = $('name-home'), na = $('name-away');
   nh.textContent = S.home.name;
   na.textContent = S.away.name;
@@ -565,6 +571,92 @@ function updateHud() {
   $('half').textContent = S.half === 2 ? '2nd Half' : '1st Half';
   $('pips-home').innerHTML = pipsHtml(Math.min(8, S.turn[0]));
   $('pips-away').innerHTML = pipsHtml(Math.min(8, S.turn[1]));
+}
+
+function applyTeamStats(msg, full) {
+  if (Object.prototype.hasOwnProperty.call(msg, 'teamstats')) {
+    if (msg.teamstats) S.teamstats = msg.teamstats;
+    else if (full) S.teamstats = null;
+  } else if (full) {
+    S.teamstats = null;
+  }
+  renderTeamStats();
+}
+
+function statTeam(side) {
+  const base = {
+    blocks: 0, tier: [0, 0, 0], dodge: [0, 0], gfi: [0, 0],
+    pickup: [0, 0], turnovers: 0, pass: 0, handoff: 0, foul: 0,
+  };
+  const src = S.teamstats && S.teamstats[side] ? S.teamstats[side] : {};
+  return Object.assign(base, src);
+}
+
+function pair(v) {
+  return Array.isArray(v) && v.length >= 2 ? v : [0, 0];
+}
+
+function pairText(v) {
+  const p = pair(v);
+  return (p[0] || 0) + '/' + (p[1] || 0);
+}
+
+function tierHtml(v) {
+  const t = Array.isArray(v) ? v : [0, 0, 0];
+  const good = t[0] || 0, even = t[1] || 0, bad = t[2] || 0;
+  const total = Math.max(0, good + even + bad);
+  const gp = total ? (good / total) * 100 : 0;
+  const ep = total ? (even / total) * 100 : 0;
+  const bp = total ? Math.max(0, 100 - gp - ep) : 0;
+  return '<div class="tierline">' +
+    '<span class="tiercount">' + good + '-' + even + '-' + bad + '</span>' +
+    '<span class="tierbar" aria-hidden="true">' +
+      '<i class="tier-good" style="width:' + gp.toFixed(2) + '%"></i>' +
+      '<i class="tier-even" style="width:' + ep.toFixed(2) + '%"></i>' +
+      '<i class="tier-bad" style="width:' + bp.toFixed(2) + '%"></i>' +
+    '</span>' +
+  '</div>';
+}
+
+function statRow(label, home, away, cls) {
+  return '<div class="statrow' + (cls ? ' ' + cls : '') + '">' +
+    '<span class="statlabel">' + esc(label) + '</span>' +
+    '<span class="statnum">' + home + '</span>' +
+    '<span class="statnum">' + away + '</span>' +
+  '</div>';
+}
+
+function renderTeamStats() {
+  const panel = $('panel-teamstats');
+  const el = $('teamstats');
+  if (!panel || !el) return;
+  if (!S.teamstats) {
+    panel.classList.add('hidden');
+    el.innerHTML = '';
+    return;
+  }
+  panel.classList.remove('hidden');
+  const h = statTeam('home'), a = statTeam('away');
+  el.innerHTML =
+    '<div class="stathead">' +
+      '<span></span>' +
+      '<span class="statteam statteam-home"><i></i>Home</span>' +
+      '<span class="statteam statteam-away"><i></i>Away</span>' +
+    '</div>' +
+    statRow('Blocks', h.blocks || 0, a.blocks || 0, 'primary') +
+    '<div class="statrow tierrow">' +
+      '<span class="statlabel"></span>' +
+      '<span class="statnum">' + tierHtml(h.tier) + '</span>' +
+      '<span class="statnum">' + tierHtml(a.tier) + '</span>' +
+    '</div>' +
+    statRow('Dodge', pairText(h.dodge), pairText(a.dodge), 'primary') +
+    statRow('GFI', pairText(h.gfi), pairText(a.gfi), 'primary') +
+    statRow('Pickup', pairText(h.pickup), pairText(a.pickup), 'primary') +
+    statRow('Turnovers', h.turnovers || 0, a.turnovers || 0, 'primary') +
+    '<div class="statsep"></div>' +
+    statRow('Pass', h.pass || 0, a.pass || 0, 'secondary') +
+    statRow('Handoff', h.handoff || 0, a.handoff || 0, 'secondary') +
+    statRow('Foul', h.foul || 0, a.foul || 0, 'secondary');
 }
 
 function updateWinProb(dt) {
@@ -625,7 +717,7 @@ function esc(s) {
 }
 
 // ---------------------------------------------------------------- action log
-const KNOWN_KINDS = ['move', 'block', 'blitz', 'dodge', 'gfi', 'pickup', 'pass', 'handoff', 'td', 'turnover', 'injury', 'ko', 'cas', 'kickoff', 'sys'];
+const KNOWN_KINDS = ['move', 'block', 'blitz', 'dodge', 'gfi', 'pickup', 'pass', 'handoff', 'foul', 'td', 'turnover', 'injury', 'ko', 'cas', 'kickoff', 'sys'];
 
 function pushLog(div) {
   const log = $('actionlog');
@@ -801,6 +893,7 @@ function frame(now) {
 
 updateHud();
 renderDugouts();
+renderTeamStats();
 updateFooter();
 requestAnimationFrame(frame);
 connect();

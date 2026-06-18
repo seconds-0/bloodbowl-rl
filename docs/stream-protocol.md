@@ -76,6 +76,23 @@ All messages: `{"v":1, "t":"<type>", "seq":<int>, ...}`.
   `carrier` is a player slot.
 - `win_prob`: P(home wins) from the model's value head, 0..1.
 
+#### Additive v1.x: `teamstats`
+Snapshots may include a full per-game team-stat accumulator. This is additive
+under protocol `v:1`; clients that do not render it should ignore it.
+
+```json
+"teamstats":{
+  "home":{"blocks":12,"tier":[9,2,1],"dodge":[8,10],"gfi":[5,6],
+          "pickup":[2,3],"turnovers":1,"pass":1,"handoff":1,"foul":2},
+  "away":{"blocks":7,"tier":[3,3,1],"dodge":[4,6],"gfi":[2,2],
+          "pickup":[1,2],"turnovers":2,"pass":0,"handoff":1,"foul":0}
+}
+```
+
+`tier` is `[good, even, bad]`, where good is attacker-choice 2d/3d, even is
+1d, and bad is defender-choice 2d-red/3d-red. Test rows use
+`[successes, attempts]`.
+
 ### `delta` — one decision (the common message, ~1-2/sec)
 ```json
 {"v":1,"t":"delta","seq":413,
@@ -87,10 +104,13 @@ All messages: `{"v":1, "t":"<type>", "seq":<int>, ...}`.
  "dice":null,
  "ev":null,
  "win_prob":0.65,
+ "teamstats":null,
  "feed":[{"kind":"move","text":"#1 Grimgor advances","side":"home"}]}
 ```
 Only changed fields are non-null. `moves` lists player position/stance
 changes this step (usually 1, can be several after a push chain).
+`teamstats` is the full object when the accumulator changed on that decision,
+otherwise `null`. Older protocol-v1 servers may omit it entirely.
 
 `action.probs`: the model's top-3 candidate actions with probabilities —
 render as the "AI is thinking" overlay just before/as the action animates.
@@ -107,7 +127,7 @@ odds card ("AI saw: 73% knockdown, 22% ball out"). `dice.kind`:
 `{"target":4,"roll":5,"ok":true,"label":"Dodge"}`.
 
 `feed`: pre-formatted ticker lines, color-key by `kind`:
-`move|block|blitz|dodge|gfi|pickup|pass|handoff|td|turnover|injury|ko|cas|kickoff`.
+`move|block|blitz|dodge|gfi|pickup|pass|handoff|foul|td|turnover|injury|ko|cas|kickoff`.
 TD/turnover/cas lines deserve banner treatment (cas = the "memorial" —
 the backend marks first blood with `"first_blood":true`).
 
