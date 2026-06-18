@@ -15,6 +15,11 @@ typedef struct {
 
 typedef struct {
     bb_reach_cost cost[BB_PITCH_LEN][BB_PITCH_WID];
+    // Path metadata for the selected cheapest path to each square. Source has
+    // len 0 and prev_x/prev_y == -1. Unreachable squares have len 0.
+    uint8_t len[BB_PITCH_LEN][BB_PITCH_WID];
+    int8_t prev_x[BB_PITCH_LEN][BB_PITCH_WID];
+    int8_t prev_y[BB_PITCH_LEN][BB_PITCH_WID];
 } bb_reach_field;
 
 // R6v1 aggregate around a target square. any_free means at least one standing,
@@ -67,5 +72,29 @@ int bb_def_threat_turns(const bb_match* m, int slot);
 // (the defending team, i.e. the team whose own turn just ended) faces from the
 // OTHER team. Pure geometry, O(players), no ball model, no Dijkstra.
 bb_def_threat bb_def_threat_eval(const bb_match* m, int team);
+
+// R6v2 threat annuity (docs/threat-annuity-design.md, locked 2026-06-18).
+// Pure decision-time scalar around the CURRENT ball carrier:
+//   T = sum(adjacent standing enemies' excess) + best non-adjacent blitz excess
+// capped at BB_CARRIER_THREAT_T_MAX. The evaluator uses reachability paths for
+// movement probability and bb_block_ev from a temp-position clone for block EV.
+#define BB_CARRIER_THREAT_T_MAX 2.0f
+
+typedef struct {
+    int carrier;             // BB_NO_PLAYER when no held carrier was priced
+    int carrier_team;        // -1 when no held carrier was priced
+    float baseline;          // engine-computed cage-dive reference
+    float adjacent_excess;   // uncapped adjacent free-block pool
+    float blitz_excess;      // uncapped best movement-reachable enemy
+    float uncapped_total;    // adjacent_excess + blitz_excess
+    float capped_total;      // min(uncapped_total, BB_CARRIER_THREAT_T_MAX)
+    int enemies_considered;  // on-pitch standing enemies
+    int adjacent_enemies;    // adjacent standing enemies included in the sum
+    int reachable_enemies;   // non-adjacent standing enemies with a path
+} bb_carrier_threat_breakdown;
+
+float bb_carrier_threat_baseline(void);
+float bb_carrier_threat_eval(const bb_match* m,
+                             bb_carrier_threat_breakdown* out);
 
 #endif // BB_REACHABILITY_H

@@ -57,6 +57,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>   // sqrtf — aggregate-stat-matching pseudo-reward (D114)
+#include <stdio.h>
 
 // --- Engine amalgamation (build.sh compiles binding.c as a single TU) -------
 // `engine/` and `bb/` next to this header are symlinks in the dev tree
@@ -188,6 +189,7 @@ typedef struct {
     float ep_touchbacks;        // kickoff touchbacks caused by the kicking team
     float carrier_exposed_full; // R6v1 full carrier-exposure firings
     float carrier_exposed_soft; // R6v1 one-roll carrier-exposure firings
+    float ep_carrier_threat;    // R6v2 carrier-threat annuity T (per ep)
     float def_threats_1t;       // R12v1 unmitigated 1-turn deep threats (per ep)
     float def_threats_2t;       // R12v1 unmitigated 2-turn deep threats (per ep)
     // Learner (slot 0) score vs frozen bank b on envs tagged b+1; selfplay.py
@@ -325,6 +327,13 @@ typedef struct {
     // adjacent access requires exactly one dodge or GFI. Positive magnitude;
     // 0 = off.
     float reward_carrier_exposure_soft;
+    // Carrier-threat annuity (R6v2, locked 2026-06-18): replaces R6v1's
+    // one-sided exposure fine when enabled. At settled own-turn-end while a
+    // team holds the ball, compute T = excess adjacent free-block threat plus
+    // the best non-adjacent blitz threat, capped at BB_CARRIER_THREAT_T_MAX.
+    // Defender earns +k*T; holder earns +k*(T_max-T). Positive-positive with
+    // constant sum k*T_max per turn. Mutually exclusive with R6v1 knobs.
+    float reward_carrier_threat;
     // Defensive scoring-lane threat penalty (R12v1, D133-A): the DUAL of R6v1.
     // At settled own-turn-end, charge the team-whose-turn-just-ended a positive
     // magnitude (via subtraction) for each UNMITIGATED (unmarked) opposing
@@ -445,6 +454,7 @@ typedef struct {
     int ep_turns[2], ep_turns_with_ball[2];
     int prev_active_team;       // turn-boundary detector for possession_rate
     int ep_carrier_exposed_full, ep_carrier_exposed_soft;
+    float ep_carrier_threat;
     int ep_def_threats_1t, ep_def_threats_2t; // R12v1 unmitigated deep threats
     // Per-team behavior counters for the spectator's live archetype plates
     // ("BRUISER"/"BALLHAWK"/...): contact = block+blitz declarations, ball =
@@ -525,6 +535,17 @@ typedef struct {
     int setup_block_start[BBE_HEAD_ARG];   // projected arg -> block start (-1)
     uint16_t setup_sq_off[BBE_HEAD_SQ];    // sq -> template offset (0xFFFF)
 } Bloodbowl;
+
+static void bbe_validate_reward_config(const Bloodbowl* env) {
+    if (env->reward_carrier_threat != 0.0f &&
+        (env->reward_carrier_exposure != 0.0f ||
+         env->reward_carrier_exposure_soft != 0.0f)) {
+        fprintf(stderr,
+                "bloodbowl: reward_carrier_threat replaces the legacy "
+                "reward_carrier_exposure knobs; set one R6 arm only\n");
+        abort();
+    }
+}
 
 // v5 macro-moves (D82): forward decls — used by obs encode before definition
 static void bbe_macro_reach(Bloodbowl* env, const bb_match* m, int mover,
@@ -1429,6 +1450,7 @@ static void bbe_reset_match(Bloodbowl* env) {
     env->ep_turns_with_ball[0] = env->ep_turns_with_ball[1] = 0;
     env->prev_active_team = env->match.active_team;
     env->ep_carrier_exposed_full = env->ep_carrier_exposed_soft = 0;
+    env->ep_carrier_threat = 0.0f;
     env->ep_def_threats_1t = env->ep_def_threats_2t = 0;
     memset(env->ep_dodge_att, 0, sizeof env->ep_dodge_att);
     memset(env->ep_dodge_ok, 0, sizeof env->ep_dodge_ok);
@@ -1504,6 +1526,7 @@ static void c_reset(Bloodbowl* env) {
         env->reward_td = 1.0f;
         env->reward_win = 3.0f;
     }
+    bbe_validate_reward_config(env);
     bbe_reset_match(env);
     bbe_emit_all(env);
 }
@@ -1595,6 +1618,7 @@ static void bbe_finish_episode(Bloodbowl* env) {
     env->log.ep_touchbacks += (float)env->ep_touchbacks;
     env->log.carrier_exposed_full += (float)env->ep_carrier_exposed_full;
     env->log.carrier_exposed_soft += (float)env->ep_carrier_exposed_soft;
+    env->log.ep_carrier_threat += env->ep_carrier_threat;
     env->log.def_threats_1t += (float)env->ep_def_threats_1t;
     env->log.def_threats_2t += (float)env->ep_def_threats_2t;
     // --- Aggregate-statistic-matching pseudo-reward (D114) ------------------
@@ -2108,6 +2132,30 @@ static void c_step(Bloodbowl* env) {
                     env->reward_ptr[t][0] -= env->reward_carrier_exposure_soft;
                     env->ep_return[t] -= env->reward_carrier_exposure_soft;
                     env->ep_carrier_exposed_soft++;
+                }
+            }
+            // R6v2 carrier-threat annuity (locked 2026-06-18): replacement
+            // arm for the legacy R6 exposure fine. Fires once at a genuine
+            // settled own-turn-end when anyone holds the ball. T is computed
+            // from decision-time EV only: adjacent free blocks are summed, and
+            // only the best non-adjacent movement threat is pooled as the
+            // single blitz. Rewards are positive-positive with constant sum
+            // k*T_max; raw uncapped T is logged for visibility.
+            if (pre_in_team_turn && env->reward_carrier_threat != 0.0f &&
+                m->ball.state == BB_BALL_HELD) {
+                bb_carrier_threat_breakdown th;
+                float tc = bb_carrier_threat_eval(m, &th);
+                if (th.carrier != BB_NO_PLAYER) {
+                    int holder = th.carrier_team;
+                    int defender = 1 - holder;
+                    float def_r = env->reward_carrier_threat * tc;
+                    float hold_r = env->reward_carrier_threat *
+                                   (BB_CARRIER_THREAT_T_MAX - tc);
+                    env->reward_ptr[defender][0] += def_r;
+                    env->reward_ptr[holder][0] += hold_r;
+                    env->ep_return[defender] += def_r;
+                    env->ep_return[holder] += hold_r;
+                    env->ep_carrier_threat += th.uncapped_total;
                 }
             }
             // R12v1 defensive scoring-lane threat (D133-A): the DUAL of R6v1.

@@ -89,6 +89,8 @@ static void apply_kwargs(Env* env, Dict* kwargs) {
     env->reward_carrier_exposure = (float)kw(kwargs, "reward_carrier_exposure", 0.0);
     env->reward_carrier_exposure_soft =
         (float)kw(kwargs, "reward_carrier_exposure_soft", 0.0);
+    env->reward_carrier_threat = (float)kw(kwargs, "reward_carrier_threat", 0.0);
+    bbe_validate_reward_config(env);
     // R12v1 defensive scoring-lane threat penalties (D133-A), positive
     // magnitudes charged via -=. 1-turn (hard) + optional 2-turn (soft) tiers.
     env->reward_defensive_threat = (float)kw(kwargs, "reward_defensive_threat", 0.0);
@@ -217,7 +219,7 @@ void my_log(Log* log, Dict* out) {
     //
     // CAPACITY: vec_log (src/bindings_cpu.cpp / bindings.cu) hands us a
     // create_dict(64) and appends "n" after we return — keep total keys < 64.
-    // We emit 56. Growing past the call-site capacity is SILENT HEAP
+    // We emit 57. Growing past the call-site capacity is SILENT HEAP
     // CORRUPTION upstream (assert compiles out under NDEBUG); our vendored
     // dict_set aborts loudly instead (training/puffer_dict_capacity.patch).
     // History: key count hit 37 vs capacity 32 when slot scores + demo
@@ -255,6 +257,7 @@ void my_log(Log* log, Dict* out) {
     dict_set(out, "ep_touchbacks", log->ep_touchbacks);
     dict_set(out, "carrier_exposed_full", log->carrier_exposed_full);
     dict_set(out, "carrier_exposed_soft", log->carrier_exposed_soft);
+    dict_set(out, "ep_carrier_threat", log->ep_carrier_threat);
     dict_set(out, "ep_def_threats_1t", log->def_threats_1t);
     dict_set(out, "ep_def_threats_2t", log->def_threats_2t);
     dict_set(out, "error_episodes", log->error_episodes);

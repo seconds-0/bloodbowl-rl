@@ -243,3 +243,68 @@ BB_TEST(puffer_reward_kickoff_touchback_default_zero_no_reward) {
     check_float(f.env.ep_return[BB_AWAY], 0.0f);
     BB_CHECK_EQ(f.env.ep_touchbacks, 1);
 }
+
+static int build_carrier_threat_env(RewardFixture* f,
+                                    float reward_carrier_threat) {
+    setup_env_buffers(f);
+    Bloodbowl* env = &f->env;
+    env->reward_carrier_threat = reward_carrier_threat;
+    bbe_validate_reward_config(env);
+
+    fx_match_midturn(&env->match, BB_HOME, 0);
+    int carrier = fx_lineman(&env->match, BB_HOME, 0, 13, 7);
+    fx_ball_held(&env->match, carrier);
+    fx_lineman(&env->match, BB_AWAY, 0, 13, 8); // adjacent free block threat
+    fx_lineman(&env->match, BB_AWAY, 1, 23, 12);
+
+    bb_advance(&env->match, &env->rng);
+    bbe_refresh_legal(env);
+    env->prev_active_team = env->match.active_team;
+    env->pending_pickup_slot = -1;
+    env->pending_gfi_slot = -1;
+    env->pending_dodge_slot = -1;
+    env->possessor = BB_HOME;
+    env->pot_fetch_prev[0] = env->pot_fetch_prev[1] = -1.0f;
+    env->pot_carry_prev[0] = env->pot_carry_prev[1] = -1.0f;
+    env->score_prev[0] = env->score_start[0] = env->match.score[0];
+    env->score_prev[1] = env->score_start[1] = env->match.score[1];
+    bbe_emit_all(env);
+    return carrier;
+}
+
+BB_TEST(puffer_reward_carrier_threat_symmetric_charge_sums_constant) {
+    RewardFixture f;
+    build_carrier_threat_env(&f, 0.05f);
+
+    bb_carrier_threat_breakdown th;
+    float tc = bb_carrier_threat_eval(&f.env.match, &th);
+    BB_CHECK(th.carrier_team == BB_HOME);
+    BB_CHECK(tc > 0.0f);
+
+    step_action(&f, (bb_action){BB_A_END_TURN, 0, 0, 0});
+    float want_home = 0.05f * (BB_CARRIER_THREAT_T_MAX - tc);
+    float want_away = 0.05f * tc;
+    check_float(f.rewards[BB_HOME], want_home);
+    check_float(f.rewards[BB_AWAY], want_away);
+    check_float(f.rewards[BB_HOME] + f.rewards[BB_AWAY],
+                0.05f * BB_CARRIER_THREAT_T_MAX);
+    check_float(f.env.ep_return[BB_HOME], want_home);
+    check_float(f.env.ep_return[BB_AWAY], want_away);
+    check_float(f.env.ep_carrier_threat, th.uncapped_total);
+}
+
+BB_TEST(puffer_reward_carrier_threat_default_zero_inert) {
+    RewardFixture f;
+    build_carrier_threat_env(&f, 0.0f);
+
+    bb_carrier_threat_breakdown th;
+    float tc = bb_carrier_threat_eval(&f.env.match, &th);
+    BB_CHECK(tc > 0.0f); // the state has signal; default-zero ignores it
+
+    step_action(&f, (bb_action){BB_A_END_TURN, 0, 0, 0});
+    check_float(f.rewards[BB_HOME], 0.0f);
+    check_float(f.rewards[BB_AWAY], 0.0f);
+    check_float(f.env.ep_return[BB_HOME], 0.0f);
+    check_float(f.env.ep_return[BB_AWAY], 0.0f);
+    check_float(f.env.ep_carrier_threat, 0.0f);
+}

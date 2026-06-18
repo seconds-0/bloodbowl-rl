@@ -975,23 +975,31 @@ static void move_apply(bb_match* m, bb_action a, bb_rng* rng) {
 const bb_proc_vtable bb_proc_move_vtable = {move_advance, move_legal, move_apply};
 
 // --- Obs-v4 decision support (docs/obs-v4-spec.md) ---------------------------
-// Success probability (x255) of `slot` stepping to (to_x, to_y): the product
-// of the rush / dodge / pickup tests the STEP apply path above would push,
-// each built from the SAME bb_ctx + bb_hook_mods + bb_test_target math (no
-// modifier law duplicated). Pure — no RNG, no mutation. Tentacles excluded
+// Success-probability components for `slot` stepping to (to_x, to_y): the
+// rush / dodge / pickup tests the STEP apply path above would push, each built
+// from the SAME bb_ctx + bb_hook_mods + bb_test_target math (no modifier law
+// duplicated). Pure — no RNG, no mutation. Tentacles excluded
 // (opponent-conditional pre-move interrupt, not a test the mover rolls).
 // Nat-1/nat-6 law bounds each test's probability to [1/6, 5/6].
-int bb_step_success_p255(const bb_match* m, int slot, int to_x, int to_y,
-                         int is_blitz) {
+void bb_step_success_components(const bb_match* m, int slot, int to_x, int to_y,
+                                int is_blitz, int* rush_test, float* rush_p,
+                                int* dodge_test, float* dodge_p,
+                                int* pickup_test, float* pickup_p) {
     const bb_player* p = &m->players[slot];
-    float prob = 1.0f;
+    if (rush_test) *rush_test = 0;
+    if (rush_p) *rush_p = 1.0f;
+    if (dodge_test) *dodge_test = 0;
+    if (dodge_p) *dodge_p = 1.0f;
+    if (pickup_test) *pickup_test = 0;
+    if (pickup_p) *pickup_p = 1.0f;
     if (p->moved >= p->ma) {
         bb_ctx rc = {BB_TEST_RUSH, (uint8_t)slot, BB_NO_PLAYER, (uint8_t)slot,
                      (int8_t)p->x, (int8_t)p->y, (int8_t)to_x, (int8_t)to_y,
                      -1, (uint8_t)is_blitz};
         int rmod = bb_hook_mods((bb_match*)m, &rc);
         if (m->weather == BB_WEATHER_BLIZZARD) rmod -= 1;
-        prob *= (float)(7 - bb_test_target(2, rmod)) / 6.0f;
+        if (rush_test) *rush_test = 1;
+        if (rush_p) *rush_p = (float)(7 - bb_test_target(2, rmod)) / 6.0f;
     }
     if (bb_tackle_zones(m, BB_TEAM_OF(slot), p->x, p->y) > 0) {
         bb_ctx c = {BB_TEST_DODGE, (uint8_t)slot, BB_NO_PLAYER, (uint8_t)slot,
@@ -999,7 +1007,8 @@ int bb_step_success_p255(const bb_match* m, int slot, int to_x, int to_y,
                     -1, (uint8_t)is_blitz};
         int mod = -bb_tackle_zones(m, BB_TEAM_OF(slot), to_x, to_y) +
                   bb_hook_mods((bb_match*)m, &c);
-        prob *= (float)(7 - bb_test_target(p->ag, mod)) / 6.0f;
+        if (dodge_test) *dodge_test = 1;
+        if (dodge_p) *dodge_p = (float)(7 - bb_test_target(p->ag, mod)) / 6.0f;
     }
     if (m->ball.state == BB_BALL_ON_GROUND && m->ball.x == to_x &&
         m->ball.y == to_y) {
@@ -1009,7 +1018,21 @@ int bb_step_success_p255(const bb_match* m, int slot, int to_x, int to_y,
         int mod = -bb_tackle_zones(m, BB_TEAM_OF(slot), to_x, to_y);
         if (m->weather == BB_WEATHER_RAIN) mod -= 1;
         mod += bb_hook_mods((bb_match*)m, &pc);
-        prob *= (float)(7 - bb_test_target(p->ag, mod)) / 6.0f;
+        if (pickup_test) *pickup_test = 1;
+        if (pickup_p) *pickup_p = (float)(7 - bb_test_target(p->ag, mod)) / 6.0f;
     }
+}
+
+int bb_step_success_p255(const bb_match* m, int slot, int to_x, int to_y,
+                         int is_blitz) {
+    int rush_test, dodge_test, pickup_test;
+    float rush_p, dodge_p, pickup_p;
+    bb_step_success_components(m, slot, to_x, to_y, is_blitz,
+                               &rush_test, &rush_p, &dodge_test, &dodge_p,
+                               &pickup_test, &pickup_p);
+    (void)rush_test;
+    (void)dodge_test;
+    (void)pickup_test;
+    float prob = rush_p * dodge_p * pickup_p;
     return (int)(prob * 255.0f + 0.5f);
 }
