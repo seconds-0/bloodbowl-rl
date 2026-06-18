@@ -1,6 +1,7 @@
 // proc_turn.c — TEAM_TURN, ACTIVATION, TURNOVER.
 #include "bb/bb_proc.h"
 #include "bb/bb_hooks.h"
+#include "bb/bb_reachability.h"
 
 // ===== TEAM_TURN =============================================================
 // a = team. phase 0: turn start bookkeeping. phase 1: activation loop.
@@ -206,6 +207,51 @@ static bool has_adjacent_downed_opponent(const bb_match* m, int slot) {
     return false;
 }
 
+static bool has_reachable_blitz_target(const bb_match* m, int slot) {
+    const bb_player* p = &m->players[slot];
+    if (p->location != BB_LOC_ON_PITCH) return false;
+    if (p->stance == BB_STANCE_STUNNED || p->stance == BB_STANCE_STUNNED_USED) {
+        return false;
+    }
+
+    bb_match adjusted;
+    const bb_match* rm = m;
+    if (p->stance == BB_STANCE_PRONE) {
+        adjusted = *m;
+        bb_player* ap = &adjusted.players[slot];
+        ap->stance = BB_STANCE_STANDING;
+        if (!bb_has_skill(&ap->skills, BB_SK_JUMP_UP)) {
+            if (ap->ma < 3) {
+                ap->moved = (uint8_t)ap->ma;
+                ap->rushes = (uint8_t)bb_max_rushes(&adjusted, slot);
+            } else {
+                ap->moved = 3;
+            }
+        }
+        rm = &adjusted;
+    } else if (p->stance != BB_STANCE_STANDING) {
+        return false;
+    }
+
+    bb_reach_field field;
+    bb_reach_field_compute(rm, slot, &field);
+    int opp = 1 - BB_TEAM_OF(slot);
+    for (int s = opp * BB_TEAM_SLOTS; s < (opp + 1) * BB_TEAM_SLOTS; s++) {
+        const bb_player* q = &rm->players[s];
+        if (q->location != BB_LOC_ON_PITCH) continue;
+        if (q->stance != BB_STANCE_STANDING) continue;
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dy = -1; dy <= 1; dy++) {
+                if (!dx && !dy) continue;
+                int ax = q->x + dx, ay = q->y + dy;
+                if (!bb_on_pitch_xy(ax, ay)) continue;
+                if (field.cost[ax][ay].dodges != BB_REACH_UNREACHABLE) return true;
+            }
+        }
+    }
+    return false;
+}
+
 static void activation_advance(bb_match* m, bb_rng* rng) {
     (void)rng;
     bb_frame* f = bb_top(m);
@@ -319,7 +365,7 @@ static int activation_legal(const bb_match* m, bb_action* out) {
         // one may Kick Team-mate (budget bits in the parent KICKOFF frame's
         // y). No other action kinds exist during the Charge.
         const bb_frame* ko = &m->stack[m->stack_top - 2];
-        if (!(ko->y & 1)) {
+        if (!(ko->y & 1) && has_reachable_blitz_target(m, slot)) {
             out[n++] = (bb_action){BB_A_DECLARE, BB_ACT_BLITZ, 0, 0};
         }
         bool mate_adj = false;
@@ -351,7 +397,7 @@ static int activation_legal(const bb_match* m, bb_action* out) {
         has_adjacent_standing_opponent(m, slot)) {
         out[n++] = (bb_action){BB_A_DECLARE, BB_ACT_BLOCK, 0, 0};
     }
-    if (!m->blitz_used) {
+    if (!m->blitz_used && has_reachable_blitz_target(m, slot)) {
         out[n++] = (bb_action){BB_A_DECLARE, BB_ACT_BLITZ, 0, 0};
     }
     // A player need not hold the ball to declare a Pass/Hand-off action —

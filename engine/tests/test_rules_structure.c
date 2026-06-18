@@ -1144,6 +1144,96 @@ BB_TEST(struct_turnover_active_carrier_chain_pushed_into_crowd) {
 // A TEAM'S TURN — GAME "PLAYER ACTIVATIONS" / action-per-turn limits
 // ===========================================================================
 
+// GAME BLITZ ACTIONS!: the declared target must be reachable by the Move
+// Action portion of the Blitz, counting Rush squares.
+BB_TEST(struct_blitz_declaration_requires_reachable_standing_target) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int att = fx_lineman(&m, BB_HOME, 0, 5, 7); // MA6, max 2 Rushes
+    fx_lineman(&m, BB_AWAY, 0, 15, 7); // nearest adjacent square is 9 away
+    bb_rng rng;
+    bb_rng_script(&rng, 0, 0);
+
+    bb_status st = fx_run(&m, &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    st = fx_apply(&m, stx_act(BB_A_ACTIVATE, att, 0, 0), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK_EQ(fx_find(&m, stx_act(BB_A_DECLARE, BB_ACT_BLITZ, 0, 0)), -1);
+    BB_CHECK(fx_find(&m, stx_act(BB_A_DECLARE, BB_ACT_MOVE, 0, 0)) >= 0);
+}
+
+// Adjacent targets trivially qualify, and a target at the edge of MA + Rush
+// qualifies even though the coach is not forced to perform the block.
+BB_TEST(struct_blitz_declaration_allows_adjacent_and_rush_edge_targets) {
+    {
+        bb_match m;
+        fx_match_midturn(&m, BB_HOME, 0);
+        int att = fx_lineman(&m, BB_HOME, 0, 10, 7);
+        fx_lineman(&m, BB_AWAY, 0, 11, 7);
+        bb_rng rng;
+        bb_rng_script(&rng, 0, 0);
+
+        bb_status st = fx_run(&m, &rng);
+        BB_CHECK_EQ(st, BB_STATUS_DECISION);
+        st = fx_apply(&m, stx_act(BB_A_ACTIVATE, att, 0, 0), &rng);
+        BB_CHECK_EQ(st, BB_STATUS_DECISION);
+        BB_CHECK(fx_find(&m, stx_act(BB_A_DECLARE, BB_ACT_BLITZ, 0, 0)) >= 0);
+    }
+    {
+        bb_match m;
+        fx_match_midturn(&m, BB_HOME, 0);
+        int att = fx_lineman(&m, BB_HOME, 0, 5, 7); // reaches x=13 with 2 Rushes
+        fx_lineman(&m, BB_AWAY, 0, 14, 7);
+        bb_rng rng;
+        bb_rng_script(&rng, 0, 0);
+
+        bb_status st = fx_run(&m, &rng);
+        BB_CHECK_EQ(st, BB_STATUS_DECISION);
+        st = fx_apply(&m, stx_act(BB_A_ACTIVATE, att, 0, 0), &rng);
+        BB_CHECK_EQ(st, BB_STATUS_DECISION);
+        BB_CHECK(fx_find(&m, stx_act(BB_A_DECLARE, BB_ACT_BLITZ, 0, 0)) >= 0);
+        st = fx_apply(&m, stx_act(BB_A_DECLARE, BB_ACT_BLITZ, 0, 0), &rng);
+        BB_CHECK_EQ(st, BB_STATUS_DECISION);
+        BB_CHECK(fx_find(&m, stx_act(BB_A_END_ACTIVATION, 0, 0, 0)) >= 0);
+    }
+}
+
+BB_TEST(struct_blitz_declaration_still_hidden_after_blitz_used) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int att = fx_lineman(&m, BB_HOME, 0, 10, 7);
+    fx_lineman(&m, BB_AWAY, 0, 11, 7);
+    bb_rng rng;
+    bb_rng_script(&rng, 0, 0);
+
+    bb_status st = fx_run(&m, &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    m.blitz_used = 1;
+    st = fx_apply(&m, stx_act(BB_A_ACTIVATE, att, 0, 0), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK_EQ(fx_find(&m, stx_act(BB_A_DECLARE, BB_ACT_BLITZ, 0, 0)), -1);
+    BB_CHECK(fx_find(&m, stx_act(BB_A_DECLARE, BB_ACT_MOVE, 0, 0)) >= 0);
+}
+
+BB_TEST(struct_blitz_declaration_ignores_prone_and_stunned_targets) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int att = fx_lineman(&m, BB_HOME, 0, 10, 7);
+    int prone = fx_lineman(&m, BB_AWAY, 0, 11, 7);
+    int stunned = fx_lineman(&m, BB_AWAY, 1, 12, 7);
+    m.players[prone].stance = BB_STANCE_PRONE;
+    m.players[stunned].stance = BB_STANCE_STUNNED;
+    bb_rng rng;
+    bb_rng_script(&rng, 0, 0);
+
+    bb_status st = fx_run(&m, &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    st = fx_apply(&m, stx_act(BB_A_ACTIVATE, att, 0, 0), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK_EQ(fx_find(&m, stx_act(BB_A_DECLARE, BB_ACT_BLITZ, 0, 0)), -1);
+    BB_CHECK(fx_find(&m, stx_act(BB_A_DECLARE, BB_ACT_MOVE, 0, 0)) >= 0);
+}
+
 // GAME BLITZ ACTION: "Only a single Blitz Action can be declared each Turn."
 BB_TEST(struct_one_blitz_per_team_turn) {
     bb_match m;
