@@ -80,6 +80,46 @@ static void build_foul_env(RewardFixture* f, float reward_send_off,
     bbe_emit_all(env);
 }
 
+static int build_kickoff_touchback_env(RewardFixture* f,
+                                       float reward_kickoff_touchback,
+                                       const uint8_t* dice, int n_dice) {
+    setup_env_buffers(f);
+    Bloodbowl* env = &f->env;
+    env->reward_kickoff_touchback = reward_kickoff_touchback;
+    bb_match* m = &env->match;
+    memset(m, 0, sizeof(*m));
+    m->team_id[0] = BB_TEAM_HUMAN;
+    m->team_id[1] = BB_TEAM_ORC;
+    for (int s = 0; s < BB_NUM_PLAYERS; s++) {
+        m->players[s].location = BB_LOC_ABSENT;
+    }
+    m->half = 1;
+    m->weather = BB_WEATHER_PERFECT;
+    m->ball.state = BB_BALL_OFF_PITCH;
+    m->ball.carrier = BB_NO_PLAYER;
+    m->status = BB_STATUS_RUNNING;
+    m->kicking_team = BB_HOME;
+    bb_push(m, BB_PROC_MATCH, 0, 0, 0, 0);
+    bb_top(m)->phase = 2; // next advance pushes KICKOFF
+
+    int receiver = fx_lineman(m, BB_AWAY, 0, 20, 7);
+
+    bb_rng_script(&env->rng, dice, n_dice);
+    bb_advance(m, &env->rng);
+    bbe_refresh_legal(env);
+    env->prev_active_team = m->active_team;
+    env->pending_pickup_slot = -1;
+    env->pending_gfi_slot = -1;
+    env->pending_dodge_slot = -1;
+    env->possessor = -1;
+    env->pot_fetch_prev[0] = env->pot_fetch_prev[1] = -1.0f;
+    env->pot_carry_prev[0] = env->pot_carry_prev[1] = -1.0f;
+    env->score_prev[0] = env->score_start[0] = m->score[0];
+    env->score_prev[1] = env->score_start[1] = m->score[1];
+    bbe_emit_all(env);
+    return receiver;
+}
+
 static void step_action(RewardFixture* f, bb_action a) {
     Bloodbowl* env = &f->env;
     int agent = env->match.decision_team & 1;
@@ -157,4 +197,49 @@ BB_TEST(puffer_reward_send_off_default_zero_no_reward) {
     check_float(f.rewards[1], 0.0f);
     check_float(f.env.ep_return[0], 0.0f);
     check_float(f.env.ep_return[1], 0.0f);
+}
+
+BB_TEST(puffer_reward_kickoff_touchback_penalizes_kicking_team_once) {
+    RewardFixture f;
+    // Target (13,0); d8=1 -> (-1,-1), d6=2 -> (11,-2): off the pitch.
+    static const uint8_t dice[] = {1, 2, 1, 1};
+    int receiver = build_kickoff_touchback_env(&f, -0.125f, dice, 4);
+    BB_CHECK_EQ(f.env.match.decision_team, BB_HOME);
+
+    step_action(&f, (bb_action){BB_A_KICK_TARGET, 0, 13, 0});
+    BB_CHECK_EQ(f.env.match.decision_team, BB_AWAY);
+    BB_CHECK_EQ(f.env.match.ball.state, BB_BALL_OFF_PITCH);
+    BB_CHECK(f.env.match.stack_top > 0);
+    const bb_frame* top = &f.env.match.stack[f.env.match.stack_top - 1];
+    BB_CHECK_EQ(top->proc, BB_PROC_KICKOFF);
+    BB_CHECK_EQ(top->phase, 2);
+    check_float(f.rewards[BB_HOME], -0.125f);
+    check_float(f.rewards[BB_AWAY], 0.0f);
+    check_float(f.env.ep_return[BB_HOME], -0.125f);
+    check_float(f.env.ep_return[BB_AWAY], 0.0f);
+    BB_CHECK_EQ(f.env.ep_touchbacks, 1);
+    BB_CHECK_EQ(f.env.kickoff_touchback_latched, 1);
+
+    step_action(&f, (bb_action){BB_A_TOUCHBACK, receiver, 0, 0});
+    BB_CHECK_EQ(f.env.match.ball.state, BB_BALL_HELD);
+    BB_CHECK_EQ(f.env.match.ball.carrier, receiver);
+    check_float(f.rewards[BB_HOME], 0.0f);
+    check_float(f.rewards[BB_AWAY], 0.0f);
+    check_float(f.env.ep_return[BB_HOME], -0.125f);
+    check_float(f.env.ep_return[BB_AWAY], 0.0f);
+    BB_CHECK_EQ(f.env.ep_touchbacks, 1);
+    BB_CHECK_EQ(f.env.kickoff_touchback_latched, 0);
+}
+
+BB_TEST(puffer_reward_kickoff_touchback_default_zero_no_reward) {
+    RewardFixture f;
+    static const uint8_t dice[] = {1, 2, 1, 1};
+    build_kickoff_touchback_env(&f, 0.0f, dice, 4);
+
+    step_action(&f, (bb_action){BB_A_KICK_TARGET, 0, 13, 0});
+    check_float(f.rewards[BB_HOME], 0.0f);
+    check_float(f.rewards[BB_AWAY], 0.0f);
+    check_float(f.env.ep_return[BB_HOME], 0.0f);
+    check_float(f.env.ep_return[BB_AWAY], 0.0f);
+    BB_CHECK_EQ(f.env.ep_touchbacks, 1);
 }

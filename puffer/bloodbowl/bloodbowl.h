@@ -185,6 +185,7 @@ typedef struct {
     float knockdowns_inflicted; // actor's opponents downed during his window
     float knockdowns_own;       // actor's own players downed (failed dodges...)
     float ep_send_offs;         // own-team players finally Sent-off this episode
+    float ep_touchbacks;        // kickoff touchbacks caused by the kicking team
     float carrier_exposed_full; // R6v1 full carrier-exposure firings
     float carrier_exposed_soft; // R6v1 one-roll carrier-exposure firings
     float def_threats_1t;       // R12v1 unmitigated 1-turn deep threats (per ep)
@@ -268,6 +269,10 @@ typedef struct {
     // Send-off shaping (default 0 = off): one-sided penalty when an own player
     // is finally removed to the Sent-off box after Bribe / Argue-the-Call saves.
     float reward_send_off;
+    // Kickoff touchback shaping (default 0 = off): one-sided term charged to the
+    // KICKING team when its kickoff enters the touchback resolution. Configure as
+    // a negative value, e.g. -0.05, to teach safe placement without engine edits.
+    float reward_kickoff_touchback;
     // Surf shaping (default 0 = off): per player crowd-pushed off the pitch,
     // charged at the (deterministic) push event regardless of injury dice.
     float reward_surf_taken;
@@ -456,6 +461,8 @@ typedef struct {
     int ep_turnovers[2];
     int ep_knockdowns_inflicted, ep_knockdowns_own;
     int ep_send_offs;
+    int ep_touchbacks;
+    int kickoff_touchback_latched;
     float ep_return[BBE_AGENTS];
     bb_action legal[BB_LEGAL_MAX];
     int n_legal;
@@ -1435,6 +1442,8 @@ static void bbe_reset_match(Bloodbowl* env) {
     memset(env->ep_turnovers, 0, sizeof env->ep_turnovers);
     env->ep_knockdowns_inflicted = env->ep_knockdowns_own = 0;
     env->ep_send_offs = 0;
+    env->ep_touchbacks = 0;
+    env->kickoff_touchback_latched = 0;
     for (int t = 0; t < 2; t++) {
         env->ep_team_contact[t] = 0;
         env->ep_team_ball[t] = 0;
@@ -1583,6 +1592,7 @@ static void bbe_finish_episode(Bloodbowl* env) {
     env->log.knockdowns_inflicted += (float)env->ep_knockdowns_inflicted;
     env->log.knockdowns_own += (float)env->ep_knockdowns_own;
     env->log.ep_send_offs += (float)env->ep_send_offs;
+    env->log.ep_touchbacks += (float)env->ep_touchbacks;
     env->log.carrier_exposed_full += (float)env->ep_carrier_exposed_full;
     env->log.carrier_exposed_soft += (float)env->ep_carrier_exposed_soft;
     env->log.def_threats_1t += (float)env->ep_def_threats_1t;
@@ -1813,6 +1823,33 @@ static void bbe_count_knockdowns(Bloodbowl* env, uint32_t was_standing,
     }
 }
 
+static int bbe_kickoff_touchback_team(const bb_match* m) {
+    if (m->status != BB_STATUS_DECISION || m->stack_top <= 0) return -1;
+    const bb_frame* top = &m->stack[m->stack_top - 1];
+    if (top->proc != BB_PROC_KICKOFF || top->phase != 2) return -1;
+    if (m->ball.state != BB_BALL_OFF_PITCH) return -1;
+    if (m->kicking_team > 1 || top->a > 1) return -1;
+    if (top->a != m->kicking_team) return -1;
+    int kicking = (int)m->kicking_team;
+    if ((int)m->decision_team != 1 - kicking) return -1;
+    return kicking;
+}
+
+static void bbe_apply_kickoff_touchback_reward(Bloodbowl* env) {
+    int kicking = bbe_kickoff_touchback_team(&env->match);
+    if (kicking < 0) {
+        env->kickoff_touchback_latched = 0;
+        return;
+    }
+    if (env->kickoff_touchback_latched) return;
+    env->kickoff_touchback_latched = 1;
+    env->ep_touchbacks++;
+    if (env->reward_kickoff_touchback != 0.0f) {
+        env->reward_ptr[kicking][0] += env->reward_kickoff_touchback;
+        env->ep_return[kicking] += env->reward_kickoff_touchback;
+    }
+}
+
 static void c_step(Bloodbowl* env) {
     for (int a = 0; a < BBE_AGENTS; a++) {
         env->reward_ptr[a][0] = 0.0f;
@@ -2031,6 +2068,7 @@ static void c_step(Bloodbowl* env) {
             env->macro_len = 0;
             env->macro_pos = 0;
         }
+        bbe_apply_kickoff_touchback_reward(env);
         env->reach_mover = -1;  // state advanced: reachability is stale
         // Possession-rate bookkeeping: when the active team flips, the
         // previous team's turn ENDED — score whether they ended it holding,

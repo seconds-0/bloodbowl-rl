@@ -72,6 +72,7 @@ static void apply_kwargs(Env* env, Dict* kwargs) {
     env->reward_injury_taken = (float)kw(kwargs, "reward_injury_taken", 0.0);
     env->reward_injury_value_scaled = (int)kw(kwargs, "reward_injury_value_scaled", 0.0);
     env->reward_send_off = (float)kw(kwargs, "reward_send_off", 0.0);
+    env->reward_kickoff_touchback = (float)kw(kwargs, "reward_kickoff_touchback", 0.0);
     env->reward_surf_taken = (float)kw(kwargs, "reward_surf_taken", 0.0);
     env->reward_surf_inflicted = (float)kw(kwargs, "reward_surf_inflicted", 0.0);
     // Profile C exposure-EV + sequencing knobs (bb_blockev; spec defaults
@@ -216,7 +217,7 @@ void my_log(Log* log, Dict* out) {
     //
     // CAPACITY: vec_log (src/bindings_cpu.cpp / bindings.cu) hands us a
     // create_dict(64) and appends "n" after we return — keep total keys < 64.
-    // We emit 55. Growing past the call-site capacity is SILENT HEAP
+    // We emit 56. Growing past the call-site capacity is SILENT HEAP
     // CORRUPTION upstream (assert compiles out under NDEBUG); our vendored
     // dict_set aborts loudly instead (training/puffer_dict_capacity.patch).
     // History: key count hit 37 vs capacity 32 when slot scores + demo
@@ -251,6 +252,7 @@ void my_log(Log* log, Dict* out) {
     dict_set(out, "knockdowns_inflicted", log->knockdowns_inflicted);
     dict_set(out, "knockdowns_own", log->knockdowns_own);
     dict_set(out, "ep_send_offs", log->ep_send_offs);
+    dict_set(out, "ep_touchbacks", log->ep_touchbacks);
     dict_set(out, "carrier_exposed_full", log->carrier_exposed_full);
     dict_set(out, "carrier_exposed_soft", log->carrier_exposed_soft);
     dict_set(out, "ep_def_threats_1t", log->def_threats_1t);
