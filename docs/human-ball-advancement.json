@@ -1,84 +1,66 @@
 {
-  "_status": "blocked_no_complete_replayed_games",
-  "_reason": "All local validation/lockstep replay scripts diverged before engine MATCH_OVER, so no full-game human ball-advancement baseline can be computed without either improving lockstep conformance or changing the methodology.",
-  "_method": "Re-sim of validation/lockstep human replays through the engine; ball tracking mirrors the env ball_fwd_adv/ball_path_len helpers (carrier-position ball xy, team-oriented forward coord, Chebyshev path, same possession-transition rules); aggregated per-game and per-team-turn, not per-possession.",
-  "_caveat": "human = FULL-GAME (kickoff->end); the live agent's dashboard number is per-EPISODE from CURRICULUM starts, so a fair agent comparison needs a full-game agent eval (demo_reset_pct 0) reporting the SAME per-game/per-team-turn units.",
-  "_source": "validation/lockstep/*.jsonl",
-  "_generated_utc": "2026-06-19T02:41:47.795845+00:00",
+  "_method": "parsed RECORDED FUMBBL ball trajectory from validation/normalized via lockstep_map parsing; full finished games; mirrors env ball_fwd_adv/ball_path_len; per-game + per-team-turn",
+  "_caveat": "human = full recorded games; the live agent dashboard number is per-EPISODE from CURRICULUM starts, so a fair agent comparison needs a full-game agent eval (demo_reset_pct 0) in the same units.",
+  "_source": "validation/normalized/*.jsonl",
+  "_generated_utc": "2026-06-19T08:40:28.865063+00:00",
   "_input_games": 401,
-  "games_processed": 0,
-  "games_failed": 401,
-  "total_possessions": 0,
-  "total_team_turns": 0,
-  "team_turns_per_game": null,
-  "possessions_per_game": null,
-  "ball_fwd_adv_per_game": null,
-  "ball_path_len_per_game": null,
-  "ball_fwd_adv_per_team_turn": null,
-  "ball_path_len_per_team_turn": null,
+  "games_processed": 401,
+  "games_failed": 0,
+  "total_possessions": 3232,
+  "total_team_turns": 14259,
+  "team_turns_per_game": 35.5586,
+  "possessions_per_game": 8.0599,
+  "ball_fwd_adv_per_game": 48.4838,
+  "ball_path_len_per_game": 65.0274,
+  "ball_fwd_adv_per_team_turn": 1.36349,
+  "ball_path_len_per_team_turn": 1.82874,
   "ball_fwd_adv_per_game_distribution": {
-    "p25": null,
-    "median": null,
-    "p75": null
+    "p25": 36.0,
+    "median": 48.0,
+    "p75": 59.0
   },
-  "_fwd_adv_per_possession_mean": null,
-  "_failure_class_counts": {
-    "ball": 2,
-    "dice": 178,
-    "illegal": 174,
-    "position": 32,
-    "state": 15
+  "_fwd_adv_per_possession_mean": 6.01547,
+  "_td_orientation_sanity": {
+    "td_possessions": 855,
+    "min_td_fwd_adv": 0,
+    "median_td_fwd_adv": 12,
+    "td_nonnegative": true,
+    "td_large_positive_count_ge_10": 502,
+    "td_large_positive_examples": [
+      19,
+      13,
+      19,
+      10,
+      22,
+      17,
+      19,
+      12,
+      15,
+      10,
+      13,
+      23
+    ],
+    "sample_td_fwd_adv": [
+      19,
+      13,
+      7,
+      19,
+      6,
+      10,
+      22,
+      2,
+      17,
+      5,
+      19,
+      12
+    ]
   },
-  "_failed_replays_sample": [
-    {
-      "replay": "1559380",
-      "fail_class": "illegal",
-      "fail_reason": "illegal action (9,0,8,4); 4 legal actions"
-    },
-    {
-      "replay": "1898990",
-      "fail_class": "illegal",
-      "fail_reason": "illegal action (9,0,19,2); 6 legal actions"
-    },
-    {
-      "replay": "1898996",
-      "fail_class": "illegal",
-      "fail_reason": "illegal action (22,0,0,0); 3 legal actions"
-    },
-    {
-      "replay": "1899012",
-      "fail_class": "dice",
-      "fail_reason": "engine consumed 0 dice; replay recorded 1"
-    },
-    {
-      "replay": "1899021",
-      "fail_class": "illegal",
-      "fail_reason": "illegal action (10,0,0,0); 7 legal actions"
-    },
-    {
-      "replay": "1899022",
-      "fail_class": "illegal",
-      "fail_reason": "illegal action (22,0,0,0); 3 legal actions"
-    },
-    {
-      "replay": "1899049",
-      "fail_class": "illegal",
-      "fail_reason": "illegal action (9,0,14,7); 8 legal actions"
-    },
-    {
-      "replay": "1899061",
-      "fail_class": "illegal",
-      "fail_reason": "illegal action (9,0,11,9); 6 legal actions"
-    },
-    {
-      "replay": "1899075",
-      "fail_class": "dice",
-      "fail_reason": "engine consumed 0 dice; replay recorded 2"
-    },
-    {
-      "replay": "1899084",
-      "fail_class": "illegal",
-      "fail_reason": "illegal action (6,23,0,0); 2 legal actions"
-    }
-  ]
+  "_sanity_checks": {
+    "team_turns_per_game_in_30_40_band": true,
+    "fwd_adv_positive_on_average": true,
+    "path_len_ge_abs_fwd_adv_violations": 0,
+    "td_orientation_large_positive_examples_present": true
+  },
+  "_failed_replays_sample": [],
+  "_authoritative_note": "tools/bb_ballstats.c is an engine re-simulation helper and is conformance-limited; this recorded-trajectory parser is the authoritative human baseline source."
 }
