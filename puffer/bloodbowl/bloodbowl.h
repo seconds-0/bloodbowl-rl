@@ -177,6 +177,8 @@ typedef struct {
     float possession_rate;      // fraction of team-turns ENDED holding the ball
                                 // (Alex 2026-06-06: integrates pickup success +
                                 // ball security; can't be farmed by attempts)
+    float ball_fwd_adv;         // mean net forward ball advance per possession
+    float ball_path_len;        // mean total ball path length per possession
     float blitzes;              // BB_A_DECLARE of BB_ACT_BLITZ
     float dodge_attempts;       // STEPs out of >=1 opposing TZ (dodge test due)
     float gfi_attempts;         // STEPs beyond MA (rush/GFI test due)
@@ -483,6 +485,10 @@ typedef struct {
     // match's real result, wherever it was resumed from).
     int score_start[2];
     int possessor;   // last settled possession: -1 none, else team; IN_AIR = limbo
+    float ep_ball_fwd_sum, ep_ball_path_sum;
+    int ep_ball_possessions;
+    float poss_pickup_fwd, poss_path;
+    int poss_last_x, poss_last_y;
     // Bootstrap potentials, per channel: deltas emitted only WITHIN a regime
     // (ball stays loose / same team keeps carrying); regime transitions emit
     // nothing — pickup itself is priced by reward_ball_gain. -1 = inactive.
@@ -1284,6 +1290,104 @@ static void bbe_emit_all(Bloodbowl* env) {
     }
 }
 
+static inline void bbe_ball_xy(const bb_match* m, int* x, int* y) {
+    if (m->ball.state == BB_BALL_HELD && m->ball.carrier < BB_NUM_PLAYERS) {
+        const bb_player* c = &m->players[m->ball.carrier];
+        *x = c->x;
+        *y = c->y;
+    } else {
+        *x = m->ball.x;
+        *y = m->ball.y;
+    }
+}
+
+static inline int bbe_forward_coord(int team, int x) {
+    return bb_endzone_x(team) == 0 ? (BB_PITCH_LEN - 1) - x : x;
+}
+
+static inline int bbe_cheb_dist(int x0, int y0, int x1, int y1) {
+    int dx = x0 > x1 ? x0 - x1 : x1 - x0;
+    int dy = y0 > y1 ? y0 - y1 : y1 - y0;
+    return dx > dy ? dx : dy;
+}
+
+static void bbe_start_ball_possession(Bloodbowl* env, int team, int x, int y) {
+    env->possessor = team;
+    env->poss_pickup_fwd = (float)bbe_forward_coord(team, x);
+    env->poss_path = 0.0f;
+    env->poss_last_x = x;
+    env->poss_last_y = y;
+}
+
+static void bbe_end_ball_possession(Bloodbowl* env, int x, int y) {
+    int team = env->possessor;
+    if (team < 0) return;
+    if (env->poss_last_x >= 0 && env->poss_last_y >= 0) {
+        env->poss_path += (float)bbe_cheb_dist(
+            env->poss_last_x, env->poss_last_y, x, y);
+    }
+    env->ep_ball_fwd_sum +=
+        (float)bbe_forward_coord(team, x) - env->poss_pickup_fwd;
+    env->ep_ball_path_sum += env->poss_path;
+    env->ep_ball_possessions++;
+    env->possessor = -1;
+    env->poss_pickup_fwd = 0.0f;
+    env->poss_path = 0.0f;
+    env->poss_last_x = -1;
+    env->poss_last_y = -1;
+}
+
+static void bbe_update_ball_possession(Bloodbowl* env, bool scored) {
+    bb_match* m = &env->match;
+    int x, y;
+    bbe_ball_xy(m, &x, &y);
+    if (env->possessor >= 0 &&
+        env->poss_last_x >= 0 && env->poss_last_y >= 0) {
+        env->poss_path += (float)bbe_cheb_dist(
+            env->poss_last_x, env->poss_last_y, x, y);
+        env->poss_last_x = x;
+        env->poss_last_y = y;
+    }
+
+    int pay_rewards =
+        env->reward_ball_gain != 0.0f || env->reward_ball_loss != 0.0f;
+    if (m->ball.state == BB_BALL_HELD) {
+        int cur = BB_TEAM_OF(m->ball.carrier);
+        if (cur != env->possessor) {
+            int prev = env->possessor;
+            if (prev >= 0) {
+                bbe_end_ball_possession(env, x, y);
+                if (!scored && pay_rewards) {
+                    env->reward_ptr[prev][0] += env->reward_ball_loss;
+                    env->ep_return[prev] += env->reward_ball_loss;
+                }
+            }
+            bbe_start_ball_possession(env, cur, x, y);
+            if (!scored && pay_rewards) {
+                env->reward_ptr[cur][0] += env->reward_ball_gain;
+                env->ep_return[cur] += env->reward_ball_gain;
+            }
+        }
+        if (scored) bbe_end_ball_possession(env, x, y);
+    } else if (m->ball.state == BB_BALL_ON_GROUND && env->possessor >= 0) {
+        int prev = env->possessor;
+        bbe_end_ball_possession(env, x, y);
+        if (pay_rewards) {
+            env->reward_ptr[prev][0] += env->reward_ball_loss;
+            env->ep_return[prev] += env->reward_ball_loss;
+        }
+    } else if (m->ball.state == BB_BALL_OFF_PITCH && env->possessor >= 0) {
+        for (int i = 0; i < m->stack_top; i++) {
+            if (m->stack[i].proc == BB_PROC_SETUP ||
+                m->stack[i].proc == BB_PROC_KICKOFF) {
+                bbe_end_ball_possession(env, x, y);
+                break;
+            }
+        }
+    }
+    // BB_BALL_IN_AIR: limbo — the active possession is judged when it settles.
+}
+
 static void bbe_reset_match(Bloodbowl* env) {
     env->episode++;
     bb_rng_seed(&env->procgen, env->seed * 2654435761u + env->episode, 11);
@@ -1477,6 +1581,13 @@ static void bbe_reset_match(Bloodbowl* env) {
     // and the Log's tds/score_diff deltas count only what happens from here.
     env->score_prev[0] = env->score_start[0] = env->match.score[0];
     env->score_prev[1] = env->score_start[1] = env->match.score[1];
+    env->ep_ball_fwd_sum = 0.0f;
+    env->ep_ball_path_sum = 0.0f;
+    env->ep_ball_possessions = 0;
+    env->poss_pickup_fwd = 0.0f;
+    env->poss_path = 0.0f;
+    env->poss_last_x = -1;
+    env->poss_last_y = -1;
     // Settled-possession baseline from the loaded ball state (a banked
     // carrier must not pay reward_ball_loss for a pre-existing loose ball,
     // nor earn reward_ball_gain for already holding it). Grounded/in-air/
@@ -1485,6 +1596,11 @@ static void bbe_reset_match(Bloodbowl* env) {
     env->possessor = env->match.ball.state == BB_BALL_HELD
                          ? BB_TEAM_OF(env->match.ball.carrier)
                          : -1;
+    if (env->possessor >= 0) {
+        int x, y;
+        bbe_ball_xy(&env->match, &x, &y);
+        bbe_start_ball_possession(env, env->possessor, x, y);
+    }
     // Potentials start inactive in both channels: the first post-reset step
     // primes them without emitting a delta, so a resumed carrier/loose ball
     // never books a phantom potential jump against the -1 sentinel.
@@ -1557,6 +1673,11 @@ static void bbe_finish_episode(Bloodbowl* env) {
         env->ep_return[a] += bonus[a];
         env->terminal_ptr[a][0] = 1.0f;
     }
+    if (env->possessor >= 0) {
+        int x, y;
+        bbe_ball_xy(m, &x, &y);
+        bbe_end_ball_possession(env, x, y);
+    }
     env->log.perf += result;
     env->log.slot_0_score += result;
     env->log.slot_1_score += 1.0f - result;
@@ -1605,6 +1726,11 @@ static void bbe_finish_episode(Bloodbowl* env) {
         int turns = env->ep_turns[0] + env->ep_turns[1];
         int held = env->ep_turns_with_ball[0] + env->ep_turns_with_ball[1];
         if (turns > 0) env->log.possession_rate += (float)held / (float)turns;
+    }
+    if (env->ep_ball_possessions > 0) {
+        float npos = (float)env->ep_ball_possessions;
+        env->log.ball_fwd_adv += env->ep_ball_fwd_sum / npos;
+        env->log.ball_path_len += env->ep_ball_path_sum / npos;
     }
     env->log.blitzes += (float)env->ep_blitzes;
     env->log.dodge_attempts += (float)ep_dodge_attempts;
@@ -2218,41 +2344,11 @@ static void c_step(Bloodbowl* env) {
                 env->score_prev[t] = m->score[t];
             }
         }
-        // Ball-possession shaping on SETTLED transitions only. Scoring or a
-        // drive reset clears possession without penalty — losing the ball to
-        // a touchdown or the half-time whistle isn't a fumble.
-        if (env->reward_ball_gain != 0.0f || env->reward_ball_loss != 0.0f) {
-            if (scored) {
-                env->possessor = -1;
-            } else if (m->ball.state == BB_BALL_HELD) {
-                int cur = BB_TEAM_OF(m->ball.carrier);
-                if (cur != env->possessor) {
-                    if (env->possessor >= 0) {
-                        env->reward_ptr[env->possessor][0] += env->reward_ball_loss;
-                        env->ep_return[env->possessor] += env->reward_ball_loss;
-                    }
-                    env->reward_ptr[cur][0] += env->reward_ball_gain;
-                    env->ep_return[cur] += env->reward_ball_gain;
-                    env->possessor = cur;
-                }
-            } else if (m->ball.state == BB_BALL_ON_GROUND && env->possessor >= 0) {
-                env->reward_ptr[env->possessor][0] += env->reward_ball_loss;
-                env->ep_return[env->possessor] += env->reward_ball_loss;
-                env->possessor = -1;
-            } else if (m->ball.state == BB_BALL_OFF_PITCH && env->possessor >= 0) {
-                // Drive reset (setup/kickoff on the stack) clears silently; a
-                // crowd-surfed carrier's ball stays in limbo until the
-                // throw-in settles, which then emits the loss above.
-                for (int i = 0; i < m->stack_top; i++) {
-                    if (m->stack[i].proc == BB_PROC_SETUP ||
-                        m->stack[i].proc == BB_PROC_KICKOFF) {
-                        env->possessor = -1;
-                        break;
-                    }
-                }
-            }
-            // BB_BALL_IN_AIR: limbo — judged when it settles.
-        }
+        // Settled possession transitions: shared by ball gain/loss shaping
+        // and possession-path telemetry. Scoring or a drive reset clears
+        // possession without penalty — losing the ball to a touchdown or the
+        // half-time whistle isn't a fumble.
+        bbe_update_ball_possession(env, scored);
         // Injury shaping: a player leaving the pitch to the KO or casualty
         // box punishes his coach and rewards the opponent (crowd-shoves and
         // failed-dodge self-injuries included — your attrition is always

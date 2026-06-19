@@ -219,7 +219,7 @@ void my_log(Log* log, Dict* out) {
     //
     // CAPACITY: vec_log (src/bindings_cpu.cpp / bindings.cu) hands us a
     // create_dict(64) and appends "n" after we return — keep total keys < 64.
-    // We emit 57. Growing past the call-site capacity is SILENT HEAP
+    // We emit 59. Growing past the call-site capacity is SILENT HEAP
     // CORRUPTION upstream (assert compiles out under NDEBUG); our vendored
     // dict_set aborts loudly instead (training/puffer_dict_capacity.patch).
     // History: key count hit 37 vs capacity 32 when slot scores + demo
@@ -245,6 +245,8 @@ void my_log(Log* log, Dict* out) {
     dict_set(out, "block_3dred_frac", log->block_3dred_frac);
     dict_set(out, "pickup_success", log->pickup_success);
     dict_set(out, "possession_rate", log->possession_rate);
+    dict_set(out, "ball_fwd_adv", log->ball_fwd_adv);
+    dict_set(out, "ball_path_len", log->ball_path_len);
     dict_set(out, "blitzes", log->blitzes);
     dict_set(out, "dodge_attempts", log->dodge_attempts);
     dict_set(out, "gfi_attempts", log->gfi_attempts);
