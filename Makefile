@@ -22,7 +22,7 @@ PUFFER_REWARD_TESTBIN := $(BUILD)/puffer_reward_tests
 PUFFER_CONTACT_TESTBIN := $(BUILD)/puffer_contact_bot_tests
 PUFFER_TESTBINS := $(PUFFER_REWARD_TESTBIN) $(PUFFER_CONTACT_TESTBIN)
 
-.PHONY: all test asan fuzz coverage coverage-run lockstep blockev-mc clean
+.PHONY: all test asan fuzz coverage coverage-run lockstep ballstats human-ball-advancement blockev-mc clean
 
 all: test
 
@@ -82,6 +82,17 @@ lockstep:
 	$(CC) $(CFLAGS) -Ipuffer/bloodbowl -Wno-unused-function \
 		tools/bb_lockstep.c -o $(BUILD)/bb_lockstep
 	@echo "run: ./$(BUILD)/bb_lockstep validation/lockstep/<id>.jsonl"
+
+# FUMBBL human ball-advancement baseline. Replays lockstep JSONL through the
+# engine and aggregates the same possession-path metric as the env, but in
+# docs/human-baseline.json units (per-game and per-team-turn).
+ballstats: $(OBJ)
+	$(CC) $(CFLAGS) tools/bb_ballstats.c $(OBJ) -o $(BUILD)/bb_ballstats -lm $(LDFLAGS)
+	@echo "run: ./$(BUILD)/bb_ballstats validation/lockstep/<id>.jsonl"
+
+human-ball-advancement: ballstats
+	python3 tools/human_ball_advancement.py --runner ./$(BUILD)/bb_ballstats \
+		--input validation/lockstep --output docs/human-ball-advancement.json
 
 # Regenerate golden traces (explicit; goldens change when rules change).
 # Links objects directly (constructor-registered skill hooks would be dropped
