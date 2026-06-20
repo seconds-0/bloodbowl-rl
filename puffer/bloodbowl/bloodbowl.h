@@ -2119,7 +2119,21 @@ static void c_step(Bloodbowl* env) {
                 env->ep_return[bteam] += exposure;
                 env->ep_return[1 - bteam] -= exposure;
                 if (env->reward_k_turnover != 0.0f) {
-                    float turnover_cost = env->reward_k_turnover * p_own_to;
+                    // Net-EV block discipline (D158): charge the turnover COST
+                    // against the takedown VALUE so a 2d-red goes net-negative
+                    // on low-value targets but stays +EV on the carrier/stars
+                    // (where p_def_removed*value / p_ball_out dominate). Use
+                    // ev.p_turnover (the BLOCK-DICE turnover prob), NOT p_own_to:
+                    // p_own_to folds in the blitz rush-fail turnover, which is
+                    // the SAME for 2d vs 2d-red and would dilute the dice-mix
+                    // signal this term exists to sharpen (adversarial review F2).
+                    // ATTACKER-ONLY (asymmetric, like the seq charge) is
+                    // INTENTIONAL: the turnover is the attacker's own-goal risk;
+                    // the opponent's free-turn benefit is already realized
+                    // through their own objective terms, so crediting the
+                    // defender here would double-pay them (review F4). Pre-dice
+                    // EV — cardinal-rule clean (D147).
+                    float turnover_cost = env->reward_k_turnover * ev.p_turnover;
                     env->reward_ptr[bteam][0] -= turnover_cost;
                     env->ep_return[bteam] -= turnover_cost;
                 }
