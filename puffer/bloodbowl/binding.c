@@ -219,7 +219,7 @@ void my_log(Log* log, Dict* out) {
     //
     // CAPACITY: vec_log (src/bindings_cpu.cpp / bindings.cu) hands us a
     // create_dict(64) and appends "n" after we return — keep total keys < 64.
-    // We emit 59. Growing past the call-site capacity is SILENT HEAP
+    // We emit 62. Growing past the call-site capacity is SILENT HEAP
     // CORRUPTION upstream (assert compiles out under NDEBUG); our vendored
     // dict_set aborts loudly instead (training/puffer_dict_capacity.patch).
     // History: key count hit 37 vs capacity 32 when slot scores + demo
@@ -238,6 +238,8 @@ void my_log(Log* log, Dict* out) {
     dict_set(out, "blocks_thrown", log->blocks_thrown);
     dict_set(out, "blocks_thrown_t0", log->blocks_thrown_t0);
     dict_set(out, "blocks_thrown_t1", log->blocks_thrown_t1);
+    dict_set(out, "blocks_vs_carrier", log->blocks_vs_carrier);
+    dict_set(out, "carrier_block_frac", log->carrier_block_frac);
     dict_set(out, "block_1d_frac", log->block_1d_frac);
     dict_set(out, "block_2d_frac", log->block_2d_frac);
     dict_set(out, "block_3d_frac", log->block_3d_frac);
@@ -255,6 +257,7 @@ void my_log(Log* log, Dict* out) {
     dict_set(out, "handoff_attempts", log->handoff_attempts);
     dict_set(out, "knockdowns_inflicted", log->knockdowns_inflicted);
     dict_set(out, "knockdowns_own", log->knockdowns_own);
+    dict_set(out, "carrier_knockdowns", log->carrier_knockdowns);
     dict_set(out, "ep_send_offs", log->ep_send_offs);
     dict_set(out, "ep_touchbacks", log->ep_touchbacks);
     dict_set(out, "carrier_exposed_full", log->carrier_exposed_full);

@@ -168,6 +168,8 @@ typedef struct {
     float blocks_thrown;
     float blocks_thrown_t0;
     float blocks_thrown_t1;
+    float blocks_vs_carrier;     // block targets declared against ball carrier
+    float carrier_block_frac;    // blocks_vs_carrier / max(1, blocks_thrown)
     float block_1d_frac;
     float block_2d_frac;
     float block_3d_frac;
@@ -187,6 +189,7 @@ typedef struct {
     float handoff_attempts;     // BB_A_HANDOFF_TARGET actions
     float knockdowns_inflicted; // actor's opponents downed during his window
     float knockdowns_own;       // actor's own players downed (failed dodges...)
+    float carrier_knockdowns;   // downed player was carrier pre-apply
     float ep_send_offs;         // own-team players finally Sent-off this episode
     float ep_touchbacks;        // kickoff touchbacks caused by the kicking team
     float carrier_exposed_full; // R6v1 full carrier-exposure firings
@@ -444,6 +447,7 @@ typedef struct {
     int ep_blocks, ep_blitzes;
     int ep_blocks_thrown;
     int ep_blocks_thrown_team[2];
+    int ep_blocks_vs_carrier;
     int ep_tds_team[2];
     // Block-dice tier distribution (Alex's blocking-rationality gauge): a
     // healthy game trends toward 2d/3d attacker-choice and away from red
@@ -472,6 +476,7 @@ typedef struct {
     int ep_pass_att[2], ep_handoff_att[2], ep_foul_att[2];
     int ep_turnovers[2];
     int ep_knockdowns_inflicted, ep_knockdowns_own;
+    int ep_carrier_knockdowns;
     int ep_send_offs;
     int ep_touchbacks;
     int kickoff_touchback_latched;
@@ -1545,6 +1550,7 @@ static void bbe_reset_match(Bloodbowl* env) {
     env->ep_blocks = env->ep_blitzes = 0;
     env->ep_blocks_thrown = 0;
     env->ep_blocks_thrown_team[0] = env->ep_blocks_thrown_team[1] = 0;
+    env->ep_blocks_vs_carrier = 0;
     env->ep_tds_team[0] = env->ep_tds_team[1] = 0;
     memset(env->ep_block_tier_team, 0, sizeof env->ep_block_tier_team);
     env->pending_pickup_slot = -1;
@@ -1567,6 +1573,7 @@ static void bbe_reset_match(Bloodbowl* env) {
     memset(env->ep_foul_att, 0, sizeof env->ep_foul_att);
     memset(env->ep_turnovers, 0, sizeof env->ep_turnovers);
     env->ep_knockdowns_inflicted = env->ep_knockdowns_own = 0;
+    env->ep_carrier_knockdowns = 0;
     env->ep_send_offs = 0;
     env->ep_touchbacks = 0;
     env->kickoff_touchback_latched = 0;
@@ -1702,6 +1709,10 @@ static void bbe_finish_episode(Bloodbowl* env) {
     env->log.blocks_thrown += (float)env->ep_blocks_thrown;
     env->log.blocks_thrown_t0 += (float)env->ep_blocks_thrown_team[0];
     env->log.blocks_thrown_t1 += (float)env->ep_blocks_thrown_team[1];
+    env->log.blocks_vs_carrier += (float)env->ep_blocks_vs_carrier;
+    env->log.carrier_block_frac +=
+        (float)env->ep_blocks_vs_carrier /
+        (float)(env->ep_blocks_thrown > 0 ? env->ep_blocks_thrown : 1);
     int block_tier_sum[5];
     for (int i = 0; i < 5; i++) {
         block_tier_sum[i] = env->ep_block_tier_team[0][i] +
@@ -1740,6 +1751,7 @@ static void bbe_finish_episode(Bloodbowl* env) {
     env->log.handoff_attempts += (float)ep_handoff_attempts;
     env->log.knockdowns_inflicted += (float)env->ep_knockdowns_inflicted;
     env->log.knockdowns_own += (float)env->ep_knockdowns_own;
+    env->log.carrier_knockdowns += (float)env->ep_carrier_knockdowns;
     env->log.ep_send_offs += (float)env->ep_send_offs;
     env->log.ep_touchbacks += (float)env->ep_touchbacks;
     env->log.carrier_exposed_full += (float)env->ep_carrier_exposed_full;
@@ -1898,6 +1910,13 @@ static void bbe_count_action(Bloodbowl* env, bb_action act) {
     case BB_A_FOUL_TARGET:
         env->ep_foul_att[m->decision_team & 1]++;
         break;
+    case BB_A_BLOCK_TARGET:
+        if (m->ball.state == BB_BALL_HELD &&
+            m->ball.carrier != BB_NO_PLAYER &&
+            bb_slot_at(m, act.x, act.y) == (int)m->ball.carrier) {
+            env->ep_blocks_vs_carrier++;
+        }
+        break;
     case BB_A_CHOOSE_DIE: {
         // Exactly one die pick per RESOLVED block (incl. the Frenzy second
         // block) — the clean denominator for knockdown-conversion claims
@@ -1959,7 +1978,7 @@ static uint32_t bbe_standing_mask(const bb_match* m) {
 // A crowd-surfed player counts only when injured into a box (KO/CAS);
 // surfed-but-fine players return via RESERVES and are not knockdowns.
 static void bbe_count_knockdowns(Bloodbowl* env, uint32_t was_standing,
-                                 int actor) {
+                                 int actor, uint32_t carrier_pre_down_mask) {
     const bb_match* m = &env->match;
     for (int s = 0; s < BB_NUM_PLAYERS; s++) {
         if (!(was_standing & (1u << s))) continue;
@@ -1970,6 +1989,7 @@ static void bbe_count_knockdowns(Bloodbowl* env, uint32_t was_standing,
         if (!down) continue;
         if (BB_TEAM_OF(s) == actor) env->ep_knockdowns_own++;
         else env->ep_knockdowns_inflicted++;
+        if (carrier_pre_down_mask & (1u << s)) env->ep_carrier_knockdowns++;
     }
 }
 
@@ -2115,6 +2135,10 @@ static void c_step(Bloodbowl* env) {
             }
         }
         uint32_t was_standing = bbe_standing_mask(m);
+        uint32_t carrier_pre_down_mask =
+            (m->ball.state == BB_BALL_HELD && m->ball.carrier < BB_NUM_PLAYERS)
+                ? (1u << m->ball.carrier)
+                : 0u;
         // R12 turn-boundary gate (D136): capture, BEFORE the apply that may flip
         // active_team, whether the acting team is genuinely inside its own
         // BB_PROC_TEAM_TURN. The generic active_team-flip hook below also fires
@@ -2180,6 +2204,10 @@ static void c_step(Bloodbowl* env) {
                 if (!can_step(m, env->macro_mover)) break;
                 bb_action mact = {BB_A_STEP, 0, (uint8_t)nx, (uint8_t)ny};
                 bbe_count_action(env, mact);
+                if (m->ball.state == BB_BALL_HELD &&
+                    m->ball.carrier < BB_NUM_PLAYERS) {
+                    carrier_pre_down_mask |= 1u << m->ball.carrier;
+                }
                 bb_apply_trusted(m, mact, &env->rng);
                 bbe_macro_dbg_steps++;
                 if ((bbe_macro_dbg_steps % 200000) == 1)
@@ -2326,7 +2354,7 @@ static void c_step(Bloodbowl* env) {
             }
             env->prev_active_team = (int)m->active_team;
         }
-        bbe_count_knockdowns(env, was_standing, agent);
+        bbe_count_knockdowns(env, was_standing, agent, carrier_pre_down_mask);
         // Touchdown rewards.
         bool scored = false;
         for (int t = 0; t < 2; t++) {
