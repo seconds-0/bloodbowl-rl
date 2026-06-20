@@ -75,12 +75,13 @@ static void apply_kwargs(Env* env, Dict* kwargs) {
     env->reward_kickoff_touchback = (float)kw(kwargs, "reward_kickoff_touchback", 0.0);
     env->reward_surf_taken = (float)kw(kwargs, "reward_surf_taken", 0.0);
     env->reward_surf_inflicted = (float)kw(kwargs, "reward_surf_inflicted", 0.0);
-    // Profile C exposure-EV + sequencing knobs (bb_blockev; spec defaults
-    // when enabled: k_kd 0.06, k_value 0.5, k_ball 0.3, k_seq ~0.02).
+    // Profile C exposure-EV + sequencing/net-EV knobs (bb_blockev; spec
+    // defaults when enabled: k_kd 0.06, k_value 0.5, k_ball 0.3, k_seq ~0.02).
     env->reward_k_kd = (float)kw(kwargs, "reward_k_kd", 0.0);
     env->reward_k_value = (float)kw(kwargs, "reward_k_value", 0.0);
     env->reward_k_ball = (float)kw(kwargs, "reward_k_ball", 0.0);
     env->reward_k_seq = (float)kw(kwargs, "reward_k_seq", 0.0);
+    env->reward_k_turnover = (float)kw(kwargs, "reward_k_turnover", 0.0);
     // Possession annuity transfer per own-turn-ended-holding (suggested 0.03)
     env->reward_possession = (float)kw(kwargs, "reward_possession", 0.0);
     // Rush tax per GFI square at declaration (suggested 0.01-0.02)

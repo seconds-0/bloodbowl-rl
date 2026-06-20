@@ -306,6 +306,11 @@ typedef struct {
     // then destroys nothing the whistle wasn't about to). v1 scope: block
     // declarations only (movement-roll sequencing is a follow-up).
     float reward_k_seq;
+    // Net-EV turnover charge: attacker-only cost for the block's own turnover
+    // risk at declaration. Uses the same pre-dice p_own_to as sequencing,
+    // including the blitz Rush gate, but prices the turnover itself rather
+    // than wasted remaining activations.
+    float reward_k_turnover;
     // Possession annuity (Alex, 2026-06-06 — the reward-chain redesign):
     // ending your own team turn HOLDING the ball pays +p to the holder and
     // -p to the opponent (zero-sum transfer at the turn boundary). Holding
@@ -2050,7 +2055,8 @@ static void c_step(Bloodbowl* env) {
         // no dice have rolled yet). Standing attackers only: a prone Jump-Up
         // block routes through an extra gating test (rare; unpriced v1).
         if ((env->reward_k_kd != 0.0f || env->reward_k_value != 0.0f ||
-             env->reward_k_ball != 0.0f || env->reward_k_seq != 0.0f) &&
+             env->reward_k_ball != 0.0f || env->reward_k_seq != 0.0f ||
+             env->reward_k_turnover != 0.0f) &&
             act.type == BB_A_BLOCK_TARGET && m->stack_top > 0) {
             const bb_frame* mf = &m->stack[m->stack_top - 1];
             int batt = mf->a;
@@ -2112,6 +2118,11 @@ static void c_step(Bloodbowl* env) {
                 env->reward_ptr[1 - bteam][0] -= exposure;
                 env->ep_return[bteam] += exposure;
                 env->ep_return[1 - bteam] -= exposure;
+                if (env->reward_k_turnover != 0.0f) {
+                    float turnover_cost = env->reward_k_turnover * p_own_to;
+                    env->reward_ptr[bteam][0] -= turnover_cost;
+                    env->ep_return[bteam] -= turnover_cost;
+                }
                 // Sequencing charge: own-turnover risk x unbanked safe
                 // activations; exempt on the team's last turn of the half
                 // and during Charge! free activations (panel: a Charge!
