@@ -307,9 +307,10 @@ typedef struct {
     // declarations only (movement-roll sequencing is a follow-up).
     float reward_k_seq;
     // Net-EV turnover charge: attacker-only cost for the block's own turnover
-    // risk at declaration. Uses the same pre-dice p_own_to as sequencing,
-    // including the blitz Rush gate, but prices the turnover itself rather
-    // than wasted remaining activations.
+    // risk at declaration. Prices ev.p_turnover (the BLOCK-DICE own-turnover
+    // prob), NOT p_own_to — the rush-fail term in p_own_to is identical for 2d
+    // vs 2d-red and would dilute the dice-mix signal (D159 F2; do NOT revert).
+    // Prices the turnover itself, not wasted remaining activations (vs k_seq).
     float reward_k_turnover;
     // Possession annuity (Alex, 2026-06-06 — the reward-chain redesign):
     // ending your own team turn HOLDING the ball pays +p to the holder and

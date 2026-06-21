@@ -1,118 +1,119 @@
-# Reward-Discovery Integration Plan v2 (Claude + Codex synthesis, 2026-06-20)
+# Reward-Discovery Integration Plan v3 (dual-reviewed, 2026-06-20)
 
-Supersedes v1. Synthesizes Claude's draft (`analysis/reward-discovery/01..04` SOTA) with Codex's
-independent integration review (`.codex-reviews/reward-integration-codex.md`). Codex corrected several
-v1 errors — incorporated below, marked **[Codex]**. Invariants kept: decision-time-EV pricing (D147);
-win-rate/Elo-vs-frozen-anchors as the only ground truth; never-destroy-cloud-resources.
+Final synthesis. v1 (Claude) → v2 (+ Codex integration approach) → **v3 (+ Codex v2-review +
+adversarial-Claude review)**. The two v2 reviews are in `.codex-reviews/plan-v2-codex-review.md` and
+returned by the adversarial agent. Their load-bearing corrections are folded in and marked **[adv]** /
+**[codex]**. Invariants kept: decision-time-EV pricing (D147); win-rate/Elo-vs-frozen-anchors as the
+only ground truth; never-destroy-cloud-resources; back caps up to Mac on every cap (D160 lesson).
 
-## What changed v1 → v2 (the corrections that matter)
-1. **[Codex] KL-to-BC is NOT a ~1-day job.** The native CUDA backend (the production path; PPO
-   loss/optimizer are kernels in `vendor/PufferLib/src/pufferlib.cu` + `muon.cu`) **ignores** the torch
-   `bc_coef`/BC-CE patch in `torch_pufferl.py`. So: native **BC-pair CE** (load `.bbp` human pairs to
-   GPU, add masked 3-head CE to the optimizer step) = weeks of CUDA work; true on-policy KL-to-BC
-   (frozen teacher resident in native trainer) = a research project. Moved from Tier 1 → Tier 3.
-2. **[Codex] Human-stat-matching belongs in the OUTER objective, not an in-env reward.** Under D147 it
-   can't be episode-end reward shaping (the old D113-A statmatch term). It's the GERS upper-level
-   validation objective / sweep score — never a per-step or per-episode reward.
-3. **[Codex] Protein/GERS sweep BEFORE EA-SEED LLM-controller.** 8 numeric runtime-configured knobs =
-   tiny search space → cost-aware BO is the better first automation. EA-SEED only after structured trial
-   data exists, and as a propose-and-EXPLAIN step, never a silent optimizer.
-4. **[Codex] `reward_possession` is NOT PBRS-safe** (turn-end annuity stream, not optimum-invariant by
-   theorem) — v1 wrongly lumped it with the safe potentials. Only `reward_dist_ball`/`reward_dist_endzone`
-   are genuine delta-potentials; possession, the k-block-EV terms, and `reward_k_turnover` are
-   optimum-moving (D147-clean, but NOT hack-immune by construction). Audit corrected.
-5. **[Codex] Resumability + opponent separation** added (lessons from the credit-stop we just hit).
+## The headline reorder the reviews forced (READ THIS FIRST)
+**[adv HIGH-3] Validate the netblock finding from scratch BEFORE building any automation on it.** Every
+result so far is a single warm-start arm, one seed, no cold/BC-init control, one lineage — the exact
+profile D04 calls a likely lineage artifact, and the ledger has a *documented walk-back* (D34→D34-AMENDED
+retracted a from-scratch claim after a matched cold control). Automating a knob search whose objective is
+read off lineage-contaminated probes is "finding biased rewards faster." So **item #1 is: reproduce the
+net-EV turnover finding (2d-red↓ with scoring held) from a BC-init / cold start, ≥2 seeds, fixed budget,
+with CIs.** If it doesn't reproduce cold, the whole turnover economy — and any sweep that optimizes
+toward it — is suspect. Nothing in Tier 2 starts until this passes.
 
-## Guiding reframe
-We are doing **manual evolutionary bilevel reward shaping** (GERS): outer = us choosing knobs, inner =
-warm-started probe, objective = human-stat distance + Elo. Adopt in priority order: **trust the read →
-cheap automation (Protein) → richer feedback (LLM propose-explain) → learn-the-reward (research).**
+## Corrections folded into v3
+- **[adv HIGH-2] "#58 is a blocker" is FALSE.** The match-mode sweep fix is already landed locally
+  (D131: `2a78df5`/`ac155a3`/`473752e`) and a 16-trial sweep already ran (task #57). #58 is only the
+  upstream-PR courtesy. **Protein can run today on the local tree** — remove all "land #58 first" gating.
+- **[adv HIGH-1] The metric split is CODE, not read-only analysis.** "Low-value vs carrier-pressure
+  2d-red" is NOT measurable today: `block_2dred_frac` is a pure dice-tier histogram; carrier telemetry
+  isn't crossed with dice tier. Needs a new **`block_tier × target_value` 2-D telemetry crossing** (C +
+  binding + rebuild + resync). This is the first CODE task and it gates the metric the optimizer uses.
+- **[adv MEDIUM-4 — cardinal-rule extension] The composite outer objective must use PRE-DICE features
+  only.** The validated stat vector (bloodbowl.h:361) includes realized post-dice outcomes
+  (pickup/pass/GFI success, tds). Tuning knobs to match the agent's realized *success rates* to humans
+  launders outcome-matching up into the outer objective. **Restrict the optimization TARGET to pre-dice
+  / decision-mix features** (block-tier mix, declaration rates, positional/EV); keep realized-roll
+  successes + outcome counts as DIAGNOSTICS only.
+- **[adv MEDIUM-3] Elo-vs-anchors is a TRIPWIRE, not a maximization term.** If it's in the sweep score,
+  Protein hammering it rots the finite frozen anchor pool. Optimize human-stat-distance; use
+  Elo-vs-anchors only as an EvalStop constraint. Rotate/refresh the FINAL anchor set after any sweep.
+- **[codex M1] Soften PBRS language.** Even `dist_ball`/`dist_endzone` emit `Φ(s')−Φ(s)` (not
+  `γΦ(s')−Φ(s)`; γ=0.995) → "delta-potential scaffold / anneal-to-zero," not theorem-level "PBRS-safe."
+  `possession`/k-terms/k_turnover are optimum-moving.
+- **[codex M3] "frozen TRAIN opponent" = the frozen-bank / league-preseed selfplay pool**, NOT a
+  scripted opponent (native rejects scripted-opponent-with-learning, pufferl.py:191; use selfplay.py:120).
+- **[codex M2] Protein needs a real wrapper.** Current sweep observes training metrics or final
+  match_score, not a composite kickoff-stat-residual + anchor-Elo. → write an external resumable sweep
+  driver (or modify pufferl.py) that computes/logs the composite; decide whether early-stop uses a proxy
+  or waits for final eval.
+- **[codex L4] Force `reward_statmatch_scale=0`; never a sweep knob** (the in-env statmatch path still
+  exists, default 0 — keep it off and out of the search).
+- **[codex L5] Header struct comment fixed** (bloodbowl.h:309 said p_own_to; now ev.p_turnover per F2).
+- **[adv MEDIUM-2 / codex M2] Native BC-CE gated behind a CHEAP precursor** (below).
 
-## TIER 0 — Free / now (protect + cheap analysis)
-0. **[Codex #1] Protect netblock artifacts** — back the caps off the single credit-fragile box (DONE
-   this session: rsync to `runs/caps/`). Standing rule: cap → back up to Mac immediately.
-1. **Potential-shaping knob audit (corrected).** `dist_ball`/`dist_endzone` = delta-potentials
-   (scaffold-like, optimum-invariant-ish). `possession`, `k_kd/k_value/k_ball`, `k_turnover`, `rush_cost`
-   = optimum-MOVING (the hacking risk surface). Deliverable: the table in DECISIONS + note which raw
-   bonuses could be re-expressed as Φ-differences (e.g., k_value removal-EV → a team-value-on-pitch
-   potential). Read-only.
-2. **[Codex, loud] The metric fix: split low-value-target vs carrier-pressure 2d-red.** Aggregate
-   2d-red is the WRONG target — the netblock arc proves the next metric must distinguish low-value slop
-   (bad, suppress) from carrier-pressure desperation (often correct, keep). Without this the optimizer
-   removes correct violence. Use the carrier telemetry (blocks_vs_carrier, carrier_knockdowns, #64) +
-   a target-value split. **This gates everything downstream.**
+## TIER 0 — now (free + protect)
+0. **Back caps off the credit-fragile box** (DONE: `runs/caps/{netblock,violence}_cap.bin` on Mac).
+   Standing: cap → back up immediately.
+1. **Potential-shaping audit (corrected language).** `dist_ball`/`dist_endzone` = delta-potential
+   scaffold (anneal-to-zero candidates, NOT theorem-PBRS given γ mismatch). `possession`, `k_kd/k_value/
+   k_ball`, `k_turnover`, `rush_cost` = optimum-moving (the hacking risk surface). Table → DECISIONS.
 
-## TIER 1 — Make the read trustworthy + the outer objective honest (days, mostly orchestration)
-3. **[Codex] Composite probe score + kickoff-only stat scoring**, computed OUTSIDE the env (launcher/
-   tooling), as the GERS upper-level objective = weighted human-stat distance (kickoff-start eval, not
-   curriculum) + Elo-vs-anchors. Never an in-env reward.
-4. **Sign-pair logging** (orchestration, not the kernel): per eval, per anchor-archetype,
-   (Δcomposite-proxy, ΔElo-vs-FROZEN-anchors); flag the hacking quadrant.
-5. **EvalStop** (orchestration, NOT the PPO kernel): stop-and-keep-best on k=2 consecutive
-   Elo-vs-anchor declines even while shaped reward climbs.
-6. **[Codex] Sharp opponent separation:** one frozen TRAIN opponent (stationarity), a separate EVAL
-   anchor (sweep score), a quarantined FINAL anchor set (promotion only, never trained/tuned against).
-7. **Cross-ancestor warm-start probe** for FINALISTS only (not every candidate): re-read from 2
-   different lineages; ancestor-dependent behavior ⇒ reading the policy, not the reward.
+## TIER 1 — first CODE + make the read trustworthy (days)
+2. **[adv HIGH-1, first code task] Build the `block_tier × target_value` telemetry crossing** (low-value
+   vs carrier/high-value 2d-red). Gates the next metric. C + binding + rebuild + resync.
+3. **[adv HIGH-3, item #1 experiment] From-scratch/BC-init reproduction of the netblock turnover finding**
+   (≥2 seeds, CIs) — BEFORE any automation. Uses the live box.
+4. **Composite probe score** (orchestration, outside the env): **pre-dice features only** [adv M4],
+   kickoff-start eval, as the GERS upper-level objective. Elo-vs-anchors = separate tripwire [adv M3].
+5. **Sign-pair logging** (orchestration): per eval, per anchor-archetype, (Δcomposite, ΔElo-vs-anchors);
+   flag the hacking quadrant.
+6. **EvalStop** (orchestration, NOT the kernel): stop+keep-best on k=2 consecutive Elo-vs-anchor declines.
+7. **Opponent separation [codex M3]:** frozen TRAIN bank (selfplay pool, stationarity) / EVAL anchor
+   (sweep tripwire) / quarantined FINAL anchor set (promotion only; rotate after sweeps [adv M3]).
+8. **Cross-ancestor warm-start probe** for finalists only.
+9. **[adv MEDIUM-5] Re-express k_value (and k_kd where feasible) as a telescoping team-value/EV
+   potential**; validate optimum-invariance via shaping-anneal-to-zero (§04 #7). The highest-leverage
+   safety lever — schedule it, don't footnote it.
 
-## TIER 2 — Automate the outer loop (1–2 weeks)
-8. **[Codex, FIRST automation] Constrained, RESUMABLE Protein/GERS reward-knob sweep** centered on the
-   netblock economy. `search_center` = current knobs; `score` = composite (Tier-1 #3); `cost` =
-   wallclock; built-in early-stop. **[Codex] Protein's GP state is in-memory → write every trial
-   observation to durable JSON + be able to replay `observe()` after an interruption** (the credit-stop
-   lesson). DEPENDS: land the match-mode sweep PR (#58). Protein DOES drive native arms (`pufferl.py`
-   dispatches `_C` by default). Start 3–4 knobs around netblock.
-9. **EA-SEED LLM-controller — AFTER #8 has structured trial data.** Emit {per-stat observed, human-ref,
-   delta} + {per-knob contribution} (Eureka reflection) → LLM PROPOSES next knob vector + explains
-   (logged to DECISIONS) → gate through Tier-1 trust before a full arm. **[Codex] propose-and-explain,
-   not a silent optimizer.**
+## TIER 2 — automate the outer loop (only after #3 passes; weeks)
+10. **Resumable Protein/GERS knob sweep** around the (validated) netblock economy. `search_center` =
+    current knobs; `score` = pre-dice composite; Elo = tripwire. **[codex M2/adv M1] Build the durable
+    `observe()`-replay wrapper as a TESTED precondition** (kill -9 mid-trial, restart, confirm GP state
+    identical) + per-trial JSON mirrored to Mac. **[adv L3] Cost-model first** (probe-len × arms × SPS →
+    wall-clock → $) with the balance-guard ladder as a hard stop — a serial single-GPU sweep is days of
+    wall-clock per iteration on the box that just credit-died. NO #58 dependency [adv H2].
+11. **EA-SEED LLM-controller — after #10 has structured trial data.** Propose-and-EXPLAIN (logged to
+    DECISIONS), gated through Tier-1 trust; NOT a silent optimizer. **[adv L1] Marginal value over
+    Protein for 8 numeric knobs is thin — keep deferred; value is the explanation artifact.**
 
-## TIER 3 — Native trainer features + learn-the-reward (weeks → research)
-10. **[Codex] Native BC-pair CE regularizer** (the realistic "human prior" path; KL-to-BC's tractable
-    form): load `.bbp` pairs to GPU buffers, sample a BC minibatch per PPO update, add masked 3-head CE
-    to the optimizer step in the native trainer. **[Codex] upweight DECLARE/BLOCK_TARGET/CHOOSE_DIE
-    pairs** (D33: state-averaged BC keeps aggregate acc but misses block behavior). Anneal to a small
-    floor (a strong KL floor can freeze the policy at bc_v4's ceiling). CUDA work + NaN/SPS checks.
-    **[Codex] COMPLEMENT, not replace, the EV shaping** (policy prior vs credit assignment — different
-    problems; let frozen-anchor Elo decide if divergence from BC is good).
-11. **True on-policy KL-to-BC in native** — research project (frozen teacher resident in native
-    trainer). Defer.
-12. **f-IRL / moment-matching knob calibration** — conceptually aligned (auto-calibrate knob weights to
-    human moments, offline on the frozen corpus, stationary reward, φ over pre-dice features) but honest
-    f-IRL through PPO/self-play is NOT a quick patch [Codex]. Research-grade; a simple
-    offline-correlation "which reward feature tracks human residuals" report is the cheap precursor.
-13. **MAP-Elites / CMA-MAE behavioral atlas** — only if scalar Protein search STALLS on the multi-target
-    tension (it may; fixed scalarization provably can't reach non-convex Pareto). `pyribs`. Defer.
+## TIER 3 — native trainer features + learn-the-reward (research; gated behind precursors)
+12. **[adv M2] Native BC-CE — only after a cheap precursor proves it helps:** (a) offline-correlation
+    "which reward feature tracks human residuals" report, AND (b) a TORCH-backend BC-CE A/B at reduced
+    SPS showing it moves block-selection toward human AT ALL. Only then spend weeks of native CUDA work
+    (load `.bbp` to GPU, masked 3-head CE in the optimizer step, **[codex L6] reproduce the iid /
+    zero-recurrent-state limitation first** before sequence-BC, **[codex] upweight DECLARE/BLOCK_TARGET/
+    CHOOSE_DIE** per D33). COMPLEMENT not replace EV shaping; anneal to a small floor.
+13. True on-policy KL-to-BC in native (frozen teacher resident) — research; defer.
+14. f-IRL knob calibration — research; the offline-correlation report (#12a) is the cheap precursor.
+15. **[adv L2] MAP-Elites atlas — gated on a DEFINED stall:** Protein best-composite plateaus N trials
+    while ≥2 stat residuals stay anti-correlated. `pyribs`. Defer until then.
 
-## From-scratch reproduction gate — TIERED (Codex's rule, resolves open Q-a)
-NOT a standing per-candidate filter (would kill search velocity on one GPU + bias toward conservative
-changes). Instead:
-- Every sweep candidate: warm-start probe + kickoff eval.
-- Every finalist: cross-ancestor warm-start probe.
-- **Every new default / paper claim / reward-economy change: from-scratch or BC-init, ≥2 seeds, fixed
-  budget, with CIs.**
-- Every lock-in: from-scratch/BC-init + frozen-anchor tournament + behavior-stat read.
-- Any suspicious "warm-start did exactly what the ancestor already did" result: trigger from-scratch early.
-
-## KL-to-BC: COMPLEMENT, not replace (resolves open Q-b) [Codex]
-Policy prior (KL/BC) and credit-assignment (EV shaping) solve different problems. The corpus is human,
-not oracle (D46); BC is weakest exactly where sparse tactical credit matters (rare blocks, carrier
-pressure, multi-turn drives); a strong KL floor can prevent improvement past bc_v4. Use: BC warm-start →
-decaying native BC-CE/KL regularizer (decision-type-weighted) → EV shaping remains the credit mechanism
-→ frozen-anchor Elo decides whether divergence from BC is good.
+## From-scratch gate (tiered) + KL-complement — unchanged from v2, both reviews concur
+Warm-start probe per candidate; cross-ancestor per finalist; **from-scratch ≥2-seed+CIs per new default /
+paper claim / economy change** (this is why #3 is item #1); from-scratch + tournament + behavior-stat at
+lock-in. KL-to-BC COMPLEMENTS decision-time-EV shaping (policy prior vs credit assignment), never replaces.
 
 ## DO NOT
-Online adversarial IRL (GAIL/AIRL) in self-play (post-dice + double non-stationarity); meta-gradient
-bilevel (no gradients through the C engine); full online PBT (we're fixed-knob short-read); tune knobs
-to directly maximize anchor-Elo (rots ground truth); put human-stat-matching in the env reward (D147);
-fake KL-to-BC in the env/Python layer for native runs (wrong layer, murders SPS) [Codex].
+Online GAIL/AIRL in self-play; meta-gradient through the C engine; full online PBT; tune knobs to
+maximize anchor-Elo (rots ground truth — Elo is a tripwire); human-stat-matching OR realized-outcome
+stats in the env reward (D147) or in the sweep OPTIMIZATION target (keep outcomes as diagnostics);
+`reward_statmatch_scale` ≠ 0 in any sweep; fake KL-to-BC in the env/Python layer for native runs.
 
-## First concrete moves (box live, netblock2 running)
-Tier 0 #1 audit (free) + #2 the low-value/carrier 2d-red metric split (gates everything) → Tier 1
-orchestration guardrails (#3-6) → land #58 → Tier 2 #8 resumable Protein sweep around netblock. The
-netblock turnover finding is the first reward to run the new-default from-scratch gate before it becomes
-the standing economy.
+## First concrete moves (box live)
+Tier 0 #1 audit (free, now) → Tier 1 #2 build the tier×target-value telemetry (first code) + #3
+from-scratch-reproduce netblock (first experiment, gates automation) → Tier 1 orchestration guardrails
+(#4–8) → only then Tier 2 #10 Protein. netblock2 (k_turnover 0.30, running) finishes the cheap
+higher-k read in parallel but is itself warm-started, so it does NOT substitute for #3.
 
-## Code-doc fix applied this session
-Tightened the `reward_k_turnover` comment in `bloodbowl.ini` (it claimed "including the blitz Rush gate"
-but the impl uses `ev.p_turnover` not `p_own_to` per D159 F2 — a future agent could have reverted it).
+## Verdicts
+- **[codex] v2 incorporated the four major corrections correctly; tier ordering sound for native+1GPU.**
+- **[adv] NOT sound as-written but close: start Tier-1 guardrails; MANDATORY before automation — (HIGH-3)
+  from-scratch-reproduce netblock, (HIGH-1) build the tier×target-value telemetry, (HIGH-2) drop the
+  fictional #58 blocker, (M3/M4) anchor-Elo as tripwire + composite = pre-dice features only.** All folded
+  into v3 above.
