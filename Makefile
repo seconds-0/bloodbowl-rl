@@ -22,7 +22,7 @@ PUFFER_REWARD_TESTBIN := $(BUILD)/puffer_reward_tests
 PUFFER_CONTACT_TESTBIN := $(BUILD)/puffer_contact_bot_tests
 PUFFER_TESTBINS := $(PUFFER_REWARD_TESTBIN) $(PUFFER_CONTACT_TESTBIN)
 
-.PHONY: all test asan fuzz coverage coverage-run lockstep ballstats human-ball-advancement blockev-mc clean
+.PHONY: all test asan fuzz coverage coverage-run lockstep ballstats blockstats human-ball-advancement blockev-mc clean
 
 all: test
 
@@ -89,6 +89,10 @@ lockstep:
 ballstats: $(OBJ)
 	$(CC) $(CFLAGS) tools/bb_ballstats.c $(OBJ) -o $(BUILD)/bb_ballstats -lm $(LDFLAGS)
 	@echo "run: ./$(BUILD)/bb_ballstats validation/lockstep/<id>.jsonl"
+
+blockstats: $(OBJ)
+	$(CC) $(CFLAGS) tools/bb_blockstats.c $(OBJ) -o $(BUILD)/bb_blockstats -lm $(LDFLAGS)
+	@echo "run: ./$(BUILD)/bb_blockstats validation/normalized/*.jsonl"
 
 human-ball-advancement: ballstats
 	python3 tools/human_ball_advancement.py --runner ./$(BUILD)/bb_ballstats \

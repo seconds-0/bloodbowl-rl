@@ -218,11 +218,11 @@ void my_init(Env* env, Dict* kwargs) {
 void my_log(Log* log, Dict* out) {
     // dict_set stores the key POINTER (vecenv.h), so string literals only.
     //
-    // CAPACITY: vec_log (src/bindings_cpu.cpp / bindings.cu) hands us a
-    // create_dict(64) and appends "n" after we return — keep total keys < 64.
-    // We emit 62. Growing past the call-site capacity is SILENT HEAP
-    // CORRUPTION upstream (assert compiles out under NDEBUG); our vendored
-    // dict_set aborts loudly instead (training/puffer_dict_capacity.patch).
+    // CAPACITY: vec_log (src/bindings_cpu.cpp / bindings.cu) must hand us a
+    // dict large enough for these keys plus the vecenv-appended "n". We emit
+    // 69. Growing past the call-site capacity is SILENT HEAP CORRUPTION
+    // upstream (assert compiles out under NDEBUG); our vendored dict_set
+    // aborts loudly instead (training/puffer_dict_capacity.patch).
     // History: key count hit 37 vs capacity 32 when slot scores + demo
     // counters landed → "free(): corrupted unsorted chunks" at first episode
     // completion (~786K steps), masquerading as a thread-count bug.
@@ -246,6 +246,13 @@ void my_log(Log* log, Dict* out) {
     dict_set(out, "block_3d_frac", log->block_3d_frac);
     dict_set(out, "block_2dred_frac", log->block_2dred_frac);
     dict_set(out, "block_3dred_frac", log->block_3dred_frac);
+    dict_set(out, "block_1d_carrier_frac", log->block_1d_carrier_frac);
+    dict_set(out, "block_2d_carrier_frac", log->block_2d_carrier_frac);
+    dict_set(out, "block_2dred_carrier_frac", log->block_2dred_carrier_frac);
+    dict_set(out, "offassist_1d", log->offassist_1d);
+    dict_set(out, "offassist_2d", log->offassist_2d);
+    dict_set(out, "offassist_3d", log->offassist_3d);
+    dict_set(out, "offassist_2dred", log->offassist_2dred);
     dict_set(out, "pickup_success", log->pickup_success);
     dict_set(out, "possession_rate", log->possession_rate);
     dict_set(out, "ball_fwd_adv", log->ball_fwd_adv);

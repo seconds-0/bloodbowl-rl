@@ -1,0 +1,148 @@
+{
+  "agent_eval": {
+    "source": "training/netblock_cap.bin",
+    "method": "finite native PufferLib eval_log rollout with frozen banks disabled so both coaches use the loaded policy",
+    "games": 513,
+    "blocks_thrown_per_game": 21.78557586669922,
+    "tier_fracs": {
+      "1d": 0.2595342695713043,
+      "2d": 0.540948212146759,
+      "3d": 0.12121875584125519,
+      "2d-red": 0.06937750428915024,
+      "3d-red": 0.008920948021113873
+    },
+    "matched_tiers": {
+      "1d": {
+        "frac_vs_carrier": 0.168111652135849,
+        "mean_offassist": 0.2833792269229889
+      },
+      "2d": {
+        "frac_vs_carrier": 0.08005192130804062,
+        "mean_offassist": 0.5225246548652649
+      },
+      "2d-red": {
+        "frac_vs_carrier": 0.2589993476867676,
+        "mean_offassist": 0.08983104676008224
+      },
+      "3d": {
+        "frac_vs_carrier": null,
+        "mean_offassist": 0.4954591393470764
+      }
+    },
+    "raw_log": {
+      "env/n": 513.0,
+      "env/block_1d_carrier_frac": 0.168111652135849,
+      "env/block_2d_carrier_frac": 0.08005192130804062,
+      "env/block_2dred_carrier_frac": 0.2589993476867676,
+      "env/offassist_1d": 0.2833792269229889,
+      "env/offassist_2d": 0.5225246548652649,
+      "env/offassist_3d": 0.4954591393470764,
+      "env/offassist_2dred": 0.08983104676008224
+    }
+  },
+  "human_corpus": {
+    "source": "validation/normalized/*.jsonl",
+    "games_total": 401,
+    "games_used": 401,
+    "malformed_games": 0,
+    "blocks_total": 32483,
+    "blocks_skipped": 17,
+    "engine_tier_mismatch": 459,
+    "engine_tier_mismatch_frac": 0.014130468,
+    "tier_fracs_block_weighted": {
+      "1d": 0.117969399,
+      "2d": 0.753809685,
+      "3d": 0.106979035,
+      "2d-red": 0.020995598,
+      "3d-red": 0.000246283
+    },
+    "matched_tiers": {
+      "1d": {
+        "frac_vs_carrier": 0.070890768,
+        "mean_offassist": 0.554488538
+      },
+      "2d": {
+        "frac_vs_carrier": 0.01672848,
+        "mean_offassist": 0.935354529
+      },
+      "2d-red": {
+        "frac_vs_carrier": 0.111420853,
+        "mean_offassist": 0.166672964
+      },
+      "3d": {
+        "frac_vs_carrier": 0.009260567,
+        "mean_offassist": 1.679786796
+      }
+    },
+    "block_weighted_tiers": {
+      "1d": {
+        "count": 3832,
+        "carrier_count": 250,
+        "frac_vs_carrier": 0.065240084,
+        "mean_offassist": 0.474425887,
+        "mean_defassist": 0.23408142
+      },
+      "2d": {
+        "count": 24486,
+        "carrier_count": 379,
+        "frac_vs_carrier": 0.015478232,
+        "mean_offassist": 0.946704239,
+        "mean_defassist": 0.086825125
+      },
+      "3d": {
+        "count": 3475,
+        "carrier_count": 46,
+        "frac_vs_carrier": 0.01323741,
+        "mean_offassist": 1.299856115,
+        "mean_defassist": 0.016402878
+      },
+      "2d-red": {
+        "count": 682,
+        "carrier_count": 85,
+        "frac_vs_carrier": 0.124633431,
+        "mean_offassist": 0.291788856,
+        "mean_defassist": 0.604105572
+      },
+      "3d-red": {
+        "count": 8,
+        "carrier_count": 5,
+        "frac_vs_carrier": 0.625,
+        "mean_offassist": 0.0,
+        "mean_defassist": 1.75
+      }
+    }
+  },
+  "matched_table": [
+    {
+      "tier": "1d",
+      "agent_frac_vs_carrier": 0.168111652135849,
+      "agent_mean_offassist": 0.2833792269229889,
+      "human_frac_vs_carrier": 0.070890768,
+      "human_mean_offassist": 0.554488538
+    },
+    {
+      "tier": "2d",
+      "agent_frac_vs_carrier": 0.08005192130804062,
+      "agent_mean_offassist": 0.5225246548652649,
+      "human_frac_vs_carrier": 0.01672848,
+      "human_mean_offassist": 0.935354529
+    },
+    {
+      "tier": "2d-red",
+      "agent_frac_vs_carrier": 0.2589993476867676,
+      "agent_mean_offassist": 0.08983104676008224,
+      "human_frac_vs_carrier": 0.111420853,
+      "human_mean_offassist": 0.166672964
+    }
+  ],
+  "build_verification": {
+    "remote": "root@ssh3.vast.ai:12464:/root/bloodbowl-rl",
+    "precision_bytes": 2,
+    "raw_logratio_present": true,
+    "install_check": "OK"
+  },
+  "verdict": {
+    "h1": "Partial support only: agent 2d-red blocks are more carrier-concentrated than human 2d-red blocks (0.259 vs 0.111 per-game mean), but about 74% of agent 2d-red blocks are still not against the carrier.",
+    "h2": "Supported: the agent brings fewer offensive assists than humans across the relevant tiers, especially favorable 2d blocks (0.523 vs 0.935) and 2d-red blocks (0.090 vs 0.167 per-game mean; 0.292 human block-weighted)."
+  }
+}

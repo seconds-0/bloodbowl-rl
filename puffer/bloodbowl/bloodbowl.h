@@ -175,6 +175,13 @@ typedef struct {
     float block_3d_frac;
     float block_2dred_frac;
     float block_3dred_frac;        // resolved block dice pools (CHOOSE_DIE)
+    float block_1d_carrier_frac;
+    float block_2d_carrier_frac;
+    float block_2dred_carrier_frac;
+    float offassist_1d;
+    float offassist_2d;
+    float offassist_3d;
+    float offassist_2dred;
     float pickup_success;       // pickup attempts that ended holding the ball
     float possession_rate;      // fraction of team-turns ENDED holding the ball
                                 // (Alex 2026-06-06: integrates pickup success +
@@ -461,6 +468,9 @@ typedef struct {
     // the block frame: nd in data bits 9-10, defender-chooses in bit 11
     // (proc_block.c layout).
     int ep_block_tier_team[2][5]; // 0=1d, 1=2d, 2=3d, 3=2d-red, 4=3d-red
+    int ep_block_tier_carrier[5];
+    int ep_block_offassist_sum[5];
+    int ep_block_defassist_sum[5];
     int pending_pickup_slot;    // mover of THIS step's pickup attempt (-1 none)
     int pending_gfi_slot, pending_dodge_slot; // mover of THIS step's roll (-1 none)
     int ep_turns[2], ep_turns_with_ball[2];
@@ -1559,6 +1569,9 @@ static void bbe_reset_match(Bloodbowl* env) {
     env->ep_blocks_vs_carrier = 0;
     env->ep_tds_team[0] = env->ep_tds_team[1] = 0;
     memset(env->ep_block_tier_team, 0, sizeof env->ep_block_tier_team);
+    memset(env->ep_block_tier_carrier, 0, sizeof env->ep_block_tier_carrier);
+    memset(env->ep_block_offassist_sum, 0, sizeof env->ep_block_offassist_sum);
+    memset(env->ep_block_defassist_sum, 0, sizeof env->ep_block_defassist_sum);
     env->pending_pickup_slot = -1;
     env->pending_gfi_slot = -1;
     env->pending_dodge_slot = -1;
@@ -1738,6 +1751,27 @@ static void bbe_finish_episode(Bloodbowl* env) {
         env->log.block_2dred_frac += (float)block_tier_sum[3] / tb;
         env->log.block_3dred_frac += (float)block_tier_sum[4] / tb;
     }
+    env->log.block_1d_carrier_frac +=
+        (float)env->ep_block_tier_carrier[0] /
+        (float)(block_tier_sum[0] > 0 ? block_tier_sum[0] : 1);
+    env->log.block_2d_carrier_frac +=
+        (float)env->ep_block_tier_carrier[1] /
+        (float)(block_tier_sum[1] > 0 ? block_tier_sum[1] : 1);
+    env->log.block_2dred_carrier_frac +=
+        (float)env->ep_block_tier_carrier[3] /
+        (float)(block_tier_sum[3] > 0 ? block_tier_sum[3] : 1);
+    env->log.offassist_1d +=
+        (float)env->ep_block_offassist_sum[0] /
+        (float)(block_tier_sum[0] > 0 ? block_tier_sum[0] : 1);
+    env->log.offassist_2d +=
+        (float)env->ep_block_offassist_sum[1] /
+        (float)(block_tier_sum[1] > 0 ? block_tier_sum[1] : 1);
+    env->log.offassist_3d +=
+        (float)env->ep_block_offassist_sum[2] /
+        (float)(block_tier_sum[2] > 0 ? block_tier_sum[2] : 1);
+    env->log.offassist_2dred +=
+        (float)env->ep_block_offassist_sum[3] /
+        (float)(block_tier_sum[3] > 0 ? block_tier_sum[3] : 1);
     env->log.pickup_success += (float)ep_pickup_success;
     {
         int turns = env->ep_turns[0] + env->ep_turns[1];
@@ -1936,6 +1970,13 @@ static void bbe_count_action(Bloodbowl* env, bb_action act) {
             int red = (bf->data & (1u << 11)) != 0; // BLK_DEF_CHOOSES
             int tier = nd == 1 ? 0 : (nd == 2 ? (red ? 3 : 1) : (red ? 4 : 2));
             env->ep_block_tier_team[m->decision_team & 1][tier]++;
+            if (m->ball.state == BB_BALL_HELD &&
+                m->ball.carrier != BB_NO_PLAYER &&
+                bf->b == (int)m->ball.carrier) {
+                env->ep_block_tier_carrier[tier]++;
+            }
+            env->ep_block_offassist_sum[tier] += bb_count_assists(m, bf->a, bf->b);
+            env->ep_block_defassist_sum[tier] += bb_count_assists(m, bf->b, bf->a);
         }
         break;
     }
