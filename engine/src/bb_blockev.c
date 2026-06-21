@@ -474,3 +474,40 @@ void bb_block_ev(const bb_match* m, int att, int def, int is_blitz,
     out->p_ball_out = v.ball_out;
     out->p_turnover = v.turnover;
 }
+
+float bb_team_contact_favorability(const bb_match* m, int team) {
+    if (team < 0 || team > 1) return 0.0f;
+    float total = 0.0f;
+    int base = team * BB_TEAM_SLOTS;
+    for (int att = base; att < base + BB_TEAM_SLOTS; att++) {
+        const bb_player* p = &m->players[att];
+        if (p->location != BB_LOC_ON_PITCH ||
+            p->stance != BB_STANCE_STANDING) {
+            continue;
+        }
+        float best = 0.0f;
+        int found = 0;
+        for (int dy = -1; dy <= 1; dy++) {
+            int y = p->y + dy;
+            if (y < 0 || y >= BB_PITCH_WID) continue;
+            for (int dx = -1; dx <= 1; dx++) {
+                if (dx == 0 && dy == 0) continue;
+                int x = p->x + dx;
+                if (x < 0 || x >= BB_PITCH_LEN) continue;
+                int def = bb_slot_at(m, x, y);
+                if (def < 0 || BB_TEAM_OF(def) == team) continue;
+                const bb_player* q = &m->players[def];
+                if (q->location != BB_LOC_ON_PITCH ||
+                    q->stance != BB_STANCE_STANDING) {
+                    continue;
+                }
+                bb_blockev ev;
+                bb_block_ev(m, att, def, 0, NULL, &ev);
+                if (!found || ev.p_def_down > best) best = ev.p_def_down;
+                found = 1;
+            }
+        }
+        if (found) total += best;
+    }
+    return total;
+}

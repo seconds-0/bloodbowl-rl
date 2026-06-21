@@ -202,6 +202,7 @@ typedef struct {
     float carrier_exposed_full; // R6v1 full carrier-exposure firings
     float carrier_exposed_soft; // R6v1 one-roll carrier-exposure firings
     float ep_carrier_threat;    // R6v2 carrier-threat annuity T (per ep)
+    float ep_contact_fav;       // D163 assist-potential raw Phi samples (per ep)
     float def_threats_1t;       // R12v1 unmitigated 1-turn deep threats (per ep)
     float def_threats_2t;       // R12v1 unmitigated 2-turn deep threats (per ep)
     // Learner (slot 0) score vs frozen bank b on envs tagged b+1; selfplay.py
@@ -330,6 +331,13 @@ typedef struct {
     // rational ball-avoidance under loss-fines; kzero@1.7B attempted ZERO
     // kickoff pickups).
     float reward_possession;
+    // Assist potential (D163): zero-sum telescoping PBRS at settled own-turn
+    // end. Phi(team) is the bounded contact favorability from existing
+    // adjacent block contacts: each standing on-pitch player contributes its
+    // best adjacent no-blitz P(defender down). Improving my contacts or
+    // removing enemy defensive assists raises my Phi; reducing opponent
+    // contacts lowers theirs. Default 0 = inert.
+    float reward_k_assist;
     // Rush (GFI) tax: charged per rush square AT DECLARATION (decision-time,
     // dice-independent — the exposure-pricing family). Exists because under
     // scoring scarcity the critic prices failed GFIs at ~nothing (the
@@ -477,6 +485,7 @@ typedef struct {
     int prev_active_team;       // turn-boundary detector for possession_rate
     int ep_carrier_exposed_full, ep_carrier_exposed_soft;
     float ep_carrier_threat;
+    float ep_contact_fav;
     int ep_def_threats_1t, ep_def_threats_2t; // R12v1 unmitigated deep threats
     // Per-team behavior counters for the spectator's live archetype plates
     // ("BRUISER"/"BALLHAWK"/...): contact = block+blitz declarations, ball =
@@ -515,6 +524,7 @@ typedef struct {
     // nothing — pickup itself is priced by reward_ball_gain. -1 = inactive.
     float pot_fetch_prev[2];
     float pot_carry_prev[2];
+    float prev_contact_fav[2];
     int out_prev[2]; // players in the KO + casualty boxes (injury shaping)
     int sent_off_prev[2]; // players in the Sent-off box (send-off shaping)
     int surf_prev[2]; // m->surfs snapshot (surf shaping)
@@ -570,6 +580,13 @@ static void bbe_validate_reward_config(const Bloodbowl* env) {
         fprintf(stderr,
                 "bloodbowl: reward_carrier_threat replaces the legacy "
                 "reward_carrier_exposure knobs; set one R6 arm only\n");
+        abort();
+    }
+    if (env->reward_carrier_threat != 0.0f &&
+        env->reward_k_assist != 0.0f) {
+        fprintf(stderr,
+                "bloodbowl: reward_k_assist and reward_carrier_threat are "
+                "both zero-sum board-EV annuities; set one arm only\n");
         abort();
     }
 }
@@ -1580,6 +1597,7 @@ static void bbe_reset_match(Bloodbowl* env) {
     env->prev_active_team = env->match.active_team;
     env->ep_carrier_exposed_full = env->ep_carrier_exposed_soft = 0;
     env->ep_carrier_threat = 0.0f;
+    env->ep_contact_fav = 0.0f;
     env->ep_def_threats_1t = env->ep_def_threats_2t = 0;
     memset(env->ep_dodge_att, 0, sizeof env->ep_dodge_att);
     memset(env->ep_dodge_ok, 0, sizeof env->ep_dodge_ok);
@@ -1632,6 +1650,12 @@ static void bbe_reset_match(Bloodbowl* env) {
     // never books a phantom potential jump against the -1 sentinel.
     env->pot_fetch_prev[0] = env->pot_fetch_prev[1] = -1.0f;
     env->pot_carry_prev[0] = env->pot_carry_prev[1] = -1.0f;
+    if (env->reward_k_assist != 0.0f) {
+        env->prev_contact_fav[0] = bb_team_contact_favorability(&env->match, 0);
+        env->prev_contact_fav[1] = bb_team_contact_favorability(&env->match, 1);
+    } else {
+        env->prev_contact_fav[0] = env->prev_contact_fav[1] = 0.0f;
+    }
     // Procgen can pre-injure players into the CAS box, and banked demo
     // states arrive with whatever KO/CAS/Sent-off boxes and surf counts the
     // human game had reached; baseline all of it so shaping prices only NEW
@@ -1797,6 +1821,7 @@ static void bbe_finish_episode(Bloodbowl* env) {
     env->log.carrier_exposed_full += (float)env->ep_carrier_exposed_full;
     env->log.carrier_exposed_soft += (float)env->ep_carrier_exposed_soft;
     env->log.ep_carrier_threat += env->ep_carrier_threat;
+    env->log.ep_contact_fav += env->ep_contact_fav;
     env->log.def_threats_1t += (float)env->ep_def_threats_1t;
     env->log.def_threats_2t += (float)env->ep_def_threats_2t;
     // --- Aggregate-statistic-matching pseudo-reward (D114) ------------------
@@ -2378,6 +2403,29 @@ static void c_step(Bloodbowl* env) {
                     env->ep_return[holder] += hold_r;
                     env->ep_carrier_threat += th.uncapped_total;
                 }
+            }
+            // D163 assist potential: zero-sum telescoping board-EV annuity.
+            // Fires only at genuine own-team-turn ends (same gate as the
+            // possession/carrier-threat hook). Phi is bounded to existing
+            // adjacent contacts in bb_team_contact_favorability, so the off
+            // switch is free and the on switch costs O(live contacts).
+            if (env->reward_k_assist != 0.0f) {
+                float fav[2] = {
+                    bb_team_contact_favorability(m, 0),
+                    bb_team_contact_favorability(m, 1)
+                };
+                if (pre_in_team_turn) {
+                    float d0 = fav[0] - env->prev_contact_fav[0];
+                    float d1 = fav[1] - env->prev_contact_fav[1];
+                    float r0 = env->reward_k_assist * (d0 - d1);
+                    env->reward_ptr[0][0] += r0;
+                    env->reward_ptr[1][0] -= r0;
+                    env->ep_return[0] += r0;
+                    env->ep_return[1] -= r0;
+                    env->ep_contact_fav += fav[0] + fav[1];
+                }
+                env->prev_contact_fav[0] = fav[0];
+                env->prev_contact_fav[1] = fav[1];
             }
             // R12v1 defensive scoring-lane threat (D133-A): the DUAL of R6v1.
             // `t` is the team whose own turn just ended; it is on defense for

@@ -62,6 +62,11 @@ bb_blockev_w bb_blockev_w_default(void);
 void bb_block_ev(const bb_match* m, int att, int def, int is_blitz,
                  const bb_blockev_w* w, bb_blockev* out);
 
+// Contact favorability potential: sum, over `team`'s standing on-pitch
+// players currently adjacent to standing enemies, of that player's best
+// adjacent no-blitz P(defender down). Pure and bounded to existing contacts.
+float bb_team_contact_favorability(const bb_match* m, int team);
+
 // Choice-policy introspection for the Monte Carlo differential
 // (tools/blockev_mc.c): the per-face utilities (attacker's perspective,
 // indexed by bb_block_die 1..6, Both Down already minimax-resolved) and the

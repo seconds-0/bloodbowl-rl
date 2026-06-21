@@ -84,6 +84,7 @@ static void apply_kwargs(Env* env, Dict* kwargs) {
     env->reward_k_turnover = (float)kw(kwargs, "reward_k_turnover", 0.0);
     // Possession annuity transfer per own-turn-ended-holding (suggested 0.03)
     env->reward_possession = (float)kw(kwargs, "reward_possession", 0.0);
+    env->reward_k_assist = (float)kw(kwargs, "reward_k_assist", 0.0);
     // Rush tax per GFI square at declaration (suggested 0.01-0.02)
     env->reward_rush_cost = (float)kw(kwargs, "reward_rush_cost", 0.0);
     // R6v1 carrier-exposure penalties, positive magnitudes charged via -=.
@@ -220,7 +221,7 @@ void my_log(Log* log, Dict* out) {
     //
     // CAPACITY: vec_log (src/bindings_cpu.cpp / bindings.cu) must hand us a
     // dict large enough for these keys plus the vecenv-appended "n". We emit
-    // 69. Growing past the call-site capacity is SILENT HEAP CORRUPTION
+    // 70. Growing past the call-site capacity is SILENT HEAP CORRUPTION
     // upstream (assert compiles out under NDEBUG); our vendored dict_set
     // aborts loudly instead (training/puffer_dict_capacity.patch).
     // History: key count hit 37 vs capacity 32 when slot scores + demo
@@ -271,6 +272,7 @@ void my_log(Log* log, Dict* out) {
     dict_set(out, "carrier_exposed_full", log->carrier_exposed_full);
     dict_set(out, "carrier_exposed_soft", log->carrier_exposed_soft);
     dict_set(out, "ep_carrier_threat", log->ep_carrier_threat);
+    dict_set(out, "ep_contact_fav", log->ep_contact_fav);
     dict_set(out, "ep_def_threats_1t", log->def_threats_1t);
     dict_set(out, "ep_def_threats_2t", log->def_threats_2t);
     dict_set(out, "error_episodes", log->error_episodes);
