@@ -2222,10 +2222,13 @@ static void c_step(Bloodbowl* env) {
     bb_match* m = &env->match;
     if (m->status == BB_STATUS_DECISION && env->n_legal > 0) {
         int agent = m->decision_team;
+        // scripted_opponent_team: 0=HOME scripted, 1=AWAY scripted, 2=BOTH
+        // (bot-vs-bot, for spectating/validation — no policy drives either side).
+        int scripted_both = env->scripted_opponent_team == 2;
         int scripted_team = env->scripted_opponent_team == BB_HOME
                                 ? BB_HOME : BB_AWAY;
         bb_action act;
-        if (env->scripted_opponent && agent == scripted_team) {
+        if (env->scripted_opponent && (scripted_both || agent == scripted_team)) {
             act = env->scripted_opponent_type == 1
                       ? bbe_offense_bot_pick(m, env->legal, env->n_legal)
                       : bbe_contact_bot_pick(m, env->legal, env->n_legal);

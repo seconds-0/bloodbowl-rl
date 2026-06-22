@@ -596,7 +596,7 @@ def tag_positions(players, home_team, away_team):
 
 class Match:
     def __init__(self, ckpt_a, ckpt_b, seed=None, home_team=-1, away_team=-1,
-                 macro=False):
+                 macro=False, scripted="off", scripted_type=1):
         if torch is None or pufferl_mod is None or tp is None:
             raise RuntimeError(
                 "Match requires torch and pufferlib; pure helpers such as "
@@ -616,6 +616,14 @@ class Match:
         args["env"]["macro_moves"] = 1 if macro else 0
         args["env"]["force_home_team"] = home_team
         args["env"]["force_away_team"] = away_team
+        # Scripted-bot spectating: drive a team (or both) with the C cage bot
+        # instead of a policy. team code 0=home, 1=away, 2=both (bot-vs-bot).
+        self.scripted = scripted
+        _steam = {"home": 0, "away": 1, "both": 2}.get(scripted)
+        if _steam is not None:
+            args["env"]["scripted_opponent"] = 1
+            args["env"]["scripted_opponent_team"] = _steam
+            args["env"]["scripted_opponent_type"] = scripted_type
         args["load_model_path"] = ckpt_a
         if seed is not None:
             args["env"]["seed"] = seed
@@ -665,13 +673,19 @@ class Match:
         tag_positions(st["players"], self.home_team, self.away_team)
         hr = _ROSTERS[self.home_team]["name"] if 0 <= self.home_team < 30 else "procgen"
         ar = _ROSTERS[self.away_team]["name"] if 0 <= self.away_team < 30 else "procgen"
+        # Scripted teams are tied to the board side (home/away), not the policy
+        # key — label them "cage-bot" so the broadcast names what's actually playing.
+        home_agent = ("cage-bot" if self.scripted in ("home", "both")
+                      else self.names[self.home_key])
+        away_agent = ("cage-bot" if self.scripted in ("away", "both")
+                      else self.names[self.away_key])
         return {"t": "match_start", "match_id": self.match_id,
-                "home": {"name": f"{hr} ({self.names[self.home_key]})", "roster": hr,
+                "home": {"name": f"{hr} ({home_agent})", "roster": hr,
                          "color": TEAM_COLORS.get(hr, "#8b1a1a"),
-                         "agent": self.names[self.home_key]},
-                "away": {"name": f"{ar} ({self.names[self.away_key]})", "roster": ar,
+                         "agent": home_agent},
+                "away": {"name": f"{ar} ({away_agent})", "roster": ar,
                          "color": TEAM_COLORS.get(ar, "#1a4d8b"),
-                         "agent": self.names[self.away_key]},
+                         "agent": away_agent},
                 "players": st["players"]}
 
     def snapshot_msg(self):

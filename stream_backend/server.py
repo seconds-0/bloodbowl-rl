@@ -131,13 +131,19 @@ async def main():
     ap.add_argument("--max-games", type=int, default=2)
     ap.add_argument("--seed", type=int, default=None)
     ap.add_argument("--macro", action="store_true", help="v5 path-actions env")
+    ap.add_argument("--scripted", choices=["off", "home", "away", "both"],
+                    default="off",
+                    help="drive a team (or both) with the scripted bot instead "
+                         "of its policy — 'both' = deterministic bot-vs-bot")
+    ap.add_argument("--scripted-type", type=int, default=1,
+                    help="scripted bot flavour: 1=offense cage bot, 0=contact bot")
     a = ap.parse_args()
 
     home, away = random.choice(MATCHUPS)
     if random.random() < 0.5:
         home, away = away, home
     match = Match(a.ckpt_a, a.ckpt_b, seed=a.seed, home_team=home, away_team=away,
-                  macro=a.macro)
+                  macro=a.macro, scripted=a.scripted, scripted_type=a.scripted_type)
     hub = Hub()
     if a.record:
         hub.record_fh = open(a.record, "w")
