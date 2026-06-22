@@ -206,6 +206,11 @@ typedef struct {
     float ep_contact_fav;       // D163 assist-potential raw Phi samples (per ep)
     float def_threats_1t;       // R12v1 unmitigated 1-turn deep threats (per ep)
     float def_threats_2t;       // R12v1 unmitigated 2-turn deep threats (per ep)
+    float def_deep_safety;      // mean defenders goal-side of carrier
+    float def_deep_safety_zero_frac; // frac defensive turns with no safety back
+    float def_carrier_path_zerotz; // mean zero-defender-TZ squares on score path
+    float def_carrier_min_dodges; // mean dodges on carrier min-cost score path
+    float def_carrier_marked_frac; // frac defensive turns carrier is marked
     // Learner (slot 0) score vs frozen bank b on envs tagged b+1; selfplay.py
     // reads hist_score_bank_<b>/hist_n_bank_<b> to drive bank swaps.
     float hist_score_bank[BBE_MAX_BANKS];
@@ -491,6 +496,12 @@ typedef struct {
     float ep_carrier_threat;
     float ep_contact_fav;
     int ep_def_threats_1t, ep_def_threats_2t; // R12v1 unmitigated deep threats
+    int ep_def_canary_n;
+    float ep_def_deep_safety_sum;
+    float ep_def_deep_safety_zero_sum;
+    float ep_def_carrier_path_zerotz_sum;
+    float ep_def_carrier_min_dodges_sum;
+    float ep_def_carrier_marked_sum;
     // Per-team behavior counters for the spectator's live archetype plates
     // ("BRUISER"/"BALLHAWK"/...): contact = block+blitz declarations, ball =
     // weighted ball engagement (pickups, passes, squares moved carrying).
@@ -1353,6 +1364,95 @@ static inline int bbe_cheb_dist(int x0, int y0, int x1, int y1) {
     return dx > dy ? dx : dy;
 }
 
+static inline int bbe_reach_cost_better(bb_reach_cost a, uint8_t alen,
+                                        bb_reach_cost b, uint8_t blen) {
+    if (a.dodges != b.dodges) return a.dodges < b.dodges;
+    if (a.gfis != b.gfis) return a.gfis < b.gfis;
+    return alen < blen;
+}
+
+static void bbe_measure_defensive_canary(Bloodbowl* env, int defending_team) {
+    bb_match* m = &env->match;
+    if (defending_team != BB_HOME && defending_team != BB_AWAY) return;
+    if (m->ball.state != BB_BALL_HELD ||
+        m->ball.carrier == BB_NO_PLAYER ||
+        m->ball.carrier >= BB_NUM_PLAYERS) {
+        return;
+    }
+
+    int carrier = m->ball.carrier;
+    int holder = BB_TEAM_OF(carrier);
+    if (holder == defending_team) return;
+
+    const bb_player* c = &m->players[carrier];
+    if (c->location != BB_LOC_ON_PITCH || c->stance != BB_STANCE_STANDING) {
+        return;
+    }
+
+    int ez = bb_endzone_x(holder);
+    int safety = 0;
+    for (int s = defending_team * BB_TEAM_SLOTS;
+         s < (defending_team + 1) * BB_TEAM_SLOTS; s++) {
+        const bb_player* p = &m->players[s];
+        if (p->location != BB_LOC_ON_PITCH ||
+            p->stance != BB_STANCE_STANDING) {
+            continue;
+        }
+        if ((ez == 0 && p->x < c->x) || (ez != 0 && p->x > c->x)) {
+            safety++;
+        }
+    }
+
+    int best_x = -1, best_y = -1;
+    bb_reach_cost best = {BB_REACH_UNREACHABLE, BB_REACH_UNREACHABLE};
+    uint8_t best_len = 0;
+    bb_reach_field field;
+    int ma_left = (int)c->ma - (int)c->moved;
+    if (ma_left < 0) ma_left = 0;
+    int rush_left = bb_max_rushes(m, carrier) - (int)c->rushes;
+    if (rush_left < 0) rush_left = 0;
+    int budget = ma_left + rush_left;
+    int dist_to_ez = c->x > ez ? c->x - ez : ez - c->x;
+    if (dist_to_ez <= budget) {
+        bb_reach_field_compute(m, carrier, &field);
+        for (int y = 0; y < BB_PITCH_WID; y++) {
+            bb_reach_cost cost = field.cost[ez][y];
+            if (cost.dodges == BB_REACH_UNREACHABLE) continue;
+            uint8_t len = field.len[ez][y];
+            if (best_x < 0 || bbe_reach_cost_better(cost, len, best, best_len)) {
+                best_x = ez;
+                best_y = y;
+                best = cost;
+                best_len = len;
+            }
+        }
+    }
+
+    int zero_tz = 0;
+    int min_dodges = 0;
+    if (best_x >= 0) {
+        min_dodges = best.dodges;
+        int x = best_x;
+        int y = best_y;
+        for (int i = 0; i < (int)best_len; i++) {
+            if (bb_tackle_zones(m, holder, x, y) == 0) zero_tz++;
+            int px = field.prev_x[x][y];
+            int py = field.prev_y[x][y];
+            if (px < 0 || py < 0) break;
+            x = px;
+            y = py;
+        }
+    }
+
+    env->ep_def_canary_n++;
+    env->ep_def_deep_safety_sum += (float)safety;
+    env->ep_def_deep_safety_zero_sum += safety == 0 ? 1.0f : 0.0f;
+    env->ep_def_carrier_path_zerotz_sum += (float)zero_tz;
+    env->ep_def_carrier_min_dodges_sum += (float)min_dodges;
+    env->ep_def_carrier_marked_sum +=
+        bb_tackle_zones(m, holder, c->x, c->y) > 0 ? 1.0f : 0.0f;
+}
+
 static void bbe_start_ball_possession(Bloodbowl* env, int team, int x, int y) {
     env->possessor = team;
     env->poss_pickup_fwd = (float)bbe_forward_coord(team, x);
@@ -1603,6 +1703,12 @@ static void bbe_reset_match(Bloodbowl* env) {
     env->ep_carrier_threat = 0.0f;
     env->ep_contact_fav = 0.0f;
     env->ep_def_threats_1t = env->ep_def_threats_2t = 0;
+    env->ep_def_canary_n = 0;
+    env->ep_def_deep_safety_sum = 0.0f;
+    env->ep_def_deep_safety_zero_sum = 0.0f;
+    env->ep_def_carrier_path_zerotz_sum = 0.0f;
+    env->ep_def_carrier_min_dodges_sum = 0.0f;
+    env->ep_def_carrier_marked_sum = 0.0f;
     memset(env->ep_dodge_att, 0, sizeof env->ep_dodge_att);
     memset(env->ep_dodge_ok, 0, sizeof env->ep_dodge_ok);
     memset(env->ep_gfi_att, 0, sizeof env->ep_gfi_att);
@@ -1828,6 +1934,18 @@ static void bbe_finish_episode(Bloodbowl* env) {
     env->log.ep_contact_fav += env->ep_contact_fav;
     env->log.def_threats_1t += (float)env->ep_def_threats_1t;
     env->log.def_threats_2t += (float)env->ep_def_threats_2t;
+    if (env->ep_def_canary_n > 0) {
+        float ndef = (float)env->ep_def_canary_n;
+        env->log.def_deep_safety += env->ep_def_deep_safety_sum / ndef;
+        env->log.def_deep_safety_zero_frac +=
+            env->ep_def_deep_safety_zero_sum / ndef;
+        env->log.def_carrier_path_zerotz +=
+            env->ep_def_carrier_path_zerotz_sum / ndef;
+        env->log.def_carrier_min_dodges +=
+            env->ep_def_carrier_min_dodges_sum / ndef;
+        env->log.def_carrier_marked_frac +=
+            env->ep_def_carrier_marked_sum / ndef;
+    }
     // --- Aggregate-statistic-matching pseudo-reward (D114) ------------------
     // Episode-end term = -scale * sqrt(sum_i z_i^2) over the 7 full-game stats,
     // z_i = (agent_stat_i - human_mean_i)/human_std_i. Pulls the policy's
@@ -2380,6 +2498,11 @@ static void c_step(Bloodbowl* env) {
                     env->ep_return[t] += env->reward_possession;
                     env->ep_return[1 - t] -= env->reward_possession;
                 }
+            }
+            if (pre_in_team_turn && m->ball.state == BB_BALL_HELD &&
+                m->ball.carrier < BB_NUM_PLAYERS &&
+                BB_TEAM_OF(m->ball.carrier) != t) {
+                bbe_measure_defensive_canary(env, t);
             }
             if (env->reward_carrier_exposure != 0.0f ||
                 env->reward_carrier_exposure_soft != 0.0f) {
