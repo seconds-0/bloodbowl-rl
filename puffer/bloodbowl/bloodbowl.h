@@ -96,6 +96,7 @@
 #include "engine/bb_reachability.c"
 #undef DIR8
 #include "contact_bot.h"
+#include "offense_bot.h"
 
 #define BBE_PLAYER_BYTES 24    // 11 stat/state bytes + 12 skill-id slots + TZ byte
 #define BBE_SKILL_SLOTS 12     // >= max base-roster skills (10) + procgen cap
@@ -448,10 +449,12 @@ typedef struct {
     int force_away_team;
     // Evaluation/training-pressure opponent: when set, scripted_opponent_team
     // ignores the policy action heads and chooses directly from the current
-    // legal bb_action list with bbe_contact_bot_pick. The other team stays
-    // policy-controlled. Default is AWAY/team 1 via the binding/config.
+    // legal bb_action list with a deterministic scripted bot. The other team
+    // stays policy-controlled. Type 0 is the original contact bot; type 1 is
+    // the bashy cage-advance offense bot. Default is AWAY/team 1 via config.
     int scripted_opponent;
     int scripted_opponent_team;
+    int scripted_opponent_type;
     int max_decisions;
     // Spectator rendering (bbe_render.h); NULL until c_render is first called.
     int render_fps;
@@ -2103,10 +2106,14 @@ static void c_step(Bloodbowl* env) {
         int agent = m->decision_team;
         int scripted_team = env->scripted_opponent_team == BB_HOME
                                 ? BB_HOME : BB_AWAY;
-        bb_action act = (env->scripted_opponent &&
-                         agent == scripted_team)
-                            ? bbe_contact_bot_pick(m, env->legal, env->n_legal)
-                            : bbe_decode(env, agent, env->action_ptr[agent]);
+        bb_action act;
+        if (env->scripted_opponent && agent == scripted_team) {
+            act = env->scripted_opponent_type == 1
+                      ? bbe_offense_bot_pick(m, env->legal, env->n_legal)
+                      : bbe_contact_bot_pick(m, env->legal, env->n_legal);
+        } else {
+            act = bbe_decode(env, agent, env->action_ptr[agent]);
+        }
         // Setup shaping: forced DONE (budget exhausted -> sole legal action)
         // vs voluntary legal DONE. Must inspect n_legal BEFORE bb_apply.
         if (act.type == BB_A_SETUP_DONE) {

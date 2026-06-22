@@ -125,8 +125,12 @@ static void apply_kwargs(Env* env, Dict* kwargs) {
     env->force_away_team = (int)kw(kwargs, "force_away_team", -1.0);
     env->scripted_opponent = (int)kw(kwargs, "scripted_opponent", 0.0);
     env->scripted_opponent_team = (int)kw(kwargs, "scripted_opponent_team", 1.0);
+    env->scripted_opponent_type = (int)kw(kwargs, "scripted_opponent_type", 0.0);
     if (env->scripted_opponent_team < 0 || env->scripted_opponent_team > 1) {
         env->scripted_opponent_team = 1;
+    }
+    if (env->scripted_opponent_type < 0 || env->scripted_opponent_type > 1) {
+        env->scripted_opponent_type = 0;
     }
     env->max_decisions = (int)kw(kwargs, "max_decisions", BBE_MAX_DECISIONS);
     if (env->max_decisions <= 0 || env->max_decisions > BBE_MAX_DECISIONS) {
