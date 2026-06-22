@@ -305,6 +305,7 @@ typedef struct {
     // 2d+Block throw is +EV at declaration, curing the never-blocking meta.
     float reward_k_kd;
     float reward_k_value;
+    float reward_k_self_injury;
     float reward_k_ball;
     // Sequencing charge (same doc, Addendum 1): risky rolls taken while safe
     // activations remain unspent expose the rest of your turn to your own
@@ -2122,6 +2123,7 @@ static void c_step(Bloodbowl* env) {
         // no dice have rolled yet). Standing attackers only: a prone Jump-Up
         // block routes through an extra gating test (rare; unpriced v1).
         if ((env->reward_k_kd != 0.0f || env->reward_k_value != 0.0f ||
+             env->reward_k_self_injury != 0.0f ||
              env->reward_k_ball != 0.0f || env->reward_k_seq != 0.0f ||
              env->reward_k_turnover != 0.0f) &&
             act.type == BB_A_BLOCK_TARGET && m->stack_top > 0) {
@@ -2185,6 +2187,13 @@ static void c_step(Bloodbowl* env) {
                 env->reward_ptr[1 - bteam][0] -= exposure;
                 env->ep_return[bteam] += exposure;
                 env->ep_return[1 - bteam] -= exposure;
+                if (env->reward_k_self_injury != 0.0f) {
+                    float self_injury =
+                        env->reward_k_self_injury * ev.p_att_removed *
+                        player_cost_100k(m, batt) * p_deliver;
+                    env->reward_ptr[bteam][0] -= self_injury;
+                    env->ep_return[bteam] -= self_injury;
+                }
                 if (env->reward_k_turnover != 0.0f) {
                     // Net-EV block discipline (D158): charge the turnover COST
                     // against the takedown VALUE so a 2d-red goes net-negative

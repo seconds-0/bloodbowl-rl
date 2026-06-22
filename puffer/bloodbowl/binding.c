@@ -79,6 +79,7 @@ static void apply_kwargs(Env* env, Dict* kwargs) {
     // defaults when enabled: k_kd 0.06, k_value 0.5, k_ball 0.3, k_seq ~0.02).
     env->reward_k_kd = (float)kw(kwargs, "reward_k_kd", 0.0);
     env->reward_k_value = (float)kw(kwargs, "reward_k_value", 0.0);
+    env->reward_k_self_injury = (float)kw(kwargs, "reward_k_self_injury", 0.0);
     env->reward_k_ball = (float)kw(kwargs, "reward_k_ball", 0.0);
     env->reward_k_seq = (float)kw(kwargs, "reward_k_seq", 0.0);
     env->reward_k_turnover = (float)kw(kwargs, "reward_k_turnover", 0.0);
