@@ -118,3 +118,7 @@ coverage-run: $(OBJ)
 
 clean:
 	rm -rf $(BUILD)
+
+offense_test: ## rigorous behavioral validation of the scripted offense bot
+	cc -std=c11 -O2 -g -Wall -Wextra -Werror -Iengine/include -Ipuffer/bloodbowl -Wno-unused-function tools/bb_offense_test.c -o build/bb_offense_test -lm
+	./build/bb_offense_test
