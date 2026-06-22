@@ -472,3 +472,18 @@ tail of DECISIONS.md for anything newer than D57/this skill. Before any launch:
 invariants (§4), obs-size sync points (§2), the launcher-default warning + rebuild
 discipline (§3), recover live-run flags from the box before resuming. After any
 finding: ledger entry (§7), then act.
+
+## Run length / stopping rule (D168) — plateau, not a fixed budget
+
+Reward-economy / behavioral DIAGNOSTIC probes are NOT stopped at a fixed step budget.
+- **Extend-on-still-improving, stop-on-plateau.** Track the primary metric(s) the probe tests
+  (block_2dred_frac, offassist_2d, etc.). At each cap, compare the metric over the last ~2B window
+  to the prior ~2B. Still moving beyond noise → **chain a warm-restart from the cap** (same reward
+  config + pool preseed; total-timesteps can't be raised mid-run) and continue until it flattens.
+  Flat, or the verdict is already decisive → stop + record.
+- Judge "still improving" on the metric that MATTERS: behavioral curve for a probe; Elo-vs-frozen-anchors
+  for a strength/final run — and there also stop on the EvalStop overoptimization downturn (k=2 consecutive
+  Elo drops), not just plateau (a proxy can climb toward human while true strength regresses).
+- Probe = stop at behavioral plateau / clear verdict (cheap). Final policy = run to a real budget / Elo
+  plateau for max strength.
+- To extend: warm-restart from the latest snapshot/cap, same config, same `--selfplay.league-preseed`.
