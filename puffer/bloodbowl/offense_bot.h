@@ -266,14 +266,32 @@ static float bbe_ob_step_like_score(const bb_match* m, bb_action a) {
         int scores = a.x == bb_endzone_x(team);
         if (scores) {
             score += 20000.0f + 500.0f * ps;
-        } else {
-            if (rush_test) score -= 4500.0f;
-            score += 4600.0f + 520.0f * (float)progress - 28.0f * (float)after;
-            score += 240.0f * (float)bbe_cb_adjacent_friendlies(m, team, slot, a.x, a.y);
-            score -= 300.0f * (float)to_tz;
-            if (from_tz) score -= 420.0f;
-            if (progress < 0) score -= 700.0f;
+            return score;
         }
+        // CARRIER SAFETY DOMINATES PROGRESS. The old logic gave any forward step
+        // ~+4600 base vs only -300/tackle-zone, so the carrier sprinted solo into
+        // contact instead of caging. Rule now: never end the move adjacent to an
+        // enemy, never roll the dice (GFI/dodge) with the ball, and don't outrun
+        // the escort — advance one safe, supported square at a time, and only
+        // push forward once the carrier already has cage corners around it.
+        int xs[4], ys[4];
+        int holes = bbe_ob_empty_cage_corners(m, slot, xs, ys);
+        int enemies_at = bbe_ob_adjacent_enemy_count(m, team, a.x, a.y);
+        float friendlies = (float)bbe_cb_adjacent_friendlies(m, team, slot, a.x, a.y);
+        score -= 1800.0f * (float)enemies_at;   // ending next to contact is forbidden
+        if (rush_test) score -= 5000.0f;        // never GFI the ball carrier
+        if (dodge_test) score -= 2500.0f;       // never dodge the ball carrier
+        if (from_tz) score -= 300.0f;
+        if (holes >= 2) {
+            // No cage yet: hold and let the corners form; only a fully safe,
+            // escorted nudge beats stopping (END_ACTIVATION scores 70).
+            score += 200.0f + 60.0f * (float)progress + 150.0f * friendlies;
+        } else {
+            // Caged: grind one safe square forward, staying inside the escort.
+            score += 800.0f + 140.0f * (float)progress - 20.0f * (float)after
+                     + 150.0f * friendlies;
+        }
+        if (progress < 0) score -= 500.0f;
         return score;
     }
 
