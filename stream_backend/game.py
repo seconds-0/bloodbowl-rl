@@ -596,7 +596,7 @@ def tag_positions(players, home_team, away_team):
 
 class Match:
     def __init__(self, ckpt_a, ckpt_b, seed=None, home_team=-1, away_team=-1,
-                 macro=False, scripted="off", scripted_type=1):
+                 macro=False, scripted="off", scripted_type=1, greedy=True):
         if torch is None or pufferl_mod is None or tp is None:
             raise RuntimeError(
                 "Match requires torch and pufferlib; pure helpers such as "
@@ -619,6 +619,7 @@ class Match:
         # Scripted-bot spectating: drive a team (or both) with the C cage bot
         # instead of a policy. team code 0=home, 1=away, 2=both (bot-vs-bot).
         self.scripted = scripted
+        self.greedy = greedy
         _steam = {"home": 0, "away": 1, "both": 2}.get(scripted)
         if _steam is not None:
             args["env"]["scripted_opponent"] = 1

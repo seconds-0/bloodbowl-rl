@@ -137,13 +137,17 @@ async def main():
                          "of its policy — 'both' = deterministic bot-vs-bot")
     ap.add_argument("--scripted-type", type=int, default=1,
                     help="scripted bot flavour: 1=offense cage bot, 0=contact bot")
+    ap.add_argument("--sample", action="store_true",
+                    help="sample actions instead of greedy argmax (fairer view "
+                         "of what the policy actually learned)")
     a = ap.parse_args()
 
     home, away = random.choice(MATCHUPS)
     if random.random() < 0.5:
         home, away = away, home
     match = Match(a.ckpt_a, a.ckpt_b, seed=a.seed, home_team=home, away_team=away,
-                  macro=a.macro, scripted=a.scripted, scripted_type=a.scripted_type)
+                  macro=a.macro, scripted=a.scripted, scripted_type=a.scripted_type,
+                  greedy=not a.sample)
     hub = Hub()
     if a.record:
         hub.record_fh = open(a.record, "w")
