@@ -14,32 +14,39 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from bc_context_features import (  # noqa: E402
     A_ACTIVATE,
+    A_CHOOSE_OPTION,
+    A_DECLINE_REROLL,
     A_END_TURN,
+    A_PUSH_SQUARE,
+    A_SPECIAL_TARGET,
     A_STEP,
     A_USE_REROLL,
     BBE_CTX_OFF,
     BBE_SCALAR_OFF,
     LAST_ACTION_STRIDE,
     RR_TEAM,
+    _obs_turn_key,
+    action_head_applicability,
     compute_context_features,
     make_context_spec,
 )
 
 
 OBS_SIZE = 832
+OBS_V4_SIZE = 2782
 MASK_SIZE = 454
 
 
-def rec_dtype():
+def rec_dtype(obs_size=OBS_SIZE):
     return np.dtype([
         ("replay", "<u4"), ("cmd", "<u4"), ("agent", "u1"), ("pad", "u1", (3,)),
-        ("obs", "u1", (OBS_SIZE,)), ("mask", "u1", (MASK_SIZE,)),
+        ("obs", "u1", (obs_size,)), ("mask", "u1", (MASK_SIZE,)),
         ("type", "u1"), ("arg", "u1"), ("sq", "<u2"),
     ])
 
 
-def obs_key(half=1, my_turn=1, opp_turn=1, active=1):
-    obs = np.zeros(OBS_SIZE, dtype=np.uint8)
+def obs_key(obs_size=OBS_SIZE, half=1, my_turn=1, opp_turn=1, active=1):
+    obs = np.zeros(obs_size, dtype=np.uint8)
     obs[BBE_SCALAR_OFF + 0] = half
     obs[BBE_SCALAR_OFF + 1] = my_turn
     obs[BBE_SCALAR_OFF + 2] = opp_turn
@@ -47,8 +54,8 @@ def obs_key(half=1, my_turn=1, opp_turn=1, active=1):
     return obs
 
 
-def records(rows):
-    out = np.zeros(len(rows), dtype=rec_dtype())
+def records(rows, obs_size=OBS_SIZE):
+    out = np.zeros(len(rows), dtype=rec_dtype(obs_size))
     for i, row in enumerate(rows):
         replay, cmd, agent, typ, arg, sq, key = row
         out[i]["replay"] = replay
@@ -61,6 +68,18 @@ def records(rows):
     return out
 
 
+def test_obs_v4_contract_constants_and_turn_key():
+    assert BBE_CTX_OFF == 32 * 24
+    assert BBE_CTX_OFF == 768
+    assert BBE_SCALAR_OFF == BBE_CTX_OFF + 16
+    assert BBE_SCALAR_OFF == 784
+    assert BBE_SCALAR_OFF + 48 == 832
+
+    k = obs_key(OBS_V4_SIZE, half=2, my_turn=3, opp_turn=4, active=1)
+    rec = records([(10, 1, 0, A_STEP, 0, 390, k)], obs_size=OBS_V4_SIZE)[0]
+    assert _obs_turn_key(rec) == (2, 3, 4, 1)
+
+
 def test_structural_resets_and_flags():
     k1 = obs_key(my_turn=1)
     k2 = obs_key(my_turn=2)
@@ -68,28 +87,34 @@ def test_structural_resets_and_flags():
         (100, 1, 0, A_ACTIVATE, 2, 390, k1),
         (100, 2, 0, A_STEP, 0, 10, k1),
         (100, 3, 0, A_USE_REROLL, RR_TEAM, 390, k1),
-        (100, 4, 0, A_STEP, 0, 11, k1),
-        (100, 5, 0, A_END_TURN, 0, 390, k1),
-        (100, 6, 0, A_ACTIVATE, 5, 390, k2),
+        (100, 4, 0, A_ACTIVATE, 5, 390, k1),
+        (100, 5, 0, A_STEP, 0, 11, k1),
+        (100, 6, 0, A_END_TURN, 0, 390, k1),
+        (100, 7, 0, A_ACTIVATE, 6, 390, k2),
     ])
 
     feat, width, spec = compute_context_features(recs, OBS_SIZE, arm="structural")
     assert width == OBS_SIZE + 18
     flags = spec.player_flags_slice
+    activations = spec.own_activations_this_turn_col
 
-    assert feat[0, spec.activation_index_col] == 0
+    assert feat[0, activations] == 0
     assert feat[0, flags.start + 2] == 0
-    assert feat[1, spec.activation_index_col] == 1
+    assert feat[1, activations] == 1 / 16
     assert feat[1, flags.start + 2] == 1
-    assert feat[2, spec.activation_index_col] == 2
+    assert feat[2, activations] == 1 / 16
     assert feat[2, spec.reroll_used_col] == 0
-    assert feat[3, spec.activation_index_col] == 3
+    assert feat[3, activations] == 1 / 16
     assert feat[3, spec.reroll_used_col] == 1
-    assert feat[4, flags.start + 2] == 1
-    assert feat[5, spec.activation_index_col] == 0
-    assert feat[5, spec.reroll_used_col] == 0
-    assert feat[5, flags.start + 2] == 0
-    assert feat[5, flags.start + 5] == 0
+    assert feat[3, flags.start + 5] == 0
+    assert feat[4, activations] == 2 / 16
+    assert feat[4, flags.start + 5] == 1
+    assert feat[5, activations] == 2 / 16
+    assert feat[5, flags.start + 2] == 1
+    assert feat[6, activations] == 0
+    assert feat[6, spec.reroll_used_col] == 0
+    assert feat[6, flags.start + 2] == 0
+    assert feat[6, flags.start + 5] == 0
 
 
 def test_last_action_boundaries_and_order():
@@ -133,9 +158,25 @@ def test_turn_key_change_clears_turnover_leakage():
     feat, _width, spec = compute_context_features(
         recs, OBS_SIZE, arm="structural_last_action")
 
-    assert feat[1, spec.activation_index_col] == 0
+    assert feat[1, spec.own_activations_this_turn_col] == 0
     assert feat[1, spec.player_flags_slice.start + 1] == 0
     assert feat[1, spec.last_action_lag_slice(0).start] == 0
+
+
+def test_action_head_applicability_sets():
+    app = action_head_applicability(np.array([
+        A_PUSH_SQUARE,
+        A_SPECIAL_TARGET,
+        A_CHOOSE_OPTION,
+        A_END_TURN,
+        A_DECLINE_REROLL,
+    ], dtype=np.uint8))
+
+    assert app[0].tolist() == [True, True, True]
+    assert app[1].tolist() == [True, True, True]
+    assert app[2].tolist() == [True, True, False]
+    assert app[3].tolist() == [True, False, False]
+    assert app[4].tolist() == [True, False, False]
 
 
 def test_widths():
@@ -147,9 +188,11 @@ def test_widths():
 
 def main():
     tests = [
+        test_obs_v4_contract_constants_and_turn_key,
         test_structural_resets_and_flags,
         test_last_action_boundaries_and_order,
         test_turn_key_change_clears_turnover_leakage,
+        test_action_head_applicability_sets,
         test_widths,
     ]
     for test in tests:

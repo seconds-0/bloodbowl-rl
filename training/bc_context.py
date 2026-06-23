@@ -9,19 +9,22 @@ winning features to the engine obs encoder and pairs are re-extracted.
 
 Four A/B arms:
   iid                    no context, D172-compatible baseline
-  structural             turn-decision count + team-reroll-used + player flags
+  structural             own activation count + team-reroll-used + player flags
   structural_last_action structural + previous 1-3 actions
   last_action_only       copycat ablation
 
 Example:
   vendor/PufferLib/.venv/bin/python training/bc_context.py \\
       --pairs-dir validation/pairs_v4 --arm structural_last_action \\
+      --expect-obs-size 2782 --head-loss legacy \\
       --steps 3000 --batch-size 256 --lr 1e-3 --cosine
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import os
 import sys
 import types
@@ -45,10 +48,29 @@ from bc_context_features import (  # noqa: E402
 )
 
 
+VAL_CHECKSUM_DTYPE = np.dtype([
+    ("replay", "<u4"),
+    ("cmd", "<u4"),
+    ("agent", "u1"),
+    ("type", "u1"),
+    ("arg", "u1"),
+    ("sq", "<u2"),
+])
+
+
 def split_by_replay_with_mask(recs, val_frac, seed):
     train_r, val_r, val_ids = bc_pretrain.split_by_replay(recs, val_frac, seed)
     val_m = np.isin(recs["replay"], val_ids)
     return train_r, val_r, val_ids, ~val_m, val_m
+
+
+def validation_records_checksum(recs):
+    """SHA-256 over validation (replay, cmd, agent, type, arg, sq) rows."""
+
+    keys = np.empty(len(recs), dtype=VAL_CHECKSUM_DTYPE)
+    for name in VAL_CHECKSUM_DTYPE.names:
+        keys[name] = recs[name]
+    return hashlib.sha256(np.ascontiguousarray(keys).view(np.uint8)).hexdigest()
 
 
 def to_tensors(recs, context, device):
@@ -157,9 +179,30 @@ def apply_last_action_dropout(ctx, spec: ContextFeatureSpec, p, gen):
 def resolve_head_loss(arm, requested):
     if requested != "auto":
         return requested
-    # D172 baseline compatibility for iid; applicability masks for the arms
-    # where context is actually under test.
-    return "legacy" if arm == "iid" else "applicable"
+    # Auto intentionally aliases legacy so the default A/B isolates features.
+    # Use --head-loss applicable explicitly for the diagnostic masked loss.
+    return "legacy"
+
+
+def resolve_checkpoint_path(out_arg, arm, head_loss):
+    if out_arg is None:
+        return os.path.join(ROOT, "training", "checkpoints",
+                            f"bc_context_{arm}_head-{head_loss}.bin")
+    dirname, basename = os.path.split(out_arg)
+    stem, ext = os.path.splitext(basename)
+    ext = ext or ".bin"
+    normalized = stem.lower().replace("_", "-")
+    if f"head-{head_loss}" in normalized or f"headloss-{head_loss}" in normalized:
+        return out_arg
+    return os.path.join(dirname, f"{stem}_head-{head_loss}{ext}")
+
+
+def write_manifest(path, data):
+    manifest_path = f"{path}.manifest.json"
+    with open(manifest_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, sort_keys=True)
+        f.write("\n")
+    return manifest_path
 
 
 def load_policy_like_trainer(config_path, input_size):
@@ -188,11 +231,11 @@ def verify_roundtrip(out_path, input_size, config_path, trained_policy, probe_ob
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--pairs-dir", default=os.path.join(ROOT, "validation", "pairs"))
+    ap.add_argument("--pairs-dir", default=os.path.join(ROOT, "validation", "pairs_v4"))
     ap.add_argument("--config", default=os.path.join(ROOT, "puffer", "config",
                                                      "bloodbowl.ini"))
-    ap.add_argument("--out", default=os.path.join(ROOT, "training", "checkpoints",
-                                                  "bc_context.bin"))
+    ap.add_argument("--out", default=None,
+                    help="checkpoint path; head_loss is appended unless already present")
     ap.add_argument("--arm", default="iid",
                     choices=["iid", "structural", "structural_last_action",
                              "last_action_only"],
@@ -211,9 +254,13 @@ def main():
                     help="warm-start from an existing state_dict (input width must match)")
     ap.add_argument("--cosine", action="store_true",
                     help="cosine-decay the LR to 1%% over --steps")
-    ap.add_argument("--head-loss", default="auto",
+    ap.add_argument("--head-loss", default="legacy",
                     choices=["auto", "legacy", "applicable"],
-                    help="legacy is bc_pretrain CE on all heads; applicable skips unused arg/sq")
+                    help="legacy is the strict feature-ablation default; applicable is a diagnostic")
+    ap.add_argument("--val-checksum", default=None,
+                    help="expected validation SHA-256 over replay/cmd/agent/type/arg/sq")
+    ap.add_argument("--expect-obs-size", type=int, default=2782,
+                    help="abort unless shard obs size matches; use 0 to disable")
     ap.add_argument("--last-action-dropout", type=float, default=0.10,
                     help="per-sample dropout probability for the last-action feature block")
     ap.add_argument("--no-roundtrip", action="store_true",
@@ -227,27 +274,45 @@ def main():
 
     spec = make_context_spec(args.arm, args.features)
     head_loss = resolve_head_loss(spec.arm, args.head_loss)
+    out_path = resolve_checkpoint_path(args.out, spec.arm, head_loss)
+    if args.out is not None and out_path != args.out:
+        print(f"checkpoint filename includes head_loss: {args.out} -> {out_path}")
     if spec.width == 0:
         args.last_action_dropout = 0.0
 
     recs, obs_size, mask_size = bc_pretrain.load_shards(args.pairs_dir)
+    if args.expect_obs_size and obs_size != args.expect_obs_size:
+        raise SystemExit(
+            f"obs-size guard failed: {args.pairs_dir} has {obs_size}B obs, "
+            f"expected {args.expect_obs_size}B "
+            "(pass --expect-obs-size 0 to disable or set the intended size)")
+    train_r, val_r, val_ids, train_m, val_m = split_by_replay_with_mask(
+        recs, args.val_frac, args.seed)
+    val_checksum = validation_records_checksum(val_r)
+    print(f"pairs: {len(recs)} from {len(np.unique(recs['replay']))} replays "
+          f"(obs {obs_size}B, mask {mask_size}b) | split BY REPLAY: "
+          f"{len(train_r)} train / {len(val_r)} val (held out: {val_ids})")
+    print(f"val checksum sha256(replay,cmd,agent,type,arg,sq): {val_checksum}")
+    expected_val_checksum = (args.val_checksum or "").strip().lower()
+    if expected_val_checksum and expected_val_checksum != val_checksum:
+        raise SystemExit(f"validation checksum mismatch: got {val_checksum}, "
+                         f"expected {expected_val_checksum}")
+
     ctx_all = None
     input_size = obs_size
     if spec.width:
         ctx_all, input_size, spec = compute_context_features(
             recs, obs_size=obs_size, arm=args.arm, features=args.features)
-
-    train_r, val_r, val_ids, train_m, val_m = split_by_replay_with_mask(
-        recs, args.val_frac, args.seed)
     train_ctx = None if ctx_all is None else ctx_all[train_m]
     val_ctx = None if ctx_all is None else ctx_all[val_m]
 
-    print(f"pairs: {len(recs)} from {len(np.unique(recs['replay']))} replays "
-          f"(obs {obs_size}B, mask {mask_size}b) | split BY REPLAY: "
-          f"{len(train_r)} train / {len(val_r)} val (held out: {val_ids})")
     print(f"context arm: {spec.arm} | features {spec.summary()} | "
           f"input {obs_size}+{spec.width}={input_size} | "
-          f"head_loss={head_loss} | last_action_dropout={args.last_action_dropout:.2f}")
+          f"head_loss={head_loss} (requested {args.head_loss}) | "
+          f"last_action_dropout={args.last_action_dropout:.2f}")
+    if spec.width == 0 and head_loss == "legacy":
+        print("iid compatibility: zero-width context, legacy head loss, "
+              f"bc_pretrain.split_by_replay(seed={args.seed})")
     if spec.width:
         names = feature_names(spec)
         print(f"context feature names ({len(names)}): {', '.join(names[:12])}"
@@ -299,20 +364,55 @@ def main():
                                        tr_app, device, head_loss, "legacy")
     print(f"final train legacy | loss[{head_loss}] {t_loss:.4f} | acc type/arg/sq "
           f"{t_accs[0]:.3f}/{t_accs[1]:.3f}/{t_accs[2]:.3f} | exact {t_exact:.3f}")
-    print(f"final  val  legacy | loss[{head_loss}] {v_loss:.4f} | acc type/arg/sq "
-          f"{v_accs[0]:.3f}/{v_accs[1]:.3f}/{v_accs[2]:.3f} | exact {v_exact:.3f}")
+    print(f"final  val  legacy | head_loss={head_loss} | loss {v_loss:.4f} | "
+          f"acc type/arg/sq {v_accs[0]:.3f}/{v_accs[1]:.3f}/{v_accs[2]:.3f} | "
+          f"exact {v_exact:.3f}")
 
-    va_app_loss, va_app_accs, va_app_exact = evaluate(
-        policy, va_obs, va_ctx, va_mask, va_tgt, va_app, device,
-        "applicable", "applicable")
-    print(f"final  val  applicable | loss {va_app_loss:.4f} | acc type/arg/sq "
-          f"{va_app_accs[0]:.3f}/{va_app_accs[1]:.3f}/{va_app_accs[2]:.3f} | "
-          f"exact {va_app_exact:.3f}")
+    va_app_exact = None
+    if head_loss == "applicable":
+        va_app_loss, va_app_accs, va_app_exact = evaluate(
+            policy, va_obs, va_ctx, va_mask, va_tgt, va_app, device,
+            "applicable", "applicable")
+        print(f"final  val  applicable | loss {va_app_loss:.4f} | acc type/arg/sq "
+              f"{va_app_accs[0]:.3f}/{va_app_accs[1]:.3f}/{va_app_accs[2]:.3f} | "
+              f"exact {va_app_exact:.3f}")
     print(f"loss curve: {first_loss:.4f} -> {last_loss:.4f}")
 
-    os.makedirs(os.path.dirname(args.out), exist_ok=True)
-    torch.save(policy.state_dict(), args.out)
-    print(f"saved {args.out} ({os.path.getsize(args.out)} bytes)")
+    out_dir = os.path.dirname(out_path)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+    torch.save(policy.state_dict(), out_path)
+    manifest = {
+        "arm": spec.arm,
+        "batch_size": args.batch_size,
+        "checkpoint": out_path,
+        "config": args.config,
+        "context_features": feature_names(spec),
+        "context_width": spec.width,
+        "cosine": bool(args.cosine),
+        "device": device,
+        "head_loss": head_loss,
+        "head_loss_requested": args.head_loss,
+        "input_size": input_size,
+        "last_action_dropout": args.last_action_dropout,
+        "lr": args.lr,
+        "mask_size": mask_size,
+        "obs_size": obs_size,
+        "pairs_dir": args.pairs_dir,
+        "seed": args.seed,
+        "steps": args.steps,
+        "train_records": int(len(train_r)),
+        "val_checksum": val_checksum,
+        "val_frac": args.val_frac,
+        "val_ids": [int(x) for x in val_ids],
+        "val_records": int(len(val_r)),
+        "val_exact_applicable_metric": (
+            None if va_app_exact is None else float(va_app_exact)),
+        "val_exact_legacy_metric": float(v_exact),
+    }
+    manifest_path = write_manifest(out_path, manifest)
+    print(f"saved {out_path} ({os.path.getsize(out_path)} bytes)")
+    print(f"saved manifest {manifest_path}")
 
     if not args.no_roundtrip:
         probe_obs = va_obs[:8] if len(va_obs) else tr_obs[:8]
@@ -321,7 +421,7 @@ def main():
             src_ctx = va_ctx if va_ctx is not None and len(va_ctx) else tr_ctx
             probe_ctx = src_ctx[:8]
         probe = make_policy_input(probe_obs, probe_ctx)
-        pdiff, ldiff = verify_roundtrip(args.out, input_size, args.config,
+        pdiff, ldiff = verify_roundtrip(out_path, input_size, args.config,
                                         policy, probe)
         print(f"round-trip: pufferlib.torch_pufferl.PuffeRL.load_weights OK - "
               f"max param diff {pdiff:.3e}, max logit diff {ldiff:.3e}")
@@ -332,6 +432,9 @@ def main():
         print("Path-A caveat: context features are loader-only. Treat any val-accuracy "
               "lift as a screen; rollout/Elo confirmation requires Path-B engine obs "
               "integration and re-extraction.")
+    print(f"result | arm={spec.arm} | requested_head_loss={args.head_loss} | "
+          f"head_loss={head_loss} | val_checksum={val_checksum} | "
+          f"val_exact_legacy_metric={v_exact:.3f} | checkpoint={out_path}")
 
 
 if __name__ == "__main__":

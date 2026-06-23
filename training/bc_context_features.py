@@ -52,6 +52,7 @@ ARG_SENTINEL = 32
 SQ_SENTINEL = 390
 
 OWN_TEAM_SLOTS = 16
+OWN_ACTIVATIONS_DENOM = OWN_TEAM_SLOTS
 LAST_ACTION_DEPTH = 3
 LAST_ACTION_STRIDE = 1 + ACT_SIZES[0] + 1 + 1  # present, type one-hot, arg, sq
 
@@ -79,10 +80,10 @@ ARG_ACTION_TYPES = frozenset({
     A_TOUCHBACK,
     A_ACTIVATE,
     A_DECLARE,
+    A_PUSH_SQUARE,
     A_CHOOSE_DIE,
     A_FOLLOW_UP,
     A_USE_REROLL,
-    A_DECLINE_REROLL,
     A_USE_SKILL,
     A_DECLINE_SKILL,
     A_APOTHECARY,
@@ -116,7 +117,7 @@ class ContextFeatureSpec:
         return self.structural_width + self.last_action_width
 
     @property
-    def activation_index_col(self) -> Optional[int]:
+    def own_activations_this_turn_col(self) -> Optional[int]:
         return 0 if self.include_structural else None
 
     @property
@@ -282,14 +283,14 @@ def compute_context_features(
 
     stream_key = None
     turn_key = None
-    activation_index = 0
+    own_activations_this_turn = 0
     reroll_used = 0.0
     activated = np.zeros(spec.own_team_slots, dtype=np.float32)
     last_actions: list[tuple[int, int, int]] = []
 
     def reset_state() -> None:
-        nonlocal activation_index, reroll_used, activated, last_actions
-        activation_index = 0
+        nonlocal own_activations_this_turn, reroll_used, activated, last_actions
+        own_activations_this_turn = 0
         reroll_used = 0.0
         activated = np.zeros(spec.own_team_slots, dtype=np.float32)
         last_actions = []
@@ -311,7 +312,8 @@ def compute_context_features(
                 reset_state()
 
         if spec.include_structural:
-            out[row, spec.activation_index_col] = float(activation_index)
+            out[row, spec.own_activations_this_turn_col] = _clip01(
+                own_activations_this_turn, OWN_ACTIVATIONS_DENOM)
             out[row, spec.reroll_used_col] = reroll_used
             out[row, spec.player_flags_slice] = activated
 
@@ -329,14 +331,14 @@ def compute_context_features(
 
         if typ == A_USE_REROLL and arg == RR_TEAM:
             reroll_used = 1.0
-        elif typ == A_ACTIVATE and 0 <= arg < spec.own_team_slots:
-            activated[arg] = 1.0
+        if typ == A_ACTIVATE:
+            if 0 <= arg < spec.own_team_slots:
+                activated[arg] = 1.0
+            own_activations_this_turn += 1
 
         if spec.include_last_action:
             last_actions.insert(0, (typ, arg, sq))
             del last_actions[spec.last_action_depth:]
-
-        activation_index += 1
 
     return out, (None if obs_size is None else obs_size + spec.width), spec
 
@@ -392,7 +394,7 @@ def action_head_applicability(records_or_types: np.ndarray) -> np.ndarray:
 def feature_names(spec: ContextFeatureSpec) -> list[str]:
     names: list[str] = []
     if spec.include_structural:
-        names.extend(["turn_decision_index", "team_reroll_used"])
+        names.extend(["own_activations_this_turn", "team_reroll_used"])
         names.extend(f"own_player_{i}_activated" for i in range(spec.own_team_slots))
     if spec.include_last_action:
         for lag in range(spec.last_action_depth):
