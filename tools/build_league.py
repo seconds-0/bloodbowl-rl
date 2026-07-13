@@ -34,15 +34,15 @@ Seed files must be CUDA flat-fp32 weight blobs — the save_weights format
 header). pufferl_load_frozen_bank (vendor/PufferLib/src/pufferlib.cu:1830)
 checks the byte size but only fprintf-warns and RETURNS on mismatch (the
 bank silently keeps its previous weights), so this tool hard-verifies every
-seed's size up front. 13,670,400 bytes = the bloodbowl policy (obs 1612 =
-obs v3, heads {30,33,391}, hidden 512, 3 layers —
-training/test_convert_checkpoint.py). Pre-cycle-2 (obs 832) seeds are a
-dead lineage (12,072,960 bytes; archived in checkpoints-backup/) — pass
---expect-bytes 12072960 only to rebuild a historical 832 league.
+seed's size up front. 16,066,560 bytes = the current bloodbowl policy (obs
+2782 = obs v4, heads {30,33,391}, hidden 512, 3 layers —
+training/test_convert_checkpoint.py). Older lineages require an explicit
+override: obs-v3 (1612) is 13,670,400 bytes and obs-v2 (832) is 12,072,960
+bytes.
 
 Usage:
     tools/build_league.py --out <run-dir> --seeds name0=/path/a.bin \
-        name1=/path/b.bin ... [--expect-bytes 13670400]
+        name1=/path/b.bin ... [--expect-bytes 16066560]
 
 Seed order == frozen bank index (bank 0 = first --seeds entry). The patched
 setup() also starts the opponent pool as exactly this list, oldest-first, so
@@ -58,11 +58,11 @@ import os
 import shutil
 import sys
 
-# Bloodbowl CUDA flat blob: 3,417,600 fp32 params (obs 1612 = obs v3 /
-# heads {30,33,391} / hidden 512 / 3 layers). Size pinned by
-# training/test_convert_checkpoint.py. The pre-cycle-2 obs-832 lineage
-# (12,072,960 bytes, checkpoints-backup/) needs an explicit --expect-bytes.
-DEFAULT_EXPECT_BYTES = 13_670_400
+# Current Blood Bowl CUDA flat blob: 4,016,640 fp32 params (obs 2782 = obs
+# v4 / heads {30,33,391} / hidden 512 / 3 layers). Size pinned by
+# training/test_convert_checkpoint.py. Older obs-v3 (13,670,400 bytes) and
+# obs-v2 (12,072,960 bytes) lineages require an explicit --expect-bytes.
+DEFAULT_EXPECT_BYTES = 16_066_560
 
 MANIFEST_NAME = 'league_seeds.json'
 

@@ -58,8 +58,8 @@ static void build_foul_env(RewardFixture* f, float reward_send_off,
     env->pending_gfi_slot = -1;
     env->pending_dodge_slot = -1;
     env->possessor = -1;
-    env->pot_fetch_prev[0] = env->pot_fetch_prev[1] = -1.0f;
-    env->pot_carry_prev[0] = env->pot_carry_prev[1] = -1.0f;
+    env->pot_fetch_prev[0] = env->pot_fetch_prev[1] = NAN;
+    env->pot_carry_prev[0] = env->pot_carry_prev[1] = NAN;
     env->score_prev[0] = env->score_start[0] = env->match.score[0];
     env->score_prev[1] = env->score_start[1] = env->match.score[1];
     for (int t = 0; t < 2; t++) {
@@ -112,8 +112,8 @@ static int build_kickoff_touchback_env(RewardFixture* f,
     env->pending_gfi_slot = -1;
     env->pending_dodge_slot = -1;
     env->possessor = -1;
-    env->pot_fetch_prev[0] = env->pot_fetch_prev[1] = -1.0f;
-    env->pot_carry_prev[0] = env->pot_carry_prev[1] = -1.0f;
+    env->pot_fetch_prev[0] = env->pot_fetch_prev[1] = NAN;
+    env->pot_carry_prev[0] = env->pot_carry_prev[1] = NAN;
     env->score_prev[0] = env->score_start[0] = m->score[0];
     env->score_prev[1] = env->score_start[1] = m->score[1];
     bbe_emit_all(env);
@@ -244,6 +244,36 @@ BB_TEST(puffer_reward_kickoff_touchback_default_zero_no_reward) {
     BB_CHECK_EQ(f.env.ep_touchbacks, 1);
 }
 
+BB_TEST(puffer_possession_bookkeeping_ignores_kickoff_charge_flip) {
+    RewardFixture f;
+    static const uint8_t dice[] = {1};
+    build_kickoff_touchback_env(&f, 0.0f, dice, 1);
+
+    // Reframe the live kickoff decision as the end of a Charge! event. This
+    // is a real active-team flip (kicker -> receiver), but not a completed
+    // team turn and therefore must not enter the possession denominator.
+    bb_match* m = &f.env.match;
+    BB_CHECK(m->stack_top > 0);
+    bb_frame* top = &m->stack[m->stack_top - 1];
+    BB_CHECK_EQ(top->proc, BB_PROC_KICKOFF);
+    top->phase = 7;
+    top->x = 0;
+    top->data = 0;
+    m->active_team = BB_HOME;
+    m->decision_team = BB_HOME;
+    m->status = BB_STATUS_DECISION;
+    f.env.prev_active_team = BB_HOME;
+    bbe_refresh_legal(&f.env);
+    BB_CHECK(!bb_in_team_turn(m, m->active_team));
+
+    step_action(&f, (bb_action){BB_A_END_TURN, 0, 0, 0});
+    BB_CHECK_EQ(m->active_team, BB_AWAY);
+    BB_CHECK_EQ(f.env.ep_turns[BB_HOME], 0);
+    BB_CHECK_EQ(f.env.ep_turns[BB_AWAY], 0);
+    BB_CHECK_EQ(f.env.ep_turns_with_ball[BB_HOME], 0);
+    BB_CHECK_EQ(f.env.ep_turns_with_ball[BB_AWAY], 0);
+}
+
 static int build_carrier_threat_env(RewardFixture* f,
                                     float reward_carrier_threat) {
     setup_env_buffers(f);
@@ -264,8 +294,8 @@ static int build_carrier_threat_env(RewardFixture* f,
     env->pending_gfi_slot = -1;
     env->pending_dodge_slot = -1;
     env->possessor = BB_HOME;
-    env->pot_fetch_prev[0] = env->pot_fetch_prev[1] = -1.0f;
-    env->pot_carry_prev[0] = env->pot_carry_prev[1] = -1.0f;
+    env->pot_fetch_prev[0] = env->pot_fetch_prev[1] = NAN;
+    env->pot_carry_prev[0] = env->pot_carry_prev[1] = NAN;
     env->score_prev[0] = env->score_start[0] = env->match.score[0];
     env->score_prev[1] = env->score_start[1] = env->match.score[1];
     bbe_emit_all(env);
@@ -307,4 +337,340 @@ BB_TEST(puffer_reward_carrier_threat_default_zero_inert) {
     check_float(f.env.ep_return[BB_HOME], 0.0f);
     check_float(f.env.ep_return[BB_AWAY], 0.0f);
     check_float(f.env.ep_carrier_threat, 0.0f);
+}
+
+BB_TEST(puffer_possession_annuity_fires_on_genuine_team_turn_end) {
+    RewardFixture f;
+    build_carrier_threat_env(&f, 0.0f);
+    f.env.reward_possession = 0.03f;
+
+    step_action(&f, (bb_action){BB_A_END_TURN, 0, 0, 0});
+    BB_CHECK_EQ(f.env.ep_turns[BB_HOME], 1);
+    BB_CHECK_EQ(f.env.ep_turns[BB_AWAY], 0);
+    BB_CHECK_EQ(f.env.ep_turns_with_ball[BB_HOME], 1);
+    BB_CHECK_EQ(f.env.ep_turns_with_ball[BB_AWAY], 0);
+    check_float(f.rewards[BB_HOME], 0.03f);
+    check_float(f.rewards[BB_AWAY], -0.03f);
+    check_float(f.env.ep_return[BB_HOME], 0.03f);
+    check_float(f.env.ep_return[BB_AWAY], -0.03f);
+}
+
+static int build_distance_potential_env(RewardFixture* f, bool held_ball,
+                                        int player_x, int ball_x) {
+    setup_env_buffers(f);
+    Bloodbowl* env = &f->env;
+    env->reward_dist_ball = 0.05f;
+    env->reward_dist_endzone = 0.20f;
+
+    fx_match_midturn(&env->match, BB_HOME, 0);
+    int mover = fx_lineman(&env->match, BB_HOME, 0, player_x, 7);
+    fx_lineman(&env->match, BB_AWAY, 0, 23, 12);
+    if (held_ball) fx_ball_held(&env->match, mover);
+    else fx_ball_ground(&env->match, ball_x, 7);
+
+    bb_advance(&env->match, &env->rng);
+    bbe_refresh_legal(env);
+    env->prev_active_team = env->match.active_team;
+    env->pending_pickup_slot = -1;
+    env->pending_gfi_slot = -1;
+    env->pending_dodge_slot = -1;
+    env->possessor = held_ball ? BB_HOME : -1;
+    env->pot_fetch_prev[0] = env->pot_fetch_prev[1] = NAN;
+    env->pot_carry_prev[0] = env->pot_carry_prev[1] = NAN;
+    env->score_prev[0] = env->score_start[0] = env->match.score[0];
+    env->score_prev[1] = env->score_start[1] = env->match.score[1];
+    bbe_emit_all(env);
+    return mover;
+}
+
+BB_TEST(puffer_reward_carry_potential_emits_full_pitch_delta) {
+    RewardFixture f;
+    int mover = build_distance_potential_env(&f, true, 5, 0);
+
+    step_action(&f, (bb_action){BB_A_ACTIVATE, mover, 0, 0});
+    check_float(f.rewards[BB_HOME], 0.0f); // primes the carry potential
+    step_action(&f, (bb_action){BB_A_DECLARE, BB_ACT_MOVE, 0, 0});
+    check_float(f.rewards[BB_HOME], 0.0f);
+    step_action(&f, (bb_action){BB_A_STEP, 0, 6, 7});
+
+    // HOME's end zone is x=25: moving x=5 -> 6 reduces distance 20 -> 19.
+    check_float(f.rewards[BB_HOME], 0.20f);
+    check_float(f.env.ep_return[BB_HOME], 0.20f);
+}
+
+BB_TEST(puffer_reward_fetch_potential_emits_full_pitch_delta) {
+    RewardFixture f;
+    int mover = build_distance_potential_env(&f, false, 4, 25);
+
+    step_action(&f, (bb_action){BB_A_ACTIVATE, mover, 0, 0});
+    check_float(f.rewards[BB_HOME], 0.0f); // primes the fetch potential
+    step_action(&f, (bb_action){BB_A_DECLARE, BB_ACT_MOVE, 0, 0});
+    check_float(f.rewards[BB_HOME], 0.0f);
+    step_action(&f, (bb_action){BB_A_STEP, 0, 5, 7});
+
+    // Moving toward the loose ball reduces Chebyshev distance 21 -> 20.
+    check_float(f.rewards[BB_HOME], 0.05f);
+    check_float(f.env.ep_return[BB_HOME], 0.05f);
+}
+
+BB_TEST(puffer_possession_metric_counts_touchdown_ending_turn_once) {
+    RewardFixture f;
+    int mover = build_distance_potential_env(&f, true, 24, 0);
+    f.env.reward_dist_ball = 0.0f;
+    f.env.reward_dist_endzone = 0.0f;
+    f.env.reward_possession = 0.03f;
+
+    step_action(&f, (bb_action){BB_A_ACTIVATE, mover, 0, 0});
+    step_action(&f, (bb_action){BB_A_DECLARE, BB_ACT_MOVE, 0, 0});
+    step_action(&f, (bb_action){BB_A_STEP, 0, 25, 7});
+
+    BB_CHECK_EQ(f.env.match.score[BB_HOME], 1);
+    BB_CHECK_EQ(f.env.ep_turns[BB_HOME], 1);
+    BB_CHECK_EQ(f.env.ep_turns_with_ball[BB_HOME], 1);
+    BB_CHECK_EQ(f.env.ep_turns[BB_AWAY], 0);
+    BB_CHECK_EQ(f.env.ep_turns_with_ball[BB_AWAY], 0);
+    // The TD objective prices the score; the possession annuity is metric-only
+    // on a scoring turn and must not also pay a terminal possession coupon.
+    check_float(f.rewards[BB_HOME], 0.0f);
+    check_float(f.rewards[BB_AWAY], 0.0f);
+}
+
+BB_TEST(puffer_final_turn_touchdown_stacks_objective_without_possession_clip) {
+    RewardFixture f;
+    int mover = build_distance_potential_env(&f, true, 24, 0);
+    f.env.reward_configured = 1;
+    f.env.reward_td = 0.4f;
+    f.env.reward_win = 0.6f;
+    f.env.reward_possession = 0.03f;
+    f.env.reward_dist_ball = 0.0f;
+    f.env.reward_dist_endzone = 0.0f;
+    // This already-open HOME turn is the final outstanding turn of half 2.
+    // Scoring must finish the match in the same c_step that emits the TD.
+    f.env.match.half = 2;
+    f.env.match.turn[BB_HOME] = 8;
+    f.env.match.turn[BB_AWAY] = 8;
+
+    step_action(&f, (bb_action){BB_A_ACTIVATE, mover, 0, 0});
+    step_action(&f, (bb_action){BB_A_DECLARE, BB_ACT_MOVE, 0, 0});
+    step_action(&f, (bb_action){BB_A_STEP, 0, 25, 7});
+
+    check_float(f.terminals[BB_HOME], 1.0f);
+    check_float(f.terminals[BB_AWAY], 1.0f);
+    check_float(f.rewards[BB_HOME], 1.0f);
+    check_float(f.rewards[BB_AWAY], -1.0f);
+    // The scoring turn enters the possession metric, but its annuity coupon is
+    // suppressed because the TD already priced this boundary.
+    check_float(f.env.log.possession_rate, 1.0f);
+    check_float(f.env.log.reward_clip_frac, 0.0f);
+    check_float(f.env.log.reward_clip_episodes, 0.0f);
+    check_float(f.env.log.reward_abs_max, 1.0f);
+}
+
+BB_TEST(puffer_possession_bookkeeping_survives_auto_empty_opponent_turn) {
+    RewardFixture f;
+    setup_env_buffers(&f);
+    Bloodbowl* env = &f.env;
+    env->reward_possession = 0.03f;
+
+    fx_match_midturn(&env->match, BB_HOME, 0);
+    int carrier = fx_lineman(&env->match, BB_HOME, 0, 5, 5);
+    fx_ball_held(&env->match, carrier);
+    bb_advance(&env->match, &env->rng);
+    bbe_refresh_legal(env);
+    env->prev_active_team = env->match.active_team;
+    env->pending_pickup_slot = -1;
+    env->pending_gfi_slot = -1;
+    env->pending_dodge_slot = -1;
+    env->possessor = BB_HOME;
+    env->pot_fetch_prev[0] = env->pot_fetch_prev[1] = NAN;
+    env->pot_carry_prev[0] = env->pot_carry_prev[1] = NAN;
+    env->score_prev[0] = env->score_start[0] = env->match.score[0];
+    env->score_prev[1] = env->score_start[1] = env->match.score[1];
+    bbe_emit_all(env);
+
+    step_action(&f, (bb_action){BB_A_END_TURN, 0, 0, 0});
+
+    // bb_advance compresses AWAY's playerless turn and reaches HOME's next
+    // decision in the same c_step, so final active_team alone cannot see
+    // either boundary.
+    BB_CHECK_EQ(env->match.active_team, BB_HOME);
+    BB_CHECK_EQ(env->ep_turns[BB_HOME], 1);
+    BB_CHECK_EQ(env->ep_turns[BB_AWAY], 1);
+    BB_CHECK_EQ(env->ep_turns_with_ball[BB_HOME], 1);
+    BB_CHECK_EQ(env->ep_turns_with_ball[BB_AWAY], 0);
+    check_float(f.rewards[BB_HOME], 0.03f);
+    check_float(f.rewards[BB_AWAY], -0.03f);
+}
+
+BB_TEST(puffer_turnover_bookkeeping_counts_failure_created_by_action) {
+    RewardFixture f;
+    static const uint8_t dice[] = {1, 1, 1, 1};
+    setup_env_buffers(&f);
+    Bloodbowl* env = &f.env;
+
+    fx_match_midturn(&env->match, BB_HOME, 0);
+    int mover = fx_lineman(&env->match, BB_HOME, 0, 5, 5);
+    fx_lineman(&env->match, BB_HOME, 1, 2, 2);
+    fx_lineman(&env->match, BB_AWAY, 0, 5, 6); // marks the mover
+    fx_lineman(&env->match, BB_AWAY, 1, 23, 12);
+    bb_rng_script(&env->rng, dice, sizeof dice);
+    bb_advance(&env->match, &env->rng);
+    bbe_refresh_legal(env);
+    env->prev_active_team = env->match.active_team;
+    env->pending_pickup_slot = -1;
+    env->pending_gfi_slot = -1;
+    env->pending_dodge_slot = -1;
+    env->possessor = -1;
+    env->pot_fetch_prev[0] = env->pot_fetch_prev[1] = NAN;
+    env->pot_carry_prev[0] = env->pot_carry_prev[1] = NAN;
+    env->score_prev[0] = env->score_start[0] = env->match.score[0];
+    env->score_prev[1] = env->score_start[1] = env->match.score[1];
+    bbe_emit_all(env);
+
+    step_action(&f, (bb_action){BB_A_ACTIVATE, mover, 0, 0});
+    step_action(&f, (bb_action){BB_A_DECLARE, BB_ACT_MOVE, 0, 0});
+    step_action(&f, (bb_action){BB_A_STEP, 0, 4, 5});
+
+    BB_CHECK_EQ(env->match.turnovers_completed[BB_HOME], 1);
+    BB_CHECK_EQ(env->ep_turnovers[BB_HOME], 1);
+    BB_CHECK_EQ(env->ep_turns[BB_HOME], 1);
+    BB_CHECK_EQ(env->ep_turnovers[BB_AWAY], 0);
+}
+
+BB_TEST(puffer_reward_explicit_zero_objective_survives_reset) {
+    RewardFixture f;
+    setup_env_buffers(&f);
+    f.env.reward_td = 0.0f;
+    f.env.reward_win = 0.0f;
+    f.env.reward_draw = 0.0f;
+    f.env.reward_configured = 1;
+
+    c_reset(&f.env);
+
+    check_float(f.env.reward_td, 0.0f);
+    check_float(f.env.reward_win, 0.0f);
+    check_float(f.env.reward_draw, 0.0f);
+}
+
+BB_TEST(puffer_reward_standalone_defaults_match_public_config) {
+    RewardFixture f;
+    setup_env_buffers(&f);
+
+    c_reset(&f.env);
+
+    check_float(f.env.reward_td, 0.4f);
+    check_float(f.env.reward_win, 0.6f);
+    check_float(f.env.reward_draw, 0.0f);
+}
+
+BB_TEST(puffer_reward_config_rejects_nonfinite_coefficients) {
+    RewardFixture f;
+    setup_env_buffers(&f);
+    const char* bad_field = NULL;
+
+    BB_CHECK(bbe_reward_config_scalars_valid(&f.env, &bad_field));
+    f.env.reward_dist_endzone = INFINITY;
+    BB_CHECK(!bbe_reward_config_scalars_valid(&f.env, &bad_field));
+    BB_CHECK(bad_field != NULL);
+    BB_CHECK(strcmp(bad_field, "reward_dist_endzone") == 0);
+
+    f.env.reward_dist_endzone = 3.402823466e+38F;
+    BB_CHECK(!bbe_reward_config_scalars_valid(&f.env, &bad_field));
+    BB_CHECK(strcmp(bad_field, "reward_dist_endzone") == 0);
+}
+
+BB_TEST(puffer_reward_clip_telemetry_sees_terminal_stack) {
+    RewardFixture f;
+    setup_env_buffers(&f);
+    f.env.reward_configured = 1;
+    f.env.reward_win = 0.8f;
+    f.env.match.score[BB_HOME] = 1;
+    f.env.match.score[BB_AWAY] = 0;
+    f.rewards[BB_HOME] = 0.4f;
+    f.rewards[BB_AWAY] = -0.4f;
+    f.env.ep_return[BB_HOME] = 0.4f;
+    f.env.ep_return[BB_AWAY] = -0.4f;
+
+    bbe_finish_episode(&f.env);
+
+    check_float(f.env.log.reward_clip_frac, 1.0f);
+    check_float(f.env.log.reward_clip_episodes, 1.0f);
+    check_float(f.env.log.reward_nonfinite_episodes, 0.0f);
+    check_float(f.env.log.reward_clip_excess, 0.4f);
+    check_float(f.env.log.reward_abs_max, 1.2f);
+    check_float(f.env.log.reward_nonfinite_frac, 0.0f);
+}
+
+BB_TEST(puffer_reward_clip_telemetry_includes_statmatch_terminal_term) {
+    RewardFixture f;
+    setup_env_buffers(&f);
+    f.env.reward_configured = 1;
+    f.env.reward_statmatch_scale = 1.0f;
+
+    bbe_finish_episode(&f.env);
+
+    BB_CHECK(f.env.log.statmatch_term < -1.0f);
+    check_float(f.env.log.reward_clip_frac, 1.0f);
+    check_float(f.env.log.reward_clip_episodes, 1.0f);
+    BB_CHECK(f.env.log.reward_abs_max > 1.0f);
+    BB_CHECK(f.env.log.reward_clip_excess > 0.0f);
+}
+
+BB_TEST(puffer_reward_clip_nonzero_fraction_is_not_diluted_by_sparse_zeros) {
+    RewardFixture f;
+    setup_env_buffers(&f);
+    f.env.reward_configured = 1;
+    for (int i = 0; i < 100; i++) {
+        f.rewards[BB_HOME] = f.rewards[BB_AWAY] = 0.0f;
+        bbe_record_reward_emission(&f.env);
+    }
+    f.env.reward_win = 0.8f;
+    f.env.match.score[BB_HOME] = 1;
+    f.rewards[BB_HOME] = 0.4f;
+    f.rewards[BB_AWAY] = -0.4f;
+
+    bbe_finish_episode(&f.env);
+
+    check_float(f.env.log.reward_clip_frac, 2.0f / 202.0f);
+    check_float(f.env.log.reward_clip_frac_nonzero, 1.0f);
+}
+
+BB_TEST(puffer_reward_nonfinite_telemetry_sees_raw_nan_and_infinity) {
+    RewardFixture f;
+    setup_env_buffers(&f);
+    f.env.reward_configured = 1;
+    f.rewards[BB_HOME] = NAN;
+    f.rewards[BB_AWAY] = INFINITY;
+
+    bbe_finish_episode(&f.env);
+
+    check_float(f.env.log.reward_nonfinite_frac, 1.0f);
+    check_float(f.env.log.reward_nonfinite_episodes, 1.0f);
+    check_float(f.env.log.reward_clip_frac, 0.0f);
+    check_float(f.env.log.reward_clip_episodes, 0.0f);
+    check_float(f.env.log.reward_abs_max, 0.0f);
+}
+
+BB_TEST(puffer_reward_clip_threshold_is_strictly_above_one) {
+    RewardFixture exact;
+    setup_env_buffers(&exact);
+    exact.env.reward_configured = 1;
+    exact.rewards[BB_HOME] = 1.0f;
+    exact.rewards[BB_AWAY] = -1.0f;
+    bbe_finish_episode(&exact.env);
+    check_float(exact.env.log.reward_clip_frac, 0.0f);
+    check_float(exact.env.log.reward_clip_episodes, 0.0f);
+    check_float(exact.env.log.reward_abs_max, 1.0f);
+
+    RewardFixture over;
+    setup_env_buffers(&over);
+    over.env.reward_configured = 1;
+    float just_over = nextafterf(1.0f, INFINITY);
+    over.rewards[BB_HOME] = just_over;
+    over.rewards[BB_AWAY] = -just_over;
+    bbe_finish_episode(&over.env);
+    check_float(over.env.log.reward_clip_frac, 1.0f);
+    check_float(over.env.log.reward_clip_episodes, 1.0f);
+    BB_CHECK(over.env.log.reward_clip_excess > 0.0f);
+    check_float(over.env.log.reward_abs_max, just_over);
 }

@@ -1,8 +1,6 @@
-diff --git a/pufferlib/pufferl.py b/pufferlib/pufferl.py
-index 0000000..0000000 100644
 --- a/pufferlib/pufferl.py
 +++ b/pufferlib/pufferl.py
-@@ -345,18 +345,23 @@
+@@ -428,18 +428,24 @@
      next_bin = logged_timesteps / (n - 1) if n > 1 else np.inf
      for log in all_logs:
          for k, v in log.items():
@@ -15,7 +13,8 @@ index 0000000..0000000 100644
          next_bin += logged_timesteps / (n - 1)
          for k in metrics:
 -            metrics[k][-1] = np.mean(metrics[k][-1])
-+            metrics[k][-1] = np.mean(metrics[k][-1]) if metrics[k][-1] else float("nan")
++            metrics[k][-1] = (
++                np.mean(metrics[k][-1]) if metrics[k][-1] else float("nan"))
              metrics[k].append([])
  
      for k in metrics:

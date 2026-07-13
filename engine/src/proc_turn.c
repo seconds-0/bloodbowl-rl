@@ -74,6 +74,12 @@ static void pick_me_up(bb_match* m, bb_rng* rng, int helping_team) {
 }
 
 static void turn_end(bb_match* m, int team) {
+    m->turns_completed[team]++;
+    if (m->ball.state == BB_BALL_HELD &&
+        BB_TEAM_OF(m->ball.carrier) == team) {
+        m->turns_completed_held[team]++;
+    }
+    if (m->turnover) m->turnovers_completed[team]++;
     // Only players who STARTED this turn Stunned (marked at turn start) roll
     // over to Prone now.
     for (int s = team * BB_TEAM_SLOTS; s < (team + 1) * BB_TEAM_SLOTS; s++) {

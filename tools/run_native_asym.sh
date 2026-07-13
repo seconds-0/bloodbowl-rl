@@ -37,12 +37,22 @@
 #                            lineage (input-shape INCOMPATIBLE), 12072960 =
 #                            dead obs-832 lineage. Override only for a new arch.
 #   SKIP_DRIFT_CHECK=1       skip the install_puffer_env.sh --check gate.
+#   RIG_ALLOW_FLOAT=1        allow native fp32 on the owned RTX 2070/Turing
+#                            rig, where bf16 is unsupported. Does not add
+#                            --slowly; this remains the native backend.
+#   REWARD_MANIFEST=<json>   optional COMPLETE reward manifest validated by
+#                            tools/reward_manifest.py. When supplied, all 31
+#                            reward fields are appended after the legacy inline
+#                            recipe, the manifest hash is logged, and trailing
+#                            reward overrides are refused. Recommended for every
+#                            causal reward experiment.
 #
 # Prereqs on the box (this script CHECKS or AUTO-FIXES every one of these —
 # read its error messages before improvising):
-#   - NATIVE build: vendor/PufferLib built WITHOUT --float (plain build =
-#     bf16 native CUDA; --float is the torch/--slowly requirement and costs
-#     the 4x SPS win). Probe:  cd vendor/PufferLib &&
+#   - NATIVE build: production Ampere/Ada boxes use a plain bf16 build. The
+#     owned RTX 2070 is Turing and must use native fp32 (`--float` build plus
+#     RIG_ALLOW_FLOAT=1); this does NOT imply the torch/--slowly backend.
+#     Probe:  cd vendor/PufferLib &&
 #       python3 -c "from pufferlib import _C; print(_C.precision_bytes)"
 #     -> 2 = native bf16 (correct), 4 = --float build (rebuild:
 #       rm -rf build && ./build.sh bloodbowl     # NO --float, never skip rm).
@@ -78,6 +88,8 @@ TEACHER="$(abspath "$TEACHER")"
 LOG="$(abspath "$LOG")"
 POOL="$(abspath "$POOL")"
 [ -n "${WARM:-}" ] && WARM="$(abspath "$WARM")"
+[ -n "${REWARD_MANIFEST:-}" ] && \
+  REWARD_MANIFEST="$(abspath "$REWARD_MANIFEST")"
 
 # ---- guard: refuse trailing overrides of the pinning knobs ------------------
 # Trailing args are last-wins by design (reward-economy overrides), but a
@@ -90,6 +102,13 @@ for a in "$@"; do
       echo "immutability contract — see PINNING KNOBS comment). If you truly" >&2
       echo "want a rotating-opponent run, that is tools/run_league.sh, not this." >&2
       exit 1 ;;
+    --env.reward-*)
+      if [ -n "${REWARD_MANIFEST:-}" ]; then
+        echo "refusing trailing arg '$a': REWARD_MANIFEST supplies a complete" >&2
+        echo "hashable reward configuration; an extra reward override would" >&2
+        echo "make the recorded manifest false." >&2
+        exit 1
+      fi ;;
   esac
 done
 
@@ -110,6 +129,35 @@ fi
 cd "$ROOT/vendor/PufferLib"
 PYBIN="python3"
 [ -x .venv/bin/python ] && PYBIN=".venv/bin/python"
+
+# ---- reward provenance ------------------------------------------------------
+# Historical launchers accumulated partial, last-wins reward recipes. A
+# complete manifest makes every coefficient explicit and gives each arm a
+# stable identity. Preserve the legacy inline recipe only for old workflows;
+# manifest values are appended later and therefore replace every legacy field.
+REWARD_ARGS=()
+REWARD_NAME="legacy_inline_unversioned"
+REWARD_HASH="UNVERSIONED"
+if [ -n "${REWARD_MANIFEST:-}" ]; then
+  [ -f "$REWARD_MANIFEST" ] || {
+    echo "reward manifest missing: $REWARD_MANIFEST" >&2; exit 1; }
+  while IFS= read -r token; do
+    REWARD_ARGS+=("$token")
+  done < <("$PYBIN" "$ROOT/tools/reward_manifest.py" \
+            "$REWARD_MANIFEST" --lines)
+  read -r REWARD_NAME REWARD_HASH < <(
+    "$PYBIN" - "$ROOT" "$REWARD_MANIFEST" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1] + "/tools")
+from reward_manifest import load_manifest
+manifest, digest = load_manifest(sys.argv[2])
+print(manifest["name"], digest)
+PY
+  )
+  echo "reward: $REWARD_NAME sha256=$REWARD_HASH manifest=$REWARD_MANIFEST"
+else
+  echo "WARNING: no REWARD_MANIFEST; using the historical partial inline reward recipe" >&2
+fi
 
 # ---- guard: source-vs-snapshot drift (footgun: build compiles the snapshot,
 # not your edit; a drifted puffer/bloodbowl means the .so may be stale) ----
@@ -184,15 +232,19 @@ elif [ "$cenv" != "bloodbowl" ]; then
 elif [ "$cgpu" != "1" ]; then
   echo "_C is a CPU build — the selfplay pool/frozen banks are CUDA-only; rebuild on the box" >&2
   exit 1
-elif [ "$prec" = "4" ]; then
+elif [ "$prec" = "4" ] && [ "${RIG_ALLOW_FLOAT:-0}" != "1" ]; then
   echo "build is --float (precision_bytes=4): that's the torch/--slowly build — it forfeits the 4x SPS win." >&2
   echo "rebuild native:  cd $ROOT/vendor/PufferLib && rm -rf build && ./build.sh bloodbowl   # NO --float, never skip rm -rf build" >&2
   exit 1
-elif [ "$prec" != "2" ]; then
+elif [ "$prec" != "2" ] && [ "$prec" != "4" ]; then
   echo "unexpected _C.precision_bytes='$prec' (want 2 = native bf16) — investigate before launching" >&2
   exit 1
 fi
-echo "build: native bf16 bloodbowl GPU (_C.precision_bytes=2) — correct for this architecture"
+if [ "$prec" = "4" ]; then
+  echo "build: native fp32 bloodbowl GPU (_C.precision_bytes=4; RIG_ALLOW_FLOAT=1 for Turing)"
+else
+  echo "build: native bf16 bloodbowl GPU (_C.precision_bytes=2) — correct for this architecture"
+fi
 
 # ---- guard: teacher blob (and optional warm blob) are sane cuda flats ------
 # Why strict: pufferl_load_frozen_bank (src/pufferlib.cu:1830) only
@@ -266,7 +318,7 @@ with open(os.path.join(pool, 'league_seeds.json'), 'w') as f:
 print(f"pool: {pool} (1 seed: {fname}, sha256 {manifest['seeds'][0]['sha256'][:12]})")
 PY
 
-echo "tag=$TAG steps=$STEPS warm=${WARM:-<fresh>} log=$LOG"
+echo "tag=$TAG steps=$STEPS warm=${WARM:-<fresh>} log=$LOG reward=$REWARD_NAME reward_sha256=$REWARD_HASH"
 
 # ---- launch -----------------------------------------------------------------
 # PINNING KNOBS (the teacher-immutability contract — the trailing-arg guard
@@ -316,6 +368,7 @@ setsid nohup puffer train bloodbowl --tag "$TAG" \
   --env.reward-possession 0.03 --env.reward-ball-gain 0.05 --env.reward-ball-loss 0 \
   --env.reward-dist-ball 0.05 --env.reward-dist-endzone 0.2 \
   --env.reward-k-kd 0.03 --env.reward-k-value 0.25 --env.reward-k-ball 0.15 --env.reward-k-seq 0.01 \
+  ${REWARD_ARGS[@]+"${REWARD_ARGS[@]}"} \
   --env.demo-reset-pct 0.9 --env.demo-endzone-maxdist 9 \
   --train.total-timesteps "$STEPS" \
   "$@" > "$LOG" 2>&1 < /dev/null &
@@ -331,7 +384,7 @@ echo "LAUNCHED-PID-$PID log=$LOG"
     sleep 10
     d=$(ls -td checkpoints/bloodbowl/*/ 2>/dev/null | head -1)
     if [ -n "$d" ] && [ ! -e "${d}PROFILE" ]; then
-      echo "native-asym ($TAG): native CUDA, anchor-free, frozen teacher $tbase" > "${d}PROFILE"
+      echo "native-asym ($TAG): native CUDA, anchor-free, frozen teacher $tbase, reward $REWARD_NAME ${REWARD_HASH:0:12}" > "${d}PROFILE"
       break
     fi
   done

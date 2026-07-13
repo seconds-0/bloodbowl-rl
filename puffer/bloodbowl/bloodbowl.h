@@ -112,6 +112,9 @@
 #define BBE_AGENTS 2
 #define BBE_MAX_DECISIONS 4096 // episode safety bound
 #define BBE_MAX_BANKS 8        // frozen selfplay-pool banks (matches selfplay.py)
+#define BBE_DEFAULT_REWARD_TD 0.4f
+#define BBE_DEFAULT_REWARD_WIN 0.6f
+#define BBE_DEFAULT_REWARD_DRAW 0.0f
 
 _Static_assert(BBE_HEAD_TYPE == BB_A_TYPE_COUNT,
                "action-type head out of sync with bb_actions.h");
@@ -158,6 +161,17 @@ typedef struct {
     // on curriculum-start episodes. Watch it converge toward 0 during a
     // statmatch arm; a stuck-large value means an untracked-dimension exploit.
     float statmatch_term;
+    // PPO clamps each emitted agent reward to [-1,1]. These aggregates expose
+    // any difference between raw env return and the learner's reward stream.
+    float reward_clip_frac;
+    float reward_clip_frac_nonzero;
+    float reward_clip_excess;
+    float reward_abs_max;
+    float reward_nonfinite_frac;
+    // Episode indicators; after vec-log normalization these are the fraction
+    // of completed episodes with at least one clipped/non-finite emission.
+    float reward_clip_episodes;
+    float reward_nonfinite_episodes;
     float illegal_frac;    // sampled actions that had to be snapped to legal
     // Behavioral micro-stats, summed per episode (dashboard shows per-episode
     // means after the /n aggregation). Motivated by a spectator finding:
@@ -258,6 +272,10 @@ typedef struct {
     float reward_td;
     float reward_win;
     float reward_draw; // applied to BOTH agents on equal scores (default 0)
+    // apply_kwargs sets this even when all objective terms are explicitly 0.
+    // Standalone callers skip apply_kwargs and receive the public defaults in
+    // c_reset; configured all-zero objectives must not be silently rewritten.
+    int reward_configured;
     // Setup shaping (default 0 = off): a voluntary legal SETUP_DONE earns
     // reward_setup_done; exhausting the placement budget so the engine
     // autofixes the formation earns reward_setup_autofix (negative). The two
@@ -378,9 +396,12 @@ typedef struct {
     // reach our endzone in <= 2 turns. Counted separately from the 1-turn tier
     // so a 1-turn threat is NOT also charged the soft fine. Positive; 0 = off.
     float reward_defensive_threat_soft;
-    // Aggregate-statistic matching (D114): episode-end pseudo-reward that pulls
-    // the full-game behavioral stat vector toward the FIXED human baseline
-    // (docs/human-baseline.json). term = -scale * sqrt(sum_i z_i^2) over the 7
+    // LEGACY / QUARANTINED aggregate-statistic matching (D114): episode-end
+    // pseudo-reward against the historical docs/human-baseline.json. The
+    // 2026-07-09 audit found incompatible event semantics, a retired
+    // possession parser, synthetic variances, and ignored covariance. New
+    // manifests reject nonzero scale; this remains only for artifact
+    // reproduction. term = -scale * sqrt(sum_i z_i^2) over the 7
     // stats {tds, dodgeRoll, pickUpRoll, passRoll, goForItRoll, block_2dred_frac,
     // possession_rate}, z_i = (agent_i - human_mean_i)/human_std_i (diagonal
     // Mahalanobis / Z-score L2, raw episodic term, NOT PBRS). Stats are
@@ -521,6 +542,12 @@ typedef struct {
     int ep_touchbacks;
     int kickoff_touchback_latched;
     float ep_return[BBE_AGENTS];
+    int ep_reward_samples;
+    int ep_reward_clipped;
+    int ep_reward_nonzero;
+    int ep_reward_nonfinite;
+    float ep_reward_clip_excess;
+    float ep_reward_abs_max;
     bb_action legal[BB_LEGAL_MAX];
     int n_legal;
     int score_prev[2];
@@ -536,7 +563,8 @@ typedef struct {
     int poss_last_x, poss_last_y;
     // Bootstrap potentials, per channel: deltas emitted only WITHIN a regime
     // (ball stays loose / same team keeps carrying); regime transitions emit
-    // nothing — pickup itself is priced by reward_ball_gain. -1 = inactive.
+    // nothing — pickup itself is priced by reward_ball_gain. NaN = inactive;
+    // finite negative values are valid potentials at any configured scale.
     float pot_fetch_prev[2];
     float pot_carry_prev[2];
     float prev_contact_fav[2];
@@ -588,7 +616,60 @@ typedef struct {
     uint16_t setup_sq_off[BBE_HEAD_SQ];    // sq -> template offset (0xFFFF)
 } Bloodbowl;
 
+static bool bbe_reward_config_scalars_valid(const Bloodbowl* env,
+                                            const char** bad_field) {
+#define BBE_CHECK_REWARD_FINITE(field) \
+    do { \
+        if (!isfinite(env->field) || fabsf(env->field) > 1.0f) { \
+            if (bad_field != NULL) *bad_field = #field; \
+            return false; \
+        } \
+    } while (0)
+    BBE_CHECK_REWARD_FINITE(reward_td);
+    BBE_CHECK_REWARD_FINITE(reward_win);
+    BBE_CHECK_REWARD_FINITE(reward_draw);
+    BBE_CHECK_REWARD_FINITE(reward_setup_done);
+    BBE_CHECK_REWARD_FINITE(reward_setup_autofix);
+    BBE_CHECK_REWARD_FINITE(reward_ball_gain);
+    BBE_CHECK_REWARD_FINITE(reward_ball_loss);
+    BBE_CHECK_REWARD_FINITE(reward_dist_ball);
+    BBE_CHECK_REWARD_FINITE(reward_dist_endzone);
+    BBE_CHECK_REWARD_FINITE(reward_injury_inflicted);
+    BBE_CHECK_REWARD_FINITE(reward_injury_taken);
+    BBE_CHECK_REWARD_FINITE(reward_send_off);
+    BBE_CHECK_REWARD_FINITE(reward_kickoff_touchback);
+    BBE_CHECK_REWARD_FINITE(reward_surf_taken);
+    BBE_CHECK_REWARD_FINITE(reward_surf_inflicted);
+    BBE_CHECK_REWARD_FINITE(reward_k_kd);
+    BBE_CHECK_REWARD_FINITE(reward_k_value);
+    BBE_CHECK_REWARD_FINITE(reward_k_self_injury);
+    BBE_CHECK_REWARD_FINITE(reward_k_ball);
+    BBE_CHECK_REWARD_FINITE(reward_k_seq);
+    BBE_CHECK_REWARD_FINITE(reward_k_turnover);
+    BBE_CHECK_REWARD_FINITE(reward_possession);
+    BBE_CHECK_REWARD_FINITE(reward_k_assist);
+    BBE_CHECK_REWARD_FINITE(reward_rush_cost);
+    BBE_CHECK_REWARD_FINITE(reward_carrier_exposure);
+    BBE_CHECK_REWARD_FINITE(reward_carrier_exposure_soft);
+    BBE_CHECK_REWARD_FINITE(reward_carrier_threat);
+    BBE_CHECK_REWARD_FINITE(reward_defensive_threat);
+    BBE_CHECK_REWARD_FINITE(reward_defensive_threat_soft);
+    BBE_CHECK_REWARD_FINITE(reward_statmatch_scale);
+#undef BBE_CHECK_REWARD_FINITE
+    if (bad_field != NULL) *bad_field = NULL;
+    return true;
+}
+
 static void bbe_validate_reward_config(const Bloodbowl* env) {
+    const char* bad_field = NULL;
+    if (!bbe_reward_config_scalars_valid(env, &bad_field)) {
+        fprintf(stderr,
+                "bloodbowl: reward coefficient %s must be finite and within "
+                "[-1,1]; PPO clamps the summed agent-step reward to that "
+                "range\n",
+                bad_field != NULL ? bad_field : "<unknown>");
+        abort();
+    }
     if (env->reward_carrier_threat != 0.0f &&
         (env->reward_carrier_exposure != 0.0f ||
          env->reward_carrier_exposure_soft != 0.0f)) {
@@ -1731,6 +1812,12 @@ static void bbe_reset_match(Bloodbowl* env) {
             (env->match.half - 1) * 8 + env->match.turn[t];
     }
     env->ep_return[0] = env->ep_return[1] = 0;
+    env->ep_reward_samples = 0;
+    env->ep_reward_clipped = 0;
+    env->ep_reward_nonzero = 0;
+    env->ep_reward_nonfinite = 0;
+    env->ep_reward_clip_excess = 0.0f;
+    env->ep_reward_abs_max = 0.0f;
     // Baseline scores from the (possibly resumed) match so TD step rewards
     // and the Log's tds/score_diff deltas count only what happens from here.
     env->score_prev[0] = env->score_start[0] = env->match.score[0];
@@ -1757,9 +1844,9 @@ static void bbe_reset_match(Bloodbowl* env) {
     }
     // Potentials start inactive in both channels: the first post-reset step
     // primes them without emitting a delta, so a resumed carrier/loose ball
-    // never books a phantom potential jump against the -1 sentinel.
-    env->pot_fetch_prev[0] = env->pot_fetch_prev[1] = -1.0f;
-    env->pot_carry_prev[0] = env->pot_carry_prev[1] = -1.0f;
+    // never books a phantom potential jump against the inactive sentinel.
+    env->pot_fetch_prev[0] = env->pot_fetch_prev[1] = NAN;
+    env->pot_carry_prev[0] = env->pot_carry_prev[1] = NAN;
     if (env->reward_k_assist != 0.0f) {
         env->prev_contact_fav[0] = bb_team_contact_favorability(&env->match, 0);
         env->prev_contact_fav[1] = bb_team_contact_favorability(&env->match, 1);
@@ -1798,13 +1885,34 @@ static void c_reset(Bloodbowl* env) {
     env->v4_dirty[1] = 1;
     // Defaults for callers that skip apply_kwargs (standalone driver, tests).
     if (env->max_decisions <= 0) env->max_decisions = BBE_MAX_DECISIONS;
-    if (env->reward_td == 0.0f && env->reward_win == 0.0f) {
-        env->reward_td = 1.0f;
-        env->reward_win = 3.0f;
+    if (!env->reward_configured) {
+        env->reward_td = BBE_DEFAULT_REWARD_TD;
+        env->reward_win = BBE_DEFAULT_REWARD_WIN;
+        env->reward_draw = BBE_DEFAULT_REWARD_DRAW;
     }
     bbe_validate_reward_config(env);
     bbe_reset_match(env);
     bbe_emit_all(env);
+}
+
+static void bbe_record_reward_emission(Bloodbowl* env) {
+    for (int a = 0; a < BBE_AGENTS; a++) {
+        float raw = env->reward_ptr[a][0];
+        env->ep_reward_samples++;
+        if (!isfinite(raw)) {
+            env->ep_reward_nonfinite++;
+            continue;
+        }
+        float magnitude = fabsf(raw);
+        if (magnitude > 0.0f) env->ep_reward_nonzero++;
+        if (magnitude > env->ep_reward_abs_max) {
+            env->ep_reward_abs_max = magnitude;
+        }
+        if (magnitude > 1.0f) {
+            env->ep_reward_clipped++;
+            env->ep_reward_clip_excess += magnitude - 1.0f;
+        }
+    }
 }
 
 static void bbe_finish_episode(Bloodbowl* env) {
@@ -2006,6 +2114,24 @@ static void bbe_finish_episode(Bloodbowl* env) {
         env->reward_ptr[a][0] += statmatch;
         env->ep_return[a]     += statmatch;
     }
+    // Record only after every terminal component—including statmatch—has
+    // stacked. This is exactly the raw emission PPO clamps before GAE.
+    bbe_record_reward_emission(env);
+    if (env->ep_reward_samples > 0) {
+        float nreward = (float)env->ep_reward_samples;
+        env->log.reward_clip_frac +=
+            (float)env->ep_reward_clipped / nreward;
+        env->log.reward_nonfinite_frac +=
+            (float)env->ep_reward_nonfinite / nreward;
+    }
+    if (env->ep_reward_nonzero > 0) {
+        env->log.reward_clip_frac_nonzero +=
+            (float)env->ep_reward_clipped / (float)env->ep_reward_nonzero;
+    }
+    env->log.reward_clip_excess += env->ep_reward_clip_excess;
+    env->log.reward_abs_max += env->ep_reward_abs_max;
+    env->log.reward_clip_episodes += env->ep_reward_clipped > 0;
+    env->log.reward_nonfinite_episodes += env->ep_reward_nonfinite > 0;
     env->log.statmatch_term += statmatch;
     // episode_return was logged above from slot 0's pre-statmatch ep_return;
     // fold the statmatch term in so the dashboard's episode_return is total.
@@ -2376,7 +2502,12 @@ static void c_step(Bloodbowl* env) {
         // phantom penalty. R6v1's carrier-exposure block does not need this gate
         // (its ball-HELD check already filters to settled own-turn-ends).
         int pre_in_team_turn = bb_in_team_turn(m, m->active_team);
-        int pre_turnover_latch = m->turnover;
+        uint8_t turns_completed_pre[2] = {
+            m->turns_completed[0], m->turns_completed[1]};
+        uint8_t turns_held_pre[2] = {
+            m->turns_completed_held[0], m->turns_completed_held[1]};
+        uint8_t turnovers_completed_pre[2] = {
+            m->turnovers_completed[0], m->turnovers_completed[1]};
         // Trusted fast path: act came from bbe_decode or the scripted contact
         // bot, both of which only return elements of env->legal — the legal set
         // enumerated on THIS state by bbe_refresh_legal. Membership holds by
@@ -2477,31 +2608,38 @@ static void c_step(Bloodbowl* env) {
         }
         bbe_apply_kickoff_touchback_reward(env);
         env->reach_mover = -1;  // state advanced: reachability is stale
+        // Genuine team-turn accounting comes from monotonic engine counters,
+        // not final active_team. One bb_apply/advance can compress an empty
+        // opponent turn and return to the original active team; touchdowns
+        // unwind TEAM_TURN without flipping active_team at all. Both cases
+        // made the old flip detector silently lose possession/turnover data.
+        for (int t = 0; t < 2; t++) {
+            int completed = (int)m->turns_completed[t] -
+                            (int)turns_completed_pre[t];
+            int held = (int)m->turns_completed_held[t] -
+                       (int)turns_held_pre[t];
+            int turnovers = (int)m->turnovers_completed[t] -
+                            (int)turnovers_completed_pre[t];
+            env->ep_turns[t] += completed;
+            env->ep_turns_with_ball[t] += held;
+            env->ep_turnovers[t] += turnovers;
+
+            // A scoring turn counts as held for the metric, but reward_td
+            // already prices it; do not stack a possession-annuity coupon.
+            int scored = m->score[t] - env->score_prev[t];
+            int annuity_events = held - (scored < held ? scored : held);
+            if (annuity_events > 0 && env->reward_possession != 0.0f) {
+                float r = env->reward_possession * (float)annuity_events;
+                env->reward_ptr[t][0] += r;
+                env->reward_ptr[1 - t][0] -= r;
+                env->ep_return[t] += r;
+                env->ep_return[1 - t] -= r;
+            }
+        }
         // Possession-rate bookkeeping: when the active team flips, the
-        // previous team's turn ENDED — score whether they ended it holding,
-        // and pay the possession annuity transfer (see reward_possession).
+        // remaining positional hooks evaluate the just-ended board.
         if ((int)m->active_team != env->prev_active_team) {
             int t = env->prev_active_team & 1;
-            if (pre_in_team_turn && pre_turnover_latch) {
-                env->ep_turnovers[t]++;
-            }
-            env->ep_turns[t]++;
-            // Possession METRIC (D90, Alex): a turn that ends in your own
-            // touchdown counts as ending WITH possession — you carried it in.
-            // Metric only; the annuity transfer below still requires HELD
-            // (reward_td already pays the score).
-            if (m->score[t] > env->score_prev[t]) {
-                env->ep_turns_with_ball[t]++;
-            } else if (m->ball.state == BB_BALL_HELD &&
-                BB_TEAM_OF(m->ball.carrier) == t) {
-                env->ep_turns_with_ball[t]++;
-                if (env->reward_possession != 0.0f) {
-                    env->reward_ptr[t][0] += env->reward_possession;
-                    env->reward_ptr[1 - t][0] -= env->reward_possession;
-                    env->ep_return[t] += env->reward_possession;
-                    env->ep_return[1 - t] -= env->reward_possession;
-                }
-            }
             if (pre_in_team_turn && m->ball.state == BB_BALL_HELD &&
                 m->ball.carrier < BB_NUM_PLAYERS &&
                 BB_TEAM_OF(m->ball.carrier) != t) {
@@ -2694,7 +2832,7 @@ static void c_step(Bloodbowl* env) {
         if (env->reward_dist_ball != 0.0f || env->reward_dist_endzone != 0.0f) {
             for (int t = 0; t < 2; t++) {
                 // Fetch channel: active only while the ball is loose.
-                float pf = -1.0f;
+                float pf = NAN;
                 if (m->ball.state == BB_BALL_ON_GROUND) {
                     int best = 99;
                     for (int sl = t * BB_TEAM_SLOTS; sl < (t + 1) * BB_TEAM_SLOTS; sl++) {
@@ -2708,21 +2846,23 @@ static void c_step(Bloodbowl* env) {
                     }
                     if (best < 99) pf = -env->reward_dist_ball * (float)best;
                 }
-                if (!scored && pf > -1.0f && env->pot_fetch_prev[t] > -1.0f) {
+                if (!scored && !isnan(pf) &&
+                    !isnan(env->pot_fetch_prev[t])) {
                     float dr = pf - env->pot_fetch_prev[t];
                     env->reward_ptr[t][0] += dr;
                     env->ep_return[t] += dr;
                 }
                 env->pot_fetch_prev[t] = pf;
                 // Carry channel: active only while this team holds the ball.
-                float pc = -1.0f;
+                float pc = NAN;
                 if (m->ball.state == BB_BALL_HELD && BB_TEAM_OF(m->ball.carrier) == t) {
                     const bb_player* c = &m->players[m->ball.carrier];
                     int ez = bb_endzone_x(t);
                     int d = c->x > ez ? c->x - ez : ez - c->x;
                     pc = -env->reward_dist_endzone * (float)d;
                 }
-                if (!scored && pc > -1.0f && env->pot_carry_prev[t] > -1.0f) {
+                if (!scored && !isnan(pc) &&
+                    !isnan(env->pot_carry_prev[t])) {
                     float dr = pc - env->pot_carry_prev[t];
                     env->reward_ptr[t][0] += dr;
                     env->ep_return[t] += dr;
@@ -2745,6 +2885,7 @@ static void c_step(Bloodbowl* env) {
             }
         }
     }
+    bool episode_finished = false;
     if (m->status == BB_STATUS_ERROR ||
         (m->status == BB_STATUS_DECISION && env->n_legal <= 0)) {
         // Both should be unreachable (decode snaps to legal; every decision
@@ -2754,10 +2895,13 @@ static void c_step(Bloodbowl* env) {
         // the step path would never apply anything and never terminate.
         env->log.error_episodes += 1;
         bbe_finish_episode(env);
+        episode_finished = true;
     } else if (m->status == BB_STATUS_MATCH_OVER ||
                env->decisions >= env->max_decisions) {
         bbe_finish_episode(env);
+        episode_finished = true;
     }
+    if (!episode_finished) bbe_record_reward_emission(env);
     bbe_refresh_legal(env);
     bbe_emit_all(env);
 }
