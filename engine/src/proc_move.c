@@ -36,6 +36,19 @@ enum {
     MV_JUMP = 1 << 15,
 };
 
+bool bb_in_pending_ball_action(const bb_match* m) {
+    // Resolve against the nearest MOVE parent.  This deliberately excludes
+    // standalone catches (kick-off, throw-in, ordinary bounce) and unrelated
+    // activation kinds that may also have an awaiting child.
+    for (int i = m->stack_top - 1; i >= 0; i--) {
+        const bb_frame* f = &m->stack[i];
+        if (f->proc != BB_PROC_MOVE) continue;
+        return (f->data & MV_AWAIT_ACTION) != 0 &&
+               (f->b == BB_ACT_PASS || f->b == BB_ACT_HANDOFF);
+    }
+    return false;
+}
+
 static int movement_left(const bb_match* m, int slot) {
     const bb_player* p = &m->players[slot];
     int left = p->ma - p->moved;

@@ -5,12 +5,13 @@ Run with the PufferLib venv:
   vendor/PufferLib/.venv/bin/python training/test_convert_checkpoint.py
 
 Covers:
-  1. layout totals: the obs-v3 default (13,670,400 bytes for obs 1612) and
-     the legacy obs-v2 lineage, which must match the real CUDA-backend
-     artifact byte-for-byte (12,072,960 bytes for obs 832 / heads
-     (30,33,391) / hidden 512 / 3 layers). Real blob path:
+  1. layout totals: the current obs-v4 default (16,066,560 bytes for obs
+     2782), the obs-v3 lineage (13,670,400 bytes for obs 1612), and the
+     legacy obs-v2 lineage, which must match the real CUDA-backend artifact
+     byte-for-byte (12,072,960 bytes for obs 832 / heads (30,33,391) /
+     hidden 512 / 3 layers). Real blob path:
      training/checkpoints/cuda_real_*.bin or $CUDA_CKPT (obs-v2 lineage);
-     round-trip tests fall back to a synthetic obs-v3 blob if absent.
+     round-trip tests fall back to a synthetic obs-v4 blob if absent.
   2. cuda -> torch -> cuda is byte-identical.
   3. the cuda->torch state_dict loads into the REAL torch policy (built
      exactly like the trainer via bc_pretrain.load_policy_like_trainer)
@@ -31,11 +32,13 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from bc_pretrain import ACT_SIZES, load_policy_like_trainer  # noqa: E402
 from convert_checkpoint import (  # noqa: E402
-    BIAS_KEYS, DEFAULT_CONFIG, DEFAULT_OBS_SIZE, LEGACY_OBS_SIZE, cuda_layout,
-    cuda_to_torch, read_policy_arch, torch_to_cuda, torch_weight_keys)
+    BIAS_KEYS, DEFAULT_CONFIG, DEFAULT_OBS_SIZE, LEGACY_OBS_SIZE, OBS_V3_SIZE,
+    cuda_layout, cuda_to_torch, read_policy_arch, torch_to_cuda,
+    torch_weight_keys)
 
 HIDDEN, NUM_LAYERS = read_policy_arch(DEFAULT_CONFIG)
 ENTRIES, TOTAL = cuda_layout(HIDDEN, NUM_LAYERS, DEFAULT_OBS_SIZE, ACT_SIZES)
+_, OBS_V3_TOTAL = cuda_layout(HIDDEN, NUM_LAYERS, OBS_V3_SIZE, ACT_SIZES)
 _, LEGACY_TOTAL = cuda_layout(HIDDEN, NUM_LAYERS, LEGACY_OBS_SIZE, ACT_SIZES)
 
 
@@ -49,14 +52,15 @@ def find_real_blob():
 
 
 def test_layout_matches_real_artifact():
-    """Layout float counts; legacy == real CUDA save_weights file size."""
-    assert TOTAL == 3_417_600, TOTAL  # 512x1612 + 455x512 + 3 x 1536x512
+    """Current and historical layout counts; obs-v2 matches real artifact."""
+    assert TOTAL == 4_016_640, TOTAL  # 512x2782 + 455x512 + 3 x 1536x512
+    assert OBS_V3_TOTAL == 3_417_600, OBS_V3_TOTAL  # 512x1612 + ...
     # Legacy obs-v2 lineage (832): pinned to the real GPU-run artifact.
     assert LEGACY_TOTAL == 3_018_240, LEGACY_TOTAL  # 512x832 + ...
     path = find_real_blob()
     if path is None:
-        print("  (no real CUDA blob found — sizes pinned to 13,670,400 / "
-              "12,072,960 only)")
+        print("  (no real CUDA blob found — sizes pinned to 16,066,560 / "
+              "13,670,400 / 12,072,960)")
         return
     nbytes = os.path.getsize(path)
     assert nbytes == LEGACY_TOTAL * 4, (nbytes, LEGACY_TOTAL * 4)
@@ -66,7 +70,7 @@ def test_layout_matches_real_artifact():
 
 def load_blob():
     """(blob, src, obs_size): real artifacts are obs-v2 lineage (832);
-    the synthetic fallback exercises the obs-v3 default layout."""
+    the synthetic fallback exercises the obs-v4 default layout."""
     path = find_real_blob()
     if path is not None:
         return np.fromfile(path, dtype="<f4"), path, LEGACY_OBS_SIZE
@@ -95,9 +99,9 @@ def test_converted_state_dict_loads_and_forwards():
     with torch.no_grad():
         state = policy.initial_state(obs.shape[0], device="cpu")
         logits, values, _ = policy.forward_eval(obs, state)
-    assert tuple(l.shape for l in logits) == \
-        tuple((8, n) for n in ACT_SIZES), [l.shape for l in logits]
-    assert all(torch.isfinite(l).all() for l in logits)
+    assert tuple(logit.shape for logit in logits) == \
+        tuple((8, n) for n in ACT_SIZES), [logit.shape for logit in logits]
+    assert all(torch.isfinite(logit).all() for logit in logits)
     assert torch.isfinite(values).all()
     print(f"  state_dict from {src} loads strict + forwards "
           f"(heads {ACT_SIZES}, finite)  OK")

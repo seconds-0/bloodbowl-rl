@@ -1,0 +1,46 @@
+diff --git a/pufferlib/pufferl.py b/pufferlib/pufferl.py
+--- a/pufferlib/pufferl.py
++++ b/pufferlib/pufferl.py
+@@ -69,6 +69,6 @@ def fmt_perf(name, color, delta_ref, elapsed, b2, c2):
+     return f'{color}{name}', duration(elapsed, b2, c2), f'{b2}{percent:2d}{c2}%'
+ 
+-def print_dashboard(args, model_size, flat_logs, clear=False, idx=[0],
++def print_dashboard(args, model_size, flat_logs, clear=False, final_reprint=False, idx=[0],
+         c1='[cyan]', c2='[white]', b1='[bright_cyan]', b2='[bright_white]'):
+     g = lambda k, d=0: flat_logs.get(k, d)
+     console = rich.console.Console()
+@@ -164,6 +164,28 @@ def print_dashboard(args, model_size, flat_logs, clear=False, idx=[0],
+         console.print(dashboard)
+ 
+     print('\033[0;0H' + capture.get())
++    # Full-fidelity machine-readable companion: Rich abbreviates long metric
++    # names with an ellipsis, making dashboard text unsafe for analysis. Mark
++    # native eval snapshots as cumulative: unlike log(), static_vec_eval_log()
++    # deliberately does not clear completed-episode logs between panels. The
++    # post-loop dashboard is an explicit reprint, not another sample.
++    env_json = {k[4:]: v for k, v in flat_logs.items() if k.startswith('env/')}
++    train_epochs = int(args['train']['total_timesteps'] //
++        (args['vec']['total_agents'] * args['train']['horizon']))
++    epoch = int(flat_logs.get('epoch', -1))
++    phase_eval = epoch >= train_epochs and epoch >= 0
++    backend_native = not args.get('slowly')
++    env_json.update({
++        '_puffer_schema': 1,
++        '_puffer_backend_native': int(backend_native),
++        '_puffer_phase_eval': int(phase_eval),
++        '_puffer_env_cumulative': int(phase_eval and backend_native),
++        '_puffer_final_reprint': int(final_reprint),
++        '_puffer_agent_steps': float(flat_logs.get('agent_steps', 0)),
++        '_puffer_epoch': epoch,
++    })
++    print('PUFFER_ENV_JSON ' + json.dumps(
++        env_json, sort_keys=True, allow_nan=False))
+ 
+ def validate_config(args):
+     minibatch_size = args['train']['minibatch_size']
+@@ -343,4 +365,4 @@ def _train(env_name, args, sweep_obj=None, result_queue=None, verbose=False):
+-    print_dashboard(args, model_size, flat_logs)
++    print_dashboard(args, model_size, flat_logs, final_reprint=True)
+     # Match-mode trials may have early-stopped before the in-loop save fired;
+     # ensure we always have a checkpoint to feed match().
+     if match_mode and not model_path:

@@ -1585,6 +1585,28 @@ BB_TEST(struct_touchdown_by_push_during_opponent_turn) {
     BB_CHECK_EQ(m.decision_team, 1);
 }
 
+BB_TEST(struct_touchdown_books_pending_turnover_before_unwind) {
+    bb_match m;
+    bb_rng rng;
+    fx_match_midturn(&m, BB_HOME, 0);
+    fx_lineman(&m, BB_HOME, 0, 5, 5);
+    int away_carrier = fx_lineman(&m, BB_AWAY, 0, 0, 7);
+    fx_ball_held(&m, away_carrier);
+    fx_run(&m, &rng);
+
+    // Successful interception into the endzone follows this ordering:
+    // bb_turnover(active team), then bb_check_td(opponent carrier).
+    bb_turnover(&m);
+    BB_CHECK(bb_check_td(&m));
+    m.status = BB_STATUS_RUNNING;
+    fx_run(&m, &rng);
+
+    BB_CHECK_EQ(m.score[BB_AWAY], 1);
+    BB_CHECK_EQ(m.turns_completed[BB_HOME], 1);
+    BB_CHECK_EQ(m.turns_completed_held[BB_HOME], 0);
+    BB_CHECK_EQ(m.turnovers_completed[BB_HOME], 1);
+}
+
 // ENGINE-DIVERGENCE: GAME SCORING DURING YOUR OPPONENT'S TURN: "the team that
 // scored will skip their next Turn entirely ... play will resume with the
 // team that conceded." After the re-kick the conceding team plays, and the
@@ -1694,6 +1716,12 @@ BB_TEST(struct_each_team_gets_eight_turns_per_half) {
     // After away's final turn the half is over: the second half begins.
     st = fx_apply(&m, stx_act(BB_A_END_TURN, 0, 0, 0), &rng);
     BB_CHECK_EQ(m.half, 2);
+    // Match-level reward/telemetry counters survive the half-time reset of the
+    // public turn markers and record this final genuine boundary exactly once.
+    BB_CHECK_EQ(m.turns_completed[BB_HOME], 0);
+    BB_CHECK_EQ(m.turns_completed[BB_AWAY], 1);
+    BB_CHECK_EQ(m.turns_completed_held[BB_AWAY], 0);
+    BB_CHECK_EQ(m.turnovers_completed[BB_AWAY], 0);
 }
 
 // GAME RECOVER KNOCKED-OUT PLAYERS: "Roll a D6 for each Knocked-out player.

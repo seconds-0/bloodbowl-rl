@@ -572,6 +572,47 @@ BB_TEST(ball_pass_caught_by_opponent_is_turnover) {
     BB_CHECK_EQ(m.decision_team, 1); // turnover
 }
 
+// A successful catch can immediately push TOUCHDOWN, which unwinds the MOVE
+// frame before its normal post-pass possession check runs.  The turnover must
+// therefore already be latched when the inactive catcher scores.
+BB_TEST(ball_pass_caught_by_opponent_in_endzone_books_turnover) {
+    bb_match m;
+    fx_match_midturn(&m, 0, 0);
+    int thrower = fx_player(&m, 0, 0, 3, 7, 6, 3, 3, 2, 9);
+    fx_player(&m, 1, 0, 0, 7, 6, 3, 2, 3, 9); // away scores at x == 0
+    fx_ball_held(&m, thrower);
+    uint8_t script[] = {6, 5}; // accurate; opponent catches (no modifier)
+    bb_rng rng;
+    bb_rng_script(&rng, script, 2);
+    fx_run(&m, &rng);
+    fx_activate(&m, &rng, thrower, BB_ACT_PASS);
+    fx_apply(&m, mk(BB_A_PASS_TARGET, 0, 0, 7), &rng);
+    BB_CHECK_EQ(m.score[1], 1);
+    BB_CHECK_EQ(m.turns_completed[0], 1);
+    BB_CHECK_EQ(m.turns_completed_held[0], 0);
+    BB_CHECK_EQ(m.turnovers_completed[0], 1);
+}
+
+// A catch alone is not evidence that a Pass/Hand-off turnover is pending.
+// This pins the context guard: a standalone catch by the inactive team may
+// score, but it must not be classified as a failed ball-action turnover.
+BB_TEST(ball_unrelated_opponent_catch_in_endzone_is_not_pass_turnover) {
+    bb_match m;
+    fx_match_midturn(&m, 0, 0);
+    fx_lineman(&m, 0, 0, 10, 7);
+    int opp = fx_player(&m, 1, 0, 0, 7, 6, 3, 2, 3, 9);
+    fx_ball_ground(&m, 0, 7);
+    uint8_t script[] = {5}; // standalone catch succeeds
+    bb_rng rng;
+    bb_rng_script(&rng, script, 1);
+    fx_run(&m, &rng);
+    bb_push(&m, BB_PROC_CATCH, opp, 0, 0, 0);
+    m.status = BB_STATUS_RUNNING;
+    fx_run(&m, &rng);
+    BB_CHECK_EQ(m.score[1], 1);
+    BB_CHECK_EQ(m.turnovers_completed[0], 0);
+}
+
 // GAME/CATCHING THE BALL: "Apply a -1 modifier for each opposition player
 // that is Marking the player attempting to Catch the ball" and "If the
 // Agility Test is failed, or a natural 1 is rolled, the player fails to

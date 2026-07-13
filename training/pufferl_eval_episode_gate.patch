@@ -1,0 +1,41 @@
+--- a/pufferlib/pufferl.py
++++ b/pufferlib/pufferl.py
+@@ -189,6 +189,8 @@
+         '_puffer_final_reprint': int(final_reprint),
+         '_puffer_agent_steps': float(flat_logs.get('agent_steps', 0)),
+         '_puffer_epoch': int(phase_epoch),
++        '_puffer_eval_episodes_completed': float(
++            flat_logs.get('eval_episodes_completed', 0)),
+     })
+     print('PUFFER_ENV_JSON ' + json.dumps(
+         env_json, sort_keys=True, allow_nan=False))
+@@ -313,7 +315,11 @@
+     model_path = ''
+     flat_logs = {}
+     train_epochs = int(total_timesteps // (args['vec']['total_agents'] * args['train']['horizon']))
+-    eval_epochs = train_epochs // 2
++    # Native eval logs are cumulative; Torch eval logs are interval-resetting.
++    # Give short frozen-policy runs enough evaluation epochs to reach the
++    # requested game count, with a finite safety cap for broken environments.
++    eval_epochs = max(train_epochs // 2, 2 * int(args['eval_episodes']))
++    eval_episodes_completed = 0.0
+     last_phase_eval = False
+     last_phase_epoch = -1
+     for epoch in range(train_epochs + eval_epochs):
+@@ -368,8 +374,14 @@
+                     and pufferl.global_step > min(0.20*total_timesteps, 100_000_000) and
+                     sweep_obj.early_stop(logs, target_key)):
+                 break
+-        elif flat_logs['env/n'] > args['eval_episodes']:
+-            break
++        else:
++            if args.get('slowly'):
++                eval_episodes_completed += flat_logs['env/n']
++            else:
++                eval_episodes_completed = flat_logs['env/n']
++            flat_logs['eval_episodes_completed'] = eval_episodes_completed
++            if eval_episodes_completed >= args['eval_episodes']:
++                break
+ 
+ 
+     print_dashboard(args, model_size, flat_logs,

@@ -23,11 +23,13 @@ corpus-out/
 # Training artifacts
 training/runs/
 training/checkpoints/
+/runs/
 wandb/
 # Replay cache (large; fetched on demand)
 validation/replay_cache/
 # Codex reviews
 .codex-reviews/
+.codex-impl/*.log
 # OS
 .DS_Store
 checkpoints-backup/

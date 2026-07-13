@@ -127,6 +127,16 @@ typedef struct {
     // Bookkeeping
     uint32_t step_count;    // decisions resolved (sanity/timeout)
     uint8_t team_id[2];     // roster ids (codegen index) for obs/embeddings
+    // Monotonic match-level boundary counters. Unlike active_team/turn[],
+    // these survive half resets and expose every genuine TEAM_TURN completion,
+    // including playerless turns compressed inside one bb_advance call and
+    // touchdowns that unwind the procedure stack without calling turn_end.
+    // These bytes replace the old struct's zeroed tail padding on the current
+    // ABI. Legacy BBS1 states therefore load with a valid zero baseline; only
+    // post-load deltas matter to the env telemetry/reward hook.
+    uint8_t turns_completed[2];
+    uint8_t turns_completed_held[2];
+    uint8_t turnovers_completed[2];
 } bb_match;
 
 // --- Lifecycle -----------------------------------------------------------------

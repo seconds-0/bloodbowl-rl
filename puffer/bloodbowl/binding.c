@@ -59,9 +59,10 @@ static double kw(Dict* kwargs, const char* key, double fallback) {
 }
 
 static void apply_kwargs(Env* env, Dict* kwargs) {
-    env->reward_td = (float)kw(kwargs, "reward_td", 1.0);
-    env->reward_win = (float)kw(kwargs, "reward_win", 3.0);
-    env->reward_draw = (float)kw(kwargs, "reward_draw", 0.0);
+    env->reward_td = (float)kw(kwargs, "reward_td", BBE_DEFAULT_REWARD_TD);
+    env->reward_win = (float)kw(kwargs, "reward_win", BBE_DEFAULT_REWARD_WIN);
+    env->reward_draw = (float)kw(kwargs, "reward_draw", BBE_DEFAULT_REWARD_DRAW);
+    env->reward_configured = 1;
     env->reward_setup_done = (float)kw(kwargs, "reward_setup_done", 0.0);
     env->reward_setup_autofix = (float)kw(kwargs, "reward_setup_autofix", 0.0);
     env->reward_ball_gain = (float)kw(kwargs, "reward_ball_gain", 0.0);
@@ -93,17 +94,18 @@ static void apply_kwargs(Env* env, Dict* kwargs) {
     env->reward_carrier_exposure_soft =
         (float)kw(kwargs, "reward_carrier_exposure_soft", 0.0);
     env->reward_carrier_threat = (float)kw(kwargs, "reward_carrier_threat", 0.0);
-    bbe_validate_reward_config(env);
     // R12v1 defensive scoring-lane threat penalties (D133-A), positive
     // magnitudes charged via -=. 1-turn (hard) + optional 2-turn (soft) tiers.
     env->reward_defensive_threat = (float)kw(kwargs, "reward_defensive_threat", 0.0);
     env->reward_defensive_threat_soft =
         (float)kw(kwargs, "reward_defensive_threat_soft", 0.0);
-    // Aggregate-stat-matching pseudo-reward scale (D114). 0 = off (default).
-    // When >0, an episode-end -scale*||z||_2 penalty pulls the 7-stat full-game
-    // vector toward docs/human-baseline.json. Kickoff-pure only; pair with
-    // --env.reward-possession 0. See bloodbowl.h reward_statmatch_scale.
+    // Legacy/quarantined D114 stat-matching scale. New complete reward
+    // manifests require 0 because the historical targets are semantically
+    // invalid; retain the kwarg only for artifact reproduction.
     env->reward_statmatch_scale = (float)kw(kwargs, "reward_statmatch_scale", 0.0);
+    // Validate only after every reward field has been populated. Keeping this
+    // call above the final fields made apply_kwargs' validation incomplete.
+    bbe_validate_reward_config(env);
     // Backplay curriculum: scoring-proximal demo resets (0 = uniform)
     env->demo_endzone_maxdist = (int)kw(kwargs, "demo_endzone_maxdist", 0.0);
     // Pickup curriculum (D64): loose-ball-near-mover demo resets (0 = off)
@@ -226,7 +228,7 @@ void my_log(Log* log, Dict* out) {
     //
     // CAPACITY: vec_log (src/bindings_cpu.cpp / bindings.cu) must hand us a
     // dict large enough for these keys plus the vecenv-appended "n". We emit
-    // 75. Growing past the call-site capacity is SILENT HEAP CORRUPTION
+    // 82. Growing past the call-site capacity is SILENT HEAP CORRUPTION
     // upstream (assert compiles out under NDEBUG); our vendored dict_set
     // aborts loudly instead (training/puffer_dict_capacity.patch).
     // History: key count hit 37 vs capacity 32 when slot scores + demo
@@ -240,6 +242,13 @@ void my_log(Log* log, Dict* out) {
     dict_set(out, "episode_return", log->episode_return);
     dict_set(out, "episode_length", log->episode_length);
     dict_set(out, "statmatch_term", log->statmatch_term);
+    dict_set(out, "reward_clip_frac", log->reward_clip_frac);
+    dict_set(out, "reward_clip_frac_nonzero", log->reward_clip_frac_nonzero);
+    dict_set(out, "reward_clip_excess", log->reward_clip_excess);
+    dict_set(out, "reward_abs_max", log->reward_abs_max);
+    dict_set(out, "reward_nonfinite_frac", log->reward_nonfinite_frac);
+    dict_set(out, "reward_clip_episodes", log->reward_clip_episodes);
+    dict_set(out, "reward_nonfinite_episodes", log->reward_nonfinite_episodes);
     dict_set(out, "illegal_frac", log->illegal_frac);
     dict_set(out, "blocks", log->blocks);
     dict_set(out, "blocks_thrown", log->blocks_thrown);

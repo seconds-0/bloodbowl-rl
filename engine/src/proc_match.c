@@ -942,6 +942,15 @@ static void touchdown_advance(bb_match* m, bb_rng* rng) {
     bb_frame* f = bb_top(m);
     int slot = f->a;
     int team = BB_TEAM_OF(slot);
+    int active = m->active_team;
+    // TOUCHDOWN unwinds the TEAM_TURN frame directly, so turn_end() never
+    // observes this genuine boundary. Book the active team's completed turn
+    // here. Only an own-turn scorer ended holding; an opponent pushed into
+    // the endzone during the active team's turn did not give the active team
+    // possession credit.
+    m->turns_completed[active]++;
+    if (team == active) m->turns_completed_held[active]++;
+    if (m->turnover) m->turnovers_completed[active]++;
     m->score[team]++;
     // Scoring during the OPPONENT's turn: the scorer skips their next turn
     // entirely (advance their marker for the skipped turn).

@@ -72,6 +72,9 @@ bool bb_in_kickoff(const bb_match* m);
 // is genuinely inside its own team turn, not setup / kickoff / end-drive)?
 // Used as the turn-boundary gate for ball-agnostic reward hooks (R12).
 bool bb_in_team_turn(const bb_match* m, int team);
+// Is the current child chain settling an attempted Pass or Hand-off Action?
+// The MOVE frame owns this state until the full catch/bounce chain finishes.
+bool bb_in_pending_ball_action(const bb_match* m);
 // Inside the Charge! kick-off event's free-activation loop (team re-rolls
 // available to the charging team there)?
 bool bb_in_kickoff_charge(const bb_match* m);

@@ -162,6 +162,13 @@ static void catch_advance(bb_match* m, bb_rng* rng) {
     bb_pop(m);
     if (m->ret & 1) {
         bb_give_ball(m, slot);
+        // A catch in the scoring endzone pushes TOUCHDOWN, which unwinds the
+        // MOVE frame before its normal post-action possession check.  Latch
+        // the Pass/Hand-off turnover now, while preserving standalone catches.
+        if (BB_TEAM_OF(slot) != m->active_team &&
+            bb_in_pending_ball_action(m)) {
+            bb_turnover(m);
+        }
         bb_check_td(m);
     } else {
         bb_push(m, BB_PROC_SCATTER, 0, 1, (uint8_t)x, (uint8_t)y);

@@ -1,0 +1,33 @@
+diff --git a/pufferlib/pufferl.py b/pufferlib/pufferl.py
+--- a/pufferlib/pufferl.py
++++ b/pufferlib/pufferl.py
+@@ -143,12 +143,27 @@ def print_dashboard(args, model_size, flat_logs, clear=False, idx=[0],
+     right.add_column(f"{c1}Value", justify="right", width=10)
+ 
+     i = 0
++    shown_env = set()
++    priority_env = (
++        'env/n', 'env/slot_0_score', 'env/slot_1_score', 'env/draw_rate',
++        'env/tds_t0', 'env/tds_t1',
++        'env/blocks_thrown_t0', 'env/blocks_thrown_t1',
++    )
++    for k in priority_env:
++        if k in flat_logs:
++            u = left if i % 2 == 0 else right
++            u.add_row(f'{b2}{k[4:]}', f'{b2}{flat_logs[k]:.3f}')
++            shown_env.add(k)
++            i += 1
+     for k, v in flat_logs.items():
+-        if k.startswith('env/') and k != 'env/n':
++        if k.startswith('env/') and k not in shown_env:
+             u = left if i % 2 == 0 else right
+             u.add_row(f'{b2}{k[4:]}', f'{b2}{v:.3f}')
+             i += 1
+-            if i == 30:
++            # Blood Bowl emits a large diagnostic contract. Truncating at 30
++            # hid possession, turnover, defense, and integrity metrics from
++            # logs even though the binding returned them successfully.
++            if i == 96:
+                 break
+ 
+     if clear:

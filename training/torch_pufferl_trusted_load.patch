@@ -1,0 +1,33 @@
+diff --git a/pufferlib/torch_pufferl.py b/pufferlib/torch_pufferl.py
+--- a/pufferlib/torch_pufferl.py
++++ b/pufferlib/torch_pufferl.py
+@@ -742,7 +742,10 @@ class PuffeRL:
+         torch.save(self.policy.state_dict(), path)
+ 
+     def load_weights(self, path):
+-        state_dict = torch.load(path, map_location=self.device)
++        # Blood Bowl checkpoints are trusted local artifacts and include
++        # historical full-pickle state dicts rejected by PyTorch 2.6+'s new
++        # weights_only=True default.
++        state_dict = torch.load(path, map_location=self.device, weights_only=False)
+         state_dict = {k.replace('module.', ''): v for k, v in state_dict.items()}
+         self.policy.load_state_dict(state_dict)
+ 
+@@ -849,7 +852,7 @@ def load_policy(args, vec):
+         else:
+             raise ValueError('load_id requires --wandb')
+ 
+-        state_dict = torch.load(path, map_location=device)
++        state_dict = torch.load(path, map_location=device, weights_only=False)
+         state_dict = {k.replace('module.', ''): v for k, v in state_dict.items()}
+         policy.load_state_dict(state_dict)
+ 
+@@ -860,7 +863,7 @@ def load_policy(args, vec):
+         load_path = max(candidates, key=os.path.getctime)
+ 
+     if load_path is not None:
+-        state_dict = torch.load(load_path, map_location=device)
++        state_dict = torch.load(load_path, map_location=device, weights_only=False)
+         state_dict = {k.replace('module.', ''): v for k, v in state_dict.items()}
+         policy.load_state_dict(state_dict)
+ 
