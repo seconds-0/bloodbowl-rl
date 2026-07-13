@@ -208,6 +208,32 @@ class FollowLatestTests(unittest.TestCase):
             fallback,
         )
 
+    def test_quarantined_last_successful_reverts_to_fallback(self):
+        prepared = (Path("prepared-a"), Path("prepared-b"))
+        previous = (Path("previous-a"), Path("previous-b"))
+        fallback = (Path("fallback-a"), Path("fallback-b"))
+
+        self.assertEqual(
+            follow_latest.choose_stream_pair(
+                prepared, previous, {prepared, previous}, fallback
+            ),
+            fallback,
+        )
+
+    def test_all_quarantined_pairs_are_not_relaunched(self):
+        prepared = (Path("prepared-a"), Path("prepared-b"))
+        previous = (Path("previous-a"), Path("previous-b"))
+        fallback = (Path("fallback-a"), Path("fallback-b"))
+
+        self.assertIsNone(
+            follow_latest.choose_stream_pair(
+                prepared,
+                previous,
+                {prepared, previous, fallback},
+                fallback,
+            )
+        )
+
     def test_safe_label_removes_path_characters(self):
         self.assertEqual(
             follow_latest.safe_label("arm / seed 42:_torch.bin"),

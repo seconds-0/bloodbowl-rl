@@ -365,9 +365,10 @@ def choose_stream_pair(
     fallback: tuple[Path, Path] | None,
 ) -> tuple[Path, Path] | None:
     """Prefer an unquarantined candidate, then a proven pair, then fallback."""
-    if prepared is not None and prepared not in quarantined:
-        return prepared
-    return last_successful or fallback
+    for pair in (prepared, last_successful, fallback):
+        if pair is not None and pair not in quarantined:
+            return pair
+    return None
 
 
 def run_forever(args: argparse.Namespace) -> int:
@@ -444,6 +445,8 @@ def run_forever(args: argparse.Namespace) -> int:
             prune_cache(args.cache_dir, selected, args.keep_converted)
             if return_code != 0:
                 quarantined_pairs.add(pair)
+                if pair == last_successful_pair:
+                    last_successful_pair = None
                 failures += 1
                 print(
                     f"BBTV server exited {return_code}; quarantining "
