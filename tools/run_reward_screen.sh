@@ -4,6 +4,10 @@
 # The screen plan, every completed arm, and final completion summary are
 # content-addressed. A restarted orchestrator can recover a cleanly completed
 # detached arm, but code/config/artifact drift fails closed.
+# Example (current possession/gain screen):
+#   WARM=/abs/warm.bin POOL=/abs/pool STEPS=500000000 \
+#     SCREEN_PROFILE=possession-gain PREFIX=possession-gain-v2 \
+#     bash tools/run_reward_screen.sh
 set -euo pipefail
 
 if [ $# -ne 0 ]; then
@@ -15,12 +19,12 @@ LAUNCH_CWD="$PWD"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 : "${WARM:?WARM is required}"
 : "${POOL:?POOL is required}"
+: "${STEPS:?STEPS is required (explicit experiment budget)}"
+: "${SCREEN_PROFILE:?SCREEN_PROFILE is required (distance-possession or possession-gain)}"
 PREFIX="${PREFIX:-reward-screen-v1}"
-STEPS="${STEPS:-250000000}"
 OUT_DIR="${OUT_DIR:-$ROOT/runs/reward-screens/$PREFIX}"
 POLL_SECONDS="${POLL_SECONDS:-30}"
 PLAN_ONLY="${PLAN_ONLY:-0}"
-SCREEN_PROFILE="${SCREEN_PROFILE:-distance-possession}"
 
 # Fixed Stage-1 causal contract. Assign, rather than inherit, every optional
 # launcher input which could alter optimization, batching, or pool allocation.

@@ -11,7 +11,7 @@ retune from aesthetics, training curves, or human-looking behavior. Change one
 declared factor through a frozen experiment, validate on match utility and held-out
 transfer, and write every accepted finding to `DECISIONS.md`.**
 
-State as of 2026-07-13 (reward/replay audit complete, ledger through D180).
+State as of 2026-07-13 (reward/replay audit complete, ledger through D181).
 Always read `AGENTS.md`, the tail of `DECISIONS.md`, and
 `docs/reward-and-replay-audit-2026-07-09.md` first. Newer ledger entries and
 immutable result artifacts supersede older sections of this skill.
@@ -321,10 +321,10 @@ See §4. Check the invariants before every reward-config launch. No exceptions.
 
 ## 7. DECISIONS.md ledger discipline
 
-The ledger is at `DECISIONS.md` (through D180 as of 2026-07-13). It is the
-program's chronological memory. D177–D180 are the reward-screen, transfer,
-replay-corpus, and streaming-loader findings that supersede this skill's June
-snapshots.
+The ledger is at `DECISIONS.md` (through D181 as of 2026-07-13). It is the
+program's chronological memory. D177–D181 cover the reward screen, transfer,
+replay corpus, streaming loader, and rejected partial-deployment run that
+supersede this skill's June snapshots.
 
 - **EVERY finding gets an atomic entry. No exceptions.** One decision/finding per
   entry, numbered D{n+1}, dated. If your write-up needs "and" between two findings,
@@ -474,7 +474,7 @@ Work the queue top-down. Do not reorder without writing a ledger entry justifyin
 
 ## 12. Session checklist
 
-Before doing anything: read `AGENTS.md`, D177–D180 and the ledger tail; discover
+Before doing anything: read `AGENTS.md`, D177–D181 and the ledger tail; discover
 live Tailscale/Vast state and processes; confirm the intended checkout is not the
 production checkout. Before launch: verify obs size, install drift, imported
 module/provenance, disk, complete reward manifest, opponent/data hashes, seeds,

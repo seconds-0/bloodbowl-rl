@@ -8,6 +8,12 @@
 +# ===========================================================================
 +# LOCAL PATCH (bloodbowl-rl): BC-regularized PPO — human-imitation anchor.
 +#
++# HISTORICAL/REJECTED FOR NEW RUNS (D176): coefficient-1 iid CE collapsed
++# offense, this implementation eagerly preloads every shard, and it has no
++# replay-ID/edition allowlist. It is retained only to reproduce the old arm
++# and prove bc_coef=0 off-mode identity. Do not enable it for current runs;
++# any reconsideration requires bounded streaming and a BB2025-exact allowlist.
++#
 +# Motivation (DECISIONS.md D27): 10B steps of selfplay PPO eroded the
 +# BC-pretrained human prior (BC-init beat BC-final head-to-head). Fix is the
 +# AlphaStar-style anchor: an auxiliary masked cross-entropy on human

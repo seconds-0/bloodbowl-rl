@@ -15,7 +15,7 @@ self-play perm, FEN curriculum — structurally closest to Blood Bowl).
 Minimal template: `vendor/PufferLib/ocean/squared/`. MultiDiscrete: `vendor/PufferLib/ocean/drive/`.
 Cached upstream docs: `docs/vendor/pufferlib/docs.html` (env-author checklist + CLI cheatsheet).
 
-For current Blood Bowl experiment acceptance, also read `AGENTS.md`, D177–D180,
+For current Blood Bowl experiment acceptance, also read `AGENTS.md`, D177–D181,
 and `docs/reward-and-replay-audit-2026-07-09.md`. Upstream success/exit status is
 not sufficient: the audited path requires explicit phase, provenance, completed
 games, final cumulative reprint, and reward-integrity telemetry.
@@ -156,13 +156,13 @@ leave ≥1 bit set (give BB an explicit end-turn/no-op action that is always leg
 
 **Masked sampling is now the default in BOTH backends** (D38, the unmasked-sampler
 bug: pre-fix torch runs played at illegal_frac 1.000 through the decode fallback —
-all intuitions from that era are rebased). Upstream `pufferlib/torch_pufferl.py`
-(the `--slowly` / `--cpu` path) still has zero mask plumbing, but our
-`training/torch_pufferl_bcreg.patch` adds it: the bindings expose the vec
-`action_mask` (cpu+gpu) and `apply_action_mask` does a per-head
+all intuitions from that era are rebased). The installed vendored torch baseline
+exposes the vec `action_mask` (cpu+gpu), and `apply_action_mask` does a per-head
 `masked_fill(-inf)` BEFORE rollout sampling, stores masks in experience, and
 re-applies them at train-time recompute (mask-consistent ratios/entropy, all-zero
-head-row guard). An UNPATCHED torch backend samples raw logits, so `c_step` must
+head-row guard). `training/torch_pufferl_bcreg.patch` itself is now only the
+historical BC-loss patch; it does not carry masking. An UNPATCHED torch backend
+samples raw logits, so `c_step` must
 still tolerate any in-range action value (chess answers invalid picks with
 `reward_invalid_*` penalties, binding.c kwargs).
 
@@ -374,23 +374,23 @@ surface, match() mechanics): `reference/vecenv-internals.md`.
   **bc_v4** (val exact 0.508; lives on the training boxes — local
   `training/` only holds ≤ bc_v3b).
 
-## BC-regularized PPO (local torch_pufferl.py patch)
+## Historical BC-regularized PPO patch (rejected for new runs)
 
-The AlphaStar-style human anchor (DECISIONS.md D27: selfplay PPO erodes the
-BC prior): when `[train] bc_coef > 0`, every PPO minibatch in the TORCH
+The AlphaStar-style human anchor was tested after D27. When `[train] bc_coef > 0`,
+every PPO minibatch in the TORCH
 backend (`--slowly`) also pays `bc_coef *` masked 3-head CE on `bc_batch`
 human pairs sampled from the `.bbp` shards in `bc_pairs_dir`, zero recurrent
 state (= bc_pretrain v0). `bc_coef_anneal=1` cosine-decays bc_coef to 10%
 over total_timesteps. Dashboard/wandb keys: `loss/bc_loss`, `loss/bc_acc`,
 `loss/bc_coef`. TORCH BACKEND ONLY — the native CUDA trainer ignores bc_*.
 
-The same patch now also carries (a) **masked sampling** (`apply_action_mask`,
-D38 — see §5) and (b) **asymmetric training** via `[train] frozen_enemy_path`
-(D44): non-learner rows play a FROZEN policy (deepcopy + state_dict load, no
-grad, masked sampling, its own recurrent state), the learner alternates
-home/away by env parity, and PPO slices ratio/prio/batch math to learner rows
-only (`train_rows`). CLI: `--train.frozen-enemy-path <ckpt>`; empty (the
-`puffer/config/bloodbowl.ini` default) = symmetric self-play, upstream behavior.
+**D176 rejected this mechanism for new runs:** coefficient-1 iid CE collapsed
+offense to zero while the no-anchor control stayed functional. The patch also
+eagerly preloads every shard and has no replay-ID/edition allowlist, so the
+legacy `validation/pairs` path can mix rules editions. Keep `bc_coef=0`; any
+reconsideration needs bounded streaming, a BB2025-exact allowlist, and a new
+controlled hypothesis. Masked sampling and asymmetric training are separate
+facilities in the installed patch stack; they are not supplied by this BC patch.
 
 - Config keys live in `puffer/config/bloodbowl.ini` `[train]` (bc_coef
   default 0.0 = off and bit-identical to unpatched; bc_pairs_dir; bc_batch;
@@ -401,7 +401,8 @@ only (`train_rows`). CLI: `--train.frozen-enemy-path <ckpt>`; empty (the
   `vendor/PufferLib/.venv/bin/python training/test_bcreg_torch_pufferl.py`
   (proves off-mode bit-identity vs pristine HEAD + on-mode bc_loss decrease).
   `tools/run_bcreg.sh` auto-applies the patch if the marker is missing.
-- Launch recipe: `tools/run_bcreg.sh` — torch backend on the CUDA box
+- Historical reproduction recipe only: `tools/run_bcreg.sh` — torch backend
+  on the CUDA box
   (`rm -rf build && ./build.sh bloodbowl --float`; bf16 default build refuses
   to import), `--selfplay.enabled 0` (pool is native-only), warm start from a
   CURRENT-lineage anchor (state_dict loads directly in the torch backend — no

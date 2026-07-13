@@ -8,6 +8,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+PUFFERL_SOURCE = ROOT / "vendor/PufferLib/pufferlib/pufferl.py"
+VENDOR_CHECKOUT = PUFFERL_SOURCE.is_file()
 
 
 def run_script(script, *args, env=None):
@@ -79,9 +81,9 @@ class ExperimentContractTests(unittest.TestCase):
         self.assertIn("_puffer_eval_episodes_completed", source)
         self.assertIn("scripted eval sample too small", source)
 
+    @unittest.skipUnless(VENDOR_CHECKOUT, "vendored Puffer checkout unavailable")
     def test_puffer_eval_gate_accumulates_torch_intervals(self):
-        source = (ROOT / "vendor/PufferLib/pufferlib/pufferl.py").read_text(
-            encoding="utf-8")
+        source = PUFFERL_SOURCE.read_text(encoding="utf-8")
         self.assertIn(
             "eval_episodes_completed += flat_logs['env/n']", source)
         self.assertIn(
@@ -155,17 +157,20 @@ class ExperimentContractTests(unittest.TestCase):
             encoding="utf-8")
         for arm in ("both", "possession_only", "gain_only", "neither"):
             self.assertIn(arm, source)
-        self.assertIn('SCREEN_PROFILE="${SCREEN_PROFILE:-distance-possession}"',
-                      source)
+        self.assertIn(
+            ': "${SCREEN_PROFILE:?SCREEN_PROFILE is required ', source)
+        self.assertIn(': "${STEPS:?STEPS is required ', source)
+        self.assertNotIn('SCREEN_PROFILE="${SCREEN_PROFILE:-', source)
+        self.assertNotIn('STEPS="${STEPS:-', source)
 
         possession = (ROOT / "puffer/config/rewards/p1_possession_only.json")
         gain = (ROOT / "puffer/config/rewards/p2_gain_only.json")
         self.assertTrue(possession.is_file())
         self.assertTrue(gain.is_file())
 
+    @unittest.skipUnless(VENDOR_CHECKOUT, "vendored Puffer checkout unavailable")
     def test_puffer_machine_log_uses_explicit_loop_phase_and_fresh_panels(self):
-        source = (ROOT / "vendor/PufferLib/pufferlib/pufferl.py").read_text(
-            encoding="utf-8")
+        source = PUFFERL_SOURCE.read_text(encoding="utf-8")
         self.assertIn("'_puffer_schema': 2", source)
         self.assertIn("phase_eval = epoch >= train_epochs", source)
         self.assertIn("phase_eval=phase_eval, phase_epoch=epoch", source)

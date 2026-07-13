@@ -75,9 +75,6 @@ import torch.nn.functional as F
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "vendor", "PufferLib"))
 
-import pufferlib  # noqa: E402
-import pufferlib.models  # noqa: E402
-
 # Mirrors ACT_SIZES in puffer/bloodbowl/binding.c (asserted against the .bbp
 # header's mask_size below — the shards only pin the sum).
 ACT_SIZES = (30, 33, 391)
@@ -460,6 +457,9 @@ def load_shards(pair_dir, replay_ids=None):
 
 def load_policy_like_trainer(config_path, obs_size):
     """pufferlib.torch_pufferl.load_policy minus the vec (sizes from .bbp)."""
+    import pufferlib
+    import pufferlib.models
+
     default_ini = os.path.join(os.path.dirname(os.path.dirname(
         os.path.realpath(pufferlib.__file__))), "config", "default.ini")
     p = configparser.ConfigParser()
