@@ -1,0 +1,64 @@
+# BBTV latest-checkpoint follower
+
+BBTV is an external progress view for the current reward-screen experiment. It
+continuously plays the newest completed training checkpoint against that run's
+frozen warm-start policy. This pairing makes cumulative behavior change easier
+to see than latest-vs-latest self-play while still showing the freshest policy.
+
+The public page remains <https://bbtv.seconds0.com>. The WebSocket remains at
+`/ws`; no frontend or protocol change is required.
+
+## Safety contract
+
+`stream_backend/follow_latest.py`:
+
+- considers only checkpoint directories with `RUN_MANIFEST.json` and mode
+  `native_static_pool_reward_ablation`;
+- ignores bootstrap checkpoints and files whose byte size differs from the
+  manifest's expected checkpoint size;
+- requires size and timestamps to remain stable before reading a checkpoint;
+- hashes the source before conversion and confirms it did not change during
+  conversion;
+- writes converted Torch policies and metadata atomically under
+  `runs/bbtv-follow`, never in the trainer's checkpoint tree;
+- uses a separate, float-built Puffer environment at
+  `/home/rache/bloodbowl-rl-bbtv/vendor/PufferLib`, so it cannot rebuild or
+  replace the native module imported by the live trainer;
+- falls back to the prior league9-vs-league8 stream if discovery or conversion
+  fails; and
+- runs at nice level 19 and idle I/O priority.
+
+The follower rechecks after every two streamed games. Home and away are swapped
+between those games by the existing match runner. A just-finished checkpoint can
+therefore take up to one two-game cycle to appear.
+
+## RTX 2070 service
+
+The repository launcher is `stream_backend/run_follow_latest.sh`. Production is
+enabled with a reversible systemd user-service override:
+
+The checked-in override template is
+`stream_backend/bbstream-follow-latest.conf`; install it as
+`~/.config/systemd/user/bbstream.service.d/follow-latest.conf`.
+
+Apply or inspect it with:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user restart bbstream.service
+systemctl --user status bbstream.service
+cat /home/rache/bloodbowl-rl-audit/runs/bbtv-follow/selection.json
+```
+
+Rollback preserves the original static launcher:
+
+```bash
+rm ~/.config/systemd/user/bbstream.service.d/follow-latest.conf
+systemctl --user daemon-reload
+systemctl --user restart bbstream.service
+```
+
+Do not delete or rewrite the audit checkpoint tree to repair BBTV. If no valid
+checkpoint is discoverable, inspect `server_status.json`, the conversion
+metadata, and `journalctl --user -u bbstream.service`; the designed recovery path
+is the static-policy fallback.
