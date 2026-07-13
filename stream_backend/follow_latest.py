@@ -39,7 +39,9 @@ class Candidate:
     rollout_quantum: int
     expected_bytes: int
     warm_path: Path
-    mtime_ns: int
+    warm_bytes: int
+    warm_sha256: str
+    run_order: int
 
 
 def sha256_file(path: Path) -> str:
@@ -79,16 +81,31 @@ def _manifest_candidate(
     try:
         if manifest.get("mode") != "native_static_pool_reward_ablation":
             return None
+        if int(manifest["schema_version"]) != 1:
+            return None
         expected = int(manifest["expected_checkpoint_bytes"])
         rollout = int(manifest["rollout_quantum"])
         step = int(native_path.stem)
         stat = native_path.stat()
         warm = Path(str(manifest["warm"])).expanduser().resolve()
+        warm_bytes = int(manifest["warm_bytes"])
+        warm_sha = str(manifest["warm_sha256"]).lower()
+        run_order = int(manifest_path.parent.name)
+        warm_size = warm.stat().st_size
         tag = str(manifest["tag"])
         seed = int(manifest["seed"])
     except (KeyError, TypeError, ValueError, OSError):
         return None
-    if stat.st_size != expected or step <= rollout or not warm.is_file():
+    if (
+        stat.st_size != expected
+        or step <= rollout
+        or expected <= 0
+        or warm_bytes <= 0
+        or run_order < 0
+        or not warm.is_file()
+        or warm_size != warm_bytes
+        or not re.fullmatch(r"[0-9a-f]{64}", warm_sha)
+    ):
         return None
     return Candidate(
         native_path=native_path.resolve(),
@@ -99,7 +116,9 @@ def _manifest_candidate(
         rollout_quantum=rollout,
         expected_bytes=expected,
         warm_path=warm,
-        mtime_ns=stat.st_mtime_ns,
+        warm_bytes=warm_bytes,
+        warm_sha256=warm_sha,
+        run_order=run_order,
     )
 
 
@@ -117,7 +136,10 @@ def discover_candidates(checkpoint_root: Path) -> list[Candidate]:
             candidate = _manifest_candidate(manifest_path, native_path, manifest)
             if candidate is not None:
                 candidates.append(candidate)
-    return sorted(candidates, key=lambda item: (item.mtime_ns, item.step))
+    # Run directories are launcher-generated monotonic numeric IDs. Select the
+    # newest run by that immutable identity, then its greatest completed step;
+    # copying/touching an old checkpoint must never roll BBTV backward.
+    return sorted(candidates, key=lambda item: (item.run_order, item.step))
 
 
 def stable_native(path: Path, expected_bytes: int, seconds: float) -> os.stat_result:
@@ -162,17 +184,25 @@ def convert_native(
     converter_script: Path,
     config_path: Path,
     stability_seconds: float,
+    timeout_seconds: float,
 ) -> dict[str, Any]:
     stable_native(source, expected_bytes, stability_seconds)
     source_sha = sha256_file(source)
     output = cache_dir / label
     metadata_path = output.with_suffix(output.suffix + ".json")
+    conversion_identity = {
+        "schema_version": 1,
+        "obs_size": 2782,
+        "converter_sha256": sha256_file(converter_script),
+        "config_sha256": sha256_file(config_path),
+    }
     if output.is_file() and metadata_path.is_file():
         try:
             metadata = load_json(metadata_path)
             if (
                 metadata.get("source_sha256") == source_sha
                 and metadata.get("output_sha256") == sha256_file(output)
+                and metadata.get("conversion_identity") == conversion_identity
             ):
                 return metadata
         except (OSError, ValueError, json.JSONDecodeError):
@@ -206,6 +236,7 @@ def convert_native(
             stderr=subprocess.PIPE,
             env=environment,
             check=False,
+            timeout=timeout_seconds,
         )
         if completed.returncode != 0:
             raise RuntimeError(
@@ -231,6 +262,7 @@ def convert_native(
             "output": str(output),
             "output_bytes": output.stat().st_size,
             "output_sha256": output_sha,
+            "conversion_identity": conversion_identity,
             "converter_command": command,
             "converter_stdout": completed.stdout.strip(),
         }
@@ -245,6 +277,13 @@ def prepare_pair(args: argparse.Namespace) -> dict[str, Any]:
     if not candidates:
         raise RuntimeError("no stable post-bootstrap manifested checkpoint exists")
     current = candidates[-1]
+    stable_native(current.warm_path, current.warm_bytes, args.stability_seconds)
+    baseline_sha = sha256_file(current.warm_path)
+    if baseline_sha != current.warm_sha256:
+        raise RuntimeError(
+            "frozen warm-start hash does not match run manifest: "
+            f"{current.warm_path} ({baseline_sha} != {current.warm_sha256})"
+        )
     current_sha = sha256_file(current.native_path)
     current_meta = convert_native(
         current.native_path,
@@ -255,18 +294,21 @@ def prepare_pair(args: argparse.Namespace) -> dict[str, Any]:
         args.converter_script,
         args.config,
         args.stability_seconds,
+        args.conversion_timeout_seconds,
     )
-    baseline_sha = sha256_file(current.warm_path)
     baseline_meta = convert_native(
         current.warm_path,
-        current.expected_bytes,
+        current.warm_bytes,
         _baseline_label(current, baseline_sha),
         args.cache_dir,
         args.converter_python,
         args.converter_script,
         args.config,
         args.stability_seconds,
+        args.conversion_timeout_seconds,
     )
+    if baseline_meta.get("source_sha256") != current.warm_sha256:
+        raise RuntimeError("frozen warm-start changed during conversion")
     selection = {
         "schema_version": 1,
         "selected_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
@@ -316,6 +358,18 @@ def server_command(
     ]
 
 
+def choose_stream_pair(
+    prepared: tuple[Path, Path] | None,
+    last_successful: tuple[Path, Path] | None,
+    quarantined: set[tuple[Path, Path]],
+    fallback: tuple[Path, Path] | None,
+) -> tuple[Path, Path] | None:
+    """Prefer an unquarantined candidate, then a proven pair, then fallback."""
+    if prepared is not None and prepared not in quarantined:
+        return prepared
+    return last_successful or fallback
+
+
 def run_forever(args: argparse.Namespace) -> int:
     args.state_dir.mkdir(parents=True, exist_ok=True)
     args.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -327,26 +381,35 @@ def run_forever(args: argparse.Namespace) -> int:
             print(f"another BBTV follower holds {lock_path}", file=sys.stderr)
             return 2
 
-        last_pair: tuple[Path, Path] | None = None
+        last_successful_pair: tuple[Path, Path] | None = None
+        quarantined_pairs: set[tuple[Path, Path]] = set()
         failures = 0
         while True:
+            prepared_pair: tuple[Path, Path] | None = None
             try:
                 selection = prepare_pair(args)
-                pair = (
+                prepared_pair = (
                     Path(selection["checkpoint_a"]["output"]),
                     Path(selection["checkpoint_b"]["output"]),
                 )
-                last_pair = pair
-                failures = 0
             except Exception as exc:
                 print(f"BBTV discovery/conversion warning: {exc}", file=sys.stderr)
-                pair = last_pair
-                if pair is None and args.fallback_a and args.fallback_b:
-                    pair = (args.fallback_a, args.fallback_b)
-                if pair is None:
-                    failures += 1
-                    time.sleep(min(args.retry_seconds * failures, 60))
-                    continue
+
+            fallback = (
+                (args.fallback_a, args.fallback_b)
+                if args.fallback_a and args.fallback_b
+                else None
+            )
+            pair = choose_stream_pair(
+                prepared_pair,
+                last_successful_pair,
+                quarantined_pairs,
+                fallback,
+            )
+            if pair is None:
+                failures += 1
+                time.sleep(min(args.retry_seconds * failures, 60))
+                continue
 
             command = server_command(args, *pair)
             status = {
@@ -358,25 +421,40 @@ def run_forever(args: argparse.Namespace) -> int:
             }
             atomic_json(args.state_dir / "server_status.json", status)
             print("BBTV FOLLOW " + json.dumps(status, sort_keys=True), flush=True)
-            completed = subprocess.run(
-                command,
-                cwd=args.server_script.parent,
-                check=False,
-            )
+            try:
+                completed = subprocess.run(
+                    command,
+                    cwd=args.server_script.parent,
+                    check=False,
+                    timeout=args.server_timeout_seconds,
+                )
+                return_code = completed.returncode
+            except subprocess.TimeoutExpired:
+                return_code = 124
+                print(
+                    "BBTV server exceeded its cycle timeout; child was "
+                    "terminated",
+                    file=sys.stderr,
+                    flush=True,
+                )
             status["completed_utc"] = dt.datetime.now(dt.timezone.utc).isoformat()
-            status["exit_code"] = completed.returncode
+            status["exit_code"] = return_code
             atomic_json(args.state_dir / "server_status.json", status)
             selected = {path.resolve() for path in pair}
             prune_cache(args.cache_dir, selected, args.keep_converted)
-            if completed.returncode != 0:
+            if return_code != 0:
+                quarantined_pairs.add(pair)
                 failures += 1
                 print(
-                    f"BBTV server exited {completed.returncode}; retaining last "
-                    f"known-good pair and retrying",
+                    f"BBTV server exited {return_code}; quarantining "
+                    "that pair and reverting to the last successful stream",
                     file=sys.stderr,
                     flush=True,
                 )
                 time.sleep(min(args.retry_seconds * failures, 60))
+            else:
+                last_successful_pair = pair
+                failures = 0
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -396,6 +474,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--games-per-cycle", type=int, default=2)
     parser.add_argument("--stability-seconds", type=float, default=1.0)
     parser.add_argument("--retry-seconds", type=float, default=5.0)
+    parser.add_argument("--conversion-timeout-seconds", type=float, default=300.0)
+    parser.add_argument("--server-timeout-seconds", type=float, default=7200.0)
     parser.add_argument("--keep-converted", type=int, default=24)
     parser.add_argument(
         "--select-only",
@@ -433,8 +513,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         parser.error("--fallback-a and --fallback-b must be provided together")
     if not 1 <= args.port <= 65535:
         parser.error("--port must be in 1..65535")
-    if args.pace <= 0 or args.games_per_cycle <= 0:
-        parser.error("--pace and --games-per-cycle must be positive")
+    if (
+        args.pace <= 0
+        or args.games_per_cycle <= 0
+        or args.conversion_timeout_seconds <= 0
+        or args.server_timeout_seconds <= 0
+    ):
+        parser.error("pace, cycle size, and subprocess timeouts must be positive")
     if args.stability_seconds < 0 or args.keep_converted < 2:
         parser.error("stability must be non-negative and cache must keep >=2")
     return args

@@ -228,7 +228,7 @@ void my_log(Log* log, Dict* out) {
     //
     // CAPACITY: vec_log (src/bindings_cpu.cpp / bindings.cu) must hand us a
     // dict large enough for these keys plus the vecenv-appended "n". We emit
-    // 82. Growing past the call-site capacity is SILENT HEAP CORRUPTION
+    // 86. Growing past the call-site capacity is SILENT HEAP CORRUPTION
     // upstream (assert compiles out under NDEBUG); our vendored dict_set
     // aborts loudly instead (training/puffer_dict_capacity.patch).
     // History: key count hit 37 vs capacity 32 when slot scores + demo
@@ -242,11 +242,25 @@ void my_log(Log* log, Dict* out) {
     dict_set(out, "episode_return", log->episode_return);
     dict_set(out, "episode_length", log->episode_length);
     dict_set(out, "statmatch_term", log->statmatch_term);
-    dict_set(out, "reward_clip_frac", log->reward_clip_frac);
-    dict_set(out, "reward_clip_frac_nonzero", log->reward_clip_frac_nonzero);
+    float clip_frac = log->reward_samples > 0.0f
+        ? log->reward_clipped_samples / log->reward_samples : 0.0f;
+    float clip_frac_nonzero = log->reward_nonzero_samples > 0.0f
+        ? log->reward_clipped_samples / log->reward_nonzero_samples : 0.0f;
+    float nonfinite_frac = log->reward_samples > 0.0f
+        ? log->reward_nonfinite_samples / log->reward_samples : 0.0f;
+    dict_set(out, "reward_clip_frac", clip_frac);
+    dict_set(out, "reward_clip_frac_nonzero", clip_frac_nonzero);
     dict_set(out, "reward_clip_excess", log->reward_clip_excess);
-    dict_set(out, "reward_abs_max", log->reward_abs_max);
-    dict_set(out, "reward_nonfinite_frac", log->reward_nonfinite_frac);
+    dict_set(out, "reward_episode_abs_max_mean",
+             log->reward_episode_abs_max_mean);
+    dict_set(out, "reward_nonfinite_frac", nonfinite_frac);
+    dict_set(out, "reward_samples_per_episode", log->reward_samples);
+    dict_set(out, "reward_nonzero_samples_per_episode",
+             log->reward_nonzero_samples);
+    dict_set(out, "reward_clipped_samples_per_episode",
+             log->reward_clipped_samples);
+    dict_set(out, "reward_nonfinite_samples_per_episode",
+             log->reward_nonfinite_samples);
     dict_set(out, "reward_clip_episodes", log->reward_clip_episodes);
     dict_set(out, "reward_nonfinite_episodes", log->reward_nonfinite_episodes);
     dict_set(out, "illegal_frac", log->illegal_frac);

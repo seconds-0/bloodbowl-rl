@@ -163,11 +163,16 @@ typedef struct {
     float statmatch_term;
     // PPO clamps each emitted agent reward to [-1,1]. These aggregates expose
     // any difference between raw env return and the learner's reward stream.
-    float reward_clip_frac;
-    float reward_clip_frac_nonzero;
+    // Raw emission counters. Vec aggregation sums these and divides each by
+    // the same episode count; my_log forms ratios afterward, preserving exact
+    // emission weighting across short curriculum and full-game episodes.
+    float reward_samples;
+    float reward_nonzero_samples;
+    float reward_clipped_samples;
+    float reward_nonfinite_samples;
     float reward_clip_excess;
-    float reward_abs_max;
-    float reward_nonfinite_frac;
+    // Sum of each episode's maximum; after vec /n this is explicitly a mean.
+    float reward_episode_abs_max_mean;
     // Episode indicators; after vec-log normalization these are the fraction
     // of completed episodes with at least one clipped/non-finite emission.
     float reward_clip_episodes;
@@ -2117,19 +2122,12 @@ static void bbe_finish_episode(Bloodbowl* env) {
     // Record only after every terminal component—including statmatch—has
     // stacked. This is exactly the raw emission PPO clamps before GAE.
     bbe_record_reward_emission(env);
-    if (env->ep_reward_samples > 0) {
-        float nreward = (float)env->ep_reward_samples;
-        env->log.reward_clip_frac +=
-            (float)env->ep_reward_clipped / nreward;
-        env->log.reward_nonfinite_frac +=
-            (float)env->ep_reward_nonfinite / nreward;
-    }
-    if (env->ep_reward_nonzero > 0) {
-        env->log.reward_clip_frac_nonzero +=
-            (float)env->ep_reward_clipped / (float)env->ep_reward_nonzero;
-    }
+    env->log.reward_samples += (float)env->ep_reward_samples;
+    env->log.reward_nonzero_samples += (float)env->ep_reward_nonzero;
+    env->log.reward_clipped_samples += (float)env->ep_reward_clipped;
+    env->log.reward_nonfinite_samples += (float)env->ep_reward_nonfinite;
     env->log.reward_clip_excess += env->ep_reward_clip_excess;
-    env->log.reward_abs_max += env->ep_reward_abs_max;
+    env->log.reward_episode_abs_max_mean += env->ep_reward_abs_max;
     env->log.reward_clip_episodes += env->ep_reward_clipped > 0;
     env->log.reward_nonfinite_episodes += env->ep_reward_nonfinite > 0;
     env->log.statmatch_term += statmatch;
@@ -2613,6 +2611,7 @@ static void c_step(Bloodbowl* env) {
         // opponent turn and return to the original active team; touchdowns
         // unwind TEAM_TURN without flipping active_team at all. Both cases
         // made the old flip detector silently lose possession/turnover data.
+        int completed_delta[2] = {0, 0};
         for (int t = 0; t < 2; t++) {
             int completed = (int)m->turns_completed[t] -
                             (int)turns_completed_pre[t];
@@ -2621,6 +2620,7 @@ static void c_step(Bloodbowl* env) {
             int turnovers = (int)m->turnovers_completed[t] -
                             (int)turnovers_completed_pre[t];
             env->ep_turns[t] += completed;
+            completed_delta[t] = completed;
             env->ep_turns_with_ball[t] += held;
             env->ep_turnovers[t] += turnovers;
 
@@ -2636,11 +2636,16 @@ static void c_step(Bloodbowl* env) {
                 env->ep_return[1 - t] -= r;
             }
         }
-        // Possession-rate bookkeeping: when the active team flips, the
-        // remaining positional hooks evaluate the just-ended board.
-        if ((int)m->active_team != env->prev_active_team) {
-            int t = env->prev_active_team & 1;
-            if (pre_in_team_turn && m->ball.state == BB_BALL_HELD &&
+        // Every positional turn-end hook follows the same monotonic boundary
+        // signal as possession bookkeeping. One advance can compress an empty
+        // opponent turn and return to the original active team, while a TD can
+        // unwind TEAM_TURN without flipping active_team at all. In both cases
+        // the acting team's completed counter is the authoritative boundary.
+        int t = env->prev_active_team & 1;
+        bool genuine_own_turn_end =
+            pre_in_team_turn && completed_delta[t] > 0;
+        if (genuine_own_turn_end) {
+            if (m->ball.state == BB_BALL_HELD &&
                 m->ball.carrier < BB_NUM_PLAYERS &&
                 BB_TEAM_OF(m->ball.carrier) != t) {
                 bbe_measure_defensive_canary(env, t);
@@ -2667,7 +2672,7 @@ static void c_step(Bloodbowl* env) {
             // only the best non-adjacent movement threat is pooled as the
             // single blitz. Rewards are positive-positive with constant sum
             // k*T_max; raw uncapped T is logged for visibility.
-            if (pre_in_team_turn && env->reward_carrier_threat != 0.0f &&
+            if (env->reward_carrier_threat != 0.0f &&
                 m->ball.state == BB_BALL_HELD) {
                 bb_carrier_threat_breakdown th;
                 float tc = bb_carrier_threat_eval(m, &th);
@@ -2694,16 +2699,14 @@ static void c_step(Bloodbowl* env) {
                     bb_team_contact_favorability(m, 0),
                     bb_team_contact_favorability(m, 1)
                 };
-                if (pre_in_team_turn) {
-                    float d0 = fav[0] - env->prev_contact_fav[0];
-                    float d1 = fav[1] - env->prev_contact_fav[1];
-                    float r0 = env->reward_k_assist * (d0 - d1);
-                    env->reward_ptr[0][0] += r0;
-                    env->reward_ptr[1][0] -= r0;
-                    env->ep_return[0] += r0;
-                    env->ep_return[1] -= r0;
-                    env->ep_contact_fav += fav[0] + fav[1];
-                }
+                float d0 = fav[0] - env->prev_contact_fav[0];
+                float d1 = fav[1] - env->prev_contact_fav[1];
+                float r0 = env->reward_k_assist * (d0 - d1);
+                env->reward_ptr[0][0] += r0;
+                env->reward_ptr[1][0] -= r0;
+                env->ep_return[0] += r0;
+                env->ep_return[1] -= r0;
+                env->ep_contact_fav += fav[0] + fav[1];
                 env->prev_contact_fav[0] = fav[0];
                 env->prev_contact_fav[1] = fav[1];
             }
@@ -2719,9 +2722,8 @@ static void c_step(Bloodbowl* env) {
             // still inside its BB_PROC_TEAM_TURN. This filters the setup->kickoff
             // flip and kickoff Charge! active-team changes (ball off-pitch,
             // counters 0/0) that the bare active_team-flip hook also catches.
-            if (pre_in_team_turn &&
-                (env->reward_defensive_threat != 0.0f ||
-                 env->reward_defensive_threat_soft != 0.0f)) {
+            if (env->reward_defensive_threat != 0.0f ||
+                env->reward_defensive_threat_soft != 0.0f) {
                 bb_def_threat dt = bb_def_threat_eval(m, t);
                 int hard_true = dt.n_threats_1turn;
                 int soft_true = dt.n_threats_2turn - dt.n_threats_1turn;
@@ -2747,6 +2749,8 @@ static void c_step(Bloodbowl* env) {
                 env->ep_def_threats_1t += hard_true;
                 env->ep_def_threats_2t += dt.n_threats_2turn;
             }
+        }
+        if ((int)m->active_team != env->prev_active_team) {
             env->prev_active_team = (int)m->active_team;
         }
         bbe_count_knockdowns(env, was_standing, agent, carrier_pre_down_mask);

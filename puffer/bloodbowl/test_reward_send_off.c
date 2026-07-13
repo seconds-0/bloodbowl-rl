@@ -23,6 +23,21 @@ static void check_float(float got, float want) {
     BB_CHECK(d < 0.00001f);
 }
 
+static float reward_clip_frac(const Log* log) {
+    return log->reward_samples > 0.0f
+        ? log->reward_clipped_samples / log->reward_samples : 0.0f;
+}
+
+static float reward_clip_frac_nonzero(const Log* log) {
+    return log->reward_nonzero_samples > 0.0f
+        ? log->reward_clipped_samples / log->reward_nonzero_samples : 0.0f;
+}
+
+static float reward_nonfinite_frac(const Log* log) {
+    return log->reward_samples > 0.0f
+        ? log->reward_nonfinite_samples / log->reward_samples : 0.0f;
+}
+
 static void setup_env_buffers(RewardFixture* f) {
     memset(f, 0, sizeof(*f));
     Bloodbowl* env = &f->env;
@@ -461,9 +476,9 @@ BB_TEST(puffer_final_turn_touchdown_stacks_objective_without_possession_clip) {
     // The scoring turn enters the possession metric, but its annuity coupon is
     // suppressed because the TD already priced this boundary.
     check_float(f.env.log.possession_rate, 1.0f);
-    check_float(f.env.log.reward_clip_frac, 0.0f);
+    check_float(reward_clip_frac(&f.env.log), 0.0f);
     check_float(f.env.log.reward_clip_episodes, 0.0f);
-    check_float(f.env.log.reward_abs_max, 1.0f);
+    check_float(f.env.log.reward_episode_abs_max_mean, 1.0f);
 }
 
 BB_TEST(puffer_possession_bookkeeping_survives_auto_empty_opponent_turn) {
@@ -471,6 +486,7 @@ BB_TEST(puffer_possession_bookkeeping_survives_auto_empty_opponent_turn) {
     setup_env_buffers(&f);
     Bloodbowl* env = &f.env;
     env->reward_possession = 0.03f;
+    env->reward_carrier_threat = 0.05f;
 
     fx_match_midturn(&env->match, BB_HOME, 0);
     int carrier = fx_lineman(&env->match, BB_HOME, 0, 5, 5);
@@ -498,8 +514,12 @@ BB_TEST(puffer_possession_bookkeeping_survives_auto_empty_opponent_turn) {
     BB_CHECK_EQ(env->ep_turns[BB_AWAY], 1);
     BB_CHECK_EQ(env->ep_turns_with_ball[BB_HOME], 1);
     BB_CHECK_EQ(env->ep_turns_with_ball[BB_AWAY], 0);
-    check_float(f.rewards[BB_HOME], 0.03f);
+    // The original HOME boundary must also fire positional hooks even though
+    // the playerless AWAY turn was compressed and active_team returned HOME.
+    check_float(f.rewards[BB_HOME],
+                0.03f + 0.05f * BB_CARRIER_THREAT_T_MAX);
     check_float(f.rewards[BB_AWAY], -0.03f);
+    check_float(env->ep_carrier_threat, 0.0f);
 }
 
 BB_TEST(puffer_turnover_bookkeeping_counts_failure_created_by_action) {
@@ -593,12 +613,12 @@ BB_TEST(puffer_reward_clip_telemetry_sees_terminal_stack) {
 
     bbe_finish_episode(&f.env);
 
-    check_float(f.env.log.reward_clip_frac, 1.0f);
+    check_float(reward_clip_frac(&f.env.log), 1.0f);
     check_float(f.env.log.reward_clip_episodes, 1.0f);
     check_float(f.env.log.reward_nonfinite_episodes, 0.0f);
     check_float(f.env.log.reward_clip_excess, 0.4f);
-    check_float(f.env.log.reward_abs_max, 1.2f);
-    check_float(f.env.log.reward_nonfinite_frac, 0.0f);
+    check_float(f.env.log.reward_episode_abs_max_mean, 1.2f);
+    check_float(reward_nonfinite_frac(&f.env.log), 0.0f);
 }
 
 BB_TEST(puffer_reward_clip_telemetry_includes_statmatch_terminal_term) {
@@ -610,9 +630,9 @@ BB_TEST(puffer_reward_clip_telemetry_includes_statmatch_terminal_term) {
     bbe_finish_episode(&f.env);
 
     BB_CHECK(f.env.log.statmatch_term < -1.0f);
-    check_float(f.env.log.reward_clip_frac, 1.0f);
+    check_float(reward_clip_frac(&f.env.log), 1.0f);
     check_float(f.env.log.reward_clip_episodes, 1.0f);
-    BB_CHECK(f.env.log.reward_abs_max > 1.0f);
+    BB_CHECK(f.env.log.reward_episode_abs_max_mean > 1.0f);
     BB_CHECK(f.env.log.reward_clip_excess > 0.0f);
 }
 
@@ -631,8 +651,8 @@ BB_TEST(puffer_reward_clip_nonzero_fraction_is_not_diluted_by_sparse_zeros) {
 
     bbe_finish_episode(&f.env);
 
-    check_float(f.env.log.reward_clip_frac, 2.0f / 202.0f);
-    check_float(f.env.log.reward_clip_frac_nonzero, 1.0f);
+    check_float(reward_clip_frac(&f.env.log), 2.0f / 202.0f);
+    check_float(reward_clip_frac_nonzero(&f.env.log), 1.0f);
 }
 
 BB_TEST(puffer_reward_nonfinite_telemetry_sees_raw_nan_and_infinity) {
@@ -644,11 +664,11 @@ BB_TEST(puffer_reward_nonfinite_telemetry_sees_raw_nan_and_infinity) {
 
     bbe_finish_episode(&f.env);
 
-    check_float(f.env.log.reward_nonfinite_frac, 1.0f);
+    check_float(reward_nonfinite_frac(&f.env.log), 1.0f);
     check_float(f.env.log.reward_nonfinite_episodes, 1.0f);
-    check_float(f.env.log.reward_clip_frac, 0.0f);
+    check_float(reward_clip_frac(&f.env.log), 0.0f);
     check_float(f.env.log.reward_clip_episodes, 0.0f);
-    check_float(f.env.log.reward_abs_max, 0.0f);
+    check_float(f.env.log.reward_episode_abs_max_mean, 0.0f);
 }
 
 BB_TEST(puffer_reward_clip_threshold_is_strictly_above_one) {
@@ -658,9 +678,9 @@ BB_TEST(puffer_reward_clip_threshold_is_strictly_above_one) {
     exact.rewards[BB_HOME] = 1.0f;
     exact.rewards[BB_AWAY] = -1.0f;
     bbe_finish_episode(&exact.env);
-    check_float(exact.env.log.reward_clip_frac, 0.0f);
+    check_float(reward_clip_frac(&exact.env.log), 0.0f);
     check_float(exact.env.log.reward_clip_episodes, 0.0f);
-    check_float(exact.env.log.reward_abs_max, 1.0f);
+    check_float(exact.env.log.reward_episode_abs_max_mean, 1.0f);
 
     RewardFixture over;
     setup_env_buffers(&over);
@@ -669,8 +689,34 @@ BB_TEST(puffer_reward_clip_threshold_is_strictly_above_one) {
     over.rewards[BB_HOME] = just_over;
     over.rewards[BB_AWAY] = -just_over;
     bbe_finish_episode(&over.env);
-    check_float(over.env.log.reward_clip_frac, 1.0f);
+    check_float(reward_clip_frac(&over.env.log), 1.0f);
     check_float(over.env.log.reward_clip_episodes, 1.0f);
     BB_CHECK(over.env.log.reward_clip_excess > 0.0f);
-    check_float(over.env.log.reward_abs_max, just_over);
+    check_float(over.env.log.reward_episode_abs_max_mean, just_over);
+}
+
+BB_TEST(puffer_reward_clip_fraction_is_emission_weighted_across_episodes) {
+    RewardFixture f;
+    setup_env_buffers(&f);
+    f.env.reward_configured = 1;
+    for (int i = 0; i < 100; i++) {
+        f.rewards[BB_HOME] = f.rewards[BB_AWAY] = 0.0f;
+        bbe_record_reward_emission(&f.env);
+    }
+    f.env.reward_win = 0.8f;
+    f.env.match.score[BB_HOME] = 1;
+    f.rewards[BB_HOME] = 0.4f;
+    f.rewards[BB_AWAY] = -0.4f;
+    bbe_finish_episode(&f.env);
+
+    // A second two-sample unclipped episode must contribute by emission
+    // count, not receive equal weight with the preceding 202-sample episode.
+    f.env.reward_win = 0.0f;
+    f.rewards[BB_HOME] = f.rewards[BB_AWAY] = 0.0f;
+    bbe_finish_episode(&f.env);
+
+    check_float(f.env.log.n, 2.0f);
+    check_float(f.env.log.reward_samples, 204.0f);
+    check_float(f.env.log.reward_clipped_samples, 2.0f);
+    check_float(reward_clip_frac(&f.env.log), 2.0f / 204.0f);
 }
