@@ -26,7 +26,11 @@ vendor/       Pinned reference clones (gitignored; see vendor/PINS.md)
 
 ## Status
 
-Phase 0 — scaffolding, doc cache, project skills. See `~/.claude/plans/i-need-you-to-merry-naur.md` for the full plan.
+Active reward/replay research. The repaired reward 2×2 and R0/R2 scripted
+transfer are complete; R0 remains an experimental baseline and no production
+reward has been promoted. See `STATUS.md`, D177–D180 in `DECISIONS.md`, and
+`docs/reward-and-replay-audit-2026-07-09.md` for the current verdict and next
+experiment. Agent workflows start at `AGENTS.md`.
 
 ## Note on IP
 

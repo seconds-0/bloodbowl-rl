@@ -1,5 +1,16 @@
 # Reward-Shaping Memo: Coaching-Doctrine Knobs for BB2025 PPO Self-Play
 
+> **Historical proposal—not the current reward plan (superseded 2026-07-13).**
+> The magnitudes, baseline vector, and experiment order below predate the repaired
+> reward semantics, R0–R3 screen, R0/R2 transfer, corrected human possession, and
+> strict replay audit. Do not implement these knobs as a bundle or treat coaching
+> doctrine as scalar ground truth. Current action is to decompose possession
+> annuity from ball gain while distance remains on, then require learned-opponent,
+> roster, longer, and second-ancestry transfer. See
+> `docs/reward-and-replay-audit-2026-07-09.md` and D177–D180. Any future candidate
+> from this memo must enter as one narrowly justified, independently ablated,
+> annealable scaffold under the immutable experiment contract.
+
 **Scope.** Additions to the existing vector (win +3 / loss −3 / draw −0.5; TD ±1; possession +0.1/−0.5 settled-transitions; injury ±0.15 KO+CAS; setup ±0.25). All magnitudes relative to TD = 1.0. Six research angles deduplicated: the two turn-ordering candidates are merged (R1), the uphill-block penalty is folded into the p-scaled block surcharge (R2), and the two carrier-protection candidates are merged (R3). Engine hooks verified in-repo: `BB_ACT_SECURE_BALL` at `engine/include/bb/bb_actions.h:75`, Secure-the-Ball logic in `engine/src/proc_move.c`, send-off/bribe flow in `engine/data/spec/inducements.yaml`, settled-transition machinery already used by the possession knob.
 
 **Design invariants applied throughout** (from the researchers' cross-cutting notes):

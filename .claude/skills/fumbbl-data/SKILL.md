@@ -1,9 +1,14 @@
 ---
 name: fumbbl-data
-description: Use when fetching or parsing FUMBBL data — API endpoints (match/replay/team/roster/ruleset), replay JSON anatomy (gameLog/modelChangeList/reports), playerState bit encoding, BC corpus curation filters, or server etiquette/throttling for fumbbl.com.
+description: Fetch, parse, audit, and train from FUMBBL data with embedded-rulesVersion filtering, replay-disjoint splits, bounded streaming BBP access, depth/action coverage checks, and polite cached API use. Use for FUMBBL endpoints, replay JSON anatomy, playerState encoding, corpus curation, BB2025 allowlists, BC sampling, human baselines, or server etiquette.
 ---
 
 # FUMBBL Data: API, Replays, Curation
+
+Read `runs/replay-audit-20260713/corpus.json`, D179–D180, and the replay sections
+of `docs/reward-and-replay-audit-2026-07-09.md` before changing the corpus or BC
+sampler. The current corpus is mixed-edition at the raw layer and sharply
+prefix-censored; shard presence and directory names are not edition proof.
 
 Ground truth lives in two vendored codebases (paths relative to repo root):
 
@@ -96,17 +101,69 @@ reportIds observed in `example_input/1559380.json` with real payload shapes (ful
 
 ## 5. Curation recipe for BC corpus
 
-**Current corpus (obs-v4 era, 2026-06): 12,304 replays → 2,085,330 .bbp pairs**
-(D53; `validation/pairs_v4`, with the `pairs` symlink on v4 training boxes
-pointing at it). The ~27K-file raw replay cache (`validation/replay_cache/`
-layout, fetch_replays.py header) has its SOLE COPY on the bb-japan-native box —
-never re-scrape what is already cached there. Extracted pairs are
-obs-lineage-specific: an obs bump (v3→v4 etc.) means re-extracting the whole
-corpus from the cached replays — entry point `validation/extract_pairs.py`,
-run on bb-japan-native where the cache lives; lineages never mix in one
-corpus. The demo STATE bank (`validation/build_state_bank.py` → `bank.bbs`)
-stores engine `bb_match` states, NOT observations — it is obs-independent and
-does NOT need rebuilding on an obs bump.
+**Exact audited inventory (2026-07-13):**
+
+- 15,347 raw replay manifest entries;
+- 11,580 embedded BB2025 and 3,767 embedded BB2020 replays;
+- 12,304 BBP shards / 2,085,330 records;
+- 9,170 joined BB2025 shards / 1,622,231 records;
+- 9,118 non-empty BB2025 IDs in the strict allowlist at
+  `runs/replay-audit-20260713/bb2025-nonempty.ids`.
+
+The old phrase "12,304 replays" was wrong: it counted pair shards, not verified
+BB2025 games. Determine edition from the replay's embedded `rulesVersion`, never
+from filenames, directories, dates, API division, or successful conversion.
+Never mix BB2020 into BB2025 BC.
+
+BBP records are observation-lineage-specific; an observation change requires
+re-extraction from cached raw replay data. BBS state banks store engine states,
+not observations, but still require matching engine fingerprints and strict
+edition/semantic validation.
+
+### Coverage limitations
+
+The joined BB2025 pairs are prefix-censored by lockstep divergence. Replay
+coverage falls from 9,118 at the opening to 35 at the deepest encoded turn.
+Pass/handoff/foul targets combined are only 1,040 records (`0.0641%`), with no
+Jump, Throw Team-Mate, or Special targets. Therefore:
+
+- do not use flat record accuracy as evidence of whole-game competence;
+- do not use this corpus alone for second-half, late-drive, comeback, stalling,
+  or rare-action policy;
+- report metrics by turn/drive depth and action family;
+- cap setup/opening mass and add purpose-built full-game/scenario data before
+  training recurrent or late-game claims.
+
+### Streaming and splits
+
+Use `training/bc_pretrain.py`'s bounded streaming path:
+
+- validate BBP headers and embedded replay IDs against the strict allowlist;
+- split by replay ID, never record, so one match cannot leak across splits;
+- keep the evict-before-open memory-map LRU and owning minibatches;
+- evaluate in batches rather than materializing the corpus;
+- use replay-first sampling as the current compatibility default.
+
+Replay-first removes long-shard dominance but does not cure opening censorship.
+The next sampler should be hierarchical:
+
+```text
+replay → roster/matchup → turn or drive depth → action family
+```
+
+The full strict-corpus probe used 9,118 shards / 1,622,231 records, a
+7,294/1,824 replay-disjoint split, an 8-map cache, and about 179MB measured
+footprint. Do not restore the projected ~10.55GB CPU + ~5.29GB device eager
+loader.
+
+### Human baselines
+
+Corrected genuine BB2025 team-turn possession is `173,200 / 365,449 =
+0.47393754` turn-weighted; per-game mean `0.47452514`, after excluding 47,599
+synthetic observations. Use it as a diagnostic only, not as a reward or BC
+optimization target.
+
+### Acquisition filters
 
 Filter on the cheap match JSON **before** downloading any replay:
 
@@ -117,6 +174,9 @@ Filter on the cheap match JSON **before** downloading any replay:
 5. **Per game, imitate only the higher-rated coach**: compare `pre.r` (fall back to `pre.cr`), tag that team's actions as the BC target, treat the other side as environment.
 6. Dedupe by `replayId`, cache forever (`~/.cache/fumbbl_replays/` layout in `get_cache_dir.py`); a replay is immutable once uploaded.
 7. Enumerate candidate matches via `/api/team/matches/<teamId>` pagination, or coach/tournament-based discovery; record `(matchId, replayId, division, TVs, CRs, conceded)` in a manifest before bulk replay download.
+8. After download, inspect embedded `rulesVersion`; exclude anything not BB2025
+   before conversion, allowlist construction, state-bank construction, splitting,
+   or metric calculation. API metadata is only a pre-download filter.
 
 ## 6. Normalizer skeleton
 

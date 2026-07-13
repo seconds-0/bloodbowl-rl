@@ -1,5 +1,11 @@
 # Preserving the Human Defensive Prior Through RL — KL-Anchor Experiment Design
 
+> **Historical June 2026 design, not the current queue or reward authority.** D176
+> supersedes its launch decision, and D177–D180 plus
+> `docs/reward-and-replay-audit-2026-07-09.md` define the current reward/replay
+> program. Reuse research from this document only through a newly frozen causal
+> plan with the July experiment contract and current host discovery.
+
 **Status:** DESIGN (not yet launched). Author pass 2026-06-23. Lever chosen by Alex: "do 1, lean in" — keep a KL/BC anchor to the human policy *through* RL to stop/reverse the champion's defensive-prior erosion (turnover3 ignores the ball carrier on defense; D170).
 
 **One-line thesis:** The champion (`turnover3`) trained anchor-free in self-play (`bc_coef=0` lineage, D57/D58) and pruned its human-cloned defensive behavior as "wasted entropy." We re-introduce a human anchor that is held *persistently* through RL (no anneal-to-zero) and measure whether it prevents (control) and reverses (treatment) the D170 defensive leak (champion concedes ~2× a scripted bot on defense), at acceptable offensive cost.

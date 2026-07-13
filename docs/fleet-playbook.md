@@ -1,5 +1,11 @@
 # Fleet playbook — the experiment wave
 
+> **Historical June 2026 playbook; do not operate current infrastructure from
+> this file.** The listed Vast hosts, roles, gates, launch commands, and reward
+> defaults are stale. Use `AGENTS.md` and
+> `.claude/skills/fleet-ops/SKILL.md`, rediscover live state, use the isolated
+> Tailscale audit checkout, and follow the July immutable reward-screen contract.
+
 Tooling: `tools/fleet.sh` (state = Vast instance labels `bb-<name>`; no local
 manifest). Provisioning policy: **filter on `cpu_cores_effective`, not host
 cores** — the container slice is what the env threads actually get (box-2

@@ -9,9 +9,34 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install deps
-        run: pip install pyyaml
+        run: |
+          pip install pyyaml numpy
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
       - name: Codegen up to date
         run: python3 tools/codegen.py --check
+      - name: Reward, replay, and analyzer contracts
+        run: |
+          PYTHONPATH=tools python3 -m unittest \
+            tools.test_analyze_reward_screen \
+            tools.test_analyze_reward_transfer \
+            tools.test_bbp_behavior_audit \
+            tools.test_experiment_contracts \
+            tools.test_game_stats \
+            tools.test_human_possession \
+            tools.test_replay_corpus_audit \
+            tools.test_reward_manifest
+          for manifest in puffer/config/rewards/*.json; do
+            python3 tools/reward_manifest.py "$manifest" --json >/dev/null
+          done
+          bash -n \
+            tools/install_puffer_env.sh \
+            tools/run_reward_ablation.sh \
+            tools/run_reward_screen.sh
+      - name: BC corpus filtering and bounded streaming
+        run: |
+          PYTHONPATH=training python3 -m unittest \
+            training.test_bc_pretrain_filter \
+            training.test_bc_pretrain_streaming
       - name: Build + unit tests
         run: make test
       - name: ASan/UBSan tests

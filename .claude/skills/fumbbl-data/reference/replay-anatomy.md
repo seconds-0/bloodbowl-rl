@@ -115,6 +115,12 @@ teamValue, treasuryUsedOnInducements, fanFactor, dedicatedFans, penaltyScore`
   {"gameOptionId": "clawDoesNotStack", "gameOptionValue": "true"}, ...]}
 ```
 
+For edition filtering, scan `game.gameOptions.gameOptionArray` for the entry with
+`gameOptionId == "rulesVersion"` and use its exact `gameOptionValue`. Do not infer
+the edition from replay ID, date, directory, roster name, or whether extraction
+succeeded. `tools/replay_corpus_audit.py` implements both JSON and streaming-byte
+fallback extraction for this field.
+
 ## Command stream (`gameLog.commandArray[i]`)
 
 ```json

@@ -1,5 +1,14 @@
 # Reward audit: decision-time pricing, never outcome pricing
 
+> **Current qualification (2026-07-13):** declaration-time EV is safer than
+> realized-dice shaping, but it can still redefine the game by paying an
+> instrument rather than match utility. Treat every EV/event term as a temporary
+> scaffold unless paired held-out W/D/L and TD-for/against demonstrate benefit.
+> Potential shaping is policy-invariant only in the exact discounted form
+> `beta*(gamma*Phi(s') - Phi(s))` with correct terminal handling. See
+> `docs/reward-and-replay-audit-2026-07-09.md` and D177–D180 for the current
+> reward hierarchy, integrity gates, and next experiment.
+
 Directive (Alex, 2026-06-03): rewards and penalties are evaluated at the
 DECISION, never at the dice result, everywhere. This audit classifies every
 existing and planned knob against that principle and defines the v2

@@ -232,6 +232,10 @@ def verify_roundtrip(out_path, input_size, config_path, trained_policy, probe_ob
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--pairs-dir", default=os.path.join(ROOT, "validation", "pairs_v4"))
+    ap.add_argument(
+        "--replay-ids", default=None,
+        help="exact replay-ID allowlist; generate the BB2025 list with "
+             "tools/replay_corpus_audit.py --write-bb2025-ids")
     ap.add_argument("--config", default=os.path.join(ROOT, "puffer", "config",
                                                      "bloodbowl.ini"))
     ap.add_argument("--out", default=None,
@@ -280,7 +284,10 @@ def main():
     if spec.width == 0:
         args.last_action_dropout = 0.0
 
-    recs, obs_size, mask_size = bc_pretrain.load_shards(args.pairs_dir)
+    replay_ids = (bc_pretrain.load_replay_ids(args.replay_ids)
+                  if args.replay_ids else None)
+    recs, obs_size, mask_size = bc_pretrain.load_shards(
+        args.pairs_dir, replay_ids=replay_ids)
     if args.expect_obs_size and obs_size != args.expect_obs_size:
         raise SystemExit(
             f"obs-size guard failed: {args.pairs_dir} has {obs_size}B obs, "
@@ -399,6 +406,11 @@ def main():
         "mask_size": mask_size,
         "obs_size": obs_size,
         "pairs_dir": args.pairs_dir,
+        "replay_ids": args.replay_ids,
+        "replay_ids_count": None if replay_ids is None else len(replay_ids),
+        "replay_ids_sha256": (
+            None if replay_ids is None else
+            bc_pretrain.replay_ids_sha256(replay_ids)),
         "seed": args.seed,
         "steps": args.steps,
         "train_records": int(len(train_r)),

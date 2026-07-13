@@ -1,6 +1,6 @@
 ---
 name: puffer-env-dev
-description: Use when writing or debugging the native C env binding for PufferLib 4.0 (vendor/PufferLib) — binding.c macros, Env struct, action masks, two-player self-play perm/tags, build.sh, config .ini, puffer train/eval/match, or any "how do I hook the BB engine into Puffer" question.
+description: Develop and audit the Blood Bowl PufferLib 4.0 environment, including binding macros, buffers, action masks, self-play routing, builds, configs, local patch stack, phase/provenance telemetry, eval game gates, reward integrity, train/eval/match, and checkpoint conversion. Use for native C binding work or any Puffer training/evaluation correctness question.
 ---
 
 # PufferLib 4.0 Native C Env Development
@@ -14,6 +14,11 @@ Primary template: `vendor/PufferLib/ocean/chess/` (2-player board game, action m
 self-play perm, FEN curriculum — structurally closest to Blood Bowl).
 Minimal template: `vendor/PufferLib/ocean/squared/`. MultiDiscrete: `vendor/PufferLib/ocean/drive/`.
 Cached upstream docs: `docs/vendor/pufferlib/docs.html` (env-author checklist + CLI cheatsheet).
+
+For current Blood Bowl experiment acceptance, also read `AGENTS.md`, D177–D181,
+and `docs/reward-and-replay-audit-2026-07-09.md`. Upstream success/exit status is
+not sufficient: the audited path requires explicit phase, provenance, completed
+games, final cumulative reprint, and reward-integrity telemetry.
 
 ## 1. The binding ABI
 
@@ -95,17 +100,25 @@ field by summed `n`, then memsets all env logs to zero. So: store **sums**, bump
 `my_log` via `dict_set` — these become `env/<key>` in the dashboard, wandb, and
 selfplay.py.
 
+Blood Bowl's reward-integrity ratios deliberately combine fields after this
+aggregation: `Log` stores raw emission counters, vec aggregation divides every
+counter by the same episode count, and `my_log` forms the ratios afterward.
+The common divisor cancels, preserving emission weighting across short and
+long episodes. `reward_episode_abs_max_mean` is the mean of episode maxima;
+it is not a run-wide maximum.
+
 **HARD KEY LIMIT (bit us 2026-06-05):** `vec_log` in `src/bindings_cpu.cpp` AND
 `src/bindings.cu` allocates the output dict with a FIXED capacity (upstream: 32;
-ours: 64 via `training/puffer_dict_capacity.patch`) and appends `"n"` after
+ours: 96 via `training/puffer_dict_capacity.patch`) and appends `"n"` after
 `my_log` returns. `dict_set`'s capacity check is a bare `assert` upstream —
 **compiles out under NDEBUG**, so exceeding capacity is a silent 24-bytes-per-key
 heap overrun that surfaces as `free(): corrupted unsorted chunks` at the FIRST
 log aggregation with completed episodes (~epoch 3 / ~786K steps, `n==0`
 early-returns before that). It reproduces at any thread count / cwd / config —
 do not chase those. Our vendored `dict_set` now aborts loudly with the key name.
-When adding Log keys: count `dict_set` calls in `my_log` (+1 for `"n"`) against
-the `create_dict` capacity at both vec_log call sites.
+Blood Bowl currently emits 86 keys plus `"n"`. When adding Log keys, recount
+`dict_set` calls in `my_log` (+1 for `"n"`) against the `create_dict` capacity
+at both vec_log call sites and update the installer/dashboard guidance.
 
 ## 4. Two-player self-play (the chess pattern)
 
@@ -143,13 +156,13 @@ leave ≥1 bit set (give BB an explicit end-turn/no-op action that is always leg
 
 **Masked sampling is now the default in BOTH backends** (D38, the unmasked-sampler
 bug: pre-fix torch runs played at illegal_frac 1.000 through the decode fallback —
-all intuitions from that era are rebased). Upstream `pufferlib/torch_pufferl.py`
-(the `--slowly` / `--cpu` path) still has zero mask plumbing, but our
-`training/torch_pufferl_bcreg.patch` adds it: the bindings expose the vec
-`action_mask` (cpu+gpu) and `apply_action_mask` does a per-head
+all intuitions from that era are rebased). The installed vendored torch baseline
+exposes the vec `action_mask` (cpu+gpu), and `apply_action_mask` does a per-head
 `masked_fill(-inf)` BEFORE rollout sampling, stores masks in experience, and
 re-applies them at train-time recompute (mask-consistent ratios/entropy, all-zero
-head-row guard). An UNPATCHED torch backend samples raw logits, so `c_step` must
+head-row guard). `training/torch_pufferl_bcreg.patch` itself is now only the
+historical BC-loss patch; it does not carry masking. An UNPATCHED torch backend
+samples raw logits, so `c_step` must
 still tolerate any in-range action value (chess answers invalid picks with
 `reward_invalid_*` penalties, binding.c kwargs).
 
@@ -314,15 +327,25 @@ pushed via `_C.set_agent_perm` / `_C.set_env_tags`; full layout diagram in
 Deep internals (StaticVec walkthrough, threading, perm row layout, pybind export
 surface, match() mechanics): `reference/vecenv-internals.md`.
 
-## Operational gotchas discovered in production (2026-06-04)
+## Operational and experiment-integrity contract
 
-- **The post-training eval tail HANGS for long-episode envs.** After
-  total_timesteps, _train runs eval epochs until `env/n > eval_episodes`
-  (10000 default). Our episodes are 300-900 decisions, so this is hours —
-  and it pins the box silently at the final Steps count (log mtime frozen,
-  0% CPU pattern). Fix per run: `--eval-episodes 100`-ish, or just pkill
-  after the final checkpoint lands (checkpoints save during training; the
-  eval tail adds nothing we use).
+- **Do not kill the post-training eval because the Steps line stopped.** The
+  audited `training/pufferl_eval_episode_gate.patch` accumulates completed games
+  across intervals and scales the eval budget to the requested target. An arm is
+  accepted only after the requested full games, explicit final phase/status
+  reprint, checkpoint hash, and zero integrity counters. A frozen dashboard line
+  alone proves neither a hang nor completion.
+- `tools/install_puffer_env.sh` applies the audited Puffer stack in this order:
+  dashboard limit, env JSON, JSON metadata upgrade, phase contract, eval episode
+  gate, dynamic metrics-key fix, and trusted Torch load. `tools/run_reward_screen.sh`
+  hashes the same ordered bundle. Do not hand-apply a subset and compare it to an
+  accepted arm.
+- Record the actual imported `_C.__file__`, `_C.env_name`, GPU flag, precision,
+  and module SHA. A source checkout or installed-content hash does not prove which
+  extension Python loaded.
+- Env telemetry must distinguish train from final eval, clear sticky metadata,
+  expose reward clip/non-finite/error/demo/fallback counts, and print the final
+  cumulative record. Keep `metrics.setdefault` behavior for dynamic keys.
 - **`puffer train` has NO upstream warm-start.** load_model_path is only
   read by eval()/match(). We patch _train in the VENDORED pufferl.py
   (gitignored — re-apply after any re-clone; patch lives right after
@@ -344,28 +367,30 @@ surface, match() mechanics): `reference/vecenv-internals.md`.
   explicit `--obs-size 1612` for v3 / `--obs-size 832` for v2 — binding.c's
   literal once lagged at 1612 and the `_Static_assert` caught it exactly as
   designed, D54). BC pairs never mix obs lineages in one corpus — current
-  corpus is 2,085,330 v4 pairs from 12,304 replays (`validation/pairs_v4`;
-  the `pairs` symlink on v4 boxes points at it). Current anchor lineage:
+  historical pair store is 2,085,330 v4 records across 12,304 shards, but the
+  strict embedded-rulesVersion BB2025 surface is 9,118 non-empty replay IDs and
+  1,622,231 joined records (`runs/replay-audit-20260713/`). Never call shard count
+  replay count or mix BB2020 into BC. Current anchor lineage:
   **bc_v4** (val exact 0.508; lives on the training boxes — local
   `training/` only holds ≤ bc_v3b).
 
-## BC-regularized PPO (local torch_pufferl.py patch)
+## Historical BC-regularized PPO patch (rejected for new runs)
 
-The AlphaStar-style human anchor (DECISIONS.md D27: selfplay PPO erodes the
-BC prior): when `[train] bc_coef > 0`, every PPO minibatch in the TORCH
+The AlphaStar-style human anchor was tested after D27. When `[train] bc_coef > 0`,
+every PPO minibatch in the TORCH
 backend (`--slowly`) also pays `bc_coef *` masked 3-head CE on `bc_batch`
 human pairs sampled from the `.bbp` shards in `bc_pairs_dir`, zero recurrent
 state (= bc_pretrain v0). `bc_coef_anneal=1` cosine-decays bc_coef to 10%
 over total_timesteps. Dashboard/wandb keys: `loss/bc_loss`, `loss/bc_acc`,
 `loss/bc_coef`. TORCH BACKEND ONLY — the native CUDA trainer ignores bc_*.
 
-The same patch now also carries (a) **masked sampling** (`apply_action_mask`,
-D38 — see §5) and (b) **asymmetric training** via `[train] frozen_enemy_path`
-(D44): non-learner rows play a FROZEN policy (deepcopy + state_dict load, no
-grad, masked sampling, its own recurrent state), the learner alternates
-home/away by env parity, and PPO slices ratio/prio/batch math to learner rows
-only (`train_rows`). CLI: `--train.frozen-enemy-path <ckpt>`; empty (the
-`puffer/config/bloodbowl.ini` default) = symmetric self-play, upstream behavior.
+**D176 rejected this mechanism for new runs:** coefficient-1 iid CE collapsed
+offense to zero while the no-anchor control stayed functional. The patch also
+eagerly preloads every shard and has no replay-ID/edition allowlist, so the
+legacy `validation/pairs` path can mix rules editions. Keep `bc_coef=0`; any
+reconsideration needs bounded streaming, a BB2025-exact allowlist, and a new
+controlled hypothesis. Masked sampling and asymmetric training are separate
+facilities in the installed patch stack; they are not supplied by this BC patch.
 
 - Config keys live in `puffer/config/bloodbowl.ini` `[train]` (bc_coef
   default 0.0 = off and bit-identical to unpatched; bc_pairs_dir; bc_batch;
@@ -376,7 +401,8 @@ only (`train_rows`). CLI: `--train.frozen-enemy-path <ckpt>`; empty (the
   `vendor/PufferLib/.venv/bin/python training/test_bcreg_torch_pufferl.py`
   (proves off-mode bit-identity vs pristine HEAD + on-mode bc_loss decrease).
   `tools/run_bcreg.sh` auto-applies the patch if the marker is missing.
-- Launch recipe: `tools/run_bcreg.sh` — torch backend on the CUDA box
+- Historical reproduction recipe only: `tools/run_bcreg.sh` — torch backend
+  on the CUDA box
   (`rm -rf build && ./build.sh bloodbowl --float`; bf16 default build refuses
   to import), `--selfplay.enabled 0` (pool is native-only), warm start from a
   CURRENT-lineage anchor (state_dict loads directly in the torch backend — no

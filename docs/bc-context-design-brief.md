@@ -1,5 +1,11 @@
 # BC temporal-context — design brief (Codex builds from this)
 
+> **Historical design brief; resolved by D174.** The frame-stacked context screen
+> was null within noise, so sequence context is not the current first lever. Its
+> old host paths and launch sequence are not operational guidance. Current BC
+> work uses the edition-exact, bounded streaming, replay-disjoint pipeline in
+> D179–D180 and `.claude/skills/fumbbl-data/SKILL.md`.
+
 **Decision (Alex, 2026-06-23):** add temporal context to behavioral cloning via **frame-stacked
 within-turn context features first** (single-step BC, cheap, surgical), with **recurrent BC as a
 second head-to-head A/B**. This brief is loop 1 of a research→design→build→review×3 cycle. Codex

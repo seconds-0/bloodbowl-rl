@@ -1,8 +1,20 @@
 # RL Best Practices — bloodbowl-rl Reference Library
 
+> **Historical research memo, superseded for execution by the July 2026 audit.**
+> Do not work the ranked actions below as the current queue. Read
+> `docs/reward-and-replay-audit-2026-07-09.md`, D174, D176, and D177–D180.
+> Subsequent evidence found: full-strength persistent iid CE anchoring collapses
+> offense; frame-stacked sequence context is null within noise; more flat replay
+> volume is not the binding lever; the corpus is mixed-edition and opening-censored;
+> distance supplies current learnability but raw delta is not exact PBRS; and
+> possession+gain survives scripted transfer only as an unresolved bundle. The
+> current queue is reward-family decomposition, diverse-opponent transfer, exact
+> PBRS/annealing, and second-ancestry confirmation. Human-stat matching is
+> diagnostic, not an objective.
+
 Synthesis of six literature/infrastructure gap analyses (PufferLib practice, selfplay leagues, imitation+RL hybrids, dice/action spaces, shaping/curriculum theory, evaluation methodology), grounded in our empirical results: universal 0-0 mutual-ball-avoidance equilibrium at 10B steps under both outcome and event-shaped rewards; BC warm-start erosion (BC-init > BC-final after 10B selfplay steps); potential-based curriculum escaping the basin (tds 0→0.185, still climbing at stage-1 handoff); cold shaping removal decaying back to 0.
 
-Last updated: 2026-06-04.
+Original memo updated: 2026-06-04. Supersession note: 2026-07-13.
 
 ---
 

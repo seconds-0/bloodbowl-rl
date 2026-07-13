@@ -141,7 +141,7 @@ if [ -f "$SWEEP_PY" ] && ! grep -q "match_enemy_model_path" "$SWEEP_PY"; then
 fi
 
 # Puffer's stock dashboard truncates environment metrics after 30 keys. Blood
-# Bowl emits 82 plus vecenv's `n`; without this patch, later correctness and
+# Bowl emits 86 plus vecenv's `n`; without this patch, later correctness and
 # behavior telemetry exists in C but never reaches evaluation logs.
 DASHBOARD_PY="$PUFFER/pufferlib/pufferl.py"
 if [ -f "$DASHBOARD_PY" ] && grep -q 'if i == 30:' "$DASHBOARD_PY"; then
