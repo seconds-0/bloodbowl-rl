@@ -114,13 +114,13 @@ if [ -f "$ROOT/validation/states/bank.bbs" ]; then
     echo "staged:    $PUFFER/resources/bloodbowl/state_bank.bbs"
 fi
 
-# Blood Bowl's my_log currently emits 82 keys, and vecenv appends "n" after
+# Blood Bowl's my_log currently emits 86 keys, and vecenv appends "n" after
 # the env binding returns. Keep the vendored dict allocations comfortably above
 # that so adding telemetry does not resurrect the historical heap overflow.
 for f in "$PUFFER/src/bindings.cu" "$PUFFER/src/bindings_cpu.cpp" "$PUFFER/src/pufferlib.cu"; do
     [ -f "$f" ] || continue
     perl -0pi -e \
-        's/create_dict\((32|64)\)(\s*;\s*\/\/ bloodbowl my_log emits )[^\n]*/create_dict(96)$2 82 keys + "n"; keep headroom/g;
+        's/create_dict\((32|64)\)(\s*;\s*\/\/ bloodbowl my_log emits )[^\n]*/create_dict(96)$2 86 keys + "n"; keep headroom/g;
          s/create_dict\((32|64)\);/create_dict(96);/g' "$f"
 done
 
