@@ -1,5 +1,12 @@
 # PufferLib hyperparameter sweep: research + proposal for bloodbowl-rl
 
+> **Historical proposal, not a current launch plan.** Its Puffer findings remain
+> useful, but its fleet paths, launch examples, and "settled v4" reward block
+> predate the July 2026 audit. Use `AGENTS.md`, D177–D180, and
+> `.claude/skills/training-experiments/SKILL.md`; do not sweep reward semantics
+> or promote a configuration before the queued causal decomposition and transfer
+> gates are complete.
+
 Joseph Suarez (PufferLib founder) suggested running a hyperparameter sweep. This doc
 (1) documents how PufferLib 4.0's sweep tooling (`Protein`, CARBS-derived) actually
 works, grounded in the vendored source at the pinned commit

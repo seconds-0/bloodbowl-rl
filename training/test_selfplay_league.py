@@ -97,7 +97,17 @@ def load_patched_selfplay(puffer_dir, backend):
     src = os.path.join(puffer_dir, 'pufferlib', 'selfplay.py')
     dst = os.path.join(tmp, 'pufferlib', 'selfplay.py')
     shutil.copyfile(src, dst)
-    subprocess.run(['git', 'apply', PATCH], cwd=tmp, check=True)
+    applicable = subprocess.run(
+        ['git', 'apply', '--check', PATCH], cwd=tmp,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE).returncode == 0
+    applied = subprocess.run(
+        ['git', 'apply', '--reverse', '--check', PATCH], cwd=tmp,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE).returncode == 0
+    if applicable:
+        subprocess.run(['git', 'apply', PATCH], cwd=tmp, check=True)
+    elif not applied:
+        raise RuntimeError(
+            'selfplay_league.patch is neither applicable nor already applied')
 
     fake_pkg = types.ModuleType('pufferlib')
     fake_pkg._C = backend
@@ -180,8 +190,8 @@ class BuildLeagueTest(unittest.TestCase):
                           '0000000000000002.bin'])
 
     def test_default_expect_bytes_is_the_cuda_blob(self):
-        # bloodbowl flat-fp32 artifact (training/test_convert_checkpoint.py)
-        self.assertEqual(DEFAULT_EXPECT_BYTES, 12_072_960)
+        # Current obs-v4 flat-fp32 artifact (test_convert_checkpoint.py).
+        self.assertEqual(DEFAULT_EXPECT_BYTES, 16_066_560)
 
     def test_rejects_wrong_size(self):
         bad = os.path.join(self.tmp, 'bad.bin')
@@ -235,9 +245,14 @@ class PatchedSetupTest(unittest.TestCase):
         build_league(out, seeds, self.EXPECT)
         return os.path.join(out, 'pool')
 
-    def test_patch_applies_clean_to_vendor(self):
-        subprocess.run(['git', 'apply', '--check', PATCH],
-                       cwd=self.puffer, check=True)
+    def test_patch_is_applicable_or_already_applied_to_vendor(self):
+        applicable = subprocess.run(
+            ['git', 'apply', '--check', PATCH], cwd=self.puffer,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE).returncode == 0
+        applied = subprocess.run(
+            ['git', 'apply', '--reverse', '--check', PATCH], cwd=self.puffer,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE).returncode == 0
+        self.assertNotEqual(applicable, applied)
 
     def test_preseed_loads_each_bank_from_its_seed(self):
         pool = self.build_pool()
@@ -295,7 +310,6 @@ class PatchedSetupTest(unittest.TestCase):
     def test_perm_tags_math_for_league_numbers(self):
         # run_league.sh numbers: apb=2048, team_size=1, pct 0.08 -> 163/bank,
         # 815 total (< apb/2 = 1024), 326 hist envs/bank, 418 selfplay envs.
-        import numpy as np
         frozen_size = int(2048 * 0.08)
         self.assertEqual(frozen_size, 163)
         self.assertLess(5 * frozen_size, 2048 // 2)

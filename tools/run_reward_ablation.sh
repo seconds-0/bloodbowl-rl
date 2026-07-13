@@ -1,0 +1,516 @@
+#!/usr/bin/env bash
+# Launch one native, static-pool reward-ablation arm from a complete manifest.
+#
+# Required:
+#   TAG=<unique arm tag>
+#   REWARD_MANIFEST=<puffer/config/rewards/*.json>
+#   WARM=<obs-v4 native flat-fp32 checkpoint>
+#   POOL=<directory containing league_seeds.json and exactly four seed blobs>
+#
+# Optional:
+#   STEPS=250000000 SEED=42 LOG=/tmp/$TAG.log
+#   TOTAL_AGENTS=2048 NUM_BUFFERS=2 NUM_THREADS=<cpu cap>
+#   FROZEN_BANK_PCT=0.06 EXPECT_BYTES=16066560
+#   LR=0.00028 ENT_COEF=0.009 GAMMA=0.995 GAE_LAMBDA=0.85
+#   HORIZON=64 MINIBATCH_SIZE=16384 CHECKPOINT_STEPS=50000000
+#   RIG_ALLOW_FLOAT=1   required for native fp32 on the RTX 2070/Turing rig
+#   DRY_RUN=1           validate every artifact/build contract and print the
+#                       final command without starting a trainer
+#
+# This is a causal launcher, not a general Puffer wrapper. It refuses every
+# trailing argument so argparse's last-wins behavior cannot invalidate PROFILE.
+set -euo pipefail
+
+LAUNCH_CWD="$PWD"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+: "${TAG:?TAG is required}"
+: "${REWARD_MANIFEST:?REWARD_MANIFEST is required}"
+: "${WARM:?WARM is required}"
+: "${POOL:?POOL is required}"
+
+if [ $# -ne 0 ]; then
+  echo "trailing Puffer overrides are not allowed by this ablation contract" >&2
+  exit 1
+fi
+
+STEPS="${STEPS:-250000000}"
+SEED="${SEED:-42}"
+LOG="${LOG:-/tmp/${TAG}.log}"
+TOTAL_AGENTS="${TOTAL_AGENTS:-2048}"
+NUM_BUFFERS="${NUM_BUFFERS:-2}"
+FROZEN_BANK_PCT="${FROZEN_BANK_PCT:-0.06}"
+EXPECT_BYTES="${EXPECT_BYTES:-16066560}"
+LR="${LR:-0.00028}"
+ENT_COEF="${ENT_COEF:-0.009}"
+GAMMA="${GAMMA:-0.995}"
+GAE_LAMBDA="${GAE_LAMBDA:-0.85}"
+HORIZON="${HORIZON:-64}"
+MINIBATCH_SIZE="${MINIBATCH_SIZE:-16384}"
+CHECKPOINT_STEPS="${CHECKPOINT_STEPS:-50000000}"
+REPLAY_RATIO="${REPLAY_RATIO:-0.25}"
+CLIP_COEF="${CLIP_COEF:-0.2}"
+VF_COEF="${VF_COEF:-1.0}"
+VF_CLIP_COEF="${VF_CLIP_COEF:-0.5}"
+MAX_GRAD_NORM="${MAX_GRAD_NORM:-1.5}"
+EXPECTED_POOL_HASH="${EXPECTED_POOL_HASH:-18ec7cac858b71a6657003f454f19e232fb060f08b644c1e9e2f101076a9aac0}"
+SCREEN_MANIFEST_SHA256="${SCREEN_MANIFEST_SHA256:-}"
+EXPECTED_PUFFER_PATCH_BUNDLE_SHA256="${EXPECTED_PUFFER_PATCH_BUNDLE_SHA256:-}"
+
+for digest_name in SCREEN_MANIFEST_SHA256 \
+                   EXPECTED_PUFFER_PATCH_BUNDLE_SHA256; do
+  digest="${!digest_name}"
+  if [ -n "$digest" ] && [[ ! "$digest" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "$digest_name must be empty or a lowercase SHA-256 digest" >&2
+    exit 1
+  fi
+done
+
+abspath() {
+  case "$1" in
+    /*) printf '%s\n' "$1" ;;
+    *) printf '%s\n' "$LAUNCH_CWD/$1" ;;
+  esac
+}
+REWARD_MANIFEST="$(abspath "$REWARD_MANIFEST")"
+WARM="$(abspath "$WARM")"
+POOL="$(abspath "$POOL")"
+LOG="$(abspath "$LOG")"
+
+case "$STEPS:$SEED:$TOTAL_AGENTS:$NUM_BUFFERS:$EXPECT_BYTES:$HORIZON:$MINIBATCH_SIZE:$CHECKPOINT_STEPS" in
+  *[!0-9:]*)
+    echo "step/seed/agent/buffer/byte/horizon/minibatch/checkpoint values must be non-negative integers" >&2
+    exit 1 ;;
+esac
+if [ "$STEPS" -le 0 ] || [ "$TOTAL_AGENTS" -le 0 ] || \
+   [ "$NUM_BUFFERS" -le 0 ] || [ "$EXPECT_BYTES" -le 0 ] || \
+   [ "$HORIZON" -le 0 ] || [ "$MINIBATCH_SIZE" -le 0 ] || \
+   [ "$CHECKPOINT_STEPS" -le 0 ]; then
+  echo "step/agent/buffer/byte/horizon/minibatch/checkpoint values must be positive" >&2
+  exit 1
+fi
+if [ $(( TOTAL_AGENTS % NUM_BUFFERS )) -ne 0 ]; then
+  echo "TOTAL_AGENTS must be divisible by NUM_BUFFERS" >&2
+  exit 1
+fi
+ROLLOUT_QUANTUM=$(( TOTAL_AGENTS * HORIZON ))
+TRAIN_EPOCHS=$(( STEPS / ROLLOUT_QUANTUM ))
+if [ "$TRAIN_EPOCHS" -le 0 ]; then
+  echo "STEPS=$STEPS is smaller than one rollout quantum ($ROLLOUT_QUANTUM)" >&2
+  exit 1
+fi
+FINAL_STEPS=$(( TRAIN_EPOCHS * ROLLOUT_QUANTUM ))
+CHECKPOINT_INTERVAL=$(( (CHECKPOINT_STEPS + ROLLOUT_QUANTUM / 2) / ROLLOUT_QUANTUM ))
+[ "$CHECKPOINT_INTERVAL" -gt 0 ] || CHECKPOINT_INTERVAL=1
+OPP_TIMEOUT=$(( STEPS * 10 ))
+
+PYBIN="$ROOT/vendor/PufferLib/.venv/bin/python"
+PUFFER_BIN="$ROOT/vendor/PufferLib/.venv/bin/puffer"
+[ -x "$PYBIN" ] || { echo "vendored Python missing: $PYBIN" >&2; exit 1; }
+[ -x "$PUFFER_BIN" ] || { echo "vendored puffer entrypoint missing: $PUFFER_BIN" >&2; exit 1; }
+read -r FROZEN_PER_BANK HISTORICAL_GAME_SHARE < <(
+  "$PYBIN" - "$TOTAL_AGENTS" "$NUM_BUFFERS" "$FROZEN_BANK_PCT" <<'PY'
+import math, sys
+total, buffers = map(int, sys.argv[1:3])
+try:
+    pct = float(sys.argv[3])
+except ValueError as exc:
+    raise SystemExit("FROZEN_BANK_PCT must be numeric") from exc
+if not math.isfinite(pct) or pct <= 0:
+    raise SystemExit("FROZEN_BANK_PCT must be finite and positive")
+apb = total // buffers
+per_bank = int(apb * pct)
+if per_bank <= 0:
+    raise SystemExit("FROZEN_BANK_PCT rounds to zero rows per bank")
+total_frozen = 4 * per_bank
+if total_frozen >= apb // 2:
+    raise SystemExit(
+        f"four banks reserve {total_frozen} rows/buffer, must be < {apb//2}")
+print(per_bank, total_frozen / (apb / 2.0))
+PY
+)
+
+[ -f "$REWARD_MANIFEST" ] || { echo "missing reward manifest: $REWARD_MANIFEST" >&2; exit 1; }
+[ -f "$WARM" ] || { echo "missing warm checkpoint: $WARM" >&2; exit 1; }
+[ -f "$POOL/league_seeds.json" ] || { echo "missing $POOL/league_seeds.json" >&2; exit 1; }
+
+RUN_MANIFEST="${LOG}.manifest.json"
+STATUS_FILE="${LOG}.status.json"
+RUN_DIR_FILE="${LOG}.run_dir"
+PROCESS_FILE="${LOG}.process.json"
+for artifact in "$LOG" "$RUN_MANIFEST" "$STATUS_FILE" "$RUN_DIR_FILE" \
+                "$PROCESS_FILE"; do
+  [ ! -e "$artifact" ] || {
+    echo "refusing to overwrite existing run artifact: $artifact" >&2
+    exit 1
+  }
+done
+
+command -v flock >/dev/null 2>&1 || {
+  echo "flock is required for the one-trainer contract" >&2; exit 1; }
+exec 9>/tmp/bloodbowl-rl-reward-ablation.lock
+if ! flock -n 9; then
+  echo "another reward-ablation launcher or inherited trainer holds the host lock" >&2
+  exit 1
+fi
+
+if pgrep -f 'puffer [t]rain' >/dev/null; then
+  echo "a puffer trainer is already live on this host" >&2
+  pgrep -af 'puffer [t]rain' >&2 || true
+  exit 1
+fi
+command -v nvidia-smi >/dev/null 2>&1 || {
+  echo "no nvidia-smi; run this launcher on a CUDA host" >&2; exit 1; }
+
+cd "$ROOT/vendor/PufferLib"
+
+REWARD_ARGS=()
+while IFS= read -r token; do REWARD_ARGS+=("$token"); done < <(
+  "$PYBIN" "$ROOT/tools/reward_manifest.py" "$REWARD_MANIFEST" --lines)
+read -r REWARD_NAME REWARD_HASH < <(
+  "$PYBIN" - "$ROOT" "$REWARD_MANIFEST" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1] + "/tools")
+from reward_manifest import load_manifest
+manifest, digest = load_manifest(sys.argv[2])
+print(manifest["name"], digest)
+PY
+)
+
+warm_size=$(wc -c < "$WARM")
+if [ "$warm_size" -ne "$EXPECT_BYTES" ]; then
+  echo "warm checkpoint is $warm_size bytes; expected $EXPECT_BYTES" >&2
+  exit 1
+fi
+
+# Validate the pool body, bank order, hashes, and architecture before any
+# trainer allocates GPU state. Print both the raw manifest hash and one
+# deterministic content-identity hash over the ordered banks.
+read -r POOL_HASH POOL_BANKS POOL_MANIFEST_HASH < <(
+  "$PYBIN" - "$POOL" "$EXPECT_BYTES" <<'PY'
+import hashlib, json, pathlib, sys
+pool = pathlib.Path(sys.argv[1])
+expect = int(sys.argv[2])
+manifest_path = pool / "league_seeds.json"
+manifest_raw = manifest_path.read_bytes()
+manifest = json.loads(manifest_raw)
+if manifest.get("expected_bytes") != expect:
+    raise SystemExit(
+        f"pool expected_bytes={manifest.get('expected_bytes')}, expected {expect}")
+seeds = manifest.get("seeds")
+if not isinstance(seeds, list) or len(seeds) != 4:
+    raise SystemExit("static reward pool must contain exactly four seeds")
+identity = []
+seen_names = set()
+seen_hashes = set()
+for index, seed in enumerate(seeds):
+    if seed.get("bank") != index:
+        raise SystemExit(f"pool bank order mismatch at {index}: {seed.get('bank')}")
+    name = seed.get("name")
+    if not isinstance(name, str) or not name or name in seen_names:
+        raise SystemExit(f"pool bank {index} has missing/duplicate name {name!r}")
+    seen_names.add(name)
+    path = pool / seed["file"]
+    blob = path.read_bytes()
+    digest = hashlib.sha256(blob).hexdigest()
+    if len(blob) != expect:
+        raise SystemExit(f"{path}: {len(blob)} bytes, expected {expect}")
+    if seed.get("bytes") != len(blob) or seed.get("sha256") != digest:
+        raise SystemExit(f"{path}: manifest size/hash mismatch")
+    if digest in seen_hashes:
+        raise SystemExit(f"pool bank {index} duplicates another checkpoint")
+    seen_hashes.add(digest)
+    identity.append({"bank": index, "name": name,
+                     "bytes": len(blob), "sha256": digest})
+canonical = json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()
+print(hashlib.sha256(canonical).hexdigest(), len(seeds),
+      hashlib.sha256(manifest_raw).hexdigest())
+PY
+)
+if [ "$POOL_HASH" != "$EXPECTED_POOL_HASH" ]; then
+  echo "pool identity $POOL_HASH does not match expected $EXPECTED_POOL_HASH" >&2
+  exit 1
+fi
+
+if ! bash "$ROOT/tools/install_puffer_env.sh" --check; then
+  echo "installed Blood Bowl snapshot is stale; install and rebuild before launch" >&2
+  exit 1
+fi
+grep -q '^league_preseed' config/bloodbowl.ini || {
+  echo "installed config lacks league_preseed" >&2; exit 1; }
+grep -q 'league_preseed' pufferlib/selfplay.py || {
+  echo "vendored selfplay.py lacks training/selfplay_league.patch" >&2; exit 1; }
+grep -q 'Warm-started training from' pufferlib/pufferl.py || {
+  echo "vendored pufferl.py lacks the warm-start patch" >&2; exit 1; }
+grep -q 'if i == 96:' pufferlib/pufferl.py || {
+  echo "vendored pufferl.py lacks the full Blood Bowl dashboard patch" >&2; exit 1; }
+grep -q 'PUFFER_ENV_JSON' pufferlib/pufferl.py || {
+  echo "vendored pufferl.py lacks machine-readable environment logging" >&2; exit 1; }
+grep -q "'_puffer_final_reprint'" pufferlib/pufferl.py || {
+  echo "vendored pufferl.py lacks phase/cumulative/reprint metadata" >&2; exit 1; }
+grep -q "'_puffer_schema': 2" pufferlib/pufferl.py || {
+  echo "vendored pufferl.py lacks explicit loop-phase/panel metadata" >&2; exit 1; }
+
+probe="$($PYBIN - <<'PY'
+from pufferlib import _C
+print(getattr(_C, "env_name", None), int(bool(getattr(_C, "gpu", False))),
+      int(_C.precision_bytes))
+PY
+)"
+read -r cenv cgpu precision <<< "$probe"
+if [ "$cenv" != "bloodbowl" ] || [ "$cgpu" != "1" ]; then
+  echo "invalid native build: env=$cenv gpu=$cgpu" >&2; exit 1
+fi
+if [ "${RIG_ALLOW_FLOAT:-0}" = "1" ] && [ "$precision" != "4" ]; then
+  echo "RIG_ALLOW_FLOAT=1 requires the Turing fp32 build (precision_bytes=4); got $precision" >&2
+  echo "rebuild with: cd $ROOT/vendor/PufferLib && ./build.sh bloodbowl --float" >&2
+  exit 1
+fi
+if [ "$precision" = "4" ] && [ "${RIG_ALLOW_FLOAT:-0}" != "1" ]; then
+  echo "native fp32 build requires RIG_ALLOW_FLOAT=1 on the Turing rig" >&2; exit 1
+fi
+if [ "$precision" != "2" ] && [ "$precision" != "4" ]; then
+  echo "unsupported native precision_bytes=$precision" >&2; exit 1
+fi
+
+. "$ROOT/tools/cpu_cap.sh"
+NUM_THREADS="${NUM_THREADS:-${OMP_NUM_THREADS:-8}}"
+
+WARM_HASH="$(sha256sum "$WARM" | awk '{print $1}')"
+CONFIG_HASH="$(sha256sum config/bloodbowl.ini | awk '{print $1}')"
+SOURCE_HASH="$(cat ocean/bloodbowl/.content_hash)"
+MODULE_PATH="$("$PYBIN" -c 'from pufferlib import _C; print(_C.__file__)')"
+[ -f "$MODULE_PATH" ] || { echo "imported pufferlib module missing: $MODULE_PATH" >&2; exit 1; }
+MODULE_HASH="$(sha256sum "$MODULE_PATH" | awk '{print $1}')"
+LAUNCHER_HASH="$(sha256sum "$ROOT/tools/run_reward_ablation.sh" | awk '{print $1}')"
+PATCH_HASH="$({
+  sha256sum "$ROOT/training/pufferl_env_dashboard_limit.patch"
+  sha256sum "$ROOT/training/pufferl_env_json.patch"
+  sha256sum "$ROOT/training/pufferl_env_json_metadata_upgrade.patch"
+  sha256sum "$ROOT/training/pufferl_env_phase_contract.patch"
+  sha256sum "$ROOT/training/pufferl_eval_episode_gate.patch"
+  sha256sum "$ROOT/training/pufferl_metrics_keyerror.patch"
+  sha256sum "$ROOT/training/torch_pufferl_trusted_load.patch"
+} | sha256sum | awk '{print $1}')"
+if [ -n "$EXPECTED_PUFFER_PATCH_BUNDLE_SHA256" ] && \
+   [ "$PATCH_HASH" != "$EXPECTED_PUFFER_PATCH_BUNDLE_SHA256" ]; then
+  echo "Puffer patch bundle drifted from the frozen screen contract: " \
+       "$PATCH_HASH != $EXPECTED_PUFFER_PATCH_BUNDLE_SHA256" >&2
+  exit 1
+fi
+VENDOR_HEAD="$(git rev-parse HEAD 2>/dev/null || printf '%s' '<not-a-git-checkout>')"
+VENDOR_SOURCE_HASH="$({
+  sha256sum pufferlib/pufferl.py pufferlib/selfplay.py \
+    pufferlib/torch_pufferl.py src/pufferlib.cu src/bindings.cu src/vecenv.h
+} | sha256sum | awk '{print $1}')"
+
+echo "tag=$TAG seed=$SEED requested_steps=$STEPS final_steps=$FINAL_STEPS rollout_quantum=$ROLLOUT_QUANTUM"
+echo "reward=$REWARD_NAME reward_sha256=$REWARD_HASH"
+echo "pool=$POOL pool_identity_sha256=$POOL_HASH pool_manifest_sha256=$POOL_MANIFEST_HASH banks=$POOL_BANKS pct=$FROZEN_BANK_PCT rows_per_bank=$FROZEN_PER_BANK historical_game_share=$HISTORICAL_GAME_SHARE"
+echo "warm=$WARM warm_sha256=$WARM_HASH"
+echo "source_sha256=$SOURCE_HASH config_sha256=$CONFIG_HASH module_sha256=$MODULE_HASH"
+echo "native_precision_bytes=$precision total_agents=$TOTAL_AGENTS buffers=$NUM_BUFFERS threads=$NUM_THREADS horizon=$HORIZON minibatch=$MINIBATCH_SIZE"
+echo "lr=$LR ent_coef=$ENT_COEF gamma=$GAMMA gae_lambda=$GAE_LAMBDA replay_ratio=$REPLAY_RATIO log=$LOG"
+
+CMD=("$PUFFER_BIN" train bloodbowl --tag "$TAG" \
+  --seed "$SEED" --train.seed "$SEED" --selfplay.seed "$SEED" --env.seed "$SEED" \
+  --train.gpus 1 --eval-episodes 10000 \
+  --checkpoint-interval "$CHECKPOINT_INTERVAL" \
+  --policy.hidden-size 512 --policy.num-layers 3 --policy.expansion-factor 1 \
+  --selfplay.enabled 1 --selfplay.league-preseed "$POOL" \
+  --selfplay.swap-winrate 1.1 --selfplay.opp-timeout-steps "$OPP_TIMEOUT" \
+  --selfplay.snapshot-interval 1000000000000 \
+  --vec.total-agents "$TOTAL_AGENTS" --vec.num-buffers "$NUM_BUFFERS" \
+  --vec.num-threads "$NUM_THREADS" \
+  --vec.num-frozen-banks 4 --vec.frozen-bank-pct "$FROZEN_BANK_PCT" \
+  --load-model-path "$WARM" \
+  "${REWARD_ARGS[@]}" \
+  --env.demo-reset-pct 0 --env.demo-endzone-maxdist 0 \
+  --env.demo-pickup-maxdist 0 --env.demo-postkick-maxturn 0 \
+  --env.demo-pass-maxrange 0 \
+  --train.total-timesteps "$STEPS" --train.learning-rate "$LR" \
+  --train.ent-coef "$ENT_COEF" --train.gamma "$GAMMA" \
+  --train.gae-lambda "$GAE_LAMBDA" --train.horizon "$HORIZON" \
+  --train.minibatch-size "$MINIBATCH_SIZE" \
+  --train.anneal-lr 1 --train.min-lr-ratio 0.1 \
+  --train.replay-ratio "$REPLAY_RATIO" --train.clip-coef "$CLIP_COEF" \
+  --train.vf-coef "$VF_COEF" --train.vf-clip-coef "$VF_CLIP_COEF" \
+  --train.max-grad-norm "$MAX_GRAD_NORM" \
+  --train.anneal-ent-coef 1 --train.min-ent-coef-ratio 0.1 \
+  --train.update-epochs 1 --train.beta1 0.95 --train.beta2 0.999 \
+  --train.eps 0.000000000001)
+
+if [ "${DRY_RUN:-0}" = "1" ]; then
+  printf 'DRY-RUN command:'
+  printf ' %q' "${CMD[@]}"
+  printf '\n'
+  exit 0
+fi
+
+META_ARGS=(
+  tag "$TAG" seed "$SEED" requested_steps "$STEPS" final_steps "$FINAL_STEPS"
+  rollout_quantum "$ROLLOUT_QUANTUM" reward_name "$REWARD_NAME"
+  reward_sha256 "$REWARD_HASH" reward_manifest "$REWARD_MANIFEST"
+  pool "$POOL" pool_identity_sha256 "$POOL_HASH"
+  pool_manifest_sha256 "$POOL_MANIFEST_HASH"
+  historical_game_share "$HISTORICAL_GAME_SHARE"
+  frozen_bank_pct "$FROZEN_BANK_PCT" num_frozen_banks 4
+  expected_pool_hash "$EXPECTED_POOL_HASH"
+  warm "$WARM" warm_sha256 "$WARM_HASH" warm_bytes "$warm_size"
+  source_sha256 "$SOURCE_HASH" config_sha256 "$CONFIG_HASH"
+  compiled_module "$MODULE_PATH" compiled_module_sha256 "$MODULE_HASH"
+  launcher_sha256 "$LAUNCHER_HASH" puffer_patch_bundle_sha256 "$PATCH_HASH"
+  vendor_head "$VENDOR_HEAD" vendor_source_sha256 "$VENDOR_SOURCE_HASH"
+  native_precision_bytes "$precision" total_agents "$TOTAL_AGENTS"
+  num_buffers "$NUM_BUFFERS" num_threads "$NUM_THREADS" horizon "$HORIZON"
+  minibatch_size "$MINIBATCH_SIZE" checkpoint_interval "$CHECKPOINT_INTERVAL"
+  checkpoint_steps "$CHECKPOINT_STEPS" learning_rate "$LR"
+  ent_coef "$ENT_COEF" gamma "$GAMMA" gae_lambda "$GAE_LAMBDA"
+  replay_ratio "$REPLAY_RATIO" clip_coef "$CLIP_COEF" vf_coef "$VF_COEF"
+  vf_clip_coef "$VF_CLIP_COEF" max_grad_norm "$MAX_GRAD_NORM"
+  expected_checkpoint_bytes "$EXPECT_BYTES"
+  screen_manifest_sha256 "$SCREEN_MANIFEST_SHA256"
+)
+"$PYBIN" - "$RUN_MANIFEST" "${META_ARGS[@]}" -- "${CMD[@]}" <<'PY'
+import json, pathlib, sys
+path = pathlib.Path(sys.argv[1])
+split = sys.argv.index("--", 2)
+pairs = sys.argv[2:split]
+if len(pairs) % 2:
+    raise SystemExit("invalid run-manifest metadata pairs")
+manifest = dict(zip(pairs[::2], pairs[1::2]))
+manifest.update({
+    "schema_version": 1,
+    "mode": "native_static_pool_reward_ablation",
+    "command": sys.argv[split + 1:],
+})
+path.write_text(json.dumps(
+    manifest, indent=2, sort_keys=True, allow_nan=False) + "\n",
+    encoding="utf-8")
+PY
+"$PYBIN" - "$RUN_MANIFEST" <<'PY' > "$LOG"
+import json, pathlib, sys
+manifest = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+print("BB_RUN_MANIFEST " + json.dumps(
+    manifest, sort_keys=True, separators=(",", ":"), allow_nan=False))
+PY
+
+BEFORE_RUNS=$(mktemp)
+find checkpoints/bloodbowl -mindepth 1 -maxdepth 1 -type d \
+  -exec basename {} \; 2>/dev/null | sort > "$BEFORE_RUNS" || true
+setsid nohup bash -c '
+  status=$1
+  log=$2
+  shift 2
+  set +e
+  "$@" >> "$log" 2>&1
+  rc=$?
+  tmp="${status}.tmp.$$"
+  printf "{\"exit_code\":%d,\"pid\":%d,\"completed_utc\":\"%s\"}\n" \
+    "$rc" "$$" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$tmp"
+  mv "$tmp" "$status"
+  exit "$rc"
+' bash "$STATUS_FILE" "$LOG" "${CMD[@]}" > /dev/null 2>&1 < /dev/null &
+PID=$!
+PROCESS_TMP="${PROCESS_FILE}.tmp.$$"
+printf '{"pid":%d,"process_group":%d,"started_utc":"%s"}\n' \
+  "$PID" "$PID" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$PROCESS_TMP"
+mv "$PROCESS_TMP" "$PROCESS_FILE"
+echo "LAUNCHED pid=$PID"
+
+# Mark the exact newly created run directory without relying on mtime or a
+# globally "newest" directory. One-trainer-per-host is already enforced, but
+# inherited checkpoint trees can contain many old unmarked directories.
+(
+  for _ in $(seq 1 60); do
+    sleep 2
+    for directory in checkpoints/bloodbowl/*/; do
+      [ -d "$directory" ] || continue
+      base=$(basename "$directory")
+      grep -Fxq "$base" "$BEFORE_RUNS" && continue
+      {
+        echo "reward-ablation tag=$TAG"
+        echo "reward=$REWARD_NAME sha256=$REWARD_HASH"
+        echo "pool=$POOL identity_sha256=$POOL_HASH manifest_sha256=$POOL_MANIFEST_HASH pct=$FROZEN_BANK_PCT"
+        echo "warm=$WARM sha256=$WARM_HASH seed=$SEED requested_steps=$STEPS final_steps=$FINAL_STEPS"
+        echo "run_manifest_sha256=$(sha256sum "$RUN_MANIFEST" | awk '{print $1}')"
+      } > "${directory}PROFILE"
+      cp "$RUN_MANIFEST" "${directory}RUN_MANIFEST.json"
+      run_dir="$(pwd)/${directory%/}"
+      tmp="${RUN_DIR_FILE}.tmp.$$"
+      printf '%s\n' "$run_dir" > "$tmp"
+      mv "$tmp" "$RUN_DIR_FILE"
+      rm -f "$BEFORE_RUNS"
+      exit 0
+    done
+  done
+  rm -f "$BEFORE_RUNS"
+  echo "warning: could not identify the new checkpoint directory for $TAG" >&2
+) &
+MARKER_PID=$!
+
+terminate_group() {
+  kill -TERM -- "-$PID" 2>/dev/null || true
+  for _ in $(seq 1 20); do
+    kill -0 "$PID" 2>/dev/null || break
+    sleep 0.25
+  done
+  kill -KILL -- "-$PID" 2>/dev/null || true
+  wait "$PID" 2>/dev/null || true
+}
+
+for _ in $(seq 1 40); do
+  sleep 1
+  if grep -aq 'pufferl_load_frozen_bank' "$LOG"; then
+    grep -a 'pufferl_load_frozen_bank' "$LOG" >&2 || true
+    echo "frozen bank load failed; terminating process group $PID" >&2
+    terminate_group
+    kill "$MARKER_PID" 2>/dev/null || true
+    exit 1
+  fi
+  [ -f "$STATUS_FILE" ] && break
+  kill -0 "$PID" 2>/dev/null || { sleep 1; break; }
+done
+
+if [ -f "$STATUS_FILE" ]; then
+  EXIT_CODE="$($PYBIN - "$STATUS_FILE" <<'PY'
+import json, sys
+print(int(json.load(open(sys.argv[1], encoding="utf-8"))["exit_code"]))
+PY
+)"
+  wait "$PID" 2>/dev/null || true
+  if [ "$EXIT_CODE" -ne 0 ]; then
+    kill "$MARKER_PID" 2>/dev/null || true
+    echo "trainer exited early with status $EXIT_CODE; tail of $LOG:" >&2
+    tail -30 "$LOG" >&2
+    exit 1
+  fi
+  for _ in $(seq 1 10); do
+    [ -f "$RUN_DIR_FILE" ] && break
+    sleep 1
+  done
+  if [ ! -f "$RUN_DIR_FILE" ]; then
+    kill "$MARKER_PID" 2>/dev/null || true
+    echo "trainer exited 0 but its checkpoint directory was not identified" >&2
+    exit 1
+  fi
+  RUN_DIR="$(cat "$RUN_DIR_FILE")"
+  FINAL_CHECKPOINT="$RUN_DIR/$(printf '%016d.bin' "$FINAL_STEPS")"
+  if [ ! -f "$FINAL_CHECKPOINT" ]; then
+    kill "$MARKER_PID" 2>/dev/null || true
+    echo "trainer exited 0 without expected final checkpoint: $FINAL_CHECKPOINT" >&2
+    exit 1
+  fi
+  echo "COMPLETE pid=$PID final_checkpoint=$FINAL_CHECKPOINT log=$LOG"
+  exit 0
+fi
+
+if ! kill -0 "$PID" 2>/dev/null; then
+  kill "$MARKER_PID" 2>/dev/null || true
+  echo "trainer died without an atomic status sidecar; tail of $LOG:" >&2
+  tail -30 "$LOG" >&2
+  exit 1
+fi
+grep -a 'Warm-started' "$LOG" | head -2 || {
+  echo "warning: no warm-start confirmation in first 40 seconds" >&2; }
+echo "LIVE pid=$PID log=$LOG"

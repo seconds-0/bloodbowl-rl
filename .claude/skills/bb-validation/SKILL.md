@@ -1,30 +1,33 @@
 ---
 name: bb-validation
-description: Run and triage the 7-layer validation architecture for the C engine (spec tests, dice chi-square, property invariants, fuzzing, golden traces, coverage gate, FUMBBL/FFB replay differential). Use when validating engine changes, triaging replay divergences, updating golden traces, extracting oracle odds, or setting up FFB/Jervis headless.
+description: Validate Blood Bowl engine and environment changes with BB2025 spec tests, sanitizers, deterministic/property checks, golden traces, statistical oracles, strict-edition FUMBBL differentials, reward-semantic regressions, and experiment-integrity tests. Use when changing rules/rewards/counters, triaging replay divergences, updating goldens, extracting oracle odds, or setting up FFB/Jervis headless.
 ---
 
 # bb-validation — 7-layer engine validation
 
-Validation **is the product** of the engine phase: all 7 layers green + rule coverage
-gate before a single RL step (repo README, principle 3). Everything routes through
-`bb_rng` dice injection: seeded PCG-64 *or* a recorded dice script. That one design
-decision is what makes layers 2, 5, and 7 possible.
+Validation is part of the product: rule/reward semantics must be correct before a
+training curve can be interpreted. Everything routes through `bb_rng` dice
+injection: seeded PCG-64 or a recorded dice script. That design makes statistical,
+golden, and replay-differential checks possible.
 
-**Status legend used below:** `[BUILT]` runnable today · `[ORACLE]` vendor oracle
-runnable today · `[PLANNED]` ours, not yet written (engine/ and validation/ are
-empty as of Phase 0). When you implement a layer, update this skill.
+**Current status (2026-07-13):** `make test` runs 392 engine + 25 reward + 2
+scripted-bot tests; `make asan` passes the same 419. The audit also passed 53
+tool/analyzer tests, 23 replay/converter/league tests, 6 BC-context tests, and a
+BC regression harness. This does not mean all seven originally planned layers are
+complete. `[BUILT]` is runnable now, `[PARTIAL]` has useful coverage with known
+gaps, `[ORACLE]` is external reference code, and `[PLANNED]` is not implemented.
 
 ## The 7 layers at a glance
 
 | # | Layer | Oracle | Cadence | Status |
 |---|-------|--------|---------|--------|
-| 1 | Rulebook spec unit tests | BB2025 rules cache + FFB/Jervis test suites | PR gate | PLANNED (oracles BUILT) |
-| 2 | Statistical dice conformance | exact math + BloodBowlActionCalculator | nightly | PLANNED (oracle BUILT) |
-| 3 | Property/metamorphic invariants | internal consistency | PR gate | PLANNED |
-| 4 | libFuzzer + ASan/UBSan | crash-freedom | PR (short) / nightly (long) | PLANNED |
-| 5 | Golden-trace regression | frozen known-good traces | PR gate | PLANNED |
-| 6 | Rule-coverage gate | llvm-cov + rule-path registry | PR gate | PLANNED |
-| 7 | FUMBBL replay differential | real FUMBBL games + FFB + Jervis | nightly | PLANNED (oracles ORACLE) |
+| 1 | Rulebook spec unit tests | current BB2025 mirror/FAQ + focused C tests | every change | BUILT, incomplete ruleset breadth |
+| 2 | Statistical dice conformance | exact math + BloodBowlActionCalculator | targeted/nightly | PARTIAL (oracle built) |
+| 3 | Property/metamorphic invariants | internal consistency + deterministic FNV | every engine/env change | PARTIAL |
+| 4 | fuzzing + ASan/UBSan | crash/UB freedom | every change + long runs | BUILT sanitizer suite; fuzz depth partial |
+| 5 | Golden-trace regression | frozen known-good traces | explicit | PARTIAL |
+| 6 | Rule-coverage gate | coverage + rule-path registry | release gate | PLANNED/PARTIAL |
+| 7 | FUMBBL replay differential | strict BB2025 real games + FFB/Jervis | corpus conversion | PARTIAL, prefix-censored |
 
 ---
 
@@ -32,8 +35,10 @@ empty as of Phase 0). When you implement a layer, update this skill.
 
 **Validates:** every rule clause as an isolated test: block dice selection, armour/injury
 modifier stacks, skill triggers, push chains, passing ranges, turnover causes.
-**Oracle:** rules cache at `docs/vendor/bloodbowlbase/` (BB2025 full reference incl.
-skills with ACTIVE/PASSIVE annotations) + `docs/vendor/gw/bb-faq-errata-nov2025.pdf`.
+**Rule authority:** current BB2025 mirror under
+`docs/vendor/bloodbowlbase/bloodbowlbase.ru/bb2025/`, including the inline May
+2026 FAQ/errata. The November 2025 GW PDF is an older subset. FFB/Jervis are
+behavioral and triangulation oracles, not authority over current rule text.
 Cross-check disputed mechanics against the two reference engines' own suites:
 
 - FFB (primary oracle, the engine FUMBBL runs): `cd vendor/ffb && mvn test`
@@ -50,12 +55,13 @@ Cross-check disputed mechanics against the two reference engines' own suites:
   Its `D6.fix(value)` queue pattern (`tests/game/test_dice.py`) is prior art for our
   dice-script injection.
 
-**Ours (planned):** `engine/tests/` C tests, one file per procedure, every dice branch
-forced via injected scripts. **Failure looks like:** assertion with forced dice +
+**Ours:** `engine/tests/` contains focused C procedure/rule tests with forced dice;
+expand it for every semantic change and every reproduced defect. **Failure looks like:** assertion with forced dice +
 expected state. **Triage:** check rules cache first, then how FFB resolves it
 (`vendor/ffb/ffb-server/.../server/step/` Step classes), then Jervis. If FFB and
-rulebook disagree → record in a `docs/ffb-quirks.md` ledger and match FFB (it is what
-the replay data was generated by).
+the current rulebook disagree, implement the rulebook for the BB2025 engine,
+record the FFB divergence, and prevent incompatible replay prefixes from silently
+becoming training truth.
 
 ## Layer 2 — Statistical dice conformance
 
@@ -124,9 +130,10 @@ the subsystem (ball ⇒ scatter/catch/push code; conservation ⇒ injury/box tra
 ## Layer 4 — Fuzzing + sanitizers
 
 **Validates:** crash-freedom, UB-freedom, OOB on adversarial action/dice streams.
-**Ours (planned):** libFuzzer harness feeding bytes as (action, dice) streams into
-step(); build `-fsanitize=address,undefined,fuzzer`; corpus seeded from layer-5 traces.
-PR gate runs ~5 min; nightly runs hours with corpus persistence.
+**Ours:** `make asan` exercises the same current 418-test suite under sanitizers;
+`engine/tests/fuzz_match.c` provides the fuzz entry surface. Keep the planned
+long-lived corpus/minimization work separate from the already-green sanitizer
+suite; do not describe ASan success as exhaustive fuzz coverage.
 **Prior art:** Jervis ships a fuzzer —
 `vendor/jervis-ffb/modules/jervis-engine/src/commonTest/kotlin/com/jervisffb/test/FuzzTester.kt`
 (100k seeded random games, `@Ignore`d, run manually; note their perf findings: log
@@ -159,10 +166,16 @@ point: a skill that's *implemented* but never *tested* is indistinguishable from
 **Triage:** write the missing layer-1 test; coverage gaps after Phase 3 usually mean a
 skill hook is registered but unreachable (wiring bug).
 
-## Layer 7 — FUMBBL replay differential (the authoritative layer)
+## Layer 7 — FUMBBL replay differential (compatibility and data-quality layer)
 
 **Validates:** our engine reproduces real FUMBBL BB2025 games: inject recorded dice +
 actions, diff state trajectories turn-by-turn.
+Filter candidates by embedded `gameOptions.rulesVersion` before differential or
+pair extraction. The audited raw set contains 11,580 BB2025 and 3,767 BB2020
+replays; use the strict 9,118-ID non-empty BB2025 allowlist in
+`runs/replay-audit-20260713/`. Current converted pairs stop at first divergence and
+are sharply opening-censored, so a large pair count is not proof of full-game
+lockstep correctness.
 **Data:** `GET https://fumbbl.com/api/replay/get/<replayId>/gz` (replayId from
 `/api/match/get/<id>`), no auth — throttle ~1 req/s (see `docs/SOURCES.md` and the
 `fumbbl-data` skill). Parser prior art: `vendor/fumbbl_replays/src/fumbbl_replays/`
@@ -190,6 +203,28 @@ Classify every divergence as exactly one of (first diverging field tells you whi
 
 Every triaged divergence must end as: a layer-1 regression test, a quirks-ledger
 entry (FFB deviates from rulebook), or a parser fix — never just "re-ran, passed".
+
+---
+
+## Reward and experiment-semantic validation
+
+Reward changes require more than the seven engine layers:
+
+1. Add focused tests at true turn, possession, turnover, catch, touchdown, and
+   episode boundaries. Count a semantic event exactly once.
+2. Validate complete reward manifests; explicit zero and missing must not collapse
+   to the same fallback path.
+3. Exercise full-pitch/sentinel edge cases and reject non-finite potentials.
+4. Expose clip/non-finite/error/demo/fallback counters in both train and eval.
+5. Require explicit phase, minimum complete games, final cumulative reprint,
+   checkpoint hash, and imported-module provenance.
+6. Run `tools/test_reward_manifest.py`, `tools/test_experiment_contracts.py`, and
+   the screen/transfer analyzer tests before accepting an arm.
+7. Validate policy effects with paired seeds and held-out W/D/L plus TD
+   for/against. Engine correctness does not establish reward usefulness.
+
+The canonical current semantic audit is
+`docs/reward-and-replay-audit-2026-07-09.md`; durable findings are D177–D180.
 
 ---
 

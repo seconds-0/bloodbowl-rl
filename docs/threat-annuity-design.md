@@ -1,5 +1,11 @@
 # Threat Annuity — design spec (FOR REVIEW, pre-build)
 
+> **Historical proposal; not an approved reward term or current experiment.** The
+> July audit found distance learnability but no production-promotable reward and
+> queued possession/gain decomposition first. Any revival must use exact PBRS
+> where claimed and pass the immutable held-out transfer gates in `AGENTS.md` and
+> `.claude/skills/training-experiments/SKILL.md`.
+
 Alex's design (2026-06-18), after D147 (cardinal rule) + D148 (injury-outcome dead end).
 The EV-weighted, zero-sum, decision-time **dual of the possession annuity**: prices the
 contest for the ball as a continuous threat field, so the defense is paid for getting in

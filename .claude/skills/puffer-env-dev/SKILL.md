@@ -1,6 +1,6 @@
 ---
 name: puffer-env-dev
-description: Use when writing or debugging the native C env binding for PufferLib 4.0 (vendor/PufferLib) — binding.c macros, Env struct, action masks, two-player self-play perm/tags, build.sh, config .ini, puffer train/eval/match, or any "how do I hook the BB engine into Puffer" question.
+description: Develop and audit the Blood Bowl PufferLib 4.0 environment, including binding macros, buffers, action masks, self-play routing, builds, configs, local patch stack, phase/provenance telemetry, eval game gates, reward integrity, train/eval/match, and checkpoint conversion. Use for native C binding work or any Puffer training/evaluation correctness question.
 ---
 
 # PufferLib 4.0 Native C Env Development
@@ -14,6 +14,11 @@ Primary template: `vendor/PufferLib/ocean/chess/` (2-player board game, action m
 self-play perm, FEN curriculum — structurally closest to Blood Bowl).
 Minimal template: `vendor/PufferLib/ocean/squared/`. MultiDiscrete: `vendor/PufferLib/ocean/drive/`.
 Cached upstream docs: `docs/vendor/pufferlib/docs.html` (env-author checklist + CLI cheatsheet).
+
+For current Blood Bowl experiment acceptance, also read `AGENTS.md`, D177–D180,
+and `docs/reward-and-replay-audit-2026-07-09.md`. Upstream success/exit status is
+not sufficient: the audited path requires explicit phase, provenance, completed
+games, final cumulative reprint, and reward-integrity telemetry.
 
 ## 1. The binding ABI
 
@@ -95,17 +100,25 @@ field by summed `n`, then memsets all env logs to zero. So: store **sums**, bump
 `my_log` via `dict_set` — these become `env/<key>` in the dashboard, wandb, and
 selfplay.py.
 
+Blood Bowl's reward-integrity ratios deliberately combine fields after this
+aggregation: `Log` stores raw emission counters, vec aggregation divides every
+counter by the same episode count, and `my_log` forms the ratios afterward.
+The common divisor cancels, preserving emission weighting across short and
+long episodes. `reward_episode_abs_max_mean` is the mean of episode maxima;
+it is not a run-wide maximum.
+
 **HARD KEY LIMIT (bit us 2026-06-05):** `vec_log` in `src/bindings_cpu.cpp` AND
 `src/bindings.cu` allocates the output dict with a FIXED capacity (upstream: 32;
-ours: 64 via `training/puffer_dict_capacity.patch`) and appends `"n"` after
+ours: 96 via `training/puffer_dict_capacity.patch`) and appends `"n"` after
 `my_log` returns. `dict_set`'s capacity check is a bare `assert` upstream —
 **compiles out under NDEBUG**, so exceeding capacity is a silent 24-bytes-per-key
 heap overrun that surfaces as `free(): corrupted unsorted chunks` at the FIRST
 log aggregation with completed episodes (~epoch 3 / ~786K steps, `n==0`
 early-returns before that). It reproduces at any thread count / cwd / config —
 do not chase those. Our vendored `dict_set` now aborts loudly with the key name.
-When adding Log keys: count `dict_set` calls in `my_log` (+1 for `"n"`) against
-the `create_dict` capacity at both vec_log call sites.
+Blood Bowl currently emits 86 keys plus `"n"`. When adding Log keys, recount
+`dict_set` calls in `my_log` (+1 for `"n"`) against the `create_dict` capacity
+at both vec_log call sites and update the installer/dashboard guidance.
 
 ## 4. Two-player self-play (the chess pattern)
 
@@ -314,15 +327,25 @@ pushed via `_C.set_agent_perm` / `_C.set_env_tags`; full layout diagram in
 Deep internals (StaticVec walkthrough, threading, perm row layout, pybind export
 surface, match() mechanics): `reference/vecenv-internals.md`.
 
-## Operational gotchas discovered in production (2026-06-04)
+## Operational and experiment-integrity contract
 
-- **The post-training eval tail HANGS for long-episode envs.** After
-  total_timesteps, _train runs eval epochs until `env/n > eval_episodes`
-  (10000 default). Our episodes are 300-900 decisions, so this is hours —
-  and it pins the box silently at the final Steps count (log mtime frozen,
-  0% CPU pattern). Fix per run: `--eval-episodes 100`-ish, or just pkill
-  after the final checkpoint lands (checkpoints save during training; the
-  eval tail adds nothing we use).
+- **Do not kill the post-training eval because the Steps line stopped.** The
+  audited `training/pufferl_eval_episode_gate.patch` accumulates completed games
+  across intervals and scales the eval budget to the requested target. An arm is
+  accepted only after the requested full games, explicit final phase/status
+  reprint, checkpoint hash, and zero integrity counters. A frozen dashboard line
+  alone proves neither a hang nor completion.
+- `tools/install_puffer_env.sh` applies the audited Puffer stack in this order:
+  dashboard limit, env JSON, JSON metadata upgrade, phase contract, eval episode
+  gate, dynamic metrics-key fix, and trusted Torch load. `tools/run_reward_screen.sh`
+  hashes the same ordered bundle. Do not hand-apply a subset and compare it to an
+  accepted arm.
+- Record the actual imported `_C.__file__`, `_C.env_name`, GPU flag, precision,
+  and module SHA. A source checkout or installed-content hash does not prove which
+  extension Python loaded.
+- Env telemetry must distinguish train from final eval, clear sticky metadata,
+  expose reward clip/non-finite/error/demo/fallback counts, and print the final
+  cumulative record. Keep `metrics.setdefault` behavior for dynamic keys.
 - **`puffer train` has NO upstream warm-start.** load_model_path is only
   read by eval()/match(). We patch _train in the VENDORED pufferl.py
   (gitignored — re-apply after any re-clone; patch lives right after
@@ -344,8 +367,10 @@ surface, match() mechanics): `reference/vecenv-internals.md`.
   explicit `--obs-size 1612` for v3 / `--obs-size 832` for v2 — binding.c's
   literal once lagged at 1612 and the `_Static_assert` caught it exactly as
   designed, D54). BC pairs never mix obs lineages in one corpus — current
-  corpus is 2,085,330 v4 pairs from 12,304 replays (`validation/pairs_v4`;
-  the `pairs` symlink on v4 boxes points at it). Current anchor lineage:
+  historical pair store is 2,085,330 v4 records across 12,304 shards, but the
+  strict embedded-rulesVersion BB2025 surface is 9,118 non-empty replay IDs and
+  1,622,231 joined records (`runs/replay-audit-20260713/`). Never call shard count
+  replay count or mix BB2020 into BC. Current anchor lineage:
   **bc_v4** (val exact 0.508; lives on the training boxes — local
   `training/` only holds ≤ bc_v3b).
 

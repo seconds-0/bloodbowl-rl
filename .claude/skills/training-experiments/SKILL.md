@@ -1,63 +1,97 @@
 ---
 name: training-experiments
-description: Run the Blood Bowl RL experiment program — fleet ops on the 4 Vast.ai boxes, the launch contract (run_synthesis_c.sh, warm-start, rebuild discipline), the settled v4 reward economy and its invariants, the curriculum ladder (maxdist 6→9→12→uniform→kickoff), metric interpretation against reference values, tournament procedure, the standing doctrines (D46 discovery-vs-artifact, D50/D56 graduation rule, decision-time pricing, anti-farming invariants, gradual anneal, masked sampler), DECISIONS.md ledger discipline, and the open experiment queue. Use for ANY training run, A/B, checkpoint op, metric read, or experimental verdict in this repo.
+description: Run and audit Blood Bowl RL experiments with immutable reward manifests, paired seeds, provenance/integrity gates, held-out transfer, checkpoint/build discipline, metric interpretation, opponent controls, and DECISIONS.md ledger updates. Use for any training run, reward ablation, A/B, checkpoint operation, evaluation, metric read, transfer study, or promotion verdict in this repo.
 ---
 
 # training-experiments — running the RL program
 
-You are continuing a long experiment program alone. Everything settled here was paid
-for with GPU-weeks and dead lineages. **Do not re-derive, re-tune, or "improve" the
-settled design on aesthetics. Change knobs only through the experiment queue, with
-A/Bs, and write every finding to DECISIONS.md.**
+You are continuing a long experiment program. Historical findings were paid for
+with substantial compute, but later controlled evidence can amend them. **Do not
+retune from aesthetics, training curves, or human-looking behavior. Change one
+declared factor through a frozen experiment, validate on match utility and held-out
+transfer, and write every accepted finding to `DECISIONS.md`.**
 
-State as of 2026-06-08 (v4 era, stage-2 live, ledger D1–D57). When state changes,
-update this skill. ALWAYS read the tail of `DECISIONS.md` first — anything newer
-than D57 supersedes this file.
+State as of 2026-07-13 (reward/replay audit complete, ledger through D180).
+Always read `AGENTS.md`, the tail of `DECISIONS.md`, and
+`docs/reward-and-replay-audit-2026-07-09.md` first. Newer ledger entries and
+immutable result artifacts supersede older sections of this skill.
 
 ---
 
-## 1. The fleet
+## 0. July 2026 reward verdict and next experiment
 
-4 Vast.ai boxes. **Labels are state** — confirm with `vastai show instances --raw`
-(or `tools/fleet.sh ls`) before trusting anything below. SSH host/port CHANGE after
-a stop/start — the endpoints below are a snapshot, re-resolve them after any
-restart. SSH key `~/.ssh/id_ed25519`, repo at `/root/bloodbowl-rl` on every box.
-`vastai` CLI must be ≥ 1.0 (the brew 0.4 build makes zombie instances).
+No reward has been promoted to production.
 
-| Label | SSH (snapshot) | Cores | Role |
-|---|---|---|---|
-| `bb-japan-native` (box-1, id 39322464) | `ssh3.vast.ai:12464` | 24c | scraper + judge GPU + native-asym run (D57) + **replay cache SOLE COPY (~27K files — never delete, never let this box be reclaimed without backing it up)** |
-| `bb-taiwan-anchor` (box-2, id 39471946) | `ssh2.vast.ai:31946` | 28c | anchor training / overflow |
-| `bb-ballhawk` (box-3, id 39745431) | `ssh4.vast.ai:25430` | 64c | FAST — flagship runs |
-| `bb-possession` (box-4, id 39790498) | `ssh7.vast.ai:30498` | 64c | FAST — twin/A-B runs |
+- The repaired R0–R3 2×2 completed all eight paired arms at exact
+  `249,954,304` native steps with two seeds, ≥10,001 final eval games/arm,
+  identical frozen provenance, and zero integrity counters. Distance supplied
+  nearly all scoring learnability: TD/game `+0.76365`, match score `+0.11130`,
+  ball-forward `+4.45069`. It also increased block volume and 2D-red rate.
+- The R0/R2 transfer matrix completed 16 cells and 16,076 full games. Removing
+  possession+gain (R2) reduced match score in all eight matched cells and raised
+  losses and opponent TDs in all eight. R2 is not transfer-noninferior.
+- Keep R0 only as the next experimental baseline. Raw distance `ΔΦ` is a
+  temporary scaffold, not exact PBRS at `gamma=0.995` and not final utility.
+- Next screen, with distance on in every arm:
 
-Fleet rules:
+  | Arm | Possession annuity | Ball-gain event |
+  |---|---:|---:|
+  | P0 | on | on |
+  | P1 | on | off |
+  | P2 | off | on |
+  | P3 | off | off |
 
-- **NEVER ship big payloads Mac→ssh4 directly.** The Mac→ssh4 route can be
-  pathologically slow. Ship box-to-box: `ssh -A` (agent forwarding) from a fast box,
-  then `scp`/`rsync` between boxes.
-- `tools/fleet.sh` subcommands: `search | provision | ls | ssh | setup | launch |
-  status | collect | destroy`. `setup` deliberately excludes `vendor/PufferLib/
-  {.venv,build,raylib*,checkpoints}`, `validation/replay_cache`, **and
-  `training/*.bin`** — venv/raylib/build rebuild per-box (do not "fix" that by
-  syncing them), and **anchors + checkpoints never sync via setup: ship them
-  box-to-box yourself.**
-- Vast **stopped** instances can be RECLAIMED (the GPU re-rented under you). Restart
-  promptly after a stop, or accept you may get a replacement box.
-- The balance ladder `/tmp/vast_ladder.sh` (Mac-side; `/tmp` is wiped on Mac reboot
-  — recreate it if missing) stops boxes in value order when credit drops below
-  $5 / $3.5 / $2. It is stop-only and reversible. Spend cap is $50 (D7).
-- All monitor/SSH loops MUST use `ssh -n -o ConnectTimeout=...` (footgun 9).
-- **Restart after hibernation** (D55 procedure, lost zero data):
-  ```bash
-  for i in 39322464 39471946 39790498 39745431; do vastai start instance "$i"; done
-  tools/fleet.sh ls        # re-resolve ssh endpoints — they change on restart
-  ```
-  Then on box-1 restart the scraper: `cd /root/bloodbowl-rl && nohup bash
-  tools/long_scrape.sh >/dev/null 2>&1 &` (resumable, manifest dedupes; stop with
-  `pkill -f '[l]ong_scrape'`). Resume training runs via the warm-start procedure
-  in §3. If an id no longer exists, the box was reclaimed — re-provision and
-  re-`setup`, then re-ship anchors/checkpoints.
+  Run `500M × 2 seeds`; then confirm R0 against the simplest
+  transfer-noninferior survivor with learned opponents, roster macro, longer
+  horizon, and a second ancestry. Do not change production defaults before all
+  gates pass.
+
+Canonical evidence:
+
+- `runs/reward-screens/reward-screen-20260709-v1/SCREEN_COMPLETE.json`
+- `runs/reward-transfer-20260713-v1/ANALYSIS.json`
+- `docs/reward-and-replay-audit-2026-07-09.md`
+
+### Immutable experiment contract
+
+Use `tools/reward_manifest.py`, `tools/run_reward_screen.sh`,
+`tools/analyze_reward_screen.py`, and `tools/analyze_reward_transfer.py` for the
+audited workflow.
+
+For every causal arm:
+
+1. Freeze source, installed env/config, imported module, Puffer patches, warm
+   checkpoint, pool, backend, optimizer, seeds, execution order, and eval policy.
+2. Supply a complete reward JSON; omitted and explicit-zero fields are different.
+3. Record all hashes and persist immutable plan/status/result/completion records.
+4. Require explicit phase telemetry, enough complete kickoff games, a final
+   cumulative reprint, and zero clip/non-finite/engine-error/demo/fallback counts.
+5. Reject integrity failures rather than averaging them into the comparison.
+6. Report W/D/L, TD for/against, both sides, paired common-seed differences, and
+   in-sample versus held-out results separately.
+7. Treat two-seed/scripted-bot screens as descriptive, never as confidence
+   intervals, tournament-strength claims, or production promotion.
+
+---
+
+## 1. Compute targets
+
+**The table below is June historical context, not live inventory.** The paid Vast
+fleet was stopped after D176. Discover external state before any action; do not
+restart old instance IDs from documentation. The current free lightweight target
+is the Tailscale `wsl-ubuntu` RTX 2070. July audit work used the isolated checkout
+`/home/rache/bloodbowl-rl-audit`; `/home/rache/bloodbowl-rl` may host the production
+evaluator/stream and is out of scope unless the user explicitly authorizes changes.
+
+For any remote run, first record `tailscale status`, live processes, free disk,
+GPU/driver/CUDA, Python/Torch/compiler, checkout path, Git/worktree state,
+`_C.__file__`, `_C.env_name`, GPU flag, precision, and module SHA. Do not kill or
+replace an existing `server.py` process as part of training work.
+
+If Vast is intentionally reactivated, use `.claude/skills/fleet-ops/SKILL.md`
+and live `vastai show instances --raw`; do not copy old IDs or endpoints from
+the ledger. Use `ssh -n` plus timeouts in monitors, preserve cached replays and
+checkpoints, and remember that stopped instances can be reclaimed.
 
 ---
 
@@ -80,53 +114,23 @@ Fleet rules:
 
 ---
 
-## 3. Launch contract
+## 3. Launch contracts
 
-Launcher: **`tools/run_synthesis_c.sh`**, run on the box from `/root/bloodbowl-rl`.
+### Audited reward screens and transfer
 
-**CRITICAL: the script's baked-in defaults are the FROZEN v3 synthesis+C profile**
-(`ball-gain 0.1 / ball-loss -0.2`, full-strength k `0.06/0.5/0.3/0.02`,
-`demo-reset-pct 0.5`, no possession/rush/maxdist knobs). The settled v4 economy
-(§4) exists ONLY as overrides passed after the script name. Launching "bare"
-ships a config that VIOLATES the D43 invariant (loss fine + annuity). Canonical
-v4 stage-2 launch:
+Use complete reward manifests under `puffer/config/rewards/` and the immutable
+workflow in §0. Do not reconstruct a July arm from a dashboard command and do not
+send it through bare `run_synthesis_c.sh`: historical launcher defaults are not a
+complete manifest and can silently inject old shaping. Preserve plan, per-arm
+status/result JSON, completion proof, final checkpoint, and analyzer output.
 
-```bash
-ANCHOR=<ckpt-or-anchor> LOG=/tmp/v4_s2.log bash tools/run_synthesis_c.sh \
-  --env.reward-possession 0.03 \
-  --env.reward-ball-gain 0.05 --env.reward-ball-loss 0 \
-  --env.reward-dist-ball 0.05 --env.reward-dist-endzone 0.2 \
-  --env.reward-k-kd 0.03 --env.reward-k-value 0.25 \
-  --env.reward-k-ball 0.15 --env.reward-k-seq 0.01 \
-  --env.demo-reset-pct 0.9 --env.demo-endzone-maxdist 9 \
-  --train.frozen-enemy-path training/bc_v4.bin
-```
+### Historical curriculum/lineage launcher
 
-Taxed twin adds `--env.reward-rush-cost 0.015`. **When RESUMING a live arm, do not
-reconstruct flags from memory: recover the exact prior command from the box**
-(`head` of its `/tmp/*.log`, or the PROFILE file in the run's checkpoint dir) and
-change only `ANCHOR`/the intended knob.
-
-Script mechanics (it enforces all of these — know them before you launch):
-
-- Refuses to double-launch: kill any live trainer first with
-  `pkill -f 'puffer [t]rain'` (bracket pattern, footgun 3).
-- `ANCHOR=<path>` (default `training/bc_v3b.bin`) — passed as `--load-model-path`,
-  so it is both warm-start and BC-anchor init. Guard: rejects files ≤13,000,000
-  bytes (dead 832-obs lineage ≈12.08MB; v3b 13.68MB; v4 files are larger — pass).
-- Requires the demo bank at `vendor/PufferLib/resources/bloodbowl/state_bank.bbs`
-  (>1MB or it exits; a missing bank would otherwise SILENTLY train procgen-only).
-- `LOG=<path>` (default `/tmp/synthesis_c.log`), `STEPS=<n>` (default 10B).
-- Asymmetric runs **OVERSHOOT the step cap ~1.5×** (runner `global_step` advances
-  train-batch-width under asymmetry — open thread 7). Benign; budget for it. Do
-  not "fix" a run mid-flight because of it.
-- BC knobs: `--train.bc-coef 1.0` (cosine); floor via `--train.bc-coef-floor`.
-
-**Warm relaunch:** `ANCHOR=<newest checkpoint>`. Checkpoints live at
-`vendor/PufferLib/checkpoints/bloodbowl/<run-id>/<step>.bin` on the box. Find with
-`ls -t vendor/PufferLib/checkpoints/bloodbowl/*/0*.bin | head -1` — **CAUTION:
-newest mtime ≠ highest step across run dirs.** When multiple run dirs exist, compare
-the step number embedded in the filename, not mtime.
+`tools/run_synthesis_c.sh` has frozen v3 reward defaults, including the poisoned
+ball-loss profile. It is allowed only for exact historical continuation with a
+complete explicit override recovered from the original profile. Never use it
+for a new reward comparison. `ANCHOR`, `LOG`, and `STEPS` are historical env-var
+controls; choose a checkpoint by embedded step and hash, not mtime.
 
 **After ANY env code change, do ALL of, in order.** Source of truth is
 `puffer/bloodbowl/` (its `engine/`+`bb/` symlinks pull in `engine/src` +
@@ -147,72 +151,54 @@ cd vendor/PufferLib && rm -rf build && ./build.sh bloodbowl --float
   D49). After syncing to a box, `grep` the changed symbol on the box to prove the
   right code landed, then re-run install + rebuild ON THE BOX.
 
-**Verify every launch:** the script prints `LIVE` or `TRAINER DIED` at the 40-second
-mark, plus a warm-start/demo-bank echo. Do not walk away before reading it.
-
-### Runs live right now (verify with `tools/fleet.sh status` before believing this)
-
-| Run | Box | Config |
-|---|---|---|
-| `v4_s2` flagship (torch) | bb-ballhawk | maxdist 9, warm from v4_s1_final 15B ckpt (`0000014942470144.bin`, tds 0.42–0.49 at maxdist-6 starts) |
-| `v4_s2tax` twin (torch) | bb-possession | same + `--env.reward-rush-cost 0.015` |
-| `v4-native-asym` (D57) | bb-japan-native | native CUDA, NO bc aux, frozen bc_v4 selfplay-pool teacher (~48% vs-teacher / rest mirror), warm from v4_s1_final_cuda, stage-2 knobs, 2.1M SPS |
-| `v3_tax` completion | box-2 | finishing the v3 rush-tax arm |
+Verify every launch from process state, fresh logs, manifest/status records, and
+the imported module. Do not trust a historical "LIVE" banner alone.
 
 ---
 
-## 4. The reward economy (SETTLED — do not retune)
+## 4. Reward economy (audited experimental baseline, not settled utility)
 
-These are the §3 override values, NOT the launcher defaults — see the warning there.
+The canonical R0 values live in `puffer/config/rewards/r0_full.json`; do not
+retype or partially override them. Important current values are terminal TD
+`0.4`, win/loss `±0.6`, draw `0`; possession `0.03`, gain `0.05`, loss `0`;
+distance-to-ball/endzone `0.02/0.04`; block terms
+`k_kd/k_value/k_ball/k_turnover/k_seq = 0.10/0.50/0.15/0.15/0.03`; rush cost
+`0.015`; other shaping zero. These define an **experimental control**, not a
+recommended final objective and not a bit-identical historical continuation.
 
-| Knob (`--env.` flag) | Value | Why |
-|---|---|---|
-| `reward-possession` | **0.03** | Possession **annuity**: ±zero-sum payment at every own-turn boundary while holding (~16 binary events/side/game → unfarmable income stream, D43). |
-| `reward-ball-loss` | **0 (with the annuity)** | INVARIANT. The annuity already prices a loss as (lost stream + opponent's gained stream). Adding an exit fine on top is **measured poison**: lump-sum+fine made refusing the free ball rational (kzero probe: `pickup_attempts 0.000` from kickoff). NEVER reintroduce a loss fine alongside the annuity. |
-| `reward-ball-gain` | **0.05** | Pickup coupon, small. |
-| `reward-dist-ball` | **0.05** | Potential shaping toward the ball. |
-| `reward-dist-endzone` | **0.2** | Potential shaping toward scoring. |
-| **k-half** (exposure) | **`reward-k-kd 0.03 / reward-k-value 0.25 / reward-k-ball 0.15 / reward-k-seq 0.01`** | Decision-time exposure pricing (D33/D34, §6). "k-half" = the original synthesis+C k values (0.06/0.5/0.3/0.02 — still the script defaults) halved once per the D28/D42 gradual-anneal chain. |
-| `reward-rush-cost` | **0.015** | Rush tax. A/B leaning ADOPT, but it is **scaffolding to be annealed away** (D46), never permanent. |
-| `--train.bc-coef` | **1.0, cosine** | BC anchor weight; floor via `--train.bc-coef-floor` (default decays to 0.1× — D45 made it configurable). |
+Interpretation after D177–D178:
 
-**Invariants — check these before launching ANY reward variation:**
+- Distance supplies most learnability. Keep it during decomposition, but call it
+  a scaffold. Raw state delta is not exact discounted PBRS.
+- Possession+gain has a small screen effect but a consistent defensive transfer
+  benefit. Keep the bundle only until the next screen isolates its components.
+- Rush and block terms remain scaffolds. Higher block count is not a promotion
+  criterion; R2 blocked more and lost more in transfer.
+- Stalling is not an automatically accepted side effect. BB2025 explicitly
+  penalizes a carrier who could score without dice; evaluate possession rewards
+  against score/clock behavior and held-out match utility.
 
-1. **`|ball_loss| > ball_gain` in any config that has a loss fine** (D42) — otherwise
-   pickup→drop laundering. (v2 shipped 0.3/−0.4 after a premortem caught 0.3/−0.2.)
-2. **`ball_loss = 0` whenever the possession annuity is on** (D43) — no double fine.
-3. **All potentials must telescope** (unfarmable; D41 ballhawk design).
-4. Exposure rewards on blitz MUST be rush-gated (D36): scale by P(rush succeeds) and
-   fold rush-failure turnover, or attackers farm fictitious zero-sum reward.
+**Invariants for every reward variation:**
 
-Accepted known trade: the annuity mildly rewards stalling. That is real Blood Bowl.
-Do not patch it.
+1. Use a complete canonical manifest; never inherit an omitted field.
+2. Keep `ball_loss = 0` while the possession annuity is on; no double fine.
+3. Any term called a potential must use the exact discounted form
+   `beta*(gamma*Phi(s') - Phi(s))`, or be labeled a non-invariant scaffold.
+4. Rush-gate blitz exposure and include rush-failure turnover probability.
+5. Record and reject reward clipping or non-finite values.
+6. Do not reward realized dice outcomes as shaping. Event/EV terms can still
+   redefine utility and require held-out match validation.
+7. Do not promote from human-stat proximity, TDs alone, or training-opponent
+   success. Require W/D/L and TD for/against on held-out opponents.
 
 ---
 
-## 5. Curriculum ladder
+## 5. Historical curriculum ladder
 
-Stage variable: `--env.demo-endzone-maxdist`. Backplay stages run
-`--env.demo-reset-pct 0.9` (90% of resets from the demo bank). Ladder:
-
-```
-6  →  9  →  12  →  uniform (maxdist 0 = whole bank)  →  kickoff starts (demo-reset-pct 0)
-```
-
-- **+3 squares per stage, never more.** D51: a 6→12 jump overshot (tds flat
-  0.03–0.07). Small steps only.
-- **Advance on tds plateau** at the current stage's starts.
-- **Warm-start every stage** from the newest checkpoint of the previous stage (mind
-  the mtime-vs-step caveat in §3).
-- **Watch retention at every expansion.** The Backplay-literature failure mode is
-  forgetting the endgame. Per-stage progress = tds-at-stage-starts PLUS retention
-  probes of earlier stages (D50/D56).
-- If a stage stalls: the designed (not yet built) escalation is the **frozen-opponent
-  ladder** (D56) — train vs weaker frozen defenses first to manufacture decisive
-  games earlier. Build it before inventing something else.
-- Stage-1 depth finding (D52/D54): starting deeper-trained (15B ckpt) converges
-  faster than shallower (5.24B) but to a similar band. Don't burn compute re-asking
-  this in the v4 lineage without new cause.
+The old Backplay ladder was `maxdist 6 → 9 → 12 → uniform → kickoff`,
+advancing in three-square increments with retention probes. It remains useful
+historical context, but July causal reward comparisons use full kickoff starts
+(`demo_reset_pct=0`). Never compare curriculum TD rates across start depths.
 
 ---
 
@@ -296,15 +282,19 @@ See §4. Check the invariants before every reward-config launch. No exceptions.
   had `illegal_frac 1.000` and a decode-fallback shadow policy — all its measured
   dynamics are invalid). CUDA-backend results (D26–D28, D34) are unaffected.
 
-### D45/D47 — Anchor verdicts
+### D174/D176 — Current BC and opponent verdicts
 
-- The BC anchor prevents erosion (D32: bc_acc 0.93–0.96, tds 0.39–0.45 sustained
-  where every unanchored arm died) but is **NOT the binding constraint**: full
-  anchor release (bc_coef floor → 0) produced no breakout AND no collapse — PPO
-  updates are too local to leave the basin.
-- The PRIOR's quality is the bottleneck. Lever ranking, in order:
-  **sequence context > bigger policy > more data** (D35-VERDICT/D45). Spend anchor
-  effort in that order.
+- D174 supersedes the old "sequence context first" ranking: frame-stacked
+  structural context was null because obs-v4 already encodes within-turn state;
+  last-action history added only `+0.002`, inside noise. Do not fund recurrence
+  without full-game lockstep data and a new falsifiable hypothesis.
+- D176 supersedes the old blanket "BC anchor prevents erosion" recommendation:
+  full-strength persistent iid CE mechanically held BC accuracy but collapsed
+  offense. Do not reintroduce it as the default and do not infer that a weaker
+  coefficient must help.
+- Competent opponent quality produced the strongest defensive improvement, but a
+  single deterministic bot is an overfit probe. Prioritize diverse opponents and
+  held-out transfer over more corpus volume or stronger iid anchoring.
 
 ### D35 — Optimization-bound before capacity claims
 
@@ -331,7 +321,10 @@ See §4. Check the invariants before every reward-config launch. No exceptions.
 
 ## 7. DECISIONS.md ledger discipline
 
-The ledger is at `DECISIONS.md` (D1–D57 so far). It is the program's memory.
+The ledger is at `DECISIONS.md` (through D180 as of 2026-07-13). It is the
+program's chronological memory. D177–D180 are the reward-screen, transfer,
+replay-corpus, and streaming-loader findings that supersede this skill's June
+snapshots.
 
 - **EVERY finding gets an atomic entry. No exceptions.** One decision/finding per
   entry, numbered D{n+1}, dated. If your write-up needs "and" between two findings,
@@ -355,7 +348,7 @@ The ledger is at `DECISIONS.md` (D1–D57 so far). It is the program's memory.
 | `tds` | stage-dependent | Per-episode touchdowns **FROM CURRICULUM STARTS**. NOT comparable across maxdist stages — a drop on stage advance is expected, not regression. |
 | `block_2dred_frac` | human 0.017; v3 agent plateau ~0.20; v4 0.169 falling | Fraction of blocks thrown at 2-dice-against. **Falling = probability planes working.** |
 | 2d : 2dred ratio | human 46:1 | Same axis as above. |
-| `possession_rate` | raw prior ~0.15; v4 s1 best 0.193; poisoned ~0.05 | If you see ~0.05, suspect a loss-fine-poisoned config (D43). |
+| `possession_rate` | corrected BB2025 human genuine-turn rate 0.47394; per-game mean 0.47453 | Metric semantics changed historically. Never compare old ~0.15 dashboard values or synthetic turns directly to the corrected baseline; use it as a diagnostic, not a target. |
 | `gfi` (go-for-its) | human ~2–5/ep; agent ~25–35 | Presumed ARTIFACT per D46 unless it survives grounding. Track it; do not patch it outside the rush-tax A/B. |
 | `bc_acc` | v4 ceiling ~0.51 (runs hold 0.49–0.55) | Anchor agreement. Don't expect above ceiling; collapse far below it = erosion. |
 | `blocks_thrown` | — | Clean denominator for contact conversion (one CHOOSE_DIE per resolved block). |
@@ -366,6 +359,13 @@ The ledger is at `DECISIONS.md` (D1–D57 so far). It is the program's memory.
 ---
 
 ## 9. Tournament procedure
+
+For July reward selection, first run the immutable final-policy evaluation and
+held-out transfer matrix described in §0. `puffer match` remains useful for
+checkpoint head-to-heads, but it is not a substitute for both sides, TD
+for/against, scripted/learned opponent diversity, roster macro, provenance, or
+integrity telemetry. Native↔Torch conversion zero-fills/drops biases; document
+and apply conversions symmetrically.
 
 1. Ship both checkpoints to **box-1** (judge GPU). Box-to-box via `ssh -A`, never
    Mac→ssh4 for big files.
@@ -420,32 +420,37 @@ The ledger is at `DECISIONS.md` (D1–D57 so far). It is the program's memory.
 
 Work the queue top-down. Do not reorder without writing a ledger entry justifying it.
 
-1. **v4 stage-3 (maxdist 12)** when `v4_s2` plateaus on tds-at-maxdist-9 starts.
-   Warm-start from newest s2 ckpt; run retention probes at maxdist 6.
-2. **Rush-tax adoption decision** (D46 A/B, leaning ADOPT): bp_tax matched/beat
-   untaxed pace with 3–5 fewer gfi/ep across D51/D52/D55. Make the call from the
-   v4_s2 vs v4_s2tax twins; whatever the verdict, the tax must eventually be
-   ANNEALED away (D46), never enshrined.
-3. **Native anchor-free parity VERDICT (run is already LIVE — D57).**
-   `v4-native-asym` fired 2026-06-08 on box-1: native CUDA, no bc aux, frozen
-   bc_v4 selfplay-pool teacher, 2.1M SPS (3× the torch twins on the WEAKEST box).
-   Early tds 0.229@0.5B in the stage-2 band. The pending work is the JUDGMENT:
-   compare its tds curve vs the torch flagship at matched steps; if parity holds,
-   write the ledger entry, make native the default backend, and retire torch to
-   bc_vN training only. Do NOT re-launch this experiment from scratch.
-4. **Tier-4 box-side OMP/CUDA knobs.** A/B carefully, ONE knob at a time — one
-   config showed an 80× regression.
-5. **bc_v5 with sequence context** (D35 lever ranking: sequence context first).
-6. **Windows 2070 onboarding** (task 22).
-7. **Wizards / star players / team-comp backlog** (tasks 23–24).
+1. **Decompose R0's bundled possession family with distance fixed on:** both,
+   possession-only, gain-only, neither; `500M × 2 seeds`, same frozen contract
+   as D177. R2 is prior evidence for neither, not permission to skip a fresh
+   matched cell.
+2. **Confirm R0 against the simplest transfer-noninferior survivor:**
+   `1B × 2 seeds`, learned-opponent transfer, both sides, roster-grid macro,
+   TD for/against, and uncertainty. Reject any simplification that repeats R2's
+   defense loss.
+3. **Separate opponent curriculum from reward:** freeze the selected reward and
+   compare diverse competent opponents. D176 shows opponent quality can dominate
+   apparent defense improvements; a single deterministic bot is an overfit probe.
+4. **Make distance policy-safer:** replace raw delta with exact discounted PBRS,
+   or anneal it to zero and demonstrate non-inferiority against objective-only.
+5. **Ablate rush and remaining block scaffolds one family at a time.** More blocks
+   or more human-looking rates are not benefits unless held-out match utility
+   improves.
+6. **Reproduce the finalist from a second ancestry** (initial candidate:
+   league9), then run the final long matched control. Only this stage can
+   authorize a production default change.
+7. **Improve replay sampling:** edition-exact, replay-disjoint, hierarchical
+   depth/action/roster sampling with setup caps and grouped metrics; build
+   replay-derived scenarios only after full-game lockstep coverage is verified.
 
 ### Background threads (not queue items, but don't lose them)
 
-- Frozen-opponent ladder: designed, not built — build it if a stage stalls (§5).
-- bc_v4 confound (D53): more-data + obs-v4 planes deliberately confounded; if
-  decomposition ever matters, train a v3-obs anchor on the same 12K-replay corpus.
-- Asymmetric-stop overshoot bug: fix with epoch-based stop or full-width accounting
-  (open thread 7) — low priority while benign.
+- The strict BB2025 replay corpus is opening-censored and nearly lacks pass,
+  handoff, foul, Jump, TTM, and Special targets. Do not claim rare-action or
+  late-game learning from aggregate BC accuracy.
+- Recurrent sequence training remains contingent on full-game lockstep conversion;
+  frame-stacked context was null in D174.
+- Asymmetric-stop overshoot remains low priority while bounded and manifested.
 - FUMBBL differential adjudications pending: D11 crowd-push dice order; D13
   Secure-the-Ball bounce+turnover; D18 Break Tackle always-on + Secret Weapon
   approximation; D21 Saboteur auto-KO; D36 documented engine-parity divergences
@@ -460,18 +465,22 @@ Work the queue top-down. Do not reorder without writing a ledger entry justifyin
   modifiers partially landed in D31.
 - D23 decode low-x fallback bias: documented, not fixed (irrelevant under masked
   sampling).
-- D8 GitHub remote: still deferred/local.
+- The core July rules/reward corrections and experiment tooling are
+  commit-backed. Production reward defaults remain unchanged: install/rebuild
+  the corrected module only in an isolated experiment checkout for the next
+  manifested run, then require the full promotion gates before any default.
 
 ---
 
 ## 12. Session checklist
 
-Before doing anything: `vastai show instances --raw` (labels are state; endpoints
-change after restarts), check what's running (`tools/fleet.sh status`), read the
-tail of DECISIONS.md for anything newer than D57/this skill. Before any launch:
-invariants (§4), obs-size sync points (§2), the launcher-default warning + rebuild
-discipline (§3), recover live-run flags from the box before resuming. After any
-finding: ledger entry (§7), then act.
+Before doing anything: read `AGENTS.md`, D177–D180 and the ledger tail; discover
+live Tailscale/Vast state and processes; confirm the intended checkout is not the
+production checkout. Before launch: verify obs size, install drift, imported
+module/provenance, disk, complete reward manifest, opponent/data hashes, seeds,
+execution order, eval gate, and integrity rejection rules. After a run: analyze
+the immutable result, copy/hash the cap, separate in-sample from held-out
+evidence, append one atomic ledger finding, and only then consider a default.
 
 ## Run length / stopping rule (D168) — plateau, not a fixed budget
 

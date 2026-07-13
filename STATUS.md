@@ -1,28 +1,73 @@
-# Status — 2026-06-04 morning (experiment grid: COMPLETE, verdict in)
+# Status — 2026-07-13
 
-**THE NIGHT'S RESULT:** Four 10B arms + tournament (20K games). The 0-0 avoidance equilibrium is UNIVERSAL — every cross-population match ≈100% draws. Decisive finding: **BC-init beats BC-final** — selfplay PPO actively eroded the human prior (D27). Your bootstrap potentials (profile D) were the only thing that ever made selfplay score (tds 0→0.06), but cold-anneal decayed it (D26). NEXT (in order): BC-regularized PPO (KL-anchor to human policy during RL — the AlphaStar fix), gradual anneal, asymmetric offense-vs-frozen-defense curriculum. All checkpoints + 24K-pair human corpus banked; box idle at $0.64/hr; total spend ~$18.
+## Current verdict
 
---- (previous status below) ---
+The BB2025 rules/reward/replay audit is complete in the working tree. No reward
+configuration has been promoted to production and no production default was
+changed.
 
+The repaired paired R0–R3 reward screen completed all eight arms at exact
+`249,954,304` native steps with two seeds, at least 10,001 final-policy eval
+games per arm, frozen provenance, and zero clip/non-finite/error/demo/fallback
+telemetry. Distance shaping supplied nearly all present scoring learnability
+(`+0.76365 TD/game`, `+0.11130` match score), but also increased block volume
+and 2D-red rate. Raw distance delta is a temporary scaffold, not exact PBRS at
+`gamma=0.995`.
 
-**TL;DR:** Legacy 10B baseline trained (buggy engine, archived for reference). A 112-agent adversarial review found **31 confirmed issues (4 HIGH engine bugs)** — all fixed, tested, merged (277 tests, ASan clean). The box is now running **profile A (pure outcome)** then **profile B (event-shaped)** on the fixed engine, 10B steps each, unattended. Spectator shows real FUMBBL art with checkpoint progress.
+The R0-versus-R2 held-out scripted transfer completed 16 cells and 16,076 full
+games. Removing possession+gain (R2) made match score worse in all eight paired
+seed/style/side cells and increased losses plus opponent TDs in all eight. R0
+therefore survives as the next experimental baseline, not a production recipe.
 
-## Tonight's deliverables
-- **All 31 review findings fixed** — headline HIGHs: crowd-push stripped unrelated carriers' ball; Animal Savagery knockdown deferred (LIFO bug let "downed" mates keep assisting); TTM threw player slot 0 (grid corruption); Distracted never cleared for gaze victims. Plus Frenzy's second block existed only as dead wiring — now implemented.
-- **Reward design doctrine** (with Alex, `docs/reward-audit-decision-time.md`): decision-time pricing everywhere; exposure-only boundary (own gambles → critic); profiles A/B/C; desperation handled by payoff spread + last-turn exemption; all knobs default 0.
-- **Obs v2**: TZ-marking byte + pending-test-target byte (re-roll quality decisions!), team ids REMOVED (forces roster-reading → honest generalization tests).
-- **Experiment toolkit**: `tools/train_profile.sh A|B`, holdout/forced-matchup procgen kwargs, `docs/homebrew-team-authoring.md` (Alex designs team id 30).
-- **Spectator v2**: real FUMBBL pitch/sprites (159/159 positions mapped), training progress bar, `tools/spectate.sh`.
+The first 500M possession/gain decomposition arm completed cleanly at runtime
+but was rejected before acceptance because a partially deployed per-arm
+launcher hashed an older five-patch Puffer bundle while the frozen screen
+required seven patches. D181 records the failure. No metric from that arm is a
+reward verdict. The launcher now enforces the frozen bundle before training;
+the screen will restart under a fresh immutable identity after deployment.
 
-## EXPERIMENT VERDICT (both profiles complete, 10B each, fixed engine)
-**Both arms converged to the mutual ball-avoidance draw equilibrium** (tds=0.000, perf=0.500 in A AND B; B's knobs shortened episodes 905→605 but did not break the basin). Decisive negative result: selfplay-from-scratch at 10B/γ=0.995 doesn't discover football regardless of event shaping → **BC warm-start from human replays is the main line** (Bot Bowl literature reproduced). The lockstep differential doubles as the BC extractor (every locked op = an (obs, human-action) pair).
+## Next experiment
 
-## Performance (measured, shipped)
-Env: 176K → 546K steps/sec/core today (setup discipline + perf prototypes, bit-identical, 280 tests). Vec config 8/1 → 20/2 (est. 1.5-2.7× more). Full plan: docs/sps-optimization-plan.md. Box ceiling est. 3-5M SPS.
+With distance fixed on, decompose the bundled family:
 
-## Queued
-- #22 Alex's Windows 2070 box via WSL2 tonight (baseload; build `--float`)
-- Phase 4 FUMBBL differential + BC corpus (the big lever)
-- Backlog: wizards/stars (#23), team-composition meta (#24), profile C (gated on B>A)
+1. possession annuity + ball gain;
+2. possession annuity only;
+3. ball gain only;
+4. neither.
 
-## Spend: ~$8 total of $50.
+Run `500M × 2 seeds` under the immutable screen contract. Then compare R0 with
+the simplest transfer-noninferior survivor using learned opponents, both sides,
+roster-grid macro evaluation, longer training, and a second ancestry. Only that
+confirmation path can authorize a default change.
+
+## Replay and BC state
+
+- Raw manifest: 15,347 replays = 11,580 BB2025 + 3,767 BB2020 by embedded
+  `rulesVersion`.
+- Strict non-empty BB2025 allowlist: 9,118 replays / 1,622,231 joined records.
+- The corpus is severely opening-censored and almost lacks rare action targets;
+  it cannot be the sole source for second halves, late drives, stalling, or
+  comeback policy.
+- `training/bc_pretrain.py` now uses exact allowlists, replay-disjoint splits,
+  bounded memory-mapped streaming, owning minibatches, and batchwise eval.
+- Replay-first is the current default. Next sampling work must stratify
+  roster/matchup, turn/drive depth, and action family while capping setup mass.
+
+## Canonical evidence
+
+- Full report: `docs/reward-and-replay-audit-2026-07-09.md`
+- Screen proof: `runs/reward-screens/reward-screen-20260709-v1/SCREEN_COMPLETE.json`
+- Transfer analysis: `runs/reward-transfer-20260713-v1/ANALYSIS.json`
+- Replay audit and strict allowlist: `runs/replay-audit-20260713/`
+- Durable decisions: D177–D180 in `DECISIONS.md`
+
+## Verification and deployment state
+
+The corrected engine passed 419 normal tests and the same 419 under
+sanitizers. This ship cycle also passed 55 tool/analyzer tests, 24
+replay/streaming/league tests, 6 BC-context tests, 4 checkpoint-conversion
+tests, and the BC regression harness. Core reward/BBTV corrections are merged;
+BBTV is deployed and streams the newest complete manifested checkpoint against
+its hash-pinned warm baseline. No production reward was promoted. Training
+continues only from the isolated RTX 2070 audit checkout; the production viewer
+checkout and isolated float viewer build remain separate.
