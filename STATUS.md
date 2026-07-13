@@ -64,7 +64,7 @@ confirmation path can authorize a default change.
 ## Verification and deployment state
 
 The corrected engine passed 419 normal tests and the same 419 under
-sanitizers. This ship cycle also passed 55 tool/analyzer tests, 24
+sanitizers. This ship cycle also passed 56 tool/analyzer tests, 24
 replay/streaming/league tests, 6 BC-context tests, 4 checkpoint-conversion
 tests, and the BC regression harness. Core reward/BBTV corrections are merged;
 BBTV is deployed and streams the newest complete manifested checkpoint against

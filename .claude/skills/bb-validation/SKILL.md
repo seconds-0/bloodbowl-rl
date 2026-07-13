@@ -11,9 +11,10 @@ injection: seeded PCG-64 or a recorded dice script. That design makes statistica
 golden, and replay-differential checks possible.
 
 **Current status (2026-07-13):** `make test` runs 392 engine + 25 reward + 2
-scripted-bot tests; `make asan` passes the same 419. The audit also passed 53
-tool/analyzer tests, 23 replay/converter/league tests, 6 BC-context tests, and a
-BC regression harness. This does not mean all seven originally planned layers are
+scripted-bot tests; `make asan` passes the same 419. The current ship cycle also
+passed 56 tool/analyzer tests, 24 replay/streaming/league tests, 4 checkpoint
+conversion tests, 6 BC-context tests, and a BC regression harness. This does
+not mean all seven originally planned layers are
 complete. `[BUILT]` is runnable now, `[PARTIAL]` has useful coverage with known
 gaps, `[ORACLE]` is external reference code, and `[PLANNED]` is not implemented.
 
