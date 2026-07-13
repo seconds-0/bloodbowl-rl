@@ -10,6 +10,7 @@ it on the site. Wire contract: `docs/stream-protocol.md` (unchanged, v1).*
 | Piece | Path (bloodbowl-rl repo) | Status |
 |-------|--------------------------|--------|
 | Game server | `stream_backend/server.py` (+ `game.py`, `decoder.py`) | ✅ verified: full game = 816 valid messages, live WS client tested |
+| Training follower | `stream_backend/follow_latest.py` + `run_follow_latest.sh` | ✅ newest complete manifested checkpoint vs frozen warm start; see `docs/bbtv-latest-checkpoint.md` |
 | Recorded real fixture | `stream_backend/fixture_match.jsonl` | ✅ a complete flagship-vs-teacher game (2 TDs, block odds cards) |
 | Frontend page | `stream/web/` (index.html, app.js, style.css) | built against the same protocol |
 | Mock WS player | `stream/mock/play.js` | replays any fixture JSONL at ws://localhost:8787/ws |
@@ -50,22 +51,19 @@ difference.
      nvidia-cuda-toolkit-free alternative — OR just build on the 2070 and use
      option (b) below until the Docker image is sorted. The Dockerfile is the
      one genuinely remaining piece of work.
-   - **2070 rig (works TODAY, $0):** the server is already running there.
-     Expose with a Cloudflare Tunnel: `cloudflared tunnel --url
-     http://localhost:8787` on the rig, then point the page's `?ws=` at the
-     tunnel hostname (wss). Uptime = the rig's uptime (it auto-recovers from
-     reboots; the babysitter keeps the trainer alive but a small systemd-style
-     wrapper for the stream server is in stream_backend/ TODO).
+   - **2070 rig (current production):** `bbstream.service` runs the
+     latest-checkpoint follower, `bbweb.service` serves the page, and
+     `bbtv-tunnel.service` exposes both through the named Cloudflare tunnel.
+     The stream launcher has low CPU/I/O priority and a static-policy fallback.
 3. **TLS note:** browsers require `wss://` from an https page — both Railway
    and CF Tunnel give you that for free; raw `ws://IP:8787` only works from
    http/localhost dev pages.
 
-## Current live dev endpoint
+## Current live endpoints
 
-On the tailnet right now: `ws://100.97.209.46:8787/ws` (the 2070). Any
-device on Alex's tailnet can open the page with
-`?ws=ws://100.97.209.46:8787/ws` and watch the flagship play. (Not reachable
-from the public internet until the CF Tunnel step.)
+- Public viewer: <https://bbtv.seconds0.com>
+- Public WebSocket: `wss://bbtv.seconds0.com/ws`
+- Tailnet WebSocket: `ws://100.97.209.46:8787/ws`
 
 ## Known v1 limitations (by design, see DECISIONS)
 
