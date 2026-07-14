@@ -700,6 +700,38 @@ class FreezeVacationQueueTests(unittest.TestCase):
                 ):
                     freezer.validate_spec(spec_path)
 
+                spec["main_learned_complete"] = None
+                write_json(spec_path, spec)
+                drifted_evidence = {
+                    **evidence,
+                    "transfer_complete_sha256": "f" * 64,
+                }
+                write_json(screen.parent / "SCREEN_MANIFEST.json", {
+                    "contract": {"candidate_evidence": drifted_evidence},
+                })
+                with self.assertRaisesRegex(
+                    freezer.FreezeError, "not bound"
+                ):
+                    freezer.validate_spec(spec_path)
+
+                write_json(screen.parent / "SCREEN_MANIFEST.json", {
+                    "contract": {"candidate_evidence": evidence},
+                })
+                spec["candidate_arm"] = "both"
+                write_json(spec_path, spec)
+                with self.assertRaisesRegex(
+                    freezer.FreezeError, "requires a simplification candidate"
+                ):
+                    freezer.validate_spec(spec_path)
+
+                spec["candidate_arm"] = "neither"
+                spec["final_steps"] = 6_000_000_000
+                write_json(spec_path, spec)
+                with self.assertRaisesRegex(
+                    freezer.FreezeError, "12B R0"
+                ):
+                    freezer.validate_spec(spec_path)
+
     def fixture(self, root: Path) -> dict:
         files = [
             "vendor/PufferLib/.venv/bin/python",
