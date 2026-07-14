@@ -525,6 +525,15 @@ revalidate both self-play screens and both transfer strata before producing the
 only artifact that unlocks the final screens. Never mark a PPO screen
 `resume_safe`; its partial optimization trajectory is not restart-equivalent.
 
+There is one reviewed no-candidate route. If and only if the exact decomposition
+analysis recommends `both` and its eligible-candidate list is empty, freeze
+`candidate_arm=both`, null `anchor_config` and `main_learned_complete`, and
+`final_steps=12B`. The freezer then emits exactly two `control-final` jobs:
+R0-only seeds 42/43/44 from the main ancestry, then the same schedule from
+`league9`. This preserves the `72B` final budget without training a rejected
+objective. If any simplification remains eligible, the fallback must fail
+closed.
+
 Vacation screen jobs must invoke `tools/run_frozen_reward_screen.py`, which sets
 `ARM_DETACH=0`. The queue creates a new session for each job, and every screen,
 arm wrapper, trainer, and descendant must remain in that process group so its

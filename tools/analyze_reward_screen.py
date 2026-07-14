@@ -135,6 +135,7 @@ POSSESSION_GAIN_EFFECT_DEFINITIONS = {
 
 PAIRED_CANDIDATES = ("possession_only", "gain_only", "neither")
 PAIRED_FINAL_SEEDS = (42, 43, 44)
+CONTROL_FINAL_SCHEDULE = (("both", 42), ("both", 43), ("both", 44))
 
 SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 
@@ -209,6 +210,18 @@ def _screen_spec(contract: dict[str, Any]) -> dict[str, Any]:
             "reward_sha256": POSSESSION_GAIN_REWARD_SHA256,
             "factors": POSSESSION_GAIN_FACTORS,
             "effect_definitions": POSSESSION_GAIN_EFFECT_DEFINITIONS,
+        }
+    if profile == "control-final":
+        return {
+            "profile": profile,
+            "candidate_arm": "both",
+            "schedule": CONTROL_FINAL_SCHEDULE,
+            "seeds": PAIRED_FINAL_SEEDS,
+            "reward_sha256": {
+                "both": POSSESSION_GAIN_REWARD_SHA256["both"],
+            },
+            "factors": {"both": {"control": True}},
+            "effect_definitions": {},
         }
     if profile in ("paired-confirmation", "paired-final"):
         candidate = contract.get("candidate_arm")
@@ -465,8 +478,10 @@ def _validate_completion(
 
 
 def _factorial_effects(
-        cells: dict[str, float], profile: str,
+    cells: dict[str, float], profile: str,
 ) -> dict[str, float]:
+    if profile == "control-final":
+        return {}
     if profile == "distance-possession":
         r0, r1, r2, r3 = (cells[arm] for arm in ("r0", "r1", "r2", "r3"))
         return {
@@ -640,9 +655,13 @@ def analyze_screen(
     return {
         "schema_version": 1,
         "analysis": (
-            "paired_reward_confirmation"
-            if spec["profile"] in ("paired-confirmation", "paired-final")
-            else "paired_reward_screen_2x2"
+            "control_reward_replication"
+            if spec["profile"] == "control-final"
+            else (
+                "paired_reward_confirmation"
+                if spec["profile"] in ("paired-confirmation", "paired-final")
+                else "paired_reward_screen_2x2"
+            )
         ),
         "screen": {
             "directory": str(directory),
@@ -703,7 +722,11 @@ def render_text(report: dict[str, Any]) -> str:
     lines.append(
         "Per-seed paired contrasts"
         if screen["profile"] in ("paired-confirmation", "paired-final")
-        else "Per-seed 2x2 effects"
+        else (
+            "Per-seed control summaries"
+            if screen["profile"] == "control-final"
+            else "Per-seed 2x2 effects"
+        )
     )
     for seed in report["per_seed"]:
         lines.append(f"  seed {seed}")

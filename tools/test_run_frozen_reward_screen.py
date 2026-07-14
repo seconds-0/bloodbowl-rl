@@ -121,6 +121,56 @@ class FrozenRewardScreenTests(unittest.TestCase):
             ):
                 frozen.validate_config(config)
 
+    def test_control_final_requires_no_candidate_or_gate_artifact(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = self.build_config(root)
+            payload = json.loads(config.read_text(encoding="utf-8"))
+            payload.update({
+                "profile": "control-final",
+                "candidate_arm": "both",
+                "steps": 12_000_000_000,
+                "candidate_transfer": None,
+                "require_gate": False,
+            })
+            write_json(config, payload)
+            result = frozen.validate_config(config)
+
+        self.assertEqual(result["profile"], "control-final")
+        self.assertEqual(result["candidate_arm"], "both")
+        self.assertIsNone(result["transfer_path"])
+
+    def test_control_final_launch_omits_candidate_environment(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = root / "config.json"
+            write_json(config, {})
+            validated = {
+                "profile": "control-final",
+                "candidate_arm": "both",
+                "require_gate": False,
+                "warm_path": root / "warm.bin",
+                "pool_path": root / "pool",
+                "steps": 12_000_000_000,
+                "prefix": "control-final",
+                "out_path": root / "runs/control-final",
+                "root_path": root,
+                "transfer_path": None,
+            }
+            completed = mock.Mock(returncode=0)
+            with (
+                mock.patch.object(frozen, "validate_config", return_value=validated),
+                mock.patch.object(frozen.subprocess, "run", return_value=completed)
+                as run,
+            ):
+                self.assertEqual(frozen.main(["--config", str(config)]), 0)
+
+        environment = run.call_args.kwargs["env"]
+        self.assertNotIn("CANDIDATE_ARM", environment)
+        self.assertNotIn("TRANSFER_COMPLETE", environment)
+        self.assertNotIn("EXPECTED_TRANSFER_SHA256", environment)
+        self.assertEqual(environment["SCREEN_PROFILE"], "control-final")
+
 
 if __name__ == "__main__":
     unittest.main()

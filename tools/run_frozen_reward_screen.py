@@ -149,10 +149,13 @@ def validate_config(path: Path) -> dict[str, Any]:
     if not root.is_dir():
         raise FrozenScreenError(f"root does not exist: {root}")
     profile = config.get("profile")
-    if profile not in ("paired-confirmation", "paired-final"):
-        raise FrozenScreenError("frozen queue supports only paired profiles")
+    if profile not in ("paired-confirmation", "paired-final", "control-final"):
+        raise FrozenScreenError("unsupported frozen reward-screen profile")
     candidate = config.get("candidate_arm")
-    if candidate not in ("possession_only", "gain_only", "neither"):
+    if profile == "control-final":
+        if candidate != "both":
+            raise FrozenScreenError("control-final candidate_arm must be both")
+    elif candidate not in ("possession_only", "gain_only", "neither"):
         raise FrozenScreenError("invalid frozen candidate_arm")
     steps = config.get("steps")
     if isinstance(steps, bool) or not isinstance(steps, int) or steps <= 0:
@@ -187,14 +190,22 @@ def validate_config(path: Path) -> dict[str, Any]:
         raise FrozenScreenError(
             f"pool tree drift: observed={observed_tree}, expected={expected_tree}"
         )
-    transfer = validate_file(
-        config.get("candidate_transfer"), "candidate transfer completion"
-    )
-    evidence = analyze_reward_candidate_transfer.validate_completion_evidence(
-        transfer,
-        expected_complete_sha=sha256(transfer),
-        expected_candidate=candidate,
-    )
+    if profile == "control-final":
+        if config.get("candidate_transfer") is not None:
+            raise FrozenScreenError(
+                "control-final candidate_transfer must be null"
+            )
+        transfer = None
+        evidence = None
+    else:
+        transfer = validate_file(
+            config.get("candidate_transfer"), "candidate transfer completion"
+        )
+        evidence = analyze_reward_candidate_transfer.validate_completion_evidence(
+            transfer,
+            expected_complete_sha=sha256(transfer),
+            expected_candidate=candidate,
+        )
     implementation = config.get("implementation")
     if not isinstance(implementation, dict) or set(implementation) != IMPLEMENTATION_KEYS:
         raise FrozenScreenError("implementation hash set is incomplete")
@@ -211,6 +222,8 @@ def validate_config(path: Path) -> dict[str, Any]:
     require_gate = config.get("require_gate")
     if not isinstance(require_gate, bool):
         raise FrozenScreenError("require_gate must be boolean")
+    if profile == "control-final" and require_gate:
+        raise FrozenScreenError("control-final cannot require a candidate gate")
     return {
         **config,
         "root_path": root,
@@ -251,14 +264,17 @@ def main(argv: list[str] | None = None) -> int:
             "POOL": str(config["pool_path"]),
             "STEPS": str(config["steps"]),
             "SCREEN_PROFILE": config["profile"],
-            "CANDIDATE_ARM": config["candidate_arm"],
-            "TRANSFER_COMPLETE": str(config["transfer_path"]),
-            "EXPECTED_TRANSFER_SHA256": sha256(config["transfer_path"]),
             "PREFIX": config["prefix"],
             "OUT_DIR": str(config["out_path"]),
             "POLL_SECONDS": "30",
             "ARM_DETACH": "0",
         }
+        if config["profile"] != "control-final":
+            environment.update({
+                "CANDIDATE_ARM": config["candidate_arm"],
+                "TRANSFER_COMPLETE": str(config["transfer_path"]),
+                "EXPECTED_TRANSFER_SHA256": sha256(config["transfer_path"]),
+            })
         result = subprocess.run(
             ["/bin/bash", str(config["root_path"] / "tools/run_reward_screen.sh")],
             cwd=config["root_path"],

@@ -226,6 +226,38 @@ class ExperimentContractTests(unittest.TestCase):
         )
         self.assertIn('TRANSFER_COMPLETE', source)
 
+    def test_control_final_is_r0_only_and_rejects_candidate_inputs(self):
+        result = run_script(
+            "tools/run_reward_screen.sh",
+            env={
+                "WARM": "missing.bin",
+                "POOL": "missing-pool",
+                "STEPS": "12000000000",
+                "SCREEN_PROFILE": "control-final",
+                "CANDIDATE_ARM": "gain_only",
+            },
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("candidate transfer inputs are only valid", result.stderr)
+        self.assertNotIn("missing warm checkpoint", result.stderr)
+
+        result = run_script(
+            "tools/run_reward_screen.sh",
+            env={
+                "WARM": "missing.bin",
+                "POOL": "missing-pool",
+                "STEPS": "12000000000",
+                "SCREEN_PROFILE": "control-final",
+            },
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("missing warm checkpoint", result.stderr)
+        source = (ROOT / "tools/run_reward_screen.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("arms=(both both both)", source)
+        self.assertIn("seeds=(42 43 44)", source)
+
     @unittest.skipUnless(VENDOR_CHECKOUT, "vendored Puffer checkout unavailable")
     def test_puffer_machine_log_uses_explicit_loop_phase_and_fresh_panels(self):
         source = PUFFERL_SOURCE.read_text(encoding="utf-8")

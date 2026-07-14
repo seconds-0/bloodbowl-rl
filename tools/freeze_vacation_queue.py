@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""Freeze the reviewed six-day reward queue from accepted predeparture evidence.
+"""Freeze the reviewed six-day reward queue from predeparture evidence.
 
 The builder does no candidate selection.  ``candidate_arm`` must already be
 confirmed by the completed main-lineage self-play, scripted, and learned-anchor
 artifacts supplied in the spec.  It creates literal configs for one second-
 ancestry confirmation, its two transfer strata, a two-lineage gate, and matched
-three-seed long final screens.  It then emits and validates the closed typed
-``QUEUE_PLAN.json`` consumed by ``experiment_queue.py``.
+three-seed long final screens.  If the scripted screen rejects every candidate,
+the same builder instead freezes two R0-only three-seed replication screens;
+it never routes a rejected reward into training.  It then emits and validates
+the closed typed ``QUEUE_PLAN.json`` consumed by ``experiment_queue.py``.
 """
 
 from __future__ import annotations
@@ -58,6 +60,14 @@ SCREEN_CRITICAL_VENDOR_FILES = {
     "pufferlib/torch_pufferl.py",
     "pufferlib/models.py",
     "pufferlib/muon.py",
+    "src/pufferlib.cu",
+    "src/bindings.cu",
+    "src/vecenv.h",
+}
+LEGACY_SCREEN_CRITICAL_VENDOR_FILES = {
+    "pufferlib/pufferl.py",
+    "pufferlib/selfplay.py",
+    "pufferlib/torch_pufferl.py",
     "src/pufferlib.cu",
     "src/bindings.cu",
     "src/vecenv.h",
@@ -148,6 +158,7 @@ def validate_main_screen(
     path: Path, candidate: str, warm: Path, pool: Path, root: Path
 ) -> dict[str, Any]:
     root = root.resolve()
+    control_mode = candidate == "both"
     completion = load_object(path, "main screen completion")
     manifest_sha = completion.get("screen_manifest_sha256")
     report = analyze_reward_screen.analyze_screen(
@@ -156,14 +167,17 @@ def validate_main_screen(
         expected_screen_sha=manifest_sha,
     )
     screen = report["screen"]
+    expected_profile = "possession-gain" if control_mode else "paired-confirmation"
+    expected_steps = 500_000_000 if control_mode else 1_000_000_000
     if (
-        screen["profile"] != "paired-confirmation"
-        or screen.get("candidate_arm") != candidate
-        or screen.get("requested_steps") != 1_000_000_000
+        screen["profile"] != expected_profile
+        or (not control_mode and screen.get("candidate_arm") != candidate)
+        or screen.get("requested_steps") != expected_steps
         or not screen["completion"].get("present")
         or screen["completion"].get("sha256") != sha256(path)
     ):
-        raise FreezeError("main screen is not the exact paired candidate evidence")
+        label = "control fallback source" if control_mode else "paired candidate"
+        raise FreezeError(f"main screen is not the exact {label} evidence")
     manifest = load_object(path.parent / "SCREEN_MANIFEST.json", "main screen manifest")
     contract = manifest.get("contract")
     if not isinstance(contract, dict):
@@ -208,20 +222,22 @@ def validate_main_screen(
     ):
         raise FreezeError("installed Puffer config differs from main screen")
     config_tree = root / "vendor/PufferLib/config"
-    try:
-        observed_config_tree_sha = run_reward_candidate_transfer.tree_sha256(
-            config_tree
-        )
-    except run_reward_candidate_transfer.RunnerError as exc:
-        raise FreezeError(f"invalid Puffer config tree: {exc}") from exc
-    if observed_config_tree_sha != implementation.get("config_tree_sha256"):
-        raise FreezeError("Puffer config tree differs from main screen")
-    default_config = config_tree / "default.ini"
-    if (
-        not default_config.is_file()
-        or sha256(default_config) != implementation.get("default_config_sha256")
-    ):
-        raise FreezeError("Puffer default config differs from main screen")
+    if not control_mode:
+        try:
+            observed_config_tree_sha = run_reward_candidate_transfer.tree_sha256(
+                config_tree
+            )
+        except run_reward_candidate_transfer.RunnerError as exc:
+            raise FreezeError(f"invalid Puffer config tree: {exc}") from exc
+        if observed_config_tree_sha != implementation.get("config_tree_sha256"):
+            raise FreezeError("Puffer config tree differs from main screen")
+        default_config = config_tree / "default.ini"
+        if (
+            not default_config.is_file()
+            or sha256(default_config)
+            != implementation.get("default_config_sha256")
+        ):
+            raise FreezeError("Puffer default config differs from main screen")
     module_value = implementation.get("compiled_module")
     if not isinstance(module_value, str):
         raise FreezeError("main screen compiled-module path is malformed")
@@ -236,9 +252,15 @@ def validate_main_screen(
     ):
         raise FreezeError("compiled module differs from main screen")
     critical = implementation.get("critical_vendor_files")
+    critical_names = set(critical) if isinstance(critical, dict) else set()
     if (
         not isinstance(critical, dict)
-        or set(critical) != SCREEN_CRITICAL_VENDOR_FILES
+        or not critical_names
+        or (
+            not control_mode
+            and critical_names != SCREEN_CRITICAL_VENDOR_FILES
+        )
+        or (control_mode and critical_names != LEGACY_SCREEN_CRITICAL_VENDOR_FILES)
     ):
         raise FreezeError("main screen critical vendor identity is incomplete")
     for relative, expected in critical.items():
@@ -279,12 +301,17 @@ def validate_spec(path: Path) -> dict[str, Any]:
     if not root.is_dir():
         raise FreezeError(f"root does not exist: {root}")
     candidate = spec.get("candidate_arm")
-    if candidate not in ("possession_only", "gain_only", "neither"):
+    control_mode = candidate == "both"
+    if candidate not in ("both", "possession_only", "gain_only", "neither"):
         raise FreezeError("candidate_arm is invalid")
     if spec.get("second_steps") != 1_000_000_000:
         raise FreezeError("second_steps must be the reviewed 1B budget")
-    if spec.get("final_steps") != 6_000_000_000:
-        raise FreezeError("final_steps must be the reviewed 6B x three-seed budget")
+    expected_final_steps = 12_000_000_000 if control_mode else 6_000_000_000
+    if spec.get("final_steps") != expected_final_steps:
+        label = "12B R0" if control_mode else "6B paired"
+        raise FreezeError(
+            f"final_steps must be the reviewed {label} x three-seed budget"
+        )
     for key in ("min_free_bytes", "min_free_inodes"):
         value = spec.get(key)
         if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
@@ -300,19 +327,29 @@ def validate_spec(path: Path) -> dict[str, Any]:
         "main_warm": absolute_file(spec["main_warm"], "main warm", root),
         "second_warm": absolute_file(spec["second_warm"], "second warm", root),
         "pool": absolute_tree(spec["pool"], "static pool", root),
-        "anchor_config": absolute_file(
-            spec["anchor_config"], "anchor config", root
-        ),
         "main_screen_complete": absolute_file(
             spec["main_screen_complete"], "main screen completion", root
         ),
         "main_scripted_complete": absolute_file(
             spec["main_scripted_complete"], "main scripted completion", root
         ),
-        "main_learned_complete": absolute_file(
-            spec["main_learned_complete"], "main learned completion", root
-        ),
     }
+    if control_mode:
+        if spec.get("anchor_config") is not None or spec.get(
+            "main_learned_complete"
+        ) is not None:
+            raise FreezeError(
+                "control fallback requires null learned-transfer inputs"
+            )
+    else:
+        paths.update({
+            "anchor_config": absolute_file(
+                spec["anchor_config"], "anchor config", root
+            ),
+            "main_learned_complete": absolute_file(
+                spec["main_learned_complete"], "main learned completion", root
+            ),
+        })
     for key in ("main_warm", "second_warm"):
         if paths[key].stat().st_size != 16_066_560:
             raise FreezeError(f"{key} has the wrong architecture size")
@@ -351,45 +388,68 @@ def validate_spec(path: Path) -> dict[str, Any]:
         raise FreezeError(
             "main scripted transfer differs from the frozen implementation contract"
         )
-    anchor_config = run_reward_learned_transfer.validate_anchor_config(
-        paths["anchor_config"]
-    )
-    if anchor_config["games_per_cell"] != 4096:
-        raise FreezeError("anchor config must use the reviewed 4096 games per cell")
-    if len(anchor_config["anchors"]) != 4:
-        raise FreezeError("vacation learned transfer requires exactly four anchors")
-    learned_report = run_reward_learned_transfer.validate_completion(
-        paths["main_learned_complete"]
-    )
-    if (
-        learned_report.get("candidate_arm") != candidate
-        or learned_report.get("source_screen_complete_sha256")
-        != sha256(paths["main_screen_complete"])
-        or not learned_report.get("eligible_for_longer_confirmation")
-    ):
-        raise FreezeError("main learned transfer did not accept the candidate")
-    learned_manifest_record = learned_report.get("learned_transfer_manifest")
-    if not isinstance(learned_manifest_record, dict):
-        raise FreezeError("main learned transfer omitted its manifest")
-    learned_manifest = load_object(
-        Path(str(learned_manifest_record.get("path", ""))),
-        "main learned transfer manifest",
-    )
-    if (
-        learned_manifest.get("games_per_cell") != 4096
-        or learned_manifest.get("anchor_config_sha256") != anchor_config["sha256"]
-    ):
-        raise FreezeError("main learned transfer uses another anchor contract")
-    expected_learned_contract = (
-        run_reward_learned_transfer.learned_contract_identity(root, anchor_config)
-    )
-    observed_learned_contract = {
-        key: learned_manifest.get(key) for key in expected_learned_contract
-    }
-    if observed_learned_contract != expected_learned_contract:
-        raise FreezeError(
-            "main learned transfer differs from the frozen implementation contract"
+    if control_mode:
+        transfer_analysis = load_object(
+            Path(scripted_evidence["analysis"]), "main scripted analysis"
         )
+        recommendation = transfer_analysis.get("recommendation")
+        if (
+            not isinstance(recommendation, dict)
+            or recommendation.get("arm") != "both"
+            or recommendation.get("eligible_candidates_in_preference_order") != []
+        ):
+            raise FreezeError(
+                "control fallback is forbidden while an eligible simplification exists"
+            )
+        anchor_config = None
+        learned_report = None
+    else:
+        anchor_config = run_reward_learned_transfer.validate_anchor_config(
+            paths["anchor_config"]
+        )
+        if anchor_config["games_per_cell"] != 4096:
+            raise FreezeError(
+                "anchor config must use the reviewed 4096 games per cell"
+            )
+        if len(anchor_config["anchors"]) != 4:
+            raise FreezeError(
+                "vacation learned transfer requires exactly four anchors"
+            )
+        learned_report = run_reward_learned_transfer.validate_completion(
+            paths["main_learned_complete"]
+        )
+        if (
+            learned_report.get("candidate_arm") != candidate
+            or learned_report.get("source_screen_complete_sha256")
+            != sha256(paths["main_screen_complete"])
+            or not learned_report.get("eligible_for_longer_confirmation")
+        ):
+            raise FreezeError("main learned transfer did not accept the candidate")
+        learned_manifest_record = learned_report.get("learned_transfer_manifest")
+        if not isinstance(learned_manifest_record, dict):
+            raise FreezeError("main learned transfer omitted its manifest")
+        learned_manifest = load_object(
+            Path(str(learned_manifest_record.get("path", ""))),
+            "main learned transfer manifest",
+        )
+        if (
+            learned_manifest.get("games_per_cell") != 4096
+            or learned_manifest.get("anchor_config_sha256")
+            != anchor_config["sha256"]
+        ):
+            raise FreezeError("main learned transfer uses another anchor contract")
+        expected_learned_contract = (
+            run_reward_learned_transfer.learned_contract_identity(
+                root, anchor_config
+            )
+        )
+        observed_learned_contract = {
+            key: learned_manifest.get(key) for key in expected_learned_contract
+        }
+        if observed_learned_contract != expected_learned_contract:
+            raise FreezeError(
+                "main learned transfer differs from the frozen implementation contract"
+            )
     queue_dir = root / "runs" / queue_id
     state_path = queue_dir / "QUEUE_STATE.json"
     if state_path.exists():
@@ -402,6 +462,7 @@ def validate_spec(path: Path) -> dict[str, Any]:
         "screen_report": screen_report,
         "learned_report": learned_report,
         "anchor_config_record": anchor_config,
+        "control_mode": control_mode,
         "spec_path": path.resolve(),
     }
 
@@ -416,7 +477,7 @@ def build_screen_config(
     out_dir: Path,
     warm: Path,
     pool: Path,
-    transfer: Path,
+    transfer: Path | None,
     require_gate: bool,
 ) -> dict[str, Any]:
     return {
@@ -429,7 +490,7 @@ def build_screen_config(
         "out_dir": str(out_dir),
         "warm": file_record(warm),
         "pool": tree_record(pool),
-        "candidate_transfer": file_record(transfer),
+        "candidate_transfer": file_record(transfer) if transfer is not None else None,
         "require_gate": require_gate,
         "implementation": {
             "launcher_sha256": sha256(root / "tools/run_reward_screen.sh"),
@@ -491,6 +552,7 @@ def freeze(spec: dict[str, Any]) -> Path:
     config_dir.mkdir(parents=True, exist_ok=True)
     logs_dir.mkdir(parents=True, exist_ok=True)
     candidate = spec["candidate_arm"]
+    control_mode = candidate == "both"
     output_root = queue_dir / "work"
     second_dir = output_root / "second-confirmation"
     second_scripted_dir = output_root / "second-scripted-transfer"
@@ -509,44 +571,72 @@ def freeze(spec: dict[str, Any]) -> Path:
         if success.exists():
             raise FreezeError(f"refusing preexisting queue success artifact: {success}")
 
-    configs = {
-        "second": build_screen_config(
-            root=root,
-            profile="paired-confirmation",
-            candidate=candidate,
-            steps=spec["second_steps"],
-            prefix=f"{spec['queue_id']}-second-confirmation",
-            out_dir=second_dir,
-            warm=spec["second_warm"],
-            pool=spec["pool"],
-            transfer=spec["main_scripted_complete"],
-            require_gate=False,
-        ),
-        "final_main": build_screen_config(
-            root=root,
-            profile="paired-final",
-            candidate=candidate,
-            steps=spec["final_steps"],
-            prefix=f"{spec['queue_id']}-final-main",
-            out_dir=final_main_dir,
-            warm=spec["main_warm"],
-            pool=spec["pool"],
-            transfer=spec["main_scripted_complete"],
-            require_gate=True,
-        ),
-        "final_second": build_screen_config(
-            root=root,
-            profile="paired-final",
-            candidate=candidate,
-            steps=spec["final_steps"],
-            prefix=f"{spec['queue_id']}-final-second",
-            out_dir=final_second_dir,
-            warm=spec["second_warm"],
-            pool=spec["pool"],
-            transfer=spec["main_scripted_complete"],
-            require_gate=True,
-        ),
-    }
+    if control_mode:
+        configs = {
+            "final_main": build_screen_config(
+                root=root,
+                profile="control-final",
+                candidate="both",
+                steps=spec["final_steps"],
+                prefix=f"{spec['queue_id']}-final-main-control",
+                out_dir=final_main_dir,
+                warm=spec["main_warm"],
+                pool=spec["pool"],
+                transfer=None,
+                require_gate=False,
+            ),
+            "final_second": build_screen_config(
+                root=root,
+                profile="control-final",
+                candidate="both",
+                steps=spec["final_steps"],
+                prefix=f"{spec['queue_id']}-final-second-control",
+                out_dir=final_second_dir,
+                warm=spec["second_warm"],
+                pool=spec["pool"],
+                transfer=None,
+                require_gate=False,
+            ),
+        }
+    else:
+        configs = {
+            "second": build_screen_config(
+                root=root,
+                profile="paired-confirmation",
+                candidate=candidate,
+                steps=spec["second_steps"],
+                prefix=f"{spec['queue_id']}-second-confirmation",
+                out_dir=second_dir,
+                warm=spec["second_warm"],
+                pool=spec["pool"],
+                transfer=spec["main_scripted_complete"],
+                require_gate=False,
+            ),
+            "final_main": build_screen_config(
+                root=root,
+                profile="paired-final",
+                candidate=candidate,
+                steps=spec["final_steps"],
+                prefix=f"{spec['queue_id']}-final-main",
+                out_dir=final_main_dir,
+                warm=spec["main_warm"],
+                pool=spec["pool"],
+                transfer=spec["main_scripted_complete"],
+                require_gate=True,
+            ),
+            "final_second": build_screen_config(
+                root=root,
+                profile="paired-final",
+                candidate=candidate,
+                steps=spec["final_steps"],
+                prefix=f"{spec['queue_id']}-final-second",
+                out_dir=final_second_dir,
+                warm=spec["second_warm"],
+                pool=spec["pool"],
+                transfer=spec["main_scripted_complete"],
+                require_gate=True,
+            ),
+        }
     config_paths = {}
     for name, payload in configs.items():
         destination = config_dir / f"{name.upper()}_SCREEN_CONFIG.json"
@@ -564,12 +654,13 @@ def freeze(spec: dict[str, Any]) -> Path:
         "seed_perf_delta_min": -0.05,
         "max_candidate_td_relative_drop": 0.20,
     }
-    if gate_config_path.exists() and load_object(
-        gate_config_path, "gate config"
-    ) != gate_config:
-        raise FreezeError("existing gate config drift")
-    if not gate_config_path.exists():
-        atomic_json(gate_config_path, gate_config)
+    if not control_mode:
+        if gate_config_path.exists() and load_object(
+            gate_config_path, "gate config"
+        ) != gate_config:
+            raise FreezeError("existing gate config drift")
+        if not gate_config_path.exists():
+            atomic_json(gate_config_path, gate_config)
 
     python = (root / "vendor/PufferLib/.venv/bin/python").resolve()
     source_paths = [
@@ -620,15 +711,19 @@ def freeze(spec: dict[str, Any]) -> Path:
     source_paths.append(module)
     source_paths.extend(sorted((root / "training").glob("puffer*.patch")))
     source_paths.extend(config_paths.values())
-    source_paths.append(gate_config_path)
+    if not control_mode:
+        source_paths.append(gate_config_path)
     source_paths.append(spec["spec_path"])
     source_paths.append(spec["main_screen_complete"])
     source_paths.append(spec["main_scripted_complete"])
-    source_paths.append(spec["main_learned_complete"])
-    source_paths.extend((spec["main_warm"], spec["second_warm"], spec["anchor_config"]))
-    source_paths.extend(
-        Path(record["path"]) for record in spec["anchor_config_record"]["anchors"]
-    )
+    source_paths.extend((spec["main_warm"], spec["second_warm"]))
+    if not control_mode:
+        source_paths.append(spec["main_learned_complete"])
+        source_paths.append(spec["anchor_config"])
+        source_paths.extend(
+            Path(record["path"])
+            for record in spec["anchor_config_record"]["anchors"]
+        )
     # The accepted result JSON points to each exact final native checkpoint.
     for entry in load_object(
         spec["main_screen_complete"], "main screen completion"
@@ -646,11 +741,14 @@ def freeze(spec: dict[str, Any]) -> Path:
     tree_sources = [
         (spec["pool"], "static replay/league pool"),
         (root / "vendor/PufferLib/config", "Puffer configuration closure"),
-        (spec["main_screen_complete"].parent, "main paired screen evidence"),
+        (spec["main_screen_complete"].parent, "main screen evidence"),
         (spec["main_scripted_complete"].parent, "main scripted transfer evidence"),
-        (spec["main_learned_complete"].parent, "main learned transfer evidence"),
         (root / "vendor/PufferLib/ocean/bloodbowl", "installed Blood Bowl source"),
     ]
+    if not control_mode:
+        tree_sources.append(
+            (spec["main_learned_complete"].parent, "main learned transfer evidence")
+        )
     for tree, role in tree_sources:
         pins_by_path.setdefault(str(tree.resolve()), pin_tree(tree.resolve(), role))
     pins = [pins_by_path[key] for key in sorted(pins_by_path)]
@@ -708,6 +806,81 @@ def freeze(spec: dict[str, Any]) -> Path:
     )
     final_main_complete = final_main_dir / "SCREEN_COMPLETE.json"
     final_second_complete = final_second_dir / "SCREEN_COMPLETE.json"
+    if control_mode:
+        jobs = [
+            job(
+                job_id="final-main-control",
+                command=[
+                    typed_pinned(python), typed_pinned(run_frozen),
+                    typed_literal("--config"),
+                    typed_pinned(config_paths["final_main"]),
+                ],
+                success=final_main_complete,
+                validator=[
+                    typed_pinned(python), typed_pinned(artifact_validator),
+                    typed_literal("--screen"),
+                    typed_pinned(config_paths["final_main"]),
+                    typed_mutable(final_main_complete),
+                ],
+                mutable=[final_main_dir],
+                maximum=72 * 3600,
+                resume_safe=False,
+                progress=final_main_dir / "SCREEN_STATUS.json",
+                stale=600,
+            ),
+            job(
+                job_id="final-second-control",
+                command=[
+                    typed_pinned(python), typed_pinned(run_frozen),
+                    typed_literal("--config"),
+                    typed_pinned(config_paths["final_second"]),
+                ],
+                success=final_second_complete,
+                validator=[
+                    typed_pinned(python), typed_pinned(artifact_validator),
+                    typed_literal("--screen"),
+                    typed_pinned(config_paths["final_second"]),
+                    typed_mutable(final_second_complete),
+                ],
+                mutable=[final_second_dir],
+                maximum=72 * 3600,
+                resume_safe=False,
+                progress=final_second_dir / "SCREEN_STATUS.json",
+                stale=600,
+            ),
+        ]
+        plan = {
+            "schema_version": SCHEMA_VERSION,
+            "queue_id": spec["queue_id"],
+            "root": str(root),
+            "min_free_bytes": spec["min_free_bytes"],
+            "min_free_inodes": spec["min_free_inodes"],
+            "poll_seconds": 30,
+            "max_gpu_temperature_c": spec["max_gpu_temperature_c"],
+            "base_env": {
+                "HOME": str(Path.home()),
+                "PATH": (
+                    "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:"
+                    "/sbin:/bin"
+                ),
+                "PYTHONUNBUFFERED": "1",
+                "TZ": "America/Los_Angeles",
+            },
+            "pinned_files": pins,
+            "jobs": jobs,
+        }
+        plan_path = queue_dir / "QUEUE_PLAN.json"
+        if plan_path.exists() and load_object(plan_path, "queue plan") != plan:
+            raise FreezeError("existing QUEUE_PLAN.json differs from recomputed plan")
+        if not plan_path.exists():
+            atomic_json(plan_path, plan)
+        validated, validated_root, digest = experiment_queue.validate_plan(plan_path)
+        if validated != plan or validated_root != root:
+            raise FreezeError("queue plan changed during validation")
+        print(f"VACATION CONTROL QUEUE FROZEN: {plan_path}")
+        print(f"queue_plan_sha256={digest}")
+        print(f"jobs={len(jobs)} candidate=both")
+        return plan_path
     jobs = [
         job(
             job_id="second-confirmation",
