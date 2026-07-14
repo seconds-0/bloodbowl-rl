@@ -292,6 +292,29 @@ NUM_THREADS="${NUM_THREADS:-${OMP_NUM_THREADS:-8}}"
 
 WARM_HASH="$(sha256sum "$WARM" | awk '{print $1}')"
 CONFIG_HASH="$(sha256sum config/bloodbowl.ini | awk '{print $1}')"
+DEFAULT_CONFIG_HASH="$(sha256sum config/default.ini | awk '{print $1}')"
+CONFIG_TREE_HASH="$("$PYBIN" - config <<'PY'
+import hashlib, pathlib, sys
+
+root = pathlib.Path(sys.argv[1])
+digest = hashlib.sha256()
+for child in sorted(root.rglob("*")):
+    if child.is_symlink() or (not child.is_dir() and not child.is_file()):
+        raise SystemExit(f"unsupported config-tree entry: {child}")
+    if child.is_dir():
+        continue
+    relative = child.relative_to(root).as_posix()
+    size = child.stat().st_size
+    file_sha = hashlib.sha256(child.read_bytes()).hexdigest()
+    digest.update(relative.encode("utf-8"))
+    digest.update(b"\0")
+    digest.update(str(size).encode("ascii"))
+    digest.update(b"\0")
+    digest.update(file_sha.encode("ascii"))
+    digest.update(b"\n")
+print(digest.hexdigest())
+PY
+)"
 SOURCE_HASH="$(cat ocean/bloodbowl/.content_hash)"
 MODULE_PATH="$("$PYBIN" -c 'from pufferlib import _C; print(_C.__file__)')"
 [ -f "$MODULE_PATH" ] || { echo "imported pufferlib module missing: $MODULE_PATH" >&2; exit 1; }
@@ -314,8 +337,9 @@ if [ -n "$EXPECTED_PUFFER_PATCH_BUNDLE_SHA256" ] && \
 fi
 VENDOR_HEAD="$(git rev-parse HEAD 2>/dev/null || printf '%s' '<not-a-git-checkout>')"
 VENDOR_SOURCE_HASH="$({
-  sha256sum pufferlib/pufferl.py pufferlib/selfplay.py \
-    pufferlib/torch_pufferl.py src/pufferlib.cu src/bindings.cu src/vecenv.h
+  sha256sum pufferlib/__init__.py pufferlib/pufferl.py \
+    pufferlib/selfplay.py pufferlib/torch_pufferl.py pufferlib/models.py \
+    pufferlib/muon.py src/pufferlib.cu src/bindings.cu src/vecenv.h
 } | sha256sum | awk '{print $1}')"
 
 echo "tag=$TAG seed=$SEED requested_steps=$STEPS final_steps=$FINAL_STEPS rollout_quantum=$ROLLOUT_QUANTUM"
@@ -372,6 +396,8 @@ META_ARGS=(
   expected_pool_hash "$EXPECTED_POOL_HASH"
   warm "$WARM" warm_sha256 "$WARM_HASH" warm_bytes "$warm_size"
   source_sha256 "$SOURCE_HASH" config_sha256 "$CONFIG_HASH"
+  config_tree_sha256 "$CONFIG_TREE_HASH"
+  default_config_sha256 "$DEFAULT_CONFIG_HASH"
   compiled_module "$MODULE_PATH" compiled_module_sha256 "$MODULE_HASH"
   launcher_sha256 "$LAUNCHER_HASH" puffer_patch_bundle_sha256 "$PATCH_HASH"
   vendor_head "$VENDOR_HEAD" vendor_source_sha256 "$VENDOR_SOURCE_HASH"

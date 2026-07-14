@@ -211,6 +211,26 @@ def sha256sum_bundle(paths, labels):
     )
     return hashlib.sha256(payload).hexdigest()
 
+def tree_sha256(path):
+    path = pathlib.Path(path)
+    if not path.is_dir():
+        raise SystemExit(f"runtime tree is missing: {path}")
+    digest = hashlib.sha256()
+    for child in sorted(path.rglob("*")):
+        if child.is_symlink() or (not child.is_dir() and not child.is_file()):
+            raise SystemExit(f"runtime tree contains unsupported entry: {child}")
+        if child.is_dir():
+            continue
+        relative = child.relative_to(path).as_posix()
+        size = child.stat().st_size
+        digest.update(relative.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(str(size).encode("ascii"))
+        digest.update(b"\0")
+        digest.update(sha(child).encode("ascii"))
+        digest.update(b"\n")
+    return digest.hexdigest()
+
 settings = {
     "total_agents": total_agents,
     "num_buffers": num_buffers,
@@ -356,9 +376,10 @@ patches = [
     root / "training/torch_pufferl_trusted_load.patch",
 ]
 vendor_sources = [
-    "pufferlib/pufferl.py", "pufferlib/selfplay.py",
-    "pufferlib/torch_pufferl.py", "src/pufferlib.cu", "src/bindings.cu",
-    "src/vecenv.h",
+    "pufferlib/__init__.py", "pufferlib/pufferl.py",
+    "pufferlib/selfplay.py", "pufferlib/torch_pufferl.py",
+    "pufferlib/models.py", "pufferlib/muon.py", "src/pufferlib.cu",
+    "src/bindings.cu", "src/vecenv.h",
 ]
 vendor_paths = [vendor / relative for relative in vendor_sources]
 patch_bundle_sha = sha256sum_bundle(patches, [str(path) for path in patches])
@@ -416,6 +437,8 @@ contract = {
             root / "tools/analyze_reward_candidate_transfer.py"),
         "source_sha256": source_hash_path.read_text().strip(),
         "config_sha256": sha(config),
+        "config_tree_sha256": tree_sha256(vendor / "config"),
+        "default_config_sha256": sha(vendor / "config/default.ini"),
         "compiled_module": str(module.resolve()),
         "compiled_module_bytes": module.stat().st_size,
         "compiled_module_sha256": sha(module),
@@ -603,6 +626,8 @@ expected_contract = {
     "pool_manifest_sha256": screen["pool"]["manifest_sha256"],
     "source_sha256": screen["implementation"]["source_sha256"],
     "config_sha256": screen["implementation"]["config_sha256"],
+    "config_tree_sha256": screen["implementation"]["config_tree_sha256"],
+    "default_config_sha256": screen["implementation"]["default_config_sha256"],
     "compiled_module_sha256": screen["implementation"]["compiled_module_sha256"],
     "launcher_sha256": screen["implementation"]["launcher_sha256"],
     "puffer_patch_bundle_sha256": screen["implementation"]["puffer_patch_bundle_sha256"],

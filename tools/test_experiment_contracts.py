@@ -330,6 +330,23 @@ class ExperimentContractTests(unittest.TestCase):
         )
         self.assertNotIn('"config": root / "puffer/config/bloodbowl.ini"', source)
 
+    def test_reward_screen_records_the_complete_training_runtime(self):
+        screen = (ROOT / "tools/run_reward_screen.sh").read_text(
+            encoding="utf-8"
+        )
+        arm = (ROOT / "tools/run_reward_ablation.sh").read_text(
+            encoding="utf-8"
+        )
+        for field in (
+            "config_tree_sha256",
+            "default_config_sha256",
+            "pufferlib/__init__.py",
+            "pufferlib/models.py",
+            "pufferlib/muon.py",
+        ):
+            self.assertIn(field, screen)
+            self.assertIn(field, arm)
+
     def test_vacation_queue_is_hash_pinned_and_fail_closed(self):
         source = (ROOT / "tools/experiment_queue.py").read_text(
             encoding="utf-8"

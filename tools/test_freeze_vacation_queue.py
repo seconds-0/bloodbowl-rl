@@ -178,6 +178,16 @@ class FreezeVacationQueueTests(unittest.TestCase):
                 with second_warm.open("wb") as handle:
                     handle.write(b"s")
                     handle.truncate(16_066_560)
+                changed_learned = dict(learned_contract)
+                changed_learned["implementation"] = {
+                    "compiled_module_sha256": "9" * 64
+                }
+                write_json(learned_manifest, changed_learned)
+                with self.assertRaisesRegex(
+                    freezer.FreezeError, "learned transfer differs"
+                ):
+                    freezer.validate_spec(spec_path)
+                write_json(learned_manifest, learned_contract)
                 anchor_record["anchors"] = anchors[:2]
                 with self.assertRaisesRegex(freezer.FreezeError, "exactly four"):
                     freezer.validate_spec(spec_path)
@@ -195,17 +205,25 @@ class FreezeVacationQueueTests(unittest.TestCase):
             pool.mkdir()
             pool_manifest = pool / "league_seeds.json"
             write_json(pool_manifest, {"seeds": []})
+            bank = pool / "league_seed_0.bin"
+            bank.write_bytes(b"bank")
             source_hash = root / "vendor/PufferLib/ocean/bloodbowl/.content_hash"
             source_hash.parent.mkdir(parents=True)
             source_hash.write_text("source-hash\n", encoding="utf-8")
             config = root / "vendor/PufferLib/config/bloodbowl.ini"
             config.parent.mkdir(parents=True)
             config.write_text("config\n", encoding="utf-8")
+            default_config = root / "vendor/PufferLib/config/default.ini"
+            default_config.write_text("default\n", encoding="utf-8")
             module = root / "vendor/PufferLib/pufferlib/_C.so"
             module.parent.mkdir(parents=True)
             module.write_bytes(b"module")
-            critical = root / "vendor/PufferLib/pufferlib/pufferl.py"
-            critical.write_text("critical\n", encoding="utf-8")
+            critical_paths = {}
+            for relative in freezer.SCREEN_CRITICAL_VENDOR_FILES:
+                path = root / "vendor/PufferLib" / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(f"critical:{relative}\n", encoding="utf-8")
+                critical_paths[relative] = path
             patch = root / "training/test.patch"
             patch.parent.mkdir()
             patch.write_text("patch\n", encoding="utf-8")
@@ -214,15 +232,25 @@ class FreezeVacationQueueTests(unittest.TestCase):
                     "warm": {"sha256": freezer.sha256(warm)},
                     "pool": {
                         "manifest_sha256": freezer.sha256(pool_manifest),
-                        "banks": [],
+                        "banks": [{
+                            "file": bank.name,
+                            "sha256": freezer.sha256(bank),
+                        }],
                     },
                     "implementation": {
                         "source_sha256": "source-hash",
                         "config_sha256": freezer.sha256(config),
+                        "config_tree_sha256": (
+                            freezer.run_reward_candidate_transfer.tree_sha256(
+                                config.parent
+                            )
+                        ),
+                        "default_config_sha256": freezer.sha256(default_config),
                         "compiled_module": str(module),
                         "compiled_module_sha256": freezer.sha256(module),
                         "critical_vendor_files": {
-                            "pufferlib/pufferl.py": freezer.sha256(critical),
+                            relative: freezer.sha256(path)
+                            for relative, path in critical_paths.items()
                         },
                         "patches": {str(patch): freezer.sha256(patch)},
                     },
@@ -277,9 +305,50 @@ class FreezeVacationQueueTests(unittest.TestCase):
                 ] = original
                 write_json(manifest_path, screen_manifest)
 
+                original_bank = bank.read_bytes()
+                bank.write_bytes(original_bank + b"drift")
+                with self.assertRaisesRegex(
+                    freezer.FreezeError, "main screen bank"
+                ):
+                    freezer.validate_main_screen(
+                        complete, "gain_only", warm, pool, root
+                    )
+                bank.write_bytes(original_bank)
+
+                alternate_config = config.parent / "alt-bloodbowl.ini"
+                alternate_config.write_text("[bloodbowl]\n", encoding="utf-8")
+                with self.assertRaisesRegex(freezer.FreezeError, "config tree"):
+                    freezer.validate_main_screen(
+                        complete, "gain_only", warm, pool, root
+                    )
+                alternate_config.unlink()
+
+                original_default_sha = screen_manifest["contract"][
+                    "implementation"
+                ]["default_config_sha256"]
+                screen_manifest["contract"]["implementation"][
+                    "default_config_sha256"
+                ] = "0" * 64
+                write_json(manifest_path, screen_manifest)
+                with self.assertRaisesRegex(freezer.FreezeError, "default config"):
+                    freezer.validate_main_screen(
+                        complete, "gain_only", warm, pool, root
+                    )
+                screen_manifest["contract"]["implementation"][
+                    "default_config_sha256"
+                ] = original_default_sha
+                write_json(manifest_path, screen_manifest)
+
                 for changed_path, pattern in (
                     (module, "compiled module"),
-                    (critical, "critical vendor source"),
+                    (
+                        critical_paths["pufferlib/models.py"],
+                        "critical vendor source",
+                    ),
+                    (
+                        critical_paths["pufferlib/muon.py"],
+                        "critical vendor source",
+                    ),
                     (patch, "Puffer patch"),
                 ):
                     original_bytes = changed_path.read_bytes()

@@ -51,6 +51,17 @@ REVIEWED_SECOND_ANCESTRY = {
     "name": "league9",
     "sha256": "359d14caa08f12362f799c4cab4f33301fc9ce2ba3dec85922abe9622670d5f5",
 }
+SCREEN_CRITICAL_VENDOR_FILES = {
+    "pufferlib/__init__.py",
+    "pufferlib/pufferl.py",
+    "pufferlib/selfplay.py",
+    "pufferlib/torch_pufferl.py",
+    "pufferlib/models.py",
+    "pufferlib/muon.py",
+    "src/pufferlib.cu",
+    "src/bindings.cu",
+    "src/vecenv.h",
+}
 
 
 class FreezeError(ValueError):
@@ -196,6 +207,21 @@ def validate_main_screen(
         or sha256(current_config) != implementation.get("config_sha256")
     ):
         raise FreezeError("installed Puffer config differs from main screen")
+    config_tree = root / "vendor/PufferLib/config"
+    try:
+        observed_config_tree_sha = run_reward_candidate_transfer.tree_sha256(
+            config_tree
+        )
+    except run_reward_candidate_transfer.RunnerError as exc:
+        raise FreezeError(f"invalid Puffer config tree: {exc}") from exc
+    if observed_config_tree_sha != implementation.get("config_tree_sha256"):
+        raise FreezeError("Puffer config tree differs from main screen")
+    default_config = config_tree / "default.ini"
+    if (
+        not default_config.is_file()
+        or sha256(default_config) != implementation.get("default_config_sha256")
+    ):
+        raise FreezeError("Puffer default config differs from main screen")
     module_value = implementation.get("compiled_module")
     if not isinstance(module_value, str):
         raise FreezeError("main screen compiled-module path is malformed")
@@ -210,7 +236,10 @@ def validate_main_screen(
     ):
         raise FreezeError("compiled module differs from main screen")
     critical = implementation.get("critical_vendor_files")
-    if not isinstance(critical, dict) or not critical:
+    if (
+        not isinstance(critical, dict)
+        or set(critical) != SCREEN_CRITICAL_VENDOR_FILES
+    ):
         raise FreezeError("main screen critical vendor identity is incomplete")
     for relative, expected in critical.items():
         current = (root / "vendor/PufferLib" / relative).resolve()
