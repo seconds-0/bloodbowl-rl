@@ -1221,3 +1221,62 @@ Next steps:
 3. Monitor all three main-ancestry seeds through exact 12B-step training and
    10,000-game final evaluations, then the three exact league9-ancestry seeds.
    Preserve every result hash and stop fail-closed on any guard breach.
+
+## 2026-07-14 13:25 PDT
+
+Status:
+
+- The primary queue remains active on `final-main-control`, R0 seed 42, with
+  zero service restarts and 40 tasks in its cgroup. At the latest machine-log
+  observation it had reached 393,609,216 agent steps (epoch 3,002) at about
+  186K steps/second.
+- The latest 88-game diagnostic window reported performance 0.545455, score
+  differential 0.147727, 1.329545 touchdowns/game, and possession 0.333179.
+  Reward-clipping episodes/excess, non-finite rewards, engine-error episodes,
+  demos, and demo fallbacks all remained zero. These short-window figures are
+  health telemetry, not reward-selection evidence.
+- The RTX 2070 was 83 C at 76% utilization, using 5,737 MiB VRAM and about
+  150 W; free storage remained 901 GiB. `bbstream`, `bbweb`, and
+  `bbtv-tunnel` were active with zero restarts.
+
+Completed since the previous handoff:
+
+- Measured throughput shows that the immutable 72B primary queue is likely to
+  finish before the user's return. Designed a separate fail-closed overflow
+  tranche for one additional unchanged R0 `control-final` screen from the
+  static pool's exact netblock ancestry: 12B x seeds 42/43/44, or 36B and
+  roughly 53 additional training hours. This is third-ancestry replication,
+  not a candidate switch or reward promotion.
+- Implemented, on an isolated worktree, a closed-schema primary-completion
+  validator, overflow freezer, idempotent delayed starter, systemd oneshot/timer
+  templates, and focused negative tests. The overflow can start only after the
+  exact reviewed primary plan is complete, both recorded success artifacts pass
+  their original validators, the primary service is inactive, every overflow
+  pin is unchanged, no overflow state exists, and the GPU has no compute PID.
+- The new contract tests and the existing queue/freezer/frozen-screen contract
+  tests passed together: 73 tests green, with two expected skips because the
+  vendored Puffer checkout is unavailable in this local worktree. Python compile,
+  shell syntax, and patch-whitespace checks are also clean.
+
+Current blockers / risks:
+
+- The overflow code has not yet passed the repository-wide suite, independent
+  simplify/bug-hunt review, hosted CI, merge, exact-archive deployment, or live
+  failure/success smokes. Its timer is therefore not installed or armed.
+- Deployment must be strictly additive: changing even one of the primary
+  plan's 65 pinned paths would invalidate the running experiment. Before and
+  after hashes will be compared before any overflow is frozen on the host.
+- The primary PPO arm remains non-resume-safe. Any interruption is terminal for
+  this queue and must never be hidden by the overflow timer.
+
+Next steps:
+
+1. Finish the clear-eyed code review and repository-wide verification, then run
+   the required simplify and bug-hunt analysis passes.
+2. Commit the overflow tranche, open a reviewed PR, obtain green hosted CI, fix
+   any findings, and merge only if all gates pass.
+3. Deploy only new runtime files from the exact merged archive, prove all 65
+   live primary pins stayed byte-identical, run negative/success starter smokes,
+   and arm the watcher only after a primary-running poll is a verified no-op.
+4. Continue primary learner, integrity, thermal, capacity, checkpoint, and BBTV
+   monitoring while the implementation proceeds.
