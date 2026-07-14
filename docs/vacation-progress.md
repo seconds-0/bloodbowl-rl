@@ -764,3 +764,63 @@ Next steps:
 3. If scripted transfer passes, run the exact 32-cell learned-anchor matrix from
    the frozen config. Only then evaluate queue freezing and execute all
    departure interruption/failure/resume smokes before persistent start.
+
+## 2026-07-14 08:50 PDT
+
+Status:
+
+- Arm 2/4 (`neither`, seed 42) is running at 854.2M of the exact
+  999,948,288-step boundary. Arm 1 remains accepted, the screen manifest remains
+  SHA-256 `5021875f9d7816d77b520d8616e5a9acbe419c0bcdca93bc78f2655e633380da`,
+  and the service remains active with zero restarts and 38 contained tasks.
+- The arm-2 train telemetry still reports zero clipping, nonfinite rewards, and
+  engine-error episodes. At the measured cadence, its training boundary is due
+  shortly after 09:02 PDT, followed by the required 10,000-game evaluation and
+  atomic acceptance check.
+- BBTV is serving the exact arm-2 699,269,120-step checkpoint against the frozen
+  turnover3 baseline. `bbstream`, `bbweb`, and `bbtv-tunnel` are active and the
+  public endpoint returned HTTP 200 with the expected page.
+
+Completed since the previous handoff:
+
+- Monitored arm 2 continuously from 234.5M through 854.2M steps without an
+  integrity event, service restart, task escape, or host-capacity regression.
+  BBTV advanced across multiple complete manifested checkpoints rather than
+  reading an in-progress file.
+- Audited the deployed freezer's exact candidate-mode spec contract. It accepts
+  no live candidate choice: the same candidate must already be accepted by the
+  completed 1B paired screen, exact scripted transfer, and four-anchor learned
+  transfer before it can emit the fixed six-job plan.
+- Preselected conservative departure guard values for the eventual literal
+  spec: at least 100 GiB free disk, at least 1,000,000 free inodes, and an 88 C
+  thermal ceiling. These are not active or frozen yet; they will be written only
+  after all main evidence paths are literal. The queue requires three
+  consecutive 30-second over-temperature polls before terminating a job.
+- Rechecked the live margins against those proposed guards: 967.9 GB free,
+  66.9M free inodes, and 10.1 GB available memory. The GPU was at 82 C, 80%
+  utilization, 5,737 MiB VRAM, and 132 W with no hardware thermal slowdown;
+  no user unit is failed.
+
+Current blockers / risks:
+
+- Arm 2 still needs its exact boundary, final cumulative evaluation, immutable
+  checkpoint/result links, and orchestrator acceptance. Arms 3 and 4 have not
+  started, so there is no paired seed comparison or screen completion yet.
+- The resource thresholds are operational planning values, not permission to
+  freeze early. `VACATION_SPEC.json` must not exist until the main screen,
+  scripted completion, and learned completion paths and hashes all exist.
+- The public viewer is healthy but may briefly restart between checkpoint
+  selections. Persistent BBTV failure, any integrity counter, process escape,
+  or source/input drift remains a departure blocker.
+
+Next steps:
+
+1. Validate arm 2's final training/evaluation/result boundary, then monitor the
+   fixed `neither43` and `both43` arms to atomic acceptance and screen
+   completion.
+2. Regenerate the complete screen analysis independently. Only if its paired
+   gate passes, run the fresh 16-cell scripted transfer and the frozen 32-cell
+   learned-anchor transfer, preserving every completion and analysis hash.
+3. Freeze the exact candidate spec/plan with the reviewed resource guards, run
+   the non-resume-safe interruption, resume-safe recovery, and downstream-stop
+   smokes, then enable/start the persistent queue and visibly verify BBTV.
