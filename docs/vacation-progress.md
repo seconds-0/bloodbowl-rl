@@ -1098,3 +1098,70 @@ Next steps:
    green CI, merge, and deploy the exact tree.
 3. Freeze the real two-job plan, run interruption/recovery/downstream-halt
    smokes, launch it under systemd, and verify GPU health plus public BBTV.
+
+## 2026-07-14 12:50 PDT
+
+Status:
+
+- The real vacation queue is live under
+  `experiment-queue@vacation-r0-baseline-20260714-v1.service`. It is running
+  `final-main-control`, arm 1/3, R0 (`both`), seed 42. The exact `league9`
+  second-ancestry job is pending.
+- Queue plan SHA-256 is
+  `4ee72e3c58f09786cdd3bbf78a772e8de2d9a93e21a8b065cf0c5976ecced270`;
+  the main screen manifest SHA-256 is
+  `0a9b8fd435aeb41fcea9ad9ea2539b87bb9d900cb11de079c4b7e14a5945063a`.
+- The trainer is using the frozen turnover3 warm SHA
+  `fdcb2f0ebfbc88a29c026d51140ab008bd5dde5995ea5b3233fd0bd210110935`
+  and the four-bank pool identity
+  `18ec7cac858b71a6657003f454f19e232fb060f08b644c1e9e2f101076a9aac0`.
+  At the first live check the RTX 2070 was 76 C, 78% utilized, using 5,707 MiB
+  of 8,192 MiB at 145 W.
+
+Completed since the previous handoff:
+
+- PR #12 passed hosted CI and merged to `main` as
+  `0eb3f4d4fc805e15ab50f293f2f2f483830e7498`; merged-main CI also passed.
+  Review found no P0/P1 issue. The schema-version and missing negative-proof
+  P2 findings were fixed before merge.
+- Deployed the exact 4,150-entry archive to the isolated audit tree. Archive
+  SHA-256 is
+  `d8360742eeda56dc7065250c36d118d78984768b0135412f974ce81e3efba95d`;
+  tree SHA is `fd3e9a2cd76d22881de7797702c98939ed2aceb6`. The prior seven
+  overwritten files and deployment record are backed up at
+  `/home/rache/deployments/pr12-audit-backup-before-0eb3f4d`; no remote-only
+  artifact was deleted and no BBTV service was restarted.
+- The deployed schema-2 freezer independently regenerated the exact
+  `mean_perf_delta` rejection and wrote pinned
+  `BASELINE_AUTHORIZATION.json`. The frozen plan contains exactly two R0-only,
+  non-resume-safe jobs, 65 pins, 100 GiB/1M-inode capacity floors, a 10-minute
+  progress limit, and an 88 C three-poll thermal guard.
+- Revalidated the prior live systemd smokes: non-resume interruption is
+  terminal, a failed job leaves its successor pending, resume-safe artifact
+  recovery completes, and all recorded child PIDs are dead. The queue runtime
+  and installed service-template hashes are unchanged from those smokes.
+- The real service started with zero restarts. All 41 queue, wrapper, trainer,
+  and worker tasks are contained in its systemd cgroup. The launch log confirms
+  `r0_full_rebaselined`, exact 12B request / 11,999,903,744 rollout-aligned
+  steps, no demos, and the audited optimizer/rollout contract.
+
+Current blockers / risks:
+
+- BBTV remains on the preceding completed paired-reference matchup until the
+  first new R0 checkpoint is atomically published. Public HTTP and the three
+  viewer services are healthy; visual rollover is still pending.
+- The first progress status currently says `launching arm`; the next monitoring
+  read must confirm advancing learner steps, fresh status, and zero integrity
+  counters rather than relying only on process/GPU activity.
+- Both PPO jobs are intentionally non-resume-safe. A service/host interruption
+  during an arm halts the queue for inspection instead of silently restarting
+  a changed trajectory.
+
+Next steps:
+
+1. Verify advancing dashboard steps, progress freshness, integrity counters,
+   thermals, capacity, cgroup containment, and zero restarts.
+2. Confirm BBTV selects the first atomically complete checkpoint from this
+   queue and that the public page/WebSocket continues rendering the matchup.
+3. Continue hourly durable entries and concise conversational monitoring;
+   intervene only on a frozen guard breach or other evidence-backed failure.
