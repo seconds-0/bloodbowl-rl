@@ -386,3 +386,49 @@ Next steps:
    plan-only launcher smoke.
 4. Start the complete 32-cell scripted transfer under a contained durable user
    service and proceed only through the predeclared evidence route.
+
+## 2026-07-14 03:02 PDT
+
+Status:
+
+- Arm 5/8 (`gain_only`, seed 43) completed and passed its acceptance contract at
+  499,908,608 exact learner steps and 10,007 final-policy games. Performance was
+  0.513990, TD/game was 1.580394, score difference was 0.046068, and checkpoint
+  SHA-256 is
+  `2a307f4b7a4d352cd02b9a68018f8f1d5bb280f376cfb71ad497703a69f6fe95`.
+  Every training and evaluation integrity counter remains zero.
+- Arm 6/8 (`possession_only`, seed 43) is running cleanly. At the transition the
+  original screen service still had zero restarts; GPU snapshot: 81 C, 79%
+  utilization, 5,737 MiB of 8,192 MiB used. All three BBTV services are active.
+- Five of eight arms are accepted. The cadence remains consistent, moving the
+  screen-completion estimate slightly earlier to approximately 05:17 PDT.
+
+Completed since the previous handoff:
+
+- BBTV advanced to seed 43 during arm 5 and presented its complete
+  249,823,232-step checkpoint against turnover3. It is therefore following the
+  newest run identity rather than remaining pinned to seed 42.
+- Draft PR #11 passed hosted CI again on journal head `ba58cf6`.
+- Rechecked systemd health: neither the user manager nor the system manager has
+  a failed unit. GPU, memory, disk, and inode headroom remain healthy.
+
+Current blockers / risks:
+
+- Arms 6-8 and the atomic eight-arm completion proof remain mandatory. The
+  seed-43 `gain_only` result is replication evidence, not a route selection.
+- The post-screen analyzer, audit deployment, and scripted transfer are ready
+  to execute but remain intentionally blocked on that completion proof.
+- BBTV's brief checkpoint-rollover reconnect behavior remains observational;
+  it has not interrupted training or stopped the follower from advancing.
+
+Next steps:
+
+1. Verify arms 6, 7, and 8 as each crosses its immutable acceptance boundary,
+   and continue the service, integrity, thermal, capacity, and BBTV checks.
+2. On atomic screen completion, run the merged analyzer read-only from the
+   staged source and preserve its exact output as the first routing evidence.
+3. Deploy and byte-verify merged commit `ce5ef244` in the now-idle audit tree,
+   run the plan-only smoke, then launch the exact 32-cell scripted transfer as a
+   durable user service.
+4. Select no training queue until the resulting evidence satisfies one of the
+   two reviewed literal route contracts.
