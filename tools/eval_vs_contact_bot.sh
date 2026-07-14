@@ -127,19 +127,17 @@ CMD=("$PUFFER_BIN" train bloodbowl --slowly --selfplay.enabled 0 \
   CMD+=(--eval-episodes "$EVAL_EPISODES")
 
 CKPT_SHA="$(sha256sum "$CKPT" | awk '{print $1}')"
-CONFIG_SHA="$(sha256sum config/bloodbowl.ini | awk '{print $1}')"
-MODULE_PATH="$("$PYBIN" -c 'from pufferlib import _C; print(_C.__file__)')"
-[ -f "$MODULE_PATH" ] || { echo "imported pufferlib module missing: $MODULE_PATH" >&2; exit 1; }
-MODULE_SHA="$(sha256sum "$MODULE_PATH" | awk '{print $1}')"
-PUFFERL_SHA="$(sha256sum pufferlib/pufferl.py | awk '{print $1}')"
-LAUNCHER_SHA="$(sha256sum "$ROOT/tools/eval_vs_contact_bot.sh" | awk '{print $1}')"
-"$PYBIN" - "$CKPT" "$CKPT_SHA" "$STEPS" "$SEED" "$CONFIG_SHA" "$MODULE_SHA" \
+"$PYBIN" - "$ROOT" "$CKPT" "$CKPT_SHA" "$STEPS" "$SEED" \
   "$BOT_TYPE" "$BOT_TEAM" "$EVAL_EPISODES" "$MIN_EVAL_GAMES" \
-  "$PUFFERL_SHA" "$LAUNCHER_SHA" "${CMD[@]}" <<'PY' > "$LOG"
+  "${CMD[@]}" <<'PY' > "$LOG"
 import json, sys
-(checkpoint, checkpoint_sha, steps, seed, config_sha, module_sha,
- bot_type, bot_team, eval_episodes, min_eval_games, pufferl_sha,
- launcher_sha, *command) = sys.argv[1:]
+from pathlib import Path
+
+(root, checkpoint, checkpoint_sha, steps, seed, bot_type, bot_team,
+ eval_episodes, min_eval_games, *command) = sys.argv[1:]
+sys.path.insert(0, str(Path(root) / "tools"))
+from run_reward_candidate_transfer import implementation_identity
+
 print("BB_EVAL_MANIFEST " + json.dumps({
     "schema_version": 1,
     "mode": "scripted_bot_frozen",
@@ -148,10 +146,7 @@ print("BB_EVAL_MANIFEST " + json.dumps({
     "checkpoint_sha256": checkpoint_sha,
     "requested_train_steps": int(steps),
     "seed": int(seed),
-    "config_sha256": config_sha,
-    "compiled_module_sha256": module_sha,
-    "pufferl_sha256": pufferl_sha,
-    "launcher_sha256": launcher_sha,
+    **implementation_identity(Path(root)),
     "bot_type": int(bot_type),
     "bot_team": int(bot_team),
     "eval_episodes": int(eval_episodes) if eval_episodes else None,

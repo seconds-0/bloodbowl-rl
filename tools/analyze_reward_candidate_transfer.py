@@ -33,6 +33,19 @@ METRICS = (
     "champion_score", "win_rate", "draw_rate", "loss_rate",
     "champion_tds", "bot_tds", "champion_blocks", "bot_blocks",
 )
+IMPLEMENTATION_KEYS = {
+    "conversion_config_sha256",
+    "config_tree_sha256",
+    "default_config_sha256",
+    "env_config_sha256",
+    "compiled_module_sha256",
+    "package_init_sha256",
+    "pufferl_sha256",
+    "models_sha256",
+    "torch_pufferl_sha256",
+    "muon_sha256",
+    "launcher_sha256",
+}
 
 
 class TransferError(ValueError):
@@ -140,20 +153,32 @@ def _validate_plan(directory: Path) -> dict[str, Any]:
     settings = plan.get("settings")
     implementation = plan.get("implementation")
     orchestration = plan.get("orchestration_files")
+    conversion = plan.get("conversion")
     checkpoints = plan.get("checkpoints")
     gates = plan.get("gates")
     if not all(isinstance(item, dict) for item in (
-            settings, implementation, orchestration, checkpoints, gates)):
+            settings, implementation, orchestration, conversion, checkpoints,
+            gates)):
         raise TransferError(
-            "settings, implementation, orchestration_files, checkpoints, and "
-            "gates must be objects")
+            "settings, implementation, orchestration_files, conversion, "
+            "checkpoints, and gates must be objects")
     for key in ("requested_train_steps", "eval_episodes", "min_eval_games"):
         _positive_int(settings.get(key), f"settings.{key}")
-    for key in (
-        "config_sha256", "compiled_module_sha256", "pufferl_sha256",
-        "launcher_sha256",
-    ):
+    if set(implementation) != IMPLEMENTATION_KEYS:
+        raise TransferError(
+            "implementation has unknown or missing identity fields")
+    for key in sorted(IMPLEMENTATION_KEYS):
         _sha(implementation.get(key), f"implementation.{key}")
+    if set(conversion) != {
+        "converter_sha256", "config_sha256", "obs_size", "bias_contract"
+    }:
+        raise TransferError("conversion has unknown or missing fields")
+    _sha(conversion.get("converter_sha256"), "conversion.converter_sha256")
+    _sha(conversion.get("config_sha256"), "conversion.config_sha256")
+    if conversion.get("obs_size") != 2782:
+        raise TransferError("conversion.obs_size must be 2782")
+    if conversion.get("bias_contract") != "native-to-torch zero-fills biases":
+        raise TransferError("conversion.bias_contract is unsupported")
     if not orchestration:
         raise TransferError("orchestration_files must not be empty")
     for path_value, expected_sha in orchestration.items():

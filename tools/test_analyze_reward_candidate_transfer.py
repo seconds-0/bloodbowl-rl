@@ -5,8 +5,10 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import analyze_reward_candidate_transfer as transfer
+import run_reward_candidate_transfer as runner
 
 
 def digest(label: str) -> str:
@@ -36,47 +38,40 @@ class RewardCandidateTransferTests(unittest.TestCase):
 
     def write_manifest(self, root: Path) -> dict:
         arms = ("both", "possession_only", "gain_only", "neither")
+        (root / "training").mkdir()
+        (root / "puffer/config").mkdir(parents=True)
+        (root / "training/convert_checkpoint.py").write_text("# converter\n")
+        (root / "puffer/config/bloodbowl.ini").write_text("[bloodbowl]\n")
         orchestration = root / "orchestration.py"
         orchestration.write_text("# frozen\n")
-        manifest = {
-            "schema_version": 1,
-            "matrix_id": "candidate-transfer-test",
-            "reference_arm": "both",
-            "candidate_arms": list(arms[1:]),
-            "preference_order": ["neither", "possession_only", "gain_only"],
-            "seeds": [42, 43],
-            "bot_types": [0, 1],
-            "bot_teams": [0, 1],
-            "settings": {
-                "requested_train_steps": 131072,
-                "eval_episodes": 1000,
-                "min_eval_games": 1000,
-            },
-            "implementation": {
-                "config_sha256": digest("config"),
-                "compiled_module_sha256": digest("module"),
-                "pufferl_sha256": digest("pufferl"),
-                "launcher_sha256": digest("launcher"),
-            },
-            "orchestration_files": {
-                str(orchestration): digest("# frozen\n"),
-            },
-            "checkpoints": {
-                arm: {
-                    str(seed): {"torch_sha256": digest(f"{arm}-{seed}")}
-                    for seed in (42, 43)
-                }
-                for arm in arms
-            },
-            "gates": {
-                "mean_score_delta_min": -0.02,
-                "cell_score_delta_min": -0.05,
-                "max_champion_td_relative_drop": 0.20,
-                "max_bot_td_relative_rise": 0.20,
-            },
+        implementation = {
+            key: digest(key) for key in transfer.IMPLEMENTATION_KEYS
         }
-        (root / "TRANSFER_MANIFEST.json").write_text(
-            json.dumps(manifest), encoding="utf-8")
+        checkpoints = {
+            arm: {
+                str(seed): {"torch_sha256": digest(f"{arm}-{seed}")}
+                for seed in (42, 43)
+            }
+            for arm in arms
+        }
+        with (
+            mock.patch.object(
+                runner, "implementation_identity", return_value=implementation
+            ),
+            mock.patch.object(
+                runner,
+                "orchestration_identity",
+                return_value={str(orchestration): digest("# frozen\n")},
+            ),
+        ):
+            manifest = runner.freeze_manifest(
+                root / "TRANSFER_MANIFEST.json",
+                root,
+                root / "screen",
+                "a" * 64,
+                checkpoints,
+                arms,
+            )
         return manifest
 
     def write_cell(
@@ -273,9 +268,14 @@ class RewardCandidateTransferTests(unittest.TestCase):
             manifest = self.build_matrix(root)
             path = root / "gain_only-s42-b0-t0.log"
             text = path.read_text().replace(
-                manifest["implementation"]["config_sha256"], digest("drift"), 1)
+                manifest["implementation"]["env_config_sha256"],
+                digest("drift"),
+                1,
+            )
             path.write_text(text)
-            with self.assertRaisesRegex(transfer.TransferError, "config_sha256"):
+            with self.assertRaisesRegex(
+                transfer.TransferError, "env_config_sha256"
+            ):
                 transfer.analyze(root)
 
     def test_missing_cell_is_rejected(self):

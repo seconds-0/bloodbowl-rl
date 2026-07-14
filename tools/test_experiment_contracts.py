@@ -76,8 +76,11 @@ class ExperimentContractTests(unittest.TestCase):
         self.assertNotIn("--train.eval-episodes", source)
         self.assertIn('"eval_episodes":', source)
         self.assertIn('"min_eval_games":', source)
-        self.assertIn('"pufferl_sha256":', source)
-        self.assertIn('"launcher_sha256":', source)
+        self.assertIn(
+            "from run_reward_candidate_transfer import implementation_identity",
+            source,
+        )
+        self.assertIn("**implementation_identity(Path(root))", source)
         self.assertIn("_puffer_eval_episodes_completed", source)
         self.assertIn("scripted eval sample too small", source)
 
@@ -211,6 +214,18 @@ class ExperimentContractTests(unittest.TestCase):
         ):
             self.assertIn(contract, source)
 
+    def test_paired_final_adds_seed_44_without_adaptive_candidate_selection(self):
+        source = (ROOT / "tools/run_reward_screen.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("paired-final", source)
+        self.assertIn('seeds=(42 42 43 43 44 44)', source)
+        self.assertIn(
+            'arms=(both "$CANDIDATE_ARM" "$CANDIDATE_ARM" both both "$CANDIDATE_ARM")',
+            source,
+        )
+        self.assertIn('TRANSFER_COMPLETE', source)
+
     @unittest.skipUnless(VENDOR_CHECKOUT, "vendored Puffer checkout unavailable")
     def test_puffer_machine_log_uses_explicit_loop_phase_and_fresh_panels(self):
         source = PUFFERL_SOURCE.read_text(encoding="utf-8")
@@ -228,6 +243,51 @@ class ExperimentContractTests(unittest.TestCase):
         self.assertIn('screen_manifest_sha256 "$SCREEN_MANIFEST_SHA256"', source)
         self.assertIn("from pufferlib import _C; print(_C.__file__)", source)
         self.assertNotIn("find pufferlib -maxdepth 1 -name '_C*.so'", source)
+        self.assertIn('DETACH="${DETACH:-1}"', source)
+        self.assertIn('PROCESS_GROUP="$(ps -o pgid=', source)
+
+    def test_vacation_screen_keeps_trainer_in_queue_process_group(self):
+        wrapper = (ROOT / "tools/run_frozen_reward_screen.py").read_text(
+            encoding="utf-8"
+        )
+        screen = (ROOT / "tools/run_reward_screen.sh").read_text(
+            encoding="utf-8"
+        )
+        arm = (ROOT / "tools/run_reward_ablation.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('"ARM_DETACH": "0"', wrapper)
+        self.assertIn('DETACH="$ARM_DETACH"', screen)
+        self.assertIn('if [ "$DETACH" = "1" ]', arm)
+        self.assertIn('else os.getpgrp()', screen)
+        self.assertNotIn(
+            'trainer process group is not the detached wrapper PID', screen
+        )
+
+    def test_non_detached_child_inherits_new_session_process_group(self):
+        probe = subprocess.run(
+            [
+                "bash", "-c",
+                (
+                    "sleep 30 & child=$!; "
+                    "outer=$(ps -o pgid= -p $$ | tr -d ' '); "
+                    "inner=$(ps -o pgid= -p $child | tr -d ' '); "
+                    "printf '%s %s %s\\n' $$ $child $outer:$inner; "
+                    "kill $child; wait $child 2>/dev/null || true"
+                ),
+            ],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+            start_new_session=True,
+        )
+        self.assertEqual(probe.returncode, 0, probe.stderr)
+        outer_pid, child_pid, groups = probe.stdout.strip().split()
+        outer_group, child_group = groups.split(":")
+        self.assertEqual(outer_group, outer_pid)
+        self.assertEqual(child_group, outer_group)
+        self.assertNotEqual(child_pid, child_group)
 
     def test_candidate_transfer_is_a_frozen_both_sides_matrix(self):
         runner = (ROOT / "tools/run_reward_candidate_transfer.py").read_text(
@@ -255,6 +315,37 @@ class ExperimentContractTests(unittest.TestCase):
         ):
             self.assertIn(gate, runner)
             self.assertIn(gate, analyzer)
+
+    def test_learned_transfer_hashes_the_configs_it_actually_loads(self):
+        source = (ROOT / "tools/run_reward_learned_transfer.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            '"default_config": root / "vendor/PufferLib/config/default.ini"',
+            source,
+        )
+        self.assertIn(
+            '"env_config": root / "vendor/PufferLib/config/bloodbowl.ini"',
+            source,
+        )
+        self.assertNotIn('"config": root / "puffer/config/bloodbowl.ini"', source)
+
+    def test_reward_screen_records_the_complete_training_runtime(self):
+        screen = (ROOT / "tools/run_reward_screen.sh").read_text(
+            encoding="utf-8"
+        )
+        arm = (ROOT / "tools/run_reward_ablation.sh").read_text(
+            encoding="utf-8"
+        )
+        for field in (
+            "config_tree_sha256",
+            "default_config_sha256",
+            "pufferlib/__init__.py",
+            "pufferlib/models.py",
+            "pufferlib/muon.py",
+        ):
+            self.assertIn(field, screen)
+            self.assertIn(field, arm)
 
     def test_vacation_queue_is_hash_pinned_and_fail_closed(self):
         source = (ROOT / "tools/experiment_queue.py").read_text(

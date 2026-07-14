@@ -157,6 +157,19 @@ newer evidence wins.
   Never change a production default from unattended evidence. Operational
   details and the departure smoke gate are in
   `docs/vacation-autonomy-2026-07.md`.
+- The concrete vacation queue is frozen by `tools/freeze_vacation_queue.py`
+  only after the main `1B x 2` paired confirmation, scripted transfer, and
+  learned-anchor transfer are complete. It runs the same confirmation from
+  `league9`, gates both lineages, then (only on pass) runs matched `6B x 3`
+  reference/candidate screens from both ancestries. `paired-final` means seeds
+  42/43/44, not a live choice of candidate. Screen jobs are not resume-safe;
+  atomic transfer/gate jobs are.
+- Queue-owned screens run with `ARM_DETACH=0`. The queue's new-session process
+  group must contain the screen, arm wrapper, Puffer trainer, and descendants;
+  never add nested `setsid`/daemonization that would evade queue guard cleanup.
+- Maintain `docs/vacation-progress.md` at least hourly during the active
+  preparation/run with current status, completed work, blockers, and next
+  steps. Treat it as an operational journal, not experiment evidence.
 
 ### Engine / rules / oracles (stable since v1)
 - PufferLib 4.0 (`vendor/PufferLib`, branch 4.0) uses `src/vecenv.h` macros — the online `env_binding.h` ABI is dead 3.0. `ocean/chess/` is the template; `ocean/convert/` is stale.

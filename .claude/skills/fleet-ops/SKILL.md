@@ -182,9 +182,27 @@ queue halt must exit normally and remain stopped for inspection. Recheck linger,
 Tailscale online/key-expiry state, enabled BBTV services, disk/inodes, journal
 size, and GPU thresholds immediately before departure.
 
+Freeze the concrete July queue with `tools/freeze_vacation_queue.py`; do not
+write a substitute plan on-box. The audit host's experiment tree can be an
+artifact-preserving source snapshot without `.git`. Deploy a merged source
+archive without deleting `runs/`, checkpoints, or vendor artifacts, verify all
+tracked archive paths by checksum, and record `.deployed-source.json`. Do not
+report that tree as an exact Git checkout merely because its tracked bytes match.
+The frozen plan marks PPO screen jobs non-resume-safe and only atomic,
+restart-validating transfer/gate jobs resume-safe. Queue-owned reward screens
+must set `ARM_DETACH=0`: the queue creates a new process group for each job, and
+an inner `setsid`, daemonizer, or supervisor would evade per-job runtime,
+thermal, progress, and capacity termination even if a later systemd service stop
+could still clean the cgroup.
+
 A persisted queue halt is terminal across restart and reboot. Do not edit its
 state to resume it. Preserve the evidence and deploy a new reviewed queue
 ID/plan/state after diagnosis if the user-authorized experiment should continue.
+
+For the active July vacation preparation/run, append an operational handoff to
+`docs/vacation-progress.md` at least hourly: timestamp, live service/job state,
+completed work, blockers, and exact next steps. This journal never substitutes
+for immutable experiment manifests, result files, or completion proofs.
 
 ## Checkpoints and transfer
 

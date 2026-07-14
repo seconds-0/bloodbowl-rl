@@ -730,13 +730,19 @@ def halt(state_path: Path, state: dict[str, Any], message: str) -> int:
 
 
 def _terminate_group(process: subprocess.Popen[Any]) -> None:
-    with contextlib.suppress(ProcessLookupError):
+    with contextlib.suppress(ProcessLookupError, PermissionError):
         os.killpg(process.pid, signal.SIGTERM)
-    try:
-        process.wait(timeout=30)
-    except subprocess.TimeoutExpired:
-        with contextlib.suppress(ProcessLookupError):
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        try:
+            os.killpg(process.pid, 0)
+        except (ProcessLookupError, PermissionError):
+            break
+        time.sleep(0.1)
+    else:
+        with contextlib.suppress(ProcessLookupError, PermissionError):
             os.killpg(process.pid, signal.SIGKILL)
+    with contextlib.suppress(subprocess.TimeoutExpired):
         process.wait(timeout=10)
 
 
@@ -1045,7 +1051,10 @@ def run_queue(plan_path: str | Path, state_path: str | Path) -> int:
                         f"queue interrupted during {job['id']}: {exc}",
                     )
                 finally:
-                    if process is not None and process.poll() is None:
+                    # Always signal the job PGID, even if its leader already
+                    # exited. A faulty wrapper must not strand same-group GPU
+                    # descendants merely by terminating before they do.
+                    if process is not None:
                         _terminate_group(process)
                     for signum, handler in previous_handlers.items():
                         signal.signal(signum, handler)

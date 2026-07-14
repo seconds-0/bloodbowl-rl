@@ -53,6 +53,8 @@ CLIP_COEF="${CLIP_COEF:-0.2}"
 VF_COEF="${VF_COEF:-1.0}"
 VF_CLIP_COEF="${VF_CLIP_COEF:-0.5}"
 MAX_GRAD_NORM="${MAX_GRAD_NORM:-1.5}"
+DETACH="${DETACH:-1}"
+QUEUE_OWNED="${QUEUE_OWNED:-0}"
 EXPECTED_POOL_HASH="${EXPECTED_POOL_HASH:-18ec7cac858b71a6657003f454f19e232fb060f08b644c1e9e2f101076a9aac0}"
 SCREEN_MANIFEST_SHA256="${SCREEN_MANIFEST_SHA256:-}"
 EXPECTED_PUFFER_PATCH_BUNDLE_SHA256="${EXPECTED_PUFFER_PATCH_BUNDLE_SHA256:-}"
@@ -65,6 +67,18 @@ for digest_name in SCREEN_MANIFEST_SHA256 \
     exit 1
   fi
 done
+case "$DETACH" in
+  0|1) ;;
+  *) echo "DETACH must be 0 or 1" >&2; exit 1 ;;
+esac
+case "$QUEUE_OWNED" in
+  0|1) ;;
+  *) echo "QUEUE_OWNED must be 0 or 1" >&2; exit 1 ;;
+esac
+if [ "$DETACH" = "0" ] && [ "$QUEUE_OWNED" != "1" ]; then
+  echo "DETACH=0 is reserved for a queue-owned process group" >&2
+  exit 1
+fi
 
 abspath() {
   case "$1" in
@@ -232,7 +246,7 @@ if [ "$POOL_HASH" != "$EXPECTED_POOL_HASH" ]; then
   exit 1
 fi
 
-if ! bash "$ROOT/tools/install_puffer_env.sh" --check; then
+if ! /bin/bash "$ROOT/tools/install_puffer_env.sh" --check; then
   echo "installed Blood Bowl snapshot is stale; install and rebuild before launch" >&2
   exit 1
 fi
@@ -278,6 +292,29 @@ NUM_THREADS="${NUM_THREADS:-${OMP_NUM_THREADS:-8}}"
 
 WARM_HASH="$(sha256sum "$WARM" | awk '{print $1}')"
 CONFIG_HASH="$(sha256sum config/bloodbowl.ini | awk '{print $1}')"
+DEFAULT_CONFIG_HASH="$(sha256sum config/default.ini | awk '{print $1}')"
+CONFIG_TREE_HASH="$("$PYBIN" - config <<'PY'
+import hashlib, pathlib, sys
+
+root = pathlib.Path(sys.argv[1])
+digest = hashlib.sha256()
+for child in sorted(root.rglob("*")):
+    if child.is_symlink() or (not child.is_dir() and not child.is_file()):
+        raise SystemExit(f"unsupported config-tree entry: {child}")
+    if child.is_dir():
+        continue
+    relative = child.relative_to(root).as_posix()
+    size = child.stat().st_size
+    file_sha = hashlib.sha256(child.read_bytes()).hexdigest()
+    digest.update(relative.encode("utf-8"))
+    digest.update(b"\0")
+    digest.update(str(size).encode("ascii"))
+    digest.update(b"\0")
+    digest.update(file_sha.encode("ascii"))
+    digest.update(b"\n")
+print(digest.hexdigest())
+PY
+)"
 SOURCE_HASH="$(cat ocean/bloodbowl/.content_hash)"
 MODULE_PATH="$("$PYBIN" -c 'from pufferlib import _C; print(_C.__file__)')"
 [ -f "$MODULE_PATH" ] || { echo "imported pufferlib module missing: $MODULE_PATH" >&2; exit 1; }
@@ -300,8 +337,9 @@ if [ -n "$EXPECTED_PUFFER_PATCH_BUNDLE_SHA256" ] && \
 fi
 VENDOR_HEAD="$(git rev-parse HEAD 2>/dev/null || printf '%s' '<not-a-git-checkout>')"
 VENDOR_SOURCE_HASH="$({
-  sha256sum pufferlib/pufferl.py pufferlib/selfplay.py \
-    pufferlib/torch_pufferl.py src/pufferlib.cu src/bindings.cu src/vecenv.h
+  sha256sum pufferlib/__init__.py pufferlib/pufferl.py \
+    pufferlib/selfplay.py pufferlib/torch_pufferl.py pufferlib/models.py \
+    pufferlib/muon.py src/pufferlib.cu src/bindings.cu src/vecenv.h
 } | sha256sum | awk '{print $1}')"
 
 echo "tag=$TAG seed=$SEED requested_steps=$STEPS final_steps=$FINAL_STEPS rollout_quantum=$ROLLOUT_QUANTUM"
@@ -358,6 +396,8 @@ META_ARGS=(
   expected_pool_hash "$EXPECTED_POOL_HASH"
   warm "$WARM" warm_sha256 "$WARM_HASH" warm_bytes "$warm_size"
   source_sha256 "$SOURCE_HASH" config_sha256 "$CONFIG_HASH"
+  config_tree_sha256 "$CONFIG_TREE_HASH"
+  default_config_sha256 "$DEFAULT_CONFIG_HASH"
   compiled_module "$MODULE_PATH" compiled_module_sha256 "$MODULE_HASH"
   launcher_sha256 "$LAUNCHER_HASH" puffer_patch_bundle_sha256 "$PATCH_HASH"
   vendor_head "$VENDOR_HEAD" vendor_source_sha256 "$VENDOR_SOURCE_HASH"
@@ -398,7 +438,7 @@ PY
 BEFORE_RUNS=$(mktemp)
 find checkpoints/bloodbowl -mindepth 1 -maxdepth 1 -type d \
   -exec basename {} \; 2>/dev/null | sort > "$BEFORE_RUNS" || true
-setsid nohup bash -c '
+WRAPPER=(/bin/bash -c '
   status=$1
   log=$2
   shift 2
@@ -410,11 +450,21 @@ setsid nohup bash -c '
     "$rc" "$$" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$tmp"
   mv "$tmp" "$status"
   exit "$rc"
-' bash "$STATUS_FILE" "$LOG" "${CMD[@]}" > /dev/null 2>&1 < /dev/null &
+' /bin/bash "$STATUS_FILE" "$LOG" "${CMD[@]}")
+if [ "$DETACH" = "1" ]; then
+  setsid nohup "${WRAPPER[@]}" > /dev/null 2>&1 < /dev/null &
+else
+  # Vacation queues supervise one process group. Keep the trainer in the
+  # queue runner's group so runtime/thermal termination cannot strand the
+  # otherwise-detached arm; systemd KillMode=control-group remains a backstop.
+  "${WRAPPER[@]}" > /dev/null 2>&1 < /dev/null &
+fi
 PID=$!
+PROCESS_GROUP="$(ps -o pgid= -p "$PID" | tr -d ' ')"
+[ -n "$PROCESS_GROUP" ] || PROCESS_GROUP=$PID
 PROCESS_TMP="${PROCESS_FILE}.tmp.$$"
 printf '{"pid":%d,"process_group":%d,"started_utc":"%s"}\n' \
-  "$PID" "$PID" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$PROCESS_TMP"
+  "$PID" "$PROCESS_GROUP" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$PROCESS_TMP"
 mv "$PROCESS_TMP" "$PROCESS_FILE"
 echo "LAUNCHED pid=$PID"
 
@@ -450,12 +500,12 @@ echo "LAUNCHED pid=$PID"
 MARKER_PID=$!
 
 terminate_group() {
-  kill -TERM -- "-$PID" 2>/dev/null || true
+  kill -TERM -- "-$PROCESS_GROUP" 2>/dev/null || true
   for _ in $(seq 1 20); do
     kill -0 "$PID" 2>/dev/null || break
     sleep 0.25
   done
-  kill -KILL -- "-$PID" 2>/dev/null || true
+  kill -KILL -- "-$PROCESS_GROUP" 2>/dev/null || true
   wait "$PID" 2>/dev/null || true
 }
 

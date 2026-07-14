@@ -88,8 +88,11 @@ For any causal comparison:
   a default. Append amendments; never rewrite old entries.
 
 Use `tools/run_reward_screen.sh`, `tools/reward_manifest.py`,
-`tools/analyze_reward_screen.py`, and `tools/analyze_reward_transfer.py` for the
-audited path. Preserve immutable manifests and completion records.
+`tools/analyze_reward_screen.py`, `tools/run_reward_candidate_transfer.py`, and
+`tools/run_reward_learned_transfer.py` for the audited path. Preserve immutable
+manifests and completion records. A long final confirmation uses the explicit
+`paired-final` profile: reference/candidate at seeds 42, 43, and 44; it still
+requires prior candidate-transfer evidence and is never an adaptive selection.
 
 For unattended multi-day work, use `tools/experiment_queue.py` and the tracked
 `experiment-queue@.service` template. Freeze a literal JSON command queue after
@@ -105,6 +108,18 @@ inputs to an earlier job's recorded success artifact. Long jobs always expose a
 progress file; completed evidence drift halts rather than rerunning training.
 Every invocation uses a pinned executable followed by a pinned runner; literals
 are restricted to numbers, lowercase SHA-256 digests, and long flags.
+Build the concrete six-job plan with `tools/freeze_vacation_queue.py` only after
+the main paired screen plus scripted and learned transfer all complete.
+`tools/vacation_reward_gate.py` must pass both ancestries before either long
+final screen can start. PPO screens are not resume-safe; atomic/restart-
+validating transfer and validation jobs may be.
+Queue-owned reward screens use the frozen wrapper's `ARM_DETACH=0` contract;
+never add nested `setsid`/daemonization that could let the trainer escape the
+queue job process group and its guards.
+During the active vacation preparation and unattended run, append a timestamped
+status/finished-work/blockers/next-steps entry to `docs/vacation-progress.md` at
+least once per hour. The journal is an operational handoff, never scientific
+evidence in place of immutable manifests and completion artifacts.
 
 ## Replay and BC contract
 

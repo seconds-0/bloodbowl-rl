@@ -33,6 +33,23 @@ BOT_TEAMS = (0, 1)
 EXPECTED_NATIVE_BYTES = 16_066_560
 
 
+def transfer_settings() -> dict[str, int]:
+    return {
+        "requested_train_steps": 131_072,
+        "eval_episodes": 1_000,
+        "min_eval_games": 1_000,
+    }
+
+
+def transfer_gates() -> dict[str, float]:
+    return {
+        "mean_score_delta_min": -0.02,
+        "cell_score_delta_min": -0.05,
+        "max_champion_td_relative_drop": 0.20,
+        "max_bot_td_relative_rise": 0.20,
+    }
+
+
 class RunnerError(ValueError):
     pass
 
@@ -46,6 +63,27 @@ def sha256(path: Path) -> str:
     with path.open("rb") as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
+    return digest.hexdigest()
+
+
+def tree_sha256(path: Path) -> str:
+    """Hash a runtime directory including names, sizes, and file contents."""
+    if not path.is_dir():
+        raise RunnerError(f"runtime tree is missing: {path}")
+    digest = hashlib.sha256()
+    for child in sorted(path.rglob("*")):
+        if child.is_symlink() or (not child.is_dir() and not child.is_file()):
+            raise RunnerError(f"runtime tree contains an unsupported entry: {child}")
+        if child.is_dir():
+            continue
+        relative = child.relative_to(path).as_posix()
+        size = child.stat().st_size
+        digest.update(relative.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(str(size).encode("ascii"))
+        digest.update(b"\0")
+        digest.update(sha256(child).encode("ascii"))
+        digest.update(b"\n")
     return digest.hexdigest()
 
 
@@ -141,6 +179,14 @@ def convert_checkpoints(
             output = out_dir / "converted" / f"{arm}-s{seed}-torch.bin"
             output.parent.mkdir(parents=True, exist_ok=True)
             metadata = output.with_suffix(output.suffix + ".json")
+            for interrupted in (
+                *output.parent.glob(output.name + ".tmp.*"),
+                *metadata.parent.glob(metadata.name + ".tmp.*"),
+            ):
+                quarantine_partial(interrupted)
+            if output.exists() != metadata.exists():
+                quarantine_partial(output)
+                quarantine_partial(metadata)
             if output.exists() or metadata.exists():
                 if not output.is_file() or not metadata.is_file():
                     raise RunnerError(f"partial conversion artifact: {output}")
@@ -200,9 +246,26 @@ def implementation_identity(root: Path) -> dict[str, str]:
     if not module.is_file():
         raise RunnerError(f"imported module is missing: {module}")
     return {
-        "config_sha256": sha256(root / "puffer/config/bloodbowl.ini"),
+        "conversion_config_sha256": sha256(
+            root / "puffer/config/bloodbowl.ini"
+        ),
+        "config_tree_sha256": tree_sha256(root / "vendor/PufferLib/config"),
+        "default_config_sha256": sha256(
+            root / "vendor/PufferLib/config/default.ini"
+        ),
+        "env_config_sha256": sha256(
+            root / "vendor/PufferLib/config/bloodbowl.ini"
+        ),
         "compiled_module_sha256": sha256(module),
+        "package_init_sha256": sha256(
+            root / "vendor/PufferLib/pufferlib/__init__.py"
+        ),
         "pufferl_sha256": sha256(root / "vendor/PufferLib/pufferlib/pufferl.py"),
+        "models_sha256": sha256(root / "vendor/PufferLib/pufferlib/models.py"),
+        "torch_pufferl_sha256": sha256(
+            root / "vendor/PufferLib/pufferlib/torch_pufferl.py"
+        ),
+        "muon_sha256": sha256(root / "vendor/PufferLib/pufferlib/muon.py"),
         "launcher_sha256": sha256(root / "tools/eval_vs_contact_bot.sh"),
     }
 
@@ -217,11 +280,32 @@ def orchestration_identity(root: Path) -> dict[str, str]:
         root / "tools/game_stats.py",
         root / "tools/contact_bot_stats.py",
         root / "training/convert_checkpoint.py",
+        root / "vendor/PufferLib/pufferlib/__init__.py",
         root / "vendor/PufferLib/pufferlib/torch_pufferl.py",
+        root / "vendor/PufferLib/pufferlib/muon.py",
         root / "vendor/PufferLib/pufferlib/models.py",
         root / "vendor/PufferLib/pufferlib/selfplay.py",
     )
     return {str(path.resolve()): sha256(path) for path in paths}
+
+
+def transfer_contract_identity(root: Path) -> dict[str, Any]:
+    """Return every non-lineage input that must match between transfers."""
+    return {
+        "seeds": list(SEEDS),
+        "bot_types": list(BOT_TYPES),
+        "bot_teams": list(BOT_TEAMS),
+        "settings": transfer_settings(),
+        "implementation": implementation_identity(root),
+        "orchestration_files": orchestration_identity(root),
+        "conversion": {
+            "converter_sha256": sha256(root / "training/convert_checkpoint.py"),
+            "config_sha256": sha256(root / "puffer/config/bloodbowl.ini"),
+            "obs_size": 2782,
+            "bias_contract": "native-to-torch zero-fills biases",
+        },
+        "gates": transfer_gates(),
+    }
 
 
 def freeze_manifest(
@@ -243,29 +327,8 @@ def freeze_manifest(
         # Remove both terms first; among one-term recipes prefer the settled-state
         # possession annuity over the outcome-priced gain event (D147/D178).
         "preference_order": preference,
-        "seeds": list(SEEDS),
-        "bot_types": list(BOT_TYPES),
-        "bot_teams": list(BOT_TEAMS),
-        "settings": {
-            "requested_train_steps": 131_072,
-            "eval_episodes": 1_000,
-            "min_eval_games": 1_000,
-        },
-        "implementation": implementation_identity(root),
-        "orchestration_files": orchestration_identity(root),
-        "conversion": {
-            "converter_sha256": sha256(root / "training/convert_checkpoint.py"),
-            "config_sha256": sha256(root / "puffer/config/bloodbowl.ini"),
-            "obs_size": 2782,
-            "bias_contract": "native-to-torch zero-fills biases",
-        },
+        **transfer_contract_identity(root),
         "checkpoints": checkpoints,
-        "gates": {
-            "mean_score_delta_min": -0.02,
-            "cell_score_delta_min": -0.05,
-            "max_champion_td_relative_drop": 0.20,
-            "max_bot_td_relative_rise": 0.20,
-        },
     }
     if path.exists():
         recorded = load_object(path, "transfer manifest")
@@ -298,6 +361,31 @@ def completed_from_status(path: Path) -> int:
         return 0
 
 
+def quarantine_partial(path: Path) -> Path | None:
+    """Preserve an interrupted eval log outside the final-cell namespace.
+
+    Cell logs become visible at their canonical names only after semantic
+    validation.  This makes a killed scripted-transfer job genuinely
+    resume-safe without treating partial stdout as evidence.
+    """
+    if not path.exists():
+        return None
+    if not path.is_file():
+        raise RunnerError(f"partial transfer artifact is not a file: {path}")
+    quarantine = path.parent / "interrupted"
+    quarantine.mkdir(parents=True, exist_ok=True)
+    digest = sha256(path)
+    destination = quarantine / f"{path.name}.{digest[:16]}.partial"
+    if destination.exists():
+        if not destination.is_file() or sha256(destination) != digest:
+            raise RunnerError(
+                f"partial quarantine collision: {destination}")
+        path.unlink()
+    else:
+        os.replace(path, destination)
+    return destination
+
+
 def run_matrix(root: Path, out_dir: Path, plan: dict[str, Any]) -> None:
     launcher = root / "tools/eval_vs_contact_bot.sh"
     status_path = out_dir / "TRANSFER_STATUS.json"
@@ -319,6 +407,8 @@ def run_matrix(root: Path, out_dir: Path, plan: dict[str, Any]) -> None:
                             arm, seed, bot_type, bot_team,
                         )
                     else:
+                        partial = out_dir / f".{log.name}.partial"
+                        quarantine_partial(partial)
                         write_status(
                             status_path, "running", completed, total,
                             f"running {arm}/seed {seed}/bot {bot_type}/team {bot_team}",
@@ -332,12 +422,22 @@ def run_matrix(root: Path, out_dir: Path, plan: dict[str, Any]) -> None:
                             "MIN_EVAL_GAMES": "1000",
                         }
                         result = subprocess.run(
-                            ["bash", str(launcher), str(checkpoint), "131072", str(log)],
+                            [
+                                "/bin/bash", str(launcher), str(checkpoint),
+                                "131072", str(partial),
+                            ],
                             cwd=root, env=env, check=False,
                         )
                         if result.returncode != 0:
+                            preserved = quarantine_partial(partial)
                             raise RunnerError(
-                                f"transfer cell exited {result.returncode}: {log}")
+                                f"transfer cell exited {result.returncode}: "
+                                f"{preserved or partial}")
+                        candidate_transfer._validate_cell(
+                            partial, {**plan, "_arms": list(arms)},
+                            arm, seed, bot_type, bot_team,
+                        )
+                        os.replace(partial, log)
                         candidate_transfer._validate_cell(
                             log, {**plan, "_arms": list(arms)},
                             arm, seed, bot_type, bot_team,
@@ -378,13 +478,51 @@ def complete_transfer(out_dir: Path) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--screen-dir", type=Path, required=True)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--screen-dir", type=Path)
+    source.add_argument(
+        "--screen-complete",
+        type=Path,
+        help=(
+            "exact predecessor SCREEN_COMPLETE.json; derive its directory and "
+            "manifest SHA so an immutable queue can declare the artifact"
+        ),
+    )
     parser.add_argument("--out-dir", type=Path, required=True)
-    parser.add_argument("--expected-screen-sha", required=True)
+    parser.add_argument("--expected-screen-sha")
     parser.add_argument("--plan-only", action="store_true")
     args = parser.parse_args(argv)
     root = Path(__file__).resolve().parents[1]
-    screen_dir = args.screen_dir.expanduser().resolve()
+    if args.screen_complete:
+        complete_path = args.screen_complete.expanduser().resolve()
+        if complete_path.name != "SCREEN_COMPLETE.json":
+            parser.error("--screen-complete must be named SCREEN_COMPLETE.json")
+        try:
+            completion = load_object(complete_path, "screen completion")
+            expected_screen_sha = completion.get("screen_manifest_sha256")
+            if (
+                not isinstance(expected_screen_sha, str)
+                or len(expected_screen_sha) != 64
+                or any(char not in "0123456789abcdef" for char in expected_screen_sha)
+            ):
+                raise RunnerError(
+                    "screen completion has no lowercase manifest SHA-256"
+                )
+            if (
+                args.expected_screen_sha is not None
+                and args.expected_screen_sha.lower() != expected_screen_sha
+            ):
+                raise RunnerError(
+                    "--expected-screen-sha differs from screen completion"
+                )
+            screen_dir = complete_path.parent
+        except (OSError, RunnerError) as exc:
+            parser.error(str(exc))
+    else:
+        if args.expected_screen_sha is None:
+            parser.error("--screen-dir requires --expected-screen-sha")
+        expected_screen_sha = args.expected_screen_sha.lower()
+        screen_dir = args.screen_dir.expanduser().resolve()
     out_dir = args.out_dir.expanduser().resolve()
     arms = FULL_ARMS
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -396,7 +534,7 @@ def main(argv: list[str] | None = None) -> int:
             except BlockingIOError as exc:
                 raise RunnerError("another transfer runner holds the lock") from exc
             checkpoints, arms = screen_checkpoints(
-                screen_dir, args.expected_screen_sha.lower())
+                screen_dir, expected_screen_sha)
             # Share the exact one-GPU lock used by reward training. Requiring a
             # completed source screen above prevents stealing the lock during a
             # brief inter-arm gap.
@@ -410,7 +548,7 @@ def main(argv: list[str] | None = None) -> int:
                 convert_checkpoints(root, out_dir, checkpoints, arms)
                 plan = freeze_manifest(
                     out_dir / "TRANSFER_MANIFEST.json", root, screen_dir,
-                    args.expected_screen_sha.lower(), checkpoints, arms,
+                    expected_screen_sha, checkpoints, arms,
                 )
                 if args.plan_only:
                     print(

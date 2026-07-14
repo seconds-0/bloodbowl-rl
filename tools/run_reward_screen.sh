@@ -26,7 +26,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 : "${WARM:?WARM is required}"
 : "${POOL:?POOL is required}"
 : "${STEPS:?STEPS is required (explicit experiment budget)}"
-: "${SCREEN_PROFILE:?SCREEN_PROFILE is required (distance-possession, possession-gain, or paired-confirmation)}"
+: "${SCREEN_PROFILE:?SCREEN_PROFILE is required (distance-possession, possession-gain, paired-confirmation, or paired-final)}"
 CANDIDATE_ARM="${CANDIDATE_ARM:-}"
 TRANSFER_COMPLETE="${TRANSFER_COMPLETE:-}"
 EXPECTED_TRANSFER_SHA256="${EXPECTED_TRANSFER_SHA256:-}"
@@ -34,6 +34,7 @@ PREFIX="${PREFIX:-reward-screen-v1}"
 OUT_DIR="${OUT_DIR:-$ROOT/runs/reward-screens/$PREFIX}"
 POLL_SECONDS="${POLL_SECONDS:-30}"
 PLAN_ONLY="${PLAN_ONLY:-0}"
+ARM_DETACH="${ARM_DETACH:-1}"
 
 # Fixed Stage-1 causal contract. Assign, rather than inherit, every optional
 # launcher input which could alter optimization, batching, or pool allocation.
@@ -75,26 +76,30 @@ case "$PLAN_ONLY" in
   0|1) ;;
   *) echo "PLAN_ONLY must be 0 or 1" >&2; exit 1 ;;
 esac
+case "$ARM_DETACH" in
+  0|1) ;;
+  *) echo "ARM_DETACH must be 0 or 1" >&2; exit 1 ;;
+esac
 case "$SCREEN_PROFILE" in
   distance-possession|possession-gain)
     [ -z "$CANDIDATE_ARM$TRANSFER_COMPLETE$EXPECTED_TRANSFER_SHA256" ] || {
-      echo "candidate transfer inputs are only valid with paired-confirmation" >&2
+      echo "candidate transfer inputs are only valid with a paired profile" >&2
       exit 1; }
     ;;
-  paired-confirmation)
+  paired-confirmation|paired-final)
     case "$CANDIDATE_ARM" in
       possession_only|gain_only|neither) ;;
-      *) echo "paired-confirmation requires CANDIDATE_ARM=possession_only, gain_only, or neither" >&2
+      *) echo "$SCREEN_PROFILE requires CANDIDATE_ARM=possession_only, gain_only, or neither" >&2
          exit 1 ;;
     esac
     [ -n "$TRANSFER_COMPLETE" ] || {
-      echo "paired-confirmation requires TRANSFER_COMPLETE" >&2; exit 1; }
+      echo "$SCREEN_PROFILE requires TRANSFER_COMPLETE" >&2; exit 1; }
     if ! [[ "$EXPECTED_TRANSFER_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
-      echo "paired-confirmation requires a lowercase 64-character EXPECTED_TRANSFER_SHA256" >&2
+      echo "$SCREEN_PROFILE requires a lowercase 64-character EXPECTED_TRANSFER_SHA256" >&2
       exit 1
     fi
     ;;
-  *) echo "SCREEN_PROFILE must be distance-possession, possession-gain, or paired-confirmation" >&2
+  *) echo "SCREEN_PROFILE must be distance-possession, possession-gain, paired-confirmation, or paired-final" >&2
      exit 1 ;;
 esac
 
@@ -126,7 +131,7 @@ fi
 
 PYBIN="$ROOT/vendor/PufferLib/.venv/bin/python"
 [ -x "$PYBIN" ] || { echo "vendored Python missing: $PYBIN" >&2; exit 1; }
-bash "$ROOT/tools/install_puffer_env.sh" --check "$ROOT/vendor/PufferLib"
+/bin/bash "$ROOT/tools/install_puffer_env.sh" --check "$ROOT/vendor/PufferLib"
 
 case "$SCREEN_PROFILE" in
   distance-possession)
@@ -141,6 +146,13 @@ case "$SCREEN_PROFILE" in
   paired-confirmation)
     arms=(both "$CANDIDATE_ARM" "$CANDIDATE_ARM" both)
     seeds=(42 42 43 43)
+    ;;
+  paired-final)
+    # Three independent learner seeds spend a fixed long-run budget more
+    # efficiently than extending only two seeds. Alternating order balances
+    # reference/candidate exposure to wall-clock drift.
+    arms=(both "$CANDIDATE_ARM" "$CANDIDATE_ARM" both both "$CANDIDATE_ARM")
+    seeds=(42 42 43 43 44 44)
     ;;
 esac
 TOTAL_ARMS=${#arms[@]}
@@ -171,7 +183,7 @@ freeze_screen_manifest() {
     "$CLIP_COEF" "$VF_COEF" "$VF_CLIP_COEF" "$MAX_GRAD_NORM" \
     "$EXPECTED_POOL_HASH" "$MIN_TRAIN_GAMES" "$MIN_EVAL_GAMES" \
     "$SCREEN_PROFILE" "$CANDIDATE_ARM" "$TRANSFER_COMPLETE" \
-    "$EXPECTED_TRANSFER_SHA256" <<'PY'
+    "$EXPECTED_TRANSFER_SHA256" "$ARM_DETACH" <<'PY'
 import datetime, hashlib, json, pathlib, subprocess, sys, sysconfig
 
 (
@@ -181,7 +193,7 @@ import datetime, hashlib, json, pathlib, subprocess, sys, sysconfig
     checkpoint_steps, replay_ratio, clip_coef, vf_coef, vf_clip_coef,
     max_grad_norm, expected_pool_hash, min_train_games, min_eval_games,
     screen_profile, candidate_arm, transfer_complete_path,
-    expected_transfer_sha,
+    expected_transfer_sha, arm_detach,
 ) = sys.argv[1:]
 root = pathlib.Path(root_path).resolve()
 vendor = root / "vendor" / "PufferLib"
@@ -198,6 +210,26 @@ def sha256sum_bundle(paths, labels):
         for path, label in zip(paths, labels)
     )
     return hashlib.sha256(payload).hexdigest()
+
+def tree_sha256(path):
+    path = pathlib.Path(path)
+    if not path.is_dir():
+        raise SystemExit(f"runtime tree is missing: {path}")
+    digest = hashlib.sha256()
+    for child in sorted(path.rglob("*")):
+        if child.is_symlink() or (not child.is_dir() and not child.is_file()):
+            raise SystemExit(f"runtime tree contains unsupported entry: {child}")
+        if child.is_dir():
+            continue
+        relative = child.relative_to(path).as_posix()
+        size = child.stat().st_size
+        digest.update(relative.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(str(size).encode("ascii"))
+        digest.update(b"\0")
+        digest.update(sha(child).encode("ascii"))
+        digest.update(b"\n")
+    return digest.hexdigest()
 
 settings = {
     "total_agents": total_agents,
@@ -225,6 +257,7 @@ settings = {
     "policy_hidden_size": "512",
     "policy_num_layers": "3",
     "policy_expansion_factor": "1",
+    "arm_detach": arm_detach,
 }
 
 expect_size = int(expect_bytes)
@@ -288,10 +321,10 @@ elif screen_profile == "possession-gain":
         "gain_only", "possession_only", "neither", "both",
     )
     schedule_seeds = (42, 42, 42, 42, 43, 43, 43, 43)
-elif screen_profile == "paired-confirmation":
+elif screen_profile in ("paired-confirmation", "paired-final"):
     allowed = {"possession_only", "gain_only", "neither"}
     if candidate_arm not in allowed:
-        raise SystemExit("invalid paired-confirmation candidate")
+        raise SystemExit(f"invalid {screen_profile} candidate")
     all_reward_files = {
         "both": root / "puffer/config/rewards/r0_full.json",
         "possession_only": root / "puffer/config/rewards/p1_possession_only.json",
@@ -301,8 +334,15 @@ elif screen_profile == "paired-confirmation":
     reward_files = {
         arm: all_reward_files[arm] for arm in ("both", candidate_arm)
     }
-    arm_order = ("both", candidate_arm, candidate_arm, "both")
-    schedule_seeds = (42, 42, 43, 43)
+    if screen_profile == "paired-confirmation":
+        arm_order = ("both", candidate_arm, candidate_arm, "both")
+        schedule_seeds = (42, 42, 43, 43)
+    else:
+        arm_order = (
+            "both", candidate_arm, candidate_arm,
+            "both", "both", candidate_arm,
+        )
+        schedule_seeds = (42, 42, 43, 43, 44, 44)
 else:
     raise SystemExit(f"unsupported screen profile: {screen_profile}")
 if screen_profile == "distance-possession":
@@ -336,9 +376,10 @@ patches = [
     root / "training/torch_pufferl_trusted_load.patch",
 ]
 vendor_sources = [
-    "pufferlib/pufferl.py", "pufferlib/selfplay.py",
-    "pufferlib/torch_pufferl.py", "src/pufferlib.cu", "src/bindings.cu",
-    "src/vecenv.h",
+    "pufferlib/__init__.py", "pufferlib/pufferl.py",
+    "pufferlib/selfplay.py", "pufferlib/torch_pufferl.py",
+    "pufferlib/models.py", "pufferlib/muon.py", "src/pufferlib.cu",
+    "src/bindings.cu", "src/vecenv.h",
 ]
 vendor_paths = [vendor / relative for relative in vendor_sources]
 patch_bundle_sha = sha256sum_bundle(patches, [str(path) for path in patches])
@@ -396,6 +437,8 @@ contract = {
             root / "tools/analyze_reward_candidate_transfer.py"),
         "source_sha256": source_hash_path.read_text().strip(),
         "config_sha256": sha(config),
+        "config_tree_sha256": tree_sha256(vendor / "config"),
+        "default_config_sha256": sha(vendor / "config/default.ini"),
         "compiled_module": str(module.resolve()),
         "compiled_module_bytes": module.stat().st_size,
         "compiled_module_sha256": sha(module),
@@ -413,7 +456,7 @@ contract = {
         "historical_game_share": str(historical_share),
     },
 }
-if screen_profile == "paired-confirmation":
+if screen_profile in ("paired-confirmation", "paired-final"):
     contract["candidate_arm"] = candidate_arm
     transfer_complete = pathlib.Path(transfer_complete_path).resolve()
     # The shared validator binds recommended_confirmation_arm, analysis
@@ -526,7 +569,7 @@ materialize_result() {
     "$manifest_path" "$WARM" "$POOL" "$STEPS" "$log" "$result" \
     "$SCREEN_MANIFEST" "$SCREEN_MANIFEST_SHA" "$MIN_TRAIN_GAMES" \
     "$MIN_EVAL_GAMES" <<'PY'
-import hashlib, json, math, pathlib, sys
+import hashlib, json, math, os, pathlib, sys
 (
     root, mode, arm, seed, tag, reward_manifest_path, warm_path, pool_path,
     requested_steps, log_path, result_path, screen_manifest_path,
@@ -583,6 +626,8 @@ expected_contract = {
     "pool_manifest_sha256": screen["pool"]["manifest_sha256"],
     "source_sha256": screen["implementation"]["source_sha256"],
     "config_sha256": screen["implementation"]["config_sha256"],
+    "config_tree_sha256": screen["implementation"]["config_tree_sha256"],
+    "default_config_sha256": screen["implementation"]["default_config_sha256"],
     "compiled_module_sha256": screen["implementation"]["compiled_module_sha256"],
     "launcher_sha256": screen["implementation"]["launcher_sha256"],
     "puffer_patch_bundle_sha256": screen["implementation"]["puffer_patch_bundle_sha256"],
@@ -639,8 +684,17 @@ if int(status["exit_code"]) != 0:
     raise SystemExit(f"trainer status is {status['exit_code']}")
 if int(status["pid"]) != int(process["pid"]):
     raise SystemExit("trainer status PID differs from process sidecar")
-if int(process["process_group"]) != int(process["pid"]):
-    raise SystemExit("trainer process group is not the detached wrapper PID")
+detach = screen["settings"].get("arm_detach")
+if detach not in ("0", "1"):
+    raise SystemExit(f"screen has invalid arm_detach setting: {detach!r}")
+expected_process_group = (
+    int(process["pid"]) if detach == "1" else os.getpgrp()
+)
+if int(process["process_group"]) != expected_process_group:
+    raise SystemExit(
+        "trainer process group differs from the frozen containment contract: "
+        f"{process['process_group']} != {expected_process_group}"
+    )
 
 final_steps = int(run_manifest["final_steps"])
 if final_steps != int(screen["final_steps"]):
@@ -850,7 +904,9 @@ PY
         REPLAY_RATIO="$REPLAY_RATIO" CLIP_COEF="$CLIP_COEF" \
         VF_COEF="$VF_COEF" VF_CLIP_COEF="$VF_CLIP_COEF" \
         MAX_GRAD_NORM="$MAX_GRAD_NORM" EXPECTED_POOL_HASH="$EXPECTED_POOL_HASH" \
-        bash "$ROOT/tools/run_reward_ablation.sh"
+        DETACH="$ARM_DETACH" \
+        QUEUE_OWNED="$([ "$ARM_DETACH" = "0" ] && printf 1 || printf 0)" \
+        /bin/bash "$ROOT/tools/run_reward_ablation.sh"
     wait_for_status "$tag" "$log"
   fi
 
