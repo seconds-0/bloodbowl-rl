@@ -186,6 +186,48 @@ class ExperimentContractTests(unittest.TestCase):
         self.assertIn("from pufferlib import _C; print(_C.__file__)", source)
         self.assertNotIn("find pufferlib -maxdepth 1 -name '_C*.so'", source)
 
+    def test_candidate_transfer_is_a_frozen_both_sides_matrix(self):
+        runner = (ROOT / "tools/run_reward_candidate_transfer.py").read_text(
+            encoding="utf-8"
+        )
+        analyzer = (
+            ROOT / "tools/analyze_reward_candidate_transfer.py"
+        ).read_text(encoding="utf-8")
+        for contract in (
+            "TRANSFER_MANIFEST.json",
+            "TRANSFER_COMPLETE.json",
+            "EXPECTED_NATIVE_BYTES",
+            "BOT_TYPES = (0, 1)",
+            "BOT_TEAMS = (0, 1)",
+            "expected_screen_sha",
+            "screen_checkpoints",
+            "conversion_metadata_sha256",
+        ):
+            self.assertIn(contract, runner)
+        for gate in (
+            "mean_score_delta_min",
+            "cell_score_delta_min",
+            "max_champion_td_relative_drop",
+            "max_bot_td_relative_rise",
+        ):
+            self.assertIn(gate, runner)
+            self.assertIn(gate, analyzer)
+
+    def test_vacation_queue_is_hash_pinned_and_fail_closed(self):
+        source = (ROOT / "tools/experiment_queue.py").read_text(
+            encoding="utf-8"
+        )
+        for contract in (
+            "plan_sha256",
+            "resume_safe",
+            "max_runtime_seconds",
+            "max_gpu_temperature_c",
+            "min_free_bytes",
+            "success validation failed",
+            "later jobs were not run",
+        ):
+            self.assertIn(contract, source)
+
 
 if __name__ == "__main__":
     unittest.main()

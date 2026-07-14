@@ -470,6 +470,23 @@ Work the queue top-down. Do not reorder without writing a ledger entry justifyin
   the corrected module only in an isolated experiment checkout for the next
   manifested run, then require the full promotion gates before any default.
 
+### Unattended multi-day execution
+
+Do not encode the priority list as an adaptive agent that chooses its next arm
+from live metrics. Before an unattended window, resolve every branch that can be
+resolved, then freeze literal commands and expected artifacts in a schema-1
+`tools/experiment_queue.py` plan. Every job needs a maximum runtime and success
+validator; long jobs need a progress artifact. The queue root must be the
+isolated audit checkout, and the service must use `KillMode=control-group`.
+
+`resume_safe` means the job's own runner validates a frozen manifest and every
+partial/completed artifact before continuing. It does not mean “probably okay
+to rerun.” A plan drift, failed gate, missing/stale progress file, disk limit,
+sustained thermal limit, or invalid success artifact halts the queue and leaves
+later work pending. An unattended queue may produce evidence but may never
+promote a reward or production default. Use
+`docs/vacation-autonomy-2026-07.md` as the operational checklist.
+
 ---
 
 ## 12. Session checklist

@@ -136,6 +136,13 @@ newer evidence wins.
   checkpoint against that run's frozen warm start. Use the isolated float viewer
   and reversible service override in `docs/bbtv-latest-checkpoint.md`; never
   rebuild the trainer's Puffer tree or read a checkpoint still being written.
+- Unattended vacation runs use a literal hash-pinned queue, not an adaptive
+  experiment-generating agent. `tools/experiment_queue.py` must halt on plan
+  drift, failed validation, stale/absent progress, runtime, disk, or sustained
+  thermal limits; only explicitly restart-validating jobs are `resume_safe`.
+  Never change a production default from unattended evidence. Operational
+  details and the departure smoke gate are in
+  `docs/vacation-autonomy-2026-07.md`.
 
 ### Engine / rules / oracles (stable since v1)
 - PufferLib 4.0 (`vendor/PufferLib`, branch 4.0) uses `src/vecenv.h` macros — the online `env_binding.h` ABI is dead 3.0. `ocean/chess/` is the template; `ocean/convert/` is stale.

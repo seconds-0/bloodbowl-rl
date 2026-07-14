@@ -167,6 +167,16 @@ For a long-running user-directed goal, send a concise progress update about ever
 30 minutes, including active arm, steps/games, integrity state, disk, ETA, and any
 decision needed. Monitoring does not authorize modifying production.
 
+For a multi-day unattended queue, use the tracked
+`training/systemd/experiment-queue@.service` in the lingering user manager.
+Freeze the plan before service start and retain its SHA in atomic queue state.
+Require disk, job-runtime, progress, sustained-temperature, and output-validator
+guards. Test both interruption recovery and fail-closed suppression of later
+jobs before handoff. `Restart=on-failure` recovers a runner crash; a deliberate
+queue halt must exit normally and remain stopped for inspection. Recheck linger,
+Tailscale online/key-expiry state, enabled BBTV services, disk/inodes, journal
+size, and GPU thresholds immediately before departure.
+
 ## Checkpoints and transfer
 
 Select checkpoints by embedded step plus manifest/hash, not newest mtime. Verify

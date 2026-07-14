@@ -81,6 +81,15 @@ Use `tools/run_reward_screen.sh`, `tools/reward_manifest.py`,
 `tools/analyze_reward_screen.py`, and `tools/analyze_reward_transfer.py` for the
 audited path. Preserve immutable manifests and completion records.
 
+For unattended multi-day work, use `tools/experiment_queue.py` and the tracked
+`experiment-queue@.service` template. Freeze a literal JSON command queue after
+the preceding evidence chooses its inputs; do not let a running process invent
+branches or promote a reward. Require plan hashes, bounded runtimes, disk,
+progress, thermal, artifact, and validator gates. Mark a job `resume_safe` only
+when its own immutable runner validates partial/completed artifacts. A halted
+job must leave every later job pending. See
+`docs/vacation-autonomy-2026-07.md` for the first deployed contract.
+
 ## Replay and BC contract
 
 - Filter by the embedded replay `rulesVersion`; filenames, directory names, and

@@ -17,10 +17,12 @@ jobs:
       - name: Reward, replay, and analyzer contracts
         run: |
           PYTHONPATH=tools python3 -m unittest \
+            tools.test_analyze_reward_candidate_transfer \
             tools.test_analyze_reward_screen \
             tools.test_analyze_reward_transfer \
             tools.test_bbp_behavior_audit \
             tools.test_experiment_contracts \
+            tools.test_experiment_queue \
             tools.test_game_stats \
             tools.test_human_possession \
             tools.test_replay_corpus_audit \
