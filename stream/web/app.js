@@ -7,7 +7,9 @@
 
 // ---------------------------------------------------------------- config
 const PARAMS = new URLSearchParams(location.search);
-const LOCAL_HOSTS = new Set(['', 'localhost', '127.0.0.1', '::1']);
+const LOCAL_HOSTS = new Set([
+  '', 'localhost', '127.0.0.1', '0.0.0.0', '::1', '[::1]',
+]);
 const DEFAULT_WS_URL = LOCAL_HOSTS.has(location.hostname)
   ? 'ws://localhost:8787/ws'
   : `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws`;
