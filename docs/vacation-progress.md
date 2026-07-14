@@ -1501,3 +1501,25 @@ sidecar was fresh at 14:09:04 PDT (`waiting for current trainer`, R0 seed 42),
 and the queue's independent staleness limit is 600 seconds. The 14:08:49
 overflow watcher invocation also exited successfully, logged that the primary
 was active, and left the real overflow state absent.
+
+Promotion-boundary addendum: all three live/frozen screen configs were checked
+again. Each is `profile: control-final`, `candidate_arm: both`, with
+`candidate_transfer: null` and exactly one of the three approved ancestry hashes.
+In this profile, `both` maps to the existing full R0 reward manifest; it is a
+legacy arm label, not a candidate or promotion. The two primary queue commands
+and the overflow training command can only invoke the pinned frozen-screen
+runner, and their success commands can only invoke the pinned artifact
+validator. The overflow's other job can only write and validate the primary
+completion proof; that proof's own contract explicitly says it does not select
+or promote a reward. All queue mutable paths are confined to their work/output
+directories.
+
+The BBTV selection remains `latest_vs_frozen_warm`: the current vacation
+checkpoint is converted into the viewer-only directory and played against the
+frozen turnover3 source SHA-256
+`fdcb2f0ebfbc88a29c026d51140ab008bd5dde5995ea5b3233fd0bd210110935`.
+The follower can atomically replace its conversion/selection/status files and
+its child viewer process, but no viewer path is a queue input or deployed model
+destination. Therefore the unattended schedule can generate evidence and live
+matchups, but it has no command or writable path that can declare a winner,
+change a reward, or promote a checkpoint.
