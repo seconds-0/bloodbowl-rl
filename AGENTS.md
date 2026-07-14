@@ -120,6 +120,15 @@ The transfer must use `both` as reference and evaluate exactly all three
 simplifications (`possession_only`, `gain_only`, `neither`). Legacy partial
 provenance or a partial candidate matrix cannot authorize the fallback; never
 substitute a rejected candidate.
+If the already-selected candidate instead completes its paired `1B x 2`
+confirmation and fails the unchanged self-play gate, the explicit
+`confirmation-rejected-baseline` route may emit the same two R0-only jobs. It
+must independently regenerate the failure, match the confirmation's embedded
+selection evidence exactly, write a pinned `BASELINE_AUTHORIZATION.json`, and
+keep learned inputs null. This is baseline characterization, not
+all-candidates-rejected evidence, a candidate switch, or reward promotion.
+Every vacation spec names its route explicitly; never infer the route from
+`candidate_arm`.
 On the candidate route, `tools/vacation_reward_gate.py` must pass both
 ancestries before either long final screen can start. The control route has no
 candidate gate. PPO screens are not resume-safe; atomic/restart-validating
