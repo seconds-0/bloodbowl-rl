@@ -1586,3 +1586,17 @@ schedule therefore consumes under 5% of current free capacity; even a 2x
 projection error remains under 10%. Storage and inode exhaustion are not a
 credible six-day failure mode at the observed growth rate, but free space will
 remain part of each hourly guard check.
+
+Memory capacity is similarly healthy. WSL reports 11 GiB total and 9.4 GiB
+available, with only 33 MiB of 4 GiB swap in use. The experiment-queue cgroup
+uses 2.87 GB (2.88 GB peak) with no cgroup swap; BBTV uses 1.74 GB (2.35 GB
+peak) and 6.4 MB cgroup swap. Both have unlimited configured memory/swap rather
+than a hidden unit cap. Load average near 17.7 is expected from the frozen
+16-thread environment workload, and it coincides with stable learner
+throughput rather than memory pressure or process churn.
+
+The 14:19:26 PDT overflow watcher invocation also completed with result
+`success` and exit status 0, logged `primary service is still active; waiting`,
+and left the real overflow state absent. The roughly 37-second delay from the
+timer's nominal 14:18:49 trigger is within systemd's default timer-accuracy
+coalescing window and did not represent a stalled watcher.
