@@ -1540,3 +1540,25 @@ canvas screenshot could not be claimed. Public HTML, secure WebSocket upgrade,
 correct matchup identity, complete snapshot state, and live frame progression
 were verified directly instead; visual canvas inspection remains a tooling
 limitation rather than a BBTV service failure.
+
+Behavior-health addendum: live phase-tagged training telemetry was aggregated
+read-only across 7,519 schema-v2 dashboard windows (about 755,000 games), using
+game-count weighting and excluding final reprints/evaluation windows. Comparing
+the first 200M steps (141,785 games) with the most recent 200M steps through
+991,035,392 (155,020 games), frozen-history win rate rose from 0.5331 to 0.5528.
+The change was broad rather than isolated: bank 0 rose 0.4537 -> 0.4856, bank 1
+0.6050 -> 0.6212, bank 2 0.5600 -> 0.5723, and bank 3 0.5251 -> 0.5420.
+Score differential rose 0.0748 -> 0.0956, illegal-action fraction fell 0.2204
+-> 0.2106, and forward ball advancement rose 7.45 -> 8.67.
+
+The behavior shifted rather than improving monotonically on every measure:
+touchdowns fell 1.352 -> 1.192, possession 0.3295 -> 0.3223, draw rate rose
+0.4133 -> 0.4451, and total blocks thrown fell 15.28 -> 12.35. At the same time,
+blitzes rose 5.19 -> 5.61, blocks against the carrier 1.18 -> 1.30, carrier
+knockdowns 1.63 -> 1.92, pickup success 2.09 -> 2.26, ball-path length 9.51 ->
+10.90, and average episode length fell about 58 steps. That combination is
+consistent with more selective ball-directed contact and lower-scoring games,
+not an obvious no-play/collapse signature. It is still correlated,
+nonstationary training telemetry—not independent final evaluation—and cannot
+select or promote a checkpoint. Continue watching the touchdown/possession
+decline while reserving conclusions for the frozen 10,000-game evaluations.
