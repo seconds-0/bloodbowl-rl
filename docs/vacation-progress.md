@@ -1622,3 +1622,14 @@ behavior watch above. Because a 12B annealing horizon intentionally leaves
 learning rate and entropy much less decayed at 1B than a 1B run, exact
 trajectory equality is neither expected nor desired; the manifest comparison
 rules out accidental reward/config drift as the explanation.
+
+Sustained-throughput addendum: native checkpoint modification times provide an
+independent wall-clock rate series at the approximately 50M-step publication
+cadence. Across 21 consecutive intervals through 1,048,838,144 steps, mean
+throughput is 185,327 steps/second, median 184,837, standard deviation 1,505,
+and range 183,762--190,829. The first half averages 186,163 and the second half
+184,567 steps/second; the most recent five average 184,493. The sub-1% half-to-
+half difference is dominated by the unusually fast initial interval and does
+not show progressive thermal degradation. End-to-end checkpoint throughput is
+185,315 steps/second, agreeing with the prior whole-arm forecast and current
+dashboard rather than relying on either alone.
