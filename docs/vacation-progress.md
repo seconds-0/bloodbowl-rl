@@ -1801,3 +1801,27 @@ Next steps:
 3. Leave the immutable queues and promotion boundary unchanged. At primary
    completion, accept overflow start only after the exact completion proof and
    idle-GPU gates pass; never manually bypass or relaunch state.
+
+## 2026-07-14 14:41 PDT
+
+Event addendum:
+
+- The 14:40:36 PDT overflow watcher completed another successful no-op while
+  the primary service was active. It exited 0 with the expected `primary
+  service is still active; waiting` result, retained zero restarts, and did not
+  create the real overflow `QUEUE_STATE.json`.
+- A fresh public secure-WebSocket session independently received the correct
+  1,148,715,008-step learner versus frozen turnover3 matchup and advancing
+  protocol traffic from sequence 705 through at least 742. The stream included
+  the full match start/snapshot followed by live action, player, ball, dice,
+  score/turn, and setup deltas; this proves current public transport and game
+  progression rather than only page availability.
+- During that check, the learner advanced through 1,254,883,328 steps at about
+  184.4K steps/second. The newest 107-game diagnostic retained zero engine
+  errors, clipped or non-finite reward episodes/samples, demos, and demo
+  fallbacks. Its short-window performance, touchdown, and possession values are
+  recorded as noisy health telemetry only and are not promotion evidence.
+- Both immutable plans were reloaded from their deployed paths and all 65
+  primary plus 74 overflow pinned inputs rehashed successfully. Draft PR #13's
+  combined-history CI completed successfully; the branch remains a journal-only
+  change relative to merged `main`.
