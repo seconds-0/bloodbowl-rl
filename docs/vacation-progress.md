@@ -270,3 +270,57 @@ Next steps:
 4. Follow only a fully satisfied candidate or control contract, freeze the
    literal queue, execute the departure smokes, start its user service, and
    verify BBTV.
+
+## 2026-07-14 01:46 PDT
+
+Status:
+
+- This file is now the explicit durable hourly progress journal requested for
+  the unattended-training handoff. During active work, append a timestamped
+  entry at least once per hour covering status, evidence, blockers or risks,
+  and the next concrete steps; chat updates continue on the roughly 30-minute
+  cadence.
+- The corrected screen remains healthy on arm 4/8 (`gain_only`, seed 42) at
+  208,928,768 of 500,000,000 requested steps. The latest readout has zero reward
+  clipping, non-finite rewards, engine errors, demonstrations, and demonstration
+  fallbacks. GPU snapshot: 82 C, 80% utilization, 5,737 MiB of 8,192 MiB used.
+- BBTV has advanced to this arm's complete 100,007,936-step manifested
+  checkpoint against the frozen turnover3 baseline. `bbstream`, `bbweb`, and
+  `bbtv-tunnel` are all active.
+
+Completed since the previous handoff:
+
+- Revalidated the exact merged deployment archive staged on the 2070: SHA-256
+  `ff21ef64c8aaa97ff7eed1f8aba852ac030130292b45a80be607cbdcc83a0646`.
+- Rechecked the three reserved post-screen destinations. The candidate-transfer,
+  provenance-complete rerun, and final vacation queue paths are all absent and
+  therefore cannot collide with stale output.
+- Rechecked the host boundary: Windows uses the High Performance power plan,
+  AC and DC sleep are both disabled, no Windows Update or component-servicing
+  reboot is pending, Tailscale is online without key expiry, and user-service
+  lingering is enabled. Updates have not been paused or otherwise changed.
+
+Current blockers / risks:
+
+- The active audit tree must remain immutable until `SCREEN_COMPLETE.json`
+  records all eight accepted arms. Deployment, transfer, and queue freezing are
+  deliberately gated on that artifact rather than process state.
+- A candidate still requires fully closed paired confirmation plus scripted and
+  learned transfer. If every candidate is rejected, the legacy v3 source cannot
+  authorize control training; the complete-provenance decomposition must be
+  rerun.
+- Visual canvas inspection is still unavailable from this session. Public HTTP,
+  deployed JavaScript, secure WebSocket messages, and the follower's immutable
+  selection record provide independent transport and freshness evidence.
+
+Next steps:
+
+1. Continue monitoring arms 4-8, integrity, GPU thermals, disk/inodes, services,
+   and BBTV selection without modifying the active audit tree.
+2. On screen completion, verify all eight result contracts and the completion
+   manifest before deploying any source.
+3. Back up every overwritten audit file, overlay the exact merged archive,
+   verify all 4,148 tracked entries plus installed runtime identity, and run the
+   plan-only launcher smoke.
+4. Launch the exact 32-cell scripted transfer as a durable user service, then
+   follow only the evidence-authorized candidate or complete-control route.
