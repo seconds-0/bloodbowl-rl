@@ -1465,3 +1465,17 @@ and the converted viewer artifact SHA-256 is
 The selection manifest, conversion sidecar, and running server command agree.
 The public page returned HTTP 200, and all three BBTV services remained active
 with zero restarts after rollover.
+
+Forecast addendum: evaluation overhead is now measured from historical local
+artifacts instead of left unbounded. Twenty-seven accepted arms used the same
+10,000-game final-evaluation contract: eight 249,954,304-step arms had a median
+process duration of 1,561 seconds, fifteen 499,908,608-step arms had a median
+of 2,771 seconds, and four 999,948,288-step arms had a median of 5,477.5
+seconds. A linear fit gives 191,814 training steps/second plus a 223-second
+fixed initialization/evaluation intercept per arm. Nine such intercepts total
+about 33.5 minutes. Combining that conservative fixed overhead with the live
+whole-arm step forecast moves expected end-to-end completion from about 06:56
+to about 07:30 PDT on 2026-07-21. This remains an estimate, but it is now based
+on 27 complete evaluations and supports the conclusion that the immutable
+108B schedule should occupy essentially the full six-day absence without an
+idle gap.
