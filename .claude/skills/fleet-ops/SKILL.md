@@ -195,7 +195,7 @@ an inner `setsid`, daemonizer, or supervisor would evade per-job runtime,
 thermal, progress, and capacity termination even if a later systemd service stop
 could still clean the cgroup.
 
-The freezer has exactly two reviewed evidence routes. An accepted
+The primary freezer has exactly three reviewed evidence routes. An accepted
 simplification produces the six-job candidate route. A decomposition result
 that recommends `both` and records an empty eligible-candidate list produces
 only the two-job R0 control route: `control-final`, `12B x seeds 42/43/44`, once
@@ -206,6 +206,18 @@ nine-file runtime identity as every other freezer input. Never accept a legacy
 partial-provenance screen or partial transfer matrix: reference must be `both`
 and candidates must be exactly `possession_only`, `gain_only`, and `neither`.
 Never hand-edit the frozen plan or substitute a rejected reward candidate.
+
+The third primary route, `confirmation-rejected-baseline`, applies only when the
+already-selected candidate fails its unchanged paired confirmation and emits
+the same two R0 jobs after independently reproducing that failure. If measured
+throughput leaves time after the exact primary queue completes, D186 permits a
+separate additive-only overflow built by `tools/freeze_vacation_overflow.py`:
+one unchanged `control-final` screen from the exact netblock pool-bank ancestry.
+Arm its tracked watcher timer only after negative and success smokes. It must
+require primary-service inactivity, the exact primary plan/state/artifacts and
+validators, unchanged overflow pins, no prior overflow state, and an idle GPU.
+Never modify a file pinned by the live primary queue, start concurrent training,
+or allow the timer to relaunch existing state.
 
 A persisted queue halt is terminal across restart and reboot. Do not edit its
 state to resume it. Preserve the evidence and deploy a new reviewed queue

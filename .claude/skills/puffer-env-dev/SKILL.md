@@ -15,7 +15,7 @@ self-play perm, FEN curriculum — structurally closest to Blood Bowl).
 Minimal template: `vendor/PufferLib/ocean/squared/`. MultiDiscrete: `vendor/PufferLib/ocean/drive/`.
 Cached upstream docs: `docs/vendor/pufferlib/docs.html` (env-author checklist + CLI cheatsheet).
 
-For current Blood Bowl experiment acceptance, also read `AGENTS.md`, D177–D182,
+For current Blood Bowl experiment acceptance, also read `AGENTS.md`, D177–D186,
 and `docs/reward-and-replay-audit-2026-07-09.md`. Upstream success/exit status is
 not sufficient: the audited path requires explicit phase, provenance, completed
 games, final cumulative reprint, and reward-integrity telemetry.

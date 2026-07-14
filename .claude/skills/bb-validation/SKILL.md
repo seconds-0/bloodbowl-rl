@@ -10,11 +10,11 @@ training curve can be interpreted. Everything routes through `bb_rng` dice
 injection: seeded PCG-64 or a recorded dice script. That design makes statistical,
 golden, and replay-differential checks possible.
 
-**Current status (2026-07-13):** `make test` runs 392 engine + 25 reward + 2
-scripted-bot tests; `make asan` passes the same 419. The current ship cycle also
-passed 56 tool/analyzer tests, 24 replay/streaming/league tests, 4 checkpoint
-conversion tests, 6 BC-context tests, and a BC regression harness. This does
-not mean all seven originally planned layers are
+**Current status (2026-07-14):** `make test` runs 392 engine + 27 reward + 2
+scripted-bot tests; `make asan` passes the same 421. The current vacation-overflow
+ship cycle also passed 149 tool/analyzer tests locally (two expected vendored
+Puffer skips); hosted CI remains authoritative for the Torch-dependent BC tests.
+This does not mean all seven originally planned layers are
 complete. `[BUILT]` is runnable now, `[PARTIAL]` has useful coverage with known
 gaps, `[ORACLE]` is external reference code, and `[PLANNED]` is not implemented.
 
@@ -225,7 +225,8 @@ Reward changes require more than the seven engine layers:
    for/against. Engine correctness does not establish reward usefulness.
 
 The canonical current semantic audit is
-`docs/reward-and-replay-audit-2026-07-09.md`; durable findings are D177–D180.
+`docs/reward-and-replay-audit-2026-07-09.md`; durable reward findings are
+D177–D185, and D186 is the operational post-primary overflow constraint.
 
 ---
 
