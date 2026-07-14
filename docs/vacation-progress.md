@@ -1523,3 +1523,20 @@ its child viewer process, but no viewer path is a queue input or deployed model
 destination. Therefore the unattended schedule can generate evidence and live
 matchups, but it has no command or writable path that can declare a winner,
 change a reward, or promote a checkpoint.
+
+Public-viewer addendum: an external secure-WebSocket client connected to
+`wss://bbtv.seconds0.com/ws` after the 849M rollover and received protocol-v1
+`hello`, `match_start`, full `snapshot`, and continuously advancing `delta`
+messages. The public matchup metadata named the away agent as
+`vacation-r0-baseline-20260714-v1-final-main-control-both-s42-step000849084416-075937bd49.b`
+and the home agent as `baseline-turnover3_cap-fdcb2f0ebf`. The observed game
+was Dwarf versus Wood Elf in the second half; frames advanced through actions,
+blocks, a turnover, score/turn state, ball ownership, team statistics, and
+sequence numbers 1,043--1,053. This proves the post-rollover game is reaching
+an unaffiliated public client, not merely running behind the tunnel.
+
+The in-app browser had no attachable tabs in this session, so a fresh rendered
+canvas screenshot could not be claimed. Public HTML, secure WebSocket upgrade,
+correct matchup identity, complete snapshot state, and live frame progression
+were verified directly instead; visual canvas inspection remains a tooling
+limitation rather than a BBTV service failure.
