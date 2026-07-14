@@ -1562,3 +1562,15 @@ not an obvious no-play/collapse signature. It is still correlated,
 nonstationary training telemetry—not independent final evaluation—and cannot
 select or promote a checkpoint. Continue watching the touchdown/possession
 decline while reserving conclusions for the frozen 10,000-game evaluations.
+
+Subsequent BBTV verification: at 14:12:34 PDT, after the two games using the
+849M checkpoint completed, the follower selected the newest stable checkpoint
+then available at 948,961,280 steps. Its native SHA-256 is
+`9f7543dad59ebcad8e1ca9c30e25880ecb056fb35a13638de17eee377c4b3cf5`;
+the viewer conversion SHA-256 is
+`d1636093e10f79e6fd2e2734563ae9565816af9d39147369818b7b6e6d67f5be`.
+Selection and server-status manifests agree on both learner and frozen opponent,
+the public page returns HTTP 200, and all three BBTV services remain active
+with zero restarts. This is the eighth observed vacation-checkpoint rollover
+and further verifies that BBTV shows the newest stable model at completed
+matchup boundaries rather than interrupting games or remaining stale.
