@@ -1652,3 +1652,23 @@ and converted SHA-256
 At verification it was only one approximately 50M checkpoint behind the live
 learner. Selection/server manifests agree, the public page returns HTTP 200,
 and all viewer services remain active with zero restarts.
+
+Host-kernel addendum: privileged read-only journal inspection since the 12:45
+launch found zero NVIDIA Xid/NVRM faults, OOM kills, ext4/I/O errors, or
+critical thermal/shutdown messages. The only repeated GPU-adjacent warning is
+11 instances of WSL `dxgkio_is_feature_enabled: Ioctl failed: -75`: one at
+trainer initialization and exactly one 3--5 seconds after each of ten viewer
+server starts. There are no instances during steady-state execution.
+
+Microsoft's [WSL2 kernel implementation](https://github.com/microsoft/WSL2-Linux-Kernel/blob/linux-msft-wsl-6.6.y/drivers/hv/dxgkrnl/ioctl.c)
+identifies this ioctl as a `D3DKMTIsFeatureEnabled` capability query forwarded
+through `dxgvmb` to the Windows host; on this Linux guest, errno 75 is
+`EOVERFLOW`. The timestamp
+correlation plus successful CUDA training, successful viewer model loads/live
+frames after every warning, zero Xid events, stable checkpoint throughput, and
+inactive hardware slowdown support the inference that this is a tolerated
+optional feature-probe mismatch rather than a compute failure. It does not
+justify restarting WSL, changing drivers, or mutating the live arm. Treat a
+future warning as actionable only if it loses this process-start correlation
+or is accompanied by Xid, process exit, failed model load, frozen steps, or
+hardware slowdown.
