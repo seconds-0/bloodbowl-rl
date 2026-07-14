@@ -432,3 +432,51 @@ Next steps:
    durable user service.
 4. Select no training queue until the resulting evidence satisfies one of the
    two reviewed literal route contracts.
+
+## 2026-07-14 03:48 PDT
+
+Status:
+
+- Arm 6/8 (`possession_only`, seed 43) completed and passed its acceptance
+  contract at 499,908,608 exact learner steps and 10,032 final-policy games.
+  Performance was 0.519886, TD/game was 1.301435, score difference was
+  0.065391, and checkpoint SHA-256 is
+  `45568bc64a1fdb557de4c8f7f00d8fdb4b053429222470c04dc262e00e873b20`.
+  All training and evaluation integrity counters were zero.
+- Arm 7/8 (`neither`, seed 43) is running from the same immutable warm and pool.
+  The screen service remains on its original PID with zero restarts. GPU
+  snapshot at transition: 81 C, 79% utilization, 5,737 MiB of 8,192 MiB used.
+- Six of eight arms are accepted. At the observed cadence, arm 7 should finish
+  near 04:33 PDT and the complete screen near 05:19 PDT.
+
+Completed since the previous handoff:
+
+- BBTV advanced to arm 6's complete 249,823,232-step seed-43 checkpoint against
+  turnover3. The public follower is continuing to track the current run.
+- Rechecked Tailscale (`Running`, online, no key expiry), user lingering,
+  memory, swap, disk, and inode capacity. About 9.5 GiB RAM and 904 GiB disk
+  remain available; inode use is 1%.
+- Draft PR #11 passed hosted CI on journal head `e6cc49b`.
+
+Current blockers / risks:
+
+- Arms 7 and 8 plus the atomic completion proof are still required; neither
+  the analyzer nor source deployment will run early.
+- The GPU occasionally touches its normal 81 C software target and briefly
+  adjusts clocks, but hardware thermal slowdown is inactive and the exact-step
+  cadence remains stable. No power or cooling setting has been changed during
+  the experiment.
+- Queue routing remains blocked on the post-screen scripted transfer and, if a
+  candidate survives, the full confirmation and learned-transfer evidence.
+
+Next steps:
+
+1. Continue the same fail-closed monitoring through arms 7 and 8 and verify the
+   atomic completion hash chain.
+2. Run the staged merged analyzer read-only, retain and hash its output, then
+   deploy `ce5ef244` into the idle audit tree with the reviewed 21-file backup
+   and all-entry verification.
+3. Execute the installed-source and plan-only smokes and start the restart-safe
+   32-cell scripted transfer under a durable contained user unit.
+4. Use only its literal recommendation and evidence contract to choose the next
+   predeclared route.
