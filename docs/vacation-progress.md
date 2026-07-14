@@ -1574,3 +1574,15 @@ the public page returns HTTP 200, and all three BBTV services remain active
 with zero restarts. This is the eighth observed vacation-checkpoint rollover
 and further verifies that BBTV shows the newest stable model at completed
 matchup boundaries rather than interrupting games or remaining stale.
+
+Capacity addendum: storage growth was measured from the live arm at roughly
+1.0B steps. Its 21 native checkpoints consume 337,397,760 bytes and its learner
+log 72,886,195 bytes, about 410 MB combined. Checkpoints are published about
+every 50M steps, implying roughly 240 per 12B arm; linear projection for all
+nine arms is approximately 42--44 GB including logs. The BBTV converted cache
+currently uses 771,766,522 bytes and is bounded by its 24-checkpoint retention.
+The volume has 966,073,585,664 bytes free (about 900 GiB). The projected full
+schedule therefore consumes under 5% of current free capacity; even a 2x
+projection error remains under 10%. Storage and inode exhaustion are not a
+credible six-day failure mode at the observed growth rate, but free space will
+remain part of each hourly guard check.
