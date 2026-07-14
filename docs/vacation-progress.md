@@ -480,3 +480,51 @@ Next steps:
    32-cell scripted transfer under a durable contained user unit.
 4. Use only its literal recommendation and evidence contract to choose the next
    predeclared route.
+
+## 2026-07-14 04:35 PDT
+
+Status:
+
+- Arm 7/8 (`neither`, seed 43) completed and passed its acceptance contract at
+  499,908,608 exact learner steps and 10,035 final-policy games. Performance
+  was 0.511460, TD/game was 1.454210, score difference was 0.038964, and
+  checkpoint SHA-256 is
+  `d76d95c0b51de1d002cc6d4c73a23faa719f9f0b7756c62fd4fa395490a898e9`.
+  All training and evaluation integrity counters were zero.
+- Arm 8/8 (`both`, seed 43) is running cleanly. At transition, the screen
+  service remained on its original PID with zero restarts; GPU snapshot: 80 C,
+  78% utilization, 5,737 MiB of 8,192 MiB used.
+- Seven of eight arms are accepted. The final arm and atomic screen completion
+  remain on track for approximately 05:20 PDT.
+
+Completed since the previous handoff:
+
+- BBTV followed arm 7 during training, presenting its complete manifested
+  checkpoint against turnover3 rather than remaining on arm 6.
+- Rechecked Windows host restart state: neither Windows Update nor component
+  servicing reports a pending reboot. No update or power policy was modified.
+- Draft PR #11 passed hosted CI on journal head `f89a26f`.
+
+Current blockers / risks:
+
+- A seventh accepted result is not screen completion. Deployment remains gated
+  on arm 8 acceptance and the exact `SCREEN_COMPLETE.json` hash chain.
+- The first post-screen scripted matrix is expected to take roughly 42 minutes;
+  a candidate route then requires several hours of confirmation and transfer
+  work before freezing. Current timing still preserves a substantial departure
+  buffer.
+- If every candidate is rejected, legacy v3 cannot authorize the control route;
+  the reviewed provenance-complete rerun remains mandatory.
+
+Next steps:
+
+1. Monitor the final arm through exact training and evaluation completion, then
+   verify all eight result files and `SCREEN_COMPLETE.json` with the staged
+   merged analyzer.
+2. Back up the prior audit deployment record and 21 changed existing files;
+   overlay, provenance-record, and byte-verify merged commit `ce5ef244` without
+   deleting any run, checkpoint, or vendor artifact.
+3. Run the installed-source and plan-only smokes, then start the 32-cell transfer
+   in a durable restart-safe user service.
+4. Continue hourly journal and roughly 30-minute chat updates while the
+   predeparture evidence pipeline runs.
