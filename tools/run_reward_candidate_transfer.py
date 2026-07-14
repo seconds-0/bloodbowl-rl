@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Run a restart-validating scripted transfer matrix for a reward screen.
 
-The completed possession/gain screen supplies four arms and two seeds. This
-runner converts each accepted native checkpoint to Torch, freezes every input
-and conversion hash, then evaluates every arm against both scripted opponent
-styles in both team orientations. Existing artifacts are reused only after full
-validation; partial or drifted artifacts fail closed.
+A completed possession/gain screen supplies four arms and two seeds; a paired
+confirmation supplies R0 and one candidate. This runner converts each accepted
+native checkpoint to Torch, freezes every input and conversion hash, then
+evaluates every arm against both scripted opponent styles in both team
+orientations. Existing artifacts are reused only after full validation; partial
+or drifted artifacts fail closed.
 """
 
 from __future__ import annotations
@@ -25,7 +26,7 @@ import analyze_reward_candidate_transfer as candidate_transfer
 import analyze_reward_screen
 
 
-ARMS = ("both", "possession_only", "gain_only", "neither")
+FULL_ARMS = ("both", "possession_only", "gain_only", "neither")
 SEEDS = (42, 43)
 BOT_TYPES = (0, 1)
 BOT_TEAMS = (0, 1)
@@ -80,18 +81,31 @@ def run_checked(command: list[str], **kwargs: Any) -> subprocess.CompletedProces
     return result
 
 
-def screen_checkpoints(screen_dir: Path, expected_sha: str) -> dict[str, dict[str, Any]]:
+def screen_checkpoints(
+    screen_dir: Path, expected_sha: str,
+) -> tuple[dict[str, dict[str, Any]], tuple[str, ...]]:
     report = analyze_reward_screen.analyze_screen(
         screen_dir, analyze_reward_screen.DEFAULT_METRICS,
         expected_screen_sha=expected_sha,
     )
     if not report["screen"]["completion"].get("present"):
         raise RunnerError("source screen has no verified completion proof")
-    if report["screen"]["profile"] != "possession-gain":
-        raise RunnerError("candidate transfer requires a possession-gain screen")
+    profile = report["screen"]["profile"]
+    if profile == "possession-gain":
+        arms = FULL_ARMS
+    elif profile == "paired-confirmation":
+        candidate = report["screen"].get("candidate_arm")
+        if candidate not in FULL_ARMS[1:]:
+            raise RunnerError("paired source screen has an invalid candidate")
+        arms = ("both", candidate)
+    else:
+        raise RunnerError(
+            "candidate transfer requires a possession-gain or "
+            "paired-confirmation screen"
+        )
     prefix = report["screen"]["prefix"]
-    checkpoints: dict[str, dict[str, Any]] = {arm: {} for arm in ARMS}
-    for arm in ARMS:
+    checkpoints: dict[str, dict[str, Any]] = {arm: {} for arm in arms}
+    for arm in arms:
         for seed in SEEDS:
             result_path = screen_dir / f"{prefix}-{arm}-s{seed}.result.json"
             result = load_object(result_path, f"screen result {arm}/seed {seed}")
@@ -111,16 +125,17 @@ def screen_checkpoints(screen_dir: Path, expected_sha: str) -> dict[str, dict[st
                 "native_bytes": native.stat().st_size,
                 "native_sha256": observed,
             }
-    return checkpoints
+    return checkpoints, arms
 
 
 def convert_checkpoints(
     root: Path, out_dir: Path, checkpoints: dict[str, dict[str, Any]],
+    arms: tuple[str, ...],
 ) -> None:
     python = root / "vendor/PufferLib/.venv/bin/python"
     converter = root / "training/convert_checkpoint.py"
     config = root / "puffer/config/bloodbowl.ini"
-    for arm in ARMS:
+    for arm in arms:
         for seed in SEEDS:
             record = checkpoints[arm][str(seed)]
             output = out_dir / "converted" / f"{arm}-s{seed}-torch.bin"
@@ -194,18 +209,23 @@ def implementation_identity(root: Path) -> dict[str, str]:
 
 def freeze_manifest(
     path: Path, root: Path, screen_dir: Path, expected_screen_sha: str,
-    checkpoints: dict[str, dict[str, Any]],
+    checkpoints: dict[str, dict[str, Any]], arms: tuple[str, ...],
 ) -> dict[str, Any]:
+    candidates = list(arms[1:])
+    preference = [
+        arm for arm in ("neither", "possession_only", "gain_only")
+        if arm in candidates
+    ]
     core = {
         "schema_version": 1,
         "matrix_id": path.parent.name,
         "source_screen": str(screen_dir),
         "source_screen_sha256": expected_screen_sha,
         "reference_arm": "both",
-        "candidate_arms": ["possession_only", "gain_only", "neither"],
+        "candidate_arms": candidates,
         # Remove both terms first; among one-term recipes prefer the settled-state
         # possession annuity over the outcome-priced gain event (D147/D178).
-        "preference_order": ["neither", "possession_only", "gain_only"],
+        "preference_order": preference,
         "seeds": list(SEEDS),
         "bot_types": list(BOT_TYPES),
         "bot_teams": list(BOT_TEAMS),
@@ -240,10 +260,12 @@ def freeze_manifest(
     return payload
 
 
-def write_status(path: Path, state: str, completed: int, message: str) -> None:
+def write_status(
+    path: Path, state: str, completed: int, total: int, message: str,
+) -> None:
     atomic_json(path, {
         "schema_version": 1, "state": state, "completed_cells": completed,
-        "total_cells": len(ARMS) * len(SEEDS) * len(BOT_TYPES) * len(BOT_TEAMS),
+        "total_cells": total,
         "message": message, "updated_utc": utc_now(), "pid": os.getpid(),
     })
 
@@ -262,8 +284,12 @@ def run_matrix(root: Path, out_dir: Path, plan: dict[str, Any]) -> None:
     launcher = root / "tools/eval_vs_contact_bot.sh"
     status_path = out_dir / "TRANSFER_STATUS.json"
     completed = 0
-    write_status(status_path, "running", completed, "validating transfer cells")
-    for arm in ARMS:
+    arms = (plan["reference_arm"], *plan["candidate_arms"])
+    total = len(arms) * len(SEEDS) * len(BOT_TYPES) * len(BOT_TEAMS)
+    write_status(
+        status_path, "running", completed, total, "validating transfer cells"
+    )
+    for arm in arms:
         for seed in SEEDS:
             checkpoint = Path(plan["checkpoints"][arm][str(seed)]["torch"])
             for bot_type in BOT_TYPES:
@@ -271,12 +297,12 @@ def run_matrix(root: Path, out_dir: Path, plan: dict[str, Any]) -> None:
                     log = out_dir / f"{arm}-s{seed}-b{bot_type}-t{bot_team}.log"
                     if log.exists():
                         candidate_transfer._validate_cell(
-                            log, {**plan, "_arms": list(ARMS)},
+                            log, {**plan, "_arms": list(arms)},
                             arm, seed, bot_type, bot_team,
                         )
                     else:
                         write_status(
-                            status_path, "running", completed,
+                            status_path, "running", completed, total,
                             f"running {arm}/seed {seed}/bot {bot_type}/team {bot_team}",
                         )
                         env = {
@@ -295,11 +321,13 @@ def run_matrix(root: Path, out_dir: Path, plan: dict[str, Any]) -> None:
                             raise RunnerError(
                                 f"transfer cell exited {result.returncode}: {log}")
                         candidate_transfer._validate_cell(
-                            log, {**plan, "_arms": list(ARMS)},
+                            log, {**plan, "_arms": list(arms)},
                             arm, seed, bot_type, bot_team,
                         )
                     completed += 1
-                    write_status(status_path, "running", completed, "cell validated")
+                    write_status(
+                        status_path, "running", completed, total, "cell validated"
+                    )
 
 
 def complete_transfer(out_dir: Path) -> None:
@@ -325,6 +353,7 @@ def complete_transfer(out_dir: Path) -> None:
         atomic_json(complete_path, {**core, "completed_utc": utc_now()})
     write_status(
         out_dir / "TRANSFER_STATUS.json", "complete", len(report["runs"]),
+        len(report["runs"]),
         f"matrix complete; confirmation candidate={report['recommendation']['arm']}",
     )
 
@@ -339,6 +368,7 @@ def main(argv: list[str] | None = None) -> int:
     root = Path(__file__).resolve().parents[1]
     screen_dir = args.screen_dir.expanduser().resolve()
     out_dir = args.out_dir.expanduser().resolve()
+    arms = FULL_ARMS
     out_dir.mkdir(parents=True, exist_ok=True)
     lock_path = out_dir / ".transfer.lock"
     try:
@@ -347,7 +377,7 @@ def main(argv: list[str] | None = None) -> int:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError as exc:
                 raise RunnerError("another transfer runner holds the lock") from exc
-            checkpoints = screen_checkpoints(
+            checkpoints, arms = screen_checkpoints(
                 screen_dir, args.expected_screen_sha.lower())
             # Share the exact one-GPU lock used by reward training. Requiring a
             # completed source screen above prevents stealing the lock during a
@@ -359,10 +389,10 @@ def main(argv: list[str] | None = None) -> int:
                 except BlockingIOError as exc:
                     raise RunnerError(
                         "training/evaluation GPU lock is already held") from exc
-                convert_checkpoints(root, out_dir, checkpoints)
+                convert_checkpoints(root, out_dir, checkpoints, arms)
                 plan = freeze_manifest(
                     out_dir / "TRANSFER_MANIFEST.json", root, screen_dir,
-                    args.expected_screen_sha.lower(), checkpoints,
+                    args.expected_screen_sha.lower(), checkpoints, arms,
                 )
                 if args.plan_only:
                     print(
@@ -381,6 +411,7 @@ def main(argv: list[str] | None = None) -> int:
             status_path,
             "failed",
             completed_from_status(status_path),
+            len(arms) * len(SEEDS) * len(BOT_TYPES) * len(BOT_TEAMS),
             str(exc),
         )
         print(f"candidate-transfer runner failed: {exc}", file=sys.stderr)

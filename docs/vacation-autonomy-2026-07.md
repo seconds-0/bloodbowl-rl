@@ -20,8 +20,10 @@ from running.
    two training seeds, both available scripted styles, and both team sides.
 3. Select at most one simplification candidate for confirmation. This is only
    a routing decision; scripted bots cannot promote a reward.
-4. Run the longer `1B x 2` confirmation against R0, retaining all four arms if
-   schedule time permits so an early transfer choice cannot hide an interaction.
+4. Freeze the selected candidate and run the longer paired `1B x 2`
+   confirmation against R0. The preceding four-arm factorial remains the
+   interaction evidence; the confirmation spends compute only on the declared
+   reference and candidate.
 5. Freeze the six-day queue only after the screen and transfer artifacts decide
    its literal checkpoint/reward hashes. Review, merge, deploy, start, interrupt,
    and resume-smoke the service before departure.

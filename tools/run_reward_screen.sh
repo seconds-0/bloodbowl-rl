@@ -8,6 +8,10 @@
 #   WARM=/abs/warm.bin POOL=/abs/pool STEPS=500000000 \
 #     SCREEN_PROFILE=possession-gain PREFIX=possession-gain-v2 \
 #     bash tools/run_reward_screen.sh
+# Example (longer two-arm confirmation after transfer selects a candidate):
+#   WARM=/abs/warm.bin POOL=/abs/pool STEPS=1000000000 \
+#     SCREEN_PROFILE=paired-confirmation CANDIDATE_ARM=gain_only \
+#     PREFIX=gain-confirm-v1 bash tools/run_reward_screen.sh
 set -euo pipefail
 
 if [ $# -ne 0 ]; then
@@ -20,7 +24,8 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 : "${WARM:?WARM is required}"
 : "${POOL:?POOL is required}"
 : "${STEPS:?STEPS is required (explicit experiment budget)}"
-: "${SCREEN_PROFILE:?SCREEN_PROFILE is required (distance-possession or possession-gain)}"
+: "${SCREEN_PROFILE:?SCREEN_PROFILE is required (distance-possession, possession-gain, or paired-confirmation)}"
+CANDIDATE_ARM="${CANDIDATE_ARM:-}"
 PREFIX="${PREFIX:-reward-screen-v1}"
 OUT_DIR="${OUT_DIR:-$ROOT/runs/reward-screens/$PREFIX}"
 POLL_SECONDS="${POLL_SECONDS:-30}"
@@ -67,8 +72,18 @@ case "$PLAN_ONLY" in
   *) echo "PLAN_ONLY must be 0 or 1" >&2; exit 1 ;;
 esac
 case "$SCREEN_PROFILE" in
-  distance-possession|possession-gain) ;;
-  *) echo "SCREEN_PROFILE must be distance-possession or possession-gain" >&2
+  distance-possession|possession-gain)
+    [ -z "$CANDIDATE_ARM" ] || {
+      echo "CANDIDATE_ARM is only valid with paired-confirmation" >&2; exit 1; }
+    ;;
+  paired-confirmation)
+    case "$CANDIDATE_ARM" in
+      possession_only|gain_only|neither) ;;
+      *) echo "paired-confirmation requires CANDIDATE_ARM=possession_only, gain_only, or neither" >&2
+         exit 1 ;;
+    esac
+    ;;
+  *) echo "SCREEN_PROFILE must be distance-possession, possession-gain, or paired-confirmation" >&2
      exit 1 ;;
 esac
 
@@ -97,13 +112,22 @@ PYBIN="$ROOT/vendor/PufferLib/.venv/bin/python"
 [ -x "$PYBIN" ] || { echo "vendored Python missing: $PYBIN" >&2; exit 1; }
 bash "$ROOT/tools/install_puffer_env.sh" --check "$ROOT/vendor/PufferLib"
 
-if [ "$SCREEN_PROFILE" = "distance-possession" ]; then
-  arms=(r0 r3 r1 r2 r2 r1 r3 r0)
-else
-  arms=(both neither possession_only gain_only \
-        gain_only possession_only neither both)
-fi
-seeds=(42 42 42 42 43 43 43 43)
+case "$SCREEN_PROFILE" in
+  distance-possession)
+    arms=(r0 r3 r1 r2 r2 r1 r3 r0)
+    seeds=(42 42 42 42 43 43 43 43)
+    ;;
+  possession-gain)
+    arms=(both neither possession_only gain_only \
+          gain_only possession_only neither both)
+    seeds=(42 42 42 42 43 43 43 43)
+    ;;
+  paired-confirmation)
+    arms=(both "$CANDIDATE_ARM" "$CANDIDATE_ARM" both)
+    seeds=(42 42 43 43)
+    ;;
+esac
+TOTAL_ARMS=${#arms[@]}
 SCREEN_MANIFEST="$OUT_DIR/SCREEN_MANIFEST.json"
 SCREEN_STATUS="$OUT_DIR/SCREEN_STATUS.json"
 SCREEN_COMPLETE="$OUT_DIR/SCREEN_COMPLETE.json"
@@ -130,7 +154,7 @@ freeze_screen_manifest() {
     "$MINIBATCH_SIZE" "$CHECKPOINT_STEPS" "$REPLAY_RATIO" \
     "$CLIP_COEF" "$VF_COEF" "$VF_CLIP_COEF" "$MAX_GRAD_NORM" \
     "$EXPECTED_POOL_HASH" "$MIN_TRAIN_GAMES" "$MIN_EVAL_GAMES" \
-    "$SCREEN_PROFILE" <<'PY'
+    "$SCREEN_PROFILE" "$CANDIDATE_ARM" <<'PY'
 import datetime, hashlib, json, pathlib, subprocess, sys, sysconfig
 
 (
@@ -139,7 +163,7 @@ import datetime, hashlib, json, pathlib, subprocess, sys, sysconfig
     learning_rate, ent_coef, gamma, gae_lambda, horizon, minibatch_size,
     checkpoint_steps, replay_ratio, clip_coef, vf_coef, vf_clip_coef,
     max_grad_norm, expected_pool_hash, min_train_games, min_eval_games,
-    screen_profile,
+    screen_profile, candidate_arm,
 ) = sys.argv[1:]
 root = pathlib.Path(root_path).resolve()
 vendor = root / "vendor" / "PufferLib"
@@ -231,7 +255,7 @@ if screen_profile == "distance-possession":
         "r3": root / "puffer/config/rewards/r3_minimal_block.json",
     }
     arm_order = ("r0", "r3", "r1", "r2", "r2", "r1", "r3", "r0")
-else:
+elif screen_profile == "possession-gain":
     reward_files = {
         "both": root / "puffer/config/rewards/r0_full.json",
         "possession_only": root / "puffer/config/rewards/p1_possession_only.json",
@@ -242,6 +266,26 @@ else:
         "both", "neither", "possession_only", "gain_only",
         "gain_only", "possession_only", "neither", "both",
     )
+    schedule_seeds = (42, 42, 42, 42, 43, 43, 43, 43)
+elif screen_profile == "paired-confirmation":
+    allowed = {"possession_only", "gain_only", "neither"}
+    if candidate_arm not in allowed:
+        raise SystemExit("invalid paired-confirmation candidate")
+    all_reward_files = {
+        "both": root / "puffer/config/rewards/r0_full.json",
+        "possession_only": root / "puffer/config/rewards/p1_possession_only.json",
+        "gain_only": root / "puffer/config/rewards/p2_gain_only.json",
+        "neither": root / "puffer/config/rewards/r2_no_possession.json",
+    }
+    reward_files = {
+        arm: all_reward_files[arm] for arm in ("both", candidate_arm)
+    }
+    arm_order = ("both", candidate_arm, candidate_arm, "both")
+    schedule_seeds = (42, 42, 43, 43)
+else:
+    raise SystemExit(f"unsupported screen profile: {screen_profile}")
+if screen_profile == "distance-possession":
+    schedule_seeds = (42, 42, 42, 42, 43, 43, 43, 43)
 rewards = {}
 for arm, path in reward_files.items():
     reward, digest = load_manifest(path)
@@ -299,7 +343,7 @@ historical_share = 4 * per_bank / ((total // buffers) / 2.0)
 schedule = [
     {"index": index + 1, "arm": arm, "seed": seed}
     for index, (arm, seed) in enumerate(zip(
-        arm_order, (42, 42, 42, 42, 43, 43, 43, 43)))
+        arm_order, schedule_seeds))
 ]
 launcher = root / "tools/run_reward_ablation.sh"
 screen_script = root / "tools/run_reward_screen.sh"
@@ -346,6 +390,8 @@ contract = {
         "historical_game_share": str(historical_share),
     },
 }
+if screen_profile == "paired-confirmation":
+    contract["candidate_arm"] = candidate_arm
 
 if destination.exists():
     recorded = json.loads(destination.read_text(encoding="utf-8"))
@@ -755,7 +801,7 @@ PY
     }
     echo "RECOVER completed detached arm=$arm seed=$seed"
   else
-    echo "START index=$CURRENT_INDEX/8 arm=$arm seed=$seed steps=$STEPS tag=$tag"
+    echo "START index=$CURRENT_INDEX/$TOTAL_ARMS arm=$arm seed=$seed steps=$STEPS tag=$tag"
     write_screen_status running 0 "launching arm"
     env TAG="$tag" REWARD_MANIFEST="$manifest" WARM="$WARM" POOL="$POOL" \
         STEPS="$STEPS" SEED="$seed" LOG="$log" RIG_ALLOW_FLOAT=1 \
@@ -792,7 +838,7 @@ PY
   materialize_result write "$arm" "$seed" "$tag" "$manifest" \
     "$log" "$result"
   COMPLETED_ARMS=$((COMPLETED_ARMS + 1))
-  echo "DONE index=$CURRENT_INDEX/8 arm=$arm seed=$seed result=$result"
+  echo "DONE index=$CURRENT_INDEX/$TOTAL_ARMS arm=$arm seed=$seed result=$result"
   write_screen_status running 0 "arm accepted"
 
   # Status is written immediately before wrapper exit. Require the inherited
@@ -813,7 +859,7 @@ done
 
 CURRENT_ARM=""
 CURRENT_SEED=""
-CURRENT_INDEX=8
+CURRENT_INDEX=$TOTAL_ARMS
 current_screen_sha="$(freeze_screen_manifest)"
 [ "$current_screen_sha" = "$SCREEN_MANIFEST_SHA" ] || {
   echo "screen manifest hash changed before completion" >&2; exit 1; }
@@ -867,7 +913,7 @@ else:
 print(f"SCREEN COMPLETE: {destination}")
 PY
 
-COMPLETED_ARMS=8
-write_screen_status complete 0 "all eight arms accepted and completion summary verified"
+COMPLETED_ARMS=$TOTAL_ARMS
+write_screen_status complete 0 "all $TOTAL_ARMS arms accepted and completion summary verified"
 trap - EXIT INT TERM
 echo "SCREEN COMPLETE: $OUT_DIR"

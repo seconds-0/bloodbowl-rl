@@ -168,6 +168,27 @@ class ExperimentContractTests(unittest.TestCase):
         self.assertTrue(possession.is_file())
         self.assertTrue(gain.is_file())
 
+    def test_paired_confirmation_requires_an_explicit_candidate(self):
+        result = run_script(
+            "tools/run_reward_screen.sh",
+            env={
+                "WARM": "missing.bin",
+                "POOL": "missing-pool",
+                "STEPS": "1000000000",
+                "SCREEN_PROFILE": "paired-confirmation",
+            },
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("CANDIDATE_ARM", result.stderr)
+        self.assertNotIn("missing warm checkpoint", result.stderr)
+
+        source = (ROOT / "tools/run_reward_screen.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("paired-confirmation", source)
+        self.assertIn("TOTAL_ARMS", source)
+        self.assertNotIn("index=$CURRENT_INDEX/8", source)
+
     @unittest.skipUnless(VENDOR_CHECKOUT, "vendored Puffer checkout unavailable")
     def test_puffer_machine_log_uses_explicit_loop_phase_and_fresh_panels(self):
         source = PUFFERL_SOURCE.read_text(encoding="utf-8")
