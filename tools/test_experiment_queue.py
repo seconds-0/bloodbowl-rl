@@ -497,10 +497,13 @@ class ExperimentQueueTests(unittest.TestCase):
                 "POOL": {"kind": "literal", "value": str(root / "pool")}
             }
             plan.write_text(json.dumps(payload))
-            with self.assertRaisesRegex(queue.QueueError, "path-bearing"):
+            with self.assertRaisesRegex(queue.QueueError, "literal must be"):
                 queue.validate_plan(plan)
 
-            for value in ("pool", "input.ini", ".", "..", "-c", "-m"):
+            for value in (
+                "pool", "future_pool", "input.ini", ".", "..", "-c", "-m",
+                "-e",
+            ):
                 (root / "pool").mkdir(exist_ok=True)
                 (root / "input.ini").touch(exist_ok=True)
                 payload["jobs"][0]["env"] = {
@@ -508,7 +511,7 @@ class ExperimentQueueTests(unittest.TestCase):
                 }
                 plan.write_text(json.dumps(payload))
                 with self.subTest(value=value):
-                    with self.assertRaisesRegex(queue.QueueError, "path-bearing"):
+                    with self.assertRaisesRegex(queue.QueueError, "literal must be"):
                         queue.validate_plan(plan)
 
             payload["jobs"][0]["env"] = {}
@@ -517,7 +520,16 @@ class ExperimentQueueTests(unittest.TestCase):
             }
             plan.write_text(json.dumps(payload))
             with self.assertRaisesRegex(
-                queue.QueueError, "interpreter requires a pinned runner"
+                queue.QueueError, "literal must be"
+            ):
+                queue.validate_plan(plan)
+
+            payload["jobs"][0]["command"][1] = {
+                "kind": "literal", "value": "--eval",
+            }
+            plan.write_text(json.dumps(payload))
+            with self.assertRaisesRegex(
+                queue.QueueError, "requires a pinned runner"
             ):
                 queue.validate_plan(plan)
 

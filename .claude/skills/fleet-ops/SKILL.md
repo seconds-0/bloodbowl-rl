@@ -173,7 +173,9 @@ Freeze the plan before service start and retain its SHA in atomic queue state.
 Require disk, job-runtime, progress, sustained-temperature, and output-validator
 guards. Use typed command/validator/environment values, recursive tree pins for
 directory inputs, and explicit mutable/predecessor-artifact paths; recheck every
-declared pin and use the allowlisted plan environment. Test interruption
+declared pin and use the allowlisted plan environment. Every invocation is a
+pinned executable plus pinned runner; literal values are only numbers,
+lowercase SHA-256 digests, or long flags. Test interruption
 recovery, completed-artifact drift, and fail-closed suppression of later jobs
 before handoff. `Restart=on-failure` recovers a runner crash; a deliberate
 queue halt must exit normally and remain stopped for inspection. Recheck linger,

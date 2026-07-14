@@ -60,12 +60,14 @@ local/remote smoke; it is never improvised by the running service.
   rejects unknown or misspelled guard fields;
 - mutable working/log/status/artifact paths constrained to the audit root;
 - an allowlisted minimal base environment and typed command, validator, and job
-  environment values: literals cannot be path-bearing, immutable paths must be
+  environment values: literals are restricted to numbers, lowercase SHA-256
+  digests, and long flags; all other strings live in a pinned runner/config;
+  immutable paths must be
   declared pins, mutable paths must be declared under the audit root, and a
   generated input must name an earlier job's exact success artifact;
-- inline interpreter/shell code modes are forbidden; executable logic lives in
-  a hash-pinned runner, and existing relative filesystem names are rejected as
-  literals;
+- every invocation has a pinned executable followed by a pinned runner file;
+  inline code/evaluator modes and relative filesystem literals are impossible
+  regardless of executable name or whether the path exists at plan freeze;
 - size/SHA-256 records for every declared executable, script, checkpoint,
   config, manifest, and validator, plus recursive file-count/byte/tree hashes
   for directory inputs such as the replay pool, rechecked before and after every

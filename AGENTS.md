@@ -93,6 +93,8 @@ Queue commands and environments use typed values: pin immutable files and
 directory trees, declare audit-root output paths mutable, and link generated
 inputs to an earlier job's recorded success artifact. Long jobs always expose a
 progress file; completed evidence drift halts rather than rerunning training.
+Every invocation uses a pinned executable followed by a pinned runner; literals
+are restricted to numbers, lowercase SHA-256 digests, and long flags.
 
 ## Replay and BC contract
 

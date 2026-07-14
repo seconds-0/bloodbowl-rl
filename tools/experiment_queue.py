@@ -15,7 +15,9 @@ import datetime as dt
 import fcntl
 import hashlib
 import json
+import math
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -50,6 +52,8 @@ ARG_KINDS = {"literal", "pinned", "mutable", "artifact"}
 MAX_PROGRESS_EXEMPT_SECONDS = 30 * 60
 MAX_VALIDATOR_SECONDS = 30 * 60
 MAX_VALIDATOR_OUTPUT_BYTES = 10 * 1024 * 1024
+FLAG_PATTERN = re.compile(r"--[a-z][a-z0-9-]*")
+DIGEST_PATTERN = re.compile(r"[0-9a-f]{64}")
 BASE_ENV_KEYS = {
     "CUDA_VISIBLE_DEVICES", "HOME", "LANG", "LC_ALL", "LOGNAME", "PATH",
     "PYTHONHASHSEED", "PYTHONUNBUFFERED", "TZ", "USER",
@@ -140,7 +144,6 @@ def _validate_arg(
     *,
     label: str,
     root: Path,
-    cwd: Path,
     pinned_paths: set[str],
     job_pins: set[str],
     mutable_paths: set[str],
@@ -158,17 +161,20 @@ def _validate_arg(
         value = argument.get("value")
         if not isinstance(value, str) or not value:
             raise QueueError(f"{label} literal value must be a nonempty string")
-        candidate = cwd / value
-        if (
-            value in (".", "..", "-c", "-m")
-            or any(marker in value for marker in (
-                "/", "\\", "$", "`", "~", "=", ":"
-            ))
-            or candidate.exists()
-        ):
+        try:
+            numeric = math.isfinite(float(value))
+        except ValueError:
+            numeric = False
+        safe_literal = (
+            numeric
+            or DIGEST_PATTERN.fullmatch(value) is not None
+            or FLAG_PATTERN.fullmatch(value) is not None
+        )
+        if not safe_literal:
             raise QueueError(
-                f"{label} literal looks path-bearing or expandable; use a typed "
-                "pinned, mutable, or artifact argument")
+                f"{label} literal must be a number, lowercase SHA-256, or "
+                "long flag; strings and paths belong in a pinned runner/config "
+                "or a typed pinned, mutable, or artifact argument")
         return
     if kind in ("pinned", "mutable"):
         if set(argument) != {"kind", "path"}:
@@ -316,7 +322,7 @@ def validate_plan(path: Path) -> tuple[dict[str, Any], Path, str]:
                 not all(isinstance(item, dict) for item in command)):
             raise QueueError(
                 f"job {job_id} command must be typed argument objects")
-        cwd = _absolute(job.get("cwd"), f"job {job_id} cwd", root)
+        _absolute(job.get("cwd"), f"job {job_id} cwd", root)
         _absolute(job.get("log"), f"job {job_id} log", root)
         success = job.get("success")
         if not isinstance(success, dict):
@@ -425,7 +431,7 @@ def validate_plan(path: Path) -> tuple[dict[str, Any], Path, str]:
             for position, argument in enumerate(values):
                 _validate_arg(
                     argument, label=f"job {job_id} {label}[{position}]",
-                    root=root, cwd=cwd, pinned_paths=pinned_paths,
+                    root=root, pinned_paths=pinned_paths,
                     job_pins=resolved_job_pins, mutable_paths=mutable_paths,
                     predecessor_artifacts=predecessor_artifacts,
                 )
@@ -433,25 +439,16 @@ def validate_plan(path: Path) -> tuple[dict[str, Any], Path, str]:
                 raise QueueError(
                     f"job {job_id} {label} executable must be pinned")
             executable_name = Path(values[0]["path"]).name.lower()
-            interpreter = (
-                executable_name.startswith("python")
-                or executable_name in {
-                    "bash", "sh", "zsh", "dash", "ksh", "perl", "ruby",
-                }
-            )
             if executable_name == "env":
                 raise QueueError(
                     f"job {job_id} {label} cannot use env as an executable")
-            if interpreter and (
-                len(values) < 2 or values[1].get("kind") != "pinned"
-            ):
+            if len(values) < 2 or values[1].get("kind") != "pinned":
                 raise QueueError(
-                    f"job {job_id} {label} interpreter requires a pinned "
-                    "runner file")
+                    f"job {job_id} {label} requires a pinned runner as "
+                    "argument 1")
         for key, argument in env.items():
             _validate_arg(
                 argument, label=f"job {job_id} env[{key}]", root=root,
-                cwd=cwd,
                 pinned_paths=pinned_paths, job_pins=resolved_job_pins,
                 mutable_paths=mutable_paths,
                 predecessor_artifacts=predecessor_artifacts,
