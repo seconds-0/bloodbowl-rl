@@ -350,6 +350,61 @@ class RewardScreenAnalysisTests(unittest.TestCase):
         self.assertEqual(across["mean"], 1.0)
         self.assertIn("n=3", " ".join(report["warnings"]))
 
+    def test_control_final_profile_replicates_r0_across_three_seeds(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            prefix = "control-final-test"
+            schedule_pairs = (("both", 42), ("both", 43), ("both", 44))
+            manifest_path = root / "SCREEN_MANIFEST.json"
+            write_json(manifest_path, {
+                "schema_version": 1,
+                "contract": {
+                    "prefix": prefix,
+                    "screen_profile": "control-final",
+                    "requested_steps": 12_000_000_000,
+                    "final_steps": 11_999_969_280,
+                    "schedule": [
+                        {"index": index, "arm": arm, "seed": seed}
+                        for index, (arm, seed) in enumerate(schedule_pairs, 1)
+                    ],
+                    "settings": {"expected_checkpoint_bytes": "16"},
+                    "rewards": {
+                        "both": {
+                            "reward_sha256": analyze_reward_screen
+                            .POSSESSION_GAIN_REWARD_SHA256["both"]
+                        }
+                    },
+                },
+            })
+            manifest_sha = sha256(manifest_path)
+            for arm, seed in schedule_pairs:
+                write_json(root / f"{prefix}-{arm}-s{seed}.result.json", {
+                    "schema_version": 2,
+                    "trainer_complete": True,
+                    "acceptance_pass": True,
+                    "acceptance_failures": [],
+                    "arm": arm,
+                    "seed": seed,
+                    "tag": f"{prefix}-{arm}-s{seed}",
+                    "screen_manifest_sha256": manifest_sha,
+                    "reward_sha256": analyze_reward_screen
+                    .POSSESSION_GAIN_REWARD_SHA256["both"],
+                    "checkpoint_bytes": 16,
+                    "checkpoint_sha256": digest(f"checkpoint-{arm}-{seed}"),
+                    "log_sha256": digest(f"log-{arm}-{seed}"),
+                    "status_sha256": digest(f"status-{arm}-{seed}"),
+                    "process_sha256": digest(f"process-{arm}-{seed}"),
+                    "run_manifest_sha256": digest(f"manifest-{arm}-{seed}"),
+                    "eval_metrics": {"n": 10_001, "tds": seed / 10.0},
+                })
+            report = analyze_reward_screen.analyze_screen(root, ("tds",))
+
+        self.assertEqual(report["analysis"], "control_reward_replication")
+        self.assertEqual(report["screen"]["profile"], "control-final")
+        self.assertEqual(list(report["per_seed"]), ["42", "43", "44"])
+        self.assertEqual(report["per_seed"]["42"]["effects"]["tds"], {})
+        self.assertEqual(report["across_seeds"]["effects"]["tds"], {})
+
     def test_tampered_result_hash_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.build_screen(tmp)

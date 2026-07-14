@@ -113,3 +113,102 @@ Next steps:
 4. Deploy the exact merged queue source to the now-idle audit snapshot, freeze
    every input, execute the interruption/failure/resume smokes, start the user
    service, and complete the departure gate.
+
+## 2026-07-14 01:05 PDT
+
+Status:
+
+- The corrected possession/gain screen is healthy on arm 3/8
+  (`possession_only`, seed 42). Its latest machine readout is 258,473,984 of
+  500,000,000 requested steps with zero reward clipping, non-finite rewards,
+  engine errors, demonstrations, or demonstration fallbacks. GPU snapshot:
+  83 C, 81% utilization, 5,737 MiB of 8,192 MiB used; disk is 6% full and inode
+  use is 1%.
+- Arms 1 and 2 are complete and accepted. Arm 2 (`neither`, seed 42) finished
+  at 499,908,608 exact learner steps and 10,022 final-policy games, with all
+  integrity counters zero.
+- The actual BBTV units (`bbstream`, `bbweb`, and `bbtv-tunnel`) and the reward
+  screen service are active. The follower is currently presenting arm 3's
+  complete 100,007,936-step checkpoint against the frozen turnover3 baseline.
+
+Completed since the previous handoff:
+
+- PR #9 passed CI, merged to `main` as
+  `c32ecb65690af01197e2f2233987f86056549417`, and was deployed
+  artifact-preservingly to production. Public JavaScript now selects the
+  same-host secure WebSocket endpoint; an external connection received the
+  `hello`, `match_start`, and `snapshot` sequence. No BBTV service was restarted.
+- A reliability audit found that the documented all-candidates-rejected route
+  could not actually be frozen. Added a closed fallback that is authorized only
+  by exact scripted evidence recommending `both` with an empty eligible list.
+  It emits exactly two non-resume-safe R0-only `control-final` jobs, each
+  `12B x seeds 42/43/44`, preserving the 72B total across the two ancestries.
+- Added fail-first regression coverage for the analyzer, launcher, frozen
+  wrapper, spec validator, two-job freezer, candidate-input rejection, and the
+  exact six-file legacy provenance contract. Focused tests are 51/51 green;
+  full Python discovery is 128/128 green; native suites are 421/421 green.
+  Ruff, shell syntax, and whitespace checks pass.
+- Updated `AGENTS.md`, `CLAUDE.md`, the fleet/training skills, the vacation plan,
+  and decision D184 so the implementation and operating guidance describe the
+  same two reviewed routes.
+
+Current blockers / review work:
+
+- The fallback change still needs commit, hosted review/CI, merge, and exact
+  deployment staging. The active audit checkout remains intentionally untouched.
+- The final queue cannot be selected or frozen until the corrected eight-arm
+  screen and its exact scripted transfer finish. Candidate confirmation and
+  learned transfer are required only if a simplification remains eligible.
+- Visual BBTV canvas inspection remains pending because this session has no
+  in-app browser target; public HTTP, JavaScript, and WebSocket transport are
+  verified independently.
+
+Next steps:
+
+1. Finish the control-route diff review, commit it, push a PR, wait for green CI
+   and review, then merge and stage the exact source artifact without disturbing
+   the live audit process.
+2. Continue integrity, progress, thermal, capacity, and BBTV monitoring while
+   arms 3-8 run.
+3. Analyze the immutable completed screen, run the exact four-arm scripted
+   transfer, and follow only the evidence-selected candidate or R0-control route.
+4. Once the audit checkout is idle, deploy the merged source, freeze the literal
+   queue, run the departure smokes, start its user service, and verify BBTV.
+
+## 2026-07-14 01:15 PDT — review correction
+
+Status / correction:
+
+- PR #10 opened at `428604d4f3b875cc12e4688bc06e364491595254` and
+  hosted CI passed, but two independent reviewers correctly rejected that head.
+  It has not been merged or deployed.
+- The first head allowed a control fallback from the active v3 screen's older
+  six-file provenance record. That is insufficient: the manifest omitted the
+  recursive Puffer config-tree hash, explicit `default.ini` hash, and three
+  Python runtime files. Current pins cannot retroactively prove launch-time
+  bytes.
+- It also treated an empty eligible list as “all candidates rejected” without
+  requiring the transfer to have evaluated all three simplifications. A valid
+  one-candidate matrix could therefore have authorized the fallback.
+
+Fix in progress:
+
+- Removed the legacy provenance exception. Both queue routes now require the
+  complete config-tree/default-config/compiled-module/exact-nine-file/patch/
+  warm/pool source-screen contract, with control-specific drift tests for an
+  alternate config, `default.ini`, package initialization, models, and Muon.
+- The control route now requires reference `both`, the exact candidate list
+  `possession_only,gain_only,neither`, and the reviewed preference order before
+  an empty eligible list can mean every simplification failed. A candidate-
+  omission regression failed against the first head and passes after the fix.
+
+Operational consequence / next steps:
+
+1. Re-run the complete local suite, amend PR #10, and obtain exact-new-head
+   re-review plus hosted CI before merge.
+2. Continue the active v3 screen unchanged. If it selects a candidate, it can
+   route that candidate into a new fully closed paired confirmation. If it
+   rejects all candidates, it cannot directly authorize the control queue; run
+   a provenance-complete decomposition rerun first.
+3. Keep the audit checkout untouched until the current screen completes, then
+   deploy only the exact reviewed merged source.

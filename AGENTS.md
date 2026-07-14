@@ -108,11 +108,22 @@ inputs to an earlier job's recorded success artifact. Long jobs always expose a
 progress file; completed evidence drift halts rather than rerunning training.
 Every invocation uses a pinned executable followed by a pinned runner; literals
 are restricted to numbers, lowercase SHA-256 digests, and long flags.
-Build the concrete six-job plan with `tools/freeze_vacation_queue.py` only after
-the main paired screen plus scripted and learned transfer all complete.
-`tools/vacation_reward_gate.py` must pass both ancestries before either long
-final screen can start. PPO screens are not resume-safe; atomic/restart-
-validating transfer and validation jobs may be.
+Build the concrete candidate six-job plan with `tools/freeze_vacation_queue.py`
+only after the main paired screen plus scripted and learned transfer all
+complete. If the decomposition transfer instead recommends `both` and records
+an empty eligible-candidate list, the same freezer's only alternate mode is a
+two-job R0 control replication: `control-final` at `12B x seeds 42/43/44` from
+each of the two ancestries. It requires `candidate_arm=both`, null learned
+inputs, exact rejection evidence, and a source decomposition screen carrying
+the complete current config-tree/default-config/nine-file runtime identity.
+The transfer must use `both` as reference and evaluate exactly all three
+simplifications (`possession_only`, `gain_only`, `neither`). Legacy partial
+provenance or a partial candidate matrix cannot authorize the fallback; never
+substitute a rejected candidate.
+On the candidate route, `tools/vacation_reward_gate.py` must pass both
+ancestries before either long final screen can start. The control route has no
+candidate gate. PPO screens are not resume-safe; atomic/restart-validating
+transfer and validation jobs may be.
 Queue-owned reward screens use the frozen wrapper's `ARM_DETACH=0` contract;
 never add nested `setsid`/daemonization that could let the trainer escape the
 queue job process group and its guards.

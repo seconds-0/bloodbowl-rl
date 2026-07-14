@@ -20,28 +20,39 @@ from running.
    two training seeds, both available scripted styles, and both team sides.
 3. Select at most one simplification candidate for confirmation. This is only
    a routing decision; scripted bots cannot promote a reward.
-4. Freeze the selected candidate and run the longer paired `1B x 2`
+4. If a candidate is selected, freeze it and run the longer paired `1B x 2`
    confirmation against R0. The preceding four-arm factorial remains the
    interaction evidence; the confirmation spends compute only on the declared
    reference and candidate.
-5. Evaluate that confirmation against exactly four frozen learned anchors, with
+5. Evaluate a candidate confirmation against exactly four frozen learned anchors, with
    the focal policy loaded in both native backend roles. The learned matrix uses
    exactly `4096` games per cell and a separately pinned gate configuration. It
    is a deterministic fixed-stratum gate over the overall mean, each training
    seed, each anchor, each backend orientation, and the worst cell. These are
    repeated strata, not independent replicates: no confidence interval or
    reward-promotion claim is made.
-6. Freeze the six-day queue only after self-play, scripted transfer, and learned
-   transfer decide its literal checkpoint/reward hashes. Review, merge, deploy,
-   start, interrupt, and resume-smoke the service before departure.
+6. Freeze the candidate queue only after self-play, scripted transfer, and
+   learned transfer decide its literal checkpoint/reward hashes. If no candidate
+   is eligible, freeze the control route only from the exact rejected-candidate
+   evidence below. Review, merge, deploy, start, interrupt, and smoke the
+   service before departure; only restart-validating jobs are resume-smoked.
 
-If the pre-departure evidence is incomplete, inconsistent, or rejects every
-simplification, the vacation queue retains R0 as the experimental control. It
-does not guess a candidate.
+If the pre-departure evidence is incomplete or inconsistent, no queue is
+started. If the exact decomposition transfer instead recommends `both` and
+records an empty eligible-candidate list, the only reviewed fallback retains R0
+as the experimental control: the freeze spec uses `candidate_arm=both`, null
+learned-transfer inputs, and `final_steps=12B`, and emits exactly two R0-only
+`control-final` jobs (`seeds 42,43,44`) from the two frozen ancestries. That is
+still `72B` requested learner steps. It does not guess or train a rejected
+candidate. The rejecting decomposition screen must carry the complete current
+recursive config-tree hash, explicit `default.ini` hash, and exact nine-file
+runtime identity. A legacy screen missing those fields cannot authorize the
+fallback and must be rerun under the complete contract.
 
 ## Six-day queue order
 
-The frozen queue uses the July audit's priority order:
+When a simplification candidate is accepted, the frozen queue uses the July
+audit's priority order:
 
 1. Reproduce the paired `1B x 2` confirmation from the frozen `league9` second
    ancestry.
@@ -65,6 +76,11 @@ The frozen queue uses the July audit's priority order:
    an unreviewed objective, backend, opponent, roster, or replay-distribution
    change.
 
+When every simplification is rejected, the alternate order is exactly two
+jobs: main-ancestry `control-final`, then `league9` `control-final`. Each job
+trains R0 for `12B x seeds 42,43,44`; there is no second-ancestry candidate
+confirmation, transfer, or gate.
+
 The exact queue may be shorter if the repository lacks a verified launcher for
 a proposed cell. A new launcher is deployed only after focused tests and a
 local/remote smoke; it is never improvised by the running service.
@@ -73,7 +89,8 @@ The per-job safety maxima intentionally sum to more than six days: they are
 fault guards, not a return-home cutoff. Because the RTX 2070 is reserved and
 the user authorized multi-day use, a slowed but healthy declared job may finish
 after the nominal vacation window rather than being killed mid-trajectory. The
-queue still cannot start undeclared work after its six literal jobs finish.
+queue still cannot start undeclared work after its six candidate-route jobs or
+two control-route jobs finish.
 
 The second ancestry is the exact `league9_cap.bin` artifact with SHA-256
 `359d14caa08f12362f799c4cab4f33301fc9ce2ba3dec85922abe9622670d5f5`;
@@ -119,9 +136,14 @@ the freezer rejects a path label or same-size substitute.
 - retry after interruption only when that job is explicitly `resume_safe`.
 
 The concrete builder is `tools/freeze_vacation_queue.py`. It refuses to select a
-candidate, requires already-complete main-lineage self-play/scripted/learned
-evidence, writes three hash-pinned screen configs plus the two-lineage gate
-config, and validates the resulting six-job typed plan before publication.
+candidate. The accepted-candidate route requires already-complete main-lineage
+self-play/scripted/learned evidence, writes three hash-pinned screen configs plus
+the two-lineage gate config, and validates the resulting six-job typed plan
+before publication. The all-candidates-rejected route requires the exact
+scripted recommendation described above, writes two hash-pinned `control-final`
+configs, and validates a two-job typed plan with no learned transfer or gate.
+It applies the same full source-screen provenance closure as the candidate
+route; there is no legacy exception and no third route.
 `tools/run_frozen_reward_screen.py` is the categorical/path bridge into the
 existing environment-variable launcher. `tools/run_reward_learned_transfer.py`
 creates atomic per-cell learned-anchor results in both backend roles.
@@ -183,10 +205,14 @@ vendor/PufferLib/.venv/bin/python tools/freeze_vacation_queue.py \
 systemctl --user start experiment-queue@<queue-id>.service
 ```
 
-The spec fixes `second_steps=1000000000`, `final_steps=6000000000`, both warm
-checkpoint paths, the static pool, anchor config, three main-lineage completion
-proofs, free-space/inode floors, and the thermal ceiling. Editing any config,
-pin, or plan after first start is a terminal halt.
+Both spec modes fix `second_steps=1000000000`, both warm checkpoint paths, the
+static pool, the exact main screen and scripted-transfer proofs, free-space/
+inode floors, and the thermal ceiling. The candidate mode additionally fixes
+`final_steps=6000000000`, the anchor config, and the main learned-transfer proof.
+The control mode instead fixes `final_steps=12000000000`, requires null anchor
+and learned-transfer fields, and requires the full three-candidate rejection
+matrix from a provenance-complete decomposition screen. Editing any config, pin,
+or plan after first start is a terminal halt.
 
 ## Monitoring readout
 

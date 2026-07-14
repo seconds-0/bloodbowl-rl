@@ -26,7 +26,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 : "${WARM:?WARM is required}"
 : "${POOL:?POOL is required}"
 : "${STEPS:?STEPS is required (explicit experiment budget)}"
-: "${SCREEN_PROFILE:?SCREEN_PROFILE is required (distance-possession, possession-gain, paired-confirmation, or paired-final)}"
+: "${SCREEN_PROFILE:?SCREEN_PROFILE is required (distance-possession, possession-gain, paired-confirmation, paired-final, or control-final)}"
 CANDIDATE_ARM="${CANDIDATE_ARM:-}"
 TRANSFER_COMPLETE="${TRANSFER_COMPLETE:-}"
 EXPECTED_TRANSFER_SHA256="${EXPECTED_TRANSFER_SHA256:-}"
@@ -81,7 +81,7 @@ case "$ARM_DETACH" in
   *) echo "ARM_DETACH must be 0 or 1" >&2; exit 1 ;;
 esac
 case "$SCREEN_PROFILE" in
-  distance-possession|possession-gain)
+  distance-possession|possession-gain|control-final)
     [ -z "$CANDIDATE_ARM$TRANSFER_COMPLETE$EXPECTED_TRANSFER_SHA256" ] || {
       echo "candidate transfer inputs are only valid with a paired profile" >&2
       exit 1; }
@@ -99,7 +99,7 @@ case "$SCREEN_PROFILE" in
       exit 1
     fi
     ;;
-  *) echo "SCREEN_PROFILE must be distance-possession, possession-gain, paired-confirmation, or paired-final" >&2
+  *) echo "SCREEN_PROFILE must be distance-possession, possession-gain, paired-confirmation, paired-final, or control-final" >&2
      exit 1 ;;
 esac
 
@@ -153,6 +153,12 @@ case "$SCREEN_PROFILE" in
     # reference/candidate exposure to wall-clock drift.
     arms=(both "$CANDIDATE_ARM" "$CANDIDATE_ARM" both both "$CANDIDATE_ARM")
     seeds=(42 42 43 43 44 44)
+    ;;
+  control-final)
+    # A rejected simplification routes vacation compute into replicated R0
+    # trajectories rather than training an objective that failed its gate.
+    arms=(both both both)
+    seeds=(42 43 44)
     ;;
 esac
 TOTAL_ARMS=${#arms[@]}
@@ -321,6 +327,12 @@ elif screen_profile == "possession-gain":
         "gain_only", "possession_only", "neither", "both",
     )
     schedule_seeds = (42, 42, 42, 42, 43, 43, 43, 43)
+elif screen_profile == "control-final":
+    reward_files = {
+        "both": root / "puffer/config/rewards/r0_full.json",
+    }
+    arm_order = ("both", "both", "both")
+    schedule_seeds = (42, 43, 44)
 elif screen_profile in ("paired-confirmation", "paired-final"):
     allowed = {"possession_only", "gain_only", "neither"}
     if candidate_arm not in allowed:

@@ -19,6 +19,128 @@ def write_json(path: Path, payload: dict) -> None:
 
 
 class FreezeVacationQueueTests(unittest.TestCase):
+    def test_validate_spec_requires_rejected_candidate_evidence_for_control_mode(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            main_warm = root / "main.bin"
+            second_warm = root / "second.bin"
+            for path, marker in ((main_warm, b"m"), (second_warm, b"s")):
+                with path.open("wb") as handle:
+                    handle.write(marker)
+                    handle.truncate(16_066_560)
+            pool = root / "pool"
+            pool.mkdir()
+            write_json(pool / "league_seeds.json", {})
+            screen = root / "screen/SCREEN_COMPLETE.json"
+            write_json(screen, {"screen_manifest_sha256": "a" * 64})
+            scripted = root / "transfer/TRANSFER_COMPLETE.json"
+            write_json(scripted, {"recommended_confirmation_arm": "both"})
+            scripted_manifest = scripted.parent / "TRANSFER_MANIFEST.json"
+            scripted_contract = {"settings": {"eval_episodes": 1_000}}
+            write_json(scripted_manifest, {
+                "source_screen": str(screen.parent),
+                "source_screen_sha256": "a" * 64,
+                "reference_arm": "both",
+                "candidate_arms": [
+                    "possession_only", "gain_only", "neither",
+                ],
+                "preference_order": [
+                    "neither", "possession_only", "gain_only",
+                ],
+                **scripted_contract,
+            })
+            analysis = scripted.parent / "ANALYSIS.json"
+            write_json(analysis, {
+                "recommendation": {
+                    "arm": "both",
+                    "eligible_candidates_in_preference_order": [],
+                }
+            })
+            spec_path = root / "VACATION_SPEC.json"
+            write_json(spec_path, {
+                "schema_version": 1,
+                "queue_id": "vacation-control-test",
+                "root": str(root),
+                "candidate_arm": "both",
+                "main_warm": str(main_warm),
+                "second_warm": str(second_warm),
+                "pool": str(pool),
+                "anchor_config": None,
+                "main_screen_complete": str(screen),
+                "main_scripted_complete": str(scripted),
+                "main_learned_complete": None,
+                "second_steps": 1_000_000_000,
+                "final_steps": 12_000_000_000,
+                "min_free_bytes": 1,
+                "min_free_inodes": 1,
+                "max_gpu_temperature_c": 89,
+            })
+            evidence = {
+                "transfer_manifest": str(scripted_manifest),
+                "analysis": str(analysis),
+            }
+            with (
+                mock.patch.dict(
+                    freezer.REVIEWED_SECOND_ANCESTRY,
+                    {"sha256": freezer.sha256(second_warm)},
+                ),
+                mock.patch.object(
+                    freezer, "validate_main_screen",
+                    return_value={"screen": {"manifest_sha256": "a" * 64}},
+                ),
+                mock.patch.object(
+                    freezer.analyze_reward_candidate_transfer,
+                    "validate_completion_evidence",
+                    return_value=evidence,
+                ) as validate_transfer,
+                mock.patch.object(
+                    freezer.run_reward_candidate_transfer,
+                    "transfer_contract_identity",
+                    return_value=scripted_contract,
+                ),
+            ):
+                validated = freezer.validate_spec(spec_path)
+                self.assertTrue(validated["control_mode"])
+                validate_transfer.assert_called_once_with(
+                    scripted,
+                    expected_complete_sha=freezer.sha256(scripted),
+                    expected_candidate="both",
+                )
+                write_json(scripted_manifest, {
+                    "source_screen": str(screen.parent),
+                    "source_screen_sha256": "a" * 64,
+                    "reference_arm": "both",
+                    "candidate_arms": ["gain_only"],
+                    "preference_order": ["gain_only"],
+                    **scripted_contract,
+                })
+                with self.assertRaisesRegex(
+                    freezer.FreezeError, "all three simplification arms"
+                ):
+                    freezer.validate_spec(spec_path)
+                write_json(scripted_manifest, {
+                    "source_screen": str(screen.parent),
+                    "source_screen_sha256": "a" * 64,
+                    "reference_arm": "both",
+                    "candidate_arms": [
+                        "possession_only", "gain_only", "neither",
+                    ],
+                    "preference_order": [
+                        "neither", "possession_only", "gain_only",
+                    ],
+                    **scripted_contract,
+                })
+                write_json(analysis, {
+                    "recommendation": {
+                        "arm": "both",
+                        "eligible_candidates_in_preference_order": ["gain_only"],
+                    }
+                })
+                with self.assertRaisesRegex(
+                    freezer.FreezeError, "eligible simplification"
+                ):
+                    freezer.validate_spec(spec_path)
+
     def test_validate_spec_enforces_reviewed_four_anchor_contract(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp).resolve()
@@ -358,6 +480,74 @@ class FreezeVacationQueueTests(unittest.TestCase):
                             complete, "gain_only", warm, pool, root
                         )
                     changed_path.write_bytes(original_bytes)
+                report["screen"].update({
+                    "profile": "possession-gain",
+                    "candidate_arm": None,
+                    "requested_steps": 500_000_000,
+                })
+                implementation = screen_manifest["contract"]["implementation"]
+                write_json(manifest_path, screen_manifest)
+                self.assertEqual(
+                    freezer.validate_main_screen(
+                        complete, "both", warm, pool, root
+                    ),
+                    report,
+                )
+                alternate_config.write_text("[control-drift]\n", encoding="utf-8")
+                with self.assertRaisesRegex(freezer.FreezeError, "config tree"):
+                    freezer.validate_main_screen(
+                        complete, "both", warm, pool, root
+                    )
+                alternate_config.unlink()
+
+                implementation["default_config_sha256"] = "0" * 64
+                write_json(manifest_path, screen_manifest)
+                with self.assertRaisesRegex(freezer.FreezeError, "default config"):
+                    freezer.validate_main_screen(
+                        complete, "both", warm, pool, root
+                    )
+                implementation["default_config_sha256"] = freezer.sha256(
+                    default_config
+                )
+                write_json(manifest_path, screen_manifest)
+
+                for changed_path in (
+                    critical_paths["pufferlib/__init__.py"],
+                    critical_paths["pufferlib/models.py"],
+                    critical_paths["pufferlib/muon.py"],
+                ):
+                    original_bytes = changed_path.read_bytes()
+                    changed_path.write_bytes(original_bytes + b"control-drift")
+                    with self.assertRaisesRegex(
+                        freezer.FreezeError, "critical vendor source"
+                    ):
+                        freezer.validate_main_screen(
+                            complete, "both", warm, pool, root
+                        )
+                    changed_path.write_bytes(original_bytes)
+
+                implementation.pop("config_tree_sha256")
+                implementation.pop("default_config_sha256")
+                implementation["critical_vendor_files"] = {
+                    relative: freezer.sha256(path)
+                    for relative, path in critical_paths.items()
+                    if relative in {
+                        "pufferlib/pufferl.py",
+                        "pufferlib/selfplay.py",
+                        "pufferlib/torch_pufferl.py",
+                        "src/bindings.cu",
+                        "src/pufferlib.cu",
+                        "src/vecenv.h",
+                    }
+                }
+                write_json(manifest_path, screen_manifest)
+                with self.assertRaisesRegex(
+                    freezer.FreezeError,
+                    "config tree|critical vendor identity",
+                ):
+                    freezer.validate_main_screen(
+                        complete, "both", warm, pool, root
+                    )
             self.assertEqual(accepted, report)
 
     def fixture(self, root: Path) -> dict:
@@ -528,6 +718,30 @@ class FreezeVacationQueueTests(unittest.TestCase):
             str((root / "puffer/config/bloodbowl.ini").resolve()),
             {pin["path"] for pin in plan["pinned_files"]},
         )
+
+    def test_freeze_emits_two_control_jobs_when_all_candidates_are_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            spec = self.fixture(root)
+            spec["candidate_arm"] = "both"
+            spec["final_steps"] = 12_000_000_000
+            plan_path = freezer.freeze(spec)
+            plan, validated_root, _ = experiment_queue.validate_plan(plan_path)
+            main_config = json.loads(
+                (root / "runs/vacation-test/configs/FINAL_MAIN_SCREEN_CONFIG.json")
+                .read_text(encoding="utf-8")
+            )
+
+        self.assertEqual(validated_root, root)
+        self.assertEqual(
+            [job["id"] for job in plan["jobs"]],
+            ["final-main-control", "final-second-control"],
+        )
+        self.assertEqual(main_config["profile"], "control-final")
+        self.assertEqual(main_config["candidate_arm"], "both")
+        self.assertEqual(main_config["steps"], 12_000_000_000)
+        self.assertIsNone(main_config["candidate_transfer"])
+        self.assertFalse(main_config["require_gate"])
 
 
 if __name__ == "__main__":
