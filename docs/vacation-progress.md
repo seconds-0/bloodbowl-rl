@@ -824,3 +824,62 @@ Next steps:
 3. Freeze the exact candidate spec/plan with the reviewed resource guards, run
    the non-resume-safe interruption, resume-safe recovery, and downstream-stop
    smokes, then enable/start the persistent queue and visibly verify BBTV.
+
+## 2026-07-14 09:45 PDT
+
+Status:
+
+- Arm 2/4 (`neither`, seed 42) is atomically accepted. It reached exactly
+  999,948,288 steps and 10,079 final-policy games with no acceptance failures.
+  Its checkpoint SHA-256 is
+  `af63fe924d84fa4bbb5000b38f80a55a4e9d03faf56969baf23c7d26820e40d2`;
+  its result SHA-256 is
+  `a547bbc70e8d540d68629dbf2cb7d6b5f65fe5d7b3e6309b3beaae36c5461dba`.
+- Arm 3/4 (`neither`, seed 43) is running at 450.1M steps with zero clipping,
+  nonfinite rewards, and engine-error episodes. The screen service is active
+  with zero restarts and all 38 tasks contained in its cgroup.
+- BBTV is serving the exact arm-3 399,638,528-step checkpoint against the frozen
+  turnover3 baseline. All viewer services are active, and the public endpoint
+  returned HTTP 200 with the expected page.
+
+Completed since the previous handoff:
+
+- Verified arm 2's final cumulative reprint, 10,079-game count, checkpoint size
+  and hash, result/manifest/status links, and `acceptance_pass=true` before
+  counting the orchestrator transition to arm 3.
+- Arm 2's final evaluation was performance 0.505407, score differential
+  +0.020439, and 1.219169 total touchdowns per game, with zero clip,
+  nonfinite, error, demo, and fallback counters.
+- Computed the frozen self-play gate diagnostic without routing on it: seed 42
+  has candidate-minus-reference performance -0.033250. That passes the -0.05
+  per-seed floor, while the -0.02 across-seed floor requires the eventual
+  seed-43 contrast to be about -0.006750 or better. Only the completed analyzer
+  and gate may decide this.
+- Rechecked host and viewer health. The machine has 967.5 GB free, 66.9M free
+  inodes, and 10.2 GB available memory. The RTX 2070 was at 81 C, 73%
+  utilization, 5,737 MiB VRAM, and 108 W with no hardware slowdown; no user
+  unit is failed.
+
+Current blockers / risks:
+
+- Arm 3 needs another ~550M exact steps plus its final evaluation and atomic
+  result. Arm 4 (`both`, seed 43) has not started, so the decisive seed-43
+  contrast and the completed two-seed self-play gate do not exist.
+- If the frozen paired self-play gate rejects `neither`, the reviewed route
+  stops. A confirmation failure does not authorize the all-candidates-rejected
+  R0 fallback and must not be converted into an improvised candidate switch.
+- Even a passing self-play comparison remains only routing evidence. The exact
+  scripted and learned transfers must still accept the same candidate before a
+  vacation queue can be frozen.
+
+Next steps:
+
+1. Monitor arm 3 to exact acceptance, then the final `both`, seed-43 arm through
+   its exact boundary and evaluation. Independently regenerate and preserve the
+   completed screen analysis and artifact hashes.
+2. Apply the frozen self-play thresholds. On rejection, stop fail-closed; on
+   pass, immediately plan-only validate and launch the fresh exact 16-cell
+   scripted transfer, followed by the frozen 32-cell learned transfer.
+3. Only after all main gates pass, write/freeze the literal vacation spec and
+   plan, execute the live departure smokes, start the persistent user service,
+   and verify BBTV against the queue-owned run.
