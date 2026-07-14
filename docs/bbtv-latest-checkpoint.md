@@ -44,6 +44,14 @@ The follower rechecks after every two streamed games. Home and away are swapped
 between those games by the existing match runner. A just-finished checkpoint can
 therefore take up to one two-game cycle to appear.
 
+The checked-in launcher samples legal actions from each policy by default
+(`BBTV_SAMPLE=1`). This matches the action-selection mode used by training and
+evaluation more closely than greedy argmax and makes the public stream a more
+representative qualitative view of learned behavior. BBTV games remain
+observational: their small, unpaired sample must not be used for reward tuning,
+promotion, or regression gates. The exact child command, including `--sample`,
+is recorded in `server_status.json`.
+
 ## RTX 2070 service
 
 The repository launcher is `stream_backend/run_follow_latest.sh`. Production is
@@ -60,7 +68,12 @@ systemctl --user daemon-reload
 systemctl --user restart bbstream.service
 systemctl --user status bbstream.service
 cat /home/rache/bloodbowl-rl-audit/runs/bbtv-follow/selection.json
+cat /home/rache/bloodbowl-rl-audit/runs/bbtv-follow/server_status.json
 ```
+
+To compare with or immediately roll back to deterministic greedy viewing, set
+`BBTV_SAMPLE=0` in the service environment and restart only
+`bbstream.service`. Removing that override restores sampled viewing.
 
 Rollback preserves the original static launcher:
 

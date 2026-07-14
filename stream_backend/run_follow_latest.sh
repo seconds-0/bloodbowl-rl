@@ -15,6 +15,15 @@ export OMP_NUM_THREADS=${OMP_NUM_THREADS:-4}
 source "$ROOT/rig-env.sh"
 export PYTHONPATH="$VIEWER_ROOT${PYTHONPATH:+:$PYTHONPATH}"
 
+case "${BBTV_SAMPLE:-1}" in
+  1) SAMPLE_ARGS=(--sample) ;;
+  0) SAMPLE_ARGS=() ;;
+  *)
+    echo "BBTV_SAMPLE must be 0 (greedy) or 1 (sampled)" >&2
+    exit 2
+    ;;
+esac
+
 exec nice -n 19 ionice -c 3 \
   "$ROOT/vendor/PufferLib/.venv/bin/python" \
   "$ROOT/stream_backend/follow_latest.py" \
@@ -31,4 +40,5 @@ exec nice -n 19 ionice -c 3 \
   --pace "${BBTV_PACE:-0.6}" \
   --games-per-cycle "${BBTV_GAMES_PER_CYCLE:-2}" \
   --stability-seconds "${BBTV_STABILITY_SECONDS:-1}" \
-  --keep-converted "${BBTV_KEEP_CONVERTED:-24}"
+  --keep-converted "${BBTV_KEEP_CONVERTED:-24}" \
+  "${SAMPLE_ARGS[@]}"
