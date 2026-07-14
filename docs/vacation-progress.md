@@ -1677,3 +1677,13 @@ The 14:30:26 PDT overflow watcher was another successful primary-running no-op:
 result `success`, exit status 0, no unit restart, and no real overflow state.
 The learner simultaneously remained active at 1,173,356,544 steps with all
 integrity counters zero; the GPU was 81 C with hardware slowdown inactive.
+
+Repository-handoff addendum: the live-journal branch had forked before merged
+PR #14, so current `origin/main` was merged into it as `2d12e19`. The merge was
+conflict-free and preserved all 1,679 journal lines while bringing D186,
+AGENTS/CLAUDE guidance, project skills, overflow plan/runtime/tests, and tracked
+systemd templates into the branch history. Against `origin/main`, draft PR #13
+now changes exactly one file: 579 added lines in `docs/vacation-progress.md`.
+GitHub reports it mergeable; combined-history CI is running. This was local
+repository maintenance only and did not write the audit host, restart a
+service, or change any primary/overflow pin.
