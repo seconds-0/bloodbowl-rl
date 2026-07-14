@@ -40,6 +40,13 @@ class FreezeVacationQueueTests(unittest.TestCase):
             write_json(scripted_manifest, {
                 "source_screen": str(screen.parent),
                 "source_screen_sha256": "a" * 64,
+                "reference_arm": "both",
+                "candidate_arms": [
+                    "possession_only", "gain_only", "neither",
+                ],
+                "preference_order": [
+                    "neither", "possession_only", "gain_only",
+                ],
                 **scripted_contract,
             })
             analysis = scripted.parent / "ANALYSIS.json"
@@ -99,6 +106,30 @@ class FreezeVacationQueueTests(unittest.TestCase):
                     expected_complete_sha=freezer.sha256(scripted),
                     expected_candidate="both",
                 )
+                write_json(scripted_manifest, {
+                    "source_screen": str(screen.parent),
+                    "source_screen_sha256": "a" * 64,
+                    "reference_arm": "both",
+                    "candidate_arms": ["gain_only"],
+                    "preference_order": ["gain_only"],
+                    **scripted_contract,
+                })
+                with self.assertRaisesRegex(
+                    freezer.FreezeError, "all three simplification arms"
+                ):
+                    freezer.validate_spec(spec_path)
+                write_json(scripted_manifest, {
+                    "source_screen": str(screen.parent),
+                    "source_screen_sha256": "a" * 64,
+                    "reference_arm": "both",
+                    "candidate_arms": [
+                        "possession_only", "gain_only", "neither",
+                    ],
+                    "preference_order": [
+                        "neither", "possession_only", "gain_only",
+                    ],
+                    **scripted_contract,
+                })
                 write_json(analysis, {
                     "recommendation": {
                         "arm": "both",
@@ -455,23 +486,48 @@ class FreezeVacationQueueTests(unittest.TestCase):
                     "requested_steps": 500_000_000,
                 })
                 implementation = screen_manifest["contract"]["implementation"]
-                implementation.pop("config_tree_sha256")
-                implementation.pop("default_config_sha256")
-                implementation["critical_vendor_files"] = {
-                    relative: freezer.sha256(path)
-                    for relative, path in critical_paths.items()
-                    if relative in {
-                        "pufferlib/pufferl.py",
-                        "src/pufferlib.cu",
-                    }
-                }
                 write_json(manifest_path, screen_manifest)
-                with self.assertRaisesRegex(
-                    freezer.FreezeError, "critical vendor identity"
-                ):
+                self.assertEqual(
+                    freezer.validate_main_screen(
+                        complete, "both", warm, pool, root
+                    ),
+                    report,
+                )
+                alternate_config.write_text("[control-drift]\n", encoding="utf-8")
+                with self.assertRaisesRegex(freezer.FreezeError, "config tree"):
                     freezer.validate_main_screen(
                         complete, "both", warm, pool, root
                     )
+                alternate_config.unlink()
+
+                implementation["default_config_sha256"] = "0" * 64
+                write_json(manifest_path, screen_manifest)
+                with self.assertRaisesRegex(freezer.FreezeError, "default config"):
+                    freezer.validate_main_screen(
+                        complete, "both", warm, pool, root
+                    )
+                implementation["default_config_sha256"] = freezer.sha256(
+                    default_config
+                )
+                write_json(manifest_path, screen_manifest)
+
+                for changed_path in (
+                    critical_paths["pufferlib/__init__.py"],
+                    critical_paths["pufferlib/models.py"],
+                    critical_paths["pufferlib/muon.py"],
+                ):
+                    original_bytes = changed_path.read_bytes()
+                    changed_path.write_bytes(original_bytes + b"control-drift")
+                    with self.assertRaisesRegex(
+                        freezer.FreezeError, "critical vendor source"
+                    ):
+                        freezer.validate_main_screen(
+                            complete, "both", warm, pool, root
+                        )
+                    changed_path.write_bytes(original_bytes)
+
+                implementation.pop("config_tree_sha256")
+                implementation.pop("default_config_sha256")
                 implementation["critical_vendor_files"] = {
                     relative: freezer.sha256(path)
                     for relative, path in critical_paths.items()
@@ -485,12 +541,13 @@ class FreezeVacationQueueTests(unittest.TestCase):
                     }
                 }
                 write_json(manifest_path, screen_manifest)
-                self.assertEqual(
+                with self.assertRaisesRegex(
+                    freezer.FreezeError,
+                    "config tree|critical vendor identity",
+                ):
                     freezer.validate_main_screen(
                         complete, "both", warm, pool, root
-                    ),
-                    report,
-                )
+                    )
             self.assertEqual(accepted, report)
 
     def fixture(self, root: Path) -> dict:

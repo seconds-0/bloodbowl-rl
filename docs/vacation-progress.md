@@ -174,3 +174,41 @@ Next steps:
    transfer, and follow only the evidence-selected candidate or R0-control route.
 4. Once the audit checkout is idle, deploy the merged source, freeze the literal
    queue, run the departure smokes, start its user service, and verify BBTV.
+
+## 2026-07-14 01:15 PDT — review correction
+
+Status / correction:
+
+- PR #10 opened at `428604d4f3b875cc12e4688bc06e364491595254` and
+  hosted CI passed, but two independent reviewers correctly rejected that head.
+  It has not been merged or deployed.
+- The first head allowed a control fallback from the active v3 screen's older
+  six-file provenance record. That is insufficient: the manifest omitted the
+  recursive Puffer config-tree hash, explicit `default.ini` hash, and three
+  Python runtime files. Current pins cannot retroactively prove launch-time
+  bytes.
+- It also treated an empty eligible list as “all candidates rejected” without
+  requiring the transfer to have evaluated all three simplifications. A valid
+  one-candidate matrix could therefore have authorized the fallback.
+
+Fix in progress:
+
+- Removed the legacy provenance exception. Both queue routes now require the
+  complete config-tree/default-config/compiled-module/exact-nine-file/patch/
+  warm/pool source-screen contract, with control-specific drift tests for an
+  alternate config, `default.ini`, package initialization, models, and Muon.
+- The control route now requires reference `both`, the exact candidate list
+  `possession_only,gain_only,neither`, and the reviewed preference order before
+  an empty eligible list can mean every simplification failed. A candidate-
+  omission regression failed against the first head and passes after the fix.
+
+Operational consequence / next steps:
+
+1. Re-run the complete local suite, amend PR #10, and obtain exact-new-head
+   re-review plus hosted CI before merge.
+2. Continue the active v3 screen unchanged. If it selects a candidate, it can
+   route that candidate into a new fully closed paired confirmation. If it
+   rejects all candidates, it cannot directly authorize the control queue; run
+   a provenance-complete decomposition rerun first.
+3. Keep the audit checkout untouched until the current screen completes, then
+   deploy only the exact reviewed merged source.

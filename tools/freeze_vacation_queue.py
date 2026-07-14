@@ -53,6 +53,8 @@ REVIEWED_SECOND_ANCESTRY = {
     "name": "league9",
     "sha256": "359d14caa08f12362f799c4cab4f33301fc9ce2ba3dec85922abe9622670d5f5",
 }
+CONTROL_TRANSFER_CANDIDATES = ["possession_only", "gain_only", "neither"]
+CONTROL_TRANSFER_PREFERENCE = ["neither", "possession_only", "gain_only"]
 SCREEN_CRITICAL_VENDOR_FILES = {
     "pufferlib/__init__.py",
     "pufferlib/pufferl.py",
@@ -64,16 +66,6 @@ SCREEN_CRITICAL_VENDOR_FILES = {
     "src/bindings.cu",
     "src/vecenv.h",
 }
-LEGACY_SCREEN_CRITICAL_VENDOR_FILES = {
-    "pufferlib/pufferl.py",
-    "pufferlib/selfplay.py",
-    "pufferlib/torch_pufferl.py",
-    "src/pufferlib.cu",
-    "src/bindings.cu",
-    "src/vecenv.h",
-}
-
-
 class FreezeError(ValueError):
     pass
 
@@ -222,22 +214,20 @@ def validate_main_screen(
     ):
         raise FreezeError("installed Puffer config differs from main screen")
     config_tree = root / "vendor/PufferLib/config"
-    if not control_mode:
-        try:
-            observed_config_tree_sha = run_reward_candidate_transfer.tree_sha256(
-                config_tree
-            )
-        except run_reward_candidate_transfer.RunnerError as exc:
-            raise FreezeError(f"invalid Puffer config tree: {exc}") from exc
-        if observed_config_tree_sha != implementation.get("config_tree_sha256"):
-            raise FreezeError("Puffer config tree differs from main screen")
-        default_config = config_tree / "default.ini"
-        if (
-            not default_config.is_file()
-            or sha256(default_config)
-            != implementation.get("default_config_sha256")
-        ):
-            raise FreezeError("Puffer default config differs from main screen")
+    try:
+        observed_config_tree_sha = run_reward_candidate_transfer.tree_sha256(
+            config_tree
+        )
+    except run_reward_candidate_transfer.RunnerError as exc:
+        raise FreezeError(f"invalid Puffer config tree: {exc}") from exc
+    if observed_config_tree_sha != implementation.get("config_tree_sha256"):
+        raise FreezeError("Puffer config tree differs from main screen")
+    default_config = config_tree / "default.ini"
+    if (
+        not default_config.is_file()
+        or sha256(default_config) != implementation.get("default_config_sha256")
+    ):
+        raise FreezeError("Puffer default config differs from main screen")
     module_value = implementation.get("compiled_module")
     if not isinstance(module_value, str):
         raise FreezeError("main screen compiled-module path is malformed")
@@ -255,12 +245,7 @@ def validate_main_screen(
     critical_names = set(critical) if isinstance(critical, dict) else set()
     if (
         not isinstance(critical, dict)
-        or not critical_names
-        or (
-            not control_mode
-            and critical_names != SCREEN_CRITICAL_VENDOR_FILES
-        )
-        or (control_mode and critical_names != LEGACY_SCREEN_CRITICAL_VENDOR_FILES)
+        or critical_names != SCREEN_CRITICAL_VENDOR_FILES
     ):
         raise FreezeError("main screen critical vendor identity is incomplete")
     for relative, expected in critical.items():
@@ -389,6 +374,16 @@ def validate_spec(path: Path) -> dict[str, Any]:
             "main scripted transfer differs from the frozen implementation contract"
         )
     if control_mode:
+        if (
+            scripted_manifest.get("reference_arm") != "both"
+            or scripted_manifest.get("candidate_arms")
+            != CONTROL_TRANSFER_CANDIDATES
+            or scripted_manifest.get("preference_order")
+            != CONTROL_TRANSFER_PREFERENCE
+        ):
+            raise FreezeError(
+                "control fallback requires all three simplification arms"
+            )
         transfer_analysis = load_object(
             Path(scripted_evidence["analysis"]), "main scripted analysis"
         )

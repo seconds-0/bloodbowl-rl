@@ -200,8 +200,12 @@ simplification produces the six-job candidate route. A decomposition result
 that recommends `both` and records an empty eligible-candidate list produces
 only the two-job R0 control route: `control-final`, `12B x seeds 42/43/44`, once
 per ancestry. That fallback has no candidate-transfer input, learned-transfer
-input, or gate; both PPO jobs remain non-resume-safe. Never hand-edit the frozen
-plan or substitute a rejected reward candidate.
+input, or gate; both PPO jobs remain non-resume-safe. Its source decomposition
+screen must carry the same recursive config-tree, default-config, and exact
+nine-file runtime identity as every other freezer input. Never accept a legacy
+partial-provenance screen or partial transfer matrix: reference must be `both`
+and candidates must be exactly `possession_only`, `gain_only`, and `neither`.
+Never hand-edit the frozen plan or substitute a rejected reward candidate.
 
 A persisted queue halt is terminal across restart and reboot. Do not edit its
 state to resume it. Preserve the evidence and deploy a new reviewed queue

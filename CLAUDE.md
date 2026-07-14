@@ -166,9 +166,14 @@ newer evidence wins.
   42/43/44, not a live choice of candidate. Screen jobs are not resume-safe;
   atomic transfer/gate jobs are. The sole fallback is predeclared: when the
   decomposition transfer recommends `both` with no eligible simplification,
-  the freezer requires null learned inputs and emits two non-resume-safe
+  the freezer requires null learned inputs plus a fully provenance-complete
+  decomposition screen and emits two non-resume-safe
   `control-final` jobs, each R0-only at `12B x seeds 42/43/44`, preserving the
-  same `72B` total without training a rejected objective.
+  same `72B` total without training a rejected objective. A legacy screen that
+  omitted the config-tree, default-config, or full runtime-file identity cannot
+  authorize this route and must be rerun under the complete contract. Its
+  scripted transfer must use reference `both` and contain all three
+  simplification candidates; rejecting a subset is not “all rejected.”
 - Queue-owned screens run with `ARM_DETACH=0`. The queue's new-session process
   group must contain the screen, arm wrapper, Puffer trainer, and descendants;
   never add nested `setsid`/daemonization that would evade queue guard cleanup.

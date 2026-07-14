@@ -114,7 +114,12 @@ complete. If the decomposition transfer instead recommends `both` and records
 an empty eligible-candidate list, the same freezer's only alternate mode is a
 two-job R0 control replication: `control-final` at `12B x seeds 42/43/44` from
 each of the two ancestries. It requires `candidate_arm=both`, null learned
-inputs, and exact rejection evidence; never substitute a rejected candidate.
+inputs, exact rejection evidence, and a source decomposition screen carrying
+the complete current config-tree/default-config/nine-file runtime identity.
+The transfer must use `both` as reference and evaluate exactly all three
+simplifications (`possession_only`, `gain_only`, `neither`). Legacy partial
+provenance or a partial candidate matrix cannot authorize the fallback; never
+substitute a rejected candidate.
 On the candidate route, `tools/vacation_reward_gate.py` must pass both
 ancestries before either long final screen can start. The control route has no
 candidate gate. PPO screens are not resume-safe; atomic/restart-validating

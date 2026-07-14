@@ -532,7 +532,13 @@ analysis recommends `both` and its eligible-candidate list is empty, freeze
 R0-only seeds 42/43/44 from the main ancestry, then the same schedule from
 `league9`. This preserves the `72B` final budget without training a rejected
 objective. If any simplification remains eligible, the fallback must fail
-closed.
+closed. The rejecting decomposition screen must also satisfy the full current
+config-tree, explicit default-config, compiled-module, exact nine-file runtime,
+patch, warm, and pool provenance contract. A legacy screen missing any of those
+identities is screening evidence only and must be rerun before it can authorize
+the control queue. The scripted matrix must also use `both` as reference and
+evaluate all three simplifications. An empty eligible list from a subset is not
+an all-candidates-rejected result.
 
 Vacation screen jobs must invoke `tools/run_frozen_reward_screen.py`, which sets
 `ARM_DETACH=0`. The queue creates a new session for each job, and every screen,

@@ -44,7 +44,10 @@ as the experimental control: the freeze spec uses `candidate_arm=both`, null
 learned-transfer inputs, and `final_steps=12B`, and emits exactly two R0-only
 `control-final` jobs (`seeds 42,43,44`) from the two frozen ancestries. That is
 still `72B` requested learner steps. It does not guess or train a rejected
-candidate.
+candidate. The rejecting decomposition screen must carry the complete current
+recursive config-tree hash, explicit `default.ini` hash, and exact nine-file
+runtime identity. A legacy screen missing those fields cannot authorize the
+fallback and must be rerun under the complete contract.
 
 ## Six-day queue order
 
@@ -139,7 +142,8 @@ the two-lineage gate config, and validates the resulting six-job typed plan
 before publication. The all-candidates-rejected route requires the exact
 scripted recommendation described above, writes two hash-pinned `control-final`
 configs, and validates a two-job typed plan with no learned transfer or gate.
-There is no third route.
+It applies the same full source-screen provenance closure as the candidate
+route; there is no legacy exception and no third route.
 `tools/run_frozen_reward_screen.py` is the categorical/path bridge into the
 existing environment-variable launcher. `tools/run_reward_learned_transfer.py`
 creates atomic per-cell learned-anchor results in both backend roles.
@@ -201,10 +205,14 @@ vendor/PufferLib/.venv/bin/python tools/freeze_vacation_queue.py \
 systemctl --user start experiment-queue@<queue-id>.service
 ```
 
-The spec fixes `second_steps=1000000000`, `final_steps=6000000000`, both warm
-checkpoint paths, the static pool, anchor config, three main-lineage completion
-proofs, free-space/inode floors, and the thermal ceiling. Editing any config,
-pin, or plan after first start is a terminal halt.
+Both spec modes fix `second_steps=1000000000`, both warm checkpoint paths, the
+static pool, the exact main screen and scripted-transfer proofs, free-space/
+inode floors, and the thermal ceiling. The candidate mode additionally fixes
+`final_steps=6000000000`, the anchor config, and the main learned-transfer proof.
+The control mode instead fixes `final_steps=12000000000`, requires null anchor
+and learned-transfer fields, and requires the full three-candidate rejection
+matrix from a provenance-complete decomposition screen. Editing any config, pin,
+or plan after first start is a terminal halt.
 
 ## Monitoring readout
 
