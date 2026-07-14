@@ -7,7 +7,13 @@
 
 // ---------------------------------------------------------------- config
 const PARAMS = new URLSearchParams(location.search);
-const WS_URL = PARAMS.get('ws') || 'ws://localhost:8787/ws';
+const LOCAL_HOSTS = new Set([
+  '', 'localhost', '127.0.0.1', '0.0.0.0', '::1', '[::1]',
+]);
+const DEFAULT_WS_URL = LOCAL_HOSTS.has(location.hostname)
+  ? 'ws://localhost:8787/ws'
+  : `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws`;
+const WS_URL = PARAMS.get('ws') || DEFAULT_WS_URL;
 const COLS = 26, ROWS = 15, CELL = 36;
 const TWEEN_MS = 250;        // move animation
 const PROBS_MS = 700;        // "AI mind" card lifetime
