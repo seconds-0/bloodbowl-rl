@@ -994,3 +994,62 @@ Next steps:
 3. On pass, immediately run the exact 16-cell scripted and 32-cell learned
    transfers; on their pass, freeze/smoke/start the persistent vacation queue
    and visibly verify BBTV. Stop fail-closed on any rejection or drift.
+
+## 2026-07-14 12:15 PDT
+
+Status:
+
+- The four-arm paired screen completed successfully as an experiment but
+  rejected `neither` as the vacation candidate. `SCREEN_COMPLETE.json` SHA-256
+  is `96d8ab1d3dbbea438005780d8ba92a3b20e54175d885f3d460be4530e9c724ad`;
+  the independently regenerated analysis SHA-256 is
+  `a113fad8626f314ea7bed7dde8871892707b0242d0a8b6f80f5391dcb43c1a77`.
+- The frozen mean performance contrast is -0.025273, below the required -0.02.
+  Per-seed contrasts are -0.033250 and -0.017296, both above their -0.05
+  floors. Candidate TD relative drop is -0.118247 (an increase, so it passes the
+  0.20 ceiling). The literal failure is `mean_perf_delta` only and is decisive.
+- The candidate route is stopped. No paired scripted transfer, learned transfer,
+  `VACATION_SPEC.json`, queue plan, or queue state has been created from this
+  screen. The GPU is idle rather than consuming time on a guaranteed-to-fail
+  downstream gate.
+
+Completed since the previous handoff:
+
+- Arm 4 (`both`, seed 43) passed at exactly 999,948,288 steps and 10,025 final-
+  policy games with all integrity counters zero. Its performance was 0.532219,
+  score differential +0.098055, and 1.312818 TD/game; checkpoint SHA-256 is
+  `9b936ff6f45ad70315b1340fd583aee7202d2c22034a51f713f02d0964c106a8`.
+- Verified the screen service ended normally with result success, exit status
+  zero, and zero restarts. Verified all four accepted result hashes and the
+  atomic completion artifact before analyzing the comparison.
+- Regenerated the complete analysis a second time and obtained byte-identical
+  JSON. Then ran `vacation_reward_gate.validate_screen` with the reviewed
+  thresholds; it independently returned exactly `mean_perf_delta`.
+- BBTV advanced to the exact final arm-4 999,948,288-step checkpoint against
+  turnover3; all viewer services remain active. The GPU returned to idle at
+  59 C and 252 MiB VRAM after the screen completed.
+
+Current blockers / risks:
+
+- The reviewed candidate queue is now unavailable: its main self-play evidence
+  is known to fail, so running scripted/learned transfer or a second ancestry
+  would waste compute before the immutable two-lineage gate rejects it.
+- A candidate confirmation failure does not prove that every decomposition
+  candidate failed. Therefore it cannot authorize the existing all-candidates-
+  rejected R0 control fallback, and silently switching candidates would violate
+  the reviewed routing decision.
+- Maximizing vacation GPU use now requires either an already justified non-
+  promotion workload or a newly reviewed fallback contract. Neither may weaken
+  the reward evidence, mutate production defaults, or relabel this rejection.
+
+Next steps:
+
+1. Preserve the rejected screen and its exact analysis/gate evidence; keep the
+   candidate transfers and vacation freezer untouched.
+2. Audit the existing reviewed workloads for a safe non-promotion option that
+   produces useful Blood Bowl evidence and BBTV matchups without claiming a
+   reward win. If none fits literally, prepare a separately reviewed contract
+   rather than improvising a command queue.
+3. Only deploy/start an alternative after its source, typed plan, provenance,
+   failure behavior, resource guards, and BBTV path pass the same departure
+   smokes. Otherwise hand off an evidence-backed stop instead of unsafe compute.
