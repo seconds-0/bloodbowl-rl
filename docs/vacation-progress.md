@@ -648,3 +648,60 @@ Next steps:
 3. Freeze the candidate queue only after all main evidence is literal; otherwise
    stop or follow the separately reviewed fail-closed route authorized by the
    exact evidence.
+
+## 2026-07-14 07:00 PDT
+
+Status:
+
+- The main-lineage paired confirmation remains healthy on arm 1/4 (`both`, seed
+  42): 651,165,696 steps at the latest complete trainer report. The service is
+  active with zero restarts, all trainer descendants remain in its cgroup, and
+  reward clipping, nonfinite rewards, and error episodes remain zero.
+- The RTX 2070 was at 81 C, 79% utilization, 5,737 MiB VRAM, and 118 W. No
+  hardware thermal slowdown is active; disk, memory, user services, and the
+  Tailscale path remain within the previously verified departure margins.
+- BBTV is following this exact confirmation arm against the frozen turnover3
+  baseline. Its latest selected complete checkpoint was `both`, seed 42, at
+  549,453,824 steps; `bbstream`, `bbweb`, and `bbtv-tunnel` are all active.
+
+Completed since the previous handoff:
+
+- Froze and validated the learned-transfer anchor configuration at
+  `/home/rache/bloodbowl-rl-audit/runs/vacation-inputs-20260714/LEARNED_ANCHORS.json`.
+  It is read-only and has SHA-256
+  `ac2fcd8c27093122937510348262804647c2480bca357e8597fd81ec52b8a9c7`.
+- The configuration pins four exact 16,066,560-byte learned checkpoints
+  (`league9`, `violence`, `netblock`, and `turnover3`), 4,096 games per cell,
+  and the reviewed gates: mean score delta at least -0.02; per-seed,
+  per-anchor, and per-orientation means at least -0.05; and every cell at least
+  -0.10. Validation used the merged learned-transfer runner without touching
+  the active screen.
+- Rechecked live service containment, checkpoint progress, GPU health, and the
+  BBTV follow record immediately before this journal entry. The active screen
+  manifest remains the frozen SHA-256
+  `5021875f9d7816d77b520d8616e5a9acbe419c0bcdca93bc78f2655e633380da`.
+
+Current blockers / risks:
+
+- No arm result exists until the trainer reaches the exact 999,948,288-step
+  acceptance boundary and its evaluation/result contract passes. This
+  four-arm screen is deliberately non-resume-safe and will fail closed after a
+  service or host interruption.
+- A passing paired screen still cannot authorize the vacation queue by itself.
+  Its exact 16-cell scripted transfer and exact 32-cell learned-anchor transfer
+  must pass before the candidate is frozen.
+- BBTV restarts briefly when a newer checkpoint is atomically selected. Prior
+  visual verification showed its websocket retry recovering from this rollover;
+  a persistent viewer outage would still block departure readiness.
+
+Next steps:
+
+1. Monitor arm 1 through its exact boundary and verify the atomic arm result,
+   evaluation count, integrity counters, service state, and BBTV rollover before
+   allowing arm 2 to count.
+2. Continue all four fixed arms (`both42`, `neither42`, `neither43`, `both43`)
+   without modifying the experiment; preserve and independently regenerate the
+   final analysis/completion artifacts.
+3. If and only if the paired gate passes, run the exact scripted and frozen
+   learned transfers, freeze the literal candidate queue, then execute the
+   interruption/failure/resume and departure smokes before enabling it.
