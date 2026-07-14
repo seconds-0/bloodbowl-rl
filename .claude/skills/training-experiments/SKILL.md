@@ -11,7 +11,7 @@ retune from aesthetics, training curves, or human-looking behavior. Change one
 declared factor through a frozen experiment, validate on match utility and held-out
 transfer, and write every accepted finding to `DECISIONS.md`.**
 
-State as of 2026-07-13 (reward/replay audit complete, ledger through D181).
+State as of 2026-07-14 (reward/replay audit active, ledger through D182).
 Always read `AGENTS.md`, the tail of `DECISIONS.md`, and
 `docs/reward-and-replay-audit-2026-07-09.md` first. Newer ledger entries and
 immutable result artifacts supersede older sections of this skill.
@@ -45,6 +45,13 @@ No reward has been promoted to production.
   transfer-noninferior survivor with learned opponents, roster macro, longer
   horizon, and a second ancestry. Do not change production defaults before all
   gates pass.
+- The July 13–14 attempt completed all arms but is rejected under D182. One
+  training emission exceeded the PPO clamp by exactly `0.015`; the retained
+  schema cannot identify its sign or terminal context. The audit separately
+  confirmed an unsafe result-plus-incidental-shaping terminal path. It has no
+  completion proof and cannot feed transfer. Correct and review terminal
+  composition, add terminal/non-terminal recurrence telemetry, then rerun every
+  arm under one uniform semantic contract.
 
 Canonical evidence:
 
@@ -71,6 +78,9 @@ For every causal arm:
    in-sample versus held-out results separately.
 7. Treat two-seed/scripted-bot screens as descriptive, never as confidence
    intervals, tournament-strength claims, or production promotion.
+8. On an episode-ending step, emit only explicit current-step objective reward
+   (TD), result utility, and separately declared episode-terminal terms. Never
+   let incidental action/board shaping co-stack invisibly with the result.
 
 ---
 
@@ -190,6 +200,8 @@ Interpretation after D177–D178:
    redefine utility and require held-out match validation.
 7. Do not promote from human-stat proximity, TDs alone, or training-opponent
    success. Require W/D/L and TD for/against on held-out opponents.
+8. Keep terminal match utility authoritative: incidental shaping on the action
+   that ends an episode must not share the terminal result emission.
 
 ---
 
@@ -321,7 +333,7 @@ See §4. Check the invariants before every reward-config launch. No exceptions.
 
 ## 7. DECISIONS.md ledger discipline
 
-The ledger is at `DECISIONS.md` (through D181 as of 2026-07-13). It is the
+The ledger is at `DECISIONS.md` (through D182 as of 2026-07-14). It is the
 program's chronological memory. D177–D181 cover the reward screen, transfer,
 replay corpus, streaming loader, and rejected partial-deployment run that
 supersede this skill's June snapshots.

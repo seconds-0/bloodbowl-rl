@@ -9,7 +9,7 @@ and behavioral cloning from FUMBBL replays.
 1. Read the tail of `DECISIONS.md`. It is the chronological program ledger;
    later entries amend earlier ones without deleting history.
 2. For reward, replay, or training work, read
-   `docs/reward-and-replay-audit-2026-07-09.md`. D177–D180 summarize its durable
+   `docs/reward-and-replay-audit-2026-07-09.md`. D177–D182 summarize its durable
    conclusions.
 3. Load the relevant project skill under `.claude/skills/`:
    - `training-experiments` for any run, A/B, checkpoint, metric, or promotion;
@@ -42,6 +42,12 @@ default.
   opponent TDs in all eight. Do not replace R0 with R2.
 - The next causal experiment must decompose the bundle while distance remains
   on: both, possession-only, gain-only, neither; `500M x 2 seeds`.
+- The July 13–14 decomposition attempt is rejected under D182: one training
+  emission crossed PPO's clamp by exactly `0.015`; the old telemetry cannot
+  classify its sign or terminal context. The audit separately confirmed an
+  unsafe terminal result-plus-shaping path. Do not analyze or transfer from
+  that screen. Correct terminal composition and add phase-split clip telemetry,
+  then rerun all arms.
 - Do not change production defaults until the survivor passes learned-opponent,
   roster-grid, longer-horizon, multi-seed, and second-ancestry confirmation.
 - Human-looking block, rush, possession, or action rates are diagnostics, not
@@ -68,6 +74,10 @@ For any causal comparison:
 - Require explicit train/eval phase telemetry, enough completed full games, a
   final cumulative reprint, and zero clip, non-finite, engine-error, demo, and
   fallback counters. Reject an arm that fails integrity; do not average it in.
+- On an episode-ending step, preserve explicit objective reward (TD) and result
+  utility, but do not let incidental action/board shaping co-stack with the
+  terminal result. Keep deliberately episode-terminal terms separately visible
+  to clip telemetry.
 - Evaluate kickoff starts with `demo_reset_pct=0`, both sides/orientations, W/D/L,
   TD for/against, common-seed paired differences, and held-out opponents.
 - Two seeds and scripted bots are descriptive screening evidence, not a

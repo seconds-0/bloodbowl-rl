@@ -171,6 +171,11 @@ typedef struct {
     float reward_clipped_samples;
     float reward_nonfinite_samples;
     float reward_clip_excess;
+    // Diagnostic split for any future recurrence. The rejected D182 artifact
+    // predates these counters, so its one clip cannot be classified after the
+    // fact as terminal versus non-terminal.
+    float reward_clip_terminal_samples;
+    float reward_clip_nonterminal_samples;
     // Sum of each episode's maximum; after vec /n this is explicitly a mean.
     float reward_episode_abs_max_mean;
     // Episode indicators; after vec-log normalization these are the fraction
@@ -547,11 +552,24 @@ typedef struct {
     int ep_touchbacks;
     int kickoff_touchback_latched;
     float ep_return[BBE_AGENTS];
+    // Objective reward emitted on THIS agent-step (currently TD only). When
+    // the same step ends the episode, bbe_finish_episode keeps this objective
+    // component and discards incidental action/board shaping before adding
+    // the result bonus. Otherwise a terminal action can silently push an
+    // otherwise-valid TD/result or result-only emission through PPO's [-1,1]
+    // clamp (D182).
+    float step_objective_reward[BBE_AGENTS];
+    // Episode return before this c_step. Terminal composition restores this
+    // base and adds only the emitted objective/result terms, so even discarded
+    // non-finite shaping cannot poison the episode-return dashboard.
+    float step_return_base[BBE_AGENTS];
     int ep_reward_samples;
     int ep_reward_clipped;
     int ep_reward_nonzero;
     int ep_reward_nonfinite;
     float ep_reward_clip_excess;
+    int ep_reward_clip_terminal;
+    int ep_reward_clip_nonterminal;
     float ep_reward_abs_max;
     bb_action legal[BB_LEGAL_MAX];
     int n_legal;
@@ -1817,11 +1835,15 @@ static void bbe_reset_match(Bloodbowl* env) {
             (env->match.half - 1) * 8 + env->match.turn[t];
     }
     env->ep_return[0] = env->ep_return[1] = 0;
+    env->step_objective_reward[0] = env->step_objective_reward[1] = 0;
+    env->step_return_base[0] = env->step_return_base[1] = 0;
     env->ep_reward_samples = 0;
     env->ep_reward_clipped = 0;
     env->ep_reward_nonzero = 0;
     env->ep_reward_nonfinite = 0;
     env->ep_reward_clip_excess = 0.0f;
+    env->ep_reward_clip_terminal = 0;
+    env->ep_reward_clip_nonterminal = 0;
     env->ep_reward_abs_max = 0.0f;
     // Baseline scores from the (possibly resumed) match so TD step rewards
     // and the Log's tds/score_diff deltas count only what happens from here.
@@ -1900,7 +1922,9 @@ static void c_reset(Bloodbowl* env) {
     bbe_emit_all(env);
 }
 
-static void bbe_record_reward_emission(Bloodbowl* env) {
+static void bbe_record_reward_emission_masked(Bloodbowl* env,
+                                               unsigned nonfinite_mask,
+                                               bool terminal) {
     for (int a = 0; a < BBE_AGENTS; a++) {
         float raw = env->reward_ptr[a][0];
         env->ep_reward_samples++;
@@ -1908,6 +1932,7 @@ static void bbe_record_reward_emission(Bloodbowl* env) {
             env->ep_reward_nonfinite++;
             continue;
         }
+        if (nonfinite_mask & (1u << a)) env->ep_reward_nonfinite++;
         float magnitude = fabsf(raw);
         if (magnitude > 0.0f) env->ep_reward_nonzero++;
         if (magnitude > env->ep_reward_abs_max) {
@@ -1916,8 +1941,14 @@ static void bbe_record_reward_emission(Bloodbowl* env) {
         if (magnitude > 1.0f) {
             env->ep_reward_clipped++;
             env->ep_reward_clip_excess += magnitude - 1.0f;
+            if (terminal) env->ep_reward_clip_terminal++;
+            else env->ep_reward_clip_nonterminal++;
         }
     }
+}
+
+static void bbe_record_reward_emission(Bloodbowl* env) {
+    bbe_record_reward_emission_masked(env, 0, false);
 }
 
 static void bbe_finish_episode(Bloodbowl* env) {
@@ -1941,9 +1972,18 @@ static void bbe_finish_episode(Bloodbowl* env) {
         // when behind stays correct play. Win > Draw >> Loss.
         bonus[0] = bonus[1] = env->reward_draw;
     }
+    unsigned suppressed_nonfinite_mask = 0;
     for (int a = 0; a < BBE_AGENTS; a++) {
-        env->reward_ptr[a][0] += bonus[a];
-        env->ep_return[a] += bonus[a];
+        // Terminal match utility has authority over incidental shaping on the
+        // action that happens to end the game. Keep only objective components
+        // deliberately emitted on this step (TD), then add win/draw/loss.
+        // Episode-only terms such as statmatch are added explicitly below and
+        // remain visible to the clipping telemetry.
+        float pre_terminal = env->reward_ptr[a][0];
+        if (!isfinite(pre_terminal)) suppressed_nonfinite_mask |= 1u << a;
+        float objective = env->step_objective_reward[a];
+        env->reward_ptr[a][0] = objective + bonus[a];
+        env->ep_return[a] = env->step_return_base[a] + objective + bonus[a];
         env->terminal_ptr[a][0] = 1.0f;
     }
     if (env->possessor >= 0) {
@@ -2121,12 +2161,16 @@ static void bbe_finish_episode(Bloodbowl* env) {
     }
     // Record only after every terminal component—including statmatch—has
     // stacked. This is exactly the raw emission PPO clamps before GAE.
-    bbe_record_reward_emission(env);
+    bbe_record_reward_emission_masked(env, suppressed_nonfinite_mask, true);
     env->log.reward_samples += (float)env->ep_reward_samples;
     env->log.reward_nonzero_samples += (float)env->ep_reward_nonzero;
     env->log.reward_clipped_samples += (float)env->ep_reward_clipped;
     env->log.reward_nonfinite_samples += (float)env->ep_reward_nonfinite;
     env->log.reward_clip_excess += env->ep_reward_clip_excess;
+    env->log.reward_clip_terminal_samples +=
+        (float)env->ep_reward_clip_terminal;
+    env->log.reward_clip_nonterminal_samples +=
+        (float)env->ep_reward_clip_nonterminal;
     env->log.reward_episode_abs_max_mean += env->ep_reward_abs_max;
     env->log.reward_clip_episodes += env->ep_reward_clipped > 0;
     env->log.reward_nonfinite_episodes += env->ep_reward_nonfinite > 0;
@@ -2342,6 +2386,8 @@ static void c_step(Bloodbowl* env) {
     for (int a = 0; a < BBE_AGENTS; a++) {
         env->reward_ptr[a][0] = 0.0f;
         env->terminal_ptr[a][0] = 0.0f;
+        env->step_objective_reward[a] = 0.0f;
+        env->step_return_base[a] = env->ep_return[a];
     }
     bb_match* m = &env->match;
     if (m->status == BB_STATUS_DECISION && env->n_legal > 0) {
@@ -2765,6 +2811,9 @@ static void c_step(Bloodbowl* env) {
                          -1);
                 env->reward_ptr[t][0] += env->reward_td * (float)d;
                 env->reward_ptr[1 - t][0] -= env->reward_td * (float)d;
+                env->step_objective_reward[t] += env->reward_td * (float)d;
+                env->step_objective_reward[1 - t] -=
+                    env->reward_td * (float)d;
                 env->ep_return[t] += env->reward_td * (float)d;
                 env->ep_return[1 - t] -= env->reward_td * (float)d;
                 env->ep_tds_team[t] += d;

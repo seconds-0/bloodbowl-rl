@@ -5,9 +5,9 @@ deterministic C11 rules engine → PufferLib 4.0 native env → PPO + action
 masking + self-play curriculum, with BC support from curated FUMBBL replays.
 
 **Read `AGENTS.md` first.** Then read the tail of `DECISIONS.md` (currently
-through D180) and, for reward/replay work,
+through D182) and, for reward/replay work,
 `docs/reward-and-replay-audit-2026-07-09.md`. The ledger is chronological; the
-July audit and D177–D180 supersede older prose that calls the June v4 reward
+July audit and D177–D182 supersede older prose that calls the June v4 reward
 economy "settled." Where this file and newer ledger evidence disagree, the
 newer evidence wins.
 
@@ -22,7 +22,7 @@ newer evidence wins.
 | `fumbbl-data` | Fetching/parsing FUMBBL API data or replays; BC corpus curation |
 | `bb-validation` | Running/triaging the 7 validation layers; oracle setup (FFB/Jervis/Calculator) |
 
-## Current program state (reward/replay audit complete, 2026-07-13)
+## Current program state (reward/replay audit active, 2026-07-14)
 
 - **NO PRODUCTION REWARD HAS BEEN PROMOTED.** R0 is the next-stage experimental
   baseline only. Do not silently change defaults, deploy, or touch the production
@@ -39,6 +39,12 @@ newer evidence wins.
 - **Next reward screen:** distance on in all arms; `{possession+gain,
   possession-only, gain-only, neither}` at `500M × 2 seeds`; then learned
   opponents, roster macro, longer run, and second ancestry.
+- **D182 integrity rejection:** the July 13–14 screen finished all eight arms,
+  but one train emission crossed PPO's clamp by exactly `0.015`; the old schema
+  cannot classify its sign or terminal context. The audit independently found
+  an unsafe terminal result-plus-shaping path. It has no completion proof and
+  must not feed transfer. Correct terminal composition, add split recurrence
+  telemetry, then rerun every arm under the same reviewed semantics.
 - **Replay edition/coverage gate (D179):** 15,347 raw = 11,580 BB2025 + 3,767
   BB2020. Use the strict 9,118-ID non-empty BB2025 allowlist. The 1,622,231
   joined BB2025 records are sharply opening-censored and rare-action poor.
@@ -112,7 +118,9 @@ newer evidence wins.
   `beta*(gamma*Phi(s')-Phi(s))` or demonstrate non-inferiority while annealing.
 - Anti-farming invariants remain: no ball-loss double fine with the annuity,
   exact telescoping for any claimed potential, blitz exposure rush-gated, and
-  no reward clipping/non-finite values. Human-looking statistics remain
+  terminal emissions composed from explicit objective plus result rather than
+  incidental same-action shaping, and no reward clipping/non-finite values.
+  Human-looking statistics remain
   canaries, not goals.
 
 ### Metric semantics

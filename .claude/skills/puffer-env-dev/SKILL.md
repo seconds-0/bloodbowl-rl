@@ -15,7 +15,7 @@ self-play perm, FEN curriculum — structurally closest to Blood Bowl).
 Minimal template: `vendor/PufferLib/ocean/squared/`. MultiDiscrete: `vendor/PufferLib/ocean/drive/`.
 Cached upstream docs: `docs/vendor/pufferlib/docs.html` (env-author checklist + CLI cheatsheet).
 
-For current Blood Bowl experiment acceptance, also read `AGENTS.md`, D177–D181,
+For current Blood Bowl experiment acceptance, also read `AGENTS.md`, D177–D182,
 and `docs/reward-and-replay-audit-2026-07-09.md`. Upstream success/exit status is
 not sufficient: the audited path requires explicit phase, provenance, completed
 games, final cumulative reprint, and reward-integrity telemetry.
@@ -116,7 +116,7 @@ heap overrun that surfaces as `free(): corrupted unsorted chunks` at the FIRST
 log aggregation with completed episodes (~epoch 3 / ~786K steps, `n==0`
 early-returns before that). It reproduces at any thread count / cwd / config —
 do not chase those. Our vendored `dict_set` now aborts loudly with the key name.
-Blood Bowl currently emits 86 keys plus `"n"`. When adding Log keys, recount
+Blood Bowl currently emits 88 keys plus `"n"`. When adding Log keys, recount
 `dict_set` calls in `my_log` (+1 for `"n"`) against the `create_dict` capacity
 at both vec_log call sites and update the installer/dashboard guidance.
 
@@ -346,6 +346,10 @@ surface, match() mechanics): `reference/vecenv-internals.md`.
 - Env telemetry must distinguish train from final eval, clear sticky metadata,
   expose reward clip/non-finite/error/demo/fallback counts, and print the final
   cumulative record. Keep `metrics.setdefault` behavior for dynamic keys.
+- Reward telemetry splits clipped samples into terminal and non-terminal
+  contexts. On an episode-ending step, preserve explicit current-step objective
+  reward plus result utility; incidental action/board shaping must not co-stack
+  with the result. Keep deliberately terminal terms separately clip-visible.
 - **`puffer train` has NO upstream warm-start.** load_model_path is only
   read by eval()/match(). We patch _train in the VENDORED pufferl.py
   (gitignored — re-apply after any re-clone; patch lives right after
