@@ -1165,3 +1165,59 @@ Next steps:
    queue and that the public page/WebSocket continues rendering the matchup.
 3. Continue hourly durable entries and concise conversational monitoring;
    intervene only on a frozen guard breach or other evidence-backed failure.
+
+## 2026-07-14 12:55 PDT
+
+Status:
+
+- The first vacation R0 arm is making real learner progress. At 12:55 PDT it
+  had reached 114,163,712 agent steps (epoch 870); the queue service remained
+  active with main PID 431309 and zero restarts.
+- BBTV has rolled over between completed two-game viewing cycles to the exact
+  100,007,936-step checkpoint from
+  `vacation-r0-baseline-20260714-v1-final-main-control-both-s42`. The native
+  checkpoint SHA-256 is
+  `6c83f0eca621799e24d3f7e9c566585844dc1b27f38c409311b24b59f9a3a2ee`;
+  its frozen opponent remains turnover3 SHA-256
+  `fdcb2f0ebfbc88a29c026d51140ab008bd5dde5995ea5b3233fd0bd210110935`.
+- Public transport is live: `https://bbtv.seconds0.com/` returned HTTP 200 and
+  the public `/ws` endpoint completed an HTTP 101 WebSocket upgrade and
+  delivered live frames. `bbstream`, `bbweb`, and `bbtv-tunnel` are all active
+  with zero restarts.
+
+Completed since the previous handoff:
+
+- Verified the trainer advanced through 39,190,528, 46,137,344, 69,861,376,
+  103,022,592, and 114,163,712 steps rather than merely holding GPU processes.
+- Verified atomic native checkpoints at 50,069,504 and 100,007,936 steps. The
+  follower correctly ignored the bootstrap checkpoint, finished its current
+  matchup cycle, selected the newest available 100M checkpoint, converted it,
+  and started the next stream cycle without restarting the trainer.
+- Rechecked the live safety telemetry at 114M steps: reward clipping episodes
+  and excess, non-finite rewards, engine-error episodes, demos, and demo
+  fallbacks were all zero. The RTX 2070 was 81 C, 76% utilized, using 5,737 MiB
+  at 166 W; free storage remained 901 GiB.
+
+Current blockers / risks:
+
+- The dashboard behavior figures are still very early, short-window samples
+  and are not evidence for promotion or a reward conclusion. The latest window
+  contained 97 games (performance 0.494845, score differential -0.030928,
+  1.515464 TD/game, possession 0.344840); only the completed 10,000-game arm
+  evaluations are decision evidence.
+- The in-app browser surface was unavailable in this monitoring session, so a
+  fresh visual canvas inspection could not be claimed. Backend selection,
+  public HTML, WebSocket upgrade, and streamed frame bytes were verified
+  directly instead.
+- The PPO arm remains intentionally non-resume-safe. Any host/service
+  interruption must halt for inspection; it must not be silently relaunched.
+
+Next steps:
+
+1. Continue hourly checks of learner-step freshness, service restarts, thermal
+   and capacity guards, integrity counters, and atomic checkpoint publication.
+2. Confirm BBTV continues advancing at matchup boundaries as newer checkpoints
+   appear; perform a visual canvas check when the in-app browser is available.
+3. Monitor all three main-ancestry seeds through exact 12B-step training and
+   10,000-game final evaluations, then the three exact league9-ancestry seeds.
+   Preserve every result hash and stop fail-closed on any guard breach.
