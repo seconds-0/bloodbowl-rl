@@ -1633,3 +1633,22 @@ half difference is dominated by the unusually fast initial interval and does
 not show progressive thermal degradation. End-to-end checkpoint throughput is
 185,315 steps/second, agreeing with the prior whole-arm forecast and current
 dashboard rather than relying on either alone.
+
+BBTV freshness addendum: all nine vacation-rollover records were compared with
+the native checkpoint files that existed at each viewer start time. Every
+selection was the newest available checkpoint at that boundary (9/9); no
+rollover selected an older stable model when a newer one was available.
+Conversion-to-server-start latency is consistently 1.05--1.12 seconds. The
+observed two-game cycles last 520--793 seconds (8.7--13.2 minutes), mean 668
+seconds, while selected checkpoints had waited only 50--262 seconds after
+native publication. Thus cycle duration, not conversion or stale discovery,
+sets viewer freshness.
+
+At 14:23:59 PDT BBTV completed its ninth vacation rollover to the
+1,048,838,144-step checkpoint, native SHA-256
+`ebd3b05ddfe895a2c1eb65870624030deacc496a3cdb7d4a1062da6975dc3a92`
+and converted SHA-256
+`71c07b3e970297e6e3487f2fd22c3bed408afbc3d8c3dbd28fad204d5e39968b`.
+At verification it was only one approximately 50M checkpoint behind the live
+learner. Selection/server manifests agree, the public page returns HTTP 200,
+and all viewer services remain active with zero restarts.
