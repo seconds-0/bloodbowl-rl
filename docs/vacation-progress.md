@@ -1600,3 +1600,25 @@ The 14:19:26 PDT overflow watcher invocation also completed with result
 and left the real overflow state absent. The roughly 37-second delay from the
 timer's nominal 14:18:49 trigger is within systemd's default timer-accuracy
 coalescing window and did not represent a stalled watcher.
+
+One-billion-step continuity addendum: the current 12B seed-42 run was compared
+with the prior accepted 1B R0 seed-42 run from the same turnover3 ancestry. The
+full manifest diff contains only the intended identity/horizon changes: tag and
+screen-manifest identity, requested/final steps (1B/999,948,288 ->
+12B/11,999,903,744), and the opponent-timeout scaling (10B -> 120B) that keeps
+opponent swapping disabled for the longer arm. Reward, warm start, static pool,
+compiled engine, source/config trees, optimizer, rollout, network, historical
+share, and every other command field are byte-identical. The reward SHA-256 is
+`14b718f28b2c925ea3279444dfbc679631c0cceea0f84d9e3547e3318ce6e90e` in
+both runs.
+
+Across roughly the first billion training steps, the current run remains close
+to the accepted predecessor: performance 0.5276 versus 0.5308, score
+differential 0.0810 versus 0.0911, illegal fraction 0.2086 versus 0.2106, and
+ball advancement 8.40 versus 8.25. Its latest 200M frozen-history win rate is
+0.5528, effectively matching the predecessor's full-train 0.5513. The current
+recent window still has fewer touchdowns and more draws, consistent with the
+behavior watch above. Because a 12B annealing horizon intentionally leaves
+learning rate and entropy much less decayed at 1B than a 1B run, exact
+trajectory equality is neither expected nor desired; the manifest comparison
+rules out accidental reward/config drift as the explanation.
