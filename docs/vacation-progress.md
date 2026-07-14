@@ -1960,3 +1960,34 @@ Next steps:
 3. Repeat the full host/departure gate before handoff. Leave both immutable
    queues and the no-promotion boundary unchanged; terminal evidence will be
    interpreted only after the user returns.
+
+## 2026-07-14 15:35 PDT
+
+Sampled-BBTV boundary addendum:
+
+- The first post-deployment sampled two-game cycle completed normally after
+  8 minutes 47.7 seconds. The follower did not restart, retry, quarantine a
+  pair, or fall back. At 15:33:58 PDT it selected step 1,847,853,056, which was
+  the greatest native checkpoint present at that exact boundary. Native
+  SHA-256 is
+  `00aba3f98d09b39ef52e18b80c954f772253338e7df23825b7b6b0bc0d2deb28`;
+  converted SHA-256 is
+  `13f314699592e5400c61c952f5f8c80d68d088e5e56b77dfc127a557c5cc1d3a`.
+  Selection and server-status sidecars agree and the new child command retains
+  `--sample`.
+- An independent public secure-WebSocket connection received the exact 1.848B
+  learner-versus-frozen-turnover3 identity, a complete snapshot, heartbeat,
+  and advancing deltas through sequence 58. This proves both boundary rollover
+  and live external progression, not merely service liveness.
+- End-of-cycle pruning now sees corrected learner filenames. The recognized
+  cache is 26 files in steady operation: up to 24 recent entries retained by
+  `--keep-converted 24`, plus the old protected frozen baseline when it falls
+  outside that recent set, plus the newly converted current entry prepared
+  after the prior cycle's prune. This is the effective bounded maximum for the
+  present sequence, not an ongoing leak. The 30 pre-fix `_torch.b` learner
+  entries remain a fixed 482 MB legacy residue and no new malformed name was
+  created.
+- The primary queue and BBTV services remained active with zero restarts; queue
+  PID `431309` was unchanged. The GPU was 82 C, 79% utilized, using 5,737 MiB
+  at about 137 W with hardware slowdown inactive. The overflow state remained
+  absent. No experiment, reward, queue, checkpoint, or promotion input changed.
