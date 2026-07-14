@@ -1991,3 +1991,131 @@ Sampled-BBTV boundary addendum:
   PID `431309` was unchanged. The GPU was 82 C, 79% utilized, using 5,737 MiB
   at about 137 W with hardware slowdown inactive. The overflow state remained
   absent. No experiment, reward, queue, checkpoint, or promotion input changed.
+
+## 2026-07-14 16:16 PDT
+
+Status:
+
+- Main-ancestry R0 seed 42 is healthy at 2,336,882,688 exact learner steps
+  (epoch 17,828). The latest 97-game diagnostic reported performance 0.5309,
+  1.5979 touchdowns/game, draw rate 0.4227, possession 0.3710, historical win
+  rate 0.5564, illegal fraction 0.2016, and 8.68 forward ball squares. All
+  engine-error, clipping, non-finite, demonstration, and fallback counters were
+  zero. This remains health telemetry rather than final-policy evidence.
+- Forty-seven checkpoints now give an end-to-end rate of 185,470 steps/second,
+  median interval rate 185,356, and latest-five mean 185,540. The first 12B arm
+  still projects to finish near 06:43 PDT July 15. At the same rate, the full
+  remaining nine-arm schedule plus measured evaluation overhead projects near
+  07:05 PDT July 21, spanning the requested six-day absence rather than leaving
+  an idle tail.
+- The RTX 2070 was 82 C with 89% fan, 78% utilization, 5,737 MiB VRAM, about
+  108 W, and hardware slowdown inactive. A ten-minute one-minute-cadence watch
+  ranged 81--83 C; isolated load-transition samples reached 84 C but were
+  separated by 80--81 C samples and never approached the 88 C three-poll
+  fail-closed guard. Storage remains 900 GiB free, memory 9.1 GiB available,
+  and swap use 27 MiB.
+- Both immutable plans revalidated again: 65/65 primary and 74/74 overflow
+  pins, unchanged plan hashes, no drift. Queue, BBTV stream/web/tunnel, and
+  watcher timer are active with zero restarts. The latest completed watcher was
+  a successful primary-active no-op and overflow state remains absent.
+- Kernel inspection since the viewer deployment found zero NVIDIA Xid/NVRM,
+  OOM, I/O, critical-temperature, or shutdown events. Only the already
+  classified WSL capability-query warning occurred after viewer startup.
+
+Completed since the previous full checkpoint:
+
+- PR #13 CI passed on exact journal head `26cac63`, including reward/replay,
+  analyzer, BC streaming, build/unit, ASan, and UBSan checks. The draft is
+  mergeable and remains a journal-only diff relative to current `main`.
+- Verified three additional sampled BBTV cycles after deployment. They
+  completed in approximately 8m48s, 11m48s, and 9m01s without restart, retry,
+  quarantine, or fallback, selecting the greatest native checkpoint present at
+  each boundary. The most recent selection is step 2,297,298,944; an external
+  secure-WebSocket client received its exact learner/frozen identity, complete
+  snapshot, and advancing deltas through sequence 98. Every child command and
+  sidecar retained `--sample`.
+- Observed one sampled game from pre-play setup through `match_end`. The
+  current learner's Halflings, playing away against the frozen turnover3
+  Lizardmen, won 1-0. The learner recorded three blocks, 3/3 rushes, and two
+  turnovers; the frozen opponent recorded five blocks, 7/7 rushes, 0/2
+  pickups, five turnovers, four passes, and one hand-off. This is the satisfying
+  qualitative behavior BBTV is intended to expose. It is one stochastic game,
+  not evidence for a reward change, checkpoint choice, or promotion.
+- Ran a continuous ten-sample host watch at one-minute cadence. All five
+  required units were active in every sample, hardware slowdown was inactive,
+  two new learner checkpoints appeared on schedule, BBTV crossed a natural
+  cycle boundary, and no overflow state appeared. This directly checks the
+  sampled viewer's resource impact rather than inferring isolation only from
+  code.
+- Repeated the host-resilience audit. Windows remains on High Performance;
+  sleep and hibernate timers are zero on AC and DC. User lingering is enabled;
+  Tailscale is `Running`, online, and has no key expiry. All required user units
+  are enabled and active. `RigWSLKeepalive` is enabled/running with boot,
+  logon, and two-minute triggers, and its marker process has run continuously
+  for 34 days. The task's repeat-trigger result `0x800710e0` is expected while
+  its existing infinite instance is already running.
+- Windows Update, component servicing, and the Update SystemInfo API all report
+  no reboot requirement. Pending rename entries are only removal of two old
+  Microsoft Edge updater directories. A fresh read-only Update API search
+  returned only the not-downloaded malicious-software removal tool and a
+  Defender definition; no cumulative, feature, driver, WSL, CUDA, or downloaded
+  reboot-forcing update exists. No update, power, or reboot policy was changed.
+
+Learning/reward research update:
+
+- Recomputed the live trajectory through 2,127,298,560 steps from 16,226 valid
+  schema-2 training panels representing about 1.67 million games. Behavioral
+  means are game-count weighted; final reprints/eval panels are excluded; each
+  frozen-bank score is reconstructed from interval `hist_score_bank_i /
+  hist_n_bank_i`, avoiding the prior cumulative-panel error.
+- The low-touchdown/high-draw phase was not monotonic collapse. Comparing the
+  first and newest rolling 200M steps, touchdowns recovered 1.352 -> 1.627,
+  possession 0.3295 -> 0.3561, and draw rate fell 0.4133 -> 0.4033. Illegal
+  actions fell 0.2204 -> 0.1950, forward ball advancement rose 7.45 -> 9.12,
+  pickup success 2.09 -> 2.53, blocks against the carrier 1.18 -> 1.87,
+  carrier knockdowns 1.63 -> 2.32, and episode length shortened 702 -> 613.
+  Rush attempts rose 16.70 -> 20.11 and total blocks thrown fell 15.28 ->
+  12.22.
+- Match strength did not improve monotonically with that tempo recovery.
+  Overall frozen-bank expected score moved only 0.5399 -> 0.5470. Recent bank
+  scores versus the first band are 0.4732 vs 0.4668 (league9), 0.6109 vs
+  0.6107 (violence), 0.5623 vs 0.5645 (netblock), and 0.5507 vs 0.5279
+  (turnover3). Fixed 200M bands peaked around 1.2--1.4B and then softened while
+  true-game tempo recovered. This is oscillating nonstationary learning, not a
+  bank-collapse signature and not a trustworthy in-sample checkpoint ranking.
+- Therefore preserve and later evaluate predeclared fixed milestones as well as
+  terminal checkpoints with paired mirrored held-out games; do not choose the
+  visually best or highest-training-score point. The queue already retains the
+  complete checkpoint curve, so no vacation mutation is required.
+- Corrected BB2025 human references remain diagnostic only: 2.205 TDs/game,
+  0.4745 possession, and 15.46 rush tests versus the recent learner's 1.627,
+  0.356, and 20.11. Because replay states are opening-biased, action semantics
+  differ, and valid play is multimodal, those numbers must not become a global
+  stat-matching reward. The higher-leverage next causal arm remains the
+  predesigned C2 replay-state curriculum: exact-BB2025, replay-disjoint,
+  equal-weight tactical scenario starts using true game reward, annealed to
+  kickoff-only evaluation.
+
+Current interpretation / risks:
+
+- Sampled BBTV is now both fresh and more representative of training policy
+  behavior. A 1-0 learner win demonstrates its qualitative value, but the
+  1.67M-game machine trajectory and future 10,000-game terminal panels remain
+  the evidentiary surfaces.
+- Tempo has recovered while frozen strength oscillates. This argues for the
+  planned long-horizon seed/ancestry matrix, exact milestone learning curves,
+  and paired held-out evaluation; it does not justify changing R0 mid-run.
+- Physical host/WSL interruption remains the principal irreducible risk for
+  the non-resume-safe PPO arms. Power, keepalive, network, update, capacity,
+  thermal, provenance, and fail-closed checks are currently healthy.
+
+Next steps:
+
+1. Continue hourly learner/integrity, rate, service, pin, thermal, capacity,
+   kernel, watcher, and public-BBTV checks; add material events between full
+   entries.
+2. Preserve fixed milestone checkpoints and pre-register the post-return paired
+   learning-curve comparison. Do not select from training telemetry or BBTV.
+3. Repeat the full host/departure gate near 21:00 PDT, including Windows power,
+   update/reboot state, keepalive, Tailscale, both immutable plans, public BBTV,
+   and the latest progress/ETA. Leave promotion disabled.
