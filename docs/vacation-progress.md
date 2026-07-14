@@ -1434,3 +1434,9 @@ Next steps:
    thermals, capacity, service restarts, pin hashes, watcher behavior, and BBTV
    rollover through departure; preserve all evidence without interpreting or
    promoting a winner early.
+
+Post-entry verification: the 13:58:48 PDT watcher invocation completed with
+result `success` and exit status 0, logged `primary service is still active;
+waiting`, and left the real overflow state absent. This is the fourth observed
+real primary-running no-op after the pre-arm smoke and the 13:37, 13:48, and
+13:58 automatic invocations.
