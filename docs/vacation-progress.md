@@ -1479,3 +1479,25 @@ to about 07:30 PDT on 2026-07-21. This remains an estimate, but it is now based
 on 27 complete evaluations and supports the conclusion that the immutable
 108B schedule should occupy essentially the full six-day absence without an
 idle gap.
+
+Automatic-evaluation addendum: the live primary screen manifest and queue plan
+were re-audited after launch. Each 36B screen is exactly R0 `control-final` at
+seeds 42/43/44, requested 12B per seed and rollout-rounded to 11,999,903,744
+final steps. Each trainer performs a nominal 10,000-episode evaluation, while
+acceptance requires at least 10,001 observed evaluation games. A result is
+rejected if either train or evaluation telemetry is missing; if clipping,
+non-finite rewards, engine errors, or demo fallbacks are nonzero; if the exact
+final checkpoint, run manifest, reward, warm start, pool, implementation, PID,
+process group, or hashes disagree; or if the final step differs from the frozen
+manifest. `SCREEN_COMPLETE.json` cannot be emitted until all three results pass,
+and the queue then independently runs the pinned artifact validator before it
+may advance.
+
+Each 36B screen has a 259,200-second (72-hour) queue cap. The historical fit
+projects about 52.3 hours including fixed per-arm overhead, leaving roughly
+19.7 hours of headroom. Equivalently, the observed 184,982-step/second rate
+could decline by about 25% and still meet the timeout. The screen progress
+sidecar was fresh at 14:09:04 PDT (`waiting for current trainer`, R0 seed 42),
+and the queue's independent staleness limit is 600 seconds. The 14:08:49
+overflow watcher invocation also exited successfully, logged that the primary
+was active, and left the real overflow state absent.
