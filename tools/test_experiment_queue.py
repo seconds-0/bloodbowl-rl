@@ -406,6 +406,38 @@ class ExperimentQueueTests(unittest.TestCase):
             self.assertEqual(observed["state"], "halted")
             self.assertIn("validator timed out", observed["message"])
 
+    def test_fast_validator_output_is_bounded_after_exit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            job = self.write_job(
+                root, "validator-output",
+                "import pathlib,sys; pathlib.Path(sys.argv[1]).touch()",
+            )
+            plan = self.make_plan(root, [job])
+            payload = json.loads(plan.read_text())
+            noisy = root / "noisy_validator.py"
+            noisy.write_text(
+                "import os\n"
+                f"os.write(1, b'x' * ({queue.MAX_VALIDATOR_OUTPUT_BYTES} + 1))\n"
+            )
+            payload["pinned_files"].append({
+                "kind": "file", "path": str(noisy),
+                "bytes": noisy.stat().st_size,
+                "sha256": hashlib.sha256(noisy.read_bytes()).hexdigest(),
+                "role": "noisy test validator",
+            })
+            payload["jobs"][0]["pinned_inputs"].append(str(noisy))
+            payload["jobs"][0]["success"]["validator"] = [
+                {"kind": "pinned", "path": str(Path(sys.executable).resolve())},
+                {"kind": "pinned", "path": str(noisy)},
+            ]
+            plan.write_text(json.dumps(payload))
+
+            self.assertEqual(queue.run_queue(plan, root / "state.json"), 0)
+            observed = json.loads((root / "state.json").read_text())
+            self.assertEqual(observed["state"], "halted")
+            self.assertIn("validator output limit exceeded", observed["message"])
+
     def test_unknown_guard_field_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

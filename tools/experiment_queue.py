@@ -651,6 +651,10 @@ def success_error(
                     signal.signal(signum, handler)
             exit_code = process.wait()
             output_size = os.fstat(output.fileno()).st_size
+            if output_size > MAX_VALIDATOR_OUTPUT_BYTES:
+                return (
+                    "validator output limit exceeded: "
+                    f"{output_size} > {MAX_VALIDATOR_OUTPUT_BYTES}")
             output.seek(max(0, output_size - 2000))
             rendered_output = output.read(2000).decode(
                 "utf-8", errors="replace").strip()
