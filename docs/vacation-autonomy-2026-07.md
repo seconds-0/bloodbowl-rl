@@ -63,6 +63,9 @@ local/remote smoke; it is never improvised by the running service.
   environment values: literals cannot be path-bearing, immutable paths must be
   declared pins, mutable paths must be declared under the audit root, and a
   generated input must name an earlier job's exact success artifact;
+- inline interpreter/shell code modes are forbidden; executable logic lives in
+  a hash-pinned runner, and existing relative filesystem names are rejected as
+  literals;
 - size/SHA-256 records for every declared executable, script, checkpoint,
   config, manifest, and validator, plus recursive file-count/byte/tree hashes
   for directory inputs such as the replay pool, rechecked before and after every
@@ -77,6 +80,8 @@ local/remote smoke; it is never improvised by the running service.
   polls before terminating a process group;
 - a mandatory bounded validator for every success artifact, plus an expected
   artifact SHA-256 when it can be known before execution;
+- validator process-group cleanup, thermal/capacity supervision, and a 10 MiB
+  output cap written on the monitored queue filesystem;
 - atomic queue state and per-job logs; and
 - retry after interruption only when that job is explicitly `resume_safe`.
 

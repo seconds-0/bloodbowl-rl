@@ -21,27 +21,24 @@ class ExperimentQueueTests(unittest.TestCase):
     def tearDown(self):
         self.gpu_patch.stop()
 
-    @staticmethod
-    def typed(arguments: list[str], mutable: set[str]) -> list[dict[str, str]]:
-        executable = str(Path(sys.executable).resolve())
-        rendered = []
-        for value in arguments:
-            if str(Path(value).resolve()) == executable:
-                rendered.append({"kind": "pinned", "path": executable})
-            elif value in mutable:
-                rendered.append({"kind": "mutable", "path": value})
-            else:
-                rendered.append({"kind": "literal", "value": value})
-        return rendered
-
     def make_plan(self, root: Path, jobs: list[dict], **overrides) -> Path:
-        validator_body = (
-            "import pathlib,sys; "
-            "raise SystemExit(0 if pathlib.Path(sys.argv[1]).is_file() else 1)"
+        executable = Path(sys.executable).resolve()
+        validator_script = root / "validate_success.py"
+        validator_script.write_text(
+            "import pathlib,sys\n"
+            "raise SystemExit(0 if pathlib.Path(sys.argv[1]).is_file() else 1)\n"
         )
+        pinned_paths = {str(executable), str(validator_script.resolve())}
+        producer_by_path: dict[str, str] = {}
         for job in jobs:
+            command = job["command"]
+            if command[:2] == [sys.executable, "-c"]:
+                script = root / f"{job['id']}_command.py"
+                script.write_text(command[2] + "\n")
+                job["command"] = [sys.executable, str(script), *command[3:]]
+                pinned_paths.add(str(script.resolve()))
             job.setdefault("resume_safe", False)
-            job.setdefault("pinned_inputs", [str(Path(sys.executable).resolve())])
+            job.setdefault("pinned_inputs", [])
             job.setdefault("max_runtime_seconds", 5)
             if "progress" not in job:
                 job.setdefault(
@@ -51,8 +48,7 @@ class ExperimentQueueTests(unittest.TestCase):
                 "validator",
                 [
                     sys.executable,
-                    "-c",
-                    validator_body,
+                    str(validator_script),
                     job["success"]["path"],
                 ],
             )
@@ -63,16 +59,37 @@ class ExperimentQueueTests(unittest.TestCase):
             }
             if "progress" in job:
                 mutable.add(job["progress"]["path"])
-            job["command"] = self.typed(job["command"], mutable)
-            job["success"]["validator"] = self.typed(
-                job["success"]["validator"], mutable)
+
+            def typed(arguments: list[str]) -> list[dict[str, str]]:
+                rendered = []
+                for value in arguments:
+                    resolved = str(Path(value).resolve())
+                    if resolved in pinned_paths:
+                        rendered.append({"kind": "pinned", "path": resolved})
+                        if resolved not in job["pinned_inputs"]:
+                            job["pinned_inputs"].append(resolved)
+                    elif value in mutable:
+                        rendered.append({"kind": "mutable", "path": value})
+                    elif resolved in producer_by_path:
+                        rendered.append({
+                            "kind": "artifact",
+                            "job": producer_by_path[resolved],
+                            "path": resolved,
+                        })
+                    else:
+                        rendered.append({"kind": "literal", "value": value})
+                return rendered
+
+            job["command"] = typed(job["command"])
+            job["success"]["validator"] = typed(
+                job["success"]["validator"])
             job["env"] = {
-                key: ({"kind": "mutable", "path": value}
-                      if value in mutable
-                      else {"kind": "literal", "value": value})
+                key: typed([value])[0]
                 for key, value in job.get("env", {}).items()
             }
-        executable = Path(sys.executable).resolve()
+            producer_by_path[
+                str(Path(job["success"]["path"]).resolve())
+            ] = job["id"]
         payload = {
             "schema_version": 1,
             "queue_id": "test-queue",
@@ -86,13 +103,16 @@ class ExperimentQueueTests(unittest.TestCase):
                 for key in ("HOME", "PATH")
                 if key in os.environ
             },
-            "pinned_files": [{
-                "kind": "file",
-                "path": str(executable),
-                "bytes": executable.stat().st_size,
-                "sha256": hashlib.sha256(executable.read_bytes()).hexdigest(),
-                "role": "test Python executable",
-            }],
+            "pinned_files": [
+                {
+                    "kind": "file", "path": value,
+                    "bytes": Path(value).stat().st_size,
+                    "sha256": hashlib.sha256(Path(value).read_bytes()).hexdigest(),
+                    "role": "test Python executable" if Path(value) == executable
+                    else "pinned test runner",
+                }
+                for value in sorted(pinned_paths)
+            ],
             "jobs": jobs,
             **overrides,
         }
@@ -122,9 +142,10 @@ class ExperimentQueueTests(unittest.TestCase):
             second = self.write_job(
                 root, "second",
                 "import pathlib,sys; "
-                "assert pathlib.Path('first.done').read_text() == 'one'; "
+                "assert pathlib.Path(sys.argv[2]).read_text() == 'one'; "
                 "pathlib.Path(sys.argv[1]).write_text('two')",
             )
+            second["command"].append(first["success"]["path"])
             plan = self.make_plan(root, [first, second])
             state = root / "state.json"
 
@@ -313,6 +334,46 @@ class ExperimentQueueTests(unittest.TestCase):
             self.assertIn("evidence drifted", observed["message"])
             self.assertFalse(marker.exists())
 
+    def test_completed_queue_revalidates_artifacts_on_restart(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            job = self.write_job(
+                root, "complete-restart",
+                "import pathlib,sys; pathlib.Path(sys.argv[1]).write_text('ok')",
+            )
+            plan = self.make_plan(root, [job])
+            state = root / "state.json"
+            self.assertEqual(queue.run_queue(plan, state), 0)
+            self.assertEqual(json.loads(state.read_text())["state"], "complete")
+            Path(job["success"]["path"]).unlink()
+
+            self.assertEqual(queue.run_queue(plan, state), 0)
+            observed = json.loads(state.read_text())
+            self.assertEqual(observed["state"], "halted")
+            self.assertIn("evidence drifted", observed["message"])
+
+    def test_consumer_cannot_mutate_a_predecessor_artifact(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            producer = self.write_job(
+                root, "producer",
+                "import pathlib,sys; pathlib.Path(sys.argv[1]).write_text('A')",
+            )
+            consumer = self.write_job(
+                root, "consumer",
+                "import pathlib,sys; source=pathlib.Path(sys.argv[2]); "
+                "value=source.read_text(); source.write_text('B'); "
+                "pathlib.Path(sys.argv[1]).write_text('used-'+value)",
+            )
+            consumer["command"].append(producer["success"]["path"])
+            plan = self.make_plan(root, [producer, consumer])
+            state = root / "state.json"
+
+            self.assertEqual(queue.run_queue(plan, state), 0)
+            observed = json.loads(state.read_text())
+            self.assertEqual(observed["state"], "halted")
+            self.assertIn("producer success artifact drifted", observed["message"])
+
     def test_hanging_validator_is_bounded(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -323,10 +384,18 @@ class ExperimentQueueTests(unittest.TestCase):
             )
             plan = self.make_plan(root, [job])
             payload = json.loads(plan.read_text())
+            hanging = root / "hanging_validator.py"
+            hanging.write_text("import time\ntime.sleep(60)\n")
+            payload["pinned_files"].append({
+                "kind": "file", "path": str(hanging),
+                "bytes": hanging.stat().st_size,
+                "sha256": hashlib.sha256(hanging.read_bytes()).hexdigest(),
+                "role": "hanging test validator",
+            })
+            payload["jobs"][0]["pinned_inputs"].append(str(hanging))
             payload["jobs"][0]["success"]["validator"] = [
                 {"kind": "pinned", "path": str(Path(sys.executable).resolve())},
-                {"kind": "literal", "value": "-c"},
-                {"kind": "literal", "value": "import time; time.sleep(60)"},
+                {"kind": "pinned", "path": str(hanging)},
             ]
             payload["jobs"][0]["success"]["validator_timeout_seconds"] = 0.02
             plan.write_text(json.dumps(payload))
@@ -429,6 +498,27 @@ class ExperimentQueueTests(unittest.TestCase):
             }
             plan.write_text(json.dumps(payload))
             with self.assertRaisesRegex(queue.QueueError, "path-bearing"):
+                queue.validate_plan(plan)
+
+            for value in ("pool", "input.ini", ".", "..", "-c", "-m"):
+                (root / "pool").mkdir(exist_ok=True)
+                (root / "input.ini").touch(exist_ok=True)
+                payload["jobs"][0]["env"] = {
+                    "POOL": {"kind": "literal", "value": value}
+                }
+                plan.write_text(json.dumps(payload))
+                with self.subTest(value=value):
+                    with self.assertRaisesRegex(queue.QueueError, "path-bearing"):
+                        queue.validate_plan(plan)
+
+            payload["jobs"][0]["env"] = {}
+            payload["jobs"][0]["command"][1] = {
+                "kind": "literal", "value": "future_runner.py",
+            }
+            plan.write_text(json.dumps(payload))
+            with self.assertRaisesRegex(
+                queue.QueueError, "interpreter requires a pinned runner"
+            ):
                 queue.validate_plan(plan)
 
     def test_long_job_cannot_claim_progress_exemption(self):

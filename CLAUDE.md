@@ -143,6 +143,7 @@ newer evidence wins.
   Commands, validators, and job environment inputs use typed literal/pinned/
   mutable/predecessor-artifact values; replay-pool directories require recursive
   tree pins. Never encode a path in a literal or use an untyped environment path.
+  Inline interpreter/shell code modes are forbidden; use a pinned runner file.
   Never change a production default from unattended evidence. Operational
   details and the departure smoke gate are in
   `docs/vacation-autonomy-2026-07.md`.

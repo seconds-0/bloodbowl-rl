@@ -484,6 +484,8 @@ mutable; generated inputs link to an earlier job's recorded artifact. Pin and
 recheck every executable and transitive input by byte size and SHA-256/tree
 identity, and use only the plan's allowlisted base environment. The queue root must be the
 isolated audit checkout, and the service must use `KillMode=control-group`.
+Inline interpreter/shell code is not a queue command; put logic in a reviewed,
+hash-pinned runner file.
 
 `resume_safe` means the job's own runner validates a frozen manifest and every
 partial/completed artifact before continuing. It does not mean “probably okay

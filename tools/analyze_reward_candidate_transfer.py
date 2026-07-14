@@ -440,6 +440,10 @@ def validate_completion_evidence(
     analysis = _load_object(analysis_path, "transfer analysis")
     if analysis.get("schema_version") != 1:
         raise TransferError("unsupported transfer analysis schema")
+    regenerated = analyze(complete_path.parent)
+    if analysis != regenerated:
+        raise TransferError(
+            "stored transfer analysis differs from regenerated cell evidence")
     recommendation = analysis.get("recommendation")
     if (not isinstance(recommendation, dict) or
             recommendation.get("arm") != expected_candidate):

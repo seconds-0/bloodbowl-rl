@@ -223,7 +223,44 @@ class RewardCandidateTransferTests(unittest.TestCase):
             complete.write_text(json.dumps(payload, sort_keys=True) + "\n")
             expected = hashlib.sha256(complete.read_bytes()).hexdigest()
             with self.assertRaisesRegex(
-                transfer.TransferError, "analysis recommendation differs"
+                transfer.TransferError, "differs from regenerated"
+            ):
+                transfer.validate_completion_evidence(
+                    complete, expected_complete_sha=expected,
+                    expected_candidate="possession_only",
+                )
+
+    def test_self_consistent_forged_analysis_cannot_replace_cell_evidence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.build_matrix(root)
+            report = transfer.analyze(root)
+            report["runs"] = []
+            report["cell_count"] = 0
+            report["total_games"] = 0
+            complete = self.write_completion(root, report)
+            expected = hashlib.sha256(complete.read_bytes()).hexdigest()
+
+            with self.assertRaisesRegex(
+                transfer.TransferError, "differs from regenerated"
+            ):
+                transfer.validate_completion_evidence(
+                    complete, expected_complete_sha=expected,
+                    expected_candidate="possession_only",
+                )
+
+    def test_completion_evidence_rehashes_live_cell_logs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.build_matrix(root)
+            report = transfer.analyze(root)
+            complete = self.write_completion(root, report)
+            expected = hashlib.sha256(complete.read_bytes()).hexdigest()
+            cell = root / report["runs"][0]["log"]
+            cell.write_text(cell.read_text() + "tampered\n")
+
+            with self.assertRaisesRegex(
+                transfer.TransferError, "differs from regenerated"
             ):
                 transfer.validate_completion_evidence(
                     complete, expected_complete_sha=expected,

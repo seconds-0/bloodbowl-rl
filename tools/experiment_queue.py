@@ -49,6 +49,7 @@ ARG_KEYS = {"kind", "value", "path", "job"}
 ARG_KINDS = {"literal", "pinned", "mutable", "artifact"}
 MAX_PROGRESS_EXEMPT_SECONDS = 30 * 60
 MAX_VALIDATOR_SECONDS = 30 * 60
+MAX_VALIDATOR_OUTPUT_BYTES = 10 * 1024 * 1024
 BASE_ENV_KEYS = {
     "CUDA_VISIBLE_DEVICES", "HOME", "LANG", "LC_ALL", "LOGNAME", "PATH",
     "PYTHONHASHSEED", "PYTHONUNBUFFERED", "TZ", "USER",
@@ -139,6 +140,7 @@ def _validate_arg(
     *,
     label: str,
     root: Path,
+    cwd: Path,
     pinned_paths: set[str],
     job_pins: set[str],
     mutable_paths: set[str],
@@ -156,7 +158,14 @@ def _validate_arg(
         value = argument.get("value")
         if not isinstance(value, str) or not value:
             raise QueueError(f"{label} literal value must be a nonempty string")
-        if any(marker in value for marker in ("/", "\\", "$", "`", "~")):
+        candidate = cwd / value
+        if (
+            value in (".", "..", "-c", "-m")
+            or any(marker in value for marker in (
+                "/", "\\", "$", "`", "~", "=", ":"
+            ))
+            or candidate.exists()
+        ):
             raise QueueError(
                 f"{label} literal looks path-bearing or expandable; use a typed "
                 "pinned, mutable, or artifact argument")
@@ -307,7 +316,7 @@ def validate_plan(path: Path) -> tuple[dict[str, Any], Path, str]:
                 not all(isinstance(item, dict) for item in command)):
             raise QueueError(
                 f"job {job_id} command must be typed argument objects")
-        _absolute(job.get("cwd"), f"job {job_id} cwd", root)
+        cwd = _absolute(job.get("cwd"), f"job {job_id} cwd", root)
         _absolute(job.get("log"), f"job {job_id} log", root)
         success = job.get("success")
         if not isinstance(success, dict):
@@ -416,16 +425,33 @@ def validate_plan(path: Path) -> tuple[dict[str, Any], Path, str]:
             for position, argument in enumerate(values):
                 _validate_arg(
                     argument, label=f"job {job_id} {label}[{position}]",
-                    root=root, pinned_paths=pinned_paths,
+                    root=root, cwd=cwd, pinned_paths=pinned_paths,
                     job_pins=resolved_job_pins, mutable_paths=mutable_paths,
                     predecessor_artifacts=predecessor_artifacts,
                 )
             if values[0].get("kind") != "pinned":
                 raise QueueError(
                     f"job {job_id} {label} executable must be pinned")
+            executable_name = Path(values[0]["path"]).name.lower()
+            interpreter = (
+                executable_name.startswith("python")
+                or executable_name in {
+                    "bash", "sh", "zsh", "dash", "ksh", "perl", "ruby",
+                }
+            )
+            if executable_name == "env":
+                raise QueueError(
+                    f"job {job_id} {label} cannot use env as an executable")
+            if interpreter and (
+                len(values) < 2 or values[1].get("kind") != "pinned"
+            ):
+                raise QueueError(
+                    f"job {job_id} {label} interpreter requires a pinned "
+                    "runner file")
         for key, argument in env.items():
             _validate_arg(
                 argument, label=f"job {job_id} env[{key}]", root=root,
+                cwd=cwd,
                 pinned_paths=pinned_paths, job_pins=resolved_job_pins,
                 mutable_paths=mutable_paths,
                 predecessor_artifacts=predecessor_artifacts,
@@ -551,35 +577,50 @@ def success_error(
     path = _absolute(success["path"], f"job {job['id']} success path", root)
     if not path.is_file():
         return f"success artifact is missing: {path}"
+    observed_before = sha256(path)
     expected = success.get("sha256")
     if expected is not None:
-        observed = sha256(path)
-        if observed != expected:
-            return f"success SHA-256 mismatch: {observed} != {expected}"
+        if observed_before != expected:
+            return f"success SHA-256 mismatch: {observed_before} != {expected}"
     validator = success.get("validator")
     if validator:
         timeout = float(success["validator_timeout_seconds"])
         started = time.monotonic()
         hot_polls = 0
-        with tempfile.TemporaryFile(mode="w+t", encoding="utf-8") as output:
+        with tempfile.TemporaryFile(mode="w+b", dir=root) as output:
             try:
                 process = subprocess.Popen(
-                render_args(validator),
-                cwd=_absolute(job["cwd"], f"job {job['id']} cwd", root),
-                env={**base_env, **render_env(job.get("env", {}))},
-                stdout=output,
-                stderr=subprocess.STDOUT,
-                text=True,
-                start_new_session=True,
+                    render_args(validator),
+                    cwd=_absolute(job["cwd"], f"job {job['id']} cwd", root),
+                    env={**base_env, **render_env(job.get("env", {}))},
+                    stdout=output,
+                    stderr=subprocess.STDOUT,
+                    start_new_session=True,
                 )
             except OSError as exc:
                 return f"validator launch failed: {exc}"
-            while process.poll() is None:
-                elapsed = time.monotonic() - started
-                if elapsed > timeout:
-                    _terminate_group(process)
-                    return f"validator timed out after {timeout:g}s"
-                try:
+            previous_handlers = {
+                signum: signal.getsignal(signum)
+                for signum in (signal.SIGINT, signal.SIGTERM)
+            }
+
+            def interrupt_handler(signum: int, _frame: Any) -> None:
+                raise KeyboardInterrupt(f"received signal {signum}")
+
+            for signum in previous_handlers:
+                signal.signal(signum, interrupt_handler)
+            try:
+                while process.poll() is None:
+                    elapsed = time.monotonic() - started
+                    if elapsed > timeout:
+                        _terminate_group(process)
+                        return f"validator timed out after {timeout:g}s"
+                    output_bytes = os.fstat(output.fileno()).st_size
+                    if output_bytes > MAX_VALIDATOR_OUTPUT_BYTES:
+                        _terminate_group(process)
+                        return (
+                            "validator output limit exceeded: "
+                            f"{output_bytes} > {MAX_VALIDATOR_OUTPUT_BYTES}")
                     capacity = capacity_error(
                         root, job, minimum_free_bytes=minimum_free_bytes,
                         minimum_free_inodes=minimum_free_inodes,
@@ -598,22 +639,63 @@ def success_error(
                             "validator thermal guard tripped: "
                             f"{observed_temperature:.0f}C > "
                             f"{maximum_temperature}C for {hot_polls} polls")
-                except (OSError, QueueError, ValueError) as exc:
+                    time.sleep(min(
+                        poll_seconds, max(timeout - elapsed, 0.001)))
+            except KeyboardInterrupt as exc:
+                _terminate_group(process)
+                return f"validator interrupted: {exc}"
+            except (OSError, QueueError, ValueError) as exc:
+                _terminate_group(process)
+                return f"validator monitor failed closed: {exc}"
+            finally:
+                if process.poll() is None:
                     _terminate_group(process)
-                    return f"validator monitor failed closed: {exc}"
-                time.sleep(min(poll_seconds, max(timeout - elapsed, 0.001)))
+                for signum, handler in previous_handlers.items():
+                    signal.signal(signum, handler)
             exit_code = process.wait()
-            output.seek(0)
-            rendered_output = output.read().strip()[-2000:]
+            output_size = os.fstat(output.fileno()).st_size
+            output.seek(max(0, output_size - 2000))
+            rendered_output = output.read(2000).decode(
+                "utf-8", errors="replace").strip()
         if exit_code != 0:
             return f"validator exited {exit_code}: {rendered_output}"
-        if expected is not None:
-            observed_after = sha256(path)
-            if observed_after != expected:
-                return (
-                    "validator mutated success artifact: "
-                    f"{observed_after} != {expected}"
-                )
+        observed_after = sha256(path)
+        if observed_after != observed_before:
+            return (
+                "validator mutated success artifact: "
+                f"{observed_after} != {observed_before}"
+            )
+    return None
+
+
+def completed_evidence_error(
+    plan: dict[str, Any], state: dict[str, Any], root: Path,
+    *, minimum_free_bytes: int, minimum_free_inodes: int,
+    maximum_temperature: float, poll_seconds: float,
+) -> str | None:
+    """Revalidate every completed predecessor and its recorded byte identity."""
+    for job, job_state in zip(plan["jobs"], state.get("jobs", [])):
+        if job_state.get("id") != job["id"]:
+            return "state job order differs from plan"
+        if job_state.get("state") != "complete":
+            continue
+        error = success_error(
+            job, root, plan["base_env"],
+            minimum_free_bytes=minimum_free_bytes,
+            minimum_free_inodes=minimum_free_inodes,
+            maximum_temperature=maximum_temperature,
+            poll_seconds=poll_seconds,
+        )
+        if error is not None:
+            return f"completed job {job['id']} evidence drifted: {error}"
+        path = _absolute(
+            job["success"]["path"], f"job {job['id']} success path", root)
+        observed = sha256(path)
+        recorded = job_state.get("success_sha256")
+        if recorded != observed:
+            return (
+                f"completed job {job['id']} success artifact drifted: "
+                f"{observed} != {recorded}")
     return None
 
 
@@ -772,7 +854,7 @@ def run_queue(plan_path: str | Path, state_path: str | Path) -> int:
                 )
             if state.get("queue_id") != plan["queue_id"]:
                 return halt(state_path, state, "queue_id changed")
-            if state.get("state") in ("complete", "halted"):
+            if state.get("state") == "halted":
                 return 0
         else:
             state = new_state(plan, plan_sha)
@@ -781,21 +863,40 @@ def run_queue(plan_path: str | Path, state_path: str | Path) -> int:
         if len(state.get("jobs", [])) != len(plan["jobs"]):
             return halt(state_path, state, "state job count differs from plan")
 
+        poll_seconds = float(plan["poll_seconds"])
+        maximum_temperature = float(plan["max_gpu_temperature_c"])
+        minimum = int(plan["min_free_bytes"])
+        minimum_inodes = int(plan["min_free_inodes"])
         pin_error = pinned_files_error(plan)
         if pin_error is not None:
             return halt(state_path, state, pin_error)
-        publish(state_path, state, state="running", message="queue running")
-        poll_seconds = float(plan.get("poll_seconds", 30))
-        maximum_temperature = plan.get("max_gpu_temperature_c")
-        if maximum_temperature is not None:
-            observed_temperature = gpu_temperature()
-            if observed_temperature > float(maximum_temperature):
+        evidence_error = completed_evidence_error(
+            plan, state, root,
+            minimum_free_bytes=minimum,
+            minimum_free_inodes=minimum_inodes,
+            maximum_temperature=maximum_temperature,
+            poll_seconds=poll_seconds,
+        )
+        if evidence_error is not None:
+            return halt(state_path, state, evidence_error)
+        if state.get("state") == "complete":
+            if any(
+                job_state.get("state") != "complete"
+                for job_state in state["jobs"]
+            ):
                 return halt(
-                    state_path,
-                    state,
-                    "GPU temperature preflight failed: "
-                    f"{observed_temperature:.0f}C > {maximum_temperature}C",
-                )
+                    state_path, state,
+                    "complete queue contains a non-complete job state")
+            return 0
+        publish(state_path, state, state="running", message="queue running")
+        observed_temperature = gpu_temperature()
+        if observed_temperature > maximum_temperature:
+            return halt(
+                state_path,
+                state,
+                "GPU temperature preflight failed: "
+                f"{observed_temperature:.0f}C > {maximum_temperature}C",
+            )
         for index, job in enumerate(plan["jobs"]):
             job_state = state["jobs"][index]
             if job_state.get("id") != job["id"]:
@@ -823,7 +924,7 @@ def run_queue(plan_path: str | Path, state_path: str | Path) -> int:
                 job, root, plan["base_env"],
                 minimum_free_bytes=int(plan["min_free_bytes"]),
                 minimum_free_inodes=int(plan["min_free_inodes"]),
-                maximum_temperature=float(plan["max_gpu_temperature_c"]),
+                maximum_temperature=maximum_temperature,
                 poll_seconds=poll_seconds,
             )
             if prior == "complete" and artifact_error is not None:
@@ -865,8 +966,6 @@ def run_queue(plan_path: str | Path, state_path: str | Path) -> int:
                 )
                 continue
 
-            minimum = int(plan["min_free_bytes"])
-            minimum_inodes = int(plan["min_free_inodes"])
             capacity = capacity_error(
                 root, job, minimum_free_bytes=minimum,
                 minimum_free_inodes=minimum_inodes,
@@ -932,9 +1031,7 @@ def run_queue(plan_path: str | Path, state_path: str | Path) -> int:
                         minimum_free_inodes=minimum_inodes,
                         poll_seconds=poll_seconds,
                         maximum_temperature=(
-                            float(maximum_temperature)
-                            if maximum_temperature is not None
-                            else None
+                            maximum_temperature
                         ),
                     )
                     exit_code = process.wait()
@@ -975,7 +1072,7 @@ def run_queue(plan_path: str | Path, state_path: str | Path) -> int:
                 job, root, plan["base_env"],
                 minimum_free_bytes=minimum,
                 minimum_free_inodes=minimum_inodes,
-                maximum_temperature=float(maximum_temperature),
+                maximum_temperature=maximum_temperature,
                 poll_seconds=poll_seconds,
             )
             if artifact_error is not None:
@@ -1002,11 +1099,30 @@ def run_queue(plan_path: str | Path, state_path: str | Path) -> int:
                 "state": "complete", "completed_utc": utc_now(),
                 "success_sha256": sha256(artifact_path),
             })
+            evidence_error = completed_evidence_error(
+                plan, state, root,
+                minimum_free_bytes=minimum,
+                minimum_free_inodes=minimum_inodes,
+                maximum_temperature=maximum_temperature,
+                poll_seconds=poll_seconds,
+            )
+            if evidence_error is not None:
+                job_state["state"] = "failed"
+                return halt(state_path, state, evidence_error)
             publish(
                 state_path, state,
                 message=f"job {job['id']} completed and validated",
             )
 
+        evidence_error = completed_evidence_error(
+            plan, state, root,
+            minimum_free_bytes=minimum,
+            minimum_free_inodes=minimum_inodes,
+            maximum_temperature=maximum_temperature,
+            poll_seconds=poll_seconds,
+        )
+        if evidence_error is not None:
+            return halt(state_path, state, evidence_error)
         publish(
             state_path, state,
             state="complete", message="all queued jobs completed and validated",
