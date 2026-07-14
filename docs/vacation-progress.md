@@ -1440,3 +1440,15 @@ result `success` and exit status 0, logged `primary service is still active;
 waiting`, and left the real overflow state absent. This is the fourth observed
 real primary-running no-op after the pre-arm smoke and the 13:37, 13:48, and
 13:58 automatic invocations.
+
+Thermal addendum: NVIDIA's active clock-reason bit resolves specifically to
+software thermal capping at the configured temperature target, not hardware
+thermal slowdown. The card reports an 81 C target, 89 C maximum operating
+temperature, 91 C slowdown temperature, and 94 C shutdown temperature. Over a
+30-second sample it was mostly 81--82 C, with one 84 C observation; utilization
+was 77--83%, clocks were 1,620--1,785 MHz, and hardware thermal slowdown stayed
+inactive. The fan was at 89%. Because the card's own target control is working,
+learner throughput remains stable, and there is no restart or learner-integrity
+signal, the evidence does not justify mutating power or clocks during a
+non-resume-safe arm. Continue trending temperature, fan, rate, and both
+software/hardware slowdown signals hourly.
