@@ -256,6 +256,35 @@ class ExperimentContractTests(unittest.TestCase):
         self.assertIn('"ARM_DETACH": "0"', wrapper)
         self.assertIn('DETACH="$ARM_DETACH"', screen)
         self.assertIn('if [ "$DETACH" = "1" ]', arm)
+        self.assertIn('else os.getpgrp()', screen)
+        self.assertNotIn(
+            'trainer process group is not the detached wrapper PID', screen
+        )
+
+    def test_non_detached_child_inherits_new_session_process_group(self):
+        probe = subprocess.run(
+            [
+                "bash", "-c",
+                (
+                    "sleep 30 & child=$!; "
+                    "outer=$(ps -o pgid= -p $$ | tr -d ' '); "
+                    "inner=$(ps -o pgid= -p $child | tr -d ' '); "
+                    "printf '%s %s %s\\n' $$ $child $outer:$inner; "
+                    "kill $child; wait $child 2>/dev/null || true"
+                ),
+            ],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+            start_new_session=True,
+        )
+        self.assertEqual(probe.returncode, 0, probe.stderr)
+        outer_pid, child_pid, groups = probe.stdout.strip().split()
+        outer_group, child_group = groups.split(":")
+        self.assertEqual(outer_group, outer_pid)
+        self.assertEqual(child_group, outer_group)
+        self.assertNotEqual(child_pid, child_group)
 
     def test_candidate_transfer_is_a_frozen_both_sides_matrix(self):
         runner = (ROOT / "tools/run_reward_candidate_transfer.py").read_text(
@@ -283,6 +312,20 @@ class ExperimentContractTests(unittest.TestCase):
         ):
             self.assertIn(gate, runner)
             self.assertIn(gate, analyzer)
+
+    def test_learned_transfer_hashes_the_configs_it_actually_loads(self):
+        source = (ROOT / "tools/run_reward_learned_transfer.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            '"default_config": root / "vendor/PufferLib/config/default.ini"',
+            source,
+        )
+        self.assertIn(
+            '"env_config": root / "vendor/PufferLib/config/bloodbowl.ini"',
+            source,
+        )
+        self.assertNotIn('"config": root / "puffer/config/bloodbowl.ini"', source)
 
     def test_vacation_queue_is_hash_pinned_and_fail_closed(self):
         source = (ROOT / "tools/experiment_queue.py").read_text(

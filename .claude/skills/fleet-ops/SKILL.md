@@ -199,6 +199,11 @@ A persisted queue halt is terminal across restart and reboot. Do not edit its
 state to resume it. Preserve the evidence and deploy a new reviewed queue
 ID/plan/state after diagnosis if the user-authorized experiment should continue.
 
+For the active July vacation preparation/run, append an operational handoff to
+`docs/vacation-progress.md` at least hourly: timestamp, live service/job state,
+completed work, blockers, and exact next steps. This journal never substitutes
+for immutable experiment manifests, result files, or completion proofs.
+
 ## Checkpoints and transfer
 
 Select checkpoints by embedded step plus manifest/hash, not newest mtime. Verify

@@ -116,6 +116,10 @@ validating transfer and validation jobs may be.
 Queue-owned reward screens use the frozen wrapper's `ARM_DETACH=0` contract;
 never add nested `setsid`/daemonization that could let the trainer escape the
 queue job process group and its guards.
+During the active vacation preparation and unattended run, append a timestamped
+status/finished-work/blockers/next-steps entry to `docs/vacation-progress.md` at
+least once per hour. The journal is an operational handoff, never scientific
+evidence in place of immutable manifests and completion artifacts.
 
 ## Replay and BC contract
 

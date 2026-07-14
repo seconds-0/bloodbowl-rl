@@ -167,6 +167,9 @@ newer evidence wins.
 - Queue-owned screens run with `ARM_DETACH=0`. The queue's new-session process
   group must contain the screen, arm wrapper, Puffer trainer, and descendants;
   never add nested `setsid`/daemonization that would evade queue guard cleanup.
+- Maintain `docs/vacation-progress.md` at least hourly during the active
+  preparation/run with current status, completed work, blockers, and next
+  steps. Treat it as an operational journal, not experiment evidence.
 
 ### Engine / rules / oracles (stable since v1)
 - PufferLib 4.0 (`vendor/PufferLib`, branch 4.0) uses `src/vecenv.h` macros — the online `env_binding.h` ABI is dead 3.0. `ocean/chess/` is the template; `ocean/convert/` is stale.

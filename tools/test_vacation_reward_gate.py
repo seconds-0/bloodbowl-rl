@@ -22,6 +22,7 @@ class VacationRewardGateTests(unittest.TestCase):
         write_json(path, {
             "schema_version": 1,
             "candidate_arm": "gain_only",
+            "confirmation_steps": 1_000_000_000,
             "mean_perf_delta_min": -0.02,
             "seed_perf_delta_min": -0.05,
             "max_candidate_td_relative_drop": 0.20,
@@ -99,7 +100,11 @@ class VacationRewardGateTests(unittest.TestCase):
                     "eligible_for_longer_confirmation": True,
                     "gate_failures": [],
                     "mean_score_delta": 0.0,
-                    "normal_95_lower_bound": -0.01,
+                    "worst_training_seed_mean": -0.01,
+                    "games_per_cell": 4096,
+                    "anchor_config_sha256": "c" * 64,
+                    "anchor_identity": [["league9", "d" * 64]],
+                    "gates": {"mean_score_delta_min": -0.02},
                 }, [])
 
             with (
@@ -120,6 +125,50 @@ class VacationRewardGateTests(unittest.TestCase):
         self.assertTrue(report["passed"])
         self.assertEqual(set(report["lineages"]), {"main", "second"})
         self.assertEqual(report["candidate_arm"], "gain_only")
+
+    def test_two_lineage_report_rejects_different_learned_anchors(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = self.make_config(root)
+            paths = [root / f"artifact-{index}.json" for index in range(6)]
+            for path in paths:
+                write_json(path, {"ok": True})
+
+            def screen_result(path, _config, lineage):
+                return ({
+                    "path": str(path),
+                    "sha256": gate.sha256(path),
+                    "manifest_sha256": ("a" if lineage == "main" else "b") * 64,
+                }, [])
+
+            def learned_result(path, _screen, _config, lineage):
+                return ({
+                    "path": str(path),
+                    "sha256": gate.sha256(path),
+                    "games_per_cell": 4096,
+                    "anchor_config_sha256": ("c" if lineage == "main" else "d") * 64,
+                    "anchor_identity": [["anchor", "e" * 64]],
+                    "gates": {},
+                }, [])
+
+            with (
+                mock.patch.object(gate, "validate_screen", side_effect=screen_result),
+                mock.patch.object(
+                    gate, "validate_scripted",
+                    side_effect=lambda path, *_args: {"path": str(path)},
+                ),
+                mock.patch.object(gate, "validate_learned", side_effect=learned_result),
+                self.assertRaisesRegex(gate.GateError, "anchor_config_sha256"),
+            ):
+                gate.build_report(
+                    config,
+                    main_screen=paths[0],
+                    main_scripted=paths[1],
+                    main_learned=paths[2],
+                    second_screen=paths[3],
+                    second_scripted=paths[4],
+                    second_learned=paths[5],
+                )
 
     def test_rejection_never_materializes_success_artifact(self):
         with tempfile.TemporaryDirectory() as tmp:

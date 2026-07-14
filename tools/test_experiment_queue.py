@@ -194,6 +194,27 @@ class ExperimentQueueTests(unittest.TestCase):
             self.assertEqual(recorded["jobs"][1]["state"], "pending")
             self.assertFalse((root / "later.done").exists())
 
+    def test_exited_wrapper_cannot_strand_same_group_child(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            failed = self.write_job(
+                root,
+                "orphan",
+                (
+                    "import pathlib,subprocess,sys; "
+                    "child=subprocess.Popen(['sleep','60']); "
+                    "pathlib.Path(sys.argv[1]).with_suffix('.child').write_text("
+                    "str(child.pid)); raise SystemExit(7)"
+                ),
+            )
+            plan = self.make_plan(root, [failed])
+            state = root / "state.json"
+
+            self.assertEqual(queue.run_queue(plan, state), 0)
+            child_pid = int((root / "orphan.child").read_text())
+            with self.assertRaises(ProcessLookupError):
+                os.kill(child_pid, 0)
+
     def test_plan_drift_halts_a_preexisting_queue(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

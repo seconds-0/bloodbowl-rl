@@ -53,8 +53,9 @@ class LearnedTransferTests(unittest.TestCase):
             "checkpoints": checkpoints,
             "gates": {
                 "mean_score_delta_min": -0.02,
-                "lower_confidence_bound_min": -0.05,
+                "seed_mean_score_delta_min": -0.05,
                 "anchor_mean_score_delta_min": -0.05,
+                "orientation_mean_score_delta_min": -0.05,
                 "cell_score_delta_min": -0.10,
             },
             "source_screen_complete_sha256": digest("screen-complete"),
@@ -85,6 +86,8 @@ class LearnedTransferTests(unittest.TestCase):
                     "focal_score": focal_score,
                     "opponent_score": 1.0 - focal_score,
                     "draw_rate": 0.8,
+                    "focal_tds": 0.9,
+                    "opponent_tds": 0.8,
                     "focal_checkpoint_sha256": checkpoint["native_sha256"],
                     "anchor_checkpoint_sha256": anchor["sha256"],
                     "integrity": {key: 0.0 for key in learned.INTEGRITY_KEYS},
@@ -118,7 +121,9 @@ class LearnedTransferTests(unittest.TestCase):
             report = learned.validate_completion(complete)
             self.assertFalse(report["eligible_for_longer_confirmation"])
             self.assertIn("mean_score_delta", report["gate_failures"])
-            self.assertIn("lower_confidence_bound", report["gate_failures"])
+            self.assertIn("seed_mean_score_delta", report["gate_failures"])
+            self.assertIn("anchor_mean_score_delta", report["gate_failures"])
+            self.assertIn("orientation_mean_score_delta", report["gate_failures"])
             expected_sha = learned.sha256(complete)
             learned.validate_completion(complete, expected_sha256=expected_sha)
 
@@ -128,8 +133,8 @@ class LearnedTransferTests(unittest.TestCase):
                 )
             )[0]["path"]
             cell = learned.load_object(path, "cell")
-            cell["focal_score"] = 0.99
-            cell["opponent_score"] = 0.01
+            cell["focal_score"] = 0.55
+            cell["opponent_score"] = 0.45
             write_json(path, cell)
             with self.assertRaisesRegex(
                 learned.LearnedTransferError,

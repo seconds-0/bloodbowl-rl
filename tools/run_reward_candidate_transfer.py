@@ -141,6 +141,14 @@ def convert_checkpoints(
             output = out_dir / "converted" / f"{arm}-s{seed}-torch.bin"
             output.parent.mkdir(parents=True, exist_ok=True)
             metadata = output.with_suffix(output.suffix + ".json")
+            for interrupted in (
+                *output.parent.glob(output.name + ".tmp.*"),
+                *metadata.parent.glob(metadata.name + ".tmp.*"),
+            ):
+                quarantine_partial(interrupted)
+            if output.exists() != metadata.exists():
+                quarantine_partial(output)
+                quarantine_partial(metadata)
             if output.exists() or metadata.exists():
                 if not output.is_file() or not metadata.is_file():
                     raise RunnerError(f"partial conversion artifact: {output}")
@@ -200,9 +208,18 @@ def implementation_identity(root: Path) -> dict[str, str]:
     if not module.is_file():
         raise RunnerError(f"imported module is missing: {module}")
     return {
-        "config_sha256": sha256(root / "puffer/config/bloodbowl.ini"),
+        "conversion_config_sha256": sha256(
+            root / "puffer/config/bloodbowl.ini"
+        ),
+        "default_config_sha256": sha256(
+            root / "vendor/PufferLib/config/default.ini"
+        ),
+        "env_config_sha256": sha256(
+            root / "vendor/PufferLib/config/bloodbowl.ini"
+        ),
         "compiled_module_sha256": sha256(module),
         "pufferl_sha256": sha256(root / "vendor/PufferLib/pufferlib/pufferl.py"),
+        "models_sha256": sha256(root / "vendor/PufferLib/pufferlib/models.py"),
         "launcher_sha256": sha256(root / "tools/eval_vs_contact_bot.sh"),
     }
 
@@ -291,6 +308,11 @@ def write_status(
 def completed_from_status(path: Path) -> int:
     if not path.is_file():
         return 0
+    try:
+        value = load_object(path, "transfer status").get("completed_cells", 0)
+        return value if isinstance(value, int) and not isinstance(value, bool) else 0
+    except (OSError, RunnerError):
+        return 0
 
 
 def quarantine_partial(path: Path) -> Path | None:
@@ -316,11 +338,6 @@ def quarantine_partial(path: Path) -> Path | None:
     else:
         os.replace(path, destination)
     return destination
-    try:
-        value = load_object(path, "transfer status").get("completed_cells", 0)
-        return value if isinstance(value, int) and not isinstance(value, bool) else 0
-    except (OSError, RunnerError):
-        return 0
 
 
 def run_matrix(root: Path, out_dir: Path, plan: dict[str, Any]) -> None:
@@ -360,7 +377,7 @@ def run_matrix(root: Path, out_dir: Path, plan: dict[str, Any]) -> None:
                         }
                         result = subprocess.run(
                             [
-                                "bash", str(launcher), str(checkpoint),
+                                "/bin/bash", str(launcher), str(checkpoint),
                                 "131072", str(partial),
                             ],
                             cwd=root, env=env, check=False,

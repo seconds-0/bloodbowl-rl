@@ -28,6 +28,7 @@ SCHEMA_VERSION = 1
 CONFIG_KEYS = {
     "schema_version",
     "candidate_arm",
+    "confirmation_steps",
     "mean_perf_delta_min",
     "seed_perf_delta_min",
     "max_candidate_td_relative_drop",
@@ -98,7 +99,11 @@ def validate_config(path: Path) -> dict[str, Any]:
     candidate = config.get("candidate_arm")
     if candidate not in ("possession_only", "gain_only", "neither"):
         raise GateError("vacation gate config has invalid candidate_arm")
-    for key in CONFIG_KEYS - {"schema_version", "candidate_arm"}:
+    if config.get("confirmation_steps") != 1_000_000_000:
+        raise GateError("confirmation_steps must be the reviewed 1B budget")
+    for key in CONFIG_KEYS - {
+        "schema_version", "candidate_arm", "confirmation_steps"
+    }:
         config[key] = finite(config.get(key), key)
     if not 0 <= config["max_candidate_td_relative_drop"] <= 1:
         raise GateError("max_candidate_td_relative_drop must be in [0,1]")
@@ -122,6 +127,7 @@ def validate_screen(
     if (
         screen["profile"] != "paired-confirmation"
         or screen.get("candidate_arm") != config["candidate_arm"]
+        or screen.get("requested_steps") != config["confirmation_steps"]
         or not screen["completion"].get("present")
         or screen["completion"].get("sha256") != sha256(complete_path)
     ):
@@ -209,6 +215,40 @@ def validate_learned(
         )
         if not failures:
             failures.append("learned_transfer_ineligible")
+    manifest_record = report.get("learned_transfer_manifest")
+    if not isinstance(manifest_record, dict):
+        raise GateError(f"{lineage} learned transfer omitted its manifest")
+    manifest = load_object(
+        Path(str(manifest_record.get("path", ""))),
+        f"{lineage} learned transfer manifest",
+    )
+    if manifest.get("games_per_cell") != 4096:
+        raise GateError(f"{lineage} learned transfer is not the reviewed 4096 games")
+    anchor_config_sha = manifest.get("anchor_config_sha256")
+    if (
+        not isinstance(anchor_config_sha, str)
+        or len(anchor_config_sha) != 64
+        or any(char not in "0123456789abcdef" for char in anchor_config_sha)
+    ):
+        raise GateError(f"{lineage} learned transfer anchor config SHA is invalid")
+    anchors = manifest.get("anchors")
+    if not isinstance(anchors, list) or not anchors:
+        raise GateError(f"{lineage} learned transfer has no anchor identity")
+    anchor_identity = [
+        [record.get("name"), record.get("sha256")]
+        for record in anchors
+        if isinstance(record, dict)
+    ]
+    if len(anchor_identity) != len(anchors):
+        raise GateError(f"{lineage} learned transfer anchors are malformed")
+    if len(anchor_identity) != 4 or any(
+        not isinstance(name, str)
+        or not isinstance(digest, str)
+        or len(digest) != 64
+        or any(char not in "0123456789abcdef" for char in digest)
+        for name, digest in anchor_identity
+    ):
+        raise GateError(f"{lineage} learned transfer anchor identity is invalid")
     return {
         "path": str(complete_path),
         "sha256": sha256(complete_path),
@@ -219,9 +259,16 @@ def validate_learned(
         "mean_score_delta": report["paired_candidate_minus_reference"][
             "summary"
         ]["mean"],
-        "normal_95_lower_bound": report["paired_candidate_minus_reference"][
-            "normal_95_lower_bound"
-        ],
+        "worst_training_seed_mean": min(
+            value["mean"]
+            for value in report["paired_candidate_minus_reference"][
+                "by_training_seed"
+            ].values()
+        ),
+        "games_per_cell": manifest["games_per_cell"],
+        "anchor_config_sha256": anchor_config_sha,
+        "anchor_identity": anchor_identity,
+        "gates": manifest.get("gates"),
     }, failures
 
 
@@ -257,6 +304,15 @@ def build_report(
             "learned_transfer": learned,
             "failures": failures,
         }
+    main_learned_contract = lineages["main"]["learned_transfer"]
+    second_learned_contract = lineages["second"]["learned_transfer"]
+    for key in (
+        "games_per_cell", "anchor_config_sha256", "anchor_identity", "gates"
+    ):
+        if main_learned_contract.get(key) != second_learned_contract.get(key):
+            raise GateError(
+                f"learned-transfer {key} differs between the two lineages"
+            )
     return {
         "schema_version": SCHEMA_VERSION,
         "analysis": "two_lineage_vacation_reward_gate",

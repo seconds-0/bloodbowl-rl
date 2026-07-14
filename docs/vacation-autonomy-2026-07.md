@@ -24,10 +24,13 @@ from running.
    confirmation against R0. The preceding four-arm factorial remains the
    interaction evidence; the confirmation spends compute only on the declared
    reference and candidate.
-5. Evaluate that confirmation against the four frozen learned anchors, with the
-   focal policy loaded in both native backend roles. The learned matrix uses
-   `4096` games per cell and a separately pinned gate configuration; it remains
-   routing evidence, not promotion.
+5. Evaluate that confirmation against exactly four frozen learned anchors, with
+   the focal policy loaded in both native backend roles. The learned matrix uses
+   exactly `4096` games per cell and a separately pinned gate configuration. It
+   is a deterministic fixed-stratum gate over the overall mean, each training
+   seed, each anchor, each backend orientation, and the worst cell. These are
+   repeated strata, not independent replicates: no confidence interval or
+   reward-promotion claim is made.
 6. Freeze the six-day queue only after self-play, scripted transfer, and learned
    transfer decide its literal checkpoint/reward hashes. Review, merge, deploy,
    start, interrupt, and resume-smoke the service before departure.
@@ -54,8 +57,10 @@ The frozen queue uses the July audit's priority order:
    ancestry, then the identical six-arm screen from `league9`. The third seed
    buys replication rather than spending the same compute only extending two
    trajectories. Together the two final screens contain `72B` requested learner
-   steps and are sized for roughly five days on the measured RTX 2070, leaving
-   time for the second-ancestry confirmation and transfer gates.
+   steps. At the measured approximately `190K` learner steps/second, the `72B`
+   final steps take about 105 hours and the second confirmation about 6 hours,
+   before evaluation/transfer/orchestration overhead. This is an expected
+   roughly five-day workload, not a hard six-day deadline.
 6. Stop cleanly when the declared jobs finish. Unused GPU time is preferable to
    an unreviewed objective, backend, opponent, roster, or replay-distribution
    change.
@@ -63,6 +68,16 @@ The frozen queue uses the July audit's priority order:
 The exact queue may be shorter if the repository lacks a verified launcher for
 a proposed cell. A new launcher is deployed only after focused tests and a
 local/remote smoke; it is never improvised by the running service.
+
+The per-job safety maxima intentionally sum to more than six days: they are
+fault guards, not a return-home cutoff. Because the RTX 2070 is reserved and
+the user authorized multi-day use, a slowed but healthy declared job may finish
+after the nominal vacation window rather than being killed mid-trajectory. The
+queue still cannot start undeclared work after its six literal jobs finish.
+
+The second ancestry is the exact `league9_cap.bin` artifact with SHA-256
+`359d14caa08f12362f799c4cab4f33301fc9ce2ba3dec85922abe9622670d5f5`;
+the freezer rejects a path label or same-size substitute.
 
 ## Runtime safety and recovery
 

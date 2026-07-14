@@ -260,7 +260,7 @@ def main(argv: list[str] | None = None) -> int:
             "ARM_DETACH": "0",
         }
         result = subprocess.run(
-            ["/usr/bin/bash", str(config["root_path"] / "tools/run_reward_screen.sh")],
+            ["/bin/bash", str(config["root_path"] / "tools/run_reward_screen.sh")],
             cwd=config["root_path"],
             env=environment,
             check=False,

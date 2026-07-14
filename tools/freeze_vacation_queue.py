@@ -46,6 +46,10 @@ SPEC_KEYS = {
     "max_gpu_temperature_c",
 }
 QUEUE_ID_PATTERN = re.compile(r"[a-z0-9][a-z0-9._-]{0,79}")
+REVIEWED_SECOND_ANCESTRY = {
+    "name": "league9",
+    "sha256": "359d14caa08f12362f799c4cab4f33301fc9ce2ba3dec85922abe9622670d5f5",
+}
 
 
 class FreezeError(ValueError):
@@ -128,7 +132,10 @@ def tree_record(path: Path) -> dict[str, Any]:
     }
 
 
-def validate_main_screen(path: Path, candidate: str) -> dict[str, Any]:
+def validate_main_screen(
+    path: Path, candidate: str, warm: Path, pool: Path, root: Path
+) -> dict[str, Any]:
+    root = root.resolve()
     completion = load_object(path, "main screen completion")
     manifest_sha = completion.get("screen_manifest_sha256")
     report = analyze_reward_screen.analyze_screen(
@@ -140,10 +147,89 @@ def validate_main_screen(path: Path, candidate: str) -> dict[str, Any]:
     if (
         screen["profile"] != "paired-confirmation"
         or screen.get("candidate_arm") != candidate
+        or screen.get("requested_steps") != 1_000_000_000
         or not screen["completion"].get("present")
         or screen["completion"].get("sha256") != sha256(path)
     ):
         raise FreezeError("main screen is not the exact paired candidate evidence")
+    manifest = load_object(path.parent / "SCREEN_MANIFEST.json", "main screen manifest")
+    contract = manifest.get("contract")
+    if not isinstance(contract, dict):
+        raise FreezeError("main screen manifest has no contract")
+    warm_record = contract.get("warm")
+    pool_record = contract.get("pool")
+    if (
+        not isinstance(warm_record, dict)
+        or warm_record.get("sha256") != sha256(warm)
+    ):
+        raise FreezeError("main screen does not use the declared main warm")
+    pool_manifest = pool / "league_seeds.json"
+    if (
+        not isinstance(pool_record, dict)
+        or not pool_manifest.is_file()
+        or pool_record.get("manifest_sha256") != sha256(pool_manifest)
+    ):
+        raise FreezeError("main screen does not use the declared static pool")
+    for bank in pool_record.get("banks", []):
+        if not isinstance(bank, dict):
+            raise FreezeError("main screen pool bank identity is malformed")
+        current_bank = pool / Path(str(bank.get("file", ""))).name
+        if (
+            not current_bank.is_file()
+            or sha256(current_bank) != bank.get("sha256")
+        ):
+            raise FreezeError("declared static pool differs from a main screen bank")
+    implementation = contract.get("implementation")
+    if not isinstance(implementation, dict):
+        raise FreezeError("main screen has no implementation identity")
+    source_hash = root / "vendor/PufferLib/ocean/bloodbowl/.content_hash"
+    if (
+        not source_hash.is_file()
+        or source_hash.read_text(encoding="utf-8").strip()
+        != implementation.get("source_sha256")
+    ):
+        raise FreezeError("installed Blood Bowl source differs from main screen")
+    current_config = root / "vendor/PufferLib/config/bloodbowl.ini"
+    if (
+        not current_config.is_file()
+        or sha256(current_config) != implementation.get("config_sha256")
+    ):
+        raise FreezeError("installed Puffer config differs from main screen")
+    module_value = implementation.get("compiled_module")
+    if not isinstance(module_value, str):
+        raise FreezeError("main screen compiled-module path is malformed")
+    module = Path(module_value).resolve()
+    try:
+        module.relative_to(root)
+    except ValueError as exc:
+        raise FreezeError("main screen compiled module escapes audit root") from exc
+    if (
+        not module.is_file()
+        or sha256(module) != implementation.get("compiled_module_sha256")
+    ):
+        raise FreezeError("compiled module differs from main screen")
+    critical = implementation.get("critical_vendor_files")
+    if not isinstance(critical, dict) or not critical:
+        raise FreezeError("main screen critical vendor identity is incomplete")
+    for relative, expected in critical.items():
+        current = (root / "vendor/PufferLib" / relative).resolve()
+        try:
+            current.relative_to(root / "vendor/PufferLib")
+        except ValueError as exc:
+            raise FreezeError("main screen vendor path escapes checkout") from exc
+        if not current.is_file() or sha256(current) != expected:
+            raise FreezeError(f"critical vendor source differs: {relative}")
+    patches = implementation.get("patches")
+    if not isinstance(patches, dict) or not patches:
+        raise FreezeError("main screen patch identity is incomplete")
+    for patch_value, expected in patches.items():
+        patch = Path(patch_value).resolve()
+        try:
+            patch.relative_to(root)
+        except ValueError as exc:
+            raise FreezeError("main screen patch path escapes audit root") from exc
+        if not patch.is_file() or sha256(patch) != expected:
+            raise FreezeError(f"Puffer patch differs from main screen: {patch.name}")
     return report
 
 
@@ -200,12 +286,38 @@ def validate_spec(path: Path) -> dict[str, Any]:
     for key in ("main_warm", "second_warm"):
         if paths[key].stat().st_size != 16_066_560:
             raise FreezeError(f"{key} has the wrong architecture size")
-    screen_report = validate_main_screen(paths["main_screen_complete"], candidate)
-    analyze_reward_candidate_transfer.validate_completion_evidence(
+    if sha256(paths["main_warm"]) == sha256(paths["second_warm"]):
+        raise FreezeError("main and second ancestry warm checkpoints must differ")
+    if sha256(paths["second_warm"]) != REVIEWED_SECOND_ANCESTRY["sha256"]:
+        raise FreezeError(
+            "second warm is not the reviewed league9 ancestry checkpoint"
+        )
+    screen_report = validate_main_screen(
+        paths["main_screen_complete"], candidate, paths["main_warm"],
+        paths["pool"], root,
+    )
+    scripted_evidence = analyze_reward_candidate_transfer.validate_completion_evidence(
         paths["main_scripted_complete"],
         expected_complete_sha=sha256(paths["main_scripted_complete"]),
         expected_candidate=candidate,
     )
+    scripted_manifest = load_object(
+        Path(scripted_evidence["transfer_manifest"]), "main scripted manifest"
+    )
+    if (
+        Path(str(scripted_manifest.get("source_screen", ""))).resolve()
+        != paths["main_screen_complete"].parent
+        or scripted_manifest.get("source_screen_sha256")
+        != screen_report["screen"]["manifest_sha256"]
+    ):
+        raise FreezeError("main scripted transfer uses another paired screen")
+    anchor_config = run_reward_learned_transfer.validate_anchor_config(
+        paths["anchor_config"]
+    )
+    if anchor_config["games_per_cell"] != 4096:
+        raise FreezeError("anchor config must use the reviewed 4096 games per cell")
+    if len(anchor_config["anchors"]) != 4:
+        raise FreezeError("vacation learned transfer requires exactly four anchors")
     learned_report = run_reward_learned_transfer.validate_completion(
         paths["main_learned_complete"]
     )
@@ -216,9 +328,18 @@ def validate_spec(path: Path) -> dict[str, Any]:
         or not learned_report.get("eligible_for_longer_confirmation")
     ):
         raise FreezeError("main learned transfer did not accept the candidate")
-    anchor_config = run_reward_learned_transfer.validate_anchor_config(
-        paths["anchor_config"]
+    learned_manifest_record = learned_report.get("learned_transfer_manifest")
+    if not isinstance(learned_manifest_record, dict):
+        raise FreezeError("main learned transfer omitted its manifest")
+    learned_manifest = load_object(
+        Path(str(learned_manifest_record.get("path", ""))),
+        "main learned transfer manifest",
     )
+    if (
+        learned_manifest.get("games_per_cell") != 4096
+        or learned_manifest.get("anchor_config_sha256") != anchor_config["sha256"]
+    ):
+        raise FreezeError("main learned transfer uses another anchor contract")
     queue_dir = root / "runs" / queue_id
     state_path = queue_dir / "QUEUE_STATE.json"
     if state_path.exists():
@@ -388,6 +509,7 @@ def freeze(spec: dict[str, Any]) -> Path:
     gate_config = {
         "schema_version": SCHEMA_VERSION,
         "candidate_arm": candidate,
+        "confirmation_steps": 1_000_000_000,
         "mean_perf_delta_min": -0.02,
         "seed_perf_delta_min": -0.05,
         "max_candidate_td_relative_drop": 0.20,
@@ -402,6 +524,8 @@ def freeze(spec: dict[str, Any]) -> Path:
     python = (root / "vendor/PufferLib/.venv/bin/python").resolve()
     source_paths = [
         python,
+        Path("/bin/bash"),
+        root / "vendor/PufferLib/.venv/bin/puffer",
         root / "tools/experiment_queue.py",
         root / "tools/run_frozen_reward_screen.py",
         root / "tools/run_reward_screen.sh",
@@ -419,11 +543,14 @@ def freeze(spec: dict[str, Any]) -> Path:
         root / "tools/contact_bot_stats.py",
         root / "tools/eval_vs_contact_bot.sh",
         root / "training/convert_checkpoint.py",
+        root / "puffer/config/bloodbowl.ini",
         root / "puffer/config/rewards/r0_full.json",
         root / "puffer/config/rewards/p1_possession_only.json",
         root / "puffer/config/rewards/p2_gain_only.json",
         root / "puffer/config/rewards/r2_no_possession.json",
         root / "vendor/PufferLib/config/bloodbowl.ini",
+        root / "vendor/PufferLib/config/default.ini",
+        root / "vendor/PufferLib/pufferlib/models.py",
         root / "vendor/PufferLib/pufferlib/pufferl.py",
         root / "vendor/PufferLib/pufferlib/selfplay.py",
         root / "vendor/PufferLib/pufferlib/torch_pufferl.py",

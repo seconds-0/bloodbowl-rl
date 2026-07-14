@@ -54,6 +54,7 @@ VF_COEF="${VF_COEF:-1.0}"
 VF_CLIP_COEF="${VF_CLIP_COEF:-0.5}"
 MAX_GRAD_NORM="${MAX_GRAD_NORM:-1.5}"
 DETACH="${DETACH:-1}"
+QUEUE_OWNED="${QUEUE_OWNED:-0}"
 EXPECTED_POOL_HASH="${EXPECTED_POOL_HASH:-18ec7cac858b71a6657003f454f19e232fb060f08b644c1e9e2f101076a9aac0}"
 SCREEN_MANIFEST_SHA256="${SCREEN_MANIFEST_SHA256:-}"
 EXPECTED_PUFFER_PATCH_BUNDLE_SHA256="${EXPECTED_PUFFER_PATCH_BUNDLE_SHA256:-}"
@@ -70,6 +71,14 @@ case "$DETACH" in
   0|1) ;;
   *) echo "DETACH must be 0 or 1" >&2; exit 1 ;;
 esac
+case "$QUEUE_OWNED" in
+  0|1) ;;
+  *) echo "QUEUE_OWNED must be 0 or 1" >&2; exit 1 ;;
+esac
+if [ "$DETACH" = "0" ] && [ "$QUEUE_OWNED" != "1" ]; then
+  echo "DETACH=0 is reserved for a queue-owned process group" >&2
+  exit 1
+fi
 
 abspath() {
   case "$1" in
@@ -237,7 +246,7 @@ if [ "$POOL_HASH" != "$EXPECTED_POOL_HASH" ]; then
   exit 1
 fi
 
-if ! bash "$ROOT/tools/install_puffer_env.sh" --check; then
+if ! /bin/bash "$ROOT/tools/install_puffer_env.sh" --check; then
   echo "installed Blood Bowl snapshot is stale; install and rebuild before launch" >&2
   exit 1
 fi
@@ -403,7 +412,7 @@ PY
 BEFORE_RUNS=$(mktemp)
 find checkpoints/bloodbowl -mindepth 1 -maxdepth 1 -type d \
   -exec basename {} \; 2>/dev/null | sort > "$BEFORE_RUNS" || true
-WRAPPER=(bash -c '
+WRAPPER=(/bin/bash -c '
   status=$1
   log=$2
   shift 2
@@ -415,7 +424,7 @@ WRAPPER=(bash -c '
     "$rc" "$$" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$tmp"
   mv "$tmp" "$status"
   exit "$rc"
-' bash "$STATUS_FILE" "$LOG" "${CMD[@]}")
+' /bin/bash "$STATUS_FILE" "$LOG" "${CMD[@]}")
 if [ "$DETACH" = "1" ]; then
   setsid nohup "${WRAPPER[@]}" > /dev/null 2>&1 < /dev/null &
 else
@@ -465,12 +474,12 @@ echo "LAUNCHED pid=$PID"
 MARKER_PID=$!
 
 terminate_group() {
-  kill -TERM -- "-$PID" 2>/dev/null || true
+  kill -TERM -- "-$PROCESS_GROUP" 2>/dev/null || true
   for _ in $(seq 1 20); do
     kill -0 "$PID" 2>/dev/null || break
     sleep 0.25
   done
-  kill -KILL -- "-$PID" 2>/dev/null || true
+  kill -KILL -- "-$PROCESS_GROUP" 2>/dev/null || true
   wait "$PID" 2>/dev/null || true
 }
 

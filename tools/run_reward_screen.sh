@@ -131,7 +131,7 @@ fi
 
 PYBIN="$ROOT/vendor/PufferLib/.venv/bin/python"
 [ -x "$PYBIN" ] || { echo "vendored Python missing: $PYBIN" >&2; exit 1; }
-bash "$ROOT/tools/install_puffer_env.sh" --check "$ROOT/vendor/PufferLib"
+/bin/bash "$ROOT/tools/install_puffer_env.sh" --check "$ROOT/vendor/PufferLib"
 
 case "$SCREEN_PROFILE" in
   distance-possession)
@@ -546,7 +546,7 @@ materialize_result() {
     "$manifest_path" "$WARM" "$POOL" "$STEPS" "$log" "$result" \
     "$SCREEN_MANIFEST" "$SCREEN_MANIFEST_SHA" "$MIN_TRAIN_GAMES" \
     "$MIN_EVAL_GAMES" <<'PY'
-import hashlib, json, math, pathlib, sys
+import hashlib, json, math, os, pathlib, sys
 (
     root, mode, arm, seed, tag, reward_manifest_path, warm_path, pool_path,
     requested_steps, log_path, result_path, screen_manifest_path,
@@ -659,8 +659,17 @@ if int(status["exit_code"]) != 0:
     raise SystemExit(f"trainer status is {status['exit_code']}")
 if int(status["pid"]) != int(process["pid"]):
     raise SystemExit("trainer status PID differs from process sidecar")
-if int(process["process_group"]) != int(process["pid"]):
-    raise SystemExit("trainer process group is not the detached wrapper PID")
+detach = screen["settings"].get("arm_detach")
+if detach not in ("0", "1"):
+    raise SystemExit(f"screen has invalid arm_detach setting: {detach!r}")
+expected_process_group = (
+    int(process["pid"]) if detach == "1" else os.getpgrp()
+)
+if int(process["process_group"]) != expected_process_group:
+    raise SystemExit(
+        "trainer process group differs from the frozen containment contract: "
+        f"{process['process_group']} != {expected_process_group}"
+    )
 
 final_steps = int(run_manifest["final_steps"])
 if final_steps != int(screen["final_steps"]):
@@ -871,7 +880,8 @@ PY
         VF_COEF="$VF_COEF" VF_CLIP_COEF="$VF_CLIP_COEF" \
         MAX_GRAD_NORM="$MAX_GRAD_NORM" EXPECTED_POOL_HASH="$EXPECTED_POOL_HASH" \
         DETACH="$ARM_DETACH" \
-        bash "$ROOT/tools/run_reward_ablation.sh"
+        QUEUE_OWNED="$([ "$ARM_DETACH" = "0" ] && printf 1 || printf 0)" \
+        /bin/bash "$ROOT/tools/run_reward_ablation.sh"
     wait_for_status "$tag" "$log"
   fi
 

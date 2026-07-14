@@ -12,6 +12,18 @@ import run_reward_candidate_transfer as runner
 
 
 class RewardCandidateTransferRunnerTests(unittest.TestCase):
+    def test_completed_from_status_recovers_only_an_integer_count(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            status = Path(tmp) / "TRANSFER_STATUS.json"
+            status.write_text(json.dumps({"completed_cells": 7}))
+            self.assertEqual(runner.completed_from_status(status), 7)
+            status.write_text(json.dumps({"completed_cells": True}))
+            self.assertEqual(runner.completed_from_status(status), 0)
+            status.write_text(json.dumps({"completed_cells": 1.5}))
+            self.assertEqual(runner.completed_from_status(status), 0)
+            status.write_text("not-json")
+            self.assertEqual(runner.completed_from_status(status), 0)
+
     def test_paired_screen_discovers_only_reference_and_candidate(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -87,6 +99,41 @@ class RewardCandidateTransferRunnerTests(unittest.TestCase):
                     runner.convert_checkpoints(
                         root, root / "out", checkpoints, ("both",)
                     )
+
+    def test_conversion_recovers_output_published_before_metadata(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "training").mkdir()
+            (root / "puffer/config").mkdir(parents=True)
+            (root / "training/convert_checkpoint.py").write_text("converter")
+            (root / "puffer/config/bloodbowl.ini").write_text("config")
+            checkpoints = {"both": {}}
+            for seed in runner.SEEDS:
+                source = root / f"source-{seed}.bin"
+                source.write_bytes(b"native")
+                checkpoints["both"][str(seed)] = {
+                    "native": str(source),
+                    "native_sha256": runner.sha256(source),
+                }
+            orphan = root / "out/converted/both-s42-torch.bin"
+            orphan.parent.mkdir(parents=True)
+            orphan.write_bytes(b"orphan")
+
+            def fake_run(command, **_kwargs):
+                output = Path(command[command.index("-o") + 1])
+                output.write_bytes(b"x" * 1_000_001)
+                return subprocess.CompletedProcess(command, 0, "converted")
+
+            with mock.patch.object(runner, "run_checked", side_effect=fake_run):
+                runner.convert_checkpoints(
+                    root, root / "out", checkpoints, ("both",)
+                )
+
+            self.assertTrue(orphan.is_file())
+            self.assertTrue(orphan.with_suffix(orphan.suffix + ".json").is_file())
+            quarantined = list((orphan.parent / "interrupted").glob("*.partial"))
+            self.assertEqual(len(quarantined), 1)
+            self.assertEqual(quarantined[0].read_bytes(), b"orphan")
 
     def test_frozen_manifest_rejects_recomputed_plan_drift(self):
         with tempfile.TemporaryDirectory() as tmp:

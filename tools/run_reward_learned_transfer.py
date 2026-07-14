@@ -167,8 +167,9 @@ def validate_anchor_config(path: Path) -> dict[str, Any]:
     gates = config.get("gates")
     if not isinstance(gates, dict) or set(gates) != {
         "mean_score_delta_min",
-        "lower_confidence_bound_min",
+        "seed_mean_score_delta_min",
         "anchor_mean_score_delta_min",
+        "orientation_mean_score_delta_min",
         "cell_score_delta_min",
     }:
         raise LearnedTransferError("learned-anchor config gates are incomplete")
@@ -180,6 +181,18 @@ def validate_anchor_config(path: Path) -> dict[str, Any]:
     ]:
         raise LearnedTransferError(
             "cell_score_delta_min must not exceed anchor_mean_score_delta_min"
+        )
+    if normalized_gates["cell_score_delta_min"] > normalized_gates[
+        "seed_mean_score_delta_min"
+    ]:
+        raise LearnedTransferError(
+            "cell_score_delta_min must not exceed seed_mean_score_delta_min"
+        )
+    if normalized_gates["cell_score_delta_min"] > normalized_gates[
+        "orientation_mean_score_delta_min"
+    ]:
+        raise LearnedTransferError(
+            "cell_score_delta_min must not exceed orientation_mean_score_delta_min"
         )
     return {
         "schema_version": SCHEMA_VERSION,
@@ -262,8 +275,10 @@ def implementation_identity(root: Path) -> dict[str, Any]:
         )
     files = {
         "compiled_module": module,
-        "config": root / "puffer/config/bloodbowl.ini",
+        "default_config": root / "vendor/PufferLib/config/default.ini",
+        "env_config": root / "vendor/PufferLib/config/bloodbowl.ini",
         "pufferl": root / "vendor/PufferLib/pufferlib/pufferl.py",
+        "models": root / "vendor/PufferLib/pufferlib/models.py",
         "runner": Path(__file__).resolve(),
         "screen_analyzer": root / "tools/analyze_reward_screen.py",
         "screen_transfer": root / "tools/run_reward_candidate_transfer.py",
@@ -388,10 +403,19 @@ def validate_cell(
     focal = finite(cell.get("focal_score"), f"{path.name} focal score")
     opponent = finite(cell.get("opponent_score"), f"{path.name} opponent score")
     draw = finite(cell.get("draw_rate"), f"{path.name} draw rate")
+    focal_tds = finite(cell.get("focal_tds"), f"{path.name} focal TDs")
+    opponent_tds = finite(cell.get("opponent_tds"), f"{path.name} opponent TDs")
     if min(focal, opponent, draw) < -1e-6 or max(focal, opponent, draw) > 1 + 1e-6:
         raise LearnedTransferError(f"{path.name} contains impossible rates")
     if abs(focal + opponent - 1.0) > 2e-4:
         raise LearnedTransferError(f"{path.name} slot scores do not sum to one")
+    if (
+        focal_tds < 0
+        or opponent_tds < 0
+        or focal - 0.5 * draw < -1e-6
+        or opponent - 0.5 * draw < -1e-6
+    ):
+        raise LearnedTransferError(f"{path.name} contains impossible W/D/L or TDs")
     integrity = cell.get("integrity")
     if not isinstance(integrity, dict) or set(integrity) != set(INTEGRITY_KEYS):
         raise LearnedTransferError(f"{path.name} integrity fields are incomplete")
@@ -408,6 +432,8 @@ def validate_cell(
         "focal_score": focal,
         "opponent_score": opponent,
         "draw_rate": draw,
+        "focal_tds": focal_tds,
+        "opponent_tds": opponent_tds,
         "focal_checkpoint_sha256": checkpoint["native_sha256"],
         "anchor_checkpoint_sha256": anchor["sha256"],
         "file": path.name,
@@ -427,8 +453,10 @@ def run_cell(root: Path, plan_path: Path, cell_path: Path) -> int:
     implementation = plan["implementation"]
     for key in (
         "compiled_module",
-        "config",
+        "default_config",
+        "env_config",
         "pufferl",
+        "models",
         "runner",
         "screen_analyzer",
         "screen_transfer",
@@ -459,6 +487,15 @@ def run_cell(root: Path, plan_path: Path, cell_path: Path) -> int:
         or int(_C.precision_bytes) != 4
     ):
         raise LearnedTransferError("cell imported the wrong native module")
+    imported_module = Path(_C.__file__).resolve()
+    expected_module = Path(implementation["compiled_module_path"]).resolve()
+    if (
+        imported_module != expected_module
+        or sha256(imported_module) != implementation["compiled_module_sha256"]
+    ):
+        raise LearnedTransferError(
+            "cell imported a native module outside the frozen implementation"
+        )
     args = pufferl.load_config("bloodbowl")
     args["train"]["gpus"] = 1
     args["train"]["seed"] = expected["match_seed"]
@@ -472,9 +509,11 @@ def run_cell(root: Path, plan_path: Path, cell_path: Path) -> int:
     if expected["orientation"] == 0:
         policy_a, policy_b, focal_key = focal_path, anchor_path, "env/slot_0_score"
         opponent_key = "env/slot_1_score"
+        focal_tds_key, opponent_tds_key = "env/tds_t0", "env/tds_t1"
     else:
         policy_a, policy_b, focal_key = anchor_path, focal_path, "env/slot_1_score"
         opponent_key = "env/slot_0_score"
+        focal_tds_key, opponent_tds_key = "env/tds_t1", "env/tds_t0"
     logs = pufferl.match(
         env_name="bloodbowl",
         policy_a_path=policy_a,
@@ -492,8 +531,15 @@ def run_cell(root: Path, plan_path: Path, cell_path: Path) -> int:
     if games < plan["games_per_cell"]:
         raise LearnedTransferError("match returned too few completed games")
     missing = [key for key in INTEGRITY_KEYS if f"env/{key}" not in numeric_logs]
+    missing.extend(
+        key for key in (
+            focal_key, opponent_key, "env/draw_rate",
+            focal_tds_key, opponent_tds_key,
+        )
+        if key not in numeric_logs
+    )
     if missing:
-        raise LearnedTransferError(f"match omitted integrity keys: {missing}")
+        raise LearnedTransferError(f"match omitted required keys: {missing}")
     integrity = {key: numeric_logs[f"env/{key}"] for key in INTEGRITY_KEYS}
     bad = {key: value for key, value in integrity.items() if value != 0.0}
     if bad:
@@ -514,6 +560,8 @@ def run_cell(root: Path, plan_path: Path, cell_path: Path) -> int:
             "focal_score": numeric_logs[focal_key],
             "opponent_score": numeric_logs[opponent_key],
             "draw_rate": numeric_logs["env/draw_rate"],
+            "focal_tds": numeric_logs[focal_tds_key],
+            "opponent_tds": numeric_logs[opponent_tds_key],
             "focal_checkpoint": focal_path,
             "focal_checkpoint_sha256": checkpoint["native_sha256"],
             "anchor_checkpoint": anchor_path,
@@ -579,18 +627,25 @@ def analyze(directory: str | Path) -> dict[str, Any]:
                             matching[candidate]["focal_score"]
                             - matching[reference]["focal_score"]
                         ),
+                        "candidate_tds_delta": (
+                            matching[candidate]["focal_tds"]
+                            - matching[reference]["focal_tds"]
+                        ),
+                        "candidate_opponent_tds_delta": (
+                            matching[candidate]["opponent_tds"]
+                            - matching[reference]["opponent_tds"]
+                        ),
                     }
                 )
     deltas = [row["score_delta"] for row in paired]
     aggregate = summary(deltas)
-    standard_error = (
-        float(aggregate["sample_sd"]) / math.sqrt(len(deltas))
-        if len(deltas) > 1
-        else 0.0
-    )
-    # 1.96 is intentionally conservative for this descriptive routing gate;
-    # the learned anchors/training seeds are fixed strata, not iid opponents.
-    lower_confidence_bound = float(aggregate["mean"]) - 1.96 * standard_error
+    by_training_seed = {
+        str(seed): summary([
+            row["score_delta"] for row in paired
+            if row["training_seed"] == seed
+        ])
+        for seed in plan["training_seeds"]
+    }
     by_anchor = {
         anchor["name"]: summary(
             [
@@ -601,16 +656,29 @@ def analyze(directory: str | Path) -> dict[str, Any]:
         )
         for anchor in plan["anchors"]
     }
+    by_orientation = {
+        str(orientation): summary([
+            row["score_delta"] for row in paired
+            if row["orientation"] == orientation
+        ])
+        for orientation in plan["orientations"]
+    }
     gates = plan["gates"]
     failures = []
     if aggregate["mean"] < gates["mean_score_delta_min"]:
         failures.append("mean_score_delta")
-    if lower_confidence_bound < gates["lower_confidence_bound_min"]:
-        failures.append("lower_confidence_bound")
+    if min(value["mean"] for value in by_training_seed.values()) < gates[
+        "seed_mean_score_delta_min"
+    ]:
+        failures.append("seed_mean_score_delta")
     if min(value["mean"] for value in by_anchor.values()) < gates[
         "anchor_mean_score_delta_min"
     ]:
         failures.append("anchor_mean_score_delta")
+    if min(value["mean"] for value in by_orientation.values()) < gates[
+        "orientation_mean_score_delta_min"
+    ]:
+        failures.append("orientation_mean_score_delta")
     if aggregate["min"] < gates["cell_score_delta_min"]:
         failures.append("cell_score_delta")
     return {
@@ -632,17 +700,18 @@ def analyze(directory: str | Path) -> dict[str, Any]:
         "paired_candidate_minus_reference": {
             "cells": paired,
             "summary": aggregate,
-            "standard_error": standard_error,
-            "normal_95_lower_bound": lower_confidence_bound,
+            "by_training_seed": by_training_seed,
             "by_anchor": by_anchor,
+            "by_orientation": by_orientation,
         },
         "gates": gates,
         "eligible_for_longer_confirmation": not failures,
         "gate_failures": failures,
         "warning": (
-            "This fixed-anchor matrix is a conservative routing gate. The "
-            "normal lower bound is descriptive because training seeds and "
-            "anchors are fixed strata; it is not reward-promotion evidence."
+            "This is a deterministic fixed-stratum routing gate. Training "
+            "seeds, anchors, and backend orientations are repeated strata, "
+            "not independent replicates; no confidence interval or reward-"
+            "promotion claim is made."
         ),
     }
 
