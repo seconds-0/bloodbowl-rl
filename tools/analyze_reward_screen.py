@@ -133,6 +133,8 @@ POSSESSION_GAIN_EFFECT_DEFINITIONS = {
     ),
 }
 
+PAIRED_CANDIDATES = ("possession_only", "gain_only", "neither")
+
 SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 
 
@@ -206,6 +208,34 @@ def _screen_spec(contract: dict[str, Any]) -> dict[str, Any]:
             "reward_sha256": POSSESSION_GAIN_REWARD_SHA256,
             "factors": POSSESSION_GAIN_FACTORS,
             "effect_definitions": POSSESSION_GAIN_EFFECT_DEFINITIONS,
+        }
+    if profile == "paired-confirmation":
+        candidate = contract.get("candidate_arm")
+        if candidate not in PAIRED_CANDIDATES:
+            raise AnalysisError(
+                "paired-confirmation candidate_arm must be one of "
+                + ", ".join(PAIRED_CANDIDATES)
+            )
+        return {
+            "profile": profile,
+            "candidate_arm": candidate,
+            "schedule": (
+                ("both", 42), (candidate, 42),
+                (candidate, 43), ("both", 43),
+            ),
+            "reward_sha256": {
+                arm: POSSESSION_GAIN_REWARD_SHA256[arm]
+                for arm in ("both", candidate)
+            },
+            "factors": {
+                "both": {"candidate": False},
+                candidate: {"candidate": True},
+            },
+            "effect_definitions": {
+                "candidate_minus_both": (
+                    f"{candidate} - both; positive favors the simpler candidate"
+                ),
+            },
         }
     raise AnalysisError(f"unsupported reward-screen profile: {profile!r}")
 
@@ -371,7 +401,8 @@ def _validate_completion(
         raise AnalysisError("completion proof belongs to another screen plan")
     entries = complete.get("results")
     if not isinstance(entries, list) or len(entries) != len(schedule):
-        raise AnalysisError("completion proof must contain all eight results")
+        raise AnalysisError(
+            f"completion proof must contain all {len(schedule)} results")
 
     for expected, recorded in zip(schedule, entries):
         if not isinstance(recorded, dict):
@@ -430,6 +461,12 @@ def _factorial_effects(
             "interaction": r0 - r1 - r2 + r3,
         }
     both = cells["both"]
+    if profile == "paired-confirmation":
+        candidates = [arm for arm in cells if arm != "both"]
+        if len(candidates) != 1:
+            raise AnalysisError(
+                "paired-confirmation requires exactly one candidate cell")
+        return {"candidate_minus_both": cells[candidates[0]] - both}
     possession = cells["possession_only"]
     gain = cells["gain_only"]
     neither = cells["neither"]
@@ -541,7 +578,7 @@ def analyze_screen(
     else:
         completion = {"present": False}
         warnings.append(
-            "SCREEN_COMPLETE.json is absent: eight accepted results were "
+            f"SCREEN_COMPLETE.json is absent: {len(schedule)} accepted results were "
             "verified, but the atomic screen completion proof is unavailable."
         )
 
@@ -585,11 +622,16 @@ def analyze_screen(
 
     return {
         "schema_version": 1,
-        "analysis": "paired_reward_screen_2x2",
+        "analysis": (
+            "paired_reward_confirmation"
+            if spec["profile"] == "paired-confirmation"
+            else "paired_reward_screen_2x2"
+        ),
         "screen": {
             "directory": str(directory),
             "prefix": prefix,
             "profile": spec["profile"],
+            "candidate_arm": spec.get("candidate_arm"),
             "manifest_file": manifest_path.name,
             "manifest_sha256": manifest_sha,
             "requested_steps": contract.get("requested_steps"),
@@ -641,7 +683,11 @@ def render_text(report: dict[str, Any]) -> str:
         )
 
     lines.append("")
-    lines.append("Per-seed 2x2 effects")
+    lines.append(
+        "Per-seed paired contrasts"
+        if screen["profile"] == "paired-confirmation"
+        else "Per-seed 2x2 effects"
+    )
     for seed in ("42", "43"):
         lines.append(f"  seed {seed}")
         for metric in report["metrics"]:

@@ -470,6 +470,37 @@ Work the queue top-down. Do not reorder without writing a ledger entry justifyin
   the corrected module only in an isolated experiment checkout for the next
   manifested run, then require the full promotion gates before any default.
 
+### Unattended multi-day execution
+
+Do not encode the priority list as an adaptive agent that chooses its next arm
+from live metrics. Before an unattended window, resolve every branch that can be
+resolved, then freeze literal commands and expected artifacts in a schema-1
+`tools/experiment_queue.py` plan. Every job needs a maximum runtime and success
+validator; long jobs need a progress artifact and short jobs need an explicit
+progress exemption reason (the exemption is capped at 30 minutes). Use typed
+command/validator/environment values: literal values cannot carry paths;
+immutable file and directory-tree inputs are pinned; output paths are declared
+mutable; generated inputs link to an earlier job's recorded artifact. Pin and
+recheck every executable and transitive input by byte size and SHA-256/tree
+identity, and use only the plan's allowlisted base environment. The queue root must be the
+isolated audit checkout, and the service must use `KillMode=control-group`.
+Every queue invocation is a pinned executable plus a reviewed, hash-pinned
+runner file. Literal arguments are limited to numbers, lowercase SHA-256
+digests, and long flags; categorical/free-form strings belong in the pinned
+runner or config.
+
+`resume_safe` means the job's own runner validates a frozen manifest and every
+partial/completed artifact before continuing. It does not mean “probably okay
+to rerun.” A plan drift, failed gate, missing/stale progress file, disk limit,
+sustained thermal limit, or invalid success artifact halts the queue and leaves
+later work pending. An unattended queue may produce evidence but may never
+promote a reward or production default. Use
+`docs/vacation-autonomy-2026-07.md` as the operational checklist.
+
+A persisted halt is terminal. Do not restart it in place after editing state or
+artifacts. Preserve the halted evidence and create a newly reviewed queue
+ID/plan/state if human diagnosis authorizes follow-up work.
+
 ---
 
 ## 12. Session checklist

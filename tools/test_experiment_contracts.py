@@ -168,6 +168,49 @@ class ExperimentContractTests(unittest.TestCase):
         self.assertTrue(possession.is_file())
         self.assertTrue(gain.is_file())
 
+    def test_paired_confirmation_requires_an_explicit_candidate(self):
+        result = run_script(
+            "tools/run_reward_screen.sh",
+            env={
+                "WARM": "missing.bin",
+                "POOL": "missing-pool",
+                "STEPS": "1000000000",
+                "SCREEN_PROFILE": "paired-confirmation",
+            },
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("CANDIDATE_ARM", result.stderr)
+        self.assertNotIn("missing warm checkpoint", result.stderr)
+
+        source = (ROOT / "tools/run_reward_screen.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("paired-confirmation", source)
+        self.assertIn("TOTAL_ARMS", source)
+        self.assertNotIn("index=$CURRENT_INDEX/8", source)
+
+        result = run_script(
+            "tools/run_reward_screen.sh",
+            env={
+                "WARM": "missing.bin",
+                "POOL": "missing-pool",
+                "STEPS": "1000000000",
+                "SCREEN_PROFILE": "paired-confirmation",
+                "CANDIDATE_ARM": "gain_only",
+            },
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("TRANSFER_COMPLETE", result.stderr)
+        self.assertNotIn("missing warm checkpoint", result.stderr)
+        for contract in (
+            "EXPECTED_TRANSFER_SHA256",
+            "recommended_confirmation_arm",
+            "candidate_evidence",
+            "transfer_manifest_sha256",
+            "analysis_sha256",
+        ):
+            self.assertIn(contract, source)
+
     @unittest.skipUnless(VENDOR_CHECKOUT, "vendored Puffer checkout unavailable")
     def test_puffer_machine_log_uses_explicit_loop_phase_and_fresh_panels(self):
         source = PUFFERL_SOURCE.read_text(encoding="utf-8")
@@ -185,6 +228,48 @@ class ExperimentContractTests(unittest.TestCase):
         self.assertIn('screen_manifest_sha256 "$SCREEN_MANIFEST_SHA256"', source)
         self.assertIn("from pufferlib import _C; print(_C.__file__)", source)
         self.assertNotIn("find pufferlib -maxdepth 1 -name '_C*.so'", source)
+
+    def test_candidate_transfer_is_a_frozen_both_sides_matrix(self):
+        runner = (ROOT / "tools/run_reward_candidate_transfer.py").read_text(
+            encoding="utf-8"
+        )
+        analyzer = (
+            ROOT / "tools/analyze_reward_candidate_transfer.py"
+        ).read_text(encoding="utf-8")
+        for contract in (
+            "TRANSFER_MANIFEST.json",
+            "TRANSFER_COMPLETE.json",
+            "EXPECTED_NATIVE_BYTES",
+            "BOT_TYPES = (0, 1)",
+            "BOT_TEAMS = (0, 1)",
+            "expected_screen_sha",
+            "screen_checkpoints",
+            "conversion_metadata_sha256",
+        ):
+            self.assertIn(contract, runner)
+        for gate in (
+            "mean_score_delta_min",
+            "cell_score_delta_min",
+            "max_champion_td_relative_drop",
+            "max_bot_td_relative_rise",
+        ):
+            self.assertIn(gate, runner)
+            self.assertIn(gate, analyzer)
+
+    def test_vacation_queue_is_hash_pinned_and_fail_closed(self):
+        source = (ROOT / "tools/experiment_queue.py").read_text(
+            encoding="utf-8"
+        )
+        for contract in (
+            "plan_sha256",
+            "resume_safe",
+            "max_runtime_seconds",
+            "max_gpu_temperature_c",
+            "min_free_bytes",
+            "success validation failed",
+            "later jobs were not run",
+        ):
+            self.assertIn(contract, source)
 
 
 if __name__ == "__main__":

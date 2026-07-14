@@ -206,6 +206,79 @@ class RewardScreenAnalysisTests(unittest.TestCase):
             "interaction": 3.0,
         })
 
+    def test_paired_confirmation_profile_computes_candidate_contrast(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            prefix = "paired-confirmation-test"
+            candidate = "gain_only"
+            schedule_pairs = (
+                ("both", 42), (candidate, 42),
+                (candidate, 43), ("both", 43),
+            )
+            schedule = [
+                {"index": index, "arm": arm, "seed": seed}
+                for index, (arm, seed) in enumerate(schedule_pairs, 1)
+            ]
+            rewards = {
+                arm: {
+                    "reward_sha256":
+                        analyze_reward_screen.POSSESSION_GAIN_REWARD_SHA256[arm]
+                }
+                for arm in ("both", candidate)
+            }
+            manifest = {
+                "schema_version": 1,
+                "contract": {
+                    "prefix": prefix,
+                    "screen_profile": "paired-confirmation",
+                    "candidate_arm": candidate,
+                    "requested_steps": 1_000_000_000,
+                    "final_steps": 999_948_288,
+                    "schedule": schedule,
+                    "settings": {"expected_checkpoint_bytes": "16"},
+                    "rewards": rewards,
+                },
+            }
+            manifest_path = root / "SCREEN_MANIFEST.json"
+            write_json(manifest_path, manifest)
+            manifest_sha = sha256(manifest_path)
+            values = {
+                ("both", 42): 18.0, (candidate, 42): 17.0,
+                ("both", 43): 20.0, (candidate, 43): 21.0,
+            }
+            for arm, seed in schedule_pairs:
+                write_json(root / f"{prefix}-{arm}-s{seed}.result.json", {
+                    "schema_version": 2,
+                    "trainer_complete": True,
+                    "acceptance_pass": True,
+                    "acceptance_failures": [],
+                    "arm": arm,
+                    "seed": seed,
+                    "tag": f"{prefix}-{arm}-s{seed}",
+                    "screen_manifest_sha256": manifest_sha,
+                    "reward_sha256": rewards[arm]["reward_sha256"],
+                    "checkpoint_bytes": 16,
+                    "checkpoint_sha256": digest(f"checkpoint-{arm}-{seed}"),
+                    "log_sha256": digest(f"log-{arm}-{seed}"),
+                    "status_sha256": digest(f"status-{arm}-{seed}"),
+                    "process_sha256": digest(f"process-{arm}-{seed}"),
+                    "run_manifest_sha256": digest(f"manifest-{arm}-{seed}"),
+                    "eval_metrics": {"n": 10_001, "tds": values[(arm, seed)]},
+                })
+
+            report = analyze_reward_screen.analyze_screen(root, ("tds",))
+
+        self.assertEqual(report["screen"]["profile"], "paired-confirmation")
+        self.assertEqual(report["screen"]["candidate_arm"], candidate)
+        self.assertEqual(report["per_seed"]["42"]["effects"]["tds"], {
+            "candidate_minus_both": -1.0,
+        })
+        self.assertEqual(
+            report["across_seeds"]["effects"]["tds"]
+            ["candidate_minus_both"]["mean"],
+            0.0,
+        )
+
     def test_tampered_result_hash_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.build_screen(tmp)
