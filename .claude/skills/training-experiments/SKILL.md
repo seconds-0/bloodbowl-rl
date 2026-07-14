@@ -11,7 +11,7 @@ retune from aesthetics, training curves, or human-looking behavior. Change one
 declared factor through a frozen experiment, validate on match utility and held-out
 transfer, and write every accepted finding to `DECISIONS.md`.**
 
-State as of 2026-07-14 (reward/replay audit active, ledger through D182).
+State as of 2026-07-14 (reward/replay audit active, ledger through D186).
 Always read `AGENTS.md`, the tail of `DECISIONS.md`, and
 `docs/reward-and-replay-audit-2026-07-09.md` first. Newer ledger entries and
 immutable result artifacts supersede older sections of this skill.
@@ -333,10 +333,11 @@ See §4. Check the invariants before every reward-config launch. No exceptions.
 
 ## 7. DECISIONS.md ledger discipline
 
-The ledger is at `DECISIONS.md` (through D182 as of 2026-07-14). It is the
-program's chronological memory. D177–D181 cover the reward screen, transfer,
-replay corpus, streaming loader, and rejected partial-deployment run that
-supersede this skill's June snapshots.
+The ledger is at `DECISIONS.md` (through D186 as of 2026-07-14). It is the
+program's chronological memory. D177–D186 cover the reward screen, transfer,
+replay corpus, streaming loader, rejected partial-deployment run, corrected
+confirmation, and fail-closed vacation routes that supersede this skill's June
+snapshots.
 
 - **EVERY finding gets an atomic entry. No exceptions.** One decision/finding per
   entry, numbered D{n+1}, dated. If your write-up needs "and" between two findings,
@@ -525,8 +526,9 @@ revalidate both self-play screens and both transfer strata before producing the
 only artifact that unlocks the final screens. Never mark a PPO screen
 `resume_safe`; its partial optimization trajectory is not restart-equivalent.
 
-There is one reviewed no-candidate route. If and only if the exact decomposition
-analysis recommends `both` and its eligible-candidate list is empty, freeze
+There are two reviewed no-candidate primary routes. If and only if the exact
+decomposition analysis recommends `both` and its eligible-candidate list is
+empty, freeze
 `candidate_arm=both`, null `anchor_config` and `main_learned_complete`, and
 `final_steps=12B`. The freezer then emits exactly two `control-final` jobs:
 R0-only seeds 42/43/44 from the main ancestry, then the same schedule from
@@ -540,6 +542,21 @@ the control queue. The scripted matrix must also use `both` as reference and
 evaluate all three simplifications. An empty eligible list from a subset is not
 an all-candidates-rejected result.
 
+If an already-selected candidate instead fails the unchanged paired
+confirmation gate, the explicit `confirmation-rejected-baseline` route may emit
+the same two R0-only jobs only after independently regenerating the failure and
+matching the confirmation's embedded selection-transfer proof. It is not an
+all-candidates-rejected result and cannot switch candidates.
+
+D186 adds one optional, separate post-primary overflow because measured local
+throughput can leave the owned GPU idle before return. Use only
+`tools/freeze_vacation_overflow.py`: exact primary completion and its original
+validators unlock one unchanged R0 `control-final` screen from the static
+pool's exact netblock ancestry, `12B x seeds 42/43/44`. The delayed timer also
+requires primary-service inactivity, unchanged pins, no existing overflow state,
+and no GPU compute PID. It cannot run after primary failure/halt/drift, relaunch
+an interrupted PPO screen, choose a reward, or change production.
+
 Vacation screen jobs must invoke `tools/run_frozen_reward_screen.py`, which sets
 `ARM_DETACH=0`. The queue creates a new session for each job, and every screen,
 arm wrapper, trainer, and descendant must remain in that process group so its
@@ -551,7 +568,7 @@ training path.
 
 ## 12. Session checklist
 
-Before doing anything: read `AGENTS.md`, D177–D181 and the ledger tail; discover
+Before doing anything: read `AGENTS.md`, D177–D186 and the ledger tail; discover
 live Tailscale/Vast state and processes; confirm the intended checkout is not the
 production checkout. Before launch: verify obs size, install drift, imported
 module/provenance, disk, complete reward manifest, opponent/data hashes, seeds,

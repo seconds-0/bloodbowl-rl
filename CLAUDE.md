@@ -5,9 +5,9 @@ deterministic C11 rules engine → PufferLib 4.0 native env → PPO + action
 masking + self-play curriculum, with BC support from curated FUMBBL replays.
 
 **Read `AGENTS.md` first.** Then read the tail of `DECISIONS.md` (currently
-through D182) and, for reward/replay work,
+through D186) and, for reward/replay work,
 `docs/reward-and-replay-audit-2026-07-09.md`. The ledger is chronological; the
-July audit and D177–D182 supersede older prose that calls the June v4 reward
+July audit and D177–D186 supersede older prose that calls the June v4 reward
 economy "settled." Where this file and newer ledger evidence disagree, the
 newer evidence wins.
 
@@ -69,7 +69,7 @@ newer evidence wins.
   entries and host discovery.
 - **Curriculum ladder** (stage knob = `--env.demo-endzone-maxdist`): 6 → 9 → 12 → 0 (= "uniform": any demo-bank start, no endzone filter) → kickoff starts (`--env.demo-reset-pct 0`). +3 squares per stage, never more (D51: 6→12 overshot). Advance at tds plateau; warm-start each stage from the previous stage's highest-STEP ckpt.
 - The June queue is superseded by the July queue in
-  `.claude/skills/training-experiments/SKILL.md` and D177–D180.
+  `.claude/skills/training-experiments/SKILL.md` and D177–D186.
 
 ## Hard-won facts (verified — don't relearn these)
 
@@ -187,6 +187,13 @@ newer evidence wins.
 - Maintain `docs/vacation-progress.md` at least hourly during the active
   preparation/run with current status, completed work, blockers, and next
   steps. Treat it as an operational journal, not experiment evidence.
+- D186's only reviewed post-primary work is one separately frozen R0
+  `control-final` screen from the exact netblock pool-bank ancestry. Use
+  `tools/freeze_vacation_overflow.py`; its completion proof and delayed starter
+  must observe the exact primary plan complete, both success validators, an
+  inactive primary service, unchanged pins, no prior overflow state, and no GPU
+  compute PID. The overflow is third-ancestry characterization, never a reward
+  rescue, candidate switch, promotion, or permission to edit the active plan.
 
 ### Engine / rules / oracles (stable since v1)
 - PufferLib 4.0 (`vendor/PufferLib`, branch 4.0) uses `src/vecenv.h` macros — the online `env_binding.h` ABI is dead 3.0. `ocean/chess/` is the template; `ocean/convert/` is stale.

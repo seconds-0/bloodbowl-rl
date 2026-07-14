@@ -1,0 +1,10 @@
+[Unit]
+Description=Blood Bowl vacation overflow readiness gate (%i)
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/bloodbowl-rl-audit
+Environment=PYTHONUNBUFFERED=1
+ExecStart=%h/bloodbowl-rl-audit/vendor/PufferLib/.venv/bin/python %h/bloodbowl-rl-audit/tools/start_vacation_overflow.py --config %h/bloodbowl-rl-audit/runs/%i/OVERFLOW_WATCH.json
+TimeoutStartSec=15min
