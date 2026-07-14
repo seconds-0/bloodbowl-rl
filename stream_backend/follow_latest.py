@@ -342,7 +342,7 @@ def prune_cache(cache_dir: Path, selected: set[Path], keep: int) -> None:
 def server_command(
     args: argparse.Namespace, checkpoint_a: Path, checkpoint_b: Path
 ) -> list[str]:
-    return [
+    command = [
         str(args.server_python),
         str(args.server_script),
         "--ckpt-a",
@@ -356,6 +356,9 @@ def server_command(
         "--max-games",
         str(args.games_per_cycle),
     ]
+    if args.sample:
+        command.append("--sample")
+    return command
 
 
 def choose_stream_pair(
@@ -475,6 +478,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--port", type=int, default=8787)
     parser.add_argument("--pace", type=float, default=0.6)
     parser.add_argument("--games-per-cycle", type=int, default=2)
+    parser.add_argument(
+        "--sample",
+        action="store_true",
+        help="sample policy actions instead of using greedy argmax",
+    )
     parser.add_argument("--stability-seconds", type=float, default=1.0)
     parser.add_argument("--retry-seconds", type=float, default=5.0)
     parser.add_argument("--conversion-timeout-seconds", type=float, default=300.0)
