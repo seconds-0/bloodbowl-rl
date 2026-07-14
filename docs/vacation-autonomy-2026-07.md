@@ -102,6 +102,27 @@ characterization order is deliberately identical: main-ancestry
 `12B x seeds 42,43,44`. The authorization differs, is recorded explicitly, and
 must not be described as an all-candidates-rejected result.
 
+Live primary throughput measured about `187K` learner steps/second. Because the
+two primary screens may therefore finish before the user's return, one separately
+reviewed overflow queue may follow only after the exact primary plan reaches
+terminal `complete` and both original screen artifacts still pass their recorded
+hashes and validators. The overflow reuses `control-final` byte-for-byte at
+`12B x seeds 42,43,44`; its only changed factor is the exact `netblock` warm
+checkpoint already present as static-pool bank 2, SHA-256
+`9964cf4d4c9c2654157e898ff17327732e73c4c85a5883e7d311d8d3baade05e`.
+This adds `36B` and a third ancestry, not another reward candidate. Together the
+primary and overflow request `108B`, approximately 159 training hours at the
+measured rate before evaluation overhead.
+
+`tools/freeze_vacation_overflow.py` is the only reviewed builder for that queue.
+It binds to the exact primary queue ID and plan SHA, its pinned schema-2 spec and
+`BASELINE_AUTHORIZATION.json`, the unchanged two R0 configs, the same pool, and
+the reviewed netblock bank. Its first job uses
+`tools/validate_primary_queue_completion.py` to revalidate the primary plan,
+state, pins, job order, success hashes, and original success validators and to
+require an empty GPU compute-process list. Only its atomic proof unlocks one
+non-resume-safe PPO screen.
+
 The exact queue may be shorter if the repository lacks a verified launcher for
 a proposed cell. A new launcher is deployed only after focused tests and a
 local/remote smoke; it is never improvised by the running service.
@@ -197,6 +218,15 @@ and reboots. There is intentionally no in-place “acknowledge and continue”
 switch. After diagnosis, recovery requires a newly reviewed queue ID/plan/state;
 the halted evidence remains immutable.
 
+The optional overflow uses the same queue service plus the tracked
+`vacation-overflow-watch@.service/.timer`. The timer is an outer readiness gate,
+not an authority to recover: it starts nothing while the primary service is
+active, when the primary is not exactly complete, when any primary evidence or
+overflow pin drifted, when a GPU compute PID exists, or once any overflow state
+exists. A halted, failed, interrupted, or previously started overflow is never
+timer-relaunched. Even an accidental manual service start must pass the same
+completion proof as the overflow queue's first job before PPO can begin.
+
 The RTX host currently has systemd user lingering enabled, Tailscale running
 without key expiry, and the BBTV services enabled. These are host facts to
 recheck immediately before departure, not assumptions embedded in the queue.
@@ -221,6 +251,10 @@ Do not leave the queue unattended until all of the following are true:
   healthy;
 - BBTV visibly advances to a newly completed manifested checkpoint; and
 - no production reward or production trainer/evaluator was changed.
+- if the optional overflow is armed, its timer failure/success smokes pass, a
+  primary-running poll is a proven no-op, every primary pinned byte remains
+  identical across additive deployment, and existing overflow state cannot be
+  timer-relaunched.
 
 Freeze and validate only after the main evidence paths are literal:
 

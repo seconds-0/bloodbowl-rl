@@ -9,8 +9,8 @@ and behavioral cloning from FUMBBL replays.
 1. Read the tail of `DECISIONS.md`. It is the chronological program ledger;
    later entries amend earlier ones without deleting history.
 2. For reward, replay, or training work, read
-   `docs/reward-and-replay-audit-2026-07-09.md`. D177–D182 summarize its durable
-   conclusions.
+   `docs/reward-and-replay-audit-2026-07-09.md`. D177–D186 summarize its durable
+   conclusions and the subsequent vacation-training decisions.
 3. Load the relevant project skill under `.claude/skills/`:
    - `training-experiments` for any run, A/B, checkpoint, metric, or promotion;
    - `fumbbl-data` for replay download, filtering, conversion, or BC sampling;
@@ -50,6 +50,10 @@ default.
   then rerun all arms.
 - Do not change production defaults until the survivor passes learned-opponent,
   roster-grid, longer-horizon, multi-seed, and second-ancestry confirmation.
+- The corrected `neither` confirmation later failed the frozen mean-performance
+  gate (D185). The active vacation queue therefore characterizes R0 only; do not
+  switch candidates or describe R0 as promoted. D186 permits one separately
+  frozen third-ancestry R0 overflow only after exact primary completion.
 - Human-looking block, rush, possession, or action rates are diagnostics, not
   optimization objectives. Tournament/match utility and held-out transfer are
   the decision criteria.
@@ -140,6 +144,13 @@ During the active vacation preparation and unattended run, append a timestamped
 status/finished-work/blockers/next-steps entry to `docs/vacation-progress.md` at
 least once per hour. The journal is an operational handoff, never scientific
 evidence in place of immutable manifests and completion artifacts.
+If measured throughput leaves the GPU idle before return, the only reviewed
+extension is `tools/freeze_vacation_overflow.py`: one unchanged `control-final`
+R0 screen from the exact netblock pool-bank ancestry at `12B x seeds 42/43/44`.
+It is a separate queue gated on exact successful completion of the immutable
+primary plan, both original validators, primary-service inactivity, unchanged
+pins, and an idle GPU. Never append the active plan, deploy over one of its
+pinned files, start the overflow early, or timer-relaunch existing state.
 
 ## Replay and BC contract
 
