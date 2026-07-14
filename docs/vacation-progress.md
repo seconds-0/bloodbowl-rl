@@ -1363,3 +1363,74 @@ downloaded reboot-forcing package—only the July malicious-software tool and a
 Defender definition—so update policy was left unchanged. BBTV subsequently
 selected the 599,392,256- and 699,269,120-step vacation checkpoints at matchup
 boundaries. The journal branch's hosted CI passed at commit `76ca189`.
+
+## 2026-07-14 13:57 PDT
+
+Status:
+
+- The primary queue remains active on `final-main-control`, R0 seed 42. It
+  reached 799,801,344 agent steps (epoch 6,101) at 13:57 PDT. The current
+  dashboard rate was about 190K steps/second; the whole-arm rate measured from
+  the recorded 12:45:04 PDT start was 184,982 steps/second.
+- The queue service is active with zero restarts. Live integrity telemetry
+  remains clean: engine-error episodes, non-finite reward episodes/fraction,
+  reward-clipping episodes/excess/fraction, demos, and demo fallbacks are all
+  zero. Both the primary plan's 65 pins and overflow plan's 74 pins revalidated
+  from disk with no mismatch.
+- The RTX 2070 was 83 C at 78% utilization, using 5,737 MiB VRAM and about
+  142 W. Free storage is 900 GiB. Temperature is a watch item, but step rate is
+  stable and there is no restart or integrity evidence of thermal failure.
+- `bbstream`, `bbweb`, and `bbtv-tunnel` are active with zero restarts, and the
+  public BBTV page returns HTTP 200. The latest completed viewer rollover is the
+  699,269,120-step checkpoint; the learner has reached the next checkpoint
+  boundary, and the follower is allowed to finish its current two-game cycle
+  before switching.
+- The overflow timer remains active and scheduled every ten minutes. Its latest
+  completed poll at 13:48:26 PDT correctly logged that the primary was active,
+  returned success, and left the real overflow state absent.
+
+Completed since the previous handoff:
+
+- Recomputed the end-to-end utilization window from live evidence rather than
+  the instantaneous dashboard rate. Across the immutable 72B primary and 36B
+  overflow plans, 107,200,198,656 of 108B steps remained. At the measured
+  whole-arm average, training projects to finish around 2026-07-21 06:56 PDT,
+  or about 161 hours from this observation. Final 10,000-game evaluations add
+  unmeasured overhead, so this remains a planning estimate rather than a
+  completion guarantee.
+- Rechecked the exact queue identities: the primary plan SHA-256 remains
+  `4ee72e3c58f09786cdd3bbf78a772e8de2d9a93e21a8b065cf0c5976ecced270`;
+  the overflow plan remains
+  `d90ee01c8c459f599c8601934f545ccb7783261edae3bcb6e9e3878036d37d3e`.
+  The real overflow has no state and has never started.
+- Verified all four live user services relevant to the unattended run: the
+  primary experiment queue, BBTV follower/server, BBTV web service, and named
+  tunnel are active with zero restarts. The public viewer remains reachable.
+
+Current blockers / risks:
+
+- Each PPO arm is intentionally non-resume-safe. A host, WSL, service, or
+  trainer interruption is terminal and must remain visible rather than being
+  silently relaunched. The Windows sleep/hibernate, WSL keepalive, Tailscale,
+  lingering user-service, and pending-update audits reduce but cannot eliminate
+  that physical-host risk.
+- The 83 C GPU reading is below the observed failure boundary and throughput is
+  stable, but it warrants continued hourly trending. Intervention is justified
+  only if temperature rises further with throttling, process loss, integrity
+  errors, or a frozen learner; changing the live workload without those signals
+  would destroy this non-resume-safe arm.
+- Short-window training behavior is health telemetry only. No checkpoint or
+  reward configuration may be promoted automatically; conclusions wait for
+  complete, validated 10,000-game evaluations across all three seeds and
+  ancestries.
+
+Next steps:
+
+1. Confirm the 13:58 overflow watcher poll is another successful no-op and that
+   the overflow state remains absent.
+2. Confirm BBTV atomically selects the new ~800M checkpoint after its current
+   matchup cycle while the public page and three services remain healthy.
+3. Continue hourly durable checks of step freshness, integrity counters,
+   thermals, capacity, service restarts, pin hashes, watcher behavior, and BBTV
+   rollover through departure; preserve all evidence without interpreting or
+   promoting a winner early.
