@@ -16,6 +16,8 @@ def digest(label: str) -> str:
 class RewardCandidateTransferTests(unittest.TestCase):
     def write_manifest(self, root: Path) -> dict:
         arms = ("both", "possession_only", "gain_only", "neither")
+        orchestration = root / "orchestration.py"
+        orchestration.write_text("# frozen\n")
         manifest = {
             "schema_version": 1,
             "matrix_id": "candidate-transfer-test",
@@ -35,6 +37,9 @@ class RewardCandidateTransferTests(unittest.TestCase):
                 "compiled_module_sha256": digest("module"),
                 "pufferl_sha256": digest("pufferl"),
                 "launcher_sha256": digest("launcher"),
+            },
+            "orchestration_files": {
+                str(orchestration): digest("# frozen\n"),
             },
             "checkpoints": {
                 arm: {
@@ -116,7 +121,11 @@ class RewardCandidateTransferTests(unittest.TestCase):
             "blocks_thrown_t0": 8.0 if champion_team == 0 else 10.0,
             "blocks_thrown_t1": 8.0 if champion_team == 1 else 10.0,
             "reward_clip_episodes": 0,
+            "reward_clip_frac": 0,
+            "reward_clip_frac_nonzero": 0,
+            "reward_clip_excess": 0,
             "reward_nonfinite_episodes": 0,
+            "reward_nonfinite_frac": 0,
             "error_episodes": 0,
             "demo_episodes": 0,
             "demo_fallbacks": 0,
@@ -174,6 +183,20 @@ class RewardCandidateTransferTests(unittest.TestCase):
             self.build_matrix(root)
             (root / "neither-s43-b1-t1.log").unlink()
             with self.assertRaisesRegex(transfer.TransferError, "missing transfer"):
+                transfer.analyze(root)
+
+    def test_missing_integrity_counter_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.build_matrix(root)
+            path = root / "both-s42-b0-t0.log"
+            text = path.read_text().replace(
+                '"reward_clip_excess": 0, ', "", 2
+            )
+            path.write_text(text)
+            with self.assertRaisesRegex(
+                transfer.TransferError, "missing integrity counters"
+            ):
                 transfer.analyze(root)
 
 

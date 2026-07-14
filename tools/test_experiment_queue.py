@@ -14,12 +14,46 @@ import experiment_queue as queue
 
 class ExperimentQueueTests(unittest.TestCase):
     def make_plan(self, root: Path, jobs: list[dict], **overrides) -> Path:
+        validator_body = (
+            "import pathlib,sys; "
+            "raise SystemExit(0 if pathlib.Path(sys.argv[1]).is_file() else 1)"
+        )
+        for job in jobs:
+            job.setdefault("resume_safe", False)
+            job.setdefault("pinned_inputs", [str(Path(sys.executable).resolve())])
+            job.setdefault("max_runtime_seconds", 5)
+            if "progress" not in job:
+                job.setdefault(
+                    "progress_not_required_reason", "bounded unit-test command"
+                )
+            job["success"].setdefault(
+                "validator",
+                [
+                    sys.executable,
+                    "-c",
+                    validator_body,
+                    job["success"]["path"],
+                ],
+            )
+            job["success"].setdefault("validator_timeout_seconds", 2)
+        executable = Path(sys.executable).resolve()
         payload = {
             "schema_version": 1,
             "queue_id": "test-queue",
             "root": str(root),
             "min_free_bytes": 1,
             "poll_seconds": 0.01,
+            "base_env": {
+                key: os.environ[key]
+                for key in ("HOME", "PATH")
+                if key in os.environ
+            },
+            "pinned_files": [{
+                "path": str(executable),
+                "bytes": executable.stat().st_size,
+                "sha256": hashlib.sha256(executable.read_bytes()).hexdigest(),
+                "role": "test Python executable",
+            }],
             "jobs": jobs,
             **overrides,
         }
@@ -191,6 +225,93 @@ class ExperimentQueueTests(unittest.TestCase):
             observed = json.loads(state.read_text())
             self.assertEqual(observed["state"], "halted")
             self.assertIn("not resume-safe", observed["message"])
+
+            # A persisted safety halt is terminal across service restarts.
+            self.assertEqual(queue.run_queue(plan, state), 0)
+            observed_again = json.loads(state.read_text())
+            self.assertEqual(observed_again["state"], "halted")
+
+    def test_interrupted_unsafe_job_cannot_recover_from_artifact(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            job = self.write_job(
+                root, "unsafe-artifact", "raise SystemExit('must not run')"
+            )
+            plan = self.make_plan(root, [job])
+            Path(job["success"]["path"]).touch()
+            plan_sha = hashlib.sha256(plan.read_bytes()).hexdigest()
+            state = root / "state.json"
+            recorded = queue.new_state(json.loads(plan.read_text()), plan_sha)
+            recorded["jobs"][0]["state"] = "running"
+            queue.atomic_json(state, recorded)
+
+            self.assertEqual(queue.run_queue(plan, state), 0)
+            observed = json.loads(state.read_text())
+            self.assertEqual(observed["state"], "halted")
+            self.assertIn("not resume-safe", observed["message"])
+
+    def test_hanging_validator_is_bounded(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            job = self.write_job(
+                root,
+                "validator-timeout",
+                "import pathlib,sys; pathlib.Path(sys.argv[1]).touch()",
+            )
+            plan = self.make_plan(root, [job])
+            payload = json.loads(plan.read_text())
+            payload["jobs"][0]["success"]["validator"] = [
+                sys.executable, "-c", "import time; time.sleep(60)"
+            ]
+            payload["jobs"][0]["success"]["validator_timeout_seconds"] = 0.02
+            plan.write_text(json.dumps(payload))
+            state = root / "state.json"
+
+            self.assertEqual(queue.run_queue(plan, state), 0)
+            observed = json.loads(state.read_text())
+            self.assertEqual(observed["state"], "halted")
+            self.assertIn("validator timed out", observed["message"])
+
+    def test_unknown_guard_field_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            job = self.write_job(
+                root,
+                "typo",
+                "import pathlib,sys; pathlib.Path(sys.argv[1]).touch()",
+                max_runtime_second=5,
+            )
+            plan = self.make_plan(root, [job])
+            with self.assertRaisesRegex(queue.QueueError, "unknown job 1 fields"):
+                queue.run_queue(plan, root / "state.json")
+
+    def test_pinned_input_drift_halts_before_job(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            job = self.write_job(
+                root,
+                "pin-drift",
+                "import pathlib,sys; pathlib.Path(sys.argv[1]).touch()",
+            )
+            pinned = root / "reward.json"
+            pinned.write_text("frozen")
+            plan = self.make_plan(root, [job])
+            payload = json.loads(plan.read_text())
+            payload["pinned_files"].append({
+                "path": str(pinned),
+                "bytes": pinned.stat().st_size,
+                "sha256": hashlib.sha256(pinned.read_bytes()).hexdigest(),
+                "role": "reward manifest",
+            })
+            plan.write_text(json.dumps(payload))
+            pinned.write_text("drifted")
+            state = root / "state.json"
+
+            self.assertEqual(queue.run_queue(plan, state), 0)
+            observed = json.loads(state.read_text())
+            self.assertEqual(observed["state"], "halted")
+            self.assertIn("pinned reward manifest", observed["message"])
+            self.assertFalse(Path(job["success"]["path"]).exists())
 
     def test_temperature_query_failure_terminates_job_and_halts(self):
         with tempfile.TemporaryDirectory() as tmp:

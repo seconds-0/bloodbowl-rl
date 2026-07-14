@@ -189,6 +189,28 @@ class ExperimentContractTests(unittest.TestCase):
         self.assertIn("TOTAL_ARMS", source)
         self.assertNotIn("index=$CURRENT_INDEX/8", source)
 
+        result = run_script(
+            "tools/run_reward_screen.sh",
+            env={
+                "WARM": "missing.bin",
+                "POOL": "missing-pool",
+                "STEPS": "1000000000",
+                "SCREEN_PROFILE": "paired-confirmation",
+                "CANDIDATE_ARM": "gain_only",
+            },
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("TRANSFER_COMPLETE", result.stderr)
+        self.assertNotIn("missing warm checkpoint", result.stderr)
+        for contract in (
+            "EXPECTED_TRANSFER_SHA256",
+            "recommended_confirmation_arm",
+            "candidate_evidence",
+            "transfer_manifest_sha256",
+            "analysis_sha256",
+        ):
+            self.assertIn(contract, source)
+
     @unittest.skipUnless(VENDOR_CHECKOUT, "vendored Puffer checkout unavailable")
     def test_puffer_machine_log_uses_explicit_loop_phase_and_fresh_panels(self):
         source = PUFFERL_SOURCE.read_text(encoding="utf-8")

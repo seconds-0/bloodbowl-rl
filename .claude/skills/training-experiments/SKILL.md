@@ -476,7 +476,10 @@ Do not encode the priority list as an adaptive agent that chooses its next arm
 from live metrics. Before an unattended window, resolve every branch that can be
 resolved, then freeze literal commands and expected artifacts in a schema-1
 `tools/experiment_queue.py` plan. Every job needs a maximum runtime and success
-validator; long jobs need a progress artifact. The queue root must be the
+validator; long jobs need a progress artifact and short jobs need an explicit
+progress exemption reason. Pin and recheck every executable and referenced
+input by byte size and SHA-256, and use only the plan's explicit base
+environment. The queue root must be the
 isolated audit checkout, and the service must use `KillMode=control-group`.
 
 `resume_safe` means the job's own runner validates a frozen manifest and every
@@ -486,6 +489,10 @@ sustained thermal limit, or invalid success artifact halts the queue and leaves
 later work pending. An unattended queue may produce evidence but may never
 promote a reward or production default. Use
 `docs/vacation-autonomy-2026-07.md` as the operational checklist.
+
+A persisted halt is terminal. Do not restart it in place after editing state or
+artifacts. Preserve the halted evidence and create a newly reviewed queue
+ID/plan/state if human diagnosis authorizes follow-up work.
 
 ---
 

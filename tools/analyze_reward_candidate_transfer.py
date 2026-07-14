@@ -24,8 +24,10 @@ from game_stats import dashboard_windows, weighted_dashboard
 
 MANIFEST_PREFIX = "BB_EVAL_MANIFEST "
 INTEGRITY = (
-    "reward_clip_episodes", "reward_nonfinite_episodes", "error_episodes",
-    "demo_episodes", "demo_fallbacks",
+    "reward_clip_frac", "reward_clip_frac_nonzero", "reward_clip_excess",
+    "reward_nonfinite_frac", "reward_clip_episodes",
+    "reward_nonfinite_episodes", "error_episodes", "demo_episodes",
+    "demo_fallbacks",
 )
 METRICS = (
     "champion_score", "win_rate", "draw_rate", "loss_rate",
@@ -137,12 +139,14 @@ def _validate_plan(directory: Path) -> dict[str, Any]:
     bot_teams = _int_list(plan.get("bot_teams"), "bot_teams", {0, 1})
     settings = plan.get("settings")
     implementation = plan.get("implementation")
+    orchestration = plan.get("orchestration_files")
     checkpoints = plan.get("checkpoints")
     gates = plan.get("gates")
     if not all(isinstance(item, dict) for item in (
-            settings, implementation, checkpoints, gates)):
+            settings, implementation, orchestration, checkpoints, gates)):
         raise TransferError(
-            "settings, implementation, checkpoints, and gates must be objects")
+            "settings, implementation, orchestration_files, checkpoints, and "
+            "gates must be objects")
     for key in ("requested_train_steps", "eval_episodes", "min_eval_games"):
         _positive_int(settings.get(key), f"settings.{key}")
     for key in (
@@ -150,6 +154,20 @@ def _validate_plan(directory: Path) -> dict[str, Any]:
         "launcher_sha256",
     ):
         _sha(implementation.get(key), f"implementation.{key}")
+    if not orchestration:
+        raise TransferError("orchestration_files must not be empty")
+    for path_value, expected_sha in orchestration.items():
+        if not isinstance(path_value, str) or not Path(path_value).is_absolute():
+            raise TransferError("orchestration file paths must be absolute")
+        _sha(expected_sha, f"orchestration_files[{path_value!r}]")
+        path = Path(path_value)
+        if not path.is_file():
+            raise TransferError(f"missing orchestration file: {path}")
+        observed_sha = _sha256(path)
+        if observed_sha != expected_sha:
+            raise TransferError(
+                f"orchestration file hash drift: {path}: "
+                f"{observed_sha} != {expected_sha}")
     for arm in (reference, *candidates):
         by_seed = checkpoints.get(arm)
         if not isinstance(by_seed, dict):
@@ -237,8 +255,15 @@ def _validate_cell(
     games = _finite(values.get("n"), f"{path.name} games")
     if games < settings["min_eval_games"]:
         raise TransferError(f"{path.name}: sample too small")
-    bad = {key: values.get(key, 0) for key in INTEGRITY
-           if values.get(key, 0) != 0}
+    missing_integrity = [key for key in INTEGRITY if key not in values]
+    if missing_integrity:
+        raise TransferError(
+            f"{path.name}: missing integrity counters: {missing_integrity}")
+    integrity_values = {
+        key: _finite(values[key], f"{path.name} {key}")
+        for key in INTEGRITY
+    }
+    bad = {key: value for key, value in integrity_values.items() if value != 0}
     if bad:
         raise TransferError(f"{path.name}: integrity counters nonzero: {bad}")
     perspective = bot_perspective(values, bot_team)

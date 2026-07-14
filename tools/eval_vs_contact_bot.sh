@@ -189,10 +189,15 @@ games = values.get("n", 0)
 if games < minimum:
     raise SystemExit(f"scripted eval sample too small: {games:g} < {minimum}")
 integrity = (
-    "reward_clip_episodes", "reward_nonfinite_episodes", "error_episodes",
-    "demo_episodes", "demo_fallbacks",
+    "reward_clip_frac", "reward_clip_frac_nonzero", "reward_clip_excess",
+    "reward_nonfinite_frac", "reward_clip_episodes",
+    "reward_nonfinite_episodes", "error_episodes", "demo_episodes",
+    "demo_fallbacks",
 )
-bad = {key: values.get(key, 0) for key in integrity if values.get(key, 0) != 0}
+missing = [key for key in integrity if key not in values]
+if missing:
+    raise SystemExit(f"scripted eval missing integrity counters: {missing}")
+bad = {key: values[key] for key in integrity if values[key] != 0}
 if bad:
     raise SystemExit(f"scripted eval integrity gate failed: {bad}")
 print(f"validated scripted eval: {games:.0f} games; cumulative gate {completed:.0f}")

@@ -207,6 +207,20 @@ def implementation_identity(root: Path) -> dict[str, str]:
     }
 
 
+def orchestration_identity(root: Path) -> dict[str, str]:
+    paths = (
+        root / "tools/run_reward_candidate_transfer.py",
+        root / "tools/analyze_reward_candidate_transfer.py",
+        root / "tools/game_stats.py",
+        root / "tools/contact_bot_stats.py",
+        root / "training/convert_checkpoint.py",
+        root / "vendor/PufferLib/pufferlib/torch_pufferl.py",
+        root / "vendor/PufferLib/pufferlib/models.py",
+        root / "vendor/PufferLib/pufferlib/selfplay.py",
+    )
+    return {str(path.resolve()): sha256(path) for path in paths}
+
+
 def freeze_manifest(
     path: Path, root: Path, screen_dir: Path, expected_screen_sha: str,
     checkpoints: dict[str, dict[str, Any]], arms: tuple[str, ...],
@@ -235,6 +249,7 @@ def freeze_manifest(
             "min_eval_games": 1_000,
         },
         "implementation": implementation_identity(root),
+        "orchestration_files": orchestration_identity(root),
         "conversion": {
             "converter_sha256": sha256(root / "training/convert_checkpoint.py"),
             "config_sha256": sha256(root / "puffer/config/bloodbowl.ini"),

@@ -171,11 +171,16 @@ For a multi-day unattended queue, use the tracked
 `training/systemd/experiment-queue@.service` in the lingering user manager.
 Freeze the plan before service start and retain its SHA in atomic queue state.
 Require disk, job-runtime, progress, sustained-temperature, and output-validator
-guards. Test both interruption recovery and fail-closed suppression of later
+guards; pin every declared executable/input and use the explicit plan
+environment. Test both interruption recovery and fail-closed suppression of later
 jobs before handoff. `Restart=on-failure` recovers a runner crash; a deliberate
 queue halt must exit normally and remain stopped for inspection. Recheck linger,
 Tailscale online/key-expiry state, enabled BBTV services, disk/inodes, journal
 size, and GPU thresholds immediately before departure.
+
+A persisted queue halt is terminal across restart and reboot. Do not edit its
+state to resume it. Preserve the evidence and deploy a new reviewed queue
+ID/plan/state after diagnosis if the user-authorized experiment should continue.
 
 ## Checkpoints and transfer
 

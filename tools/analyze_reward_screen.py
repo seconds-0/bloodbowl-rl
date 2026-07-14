@@ -622,7 +622,11 @@ def analyze_screen(
 
     return {
         "schema_version": 1,
-        "analysis": "paired_reward_screen_2x2",
+        "analysis": (
+            "paired_reward_confirmation"
+            if spec["profile"] == "paired-confirmation"
+            else "paired_reward_screen_2x2"
+        ),
         "screen": {
             "directory": str(directory),
             "prefix": prefix,

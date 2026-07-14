@@ -11,6 +11,8 @@
 # Example (longer two-arm confirmation after transfer selects a candidate):
 #   WARM=/abs/warm.bin POOL=/abs/pool STEPS=1000000000 \
 #     SCREEN_PROFILE=paired-confirmation CANDIDATE_ARM=gain_only \
+#     TRANSFER_COMPLETE=/abs/TRANSFER_COMPLETE.json \
+#     EXPECTED_TRANSFER_SHA256=<sha256> \
 #     PREFIX=gain-confirm-v1 bash tools/run_reward_screen.sh
 set -euo pipefail
 
@@ -26,6 +28,8 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 : "${STEPS:?STEPS is required (explicit experiment budget)}"
 : "${SCREEN_PROFILE:?SCREEN_PROFILE is required (distance-possession, possession-gain, or paired-confirmation)}"
 CANDIDATE_ARM="${CANDIDATE_ARM:-}"
+TRANSFER_COMPLETE="${TRANSFER_COMPLETE:-}"
+EXPECTED_TRANSFER_SHA256="${EXPECTED_TRANSFER_SHA256:-}"
 PREFIX="${PREFIX:-reward-screen-v1}"
 OUT_DIR="${OUT_DIR:-$ROOT/runs/reward-screens/$PREFIX}"
 POLL_SECONDS="${POLL_SECONDS:-30}"
@@ -73,8 +77,9 @@ case "$PLAN_ONLY" in
 esac
 case "$SCREEN_PROFILE" in
   distance-possession|possession-gain)
-    [ -z "$CANDIDATE_ARM" ] || {
-      echo "CANDIDATE_ARM is only valid with paired-confirmation" >&2; exit 1; }
+    [ -z "$CANDIDATE_ARM$TRANSFER_COMPLETE$EXPECTED_TRANSFER_SHA256" ] || {
+      echo "candidate transfer inputs are only valid with paired-confirmation" >&2
+      exit 1; }
     ;;
   paired-confirmation)
     case "$CANDIDATE_ARM" in
@@ -82,6 +87,12 @@ case "$SCREEN_PROFILE" in
       *) echo "paired-confirmation requires CANDIDATE_ARM=possession_only, gain_only, or neither" >&2
          exit 1 ;;
     esac
+    [ -n "$TRANSFER_COMPLETE" ] || {
+      echo "paired-confirmation requires TRANSFER_COMPLETE" >&2; exit 1; }
+    if ! [[ "$EXPECTED_TRANSFER_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+      echo "paired-confirmation requires a lowercase 64-character EXPECTED_TRANSFER_SHA256" >&2
+      exit 1
+    fi
     ;;
   *) echo "SCREEN_PROFILE must be distance-possession, possession-gain, or paired-confirmation" >&2
      exit 1 ;;
@@ -96,6 +107,11 @@ abspath() {
 WARM="$(abspath "$WARM")"
 POOL="$(abspath "$POOL")"
 OUT_DIR="$(abspath "$OUT_DIR")"
+if [ -n "$TRANSFER_COMPLETE" ]; then
+  TRANSFER_COMPLETE="$(abspath "$TRANSFER_COMPLETE")"
+  [ -f "$TRANSFER_COMPLETE" ] || {
+    echo "missing transfer completion: $TRANSFER_COMPLETE" >&2; exit 1; }
+fi
 [ -f "$WARM" ] || { echo "missing warm checkpoint: $WARM" >&2; exit 1; }
 [ -d "$POOL" ] || { echo "missing static pool: $POOL" >&2; exit 1; }
 mkdir -p "$OUT_DIR"
@@ -154,7 +170,8 @@ freeze_screen_manifest() {
     "$MINIBATCH_SIZE" "$CHECKPOINT_STEPS" "$REPLAY_RATIO" \
     "$CLIP_COEF" "$VF_COEF" "$VF_CLIP_COEF" "$MAX_GRAD_NORM" \
     "$EXPECTED_POOL_HASH" "$MIN_TRAIN_GAMES" "$MIN_EVAL_GAMES" \
-    "$SCREEN_PROFILE" "$CANDIDATE_ARM" <<'PY'
+    "$SCREEN_PROFILE" "$CANDIDATE_ARM" "$TRANSFER_COMPLETE" \
+    "$EXPECTED_TRANSFER_SHA256" <<'PY'
 import datetime, hashlib, json, pathlib, subprocess, sys, sysconfig
 
 (
@@ -163,7 +180,8 @@ import datetime, hashlib, json, pathlib, subprocess, sys, sysconfig
     learning_rate, ent_coef, gamma, gae_lambda, horizon, minibatch_size,
     checkpoint_steps, replay_ratio, clip_coef, vf_coef, vf_clip_coef,
     max_grad_norm, expected_pool_hash, min_train_games, min_eval_games,
-    screen_profile, candidate_arm,
+    screen_profile, candidate_arm, transfer_complete_path,
+    expected_transfer_sha,
 ) = sys.argv[1:]
 root = pathlib.Path(root_path).resolve()
 vendor = root / "vendor" / "PufferLib"
@@ -392,6 +410,28 @@ contract = {
 }
 if screen_profile == "paired-confirmation":
     contract["candidate_arm"] = candidate_arm
+    transfer_complete = pathlib.Path(transfer_complete_path).resolve()
+    if sha(transfer_complete) != expected_transfer_sha:
+        raise SystemExit("transfer completion SHA-256 does not match expectation")
+    transfer = json.loads(transfer_complete.read_text(encoding="utf-8"))
+    if transfer.get("schema_version") != 1:
+        raise SystemExit("unsupported transfer completion schema")
+    if transfer.get("recommended_confirmation_arm") != candidate_arm:
+        raise SystemExit("CANDIDATE_ARM differs from transfer recommendation")
+    analysis_path = transfer_complete.parent / "ANALYSIS.json"
+    transfer_manifest_path = transfer_complete.parent / "TRANSFER_MANIFEST.json"
+    if sha(analysis_path) != transfer.get("analysis_sha256"):
+        raise SystemExit("transfer analysis hash chain is invalid")
+    if sha(transfer_manifest_path) != transfer.get("transfer_manifest_sha256"):
+        raise SystemExit("transfer manifest hash chain is invalid")
+    contract["candidate_evidence"] = {
+        "transfer_complete": str(transfer_complete),
+        "transfer_complete_sha256": expected_transfer_sha,
+        "analysis": str(analysis_path.resolve()),
+        "analysis_sha256": transfer["analysis_sha256"],
+        "transfer_manifest": str(transfer_manifest_path.resolve()),
+        "transfer_manifest_sha256": transfer["transfer_manifest_sha256"],
+    }
 
 if destination.exists():
     recorded = json.loads(destination.read_text(encoding="utf-8"))
