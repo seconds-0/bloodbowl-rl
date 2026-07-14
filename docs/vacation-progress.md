@@ -1349,3 +1349,8 @@ Next steps:
 3. At primary completion, preserve and validate both success artifacts and the
    atomic completion proof before accepting the overflow start. Never interpret
    or promote a reward automatically.
+
+Post-entry verification: the next automatic timer poll fired at 13:48:26 PDT,
+again logged `primary service is still active; waiting`, exited successfully,
+created no overflow state, and scheduled its next ten-minute poll. Both the
+65-pin primary plan and 74-pin overflow plan still revalidated without drift.
