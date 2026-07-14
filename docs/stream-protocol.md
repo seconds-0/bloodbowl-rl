@@ -23,8 +23,9 @@ all viewers see the same match.
 
 ## Connection
 
-- Endpoint (production): `wss://bbstream.seconds0.com/ws` *(placeholder —
-  final host TBD when the backend deploys; treat as a config value)*.
+- Endpoint (production): `wss://bbtv.seconds0.com/ws`. The bundled web client
+  uses the current page host by default and still accepts a `?ws=...` override
+  for development or alternate deployments.
 - On connect the server sends `hello`, then a full `snapshot`, then `delta`
   messages as the game progresses.
 - Heartbeat: server sends `{"t":"ping","seq":N}` every 15s; reply
