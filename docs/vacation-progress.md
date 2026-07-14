@@ -1672,3 +1672,8 @@ justify restarting WSL, changing drivers, or mutating the live arm. Treat a
 future warning as actionable only if it loses this process-start correlation
 or is accompanied by Xid, process exit, failed model load, frozen steps, or
 hardware slowdown.
+
+The 14:30:26 PDT overflow watcher was another successful primary-running no-op:
+result `success`, exit status 0, no unit restart, and no real overflow state.
+The learner simultaneously remained active at 1,173,356,544 steps with all
+integrity counters zero; the GPU was 81 C with hardware slowdown inactive.
