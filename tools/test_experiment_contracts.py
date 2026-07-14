@@ -211,6 +211,18 @@ class ExperimentContractTests(unittest.TestCase):
         ):
             self.assertIn(contract, source)
 
+    def test_paired_final_adds_seed_44_without_adaptive_candidate_selection(self):
+        source = (ROOT / "tools/run_reward_screen.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("paired-final", source)
+        self.assertIn('seeds=(42 42 43 43 44 44)', source)
+        self.assertIn(
+            'arms=(both "$CANDIDATE_ARM" "$CANDIDATE_ARM" both both "$CANDIDATE_ARM")',
+            source,
+        )
+        self.assertIn('TRANSFER_COMPLETE', source)
+
     @unittest.skipUnless(VENDOR_CHECKOUT, "vendored Puffer checkout unavailable")
     def test_puffer_machine_log_uses_explicit_loop_phase_and_fresh_panels(self):
         source = PUFFERL_SOURCE.read_text(encoding="utf-8")
@@ -228,6 +240,22 @@ class ExperimentContractTests(unittest.TestCase):
         self.assertIn('screen_manifest_sha256 "$SCREEN_MANIFEST_SHA256"', source)
         self.assertIn("from pufferlib import _C; print(_C.__file__)", source)
         self.assertNotIn("find pufferlib -maxdepth 1 -name '_C*.so'", source)
+        self.assertIn('DETACH="${DETACH:-1}"', source)
+        self.assertIn('PROCESS_GROUP="$(ps -o pgid=', source)
+
+    def test_vacation_screen_keeps_trainer_in_queue_process_group(self):
+        wrapper = (ROOT / "tools/run_frozen_reward_screen.py").read_text(
+            encoding="utf-8"
+        )
+        screen = (ROOT / "tools/run_reward_screen.sh").read_text(
+            encoding="utf-8"
+        )
+        arm = (ROOT / "tools/run_reward_ablation.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('"ARM_DETACH": "0"', wrapper)
+        self.assertIn('DETACH="$ARM_DETACH"', screen)
+        self.assertIn('if [ "$DETACH" = "1" ]', arm)
 
     def test_candidate_transfer_is_a_frozen_both_sides_matrix(self):
         runner = (ROOT / "tools/run_reward_candidate_transfer.py").read_text(

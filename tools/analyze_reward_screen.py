@@ -134,6 +134,7 @@ POSSESSION_GAIN_EFFECT_DEFINITIONS = {
 }
 
 PAIRED_CANDIDATES = ("possession_only", "gain_only", "neither")
+PAIRED_FINAL_SEEDS = (42, 43, 44)
 
 SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 
@@ -209,19 +210,32 @@ def _screen_spec(contract: dict[str, Any]) -> dict[str, Any]:
             "factors": POSSESSION_GAIN_FACTORS,
             "effect_definitions": POSSESSION_GAIN_EFFECT_DEFINITIONS,
         }
-    if profile == "paired-confirmation":
+    if profile in ("paired-confirmation", "paired-final"):
         candidate = contract.get("candidate_arm")
         if candidate not in PAIRED_CANDIDATES:
             raise AnalysisError(
-                "paired-confirmation candidate_arm must be one of "
+                f"{profile} candidate_arm must be one of "
                 + ", ".join(PAIRED_CANDIDATES)
             )
         return {
             "profile": profile,
             "candidate_arm": candidate,
             "schedule": (
-                ("both", 42), (candidate, 42),
-                (candidate, 43), ("both", 43),
+                (
+                    ("both", 42), (candidate, 42),
+                    (candidate, 43), ("both", 43),
+                )
+                if profile == "paired-confirmation"
+                else (
+                    ("both", 42), (candidate, 42),
+                    (candidate, 43), ("both", 43),
+                    ("both", 44), (candidate, 44),
+                )
+            ),
+            "seeds": (
+                (42, 43)
+                if profile == "paired-confirmation"
+                else PAIRED_FINAL_SEEDS
             ),
             "reward_sha256": {
                 arm: POSSESSION_GAIN_REWARD_SHA256[arm]
@@ -461,11 +475,11 @@ def _factorial_effects(
             "interaction": r0 - r1 - r2 + r3,
         }
     both = cells["both"]
-    if profile == "paired-confirmation":
+    if profile in ("paired-confirmation", "paired-final"):
         candidates = [arm for arm in cells if arm != "both"]
         if len(candidates) != 1:
             raise AnalysisError(
-                "paired-confirmation requires exactly one candidate cell")
+                f"{profile} requires exactly one candidate cell")
         return {"candidate_minus_both": cells[candidates[0]] - both}
     possession = cells["possession_only"]
     gain = cells["gain_only"]
@@ -477,15 +491,17 @@ def _factorial_effects(
     }
 
 
-def _describe_two_seed_values(values: dict[str, float]) -> dict[str, Any]:
-    ordered = [values[str(seed)] for seed in (42, 43)]
+def _describe_seed_values(
+    values: dict[str, float], seeds: Sequence[int]
+) -> dict[str, Any]:
+    ordered = [values[str(seed)] for seed in seeds]
     return {
         "values_by_seed": values,
         "mean": statistics.fmean(ordered),
-        "sample_sd": statistics.stdev(ordered),
+        "sample_sd": statistics.stdev(ordered) if len(ordered) > 1 else 0.0,
         "min": min(ordered),
         "max": max(ordered),
-        "seed_count": 2,
+        "seed_count": len(ordered),
     }
 
 
@@ -558,9 +574,10 @@ def analyze_screen(
         result_paths[key] = path
         runs.append(summary)
 
+    seeds = tuple(spec.get("seeds", (42, 43)))
     warnings = [
         (
-            "Only n=2 seeds are available. Across-seed means and sample SDs "
+            f"Only n={len(seeds)} seeds are available. Across-seed means and sample SDs "
             "are descriptive; they are not confidence intervals, hypothesis "
             "tests, or a strength claim."
         ),
@@ -583,7 +600,7 @@ def analyze_screen(
         )
 
     per_seed: dict[str, Any] = {}
-    for seed in (42, 43):
+    for seed in seeds:
         cells: dict[str, dict[str, float]] = {
             arm: next(
                 run["eval"] for run in runs
@@ -606,9 +623,9 @@ def analyze_screen(
         for metric in metrics:
             values = {
                 str(seed): per_seed[str(seed)]["cells"][arm][metric]
-                for seed in (42, 43)
+                for seed in seeds
             }
-            cell_summaries[arm][metric] = _describe_two_seed_values(values)
+            cell_summaries[arm][metric] = _describe_seed_values(values, seeds)
 
     effect_summaries: dict[str, Any] = {}
     for metric in metrics:
@@ -616,15 +633,15 @@ def analyze_screen(
         for effect in spec["effect_definitions"]:
             values = {
                 str(seed): per_seed[str(seed)]["effects"][metric][effect]
-                for seed in (42, 43)
+                for seed in seeds
             }
-            effect_summaries[metric][effect] = _describe_two_seed_values(values)
+            effect_summaries[metric][effect] = _describe_seed_values(values, seeds)
 
     return {
         "schema_version": 1,
         "analysis": (
             "paired_reward_confirmation"
-            if spec["profile"] == "paired-confirmation"
+            if spec["profile"] in ("paired-confirmation", "paired-final")
             else "paired_reward_screen_2x2"
         ),
         "screen": {
@@ -685,10 +702,10 @@ def render_text(report: dict[str, Any]) -> str:
     lines.append("")
     lines.append(
         "Per-seed paired contrasts"
-        if screen["profile"] == "paired-confirmation"
+        if screen["profile"] in ("paired-confirmation", "paired-final")
         else "Per-seed 2x2 effects"
     )
-    for seed in ("42", "43"):
+    for seed in report["per_seed"]:
         lines.append(f"  seed {seed}")
         for metric in report["metrics"]:
             effects = report["per_seed"][seed]["effects"][metric]
@@ -698,7 +715,8 @@ def render_text(report: dict[str, Any]) -> str:
             ))
 
     lines.append("")
-    lines.append("Across two seeds (descriptive means)")
+    seed_count = len(report["per_seed"])
+    lines.append(f"Across {seed_count} seeds (descriptive means)")
     for metric in report["metrics"]:
         summaries = report["across_seeds"]["effects"][metric]
         lines.append(

@@ -26,7 +26,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 : "${WARM:?WARM is required}"
 : "${POOL:?POOL is required}"
 : "${STEPS:?STEPS is required (explicit experiment budget)}"
-: "${SCREEN_PROFILE:?SCREEN_PROFILE is required (distance-possession, possession-gain, or paired-confirmation)}"
+: "${SCREEN_PROFILE:?SCREEN_PROFILE is required (distance-possession, possession-gain, paired-confirmation, or paired-final)}"
 CANDIDATE_ARM="${CANDIDATE_ARM:-}"
 TRANSFER_COMPLETE="${TRANSFER_COMPLETE:-}"
 EXPECTED_TRANSFER_SHA256="${EXPECTED_TRANSFER_SHA256:-}"
@@ -34,6 +34,7 @@ PREFIX="${PREFIX:-reward-screen-v1}"
 OUT_DIR="${OUT_DIR:-$ROOT/runs/reward-screens/$PREFIX}"
 POLL_SECONDS="${POLL_SECONDS:-30}"
 PLAN_ONLY="${PLAN_ONLY:-0}"
+ARM_DETACH="${ARM_DETACH:-1}"
 
 # Fixed Stage-1 causal contract. Assign, rather than inherit, every optional
 # launcher input which could alter optimization, batching, or pool allocation.
@@ -75,26 +76,30 @@ case "$PLAN_ONLY" in
   0|1) ;;
   *) echo "PLAN_ONLY must be 0 or 1" >&2; exit 1 ;;
 esac
+case "$ARM_DETACH" in
+  0|1) ;;
+  *) echo "ARM_DETACH must be 0 or 1" >&2; exit 1 ;;
+esac
 case "$SCREEN_PROFILE" in
   distance-possession|possession-gain)
     [ -z "$CANDIDATE_ARM$TRANSFER_COMPLETE$EXPECTED_TRANSFER_SHA256" ] || {
-      echo "candidate transfer inputs are only valid with paired-confirmation" >&2
+      echo "candidate transfer inputs are only valid with a paired profile" >&2
       exit 1; }
     ;;
-  paired-confirmation)
+  paired-confirmation|paired-final)
     case "$CANDIDATE_ARM" in
       possession_only|gain_only|neither) ;;
-      *) echo "paired-confirmation requires CANDIDATE_ARM=possession_only, gain_only, or neither" >&2
+      *) echo "$SCREEN_PROFILE requires CANDIDATE_ARM=possession_only, gain_only, or neither" >&2
          exit 1 ;;
     esac
     [ -n "$TRANSFER_COMPLETE" ] || {
-      echo "paired-confirmation requires TRANSFER_COMPLETE" >&2; exit 1; }
+      echo "$SCREEN_PROFILE requires TRANSFER_COMPLETE" >&2; exit 1; }
     if ! [[ "$EXPECTED_TRANSFER_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
-      echo "paired-confirmation requires a lowercase 64-character EXPECTED_TRANSFER_SHA256" >&2
+      echo "$SCREEN_PROFILE requires a lowercase 64-character EXPECTED_TRANSFER_SHA256" >&2
       exit 1
     fi
     ;;
-  *) echo "SCREEN_PROFILE must be distance-possession, possession-gain, or paired-confirmation" >&2
+  *) echo "SCREEN_PROFILE must be distance-possession, possession-gain, paired-confirmation, or paired-final" >&2
      exit 1 ;;
 esac
 
@@ -142,6 +147,13 @@ case "$SCREEN_PROFILE" in
     arms=(both "$CANDIDATE_ARM" "$CANDIDATE_ARM" both)
     seeds=(42 42 43 43)
     ;;
+  paired-final)
+    # Three independent learner seeds spend a fixed long-run budget more
+    # efficiently than extending only two seeds. Alternating order balances
+    # reference/candidate exposure to wall-clock drift.
+    arms=(both "$CANDIDATE_ARM" "$CANDIDATE_ARM" both both "$CANDIDATE_ARM")
+    seeds=(42 42 43 43 44 44)
+    ;;
 esac
 TOTAL_ARMS=${#arms[@]}
 SCREEN_MANIFEST="$OUT_DIR/SCREEN_MANIFEST.json"
@@ -171,7 +183,7 @@ freeze_screen_manifest() {
     "$CLIP_COEF" "$VF_COEF" "$VF_CLIP_COEF" "$MAX_GRAD_NORM" \
     "$EXPECTED_POOL_HASH" "$MIN_TRAIN_GAMES" "$MIN_EVAL_GAMES" \
     "$SCREEN_PROFILE" "$CANDIDATE_ARM" "$TRANSFER_COMPLETE" \
-    "$EXPECTED_TRANSFER_SHA256" <<'PY'
+    "$EXPECTED_TRANSFER_SHA256" "$ARM_DETACH" <<'PY'
 import datetime, hashlib, json, pathlib, subprocess, sys, sysconfig
 
 (
@@ -181,7 +193,7 @@ import datetime, hashlib, json, pathlib, subprocess, sys, sysconfig
     checkpoint_steps, replay_ratio, clip_coef, vf_coef, vf_clip_coef,
     max_grad_norm, expected_pool_hash, min_train_games, min_eval_games,
     screen_profile, candidate_arm, transfer_complete_path,
-    expected_transfer_sha,
+    expected_transfer_sha, arm_detach,
 ) = sys.argv[1:]
 root = pathlib.Path(root_path).resolve()
 vendor = root / "vendor" / "PufferLib"
@@ -225,6 +237,7 @@ settings = {
     "policy_hidden_size": "512",
     "policy_num_layers": "3",
     "policy_expansion_factor": "1",
+    "arm_detach": arm_detach,
 }
 
 expect_size = int(expect_bytes)
@@ -288,10 +301,10 @@ elif screen_profile == "possession-gain":
         "gain_only", "possession_only", "neither", "both",
     )
     schedule_seeds = (42, 42, 42, 42, 43, 43, 43, 43)
-elif screen_profile == "paired-confirmation":
+elif screen_profile in ("paired-confirmation", "paired-final"):
     allowed = {"possession_only", "gain_only", "neither"}
     if candidate_arm not in allowed:
-        raise SystemExit("invalid paired-confirmation candidate")
+        raise SystemExit(f"invalid {screen_profile} candidate")
     all_reward_files = {
         "both": root / "puffer/config/rewards/r0_full.json",
         "possession_only": root / "puffer/config/rewards/p1_possession_only.json",
@@ -301,8 +314,15 @@ elif screen_profile == "paired-confirmation":
     reward_files = {
         arm: all_reward_files[arm] for arm in ("both", candidate_arm)
     }
-    arm_order = ("both", candidate_arm, candidate_arm, "both")
-    schedule_seeds = (42, 42, 43, 43)
+    if screen_profile == "paired-confirmation":
+        arm_order = ("both", candidate_arm, candidate_arm, "both")
+        schedule_seeds = (42, 42, 43, 43)
+    else:
+        arm_order = (
+            "both", candidate_arm, candidate_arm,
+            "both", "both", candidate_arm,
+        )
+        schedule_seeds = (42, 42, 43, 43, 44, 44)
 else:
     raise SystemExit(f"unsupported screen profile: {screen_profile}")
 if screen_profile == "distance-possession":
@@ -413,7 +433,7 @@ contract = {
         "historical_game_share": str(historical_share),
     },
 }
-if screen_profile == "paired-confirmation":
+if screen_profile in ("paired-confirmation", "paired-final"):
     contract["candidate_arm"] = candidate_arm
     transfer_complete = pathlib.Path(transfer_complete_path).resolve()
     # The shared validator binds recommended_confirmation_arm, analysis
@@ -850,6 +870,7 @@ PY
         REPLAY_RATIO="$REPLAY_RATIO" CLIP_COEF="$CLIP_COEF" \
         VF_COEF="$VF_COEF" VF_CLIP_COEF="$VF_CLIP_COEF" \
         MAX_GRAD_NORM="$MAX_GRAD_NORM" EXPECTED_POOL_HASH="$EXPECTED_POOL_HASH" \
+        DETACH="$ARM_DETACH" \
         bash "$ROOT/tools/run_reward_ablation.sh"
     wait_for_status "$tag" "$log"
   fi

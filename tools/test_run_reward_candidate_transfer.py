@@ -124,6 +124,26 @@ class RewardCandidateTransferRunnerTests(unittest.TestCase):
                         checkpoints, ("both", "gain_only"),
                     )
 
+    def test_screen_complete_can_supply_the_exact_predecessor_manifest(self):
+        source = Path(runner.__file__).read_text(encoding="utf-8")
+        self.assertIn("--screen-complete", source)
+        self.assertIn('complete_path.name != "SCREEN_COMPLETE.json"', source)
+        self.assertIn(
+            'expected_screen_sha = completion.get("screen_manifest_sha256")',
+            source,
+        )
+
+    def test_interrupted_cell_log_is_preserved_outside_final_namespace(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            partial = root / ".cell.log.partial"
+            partial.write_text("incomplete", encoding="utf-8")
+            destination = runner.quarantine_partial(partial)
+            self.assertFalse(partial.exists())
+            self.assertTrue(destination.is_file())
+            self.assertEqual(destination.read_text(), "incomplete")
+            self.assertEqual(destination.parent.name, "interrupted")
+
 
 if __name__ == "__main__":
     unittest.main()

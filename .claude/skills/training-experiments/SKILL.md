@@ -513,6 +513,25 @@ A persisted halt is terminal. Do not restart it in place after editing state or
 artifacts. Preserve the halted evidence and create a newly reviewed queue
 ID/plan/state if human diagnosis authorizes follow-up work.
 
+For the July vacation contract, do not hand-author the typed plan. After the
+main `1B x 2` paired screen and both transfer strata pass, use
+`tools/freeze_vacation_queue.py`. Its literal order is: second-ancestry `1B x 2`,
+second scripted transfer, second learned-anchor transfer, two-lineage gate,
+main `paired-final`, second `paired-final`. `paired-final` is a fixed six-arm
+schedule (`both/candidate x seeds 42,43,44`) at `6B` requested steps per arm.
+`tools/run_reward_learned_transfer.py` loads each focal policy in both native
+backend roles against every pinned anchor. `tools/vacation_reward_gate.py` must
+revalidate both self-play screens and both transfer strata before producing the
+only artifact that unlocks the final screens. Never mark a PPO screen
+`resume_safe`; its partial optimization trajectory is not restart-equivalent.
+
+Vacation screen jobs must invoke `tools/run_frozen_reward_screen.py`, which sets
+`ARM_DETACH=0`. The queue creates a new session for each job, and every screen,
+arm wrapper, trainer, and descendant must remain in that process group so its
+runtime/progress/capacity/thermal guards cannot strand GPU work. Do not add an
+inner `setsid`, `nohup`, daemonizer, or process supervisor to a queue-owned
+training path.
+
 ---
 
 ## 12. Session checklist

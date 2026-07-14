@@ -53,6 +53,7 @@ CLIP_COEF="${CLIP_COEF:-0.2}"
 VF_COEF="${VF_COEF:-1.0}"
 VF_CLIP_COEF="${VF_CLIP_COEF:-0.5}"
 MAX_GRAD_NORM="${MAX_GRAD_NORM:-1.5}"
+DETACH="${DETACH:-1}"
 EXPECTED_POOL_HASH="${EXPECTED_POOL_HASH:-18ec7cac858b71a6657003f454f19e232fb060f08b644c1e9e2f101076a9aac0}"
 SCREEN_MANIFEST_SHA256="${SCREEN_MANIFEST_SHA256:-}"
 EXPECTED_PUFFER_PATCH_BUNDLE_SHA256="${EXPECTED_PUFFER_PATCH_BUNDLE_SHA256:-}"
@@ -65,6 +66,10 @@ for digest_name in SCREEN_MANIFEST_SHA256 \
     exit 1
   fi
 done
+case "$DETACH" in
+  0|1) ;;
+  *) echo "DETACH must be 0 or 1" >&2; exit 1 ;;
+esac
 
 abspath() {
   case "$1" in
@@ -398,7 +403,7 @@ PY
 BEFORE_RUNS=$(mktemp)
 find checkpoints/bloodbowl -mindepth 1 -maxdepth 1 -type d \
   -exec basename {} \; 2>/dev/null | sort > "$BEFORE_RUNS" || true
-setsid nohup bash -c '
+WRAPPER=(bash -c '
   status=$1
   log=$2
   shift 2
@@ -410,11 +415,21 @@ setsid nohup bash -c '
     "$rc" "$$" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$tmp"
   mv "$tmp" "$status"
   exit "$rc"
-' bash "$STATUS_FILE" "$LOG" "${CMD[@]}" > /dev/null 2>&1 < /dev/null &
+' bash "$STATUS_FILE" "$LOG" "${CMD[@]}")
+if [ "$DETACH" = "1" ]; then
+  setsid nohup "${WRAPPER[@]}" > /dev/null 2>&1 < /dev/null &
+else
+  # Vacation queues supervise one process group. Keep the trainer in the
+  # queue runner's group so runtime/thermal termination cannot strand the
+  # otherwise-detached arm; systemd KillMode=control-group remains a backstop.
+  "${WRAPPER[@]}" > /dev/null 2>&1 < /dev/null &
+fi
 PID=$!
+PROCESS_GROUP="$(ps -o pgid= -p "$PID" | tr -d ' ')"
+[ -n "$PROCESS_GROUP" ] || PROCESS_GROUP=$PID
 PROCESS_TMP="${PROCESS_FILE}.tmp.$$"
 printf '{"pid":%d,"process_group":%d,"started_utc":"%s"}\n' \
-  "$PID" "$PID" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$PROCESS_TMP"
+  "$PID" "$PROCESS_GROUP" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$PROCESS_TMP"
 mv "$PROCESS_TMP" "$PROCESS_FILE"
 echo "LAUNCHED pid=$PID"
 

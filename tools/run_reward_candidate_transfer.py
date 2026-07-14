@@ -291,6 +291,31 @@ def write_status(
 def completed_from_status(path: Path) -> int:
     if not path.is_file():
         return 0
+
+
+def quarantine_partial(path: Path) -> Path | None:
+    """Preserve an interrupted eval log outside the final-cell namespace.
+
+    Cell logs become visible at their canonical names only after semantic
+    validation.  This makes a killed scripted-transfer job genuinely
+    resume-safe without treating partial stdout as evidence.
+    """
+    if not path.exists():
+        return None
+    if not path.is_file():
+        raise RunnerError(f"partial transfer artifact is not a file: {path}")
+    quarantine = path.parent / "interrupted"
+    quarantine.mkdir(parents=True, exist_ok=True)
+    digest = sha256(path)
+    destination = quarantine / f"{path.name}.{digest[:16]}.partial"
+    if destination.exists():
+        if not destination.is_file() or sha256(destination) != digest:
+            raise RunnerError(
+                f"partial quarantine collision: {destination}")
+        path.unlink()
+    else:
+        os.replace(path, destination)
+    return destination
     try:
         value = load_object(path, "transfer status").get("completed_cells", 0)
         return value if isinstance(value, int) and not isinstance(value, bool) else 0
@@ -319,6 +344,8 @@ def run_matrix(root: Path, out_dir: Path, plan: dict[str, Any]) -> None:
                             arm, seed, bot_type, bot_team,
                         )
                     else:
+                        partial = out_dir / f".{log.name}.partial"
+                        quarantine_partial(partial)
                         write_status(
                             status_path, "running", completed, total,
                             f"running {arm}/seed {seed}/bot {bot_type}/team {bot_team}",
@@ -332,12 +359,22 @@ def run_matrix(root: Path, out_dir: Path, plan: dict[str, Any]) -> None:
                             "MIN_EVAL_GAMES": "1000",
                         }
                         result = subprocess.run(
-                            ["bash", str(launcher), str(checkpoint), "131072", str(log)],
+                            [
+                                "bash", str(launcher), str(checkpoint),
+                                "131072", str(partial),
+                            ],
                             cwd=root, env=env, check=False,
                         )
                         if result.returncode != 0:
+                            preserved = quarantine_partial(partial)
                             raise RunnerError(
-                                f"transfer cell exited {result.returncode}: {log}")
+                                f"transfer cell exited {result.returncode}: "
+                                f"{preserved or partial}")
+                        candidate_transfer._validate_cell(
+                            partial, {**plan, "_arms": list(arms)},
+                            arm, seed, bot_type, bot_team,
+                        )
+                        os.replace(partial, log)
                         candidate_transfer._validate_cell(
                             log, {**plan, "_arms": list(arms)},
                             arm, seed, bot_type, bot_team,
@@ -378,13 +415,51 @@ def complete_transfer(out_dir: Path) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--screen-dir", type=Path, required=True)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--screen-dir", type=Path)
+    source.add_argument(
+        "--screen-complete",
+        type=Path,
+        help=(
+            "exact predecessor SCREEN_COMPLETE.json; derive its directory and "
+            "manifest SHA so an immutable queue can declare the artifact"
+        ),
+    )
     parser.add_argument("--out-dir", type=Path, required=True)
-    parser.add_argument("--expected-screen-sha", required=True)
+    parser.add_argument("--expected-screen-sha")
     parser.add_argument("--plan-only", action="store_true")
     args = parser.parse_args(argv)
     root = Path(__file__).resolve().parents[1]
-    screen_dir = args.screen_dir.expanduser().resolve()
+    if args.screen_complete:
+        complete_path = args.screen_complete.expanduser().resolve()
+        if complete_path.name != "SCREEN_COMPLETE.json":
+            parser.error("--screen-complete must be named SCREEN_COMPLETE.json")
+        try:
+            completion = load_object(complete_path, "screen completion")
+            expected_screen_sha = completion.get("screen_manifest_sha256")
+            if (
+                not isinstance(expected_screen_sha, str)
+                or len(expected_screen_sha) != 64
+                or any(char not in "0123456789abcdef" for char in expected_screen_sha)
+            ):
+                raise RunnerError(
+                    "screen completion has no lowercase manifest SHA-256"
+                )
+            if (
+                args.expected_screen_sha is not None
+                and args.expected_screen_sha.lower() != expected_screen_sha
+            ):
+                raise RunnerError(
+                    "--expected-screen-sha differs from screen completion"
+                )
+            screen_dir = complete_path.parent
+        except (OSError, RunnerError) as exc:
+            parser.error(str(exc))
+    else:
+        if args.expected_screen_sha is None:
+            parser.error("--screen-dir requires --expected-screen-sha")
+        expected_screen_sha = args.expected_screen_sha.lower()
+        screen_dir = args.screen_dir.expanduser().resolve()
     out_dir = args.out_dir.expanduser().resolve()
     arms = FULL_ARMS
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -396,7 +471,7 @@ def main(argv: list[str] | None = None) -> int:
             except BlockingIOError as exc:
                 raise RunnerError("another transfer runner holds the lock") from exc
             checkpoints, arms = screen_checkpoints(
-                screen_dir, args.expected_screen_sha.lower())
+                screen_dir, expected_screen_sha)
             # Share the exact one-GPU lock used by reward training. Requiring a
             # completed source screen above prevents stealing the lock during a
             # brief inter-arm gap.
@@ -410,7 +485,7 @@ def main(argv: list[str] | None = None) -> int:
                 convert_checkpoints(root, out_dir, checkpoints, arms)
                 plan = freeze_manifest(
                     out_dir / "TRANSFER_MANIFEST.json", root, screen_dir,
-                    args.expected_screen_sha.lower(), checkpoints, arms,
+                    expected_screen_sha, checkpoints, arms,
                 )
                 if args.plan_only:
                     print(
