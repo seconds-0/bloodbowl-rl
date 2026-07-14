@@ -477,9 +477,12 @@ from live metrics. Before an unattended window, resolve every branch that can be
 resolved, then freeze literal commands and expected artifacts in a schema-1
 `tools/experiment_queue.py` plan. Every job needs a maximum runtime and success
 validator; long jobs need a progress artifact and short jobs need an explicit
-progress exemption reason. Pin and recheck every executable and referenced
-input by byte size and SHA-256, and use only the plan's explicit base
-environment. The queue root must be the
+progress exemption reason (the exemption is capped at 30 minutes). Use typed
+command/validator/environment values: literal values cannot carry paths;
+immutable file and directory-tree inputs are pinned; output paths are declared
+mutable; generated inputs link to an earlier job's recorded artifact. Pin and
+recheck every executable and transitive input by byte size and SHA-256/tree
+identity, and use only the plan's allowlisted base environment. The queue root must be the
 isolated audit checkout, and the service must use `KillMode=control-group`.
 
 `resume_safe` means the job's own runner validates a frozen manifest and every

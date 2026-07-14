@@ -14,6 +14,26 @@ def digest(label: str) -> str:
 
 
 class RewardCandidateTransferTests(unittest.TestCase):
+    @staticmethod
+    def write_completion(root: Path, report: dict) -> Path:
+        analysis = root / "ANALYSIS.json"
+        analysis.write_text(
+            json.dumps(report, sort_keys=True, allow_nan=False) + "\n",
+            encoding="utf-8",
+        )
+        complete = root / "TRANSFER_COMPLETE.json"
+        complete.write_text(json.dumps({
+            "schema_version": 1,
+            "recommended_confirmation_arm": report["recommendation"]["arm"],
+            "analysis_sha256": hashlib.sha256(analysis.read_bytes()).hexdigest(),
+            "transfer_manifest_sha256": report["transfer_manifest"]["sha256"],
+            "cells": [
+                {"log": row["log"], "sha256": row["log_sha256"]}
+                for row in report["runs"]
+            ],
+        }, sort_keys=True) + "\n", encoding="utf-8")
+        return complete
+
     def write_manifest(self, root: Path) -> dict:
         arms = ("both", "possession_only", "gain_only", "neither")
         orchestration = root / "orchestration.py"
@@ -165,6 +185,50 @@ class RewardCandidateTransferTests(unittest.TestCase):
             report["candidate_contrasts"]["possession_only"]["eligible"], True)
         self.assertEqual(
             report["candidate_contrasts"]["neither"]["eligible"], False)
+
+    def test_transfer_manifest_identity_is_not_shadowed_by_orchestration(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.build_matrix(root)
+            report = transfer.analyze(root)
+            manifest = root / "TRANSFER_MANIFEST.json"
+
+            self.assertEqual(
+                report["transfer_manifest"]["path"], str(manifest.resolve()))
+            self.assertEqual(
+                report["transfer_manifest"]["sha256"],
+                hashlib.sha256(manifest.read_bytes()).hexdigest(),
+            )
+
+    def test_completion_evidence_requires_semantic_agreement(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.build_matrix(root)
+            report = transfer.analyze(root)
+            complete = self.write_completion(root, report)
+            expected = hashlib.sha256(complete.read_bytes()).hexdigest()
+            evidence = transfer.validate_completion_evidence(
+                complete, expected_complete_sha=expected,
+                expected_candidate="possession_only",
+            )
+            self.assertEqual(evidence["transfer_complete_sha256"], expected)
+
+            report["recommendation"]["arm"] = "gain_only"
+            analysis = root / "ANALYSIS.json"
+            analysis.write_text(
+                json.dumps(report, sort_keys=True) + "\n", encoding="utf-8")
+            payload = json.loads(complete.read_text())
+            payload["analysis_sha256"] = hashlib.sha256(
+                analysis.read_bytes()).hexdigest()
+            complete.write_text(json.dumps(payload, sort_keys=True) + "\n")
+            expected = hashlib.sha256(complete.read_bytes()).hexdigest()
+            with self.assertRaisesRegex(
+                transfer.TransferError, "analysis recommendation differs"
+            ):
+                transfer.validate_completion_evidence(
+                    complete, expected_complete_sha=expected,
+                    expected_candidate="possession_only",
+                )
 
     def test_manifest_or_cell_drift_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:

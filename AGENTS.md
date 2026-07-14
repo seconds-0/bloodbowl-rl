@@ -89,6 +89,10 @@ progress, thermal, artifact, and validator gates. Mark a job `resume_safe` only
 when its own immutable runner validates partial/completed artifacts. A halted
 job must leave every later job pending. See
 `docs/vacation-autonomy-2026-07.md` for the first deployed contract.
+Queue commands and environments use typed values: pin immutable files and
+directory trees, declare audit-root output paths mutable, and link generated
+inputs to an earlier job's recorded success artifact. Long jobs always expose a
+progress file; completed evidence drift halts rather than rerunning training.
 
 ## Replay and BC contract
 

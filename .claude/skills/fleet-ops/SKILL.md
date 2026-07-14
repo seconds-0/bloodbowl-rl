@@ -171,9 +171,11 @@ For a multi-day unattended queue, use the tracked
 `training/systemd/experiment-queue@.service` in the lingering user manager.
 Freeze the plan before service start and retain its SHA in atomic queue state.
 Require disk, job-runtime, progress, sustained-temperature, and output-validator
-guards; pin every declared executable/input and use the explicit plan
-environment. Test both interruption recovery and fail-closed suppression of later
-jobs before handoff. `Restart=on-failure` recovers a runner crash; a deliberate
+guards. Use typed command/validator/environment values, recursive tree pins for
+directory inputs, and explicit mutable/predecessor-artifact paths; recheck every
+declared pin and use the allowlisted plan environment. Test interruption
+recovery, completed-artifact drift, and fail-closed suppression of later jobs
+before handoff. `Restart=on-failure` recovers a runner crash; a deliberate
 queue halt must exit normally and remain stopped for inspection. Recheck linger,
 Tailscale online/key-expiry state, enabled BBTV services, disk/inodes, journal
 size, and GPU thresholds immediately before departure.

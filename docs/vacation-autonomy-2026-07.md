@@ -59,18 +59,33 @@ local/remote smoke; it is never improvised by the running service.
 - a singleton file lock, immutable plan SHA-256, and a closed schema that
   rejects unknown or misspelled guard fields;
 - mutable working/log/status/artifact paths constrained to the audit root;
-- an explicit minimal base environment plus size/SHA-256 records for every
-  declared executable, script, checkpoint, config, manifest, and validator,
-  rechecked before and after every job;
-- minimum free disk before and during every job;
+- an allowlisted minimal base environment and typed command, validator, and job
+  environment values: literals cannot be path-bearing, immutable paths must be
+  declared pins, mutable paths must be declared under the audit root, and a
+  generated input must name an earlier job's exact success artifact;
+- size/SHA-256 records for every declared executable, script, checkpoint,
+  config, manifest, and validator, plus recursive file-count/byte/tree hashes
+  for directory inputs such as the replay pool, rechecked before and after every
+  job;
+- minimum free bytes and inodes before and during every job, checked on every
+  distinct filesystem used by its mutable paths;
 - a mandatory maximum runtime for every job;
-- mandatory progress-file staleness for long jobs, including a file that never
-  appears, or an explicit reason why a bounded short job needs no progress file;
-- three consecutive over-temperature polls before terminating a process group;
+- mandatory progress-file staleness for jobs longer than 30 minutes, including
+  a file that never appears, or an explicit reason why a job bounded to at most
+  30 minutes needs no progress file;
+- a mandatory GPU temperature ceiling and three consecutive over-temperature
+  polls before terminating a process group;
 - a mandatory bounded validator for every success artifact, plus an expected
   artifact SHA-256 when it can be known before execution;
 - atomic queue state and per-job logs; and
 - retry after interruption only when that job is explicitly `resume_safe`.
+
+A completed job whose recorded success artifact is later missing, changed, or
+invalid halts permanently; it is never silently rerun. `pinned_inputs` is also
+the explicit transitive dependency declaration reviewed with the plan. The
+typed interface blocks ordinary undeclared path arguments and environment
+inputs, while each approved Blood Bowl runner's own frozen manifest validates
+the files it discovers internally.
 
 The user service uses `KillMode=control-group`, so a service stop cannot leave a
 trainer child behind. `Restart=on-failure` covers a runner crash; a deliberate

@@ -211,6 +211,9 @@ def orchestration_identity(root: Path) -> dict[str, str]:
     paths = (
         root / "tools/run_reward_candidate_transfer.py",
         root / "tools/analyze_reward_candidate_transfer.py",
+        root / "tools/analyze_reward_screen.py",
+        root / "tools/install_puffer_env.sh",
+        root / "tools/cpu_cap.sh",
         root / "tools/game_stats.py",
         root / "tools/contact_bot_stats.py",
         root / "training/convert_checkpoint.py",

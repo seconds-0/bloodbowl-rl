@@ -138,8 +138,11 @@ newer evidence wins.
   rebuild the trainer's Puffer tree or read a checkpoint still being written.
 - Unattended vacation runs use a literal hash-pinned queue, not an adaptive
   experiment-generating agent. `tools/experiment_queue.py` must halt on plan
-  drift, failed validation, stale/absent progress, runtime, disk, or sustained
+  drift, failed validation, stale/absent progress, runtime, disk/inodes, or sustained
   thermal limits; only explicitly restart-validating jobs are `resume_safe`.
+  Commands, validators, and job environment inputs use typed literal/pinned/
+  mutable/predecessor-artifact values; replay-pool directories require recursive
+  tree pins. Never encode a path in a literal or use an untyped environment path.
   Never change a production default from unattended evidence. Operational
   details and the departure smoke gate are in
   `docs/vacation-autonomy-2026-07.md`.

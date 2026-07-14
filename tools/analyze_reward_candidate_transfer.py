@@ -121,8 +121,8 @@ def _option(command: list[Any], name: str) -> str:
 
 
 def _validate_plan(directory: Path) -> dict[str, Any]:
-    path = directory / "TRANSFER_MANIFEST.json"
-    plan = _load_object(path, "transfer manifest")
+    manifest_path = directory / "TRANSFER_MANIFEST.json"
+    plan = _load_object(manifest_path, "transfer manifest")
     if plan.get("schema_version") != 1:
         raise TransferError("transfer manifest schema_version must be 1")
     reference = plan.get("reference_arm")
@@ -160,13 +160,14 @@ def _validate_plan(directory: Path) -> dict[str, Any]:
         if not isinstance(path_value, str) or not Path(path_value).is_absolute():
             raise TransferError("orchestration file paths must be absolute")
         _sha(expected_sha, f"orchestration_files[{path_value!r}]")
-        path = Path(path_value)
-        if not path.is_file():
-            raise TransferError(f"missing orchestration file: {path}")
-        observed_sha = _sha256(path)
+        orchestration_path = Path(path_value)
+        if not orchestration_path.is_file():
+            raise TransferError(
+                f"missing orchestration file: {orchestration_path}")
+        observed_sha = _sha256(orchestration_path)
         if observed_sha != expected_sha:
             raise TransferError(
-                f"orchestration file hash drift: {path}: "
+                f"orchestration file hash drift: {orchestration_path}: "
                 f"{observed_sha} != {expected_sha}")
     for arm in (reference, *candidates):
         by_seed = checkpoints.get(arm)
@@ -184,8 +185,8 @@ def _validate_plan(directory: Path) -> dict[str, Any]:
         _finite(gates.get(key), f"gates.{key}")
     return {
         **plan,
-        "_path": str(path),
-        "_sha256": _sha256(path),
+        "_path": str(manifest_path),
+        "_sha256": _sha256(manifest_path),
         "_arms": [reference, *candidates],
         "_seeds": seeds,
         "_bot_types": bot_types,
@@ -327,6 +328,8 @@ def analyze(directory: str | Path) -> dict[str, Any]:
         arm: _summary([row for row in rows if row["arm"] == arm])
         for arm in plan["_arms"]
     }
+
+
     reference = plan["reference_arm"]
     contrasts: dict[str, Any] = {}
     for candidate in plan["candidate_arms"]:
@@ -401,6 +404,70 @@ def analyze(directory: str | Path) -> dict[str, Any]:
             "not learned-opponent, roster-grid, confidence-interval, or reward-"
             "promotion evidence."
         ),
+    }
+
+
+def validate_completion_evidence(
+    complete_path: str | Path,
+    *,
+    expected_complete_sha: str,
+    expected_candidate: str,
+) -> dict[str, str]:
+    """Validate the complete semantic and byte-level transfer evidence chain."""
+    complete_path = Path(complete_path).expanduser().resolve()
+    _sha(expected_complete_sha, "expected transfer completion SHA-256")
+    if _sha256(complete_path) != expected_complete_sha:
+        raise TransferError(
+            "transfer completion SHA-256 does not match expectation")
+    complete = _load_object(complete_path, "transfer completion")
+    if complete.get("schema_version") != 1:
+        raise TransferError("unsupported transfer completion schema")
+    if complete.get("recommended_confirmation_arm") != expected_candidate:
+        raise TransferError(
+            "candidate differs from transfer completion recommendation")
+    analysis_path = complete_path.parent / "ANALYSIS.json"
+    manifest_path = complete_path.parent / "TRANSFER_MANIFEST.json"
+    analysis_sha = _sha(
+        complete.get("analysis_sha256"), "completion analysis_sha256")
+    manifest_sha = _sha(
+        complete.get("transfer_manifest_sha256"),
+        "completion transfer_manifest_sha256",
+    )
+    if _sha256(analysis_path) != analysis_sha:
+        raise TransferError("transfer analysis hash chain is invalid")
+    if _sha256(manifest_path) != manifest_sha:
+        raise TransferError("transfer manifest hash chain is invalid")
+    analysis = _load_object(analysis_path, "transfer analysis")
+    if analysis.get("schema_version") != 1:
+        raise TransferError("unsupported transfer analysis schema")
+    recommendation = analysis.get("recommendation")
+    if (not isinstance(recommendation, dict) or
+            recommendation.get("arm") != expected_candidate):
+        raise TransferError(
+            "transfer analysis recommendation differs from candidate")
+    recorded_manifest = analysis.get("transfer_manifest")
+    if (not isinstance(recorded_manifest, dict) or
+            recorded_manifest.get("sha256") != manifest_sha):
+        raise TransferError(
+            "transfer analysis records the wrong transfer manifest")
+    runs = analysis.get("runs")
+    completion_cells = complete.get("cells")
+    if not isinstance(runs, list) or not isinstance(completion_cells, list):
+        raise TransferError("transfer analysis/completion cells must be arrays")
+    analysis_cells = [
+        {"log": row.get("log"), "sha256": row.get("log_sha256")}
+        for row in runs if isinstance(row, dict)
+    ]
+    if len(analysis_cells) != len(runs) or analysis_cells != completion_cells:
+        raise TransferError(
+            "transfer completion cells differ from transfer analysis")
+    return {
+        "transfer_complete": str(complete_path),
+        "transfer_complete_sha256": expected_complete_sha,
+        "analysis": str(analysis_path),
+        "analysis_sha256": analysis_sha,
+        "transfer_manifest": str(manifest_path),
+        "transfer_manifest_sha256": manifest_sha,
     }
 
 

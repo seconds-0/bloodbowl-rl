@@ -265,6 +265,9 @@ if pool_identity != expected_pool_hash:
 
 sys.path.insert(0, str(root / "tools"))
 from reward_manifest import load_manifest
+from analyze_reward_candidate_transfer import (
+    TransferError, validate_completion_evidence,
+)
 if screen_profile == "distance-possession":
     reward_files = {
         "r0": root / "puffer/config/rewards/r0_full.json",
@@ -389,6 +392,8 @@ contract = {
     "implementation": {
         "screen_script_sha256": sha(screen_script),
         "launcher_sha256": sha(launcher),
+        "candidate_transfer_analyzer_sha256": sha(
+            root / "tools/analyze_reward_candidate_transfer.py"),
         "source_sha256": source_hash_path.read_text().strip(),
         "config_sha256": sha(config),
         "compiled_module": str(module.resolve()),
@@ -411,27 +416,17 @@ contract = {
 if screen_profile == "paired-confirmation":
     contract["candidate_arm"] = candidate_arm
     transfer_complete = pathlib.Path(transfer_complete_path).resolve()
-    if sha(transfer_complete) != expected_transfer_sha:
-        raise SystemExit("transfer completion SHA-256 does not match expectation")
-    transfer = json.loads(transfer_complete.read_text(encoding="utf-8"))
-    if transfer.get("schema_version") != 1:
-        raise SystemExit("unsupported transfer completion schema")
-    if transfer.get("recommended_confirmation_arm") != candidate_arm:
-        raise SystemExit("CANDIDATE_ARM differs from transfer recommendation")
-    analysis_path = transfer_complete.parent / "ANALYSIS.json"
-    transfer_manifest_path = transfer_complete.parent / "TRANSFER_MANIFEST.json"
-    if sha(analysis_path) != transfer.get("analysis_sha256"):
-        raise SystemExit("transfer analysis hash chain is invalid")
-    if sha(transfer_manifest_path) != transfer.get("transfer_manifest_sha256"):
-        raise SystemExit("transfer manifest hash chain is invalid")
-    contract["candidate_evidence"] = {
-        "transfer_complete": str(transfer_complete),
-        "transfer_complete_sha256": expected_transfer_sha,
-        "analysis": str(analysis_path.resolve()),
-        "analysis_sha256": transfer["analysis_sha256"],
-        "transfer_manifest": str(transfer_manifest_path.resolve()),
-        "transfer_manifest_sha256": transfer["transfer_manifest_sha256"],
-    }
+    # The shared validator binds recommended_confirmation_arm, analysis
+    # recommendation, transfer_manifest_sha256, analysis_sha256, and the exact
+    # evaluated cell hashes.
+    try:
+        contract["candidate_evidence"] = validate_completion_evidence(
+            transfer_complete,
+            expected_complete_sha=expected_transfer_sha,
+            expected_candidate=candidate_arm,
+        )
+    except (OSError, TransferError, ValueError) as exc:
+        raise SystemExit(f"invalid candidate transfer evidence: {exc}") from exc
 
 if destination.exists():
     recorded = json.loads(destination.read_text(encoding="utf-8"))
