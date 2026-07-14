@@ -87,6 +87,19 @@ The combined possession-annuity/ball-gain family still needs decomposition,
 learned-opponent and roster-grid transfer, longer confirmation, a second
 ancestry, review/commit, and the normal deployment path.
 
+The first full possession/gain decomposition attempt on July 13–14 completed
+all eight arms but is rejected under D182. One training emission in the final
+arm exceeded PPO's clamp by exactly `0.015`. The retained telemetry did not
+record its sign or terminal context, so its exact co-firing components are
+unknown. The any-clip gate correctly withheld `SCREEN_COMPLETE.json`; its
+preliminary factorial is not causal evidence and cannot feed transfer. The
+follow-up code audit independently confirmed that terminal result utility could
+stack with arbitrary same-action shaping. Terminal composition must preserve
+explicit current-step objective reward (TD), discard incidental shaping, add
+result utility, leave deliberately episode-terminal terms separately
+clip-visible, and split any future terminal/non-terminal clip recurrence. Every
+arm must be rerun under that uniform corrected contract.
+
 The likely destination is a zero-sum terminal match utility, exact
 potential-based value shaping if it is needed, small temporary decision-time
 scaffolds, replay-derived tactical curricula, and diverse competent opponents.
@@ -1429,6 +1442,8 @@ Final adoption requires:
 - [ ] Complete reward-manifest canonical SHA-256 recorded.
 - [ ] No launcher-inherited reward fields.
 - [ ] Terminal-stack static validation passes.
+- [ ] Terminal emission contains only explicit current-step objective reward
+  plus result utility; incidental action/board shaping cannot co-stack.
 - [ ] Runtime reward clip/non-finite telemetry inspected.
 - [ ] Architecture, optimizer, LR, entropy, gamma, GAE, horizon, replay ratio,
   and all anneal settings recorded.

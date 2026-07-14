@@ -608,6 +608,8 @@ BB_TEST(puffer_reward_clip_telemetry_sees_terminal_stack) {
     f.env.match.score[BB_AWAY] = 0;
     f.rewards[BB_HOME] = 0.4f;
     f.rewards[BB_AWAY] = -0.4f;
+    f.env.step_objective_reward[BB_HOME] = 0.4f;
+    f.env.step_objective_reward[BB_AWAY] = -0.4f;
     f.env.ep_return[BB_HOME] = 0.4f;
     f.env.ep_return[BB_AWAY] = -0.4f;
 
@@ -617,8 +619,56 @@ BB_TEST(puffer_reward_clip_telemetry_sees_terminal_stack) {
     check_float(f.env.log.reward_clip_episodes, 1.0f);
     check_float(f.env.log.reward_nonfinite_episodes, 0.0f);
     check_float(f.env.log.reward_clip_excess, 0.4f);
+    check_float(f.env.log.reward_clip_terminal_samples, 2.0f);
+    check_float(f.env.log.reward_clip_nonterminal_samples, 0.0f);
     check_float(f.env.log.reward_episode_abs_max_mean, 1.2f);
     check_float(reward_nonfinite_frac(&f.env.log), 0.0f);
+}
+
+BB_TEST(puffer_terminal_result_discards_incidental_shaping_before_emission) {
+    RewardFixture f;
+    setup_env_buffers(&f);
+    f.env.reward_configured = 1;
+    f.env.reward_win = 0.6f;
+    f.env.match.score[BB_HOME] = 1;
+    f.env.match.score[BB_AWAY] = 0;
+
+    // A minimal deterministic reproducer with the failed screen's observed
+    // 1.015 magnitude. The old code stacked a terminal loss bonus on this
+    // -0.415 action subtotal. The retained artifact does not identify its one
+    // clip as terminal/non-terminal, so this locks the independently confirmed
+    // structural hazard rather than claiming the historical sample's sign.
+    f.rewards[BB_HOME] = 0.415f;
+    f.rewards[BB_AWAY] = -0.415f;
+    f.env.ep_return[BB_HOME] = 0.415f;
+    f.env.ep_return[BB_AWAY] = -0.415f;
+
+    bbe_finish_episode(&f.env);
+
+    check_float(f.rewards[BB_HOME], 0.6f);
+    check_float(f.rewards[BB_AWAY], -0.6f);
+    check_float(f.env.log.episode_return, 0.6f);
+    check_float(reward_clip_frac(&f.env.log), 0.0f);
+    check_float(f.env.log.reward_clip_episodes, 0.0f);
+    check_float(f.env.log.reward_episode_abs_max_mean, 0.6f);
+    check_float(f.env.log.reward_clip_terminal_samples, 0.0f);
+    check_float(f.env.log.reward_clip_nonterminal_samples, 0.0f);
+}
+
+BB_TEST(puffer_reward_clip_telemetry_splits_nonterminal_emissions) {
+    RewardFixture f;
+    setup_env_buffers(&f);
+    f.env.reward_configured = 1;
+    f.rewards[BB_HOME] = 1.015f;
+    f.rewards[BB_AWAY] = 0.0f;
+    bbe_record_reward_emission(&f.env);
+
+    f.rewards[BB_HOME] = f.rewards[BB_AWAY] = 0.0f;
+    bbe_finish_episode(&f.env);
+
+    check_float(f.env.log.reward_clipped_samples, 1.0f);
+    check_float(f.env.log.reward_clip_terminal_samples, 0.0f);
+    check_float(f.env.log.reward_clip_nonterminal_samples, 1.0f);
 }
 
 BB_TEST(puffer_reward_clip_telemetry_includes_statmatch_terminal_term) {
@@ -634,6 +684,7 @@ BB_TEST(puffer_reward_clip_telemetry_includes_statmatch_terminal_term) {
     check_float(f.env.log.reward_clip_episodes, 1.0f);
     BB_CHECK(f.env.log.reward_episode_abs_max_mean > 1.0f);
     BB_CHECK(f.env.log.reward_clip_excess > 0.0f);
+    check_float(f.env.log.episode_return, f.rewards[BB_HOME]);
 }
 
 BB_TEST(puffer_reward_clip_nonzero_fraction_is_not_diluted_by_sparse_zeros) {
@@ -648,6 +699,8 @@ BB_TEST(puffer_reward_clip_nonzero_fraction_is_not_diluted_by_sparse_zeros) {
     f.env.match.score[BB_HOME] = 1;
     f.rewards[BB_HOME] = 0.4f;
     f.rewards[BB_AWAY] = -0.4f;
+    f.env.step_objective_reward[BB_HOME] = 0.4f;
+    f.env.step_objective_reward[BB_AWAY] = -0.4f;
 
     bbe_finish_episode(&f.env);
 
@@ -677,6 +730,8 @@ BB_TEST(puffer_reward_clip_threshold_is_strictly_above_one) {
     exact.env.reward_configured = 1;
     exact.rewards[BB_HOME] = 1.0f;
     exact.rewards[BB_AWAY] = -1.0f;
+    exact.env.step_objective_reward[BB_HOME] = 1.0f;
+    exact.env.step_objective_reward[BB_AWAY] = -1.0f;
     bbe_finish_episode(&exact.env);
     check_float(reward_clip_frac(&exact.env.log), 0.0f);
     check_float(exact.env.log.reward_clip_episodes, 0.0f);
@@ -688,6 +743,8 @@ BB_TEST(puffer_reward_clip_threshold_is_strictly_above_one) {
     float just_over = nextafterf(1.0f, INFINITY);
     over.rewards[BB_HOME] = just_over;
     over.rewards[BB_AWAY] = -just_over;
+    over.env.step_objective_reward[BB_HOME] = just_over;
+    over.env.step_objective_reward[BB_AWAY] = -just_over;
     bbe_finish_episode(&over.env);
     check_float(reward_clip_frac(&over.env.log), 1.0f);
     check_float(over.env.log.reward_clip_episodes, 1.0f);
@@ -707,6 +764,8 @@ BB_TEST(puffer_reward_clip_fraction_is_emission_weighted_across_episodes) {
     f.env.match.score[BB_HOME] = 1;
     f.rewards[BB_HOME] = 0.4f;
     f.rewards[BB_AWAY] = -0.4f;
+    f.env.step_objective_reward[BB_HOME] = 0.4f;
+    f.env.step_objective_reward[BB_AWAY] = -0.4f;
     bbe_finish_episode(&f.env);
 
     // A second two-sample unclipped episode must contribute by emission

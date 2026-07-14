@@ -228,7 +228,7 @@ void my_log(Log* log, Dict* out) {
     //
     // CAPACITY: vec_log (src/bindings_cpu.cpp / bindings.cu) must hand us a
     // dict large enough for these keys plus the vecenv-appended "n". We emit
-    // 86. Growing past the call-site capacity is SILENT HEAP CORRUPTION
+    // 88. Growing past the call-site capacity is SILENT HEAP CORRUPTION
     // upstream (assert compiles out under NDEBUG); our vendored dict_set
     // aborts loudly instead (training/puffer_dict_capacity.patch).
     // History: key count hit 37 vs capacity 32 when slot scores + demo
@@ -251,6 +251,10 @@ void my_log(Log* log, Dict* out) {
     dict_set(out, "reward_clip_frac", clip_frac);
     dict_set(out, "reward_clip_frac_nonzero", clip_frac_nonzero);
     dict_set(out, "reward_clip_excess", log->reward_clip_excess);
+    dict_set(out, "reward_clip_terminal_samples_per_episode",
+             log->reward_clip_terminal_samples);
+    dict_set(out, "reward_clip_nonterminal_samples_per_episode",
+             log->reward_clip_nonterminal_samples);
     dict_set(out, "reward_episode_abs_max_mean",
              log->reward_episode_abs_max_mean);
     dict_set(out, "reward_nonfinite_frac", nonfinite_frac);

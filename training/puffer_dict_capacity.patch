@@ -7,7 +7,7 @@ index 64be611..fa050a1 100644
  
  py::dict vec_log(VecEnv& ve) {
 -    Dict* out = create_dict(32);
-+    Dict* out = create_dict(96); // bloodbowl my_log emits 86 keys + "n"; keep headroom
++    Dict* out = create_dict(96); // bloodbowl my_log emits 88 keys + "n"; keep headroom
      static_vec_log(ve.vec, out);
      py::dict result;
      for (int i = 0; i < out->size; i++) {
@@ -34,7 +34,7 @@ index 5ba4dc8..bcffc03 100644
  
  static py::dict vec_log(VecEnv& ve) {
 -    Dict* out = create_dict(32);
-+    Dict* out = create_dict(96); // bloodbowl my_log emits 86 keys + "n"; keep headroom
++    Dict* out = create_dict(96); // bloodbowl my_log emits 88 keys + "n"; keep headroom
      static_vec_log(ve.vec, out);
      py::dict result;
      for (int i = 0; i < out->size; i++)

@@ -114,13 +114,13 @@ if [ -f "$ROOT/validation/states/bank.bbs" ]; then
     echo "staged:    $PUFFER/resources/bloodbowl/state_bank.bbs"
 fi
 
-# Blood Bowl's my_log currently emits 86 keys, and vecenv appends "n" after
+# Blood Bowl's my_log currently emits 88 keys, and vecenv appends "n" after
 # the env binding returns. Keep the vendored dict allocations comfortably above
 # that so adding telemetry does not resurrect the historical heap overflow.
 for f in "$PUFFER/src/bindings.cu" "$PUFFER/src/bindings_cpu.cpp" "$PUFFER/src/pufferlib.cu"; do
     [ -f "$f" ] || continue
     perl -0pi -e \
-        's/create_dict\((32|64)\)(\s*;\s*\/\/ bloodbowl my_log emits )[^\n]*/create_dict(96)$2 86 keys + "n"; keep headroom/g;
+        's/create_dict\((32|64|96)\)(\s*;\s*\/\/ bloodbowl my_log emits )[^\n]*/create_dict(96)$2 88 keys + "n"; keep headroom/g;
          s/create_dict\((32|64)\);/create_dict(96);/g' "$f"
 done
 
@@ -141,7 +141,7 @@ if [ -f "$SWEEP_PY" ] && ! grep -q "match_enemy_model_path" "$SWEEP_PY"; then
 fi
 
 # Puffer's stock dashboard truncates environment metrics after 30 keys. Blood
-# Bowl emits 86 plus vecenv's `n`; without this patch, later correctness and
+# Bowl emits 88 plus vecenv's `n`; without this patch, later correctness and
 # behavior telemetry exists in C but never reaches evaluation logs.
 DASHBOARD_PY="$PUFFER/pufferlib/pufferl.py"
 if [ -f "$DASHBOARD_PY" ] && grep -q 'if i == 30:' "$DASHBOARD_PY"; then
