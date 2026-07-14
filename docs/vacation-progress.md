@@ -324,3 +324,65 @@ Next steps:
    plan-only launcher smoke.
 4. Launch the exact 32-cell scripted transfer as a durable user service, then
    follow only the evidence-authorized candidate or complete-control route.
+
+## 2026-07-14 02:15 PDT
+
+Status:
+
+- Arm 4/8 (`gain_only`, seed 42) completed and passed its immutable acceptance
+  contract at 499,908,608 exact learner steps and 10,076 final-policy games.
+  Performance was 0.530915, TD/game was 1.452263, score difference was
+  0.097757, and checkpoint SHA-256 is
+  `b97bfe681ebacf8eec72f9cf98e59b66fa2ea61e226fe6dcb3dcfc936ed3f6a1`.
+  Reward clipping, non-finite rewards, engine errors, demonstrations, and
+  demonstration fallbacks were all zero in training and evaluation.
+- Arm 5/8 (`gain_only`, seed 43) started from the frozen warm and static pool
+  and is healthy at 13,238,272 steps. The screen service remains on its original
+  PID with zero restarts. GPU snapshot at the arm transition: 83 C, 78%
+  utilization, 5,737 MiB of 8,192 MiB used.
+- Four of eight arms are now accepted. The observed completed-arm cadence is
+  about 46 minutes 24 seconds, keeping the screen-completion estimate near
+  05:20 PDT.
+
+Completed since the previous handoff:
+
+- Used a real headed Chrome session against `https://bbtv.seconds0.com` to close
+  the visual-verification gap. The live canvas rendered the pitch, players,
+  scoreboard, action log, dice odds, decision rate, and exact manifested
+  `gain_only-s42-step000249823232` policy label against turnover3.
+- The browser initially encountered four WebSocket 502 handshakes during the
+  bounded checkpoint handoff. Origin port 8787 and the public tunnel then
+  returned the expected HTTP 426 upgrade response, and the existing exponential
+  retry logic recovered automatically. The new server/selection record was
+  published at 01:53:21 PDT; this was a brief viewing gap, not an experiment or
+  service failure.
+- Opened draft PR #11 for this ongoing journal. Its first hosted CI run passed.
+  It remains draft until the queue is frozen, smoke-tested, started, and visibly
+  advancing.
+- Repeated the staged-to-audit checksum dry run. Exactly 31 tracked paths have
+  content changes or are new, matching the reviewed `f468762..ce5ef244` change
+  set; all other archive differences are metadata timestamps only.
+
+Current blockers / risks:
+
+- The remaining four seed-43 arms and atomic `SCREEN_COMPLETE.json` are still
+  required before deployment or analysis. No preliminary seed-42 metric is
+  being used to select a route.
+- BBTV checkpoint rollover can briefly show `reconnecting` while the next
+  bounded server loads. The client recovers and the immutable selection moves
+  forward; a persistent failure would still require separate investigation.
+- Candidate and control paths retain the same evidence requirements described
+  in the previous entry. Neither route can be frozen yet.
+
+Next steps:
+
+1. Monitor arms 5-8 and verify each result at its acceptance boundary; keep
+   BBTV, thermal, capacity, Tailscale, and service checks live.
+2. Require the exact eight-arm completion artifact, then run the merged analyzer
+   read-only from its staged path before deploying that source into the idle
+   audit tree.
+3. Back up the 21 existing content-changed audit files plus the prior deployment
+   record, overlay and byte-verify the exact merged tree, and perform the
+   plan-only launcher smoke.
+4. Start the complete 32-cell scripted transfer under a contained durable user
+   service and proceed only through the predeclared evidence route.
