@@ -591,3 +591,60 @@ Next steps:
 3. Continue through the required confirmation/transfer gates, freeze the exact
    candidate or control queue, and execute the interruption/failure/resume and
    departure smokes before enabling the persistent service.
+
+## 2026-07-14 06:03 PDT
+
+Status:
+
+- The complete 32-cell scripted transfer finished successfully with zero
+  service restarts. `TRANSFER_COMPLETE.json` SHA-256 is
+  `d25ef35f672ed63518473cdeb116294179d5eabf0daabf07dc592f6c445e9cdc`;
+  `ANALYSIS.json` SHA-256 is
+  `5edde996666a6f532ea5240829dfc7373fcde1e0b40c67f9864c629f0e4442d9`.
+  Regenerating the analysis from all 32 cell logs produced byte-identical JSON.
+- All three simplifications passed the conservative scripted gate. The frozen
+  preference order `[neither, possession_only, gain_only]` therefore selected
+  `neither` for longer confirmation. This is a routing decision only, not reward
+  promotion.
+- The exact main-lineage `1B x 2` paired confirmation is running under
+  `reward-paired-confirmation-neither-v1.service`. Its manifest SHA-256 is
+  `5021875f9d7816d77b520d8616e5a9acbe419c0bcdca93bc78f2655e633380da`;
+  the fixed schedule is `both42, neither42, neither43, both43`.
+
+Completed since the previous handoff:
+
+- Validated 32,092 scripted-opponent games across all predeclared cells. The
+  three candidate score-delta means/minima were: `neither -0.000712/-0.026463`,
+  `possession_only -0.009396/-0.030401`, and
+  `gain_only -0.001000/-0.015702`; all also passed the champion-TD and bot-TD
+  relative gates.
+- Froze the paired confirmation with candidate `neither`, exact transfer
+  completion/analysis/manifest hashes, frozen turnover3 warm, static pool,
+  exact merged implementation, and final step boundary 999,948,288.
+- Ran its plan-only validation, then launched the real screen with
+  `ARM_DETACH=0`, `Restart=no`, and `KillMode=control-group`. The first
+  `both`, seed-42 trainer is inside the service cgroup, and the unit has zero
+  restarts.
+- BBTV remains on the final accepted v3 checkpoint until the confirmation emits
+  a newer complete manifested checkpoint; all three viewer services are active.
+
+Current blockers / risks:
+
+- The four-arm paired confirmation is non-resume-safe and will fail closed on a
+  service or host interruption. Automatic restart is deliberately disabled.
+- Scripted eligibility is not enough to freeze a vacation queue. Main-lineage
+  self-play, scripted transfer, and learned-anchor transfer must all pass, then
+  the frozen queue must reproduce the same evidence on the second ancestry.
+- At the measured 2070 cadence, this confirmation should take about six hours;
+  the predeparture buffer remains adequate but is now dominated by real training
+  rather than setup work.
+
+Next steps:
+
+1. Monitor all four 1B arms through their exact acceptance boundaries, including
+   integrity, service containment, thermals, capacity, and BBTV freshness.
+2. If the paired screen passes, run its exact 16-cell scripted transfer and
+   32-cell learned-anchor transfer, then evaluate the fixed main-lineage gates.
+3. Freeze the candidate queue only after all main evidence is literal; otherwise
+   stop or follow the separately reviewed fail-closed route authorized by the
+   exact evidence.
