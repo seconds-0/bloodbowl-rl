@@ -528,3 +528,66 @@ Next steps:
    in a durable restart-safe user service.
 4. Continue hourly journal and roughly 30-minute chat updates while the
    predeparture evidence pipeline runs.
+
+## 2026-07-14 05:24 PDT
+
+Status:
+
+- The corrected v3 screen is atomically complete. All eight arms passed their
+  contracts; `SCREEN_COMPLETE.json` SHA-256 is
+  `0cb5b65a1908f6e710997a92afdfbeaaac015f9b66f8df5fd6d3b907ba681f21`.
+  The merged analyzer independently regenerated and verified the complete
+  eight-result hash chain. Its preserved JSON SHA-256 is
+  `d04ca9e3dcd23d54fa9e24bb80d700f48f148e4200d3ee9c6a4f5bd9e17f6f0e`.
+- Merged commit `ce5ef24457eed3d49903e56eb2a652e3918fed66` is now deployed in the idle
+  audit tree. The pre-overlay delta contained exactly 21 changed existing files
+  and 10 new files; every existing file plus the prior deployment record is
+  backed up at
+  `/home/rache/deployments/pr10-audit-backup-before-ce5ef244`.
+- The 32-cell scripted transfer is running under
+  `reward-candidate-transfer-v3.service`. It started with zero restarts,
+  `Restart=on-failure`, `KillMode=control-group`, and the exact reserved output
+  path. Current status is cell 1/32 (`both`, seed 42, bot 0, team side 0).
+
+Completed since the previous handoff:
+
+- Arm 8/8 (`both`, seed 43) passed at 499,908,608 exact steps, completing the
+  screen and stopping its service normally.
+- Ran the merged analyzer read-only from the staged tree before deployment; it
+  verified all eight result contracts and the atomic completion artifact.
+- Recomputed the deployment delta, backed up all overwritten content, overlaid
+  the exact 4,148-entry archive without deletes, wrote the exact commit/tree/
+  archive deployment record, and verified zero post-overlay content or symlink
+  drift. The installed Puffer source/config/dashboard/build check passed.
+- The merged `control-final` launcher plan-only smoke passed with screen
+  manifest SHA-256
+  `e351de0d4ce46aa480bdb467f8dafad7c0851eb8ec073d4e285b7ab38617aad1`.
+  The real transfer plan-only freeze also passed: manifest SHA-256
+  `84f168704bf2e18b3a249653b4ef80245b3ba39da2c7489815a7a76c374f8f7f`.
+- Verified that the real matrix is exactly reference `both` plus candidates
+  `[possession_only, gain_only, neither]`, seeds `[42,43]`, both bot styles, and
+  both team sides, with preference order
+  `[neither, possession_only, gain_only]` and full merged runtime provenance.
+- BBTV advanced to the final accepted `both`, seed-43, 499,908,608-step
+  checkpoint against turnover3; all three viewer services remain active.
+
+Current blockers / risks:
+
+- The scripted transfer must publish and validate all 32 atomic cells plus
+  `TRANSFER_COMPLETE.json` before its recommendation is actionable.
+- If a simplification is eligible, the longer paired confirmation plus scripted
+  and learned transfer remain required before queue freeze. If none is eligible,
+  the legacy v3 source still requires the complete-provenance v4 rerun.
+- The transfer is restart-validating, but any source, manifest, checkpoint, or
+  completed-cell drift will fail closed and block the next route.
+
+Next steps:
+
+1. Monitor all 32 transfer cells, service restarts, atomic status, GPU/host
+   health, and BBTV. Preserve the final completion and analysis hashes.
+2. Apply only the transfer's literal recommendation: either launch the reviewed
+   paired confirmation for its one eligible candidate or launch the complete-
+   provenance v4 decomposition rerun if all simplifications are rejected.
+3. Continue through the required confirmation/transfer gates, freeze the exact
+   candidate or control queue, and execute the interruption/failure/resume and
+   departure smokes before enabling the persistent service.
