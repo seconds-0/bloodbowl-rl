@@ -240,6 +240,39 @@ class FollowLatestTests(unittest.TestCase):
             "arm-seed-42-_torch.bin",
         )
 
+    def test_conversion_label_preserves_digest_and_prunable_suffix(self):
+        candidate = SimpleNamespace(
+            tag="vacation-" + "very-long-arm-name-" * 8,
+            step=1_598_160_896,
+        )
+
+        label = follow_latest._conversion_label(candidate, "a" * 64)
+
+        self.assertLessEqual(len(label), 96)
+        self.assertTrue(label.endswith("-aaaaaaaaaa_torch.bin"))
+        self.assertTrue(Path(label).match("*_torch.bin"))
+
+    def test_server_command_forwards_sample_mode(self):
+        args = SimpleNamespace(
+            server_python=Path("viewer-python"),
+            server_script=Path("server.py"),
+            port=8787,
+            pace=0.6,
+            games_per_cycle=2,
+            sample=True,
+        )
+
+        sampled = follow_latest.server_command(
+            args, Path("learner.bin"), Path("baseline.bin")
+        )
+        args.sample = False
+        greedy = follow_latest.server_command(
+            args, Path("learner.bin"), Path("baseline.bin")
+        )
+
+        self.assertEqual(sampled[-1], "--sample")
+        self.assertNotIn("--sample", greedy)
+
     def test_parser_preserves_virtualenv_python_symlink(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -262,9 +295,11 @@ class FollowLatestTests(unittest.TestCase):
                     "--config", str(script),
                     "--server-python", str(venv_python),
                     "--server-script", str(script),
+                    "--sample",
                 ])
         self.assertEqual(args.converter_python, venv_python.absolute())
         self.assertNotEqual(args.converter_python, real_python.resolve())
+        self.assertTrue(args.sample)
 
 
 if __name__ == "__main__":

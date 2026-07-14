@@ -164,15 +164,20 @@ def stable_native(path: Path, expected_bytes: int, seconds: float) -> os.stat_re
 
 
 def _conversion_label(candidate: Candidate, digest: str) -> str:
-    return safe_label(
-        f"{candidate.tag}-step{candidate.step:012d}-{digest[:10]}_torch.bin"
+    return _hashed_torch_label(
+        f"{candidate.tag}-step{candidate.step:012d}", digest
     )
 
 
 def _baseline_label(candidate: Candidate, digest: str) -> str:
-    return safe_label(
-        f"baseline-{candidate.warm_path.stem}-{digest[:10]}_torch.bin"
-    )
+    return _hashed_torch_label(f"baseline-{candidate.warm_path.stem}", digest)
+
+
+def _hashed_torch_label(prefix: str, digest: str) -> str:
+    suffix = f"-{digest[:10]}_torch.bin"
+    prefix_budget = 96 - len(suffix)
+    bounded_prefix = safe_label(prefix)[:prefix_budget].rstrip("-._")
+    return f"{bounded_prefix or 'checkpoint'}{suffix}"
 
 
 def convert_native(
@@ -342,7 +347,7 @@ def prune_cache(cache_dir: Path, selected: set[Path], keep: int) -> None:
 def server_command(
     args: argparse.Namespace, checkpoint_a: Path, checkpoint_b: Path
 ) -> list[str]:
-    return [
+    command = [
         str(args.server_python),
         str(args.server_script),
         "--ckpt-a",
@@ -356,6 +361,9 @@ def server_command(
         "--max-games",
         str(args.games_per_cycle),
     ]
+    if args.sample:
+        command.append("--sample")
+    return command
 
 
 def choose_stream_pair(
@@ -475,6 +483,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--port", type=int, default=8787)
     parser.add_argument("--pace", type=float, default=0.6)
     parser.add_argument("--games-per-cycle", type=int, default=2)
+    parser.add_argument(
+        "--sample",
+        action="store_true",
+        help="sample policy actions instead of using greedy argmax",
+    )
     parser.add_argument("--stability-seconds", type=float, default=1.0)
     parser.add_argument("--retry-seconds", type=float, default=5.0)
     parser.add_argument("--conversion-timeout-seconds", type=float, default=300.0)
