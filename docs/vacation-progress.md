@@ -1280,3 +1280,72 @@ Next steps:
    and arm the watcher only after a primary-running poll is a verified no-op.
 4. Continue primary learner, integrity, thermal, capacity, checkpoint, and BBTV
    monitoring while the implementation proceeds.
+
+## 2026-07-14 13:40 PDT
+
+Status:
+
+- The primary queue remains healthy on main-ancestry R0 seed 42. At the latest
+  observation it had reached 591,921,152 steps (epoch 4,515), with zero service
+  restarts and 40 tasks in the queue cgroup. Reward clipping, non-finite reward,
+  engine-error, demo, and demo-fallback counters all remained zero.
+- The latest 98-game diagnostic window reported performance 0.530612, score
+  differential 0.132653, 1.5 touchdowns/game, and possession 0.330672. The GPU
+  was 82 C at 79% utilization, using 5,737 MiB VRAM and about 134 W.
+- BBTV continued its matchup-boundary rollover and selected the manifested
+  499,515,392-step vacation checkpoint at 13:31:10 PDT. `bbstream`, `bbweb`,
+  and `bbtv-tunnel` remain active with zero restarts.
+- The post-primary watcher timer is enabled and active. Its first armed poll at
+  13:37:54 PDT logged `primary service is still active; waiting`, returned
+  success, and created no overflow state. It is scheduled every ten minutes.
+
+Completed since the previous handoff:
+
+- PR #14 passed hosted CI, including the Torch-dependent BC tests unavailable
+  locally, and merged to `main` as
+  `92196867f371ccf276021044ac569902e83379a5`. The review found no P0/P1 issue;
+  two P2 fail-closed gaps were proven with red tests and fixed before publication:
+  unknown systemd units can no longer masquerade as inactive, and the overflow
+  plan hash is rechecked immediately before start.
+- Built a five-file deployment archive from the exact merge, SHA-256
+  `356b6bed4e1de6662c6be595ce9bb0a75c0a1e5a066f77a98f6b06a5009b250d`,
+  and deployed only new freezer/starter/completion-validator and watcher-unit
+  paths. None existed or overlapped a primary tree pin. All 65 primary pins
+  validated before and after deployment; the trainer was not restarted.
+- Froze the real separate overflow queue
+  `vacation-r0-overflow-20260714-v1`. Its plan SHA-256 is
+  `d90ee01c8c459f599c8601934f545ccb7783261edae3bcb6e9e3878036d37d3e`;
+  all 74 pins validate. It contains only a resume-safe primary-completion proof
+  followed by one non-resume-safe netblock-ancestry R0 screen at 12B x seeds
+  42/43/44. It currently has no state and has never started.
+- The real primary-running negative smoke passed both directly and through the
+  installed systemd unit: completion returned the designated not-ready code,
+  the watcher waited, and no overflow state appeared.
+- A first synthetic child smoke correctly exercised terminal ownership but its
+  dummy job halted because the fixture runner omitted its output-directory
+  creation. That halted queue was preserved and a new ID used. The corrected
+  v2 smoke reached validated `complete`; a second watcher invocation reported
+  existing complete state and left the state SHA byte-identical, proving no
+  relaunch. Neither synthetic job used the GPU.
+
+Current blockers / risks:
+
+- The real overflow must remain state-less until both primary screens finish
+  exactly and their original validators pass. The timer is an outer readiness
+  gate; the overflow queue independently repeats the completion proof.
+- The two external CLI review sources were unavailable (missing Codex native
+  binary; Gemini required interactive OAuth). Inline review, red-then-green bug
+  tests, full local verification, and hosted CI are the available review
+  evidence; this limitation is recorded on PR #14.
+- Both real PPO screens remain non-resume-safe. Primary or overflow interruption
+  is terminal and cannot be timer-relaunched.
+
+Next steps:
+
+1. Observe at least one more armed timer poll while the primary runs and confirm
+   it remains a successful no-op with no overflow state or primary pin drift.
+2. Continue learner-step, integrity, thermal, capacity, checkpoint, and BBTV
+   monitoring; keep the hourly journal current.
+3. At primary completion, preserve and validate both success artifacts and the
+   atomic completion proof before accepting the overflow start. Never interpret
+   or promote a reward automatically.
