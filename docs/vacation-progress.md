@@ -212,3 +212,61 @@ Operational consequence / next steps:
    a provenance-complete decomposition rerun first.
 3. Keep the audit checkout untouched until the current screen completes, then
    deploy only the exact reviewed merged source.
+
+## 2026-07-14 01:30 PDT
+
+Status:
+
+- Arm 3/8 (`possession_only`, seed 42) is now accepted at 499,908,608
+  exact learner steps and 10,066 final-policy games. Performance was 0.519322,
+  TD/game was 1.350387, checkpoint SHA-256 is
+  `dcbaba4d62f2c042a82ca4d45de9186aea21407f0c33490c6aaf60b5fb863916`,
+  and every integrity counter is zero.
+- Arm 4/8 (`gain_only`, seed 42) is healthy at 17,039,360 steps. Its latest
+  readout has zero clipping, non-finite rewards, and engine errors. GPU snapshot:
+  81 C, 79% utilization, 5,737 MiB of 8,192 MiB used.
+- BBTV is presenting arm 3's latest completed manifested checkpoint against the
+  frozen turnover3 baseline. Public HTTP and the secure WebSocket both pass;
+  a fresh client received `hello`, `match_start`, and live snapshot messages.
+
+Completed since the review correction:
+
+- PR #10's first head was held. The full-provenance and full-candidate-matrix
+  fixes passed 128/128 Python tests, 421/421 native tests, Ruff, ShellCheck,
+  compilation, shell syntax, and whitespace checks.
+- Three independent reviewers approved exact corrected head
+  `a0dc804ae252ccb5cc3508b2819b57bf86a01e42`; hosted CI also passed. PR #10
+  merged as `ce5ef24457eed3d49903e56eb2a652e3918fed66`.
+- Deployed the exact 4,148-entry merged archive to production without deleting
+  remote artifacts, rebuilding, or restarting services. Archive SHA-256 is
+  `ff21ef64c8aaa97ff7eed1f8aba852ac030130292b45a80be607cbdcc83a0646`;
+  the post-overlay content/symlink comparison is empty. The 15 overwritten files
+  are preserved at `/home/rache/deployments/pr10-backup-before-ce5ef244`, and
+  production records the exact commit/tree/archive in `.deployed-source.json`.
+- BBTV and reward-screen service PIDs were unchanged across deployment. The
+  active audit checkout was not modified.
+
+Current blockers / review work:
+
+- The merged source cannot be deployed into the audit checkout until the live
+  eight-arm screen finishes.
+- If v3 selects a simplification, it must still pass a new fully provenance-
+  complete paired confirmation and both transfer strata. If v3 rejects all
+  simplifications, its older manifest cannot authorize the control fallback;
+  the decomposition must be rerun under the complete source contract.
+- The remaining utilization risk is a predeparture pipeline that is healthy but
+  incomplete when the user leaves. Audit whether a separately predeclared,
+  fully pinned R0 deadline-control route can provide useful two-ancestry
+  replication without depending on incomplete or legacy selection evidence.
+
+Next steps:
+
+1. Continue monitoring arms 4-8, BBTV, thermals, capacity, and integrity.
+2. Review the deadline-control question against the no-adaptive-selection and
+   provenance requirements; implement it only if it is scientifically useful
+   and strictly safer than leaving the GPU idle.
+3. After v3 completes, deploy the merged archive to the idle audit tree, verify
+   every tracked byte, and run the exact four-arm scripted transfer.
+4. Follow only a fully satisfied candidate or control contract, freeze the
+   literal queue, execute the departure smokes, start its user service, and
+   verify BBTV.
