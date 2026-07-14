@@ -164,7 +164,7 @@ newer evidence wins.
   on pass) runs matched `6B x 3`
   reference/candidate screens from both ancestries. `paired-final` means seeds
   42/43/44, not a live choice of candidate. Screen jobs are not resume-safe;
-  atomic transfer/gate jobs are. The sole fallback is predeclared: when the
+  atomic transfer/gate jobs are. One predeclared R0 route applies when the
   decomposition transfer recommends `both` with no eligible simplification,
   the freezer requires null learned inputs plus a fully provenance-complete
   decomposition screen and emits two non-resume-safe
@@ -174,6 +174,13 @@ newer evidence wins.
   authorize this route and must be rerun under the complete contract. Its
   scripted transfer must use reference `both` and contain all three
   simplification candidates; rejecting a subset is not “all rejected.”
+  A distinct `confirmation-rejected-baseline` route applies only when the
+  already-selected candidate fails the unchanged paired self-play gate. The
+  freezer independently regenerates that failure, matches the screen's exact
+  embedded selection-transfer proof, writes a pinned authorization record, and
+  emits only the same two R0 `control-final` jobs. It is not a candidate switch,
+  all-candidates-rejected evidence, or promotion. Vacation specs always name
+  the route explicitly; never infer it from `candidate_arm`.
 - Queue-owned screens run with `ARM_DETACH=0`. The queue's new-session process
   group must contain the screen, arm wrapper, Puffer trainer, and descendants;
   never add nested `setsid`/daemonization that would evade queue guard cleanup.

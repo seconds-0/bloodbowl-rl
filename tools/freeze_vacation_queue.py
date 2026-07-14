@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """Freeze the reviewed six-day reward queue from predeparture evidence.
 
-The builder does no candidate selection.  ``candidate_arm`` must already be
-confirmed by the completed main-lineage self-play, scripted, and learned-anchor
-artifacts supplied in the spec.  It creates literal configs for one second-
-ancestry confirmation, its two transfer strata, a two-lineage gate, and matched
-three-seed long final screens.  If the scripted screen rejects every candidate,
-the same builder instead freezes two R0-only three-seed replication screens;
-it never routes a rejected reward into training.  It then emits and validates
-the closed typed ``QUEUE_PLAN.json`` consumed by ``experiment_queue.py``.
+The builder does no candidate selection. A spec explicitly chooses one of
+three evidence routes: an accepted candidate, an all-candidates-rejected R0
+control, or R0 baseline characterization after the already-selected candidate
+fails its paired confirmation. Only the accepted-candidate route can emit
+candidate jobs. Both R0 routes emit the same two control-only replication
+screens and can never route a rejected reward into training. The builder then
+emits and validates the closed typed ``QUEUE_PLAN.json`` consumed by
+``experiment_queue.py``.
 """
 
 from __future__ import annotations
@@ -27,12 +27,15 @@ import analyze_reward_screen
 import experiment_queue
 import run_reward_candidate_transfer
 import run_reward_learned_transfer
+import vacation_reward_gate
 
 
 SCHEMA_VERSION = 1
+SPEC_SCHEMA_VERSION = 2
 SPEC_KEYS = {
     "schema_version",
     "queue_id",
+    "route",
     "root",
     "candidate_arm",
     "main_warm",
@@ -55,6 +58,21 @@ REVIEWED_SECOND_ANCESTRY = {
 }
 CONTROL_TRANSFER_CANDIDATES = ["possession_only", "gain_only", "neither"]
 CONTROL_TRANSFER_PREFERENCE = ["neither", "possession_only", "gain_only"]
+ROUTE_CANDIDATE = "candidate"
+ROUTE_ALL_REJECTED = "all-candidates-rejected-control"
+ROUTE_CONFIRMATION_REJECTED = "confirmation-rejected-baseline"
+ROUTES = {
+    ROUTE_CANDIDATE,
+    ROUTE_ALL_REJECTED,
+    ROUTE_CONFIRMATION_REJECTED,
+}
+GATE_CONFIG = {
+    "schema_version": 1,
+    "confirmation_steps": 1_000_000_000,
+    "mean_perf_delta_min": -0.02,
+    "seed_perf_delta_min": -0.05,
+    "max_candidate_td_relative_drop": 0.20,
+}
 SCREEN_CRITICAL_VENDOR_FILES = {
     "pufferlib/__init__.py",
     "pufferlib/pufferl.py",
@@ -147,10 +165,11 @@ def tree_record(path: Path) -> dict[str, Any]:
 
 
 def validate_main_screen(
-    path: Path, candidate: str, warm: Path, pool: Path, root: Path
+    path: Path, candidate: str, warm: Path, pool: Path, root: Path,
+    route: str,
 ) -> dict[str, Any]:
     root = root.resolve()
-    control_mode = candidate == "both"
+    all_rejected = route == ROUTE_ALL_REJECTED
     completion = load_object(path, "main screen completion")
     manifest_sha = completion.get("screen_manifest_sha256")
     report = analyze_reward_screen.analyze_screen(
@@ -159,16 +178,16 @@ def validate_main_screen(
         expected_screen_sha=manifest_sha,
     )
     screen = report["screen"]
-    expected_profile = "possession-gain" if control_mode else "paired-confirmation"
-    expected_steps = 500_000_000 if control_mode else 1_000_000_000
+    expected_profile = "possession-gain" if all_rejected else "paired-confirmation"
+    expected_steps = 500_000_000 if all_rejected else 1_000_000_000
     if (
         screen["profile"] != expected_profile
-        or (not control_mode and screen.get("candidate_arm") != candidate)
+        or (not all_rejected and screen.get("candidate_arm") != candidate)
         or screen.get("requested_steps") != expected_steps
         or not screen["completion"].get("present")
         or screen["completion"].get("sha256") != sha256(path)
     ):
-        label = "control fallback source" if control_mode else "paired candidate"
+        label = "control fallback source" if all_rejected else "paired candidate"
         raise FreezeError(f"main screen is not the exact {label} evidence")
     manifest = load_object(path.parent / "SCREEN_MANIFEST.json", "main screen manifest")
     contract = manifest.get("contract")
@@ -272,13 +291,16 @@ def validate_main_screen(
 
 def validate_spec(path: Path) -> dict[str, Any]:
     spec = load_object(path, "vacation queue spec")
+    if spec.get("schema_version") != SPEC_SCHEMA_VERSION:
+        raise FreezeError("unsupported vacation queue spec schema")
     if set(spec) != SPEC_KEYS:
         raise FreezeError("vacation queue spec has unknown or missing fields")
-    if spec.get("schema_version") != SCHEMA_VERSION:
-        raise FreezeError("unsupported vacation queue spec schema")
     queue_id = spec.get("queue_id")
     if not isinstance(queue_id, str) or QUEUE_ID_PATTERN.fullmatch(queue_id) is None:
         raise FreezeError("queue_id has unsupported characters")
+    route = spec.get("route")
+    if route not in ROUTES:
+        raise FreezeError("vacation queue route is invalid")
     root_value = spec.get("root")
     if not isinstance(root_value, str) or not Path(root_value).is_absolute():
         raise FreezeError("root must be absolute")
@@ -286,14 +308,20 @@ def validate_spec(path: Path) -> dict[str, Any]:
     if not root.is_dir():
         raise FreezeError(f"root does not exist: {root}")
     candidate = spec.get("candidate_arm")
-    control_mode = candidate == "both"
+    r0_only = route != ROUTE_CANDIDATE
     if candidate not in ("both", "possession_only", "gain_only", "neither"):
         raise FreezeError("candidate_arm is invalid")
+    if route == ROUTE_ALL_REJECTED and candidate != "both":
+        raise FreezeError(
+            "all-candidates-rejected route requires candidate_arm=both"
+        )
+    if route != ROUTE_ALL_REJECTED and candidate == "both":
+        raise FreezeError(f"{route} requires a simplification candidate")
     if spec.get("second_steps") != 1_000_000_000:
         raise FreezeError("second_steps must be the reviewed 1B budget")
-    expected_final_steps = 12_000_000_000 if control_mode else 6_000_000_000
+    expected_final_steps = 12_000_000_000 if r0_only else 6_000_000_000
     if spec.get("final_steps") != expected_final_steps:
-        label = "12B R0" if control_mode else "6B paired"
+        label = "12B R0" if r0_only else "6B paired"
         raise FreezeError(
             f"final_steps must be the reviewed {label} x three-seed budget"
         )
@@ -319,12 +347,12 @@ def validate_spec(path: Path) -> dict[str, Any]:
             spec["main_scripted_complete"], "main scripted completion", root
         ),
     }
-    if control_mode:
+    if r0_only:
         if spec.get("anchor_config") is not None or spec.get(
             "main_learned_complete"
         ) is not None:
             raise FreezeError(
-                "control fallback requires null learned-transfer inputs"
+                "R0-only routes require null learned-transfer inputs"
             )
     else:
         paths.update({
@@ -346,7 +374,7 @@ def validate_spec(path: Path) -> dict[str, Any]:
         )
     screen_report = validate_main_screen(
         paths["main_screen_complete"], candidate, paths["main_warm"],
-        paths["pool"], root,
+        paths["pool"], root, route,
     )
     scripted_evidence = analyze_reward_candidate_transfer.validate_completion_evidence(
         paths["main_scripted_complete"],
@@ -356,7 +384,21 @@ def validate_spec(path: Path) -> dict[str, Any]:
     scripted_manifest = load_object(
         Path(scripted_evidence["transfer_manifest"]), "main scripted manifest"
     )
-    if (
+    if route == ROUTE_CONFIRMATION_REJECTED:
+        main_manifest = load_object(
+            paths["main_screen_complete"].parent / "SCREEN_MANIFEST.json",
+            "main screen manifest",
+        )
+        contract = main_manifest.get("contract")
+        candidate_evidence = (
+            contract.get("candidate_evidence")
+            if isinstance(contract, dict) else None
+        )
+        if candidate_evidence != scripted_evidence:
+            raise FreezeError(
+                "paired confirmation is not bound to the declared selection transfer"
+            )
+    elif (
         Path(str(scripted_manifest.get("source_screen", ""))).resolve()
         != paths["main_screen_complete"].parent
         or scripted_manifest.get("source_screen_sha256")
@@ -373,7 +415,8 @@ def validate_spec(path: Path) -> dict[str, Any]:
         raise FreezeError(
             "main scripted transfer differs from the frozen implementation contract"
         )
-    if control_mode:
+    confirmation_rejection = None
+    if route == ROUTE_ALL_REJECTED:
         if (
             scripted_manifest.get("reference_arm") != "both"
             or scripted_manifest.get("candidate_arms")
@@ -396,6 +439,20 @@ def validate_spec(path: Path) -> dict[str, Any]:
             raise FreezeError(
                 "control fallback is forbidden while an eligible simplification exists"
             )
+        anchor_config = None
+        learned_report = None
+    elif route == ROUTE_CONFIRMATION_REJECTED:
+        gate_config = {**GATE_CONFIG, "candidate_arm": candidate}
+        try:
+            confirmation_rejection, failures = vacation_reward_gate.validate_screen(
+                paths["main_screen_complete"], gate_config, "main"
+            )
+        except (OSError, ValueError, vacation_reward_gate.GateError) as exc:
+            raise FreezeError(
+                f"invalid rejected confirmation evidence: {exc}"
+            ) from exc
+        if not failures:
+            raise FreezeError("paired confirmation did not reject the candidate")
         anchor_config = None
         learned_report = None
     else:
@@ -457,7 +514,8 @@ def validate_spec(path: Path) -> dict[str, Any]:
         "screen_report": screen_report,
         "learned_report": learned_report,
         "anchor_config_record": anchor_config,
-        "control_mode": control_mode,
+        "r0_only": r0_only,
+        "confirmation_rejection": confirmation_rejection,
         "spec_path": path.resolve(),
     }
 
@@ -547,7 +605,8 @@ def freeze(spec: dict[str, Any]) -> Path:
     config_dir.mkdir(parents=True, exist_ok=True)
     logs_dir.mkdir(parents=True, exist_ok=True)
     candidate = spec["candidate_arm"]
-    control_mode = candidate == "both"
+    route = spec["route"]
+    r0_only = route != ROUTE_CANDIDATE
     output_root = queue_dir / "work"
     second_dir = output_root / "second-confirmation"
     second_scripted_dir = output_root / "second-scripted-transfer"
@@ -566,7 +625,7 @@ def freeze(spec: dict[str, Any]) -> Path:
         if success.exists():
             raise FreezeError(f"refusing preexisting queue success artifact: {success}")
 
-    if control_mode:
+    if r0_only:
         configs = {
             "final_main": build_screen_config(
                 root=root,
@@ -641,21 +700,33 @@ def freeze(spec: dict[str, Any]) -> Path:
             atomic_json(destination, payload)
         config_paths[name] = destination
     gate_config_path = config_dir / "GATE_CONFIG.json"
-    gate_config = {
-        "schema_version": SCHEMA_VERSION,
-        "candidate_arm": candidate,
-        "confirmation_steps": 1_000_000_000,
-        "mean_perf_delta_min": -0.02,
-        "seed_perf_delta_min": -0.05,
-        "max_candidate_td_relative_drop": 0.20,
-    }
-    if not control_mode:
+    gate_config = {**GATE_CONFIG, "candidate_arm": candidate}
+    if not r0_only:
         if gate_config_path.exists() and load_object(
             gate_config_path, "gate config"
         ) != gate_config:
             raise FreezeError("existing gate config drift")
         if not gate_config_path.exists():
             atomic_json(gate_config_path, gate_config)
+    authorization_path = config_dir / "BASELINE_AUTHORIZATION.json"
+    if route == ROUTE_CONFIRMATION_REJECTED:
+        authorization = {
+            "schema_version": SCHEMA_VERSION,
+            "route": route,
+            "candidate_arm": candidate,
+            "fixed_gate": gate_config,
+            "rejection": spec["confirmation_rejection"],
+            "warning": (
+                "This proof authorizes only R0 baseline characterization. "
+                "It does not select or promote a reward candidate."
+            ),
+        }
+        if authorization_path.exists() and load_object(
+            authorization_path, "baseline authorization"
+        ) != authorization:
+            raise FreezeError("existing baseline authorization drift")
+        if not authorization_path.exists():
+            atomic_json(authorization_path, authorization)
 
     python = (root / "vendor/PufferLib/.venv/bin/python").resolve()
     source_paths = [
@@ -706,13 +777,15 @@ def freeze(spec: dict[str, Any]) -> Path:
     source_paths.append(module)
     source_paths.extend(sorted((root / "training").glob("puffer*.patch")))
     source_paths.extend(config_paths.values())
-    if not control_mode:
+    if route == ROUTE_CONFIRMATION_REJECTED:
+        source_paths.append(authorization_path)
+    if not r0_only:
         source_paths.append(gate_config_path)
     source_paths.append(spec["spec_path"])
     source_paths.append(spec["main_screen_complete"])
     source_paths.append(spec["main_scripted_complete"])
     source_paths.extend((spec["main_warm"], spec["second_warm"]))
-    if not control_mode:
+    if not r0_only:
         source_paths.append(spec["main_learned_complete"])
         source_paths.append(spec["anchor_config"])
         source_paths.extend(
@@ -740,7 +813,7 @@ def freeze(spec: dict[str, Any]) -> Path:
         (spec["main_scripted_complete"].parent, "main scripted transfer evidence"),
         (root / "vendor/PufferLib/ocean/bloodbowl", "installed Blood Bowl source"),
     ]
-    if not control_mode:
+    if not r0_only:
         tree_sources.append(
             (spec["main_learned_complete"].parent, "main learned transfer evidence")
         )
@@ -801,7 +874,7 @@ def freeze(spec: dict[str, Any]) -> Path:
     )
     final_main_complete = final_main_dir / "SCREEN_COMPLETE.json"
     final_second_complete = final_second_dir / "SCREEN_COMPLETE.json"
-    if control_mode:
+    if r0_only:
         jobs = [
             job(
                 job_id="final-main-control",
@@ -872,9 +945,9 @@ def freeze(spec: dict[str, Any]) -> Path:
         validated, validated_root, digest = experiment_queue.validate_plan(plan_path)
         if validated != plan or validated_root != root:
             raise FreezeError("queue plan changed during validation")
-        print(f"VACATION CONTROL QUEUE FROZEN: {plan_path}")
+        print(f"VACATION R0 QUEUE FROZEN: {plan_path}")
         print(f"queue_plan_sha256={digest}")
-        print(f"jobs={len(jobs)} candidate=both")
+        print(f"jobs={len(jobs)} route={route} reward=both")
         return plan_path
     jobs = [
         job(

@@ -19,6 +19,19 @@ def write_json(path: Path, payload: dict) -> None:
 
 
 class FreezeVacationQueueTests(unittest.TestCase):
+    def test_route_aware_spec_requires_schema_two(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            spec_path = Path(tmp) / "VACATION_SPEC.json"
+            write_json(spec_path, {
+                "schema_version": 1,
+                "queue_id": "old-schema",
+                "route": "candidate",
+            })
+            with self.assertRaisesRegex(
+                freezer.FreezeError, "unsupported vacation queue spec schema"
+            ):
+                freezer.validate_spec(spec_path)
+
     def test_validate_spec_requires_rejected_candidate_evidence_for_control_mode(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp).resolve()
@@ -58,8 +71,9 @@ class FreezeVacationQueueTests(unittest.TestCase):
             })
             spec_path = root / "VACATION_SPEC.json"
             write_json(spec_path, {
-                "schema_version": 1,
+                "schema_version": 2,
                 "queue_id": "vacation-control-test",
+                "route": "all-candidates-rejected-control",
                 "root": str(root),
                 "candidate_arm": "both",
                 "main_warm": str(main_warm),
@@ -100,7 +114,7 @@ class FreezeVacationQueueTests(unittest.TestCase):
                 ),
             ):
                 validated = freezer.validate_spec(spec_path)
-                self.assertTrue(validated["control_mode"])
+                self.assertTrue(validated["r0_only"])
                 validate_transfer.assert_called_once_with(
                     scripted,
                     expected_complete_sha=freezer.sha256(scripted),
@@ -186,8 +200,9 @@ class FreezeVacationQueueTests(unittest.TestCase):
             })
             spec_path = root / "VACATION_SPEC.json"
             write_json(spec_path, {
-                "schema_version": 1,
+                "schema_version": 2,
                 "queue_id": "vacation-test",
+                "route": "candidate",
                 "root": str(root),
                 "candidate_arm": "gain_only",
                 "main_warm": str(main_warm),
@@ -396,18 +411,21 @@ class FreezeVacationQueueTests(unittest.TestCase):
             ):
                 with self.assertRaisesRegex(freezer.FreezeError, "exact paired"):
                     freezer.validate_main_screen(
-                        complete, "gain_only", warm, pool, root
+                        complete, "gain_only", warm, pool, root,
+                        freezer.ROUTE_CANDIDATE,
                     )
                 report["screen"]["requested_steps"] = 1_000_000_000
                 accepted = freezer.validate_main_screen(
-                    complete, "gain_only", warm, pool, root
+                    complete, "gain_only", warm, pool, root,
+                    freezer.ROUTE_CANDIDATE,
                 )
                 original = screen_manifest["contract"]["warm"]["sha256"]
                 screen_manifest["contract"]["warm"]["sha256"] = "0" * 64
                 write_json(manifest_path, screen_manifest)
                 with self.assertRaisesRegex(freezer.FreezeError, "main warm"):
                     freezer.validate_main_screen(
-                        complete, "gain_only", warm, pool, root
+                        complete, "gain_only", warm, pool, root,
+                        freezer.ROUTE_CANDIDATE,
                     )
                 screen_manifest["contract"]["warm"]["sha256"] = original
 
@@ -420,7 +438,8 @@ class FreezeVacationQueueTests(unittest.TestCase):
                 write_json(manifest_path, screen_manifest)
                 with self.assertRaisesRegex(freezer.FreezeError, "static pool"):
                     freezer.validate_main_screen(
-                        complete, "gain_only", warm, pool, root
+                        complete, "gain_only", warm, pool, root,
+                        freezer.ROUTE_CANDIDATE,
                     )
                 screen_manifest["contract"]["pool"][
                     "manifest_sha256"
@@ -433,7 +452,8 @@ class FreezeVacationQueueTests(unittest.TestCase):
                     freezer.FreezeError, "main screen bank"
                 ):
                     freezer.validate_main_screen(
-                        complete, "gain_only", warm, pool, root
+                        complete, "gain_only", warm, pool, root,
+                        freezer.ROUTE_CANDIDATE,
                     )
                 bank.write_bytes(original_bank)
 
@@ -441,7 +461,8 @@ class FreezeVacationQueueTests(unittest.TestCase):
                 alternate_config.write_text("[bloodbowl]\n", encoding="utf-8")
                 with self.assertRaisesRegex(freezer.FreezeError, "config tree"):
                     freezer.validate_main_screen(
-                        complete, "gain_only", warm, pool, root
+                        complete, "gain_only", warm, pool, root,
+                        freezer.ROUTE_CANDIDATE,
                     )
                 alternate_config.unlink()
 
@@ -454,7 +475,8 @@ class FreezeVacationQueueTests(unittest.TestCase):
                 write_json(manifest_path, screen_manifest)
                 with self.assertRaisesRegex(freezer.FreezeError, "default config"):
                     freezer.validate_main_screen(
-                        complete, "gain_only", warm, pool, root
+                        complete, "gain_only", warm, pool, root,
+                        freezer.ROUTE_CANDIDATE,
                     )
                 screen_manifest["contract"]["implementation"][
                     "default_config_sha256"
@@ -477,7 +499,8 @@ class FreezeVacationQueueTests(unittest.TestCase):
                     changed_path.write_bytes(original_bytes + b"drift")
                     with self.assertRaisesRegex(freezer.FreezeError, pattern):
                         freezer.validate_main_screen(
-                            complete, "gain_only", warm, pool, root
+                            complete, "gain_only", warm, pool, root,
+                            freezer.ROUTE_CANDIDATE,
                         )
                     changed_path.write_bytes(original_bytes)
                 report["screen"].update({
@@ -489,14 +512,16 @@ class FreezeVacationQueueTests(unittest.TestCase):
                 write_json(manifest_path, screen_manifest)
                 self.assertEqual(
                     freezer.validate_main_screen(
-                        complete, "both", warm, pool, root
+                        complete, "both", warm, pool, root,
+                        freezer.ROUTE_ALL_REJECTED,
                     ),
                     report,
                 )
                 alternate_config.write_text("[control-drift]\n", encoding="utf-8")
                 with self.assertRaisesRegex(freezer.FreezeError, "config tree"):
                     freezer.validate_main_screen(
-                        complete, "both", warm, pool, root
+                        complete, "both", warm, pool, root,
+                        freezer.ROUTE_ALL_REJECTED,
                     )
                 alternate_config.unlink()
 
@@ -504,7 +529,8 @@ class FreezeVacationQueueTests(unittest.TestCase):
                 write_json(manifest_path, screen_manifest)
                 with self.assertRaisesRegex(freezer.FreezeError, "default config"):
                     freezer.validate_main_screen(
-                        complete, "both", warm, pool, root
+                        complete, "both", warm, pool, root,
+                        freezer.ROUTE_ALL_REJECTED,
                     )
                 implementation["default_config_sha256"] = freezer.sha256(
                     default_config
@@ -522,7 +548,8 @@ class FreezeVacationQueueTests(unittest.TestCase):
                         freezer.FreezeError, "critical vendor source"
                     ):
                         freezer.validate_main_screen(
-                            complete, "both", warm, pool, root
+                            complete, "both", warm, pool, root,
+                            freezer.ROUTE_ALL_REJECTED,
                         )
                     changed_path.write_bytes(original_bytes)
 
@@ -546,9 +573,132 @@ class FreezeVacationQueueTests(unittest.TestCase):
                     "config tree|critical vendor identity",
                 ):
                     freezer.validate_main_screen(
-                        complete, "both", warm, pool, root
+                        complete, "both", warm, pool, root,
+                        freezer.ROUTE_ALL_REJECTED,
                     )
             self.assertEqual(accepted, report)
+
+    def test_validate_spec_requires_a_rejected_confirmation_for_baseline_route(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            main_warm = root / "main.bin"
+            second_warm = root / "second.bin"
+            for path, marker in ((main_warm, b"m"), (second_warm, b"s")):
+                with path.open("wb") as handle:
+                    handle.write(marker)
+                    handle.truncate(16_066_560)
+            pool = root / "pool"
+            pool.mkdir()
+            write_json(pool / "league_seeds.json", {})
+            screen = root / "screen/SCREEN_COMPLETE.json"
+            write_json(screen, {"screen_manifest_sha256": "a" * 64})
+            scripted = root / "selection/TRANSFER_COMPLETE.json"
+            write_json(scripted, {"recommended_confirmation_arm": "neither"})
+            scripted_manifest = scripted.parent / "TRANSFER_MANIFEST.json"
+            scripted_contract = {"settings": {"eval_episodes": 1_000}}
+            write_json(scripted_manifest, {
+                "source_screen": str(root / "decomposition"),
+                "source_screen_sha256": "d" * 64,
+                **scripted_contract,
+            })
+            evidence = {
+                "transfer_complete": str(scripted),
+                "transfer_complete_sha256": freezer.sha256(scripted),
+                "transfer_manifest": str(scripted_manifest),
+            }
+            write_json(screen.parent / "SCREEN_MANIFEST.json", {
+                "contract": {"candidate_evidence": evidence},
+            })
+            spec_path = root / "VACATION_SPEC.json"
+            spec = {
+                "schema_version": 2,
+                "queue_id": "vacation-rejected-baseline-test",
+                "route": "confirmation-rejected-baseline",
+                "root": str(root),
+                "candidate_arm": "neither",
+                "main_warm": str(main_warm),
+                "second_warm": str(second_warm),
+                "pool": str(pool),
+                "anchor_config": None,
+                "main_screen_complete": str(screen),
+                "main_scripted_complete": str(scripted),
+                "main_learned_complete": None,
+                "second_steps": 1_000_000_000,
+                "final_steps": 12_000_000_000,
+                "min_free_bytes": 1,
+                "min_free_inodes": 1,
+                "max_gpu_temperature_c": 89,
+            }
+            write_json(spec_path, spec)
+            screen_report = {"screen": {"manifest_sha256": "a" * 64}}
+            rejection_report = {
+                "failures": ["mean_perf_delta"],
+                "perf_candidate_minus_both": {"mean": -0.025},
+            }
+            with (
+                mock.patch.dict(
+                    freezer.REVIEWED_SECOND_ANCESTRY,
+                    {"sha256": freezer.sha256(second_warm)},
+                ),
+                mock.patch.object(
+                    freezer, "validate_main_screen", return_value=screen_report,
+                ),
+                mock.patch.object(
+                    freezer.analyze_reward_candidate_transfer,
+                    "validate_completion_evidence", return_value=evidence,
+                ) as validate_transfer,
+                mock.patch.object(
+                    freezer.run_reward_candidate_transfer,
+                    "transfer_contract_identity", return_value=scripted_contract,
+                ),
+                mock.patch.object(
+                    freezer.vacation_reward_gate, "validate_screen",
+                    return_value=(rejection_report, ["mean_perf_delta"]),
+                ) as validate_rejection,
+            ):
+                validated = freezer.validate_spec(spec_path)
+                self.assertTrue(validated["r0_only"])
+                self.assertEqual(
+                    validated["route"], "confirmation-rejected-baseline"
+                )
+                self.assertEqual(
+                    validated["confirmation_rejection"], rejection_report
+                )
+                validate_transfer.assert_called_once_with(
+                    scripted,
+                    expected_complete_sha=freezer.sha256(scripted),
+                    expected_candidate="neither",
+                )
+                validate_rejection.assert_called_once_with(
+                    screen,
+                    {
+                        "schema_version": 1,
+                        "candidate_arm": "neither",
+                        "confirmation_steps": 1_000_000_000,
+                        "mean_perf_delta_min": -0.02,
+                        "seed_perf_delta_min": -0.05,
+                        "max_candidate_td_relative_drop": 0.20,
+                    },
+                    "main",
+                )
+
+                freezer.vacation_reward_gate.validate_screen.return_value = (
+                    {"failures": []}, []
+                )
+                with self.assertRaisesRegex(
+                    freezer.FreezeError, "did not reject"
+                ):
+                    freezer.validate_spec(spec_path)
+
+                freezer.vacation_reward_gate.validate_screen.return_value = (
+                    rejection_report, ["mean_perf_delta"]
+                )
+                spec["main_learned_complete"] = str(scripted)
+                write_json(spec_path, spec)
+                with self.assertRaisesRegex(
+                    freezer.FreezeError, "null learned-transfer"
+                ):
+                    freezer.validate_spec(spec_path)
 
     def fixture(self, root: Path) -> dict:
         files = [
@@ -644,8 +794,9 @@ class FreezeVacationQueueTests(unittest.TestCase):
         spec_path = root / "VACATION_SPEC.json"
         write_json(spec_path, {"fixture": True})
         return {
-            "schema_version": 1,
+            "schema_version": 2,
             "queue_id": "vacation-test",
+            "route": "candidate",
             "root": str(root),
             "root_path": root,
             "queue_dir": root / "runs/vacation-test",
@@ -723,6 +874,7 @@ class FreezeVacationQueueTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp).resolve()
             spec = self.fixture(root)
+            spec["route"] = "all-candidates-rejected-control"
             spec["candidate_arm"] = "both"
             spec["final_steps"] = 12_000_000_000
             plan_path = freezer.freeze(spec)
@@ -742,6 +894,48 @@ class FreezeVacationQueueTests(unittest.TestCase):
         self.assertEqual(main_config["steps"], 12_000_000_000)
         self.assertIsNone(main_config["candidate_transfer"])
         self.assertFalse(main_config["require_gate"])
+
+    def test_freeze_emits_two_control_jobs_for_rejected_confirmation_baseline(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            spec = self.fixture(root)
+            spec["route"] = "confirmation-rejected-baseline"
+            spec["candidate_arm"] = "neither"
+            spec["anchor_config"] = None
+            spec["anchor_config_record"] = None
+            spec["main_learned_complete"] = None
+            spec["final_steps"] = 12_000_000_000
+            spec["confirmation_rejection"] = {
+                "failures": ["mean_perf_delta"]
+            }
+            plan_path = freezer.freeze(spec)
+            plan, validated_root, _ = experiment_queue.validate_plan(plan_path)
+            main_config = json.loads(
+                (root / "runs/vacation-test/configs/FINAL_MAIN_SCREEN_CONFIG.json")
+                .read_text(encoding="utf-8")
+            )
+            authorization_path = (
+                root / "runs/vacation-test/configs/BASELINE_AUTHORIZATION.json"
+            )
+            authorization = json.loads(
+                authorization_path.read_text(encoding="utf-8")
+            )
+
+        self.assertEqual(validated_root, root)
+        self.assertEqual(
+            [job["id"] for job in plan["jobs"]],
+            ["final-main-control", "final-second-control"],
+        )
+        self.assertEqual(main_config["profile"], "control-final")
+        self.assertEqual(main_config["candidate_arm"], "both")
+        self.assertEqual(main_config["steps"], 12_000_000_000)
+        self.assertEqual(
+            authorization["rejection"]["failures"], ["mean_perf_delta"]
+        )
+        self.assertIn(
+            str(authorization_path.resolve()),
+            {pin["path"] for pin in plan["pinned_files"]},
+        )
 
 
 if __name__ == "__main__":

@@ -1053,3 +1053,48 @@ Next steps:
 3. Only deploy/start an alternative after its source, typed plan, provenance,
    failure behavior, resource guards, and BBTV path pass the same departure
    smokes. Otherwise hand off an evidence-backed stop instead of unsafe compute.
+
+## 2026-07-14 12:25 PDT
+
+Status:
+
+- Selected a safe, non-promotion vacation workload: long R0 baseline
+  characterization from the main and exact `league9` ancestries. The intended
+  queue remains `72B` learner steps but contains no reward candidate.
+- The implementation is isolated on
+  `tranche/confirmation-rejected-baseline`. Focused freezer tests are green.
+  The GPU remains idle while source review and departure smokes are incomplete.
+
+Completed since the previous handoff:
+
+- Wrote the test-first tranche contract in
+  `docs/plans/confirmation-rejected-baseline.md`.
+- Added an explicit `confirmation-rejected-baseline` spec route. It regenerates
+  the fixed paired gate, requires at least one literal failure, verifies that
+  the confirmation embeds the exact validated selection transfer, and rejects
+  non-null learned inputs.
+- Reused the existing two-job R0 `control-final` execution path and added a
+  pinned `BASELINE_AUTHORIZATION.json` containing the exact failure and a
+  no-promotion warning. A passing candidate cannot enter this route.
+- Updated `DECISIONS.md`, `AGENTS.md`, `CLAUDE.md`, and the autonomy contract to
+  distinguish candidate acceptance, all-candidates-rejected control, and
+  confirmation-rejected baseline evidence.
+
+Current blockers / risks:
+
+- This source is not yet reviewed, merged, deployed, or frozen against the real
+  host evidence. No real queue spec or state exists.
+- The most important remaining risk is a route/provenance bypass in the freezer
+  or an incomplete deployment pin. Broader tests and adversarial self-review
+  must pass before the RTX 2070 starts.
+- BBTV is still showing the completed reference matchup; it cannot show the new
+  workload until the first manifested R0 checkpoint completes.
+
+Next steps:
+
+1. Finish the fail-open/route-confusion audit and strengthen tests for malformed,
+   passing, wrong-arm, and drifted evidence.
+2. Run the full queue/tool contract suite, commit and review the diff, obtain
+   green CI, merge, and deploy the exact tree.
+3. Freeze the real two-job plan, run interruption/recovery/downstream-halt
+   smokes, launch it under systemd, and verify GPU health plus public BBTV.

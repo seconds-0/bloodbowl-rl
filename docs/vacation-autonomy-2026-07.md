@@ -49,6 +49,21 @@ recursive config-tree hash, explicit `default.ini` hash, and exact nine-file
 runtime identity. A legacy screen missing those fields cannot authorize the
 fallback and must be rerun under the complete contract.
 
+If the decomposition selects one simplification but that exact candidate later
+fails the frozen `1B x 2` paired self-play gate, it remains rejected and no
+other candidate may be substituted. A separately labeled
+`confirmation-rejected-baseline` route may still characterize R0: the freezer
+independently regenerates the paired analysis, reapplies the unchanged mean,
+per-seed, and TD thresholds, and requires at least one literal failure. It also
+requires the confirmation manifest's embedded selection-transfer evidence to
+equal the separately validated transfer record. Passing, malformed, wrong-arm,
+wrong-budget, or differently selected evidence fails closed. The route writes
+a pinned `BASELINE_AUTHORIZATION.json` and emits the same two R0-only
+`control-final` jobs at `12B x seeds 42,43,44` from the two frozen ancestries.
+It measures long-horizon seed/ancestry variation and creates reusable R0
+learning curves/checkpoints; it cannot confirm another candidate, pass a reward
+gate, or change production.
+
 ## Six-day queue order
 
 When a simplification candidate is accepted, the frozen queue uses the July
@@ -80,6 +95,12 @@ When every simplification is rejected, the alternate order is exactly two
 jobs: main-ancestry `control-final`, then `league9` `control-final`. Each job
 trains R0 for `12B x seeds 42,43,44`; there is no second-ancestry candidate
 confirmation, transfer, or gate.
+
+When the selected candidate instead fails paired confirmation, the baseline-
+characterization order is deliberately identical: main-ancestry
+`control-final`, then `league9` `control-final`, each R0 at
+`12B x seeds 42,43,44`. The authorization differs, is recorded explicitly, and
+must not be described as an all-candidates-rejected result.
 
 The exact queue may be shorter if the repository lacks a verified launcher for
 a proposed cell. A new launcher is deployed only after focused tests and a
@@ -142,8 +163,12 @@ the two-lineage gate config, and validates the resulting six-job typed plan
 before publication. The all-candidates-rejected route requires the exact
 scripted recommendation described above, writes two hash-pinned `control-final`
 configs, and validates a two-job typed plan with no learned transfer or gate.
-It applies the same full source-screen provenance closure as the candidate
-route; there is no legacy exception and no third route.
+The confirmation-rejected baseline route requires an exact failed paired
+confirmation bound to its original selection transfer, independently
+recomputes the fixed self-play gate, writes a pinned authorization report, and
+reuses the same two-job R0 execution path. All routes are explicit in the spec;
+none is inferred by overloading `candidate_arm`. They apply the same full
+source-screen provenance closure, with no legacy exception.
 `tools/run_frozen_reward_screen.py` is the categorical/path bridge into the
 existing environment-variable launcher. `tools/run_reward_learned_transfer.py`
 creates atomic per-cell learned-anchor results in both backend roles.
@@ -205,14 +230,17 @@ vendor/PufferLib/.venv/bin/python tools/freeze_vacation_queue.py \
 systemctl --user start experiment-queue@<queue-id>.service
 ```
 
-Both spec modes fix `second_steps=1000000000`, both warm checkpoint paths, the
+All three schema-2 spec routes name `route` explicitly and fix
+`second_steps=1000000000`, both warm checkpoint paths, the
 static pool, the exact main screen and scripted-transfer proofs, free-space/
 inode floors, and the thermal ceiling. The candidate mode additionally fixes
 `final_steps=6000000000`, the anchor config, and the main learned-transfer proof.
-The control mode instead fixes `final_steps=12000000000`, requires null anchor
-and learned-transfer fields, and requires the full three-candidate rejection
-matrix from a provenance-complete decomposition screen. Editing any config, pin,
-or plan after first start is a terminal halt.
+Both R0-only modes instead fix `final_steps=12000000000` and require null anchor
+and learned-transfer fields. `all-candidates-rejected-control` requires the full
+three-candidate rejection matrix from a provenance-complete decomposition
+screen; `confirmation-rejected-baseline` requires the exact rejected paired
+screen and its embedded selection proof. Editing any config, pin, or plan after
+first start is a terminal halt.
 
 ## Monitoring readout
 
