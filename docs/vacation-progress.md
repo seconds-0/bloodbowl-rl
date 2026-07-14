@@ -1354,3 +1354,12 @@ Post-entry verification: the next automatic timer poll fired at 13:48:26 PDT,
 again logged `primary service is still active; waiting`, exited successfully,
 created no overflow state, and scheduled its next ten-minute poll. Both the
 65-pin primary plan and 74-pin overflow plan still revalidated without drift.
+
+Additional departure audit: Windows is on High Performance with sleep and
+hibernate disabled on AC and DC. WSL has a running keepalive task with boot,
+logon, and two-minute triggers; Tailscale is enabled, online, and has no key
+expiry. A direct Windows Update search found no cumulative/feature update or
+downloaded reboot-forcing package—only the July malicious-software tool and a
+Defender definition—so update policy was left unchanged. BBTV subsequently
+selected the 599,392,256- and 699,269,120-step vacation checkpoints at matchup
+boundaries. The journal branch's hosted CI passed at commit `76ca189`.
