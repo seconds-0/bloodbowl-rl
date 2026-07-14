@@ -275,10 +275,12 @@ def implementation_identity(root: Path) -> dict[str, Any]:
         )
     files = {
         "compiled_module": module,
+        "package_init": root / "vendor/PufferLib/pufferlib/__init__.py",
         "default_config": root / "vendor/PufferLib/config/default.ini",
         "env_config": root / "vendor/PufferLib/config/bloodbowl.ini",
         "pufferl": root / "vendor/PufferLib/pufferlib/pufferl.py",
         "models": root / "vendor/PufferLib/pufferlib/models.py",
+        "selfplay": root / "vendor/PufferLib/pufferlib/selfplay.py",
         "runner": Path(__file__).resolve(),
         "screen_analyzer": root / "tools/analyze_reward_screen.py",
         "screen_transfer": root / "tools/run_reward_candidate_transfer.py",
@@ -287,8 +289,28 @@ def implementation_identity(root: Path) -> dict[str, Any]:
         "env_name": env_name,
         "gpu": int(gpu),
         "precision_bytes": int(precision),
+        "config_tree_path": str((root / "vendor/PufferLib/config").resolve()),
+        "config_tree_sha256": run_reward_candidate_transfer.tree_sha256(
+            root / "vendor/PufferLib/config"
+        ),
         **{f"{key}_path": str(path) for key, path in files.items()},
         **{f"{key}_sha256": sha256(path) for key, path in files.items()},
+    }
+
+
+def learned_contract_identity(
+    root: Path, anchor_config: dict[str, Any]
+) -> dict[str, Any]:
+    """Return every non-lineage input that must match between matrices."""
+    return {
+        "training_seeds": list(run_reward_candidate_transfer.SEEDS),
+        "orientations": [0, 1],
+        "games_per_cell": anchor_config["games_per_cell"],
+        "anchor_config": anchor_config["path"],
+        "anchor_config_sha256": anchor_config["sha256"],
+        "anchors": anchor_config["anchors"],
+        "gates": anchor_config["gates"],
+        "implementation": implementation_identity(root),
     }
 
 
@@ -311,15 +333,8 @@ def freeze_manifest(
         ],
         "reference_arm": arms[0],
         "candidate_arm": arms[1],
-        "training_seeds": list(run_reward_candidate_transfer.SEEDS),
-        "orientations": [0, 1],
-        "games_per_cell": anchor_config["games_per_cell"],
-        "anchor_config": anchor_config["path"],
-        "anchor_config_sha256": anchor_config["sha256"],
-        "anchors": anchor_config["anchors"],
+        **learned_contract_identity(root, anchor_config),
         "checkpoints": checkpoints,
-        "gates": anchor_config["gates"],
-        "implementation": implementation_identity(root),
     }
     if path.exists():
         recorded = load_object(path, "learned-transfer manifest")
@@ -387,6 +402,8 @@ def validate_cell(
             raise LearnedTransferError(
                 f"{path.name} {key}={cell.get(key)!r}, expected {value!r}"
             )
+    if cell.get("implementation") != plan.get("implementation"):
+        raise LearnedTransferError(f"{path.name} implementation identity drift")
     checkpoint = plan["checkpoints"][expected["arm"]][
         str(expected["training_seed"])
     ]
@@ -453,10 +470,12 @@ def run_cell(root: Path, plan_path: Path, cell_path: Path) -> int:
     implementation = plan["implementation"]
     for key in (
         "compiled_module",
+        "package_init",
         "default_config",
         "env_config",
         "pufferl",
         "models",
+        "selfplay",
         "runner",
         "screen_analyzer",
         "screen_transfer",
@@ -464,6 +483,13 @@ def run_cell(root: Path, plan_path: Path, cell_path: Path) -> int:
         source = Path(implementation[f"{key}_path"])
         if not source.is_file() or sha256(source) != implementation[f"{key}_sha256"]:
             raise LearnedTransferError(f"implementation drift before cell: {key}")
+    config_tree = Path(implementation["config_tree_path"])
+    if (
+        not config_tree.is_dir()
+        or run_reward_candidate_transfer.tree_sha256(config_tree)
+        != implementation["config_tree_sha256"]
+    ):
+        raise LearnedTransferError("implementation drift before cell: config_tree")
     checkpoint = plan["checkpoints"][expected["arm"]][
         str(expected["training_seed"])
     ]

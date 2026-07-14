@@ -180,6 +180,16 @@ class RewardCandidateTransferRunnerTests(unittest.TestCase):
             source,
         )
 
+    def test_scripted_launcher_uses_the_shared_implementation_identity(self):
+        launcher = (
+            Path(runner.__file__).parent / "eval_vs_contact_bot.sh"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "from run_reward_candidate_transfer import implementation_identity",
+            launcher,
+        )
+        self.assertIn("**implementation_identity(Path(root))", launcher)
+
     def test_interrupted_cell_log_is_preserved_outside_final_namespace(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

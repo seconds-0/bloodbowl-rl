@@ -58,6 +58,7 @@ class LearnedTransferTests(unittest.TestCase):
                 "orientation_mean_score_delta_min": -0.05,
                 "cell_score_delta_min": -0.10,
             },
+            "implementation": {"fixture_sha256": digest("implementation")},
             "source_screen_complete_sha256": digest("screen-complete"),
         }
         manifest = root / "LEARNED_TRANSFER_MANIFEST.json"
@@ -90,6 +91,7 @@ class LearnedTransferTests(unittest.TestCase):
                     "opponent_tds": 0.8,
                     "focal_checkpoint_sha256": checkpoint["native_sha256"],
                     "anchor_checkpoint_sha256": anchor["sha256"],
+                    "implementation": plan["implementation"],
                     "integrity": {key: 0.0 for key in learned.INTEGRITY_KEYS},
                 },
             )

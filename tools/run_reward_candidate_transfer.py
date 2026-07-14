@@ -33,6 +33,23 @@ BOT_TEAMS = (0, 1)
 EXPECTED_NATIVE_BYTES = 16_066_560
 
 
+def transfer_settings() -> dict[str, int]:
+    return {
+        "requested_train_steps": 131_072,
+        "eval_episodes": 1_000,
+        "min_eval_games": 1_000,
+    }
+
+
+def transfer_gates() -> dict[str, float]:
+    return {
+        "mean_score_delta_min": -0.02,
+        "cell_score_delta_min": -0.05,
+        "max_champion_td_relative_drop": 0.20,
+        "max_bot_td_relative_rise": 0.20,
+    }
+
+
 class RunnerError(ValueError):
     pass
 
@@ -46,6 +63,27 @@ def sha256(path: Path) -> str:
     with path.open("rb") as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
+    return digest.hexdigest()
+
+
+def tree_sha256(path: Path) -> str:
+    """Hash a runtime directory including names, sizes, and file contents."""
+    if not path.is_dir():
+        raise RunnerError(f"runtime tree is missing: {path}")
+    digest = hashlib.sha256()
+    for child in sorted(path.rglob("*")):
+        if child.is_symlink() or (not child.is_dir() and not child.is_file()):
+            raise RunnerError(f"runtime tree contains an unsupported entry: {child}")
+        if child.is_dir():
+            continue
+        relative = child.relative_to(path).as_posix()
+        size = child.stat().st_size
+        digest.update(relative.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(str(size).encode("ascii"))
+        digest.update(b"\0")
+        digest.update(sha256(child).encode("ascii"))
+        digest.update(b"\n")
     return digest.hexdigest()
 
 
@@ -211,6 +249,7 @@ def implementation_identity(root: Path) -> dict[str, str]:
         "conversion_config_sha256": sha256(
             root / "puffer/config/bloodbowl.ini"
         ),
+        "config_tree_sha256": tree_sha256(root / "vendor/PufferLib/config"),
         "default_config_sha256": sha256(
             root / "vendor/PufferLib/config/default.ini"
         ),
@@ -218,8 +257,15 @@ def implementation_identity(root: Path) -> dict[str, str]:
             root / "vendor/PufferLib/config/bloodbowl.ini"
         ),
         "compiled_module_sha256": sha256(module),
+        "package_init_sha256": sha256(
+            root / "vendor/PufferLib/pufferlib/__init__.py"
+        ),
         "pufferl_sha256": sha256(root / "vendor/PufferLib/pufferlib/pufferl.py"),
         "models_sha256": sha256(root / "vendor/PufferLib/pufferlib/models.py"),
+        "torch_pufferl_sha256": sha256(
+            root / "vendor/PufferLib/pufferlib/torch_pufferl.py"
+        ),
+        "muon_sha256": sha256(root / "vendor/PufferLib/pufferlib/muon.py"),
         "launcher_sha256": sha256(root / "tools/eval_vs_contact_bot.sh"),
     }
 
@@ -234,11 +280,32 @@ def orchestration_identity(root: Path) -> dict[str, str]:
         root / "tools/game_stats.py",
         root / "tools/contact_bot_stats.py",
         root / "training/convert_checkpoint.py",
+        root / "vendor/PufferLib/pufferlib/__init__.py",
         root / "vendor/PufferLib/pufferlib/torch_pufferl.py",
+        root / "vendor/PufferLib/pufferlib/muon.py",
         root / "vendor/PufferLib/pufferlib/models.py",
         root / "vendor/PufferLib/pufferlib/selfplay.py",
     )
     return {str(path.resolve()): sha256(path) for path in paths}
+
+
+def transfer_contract_identity(root: Path) -> dict[str, Any]:
+    """Return every non-lineage input that must match between transfers."""
+    return {
+        "seeds": list(SEEDS),
+        "bot_types": list(BOT_TYPES),
+        "bot_teams": list(BOT_TEAMS),
+        "settings": transfer_settings(),
+        "implementation": implementation_identity(root),
+        "orchestration_files": orchestration_identity(root),
+        "conversion": {
+            "converter_sha256": sha256(root / "training/convert_checkpoint.py"),
+            "config_sha256": sha256(root / "puffer/config/bloodbowl.ini"),
+            "obs_size": 2782,
+            "bias_contract": "native-to-torch zero-fills biases",
+        },
+        "gates": transfer_gates(),
+    }
 
 
 def freeze_manifest(
@@ -260,29 +327,8 @@ def freeze_manifest(
         # Remove both terms first; among one-term recipes prefer the settled-state
         # possession annuity over the outcome-priced gain event (D147/D178).
         "preference_order": preference,
-        "seeds": list(SEEDS),
-        "bot_types": list(BOT_TYPES),
-        "bot_teams": list(BOT_TEAMS),
-        "settings": {
-            "requested_train_steps": 131_072,
-            "eval_episodes": 1_000,
-            "min_eval_games": 1_000,
-        },
-        "implementation": implementation_identity(root),
-        "orchestration_files": orchestration_identity(root),
-        "conversion": {
-            "converter_sha256": sha256(root / "training/convert_checkpoint.py"),
-            "config_sha256": sha256(root / "puffer/config/bloodbowl.ini"),
-            "obs_size": 2782,
-            "bias_contract": "native-to-torch zero-fills biases",
-        },
+        **transfer_contract_identity(root),
         "checkpoints": checkpoints,
-        "gates": {
-            "mean_score_delta_min": -0.02,
-            "cell_score_delta_min": -0.05,
-            "max_champion_td_relative_drop": 0.20,
-            "max_bot_td_relative_rise": 0.20,
-        },
     }
     if path.exists():
         recorded = load_object(path, "transfer manifest")

@@ -33,6 +33,26 @@ CONFIG_KEYS = {
     "seed_perf_delta_min",
     "max_candidate_td_relative_drop",
 }
+SCRIPTED_CONTRACT_KEYS = (
+    "seeds",
+    "bot_types",
+    "bot_teams",
+    "settings",
+    "implementation",
+    "orchestration_files",
+    "conversion",
+    "gates",
+)
+LEARNED_CONTRACT_KEYS = (
+    "training_seeds",
+    "orientations",
+    "games_per_cell",
+    "anchor_config",
+    "anchor_config_sha256",
+    "anchors",
+    "gates",
+    "implementation",
+)
 
 
 class GateError(ValueError):
@@ -189,9 +209,13 @@ def validate_scripted(
         raise GateError(f"{lineage} scripted transfer uses another screen")
     if manifest.get("source_screen_sha256") != screen["manifest_sha256"]:
         raise GateError(f"{lineage} scripted transfer screen hash mismatch")
+    contract = {key: manifest.get(key) for key in SCRIPTED_CONTRACT_KEYS}
+    if any(value is None for value in contract.values()):
+        raise GateError(f"{lineage} scripted transfer contract is incomplete")
     return {
         "path": str(complete_path),
         "sha256": sha256(complete_path),
+        "contract_identity": contract,
         **evidence,
     }
 
@@ -249,6 +273,9 @@ def validate_learned(
         for name, digest in anchor_identity
     ):
         raise GateError(f"{lineage} learned transfer anchor identity is invalid")
+    contract = {key: manifest.get(key) for key in LEARNED_CONTRACT_KEYS}
+    if any(value is None for value in contract.values()):
+        raise GateError(f"{lineage} learned transfer contract is incomplete")
     return {
         "path": str(complete_path),
         "sha256": sha256(complete_path),
@@ -269,6 +296,10 @@ def validate_learned(
         "anchor_config_sha256": anchor_config_sha,
         "anchor_identity": anchor_identity,
         "gates": manifest.get("gates"),
+        "implementation": manifest.get("implementation"),
+        "training_seeds": manifest.get("training_seeds"),
+        "orientations": manifest.get("orientations"),
+        "contract_identity": contract,
     }, failures
 
 
@@ -304,14 +335,15 @@ def build_report(
             "learned_transfer": learned,
             "failures": failures,
         }
-    main_learned_contract = lineages["main"]["learned_transfer"]
-    second_learned_contract = lineages["second"]["learned_transfer"]
-    for key in (
-        "games_per_cell", "anchor_config_sha256", "anchor_identity", "gates"
-    ):
-        if main_learned_contract.get(key) != second_learned_contract.get(key):
+    for transfer_name in ("scripted_transfer", "learned_transfer"):
+        main_contract = lineages["main"][transfer_name].get("contract_identity")
+        second_contract = lineages["second"][transfer_name].get(
+            "contract_identity"
+        )
+        if main_contract != second_contract:
             raise GateError(
-                f"learned-transfer {key} differs between the two lineages"
+                f"{transfer_name.replace('_', '-')} contract differs between "
+                "the two lineages"
             )
     return {
         "schema_version": SCHEMA_VERSION,

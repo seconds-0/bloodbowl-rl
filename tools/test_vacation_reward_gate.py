@@ -16,6 +16,32 @@ def write_json(path: Path, payload: dict) -> None:
     )
 
 
+def scripted_contract() -> dict:
+    return {
+        "seeds": [42, 43],
+        "bot_types": [0, 1],
+        "bot_teams": [0, 1],
+        "settings": {"requested_train_steps": 131_072},
+        "implementation": {"compiled_module_sha256": "1" * 64},
+        "orchestration_files": {"/frozen/runner.py": "2" * 64},
+        "conversion": {"converter_sha256": "3" * 64},
+        "gates": {"mean_score_delta_min": -0.02},
+    }
+
+
+def learned_contract() -> dict:
+    return {
+        "training_seeds": [42, 43],
+        "orientations": [0, 1],
+        "games_per_cell": 4096,
+        "anchor_config": "/frozen/anchors.json",
+        "anchor_config_sha256": "c" * 64,
+        "anchors": [{"name": "league9", "sha256": "d" * 64}],
+        "gates": {"mean_score_delta_min": -0.02},
+        "implementation": {"compiled_module_sha256": "4" * 64},
+    }
+
+
 class VacationRewardGateTests(unittest.TestCase):
     def make_config(self, root: Path) -> Path:
         path = root / "GATE_CONFIG.json"
@@ -91,7 +117,11 @@ class VacationRewardGateTests(unittest.TestCase):
                 }, [])
 
             def scripted_result(path, *_args):
-                return {"path": str(path), "sha256": gate.sha256(path)}
+                return {
+                    "path": str(path),
+                    "sha256": gate.sha256(path),
+                    "contract_identity": scripted_contract(),
+                }
 
             def learned_result(path, *_args):
                 return ({
@@ -105,6 +135,7 @@ class VacationRewardGateTests(unittest.TestCase):
                     "anchor_config_sha256": "c" * 64,
                     "anchor_identity": [["league9", "d" * 64]],
                     "gates": {"mean_score_delta_min": -0.02},
+                    "contract_identity": learned_contract(),
                 }, [])
 
             with (
@@ -142,6 +173,10 @@ class VacationRewardGateTests(unittest.TestCase):
                 }, [])
 
             def learned_result(path, _screen, _config, lineage):
+                contract = learned_contract()
+                contract["anchor_config_sha256"] = (
+                    "c" if lineage == "main" else "d"
+                ) * 64
                 return ({
                     "path": str(path),
                     "sha256": gate.sha256(path),
@@ -149,16 +184,80 @@ class VacationRewardGateTests(unittest.TestCase):
                     "anchor_config_sha256": ("c" if lineage == "main" else "d") * 64,
                     "anchor_identity": [["anchor", "e" * 64]],
                     "gates": {},
+                    "contract_identity": contract,
                 }, [])
 
             with (
                 mock.patch.object(gate, "validate_screen", side_effect=screen_result),
                 mock.patch.object(
                     gate, "validate_scripted",
-                    side_effect=lambda path, *_args: {"path": str(path)},
+                    side_effect=lambda path, *_args: {
+                        "path": str(path),
+                        "contract_identity": scripted_contract(),
+                    },
                 ),
                 mock.patch.object(gate, "validate_learned", side_effect=learned_result),
-                self.assertRaisesRegex(gate.GateError, "anchor_config_sha256"),
+                self.assertRaisesRegex(gate.GateError, "learned-transfer contract"),
+            ):
+                gate.build_report(
+                    config,
+                    main_screen=paths[0],
+                    main_scripted=paths[1],
+                    main_learned=paths[2],
+                    second_screen=paths[3],
+                    second_scripted=paths[4],
+                    second_learned=paths[5],
+                )
+
+    def test_two_lineage_report_rejects_scripted_implementation_drift(self):
+        self.assert_contract_drift_rejected("scripted")
+
+    def test_two_lineage_report_rejects_learned_implementation_drift(self):
+        self.assert_contract_drift_rejected("learned")
+
+    def assert_contract_drift_rejected(self, transfer: str):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = self.make_config(root)
+            paths = [root / f"artifact-{index}.json" for index in range(6)]
+            for path in paths:
+                write_json(path, {"ok": True})
+
+            def screen_result(path, _config, lineage):
+                return ({
+                    "path": str(path),
+                    "sha256": gate.sha256(path),
+                    "manifest_sha256": ("a" if lineage == "main" else "b") * 64,
+                }, [])
+
+            def scripted_result(path, _screen, _config, lineage):
+                contract = scripted_contract()
+                if transfer == "scripted" and lineage == "second":
+                    contract["implementation"] = {
+                        "compiled_module_sha256": "9" * 64
+                    }
+                return {"path": str(path), "contract_identity": contract}
+
+            def learned_result(path, _screen, _config, lineage):
+                contract = learned_contract()
+                if transfer == "learned" and lineage == "second":
+                    contract["implementation"] = {
+                        "compiled_module_sha256": "9" * 64
+                    }
+                return ({
+                    "path": str(path),
+                    "contract_identity": contract,
+                }, [])
+
+            with (
+                mock.patch.object(gate, "validate_screen", side_effect=screen_result),
+                mock.patch.object(
+                    gate, "validate_scripted", side_effect=scripted_result
+                ),
+                mock.patch.object(gate, "validate_learned", side_effect=learned_result),
+                self.assertRaisesRegex(
+                    gate.GateError, f"{transfer}-transfer contract"
+                ),
             ):
                 gate.build_report(
                     config,

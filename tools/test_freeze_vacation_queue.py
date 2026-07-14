@@ -40,18 +40,27 @@ class FreezeVacationQueueTests(unittest.TestCase):
             scripted.parent.mkdir()
             write_json(scripted, {"complete": True})
             scripted_manifest = scripted.parent / "TRANSFER_MANIFEST.json"
+            scripted_contract = {
+                "settings": {"requested_train_steps": 131_072},
+                "implementation": {"compiled_module_sha256": "1" * 64},
+            }
             write_json(scripted_manifest, {
                 "source_screen": str(screen.parent),
                 "source_screen_sha256": "a" * 64,
+                **scripted_contract,
             })
             learned = root / "main-learned/LEARNED_TRANSFER_COMPLETE.json"
             learned.parent.mkdir()
             write_json(learned, {"complete": True})
             learned_manifest = learned.parent / "LEARNED_TRANSFER_MANIFEST.json"
             anchor_sha = freezer.sha256(anchor_config)
-            write_json(learned_manifest, {
+            learned_contract = {
                 "games_per_cell": 4096,
                 "anchor_config_sha256": anchor_sha,
+                "implementation": {"compiled_module_sha256": "2" * 64},
+            }
+            write_json(learned_manifest, {
+                **learned_contract,
             })
             spec_path = root / "VACATION_SPEC.json"
             write_json(spec_path, {
@@ -109,9 +118,66 @@ class FreezeVacationQueueTests(unittest.TestCase):
                     freezer.run_reward_learned_transfer,
                     "validate_anchor_config", return_value=anchor_record,
                 ),
+                mock.patch.object(
+                    freezer.run_reward_candidate_transfer,
+                    "transfer_contract_identity",
+                    return_value=scripted_contract,
+                ),
+                mock.patch.object(
+                    freezer.run_reward_learned_transfer,
+                    "learned_contract_identity",
+                    return_value=learned_contract,
+                ),
             ):
                 validated = freezer.validate_spec(spec_path)
                 self.assertEqual(len(validated["anchor_config_record"]["anchors"]), 4)
+                changed = dict(scripted_contract)
+                changed["implementation"] = {
+                    "compiled_module_sha256": "9" * 64
+                }
+                write_json(scripted_manifest, {
+                    "source_screen": str(screen.parent),
+                    "source_screen_sha256": "a" * 64,
+                    **changed,
+                })
+                with self.assertRaisesRegex(
+                    freezer.FreezeError, "scripted transfer differs"
+                ):
+                    freezer.validate_spec(spec_path)
+                write_json(scripted_manifest, {
+                    "source_screen": str(screen.parent),
+                    "source_screen_sha256": "a" * 64,
+                    **scripted_contract,
+                })
+                write_json(scripted_manifest, {
+                    "source_screen": str(root / "another-screen"),
+                    "source_screen_sha256": "a" * 64,
+                    **scripted_contract,
+                })
+                with self.assertRaisesRegex(
+                    freezer.FreezeError, "another paired screen"
+                ):
+                    freezer.validate_spec(spec_path)
+                write_json(scripted_manifest, {
+                    "source_screen": str(screen.parent),
+                    "source_screen_sha256": "a" * 64,
+                    **scripted_contract,
+                })
+                reviewed_sha = freezer.REVIEWED_SECOND_ANCESTRY["sha256"]
+                freezer.REVIEWED_SECOND_ANCESTRY["sha256"] = "0" * 64
+                with self.assertRaisesRegex(
+                    freezer.FreezeError, "reviewed league9"
+                ):
+                    freezer.validate_spec(spec_path)
+                freezer.REVIEWED_SECOND_ANCESTRY["sha256"] = reviewed_sha
+                second_warm.write_bytes(main_warm.read_bytes())
+                with self.assertRaisesRegex(
+                    freezer.FreezeError, "must differ"
+                ):
+                    freezer.validate_spec(spec_path)
+                with second_warm.open("wb") as handle:
+                    handle.write(b"s")
+                    handle.truncate(16_066_560)
                 anchor_record["anchors"] = anchors[:2]
                 with self.assertRaisesRegex(freezer.FreezeError, "exactly four"):
                     freezer.validate_spec(spec_path)
@@ -143,7 +209,7 @@ class FreezeVacationQueueTests(unittest.TestCase):
             patch = root / "training/test.patch"
             patch.parent.mkdir()
             patch.write_text("patch\n", encoding="utf-8")
-            write_json(screen_dir / "SCREEN_MANIFEST.json", {
+            screen_manifest = {
                 "contract": {
                     "warm": {"sha256": freezer.sha256(warm)},
                     "pool": {
@@ -161,7 +227,9 @@ class FreezeVacationQueueTests(unittest.TestCase):
                         "patches": {str(patch): freezer.sha256(patch)},
                     },
                 }
-            })
+            }
+            manifest_path = screen_dir / "SCREEN_MANIFEST.json"
+            write_json(manifest_path, screen_manifest)
             report = {
                 "screen": {
                     "profile": "paired-confirmation",
@@ -184,6 +252,43 @@ class FreezeVacationQueueTests(unittest.TestCase):
                 accepted = freezer.validate_main_screen(
                     complete, "gain_only", warm, pool, root
                 )
+                original = screen_manifest["contract"]["warm"]["sha256"]
+                screen_manifest["contract"]["warm"]["sha256"] = "0" * 64
+                write_json(manifest_path, screen_manifest)
+                with self.assertRaisesRegex(freezer.FreezeError, "main warm"):
+                    freezer.validate_main_screen(
+                        complete, "gain_only", warm, pool, root
+                    )
+                screen_manifest["contract"]["warm"]["sha256"] = original
+
+                original = screen_manifest["contract"]["pool"][
+                    "manifest_sha256"
+                ]
+                screen_manifest["contract"]["pool"]["manifest_sha256"] = (
+                    "0" * 64
+                )
+                write_json(manifest_path, screen_manifest)
+                with self.assertRaisesRegex(freezer.FreezeError, "static pool"):
+                    freezer.validate_main_screen(
+                        complete, "gain_only", warm, pool, root
+                    )
+                screen_manifest["contract"]["pool"][
+                    "manifest_sha256"
+                ] = original
+                write_json(manifest_path, screen_manifest)
+
+                for changed_path, pattern in (
+                    (module, "compiled module"),
+                    (critical, "critical vendor source"),
+                    (patch, "Puffer patch"),
+                ):
+                    original_bytes = changed_path.read_bytes()
+                    changed_path.write_bytes(original_bytes + b"drift")
+                    with self.assertRaisesRegex(freezer.FreezeError, pattern):
+                        freezer.validate_main_screen(
+                            complete, "gain_only", warm, pool, root
+                        )
+                    changed_path.write_bytes(original_bytes)
             self.assertEqual(accepted, report)
 
     def fixture(self, root: Path) -> dict:
@@ -215,6 +320,8 @@ class FreezeVacationQueueTests(unittest.TestCase):
             "vendor/PufferLib/config/bloodbowl.ini",
             "vendor/PufferLib/config/default.ini",
             "vendor/PufferLib/pufferlib/pufferl.py",
+            "vendor/PufferLib/pufferlib/__init__.py",
+            "vendor/PufferLib/pufferlib/muon.py",
             "vendor/PufferLib/pufferlib/models.py",
             "vendor/PufferLib/pufferlib/selfplay.py",
             "vendor/PufferLib/pufferlib/torch_pufferl.py",
@@ -310,6 +417,18 @@ class FreezeVacationQueueTests(unittest.TestCase):
                 (root / "runs/vacation-test/configs/FINAL_MAIN_SCREEN_CONFIG.json")
                 .read_text(encoding="utf-8")
             )
+            muon = root / "vendor/PufferLib/pufferlib/muon.py"
+            original_muon = muon.read_bytes()
+            muon.write_bytes(original_muon + b"drift")
+            self.assertIn("muon.py", experiment_queue.pinned_files_error(plan))
+            muon.write_bytes(original_muon)
+            alternate_config = root / "vendor/PufferLib/config/alt-bloodbowl.ini"
+            alternate_config.write_text("[bloodbowl]\n", encoding="utf-8")
+            self.assertIn(
+                "Puffer configuration closure",
+                experiment_queue.pinned_files_error(plan),
+            )
+            alternate_config.unlink()
 
         self.assertEqual(validated_root, root)
         self.assertEqual(len(digest), 64)
@@ -330,6 +449,12 @@ class FreezeVacationQueueTests(unittest.TestCase):
         pinned_names = {Path(pin["path"]).name for pin in plan["pinned_files"]}
         for name in ("bash", "puffer", "default.ini", "models.py"):
             self.assertIn(name, pinned_names)
+        self.assertIn("muon.py", pinned_names)
+        config_pin = next(
+            pin for pin in plan["pinned_files"]
+            if pin["path"] == str((root / "vendor/PufferLib/config").resolve())
+        )
+        self.assertEqual(config_pin["kind"], "tree")
         self.assertIn(
             str((root / "puffer/config/bloodbowl.ini").resolve()),
             {pin["path"] for pin in plan["pinned_files"]},

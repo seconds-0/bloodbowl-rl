@@ -76,8 +76,11 @@ class ExperimentContractTests(unittest.TestCase):
         self.assertNotIn("--train.eval-episodes", source)
         self.assertIn('"eval_episodes":', source)
         self.assertIn('"min_eval_games":', source)
-        self.assertIn('"pufferl_sha256":', source)
-        self.assertIn('"launcher_sha256":', source)
+        self.assertIn(
+            "from run_reward_candidate_transfer import implementation_identity",
+            source,
+        )
+        self.assertIn("**implementation_identity(Path(root))", source)
         self.assertIn("_puffer_eval_episodes_completed", source)
         self.assertIn("scripted eval sample too small", source)
 

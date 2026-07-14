@@ -23,6 +23,7 @@ from typing import Any
 import analyze_reward_candidate_transfer
 import analyze_reward_screen
 import experiment_queue
+import run_reward_candidate_transfer
 import run_reward_learned_transfer
 
 
@@ -311,6 +312,16 @@ def validate_spec(path: Path) -> dict[str, Any]:
         != screen_report["screen"]["manifest_sha256"]
     ):
         raise FreezeError("main scripted transfer uses another paired screen")
+    expected_scripted_contract = (
+        run_reward_candidate_transfer.transfer_contract_identity(root)
+    )
+    observed_scripted_contract = {
+        key: scripted_manifest.get(key) for key in expected_scripted_contract
+    }
+    if observed_scripted_contract != expected_scripted_contract:
+        raise FreezeError(
+            "main scripted transfer differs from the frozen implementation contract"
+        )
     anchor_config = run_reward_learned_transfer.validate_anchor_config(
         paths["anchor_config"]
     )
@@ -340,6 +351,16 @@ def validate_spec(path: Path) -> dict[str, Any]:
         or learned_manifest.get("anchor_config_sha256") != anchor_config["sha256"]
     ):
         raise FreezeError("main learned transfer uses another anchor contract")
+    expected_learned_contract = (
+        run_reward_learned_transfer.learned_contract_identity(root, anchor_config)
+    )
+    observed_learned_contract = {
+        key: learned_manifest.get(key) for key in expected_learned_contract
+    }
+    if observed_learned_contract != expected_learned_contract:
+        raise FreezeError(
+            "main learned transfer differs from the frozen implementation contract"
+        )
     queue_dir = root / "runs" / queue_id
     state_path = queue_dir / "QUEUE_STATE.json"
     if state_path.exists():
@@ -550,6 +571,8 @@ def freeze(spec: dict[str, Any]) -> Path:
         root / "puffer/config/rewards/r2_no_possession.json",
         root / "vendor/PufferLib/config/bloodbowl.ini",
         root / "vendor/PufferLib/config/default.ini",
+        root / "vendor/PufferLib/pufferlib/__init__.py",
+        root / "vendor/PufferLib/pufferlib/muon.py",
         root / "vendor/PufferLib/pufferlib/models.py",
         root / "vendor/PufferLib/pufferlib/pufferl.py",
         root / "vendor/PufferLib/pufferlib/selfplay.py",
@@ -593,6 +616,7 @@ def freeze(spec: dict[str, Any]) -> Path:
         )
     tree_sources = [
         (spec["pool"], "static replay/league pool"),
+        (root / "vendor/PufferLib/config", "Puffer configuration closure"),
         (spec["main_screen_complete"].parent, "main paired screen evidence"),
         (spec["main_scripted_complete"].parent, "main scripted transfer evidence"),
         (spec["main_learned_complete"].parent, "main learned transfer evidence"),
