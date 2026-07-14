@@ -940,3 +940,57 @@ Next steps:
 3. If every main gate passes, freeze the exact six-job vacation queue, execute
    interruption/recovery/downstream-stop smokes, enable/start its persistent
    service, and visibly verify BBTV before departure.
+
+## 2026-07-14 11:35 PDT
+
+Status:
+
+- The final arm 4/4 (`both`, seed 43) is running at 643.6M of the exact
+  999,948,288-step boundary. Arms 1-3 remain atomically accepted and the screen
+  manifest remains SHA-256
+  `5021875f9d7816d77b520d8616e5a9acbe419c0bcdca93bc78f2655e633380da`.
+- Arm 4 still reports zero clipping, nonfinite rewards, and engine-error
+  episodes. The screen service remains active with zero restarts and all 38
+  tasks contained in its cgroup. At the observed rate its training boundary is
+  due around 12:07 PDT, followed by final evaluation and screen publication.
+- BBTV is serving the exact arm-4 549,453,824-step checkpoint against the frozen
+  turnover3 baseline. All viewer services are active and the public endpoint
+  returned HTTP 200 with the expected page.
+
+Completed since the previous handoff:
+
+- Monitored the final arm continuously from 39.3M through 643.6M steps without
+  an integrity event, service restart, task escape, or source/input change.
+  BBTV rolled from arm 3 to arm 4 and advanced across stable manifested
+  checkpoints without reading an in-progress file.
+- Reconfirmed the three accepted result/checkpoint pairs and that no partial
+  seed-43 contrast is being routed. The decisive reference performance, atomic
+  fourth result, and `SCREEN_COMPLETE.json` still do not exist.
+- Kept the post-screen commands mechanical: independently regenerate the
+  analyzer; apply mean performance >= -0.02, every seed >= -0.05, and candidate
+  TD relative drop <= 0.20; then either stop or create the fresh scripted plan.
+- Rechecked live host margins: 966.9 GB free, 66.9M free inodes, and 10.2 GB
+  available memory. The RTX 2070 was at 81 C, 69% utilization, 5,737 MiB VRAM,
+  and 119 W with no hardware slowdown; no user unit is failed.
+
+Current blockers / risks:
+
+- The final reference arm and atomic screen completion remain mandatory. A
+  process exit, last dashboard panel, or partial reference metric is not
+  sufficient to evaluate the candidate.
+- The seed-43 reference can still make the frozen two-seed self-play gate pass
+  or fail. A rejection ends the reviewed route; it cannot be repurposed as the
+  all-candidates-rejected control fallback or an unreviewed candidate switch.
+- A passing self-play gate only permits the exact scripted and learned transfer
+  strata. Neither a passing screen nor a visually promising BBTV matchup is a
+  reward promotion.
+
+Next steps:
+
+1. Monitor arm 4 through exact training, 10,000-game final evaluation, atomic
+   result, service completion, and `SCREEN_COMPLETE.json` publication.
+2. Independently regenerate the completed paired analysis, verify every result
+   and completion hash, and apply the frozen self-play thresholds literally.
+3. On pass, immediately run the exact 16-cell scripted and 32-cell learned
+   transfers; on their pass, freeze/smoke/start the persistent vacation queue
+   and visibly verify BBTV. Stop fail-closed on any rejection or drift.
