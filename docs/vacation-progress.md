@@ -1452,3 +1452,16 @@ learner throughput remains stable, and there is no restart or learner-integrity
 signal, the evidence does not justify mutating power or clocks during a
 non-resume-safe arm. Continue trending temperature, fan, rate, and both
 software/hardware slowdown signals hourly.
+
+BBTV addendum: at 14:03:54 PDT the current two-game cycle ended and the
+follower atomically selected the newest stable checkpoint then available,
+849,084,416 steps. It correctly skipped superseded intermediate checkpoints
+instead of interrupting or replaying stale matchups. The selected run tag is
+`vacation-r0-baseline-20260714-v1-final-main-control-both-s42`, seed 42; the
+native source SHA-256 is
+`075937bd49110a9b7d406e9f031421c572850c505abcf8795cf31ffc026c9e59`,
+and the converted viewer artifact SHA-256 is
+`855b281cb8aa3e2f65d501981ac7474240d992f0b57b3f128c1260681802d943`.
+The selection manifest, conversion sidecar, and running server command agree.
+The public page returned HTTP 200, and all three BBTV services remained active
+with zero restarts after rollover.
