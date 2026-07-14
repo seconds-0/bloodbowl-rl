@@ -705,3 +705,62 @@ Next steps:
 3. If and only if the paired gate passes, run the exact scripted and frozen
    learned transfers, freeze the literal candidate queue, then execute the
    interruption/failure/resume and departure smokes before enabling it.
+
+## 2026-07-14 07:55 PDT
+
+Status:
+
+- Arm 1/4 (`both`, seed 42) is atomically accepted. It reached the exact
+  999,948,288-step boundary, completed 10,024 final-policy evaluation games,
+  and recorded `acceptance_pass=true` with no failures. Its checkpoint SHA-256
+  is `329a0d2488da832979415a4c18394845f3b77d1bf2c494a904b33d64ca829a17`;
+  its result SHA-256 is
+  `f9073bb157d06a5c39eab42e7561becdde7e1f4b49d050170e508f637b5096cd`.
+- Arm 2/4 (`neither`, seed 42) is running at 234.5M steps. Reward clipping,
+  nonfinite rewards, and engine-error episodes are still zero, the enclosing
+  service has zero restarts, and all 38 tasks remain in its cgroup.
+- BBTV has advanced to the exact arm-2 checkpoint at 199,884,800 steps against
+  the frozen turnover3 baseline. All three viewer services are active and the
+  public endpoint returned HTTP 200.
+
+Completed since the previous handoff:
+
+- Verified arm 1's final cumulative evaluation rather than inferring success
+  from trainer exit. Its accepted final metrics include performance 0.538657,
+  score differential +0.109836, and 1.266461 total touchdowns per game, with
+  zero clip, nonfinite, error, demo, and fallback counters.
+- Independently checked the accepted result, run manifest, process record,
+  status record, checkpoint byte count, and their SHA-256 links before allowing
+  the orchestrator's transition to arm 2 to count.
+- Rechecked the post-screen launch inputs. The read-only learned-anchor config
+  still hashes to
+  `ac2fcd8c27093122937510348262804647c2480bca357e8597fd81ec52b8a9c7`,
+  and the planned scripted-transfer, learned-transfer, and vacation-queue
+  destinations are all absent/free. This preserves a fail-first launch instead
+  of reusing ambiguous output.
+- Rechecked host margin: about 968 GB of disk and 10.2 GB of available memory.
+  The RTX 2070 was at 83 C, 79% utilization, 5,737 MiB VRAM, and 163 W with no
+  hardware thermal slowdown. No user service is failed.
+
+Current blockers / risks:
+
+- Three fixed arms remain. The screen has no actionable completion or paired
+  comparison until `neither42`, `neither43`, and `both43` each publish an
+  accepted result and `SCREEN_COMPLETE.json` validates all four result hashes.
+- Arm 1 alone cannot justify removing either shaping term. Even a passing
+  four-arm comparison only authorizes the predeclared scripted and learned
+  transfer gates; it does not promote a reward.
+- The screen remains deliberately non-resume-safe. A service/host interruption,
+  artifact drift, nonzero integrity counter, undersampled evaluation, or wrong
+  step boundary must stop the route rather than silently restarting it.
+
+Next steps:
+
+1. Monitor arm 2 through exact training, evaluation, and atomic acceptance,
+   then do the same for the fixed seed-43 candidate/reference pair.
+2. On a complete passing screen, run the scripted-transfer plan-only validation
+   in its fresh destination and launch the exact 16-cell restart-validating
+   matrix; preserve its literal completion and analysis hashes.
+3. If scripted transfer passes, run the exact 32-cell learned-anchor matrix from
+   the frozen config. Only then evaluate queue freezing and execute all
+   departure interruption/failure/resume smokes before persistent start.
