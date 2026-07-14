@@ -1687,3 +1687,117 @@ now changes exactly one file: 579 added lines in `docs/vacation-progress.md`.
 GitHub reports it mergeable; combined-history CI is running. This was local
 repository maintenance only and did not write the audit host, restart a
 service, or change any primary/overflow pin.
+
+## 2026-07-14 14:34 PDT
+
+Status:
+
+- The primary remains healthy on main-ancestry R0 seed 42 at 1,206,386,688
+  exact steps (epoch 9,203). The latest dashboard rate was 182K steps/second;
+  the independent 21-interval checkpoint series remains 185,315 steps/second
+  end to end. The progress sidecar was fresh at 14:33:41 PDT.
+- The latest 106-game diagnostic window reported performance 0.5613, score
+  differential 0.1415, 1.2925 touchdowns/game, possession 0.3139, historical
+  win rate 0.5595, and illegal fraction 0.2042. Engine-error, clipping,
+  non-finite reward, demo, and demo-fallback counters remained zero. This is
+  health telemetry, not final-evaluation or promotion evidence.
+- The queue, BBTV follower/server, web service, and tunnel are active with zero
+  restarts. The RTX 2070 was 81 C, 75% utilized, using 5,737 MiB at about 115 W;
+  software target capping was active and hardware slowdown inactive. Memory
+  available remains 9.4 GiB, swap use 33 MiB, and free storage 900 GiB.
+- BBTV completed its tenth vacation rollover at 14:32:52 PDT to the newest
+  available 1,148,715,008-step checkpoint. Native SHA-256 is
+  `23ac14668e46866536509722341055f6791fc41b76854a543ca068333eda941b`;
+  converted SHA-256 is
+  `b8a52d044a06f21ef06ed15a9f1e712b1603323dd73fda65625d307c6ab7fd62`.
+  The public page returns HTTP 200.
+- The overflow timer is active and waiting. Its latest invocation at 14:30:26
+  PDT was a successful primary-running no-op. The real overflow still has no
+  state. The 65 primary and 74 overflow pins revalidate; their plan hashes
+  remain `4ee72e3c58f09786cdd3bbf78a772e8de2d9a93e21a8b065cf0c5976ecced270`
+  and `d90ee01c8c459f599c8601934f545ccb7783261edae3bcb6e9e3878036d37d3e`.
+
+Completed since the previous full checkpoint:
+
+- Closed the end-to-end utilization forecast with 27 historical 10,000-game
+  evaluations. The fixed startup/evaluation intercept is about 223 seconds per
+  arm; the complete 108B primary-plus-overflow schedule projects to finish near
+  07:30 PDT on July 21, with the 72-hour per-screen caps retaining roughly
+  18--20 hours of headroom at the live sustained rate.
+- Re-audited automatic acceptance: exact final steps/checkpoints, complete
+  train/eval telemetry, at least 10,001 observed evaluation games, zero
+  integrity counters, and full manifest/hash/process containment are required
+  per seed. All three seeds must pass before a screen completes; the queue then
+  independently repeats the frozen artifact validator.
+- Proved the promotion boundary: every screen is unchanged R0 `control-final`,
+  candidate transfer is null, writable paths are confined to work outputs, the
+  completion proof cannot select a reward, and BBTV is viewer-only. No
+  unattended command can promote a checkpoint or change production.
+- Verified the public secure WebSocket with correct 849M matchup identity, a
+  complete snapshot, and advancing game deltas. Across ten rollovers, all ten
+  audited boundaries selected the newest checkpoint available; conversion adds
+  about 1.1 seconds and the deliberate two-game cycle sets freshness.
+- Aggregated about 755,000 live training games. Recent frozen-bank performance
+  improved broadly without a collapse signature, while lower touchdowns and
+  possession/higher draws remain watch items. Manifest comparison against the
+  accepted 1B R0 predecessor found only the intended 12x horizon/timeout and
+  identity changes; reward, engine, pool, model, optimizer, and rollout fields
+  are identical.
+- Quantified storage, memory, and kernel risk. The schedule projects to 42--44
+  GB against 900 GiB free; memory has 9.4 GiB available. There are no Xid, OOM,
+  filesystem/I/O, or critical thermal events. WSL feature-query warnings occur
+  only at successful process starts and are not accompanied by runtime failure.
+- Merged current `origin/main` into the journal branch. Draft PR #13 is
+  mergeable, changes only this journal relative to main, and is running CI on
+  the exact combined history.
+
+Departure-gate audit:
+
+- **Merged/deployed identity: achieved.** PR #12 primary and PR #14 overflow
+  merges, exact archive/deployment hashes, and before/after primary-pin checks
+  are preserved.
+- **Validation and recovery semantics: achieved.** Hosted/local tests, installed
+  source checks, terminal non-resume interruption, downstream halt,
+  resume-safe recovery, overflow failure/success/idempotence smokes, and real
+  primary-running no-ops are recorded.
+- **Autonomous utilization: achieved and live.** Exactly 108B reviewed R0 steps
+  across nine seed/ancestry arms fill essentially the six-day window; no dynamic
+  experiment selection exists.
+- **Provenance/fail-closed: achieved and live.** Both immutable plans and all
+  pins validate; active progress, cgroup containment, success validators,
+  runtime/progress/capacity/thermal guards, and terminal state ownership are
+  observed.
+- **BBTV visibility: achieved.** A prior headed-browser canvas verification,
+  current public HTTP/WebSocket frames, manifested hashes, and ten live
+  rollovers cover both rendered and transport paths.
+- **Host resilience/capacity: achieved at this checkpoint.** Windows sleep and
+  hibernate are disabled, WSL keepalive and linger are active, Tailscale has no
+  key expiry, pending updates do not include a downloaded reboot-forcing OS
+  package, and disk/memory/thermal/kernel guards are healthy.
+- **Promotion prohibition: achieved.** The unattended graph can collect and
+  validate evidence only; evaluation results require human interpretation after
+  return.
+- **Hourly durable reporting: achieved so far and ongoing.** The journal is
+  current, branch-synchronized, committed, pushed, and covered by draft PR CI.
+
+Current blockers / risks:
+
+- The real primary and overflow evaluations are intentionally incomplete; no
+  scientific conclusion or reward promotion can be made before their atomic
+  completion artifacts exist and validate.
+- A physical power/host/WSL interruption remains terminal for the current PPO
+  arm by design. Host hardening reduces this risk but cannot make a
+  non-resume-safe trajectory recoverable without changing the experiment.
+- The GPU operates near its 81 C target with a high fan duty cycle. Stable
+  checkpoint throughput, zero Xid, and inactive hardware slowdown argue against
+  intervention, but temperature/fan/rate remain hourly watch signals.
+
+Next steps:
+
+1. Continue hourly learner, integrity, progress-freshness, pin, service,
+   thermal, capacity, kernel, watcher, and BBTV checks through departure.
+2. Repeat the complete host/departure gate immediately before the user leaves,
+   including Windows power/update state and public BBTV transport.
+3. Leave the immutable queues and promotion boundary unchanged. At primary
+   completion, accept overflow start only after the exact completion proof and
+   idle-GPU gates pass; never manually bypass or relaunch state.
