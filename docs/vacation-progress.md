@@ -1825,3 +1825,138 @@ Event addendum:
   primary plus 74 overflow pinned inputs rehashed successfully. Draft PR #13's
   combined-history CI completed successfully; the branch remains a journal-only
   change relative to merged `main`.
+
+## 2026-07-14 15:27 PDT
+
+Status:
+
+- Main-ancestry R0 seed 42 remains healthy at 1,783,103,488 exact learner
+  steps (epoch 13,603 at the last complete machine panel). It advanced by
+  22.2M steps across the BBTV deployment window without changing trainer PID
+  `431596` or queue PID `431309`. The latest 102-game diagnostic reported
+  performance 0.4755, 1.9118 touchdowns/game, possession 0.3735, historical
+  win rate 0.5609, and illegal fraction 0.1781. Engine-error, clipping,
+  non-finite reward, demonstration, and fallback counters were all zero. The
+  panel is short-window health telemetry, not final-policy evidence.
+- The RTX 2070 was 83 C with 89% fan, 76% utilization, 5,737 MiB VRAM, about
+  116 W, and hardware slowdown inactive. Sustained checkpoint throughput and
+  the six-day completion forecast remain consistent with the prior audit.
+- The immutable primary and overflow plans revalidated immediately before and
+  after the viewer deployment: 65/65 and 74/74 pins, plan hashes
+  `4ee72e3c58f09786cdd3bbf78a772e8de2d9a93e21a8b065cf0c5976ecced270`
+  and `d90ee01c8c459f599c8601934f545ccb7783261edae3bcb6e9e3878036d37d3e`,
+  with no drift. The primary queue remains active with zero restarts. The
+  15:23:26 PDT overflow watcher was another successful primary-active no-op and
+  the overflow state remains absent.
+- BBTV now samples legal policy actions rather than taking independent greedy
+  argmax actions. It is showing the newest checkpoint available at restart,
+  step 1,747,976,192, against the same frozen turnover3 baseline. The public
+  page returned HTTP 200; a new external secure-WebSocket client received the
+  exact sampled matchup, a full snapshot, and advancing deltas through sequence
+  50. `bbstream`, `bbweb`, and `bbtv-tunnel` are active with zero restarts.
+
+Completed since the previous full checkpoint:
+
+- Observed two complete/near-complete greedy BBTV games before changing the
+  presentation mode. Both ended 0-0 but contained active movement, blocks,
+  blitzes, pickups, passes, turnovers, and rushes. One learner game made 39/39
+  rush rolls. This was useful qualitative evidence of modal behavior, but two
+  greedy games are neither an unbiased draw-rate estimate nor evidence that the
+  rush tax is wrong: training/evaluation sample the masked policy distribution,
+  and live aggregate rush volume remains near the current human reference.
+- Re-traced the shaped reward. A forward carrier square is worth +0.04 while a
+  rush declaration costs -0.015, leaving +0.025 for a successful forward
+  carrier rush; moving toward a loose ball is +0.02, leaving +0.005; a rush with
+  neither potential change pays only the cost. No reward change is justified
+  by the two displayed games.
+- Extended the longitudinal reward analysis. Relative to the first 200M steps,
+  the recent period shows broadly stronger frozen-bank match score and more
+  ball advancement, while touchdowns/possession are lower and draws are higher.
+  Per-bank expected match score improved from approximately 0.467 to 0.526
+  (league9), 0.611 to 0.645 (violence), 0.565 to 0.608 (netblock), and 0.528 to
+  0.594 (turnover3). That pattern has no bank-collapse signature, but it keeps
+  tempo/conversion as a required terminal-evaluation watch item. It also
+  reinforces the decision to collect the full nine-policy matrix and not tune
+  from stream aesthetics.
+- Implemented the viewer-only sampled-mode change test-first. The follower now
+  accepts and provenance-records `--sample`; the checked-in production launcher
+  defaults `BBTV_SAMPLE=1`, with `BBTV_SAMPLE=0` as the immediate greedy
+  rollback. Documentation explicitly classifies BBTV games as qualitative and
+  prohibits their use for reward tuning or promotion.
+- Inline review found a separate operational defect in the same follower:
+  96-character truncation changed long converted names from `_torch.bin` to
+  `_torch.b`, so the intended `*_torch.bin` pruning glob could never see them.
+  A red regression test reproduced it. The corrected label preserves both a
+  source digest and the prunable suffix within the existing 96-character bound.
+  All 14 follower tests, Bash syntax, ShellCheck, and whitespace checks passed.
+- PR #15 passed full hosted CI on its reviewed head, including reward/replay,
+  analyzer, BC-streaming, build/unit, ASan, and UBSan contracts. External Codex
+  review could not run because its local installed binary is missing; Gemini
+  stopped at interactive authentication. The review record makes no external-
+  review claim. Inline review plus both PR-head and merged-main CI were green.
+  PR #15 merged as
+  `d712d2976a40b8147db40e80ef7269a7bd14236f`; its source branch was removed.
+- Built a two-runtime-file archive directly from that merge. Archive SHA-256 is
+  `c0897a94822612702b971fa0141ac5b56dc67a571b54ac2790650b6a4e60fae7`;
+  deployed `follow_latest.py` and `run_follow_latest.sh` hashes are
+  `3560289ee7524d2e5f903fe0ae38c2a99337b2e84815b36469249fd2e25c18f5`
+  and `bfee407ee4b0100521fe50a70da7647fd24c6f50cbea9cc13e99072a237ebed0`.
+  Prior bytes are backed up at
+  `/home/rache/deployments/pr15-bbtv-backup-before-d712d297`; production records
+  commit, tree, archive, old/new hashes, and backup in
+  `.deployed-bbtv-source.json`.
+- The first provenance-record command discovered that the host lacks `jq` only
+  after the two exact files had been overlaid. `set -e` stopped before any
+  service restart. Checks proved the trainer and old viewer were still running,
+  the overlay hashes were exact, and backups existed. The record was then
+  generated and JSON-validated locally, copied atomically, and hashed before
+  proceeding. This was a deployment-tooling correction, not an experiment or
+  viewer failure.
+- Restarted only `bbstream.service`. Queue, trainer, web, and tunnel PIDs were
+  unchanged; the new follower and child command both contain `--sample`.
+  Conversion produced the corrected digest-bearing `_torch.bin` path and the
+  selected native/converted hashes are recorded in the standard sidecars. The
+  sole new kernel line was the already-classified WSL feature query 10 seconds
+  after viewer startup; there was no Xid, OOM, I/O, or hardware-slowdown event.
+
+Cache-accounting correction:
+
+- The earlier journal statement that the converted cache was already bounded
+  by 24 files was incorrect. It was the intended configuration, but the long-
+  label truncation excluded 30 learner cache entries (482,300,490 bytes) from
+  the pruning glob. There are also 26 currently recognized `_torch.bin` entries
+  (417,990,372 bytes); the active cycle has not yet reached its end-of-cycle
+  prune. The 30 legacy malformed entries are retained as derived evidence and
+  will not grow under the corrected naming path. Future recognized entries will
+  be bounded normally. At roughly 0.9 GB total against about 900 GiB free, the
+  residue does not change the capacity conclusion or justify destructive
+  cleanup during a live run. The next completed BBTV cycle will verify that the
+  recognized set returns to its configured bound.
+
+Current risks / interpretation:
+
+- Sampled BBTV is a more representative and satisfying qualitative view of the
+  policy used in training/evaluation, but it is still a tiny unpaired stream
+  with random matchups. Scorelines and individual decisions remain anecdotes;
+  only the pinned 10,000-game terminal evaluations and post-return paired matrix
+  may support reward conclusions.
+- Recent broad frozen-bank strength alongside reduced touchdown tempo remains
+  genuinely ambiguous: longer training may be learning stronger risk control,
+  or it may be settling into draw-heavy play. Historical R0 terminal snapshots
+  show the same direction, so no unattended reward mutation or promotion is
+  warranted.
+- Physical host/WSL interruption and sustained near-target GPU temperature
+  remain the principal operational risks. Current process containment,
+  throughput, pins, capacity, kernel state, and fail-closed recovery behavior
+  remain healthy.
+
+Next steps:
+
+1. At the next two-game boundary, prove sampled BBTV selects the newest stable
+   checkpoint, completes successfully, and prunes recognized cache entries to
+   the configured bound while the trainer rate remains unchanged.
+2. Continue hourly queue/progress/integrity, pins, thermal, storage/memory,
+   kernel, overflow-watcher, and public-BBTV checks through departure.
+3. Repeat the full host/departure gate before handoff. Leave both immutable
+   queues and the no-promotion boundary unchanged; terminal evidence will be
+   interpreted only after the user returns.
