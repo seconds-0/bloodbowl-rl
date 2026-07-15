@@ -4103,3 +4103,27 @@ Next: require reviewers to reproduce closure of their exact findings on
 approval plus green hosted CI. Then implement the separate legal F4 authored
 recipe and writer change; do not conflate validator infrastructure with a
 training record, action label, reward change, or deployment authorization.
+
+09:45 PDT addendum:
+
+- All three independent reviewers approved exact head
+  `4f58fd132d55b59128d05c8f2657bf1889edfca2` with no P0-P3 findings after
+  reproducing the original failures and their closure. Each rechecked local,
+  remote, and GitHub head identity before and after review; all review
+  worktrees remained clean. One reviewer additionally probed active versus
+  Distracted/No-TZ/Prone/same-team/destination-only Tackle variants and
+  confirmed suppression occurs only for an opposition Tackle player actually
+  exerting a Tackle Zone on the Dodge origin.
+- Exact-head CI run `29432825441` passed in 4m44s, including contracts,
+  optimized tests, and ASan/UBSan. PR #35 merged authoritatively to `main` as
+  `c13094d6e15e3ce561a7410901e776b92fda9601`; the remote feature branch was
+  deleted. As in prior merges, GitHub completed the merge before the local
+  cleanup step reported only that another worktree already owns `main`.
+- A clean `codex/authored-f4-recipe` branch now starts from that exact merge.
+  The next tranche is deliberately separate: legally discover and exact-replay
+  one pending non-Rush Dodge reroll recipe, add recipe-specific nested capture
+  and replay endpoints, and selectively widen only the reviewed authored
+  writer path. No state, reroll choice, result, reward, regret, action label,
+  bank artifact, training input, or live deployment was created by the
+  validator merge. The occupied 2070 checkout and both frozen queues remain
+  unchanged.
