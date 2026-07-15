@@ -73,17 +73,24 @@ static int load_one(const char* path, const bb_match* match) {
     return bbe_state_bank_n;
 }
 
-BB_TEST(state_bank_accepts_exact_replayed_authored_record) {
+static ad_recipe authored_test_recipe(void) {
     ad_recipe recipe;
     memset(&recipe, 0, sizeof recipe);
     recipe.procgen_seed = 0xA1170EEDu;
     recipe.procgen_stream = 17;
     recipe.game_seed = 0xD11CE5u;
     recipe.game_stream = 23;
+    recipe.controller_seed = 0xF300F3u;
+    recipe.controller_stream = 31;
     recipe.home_team = 0;
     recipe.away_team = 1;
     recipe.exclude_team = -1;
     recipe.procgen = bb_procgen_params_default();
+    return recipe;
+}
+
+BB_TEST(state_bank_accepts_exact_replayed_authored_record) {
+    ad_recipe recipe = authored_test_recipe();
     char error[AD_ERROR_CAP];
     BB_CHECK_EQ(ad_discover_first_team_turn(&recipe, error), 0);
     bb_match replayed;
@@ -114,6 +121,39 @@ BB_TEST(state_bank_accepts_exact_replayed_authored_record) {
         BB_CHECK(packed_action != 0);
         BB_CHECK(status != BB_STATUS_ERROR);
         BB_CHECK(dice_used >= 0 && dice_used <= AD_CONTINUATION_DICE);
+    }
+    reset_state_bank_loader(BBE_STATE_BANK_PATH);
+    BB_CHECK_EQ(remove(path), 0);
+}
+
+BB_TEST(state_bank_accepts_exact_replayed_late_second_half_record) {
+    ad_recipe recipe = authored_test_recipe();
+    char error[AD_ERROR_CAP];
+    BB_CHECK_EQ(ad_discover_f3_late_second_half(&recipe, error), 0);
+
+    char path[256];
+    snprintf(path, sizeof path, "/tmp/bloodbowl-authored-f3-%ld.bbs",
+             (long)getpid());
+    FILE* file = fopen(path, "wb");
+    BB_CHECK(file != NULL);
+    if (file == NULL) return;
+    ad_bbs_record record = {
+        0xA3000001u, (uint32_t)recipe.action_count, &recipe,
+    };
+    BB_CHECK_EQ(ad_bbs_write(file, &record, 1, error), 0);
+    BB_CHECK_EQ(fclose(file), 0);
+
+    reset_state_bank_loader(path);
+    bbe_state_bank_load();
+    BB_CHECK_EQ(bbe_state_bank_n, 1);
+    if (bbe_state_bank_n == 1) {
+        const bb_match* loaded = &bbe_state_bank[0];
+        BB_CHECK_EQ(memcmp(loaded, &recipe.captured, sizeof *loaded), 0);
+        BB_CHECK_EQ(loaded->half, 2);
+        BB_CHECK(loaded->turn[loaded->active_team] >= 5);
+        BB_CHECK_EQ(ad_verify_one_action_continuation(
+                        loaded, NULL, NULL, NULL, error),
+                    0);
     }
     reset_state_bank_loader(BBE_STATE_BANK_PATH);
     BB_CHECK_EQ(remove(path), 0);

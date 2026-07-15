@@ -229,6 +229,10 @@ changes a reward, active queue, production default, or promotion verdict.
   `docs/plans/authored-drill-state-bank.md`: initialize a real match, reach
   every capture through legal engine actions, record all actions/dice, then
   reinitialize and reproduce the raw state byte-for-byte with scripted RNG.
+  Before serialization, the writer must independently rerun discovery from the
+  recipe's configuration-only fields and require full recipe byte identity;
+  exact replay of a caller-supplied transcript alone does not prove that its
+  declared procgen, game, and controller seeds generated that transcript.
   Direct match/grid/ball/score/turn/procedure surgery is forbidden. Group
   train/dev/test by recipe template, keep paired rollout/regret diagnostics out
   of BBS/observations/rewards/BC labels, and require deterministic manifest-last

@@ -68,7 +68,10 @@ newer evidence wins.
   `docs/plans/authored-drill-state-bank.md`. Every state starts from an engine
   initializer and is reached only through legal `bb_apply` actions; discovery
   records every action/die, and exact replay must reproduce the raw match bytes
-  with `bb_rng_script`. Never construct late-game context by writing score,
+  with `bb_rng_script`. Before serialization, independently rediscover the full
+  recipe from configuration-only fields and require byte identity, binding the
+  declared procgen, game, and controller seeds to the action/dice transcript;
+  exact replay alone is not seed provenance. Never construct late-game context by writing score,
   half, turn, players, grid, ball, or procedure frames. Split by recipe-template
   group and quarantine paired counterfactual outcomes from training inputs.
   BBS1 currently admits only the shared MATCH -> TEAM_TURN boundary; nested
