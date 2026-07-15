@@ -4908,3 +4908,94 @@ Next steps:
 3. Keep sidecars, bank publication, training inputs, reward changes,
    deployment, and milestone evaluation out of scope until their separate
    contracts and terminal queue gates authorize them.
+
+## 2026-07-15 15:42 PDT — seed 43 at 5.98B; BBTV live; registry PR remains review-blocked
+
+Live queue and BBTV health:
+
+- The primary queue remains authoritative `active/running` on
+  `final-main-control`, arm `both`, seed 43/current index 2, with one completed
+  arm. `SCREEN_STATUS.json` was fresh at 15:41 PDT. Queue PID 431309, wrapper
+  PID 431316, and the sole completion-gate/GPU-compute PID 473422 remain
+  stable; the primary and three BBTV services have zero restarts. The overflow
+  service remains inactive/dead with absent state and zero restarts.
+- Exact read-only validation again matched all 65 primary pins at plan SHA-256
+  `4ee72e3c58f09786cdd3bbf78a772e8de2d9a93e21a8b065cf0c5976ecced270`
+  and all 74 overflow pins at plan SHA-256
+  `d90ee01c8c459f599c8601934f545ccb7783261edae3bcb6e9e3878036d37d3e`.
+  Both pin-error results are `None`, overflow state is absent, and the exact
+  gate reports only PID 473422.
+- The latest complete telemetry panel observed exact step 5,978,193,920 at
+  epoch 45,609 over 104 games: performance 0.533654, draw rate 0.451923,
+  possession 0.362266, illegal/sampled-repair fraction 0.178700, ball progress
+  8.035694, 12.326923 blocks thrown, 2.144231 blocks against the carrier,
+  carrier-target fraction 0.194354, Pass intentions 0.009615, and zero Hand-off
+  intentions. Reward clipping, non-finite reward, engine-error, demonstration,
+  and fallback counters remain zero. The latest rendered dashboard reported
+  183.1K SPS and roughly 9h08m remaining for this seed; both remain
+  observational rather than completion evidence.
+- The newest complete 16,066,560-byte checkpoint was exact step 5,942,804,480
+  at 15:38 PDT. Four GPU samples ranged from 81-83 C, 88-89% fan, 77-79%
+  utilization, 5,554/8,192 MiB, and 112.98-145.38 W. Software thermal slowdown
+  was active and hardware slowdown inactive in all four. Temperature remains
+  below the literal frozen 88 C three-poll guard, so no tuning was performed.
+  Disk is 7% used with 893 GiB free, inode use is 1%, memory has 9.2 GiB
+  available, and swap use is 43 MiB.
+- The 15:39 PDT overflow watcher exited successfully after logging `primary
+  service is still active; waiting`; the timer remained active/waiting for its
+  15:49 poll and created no overflow state.
+- `bbstream`, `bbweb`, and `bbtv-tunnel` remain active with zero restarts. At
+  15:32 PDT BBTV selected seed-43 checkpoint 5,842,927,616 against the frozen
+  turnover3 baseline. Learner source SHA-256 is
+  `cf726e59d16967badc6237440888be6cf62ae0c1bbc1a02f2839c4d28c8b560f`,
+  converted output SHA-256 is
+  `c6f673bf0ddc928d7cfb6cac0ea022b09106aae4568a92321d152f4cb16ca047`,
+  and `selection.json` SHA-256 is
+  `acaa00b61d61a774df875b2d456e205a42619b25953431f1340e5d525405fc33`.
+  The public page returned HTTP 200 in 0.200 seconds. A bounded public WSS client
+  received protocol-v1 hello, frozen Elven Union versus learner Orc match
+  start, a half-one snapshot at turns 3/2, and advancing deltas. BBTV remains
+  CPU-only and observational.
+
+Persistent authored identity registry:
+
+- PR #42 was opened at the initially green implementation head, but independent
+  exact-head review correctly blocked merge. The first correction moved every
+  candidate execution into a fresh digest-pinned, tokenless, networkless,
+  capability-dropped container with read-only candidate/authority mounts;
+  added public-mapper mutation evidence; wrapped `fwrite` to bind whole-batch
+  preflight; and replaced textual gateway-forwarder checks with exact Clang AST
+  structure. The full corrected local, pinned-container, and native-Linux
+  verifiers passed, including GNU interposition, while trainer PID 473422
+  remained the sole GPU owner.
+- The current draft head is `be0b3618944105eb5af15bcb4f5b7d1ad914d734`,
+  introduced as the single registry-bearing commit after a leased branch
+  rewrite; its bootstrap history proof passed `1/1`. It is not merge-ready.
+  Fresh review found additional proof gaps: arbitrary positive writer counts
+  need unconditional gateway evidence; semantic-axis mutations must remain
+  composition-valid so identity lookup, not the earlier composition gate,
+  causes rejection; early error-buffer aliases can violate the documented
+  failure-atomicity guarantee; provenance/gate failures need every family and
+  index represented; and the public identity ABI/signatures/constants must join
+  the immutable declaration authority.
+- These findings are treated as blockers despite green ordinary CI. The PR
+  remains draft, no approval from a superseded head counts, and no merge or
+  deployment has occurred. The next correction will place overlap checks before
+  every error write, add paired composition-valid axis swaps, freeze the public
+  ABI, restore all-26 single-record interposition plus complete-batch evidence,
+  broaden all-position provenance negatives, and structurally bind the writer's
+  allowed `count` uses and control flow before another exact-head review cycle.
+- Claude Code authentication remains unavailable, so Fable was not invoked and
+  no Fable approval is claimed.
+
+Next steps:
+
+1. Continue the hourly read-only operational loop, preserving every frozen
+   queue, thermal, overflow, checkpoint-selection, and BBTV boundary.
+2. Implement and independently prove every remaining PR #42 review correction,
+   regenerate immutable hashes, rerun local/container/Linux/history evidence,
+   and restart hosted CI plus all three exact-head reviews from zero.
+3. Keep PR #42 draft and keep sidecars, bank publication, training inputs,
+   reward changes, deployment, and milestone evaluation out of scope until all
+   authority findings are closed and the live queue gates separately authorize
+   later work.
