@@ -2700,3 +2700,104 @@ Post-entry review and merge verification at 23:26 PDT:
   read-only tool allowlists and structured output, then independently verify
   the result. No live queue, pinned input, service, reward, checkpoint, or
   deployed production default changed during this work.
+
+## 2026-07-14 23:58 PDT — hourly health check, headless Fable review, and BBTV handoff blocker
+
+Live experiment and autonomy state:
+
+- At 23:55 PDT `final-main-control` remained healthy at exact learner step
+  7,476,477,952 (epoch 57,040), approximately 62.3% of its 12B seed-42 run.
+  The current 105-game native train panel reported 1.5714 touchdowns/game,
+  performance 0.5667, draw rate 0.3333, possession 0.3863, historical in-pool
+  win rate 0.5918, illegal/sampled-repair fraction 0.1712, forward ball progress
+  8.638 squares, 20.505 Rush intentions, 12.695 blocks thrown, and zero pass or
+  handoff intentions. Every reward-clip, non-finite, engine-error,
+  demonstration, and fallback counter was zero.
+- Primary queue PID `431309`, screen wrapper PID `431313`, trainer wrapper PID
+  `431592`, and trainer PID `431596` remain live; the queue service is
+  active/running with zero restarts. `final-main-control` is running and
+  `final-second-control` remains pending. The current run has 150 complete
+  16,066,560-byte interval checkpoints; the newest was exact step
+  7,440,957,440 at 23:53:00 PDT. The dashboard estimated 182.3K SPS and about
+  6h54m remaining in this seed-42 arm.
+- The RTX 2070 was 81 C, 89% fan, 76% utilization, 5,737/8,192 MiB VRAM, and
+  127.75 W. Software thermal limiting remained active; hardware slowdown was
+  inactive. The reviewed plans' thermal ceiling is 88 C, sampled every 30
+  seconds with a three-poll sustained-hot guard. Disk had 897 GiB free at 7%
+  use, memory had 8.5 GiB available, and swap use was 27 MiB.
+- Primary plan SHA-256
+  `4ee72e3c58f09786cdd3bbf78a772e8de2d9a93e21a8b065cf0c5976ecced270`
+  still has all 65 pinned files and no pin error. Overflow plan SHA-256
+  `d90ee01c8c459f599c8601934f545ccb7783261edae3bcb6e9e3878036d37d3e`
+  still has all 74 pinned files and no pin error. Overflow state remains
+  absent. Its enabled timer is active/waiting; the 23:46 watcher poll exited
+  successfully after observing that the primary service is still active.
+- `bbstream`, `bbweb`, and `bbtv-tunnel` are active with zero restarts. BBTV
+  selected exact seed-42 checkpoint 7,391,019,008 at 23:52:18 PDT, source
+  SHA-256 `bef8f0c2254ce5d37767ac000bf6fe12a4d63aa8c8388875cbb2e1d8e5eb0428`,
+  against the frozen turnover3 baseline. The public page returned HTTP 200 in
+  0.250 seconds. It remains qualitative only.
+
+Headless Claude/Fable capability and independent review:
+
+- Claude Code v2.1.209 supports bounded noninteractive use through `claude -p`
+  with `--model fable`, effort, text/JSON/stream-JSON output, JSON Schema,
+  read-only `--allowedTools`, `--permission-mode dontAsk`, turn and dollar
+  limits, optional resume, and `--no-session-persistence`. The global Codex
+  memory now says to consult Fable for nontrivial scientific, plan, PR, and
+  debugging review with bounded read-only permissions, then independently
+  verify its conclusions. This is advisory, not permission to modify external
+  state.
+- Fable's six-day autonomy review returned `READY_WITH_ACTIONS`: the frozen
+  primary plus overflow budgets approximately 159 training hours for the
+  144-hour vacation, but thermal trend/ETA, the no-evaluation-until-overflow-
+  terminal rule, recovery notes, and the BBTV/GPU handoff needed explicit
+  attention. Its source-only inference that BBTV would not occupy the GPU was
+  subsequently falsified by live evidence, reinforcing the independent-
+  verification rule.
+
+Accepted D189 finding and fix status:
+
+- The exact GPU parser pinned by the overflow completion config returned
+  `[431596, 460528]`: the trainer and the current BBTV match server. Repeated
+  direct queries and the server's `/dev/dxg` descriptors confirm BBTV is a real
+  compute PID. The follower hides CUDA only for checkpoint conversion; its
+  match child inherits GPU access. Because both the primary-completion report
+  and the overflow starter's immediate recheck require an empty compute-PID
+  list, always-on GPU BBTV would strand the overflow after primary completion.
+- A spare-port probe with `CUDA_VISIBLE_DEVICES=` disappeared from the GPU PID
+  list but failed during policy construction: the isolated viewer extension is
+  compiled with `_C.gpu=1`, so PuffeRL attempted CUDA and raised `No CUDA GPUs
+  are available`. Environment hiding alone is therefore not deployable.
+- D189 records the reviewed resolution without weakening or changing either
+  queue: build a second isolated fp32 CPU viewer with `./build.sh bloodbowl
+  --cpu`; prove the exact imported `_C` path, SHA-256, `env_name=bloodbowl`,
+  `gpu=0`, and `precision_bytes=4`; hide CUDA from match children; prove both a
+  current-checkpoint and static-fallback WebSocket cycle on a private port; and
+  require the exact pinned parser to show only the trainer before restarting
+  `bbstream` alone.
+- Fable's focused design review returned `APPROVE_WITH_CHANGES`. The patch now
+  decouples the existing viewer Python environment from the new CPU source
+  tree, injects that tree only into the match child, validates the in-tree
+  native module before follower startup, and defines rollback as removing the
+  whole systemd follower override. A partial rollback to the old GPU viewer
+  while retaining CUDA hiding is explicitly forbidden. All 15 focused BBTV
+  unit tests, shell syntax, and whitespace checks pass locally. The CPU viewer
+  has not yet been built, the PR has not yet been opened, and production BBTV
+  has not been restarted; the active trainer and every pinned input remain
+  untouched.
+
+Next steps:
+
+1. Build and provenance-check the separate CPU viewer tree without modifying
+   the trainer or existing GPU viewer; run isolated latest-policy and forced-
+   fallback WebSocket probes and measure trainer SPS before/during them.
+2. Enumerate both plans' pinned paths and prove zero overlap with the explicit
+   BBTV deploy list. Finish review, open the D189 PR, require green exact-head
+   CI, merge, and deploy only the BBTV-side files from the merged archive.
+3. Restart only `bbstream` at a match boundary. Verify public HTTP/WebSocket,
+   checkpoint freshness, the exact parser showing trainer-only, unchanged
+   primary service/PIDs/progress, and byte-identical primary/overflow pins.
+4. Continue hourly durable health checks. Do not run the milestone evaluator
+   until both primary and overflow are terminal, the GPU is idle, and BBTV is
+   explicitly quiesced.
