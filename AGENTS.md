@@ -150,6 +150,10 @@ During the active vacation preparation and unattended run, append a timestamped
 status/finished-work/blockers/next-steps entry to `docs/vacation-progress.md` at
 least once per hour. The journal is an operational handoff, never scientific
 evidence in place of immutable manifests and completion artifacts.
+Use `docs/vacation-operator-runbook.md` for the read-only snapshot,
+state-to-action matrix, terminal-halt response, and return-day checklist. It
+never authorizes an in-place PPO restart, manual overflow start, or concurrent
+evaluation.
 If measured throughput leaves the GPU idle before return, the only reviewed
 extension is `tools/freeze_vacation_overflow.py`: one unchanged `control-final`
 R0 screen from the exact netblock pool-bank ancestry at `12B x seeds 42/43/44`.

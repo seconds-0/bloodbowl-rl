@@ -227,6 +227,11 @@ or allow the timer to relaunch existing state.
 A persisted queue halt is terminal across restart and reboot. Do not edit its
 state to resume it. Preserve the evidence and deploy a new reviewed queue
 ID/plan/state after diagnosis if the user-authorized experiment should continue.
+Use `docs/vacation-operator-runbook.md` for the exact read-only snapshot,
+state-to-action matrix, overflow watcher grace period, BBTV fault isolation,
+and return-day sequence. It is deliberately non-authorizing: do not improvise
+an in-place PPO restart, manual overflow start, evidence cleanup, or concurrent
+evaluation.
 
 For the active July vacation preparation/run, append an operational handoff to
 `docs/vacation-progress.md` at least hourly: timestamp, live service/job state,

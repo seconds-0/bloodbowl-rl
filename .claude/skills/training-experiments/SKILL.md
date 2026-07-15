@@ -513,6 +513,10 @@ promote a reward or production default. Use
 A persisted halt is terminal. Do not restart it in place after editing state or
 artifacts. Preserve the halted evidence and create a newly reviewed queue
 ID/plan/state if human diagnosis authorizes follow-up work.
+For the active vacation queues, follow
+`docs/vacation-operator-runbook.md` before any recovery or return-day action.
+Its state table keeps observation, watcher grace, terminal evidence, and the
+post-run idle-GPU evaluation boundary distinct.
 
 For the July vacation contract, do not hand-author the typed plan. After the
 main `1B x 2` paired screen and both transfer strata pass, use
