@@ -1066,6 +1066,10 @@ def build_cell_payload(
         "anchor_checkpoint_sha256": anchor["sha256"],
         "policy_a": policy_a,
         "policy_b": policy_b,
+        # ``run_cell`` calls verify_plan_sources before match/assembly; that
+        # re-hashes every live implementation file and the config tree against
+        # this frozen identity. Recording the plan value here therefore records
+        # the identity just observed, not an unchecked claim.
         "implementation": plan["implementation"],
         "integrity": integrity,
         "raw_env_metrics": {
