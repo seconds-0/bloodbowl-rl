@@ -2469,3 +2469,98 @@ Post-entry checkpoint-retention audit at 21:50 PDT:
   process group `431313`, persisted `running` state, and zero restarts. Future
   probes must query the user manager. This was a monitoring-command error, not
   an experiment outage or restart.
+
+## 2026-07-14 22:21 PDT — post-run milestone evaluator frozen and reviewed
+
+Live experiment and autonomy state:
+
+- At 22:20:58 PDT the first primary control arm was still healthy on seed 42 at
+  6,413,090,816 agent steps (epoch 48,927). Its latest 109-game train panel
+  reported 1.5963 touchdowns/game, performance 0.5550, draw rate 0.3945,
+  possession 0.3673, historical win rate 0.5865, illegal/sampled-repair
+  fraction 0.1724, forward ball progress 8.545 squares, 19.725 rush attempts,
+  and 12.780 blocks thrown. Reward clipping, non-finite rewards, engine errors,
+  demonstrations, and demonstration fallbacks all remain zero.
+- Queue PID `431309`, screen wrapper PID `431316`, and trainer PID `431596` are
+  unchanged; the queue and user service remain `running` with zero restarts.
+  The newest completed native checkpoint is exact step 6,392,250,368, written
+  at 22:19:06 PDT, 16,066,560 bytes. There are now 129 interval checkpoints in
+  this run directory.
+- The RTX 2070 was 81 C, 89% fan, 78% utilization, 5,737/8,192 MiB VRAM, and
+  113.6 W. Software thermal limiting was reported active, as throughout this
+  run, while hardware slowdown remained inactive. The volume has 898 GiB free
+  at 7% use, memory has 8.6 GiB available, and swap use is 27 MiB.
+- Read-only revalidation matched all 65 primary pins at plan SHA
+  `4ee72e3c58f09786cdd3bbf78a772e8de2d9a93e21a8b065cf0c5976ecced270`
+  and all 74 overflow pins at plan SHA
+  `d90ee01c8c459f599c8601934f545ccb7783261edae3bcb6e9e3878036d37d3e`.
+  Overflow state remains absent. Its enabled timer is active/waiting, and the
+  22:18 watcher invocation successfully exited after reporting that the primary
+  service was still active.
+- `bbstream`, `bbweb`, and `bbtv-tunnel` are active with zero restarts. The
+  sampled follower advanced without a restart to exact checkpoint
+  6,342,311,936, seed 42, source SHA-256
+  `17b172ccaf408cedf965a2402dc1cce4d9d674a496f77e5c5c353c14576b7706`.
+  <https://bbtv.seconds0.com/> returned HTTP 200. This remains a qualitative
+  latest-checkpoint view, not policy-selection evidence.
+
+Scientific partition correction:
+
+- The live `historical_winrate` and earlier `league9`, `violence`, `netblock`,
+  and `turnover3` summaries measure the fixed training pool. They are useful
+  longitudinal diagnostics, but they are not held-out transfer evidence. The
+  procedural training pool also used all roster identities, so a forced roster
+  grid is balanced matchup stratification rather than unseen-roster
+  generalization. The available exact learned anchors are excluded from the
+  focal milestones but remain lineage-connected checkpoints, not independent
+  external training lineages. The evaluator and report now state these limits
+  explicitly.
+- The fixed post-run Stage-A protocol is documented in
+  `docs/plans/r0-milestone-evaluation.md` and implemented by
+  `tools/run_checkpoint_milestone_eval.py`. It resolves exact retained
+  checkpoints at warm/1/2/4/6/8/10/12B for seeds 42/43/44, within a 50M-step
+  maximum gap, against the four predeclared exact learned anchors in both
+  native backend roles. Common match seeds are reused across milestones, with
+  2,048 games per cell and 393,216 games per completed ancestry. It reports raw
+  W/D/L, TD-for/against, environment metrics, zero-integrity checks, and the
+  exact 27-resample three-seed cluster bootstrap.
+- Stage B compares the exact terminal to a distinct fixed-rule nonterminal
+  nominee using scripted bots and the six-pair ordered roster grid. This is a
+  post-run characterization and early-stopping study only: no evaluator result
+  changes a reward, training queue, deployed opponent, or production default.
+
+Implementation and review state:
+
+- PR #17 (<https://github.com/seconds-0/bloodbowl-rl/pull/17>) now has exact head
+  `cd2337682671ee3326fa940273f58d5e64dc77a6`. It validates the accepted
+  `control-final` screen before freezing inputs; hashes the spec, screen
+  completion/manifest/results, run manifests, warm/milestone/anchor
+  checkpoints, native module, implementation files, and config tree; writes
+  atomic restart-validating cells; and revalidates the complete transitive
+  provenance chain before accepting completion. A shared GPU lock, idle-GPU
+  gate, and explicit BBTV-quiescence gate prevent concurrent evaluation.
+- Final self-review found and fixed three reproducibility gaps before merge:
+  anchor order is now immutable because it determines common match seeds; the
+  plateau comparator must be nonterminal and have two observed later
+  milestones, preventing a vacuous terminal-versus-terminal Stage B; and the
+  new regression module is now explicitly part of repository CI. The exact
+  local suite passes 160 tests with two platform-specific skips, plus Ruff,
+  formatting, Python compilation, and whitespace checks. Fresh GitHub CI for
+  `cd23376` is still running at this entry timestamp; PR #17 remains unmerged.
+- No evaluator code, plan, service, or artifact was deployed into the pinned RTX
+  checkout. The active primary and overflow plan snapshots were not modified.
+  The monitoring branch was advanced with the reviewed evaluator commits so it
+  cannot later propose stale reverse changes after PR #17 merges.
+
+Next steps:
+
+1. Require green CI on exact PR #17 head `cd23376`, merge it, then merge the new
+   `main` into the monitoring branch and push the journal. Do not deploy or run
+   the evaluator on the occupied RTX 2070.
+2. Continue hourly progress, integrity, checkpoint, pin, thermal, capacity,
+   overflow, BBTV-selection, and public-transport checks while the two frozen
+   primary screens run.
+3. Only after an ancestry has an exact accepted `control-final` completion and
+   the training GPU is idle, explicitly quiesce BBTV, freeze the Stage-A
+   manifest, execute/validate the paired matrix, restore the viewer, and record
+   its exact hashes. Never promote from the result automatically.
