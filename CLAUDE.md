@@ -200,13 +200,14 @@ newer evidence wins.
   revalidated `control-final` screen; resolves 0/1/2/4/6/8/10/12B native
   checkpoints by embedded step; hashes spec, implementation, results,
   checkpoints, anchors, cells, analysis, and completion; uses common match
-  seeds and both backend roles; and fails closed unless the GPU is exclusive.
+  seeds and both backend roles; and fails closed unless the GPU is exclusive
+  and the BBTV follower was explicitly quiesced.
   Static-pool metrics are in-sample, exact historical anchors are
   lineage-connected rather than independently held out, and a forced roster
   grid is stratification because training sampled every roster. Plateau
   nomination is for Stage-B compression only, never automatic selection or
   promotion. Do not deploy this tool over the pinned live audit snapshot or
-  start it while primary/overflow/BBTV owns the GPU.
+  start it while primary/overflow is live or BBTV remains active.
 
 ### Engine / rules / oracles (stable since v1)
 - PufferLib 4.0 (`vendor/PufferLib`, branch 4.0) uses `src/vecenv.h` macros — the online `env_binding.h` ABI is dead 3.0. `ocean/chess/` is the template; `ocean/convert/` is stale.

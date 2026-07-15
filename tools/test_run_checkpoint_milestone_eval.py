@@ -251,6 +251,23 @@ class MilestoneEvalTests(unittest.TestCase):
         ):
             milestone.require_idle_gpu()
 
+    def test_idle_gpu_gate_requires_bbtv_to_be_explicitly_quiesced(self):
+        with mock.patch.object(
+            milestone.subprocess,
+            "run",
+            side_effect=[
+                SimpleNamespace(returncode=0, stdout=""),
+                SimpleNamespace(
+                    returncode=0,
+                    stdout="453879 python stream_backend/follow_latest.py\n",
+                ),
+            ],
+        ):
+            with self.assertRaisesRegex(
+                milestone.MilestoneEvalError, "BBTV follower is active"
+            ):
+                milestone.require_idle_gpu()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -31,6 +31,24 @@ import run_reward_candidate_transfer
 SCHEMA_VERSION = 1
 EXPECTED_NATIVE_BYTES = 16_066_560
 CONTROL_SEEDS = (42, 43, 44)
+FIXED_TARGET_STEPS = (
+    0,
+    1_000_000_000,
+    2_000_000_000,
+    4_000_000_000,
+    6_000_000_000,
+    8_000_000_000,
+    10_000_000_000,
+    12_000_000_000,
+)
+FIXED_MAX_TARGET_GAP_STEPS = 50_000_000
+FIXED_GAMES_PER_CELL = 2_048
+FIXED_ANCHOR_SHA256 = {
+    "statmatch1": "85315d26a40f26a387ef28742b7f3306583ca73b488aae01e06c72566f5ab435",
+    "league7b": "2bf0815f506ac98e4972744903164673d40bee27b0b0c9197268b4c094fcdec1",
+    "exploiter1": "6373cfa349bab8eee133933d42b353e796d2693e4e85b5a285c999647b11771a",
+    "gen1": "62f6fcbc111e3b319ac0158358f0211e8aaf460c88f49eee86ff4639a148945a",
+}
 INTEGRITY_KEYS = (
     "reward_clip_frac",
     "reward_clip_frac_nonzero",
@@ -168,6 +186,23 @@ def validate_spec(path: Path) -> dict[str, Any]:
     )
     if screen_complete.name != "SCREEN_COMPLETE.json":
         raise MilestoneEvalError("screen completion must be SCREEN_COMPLETE.json")
+    try:
+        out_dir.relative_to(screen_complete.parent)
+    except ValueError:
+        try:
+            screen_complete.parent.relative_to(out_dir)
+        except ValueError:
+            pass
+        else:
+            raise MilestoneEvalError(
+                "out_dir must not contain the source screen artifact tree"
+            )
+    else:
+        raise MilestoneEvalError(
+            "out_dir must be separate from the source screen artifact tree"
+        )
+    if out_dir == root:
+        raise MilestoneEvalError("out_dir cannot be the checkout root")
     expected_screen_sha = need_sha(
         raw.get("screen_complete_sha256"), "screen completion SHA-256"
     )
@@ -184,16 +219,28 @@ def validate_spec(path: Path) -> dict[str, Any]:
         raise MilestoneEvalError(
             "target_steps must be unique increasing nonnegative integers starting at 0"
         )
+    if tuple(targets) != FIXED_TARGET_STEPS:
+        raise MilestoneEvalError(
+            "target_steps differ from the predeclared 0/1/2/4/6/8/10/12B protocol"
+        )
     max_gap = positive_int(raw.get("max_target_gap_steps"), "max_target_gap_steps")
+    if max_gap != FIXED_MAX_TARGET_GAP_STEPS:
+        raise MilestoneEvalError(
+            f"max_target_gap_steps must be {FIXED_MAX_TARGET_GAP_STEPS}"
+        )
     games = positive_int(raw.get("games_per_cell"), "games_per_cell")
-    if games < 1_000:
-        raise MilestoneEvalError("games_per_cell must be at least 1000")
+    if games != FIXED_GAMES_PER_CELL:
+        raise MilestoneEvalError(
+            f"games_per_cell must be the predeclared {FIXED_GAMES_PER_CELL}"
+        )
     orientations = raw.get("orientations")
     if orientations != [0, 1]:
         raise MilestoneEvalError("orientations must be exactly [0, 1]")
     anchors_raw = raw.get("anchors")
-    if not isinstance(anchors_raw, list) or len(anchors_raw) < 2:
-        raise MilestoneEvalError("at least two anchors are required")
+    if not isinstance(anchors_raw, list) or len(anchors_raw) != len(
+        FIXED_ANCHOR_SHA256
+    ):
+        raise MilestoneEvalError("the exact four predeclared anchors are required")
     anchors = []
     names: set[str] = set()
     hashes: set[str] = set()
@@ -227,6 +274,11 @@ def validate_spec(path: Path) -> dict[str, Any]:
         hashes.add(expected)
         anchors.append(
             {"name": name, "path": str(anchor), "bytes": size, "sha256": expected}
+        )
+    observed_anchors = {record["name"]: record["sha256"] for record in anchors}
+    if observed_anchors != FIXED_ANCHOR_SHA256:
+        raise MilestoneEvalError(
+            "anchor names/hashes differ from the predeclared transfer set"
         )
     return {
         "schema_version": SCHEMA_VERSION,
@@ -313,6 +365,7 @@ def implementation_identity(root: Path) -> dict[str, Any]:
         "selfplay": root / "vendor/PufferLib/pufferlib/selfplay.py",
         "runner": Path(__file__).resolve(),
         "screen_analyzer": root / "tools/analyze_reward_screen.py",
+        "tree_hasher": root / "tools/run_reward_candidate_transfer.py",
     }
     for label, path in files.items():
         if not path.is_file():
@@ -482,6 +535,19 @@ def freeze_manifest(spec: dict[str, Any]) -> dict[str, Any]:
     report, screen_manifest = source_screen(spec)
     root = Path(spec["root"])
     checkpoints = resolve_checkpoints(spec, report, screen_manifest)
+    focal_hashes = {
+        record["native_sha256"]
+        for seed_records in checkpoints.values()
+        for record in seed_records
+    }
+    overlap = sorted(
+        anchor["name"] for anchor in spec["anchors"] if anchor["sha256"] in focal_hashes
+    )
+    if overlap:
+        raise MilestoneEvalError(
+            "transfer anchors duplicate a warm/milestone checkpoint: "
+            + ", ".join(overlap)
+        )
     core = {
         "schema_version": SCHEMA_VERSION,
         "matrix_id": spec["matrix_id"],
@@ -649,6 +715,7 @@ def verify_implementation(plan: dict[str, Any]) -> None:
         "selfplay",
         "runner",
         "screen_analyzer",
+        "tree_hasher",
     ):
         path = Path(implementation[f"{key}_path"])
         if not path.is_file() or sha256(path) != implementation[f"{key}_sha256"]:
@@ -684,6 +751,26 @@ def require_idle_gpu() -> None:
         raise MilestoneEvalError(
             "evaluation GPU is not exclusive; existing compute owners: "
             + "; ".join(owners)
+        )
+    viewer = subprocess.run(
+        ["pgrep", "-af", "[f]ollow_latest.py"],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+        timeout=10,
+    )
+    if viewer.returncode not in (0, 1):
+        raise MilestoneEvalError(
+            f"cannot prove BBTV is quiescent: {viewer.stdout[-1000:]}"
+        )
+    viewer_owners = [
+        line.strip() for line in viewer.stdout.splitlines() if line.strip()
+    ]
+    if viewer_owners:
+        raise MilestoneEvalError(
+            "BBTV follower is active; pause it explicitly before evaluation: "
+            + "; ".join(viewer_owners)
         )
 
 
@@ -958,6 +1045,10 @@ def validate_completion(
     path: str | Path, expected_sha256: str | None = None
 ) -> dict[str, Any]:
     path = Path(path).expanduser().resolve()
+    if path.name != "MILESTONE_EVAL_COMPLETE.json":
+        raise MilestoneEvalError(
+            "completion must be named MILESTONE_EVAL_COMPLETE.json"
+        )
     if expected_sha256 is not None and sha256(path) != need_sha(
         expected_sha256, "expected milestone completion SHA-256"
     ):
@@ -976,6 +1067,8 @@ def validate_completion(
         "milestone_eval_manifest_sha256"
     ):
         raise MilestoneEvalError("milestone manifest hash chain is invalid")
+    if completion.get("screen_complete_sha256") != report["screen_complete_sha256"]:
+        raise MilestoneEvalError("milestone source-screen hash chain is invalid")
     expected_cells_chain = [
         {"file": row["file"], "sha256": row["file_sha256"]} for row in report["runs"]
     ]

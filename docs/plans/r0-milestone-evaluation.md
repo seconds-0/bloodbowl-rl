@@ -189,9 +189,10 @@ The runner must:
    cell whose identity, implementation, checkpoint, game count, or integrity
    fields differ;
 6. hold the shared reward/evaluation GPU lock, bound each cell runtime, publish
-   atomic progress, and require an exclusive evaluation GPU gate. If a training
-   queue or BBTV match process still owns the GPU, remain pending and do not
-   stop it implicitly;
+   atomic progress, and require an exclusive evaluation GPU gate. The BBTV
+   follower must be explicitly quiesced first so it cannot start a new match
+   after an idle-PID check. If a training queue, other compute process, or BBTV
+   follower remains active, stay pending and do not stop it implicitly;
 7. write an analysis plus completion proof chaining the manifest and every
    cell SHA-256;
 8. make no automatic reward, checkpoint, production, or queue change.
