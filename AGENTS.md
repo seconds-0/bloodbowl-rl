@@ -193,10 +193,11 @@ changes a reward, active queue, production default, or promotion verdict.
   joined records. See `runs/replay-audit-20260713/`.
 - Never mix BB2020 records into BB2025 training or evaluation.
 - A BBS1 match-size/fingerprint match proves build compatibility, not record
-  integrity. Preserve `bbe_state_bank_match_valid`: before a demo record can
-  enter reset selection it must have bounded procedure/team/enum indices,
-  bidirectionally consistent grid/player coordinates, and a valid ball state.
-  New bank writers and readers must fail closed on malformed raw snapshots.
+  integrity. Preserve the engine-owned `bb_state_bank_boundary_valid` shared by
+  writers, readers, and scanners: before a demo record can enter reset
+  selection it must have bounded procedure/team/enum indices, bidirectionally
+  consistent grid/player coordinates, and a valid ball state. New bank writers
+  and readers must fail closed on malformed raw snapshots.
 - The historical BBS state bank is mixed by source replay: 123 of 15,471
   records come from 42 BB2020 replay IDs. Before any future replay-state
   scenario/curriculum, run `tools/filter_state_bank.py` with the pinned mixed-
@@ -222,6 +223,17 @@ changes a reward, active queue, production default, or promotion verdict.
   infer unseen continuation quality from a turn-start snapshot, or turn the
   coverage report into a sampler/training input without a separate reviewed
   contract.
+- Authored drill states must follow
+  `docs/plans/authored-drill-state-bank.md`: initialize a real match, reach
+  every capture through legal engine actions, record all actions/dice, then
+  reinitialize and reproduce the raw state byte-for-byte with scripted RNG.
+  Direct match/grid/ball/score/turn/procedure surgery is forbidden. Group
+  train/dev/test by recipe template, keep paired rollout/regret diagnostics out
+  of BBS/observations/rewards/BC labels, and require deterministic manifest-last
+  publication plus loader and one-action continuation validation.
+  The current shared BBS1 validator admits only the exact MATCH -> TEAM_TURN
+  boundary; do not widen it to arbitrary decision states. Target/reroll drills
+  require an explicit shared validator for every resumable frame first.
 - The corpus is sharply prefix-censored: it is not sufficient by itself for
   second halves, late drives, stalling, comeback play, or rare actions.
 - Correct BB2025 human possession is about `0.474` on genuine team-turn

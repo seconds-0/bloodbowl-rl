@@ -1392,8 +1392,9 @@ void (*bbe_feed_hook)(const Bloodbowl* env, int kind, int a, int b) = 0;
 // validation/build_state_bank.py, staged by tools/install_puffer_env.sh.
 // Missing file = curriculum silently off (the chess pattern); a header that
 // fails the match_size/fingerprint guards is reported and ignored — training
-// on stale-engine states would be silent corruption. Only BB_STATUS_DECISION
-// records are kept (resumable by definition).
+// on stale-engine states would be silent corruption. BBS1 currently accepts
+// only the shared, structurally validated MATCH -> TEAM_TURN boundary; nested
+// procedure decisions require a future explicit validator before admission.
 #define BBE_STATE_BANK_PATH "resources/bloodbowl/state_bank.bbs"
 #define BBE_STATE_BANK_REC_META 12 // replay_id u32, cmd u32, half, turn, pad[2]
 
@@ -1405,70 +1406,6 @@ static int bbe_state_bank_tried = 0;
 static uint32_t bbe_le32(const uint8_t* b) {
     return (uint32_t)b[0] | ((uint32_t)b[1] << 8) | ((uint32_t)b[2] << 16) |
            ((uint32_t)b[3] << 24);
-}
-
-// BBS1's fingerprint rejects snapshots from a different engine build, but it
-// does not authenticate each raw bb_match record. Reject index-bearing bytes
-// that reset, observation encoding, reward pricing, or procedure dispatch may
-// dereference before a banked state reaches those paths. This is structural
-// validation for trusted, locally built banks, not a general wire format.
-static int bbe_state_bank_match_valid(const bb_match* match) {
-    if (match->status != BB_STATUS_DECISION || match->stack_top == 0 ||
-        match->stack_top > BB_STACK_MAX ||
-        match->team_id[0] >= BB_TEAM_COUNT ||
-        match->team_id[1] >= BB_TEAM_COUNT ||
-        match->active_team > BB_AWAY || match->kicking_team > BB_AWAY ||
-        match->decision_team > BB_AWAY ||
-        match->weather > BB_WEATHER_BLIZZARD) {
-        return 0;
-    }
-
-    for (int depth = 0; depth < match->stack_top; depth++) {
-        if (match->stack[depth].proc <= BB_PROC_NONE ||
-            match->stack[depth].proc >= BB_PROC_COUNT) {
-            return 0;
-        }
-    }
-
-    for (int slot = 0; slot < BB_NUM_PLAYERS; slot++) {
-        const bb_player* player = &match->players[slot];
-        if (player->position_id >= BB_MAX_POSITIONS ||
-            player->location > BB_LOC_ABSENT ||
-            player->stance > BB_STANCE_STUNNED_USED) {
-            return 0;
-        }
-        if (player->location == BB_LOC_ON_PITCH &&
-            (!bb_on_pitch_xy(player->x, player->y) ||
-             match->grid[player->x][player->y] != slot + 1)) {
-            return 0;
-        }
-    }
-
-    for (int x = 0; x < BB_PITCH_LEN; x++) {
-        for (int y = 0; y < BB_PITCH_WID; y++) {
-            uint8_t value = match->grid[x][y];
-            if (value == 0) continue;
-            int slot = value - 1;
-            if (slot >= BB_NUM_PLAYERS ||
-                match->players[slot].location != BB_LOC_ON_PITCH ||
-                match->players[slot].x != x ||
-                match->players[slot].y != y) {
-                return 0;
-            }
-        }
-    }
-
-    if (match->ball.state > BB_BALL_IN_AIR) return 0;
-    if (match->ball.state == BB_BALL_ON_GROUND &&
-        !bb_on_pitch_xy(match->ball.x, match->ball.y)) {
-        return 0;
-    }
-    if (match->ball.state == BB_BALL_HELD &&
-        (match->ball.carrier >= BB_NUM_PLAYERS ||
-         match->players[match->ball.carrier].location != BB_LOC_ON_PITCH)) {
-        return 0;
-    }
-    return 1;
 }
 
 // Load the bank once. Call sites: the binding's init entry points (before
@@ -1506,15 +1443,32 @@ static void bbe_state_bank_load(void) {
         fclose(f);
         return;
     }
+    if ((uint64_t)n > SIZE_MAX / sizeof(bb_match)) {
+        fclose(f);
+        return;
+    }
     bb_match* bank = (bb_match*)malloc((size_t)n * sizeof(bb_match));
+    if (bank == NULL) {
+        fclose(f);
+        return;
+    }
     int kept = 0;
     for (long i = 0; i < n; i++) {
-        if (fseek(f, 16 + i * (long)rec_len + BBE_STATE_BANK_REC_META,
-                  SEEK_SET) != 0 ||
+        uint8_t metadata[BBE_STATE_BANK_REC_META];
+        if (fseek(f, 16 + i * (long)rec_len, SEEK_SET) != 0 ||
+            fread(metadata, 1, sizeof metadata, f) != sizeof metadata ||
             fread(&bank[kept], sizeof(bb_match), 1, f) != 1) {
             break;
         }
-        kept += bbe_state_bank_match_valid(&bank[kept]);
+        const bb_match* match = &bank[kept];
+        uint8_t half = metadata[8];
+        uint8_t turn = metadata[9];
+        int metadata_valid = bbe_le32(metadata) != 0 &&
+            metadata[10] == 0 && metadata[11] == 0 &&
+            half >= 1 && half <= 3 && turn >= 1 && turn <= 8 &&
+            match->half == half && match->active_team <= BB_AWAY &&
+            match->turn[match->active_team] == turn;
+        kept += metadata_valid && bb_state_bank_boundary_valid(match);
     }
     fclose(f);
     if (kept == 0) {
