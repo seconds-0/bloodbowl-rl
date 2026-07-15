@@ -2372,3 +2372,71 @@ Post-entry verification at 21:38 PDT:
   `_torch.bin`. A fresh public WSS connection received that exact new matchup,
   a full snapshot, and advancing deltas. The viewer correction is therefore
   closed; routine hourly monitoring continues.
+
+## 2026-07-14 21:46 PDT — fixed 6B longitudinal reward snapshot
+
+Evidence and live state:
+
+- Preserved an append-only copy immediately after the first learner crossed 6B:
+  `/home/rache/deployments/vacation-r0-main-seed42-6b-20260714.log`,
+  431,525,243 bytes, SHA-256
+  `7fa83012f4bc9f0beb5a74d3cf7c3ea8618b93259d339ae865ee3f9246c17b5f`.
+  The Mac copy is byte-identical. Its last complete schema-2 panel is exact step
+  6,005,587,968. Analysis used 45,815 independent train panels and 4,821,395
+  completed kickoff episodes; startup and non-game panels were excluded.
+- Across that frozen prefix, episode-weighted totals for clipped rewards,
+  non-finite rewards, engine errors, demonstrations, and demonstration
+  fallbacks are all zero.
+- Live training continued through the snapshot/copy and is now at 6,023,806,976
+  steps. Queue PID `431309` is unchanged with zero restarts. GPU is 83 C, 89%
+  fan, 81% utilization, 5,737 MiB VRAM, and hardware slowdown is inactive.
+
+First-versus-recent 200M episode-weighted diagnostics:
+
+| Metric | First 200M | Recent 200M |
+|---|---:|---:|
+| In-panel performance | 0.5232 | 0.5491 |
+| Touchdowns/game | 1.3520 | 1.4965 |
+| Draw rate | 0.4133 | 0.4063 |
+| Possession | 0.3295 | 0.3724 |
+| Illegal/sampled-repair fraction | 0.2204 | 0.1802 |
+| Forward ball squares | 7.452 | 8.462 |
+| Pickup successes | 2.087 | 2.708 |
+| Rush attempts | 16.699 | 19.758 |
+| Blocks thrown | 15.277 | 12.994 |
+| 2D-red fraction | 0.0371 | 0.0438 |
+| Blocks against carrier | 1.178 | 2.087 |
+| Carrier knockdowns | 1.630 | 2.536 |
+| Decisions/game | 702.2 | 630.7 |
+| Recomputed fixed-bank score | 0.5399 | 0.6134 |
+
+The fixed-bank score improved in every bank over the same comparison:
+league9 `0.4668 -> 0.5403`, violence `0.6107 -> 0.6766`, netblock
+`0.5645 -> 0.6325`, and turnover3 `0.5279 -> 0.6126`.
+
+One-billion-step bands show why no single live panel or newest checkpoint is a
+safe selector:
+
+| Band | TD/game | Possession | Illegal frac | Ball forward | Fixed-bank score |
+|---|---:|---:|---:|---:|---:|
+| 0--1B | 1.3388 | 0.3291 | 0.2085 | 8.345 | 0.5563 |
+| 1--2B | 1.5097 | 0.3408 | 0.1984 | 8.982 | 0.5592 |
+| 2--3B | 1.5888 | 0.3600 | 0.1905 | 8.710 | 0.5642 |
+| 3--4B | 1.5388 | 0.3655 | 0.1789 | 8.588 | 0.5952 |
+| 4--5B | 1.5533 | 0.3687 | 0.1774 | 8.760 | 0.6046 |
+| 5--6B | 1.5109 | 0.3680 | 0.1797 | 8.482 | 0.6231 |
+
+Interpretation and next steps:
+
+- There is no current reward-collapse signature: in-sample fixed-bank score
+  rises across all six 1B bands and all four banks, action repair improves, and
+  the ball is carried forward more efficiently than in the opening window.
+- The trajectory is nevertheless non-monotonic. TD rate peaked in the 2--3B
+  band, ball advancement peaked in 1--2B, and recent decisions/game rose from
+  the 3--4B minimum while possession, pickup success, and carrier contact kept
+  increasing. This could be useful strength, a style shift, or in-pool
+  specialization; training-bank evidence cannot distinguish them.
+- Preserve the fixed intermediate checkpoints and terminal checkpoint. After
+  the run, compare milestones with paired, mirrored, kickoff-only held-out
+  evaluation across opponents/rosters. Do not select from this curve, BBTV, or
+  human-stat proximity, and do not mutate the reward during the vacation.
