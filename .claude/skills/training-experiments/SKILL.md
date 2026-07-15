@@ -11,7 +11,7 @@ retune from aesthetics, training curves, or human-looking behavior. Change one
 declared factor through a frozen experiment, validate on match utility and held-out
 transfer, and write every accepted finding to `DECISIONS.md`.**
 
-State as of 2026-07-14 (reward/replay audit active, ledger through D186).
+State as of 2026-07-14 (reward/replay audit active, ledger through D187).
 Always read `AGENTS.md`, the tail of `DECISIONS.md`, and
 `docs/reward-and-replay-audit-2026-07-09.md` first. Newer ledger entries and
 immutable result artifacts supersede older sections of this skill.
@@ -333,11 +333,11 @@ See §4. Check the invariants before every reward-config launch. No exceptions.
 
 ## 7. DECISIONS.md ledger discipline
 
-The ledger is at `DECISIONS.md` (through D186 as of 2026-07-14). It is the
-program's chronological memory. D177–D186 cover the reward screen, transfer,
+The ledger is at `DECISIONS.md` (through D187 as of 2026-07-14). It is the
+program's chronological memory. D177–D187 cover the reward screen, transfer,
 replay corpus, streaming loader, rejected partial-deployment run, corrected
-confirmation, and fail-closed vacation routes that supersede this skill's June
-snapshots.
+confirmation, fail-closed vacation routes, and frozen 6B learning-curve verdict
+that supersede this skill's June snapshots.
 
 - **EVERY finding gets an atomic entry. No exceptions.** One decision/finding per
   entry, numbered D{n+1}, dated. If your write-up needs "and" between two findings,
@@ -557,6 +557,15 @@ requires primary-service inactivity, unchanged pins, no existing overflow state,
 and no GPU compute PID. It cannot run after primary failure/halt/drift, relaunch
 an interrupted PPO screen, choose a reward, or change production.
 
+D187 freezes the interpretation of the first seed-42 6B curve. Improvement
+against the four static banks is in-pool and non-monotonic, not a newest-policy
+selector. The same curve shows more carrier-focused risk, persistent Rush use
+despite its tax, and near-absent pass/handoff actions; human frequencies remain
+canaries, not objectives. Use the fixed paired milestone protocol after an
+accepted screen. Future causal priorities are gamma-corrected distance/anneal,
+the declared no-rush A/B, replay-derived rare-action scenarios, and a
+per-component emitted-reward ledger before mechanism-dominance claims.
+
 Vacation screen jobs must invoke `tools/run_frozen_reward_screen.py`, which sets
 `ARM_DETACH=0`. The queue creates a new session for each job, and every screen,
 arm wrapper, trainer, and descendant must remain in that process group so its
@@ -582,7 +591,7 @@ production default.
 
 ## 12. Session checklist
 
-Before doing anything: read `AGENTS.md`, D177–D186 and the ledger tail; discover
+Before doing anything: read `AGENTS.md`, D177–D187 and the ledger tail; discover
 live Tailscale/Vast state and processes; confirm the intended checkout is not the
 production checkout. Before launch: verify obs size, install drift, imported
 module/provenance, disk, complete reward manifest, opponent/data hashes, seeds,
