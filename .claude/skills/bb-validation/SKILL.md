@@ -150,6 +150,15 @@ re-derive by hand; (b) RNG misuse (reuse/bias) — check `bb_rng` consumption co
     on non-axis recipes. Treat the quota validator as structural coverage only:
     the authored writer must still preflight full provenance, byte-exact replay,
     raw-snapshot admission, and one-action continuation before byte zero.
+    For the exact F2 Hand-off target-count axis, require one fresh-boundary
+    record for each Home/Away active-side orientation crossed with exactly one
+    or two-or-more legal catch-capable targets, exactly four total. Count only
+    after full raw-boundary validation and a private legal zero-die
+    `ACTIVATE -> DECLARE HAND-OFF` probe; do not count a rules-legal No Ball
+    target that cannot attempt the Catch, and do not relabel two-or-more as
+    exactly two. Store both side and bucket in the recipe and independently
+    rediscover them. This quota proves opportunity structure, not that Hand-off
+    or any receiver is a correct policy label.
 
 **Failure looks like:** shrunken minimal action trace + seed reproducing the violation.
 **Triage:** replay the shrunken trace under a debugger; the violated invariant names

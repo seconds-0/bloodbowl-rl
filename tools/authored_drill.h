@@ -15,6 +15,15 @@
 #define AD_F3_SECOND_HALF_TURN_COUNT 8
 #define AD_F3_SECOND_HALF_AXIS_COUNT \
     ((BB_AWAY + 1) * AD_F3_SECOND_HALF_TURN_COUNT)
+#define AD_F2_HANDOFF_TARGET_BUCKET_COUNT 2
+#define AD_F2_HANDOFF_TARGET_AXIS_COUNT \
+    ((BB_AWAY + 1) * AD_F2_HANDOFF_TARGET_BUCKET_COUNT)
+
+typedef enum {
+    AD_F2_TARGET_COUNT_NONE = 0,
+    AD_F2_TARGET_COUNT_EXACTLY_ONE,
+    AD_F2_TARGET_COUNT_TWO_OR_MORE,
+} ad_f2_target_count_bucket;
 
 typedef enum {
     AD_RECIPE_FIRST_TEAM_TURN = 0,
@@ -24,6 +33,7 @@ typedef enum {
     AD_RECIPE_F5_SCORE_OR_WAIT,
     AD_RECIPE_F4_PENDING_DODGE_REROLL,
     AD_RECIPE_F3_EXACT_SECOND_HALF_TURN,
+    AD_RECIPE_F2_EXACT_HANDOFF_TARGET_COUNT,
     AD_RECIPE_KIND_COUNT,
 } ad_recipe_kind;
 
@@ -35,10 +45,12 @@ typedef struct {
     uint64_t controller_seed;
     uint64_t controller_stream;
     ad_recipe_kind kind;
-    // Configured only for AD_RECIPE_F3_EXACT_SECOND_HALF_TURN. Keeping these
-    // inside the recipe binds the requested axis cell through rediscovery.
+    // Axis requests live inside the recipe so independent rediscovery binds
+    // the requested cell. capture_turn is F3-only; active team is used by F3
+    // and exact F2; the target bucket is exact-F2-only.
     int capture_turn;
     int capture_active_team;
+    ad_f2_target_count_bucket capture_handoff_target_bucket;
     int home_team;
     int away_team;
     int exclude_team;
@@ -101,11 +113,27 @@ int ad_discover_f1_pass_opportunity(ad_recipe* recipe,
 // die. A No Ball target may be rules-legal but does not satisfy this proof.
 int ad_f2_handoff_opportunity_valid(const bb_match* match);
 
+// Return the number of legal catch-capable team-mate targets reached through
+// a private, zero-die ACTIVATE -> DECLARE HAND-OFF probe. Return zero for a
+// malformed boundary or no qualifying target. The input is never modified.
+int ad_f2_handoff_target_count(const bb_match* match);
+
 // Play only legal engine actions until the F2 predicate above is true. The
 // nested activation/declaration/target frames are privately probed, not stored;
 // the captured BBS state remains the supported fresh team-turn boundary.
 int ad_discover_f2_handoff_opportunity(ad_recipe* recipe,
                                        char error[AD_ERROR_CAP]);
+
+// Reach an exact active-side/target-count bucket at a supported fresh team-turn
+// boundary. TWO_OR_MORE is deliberately a bucket, not an exact count of two.
+int ad_discover_f2_handoff_target_count(
+    ad_recipe* recipe, int active_team, ad_f2_target_count_bucket bucket,
+    char error[AD_ERROR_CAP]);
+
+// Require exactly one structurally valid recipe for every Home/Away x
+// exactly-one/two-or-more Hand-off target-count cell.
+int ad_validate_f2_handoff_target_count_axis(
+    const ad_recipe* recipes, size_t count, char error[AD_ERROR_CAP]);
 
 // Purely validate that a supported fresh team-turn state has an unused
 // active-team carrier that can score without dice under the engine's BB2025

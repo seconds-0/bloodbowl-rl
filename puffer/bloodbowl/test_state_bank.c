@@ -367,6 +367,95 @@ BB_TEST(state_bank_accepts_exact_replayed_handoff_opportunity_record) {
     BB_CHECK_EQ(remove(path), 0);
 }
 
+BB_TEST(state_bank_accepts_complete_f2_handoff_target_count_axis) {
+    static const uint64_t
+        controller_seed[BB_AWAY + 1][AD_F2_HANDOFF_TARGET_BUCKET_COUNT] = {
+        {4, 2},
+        {8, 13},
+    };
+    const size_t count = AD_F2_HANDOFF_TARGET_AXIS_COUNT;
+    ad_recipe* recipes = calloc(count, sizeof(*recipes));
+    BB_CHECK(recipes != NULL);
+    if (recipes == NULL) return;
+    ad_bbs_record records[AD_F2_HANDOFF_TARGET_AXIS_COUNT];
+    char error[AD_ERROR_CAP];
+
+    size_t index = 0;
+    for (int team = BB_HOME; team <= BB_AWAY; team++) {
+        for (int bucket = AD_F2_TARGET_COUNT_EXACTLY_ONE;
+             bucket <= AD_F2_TARGET_COUNT_TWO_OR_MORE; bucket++) {
+            ad_recipe* recipe = &recipes[index];
+            *recipe = authored_test_recipe();
+            recipe->controller_seed = controller_seed[team][bucket - 1];
+            BB_CHECK_EQ(ad_discover_f2_handoff_target_count(
+                            recipe, team, bucket, error),
+                        0);
+            records[index] = (ad_bbs_record){
+                0xA2000100u + (uint32_t)index,
+                (uint32_t)recipe->action_count,
+                recipe,
+            };
+            index++;
+        }
+    }
+    BB_CHECK_EQ(index, count);
+    BB_CHECK_EQ(ad_validate_f2_handoff_target_count_axis(
+                    recipes, count, error),
+                0);
+
+    char path[256];
+    snprintf(path, sizeof path, "/tmp/bloodbowl-authored-f2-axis-%ld.bbs",
+             (long)getpid());
+    FILE* file = fopen(path, "wb");
+    BB_CHECK(file != NULL);
+    if (file == NULL) {
+        free(recipes);
+        return;
+    }
+    BB_CHECK_EQ(ad_bbs_write(file, records, count, error), 0);
+    BB_CHECK_EQ(fclose(file), 0);
+
+    reset_state_bank_loader(path);
+    bbe_state_bank_load();
+    BB_CHECK_EQ(bbe_state_bank_n, count);
+    if (bbe_state_bank_n == (int)count) {
+        unsigned char
+            seen[BB_AWAY + 1][AD_F2_HANDOFF_TARGET_BUCKET_COUNT] = {{0}};
+        for (size_t i = 0; i < count; i++) {
+            const bb_match* loaded = &bbe_state_bank[i];
+            const ad_recipe* recipe = &recipes[i];
+            BB_CHECK_EQ(memcmp(loaded, &recipe->captured, sizeof *loaded), 0);
+            BB_CHECK(bb_state_bank_boundary_valid(loaded));
+            BB_CHECK_EQ(loaded->active_team, recipe->capture_active_team);
+            int target_count = ad_f2_handoff_target_count(loaded);
+            int bucket = target_count == 1
+                ? AD_F2_TARGET_COUNT_EXACTLY_ONE
+                : AD_F2_TARGET_COUNT_TWO_OR_MORE;
+            BB_CHECK(target_count > 0);
+            BB_CHECK_EQ(bucket, recipe->capture_handoff_target_bucket);
+            int team = loaded->active_team;
+            if (team >= BB_HOME && team <= BB_AWAY &&
+                bucket >= AD_F2_TARGET_COUNT_EXACTLY_ONE &&
+                bucket <= AD_F2_TARGET_COUNT_TWO_OR_MORE) {
+                seen[team][bucket - 1]++;
+            }
+            BB_CHECK_EQ(ad_verify_one_action_continuation(
+                            loaded, NULL, NULL, NULL, error),
+                        0);
+        }
+        for (int team = BB_HOME; team <= BB_AWAY; team++) {
+            for (int bucket_index = 0;
+                 bucket_index < AD_F2_HANDOFF_TARGET_BUCKET_COUNT;
+                 bucket_index++) {
+                BB_CHECK_EQ(seen[team][bucket_index], 1);
+            }
+        }
+    }
+    reset_state_bank_loader(BBE_STATE_BANK_PATH);
+    BB_CHECK_EQ(remove(path), 0);
+    free(recipes);
+}
+
 BB_TEST(state_bank_accepts_exact_replayed_score_or_stall_record) {
     ad_recipe recipe = authored_f5_test_recipe();
     char error[AD_ERROR_CAP];

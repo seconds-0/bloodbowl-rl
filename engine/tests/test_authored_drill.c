@@ -705,6 +705,240 @@ BB_TEST(authored_drill_f2_reaches_real_handoff_opportunity) {
     BB_CHECK(!ad_f2_handoff_opportunity_valid(&no_handoff.captured));
 }
 
+BB_TEST(authored_drill_f2_target_count_axis_is_complete) {
+    static const uint64_t
+        controller_seed[BB_AWAY + 1][AD_F2_HANDOFF_TARGET_BUCKET_COUNT] = {
+        {4, 2},
+        {8, 13},
+    };
+    static const int
+        expected_actions[BB_AWAY + 1][AD_F2_HANDOFF_TARGET_BUCKET_COUNT] = {
+        {202, 27},
+        {27, 27},
+    };
+    static const int
+        expected_dice[BB_AWAY + 1][AD_F2_HANDOFF_TARGET_BUCKET_COUNT] = {
+        {62, 9},
+        {10, 10},
+    };
+    const size_t expected_count = AD_F2_HANDOFF_TARGET_AXIS_COUNT;
+    ad_recipe* recipes = calloc(expected_count, sizeof(*recipes));
+    BB_CHECK(recipes != NULL);
+    if (recipes == NULL) return;
+    char error[AD_ERROR_CAP];
+
+    size_t index = 0;
+    for (int team = BB_HOME; team <= BB_AWAY; team++) {
+        for (int bucket = AD_F2_TARGET_COUNT_EXACTLY_ONE;
+             bucket <= AD_F2_TARGET_COUNT_TWO_OR_MORE; bucket++) {
+            ad_recipe* recipe = &recipes[index++];
+            *recipe = ad_test_recipe();
+            recipe->controller_seed = controller_seed[team][bucket - 1];
+            BB_CHECK_EQ(ad_discover_f2_handoff_target_count(
+                            recipe, team, bucket, error),
+                        0);
+            BB_CHECK_EQ(recipe->kind,
+                        AD_RECIPE_F2_EXACT_HANDOFF_TARGET_COUNT);
+            BB_CHECK_EQ(recipe->capture_active_team, team);
+            BB_CHECK_EQ(recipe->capture_handoff_target_bucket, bucket);
+            BB_CHECK_EQ(recipe->capture_turn, 0);
+            BB_CHECK_EQ(recipe->captured.active_team, team);
+            BB_CHECK(bb_state_bank_boundary_valid(&recipe->captured));
+            int target_count =
+                ad_f2_handoff_target_count(&recipe->captured);
+            BB_CHECK(bucket == AD_F2_TARGET_COUNT_EXACTLY_ONE
+                         ? target_count == 1
+                         : target_count >= 2);
+            BB_CHECK_EQ(recipe->action_count,
+                        expected_actions[team][bucket - 1]);
+            BB_CHECK_EQ(recipe->dice_count,
+                        expected_dice[team][bucket - 1]);
+
+            bb_match original = recipe->captured;
+            BB_CHECK_EQ(ad_f2_handoff_target_count(&recipe->captured),
+                        target_count);
+            BB_CHECK_EQ(memcmp(&recipe->captured, &original,
+                               sizeof original),
+                        0);
+
+            bb_match replayed;
+            BB_CHECK_EQ(ad_replay_exact(recipe, &replayed, error), 0);
+            BB_CHECK_EQ(memcmp(&replayed, &recipe->captured,
+                               sizeof replayed),
+                        0);
+            BB_CHECK_EQ(ad_verify_one_action_continuation(
+                            &replayed, NULL, NULL, NULL, error),
+                        0);
+
+            ad_recipe rediscovered = ad_test_recipe();
+            rediscovered.controller_seed = recipe->controller_seed;
+            BB_CHECK_EQ(ad_discover_f2_handoff_target_count(
+                            &rediscovered, team, bucket, error),
+                        0);
+            BB_CHECK_EQ(memcmp(recipe, &rediscovered, sizeof *recipe), 0);
+        }
+    }
+    BB_CHECK_EQ(index, expected_count);
+    BB_CHECK_EQ(ad_validate_f2_handoff_target_count_axis(
+                    recipes, expected_count, error),
+                0);
+
+    BB_CHECK(ad_validate_f2_handoff_target_count_axis(
+                 NULL, expected_count, error) != 0);
+    BB_CHECK(ad_validate_f2_handoff_target_count_axis(
+                 recipes, expected_count - 1, error) != 0);
+
+    ad_recipe saved = recipes[expected_count - 1];
+    recipes[expected_count - 1] = recipes[0];
+    BB_CHECK(ad_validate_f2_handoff_target_count_axis(
+                 recipes, expected_count, error) != 0);
+    BB_CHECK(strstr(error, "duplicate") != NULL ||
+             strstr(error, "missing") != NULL);
+    recipes[expected_count - 1] = saved;
+
+    recipes[0].capture_handoff_target_bucket =
+        AD_F2_TARGET_COUNT_TWO_OR_MORE;
+    BB_CHECK(ad_validate_f2_handoff_target_count_axis(
+                 recipes, expected_count, error) != 0);
+    recipes[0].capture_handoff_target_bucket =
+        AD_F2_TARGET_COUNT_EXACTLY_ONE;
+
+    bb_match captured_saved = recipes[0].captured;
+    recipes[0].captured.active_team = BB_AWAY;
+    BB_CHECK(ad_validate_f2_handoff_target_count_axis(
+                 recipes, expected_count, error) != 0);
+    recipes[0].captured = captured_saved;
+    recipes[0].captured.stack_top = 0;
+    BB_CHECK(ad_validate_f2_handoff_target_count_axis(
+                 recipes, expected_count, error) != 0);
+    recipes[0].captured = captured_saved;
+    recipes[0].captured.stack_top = 1;
+    BB_CHECK(ad_validate_f2_handoff_target_count_axis(
+                 recipes, expected_count, error) != 0);
+    recipes[0].captured = captured_saved;
+    recipes[0].captured.stack_top = BB_STACK_MAX + 1;
+    BB_CHECK(ad_validate_f2_handoff_target_count_axis(
+                 recipes, expected_count, error) != 0);
+    recipes[0].captured = captured_saved;
+    recipes[0].captured.stack_top = UINT8_MAX;
+    BB_CHECK(ad_validate_f2_handoff_target_count_axis(
+                 recipes, expected_count, error) != 0);
+    recipes[0].captured = captured_saved;
+    recipes[0].captured.stack[0].proc = BB_PROC_MOVE;
+    BB_CHECK(ad_validate_f2_handoff_target_count_axis(
+                 recipes, expected_count, error) != 0);
+    recipes[0].captured = captured_saved;
+    recipes[0].captured
+        .stack[recipes[0].captured.stack_top - 1].proc = BB_PROC_MOVE;
+    BB_CHECK(ad_validate_f2_handoff_target_count_axis(
+                 recipes, expected_count, error) != 0);
+    recipes[0].captured = captured_saved;
+
+    int occupied = -1;
+    for (int slot = 0; slot < BB_NUM_PLAYERS; slot++) {
+        if (recipes[0].captured.players[slot].location == BB_LOC_ON_PITCH) {
+            occupied = slot;
+            break;
+        }
+    }
+    BB_CHECK(occupied >= 0);
+    if (occupied >= 0) {
+        const bb_player* player = &recipes[0].captured.players[occupied];
+        recipes[0].captured.grid[player->x][player->y] = 0;
+        BB_CHECK(ad_validate_f2_handoff_target_count_axis(
+                     recipes, expected_count, error) != 0);
+        recipes[0].captured = captured_saved;
+    }
+
+    BB_CHECK_EQ(ad_f2_handoff_target_count(NULL), 0);
+    bb_match malformed = captured_saved;
+    malformed.ball.carrier = BB_NUM_PLAYERS;
+    BB_CHECK_EQ(ad_f2_handoff_target_count(&malformed), 0);
+
+    ad_recipe invalid = ad_test_recipe();
+    BB_CHECK(ad_discover_f2_handoff_target_count(
+                 &invalid, -1, AD_F2_TARGET_COUNT_EXACTLY_ONE, error) != 0);
+    invalid = ad_test_recipe();
+    BB_CHECK(ad_discover_f2_handoff_target_count(
+                 &invalid, BB_AWAY + 1,
+                 AD_F2_TARGET_COUNT_EXACTLY_ONE, error) != 0);
+    invalid = ad_test_recipe();
+    BB_CHECK(ad_discover_f2_handoff_target_count(
+                 &invalid, BB_HOME, AD_F2_TARGET_COUNT_NONE, error) != 0);
+    invalid = ad_test_recipe();
+    BB_CHECK(ad_discover_f2_handoff_target_count(
+                 &invalid, BB_HOME,
+                 AD_F2_TARGET_COUNT_TWO_OR_MORE + 1, error) != 0);
+    invalid = ad_test_recipe();
+    invalid.capture_handoff_target_bucket =
+        AD_F2_TARGET_COUNT_EXACTLY_ONE;
+    BB_CHECK(ad_discover_f2_handoff_opportunity(&invalid, error) != 0);
+
+    FILE* file = tmpfile();
+    BB_CHECK(file != NULL);
+    if (file != NULL) {
+        ad_bbs_record records[AD_F2_HANDOFF_TARGET_AXIS_COUNT];
+        size_t expected_bytes =
+            16 + expected_count * (12 + sizeof(bb_match));
+        uint8_t* first_bytes = malloc(expected_bytes);
+        uint8_t* second_bytes = malloc(expected_bytes);
+        BB_CHECK(first_bytes != NULL);
+        BB_CHECK(second_bytes != NULL);
+        if (first_bytes == NULL || second_bytes == NULL) {
+            free(first_bytes);
+            free(second_bytes);
+            BB_CHECK_EQ(fclose(file), 0);
+            free(recipes);
+            return;
+        }
+        for (size_t i = 0; i < expected_count; i++) {
+            records[i] = (ad_bbs_record){
+                0xA2000100u + (uint32_t)i,
+                (uint32_t)recipes[i].action_count,
+                &recipes[i],
+            };
+        }
+        BB_CHECK_EQ(ad_bbs_write(file, records, expected_count, error), 0);
+        BB_CHECK_EQ(fseek(file, 0, SEEK_END), 0);
+        BB_CHECK_EQ(ftell(file), expected_bytes);
+        rewind(file);
+        size_t first_read = fread(first_bytes, 1, expected_bytes, file);
+        BB_CHECK_EQ(first_read, expected_bytes);
+        BB_CHECK_EQ(fclose(file), 0);
+
+        file = tmpfile();
+        BB_CHECK(file != NULL);
+        if (file != NULL) {
+            BB_CHECK_EQ(ad_bbs_write(file, records, expected_count, error), 0);
+            rewind(file);
+            size_t second_read = fread(second_bytes, 1, expected_bytes, file);
+            BB_CHECK_EQ(second_read, expected_bytes);
+            if (first_read == expected_bytes &&
+                second_read == expected_bytes) {
+                BB_CHECK_EQ(memcmp(first_bytes, second_bytes, expected_bytes),
+                            0);
+            }
+            BB_CHECK_EQ(fclose(file), 0);
+        }
+
+        file = tmpfile();
+        BB_CHECK(file != NULL);
+        if (file != NULL) {
+            recipes[expected_count - 1].capture_handoff_target_bucket =
+                AD_F2_TARGET_COUNT_EXACTLY_ONE;
+            BB_CHECK(ad_bbs_write(file, records, expected_count, error) != 0);
+            BB_CHECK(strstr(error, "provenance") != NULL);
+            BB_CHECK_EQ(ftell(file), 0);
+            recipes[expected_count - 1] = saved;
+            BB_CHECK_EQ(fclose(file), 0);
+        }
+        free(first_bytes);
+        free(second_bytes);
+    }
+
+    free(recipes);
+}
+
 BB_TEST(authored_drill_f5_reaches_real_score_or_stall_opportunity) {
     ad_recipe recipe = ad_test_f5_recipe();
     char error[AD_ERROR_CAP];

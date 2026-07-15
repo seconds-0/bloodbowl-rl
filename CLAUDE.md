@@ -131,6 +131,19 @@ newer evidence wins.
   receiving, material, reroll, roster/race, and tactical-quality diversity plus
   sidecars, publication, training, rewards, evaluation, and deployment remain
   separate contracts.
+  The first F2 axis remains on that same fresh-turn boundary and requires four
+  cells: Home/Away active-side orientation crossed with exactly one versus
+  two-or-more legal catch-capable Hand-off targets. Its input-preserving counter
+  first validates the complete raw boundary, then privately performs the legal
+  zero-die carrier activation and Hand-off declaration. Count only targets that
+  can attempt the Catch; a rules-legal No Ball target is not included. Store
+  side and bucket as rediscovered provenance, reject the bucket on non-axis
+  recipes, and never treat two-or-more as exactly two. Fixed seeds 4/2/8/13
+  bind the four cells. Matching optimized and sanitizer sweeps over 4,096 seeds
+  per cell yield 1,246/994/1,189/1,291 exact-replayable captures and zero
+  unexpected failures. This proves structural opportunity diversity only; it
+  does not label Hand-off, a receiver, or tactical quality and does not
+  authorize publication, training, reward changes, evaluation, or deployment.
 - **BC loader (D180):** use the bounded streaming loader and replay-disjoint
   split. Replay-first is the current default, not the final sampler; next
   stratify by roster/matchup, depth, and action family.

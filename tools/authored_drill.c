@@ -187,7 +187,7 @@ int ad_f1_pass_opportunity_valid(const bb_match* match) {
     return 0;
 }
 
-int ad_f2_handoff_opportunity_valid(const bb_match* match) {
+int ad_f2_handoff_target_count(const bb_match* match) {
     if (!bb_state_bank_boundary_valid(match) ||
         match->ball.state != BB_BALL_HELD ||
         match->ball.carrier >= BB_NUM_PLAYERS ||
@@ -217,6 +217,7 @@ int ad_f2_handoff_opportunity_valid(const bb_match* match) {
         return 0;
     }
 
+    int target_count = 0;
     bb_action legal[BB_LEGAL_MAX];
     int n = bb_legal_actions(&probe, legal);
     for (int i = 0; i < n; i++) {
@@ -225,10 +226,14 @@ int ad_f2_handoff_opportunity_valid(const bb_match* match) {
         if (target >= 0 && target != carrier &&
             BB_TEAM_OF(target) == match->active_team &&
             bb_can_catch(&probe, target)) {
-            return 1;
+            target_count++;
         }
     }
-    return 0;
+    return target_count;
+}
+
+int ad_f2_handoff_opportunity_valid(const bb_match* match) {
+    return ad_f2_handoff_target_count(match) > 0;
 }
 
 int ad_f5_score_or_wait_valid(const bb_match* match) {
@@ -269,12 +274,23 @@ int ad_f4_pending_dodge_reroll_valid(const bb_match* match) {
 
 static int ad_recipe_config_valid(const ad_recipe* recipe) {
     int f3_axis = recipe->kind == AD_RECIPE_F3_EXACT_SECOND_HALF_TURN;
-    int capture_config_valid = f3_axis
-        ? recipe->capture_turn >= 1 &&
-              recipe->capture_turn <= AD_F3_SECOND_HALF_TURN_COUNT &&
-              recipe->capture_active_team >= BB_HOME &&
-              recipe->capture_active_team <= BB_AWAY
-        : recipe->capture_turn == 0 && recipe->capture_active_team == 0;
+    int f2_axis = recipe->kind == AD_RECIPE_F2_EXACT_HANDOFF_TARGET_COUNT;
+    int capture_config_valid =
+        (f3_axis
+             ? recipe->capture_turn >= 1 &&
+                   recipe->capture_turn <= AD_F3_SECOND_HALF_TURN_COUNT
+             : recipe->capture_turn == 0) &&
+        (f3_axis || f2_axis
+             ? recipe->capture_active_team >= BB_HOME &&
+                   recipe->capture_active_team <= BB_AWAY
+             : recipe->capture_active_team == 0) &&
+        (f2_axis
+             ? recipe->capture_handoff_target_bucket >=
+                       AD_F2_TARGET_COUNT_EXACTLY_ONE &&
+                   recipe->capture_handoff_target_bucket <=
+                       AD_F2_TARGET_COUNT_TWO_OR_MORE
+             : recipe->capture_handoff_target_bucket ==
+                   AD_F2_TARGET_COUNT_NONE);
     return recipe->kind >= AD_RECIPE_FIRST_TEAM_TURN &&
            recipe->kind < AD_RECIPE_KIND_COUNT &&
            capture_config_valid &&
@@ -297,6 +313,17 @@ static int ad_f3_second_half_turn_capture_valid(
            match->turn[match->active_team] == recipe->capture_turn;
 }
 
+static int ad_f2_handoff_target_count_capture_valid(
+    const bb_match* match, const ad_recipe* recipe) {
+    int target_count = ad_f2_handoff_target_count(match);
+    return target_count > 0 &&
+           match->active_team == recipe->capture_active_team &&
+           (recipe->capture_handoff_target_bucket ==
+                    AD_F2_TARGET_COUNT_EXACTLY_ONE
+                ? target_count == 1
+                : target_count >= 2);
+}
+
 static int ad_capture_ready(const bb_match* match, const ad_recipe* recipe) {
     ad_recipe_kind kind = recipe->kind;
     // F4 is deliberately a nested TEST decision, so it must be tested before
@@ -306,6 +333,9 @@ static int ad_capture_ready(const bb_match* match, const ad_recipe* recipe) {
     }
     if (kind == AD_RECIPE_F3_EXACT_SECOND_HALF_TURN) {
         return ad_f3_second_half_turn_capture_valid(match, recipe);
+    }
+    if (kind == AD_RECIPE_F2_EXACT_HANDOFF_TARGET_COUNT) {
+        return ad_f2_handoff_target_count_capture_valid(match, recipe);
     }
     if (!ad_has_team_turn(match)) return 0;
     if (kind == AD_RECIPE_FIRST_TEAM_TURN) return 1;
@@ -465,6 +495,59 @@ int ad_discover_f2_handoff_opportunity(ad_recipe* recipe,
     return ad_discover(recipe, AD_RECIPE_F2_HANDOFF_OPPORTUNITY, error);
 }
 
+int ad_discover_f2_handoff_target_count(
+    ad_recipe* recipe, int active_team, ad_f2_target_count_bucket bucket,
+    char error[AD_ERROR_CAP]) {
+    if (recipe == NULL) return ad_fail(error, "null recipe");
+    recipe->capture_active_team = active_team;
+    recipe->capture_handoff_target_bucket = bucket;
+    return ad_discover(recipe, AD_RECIPE_F2_EXACT_HANDOFF_TARGET_COUNT, error);
+}
+
+int ad_validate_f2_handoff_target_count_axis(
+    const ad_recipe* recipes, size_t count, char error[AD_ERROR_CAP]) {
+    if (recipes == NULL) return ad_fail(error, "null F2 axis recipes");
+    if (count != AD_F2_HANDOFF_TARGET_AXIS_COUNT) {
+        return ad_fail(error, "F2 axis count %zu differs from %d",
+                       count, AD_F2_HANDOFF_TARGET_AXIS_COUNT);
+    }
+
+    unsigned char
+        seen[BB_AWAY + 1][AD_F2_HANDOFF_TARGET_BUCKET_COUNT] = {{0}};
+    for (size_t i = 0; i < count; i++) {
+        const ad_recipe* recipe = &recipes[i];
+        if (!ad_recipe_config_valid(recipe) ||
+            recipe->kind != AD_RECIPE_F2_EXACT_HANDOFF_TARGET_COUNT ||
+            !ad_f2_handoff_target_count_capture_valid(
+                &recipe->captured, recipe)) {
+            return ad_fail(error, "F2 axis capture %zu is invalid", i);
+        }
+        int team = recipe->capture_active_team;
+        int bucket_index = recipe->capture_handoff_target_bucket - 1;
+        if (seen[team][bucket_index]) {
+            return ad_fail(
+                error,
+                "duplicate F2 axis capture for team %d target bucket %d",
+                team, recipe->capture_handoff_target_bucket);
+        }
+        seen[team][bucket_index] = 1;
+    }
+    for (int team = BB_HOME; team <= BB_AWAY; team++) {
+        for (int bucket_index = 0;
+             bucket_index < AD_F2_HANDOFF_TARGET_BUCKET_COUNT;
+             bucket_index++) {
+            if (!seen[team][bucket_index]) {
+                return ad_fail(
+                    error,
+                    "missing F2 axis capture for team %d target bucket %d",
+                    team, bucket_index + 1);
+            }
+        }
+    }
+    if (error != NULL) error[0] = '\0';
+    return 0;
+}
+
 int ad_discover_f5_score_or_wait(ad_recipe* recipe,
                                  char error[AD_ERROR_CAP]) {
     return ad_discover(recipe, AD_RECIPE_F5_SCORE_OR_WAIT, error);
@@ -622,6 +705,11 @@ static int ad_rediscover_recipe(const ad_recipe* source, ad_recipe* out,
         case AD_RECIPE_F3_EXACT_SECOND_HALF_TURN:
             rc = ad_discover_f3_second_half_turn(
                 out, source->capture_turn, source->capture_active_team, error);
+            break;
+        case AD_RECIPE_F2_EXACT_HANDOFF_TARGET_COUNT:
+            rc = ad_discover_f2_handoff_target_count(
+                out, source->capture_active_team,
+                source->capture_handoff_target_bucket, error);
             break;
         default:
             return ad_fail(error, "unknown authored recipe kind %d",
