@@ -164,8 +164,9 @@ def stable_native(path: Path, expected_bytes: int, seconds: float) -> os.stat_re
 
 
 def _conversion_label(candidate: Candidate, digest: str) -> str:
-    return _hashed_torch_label(
-        f"{candidate.tag}-step{candidate.step:012d}", digest
+    return _bounded_torch_label(
+        candidate.tag,
+        f"-step{candidate.step:012d}-{digest[:10]}_torch.bin",
     )
 
 
@@ -175,6 +176,10 @@ def _baseline_label(candidate: Candidate, digest: str) -> str:
 
 def _hashed_torch_label(prefix: str, digest: str) -> str:
     suffix = f"-{digest[:10]}_torch.bin"
+    return _bounded_torch_label(prefix, suffix)
+
+
+def _bounded_torch_label(prefix: str, suffix: str) -> str:
     prefix_budget = 96 - len(suffix)
     bounded_prefix = safe_label(prefix)[:prefix_budget].rstrip("-._")
     return f"{bounded_prefix or 'checkpoint'}{suffix}"

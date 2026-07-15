@@ -240,7 +240,7 @@ class FollowLatestTests(unittest.TestCase):
             "arm-seed-42-_torch.bin",
         )
 
-    def test_conversion_label_preserves_digest_and_prunable_suffix(self):
+    def test_conversion_label_preserves_step_digest_and_prunable_suffix(self):
         candidate = SimpleNamespace(
             tag="vacation-" + "very-long-arm-name-" * 8,
             step=1_598_160_896,
@@ -249,7 +249,11 @@ class FollowLatestTests(unittest.TestCase):
         label = follow_latest._conversion_label(candidate, "a" * 64)
 
         self.assertLessEqual(len(label), 96)
-        self.assertTrue(label.endswith("-aaaaaaaaaa_torch.bin"))
+        self.assertTrue(
+            label.endswith(
+                "-step001598160896-aaaaaaaaaa_torch.bin"
+            )
+        )
         self.assertTrue(Path(label).match("*_torch.bin"))
 
     def test_server_command_forwards_sample_mode(self):
