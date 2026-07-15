@@ -139,8 +139,7 @@ static void catch_advance(bb_match* m, bb_rng* rng) {
     int slot = f->a;
     bb_player* p = &m->players[slot];
     if (f->phase == 0) {
-        if (!bb_can_catch(m, slot) ||
-            bb_has_skill(&p->skills, BB_SK_NO_BALL)) { // distracted/prone/No Ball: auto-fail
+        if (!bb_can_catch(m, slot)) { // distracted/prone/No Ball: auto-fail
             int x = p->x, y = p->y;
             bb_pop(m);
             bb_push(m, BB_PROC_SCATTER, 0, 1, (uint8_t)x, (uint8_t)y);

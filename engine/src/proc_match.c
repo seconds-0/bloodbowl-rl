@@ -856,7 +856,9 @@ static int kickoff_legal(const bb_match* m, bb_action* out) {
     int receiving = 1 - f->a;
     for (int s = receiving * BB_TEAM_SLOTS; s < (receiving + 1) * BB_TEAM_SLOTS; s++) {
         const bb_player* p = &m->players[s];
-        if (p->location == BB_LOC_ON_PITCH && p->stance == BB_STANCE_STANDING) {
+        if (p->location == BB_LOC_ON_PITCH &&
+            p->stance == BB_STANCE_STANDING &&
+            !bb_has_skill(&p->skills, BB_SK_NO_BALL)) {
             out[n++] = (bb_action){BB_A_TOUCHBACK, (uint8_t)s, 0, 0};
         }
     }

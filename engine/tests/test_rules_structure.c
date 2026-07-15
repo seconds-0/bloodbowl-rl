@@ -443,7 +443,9 @@ BB_TEST(struct_kick_touchback_when_ball_exits_pitch) {
     stx_kickoff_fixture(&m, BB_HOME);
     int standing = fx_lineman(&m, 1, 0, 20, 7);
     int prone = fx_lineman(&m, 1, 1, 21, 7);
+    int no_ball = fx_lineman(&m, 1, 2, 22, 7);
     m.players[prone].stance = BB_STANCE_PRONE;
+    fx_give_skill(&m, no_ball, BB_SK_NO_BALL);
     bb_rng rng;
     // Target (13,0); d8=1 -> (-1,-1), d6=2 -> (11,-2): off the pitch.
     const uint8_t dice[] = {1, 2, 1, 1};
@@ -452,9 +454,10 @@ BB_TEST(struct_kick_touchback_when_ball_exits_pitch) {
     bb_status st = fx_apply(&m, stx_act(BB_A_KICK_TARGET, 0, 13, 0), &rng);
     BB_CHECK_EQ(st, BB_STATUS_DECISION);
     BB_CHECK_EQ(m.decision_team, BB_AWAY); // receiving coach decides
-    // Only STANDING receivers may be given the ball.
+    // Only eligible STANDING receivers may be given the ball.
     BB_CHECK(fx_find(&m, stx_act(BB_A_TOUCHBACK, standing, 0, 0)) >= 0);
     BB_CHECK_EQ(fx_find(&m, stx_act(BB_A_TOUCHBACK, prone, 0, 0)), -1);
+    BB_CHECK_EQ(fx_find(&m, stx_act(BB_A_TOUCHBACK, no_ball, 0, 0)), -1);
     st = fx_apply(&m, stx_act(BB_A_TOUCHBACK, standing, 0, 0), &rng);
     BB_CHECK_EQ(m.ball.state, BB_BALL_HELD);
     BB_CHECK_EQ(m.ball.carrier, standing);
@@ -520,6 +523,23 @@ BB_TEST(struct_kick_touchback_no_standing_receivers_places_ball) {
     // Rulebook: the receiving coach must be able to place the ball on an
     // unoccupied square of their half.
     BB_CHECK(n > 0);
+}
+
+// NO BALL players do not become eligible just because they are Standing. If
+// every Standing receiver has the trait, Touchback uses square placement.
+BB_TEST(struct_kick_touchback_only_no_ball_places_ball) {
+    bb_match m;
+    stx_kickoff_fixture(&m, BB_HOME);
+    int no_ball = fx_lineman(&m, 1, 0, 20, 7);
+    fx_give_skill(&m, no_ball, BB_SK_NO_BALL);
+    bb_rng rng;
+    const uint8_t dice[] = {1, 2, 1, 1};
+    bb_rng_script(&rng, dice, 4);
+    fx_run(&m, &rng);
+    bb_status st = fx_apply(&m, stx_act(BB_A_KICK_TARGET, 0, 13, 0), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK_EQ(fx_find(&m, stx_act(BB_A_TOUCHBACK, no_ball, 0, 0)), -1);
+    BB_CHECK(fx_find(&m, stx_act(BB_A_TOUCHBACK, 0xFF, 13, 0)) >= 0);
 }
 
 // ===========================================================================

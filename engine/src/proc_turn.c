@@ -456,7 +456,7 @@ static int activation_legal(const bb_match* m, bb_action* out) {
     // they may pick it up during the move part (pick-up-then-throw).
     // MY BALL: may not declare actions that would give up possession.
     bool my_ball = bb_has_skill(&p->skills, BB_SK_MY_BALL) && (p->flags & BB_PF_HAS_BALL);
-    if (!m->pass_used && !my_ball) {
+    if (!m->pass_used && !my_ball && p->pa > 0) {
         out[n++] = (bb_action){BB_A_DECLARE, BB_ACT_PASS, 0, 0};
     }
     if (!m->handoff_used && !my_ball) {
