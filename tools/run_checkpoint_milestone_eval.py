@@ -61,6 +61,49 @@ INTEGRITY_KEYS = (
     "demo_episodes",
     "demo_fallbacks",
 )
+# Existing native match telemetry needed to distinguish a score-only plateau
+# from behavior drift. These are match-level (both policies), except the two
+# explicitly side-split block-volume counters. They must therefore be reported
+# as joint diagnostics, never mislabelled as focal-policy-only measurements.
+BEHAVIOR_METRIC_KEYS = (
+    "illegal_frac",
+    "blocks_thrown",
+    "blocks_thrown_t0",
+    "blocks_thrown_t1",
+    "blocks_vs_carrier",
+    "carrier_block_frac",
+    "block_1d_frac",
+    "block_2d_frac",
+    "block_3d_frac",
+    "block_2dred_frac",
+    "block_3dred_frac",
+    "possession_rate",
+    "ball_fwd_adv",
+    "ball_path_len",
+    "dodge_attempts",
+    "gfi_attempts",
+    "pickup_attempts",
+    "pickup_success",
+    "pass_attempts",
+    "handoff_attempts",
+    "knockdowns_inflicted",
+    "knockdowns_own",
+    "carrier_knockdowns",
+)
+SIDE_BEHAVIOR_METRIC_KEYS = ("blocks_thrown_t0", "blocks_thrown_t1")
+JOINT_BEHAVIOR_METRIC_KEYS = tuple(
+    key for key in BEHAVIOR_METRIC_KEYS if key not in SIDE_BEHAVIOR_METRIC_KEYS
+)
+BEHAVIOR_FRACTION_KEYS = (
+    "illegal_frac",
+    "carrier_block_frac",
+    "block_1d_frac",
+    "block_2d_frac",
+    "block_3d_frac",
+    "block_2dred_frac",
+    "block_3dred_frac",
+    "possession_rate",
+)
 NAME_PATTERN = re.compile(r"[a-z][a-z0-9_-]{0,63}")
 SHA_PATTERN = re.compile(r"[0-9a-f]{64}")
 SPEC_KEYS = {
@@ -646,6 +689,22 @@ def cell_filename(seed: int, target: int, anchor: str, orientation: int) -> str:
     return f"s{seed}-t{target:012d}-{anchor}-o{orientation}.json"
 
 
+def focal_team_for_orientation(orientation: Any) -> int:
+    """Map the declared backend orientation to the focal policy's team slot."""
+    if isinstance(orientation, bool) or orientation not in (0, 1):
+        raise MilestoneEvalError(f"invalid milestone orientation: {orientation!r}")
+    return int(orientation)
+
+
+def policy_paths_for_orientation(
+    orientation: Any, focal_path: str, anchor_path: str
+) -> tuple[int, str, str]:
+    focal_team = focal_team_for_orientation(orientation)
+    if focal_team == 0:
+        return focal_team, focal_path, anchor_path
+    return focal_team, anchor_path, focal_path
+
+
 def expected_cells(plan: dict[str, Any]) -> list[dict[str, Any]]:
     rows = []
     for seed_index, seed in enumerate(plan["training_seeds"]):
@@ -658,6 +717,7 @@ def expected_cells(plan: dict[str, Any]) -> list[dict[str, Any]]:
                             "target_steps": target,
                             "anchor": anchor["name"],
                             "orientation": orientation,
+                            "focal_team": focal_team_for_orientation(orientation),
                             # Common across milestones in the same stratum.
                             "match_seed": (
                                 30_000
@@ -684,6 +744,7 @@ def validate_cell(
         "target_steps": expected["target_steps"],
         "anchor": expected["anchor"],
         "orientation": expected["orientation"],
+        "focal_team": expected["focal_team"],
         "match_seed": expected["match_seed"],
         "games_requested": plan["games_per_cell"],
         "milestone_eval_manifest_sha256": sha256(
@@ -701,6 +762,24 @@ def validate_cell(
         plan, expected["training_seed"], expected["target_steps"]
     )
     anchor = next(x for x in plan["anchors"] if x["name"] == expected["anchor"])
+    focal_team, expected_policy_a, expected_policy_b = policy_paths_for_orientation(
+        expected["orientation"], checkpoint["native"], anchor["path"]
+    )
+    if expected["focal_team"] != focal_team:
+        raise MilestoneEvalError(f"{path.name} focal-team mapping drift")
+    focal_path = checkpoint["native"]
+    anchor_path = anchor["path"]
+    path_identity = {
+        "focal_checkpoint": focal_path,
+        "anchor_checkpoint": anchor_path,
+        "policy_a": expected_policy_a,
+        "policy_b": expected_policy_b,
+    }
+    for key, value in path_identity.items():
+        if cell.get(key) != value:
+            raise MilestoneEvalError(
+                f"{path.name} {key}={cell.get(key)!r}, expected {value!r}"
+            )
     if cell.get("focal_checkpoint_sha256") != checkpoint["native_sha256"]:
         raise MilestoneEvalError(f"{path.name} focal checkpoint drift")
     if cell.get("anchor_checkpoint_sha256") != anchor["sha256"]:
@@ -737,6 +816,50 @@ def validate_cell(
     bad = {key: value for key, value in parsed_integrity.items() if value != 0.0}
     if bad:
         raise MilestoneEvalError(f"{path.name} integrity counters nonzero: {bad}")
+    raw_metrics = cell.get("raw_env_metrics")
+    if not isinstance(raw_metrics, dict):
+        raise MilestoneEvalError(
+            f"{path.name} raw environment behavior metrics are missing"
+        )
+    missing_behavior = [key for key in BEHAVIOR_METRIC_KEYS if key not in raw_metrics]
+    if missing_behavior:
+        raise MilestoneEvalError(
+            f"{path.name} raw environment behavior metrics are incomplete: "
+            + ", ".join(missing_behavior)
+        )
+    behavior = {
+        key: finite(raw_metrics[key], f"{path.name} raw_env_metrics.{key}")
+        for key in BEHAVIOR_METRIC_KEYS
+    }
+    negative = {key: value for key, value in behavior.items() if value < 0.0}
+    if negative:
+        raise MilestoneEvalError(
+            f"{path.name} raw environment behavior metrics are negative: {negative}"
+        )
+    bad_fractions = {
+        key: behavior[key]
+        for key in BEHAVIOR_FRACTION_KEYS
+        if behavior[key] > 1.0 + 1e-6
+    }
+    if bad_fractions:
+        raise MilestoneEvalError(
+            f"{path.name} raw environment behavior fractions are invalid: "
+            f"{bad_fractions}"
+        )
+    if behavior["pickup_success"] > behavior["pickup_attempts"] + 1e-6:
+        raise MilestoneEvalError(f"{path.name} pickup successes exceed pickup attempts")
+    if (
+        abs(
+            behavior["blocks_thrown_t0"]
+            + behavior["blocks_thrown_t1"]
+            - behavior["blocks_thrown"]
+        )
+        > 2e-4
+    ):
+        raise MilestoneEvalError(
+            f"{path.name} per-side block volume does not sum to total"
+        )
+    opponent_team = 1 - focal_team
     return {
         **identity,
         "embedded_steps": checkpoint["embedded_steps"],
@@ -750,6 +873,9 @@ def validate_cell(
         "opponent_tds": opponent_tds,
         "focal_checkpoint_sha256": checkpoint["native_sha256"],
         "anchor_checkpoint_sha256": anchor["sha256"],
+        "joint_behavior": {key: behavior[key] for key in JOINT_BEHAVIOR_METRIC_KEYS},
+        "focal_blocks_thrown": behavior[f"blocks_thrown_t{focal_team}"],
+        "opponent_blocks_thrown": behavior[f"blocks_thrown_t{opponent_team}"],
         "file": path.name,
         "file_sha256": sha256(path),
     }
@@ -887,6 +1013,73 @@ def require_idle_gpu() -> None:
         )
 
 
+def build_cell_payload(
+    plan_path: Path,
+    plan: dict[str, Any],
+    expected: dict[str, Any],
+    checkpoint: dict[str, Any],
+    anchor: dict[str, Any],
+    numeric: dict[str, float],
+    integrity: dict[str, float],
+) -> dict[str, Any]:
+    """Assemble the exact producer schema consumed by ``validate_cell``."""
+    focal_path = checkpoint["native"]
+    anchor_path = anchor["path"]
+    focal_team, policy_a, policy_b = policy_paths_for_orientation(
+        expected["orientation"], focal_path, anchor_path
+    )
+    if expected["focal_team"] != focal_team:
+        raise MilestoneEvalError("cell focal-team mapping drift")
+    opponent_team = 1 - focal_team
+    focal_key = f"env/slot_{focal_team}_score"
+    opponent_key = f"env/slot_{opponent_team}_score"
+    focal_tds_key = f"env/tds_t{focal_team}"
+    opponent_tds_key = f"env/tds_t{opponent_team}"
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "created_utc": utc_now(),
+        "milestone_eval_manifest_sha256": sha256(plan_path),
+        **{
+            key: expected[key]
+            for key in (
+                "training_seed",
+                "target_steps",
+                "anchor",
+                "orientation",
+                "focal_team",
+                "match_seed",
+            )
+        },
+        "embedded_steps": checkpoint["embedded_steps"],
+        "games_requested": plan["games_per_cell"],
+        "games": numeric["env/n"],
+        "focal_score": numeric[focal_key],
+        "opponent_score": numeric[opponent_key],
+        "draw_rate": numeric["env/draw_rate"],
+        "focal_win_rate": numeric[focal_key] - 0.5 * numeric["env/draw_rate"],
+        "focal_loss_rate": numeric[opponent_key] - 0.5 * numeric["env/draw_rate"],
+        "focal_tds": numeric[focal_tds_key],
+        "opponent_tds": numeric[opponent_tds_key],
+        "focal_checkpoint": focal_path,
+        "focal_checkpoint_sha256": checkpoint["native_sha256"],
+        "anchor_checkpoint": anchor_path,
+        "anchor_checkpoint_sha256": anchor["sha256"],
+        "policy_a": policy_a,
+        "policy_b": policy_b,
+        # ``run_cell`` calls verify_plan_sources before match/assembly; that
+        # re-hashes every live implementation file and the config tree against
+        # this frozen identity. Recording the plan value here therefore records
+        # the identity just observed, not an unchecked claim.
+        "implementation": plan["implementation"],
+        "integrity": integrity,
+        "raw_env_metrics": {
+            key.removeprefix("env/"): value
+            for key, value in numeric.items()
+            if key.startswith("env/")
+        },
+    }
+
+
 def run_cell(root: Path, plan_path: Path, cell_path: Path) -> int:
     plan = load_object(plan_path, "milestone manifest")
     validate_plan_contract(plan)
@@ -935,14 +1128,16 @@ def run_cell(root: Path, plan_path: Path, cell_path: Path) -> int:
     args["vec"]["num_threads"] = 16
     focal_path = checkpoint["native"]
     anchor_path = anchor["path"]
-    if expected["orientation"] == 0:
-        policy_a, policy_b = focal_path, anchor_path
-        focal_key, opponent_key = "env/slot_0_score", "env/slot_1_score"
-        focal_tds_key, opponent_tds_key = "env/tds_t0", "env/tds_t1"
-    else:
-        policy_a, policy_b = anchor_path, focal_path
-        focal_key, opponent_key = "env/slot_1_score", "env/slot_0_score"
-        focal_tds_key, opponent_tds_key = "env/tds_t1", "env/tds_t0"
+    focal_team, policy_a, policy_b = policy_paths_for_orientation(
+        expected["orientation"], focal_path, anchor_path
+    )
+    if expected["focal_team"] != focal_team:
+        raise MilestoneEvalError("cell focal-team mapping drift")
+    opponent_team = 1 - focal_team
+    focal_key = f"env/slot_{focal_team}_score"
+    opponent_key = f"env/slot_{opponent_team}_score"
+    focal_tds_key = f"env/tds_t{focal_team}"
+    opponent_tds_key = f"env/tds_t{opponent_team}"
     logs = pufferl.match(
         env_name="bloodbowl",
         policy_a_path=policy_a,
@@ -964,6 +1159,7 @@ def run_cell(root: Path, plan_path: Path, cell_path: Path) -> int:
         focal_tds_key,
         opponent_tds_key,
         *(f"env/{key}" for key in INTEGRITY_KEYS),
+        *(f"env/{key}" for key in BEHAVIOR_METRIC_KEYS),
     ]
     missing = [key for key in required if key not in numeric]
     if missing:
@@ -976,44 +1172,15 @@ def run_cell(root: Path, plan_path: Path, cell_path: Path) -> int:
         raise MilestoneEvalError(f"match integrity counters nonzero: {bad}")
     atomic_json(
         cell_path,
-        {
-            "schema_version": SCHEMA_VERSION,
-            "created_utc": utc_now(),
-            "milestone_eval_manifest_sha256": sha256(plan_path),
-            **{
-                key: expected[key]
-                for key in (
-                    "training_seed",
-                    "target_steps",
-                    "anchor",
-                    "orientation",
-                    "match_seed",
-                )
-            },
-            "embedded_steps": checkpoint["embedded_steps"],
-            "games_requested": plan["games_per_cell"],
-            "games": numeric["env/n"],
-            "focal_score": numeric[focal_key],
-            "opponent_score": numeric[opponent_key],
-            "draw_rate": numeric["env/draw_rate"],
-            "focal_win_rate": (numeric[focal_key] - 0.5 * numeric["env/draw_rate"]),
-            "focal_loss_rate": (numeric[opponent_key] - 0.5 * numeric["env/draw_rate"]),
-            "focal_tds": numeric[focal_tds_key],
-            "opponent_tds": numeric[opponent_tds_key],
-            "focal_checkpoint": focal_path,
-            "focal_checkpoint_sha256": checkpoint["native_sha256"],
-            "anchor_checkpoint": anchor_path,
-            "anchor_checkpoint_sha256": anchor["sha256"],
-            "policy_a": policy_a,
-            "policy_b": policy_b,
-            "implementation": implementation,
-            "integrity": integrity,
-            "raw_env_metrics": {
-                key.removeprefix("env/"): value
-                for key, value in numeric.items()
-                if key.startswith("env/")
-            },
-        },
+        build_cell_payload(
+            plan_path,
+            plan,
+            expected,
+            checkpoint,
+            anchor,
+            numeric,
+            integrity,
+        ),
     )
     validate_cell(cell_path, plan, expected)
     return 0
@@ -1119,6 +1286,12 @@ def analyze(directory: str | Path) -> dict[str, Any]:
                 "macro_score": mean([row["focal_score"] for row in cells]),
                 "macro_tds_for": mean([row["focal_tds"] for row in cells]),
                 "macro_tds_against": mean([row["opponent_tds"] for row in cells]),
+                "macro_focal_blocks_thrown": mean(
+                    [row["focal_blocks_thrown"] for row in cells]
+                ),
+                "macro_opponent_blocks_thrown": mean(
+                    [row["opponent_blocks_thrown"] for row in cells]
+                ),
                 "by_anchor": {
                     anchor["name"]: mean(
                         [
@@ -1139,6 +1312,10 @@ def analyze(directory: str | Path) -> dict[str, Any]:
                     )
                     for orientation in plan["orientations"]
                 },
+                "joint_behavior": {
+                    key: mean([row["joint_behavior"][key] for row in cells])
+                    for key in JOINT_BEHAVIOR_METRIC_KEYS
+                },
             }
             if points:
                 point["score_delta_previous"] = (
@@ -1152,6 +1329,17 @@ def analyze(directory: str | Path) -> dict[str, Any]:
             point["tds_against_delta_warm"] = (
                 point["macro_tds_against"] - warm["macro_tds_against"]
             )
+            point["focal_blocks_thrown_delta_warm"] = (
+                point["macro_focal_blocks_thrown"] - warm["macro_focal_blocks_thrown"]
+            )
+            point["opponent_blocks_thrown_delta_warm"] = (
+                point["macro_opponent_blocks_thrown"]
+                - warm["macro_opponent_blocks_thrown"]
+            )
+            point["joint_behavior_delta_warm"] = {
+                key: point["joint_behavior"][key] - warm["joint_behavior"][key]
+                for key in JOINT_BEHAVIOR_METRIC_KEYS
+            }
         trajectories[str(seed)] = points
         nominations[str(seed)] = nominate(points)
     aggregate_trajectory = []
@@ -1199,6 +1387,9 @@ def analyze(directory: str | Path) -> dict[str, Any]:
         "stage_b_nominations": nominations,
         "warning": (
             "These anchors are unseen exact checkpoints but lineage-connected. "
+            "joint_behavior contains match-level metrics for both policies; "
+            "it diagnoses behavior drift but cannot be attributed to the focal "
+            "policy alone. "
             "The fixed nomination compresses Stage B evaluation; it is not a "
             "reward or production promotion gate. Exact ordinary bootstrap "
             "intervals use only three seed strata and must be read with the "
