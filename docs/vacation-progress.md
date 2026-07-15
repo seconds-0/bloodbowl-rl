@@ -3749,3 +3749,27 @@ Next steps and safety boundary:
 3. Continue hourly read-only live/BBTV monitoring. Do not alter the occupied
    source checkout, manually start overflow, or start milestone evaluation
    while either frozen queue remains pending or running.
+
+07:16 PDT addendum:
+
+- Independent review found one P2 in the first PR head: the deterministic
+  first-team-turn recipe did not consume its controller RNG, so copying a
+  changed controller seed/stream through rediscovery let inert values appear
+  provenance-bound. The writer never emitted an unsafe match, but its declared
+  provenance contract was too broad. The fix canonicalizes both unused fields
+  to zero for that recipe kind; post-discovery mutation of either field now
+  fails provenance before byte zero. F3 retains and binds its actually used
+  nonzero controller stream. AGENTS, CLAUDE, the authored-bank plan, and D196
+  now distinguish used controller streams from canonical-zero unused fields.
+- All three independent re-reviews approved exact head
+  `dfda8cc70e08de832ab7eeaa28b66e0cf57c117c` with no P0-P3 findings. Reviewer
+  probes covered 256 F3 controller seeds, all of which reached a valid half-two
+  late-turn boundary, independently rediscovered/replayed exactly, and stayed
+  within 304-748 actions and 105-214 dice. The fixed optimized and sanitized
+  F3 recipe bytes matched at SHA-256
+  `0c5f0c871dc2551f032a65fac9024291d1afd6a00e5dcba3bf98086b4893f833`.
+  Exact-head CI run `29422332626` passed in 4m40s, including ASan/UBSan.
+- PR #30 merged authoritatively to `main` as
+  `02f0f15a86ad209609402e8de6df27f6538e43b6`; the remote feature branch was
+  deleted. No source or authored artifact was deployed to the occupied 2070
+  checkout, and neither frozen queue or viewer service was changed.
