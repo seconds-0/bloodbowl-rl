@@ -143,6 +143,16 @@ BB_TEST(authored_drill_bbs_writer_emits_canonical_header_and_record) {
     BB_CHECK(file != NULL);
     if (file == NULL) return;
     record.source_id = 0xA0000001u;
+    record.decision_index++;
+    BB_CHECK(ad_bbs_write(file, &record, 1, error) != 0);
+    BB_CHECK(strstr(error, "decision index") != NULL);
+    BB_CHECK_EQ(ftell(file), 0);
+    BB_CHECK_EQ(fclose(file), 0);
+
+    file = tmpfile();
+    BB_CHECK(file != NULL);
+    if (file == NULL) return;
+    record.decision_index = (uint32_t)recipe.action_count;
     recipe.captured.score[0]++;
     BB_CHECK(ad_bbs_write(file, &record, 1, error) != 0);
     BB_CHECK(strstr(error, "replay failed") != NULL);

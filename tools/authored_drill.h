@@ -53,7 +53,8 @@ uint32_t ad_bbs_fingerprint(void);
 
 // Write an ordinary BBS1 stream. The writer exact-replays every recipe into
 // private storage and serializes only those verified bytes; callers cannot
-// supply a separately mutable raw match. Authored IDs must use the reserved
+// supply a separately mutable raw match. It also requires decision_index to
+// equal the verified recipe capture point. Authored IDs must use the reserved
 // 0xA high nibble. A failed call invalidates the caller-owned stream; atomic
 // publication is the responsibility of the later manifest transaction.
 int ad_bbs_write(FILE* file, const ad_bbs_record* records, size_t count,

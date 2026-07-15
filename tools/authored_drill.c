@@ -261,9 +261,18 @@ int ad_bbs_write(FILE* file, const ad_bbs_record* records, size_t count,
             return ad_fail(error, "authored BBS record %zu replay failed: %s",
                            i, replay_error);
         }
+        if (record->decision_index !=
+            (uint32_t)record->recipe->action_count) {
+            free(verified);
+            return ad_fail(error,
+                           "authored BBS record %zu decision index differs",
+                           i);
+        }
         if (!bb_state_bank_boundary_valid(&verified[i])) {
             free(verified);
-            return ad_fail(error, "authored BBS record %zu is not a safe BBS1 boundary", i);
+            return ad_fail(error,
+                           "authored BBS record %zu is not a safe BBS1 boundary",
+                           i);
         }
     }
     if (ad_write_bytes(file, "BBS1", 4) != 0 || ad_write_u32(file, 1) != 0 ||

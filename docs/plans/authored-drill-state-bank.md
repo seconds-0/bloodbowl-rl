@@ -74,6 +74,9 @@ structurally validated `MATCH(phase 3) -> TEAM_TURN(phase 1)` stack shape. This
 is the historical bank's executable contract and is sufficient for fresh
 team-turn proof records. Merely checking procedure IDs is unsafe: corrupt frame
 parameters can become player/team indices during legal-action enumeration.
+The writer also requires each record's capture decision index to equal its
+exact-replayed recipe action count, so authentic state bytes cannot be paired
+with false capture provenance.
 
 F1/F2 target-choice and F4 reroll-window records therefore remain planned, not
 currently serializable. Before any such record is admitted, a later tranche
