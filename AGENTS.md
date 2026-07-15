@@ -247,7 +247,11 @@ changes a reward, active queue, production default, or promotion verdict.
   through legal activation and Pass declaration with zero dice. The ordinary
   raw match still contains its ball carrier; no separate carrier/action/target
   metadata, nested frame, chosen action, or target is serialized or used as a
-  label.
+  label. The F2 proof uses the same boundary and zero-die private activation /
+  declaration pattern for Hand-off, but requires at least one adjacent
+  catch-capable teammate. A Standing No Ball teammate may remain a rules-legal
+  Hand-off target and auto-fail the Catch; a No-Ball-only target set therefore
+  does not satisfy the authored F2 opportunity predicate.
 - The corpus is sharply prefix-censored: it is not sufficient by itself for
   second halves, late drives, stalling, comeback play, or rare actions.
 - Correct BB2025 human possession is about `0.474` on genuine team-turn

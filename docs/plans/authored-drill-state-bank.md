@@ -312,6 +312,20 @@ or nested frame is serialized or treated as a policy label. This proves one
 opportunity template, not passing quality, F1 axis coverage, quotas, or
 publication.
 
+The first F2 proof reuses the same fixed legal trajectory and captures the same
+half-two, away-turn-1, tied 0-0 fresh-team-turn boundary after 414 legal
+decisions and 108 in-match dice, with away slot 23 holding the ball. Its
+input-preserving private probe selects the carrier's legal activation and
+Hand-off declaration, requires both transitions to consume zero dice, and
+requires at least one adjacent legal target that can actually attempt the
+Catch. The probe, declaration frame, target set, and any chosen target are
+discarded; only the ordinary pre-activation raw state is serialized. A
+Standing No Ball teammate remains rules-legal as a Hand-off target under D198,
+but a target set containing only No Ball players does not satisfy this authored
+transfer-opportunity predicate. This proves one Hand-off opportunity template,
+not Hand-off quality, F2 axis coverage, quotas, target-window validation,
+publication, or training authorization.
+
 D198 closes the two engine/helper gaps exposed while reviewing this proof: PA-
 players no longer receive Pass declaration, and `bb_can_catch` now excludes No
 Ball. No Ball players cannot intercept or receive a Touchback, while an

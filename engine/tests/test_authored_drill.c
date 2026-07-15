@@ -20,6 +20,47 @@ static ad_recipe ad_test_recipe(void) {
     return recipe;
 }
 
+static int ad_test_apply_legal(bb_match* match, bb_action_type type, int arg,
+                               bb_rng* rng) {
+    bb_action legal[BB_LEGAL_MAX];
+    int count = bb_legal_actions(match, legal);
+    for (int i = 0; i < count; i++) {
+        if (legal[i].type == type && legal[i].arg == arg) {
+            return bb_apply(match, legal[i], rng);
+        }
+    }
+    return BB_STATUS_ERROR;
+}
+
+static int ad_test_handoff_target_count(const bb_match* source,
+                                        int* catch_capable) {
+    bb_match match = *source;
+    uint8_t die = 6;
+    bb_rng rng;
+    bb_rng_script(&rng, &die, 1);
+    int carrier = match.ball.carrier;
+    if (ad_test_apply_legal(&match, BB_A_ACTIVATE, carrier, &rng) !=
+            BB_STATUS_DECISION ||
+        ad_test_apply_legal(&match, BB_A_DECLARE, BB_ACT_HANDOFF, &rng) !=
+            BB_STATUS_DECISION ||
+        rng.script_pos != 0 || bb_rng_error(&rng)) {
+        return -1;
+    }
+
+    int targets = 0;
+    int can_catch = 0;
+    bb_action legal[BB_LEGAL_MAX];
+    int count = bb_legal_actions(&match, legal);
+    for (int i = 0; i < count; i++) {
+        if (legal[i].type != BB_A_HANDOFF_TARGET) continue;
+        targets++;
+        int slot = bb_slot_at(&match, legal[i].x, legal[i].y);
+        if (slot >= 0 && bb_can_catch(&match, slot)) can_catch++;
+    }
+    if (catch_capable != NULL) *catch_capable = can_catch;
+    return targets;
+}
+
 BB_TEST(authored_drill_exact_replay_reproduces_raw_state) {
     ad_recipe recipe = ad_test_recipe();
     char error[AD_ERROR_CAP];
@@ -381,4 +422,87 @@ BB_TEST(authored_drill_f1_reaches_real_pass_opportunity) {
     BB_CHECK_EQ(memcmp(&no_pass.captured, &original, sizeof original), 0);
     no_pass.captured.stack[1].a = 255;
     BB_CHECK(!ad_f1_pass_opportunity_valid(&no_pass.captured));
+}
+
+BB_TEST(authored_drill_f2_reaches_real_handoff_opportunity) {
+    ad_recipe recipe = ad_test_recipe();
+    char error[AD_ERROR_CAP];
+    BB_CHECK_EQ(ad_discover_f2_handoff_opportunity(&recipe, error), 0);
+    BB_CHECK_EQ(recipe.action_count, 414);
+    BB_CHECK_EQ(recipe.dice_count, 108);
+    BB_CHECK(bb_state_bank_boundary_valid(&recipe.captured));
+    BB_CHECK_EQ(recipe.captured.half, 2);
+    BB_CHECK_EQ(recipe.captured.active_team, BB_AWAY);
+    BB_CHECK_EQ(recipe.captured.turn[BB_AWAY], 1);
+    BB_CHECK_EQ(recipe.captured.score[BB_HOME], 0);
+    BB_CHECK_EQ(recipe.captured.score[BB_AWAY], 0);
+    BB_CHECK_EQ(recipe.captured.ball.state, BB_BALL_HELD);
+    BB_CHECK_EQ(recipe.captured.ball.carrier, 23);
+    BB_CHECK_EQ(BB_TEAM_OF(recipe.captured.ball.carrier), BB_AWAY);
+    BB_CHECK_EQ(recipe.captured.players[recipe.captured.ball.carrier].stance,
+                BB_STANCE_STANDING);
+    BB_CHECK_EQ(recipe.captured.handoff_used, 0);
+
+    bb_match original = recipe.captured;
+    BB_CHECK(ad_f2_handoff_opportunity_valid(&recipe.captured));
+    BB_CHECK_EQ(memcmp(&recipe.captured, &original, sizeof original), 0);
+    int catch_capable = 0;
+    BB_CHECK(ad_test_handoff_target_count(&recipe.captured, &catch_capable) > 0);
+    BB_CHECK(catch_capable > 0);
+
+    bb_match no_ball_carrier = recipe.captured;
+    bb_add_skill(&no_ball_carrier.players[no_ball_carrier.ball.carrier].skills,
+                 BB_SK_NO_BALL);
+    BB_CHECK(bb_state_bank_boundary_valid(&no_ball_carrier));
+    BB_CHECK(!ad_f2_handoff_opportunity_valid(&no_ball_carrier));
+
+    bb_match no_receivers = recipe.captured;
+    for (int slot = BB_AWAY * BB_TEAM_SLOTS;
+         slot < (BB_AWAY + 1) * BB_TEAM_SLOTS; slot++) {
+        if (slot != no_receivers.ball.carrier) {
+            bb_add_skill(&no_receivers.players[slot].skills, BB_SK_NO_BALL);
+        }
+    }
+    BB_CHECK(bb_state_bank_boundary_valid(&no_receivers));
+    BB_CHECK(ad_test_handoff_target_count(&no_receivers, &catch_capable) > 0);
+    BB_CHECK_EQ(catch_capable, 0);
+    BB_CHECK(!ad_f2_handoff_opportunity_valid(&no_receivers));
+
+    bb_match spent = recipe.captured;
+    spent.handoff_used = 1;
+    BB_CHECK(bb_state_bank_boundary_valid(&spent));
+    BB_CHECK(!ad_f2_handoff_opportunity_valid(&spent));
+
+    bb_match replayed;
+    BB_CHECK_EQ(ad_replay_exact(&recipe, &replayed, error), 0);
+    BB_CHECK_EQ(memcmp(&replayed, &recipe.captured, sizeof replayed), 0);
+    BB_CHECK_EQ(ad_verify_one_action_continuation(
+                    &replayed, NULL, NULL, NULL, error),
+                0);
+
+    FILE* file = tmpfile();
+    BB_CHECK(file != NULL);
+    if (file != NULL) {
+        ad_bbs_record record = {
+            0xA2000001u, (uint32_t)recipe.action_count, &recipe,
+        };
+        recipe.game_stream++;
+        BB_CHECK(ad_bbs_write(file, &record, 1, error) != 0);
+        BB_CHECK(strstr(error, "provenance") != NULL);
+        BB_CHECK_EQ(ftell(file), 0);
+        BB_CHECK_EQ(fclose(file), 0);
+        recipe.game_stream--;
+    }
+
+    ad_recipe rediscovered = ad_test_recipe();
+    BB_CHECK_EQ(ad_discover_f2_handoff_opportunity(&rediscovered, error), 0);
+    BB_CHECK_EQ(memcmp(&recipe, &rediscovered, sizeof recipe), 0);
+
+    ad_recipe no_handoff = ad_test_recipe();
+    BB_CHECK_EQ(ad_discover_first_team_turn(&no_handoff, error), 0);
+    original = no_handoff.captured;
+    BB_CHECK(!ad_f2_handoff_opportunity_valid(&no_handoff.captured));
+    BB_CHECK_EQ(memcmp(&no_handoff.captured, &original, sizeof original), 0);
+    no_handoff.captured.stack[1].a = 255;
+    BB_CHECK(!ad_f2_handoff_opportunity_valid(&no_handoff.captured));
 }
