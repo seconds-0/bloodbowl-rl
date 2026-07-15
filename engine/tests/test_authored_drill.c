@@ -1714,19 +1714,23 @@ BB_TEST(authored_drill_proof_bundle_builder_is_fixed_and_atomic) {
     BB_CHECK(ad_test_bytes_are(recipes_a, count * sizeof(*recipes_a), 0x5a));
     BB_CHECK(ad_test_bytes_are(records_a, count * sizeof(*records_a), 0xa5));
 
-    const size_t wrong_capacity[][2] = {
-        {0, count}, {count - 1, count}, {count + 1, count},
-        {count, 0}, {count, count - 1}, {count, count + 1},
-    };
-    for (size_t i = 0; i < sizeof wrong_capacity / sizeof wrong_capacity[0];
-         i++) {
-        BB_CHECK(ad_build_authored_proof_bundle(
-                     recipes_a, wrong_capacity[i][0], records_a,
-                     wrong_capacity[i][1], error) != 0);
-        BB_CHECK(ad_test_bytes_are(
-                     recipes_a, count * sizeof(*recipes_a), 0x5a));
-        BB_CHECK(ad_test_bytes_are(
-                     records_a, count * sizeof(*records_a), 0xa5));
+    const size_t capacities[] = {0, count - 1, count, count + 1};
+    for (size_t recipe_i = 0;
+         recipe_i < sizeof capacities / sizeof capacities[0]; recipe_i++) {
+        for (size_t record_i = 0;
+             record_i < sizeof capacities / sizeof capacities[0]; record_i++) {
+            if (capacities[recipe_i] == count &&
+                capacities[record_i] == count) {
+                continue;
+            }
+            BB_CHECK(ad_build_authored_proof_bundle(
+                         recipes_a, capacities[recipe_i], records_a,
+                         capacities[record_i], error) != 0);
+            BB_CHECK(ad_test_bytes_are(
+                         recipes_a, count * sizeof(*recipes_a), 0x5a));
+            BB_CHECK(ad_test_bytes_are(
+                         records_a, count * sizeof(*records_a), 0xa5));
+        }
     }
 
     BB_CHECK_EQ(ad_build_authored_proof_bundle(

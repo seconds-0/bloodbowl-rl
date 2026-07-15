@@ -192,7 +192,9 @@ int ad_validate_authored_proof_bundle(
 // Build the current fixed 26-record proof bundle in production-owned order.
 // Both capacities must equal AD_AUTHORED_PROOF_BUNDLE_COUNT. The A9 source IDs
 // are proof-local positional metadata, not persistent recipe/variant identity.
-// Caller outputs are committed only after complete discovery and validation.
+// Recipes, records, and error storage are required, suitably aligned, and
+// mutually disjoint. Caller outputs are committed only after complete
+// discovery and validation.
 int ad_build_authored_proof_bundle(
     ad_recipe* recipes, size_t recipe_capacity,
     ad_bbs_record* records, size_t record_capacity,
