@@ -149,7 +149,10 @@ int ad_f1_pass_opportunity_valid(const bb_match* match) {
     const bb_player* player = &match->players[carrier];
     // proc_ball treats PA '-' as unable to pass. Keep the authored predicate
     // rules-correct even while the broader activation mask is fixed separately.
-    if (player->stance != BB_STANCE_STANDING || player->pa <= 0) return 0;
+    if (player->stance != BB_STANCE_STANDING || player->pa <= 0 ||
+        bb_has_skill(&player->skills, BB_SK_NO_BALL)) {
+        return 0;
+    }
 
     bb_action action;
     if (!ad_find_legal(match, BB_A_ACTIVATE, carrier, &action)) return 0;

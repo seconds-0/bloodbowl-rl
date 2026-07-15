@@ -334,6 +334,11 @@ BB_TEST(authored_drill_f1_reaches_real_pass_opportunity) {
     bb_match no_pa = recipe.captured;
     no_pa.players[no_pa.ball.carrier].pa = 0;
     BB_CHECK(!ad_f1_pass_opportunity_valid(&no_pa));
+    bb_match no_ball_carrier = recipe.captured;
+    bb_add_skill(&no_ball_carrier.players[no_ball_carrier.ball.carrier].skills,
+                 BB_SK_NO_BALL);
+    BB_CHECK(bb_state_bank_boundary_valid(&no_ball_carrier));
+    BB_CHECK(!ad_f1_pass_opportunity_valid(&no_ball_carrier));
     bb_match no_receivers = recipe.captured;
     for (int slot = BB_AWAY * BB_TEAM_SLOTS;
          slot < (BB_AWAY + 1) * BB_TEAM_SLOTS; slot++) {
