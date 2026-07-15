@@ -3867,3 +3867,32 @@ Rules-layer follow-up and next steps:
   merge. Continue the F2 authored proof only after that rules foundation is
   merged. The occupied 2070 checkout, frozen queues, and BBTV services remain
   untouched.
+
+08:14 PDT addendum:
+
+- Exact-head review materially corrected the initial No Ball implementation
+  before merge. Hand-off target eligibility is Standing plus Tackle Zone, not
+  successful-catch capability: a No Ball team-mate remains selectable, then
+  automatically fails the required Catch without a catch die, Bounces, and
+  causes the ordinary Hand-off Turnover. A second reproduced pre-existing bug
+  allowed No Ball players to Intercept and gain possession; interception
+  candidate construction now excludes them explicitly.
+- The strengthened tests prove the No Ball Hand-off consumes exactly one D8
+  Bounce die and no catch die, leaves the ball on the ground with no carrier,
+  and turns over. A successful-pass regression proves a No Ball defender gets
+  no interception choice or possession. The Touchback test now validates all
+  194 eligible empty squares in the receiving half, excludes occupied and
+  wrong-half squares, applies the selected fallback with zero extra RNG, and
+  verifies exact ground-ball state and receiving-team continuation.
+- Three independent reviewers approved final exact head
+  `15daf22c561c3f563118d76e6d9ca77dc8209bdf` with no P0-P3 findings. Optimized
+  and ASan/UBSan suites each passed 423 engine, 37 reward, 2 contact-bot, and 4
+  loader tests; Clang analysis and diff checks passed. An independent fresh
+  double regeneration matched all eight committed goldens byte-for-byte.
+  Exact-head CI run `29426743816` passed in 4m15s.
+- PR #32 merged authoritatively to `main` as
+  `f1271e44369beb7b083e9875ee27087cf51a70e6`; the remote feature branch was
+  deleted. No source or artifact was deployed to the occupied 2070 checkout,
+  and neither frozen queue or BBTV service was changed. The next authored-bank
+  step remains the narrow F2 Hand-off-opportunity proof on the corrected rules
+  foundation.
