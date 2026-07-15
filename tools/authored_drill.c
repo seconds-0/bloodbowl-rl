@@ -2,6 +2,7 @@
 // transcripts and serialization; only the engine owns mutable bb_match state.
 #include "authored_drill.h"
 
+#include "bb/bb_reachability.h"
 #include "bb/gen_teams.h"
 #include "bb/gen_skills.h"
 
@@ -229,6 +230,38 @@ int ad_f2_handoff_opportunity_valid(const bb_match* match) {
     return 0;
 }
 
+int ad_f5_score_or_wait_valid(const bb_match* match) {
+    if (!bb_state_bank_boundary_valid(match) ||
+        match->ball.state != BB_BALL_HELD ||
+        match->ball.carrier >= BB_NUM_PLAYERS ||
+        BB_TEAM_OF(match->ball.carrier) != match->active_team) {
+        return 0;
+    }
+    int carrier = match->ball.carrier;
+    if (bb_has_skill(&match->players[carrier].skills, BB_SK_NO_BALL) ||
+        !bb_can_score_without_dice(match, carrier)) {
+        return 0;
+    }
+
+    bb_action action;
+    if (!ad_find_legal(match, BB_A_ACTIVATE, carrier, &action)) return 0;
+    bb_match probe = *match;
+    uint8_t die = 6;
+    bb_rng rng;
+    bb_rng_script(&rng, &die, 1);
+    if (bb_apply(&probe, action, &rng) != BB_STATUS_DECISION ||
+        rng.script_pos != 0 || bb_rng_error(&rng) ||
+        !ad_find_legal(&probe, BB_A_DECLARE, BB_ACT_MOVE, &action)) {
+        return 0;
+    }
+    if (bb_apply(&probe, action, &rng) != BB_STATUS_DECISION ||
+        rng.script_pos != 0 || bb_rng_error(&rng) ||
+        !ad_find_legal(&probe, BB_A_END_ACTIVATION, -1, NULL)) {
+        return 0;
+    }
+    return 1;
+}
+
 static int ad_recipe_config_valid(const ad_recipe* recipe) {
     return recipe->kind >= AD_RECIPE_FIRST_TEAM_TURN &&
            recipe->kind < AD_RECIPE_KIND_COUNT &&
@@ -251,6 +284,9 @@ static int ad_capture_ready(const bb_match* match, ad_recipe_kind kind) {
     }
     if (kind == AD_RECIPE_F2_HANDOFF_OPPORTUNITY) {
         return ad_f2_handoff_opportunity_valid(match);
+    }
+    if (kind == AD_RECIPE_F5_SCORE_OR_WAIT) {
+        return ad_f5_score_or_wait_valid(match);
     }
     return match->half == 2 && match->active_team <= BB_AWAY &&
            match->turn[match->active_team] >= 5;
@@ -348,6 +384,11 @@ int ad_discover_f1_pass_opportunity(ad_recipe* recipe,
 int ad_discover_f2_handoff_opportunity(ad_recipe* recipe,
                                        char error[AD_ERROR_CAP]) {
     return ad_discover(recipe, AD_RECIPE_F2_HANDOFF_OPPORTUNITY, error);
+}
+
+int ad_discover_f5_score_or_wait(ad_recipe* recipe,
+                                 char error[AD_ERROR_CAP]) {
+    return ad_discover(recipe, AD_RECIPE_F5_SCORE_OR_WAIT, error);
 }
 
 int ad_replay_exact(const ad_recipe* recipe, bb_match* out,
@@ -486,6 +527,9 @@ static int ad_rediscover_recipe(const ad_recipe* source, ad_recipe* out,
             break;
         case AD_RECIPE_F2_HANDOFF_OPPORTUNITY:
             rc = ad_discover_f2_handoff_opportunity(out, error);
+            break;
+        case AD_RECIPE_F5_SCORE_OR_WAIT:
+            rc = ad_discover_f5_score_or_wait(out, error);
             break;
         default:
             return ad_fail(error, "unknown authored recipe kind %d",
