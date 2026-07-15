@@ -192,6 +192,11 @@ changes a reward, active queue, production default, or promotion verdict.
   The strict non-empty BB2025 allowlist has 9,118 replay IDs and 1,622,231
   joined records. See `runs/replay-audit-20260713/`.
 - Never mix BB2020 records into BB2025 training or evaluation.
+- A BBS1 match-size/fingerprint match proves build compatibility, not record
+  integrity. Preserve `bbe_state_bank_match_valid`: before a demo record can
+  enter reset selection it must have bounded procedure/team/enum indices,
+  bidirectionally consistent grid/player coordinates, and a valid ball state.
+  New bank writers and readers must fail closed on malformed raw snapshots.
 - The historical BBS state bank is mixed by source replay: 123 of 15,471
   records come from 42 BB2020 replay IDs. Before any future replay-state
   scenario/curriculum, run `tools/filter_state_bank.py` with the pinned mixed-
