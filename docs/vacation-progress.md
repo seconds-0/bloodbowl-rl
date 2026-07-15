@@ -2440,3 +2440,32 @@ Interpretation and next steps:
   the run, compare milestones with paired, mirrored, kickoff-only held-out
   evaluation across opponents/rosters. Do not select from this curve, BBTV, or
   human-stat proximity, and do not mutate the reward during the vacation.
+
+Post-entry checkpoint-retention audit at 21:50 PDT:
+
+- The active seed-42 run directory contains 122 native checkpoints from exact
+  step 131,072 through 6,042,681,344. Every adjacent save is separated by the
+  expected 49,938,432-step interval; no interval is missing. The files occupy
+  1,960,120,320 bytes and each has the frozen 16,066,560-byte architecture
+  size. Nearest retained milestones to 1B--6B are 998,899,712;
+  1,997,668,352; 2,996,436,992; 3,995,205,632; 4,993,974,272; and
+  5,992,742,912 steps.
+- The exact installed `pufferlib/pufferl.py` writes each interval checkpoint
+  to a step-named file and contains no checkpoint rotation or deletion path.
+  The screen runner and queue do not clean these native run directories.
+  BBTV's `keep-converted=24` pruning is confined to its separate converted
+  `_torch.bin` cache and cannot remove native learner checkpoints. At the
+  current cadence, one complete 12B arm needs about 3.9 GB of native
+  checkpoints; all six primary arms plus the optional three-arm overflow fit
+  comfortably within the roughly 898 GiB currently free.
+- Therefore no live copying, pin change, runner edit, or extra retention
+  service is warranted. The native milestones already survive by construction
+  and can be hashed into a post-run evaluation manifest without disturbing the
+  active job.
+- A first service probe incorrectly used the system manager and reported the
+  templated user unit as missing. Immediate process, GPU, queue-state, and
+  corrected `systemctl --user` checks showed no transition: the service has
+  remained active since 12:45 PDT, queue PID `431309`, trainer PID `431596`,
+  process group `431313`, persisted `running` state, and zero restarts. Future
+  probes must query the user manager. This was a monitoring-command error, not
+  an experiment outage or restart.
