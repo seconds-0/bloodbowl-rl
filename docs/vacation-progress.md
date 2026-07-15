@@ -3416,3 +3416,90 @@ Next steps and safety boundary:
   Claude/Fable remained unavailable because `claude auth status` reported no
   active login, so that auth failure was not counted as a review verdict. The
   fix was not installed in the occupied 2070 checkout.
+
+## 2026-07-15 05:14 PDT — hourly health check and BB2025 Stalling implementation proof
+
+Live experiment and autonomy state:
+
+- At 05:13 PDT `final-main-control` remained healthy at exact learner step
+  11,028,660,224 (epoch 84,141), approximately 91.9% of its 12B seed-42 run.
+  The latest complete 116-game native panel reported performance 0.5862,
+  1.3621 touchdowns/game, draw rate 0.4310, possession 0.3687, historical
+  in-pool win rate 0.6072, illegal/sampled-repair fraction 0.1733, forward ball
+  progress 8.219 squares, 18.181 Rush intentions, 12.276 blocks thrown, 2.086
+  blocks against the carrier, carrier-target fraction 0.1787, 1D fraction
+  0.2015, 2D-red fraction 0.0444, 0.0259 pass intentions, and zero handoffs.
+  Reward clipping, non-finite reward, engine-error, demonstration, and fallback
+  counters were all zero.
+- The exact primary service is active/running with zero restarts and queue PID
+  431309; `final-main-control` is running and `final-second-control` remains
+  pending. The exact compute-PID gate still returns only trainer PID 431596.
+  Run `1784058310965` has 221 complete 16,066,560-byte checkpoints; the latest
+  observed complete checkpoint is exact step 10,986,586,112.
+- All 65 primary and 74 overflow pins revalidated with no error at unchanged
+  plan SHA-256 values
+  `4ee72e3c58f09786cdd3bbf78a772e8de2d9a93e21a8b065cf0c5976ecced270`
+  and
+  `d90ee01c8c459f599c8601934f545ccb7783261edae3bcb6e9e3878036d37d3e`.
+  Overflow state remains absent. Its service is inactive/dead with zero
+  restarts; the enabled timer remains active/waiting, and the 05:03 watcher
+  invocation returned success after correctly reporting that the primary was
+  still active.
+- The sampled GPU state was 80 C, 88% fan, 83% utilization, 5,554/8,192 MiB,
+  and 109.92 W. Software thermal limiting was active, hardware slowdown was
+  inactive, and the sample remained below the frozen 88 C three-poll guard.
+  Disk remains 7% used with 895 GiB free, inodes 1% used, memory 8.5 GiB
+  available, and swap use 27 MiB.
+- `bbstream`, `bbweb`, and `bbtv-tunnel` remain active with zero restarts. The
+  CPU viewer selected exact checkpoint 10,886,709,248 at 05:04 PDT, source
+  SHA-256
+  `3ae7c120f3dcb5081ef32a4fb78b3cd26c47a44686f66f57665d8f14977f59cb`,
+  against the frozen turnover3 baseline. The public page returned HTTP 200 in
+  0.266 seconds. BBTV remains observational and owns no GPU compute process.
+
+BB2025 Stalling rules audit:
+
+- The current rulebook mirror defines Stalling as ending an activation still
+  holding the ball after having been able to score without a Dodge, Rush,
+  Block, activation Trait, or any other dice. It requires an end-of-activation
+  D6; a result at least equal to the current team turn Knocks the carrier Down
+  and causes a Turnover. Forgoing the carrier's activation still requires the
+  roll, while a prior Turnover that denies the carrier an activation does not.
+  A successful Pass/Hand-off that transfers possession is exempt. The May 2026
+  FAQ interaction allows Steady Footing to prevent both the crowd knockdown and
+  its Turnover, although the crowd-action roll itself cannot be rerolled.
+- A focused bug hunt proved the executable engine contained no Stalling logic:
+  the pre-fix regression left an eligible turn-1 carrier standing with the ball
+  and consumed zero of four scripted crowd/armour/bounce dice. A local fix now
+  computes whether any scoring path is free of Dodge/Rush and compulsory
+  activation dice, snapshots eligibility at activation start, and resolves the
+  non-rerollable crowd roll after activation or explicit forgoing. It uses the
+  existing knockdown procedure so Steady Footing, ball release, armour/injury,
+  Turnover, and procedure unwinding keep one owner.
+- Nine focused Stalling tests now cover the crowd knockdown, turn-number
+  threshold, Rush/Dodge/activation-gate exemptions, successful Hand-off,
+  forgoing, prior-Turnover exemption, and Steady Footing. The existing
+  touchdown test now also proves a real score never falls through into a crowd
+  roll. The full optimized and ASan/UBSan suites both pass: 410 engine, 37
+  reward, 2 contact-bot, and 1 state-bank-loader test. Golden replay
+  resimulation remains exact. The change adds no match fields or procedure
+  identifiers and therefore does not change the serialized match ABI.
+- This rule fix remains local and uncommitted pending a final diff review,
+  guide/decision integration, and exact-head PR/CI. It was not copied to,
+  rebuilt in, or deployed over the source-pinned 2070 experiment. Claude/Fable
+  is recorded as the preferred independent plan/debug reviewer, but its local
+  OAuth session remains expired; that availability failure is not a review
+  verdict.
+
+Next steps and safety boundary:
+
+1. Review the Stalling diff for omitted compulsory-roll interactions and query
+   side effects, update the durable rules/decision guidance, then commit and
+   take it through independent diff review, exact-head CI, and merge.
+2. Resume the deterministic authored-fixture plan for Pass, Hand-off, second
+   half, contextual reroll, and score/clock/Stalling decisions. Keep recipe
+   construction engine-driven with scripted RNG and keep the authored bank out
+   of the occupied checkout until separately reviewed.
+3. Continue hourly read-only live/BBTV monitoring. Do not deploy this rule fix,
+   start overflow manually, or start milestone evaluation while either queue
+   remains pending/running.
