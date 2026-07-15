@@ -324,42 +324,6 @@ BB_TEST(state_bank_accepts_complete_f3_second_half_turn_axis) {
     BB_CHECK_EQ(ad_bbs_write(file, records, count, error), 0);
     BB_CHECK_EQ(fclose(file), 0);
 
-    const size_t expected_bytes = 16 + count * (12 + sizeof(bb_match));
-    uint8_t* first_bytes = malloc(expected_bytes);
-    uint8_t* second_bytes = malloc(expected_bytes);
-    BB_CHECK(first_bytes != NULL);
-    BB_CHECK(second_bytes != NULL);
-    if (first_bytes != NULL && second_bytes != NULL) {
-        size_t first_read = 0;
-        file = fopen(path, "rb");
-        BB_CHECK(file != NULL);
-        if (file != NULL) {
-            first_read = fread(first_bytes, 1, expected_bytes, file);
-            BB_CHECK_EQ(first_read, expected_bytes);
-            BB_CHECK_EQ(fgetc(file), EOF);
-            BB_CHECK_EQ(fclose(file), 0);
-        }
-
-        size_t second_read = 0;
-        file = tmpfile();
-        BB_CHECK(file != NULL);
-        if (file != NULL) {
-            BB_CHECK_EQ(ad_bbs_write(file, records, count, error), 0);
-            rewind(file);
-            second_read = fread(second_bytes, 1, expected_bytes, file);
-            BB_CHECK_EQ(second_read, expected_bytes);
-            BB_CHECK_EQ(fgetc(file), EOF);
-            if (first_read == expected_bytes &&
-                second_read == expected_bytes) {
-                BB_CHECK_EQ(memcmp(first_bytes, second_bytes, expected_bytes),
-                            0);
-            }
-            BB_CHECK_EQ(fclose(file), 0);
-        }
-    }
-    free(first_bytes);
-    free(second_bytes);
-
     reset_state_bank_loader(path);
     bbe_state_bank_load();
     BB_CHECK_EQ(bbe_state_bank_n, count);
@@ -968,6 +932,42 @@ BB_TEST(state_bank_accepts_complete_authored_proof_bundle) {
     }
     BB_CHECK_EQ(ad_bbs_write(file, records, count, error), 0);
     BB_CHECK_EQ(fclose(file), 0);
+
+    const size_t expected_bytes = 16 + count * (12 + sizeof(bb_match));
+    uint8_t* first_bytes = malloc(expected_bytes);
+    uint8_t* second_bytes = malloc(expected_bytes);
+    BB_CHECK(first_bytes != NULL);
+    BB_CHECK(second_bytes != NULL);
+    if (first_bytes != NULL && second_bytes != NULL) {
+        size_t first_read = 0;
+        file = fopen(path, "rb");
+        BB_CHECK(file != NULL);
+        if (file != NULL) {
+            first_read = fread(first_bytes, 1, expected_bytes, file);
+            BB_CHECK_EQ(first_read, expected_bytes);
+            BB_CHECK_EQ(fgetc(file), EOF);
+            BB_CHECK_EQ(fclose(file), 0);
+        }
+
+        size_t second_read = 0;
+        file = tmpfile();
+        BB_CHECK(file != NULL);
+        if (file != NULL) {
+            BB_CHECK_EQ(ad_bbs_write(file, records, count, error), 0);
+            rewind(file);
+            second_read = fread(second_bytes, 1, expected_bytes, file);
+            BB_CHECK_EQ(second_read, expected_bytes);
+            BB_CHECK_EQ(fgetc(file), EOF);
+            if (first_read == expected_bytes &&
+                second_read == expected_bytes) {
+                BB_CHECK_EQ(memcmp(first_bytes, second_bytes, expected_bytes),
+                            0);
+            }
+            BB_CHECK_EQ(fclose(file), 0);
+        }
+    }
+    free(first_bytes);
+    free(second_bytes);
 
     reset_state_bank_loader(path);
     bbe_state_bank_load();
