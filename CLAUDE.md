@@ -5,7 +5,7 @@ deterministic C11 rules engine → PufferLib 4.0 native env → PPO + action
 masking + self-play curriculum, with BC support from curated FUMBBL replays.
 
 **Read `AGENTS.md` first.** Then read the tail of `DECISIONS.md` (currently
-through D189) and, for reward/replay work,
+through D190) and, for reward/replay work,
 `docs/reward-and-replay-audit-2026-07-09.md`. The ledger is chronological; the
 July audit and D177–D189 supersede older prose that calls the June v4 reward
 economy "settled." Where this file and newer ledger evidence disagree, the
@@ -55,8 +55,10 @@ newer evidence wins.
   its four static training banks but is non-monotonic, in-pool evidence. Do not
   select the newest checkpoint or reward from it. Post-run selection uses the
   fixed paired milestone protocol; future reward work needs gamma-corrected
-  distance/anneal and no-rush A/Bs, replay-derived rare-action scenarios, and
-  per-component emitted-reward attribution.
+  distance/anneal and no-rush A/Bs plus replay-derived rare-action scenarios.
+  D190 supplies per-component emitted-reward attribution for future builds.
+  It is not present in, and must not trigger a rebuild of, the pinned vacation
+  queues; do not make retroactive component claims about their panels.
 - Canonical artifacts:
   `runs/reward-screens/reward-screen-20260709-v1/SCREEN_COMPLETE.json`,
   `runs/reward-transfer-20260713-v1/ANALYSIS.json`, and
@@ -119,6 +121,14 @@ newer evidence wins.
   possession-annuity/ball-gain family survived scripted transfer, but the audit
   has not identified which component helps defense. Decompose it before
   retuning coefficients.
+- Future builds expose a 28-channel emitted-reward ledger from the team-0/home
+  perspective. Interpret component totals as pre-clamp raw reward. Require
+  `sum(components) + residual` to match raw `episode_return`, then require
+  `episode_return - reward_clip_signed_delta` to match
+  `reward_postclip_return`, within float tolerance. A nonzero clamp delta fails
+  integrity independently even when both identities hold; mismatch/non-finite
+  counters also fail. This is diagnostic attribution, not evidence that any
+  shaping term is beneficial.
 - Distance shaping is required for present learnability, not validated as final
   utility. Raw `Phi(s')-Phi(s)` is not exact PBRS under `gamma=0.995`; prefer
   `beta*(gamma*Phi(s')-Phi(s))` or demonstrate non-inferiority while annealing.

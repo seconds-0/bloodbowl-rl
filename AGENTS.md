@@ -9,7 +9,7 @@ and behavioral cloning from FUMBBL replays.
 1. Read the tail of `DECISIONS.md`. It is the chronological program ledger;
    later entries amend earlier ones without deleting history.
 2. For reward, replay, or training work, read
-   `docs/reward-and-replay-audit-2026-07-09.md`. D177–D189 summarize its durable
+   `docs/reward-and-replay-audit-2026-07-09.md`. D177–D190 summarize its durable
    conclusions and the subsequent vacation-training decisions.
 3. Load the relevant project skill under `.claude/skills/`:
    - `training-experiments` for any run, A/B, checkpoint, metric, or promotion;
@@ -57,9 +57,11 @@ default.
 - The frozen seed-42 6B curve improves against all four static training banks
   but is non-monotonic and in-pool (D187, with corrected endpoints in D188).
   Select no live/newest checkpoint from
-  it. Use the fixed post-run milestone matrix, and treat near-absent pass/handoff
-  coverage plus missing per-component reward attribution as future research
-  requirements rather than reasons to alter the vacation queues.
+  it. Use the fixed post-run milestone matrix. Near-absent pass/handoff coverage
+  remains a future-research requirement. D190 adds per-component emitted-reward
+  attribution for future builds, but it is not retroactive: the pinned vacation
+  queues predate the ledger and must not be rebuilt or reinterpreted as though
+  they emitted it.
 - Human-looking block, rush, possession, or action rates are diagnostics, not
   optimization objectives. Tournament/match utility and held-out transfer are
   the decision criteria.
@@ -88,6 +90,13 @@ For any causal comparison:
   utility, but do not let incidental action/board shaping co-stack with the
   terminal result. Keep deliberately episode-terminal terms separately visible
   to clip telemetry.
+- Reward-component reports use the team-0/home learner perspective, not the sum
+  of both agents (zero-sum terms would cancel). Reconcile raw component sum plus
+  residual to raw `episode_return`, then reconcile `episode_return` minus signed
+  clamp delta to post-clamp return, within float tolerance. A nonzero clamp
+  delta is independently an integrity failure even when those identities hold;
+  so is any mismatch or non-finite component counter. The ledger diagnoses
+  emitted reward; it does not validate a component or authorize promotion.
 - Evaluate kickoff starts with `demo_reset_pct=0`, both sides/orientations, W/D/L,
   TD for/against, common-seed paired differences, and held-out opponents.
 - Two seeds and scripted bots are descriptive screening evidence, not a

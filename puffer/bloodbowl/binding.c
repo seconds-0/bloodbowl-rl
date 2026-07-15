@@ -228,7 +228,7 @@ void my_log(Log* log, Dict* out) {
     //
     // CAPACITY: vec_log (src/bindings_cpu.cpp / bindings.cu) must hand us a
     // dict large enough for these keys plus the vecenv-appended "n". We emit
-    // 88. Growing past the call-site capacity is SILENT HEAP CORRUPTION
+    // 123. Growing past the call-site capacity is SILENT HEAP CORRUPTION
     // upstream (assert compiles out under NDEBUG); our vendored dict_set
     // aborts loudly instead (training/puffer_dict_capacity.patch).
     // History: key count hit 37 vs capacity 32 when slot scores + demo
@@ -267,6 +267,75 @@ void my_log(Log* log, Dict* out) {
              log->reward_nonfinite_samples);
     dict_set(out, "reward_clip_episodes", log->reward_clip_episodes);
     dict_set(out, "reward_nonfinite_episodes", log->reward_nonfinite_episodes);
+    dict_set(out, "reward_component_setup_done",
+             log->reward_component[BBE_REWARD_SETUP_DONE]);
+    dict_set(out, "reward_component_setup_autofix",
+             log->reward_component[BBE_REWARD_SETUP_AUTOFIX]);
+    dict_set(out, "reward_component_ball_gain",
+             log->reward_component[BBE_REWARD_BALL_GAIN]);
+    dict_set(out, "reward_component_ball_loss",
+             log->reward_component[BBE_REWARD_BALL_LOSS]);
+    dict_set(out, "reward_component_distance_ball",
+             log->reward_component[BBE_REWARD_DISTANCE_BALL]);
+    dict_set(out, "reward_component_distance_endzone",
+             log->reward_component[BBE_REWARD_DISTANCE_ENDZONE]);
+    dict_set(out, "reward_component_injury_inflicted",
+             log->reward_component[BBE_REWARD_INJURY_INFLICTED]);
+    dict_set(out, "reward_component_injury_taken",
+             log->reward_component[BBE_REWARD_INJURY_TAKEN]);
+    dict_set(out, "reward_component_send_off",
+             log->reward_component[BBE_REWARD_SEND_OFF]);
+    dict_set(out, "reward_component_touchback",
+             log->reward_component[BBE_REWARD_TOUCHBACK]);
+    dict_set(out, "reward_component_surf_inflicted",
+             log->reward_component[BBE_REWARD_SURF_INFLICTED]);
+    dict_set(out, "reward_component_surf_taken",
+             log->reward_component[BBE_REWARD_SURF_TAKEN]);
+    dict_set(out, "reward_component_block_exposure",
+             log->reward_component[BBE_REWARD_BLOCK_EXPOSURE]);
+    dict_set(out, "reward_component_block_self_injury",
+             log->reward_component[BBE_REWARD_BLOCK_SELF_INJURY]);
+    dict_set(out, "reward_component_block_sequence",
+             log->reward_component[BBE_REWARD_BLOCK_SEQUENCE]);
+    dict_set(out, "reward_component_block_turnover",
+             log->reward_component[BBE_REWARD_BLOCK_TURNOVER]);
+    dict_set(out, "reward_component_possession",
+             log->reward_component[BBE_REWARD_POSSESSION]);
+    dict_set(out, "reward_component_block_assist",
+             log->reward_component[BBE_REWARD_BLOCK_ASSIST]);
+    dict_set(out, "reward_component_rush",
+             log->reward_component[BBE_REWARD_RUSH]);
+    dict_set(out, "reward_component_carrier_exposure",
+             log->reward_component[BBE_REWARD_CARRIER_EXPOSURE]);
+    dict_set(out, "reward_component_carrier_exposure_soft",
+             log->reward_component[BBE_REWARD_CARRIER_EXPOSURE_SOFT]);
+    dict_set(out, "reward_component_carrier_threat",
+             log->reward_component[BBE_REWARD_CARRIER_THREAT]);
+    dict_set(out, "reward_component_defensive_threat",
+             log->reward_component[BBE_REWARD_DEFENSIVE_THREAT]);
+    dict_set(out, "reward_component_defensive_threat_soft",
+             log->reward_component[BBE_REWARD_DEFENSIVE_THREAT_SOFT]);
+    dict_set(out, "reward_component_touchdown",
+             log->reward_component[BBE_REWARD_TOUCHDOWN]);
+    dict_set(out, "reward_component_result_winloss",
+             log->reward_component[BBE_REWARD_RESULT_WINLOSS]);
+    dict_set(out, "reward_component_result_draw",
+             log->reward_component[BBE_REWARD_RESULT_DRAW]);
+    dict_set(out, "reward_component_statmatch",
+             log->reward_component[BBE_REWARD_STATMATCH]);
+    dict_set(out, "reward_component_residual",
+             log->reward_component_residual);
+    dict_set(out, "reward_component_mismatch_samples_per_episode",
+             log->reward_component_mismatch_samples);
+    dict_set(out, "reward_component_nonfinite_samples_per_episode",
+             log->reward_component_nonfinite_samples);
+    dict_set(out, "reward_terminal_suppressed_signed",
+             log->reward_terminal_suppressed_signed);
+    dict_set(out, "reward_terminal_suppressed_abs",
+             log->reward_terminal_suppressed_abs);
+    dict_set(out, "reward_postclip_return", log->reward_postclip_return);
+    dict_set(out, "reward_clip_signed_delta",
+             log->reward_clip_signed_delta);
     dict_set(out, "illegal_frac", log->illegal_frac);
     dict_set(out, "blocks", log->blocks);
     dict_set(out, "blocks_thrown", log->blocks_thrown);

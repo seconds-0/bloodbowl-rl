@@ -57,6 +57,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>   // sqrtf — aggregate-stat-matching pseudo-reward (D114)
+#include <float.h>  // FLT_EPSILON — component-ledger reconciliation tolerance
 #include <stdio.h>
 
 // --- Engine amalgamation (build.sh compiles binding.c as a single TU) -------
@@ -115,6 +116,42 @@
 #define BBE_DEFAULT_REWARD_TD 0.4f
 #define BBE_DEFAULT_REWARD_WIN 0.6f
 #define BBE_DEFAULT_REWARD_DRAW 0.0f
+
+// Effective emitted-reward taxonomy. Each entry is the signed contribution
+// seen by one agent before Puffer's [-1, 1] clamp. The block-exposure entry is
+// deliberately the existing combined declaration-time EV expression: splitting
+// its three addends would change float accumulation order in the live reward.
+typedef enum {
+    BBE_REWARD_SETUP_DONE,
+    BBE_REWARD_SETUP_AUTOFIX,
+    BBE_REWARD_BALL_GAIN,
+    BBE_REWARD_BALL_LOSS,
+    BBE_REWARD_DISTANCE_BALL,
+    BBE_REWARD_DISTANCE_ENDZONE,
+    BBE_REWARD_INJURY_INFLICTED,
+    BBE_REWARD_INJURY_TAKEN,
+    BBE_REWARD_SEND_OFF,
+    BBE_REWARD_TOUCHBACK,
+    BBE_REWARD_SURF_INFLICTED,
+    BBE_REWARD_SURF_TAKEN,
+    BBE_REWARD_BLOCK_EXPOSURE,
+    BBE_REWARD_BLOCK_SELF_INJURY,
+    BBE_REWARD_BLOCK_SEQUENCE,
+    BBE_REWARD_BLOCK_TURNOVER,
+    BBE_REWARD_POSSESSION,
+    BBE_REWARD_BLOCK_ASSIST,
+    BBE_REWARD_RUSH,
+    BBE_REWARD_CARRIER_EXPOSURE,
+    BBE_REWARD_CARRIER_EXPOSURE_SOFT,
+    BBE_REWARD_CARRIER_THREAT,
+    BBE_REWARD_DEFENSIVE_THREAT,
+    BBE_REWARD_DEFENSIVE_THREAT_SOFT,
+    BBE_REWARD_TOUCHDOWN,
+    BBE_REWARD_RESULT_WINLOSS,
+    BBE_REWARD_RESULT_DRAW,
+    BBE_REWARD_STATMATCH,
+    BBE_REWARD_COMPONENT_COUNT,
+} bbe_reward_component;
 
 _Static_assert(BBE_HEAD_TYPE == BB_A_TYPE_COUNT,
                "action-type head out of sync with bb_actions.h");
@@ -254,6 +291,17 @@ typedef struct {
     // (should stay at 0.0 — anything else means a corrupt/stale bank).
     float demo_episodes;
     float demo_fallbacks;
+    // Team-0/home signed component returns. Team 0 is the primary learner in
+    // frozen-bank envs and matches the existing episode_return perspective.
+    // Integrity checks below still run independently for both agents.
+    float reward_component[BBE_REWARD_COMPONENT_COUNT];
+    float reward_component_residual;
+    float reward_component_mismatch_samples;
+    float reward_component_nonfinite_samples;
+    float reward_terminal_suppressed_signed;
+    float reward_terminal_suppressed_abs;
+    float reward_postclip_return;
+    float reward_clip_signed_delta;
     float n;
 } Log;
 
@@ -563,6 +611,19 @@ typedef struct {
     // base and adds only the emitted objective/result terms, so even discarded
     // non-finite shaping cannot poison the episode-return dashboard.
     float step_return_base[BBE_AGENTS];
+    // Per-step scratch is committed only when the reward is actually emitted.
+    // Terminal composition discards incidental scratch, retains TD, then adds
+    // result/statmatch. Episode arrays retain both agents for invariant checks;
+    // Log exports team 0 to reconcile with episode_return.
+    float step_reward_component[BBE_AGENTS][BBE_REWARD_COMPONENT_COUNT];
+    float ep_reward_component[BBE_AGENTS][BBE_REWARD_COMPONENT_COUNT];
+    float ep_reward_component_residual[BBE_AGENTS];
+    float ep_reward_postclip_return[BBE_AGENTS];
+    float ep_reward_clip_signed_delta[BBE_AGENTS];
+    float ep_reward_terminal_suppressed_signed[BBE_AGENTS];
+    float ep_reward_terminal_suppressed_abs[BBE_AGENTS];
+    int ep_reward_component_mismatch_samples;
+    int ep_reward_component_nonfinite_samples;
     int ep_reward_samples;
     int ep_reward_clipped;
     int ep_reward_nonzero;
@@ -638,6 +699,17 @@ typedef struct {
     int setup_block_start[BBE_HEAD_ARG];   // projected arg -> block start (-1)
     uint16_t setup_sq_off[BBE_HEAD_SQ];    // sq -> template offset (0xFFFF)
 } Bloodbowl;
+
+// Single mutation seam for ordinary reward contributions. Keeping the two
+// pre-existing additions in their original order preserves reward behavior;
+// the third addition is observation-only scratch for later commit.
+static inline void bbe_reward_add(Bloodbowl* env, int agent,
+                                  bbe_reward_component component,
+                                  float value) {
+    env->reward_ptr[agent][0] += value;
+    env->ep_return[agent] += value;
+    env->step_reward_component[agent][component] += value;
+}
 
 static bool bbe_reward_config_scalars_valid(const Bloodbowl* env,
                                             const char** bad_field) {
@@ -1604,14 +1676,14 @@ static void bbe_update_ball_possession(Bloodbowl* env, bool scored) {
             if (prev >= 0) {
                 bbe_end_ball_possession(env, x, y);
                 if (!scored && pay_rewards) {
-                    env->reward_ptr[prev][0] += env->reward_ball_loss;
-                    env->ep_return[prev] += env->reward_ball_loss;
+                    bbe_reward_add(env, prev, BBE_REWARD_BALL_LOSS,
+                                   env->reward_ball_loss);
                 }
             }
             bbe_start_ball_possession(env, cur, x, y);
             if (!scored && pay_rewards) {
-                env->reward_ptr[cur][0] += env->reward_ball_gain;
-                env->ep_return[cur] += env->reward_ball_gain;
+                bbe_reward_add(env, cur, BBE_REWARD_BALL_GAIN,
+                               env->reward_ball_gain);
             }
         }
         if (scored) bbe_end_ball_possession(env, x, y);
@@ -1619,8 +1691,8 @@ static void bbe_update_ball_possession(Bloodbowl* env, bool scored) {
         int prev = env->possessor;
         bbe_end_ball_possession(env, x, y);
         if (pay_rewards) {
-            env->reward_ptr[prev][0] += env->reward_ball_loss;
-            env->ep_return[prev] += env->reward_ball_loss;
+            bbe_reward_add(env, prev, BBE_REWARD_BALL_LOSS,
+                           env->reward_ball_loss);
         }
     } else if (m->ball.state == BB_BALL_OFF_PITCH && env->possessor >= 0) {
         for (int i = 0; i < m->stack_top; i++) {
@@ -1837,6 +1909,21 @@ static void bbe_reset_match(Bloodbowl* env) {
     env->ep_return[0] = env->ep_return[1] = 0;
     env->step_objective_reward[0] = env->step_objective_reward[1] = 0;
     env->step_return_base[0] = env->step_return_base[1] = 0;
+    memset(env->step_reward_component, 0,
+           sizeof env->step_reward_component);
+    memset(env->ep_reward_component, 0, sizeof env->ep_reward_component);
+    memset(env->ep_reward_component_residual, 0,
+           sizeof env->ep_reward_component_residual);
+    memset(env->ep_reward_postclip_return, 0,
+           sizeof env->ep_reward_postclip_return);
+    memset(env->ep_reward_clip_signed_delta, 0,
+           sizeof env->ep_reward_clip_signed_delta);
+    memset(env->ep_reward_terminal_suppressed_signed, 0,
+           sizeof env->ep_reward_terminal_suppressed_signed);
+    memset(env->ep_reward_terminal_suppressed_abs, 0,
+           sizeof env->ep_reward_terminal_suppressed_abs);
+    env->ep_reward_component_mismatch_samples = 0;
+    env->ep_reward_component_nonfinite_samples = 0;
     env->ep_reward_samples = 0;
     env->ep_reward_clipped = 0;
     env->ep_reward_nonzero = 0;
@@ -1922,9 +2009,53 @@ static void c_reset(Bloodbowl* env) {
     bbe_emit_all(env);
 }
 
+static void bbe_commit_reward_components(Bloodbowl* env,
+                                         unsigned suppressed_nonfinite_mask) {
+    for (int a = 0; a < BBE_AGENTS; a++) {
+        float component_sum = 0.0f;
+        float component_abs_sum = 0.0f;
+        bool components_finite = true;
+        for (int c = 0; c < BBE_REWARD_COMPONENT_COUNT; c++) {
+            float value = env->step_reward_component[a][c];
+            if (!isfinite(value)) {
+                components_finite = false;
+                continue;
+            }
+            env->ep_reward_component[a][c] += value;
+            component_sum += value;
+            component_abs_sum += fabsf(value);
+        }
+
+        float raw = env->reward_ptr[a][0];
+        bool raw_finite = isfinite(raw);
+        if (!components_finite || !raw_finite ||
+            (suppressed_nonfinite_mask & (1u << a))) {
+            env->ep_reward_component_nonfinite_samples++;
+        }
+        if (!components_finite || !raw_finite) continue;
+
+        // Re-folding by component can differ from the original emission by a
+        // few ulps. Preserve that signed residual for run-level dashboard
+        // reconciliation and count only materially larger mismatches; later
+        // aggregation still warrants a float tolerance, not exact equality.
+        float residual = raw - component_sum;
+        env->ep_reward_component_residual[a] += residual;
+        float tolerance =
+            8.0f * FLT_EPSILON * (1.0f + fabsf(raw) + component_abs_sum);
+        if (fabsf(residual) > tolerance) {
+            env->ep_reward_component_mismatch_samples++;
+        }
+
+        float postclip = fminf(1.0f, fmaxf(-1.0f, raw));
+        env->ep_reward_postclip_return[a] += postclip;
+        env->ep_reward_clip_signed_delta[a] += raw - postclip;
+    }
+}
+
 static void bbe_record_reward_emission_masked(Bloodbowl* env,
                                                unsigned nonfinite_mask,
                                                bool terminal) {
+    bbe_commit_reward_components(env, nonfinite_mask);
     for (int a = 0; a < BBE_AGENTS; a++) {
         float raw = env->reward_ptr[a][0];
         env->ep_reward_samples++;
@@ -1982,6 +2113,34 @@ static void bbe_finish_episode(Bloodbowl* env) {
         float pre_terminal = env->reward_ptr[a][0];
         if (!isfinite(pre_terminal)) suppressed_nonfinite_mask |= 1u << a;
         float objective = env->step_objective_reward[a];
+        float suppressed = pre_terminal - objective;
+        if (isfinite(suppressed)) {
+            // `abs` is the absolute NET suppressed subtotal on this terminal
+            // emission, not the sum of absolute per-component contributions.
+            env->ep_reward_terminal_suppressed_signed[a] += suppressed;
+            env->ep_reward_terminal_suppressed_abs[a] += fabsf(suppressed);
+        }
+
+        float observed_objective =
+            env->step_reward_component[a][BBE_REWARD_TOUCHDOWN];
+        if (isfinite(objective) && isfinite(observed_objective)) {
+            float tolerance = 8.0f * FLT_EPSILON *
+                (1.0f + fabsf(objective) + fabsf(observed_objective));
+            if (fabsf(objective - observed_objective) > tolerance) {
+                env->ep_reward_component_mismatch_samples++;
+            }
+        }
+
+        // Rebuild both the effective reward and its scratch ledger with the
+        // same terminal authority. The assignment expressions remain exactly
+        // as before; only result/statmatch below are new effective components.
+        memset(env->step_reward_component[a], 0,
+               sizeof env->step_reward_component[a]);
+        env->step_reward_component[a][BBE_REWARD_TOUCHDOWN] = objective;
+        bbe_reward_component result_component =
+            m->score[0] == m->score[1] ? BBE_REWARD_RESULT_DRAW
+                                       : BBE_REWARD_RESULT_WINLOSS;
+        env->step_reward_component[a][result_component] = bonus[a];
         env->reward_ptr[a][0] = objective + bonus[a];
         env->ep_return[a] = env->step_return_base[a] + objective + bonus[a];
         env->terminal_ptr[a][0] = 1.0f;
@@ -2156,8 +2315,7 @@ static void bbe_finish_episode(Bloodbowl* env) {
         statmatch = -env->reward_statmatch_scale * sqrtf(ss);
     }
     for (int a = 0; a < BBE_AGENTS; a++) {
-        env->reward_ptr[a][0] += statmatch;
-        env->ep_return[a]     += statmatch;
+        bbe_reward_add(env, a, BBE_REWARD_STATMATCH, statmatch);
     }
     // Record only after every terminal component—including statmatch—has
     // stacked. This is exactly the raw emission PPO clamps before GAE.
@@ -2174,6 +2332,22 @@ static void bbe_finish_episode(Bloodbowl* env) {
     env->log.reward_episode_abs_max_mean += env->ep_reward_abs_max;
     env->log.reward_clip_episodes += env->ep_reward_clipped > 0;
     env->log.reward_nonfinite_episodes += env->ep_reward_nonfinite > 0;
+    for (int c = 0; c < BBE_REWARD_COMPONENT_COUNT; c++) {
+        env->log.reward_component[c] += env->ep_reward_component[0][c];
+    }
+    env->log.reward_component_residual +=
+        env->ep_reward_component_residual[0];
+    env->log.reward_component_mismatch_samples +=
+        (float)env->ep_reward_component_mismatch_samples;
+    env->log.reward_component_nonfinite_samples +=
+        (float)env->ep_reward_component_nonfinite_samples;
+    env->log.reward_terminal_suppressed_signed +=
+        env->ep_reward_terminal_suppressed_signed[0];
+    env->log.reward_terminal_suppressed_abs +=
+        env->ep_reward_terminal_suppressed_abs[0];
+    env->log.reward_postclip_return += env->ep_reward_postclip_return[0];
+    env->log.reward_clip_signed_delta +=
+        env->ep_reward_clip_signed_delta[0];
     env->log.statmatch_term += statmatch;
     // episode_return was logged above from slot 0's pre-statmatch ep_return;
     // fold the statmatch term in so the dashboard's episode_return is total.
@@ -2222,8 +2396,8 @@ static void bbe_count_action(Bloodbowl* env, bb_action act) {
                 env->pending_gfi_slot = top->a;
                 BBE_FEED(env, BBE_EV_GFI, top->a, -1);
                 if (env->reward_rush_cost != 0.0f) {
-                    env->reward_ptr[team][0] -= env->reward_rush_cost;
-                    env->ep_return[team] -= env->reward_rush_cost;
+                    bbe_reward_add(env, team, BBE_REWARD_RUSH,
+                                   -env->reward_rush_cost);
                 }
             }
             if (bb_tackle_zones(m, BB_TEAM_OF(top->a), p->x, p->y) > 0) {
@@ -2377,8 +2551,8 @@ static void bbe_apply_kickoff_touchback_reward(Bloodbowl* env) {
     env->kickoff_touchback_latched = 1;
     env->ep_touchbacks++;
     if (env->reward_kickoff_touchback != 0.0f) {
-        env->reward_ptr[kicking][0] += env->reward_kickoff_touchback;
-        env->ep_return[kicking] += env->reward_kickoff_touchback;
+        bbe_reward_add(env, kicking, BBE_REWARD_TOUCHBACK,
+                       env->reward_kickoff_touchback);
     }
 }
 
@@ -2388,6 +2562,8 @@ static void c_step(Bloodbowl* env) {
         env->terminal_ptr[a][0] = 0.0f;
         env->step_objective_reward[a] = 0.0f;
         env->step_return_base[a] = env->ep_return[a];
+        memset(env->step_reward_component[a], 0,
+               sizeof env->step_reward_component[a]);
     }
     bb_match* m = &env->match;
     if (m->status == BB_STATUS_DECISION && env->n_legal > 0) {
@@ -2411,8 +2587,10 @@ static void c_step(Bloodbowl* env) {
             float r = env->n_legal == 1 ? env->reward_setup_autofix
                                         : env->reward_setup_done;
             if (r != 0.0f) {
-                env->reward_ptr[agent][0] += r;
-                env->ep_return[agent] += r;
+                bbe_reward_component component =
+                    env->n_legal == 1 ? BBE_REWARD_SETUP_AUTOFIX
+                                      : BBE_REWARD_SETUP_DONE;
+                bbe_reward_add(env, agent, component, r);
             }
         }
         bbe_count_action(env, act);
@@ -2481,16 +2659,17 @@ static void c_step(Bloodbowl* env) {
                      env->reward_k_value * ev.p_def_removed *
                          player_cost_100k(m, bdef) + // bb_blockev.c (same TU)
                      env->reward_k_ball * ev.p_ball_out);
-                env->reward_ptr[bteam][0] += exposure;
-                env->reward_ptr[1 - bteam][0] -= exposure;
-                env->ep_return[bteam] += exposure;
-                env->ep_return[1 - bteam] -= exposure;
+                bbe_reward_add(env, bteam, BBE_REWARD_BLOCK_EXPOSURE,
+                               exposure);
+                bbe_reward_add(env, 1 - bteam, BBE_REWARD_BLOCK_EXPOSURE,
+                               -exposure);
                 if (env->reward_k_self_injury != 0.0f) {
                     float self_injury =
                         env->reward_k_self_injury * ev.p_att_removed *
                         player_cost_100k(m, batt) * p_deliver;
-                    env->reward_ptr[bteam][0] -= self_injury;
-                    env->ep_return[bteam] -= self_injury;
+                    bbe_reward_add(env, bteam,
+                                   BBE_REWARD_BLOCK_SELF_INJURY,
+                                   -self_injury);
                 }
                 if (env->reward_k_turnover != 0.0f) {
                     // Net-EV block discipline (D158): charge the turnover COST
@@ -2508,8 +2687,8 @@ static void c_step(Bloodbowl* env) {
                     // defender here would double-pay them (review F4). Pre-dice
                     // EV — cardinal-rule clean (D147).
                     float turnover_cost = env->reward_k_turnover * ev.p_turnover;
-                    env->reward_ptr[bteam][0] -= turnover_cost;
-                    env->ep_return[bteam] -= turnover_cost;
+                    bbe_reward_add(env, bteam, BBE_REWARD_BLOCK_TURNOVER,
+                                   -turnover_cost);
                 }
                 // Sequencing charge: own-turnover risk x unbanked safe
                 // activations; exempt on the team's last turn of the half
@@ -2528,8 +2707,8 @@ static void c_step(Bloodbowl* env) {
                                    !(sp->flags & BB_PF_USED);
                     }
                     float seq = env->reward_k_seq * p_own_to * (float)pending;
-                    env->reward_ptr[bteam][0] -= seq;
-                    env->ep_return[bteam] -= seq;
+                    bbe_reward_add(env, bteam, BBE_REWARD_BLOCK_SEQUENCE,
+                                   -seq);
                 }
             }
         }
@@ -2676,10 +2855,8 @@ static void c_step(Bloodbowl* env) {
             int annuity_events = held - (scored < held ? scored : held);
             if (annuity_events > 0 && env->reward_possession != 0.0f) {
                 float r = env->reward_possession * (float)annuity_events;
-                env->reward_ptr[t][0] += r;
-                env->reward_ptr[1 - t][0] -= r;
-                env->ep_return[t] += r;
-                env->ep_return[1 - t] -= r;
+                bbe_reward_add(env, t, BBE_REWARD_POSSESSION, r);
+                bbe_reward_add(env, 1 - t, BBE_REWARD_POSSESSION, -r);
             }
         }
         // Every positional turn-end hook follows the same monotonic boundary
@@ -2701,13 +2878,14 @@ static void c_step(Bloodbowl* env) {
                 bb_carrier_exposure ex = bb_carrier_exposure_eval(m, t);
                 if (ex.full) {
                     if (env->reward_carrier_exposure != 0.0f) {
-                        env->reward_ptr[t][0] -= env->reward_carrier_exposure;
-                        env->ep_return[t] -= env->reward_carrier_exposure;
+                        bbe_reward_add(env, t, BBE_REWARD_CARRIER_EXPOSURE,
+                                       -env->reward_carrier_exposure);
                         env->ep_carrier_exposed_full++;
                     }
                 } else if (ex.soft && env->reward_carrier_exposure_soft != 0.0f) {
-                    env->reward_ptr[t][0] -= env->reward_carrier_exposure_soft;
-                    env->ep_return[t] -= env->reward_carrier_exposure_soft;
+                    bbe_reward_add(env, t,
+                                   BBE_REWARD_CARRIER_EXPOSURE_SOFT,
+                                   -env->reward_carrier_exposure_soft);
                     env->ep_carrier_exposed_soft++;
                 }
             }
@@ -2728,10 +2906,10 @@ static void c_step(Bloodbowl* env) {
                     float def_r = env->reward_carrier_threat * tc;
                     float hold_r = env->reward_carrier_threat *
                                    (BB_CARRIER_THREAT_T_MAX - tc);
-                    env->reward_ptr[defender][0] += def_r;
-                    env->reward_ptr[holder][0] += hold_r;
-                    env->ep_return[defender] += def_r;
-                    env->ep_return[holder] += hold_r;
+                    bbe_reward_add(env, defender, BBE_REWARD_CARRIER_THREAT,
+                                   def_r);
+                    bbe_reward_add(env, holder, BBE_REWARD_CARRIER_THREAT,
+                                   hold_r);
                     env->ep_carrier_threat += th.uncapped_total;
                 }
             }
@@ -2748,10 +2926,8 @@ static void c_step(Bloodbowl* env) {
                 float d0 = fav[0] - env->prev_contact_fav[0];
                 float d1 = fav[1] - env->prev_contact_fav[1];
                 float r0 = env->reward_k_assist * (d0 - d1);
-                env->reward_ptr[0][0] += r0;
-                env->reward_ptr[1][0] -= r0;
-                env->ep_return[0] += r0;
-                env->ep_return[1] -= r0;
+                bbe_reward_add(env, 0, BBE_REWARD_BLOCK_ASSIST, r0);
+                bbe_reward_add(env, 1, BBE_REWARD_BLOCK_ASSIST, -r0);
                 env->ep_contact_fav += fav[0] + fav[1];
                 env->prev_contact_fav[0] = fav[0];
                 env->prev_contact_fav[1] = fav[1];
@@ -2784,13 +2960,13 @@ static void c_step(Bloodbowl* env) {
                 int soft = soft_true < 4 ? soft_true : 4;
                 if (hard > 0 && env->reward_defensive_threat != 0.0f) {
                     float pen = env->reward_defensive_threat * (float)hard;
-                    env->reward_ptr[t][0] -= pen;
-                    env->ep_return[t] -= pen;
+                    bbe_reward_add(env, t, BBE_REWARD_DEFENSIVE_THREAT,
+                                   -pen);
                 }
                 if (soft > 0 && env->reward_defensive_threat_soft != 0.0f) {
                     float pen = env->reward_defensive_threat_soft * (float)soft;
-                    env->reward_ptr[t][0] -= pen;
-                    env->ep_return[t] -= pen;
+                    bbe_reward_add(env, t,
+                                   BBE_REWARD_DEFENSIVE_THREAT_SOFT, -pen);
                 }
                 env->ep_def_threats_1t += hard_true;
                 env->ep_def_threats_2t += dt.n_threats_2turn;
@@ -2809,13 +2985,11 @@ static void c_step(Bloodbowl* env) {
                 BBE_FEED(env, BBE_EV_TD,
                          m->ball.state == BB_BALL_HELD ? m->ball.carrier : -1,
                          -1);
-                env->reward_ptr[t][0] += env->reward_td * (float)d;
-                env->reward_ptr[1 - t][0] -= env->reward_td * (float)d;
-                env->step_objective_reward[t] += env->reward_td * (float)d;
-                env->step_objective_reward[1 - t] -=
-                    env->reward_td * (float)d;
-                env->ep_return[t] += env->reward_td * (float)d;
-                env->ep_return[1 - t] -= env->reward_td * (float)d;
+                float td_reward = env->reward_td * (float)d;
+                bbe_reward_add(env, t, BBE_REWARD_TOUCHDOWN, td_reward);
+                bbe_reward_add(env, 1 - t, BBE_REWARD_TOUCHDOWN, -td_reward);
+                env->step_objective_reward[t] += td_reward;
+                env->step_objective_reward[1 - t] -= td_reward;
                 env->ep_tds_team[t] += d;
                 env->score_prev[t] = m->score[t];
             }
@@ -2850,10 +3024,11 @@ static void c_step(Bloodbowl* env) {
                 int d = out - env->out_prev[t];
                 if (d > 0) {
                     float w = env->reward_injury_value_scaled ? weight : (float)d;
-                    env->reward_ptr[t][0] += env->reward_injury_taken * w;
-                    env->ep_return[t] += env->reward_injury_taken * w;
-                    env->reward_ptr[1 - t][0] += env->reward_injury_inflicted * w;
-                    env->ep_return[1 - t] += env->reward_injury_inflicted * w;
+                    bbe_reward_add(env, t, BBE_REWARD_INJURY_TAKEN,
+                                   env->reward_injury_taken * w);
+                    bbe_reward_add(env, 1 - t,
+                                   BBE_REWARD_INJURY_INFLICTED,
+                                   env->reward_injury_inflicted * w);
                 }
                 env->out_prev[t] = out;
                 env->out_mask_prev[t] = mask;
@@ -2874,8 +3049,7 @@ static void c_step(Bloodbowl* env) {
                 env->ep_send_offs += d;
                 if (env->reward_send_off != 0.0f) {
                     float r = env->reward_send_off * (float)d;
-                    env->reward_ptr[t][0] += r;
-                    env->ep_return[t] += r;
+                    bbe_reward_add(env, t, BBE_REWARD_SEND_OFF, r);
                 }
             }
             env->sent_off_prev[t] = sent;
@@ -2902,8 +3076,7 @@ static void c_step(Bloodbowl* env) {
                 if (!scored && !isnan(pf) &&
                     !isnan(env->pot_fetch_prev[t])) {
                     float dr = pf - env->pot_fetch_prev[t];
-                    env->reward_ptr[t][0] += dr;
-                    env->ep_return[t] += dr;
+                    bbe_reward_add(env, t, BBE_REWARD_DISTANCE_BALL, dr);
                 }
                 env->pot_fetch_prev[t] = pf;
                 // Carry channel: active only while this team holds the ball.
@@ -2917,8 +3090,7 @@ static void c_step(Bloodbowl* env) {
                 if (!scored && !isnan(pc) &&
                     !isnan(env->pot_carry_prev[t])) {
                     float dr = pc - env->pot_carry_prev[t];
-                    env->reward_ptr[t][0] += dr;
-                    env->ep_return[t] += dr;
+                    bbe_reward_add(env, t, BBE_REWARD_DISTANCE_ENDZONE, dr);
                 }
                 env->pot_carry_prev[t] = pc;
             }
@@ -2929,10 +3101,10 @@ static void c_step(Bloodbowl* env) {
             for (int t = 0; t < 2; t++) {
                 int d = m->surfs[t] - env->surf_prev[t];
                 if (d > 0) {
-                    env->reward_ptr[t][0] += env->reward_surf_taken * (float)d;
-                    env->ep_return[t] += env->reward_surf_taken * (float)d;
-                    env->reward_ptr[1 - t][0] += env->reward_surf_inflicted * (float)d;
-                    env->ep_return[1 - t] += env->reward_surf_inflicted * (float)d;
+                    bbe_reward_add(env, t, BBE_REWARD_SURF_TAKEN,
+                                   env->reward_surf_taken * (float)d);
+                    bbe_reward_add(env, 1 - t, BBE_REWARD_SURF_INFLICTED,
+                                   env->reward_surf_inflicted * (float)d);
                 }
                 env->surf_prev[t] = m->surfs[t];
             }

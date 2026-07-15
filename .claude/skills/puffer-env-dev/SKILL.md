@@ -109,14 +109,14 @@ it is not a run-wide maximum.
 
 **HARD KEY LIMIT (bit us 2026-06-05):** `vec_log` in `src/bindings_cpu.cpp` AND
 `src/bindings.cu` allocates the output dict with a FIXED capacity (upstream: 32;
-ours: 96 via `training/puffer_dict_capacity.patch`) and appends `"n"` after
+ours: 160 via `training/puffer_dict_capacity.patch`) and appends `"n"` after
 `my_log` returns. `dict_set`'s capacity check is a bare `assert` upstream —
 **compiles out under NDEBUG**, so exceeding capacity is a silent 24-bytes-per-key
 heap overrun that surfaces as `free(): corrupted unsorted chunks` at the FIRST
 log aggregation with completed episodes (~epoch 3 / ~786K steps, `n==0`
 early-returns before that). It reproduces at any thread count / cwd / config —
 do not chase those. Our vendored `dict_set` now aborts loudly with the key name.
-Blood Bowl currently emits 88 keys plus `"n"`. When adding Log keys, recount
+Blood Bowl currently emits 123 keys plus `"n"`. When adding Log keys, recount
 `dict_set` calls in `my_log` (+1 for `"n"`) against the `create_dict` capacity
 at both vec_log call sites and update the installer/dashboard guidance.
 
