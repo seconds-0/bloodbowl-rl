@@ -3986,3 +3986,36 @@ Next steps and safety boundary:
 3. Leave F4's nested reroll-window records pending until a complete shared
    resumable-frame validator is designed, tested, and independently reviewed.
    No authored source or artifact may enter either frozen vacation queue.
+
+08:50 PDT addendum:
+
+- The first F5 proof uses controller seed 410 and reaches a loader-valid
+  half-one, home-turn-2, tied 0-0 fresh-team-turn boundary after 51 legal
+  decisions and 19 recorded game dice. Home slot 6 carries at `(19, 10)` with
+  MA 6, exactly six squares from the home end zone. The validator delegates to
+  the engine's `bb_can_score_without_dice` predicate, then privately applies a
+  zero-die legal activation and Move declaration and requires End Activation
+  to remain legal without moving or scoring.
+- This establishes a real D193 score-now-versus-Stall policy surface but
+  applies neither choice. It serializes no scoring path, action, preference,
+  Crowd Takes Action roll, outcome, reward, regret, or policy-quality label.
+  Focused negatives reject a route requiring one Rush, a used carrier, a No
+  Ball carrier, malformed boundary, and seed drift before byte zero. Existing
+  engine tests retain the Dodge and compulsory-gate boundaries.
+- Optimized and ASan/UBSan suites each passed 425 engine, 37 reward, 2
+  contact-bot, and 6 loader tests. Independent optimized/sanitized sweeps of
+  controller seeds 0-1023 agreed exactly: seeds 410 and 853 reached valid
+  exact-replayable captures, 1,022 trajectories ended cleanly without capture,
+  and none produced an invalid success or unexpected failure. Both writers
+  emitted the identical 2,268-byte record with SHA-256
+  `19e5eb637ae6bb6c37d0a1733b0561dce2692e295277e41c59c6acdea93389b0`.
+- Three independent reviewers approved exact head
+  `c6f93c02c785d638b8da49271c9c97f52ec9896f` with no P0-P3 findings.
+  Exact-head CI run `29429069952` passed in 4m16s. PR #34 merged
+  authoritatively to `main` as
+  `6de65e6c80e1b85a221bcf6776b2c1c6a3a20bb4`; its remote feature branch
+  was deleted. The normal local branch cleanup again failed only because a
+  different worktree owns `main`. No source or authored artifact was deployed
+  to the occupied 2070 checkout, and neither frozen queue nor BBTV was changed.
+  F4 remains the only missing first-family proof and remains blocked on a
+  reviewed shared validator for nested reroll decisions.
