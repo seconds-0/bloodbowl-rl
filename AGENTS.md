@@ -152,6 +152,19 @@ primary plan, both original validators, primary-service inactivity, unchanged
 pins, and an idle GPU. Never append the active plan, deploy over one of its
 pinned files, start the overflow early, or timer-relaunch existing state.
 
+After an accepted R0 `control-final` screen, use
+`tools/run_checkpoint_milestone_eval.py` and
+`docs/plans/r0-milestone-evaluation.md` for the predeclared 0/1/2/4/6/8/10/12B
+trajectory. Resolve checkpoints by embedded step, hash every selected native
+file, and require an exclusive idle GPU with the BBTV follower explicitly
+quiesced; the evaluator must remain pending rather than stopping a training or
+BBTV process. Keep static-pool dashboard
+scores labeled in-pool, historical anchors labeled unseen exact checkpoints
+but lineage-connected, scripted bots separate, and the forced roster grid
+labeled stratification rather than unseen-roster transfer. The fixed plateau
+rule only nominates terminal/plateau policies for more evaluation. It never
+changes a reward, active queue, production default, or promotion verdict.
+
 ## Replay and BC contract
 
 - Filter by the embedded replay `rulesVersion`; filenames, directory names, and
