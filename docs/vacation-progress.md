@@ -4433,3 +4433,111 @@ Next steps:
 3. Do not publish an authored bank, add training input, change reward defaults,
    deploy source to the 2070, or run milestone evaluation until their separate
    reviewed contracts and the frozen queues' terminal state authorize them.
+
+## 2026-07-15 11:50 PDT — seed 43 healthy; exact F1 carrier-pressure axis merged
+
+Live queue and BBTV health:
+
+- The primary queue remains authoritative `running` on
+  `final-main-control`, arm `both`, seed 43/current index 2, with one completed
+  arm. `SCREEN_STATUS.json` was fresh at 11:45 PDT. Queue PID 431309, wrapper
+  PID 431316, and trainer PID 473422 remain stable; all relevant services have
+  zero restarts, and trainer PID 473422 is still the only GPU compute process.
+  The overflow service remains inactive/dead with no state or restarts. Its
+  11:37 watcher completed successfully after observing that the primary remains
+  active, and the timer remains active/waiting.
+- Exact read-only validation matched all 65 primary pins at plan SHA-256
+  `4ee72e3c58f09786cdd3bbf78a772e8de2d9a93e21a8b065cf0c5976ecced270`
+  and all 74 overflow pins at plan SHA-256
+  `d90ee01c8c459f599c8601934f545ccb7783261edae3bcb6e9e3878036d37d3e`.
+  Both pin-error results are `None`, the overflow state is absent, and the
+  exact completion-gate parser sees only trainer PID 473422.
+- The latest complete telemetry panel observed exact step 3,350,331,392 at
+  epoch 25,560 over 81 games: performance 0.574074, draw rate 0.432099,
+  possession 0.382326, illegal/sampled-repair fraction 0.192651, ball progress
+  8.601085, 18.876543 Rush intentions, 13.728395 blocks thrown, 1.987654
+  blocks against the carrier, carrier-target fraction 0.150887, Pass intentions
+  0.012346, and zero Hand-off intentions. Reward clipping, non-finite reward,
+  engine-error, demonstration, and fallback counters remain zero. A later
+  dashboard sample reported about 185.8K SPS. The newest complete
+  16,066,560-byte checkpoint was exact step 3,346,006,016 at 11:45 PDT.
+  Roughly 8.65B seed-43 steps remain, so an approximately 13-hour estimate is
+  observational and excludes final evaluation and queue-transition uncertainty.
+- Four GPU samples at 11:46 PDT ranged from 81-84 C, 88-89% fan, 78-80%
+  utilization, 5,554/8,192 MiB, and 119.52-164.20 W. Software thermal slowdown
+  was active in all four while hardware slowdown was inactive in all four.
+  Temperature remains below the literal frozen 88 C three-poll guard, so this
+  remains a monitored recurrence rather than authority to tune or restart the
+  immutable job. Disk is 7% used with 894 GiB free, inode use is 1%, memory has
+  9.5 GiB available, and swap use is 33 MiB.
+- `bbstream`, `bbweb`, and `bbtv-tunnel` remain active with zero restarts. BBTV
+  selected seed-43 checkpoint 3,246,129,152 at 11:37 PDT against the frozen
+  turnover3 baseline. Source SHA-256 is
+  `4f5a09b5ef85b064fc5319e536991155d9d2c977982d37ef6153fc5e494d94f9`,
+  converted output SHA-256 is
+  `d05a40ea92a9bad7dafa23bb37b3ffc7f1b1491b2cb5fb42120f62768e0ee428`,
+  and `selection.json` SHA-256 is
+  `233b48bdca26eed317b7c1e0ed26c7c648511046dbe689229532e576d18a6eb5`.
+  The public page returned HTTP 200 in 0.250 seconds. A public WSS client
+  connected successfully and received the correct frozen/learner `hello`,
+  `match_start`, full snapshot, and advancing deltas before deliberate closure.
+  BBTV remains CPU-only and observational.
+
+Completed F1 carrier-pressure/orientation-axis work:
+
+- Branch `tranche/f1-pass-opportunity-axis` started from exact merged main
+  `b45e8b2cce87423a2c12343d943cda87c77736cf`. Before production code, a
+  read-only 4,096-seed legacy-F1 probe found 2,852 captures and 1,244 clean
+  ends with zero unexpected failure. Every capture exposed multiple
+  catch-capable targets, and 2,809 mixed open and marked receivers, rejecting
+  receiver-count and receiver-marking axes that would have an empty cell or
+  require an implicit receiver choice. The selected Home/Away x open/marked
+  carrier axis is an unambiguous serialized-state fact and never chooses Pass,
+  a receiver, or a target.
+- Exact implementation head
+  `38de62a7674f25e309652791eae7ed6c930c4d93` appends one recipe kind, stores
+  side/pressure provenance, independently rediscovers it, and layers pressure
+  only after the complete safe F1 Pass-opportunity predicate. It calls the
+  engine's real `bb_is_marked` Tackle-Zone semantics on the already validated
+  carrier rather than using adjacency. Fixed cells use Home/open seed 4,
+  Home/marked 2, Away/open 10, and Away/marked 8, with exact action/dice
+  transcripts 202/62, 27/9, 172/50, and 27/10.
+- Matching optimized and ASan/UBSan exact-endpoint sweeps over 4,096 seeds per
+  cell produced Home/open 1,323, Home/marked 948, Away/open 1,464, and
+  Away/marked 996 captures; complementary clean ends were 2,773, 3,148, 2,632,
+  and 3,100, with zero invalid success, unexpected failure, or sanitizer
+  finding. Parent and head builds emitted an identical legacy 2,268-byte F1
+  BBS record with SHA-256
+  `cca3e04df7a42e77854573a2dafbd342523f378e16373cf061d274ff229d4eda`.
+- Local and independent suites pass 432 engine, 37 reward, 2 contact-bot, and
+  11 production-loader tests optimized and under ASan/UBSan. Production and
+  Puffer static analysis plus diff checks are clean. One reviewer additionally
+  ran complete byte-range malformed-field sweeps and 110,000 randomized cases
+  under sanitizers with no crash, mutation, or undefined behavior. All three
+  independent exact-head reviews reported no P0-P3 finding. Hosted CI run
+  `29440958841` passed in 5m08s at the same exact head.
+- PR #39 merged authoritatively to `main` as
+  `ce552380afe820be300f3b3e6de19bd1577dab7c`; the remote feature branch was
+  deleted separately after the known benign local `main`-worktree cleanup
+  message. D206, `AGENTS.md`, `CLAUDE.md`, the authored-bank plan, and the
+  validation skill preserve the structural opportunity-only semantics and
+  explicit remaining gaps. No source, BBS artifact, reward, training input,
+  service, BBTV path, or frozen queue was deployed or changed.
+- Claude Code authentication still reports `loggedIn: false` and
+  `authMethod: none`, so Fable was unavailable and no Fable approval is
+  claimed. The durable Codex memory records the reviewed headless invocation,
+  JSON/streaming options, permission guardrails, and Fable authentication gate
+  for use once the local login is restored.
+
+Next steps:
+
+1. Continue hourly read-only queue, integrity, thermal, capacity, overflow, and
+   BBTV checks. Do not tune the recurring software-thermal flag or select a
+   checkpoint from live telemetry or viewer aesthetics.
+2. Treat the F1/F2/F3 axis source as merged proof infrastructure only. The next
+   tranche must separately plan and review quota composition, metadata
+   sidecars, deterministic manifest-last publication, and replay-disjoint
+   grouping before any canonical authored bank exists.
+3. Do not publish or stage a bank, add a training input, change reward defaults,
+   deploy source to the 2070, or start milestone evaluation until the frozen
+   queues are terminal and their separate gates explicitly authorize it.
