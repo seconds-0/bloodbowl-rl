@@ -1610,3 +1610,189 @@ BB_TEST(authored_drill_f3_exact_second_half_turn_axis_is_complete) {
 
     free(recipes);
 }
+
+static int ad_test_build_proof_bundle(
+    ad_recipe recipes[AD_AUTHORED_PROOF_BUNDLE_COUNT],
+    char error[AD_ERROR_CAP]) {
+    static const uint64_t
+        f1_seed[BB_AWAY + 1][AD_F1_PASS_CARRIER_PRESSURE_BUCKET_COUNT] = {
+        {4, 2},
+        {10, 8},
+    };
+    static const uint64_t
+        f2_seed[BB_AWAY + 1][AD_F2_HANDOFF_TARGET_BUCKET_COUNT] = {
+        {4, 2},
+        {8, 13},
+    };
+    size_t index = 0;
+
+    for (int team = BB_HOME; team <= BB_AWAY; team++) {
+        for (int pressure = AD_F1_CARRIER_PRESSURE_OPEN;
+             pressure <= AD_F1_CARRIER_PRESSURE_MARKED; pressure++) {
+            recipes[index] = ad_test_recipe();
+            recipes[index].controller_seed = f1_seed[team][pressure - 1];
+            if (ad_discover_f1_pass_carrier_pressure(
+                    &recipes[index++], team, pressure, error) != 0) {
+                return -1;
+            }
+        }
+    }
+    for (int team = BB_HOME; team <= BB_AWAY; team++) {
+        for (int bucket = AD_F2_TARGET_COUNT_EXACTLY_ONE;
+             bucket <= AD_F2_TARGET_COUNT_TWO_OR_MORE; bucket++) {
+            recipes[index] = ad_test_recipe();
+            recipes[index].controller_seed = f2_seed[team][bucket - 1];
+            if (ad_discover_f2_handoff_target_count(
+                    &recipes[index++], team, bucket, error) != 0) {
+                return -1;
+            }
+        }
+    }
+    uint64_t f3_seed = 1000;
+    for (int team = BB_HOME; team <= BB_AWAY; team++) {
+        for (int turn = 1; turn <= AD_F3_SECOND_HALF_TURN_COUNT; turn++) {
+            recipes[index] = ad_test_recipe();
+            recipes[index].controller_seed = f3_seed++;
+            if (ad_discover_f3_second_half_turn(
+                    &recipes[index++], turn, team, error) != 0) {
+                return -1;
+            }
+        }
+    }
+    recipes[index] = ad_test_f4_recipe();
+    if (ad_discover_f4_pending_dodge_reroll(
+            &recipes[index++], error) != 0) {
+        return -1;
+    }
+    recipes[index] = ad_test_f5_recipe();
+    if (ad_discover_f5_score_or_wait(&recipes[index++], error) != 0) {
+        return -1;
+    }
+    return index == AD_AUTHORED_PROOF_BUNDLE_COUNT ? 0 : -1;
+}
+
+BB_TEST(authored_drill_proof_bundle_composition_is_complete) {
+    const size_t count = AD_AUTHORED_PROOF_BUNDLE_COUNT;
+    ad_recipe* recipes = calloc(count, sizeof(*recipes));
+    BB_CHECK(recipes != NULL);
+    if (recipes == NULL) return;
+    char error[AD_ERROR_CAP];
+    BB_CHECK_EQ(ad_test_build_proof_bundle(recipes, error), 0);
+    ad_recipe* original = malloc(count * sizeof(*original));
+    BB_CHECK(original != NULL);
+    if (original == NULL) {
+        free(recipes);
+        return;
+    }
+    memcpy(original, recipes, count * sizeof(*original));
+    BB_CHECK_EQ(ad_validate_authored_proof_bundle(recipes, count, error), 0);
+    BB_CHECK_EQ(memcmp(recipes, original, count * sizeof(*recipes)), 0);
+    free(original);
+
+    for (size_t i = 0; i < count / 2; i++) {
+        ad_recipe swap = recipes[i];
+        recipes[i] = recipes[count - i - 1];
+        recipes[count - i - 1] = swap;
+    }
+    BB_CHECK_EQ(ad_validate_authored_proof_bundle(recipes, count, error), 0);
+    for (size_t i = 0; i < count / 2; i++) {
+        ad_recipe swap = recipes[i];
+        recipes[i] = recipes[count - i - 1];
+        recipes[count - i - 1] = swap;
+    }
+
+    BB_CHECK(ad_validate_authored_proof_bundle(NULL, count, error) != 0);
+    BB_CHECK(ad_validate_authored_proof_bundle(recipes, 0, error) != 0);
+    BB_CHECK(ad_validate_authored_proof_bundle(recipes, count - 1, error) != 0);
+    BB_CHECK(ad_validate_authored_proof_bundle(recipes, count + 1, error) != 0);
+
+    ad_recipe saved = recipes[3];
+    recipes[3] = recipes[0];
+    BB_CHECK(ad_validate_authored_proof_bundle(recipes, count, error) != 0);
+    recipes[3] = saved;
+
+    const size_t f4_index = count - 2;
+    const size_t f5_index = count - 1;
+    saved = recipes[f4_index];
+    recipes[f4_index] = recipes[f5_index];
+    BB_CHECK(ad_validate_authored_proof_bundle(recipes, count, error) != 0);
+    recipes[f4_index] = saved;
+
+    saved = recipes[f5_index];
+    recipes[f5_index] = recipes[f4_index];
+    BB_CHECK(ad_validate_authored_proof_bundle(recipes, count, error) != 0);
+    recipes[f5_index] = saved;
+
+    saved = recipes[0];
+    recipes[0].kind = AD_RECIPE_F1_PASS_OPPORTUNITY;
+    BB_CHECK(ad_validate_authored_proof_bundle(recipes, count, error) != 0);
+    recipes[0] = saved;
+    recipes[0].kind = (ad_recipe_kind)-1;
+    BB_CHECK(ad_validate_authored_proof_bundle(recipes, count, error) != 0);
+    recipes[0] = saved;
+    recipes[0].kind = AD_RECIPE_KIND_COUNT;
+    BB_CHECK(ad_validate_authored_proof_bundle(recipes, count, error) != 0);
+    recipes[0] = saved;
+
+    recipes[0].capture_active_team = BB_AWAY;
+    BB_CHECK(ad_validate_authored_proof_bundle(recipes, count, error) != 0);
+    recipes[0] = saved;
+
+    recipes[0].capture_pass_carrier_pressure = AD_F1_CARRIER_PRESSURE_NONE;
+    BB_CHECK(ad_validate_authored_proof_bundle(recipes, count, error) != 0);
+    recipes[0] = saved;
+
+    saved = recipes[AD_F1_PASS_CARRIER_PRESSURE_AXIS_COUNT];
+    recipes[AD_F1_PASS_CARRIER_PRESSURE_AXIS_COUNT]
+        .capture_handoff_target_bucket = AD_F2_TARGET_COUNT_NONE;
+    BB_CHECK(ad_validate_authored_proof_bundle(recipes, count, error) != 0);
+    recipes[AD_F1_PASS_CARRIER_PRESSURE_AXIS_COUNT] = saved;
+
+    const size_t f3_index = AD_F1_PASS_CARRIER_PRESSURE_AXIS_COUNT +
+        AD_F2_HANDOFF_TARGET_AXIS_COUNT;
+    saved = recipes[f3_index];
+    recipes[f3_index].capture_turn = 0;
+    BB_CHECK(ad_validate_authored_proof_bundle(recipes, count, error) != 0);
+    recipes[f3_index] = saved;
+
+    static const uint8_t invalid_depth[] = {
+        0, 1, BB_STACK_MAX + 1, UINT8_MAX,
+    };
+    for (size_t i = 0; i < sizeof invalid_depth / sizeof invalid_depth[0];
+         i++) {
+        recipes[f3_index].captured.stack_top = invalid_depth[i];
+        BB_CHECK(ad_validate_authored_proof_bundle(
+                     recipes, count, error) != 0);
+        recipes[f3_index] = saved;
+    }
+
+    int occupied = -1;
+    for (int slot = 0; slot < BB_NUM_PLAYERS; slot++) {
+        if (recipes[f3_index].captured.players[slot].location ==
+            BB_LOC_ON_PITCH) {
+            occupied = slot;
+            break;
+        }
+    }
+    BB_CHECK(occupied >= 0);
+    if (occupied >= 0) {
+        const bb_player* player =
+            &recipes[f3_index].captured.players[occupied];
+        recipes[f3_index].captured.grid[player->x][player->y] = 0;
+        BB_CHECK(ad_validate_authored_proof_bundle(
+                     recipes, count, error) != 0);
+        recipes[f3_index] = saved;
+    }
+
+    saved = recipes[f4_index];
+    recipes[f4_index].captured.ret = 1;
+    BB_CHECK(ad_validate_authored_proof_bundle(recipes, count, error) != 0);
+    recipes[f4_index] = saved;
+
+    saved = recipes[f5_index];
+    recipes[f5_index].captured.ball.carrier = BB_NUM_PLAYERS;
+    BB_CHECK(ad_validate_authored_proof_bundle(recipes, count, error) != 0);
+    recipes[f5_index] = saved;
+
+    free(recipes);
+}

@@ -159,6 +159,14 @@ newer evidence wins.
   labels neither Pass nor any receiver/target and authorizes no publication,
   training, reward,
   evaluation, deployment, BBTV, or frozen-queue change.
+  The cross-family proof-bundle validator composes exactly 26 existing proofs:
+  F1 4, F2 4, F3 16, F4 1, and F5 1. Primary family is the exact recipe kind,
+  not overlapping state predicates; input order is irrelevant. The validator
+  reuses the complete typed axis/predicate gates and remains structural only.
+  The 4/4/16/1/1 mix is intentionally not balanced and is not a canonical bank,
+  publication transaction, or training input. The ordinary writer remains the
+  provenance/replay/admission/continuation authority; sidecars, splits, reports,
+  manifest-last publication, staging, and training stay separately gated.
 - **BC loader (D180):** use the bounded streaming loader and replay-disjoint
   split. Replay-first is the current default, not the final sampler; next
   stratify by roster/matchup, depth, and action family.

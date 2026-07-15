@@ -330,6 +330,15 @@ changes a reward, active queue, production default, or promotion verdict.
   Receiver identity/marking, Pass range, interception, score/clock, roster/race,
   publication, training, rewards, evaluation, deployment, BBTV, and the frozen
   vacation queues remain separate contracts.
+  The current cross-family composition gate accepts exactly one 26-record proof
+  bundle: F1 4, F2 4, F3 16, F4 1, and F5 1. It is order-independent, assigns
+  primary family only by exact recipe kind, and reuses the complete F1/F2/F3
+  quota validators plus exact F4/F5 predicates. Never call this 4/4/16/1/1
+  object balanced, canonical, published, or training-ready. The unchanged
+  writer must still rediscover, exact-replay, admit, and continue every record;
+  the bundle gate is only structural composition. Metadata sidecars,
+  train/dev/test grouping, reports, manifest-last publication, staging, and
+  training require separate reviewed contracts.
 - The corpus is sharply prefix-censored: it is not sufficient by itself for
   second halves, late drives, stalling, comeback play, or rare actions.
 - Correct BB2025 human possession is about `0.474` on genuine team-turn

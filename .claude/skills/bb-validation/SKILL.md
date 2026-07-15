@@ -168,6 +168,16 @@ re-derive by hand; (b) RNG misuse (reuse/bias) — check `bb_rng` consumption co
     reject pressure on non-axis kinds, and independently rediscover the exact
     cell. This quota proves structural Pass-opportunity context only, never that
     Pass or any receiver/target is tactically correct.
+13. **Authored proof-bundle composition** — accept exactly 26 supported proof
+    recipes: complete F1/F2/F3 axes (4/4/16) plus one exact F4 and one exact F5.
+    Partition only by exact recipe kind so overlapping state facts cannot double
+    count a record; accept arbitrary input order. Reuse the typed family quota
+    validators and exact opportunity predicates after complete configuration
+    validation. This is a structural proof bundle, not a balanced/canonical
+    bank and not publication or training authorization. Every serialized batch
+    still goes through independent writer rediscovery, exact replay, raw-state
+    admission, and one-action continuation. Sidecars, splits, reports,
+    manifest-last publication, staging, and training remain separate gates.
 
 **Failure looks like:** shrunken minimal action trace + seed reproducing the violation.
 **Triage:** replay the shrunken trace under a debugger; the violated invariant names

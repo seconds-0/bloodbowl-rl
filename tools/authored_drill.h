@@ -21,6 +21,9 @@
 #define AD_F1_PASS_CARRIER_PRESSURE_BUCKET_COUNT 2
 #define AD_F1_PASS_CARRIER_PRESSURE_AXIS_COUNT \
     ((BB_AWAY + 1) * AD_F1_PASS_CARRIER_PRESSURE_BUCKET_COUNT)
+#define AD_AUTHORED_PROOF_BUNDLE_COUNT \
+    (AD_F1_PASS_CARRIER_PRESSURE_AXIS_COUNT + \
+     AD_F2_HANDOFF_TARGET_AXIS_COUNT + AD_F3_SECOND_HALF_AXIS_COUNT + 2)
 
 typedef enum {
     AD_F2_TARGET_COUNT_NONE = 0,
@@ -179,6 +182,12 @@ int ad_f4_pending_dodge_reroll_valid(const bb_match* match);
 // preceding legal action and game die for byte-exact replay.
 int ad_discover_f4_pending_dodge_reroll(ad_recipe* recipe,
                                         char error[AD_ERROR_CAP]);
+
+// Require exactly the currently supported 26-record structural proof bundle:
+// complete F1/F2/F3 axes plus one exact F4 and one exact F5 recipe. This is a
+// composition gate, not a balanced training-bank or publication contract.
+int ad_validate_authored_proof_bundle(
+    const ad_recipe* recipes, size_t count, char error[AD_ERROR_CAP]);
 
 // Reinitialize from the procgen seed, inject the exact recorded in-match dice,
 // replay every packed legal action, and require recipe-specific endpoint and
