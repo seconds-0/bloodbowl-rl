@@ -2801,3 +2801,55 @@ Next steps:
 4. Continue hourly durable health checks. Do not run the milestone evaluator
    until both primary and overflow are terminal, the GPU is idle, and BBTV is
    explicitly quiesced.
+
+Post-entry D189 merge and deployment verification at 00:15 PDT:
+
+- The separate CPU viewer build completed without touching the trainer or old
+  GPU viewer. Its exact in-tree module is
+  `/home/rache/bloodbowl-rl-bbtv-cpu/vendor/PufferLib/pufferlib/_C.cpython-311-x86_64-linux-gnu.so`,
+  SHA-256 `0814398b0685438e9b23bfbb20f45d5b88fcd2c0c829f5448dec2ec59d8188d1`;
+  it reports `bloodbowl`, `gpu=0`, and fp32. The 439-file source snapshot digest
+  is `baa348a27edf6cfc43970c860bc0d99bee9577b38dfdb47ed99e91233abaa90f`.
+- Separate latest-checkpoint and forced static-fallback probes each delivered
+  public-protocol messages `hello`, `match_start`, and `snapshot`; neither CPU
+  probe appeared in the exact pinned GPU parser. A 29.91-second worst-case
+  overlap probe advanced training 5,505,024 steps, approximately 184K SPS, so
+  the low-priority CPU viewer did not measurably reduce the 182.3K dashboard
+  baseline.
+- Fable's final exact-diff review returned `APPROVE`. Its two nonblocking
+  hardening suggestions were applied before ship: the startup identity import
+  also hides CUDA, and documentation makes the converter-versus-match import
+  boundary explicit. PR #20 passed GitHub run `29396272190` on exact head
+  `663245e8a8f5ef3c82f516f63f22b3a7dd401ef9`: reward/replay/analyzer
+  contracts, BC streaming, compiled unit tests, and ASan/UBSan. It merged as
+  `11bfe7c2d5c99cb744b5202754e2440b768da322`.
+- The explicit two-file deploy list had zero overlap with either the 65 primary
+  or 74 overflow pins. Only merged `stream_backend/follow_latest.py` and
+  `stream_backend/run_follow_latest.sh` were staged from the exact merge
+  archive and overlaid into the artifact-preserving production tree. Their
+  deployed SHA-256 values are respectively
+  `f24fe6c570a3ac87525168f851cd1ba3f5c70af5cc231e334c0c62adfbe0c192`
+  and `01061aa832ade80314716b1105a84799a414c074cd52c6d43cd39c93dd32d946`;
+  the prior copies are preserved under
+  `/home/rache/deployments/pr20-backup-before-11bfe7c2`.
+- Only `bbstream` was restarted. Local and public WebSockets both immediately
+  delivered `hello`, `match_start`, and `snapshot`; public HTTP returned 200.
+  The live match child maps the exact CPU module above with
+  `CUDA_VISIBLE_DEVICES=` and
+  `PYTHONPATH=/home/rache/bloodbowl-rl-bbtv-cpu/vendor/PufferLib`. The exact
+  pinned GPU parser now returns only trainer PID `431596`; BBTV is no longer a
+  handoff blocker. It selected fresh exact checkpoint 7,640,711,168, source
+  SHA-256 `2f404238dd485cb55e97faa68d40cf6cc703af360e7784b83dff14f4698911ba`.
+- Queue PID `431309`, trainer wrapper `431592`, and trainer `431596` were proved
+  unchanged after the earlier shell self-match was corrected. Training then
+  advanced to exact step 7,678,459,904 (epoch 58,581) with all displayed clip,
+  non-finite, and error counters zero. Both plan validators still return no
+  pin error. Atomic identical provenance records were written at
+  `/home/rache/bloodbowl-rl/.deployed-bbtv-source.json` and
+  `runs/bbtv-follow/VIEWER_PROVENANCE.json`, SHA-256
+  `c80415ec13c1917756e7d592147487772c24b92a10127b2d14fc1341ec7b0955`.
+- Removing BBTV briefly let the trainer draw up to 166.65 W and produced one
+  85 C sample, still below the immutable 88 C three-poll ceiling. Seven samples
+  across 30 seconds then ranged 80–85 C with 88–89% fan, 74–80% utilization,
+  intermittent software thermal limiting, and no hardware slowdown. There was
+  no sustained-hot sequence and no guard action.
