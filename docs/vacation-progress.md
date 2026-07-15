@@ -3929,3 +3929,60 @@ Rules-layer follow-up and next steps:
   artifact was deployed to the occupied 2070 checkout, and neither frozen
   queue nor BBTV was changed. This remains one proof template, not F2 coverage,
   publication, training, or deployment authorization.
+
+## 2026-07-15 08:34 PDT — hourly health check and F5 handoff
+
+Live experiment and autonomy state:
+
+- Seed 43 remains healthy in `final-main-control`. At 08:33 PDT its last
+  complete native panel was exact learner step 1,208,877,056 at epoch 9,222
+  over 74 games: performance 0.6014, 1.6757 touchdowns/game, draw rate 0.3919,
+  possession 0.3298, illegal/sampled-repair fraction 0.2191, forward ball
+  progress 8.598, 21.541 Rush intentions, 14.770 blocks thrown, 0.959 blocks
+  against the carrier, carrier-target fraction 0.0687, 0.0135 Pass intentions,
+  and zero Hand-off intentions. Reward clipping, non-finite reward,
+  engine-error, demonstration, and fallback counters all remain zero. This
+  small training panel is observational telemetry, not selection or promotion
+  evidence.
+- The primary service remains active/running with PID 431309, screen state
+  `running`, one completed arm, seed 43 current, and zero restarts. Trainer PID
+  473422 remains the only GPU compute process. The newest complete checkpoint
+  observed was exact step 1,198,653,440 in run directory `1784123019013`.
+  The dashboard's current remaining-time estimate was approximately 16h55m;
+  it is a throughput estimate and excludes any queue-owned parsing/evaluation
+  variability.
+- All 65 primary and 74 overflow pinned inputs revalidated with no error at the
+  unchanged plan SHA-256 values
+  `4ee72e3c58f09786cdd3bbf78a772e8de2d9a93e21a8b065cf0c5976ecced270`
+  and
+  `d90ee01c8c459f599c8601934f545ccb7783261edae3bcb6e9e3878036d37d3e`.
+  Overflow state remains absent, its service inactive/dead with zero restarts,
+  and its timer active. The 08:31 watcher invocation exited successfully after
+  reporting that the primary service was still active. The exact completion
+  gate sees only trainer PID 473422.
+- The sampled GPU state was 80 C, 89% fan, 75% utilization, 5,554/8,192 MiB,
+  and 111.85 W. Software thermal limiting was active in this sample while
+  hardware slowdown was inactive; this is a monitor condition, not a queue
+  failure, and no settings were changed. Disk remains 7% used with 895 GiB
+  free, inodes 1% used, memory 9.8 GiB available, and swap use 27 MiB.
+- `bbstream`, `bbweb`, and `bbtv-tunnel` remain active with zero restarts. BBTV
+  selected seed 43 checkpoint 1,098,776,576 at 08:24 PDT, source SHA-256
+  `6d09a2f24a42bc2025e74e15d83a00ffacce5b9bec2e307e1465743de3068b3e`,
+  against the frozen turnover3 baseline. The public page returned HTTP 200 in
+  0.236 seconds; `/ws` returned the expected HTTP 101 upgrade and then remained
+  open until the read-only curl timeout. The CPU viewer still owns no GPU
+  compute process.
+
+Next steps and safety boundary:
+
+1. Continue hourly read-only monitoring, with special attention to persistent
+   thermal limiting, progress, integrity counters, queue-owned arm transition,
+   overflow gating, and BBTV checkpoint advancement. Do not tune the occupied
+   run from a single thermal sample.
+2. Begin the first narrow F5 score-now-versus-wait proof on merged main. Keep it
+   at the shared fresh-team-turn BBS boundary and use the engine's
+   `bb_can_score_without_dice` rule predicate plus real legal actions; do not
+   synthesize an end-zone path, encode a tactical preference, or stage a bank.
+3. Leave F4's nested reroll-window records pending until a complete shared
+   resumable-frame validator is designed, tested, and independently reviewed.
+   No authored source or artifact may enter either frozen vacation queue.
