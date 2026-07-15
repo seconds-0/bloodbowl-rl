@@ -3072,3 +3072,88 @@ Next steps and safety boundary:
    Use its fixed milestone/opponent/seed grid to determine whether score and the
    validated behavior panel transfer together. No result promotes a reward or
    checkpoint automatically.
+
+## 2026-07-15 02:33 PDT — hourly health check and future-run reward attribution
+
+Live experiment and autonomy state:
+
+- At 02:29 PDT `final-main-control` remained healthy at exact learner step
+  9,195,225,088 (epoch 70,153), approximately 76.6% of its 12B seed-42 run.
+  The latest complete 106-game native train panel reported 1.3396
+  touchdowns/game, performance 0.4764, draw rate 0.4057, possession 0.3887,
+  historical in-pool win rate 0.5987, illegal/sampled-repair fraction 0.1770,
+  forward ball progress 8.115 squares, 18.774 Rush intentions, 11.679 blocks
+  thrown, 2.142 blocks against the carrier, carrier-target fraction 0.1955,
+  1D fraction 0.1809, 2D-red fraction 0.0453, and zero pass or handoff
+  intentions. Reward-clip, non-finite, engine-error, demonstration, and
+  fallback episode counters were all zero.
+- Primary queue PID `431309`, screen wrapper `431313`, trainer wrapper `431592`,
+  and trainer `431596` remain live and unchanged. The exact primary service is
+  active/running with zero restarts; `final-main-control` remains running and
+  `final-second-control` pending. Run `1784058310965` has 184 complete
+  16,066,560-byte checkpoints; the newest observed interval checkpoint was
+  exact step 9,138,864,128.
+- The 65 primary and 74 overflow pins revalidate without error at unchanged
+  plan SHA-256 values
+  `4ee72e3c58f09786cdd3bbf78a772e8de2d9a93e21a8b065cf0c5976ecced270`
+  and
+  `d90ee01c8c459f599c8601934f545ccb7783261edae3bcb6e9e3878036d37d3e`.
+  Overflow state remains absent, its latest watcher invocation returned success
+  without starting work, and its enabled timer is active/waiting.
+- The exact GPU process query returned only trainer PID `431596`. Seven samples
+  over 30 seconds held at 81-84 C, 88-89% fan, 75-83% utilization, 5,554 MiB
+  VRAM, and 117.77-168.51 W. Software thermal limiting was intermittent and
+  hardware slowdown remained inactive. No sample reached the current 88 C,
+  three-consecutive-poll queue guard. Disk has 896 GiB free at 7% use, inodes
+  are 1% used, memory has 8.8 GiB available, and swap use is 27 MiB.
+- `bbstream`, `bbweb`, and `bbtv-tunnel` remain active with zero restarts. The
+  CPU viewer selected exact seed-42 checkpoint 9,138,864,128 at 02:25 PDT,
+  source SHA-256
+  `9fe2fdb8d383bb0264ce19b6d254ad3f2369e020788f4e16b12d4bedb2c7daa9`,
+  against the frozen turnover3 warm baseline. Public HTTP returned 200 in
+  0.338 seconds. BBTV remains qualitative visibility and outside the GPU
+  handoff gate.
+
+Future-run reward attribution tranche:
+
+- In an isolated checkout based on merged `origin/main`, added one centralized
+  reward-emission seam and a 28-channel signed episode ledger covering every
+  ordinary reward family. It exports the team-0/home perspective so zero-sum
+  terms do not disappear, preserves a signed float residual, separates raw
+  component totals from signed clamp delta and post-clamp return, and counts
+  component mismatches/non-finite values as integrity failures. Terminal
+  attribution follows the repaired semantics: discard incidental terminal-step
+  shaping, preserve explicit touchdown reward, then add result/statmatch once.
+- The Puffer log contract grows from 88 to 123 environment keys. Both vector
+  dictionary allocations and the visible dashboard limit are raised from 96 to
+  160, with installer migrations, drift checks, launcher guards, and four
+  machine-readable Python contract tests. `CLAUDE.md`, `AGENTS.md`, the Puffer
+  environment skill, and new D190 explicitly say this telemetry is diagnostic,
+  future-only, and cannot be attributed retroactively to the active pinned run.
+- Behavior-locking evidence remains green: pristine and instrumented default
+  1,000-episode and R0 100-episode trajectory hashes match; throughput is
+  indistinguishable; all 431 C tests pass normally and again under ASan/UBSan;
+  and all four Python log-contract tests pass. A real vectorized Puffer CPU
+  smoke completed 128 evaluation episodes with 132 JSON fields and nonzero
+  setup-autofix/touchback attribution; component sum reconciled to post-clamp
+  and episode return within float tolerance with zero mismatch/non-finite
+  counters.
+- Fable's first tools-disabled architecture review approved the arithmetic with
+  requested hardening around dashboard capacity, real vector execution,
+  call-site labels, draw/objective-bypass tests, dead code, and exact-float
+  wording. Those findings are resolved. A final complete-diff Fable review is
+  still running; no PR or merge will precede its verdict. This checkout has not
+  been installed on the 2070, and the active source, module, plans, pins, queue,
+  trainer, and reward coefficients remain unchanged.
+
+Next steps and safety boundary:
+
+1. Finish the bounded Fable review; fix and re-run verification for any concrete
+   finding, otherwise commit the exact reviewed tree and require exact-head CI
+   before merge.
+2. Treat merge to `main` as availability for future builds only. Do not install
+   or rebuild it in the occupied audit checkout and do not claim component
+   attribution for the live vacation logs.
+3. Continue hourly live checks and BBTV latest-checkpoint visibility. Start the
+   fixed milestone evaluator only after primary plus overflow are terminal, the
+   GPU is idle, the overflow timer cannot fire, and BBTV is explicitly quiesced.
