@@ -252,6 +252,12 @@ changes a reward, active queue, production default, or promotion verdict.
   catch-capable teammate. A Standing No Ball teammate may remain a rules-legal
   Hand-off target and auto-fail the Catch; a No-Ball-only target set therefore
   does not satisfy the authored F2 opportunity predicate.
+  The F5 proof also keeps the shared fresh-team-turn boundary. It requires the
+  active carrier to satisfy the engine's exact no-Dodge/no-Rush/no-gate scoring
+  predicate, then privately verifies a zero-die activation and Move declaration
+  with End Activation still legal. The probe establishes that scoring and
+  Stalling are both available; it does not say which is strategically correct,
+  apply the Stalling choice, or serialize a path, action, or preference.
 - The corpus is sharply prefix-censored: it is not sufficient by itself for
   second halves, late drives, stalling, comeback play, or rare actions.
 - Correct BB2025 human possession is about `0.474` on genuine team-turn

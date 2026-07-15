@@ -89,6 +89,12 @@ static ad_recipe authored_test_recipe(void) {
     return recipe;
 }
 
+static ad_recipe authored_f5_test_recipe(void) {
+    ad_recipe recipe = authored_test_recipe();
+    recipe.controller_seed = 410;
+    return recipe;
+}
+
 BB_TEST(state_bank_accepts_exact_replayed_authored_record) {
     ad_recipe recipe = authored_test_recipe();
     char error[AD_ERROR_CAP];
@@ -215,6 +221,38 @@ BB_TEST(state_bank_accepts_exact_replayed_handoff_opportunity_record) {
         const bb_match* loaded = &bbe_state_bank[0];
         BB_CHECK_EQ(memcmp(loaded, &recipe.captured, sizeof *loaded), 0);
         BB_CHECK(ad_f2_handoff_opportunity_valid(loaded));
+        BB_CHECK_EQ(ad_verify_one_action_continuation(
+                        loaded, NULL, NULL, NULL, error),
+                    0);
+    }
+    reset_state_bank_loader(BBE_STATE_BANK_PATH);
+    BB_CHECK_EQ(remove(path), 0);
+}
+
+BB_TEST(state_bank_accepts_exact_replayed_score_or_stall_record) {
+    ad_recipe recipe = authored_f5_test_recipe();
+    char error[AD_ERROR_CAP];
+    BB_CHECK_EQ(ad_discover_f5_score_or_wait(&recipe, error), 0);
+
+    char path[256];
+    snprintf(path, sizeof path, "/tmp/bloodbowl-authored-f5-%ld.bbs",
+             (long)getpid());
+    FILE* file = fopen(path, "wb");
+    BB_CHECK(file != NULL);
+    if (file == NULL) return;
+    ad_bbs_record record = {
+        0xA5000001u, (uint32_t)recipe.action_count, &recipe,
+    };
+    BB_CHECK_EQ(ad_bbs_write(file, &record, 1, error), 0);
+    BB_CHECK_EQ(fclose(file), 0);
+
+    reset_state_bank_loader(path);
+    bbe_state_bank_load();
+    BB_CHECK_EQ(bbe_state_bank_n, 1);
+    if (bbe_state_bank_n == 1) {
+        const bb_match* loaded = &bbe_state_bank[0];
+        BB_CHECK_EQ(memcmp(loaded, &recipe.captured, sizeof *loaded), 0);
+        BB_CHECK(ad_f5_score_or_wait_valid(loaded));
         BB_CHECK_EQ(ad_verify_one_action_continuation(
                         loaded, NULL, NULL, NULL, error),
                     0);

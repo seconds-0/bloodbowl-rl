@@ -18,6 +18,7 @@ typedef enum {
     AD_RECIPE_F3_LATE_SECOND_HALF,
     AD_RECIPE_F1_PASS_OPPORTUNITY,
     AD_RECIPE_F2_HANDOFF_OPPORTUNITY,
+    AD_RECIPE_F5_SCORE_OR_WAIT,
     AD_RECIPE_KIND_COUNT,
 } ad_recipe_kind;
 
@@ -83,6 +84,18 @@ int ad_f2_handoff_opportunity_valid(const bb_match* match);
 // the captured BBS state remains the supported fresh team-turn boundary.
 int ad_discover_f2_handoff_opportunity(ad_recipe* recipe,
                                        char error[AD_ERROR_CAP]);
+
+// Purely validate that a supported fresh team-turn state has an unused
+// active-team carrier that can score without dice under the engine's BB2025
+// Stalling predicate, and whose private zero-die activation -> Move declaration
+// retains the legal choice to end the activation without scoring.
+int ad_f5_score_or_wait_valid(const bb_match* match);
+
+// Play only legal engine actions until the F5 predicate above is true. The
+// activation/Move decision is privately probed and discarded; the captured
+// BBS state remains the supported fresh team-turn boundary.
+int ad_discover_f5_score_or_wait(ad_recipe* recipe,
+                                 char error[AD_ERROR_CAP]);
 
 // Reinitialize from the procgen seed, inject the exact recorded in-match dice,
 // replay every packed legal action, and require raw-state identity.

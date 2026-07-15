@@ -90,6 +90,11 @@ newer evidence wins.
   zero dice and expose at least one adjacent catch-capable teammate. A target
   set containing only rules-legal No Ball teammates is rejected as an authored
   transfer opportunity, without changing engine Hand-off legality.
+  The fixed F5 proof likewise serializes only a fresh team-turn state. Its
+  active carrier must satisfy `bb_can_score_without_dice`; a private zero-die
+  activation and Move declaration must still offer End Activation. This proves
+  that score-now and Stall are available, never which choice is better, and no
+  path/action/preference metadata is stored.
 - **BC loader (D180):** use the bounded streaming loader and replay-disjoint
   split. Replay-first is the current default, not the final sampler; next
   stratify by roster/matchup, depth, and action family.

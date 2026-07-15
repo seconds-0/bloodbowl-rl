@@ -326,6 +326,21 @@ transfer-opportunity predicate. This proves one Hand-off opportunity template,
 not Hand-off quality, F2 axis coverage, quotas, target-window validation,
 publication, or training authorization.
 
+The first F5 proof uses controller seed 410 and reaches a loader-valid half-one,
+home-turn-2, tied 0-0 fresh-team-turn boundary after 51 legal decisions and 19
+in-match dice. Home slot 6 holds the ball at `(19, 10)` with MA 6, exactly six
+squares from its end zone. The validator uses the engine's
+`bb_can_score_without_dice` predicate, which excludes any path requiring a
+Dodge, Rush, compulsory activation gate, or other supported compulsory roll.
+On a discarded private copy it then selects the carrier's legal activation and
+Move declaration, requires zero dice, and requires End Activation to remain
+legal without moving or scoring. This establishes a genuine score-now versus
+Stall policy surface under D193. It does not apply either choice, enumerate or
+serialize a scoring path, resolve the Crowd Takes Action roll, or label which
+choice is strategically correct. This proves one F5 opportunity template, not
+clock/score/threat/Steady-Footing axes, tactical quality, quotas,
+counterfactuals, publication, or training authorization.
+
 D198 closes the two engine/helper gaps exposed while reviewing this proof: PA-
 players no longer receive Pass declaration, and `bb_can_catch` now excludes No
 Ball. No Ball players cannot intercept or receive a Touchback, while an

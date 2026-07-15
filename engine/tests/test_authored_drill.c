@@ -1,5 +1,6 @@
 #include "authored_drill.h"
 #include "bb_test.h"
+#include "bb/bb_reachability.h"
 #include "bb/gen_skills.h"
 
 #include <string.h>
@@ -17,6 +18,12 @@ static ad_recipe ad_test_recipe(void) {
     recipe.away_team = 1;
     recipe.exclude_team = -1;
     recipe.procgen = bb_procgen_params_default();
+    return recipe;
+}
+
+static ad_recipe ad_test_f5_recipe(void) {
+    ad_recipe recipe = ad_test_recipe();
+    recipe.controller_seed = 410;
     return recipe;
 }
 
@@ -505,4 +512,99 @@ BB_TEST(authored_drill_f2_reaches_real_handoff_opportunity) {
     BB_CHECK_EQ(memcmp(&no_handoff.captured, &original, sizeof original), 0);
     no_handoff.captured.stack[1].a = 255;
     BB_CHECK(!ad_f2_handoff_opportunity_valid(&no_handoff.captured));
+}
+
+BB_TEST(authored_drill_f5_reaches_real_score_or_stall_opportunity) {
+    ad_recipe recipe = ad_test_f5_recipe();
+    char error[AD_ERROR_CAP];
+    BB_CHECK_EQ(ad_discover_f5_score_or_wait(&recipe, error), 0);
+    BB_CHECK_EQ(recipe.action_count, 51);
+    BB_CHECK_EQ(recipe.dice_count, 19);
+    BB_CHECK(bb_state_bank_boundary_valid(&recipe.captured));
+    BB_CHECK_EQ(recipe.captured.half, 1);
+    BB_CHECK_EQ(recipe.captured.active_team, BB_HOME);
+    BB_CHECK_EQ(recipe.captured.turn[BB_HOME], 2);
+    BB_CHECK_EQ(recipe.captured.turn[BB_AWAY], 2);
+    BB_CHECK_EQ(recipe.captured.score[BB_HOME], 0);
+    BB_CHECK_EQ(recipe.captured.score[BB_AWAY], 0);
+    BB_CHECK_EQ(recipe.captured.ball.state, BB_BALL_HELD);
+    BB_CHECK_EQ(recipe.captured.ball.carrier, 6);
+    int carrier = recipe.captured.ball.carrier;
+    BB_CHECK_EQ(recipe.captured.players[carrier].x, 19);
+    BB_CHECK_EQ(recipe.captured.players[carrier].y, 10);
+    BB_CHECK_EQ(recipe.captured.players[carrier].ma, 6);
+    BB_CHECK_EQ(recipe.captured.players[carrier].flags & BB_PF_USED, 0);
+    BB_CHECK(bb_can_score_without_dice(&recipe.captured, carrier));
+
+    bb_match original = recipe.captured;
+    BB_CHECK(ad_f5_score_or_wait_valid(&recipe.captured));
+    BB_CHECK_EQ(memcmp(&recipe.captured, &original, sizeof original), 0);
+
+    bb_match probe = recipe.captured;
+    uint8_t die = 6;
+    bb_rng rng;
+    bb_rng_script(&rng, &die, 1);
+    BB_CHECK_EQ(ad_test_apply_legal(&probe, BB_A_ACTIVATE, carrier, &rng),
+                BB_STATUS_DECISION);
+    BB_CHECK_EQ(ad_test_apply_legal(&probe, BB_A_DECLARE, BB_ACT_MOVE, &rng),
+                BB_STATUS_DECISION);
+    BB_CHECK_EQ(rng.script_pos, 0);
+    BB_CHECK(!bb_rng_error(&rng));
+    bb_action legal[BB_LEGAL_MAX];
+    int legal_count = bb_legal_actions(&probe, legal);
+    int can_stall = 0;
+    for (int i = 0; i < legal_count; i++) {
+        if (legal[i].type == BB_A_END_ACTIVATION) can_stall = 1;
+    }
+    BB_CHECK(can_stall);
+
+    bb_match needs_rush = recipe.captured;
+    needs_rush.players[carrier].ma--;
+    BB_CHECK(bb_state_bank_boundary_valid(&needs_rush));
+    BB_CHECK(!bb_can_score_without_dice(&needs_rush, carrier));
+    BB_CHECK(!ad_f5_score_or_wait_valid(&needs_rush));
+
+    bb_match used = recipe.captured;
+    used.players[carrier].flags |= BB_PF_USED;
+    BB_CHECK(bb_state_bank_boundary_valid(&used));
+    BB_CHECK(bb_can_score_without_dice(&used, carrier));
+    BB_CHECK(!ad_f5_score_or_wait_valid(&used));
+
+    bb_match no_ball_carrier = recipe.captured;
+    bb_add_skill(&no_ball_carrier.players[carrier].skills, BB_SK_NO_BALL);
+    BB_CHECK(bb_state_bank_boundary_valid(&no_ball_carrier));
+    BB_CHECK(!ad_f5_score_or_wait_valid(&no_ball_carrier));
+
+    bb_match replayed;
+    BB_CHECK_EQ(ad_replay_exact(&recipe, &replayed, error), 0);
+    BB_CHECK_EQ(memcmp(&replayed, &recipe.captured, sizeof replayed), 0);
+    BB_CHECK_EQ(ad_verify_one_action_continuation(
+                    &replayed, NULL, NULL, NULL, error),
+                0);
+
+    FILE* file = tmpfile();
+    BB_CHECK(file != NULL);
+    if (file != NULL) {
+        ad_bbs_record record = {
+            0xA5000001u, (uint32_t)recipe.action_count, &recipe,
+        };
+        recipe.controller_stream++;
+        BB_CHECK(ad_bbs_write(file, &record, 1, error) != 0);
+        BB_CHECK(strstr(error, "provenance") != NULL);
+        BB_CHECK_EQ(ftell(file), 0);
+        BB_CHECK_EQ(fclose(file), 0);
+        recipe.controller_stream--;
+    }
+
+    ad_recipe rediscovered = ad_test_f5_recipe();
+    BB_CHECK_EQ(ad_discover_f5_score_or_wait(&rediscovered, error), 0);
+    BB_CHECK_EQ(memcmp(&recipe, &rediscovered, sizeof recipe), 0);
+
+    ad_recipe no_score = ad_test_recipe();
+    BB_CHECK_EQ(ad_discover_first_team_turn(&no_score, error), 0);
+    original = no_score.captured;
+    BB_CHECK(!ad_f5_score_or_wait_valid(&no_score.captured));
+    BB_CHECK_EQ(memcmp(&no_score.captured, &original, sizeof original), 0);
+    no_score.captured.stack[1].a = 255;
+    BB_CHECK(!ad_f5_score_or_wait_valid(&no_score.captured));
 }
