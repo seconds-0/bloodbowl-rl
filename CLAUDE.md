@@ -173,6 +173,30 @@ newer evidence wins.
   arrays. `0xA9000000 + index` preserves the reviewed proof bytes but is not a
   persistent identity or sidecar key; the later metadata schema must define a
   collision-audited recipe/version/variant registry before publication.
+  Identity schema 1 reserves opaque durable authored IDs
+  `0xAE000001..0xAE00001A` for those exact 26 recipes while deliberately
+  preserving the legacy A9 BBS bytes. Resolve identities only through the
+  immutable template/allocation ledger and separate frozen proof schedule;
+  never derive meaning from AE bits or proof position. The defining projection
+  is every discovery configuration field, including bit-exact procgen float
+  bits; transcripts and raw states remain writer provenance, not identity.
+  Schema 1 is closed at 26 rows and revision 1. Do not append a row, reinterpret
+  an ID, edit the ledger/schedule/oracle/authority bundle, or weaken the
+  writer's fresh/resumable/continuation gateways. Any future revision or cell
+  requires the separately reviewed general compiler contract. Run
+  `make authored-identity-verify`; the protected Linux authority must also
+  verify every newly reachable commit in a fresh tokenless, networkless,
+  read-only-source container. The immutable mapper probe must reject every
+  defining configuration field through the public API, including paired
+  composition-valid swaps for every semantic axis. Its authority also freezes
+  the public result ABI, function signatures, and constants. Recipe, identity,
+  and error storage are mutually disjoint; alias rejection over the greater
+  supplied/fixed extents precedes every error write. The Linux writer probe
+  must cover every canonical record at count one,
+  every family's provenance, the writer's exact allowed `count` uses, and
+  complete-batch admission/continuation before its first write callback. This
+  registry still authorizes no
+  sidecar, bank publication, training input, reward, evaluation, or deployment.
 - **BC loader (D180):** use the bounded streaming loader and replay-disjoint
   split. Replay-first is the current default, not the final sampler; next
   stratify by roster/matchup, depth, and action family.

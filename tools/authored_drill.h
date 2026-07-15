@@ -24,6 +24,8 @@
 #define AD_AUTHORED_PROOF_BUNDLE_COUNT \
     (AD_F1_PASS_CARRIER_PRESSURE_AXIS_COUNT + \
      AD_F2_HANDOFF_TARGET_AXIS_COUNT + AD_F3_SECOND_HALF_AXIS_COUNT + 2)
+#define AD_AUTHORED_IDENTITY_SCHEMA_VERSION 1u
+#define AD_AUTHORED_TEMPLATE_KEY_CAP 64u
 
 typedef enum {
     AD_F2_TARGET_COUNT_NONE = 0,
@@ -85,6 +87,31 @@ typedef struct {
     uint32_t decision_index;
     const ad_recipe* recipe;
 } ad_bbs_record;
+
+typedef struct {
+    uint64_t variant_seed;
+    uint32_t identity_schema_version;
+    uint32_t source_id;
+    uint32_t template_id;
+    uint32_t recipe_revision;
+    uint32_t cell_id;
+    uint32_t variant_id;
+} ad_authored_identity;
+
+// Return the immutable canonical key for a known authored template ID, or
+// NULL when the ID is not allocated in identity schema version 1.
+const char* ad_authored_template_key(uint32_t template_id);
+
+// Map exactly one complete legacy authored proof bundle to durable identities.
+// Inputs may be permuted. Both counts must equal the fixed bundle count. The
+// recipe array, identity array, and error storage must be mutually disjoint.
+// The caller's recipe and identity arrays are preserved on every failure,
+// including a disjointness violation or an early null/count failure. Alias
+// checking covers the greater of the supplied and required array extents.
+int ad_identify_authored_proof_bundle(
+    const ad_recipe* recipes, size_t recipe_count,
+    ad_authored_identity* identities, size_t identity_capacity,
+    char error[AD_ERROR_CAP]);
 
 // Discover the first genuine team-turn decision using only engine init,
 // advance, and legal apply calls. The built-in controller is deterministic and

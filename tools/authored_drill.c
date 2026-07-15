@@ -1,6 +1,7 @@
 // Deterministic authored-state discovery/replay primitives. This module owns
 // transcripts and serialization; only the engine owns mutable bb_match state.
 #include "authored_drill.h"
+#include "authored_identity_internal.h"
 
 #include "bb/bb_reachability.h"
 #include "bb/gen_teams.h"
@@ -741,21 +742,6 @@ int ad_validate_authored_proof_bundle(
     return 0;
 }
 
-static ad_recipe ad_proof_base_recipe(void) {
-    ad_recipe recipe;
-    memset(&recipe, 0, sizeof recipe);
-    recipe.procgen_seed = 0xA1170EEDu;
-    recipe.procgen_stream = 17;
-    recipe.game_seed = 0xD11CE5u;
-    recipe.game_stream = 23;
-    recipe.controller_stream = 31;
-    recipe.home_team = 0;
-    recipe.away_team = 1;
-    recipe.exclude_team = -1;
-    recipe.procgen = (bb_procgen_params){4, 2, 0.0f};
-    return recipe;
-}
-
 int ad_build_authored_proof_bundle(
     ad_recipe* recipes, size_t recipe_capacity,
     ad_bbs_record* records, size_t record_capacity,
@@ -777,71 +763,54 @@ int ad_build_authored_proof_bundle(
     if (staged == NULL) {
         return ad_fail(error, "authored proof builder allocation failed");
     }
-    static const uint64_t
-        f1_seed[BB_AWAY + 1][AD_F1_PASS_CARRIER_PRESSURE_BUCKET_COUNT] = {
-        {4, 2},
-        {10, 8},
-    };
-    static const uint64_t
-        f2_seed[BB_AWAY + 1][AD_F2_HANDOFF_TARGET_BUCKET_COUNT] = {
-        {4, 2},
-        {8, 13},
-    };
     size_t index = 0;
-
-    for (int team = BB_HOME; team <= BB_AWAY; team++) {
-        for (int pressure = AD_F1_CARRIER_PRESSURE_OPEN;
-             pressure <= AD_F1_CARRIER_PRESSURE_MARKED; pressure++) {
-            staged[index] = ad_proof_base_recipe();
-            staged[index].controller_seed = f1_seed[team][pressure - 1];
-            if (ad_discover_f1_pass_carrier_pressure(
-                    &staged[index], team, pressure, error) != 0) {
+    for (; index < AD_AUTHORED_PROOF_BUNDLE_COUNT; index++) {
+        const ad_authored_allocation* allocation =
+            ad_authored_legacy_allocation(index);
+        if (allocation == NULL) {
+            free(staged);
+            return ad_fail(error,
+                           "legacy authored allocation %zu is missing", index);
+        }
+        memset(&staged[index], 0, sizeof staged[index]);
+        ad_recipe_apply_projection(&staged[index], &allocation->projection);
+        int result;
+        switch (allocation->projection.kind) {
+            case AD_RECIPE_F1_EXACT_PASS_CARRIER_PRESSURE:
+                result = ad_discover_f1_pass_carrier_pressure(
+                    &staged[index], allocation->projection.capture_active_team,
+                    allocation->projection.capture_pass_carrier_pressure,
+                    error);
+                break;
+            case AD_RECIPE_F2_EXACT_HANDOFF_TARGET_COUNT:
+                result = ad_discover_f2_handoff_target_count(
+                    &staged[index], allocation->projection.capture_active_team,
+                    allocation->projection.capture_handoff_target_bucket,
+                    error);
+                break;
+            case AD_RECIPE_F3_EXACT_SECOND_HALF_TURN:
+                result = ad_discover_f3_second_half_turn(
+                    &staged[index], allocation->projection.capture_turn,
+                    allocation->projection.capture_active_team, error);
+                break;
+            case AD_RECIPE_F4_PENDING_DODGE_REROLL:
+                result = ad_discover_f4_pending_dodge_reroll(
+                    &staged[index], error);
+                break;
+            case AD_RECIPE_F5_SCORE_OR_WAIT:
+                result = ad_discover_f5_score_or_wait(&staged[index], error);
+                break;
+            default:
                 free(staged);
-                return -1;
-            }
-            index++;
+                return ad_fail(error,
+                               "legacy authored allocation %zu has kind %d",
+                               index, allocation->projection.kind);
+        }
+        if (result != 0) {
+            free(staged);
+            return -1;
         }
     }
-    for (int team = BB_HOME; team <= BB_AWAY; team++) {
-        for (int bucket = AD_F2_TARGET_COUNT_EXACTLY_ONE;
-             bucket <= AD_F2_TARGET_COUNT_TWO_OR_MORE; bucket++) {
-            staged[index] = ad_proof_base_recipe();
-            staged[index].controller_seed = f2_seed[team][bucket - 1];
-            if (ad_discover_f2_handoff_target_count(
-                    &staged[index], team, bucket, error) != 0) {
-                free(staged);
-                return -1;
-            }
-            index++;
-        }
-    }
-    uint64_t f3_seed = 1000;
-    for (int team = BB_HOME; team <= BB_AWAY; team++) {
-        for (int turn = 1; turn <= AD_F3_SECOND_HALF_TURN_COUNT; turn++) {
-            staged[index] = ad_proof_base_recipe();
-            staged[index].controller_seed = f3_seed++;
-            if (ad_discover_f3_second_half_turn(
-                    &staged[index], turn, team, error) != 0) {
-                free(staged);
-                return -1;
-            }
-            index++;
-        }
-    }
-    staged[index] = ad_proof_base_recipe();
-    staged[index].controller_seed = 1;
-    if (ad_discover_f4_pending_dodge_reroll(&staged[index], error) != 0) {
-        free(staged);
-        return -1;
-    }
-    index++;
-    staged[index] = ad_proof_base_recipe();
-    staged[index].controller_seed = 410;
-    if (ad_discover_f5_score_or_wait(&staged[index], error) != 0) {
-        free(staged);
-        return -1;
-    }
-    index++;
 
     if (index != AD_AUTHORED_PROOF_BUNDLE_COUNT ||
         ad_validate_authored_proof_bundle(staged, index, error) != 0) {
@@ -1085,8 +1054,8 @@ int ad_bbs_write(FILE* file, const ad_bbs_record* records, size_t count,
                            i);
         }
         int safe = rediscovered->kind == AD_RECIPE_F4_PENDING_DODGE_REROLL
-            ? bb_state_bank_resumable_valid(&verified[i])
-            : bb_state_bank_boundary_valid(&verified[i]);
+            ? ad_authored_resumable_admission_gate(&verified[i])
+            : ad_authored_fresh_admission_gate(&verified[i]);
         if (!safe) {
             free(rediscovered);
             free(verified);
@@ -1095,8 +1064,8 @@ int ad_bbs_write(FILE* file, const ad_bbs_record* records, size_t count,
                            i);
         }
         char continuation_error[AD_ERROR_CAP];
-        if (ad_verify_one_action_continuation(
-                &verified[i], NULL, NULL, NULL, continuation_error) != 0) {
+        if (ad_authored_continuation_gate(
+                &verified[i], continuation_error) != 0) {
             free(rediscovered);
             free(verified);
             return ad_fail(error,

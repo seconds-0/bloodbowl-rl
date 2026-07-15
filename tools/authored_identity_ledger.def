@@ -1,0 +1,154 @@
+/*
+ * Immutable identity-schema-1 authored allocation ledger.
+ *
+ * AD_TEMPLATE(id, key, permitted_revision_1_kind)
+ * AD_ALLOCATION(source, template, revision, cell, variant, variant_seed,
+ *               procgen_seed, procgen_stream, game_seed, game_stream,
+ *               controller_seed, controller_stream, kind, capture_turn,
+ *               capture_active_team, handoff_bucket, pass_pressure,
+ *               home_team, away_team, exclude_team, skillup_max_players,
+ *               skillup_max_each, skillup_secondary_pct_bits)
+ */
+AD_TEMPLATE(1u, "f1-pass-carrier-pressure",
+            AD_RECIPE_F1_EXACT_PASS_CARRIER_PRESSURE)
+AD_TEMPLATE(2u, "f2-handoff-target-count",
+            AD_RECIPE_F2_EXACT_HANDOFF_TARGET_COUNT)
+AD_TEMPLATE(3u, "f3-second-half-turn",
+            AD_RECIPE_F3_EXACT_SECOND_HALF_TURN)
+AD_TEMPLATE(4u, "f4-pending-dodge-reroll",
+            AD_RECIPE_F4_PENDING_DODGE_REROLL)
+AD_TEMPLATE(5u, "f5-score-or-wait", AD_RECIPE_F5_SCORE_OR_WAIT)
+
+AD_ALLOCATION(0xAE000001u, 1u, 1u, 1u, 1u, 4u,
+              0xA1170EEDu, 17u, 0xD11CE5u, 23u, 4u, 31u,
+              AD_RECIPE_F1_EXACT_PASS_CARRIER_PRESSURE,
+              0, BB_HOME, AD_F2_TARGET_COUNT_NONE,
+              AD_F1_CARRIER_PRESSURE_OPEN, 0, 1, -1, 4, 2, 0u)
+AD_ALLOCATION(0xAE000002u, 1u, 1u, 2u, 2u, 2u,
+              0xA1170EEDu, 17u, 0xD11CE5u, 23u, 2u, 31u,
+              AD_RECIPE_F1_EXACT_PASS_CARRIER_PRESSURE,
+              0, BB_HOME, AD_F2_TARGET_COUNT_NONE,
+              AD_F1_CARRIER_PRESSURE_MARKED, 0, 1, -1, 4, 2, 0u)
+AD_ALLOCATION(0xAE000003u, 1u, 1u, 3u, 3u, 10u,
+              0xA1170EEDu, 17u, 0xD11CE5u, 23u, 10u, 31u,
+              AD_RECIPE_F1_EXACT_PASS_CARRIER_PRESSURE,
+              0, BB_AWAY, AD_F2_TARGET_COUNT_NONE,
+              AD_F1_CARRIER_PRESSURE_OPEN, 0, 1, -1, 4, 2, 0u)
+AD_ALLOCATION(0xAE000004u, 1u, 1u, 4u, 4u, 8u,
+              0xA1170EEDu, 17u, 0xD11CE5u, 23u, 8u, 31u,
+              AD_RECIPE_F1_EXACT_PASS_CARRIER_PRESSURE,
+              0, BB_AWAY, AD_F2_TARGET_COUNT_NONE,
+              AD_F1_CARRIER_PRESSURE_MARKED, 0, 1, -1, 4, 2, 0u)
+
+AD_ALLOCATION(0xAE000005u, 2u, 1u, 1u, 1u, 4u,
+              0xA1170EEDu, 17u, 0xD11CE5u, 23u, 4u, 31u,
+              AD_RECIPE_F2_EXACT_HANDOFF_TARGET_COUNT,
+              0, BB_HOME, AD_F2_TARGET_COUNT_EXACTLY_ONE,
+              AD_F1_CARRIER_PRESSURE_NONE, 0, 1, -1, 4, 2, 0u)
+AD_ALLOCATION(0xAE000006u, 2u, 1u, 2u, 2u, 2u,
+              0xA1170EEDu, 17u, 0xD11CE5u, 23u, 2u, 31u,
+              AD_RECIPE_F2_EXACT_HANDOFF_TARGET_COUNT,
+              0, BB_HOME, AD_F2_TARGET_COUNT_TWO_OR_MORE,
+              AD_F1_CARRIER_PRESSURE_NONE, 0, 1, -1, 4, 2, 0u)
+AD_ALLOCATION(0xAE000007u, 2u, 1u, 3u, 3u, 8u,
+              0xA1170EEDu, 17u, 0xD11CE5u, 23u, 8u, 31u,
+              AD_RECIPE_F2_EXACT_HANDOFF_TARGET_COUNT,
+              0, BB_AWAY, AD_F2_TARGET_COUNT_EXACTLY_ONE,
+              AD_F1_CARRIER_PRESSURE_NONE, 0, 1, -1, 4, 2, 0u)
+AD_ALLOCATION(0xAE000008u, 2u, 1u, 4u, 4u, 13u,
+              0xA1170EEDu, 17u, 0xD11CE5u, 23u, 13u, 31u,
+              AD_RECIPE_F2_EXACT_HANDOFF_TARGET_COUNT,
+              0, BB_AWAY, AD_F2_TARGET_COUNT_TWO_OR_MORE,
+              AD_F1_CARRIER_PRESSURE_NONE, 0, 1, -1, 4, 2, 0u)
+
+AD_ALLOCATION(0xAE000009u, 3u, 1u, 1u, 1u, 1000u,
+              0xA1170EEDu, 17u, 0xD11CE5u, 23u, 1000u, 31u,
+              AD_RECIPE_F3_EXACT_SECOND_HALF_TURN,
+              1, BB_HOME, AD_F2_TARGET_COUNT_NONE,
+              AD_F1_CARRIER_PRESSURE_NONE, 0, 1, -1, 4, 2, 0u)
+AD_ALLOCATION(0xAE00000Au, 3u, 1u, 2u, 2u, 1001u,
+              0xA1170EEDu, 17u, 0xD11CE5u, 23u, 1001u, 31u,
+              AD_RECIPE_F3_EXACT_SECOND_HALF_TURN,
+              2, BB_HOME, AD_F2_TARGET_COUNT_NONE,
+              AD_F1_CARRIER_PRESSURE_NONE, 0, 1, -1, 4, 2, 0u)
+AD_ALLOCATION(0xAE00000Bu, 3u, 1u, 3u, 3u, 1002u,
+              0xA1170EEDu, 17u, 0xD11CE5u, 23u, 1002u, 31u,
+              AD_RECIPE_F3_EXACT_SECOND_HALF_TURN,
+              3, BB_HOME, AD_F2_TARGET_COUNT_NONE,
+              AD_F1_CARRIER_PRESSURE_NONE, 0, 1, -1, 4, 2, 0u)
+AD_ALLOCATION(0xAE00000Cu, 3u, 1u, 4u, 4u, 1003u,
+              0xA1170EEDu, 17u, 0xD11CE5u, 23u, 1003u, 31u,
+              AD_RECIPE_F3_EXACT_SECOND_HALF_TURN,
+              4, BB_HOME, AD_F2_TARGET_COUNT_NONE,
+              AD_F1_CARRIER_PRESSURE_NONE, 0, 1, -1, 4, 2, 0u)
+AD_ALLOCATION(0xAE00000Du, 3u, 1u, 5u, 5u, 1004u,
+              0xA1170EEDu, 17u, 0xD11CE5u, 23u, 1004u, 31u,
+              AD_RECIPE_F3_EXACT_SECOND_HALF_TURN,
+              5, BB_HOME, AD_F2_TARGET_COUNT_NONE,
+              AD_F1_CARRIER_PRESSURE_NONE, 0, 1, -1, 4, 2, 0u)
+AD_ALLOCATION(0xAE00000Eu, 3u, 1u, 6u, 6u, 1005u,
+              0xA1170EEDu, 17u, 0xD11CE5u, 23u, 1005u, 31u,
+              AD_RECIPE_F3_EXACT_SECOND_HALF_TURN,
+              6, BB_HOME, AD_F2_TARGET_COUNT_NONE,
+              AD_F1_CARRIER_PRESSURE_NONE, 0, 1, -1, 4, 2, 0u)
+AD_ALLOCATION(0xAE00000Fu, 3u, 1u, 7u, 7u, 1006u,
+              0xA1170EEDu, 17u, 0xD11CE5u, 23u, 1006u, 31u,
+              AD_RECIPE_F3_EXACT_SECOND_HALF_TURN,
+              7, BB_HOME, AD_F2_TARGET_COUNT_NONE,
+              AD_F1_CARRIER_PRESSURE_NONE, 0, 1, -1, 4, 2, 0u)
+AD_ALLOCATION(0xAE000010u, 3u, 1u, 8u, 8u, 1007u,
+              0xA1170EEDu, 17u, 0xD11CE5u, 23u, 1007u, 31u,
+              AD_RECIPE_F3_EXACT_SECOND_HALF_TURN,
+              8, BB_HOME, AD_F2_TARGET_COUNT_NONE,
+              AD_F1_CARRIER_PRESSURE_NONE, 0, 1, -1, 4, 2, 0u)
+AD_ALLOCATION(0xAE000011u, 3u, 1u, 9u, 9u, 1008u,
+              0xA1170EEDu, 17u, 0xD11CE5u, 23u, 1008u, 31u,
+              AD_RECIPE_F3_EXACT_SECOND_HALF_TURN,
+              1, BB_AWAY, AD_F2_TARGET_COUNT_NONE,
+              AD_F1_CARRIER_PRESSURE_NONE, 0, 1, -1, 4, 2, 0u)
+AD_ALLOCATION(0xAE000012u, 3u, 1u, 10u, 10u, 1009u,
+              0xA1170EEDu, 17u, 0xD11CE5u, 23u, 1009u, 31u,
+              AD_RECIPE_F3_EXACT_SECOND_HALF_TURN,
+              2, BB_AWAY, AD_F2_TARGET_COUNT_NONE,
+              AD_F1_CARRIER_PRESSURE_NONE, 0, 1, -1, 4, 2, 0u)
+AD_ALLOCATION(0xAE000013u, 3u, 1u, 11u, 11u, 1010u,
+              0xA1170EEDu, 17u, 0xD11CE5u, 23u, 1010u, 31u,
+              AD_RECIPE_F3_EXACT_SECOND_HALF_TURN,
+              3, BB_AWAY, AD_F2_TARGET_COUNT_NONE,
+              AD_F1_CARRIER_PRESSURE_NONE, 0, 1, -1, 4, 2, 0u)
+AD_ALLOCATION(0xAE000014u, 3u, 1u, 12u, 12u, 1011u,
+              0xA1170EEDu, 17u, 0xD11CE5u, 23u, 1011u, 31u,
+              AD_RECIPE_F3_EXACT_SECOND_HALF_TURN,
+              4, BB_AWAY, AD_F2_TARGET_COUNT_NONE,
+              AD_F1_CARRIER_PRESSURE_NONE, 0, 1, -1, 4, 2, 0u)
+AD_ALLOCATION(0xAE000015u, 3u, 1u, 13u, 13u, 1012u,
+              0xA1170EEDu, 17u, 0xD11CE5u, 23u, 1012u, 31u,
+              AD_RECIPE_F3_EXACT_SECOND_HALF_TURN,
+              5, BB_AWAY, AD_F2_TARGET_COUNT_NONE,
+              AD_F1_CARRIER_PRESSURE_NONE, 0, 1, -1, 4, 2, 0u)
+AD_ALLOCATION(0xAE000016u, 3u, 1u, 14u, 14u, 1013u,
+              0xA1170EEDu, 17u, 0xD11CE5u, 23u, 1013u, 31u,
+              AD_RECIPE_F3_EXACT_SECOND_HALF_TURN,
+              6, BB_AWAY, AD_F2_TARGET_COUNT_NONE,
+              AD_F1_CARRIER_PRESSURE_NONE, 0, 1, -1, 4, 2, 0u)
+AD_ALLOCATION(0xAE000017u, 3u, 1u, 15u, 15u, 1014u,
+              0xA1170EEDu, 17u, 0xD11CE5u, 23u, 1014u, 31u,
+              AD_RECIPE_F3_EXACT_SECOND_HALF_TURN,
+              7, BB_AWAY, AD_F2_TARGET_COUNT_NONE,
+              AD_F1_CARRIER_PRESSURE_NONE, 0, 1, -1, 4, 2, 0u)
+AD_ALLOCATION(0xAE000018u, 3u, 1u, 16u, 16u, 1015u,
+              0xA1170EEDu, 17u, 0xD11CE5u, 23u, 1015u, 31u,
+              AD_RECIPE_F3_EXACT_SECOND_HALF_TURN,
+              8, BB_AWAY, AD_F2_TARGET_COUNT_NONE,
+              AD_F1_CARRIER_PRESSURE_NONE, 0, 1, -1, 4, 2, 0u)
+
+AD_ALLOCATION(0xAE000019u, 4u, 1u, 1u, 1u, 1u,
+              0xA1170EEDu, 17u, 0xD11CE5u, 23u, 1u, 31u,
+              AD_RECIPE_F4_PENDING_DODGE_REROLL,
+              0, 0, AD_F2_TARGET_COUNT_NONE,
+              AD_F1_CARRIER_PRESSURE_NONE, 0, 1, -1, 4, 2, 0u)
+AD_ALLOCATION(0xAE00001Au, 5u, 1u, 1u, 1u, 410u,
+              0xA1170EEDu, 17u, 0xD11CE5u, 23u, 410u, 31u,
+              AD_RECIPE_F5_SCORE_OR_WAIT,
+              0, 0, AD_F2_TARGET_COUNT_NONE,
+              AD_F1_CARRIER_PRESSURE_NONE, 0, 1, -1, 4, 2, 0u)

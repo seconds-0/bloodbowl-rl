@@ -213,7 +213,10 @@ and is immutable after its initial merge. A dedicated
 `tools/authored_recipe_oracle.json` owns the six stream magics, lengths and
 SHA-256 values, the 2,141-byte match width, and the complete recursive
 declaration/stream/matcher classification manifest, plus the immutable direct
-gate-corpus schemas, counts, and result digests. It is byte-immutable under
+gate-corpus schemas, counts, and result digests. The declaration authority
+includes the public `ad_authored_identity` field order/types, while the trusted
+probe statically binds schema/count/key-cap constants and both public function
+signatures. It is byte-immutable under
 schema 1 through the same authority check. Expected constants are read from
 this one fixture rather than duplicated as editable test goldens. The fixture
 also lists and hashes every file in the self-contained trusted verifier bundle:
@@ -253,7 +256,13 @@ being judged.
 
 The authority runner creates an isolated temporary worktree for every newly
 reachable commit from first introduction onward and passes that path only as
-untrusted production source. The trusted bundle explicitly compiles the
+untrusted production source. Each commit is evaluated in a fresh pinned Linux
+container with no checkout credential, secrets, or network; all capabilities
+are dropped, privilege gain is disabled, candidate and authority trees are
+read-only mounts, and only an ephemeral bounded `/tmp` is writable. The
+candidate cannot rewrite a later worktree or the trusted bundle, and no
+writable container state survives between commits. The trusted bundle
+explicitly compiles the
 allowlisted candidate engine, authored-builder, registry, and matcher sources
 with its own harness and build invocation. Its independent serializer consumes
 recipes returned directly by the candidate builder; its AST checker parses
@@ -293,8 +302,14 @@ for the three gateway symbols. Its wrappers count and order the actual public
 `ad_bbs_write` path, forward to `__real_*` on success, or independently force
 failure. The trusted AST/link-map checks require unresolved cross-object calls
 from the writer to exactly these gateways, their separate candidate definitions
-to be trivial forwarders, no direct writer call to the underlying admission or
-continuation functions, and successful interposition of all three symbols.
+to contain exactly one return of the designated underlying call with every
+argument forwarded positionally (including the continuation null arguments),
+no direct writer call to the underlying admission or continuation functions,
+and successful interposition of all three symbols. The writer AST also permits
+exactly five `count` uses—null/zero validation, overflow validation, allocation,
+the shared preflight loop, and the output loop—requires all three gateway calls
+to share the preflight loop under only the exact kind/return conditions, and
+rejects extra branches or loop transfers.
 Changed linkage, a local shadow, direct-call bypass, production-only branch, or
 missing relocation fails before runtime evidence is accepted.
 
@@ -302,10 +317,20 @@ Run this matrix separately for every one of the 26 canonical records, not only
 one exemplar per boundary shape. Every F1/F2/F3/F5 record must call fresh
 admission exactly once, never nested admission, then continuation exactly once;
 the F4 record must call nested admission exactly once, never fresh admission,
-then continuation exactly once. For each record, independently forcing its
-applicable admission wrapper to fail must reject before byte zero without
-calling continuation. Allowing admission but forcing continuation to fail must
-also reject before byte zero. Successful forwarding wrappers must reproduce the
+then continuation exactly once. For first, middle, nested-F4, and final records,
+independently forcing the applicable admission wrapper to fail in the complete
+26-record batch must reject before byte zero without calling continuation.
+Allowing admission but forcing continuation to fail at each of those positions
+must also reject before byte zero. Trusted `fwrite` interposition requires all
+52 successful admission/continuation calls to finish before the first write
+callback and zero write callbacks for every forced failure.
+Additively, every one of the 26 canonical records is written alone and must call
+its admission plus continuation exactly once before the first write; independently
+forcing either result for every one-record case must fail with zero writes.
+Representative provenance mutations cover all five families, while controller
+seed and record-index mutations cover every position. These count-one and
+family/index matrices ensure the fixed-bundle evidence cannot hide a selective
+ordinary-writer branch. Successful forwarding wrappers must reproduce the
 unwrapped public writer's exact canonical bytes. Missing, duplicate, reversed,
 wrong-kind, family-selective, or bypassed calls fail. Thus removing or reordering
 either downstream block for any one family cannot hide behind canonical output,
@@ -347,8 +372,10 @@ affect this external evaluator.
 CI checks out full history and explicitly fetches every event authority by SHA.
 The required authority job is the hash-pinned workflow in the verifier bundle.
 After the initial merge, pull requests run it from protected default-branch
-context with a read-only token, no secrets, and the candidate checked out only
-as untrusted source; merge-group and push executions first prove their workflow
+context with read-only workflow permissions, no persisted checkout credential
+or secrets, and the candidate checked out only as untrusted read-only container
+source; candidate execution receives no network or ambient GitHub environment.
+Merge-group and push executions first prove their workflow
 bytes equal the exact target version. Repository rules require this authority
 job, so a candidate workflow edit cannot replace or skip the gate. The one-time
 bootstrap PR instead requires the exact candidate workflow/bundle plus ordinary
@@ -421,7 +448,10 @@ aligned, and mutually disjoint. Both counts must equal
 `AD_AUTHORED_PROOF_BUNDLE_COUNT`. On success, `identities[i]` identifies
 `recipes[i]` and `error[0] == '\0'`; the input recipe array is unchanged. Any
 failure leaves the complete caller identity array and recipe input
-byte-for-byte unchanged.
+byte-for-byte unchanged. Disjointness is checked against the safely computed
+greater of each supplied and fixed array extent before null/count diagnostics
+or any other write to the error buffer; an extent overflow fails silently
+before touching caller storage.
 
 Identification first runs the existing safe composition gate. It then compares
 every recipe's full configuration projection field-by-field against the
@@ -429,6 +459,14 @@ fixed-schedule ledger rows and requires an exact one-to-one mapping. It rejects
 unknown, duplicate, missing, ambiguous, out-of-range, or mismatched rows. It
 stages all 26 numeric identities and copies them to caller storage only after
 complete validation. It never indexes from an unvalidated enum or axis value.
+The immutable probe changes each defining configuration field through this
+public API using a structurally valid alternate value where applicable, and
+requires rejection plus byte-identical recipe input and identity output. For
+kind, turn, active side, hand-off bucket, and carrier pressure it additionally
+swaps the corresponding captured semantics between rows so the full 26-recipe
+composition gate still succeeds; rejection must therefore come from exact
+identity lookup rather than an earlier quota failure. Direct projection-helper
+mutations remain additive evidence rather than a substitute.
 
 Before implementation, audit record-construction contexts—not merely matching
 hex literals—in the current tree, all advertised refs, and all reachable Git
