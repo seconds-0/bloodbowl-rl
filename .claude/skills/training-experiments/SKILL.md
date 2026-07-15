@@ -11,7 +11,7 @@ retune from aesthetics, training curves, or human-looking behavior. Change one
 declared factor through a frozen experiment, validate on match utility and held-out
 transfer, and write every accepted finding to `DECISIONS.md`.**
 
-State as of 2026-07-14 (reward/replay audit active, ledger through D188).
+State as of 2026-07-14 (reward/replay audit active, ledger through D189).
 Always read `AGENTS.md`, the tail of `DECISIONS.md`, and
 `docs/reward-and-replay-audit-2026-07-09.md` first. Newer ledger entries and
 immutable result artifacts supersede older sections of this skill.
@@ -333,8 +333,8 @@ See §4. Check the invariants before every reward-config launch. No exceptions.
 
 ## 7. DECISIONS.md ledger discipline
 
-The ledger is at `DECISIONS.md` (through D188 as of 2026-07-14). It is the
-program's chronological memory. D177–D188 cover the reward screen, transfer,
+The ledger is at `DECISIONS.md` (through D189 as of 2026-07-14). It is the
+program's chronological memory. D177–D189 cover the reward screen, transfer,
 replay corpus, streaming loader, rejected partial-deployment run, corrected
 confirmation, fail-closed vacation routes, and frozen 6B learning-curve verdict
 that supersede this skill's June snapshots.
@@ -576,6 +576,13 @@ behavioral table. D187's qualitative verdict stands. Any reusable analyzer
 needs source hashes, explicit boundaries, and unequal-panel-size regression
 coverage.
 
+D189 records an operational interaction between qualitative BBTV and the
+vacation overflow gate: the GPU-built match viewer appeared in the exact
+compute-PID query and would prevent primary completion from unlocking overflow.
+Conversion-only CPU isolation is insufficient. The match server must load a
+separate CPU/fp32 Blood Bowl `_C`, hide CUDA, pass a real WebSocket-cycle probe,
+and be absent from the pinned parser without touching either queue's inputs.
+
 Vacation screen jobs must invoke `tools/run_frozen_reward_screen.py`, which sets
 `ARM_DETACH=0`. The queue creates a new session for each job, and every screen,
 arm wrapper, trainer, and descendant must remain in that process group so its
@@ -601,7 +608,7 @@ production default.
 
 ## 12. Session checklist
 
-Before doing anything: read `AGENTS.md`, D177–D188 and the ledger tail; discover
+Before doing anything: read `AGENTS.md`, D177–D189 and the ledger tail; discover
 live Tailscale/Vast state and processes; confirm the intended checkout is not the
 production checkout. Before launch: verify obs size, install drift, imported
 module/provenance, disk, complete reward manifest, opponent/data hashes, seeds,

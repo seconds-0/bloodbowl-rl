@@ -277,6 +277,35 @@ class FollowLatestTests(unittest.TestCase):
         self.assertEqual(sampled[-1], "--sample")
         self.assertNotIn("--sample", greedy)
 
+    def test_server_cycle_hides_training_gpu_from_child(self):
+        subprocess_result = mock.Mock(returncode=0)
+        with mock.patch.dict(
+            follow_latest.os.environ,
+            {"CUDA_VISIBLE_DEVICES": "0", "BBTV_TEST_VALUE": "preserved"},
+            clear=True,
+        ), mock.patch.object(
+            follow_latest.subprocess, "run", return_value=subprocess_result
+        ) as run:
+            result = follow_latest.run_server_cycle(
+                ["viewer-python", "server.py"],
+                cwd=Path("stream_backend"),
+                pythonpath=Path("cpu-viewer"),
+                timeout_seconds=12.5,
+            )
+
+        self.assertIs(result, subprocess_result)
+        run.assert_called_once_with(
+            ["viewer-python", "server.py"],
+            cwd=Path("stream_backend"),
+            env={
+                "CUDA_VISIBLE_DEVICES": "",
+                "BBTV_TEST_VALUE": "preserved",
+                "PYTHONPATH": "cpu-viewer",
+            },
+            check=False,
+            timeout=12.5,
+        )
+
     def test_parser_preserves_virtualenv_python_symlink(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -288,6 +317,8 @@ class FollowLatestTests(unittest.TestCase):
             script.write_text("", encoding="utf-8")
             checkpoint_root = root / "checkpoints"
             checkpoint_root.mkdir()
+            server_pythonpath = root / "cpu-viewer"
+            (server_pythonpath / "pufferlib").mkdir(parents=True)
             with mock.patch.object(
                     follow_latest.argparse.ArgumentParser, "error",
                     side_effect=AssertionError):
@@ -298,6 +329,7 @@ class FollowLatestTests(unittest.TestCase):
                     "--converter-script", str(script),
                     "--config", str(script),
                     "--server-python", str(venv_python),
+                    "--server-pythonpath", str(server_pythonpath),
                     "--server-script", str(script),
                     "--sample",
                 ])

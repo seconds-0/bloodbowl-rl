@@ -249,8 +249,10 @@ Do not leave the queue unattended until all of the following are true:
 - a synthetic failure demonstrates that later jobs do not start;
 - disk/inode use, journal size, Tailscale, linger, BBTV, and GPU temperature are
   healthy;
-- BBTV visibly advances to a newly completed manifested checkpoint; and
-- no production reward or production trainer/evaluator was changed.
+- BBTV visibly advances to a newly completed manifested checkpoint;
+- the exact pinned overflow GPU parser excludes BBTV because its match server
+  loaded the isolated CPU/fp32 `_C` from the expected viewer root;
+- no production reward or production trainer/evaluator was changed; and
 - if the optional overflow is armed, its timer failure/success smokes pass, a
   primary-running poll is a proven no-op, every primary pinned byte remains
   identical across additive deployment, and existing overflow state cannot be

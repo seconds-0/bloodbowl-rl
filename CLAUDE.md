@@ -5,9 +5,9 @@ deterministic C11 rules engine → PufferLib 4.0 native env → PPO + action
 masking + self-play curriculum, with BC support from curated FUMBBL replays.
 
 **Read `AGENTS.md` first.** Then read the tail of `DECISIONS.md` (currently
-through D188) and, for reward/replay work,
+through D189) and, for reward/replay work,
 `docs/reward-and-replay-audit-2026-07-09.md`. The ledger is chronological; the
-July audit and D177–D188 supersede older prose that calls the June v4 reward
+July audit and D177–D189 supersede older prose that calls the June v4 reward
 economy "settled." Where this file and newer ledger evidence disagree, the
 newer evidence wins.
 
@@ -150,6 +150,9 @@ newer evidence wins.
   checkpoint against that run's frozen warm start. Use the isolated float viewer
   and reversible service override in `docs/bbtv-latest-checkpoint.md`; never
   rebuild the trainer's Puffer tree or read a checkpoint still being written.
+  For the armed vacation overflow, its match child must load the separate
+  CPU/fp32 `_C` and remain absent from the exact pinned compute-PID parser.
+  `CUDA_VISIBLE_DEVICES=` alone makes a GPU-built `_C` fail (D189).
 - Unattended vacation runs use a literal hash-pinned queue, not an adaptive
   experiment-generating agent. `tools/experiment_queue.py` must halt on plan
   drift, failed validation, stale/absent progress, runtime, disk/inodes, or sustained

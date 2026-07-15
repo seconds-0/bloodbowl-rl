@@ -31,6 +31,11 @@ use `stream_backend/run_follow_latest.sh` and the isolation contract in
 checkpoint directly or build its float viewer module in the trainer's vendored
 Puffer tree. Deploy through the reversible `bbstream.service` override, verify
 the imported viewer `_C` path/hash, and preserve the static launcher as fallback.
+If a delayed queue requires an empty GPU compute-PID list, build BBTV's match
+viewer separately with `bloodbowl --cpu`, verify `env_name=bloodbowl`, `gpu=0`,
+fp32, a real spare-port WebSocket cycle, and absence from the exact gate parser.
+Hiding CUDA from a GPU-built `_C` causes the viewer to fail and is not a handoff
+solution (D189).
 
 ## Discover before acting
 
