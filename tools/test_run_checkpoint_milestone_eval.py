@@ -83,23 +83,24 @@ class MilestoneEvalTests(unittest.TestCase):
         ]
         targets = [0, 1_000, 2_000, 4_000]
         checkpoints = {
-            "42": [
+            str(seed): [
                 {
-                    "training_seed": 42,
+                    "training_seed": seed,
                     "target_steps": target,
                     "embedded_steps": target if target else 0,
-                    "native": f"/tmp/{target}.bin",
+                    "native": f"/tmp/s{seed}-{target}.bin",
                     "native_bytes": milestone.EXPECTED_NATIVE_BYTES,
-                    "native_sha256": f"{index + 1:064x}",
+                    "native_sha256": f"{seed * 100 + index + 1:064x}",
                     "source": "warm" if target == 0 else "interval",
                 }
                 for index, target in enumerate(targets)
             ]
+            for seed in milestone.CONTROL_SEEDS
         }
         plan = {
             "schema_version": 1,
             "matrix_id": "test-matrix",
-            "training_seeds": [42],
+            "training_seeds": list(milestone.CONTROL_SEEDS),
             "target_steps": targets,
             "games_per_cell": 1_000,
             "orientations": [0, 1],
@@ -162,13 +163,24 @@ class MilestoneEvalTests(unittest.TestCase):
                 {0: 0.40, 1_000: 0.50, 2_000: 0.51, 4_000: 0.505},
             )
             report = milestone.analyze(directory)
-            self.assertEqual(report["cell_count"], 16)
-            self.assertEqual(report["total_games"], 16_000)
+            self.assertEqual(report["cell_count"], 48)
+            self.assertEqual(report["total_games"], 48_000)
             points = report["trajectories"]["42"]
             self.assertAlmostEqual(points[2]["score_delta_warm"], 0.11)
             nomination = report["stage_b_nominations"]["42"]
             self.assertEqual(nomination["target_steps"], 1_000)
             self.assertFalse(nomination["exploratory"])
+            aggregate = report["aggregate_trajectory"][2]
+            self.assertAlmostEqual(aggregate["score_delta_warm"]["mean"], 0.11)
+            self.assertEqual(aggregate["score"]["clusters"], 3)
+
+    def test_exact_cluster_bootstrap_uses_all_seed_resamples(self):
+        summary = milestone.exact_cluster_bootstrap([0.4, 0.5, 0.6])
+        self.assertAlmostEqual(summary["mean"], 0.5)
+        self.assertEqual(summary["clusters"], 3)
+        self.assertEqual(summary["exact_resamples"], 27)
+        self.assertLess(summary["lower_95"], 0.5)
+        self.assertGreater(summary["upper_95"], 0.5)
 
     def test_nonzero_integrity_is_rejected(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -206,7 +218,7 @@ class MilestoneEvalTests(unittest.TestCase):
             report = milestone.validate_completion(
                 completion, milestone.sha256(completion)
             )
-            self.assertEqual(report["total_games"], 16_000)
+            self.assertEqual(report["total_games"], 48_000)
             first = directory / milestone.expected_cells(plan)[0]["path"]
             cell = json.loads(first.read_text(encoding="utf-8"))
             cell["focal_score"] += 0.01
