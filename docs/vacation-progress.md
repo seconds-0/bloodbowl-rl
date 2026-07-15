@@ -4127,3 +4127,85 @@ training record, action label, reward change, or deployment authorization.
   bank artifact, training input, or live deployment was created by the
   validator merge. The occupied 2070 checkout and both frozen queues remain
   unchanged.
+
+## 2026-07-15 10:00 PDT — seed 43 healthy; F4 recipe exact head under review
+
+Live queue and BBTV health:
+
+- The primary queue remains authoritative `running` on
+  `final-main-control`, with screen seed 43/current index 2, one completed arm,
+  and a fresh 09:59 PDT `SCREEN_STATUS.json`. The queue service is
+  active/running at PID 431309 with zero restarts; screen PID 431316 is waiting
+  for trainer PID 473422, still the only GPU compute process. The latest
+  complete telemetry panel observed exact step 2,163,081,216 at epoch 16,502
+  over 106 completed games: performance 0.641509, draw rate 0.415094,
+  possession 0.365179, illegal/sampled-repair fraction 0.186543, ball progress
+  8.228775, 20.584906 Rush intentions, 13.660378 blocks thrown, 2.094340
+  blocks against the carrier, carrier-target fraction 0.158476, Pass intentions
+  0.018868, and zero Hand-off intentions. Reward clipping, non-finite reward,
+  engine-error, demonstration, and fallback counters remain zero. The newest
+  complete 16,066,560-byte checkpoint is exact step 2,147,483,648 in run
+  directory `1784123019013`. Recent throughput samples are about 182K–187K SPS;
+  roughly 9.84B seed-43 steps remain, so any ~14h50m estimate is observational
+  and excludes final evaluation/queue transition uncertainty.
+- Read-only validation again matched all 65 primary pins at plan SHA-256
+  `4ee72e3c58f09786cdd3bbf78a772e8de2d9a93e21a8b065cf0c5976ecced270`
+  and all 74 overflow pins at plan SHA-256
+  `d90ee01c8c459f599c8601934f545ccb7783261edae3bcb6e9e3878036d37d3e`.
+  Both pin errors are `None`. Overflow state remains absent, its service is
+  inactive/dead with zero restarts, and the 09:58 watcher exited successfully
+  after observing that the primary service remains active; its timer is active
+  and waiting.
+- The 09:58 GPU sample was 81 C, 88% fan, 77% utilization, 5,554/8,192 MiB,
+  and 126.30 W. Both software thermal slowdown and hardware slowdown were
+  inactive in this sample. The earlier intermittent software-thermal flag
+  remains a trend to observe, not authority to retune the frozen run. Disk is
+  7% used with 894 GiB free, inodes 1% used, memory 9.6 GiB available, and swap
+  use 28 MiB.
+- `bbstream`, `bbweb`, and `bbtv-tunnel` remain active with zero restarts.
+  BBTV selected seed 43 checkpoint 1,997,668,352 at 09:47 PDT against the
+  frozen turnover3 baseline. Source SHA-256 is
+  `6bbf1b4e48864ace85be384975923d5fc88a21cbeb2107d63a47ef0ef40f0582`;
+  converted output SHA-256 is
+  `9c1f570dea9ec7ee0ddc6bf408dfa224ff560fba4822fa0f4b89a588a08290f5`.
+  The public page returned HTTP 200 in 0.237 seconds. A corrected HTTP/1.1
+  WebSocket probe returned HTTP 101 and then timed out only because the socket
+  remained open and streamed data, which is expected. The CPU viewer still
+  owns no GPU compute process.
+- Two monitoring probes were initially wrong and were rerun rather than
+  omitted: `selection.json` lives under the audit root, not the production
+  root, and the first WebSocket request omitted the HTTP/1.1 upgrade behavior
+  and received 426. The corrected audit-root lookup and HTTP/1.1 upgrade
+  produced the authoritative results above. An initial checkpoint search also
+  used the queue tree instead of the Puffer checkpoint directory; the selected
+  run manifest identified the correct directory, where the exact complete
+  checkpoint list was verified. No remote file or service was changed.
+
+Completed F4 recipe work:
+
+- Branch `codex/authored-f4-recipe` now contains commit
+  `a5f4a2e3b30ec05330eba1e630d66109922be5f3` and PR #36. Local, remote, and
+  GitHub PR head identities match. Controller seed 1 legally reaches D201's
+  exact pending first-step, non-Rush Dodge window after 384 actions and 110
+  dice. The transcript ends on the failed Step before Team Re-roll, Dodge, or
+  Decline is selected; no reroll choice or outcome is a label.
+- The writer uses resumable admission only for this F4 recipe kind; all older
+  recipes and every scenario scanner retain fresh-team-turn admission. Tests
+  cover exact rediscovery/replay bytes, all three real choices, deterministic
+  repeated writer bytes, mixed boundary/F4 preflight before byte zero,
+  malformed capture/provenance rejection, production-loader byte identity,
+  TEST context/masks, and canonical continuation.
+- Optimized and ASan/UBSan suites each pass 429 engine, 37 reward, 2 contact-
+  bot, and 8 loader tests. Independent optimized and sanitized sweeps over
+  controller seeds 0–1023 agree: 247 exact F4 captures, 777 clean match ends,
+  and zero invalid successes or unexpected failures. Production-source Clang
+  static analysis and diff checks pass. D203, `AGENTS.md`, `CLAUDE.md`, the
+  authored-bank plan, and the validation skill record the selective boundary.
+  Fable remains unavailable because local Claude Code authentication reports
+  `loggedIn: false`; no Fable approval is claimed.
+
+Next: require hosted CI and all three independent exact-head reviewers to pass
+PR #36, fix every P0-P3 finding, and merge only when the reviewed head is still
+identical. Then begin axis/quota/sidecar/manifest work in a separate tranche.
+Do not publish an authored bank, change reward/training inputs, or deploy source
+over the occupied 2070 or either frozen queue.
