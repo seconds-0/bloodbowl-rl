@@ -3773,3 +3773,35 @@ Next steps and safety boundary:
   `02f0f15a86ad209609402e8de6df27f6538e43b6`; the remote feature branch was
   deleted. No source or authored artifact was deployed to the occupied 2070
   checkout, and neither frozen queue or viewer service was changed.
+
+07:42 PDT addendum:
+
+- The first F1 proof reaches a fresh half-two, away-turn-1, tied 0-0 boundary
+  after 414 legal decisions and 108 recorded game dice. On a discarded private
+  copy, it requires a zero-die legal carrier activation and Pass declaration
+  plus a distinct standing, tackle-zone-capable teammate target. The ordinary
+  raw match necessarily retains and observes its ball carrier, but no separate
+  probe metadata, chosen action, target, nested frame, outcome, reward, BC
+  target, or policy-quality label is added. The loader-compatible proof remains
+  unpublished, unstaged, and unauthorized for training.
+- Review exposed three rules-semantic false positives and one documentation
+  overclaim before merge. The final predicate now rejects PA-dash carriers, No
+  Ball carriers, and No Ball receivers even when a forged raw state remains
+  structurally BBS-valid. Documentation now distinguishes the ordinary carrier
+  field from absent probe metadata. The audit also found a separately pending
+  engine-mask defect: activation currently exposes Pass declaration to PA-dash
+  players before `proc_ball` rejects them. That engine rule fix is not hidden in
+  the authored-data tranche.
+- Three final independent reviews approved exact head
+  `0896116370bd870808ece524ec0ca59656a736eb` with no P0-P3 findings. Adversarial
+  evidence included 11,200 systematic single-byte mutations, 100,000 randomized
+  1-8-byte mutations, structured procedure/grid/carrier/Pass-used/gate/trait
+  cases, provenance mutations, and mixed later-record failure; inputs remained
+  unchanged and no sanitizer finding occurred. Optimized and ASan/UBSan suites
+  each passed 418 engine, 37 reward, 2 contact-bot, and 4 loader tests. Exact-
+  head CI run `29424320219` passed in 4m08s.
+- PR #31 merged authoritatively to `main` as
+  `85f239cf196b8958282981b46e6a2d77f9bd03a5`; the remote branch was deleted.
+  The fixed optimized/sanitized 61,912-byte recipe SHA-256 remained
+  `5908432e21034920e6aa80ed702145952dc5eda4b3f3d9a2199da0225d91d6e1`.
+  No source or artifact was deployed to the occupied 2070 checkout.
