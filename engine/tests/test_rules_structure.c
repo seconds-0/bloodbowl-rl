@@ -503,10 +503,9 @@ BB_TEST(struct_kick_touchback_after_bounce_across_los) {
     BB_CHECK(fx_has_type(&m, BB_A_TOUCHBACK));
 }
 
-// ENGINE-DIVERGENCE: GAME TOUCHBACKS: "If there are no Standing players for
+// GAME TOUCHBACKS: "If there are no Standing players for
 // them to give it to, they may place it on any unoccupied square in their
-// half instead." The engine enumerates only standing receivers and offers
-// ZERO legal actions when the receiving team has none (a dead end).
+// half instead."
 BB_TEST(struct_kick_touchback_no_standing_receivers_places_ball) {
     bb_match m;
     stx_kickoff_fixture(&m, BB_HOME);
@@ -540,6 +539,35 @@ BB_TEST(struct_kick_touchback_only_no_ball_places_ball) {
     BB_CHECK_EQ(st, BB_STATUS_DECISION);
     BB_CHECK_EQ(fx_find(&m, stx_act(BB_A_TOUCHBACK, no_ball, 0, 0)), -1);
     BB_CHECK(fx_find(&m, stx_act(BB_A_TOUCHBACK, 0xFF, 13, 0)) >= 0);
+    BB_CHECK_EQ(fx_find(&m, stx_act(BB_A_TOUCHBACK, 0xFF, 20, 7)), -1);
+    BB_CHECK_EQ(fx_find(&m, stx_act(BB_A_TOUCHBACK, 0xFF, 12, 7)), -1);
+
+    bb_action legal[BB_LEGAL_MAX];
+    int n = bb_legal_actions(&m, legal);
+    BB_CHECK_EQ(n, 13 * BB_PITCH_WID - 1); // receiving half minus No Ball square
+    for (int i = 0; i < n; i++) {
+        BB_CHECK_EQ(legal[i].type, BB_A_TOUCHBACK);
+        BB_CHECK_EQ(legal[i].arg, 0xFF);
+        BB_CHECK(legal[i].x >= 13 && legal[i].x < BB_PITCH_LEN);
+        BB_CHECK(legal[i].y < BB_PITCH_WID);
+        BB_CHECK_EQ(m.grid[legal[i].x][legal[i].y], 0);
+    }
+
+    int dice_before = rng.script_pos;
+    st = fx_apply(&m, stx_act(BB_A_TOUCHBACK, 0xFF, 13, 0), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK(!bb_rng_error(&rng));
+    BB_CHECK_EQ(rng.script_pos, dice_before);
+    BB_CHECK_EQ(m.ball.state, BB_BALL_ON_GROUND);
+    BB_CHECK_EQ(m.ball.carrier, BB_NO_PLAYER);
+    BB_CHECK_EQ(m.ball.x, 13);
+    BB_CHECK_EQ(m.ball.y, 0);
+    for (int s = 0; s < BB_NUM_PLAYERS; s++) {
+        BB_CHECK_EQ(m.players[s].flags & BB_PF_HAS_BALL, 0);
+    }
+    BB_CHECK_EQ(m.active_team, BB_AWAY);
+    BB_CHECK_EQ(m.decision_team, BB_AWAY);
+    BB_CHECK_EQ(stx_top_proc(&m), BB_PROC_TEAM_TURN);
 }
 
 // ===========================================================================
