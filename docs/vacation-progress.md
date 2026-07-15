@@ -3260,3 +3260,92 @@ Next steps and safety boundary:
 3. Continue hourly live/BBTV checks. The milestone evaluator still waits for
    both queues terminal, an idle GPU, an inert overflow timer, and explicit
    BBTV quiescence.
+
+## 2026-07-15 04:28 PDT — hourly health check and strict-bank coverage result
+
+Live experiment and autonomy state:
+
+- At 04:24 PDT `final-main-control` remained healthy at exact learner step
+  10,479,992,832 (epoch 79,955), approximately 87.3% of its 12B seed-42 run.
+  The latest complete 119-game native panel reported performance 0.6303,
+  1.5630 touchdowns/game, draw rate 0.3361, possession 0.3851, historical
+  in-pool win rate 0.6047, illegal/sampled-repair fraction 0.1700, forward ball
+  progress 8.335 squares, 17.958 Rush intentions, 11.748 blocks thrown, 2.143
+  blocks against the carrier, carrier-target fraction 0.2031, 1D fraction
+  0.2000, 2D-red fraction 0.0367, 0.0168 pass intentions, and zero handoffs.
+  Reward clipping, non-finite reward, engine-error, demonstration, and fallback
+  counters were all zero.
+- The exact primary service is active/running with zero restarts. Queue PID
+  `431309`, screen wrapper `431313`, trainer wrapper `431592`, and trainer
+  `431596` are unchanged; `final-main-control` is running and
+  `final-second-control` remains pending. Run `1784058310965` has 210 complete
+  16,066,560-byte checkpoints; the latest observed interval checkpoint is
+  exact step 10,437,263,360.
+- All 65 primary and 74 overflow pins revalidated with no error at unchanged
+  plan SHA-256 values
+  `4ee72e3c58f09786cdd3bbf78a772e8de2d9a93e21a8b065cf0c5976ecced270`
+  and
+  `d90ee01c8c459f599c8601934f545ccb7783261edae3bcb6e9e3878036d37d3e`.
+  Overflow state remains absent. Its latest watcher invocation returned success
+  without starting work; the watcher service is inactive/dead with zero
+  restarts and its enabled timer is active/waiting.
+- The exact GPU compute query returned only trainer PID `431596`. Seven samples
+  over 30 seconds held at 80–82 C, 88–89% fan, 76–81% utilization, 5,554 MiB
+  VRAM, and 110.61–154.09 W. Software thermal limiting was active in five
+  samples and inactive in two; hardware thermal slowdown was absent throughout.
+  No sample approached the 88 C three-poll guard. Disk remains 7% used with
+  896 GiB free, inodes 1% used, memory 8.6 GiB available, and swap use 27 MiB.
+- `bbstream`, `bbweb`, and `bbtv-tunnel` remain active with zero restarts. The
+  CPU viewer selected exact checkpoint 10,337,386,496 at 04:14 PDT, source
+  SHA-256
+  `c2ea24869b2794605b45013d2acb94130aa1e216e3218e530e1d59585a191511`,
+  against the frozen turnover3 baseline. Public HTTP returned 200 in 0.299
+  seconds. The only GPU compute PID remains the trainer; BBTV remains
+  observational.
+
+Strict-bank S1–S6 coverage tranche:
+
+- A pure C classifier and fail-closed scanner now measure overlapping tactical
+  opportunity structures at the bank's validated fresh-team-turn boundaries.
+  A deterministic Python layer binds the D191 bank/manifest, scanner binary and
+  sources, engine Git tree, command, thresholds, and outputs; it publishes the
+  JSONL records and aggregate report before a manifest commit marker without
+  overwriting racing writers. It does not select actions, consume outcomes,
+  set sampling weights, or wire the bank into training.
+- Canonical raw/capped/distinct-replay counts are S1
+  `5,023/4,935/4,153`, S2 `3,047/2,973/2,403`, S3
+  `12,661/9,961/5,322`, S4 `2,883/2,703/1,745`, S5
+  `3,605/3,280/1,983`, and S6 `11,763/8,993/4,950`; 840 records from 672
+  replays satisfy none of the six. The scanner exactly reconciles the
+  independent pickup probe's 5,312 loose and 10,036 held states. All structural
+  anomaly counters are zero: S2 is contained in S1, S4/S5 are disjoint, and S6
+  is the S6A/S6B union.
+- Fable's independent C review found one genuine raw-record bounds-validation
+  blocker. The scanner now validates stack depth, enum/index ranges,
+  bidirectional grid/player consistency, coordinates, and ball carrier state
+  before any engine query; focused corrupt-record fixtures cover the fix.
+  Fable separately approved the aggregation, pinning, mutation detection,
+  deterministic bytes, and exclusive publication layer. A final C re-review
+  could not start after Claude Code's OAuth session expired, so it is not being
+  represented as an approval.
+- Nine focused C tests pass normally and under ASan/UBSan; six report-layer
+  tests cover deterministic splits/caps/overlaps, hash drift, input mutation,
+  existing outputs, and injected publication failure. Optimized and sanitized
+  full-bank scans emitted the identical 15,348-line record SHA-256
+  `6c4c4ef221a9d8667cf098c6fe91aa72a2d34b228e0b985201fc46bb87058daa`.
+  The current canonical aggregate-report SHA-256 is
+  `2983f2e0c1f01902a56c7ff079df2d0b59ab00e7314cc3e5bd2ec1988f5eae88`.
+
+Next steps and safety boundary:
+
+1. Finish CI/guide/decision integration, rerun the full normal and sanitizer
+   suites, and obtain a final exact-tree review if Claude Code authentication
+   becomes available. Otherwise preserve the successful review plus explicit
+   local proof without inventing a verdict.
+2. Commit, open a PR, require exact-head CI, merge, rebuild the scanner from
+   merged `main`, and publish the durable gitignored report transaction with
+   post-merge source/binary/Git pins.
+3. Use the measured thin/empty regions only to size a separately reviewed
+   authored-fixture tranche. Do not stage the strict bank in the occupied 2070
+   checkout or start the milestone evaluator before both queues are terminal,
+   the GPU is idle, the overflow timer is inert, and BBTV is quiesced.
