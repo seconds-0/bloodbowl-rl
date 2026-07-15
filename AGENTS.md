@@ -9,7 +9,7 @@ and behavioral cloning from FUMBBL replays.
 1. Read the tail of `DECISIONS.md`. It is the chronological program ledger;
    later entries amend earlier ones without deleting history.
 2. For reward, replay, or training work, read
-   `docs/reward-and-replay-audit-2026-07-09.md`. D177–D188 summarize its durable
+   `docs/reward-and-replay-audit-2026-07-09.md`. D177–D189 summarize its durable
    conclusions and the subsequent vacation-training decisions.
 3. Load the relevant project skill under `.claude/skills/`:
    - `training-experiments` for any run, A/B, checkpoint, metric, or promotion;
@@ -242,7 +242,10 @@ changes a reward, active queue, production default, or promotion verdict.
 - If BBTV is explicitly placed in scope, follow
   `docs/bbtv-latest-checkpoint.md`: consume only complete manifested
   checkpoints, convert outside the trainer tree, use the isolated float viewer
-  build, and retain the static stream as a reversible fallback.
+  build, and retain the static stream as a reversible fallback. During an
+  armed vacation overflow handoff, the match server must load the separately
+  proven CPU/fp32 `_C`, hide CUDA, and be absent from the exact pinned GPU PID
+  parser; hiding CUDA from a GPU-built `_C` only crashes the viewer (D189).
 
 ## Verification and working-tree safety
 

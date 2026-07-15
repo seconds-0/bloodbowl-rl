@@ -371,6 +371,28 @@ def server_command(
     return command
 
 
+def run_server_cycle(
+    command: list[str], *, cwd: Path, pythonpath: Path, timeout_seconds: float
+) -> subprocess.CompletedProcess[str]:
+    """Run one viewer cycle without allowing it to occupy the training GPU.
+
+    BBTV is observational and the vacation overflow gate deliberately treats
+    every ``nvidia-smi`` compute PID as contention. Set CUDA visibility on the
+    child itself: conversion already runs CPU-only, but the match server uses a
+    different Python/Puffer environment and otherwise inherits GPU access.
+    """
+    environment = dict(os.environ)
+    environment["CUDA_VISIBLE_DEVICES"] = ""
+    environment["PYTHONPATH"] = str(pythonpath)
+    return subprocess.run(
+        command,
+        cwd=cwd,
+        env=environment,
+        check=False,
+        timeout=timeout_seconds,
+    )
+
+
 def choose_stream_pair(
     prepared: tuple[Path, Path] | None,
     last_successful: tuple[Path, Path] | None,
@@ -436,11 +458,11 @@ def run_forever(args: argparse.Namespace) -> int:
             atomic_json(args.state_dir / "server_status.json", status)
             print("BBTV FOLLOW " + json.dumps(status, sort_keys=True), flush=True)
             try:
-                completed = subprocess.run(
+                completed = run_server_cycle(
                     command,
                     cwd=args.server_script.parent,
-                    check=False,
-                    timeout=args.server_timeout_seconds,
+                    pythonpath=args.server_pythonpath,
+                    timeout_seconds=args.server_timeout_seconds,
                 )
                 return_code = completed.returncode
             except subprocess.TimeoutExpired:
@@ -482,6 +504,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--converter-script", type=Path, required=True)
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--server-python", type=Path, required=True)
+    parser.add_argument("--server-pythonpath", type=Path, required=True)
     parser.add_argument("--server-script", type=Path, required=True)
     parser.add_argument("--fallback-a", type=Path)
     parser.add_argument("--fallback-b", type=Path)
@@ -523,6 +546,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         if not path.is_file():
             parser.error(f"--{name.replace('_', '-')} does not exist: {path}")
         setattr(args, name, path)
+    args.server_pythonpath = args.server_pythonpath.expanduser().resolve()
+    if not (args.server_pythonpath / "pufferlib").is_dir():
+        parser.error(
+            "--server-pythonpath does not contain pufferlib: "
+            f"{args.server_pythonpath}"
+        )
     for name in ("fallback_a", "fallback_b"):
         path = getattr(args, name)
         if path is not None:

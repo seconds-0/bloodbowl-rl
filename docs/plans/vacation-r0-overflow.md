@@ -121,6 +121,12 @@ checks are verified. A timer poll while the primary is running must be a no-op.
 The first real overflow checkpoint must appear only after primary completion;
 BBTV may then follow it observationally at a matchup boundary.
 
+BBTV's match server must use the separately verified CPU/fp32 viewer and be
+absent from the exact pinned `nvidia-smi` compute-PID parser. Hiding CUDA from a
+GPU-built `_C` is invalid because PuffeRL will fail while moving the policy;
+prove the imported module path, `gpu=0`, and a real spare-port WebSocket cycle
+before restarting only the BBTV service.
+
 ## Risks and simplification opportunities
 
 - Concurrent trainers: require primary service inactivity, exact primary
