@@ -125,6 +125,66 @@ static int ad_action_is_legal(const bb_match* match, uint32_t packed) {
     return 0;
 }
 
+static int ad_find_legal(const bb_match* match, bb_action_type type, int arg,
+                         bb_action* out) {
+    bb_action legal[BB_LEGAL_MAX];
+    int n = bb_legal_actions(match, legal);
+    for (int i = 0; i < n; i++) {
+        if (legal[i].type == type && (arg < 0 || legal[i].arg == arg)) {
+            if (out != NULL) *out = legal[i];
+            return 1;
+        }
+    }
+    return 0;
+}
+
+int ad_f1_pass_opportunity_valid(const bb_match* match) {
+    if (!bb_state_bank_boundary_valid(match) ||
+        match->ball.state != BB_BALL_HELD ||
+        match->ball.carrier >= BB_NUM_PLAYERS ||
+        BB_TEAM_OF(match->ball.carrier) != match->active_team) {
+        return 0;
+    }
+    int carrier = match->ball.carrier;
+    const bb_player* player = &match->players[carrier];
+    // proc_ball treats PA '-' as unable to pass. Keep the authored predicate
+    // rules-correct even while the broader activation mask is fixed separately.
+    if (player->stance != BB_STANCE_STANDING || player->pa <= 0 ||
+        bb_has_skill(&player->skills, BB_SK_NO_BALL)) {
+        return 0;
+    }
+
+    bb_action action;
+    if (!ad_find_legal(match, BB_A_ACTIVATE, carrier, &action)) return 0;
+    bb_match probe = *match;
+    uint8_t die = 6;
+    bb_rng rng;
+    bb_rng_script(&rng, &die, 1);
+    if (bb_apply(&probe, action, &rng) != BB_STATUS_DECISION ||
+        rng.script_pos != 0 || bb_rng_error(&rng) ||
+        !ad_find_legal(&probe, BB_A_DECLARE, BB_ACT_PASS, &action)) {
+        return 0;
+    }
+    if (bb_apply(&probe, action, &rng) != BB_STATUS_DECISION ||
+        rng.script_pos != 0 || bb_rng_error(&rng)) {
+        return 0;
+    }
+
+    bb_action legal[BB_LEGAL_MAX];
+    int n = bb_legal_actions(&probe, legal);
+    for (int i = 0; i < n; i++) {
+        if (legal[i].type != BB_A_PASS_TARGET) continue;
+        int target = bb_slot_at(&probe, legal[i].x, legal[i].y);
+        if (target >= 0 && target != carrier &&
+            BB_TEAM_OF(target) == match->active_team &&
+            bb_can_catch(&probe, target) &&
+            !bb_has_skill(&probe.players[target].skills, BB_SK_NO_BALL)) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 static int ad_recipe_config_valid(const ad_recipe* recipe) {
     return recipe->kind >= AD_RECIPE_FIRST_TEAM_TURN &&
            recipe->kind < AD_RECIPE_KIND_COUNT &&
@@ -142,6 +202,9 @@ static int ad_recipe_config_valid(const ad_recipe* recipe) {
 static int ad_capture_ready(const bb_match* match, ad_recipe_kind kind) {
     if (!ad_has_team_turn(match)) return 0;
     if (kind == AD_RECIPE_FIRST_TEAM_TURN) return 1;
+    if (kind == AD_RECIPE_F1_PASS_OPPORTUNITY) {
+        return ad_f1_pass_opportunity_valid(match);
+    }
     return match->half == 2 && match->active_team <= BB_AWAY &&
            match->turn[match->active_team] >= 5;
 }
@@ -228,6 +291,11 @@ int ad_discover_first_team_turn(ad_recipe* recipe, char error[AD_ERROR_CAP]) {
 int ad_discover_f3_late_second_half(ad_recipe* recipe,
                                     char error[AD_ERROR_CAP]) {
     return ad_discover(recipe, AD_RECIPE_F3_LATE_SECOND_HALF, error);
+}
+
+int ad_discover_f1_pass_opportunity(ad_recipe* recipe,
+                                    char error[AD_ERROR_CAP]) {
+    return ad_discover(recipe, AD_RECIPE_F1_PASS_OPPORTUNITY, error);
 }
 
 int ad_replay_exact(const ad_recipe* recipe, bb_match* out,
@@ -360,6 +428,9 @@ static int ad_rediscover_recipe(const ad_recipe* source, ad_recipe* out,
             break;
         case AD_RECIPE_F3_LATE_SECOND_HALF:
             rc = ad_discover_f3_late_second_half(out, error);
+            break;
+        case AD_RECIPE_F1_PASS_OPPORTUNITY:
+            rc = ad_discover_f1_pass_opportunity(out, error);
             break;
         default:
             return ad_fail(error, "unknown authored recipe kind %d",

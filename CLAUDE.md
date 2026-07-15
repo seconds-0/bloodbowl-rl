@@ -79,7 +79,12 @@ newer evidence wins.
   target/reroll decisions need explicit procedure-specific validation before
   the writer or loader may accept them. Every emitted authored record must also
   pass the canonical one-action continuation gate after loading; the gate is a
-  resumability check and must never be interpreted as an action label.
+  resumability check and must never be interpreted as an action label. The F1
+  proof privately verifies a non-dash-PA, non-No-Ball carrier's zero-die legal
+  activation -> Pass declaration -> standing, tackle-zone-capable, non-No-Ball
+  teammate target while serializing only the fresh-team-turn state. The raw
+  match keeps its ordinary ball-carrier field, but no separate probe metadata,
+  chosen action, target, or nested frame is serialized or labeled.
 - **BC loader (D180):** use the bounded streaming loader and replay-disjoint
   split. Replay-first is the current default, not the final sampler; next
   stratify by roster/matchup, depth, and action family.

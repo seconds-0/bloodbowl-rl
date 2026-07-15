@@ -241,7 +241,13 @@ changes a reward, active queue, production default, or promotion verdict.
   publication plus loader and one-action continuation validation.
   The current shared BBS1 validator admits only the exact MATCH -> TEAM_TURN
   boundary; do not widen it to arbitrary decision states. Target/reroll drills
-  require an explicit shared validator for every resumable frame first.
+  require an explicit shared validator for every resumable frame first. The F1
+  proof keeps that boundary: a non-dash-PA, non-No-Ball carrier's private copy
+  must reach a standing, tackle-zone-capable, non-No-Ball teammate target
+  through legal activation and Pass declaration with zero dice. The ordinary
+  raw match still contains its ball carrier; no separate carrier/action/target
+  metadata, nested frame, chosen action, or target is serialized or used as a
+  label.
 - The corpus is sharply prefix-censored: it is not sufficient by itself for
   second halves, late drives, stalling, comeback play, or rare actions.
 - Correct BB2025 human possession is about `0.474` on genuine team-turn

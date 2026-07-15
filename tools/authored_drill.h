@@ -16,6 +16,7 @@
 typedef enum {
     AD_RECIPE_FIRST_TEAM_TURN = 0,
     AD_RECIPE_F3_LATE_SECOND_HALF,
+    AD_RECIPE_F1_PASS_OPPORTUNITY,
     AD_RECIPE_KIND_COUNT,
 } ad_recipe_kind;
 
@@ -57,6 +58,17 @@ int ad_discover_first_team_turn(ad_recipe* recipe, char error[AD_ERROR_CAP]);
 // controller stream, capturing a fresh team-turn boundary in half two at turn
 // five or later. No clock, score, player, ball, or procedure field is written.
 int ad_discover_f3_late_second_half(ad_recipe* recipe,
+                                    char error[AD_ERROR_CAP]);
+
+// Purely validate that a supported fresh team-turn state has a standing,
+// unused active-team carrier whose legal ACTIVATE -> DECLARE PASS path reaches
+// at least one legal catch-capable team-mate target without consuming a die.
+int ad_f1_pass_opportunity_valid(const bb_match* match);
+
+// Play only legal engine actions until the F1 predicate above is true. The
+// nested activation/declaration/target frames are privately probed, not stored;
+// the captured BBS state remains the supported fresh team-turn boundary.
+int ad_discover_f1_pass_opportunity(ad_recipe* recipe,
                                     char error[AD_ERROR_CAP]);
 
 // Reinitialize from the procgen seed, inject the exact recorded in-match dice,
