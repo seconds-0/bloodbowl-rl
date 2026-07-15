@@ -235,7 +235,7 @@ BB_TEST(state_bank_accepts_complete_f3_second_half_turn_axis) {
             ad_recipe* recipe = &recipes[index];
             *recipe = authored_test_recipe();
             recipe->controller_seed = 1000u +
-                                      (uint64_t)(team * 8 + turn - 1);
+                (uint64_t)(team * AD_F3_SECOND_HALF_TURN_COUNT + turn - 1);
             BB_CHECK_EQ(ad_discover_f3_second_half_turn(
                             recipe, turn, team, error),
                         0);

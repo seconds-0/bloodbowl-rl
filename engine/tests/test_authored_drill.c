@@ -948,7 +948,7 @@ BB_TEST(authored_drill_f3_exact_second_half_turn_axis_is_complete) {
             ad_recipe* recipe = &recipes[index++];
             *recipe = ad_test_recipe();
             recipe->controller_seed = 1000u +
-                                      (uint64_t)(team * 8 + turn - 1);
+                (uint64_t)(team * AD_F3_SECOND_HALF_TURN_COUNT + turn - 1);
             BB_CHECK_EQ(ad_discover_f3_second_half_turn(
                             recipe, turn, team, error),
                         0);
@@ -1004,6 +1004,44 @@ BB_TEST(authored_drill_f3_exact_second_half_turn_axis_is_complete) {
                  recipes, expected_count, error) != 0);
     BB_CHECK(strstr(error, "capture") != NULL);
     recipes[0].captured.turn[BB_HOME]--;
+
+    bb_match captured_saved = recipes[0].captured;
+    recipes[0].captured.stack_top = 0;
+    BB_CHECK(ad_validate_f3_second_half_turn_axis(
+                 recipes, expected_count, error) != 0);
+    recipes[0].captured = captured_saved;
+    recipes[0].captured.stack_top = BB_STACK_MAX + 1;
+    BB_CHECK(ad_validate_f3_second_half_turn_axis(
+                 recipes, expected_count, error) != 0);
+    recipes[0].captured = captured_saved;
+    recipes[0].captured.stack_top = UINT8_MAX;
+    BB_CHECK(ad_validate_f3_second_half_turn_axis(
+                 recipes, expected_count, error) != 0);
+    recipes[0].captured = captured_saved;
+    recipes[0].captured.stack_top = 1;
+    BB_CHECK(ad_validate_f3_second_half_turn_axis(
+                 recipes, expected_count, error) != 0);
+    recipes[0].captured = captured_saved;
+    recipes[0].captured.stack[0].proc = BB_PROC_MOVE;
+    BB_CHECK(ad_validate_f3_second_half_turn_axis(
+                 recipes, expected_count, error) != 0);
+    recipes[0].captured = captured_saved;
+
+    int occupied = -1;
+    for (int slot = 0; slot < BB_NUM_PLAYERS; slot++) {
+        if (recipes[0].captured.players[slot].location == BB_LOC_ON_PITCH) {
+            occupied = slot;
+            break;
+        }
+    }
+    BB_CHECK(occupied >= 0);
+    if (occupied >= 0) {
+        const bb_player* player = &recipes[0].captured.players[occupied];
+        recipes[0].captured.grid[player->x][player->y] = 0;
+        BB_CHECK(ad_validate_f3_second_half_turn_axis(
+                     recipes, expected_count, error) != 0);
+        recipes[0].captured = captured_saved;
+    }
 
     ad_recipe invalid = ad_test_recipe();
     BB_CHECK(ad_discover_f3_second_half_turn(

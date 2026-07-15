@@ -65,7 +65,8 @@ static void ad_count_die(void* user, int sides, int value) {
 }
 
 static int ad_has_team_turn(const bb_match* match) {
-    return match->stack_top > 0 &&
+    return match != NULL && match->stack_top > 0 &&
+           match->stack_top <= BB_STACK_MAX &&
            match->stack[match->stack_top - 1].proc == BB_PROC_TEAM_TURN;
 }
 
@@ -288,12 +289,23 @@ static int ad_recipe_config_valid(const ad_recipe* recipe) {
            recipe->procgen.skillup_secondary_pct <= 1.0f;
 }
 
+static int ad_f3_second_half_turn_capture_valid(
+    const bb_match* match, const ad_recipe* recipe) {
+    return bb_state_bank_boundary_valid(match) &&
+           match->half == 2 &&
+           match->active_team == recipe->capture_active_team &&
+           match->turn[match->active_team] == recipe->capture_turn;
+}
+
 static int ad_capture_ready(const bb_match* match, const ad_recipe* recipe) {
     ad_recipe_kind kind = recipe->kind;
     // F4 is deliberately a nested TEST decision, so it must be tested before
     // the fresh-team-turn gate shared by every earlier recipe family.
     if (kind == AD_RECIPE_F4_PENDING_DODGE_REROLL) {
         return ad_f4_pending_dodge_reroll_valid(match);
+    }
+    if (kind == AD_RECIPE_F3_EXACT_SECOND_HALF_TURN) {
+        return ad_f3_second_half_turn_capture_valid(match, recipe);
     }
     if (!ad_has_team_turn(match)) return 0;
     if (kind == AD_RECIPE_FIRST_TEAM_TURN) return 1;
@@ -305,11 +317,6 @@ static int ad_capture_ready(const bb_match* match, const ad_recipe* recipe) {
     }
     if (kind == AD_RECIPE_F5_SCORE_OR_WAIT) {
         return ad_f5_score_or_wait_valid(match);
-    }
-    if (kind == AD_RECIPE_F3_EXACT_SECOND_HALF_TURN) {
-        return match->half == 2 &&
-               match->active_team == recipe->capture_active_team &&
-               match->turn[match->active_team] == recipe->capture_turn;
     }
     return kind == AD_RECIPE_F3_LATE_SECOND_HALF && match->half == 2 &&
            match->active_team <= BB_AWAY &&
@@ -422,7 +429,7 @@ int ad_validate_f3_second_half_turn_axis(const ad_recipe* recipes, size_t count,
         const ad_recipe* recipe = &recipes[i];
         if (!ad_recipe_config_valid(recipe) ||
             recipe->kind != AD_RECIPE_F3_EXACT_SECOND_HALF_TURN ||
-            !ad_capture_ready(&recipe->captured, recipe)) {
+            !ad_f3_second_half_turn_capture_valid(&recipe->captured, recipe)) {
             return ad_fail(error, "F3 axis capture %zu is invalid", i);
         }
         int team = recipe->capture_active_team;

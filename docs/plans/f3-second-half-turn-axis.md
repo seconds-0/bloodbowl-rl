@@ -96,6 +96,12 @@ no production rollout for this tranche.
   active-side orientations. The corrected public constants define 8 turns x 2
   sides = 16 cells. Loader assertions now also guard side/turn indexing so a
   malformed load cannot turn a diagnostic failure into test undefined behavior.
+- Independent adversarial review then reproduced an out-of-bounds read when a
+  caller passed `stack_top=255` directly to the public quota validator. The
+  quota path now invokes the full safe fresh-boundary validator before any
+  endpoint read, the discovery-only top-frame helper also checks the stack
+  bound, and regressions cover depth 0, 1, 33, and 255, a wrong root frame, and
+  grid/player inconsistency under optimized and sanitizer builds.
 - Fixed recipes use controller seeds 1000-1015 and bind exact action/dice counts
   for every cell. Each proves independent rediscovery, byte-exact replay,
   deterministic repeated writer bytes, production-loader byte identity, exact
