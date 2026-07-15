@@ -9,7 +9,7 @@ and behavioral cloning from FUMBBL replays.
 1. Read the tail of `DECISIONS.md`. It is the chronological program ledger;
    later entries amend earlier ones without deleting history.
 2. For reward, replay, or training work, read
-   `docs/reward-and-replay-audit-2026-07-09.md`. D177–D190 summarize its durable
+   `docs/reward-and-replay-audit-2026-07-09.md`. D177–D191 summarize its durable
    conclusions and the subsequent vacation-training decisions.
 3. Load the relevant project skill under `.claude/skills/`:
    - `training-experiments` for any run, A/B, checkpoint, metric, or promotion;
@@ -192,6 +192,13 @@ changes a reward, active queue, production default, or promotion verdict.
   The strict non-empty BB2025 allowlist has 9,118 replay IDs and 1,622,231
   joined records. See `runs/replay-audit-20260713/`.
 - Never mix BB2020 records into BB2025 training or evaluation.
+- The historical BBS state bank is mixed by source replay: 123 of 15,471
+  records come from 42 BB2020 replay IDs. Before any future replay-state
+  scenario/curriculum, run `tools/filter_state_bank.py` with the pinned mixed-
+  bank and strict-allowlist hashes. Preserve its manifest and selected-ID list;
+  do not treat loader compatibility as edition proof. The strict subset is
+  still entirely half one and opening-censored, so it cannot supply passing,
+  late-game, Stalling, comeback, or reroll-budget coverage by itself.
 - Split by replay ID, never by record. Prevent actions from one match appearing
   in both train and validation.
 - Use the bounded streaming loader in `training/bc_pretrain.py`; do not restore

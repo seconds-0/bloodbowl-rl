@@ -5,7 +5,7 @@ deterministic C11 rules engine → PufferLib 4.0 native env → PPO + action
 masking + self-play curriculum, with BC support from curated FUMBBL replays.
 
 **Read `AGENTS.md` first.** Then read the tail of `DECISIONS.md` (currently
-through D190) and, for reward/replay work,
+through D191) and, for reward/replay work,
 `docs/reward-and-replay-audit-2026-07-09.md`. The ledger is chronological; the
 July audit and D177–D189 supersede older prose that calls the June v4 reward
 economy "settled." Where this file and newer ledger evidence disagree, the
@@ -48,6 +48,11 @@ newer evidence wins.
 - **Replay edition/coverage gate (D179):** 15,347 raw = 11,580 BB2025 + 3,767
   BB2020. Use the strict 9,118-ID non-empty BB2025 allowlist. The 1,622,231
   joined BB2025 records are sharply opening-censored and rare-action poor.
+- **Strict replay-state bank (D191):** the historical BBS bank contains 123
+  BB2020-source records among 15,471. Future scenario/curriculum work must use
+  the hash-pinned, manifest-producing `tools/filter_state_bank.py` subset: 15,348
+  records from 5,328 strict BB2025 IDs. It remains all half one and opening-
+  censored; filtering edition does not create passing or late-game coverage.
 - **BC loader (D180):** use the bounded streaming loader and replay-disjoint
   split. Replay-first is the current default, not the final sampler; next
   stratify by roster/matchup, depth, and action family.
