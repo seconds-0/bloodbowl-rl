@@ -2948,3 +2948,127 @@ Completed operational hardening and next steps:
   the GPU is idle, the overflow timer cannot fire, and BBTV is explicitly
   quiesced. No reward, checkpoint, plan, pin, queue order, or production
   training default changed in this interval.
+
+## 2026-07-15 01:34 PDT — hourly health check and behavior-evidence hardening
+
+Live experiment and autonomy state:
+
+- At 01:33 PDT `final-main-control` remained healthy at exact learner step
+  8,562,540,544 (epoch 65,326), approximately 71.4% of its 12B seed-42 run.
+  The latest complete 109-game native train panel reported 1.7890
+  touchdowns/game, performance 0.5321, draw rate 0.3670, possession 0.3923,
+  historical in-pool win rate 0.5957, illegal/sampled-repair fraction 0.1663,
+  forward ball progress 8.586 squares, 19.872 Rush intentions, 12.110 blocks
+  thrown, 2.046 blocks against the carrier, carrier-target fraction 0.1779,
+  1D fraction 0.2212, 2D-red fraction 0.0442, 0.0092 pass intentions, and zero
+  handoff intentions. Reward-clip, non-finite, engine-error, demonstration, and
+  fallback episode counters were all zero.
+- Primary queue PID `431309`, screen wrapper `431313`, trainer wrapper `431592`,
+  and trainer `431596` remain live and unchanged. The primary service is
+  active/running with zero restarts; `final-main-control` remains running and
+  `final-second-control` remains pending. Run `1784058310965` has 172 complete
+  16,066,560-byte checkpoints; the newest observed interval checkpoint was
+  exact step 8,539,602,944.
+- The 65 primary and 74 overflow pins revalidate without error at unchanged plan
+  SHA-256 values
+  `4ee72e3c58f09786cdd3bbf78a772e8de2d9a93e21a8b065cf0c5976ecced270`
+  and
+  `d90ee01c8c459f599c8601934f545ccb7783261edae3bcb6e9e3878036d37d3e`.
+  Overflow state remains absent and its service inactive. The enabled timer is
+  active/waiting; its 01:24 watcher run returned success after observing that
+  primary was still active and made no state change.
+- The exact pinned GPU gate returned only trainer PID `431596`. Seven samples
+  over 31 seconds held at 80–84 C, 88–89% fan, 78–82% utilization, 5,554 MiB
+  VRAM, and 107.09–177.80 W. Software thermal limiting was intermittent and
+  hardware slowdown remained inactive. No sample reached the current 88 C,
+  three-consecutive-poll queue guard. Disk has 896 GiB free at 7% use, inodes
+  are 1% used, memory has 8.8 GiB available, and swap use is 27 MiB.
+- `bbstream`, `bbweb`, and `bbtv-tunnel` remain active with zero restarts. The
+  CPU viewer selected exact seed-42 checkpoint 8,439,726,080 at 01:26 PDT,
+  source SHA-256
+  `aba23c7a31e7dd9622cd5cf8fc5b899631ef0be2fff46a7b8a6c4e3febd2ec89`,
+  against the frozen turnover3 warm baseline. Public HTTP returned 200 in
+  0.214 seconds. BBTV remains qualitative and outside the GPU handoff gate.
+
+BH-001 and merged milestone-evaluator hardening:
+
+- The 8B scientific review exposed a contract defect: Stage-A cells already
+  wrote raw native environment metrics, but `validate_cell` and the final
+  analysis accepted a cell that omitted them and then reduced the durable
+  report to score, draws, touchdowns, and integrity. A focused regression
+  proved the omission on the prior code before the fix.
+- The post-run evaluator now requires a fixed 23-metric behavior panel covering
+  illegal repairs, block volume/dice tiers/carrier targeting, possession, ball
+  movement, dodge/Rush/pickup/pass/handoff actions, and knockdown outcomes. It
+  rejects missing, non-object, non-finite, negative, out-of-range, pickup-
+  inconsistent, or per-team-block-inconsistent evidence. Validated joint
+  behavior means and warm deltas survive into `ANALYSIS.json`; focal and
+  opponent block volumes use explicit side counters.
+- Orientation is no longer an implicit assumption. One checked mapping loads
+  the focal policy as team 0 for orientation 0 and team 1 for orientation 1,
+  writes `focal_team` plus policy-A/policy-B path identity into the cell, and is
+  reused by production assembly and validation. Orientation-asymmetric tests
+  fail if focal/opponent paths or block counters are swapped. Side counters are
+  excluded from `joint_behavior`; all remaining metrics are explicitly labelled
+  as match-level behavior of both policies and cannot be attributed to the focal
+  policy alone.
+- The tests now build every synthetic cell through the same pure payload
+  assembler called by `run_cell`, closing the producer/validator schema-drift
+  class that caused BH-001. Before the first real cell, `verify_plan_sources`
+  still re-hashes the compiled module, package/config/tree, runner, and analyzer;
+  the payload records that just-observed frozen identity. A live native panel
+  contained all 23 keys and its per-team block sum differed from total by less
+  than `5e-7`, well inside the fail-closed `2e-4` float tolerance.
+- Three bounded, tools-disabled Fable review passes found the implicit mapping,
+  swap-invariant test, joint-label, tolerance/preflight, and producer-schema
+  issues. Each concrete finding was independently checked and resolved. Local
+  verification passed 171 Python contracts with two platform skips, Ruff,
+  formatting, whitespace, 392 engine tests, 27 reward tests, two contact-bot
+  tests, and the same compiled suites under ASan/UBSan. PR #22 passed exact-head
+  GitHub run `29400744247` on
+  `38d4b38e8e1cbceb7d0f9f05d28664f3a15d9ddc` and merged as
+  `af1240c35e8e9d25e7c50dcc750d9f8e46aa1e35`. The monitoring branch merged
+  that main as `5bc3555`; the active pinned audit checkout was not modified.
+
+Corrected 8B interpretation and replay boundary:
+
+- Fable's valid high-level warning is to test whether carrier-focused blocking
+  reflects tactics or reward following, but its rough `~0.75` carrier-block
+  comparison was not a faithful description of this implementation. R0 emits
+  a zero-sum declaration-time expectation:
+  `p_deliver * (0.10*P(def-down) + 0.50*P(removal)*victim_cost/100k +
+  0.15*P(ball-out))`, then subtracts `0.15*P(block-turnover)` and
+  `0.03*P(own-turnover)*pending-safe-activations`. It does not pay a flat or
+  realized 0.50 injury coupon. The canary remains important, but magnitude and
+  causality must come from the fixed evaluation rather than coefficient sums.
+- Across the last six complete 500M bands `(5B,8B]`, static in-pool score has
+  mean 0.6228, range 0.6137–0.6313, and an ordinary descriptive slope of
+  `-0.00255/B`; performance is essentially flat. Touchdowns and possession keep
+  rising while illegal repairs fall. Carrier-block count/fraction are stable to
+  slightly down late; 2D-red share improves, while 1D share worsens. Rush
+  attempts fall from 20.95 to 19.29 across those bands. This supports a noisy
+  performance plateau with continuing behavior change, not a demonstrated
+  regression, escalating carrier farm, or runaway rushing. The bands are
+  temporally correlated policy snapshots, not millions of independent samples.
+- Pass and handoff intentions were already nearly absent in the first 500M
+  window, so the curve proves a persistent capability hole, not that this run
+  newly extinguished passing. The exact-BB2025 replay corpus cannot repair or
+  validate that hole alone: it contains only 313 pass-target and 356 handoff-
+  target labels among 1,622,231 records, all records are from half one, and
+  turns 1–2 dominate. Replay-derived states remain appropriate for opening,
+  loose-ball, pickup, block/assist, and selected carrier-safety probes with new
+  dice. Authored, predeclared fixtures are required for passing and late-game
+  score/clock/reroll decisions; replay outcomes must not label pre-dice action
+  quality.
+
+Next steps and safety boundary:
+
+1. Continue hourly live checks and allow all frozen primary/overflow work to run
+   without adaptive checkpoint selection or reward changes.
+2. Preserve the merged evaluator as post-run code only. Do not deploy it into
+   the occupied pinned checkout or start it while either queue can run.
+3. After both queues are terminal, the GPU is idle, the overflow timer cannot
+   fire, and BBTV is explicitly quiesced, freeze Stage A in a separate checkout.
+   Use its fixed milestone/opponent/seed grid to determine whether score and the
+   validated behavior panel transfer together. No result promotes a reward or
+   checkpoint automatically.
