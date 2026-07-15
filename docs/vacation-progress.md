@@ -2119,3 +2119,167 @@ Next steps:
 3. Repeat the full host/departure gate near 21:00 PDT, including Windows power,
    update/reboot state, keepalive, Tailscale, both immutable plans, public BBTV,
    and the latest progress/ETA. Leave promotion disabled.
+
+## 2026-07-14 17:16 PDT (reconstructed at 21:12 PDT)
+
+Reporting note:
+
+- This entry was reconstructed after the fact from immutable checkpoint mtimes,
+  the last valid schema-2 training panel at or before that checkpoint, append-
+  only BBTV follower output, and systemd journals. It is authoritative machine
+  evidence but was not written contemporaneously. The late write is a journal-
+  cadence defect, not an experiment-monitoring or host-runtime gap.
+
+Status at the checkpoint:
+
+- The newest complete native checkpoint was exactly 2,996,436,992 steps,
+  published at 17:14:26 PDT and 94 seconds old at the target time. End-to-end
+  throughput was 185,554 steps/second.
+- Its matching schema-2 panel (epoch 22,860; 103 games) reported performance
+  0.5388, 1.5534 touchdowns/game, draw rate 0.3786, possession 0.3780,
+  historical win rate 0.5599, and illegal fraction 0.1796. Engine errors,
+  clipped/non-finite rewards, demos, and fallbacks were all zero.
+- BBTV started a sampled presentation of that exact checkpoint at 17:15:19
+  PDT; digest prefix `5236bbed77` matches the native SHA-256. The primary and
+  viewer processes later retained their original PIDs and zero-restart state,
+  proving this hour was part of the same continuous run.
+
+Next steps at that point remained unchanged: continue the immutable arm,
+observe natural BBTV boundaries, and reserve all reward conclusions for the
+validated terminal and paired held-out evaluations.
+
+## 2026-07-14 18:16 PDT (reconstructed at 21:12 PDT)
+
+Status at the checkpoint:
+
+- The newest checkpoint was 3,645,636,608 steps, published at 18:12:40 PDT and
+  200 seconds old. End-to-end throughput was 185,600 steps/second.
+- The matching 116-game panel at epoch 27,813 reported performance 0.5603,
+  1.5948 touchdowns/game, draw rate 0.4138, possession 0.3557, historical win
+  rate 0.5676, and illegal fraction 0.1827. All five integrity families were
+  zero.
+- BBTV was sampled and showing the most recent completed presentation-boundary
+  checkpoint, 3,545,759,744 steps, started at 18:07:05 PDT. This expected
+  one-to-two-checkpoint lag reflects the two-game viewing cycle, not stale
+  discovery or conversion.
+
+No systemd failure/restart or overflow start occurred. The appropriate next
+step remained passive evidence collection with no reward/config mutation.
+
+## 2026-07-14 19:16 PDT (reconstructed at 21:12 PDT)
+
+Status at the checkpoint:
+
+- The newest checkpoint was 4,344,774,656 steps, published at 19:15:25 PDT and
+  only 34 seconds old. End-to-end throughput was 185,613 steps/second.
+- The matching epoch-33,147 panel contained 145 games: performance 0.4931,
+  1.7034 touchdowns/game, draw rate 0.4207, possession 0.3848, historical win
+  rate 0.5700, and illegal fraction 0.1767. Integrity counters remained zero.
+- Sampled BBTV was showing boundary-selected step 4,244,897,792, started at
+  19:09:22 PDT, again within normal presentation lag.
+
+The noisy short-window performance dip alongside improving tempo reinforced
+the predeclared rule not to choose checkpoints from one dashboard panel.
+
+## 2026-07-14 20:16 PDT (reconstructed at 21:12 PDT)
+
+Status at the checkpoint:
+
+- The newest checkpoint was 4,993,974,272 steps, published at 20:13:38 PDT and
+  142 seconds old. End-to-end throughput was 185,647 steps/second.
+- The matching epoch-38,100 / 108-game panel reported performance 0.5509,
+  1.7778 touchdowns/game, draw rate 0.3981, possession 0.3691, historical win
+  rate 0.5761, and illegal fraction 0.1774. All integrity fields were zero.
+- Sampled BBTV was presenting step 4,944,035,840 from its 20:11:15 boundary,
+  less than one checkpoint behind the learner.
+
+Across 16:16--21:10, append-only service journals contain zero stop, failure,
+main-process-exit, scheduled-restart, or fallback events for the primary queue
+and three BBTV units. Twenty-seven overflow watcher invocations logged the
+expected primary-active no-op; none created overflow state.
+
+## 2026-07-14 21:12 PDT — final departure gate
+
+Current experiment state:
+
+- The learner is at 5,630,984,192 exact steps (epoch 42,960). The latest
+  107-game diagnostic reported performance 0.5701, 1.6262 touchdowns/game,
+  draw rate 0.3178, possession 0.3592, historical win rate 0.5816, illegal
+  fraction 0.1685, and 8.47 forward ball squares. Every engine-error, clipping,
+  non-finite, demonstration, and fallback counter is zero.
+- The newest complete checkpoint at the gate was 5,593,235,456 steps, only 203
+  seconds old. Across 113 checkpoints, end-to-end throughput is 185,658
+  steps/second, median interval throughput 185,728, and latest-five mean
+  185,539. First-arm completion remains near 06:45 PDT July 15; the full nine-
+  arm primary-plus-overflow matrix plus measured evaluation overhead projects
+  near 06:57 PDT July 21.
+- `SCREEN_STATUS.json` is fresh, names arm `both`, seed 42, index 1, and the
+  exact frozen screen-manifest SHA. Queue PID `431309`, trainer PID `431596`,
+  and wrapper PID `431316` are unchanged. All tasks remain in the queue cgroup;
+  the only extra task seen was the queue guard's bounded 30-second sleep.
+
+Provenance and autonomous-transition gate:
+
+- The primary plan revalidated all 65 pins with SHA-256
+  `4ee72e3c58f09786cdd3bbf78a772e8de2d9a93e21a8b065cf0c5976ecced270`.
+  The overflow plan revalidated all 74 pins with SHA-256
+  `d90ee01c8c459f599c8601934f545ccb7783261edae3bcb6e9e3878036d37d3e`.
+  Both pin validators returned no error.
+- Primary queue, BBTV stream, web service, tunnel, and overflow timer are
+  enabled and active with zero restarts. The 21:01:26 watcher was a successful
+  primary-active no-op, and real overflow state remains absent. It cannot start
+  until the primary completion proof, exact plan/pin revalidation, and idle-GPU
+  gates all pass.
+- Promotion remains structurally unavailable: these are unchanged R0 control
+  screens, candidate transfer is null, and no unattended path can select a
+  reward or alter production.
+
+Host/capacity/thermal gate:
+
+- GPU snapshot: 81 C, 88% fan, 76% utilization, 5,737/8,192 MiB VRAM, about
+  116 W, hardware slowdown inactive. Kernel inspection since 16:16 found zero
+  Xid/NVRM, OOM, I/O, critical-temperature, or shutdown events.
+- The volume has 898 GiB free and 1% inode use. Memory has 8.7 GiB available;
+  swap use is 27 MiB. The primary run directory is 387 MB at 5.6B steps, in
+  line with the previously bounded full-schedule projection.
+- User lingering is enabled and active. Tailscale is `Running`, online, and has
+  no key expiry. Windows remains on High Performance; AC/DC sleep and hibernate
+  timers are zero. `RigWSLKeepalive` is enabled/running and its marker process
+  remains continuously alive.
+- Windows Update, component servicing, and Update SystemInfo all report no
+  reboot requirement. The only pending renames are deletion of two old Edge
+  updater directories. A fresh read-only Update API search found only a not-
+  downloaded malicious-software removal tool and Defender intelligence update;
+  no cumulative, feature, driver, WSL, CUDA, or downloaded reboot-forcing item
+  exists. No policy or update was changed.
+
+BBTV/public gate:
+
+- BBTV is sampled and currently presents exact native step 5,493,358,592
+  (source SHA prefix `785f1da12f`) against the frozen turnover3 warm. Selection
+  metadata records the exact step/source/hash, the server command contains
+  `--sample`, and service PID `444521` has not restarted.
+- The public page returns HTTP 200. A fresh external secure-WebSocket session
+  received the correct learner/frozen matchup, full snapshot, and advancing
+  deltas through sequence 1,177.
+- Known presentation-only caveat: the length-bounded public agent filename
+  preserves the source digest and `_torch.bin` suffix but abbreviates the last
+  two digits of the 12-digit step component for this long tag. Exact selection
+  and provenance remain in `selection.json` and conversion metadata. Do not
+  hotfix the viewer during the departure gate; correct the label layout later
+  with test/review/CI while leaving training untouched.
+
+Reporting correction and next steps:
+
+- The missing contemporaneous 17:16--20:16 journal writes are a real reporting
+  defect and are explicitly backfilled above rather than disguised. Machine
+  monitoring itself remained continuous: checkpoints, schema telemetry,
+  service journals, BBTV follower output, queue guards, and watcher invocations
+  cover the interval with no health gap.
+- Continue autonomous monitoring and durable reporting during the vacation.
+  Preserve all fixed milestones for post-return paired learning-curve
+  evaluation. Never promote from training telemetry or BBTV aesthetics.
+- If a guard fails, accept the queue's terminal halt and preserve evidence; do
+  not manually bypass pins, capacity, thermal, progress, completion, or idle-
+  GPU checks. At primary success, overflow may start only through its reviewed
+  watcher and exact completion validator.
