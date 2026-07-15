@@ -199,6 +199,17 @@ engine Tackle-Zone semantics after safe boundary validation; no receiver is
 selected and no action-quality label is created. This does not satisfy the
 broader F1 matrix below and does not authorize artifact publication or training.
 
+The implemented cross-family composition layer now accepts exactly one
+26-record proof bundle: four F1 axis records, four F2 axis records, sixteen F3
+axis records, one F4 proof, and one F5 proof. It is order-independent and maps a
+record to its primary family only through the exact recipe kind, preventing
+overlapping opportunity facts from double counting. It reuses the complete
+typed family validators, while the unchanged writer remains responsible for
+independent rediscovery, exact replay, safe BBS admission, and one-action
+continuation. This 4/4/16/1/1 bundle is not count-balanced and does not satisfy
+the family matrix below. It is neither a canonical bank nor authorization for
+sidecars, manifest publication, staging, or training.
+
 The first complete bank is count-balanced across five families. Thin variants
 fail the build rather than borrowing excess records from an easy family.
 

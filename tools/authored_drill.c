@@ -635,6 +635,112 @@ int ad_discover_f4_pending_dodge_reroll(ad_recipe* recipe,
     return ad_discover(recipe, AD_RECIPE_F4_PENDING_DODGE_REROLL, error);
 }
 
+int ad_validate_authored_proof_bundle(
+    const ad_recipe* recipes, size_t count, char error[AD_ERROR_CAP]) {
+    if (recipes == NULL) return ad_fail(error, "null authored proof bundle");
+    if (count != AD_AUTHORED_PROOF_BUNDLE_COUNT) {
+        return ad_fail(error, "authored proof bundle count %zu differs from %d",
+                       count, AD_AUTHORED_PROOF_BUNDLE_COUNT);
+    }
+
+    const size_t axis_count = AD_F1_PASS_CARRIER_PRESSURE_AXIS_COUNT +
+        AD_F2_HANDOFF_TARGET_AXIS_COUNT + AD_F3_SECOND_HALF_AXIS_COUNT;
+    ad_recipe* axes = malloc(axis_count * sizeof(*axes));
+    if (axes == NULL) {
+        return ad_fail(error, "authored proof bundle allocation failed");
+    }
+    ad_recipe* f1 = axes;
+    ad_recipe* f2 = f1 + AD_F1_PASS_CARRIER_PRESSURE_AXIS_COUNT;
+    ad_recipe* f3 = f2 + AD_F2_HANDOFF_TARGET_AXIS_COUNT;
+    size_t f1_count = 0;
+    size_t f2_count = 0;
+    size_t f3_count = 0;
+    const ad_recipe* f4 = NULL;
+    const ad_recipe* f5 = NULL;
+
+    for (size_t i = 0; i < count; i++) {
+        const ad_recipe* recipe = &recipes[i];
+        if (!ad_recipe_config_valid(recipe)) {
+            free(axes);
+            return ad_fail(error,
+                           "authored proof recipe %zu has invalid configuration",
+                           i);
+        }
+        switch (recipe->kind) {
+            case AD_RECIPE_F1_EXACT_PASS_CARRIER_PRESSURE:
+                if (f1_count >= AD_F1_PASS_CARRIER_PRESSURE_AXIS_COUNT) {
+                    free(axes);
+                    return ad_fail(
+                        error, "authored proof bundle has excess F1 records");
+                }
+                f1[f1_count++] = *recipe;
+                break;
+            case AD_RECIPE_F2_EXACT_HANDOFF_TARGET_COUNT:
+                if (f2_count >= AD_F2_HANDOFF_TARGET_AXIS_COUNT) {
+                    free(axes);
+                    return ad_fail(
+                        error, "authored proof bundle has excess F2 records");
+                }
+                f2[f2_count++] = *recipe;
+                break;
+            case AD_RECIPE_F3_EXACT_SECOND_HALF_TURN:
+                if (f3_count >= AD_F3_SECOND_HALF_AXIS_COUNT) {
+                    free(axes);
+                    return ad_fail(
+                        error, "authored proof bundle has excess F3 records");
+                }
+                f3[f3_count++] = *recipe;
+                break;
+            case AD_RECIPE_F4_PENDING_DODGE_REROLL:
+                if (f4 != NULL) {
+                    free(axes);
+                    return ad_fail(
+                        error, "authored proof bundle has duplicate F4 record");
+                }
+                f4 = recipe;
+                break;
+            case AD_RECIPE_F5_SCORE_OR_WAIT:
+                if (f5 != NULL) {
+                    free(axes);
+                    return ad_fail(
+                        error, "authored proof bundle has duplicate F5 record");
+                }
+                f5 = recipe;
+                break;
+            default:
+                free(axes);
+                return ad_fail(error,
+                               "authored proof recipe %zu has unsupported kind %d",
+                               i, recipe->kind);
+        }
+    }
+
+    if (f1_count != AD_F1_PASS_CARRIER_PRESSURE_AXIS_COUNT ||
+        f2_count != AD_F2_HANDOFF_TARGET_AXIS_COUNT ||
+        f3_count != AD_F3_SECOND_HALF_AXIS_COUNT || f4 == NULL ||
+        f5 == NULL) {
+        free(axes);
+        return ad_fail(error,
+                       "authored proof bundle family counts are incomplete");
+    }
+    if (ad_validate_f1_pass_carrier_pressure_axis(f1, f1_count, error) != 0 ||
+        ad_validate_f2_handoff_target_count_axis(f2, f2_count, error) != 0 ||
+        ad_validate_f3_second_half_turn_axis(f3, f3_count, error) != 0) {
+        free(axes);
+        return -1;
+    }
+    free(axes);
+
+    if (!ad_f4_pending_dodge_reroll_valid(&f4->captured)) {
+        return ad_fail(error, "authored proof bundle F4 endpoint is invalid");
+    }
+    if (!ad_f5_score_or_wait_valid(&f5->captured)) {
+        return ad_fail(error, "authored proof bundle F5 endpoint is invalid");
+    }
+    if (error != NULL) error[0] = '\0';
+    return 0;
+}
+
 int ad_replay_exact(const ad_recipe* recipe, bb_match* out,
                     char error[AD_ERROR_CAP]) {
     if (recipe == NULL || out == NULL) return ad_fail(error, "null replay input");
