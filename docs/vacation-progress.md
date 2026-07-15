@@ -3609,3 +3609,29 @@ Next steps and safety boundary:
    transition into seed 43. Do not manually start overflow, interrupt a queue,
    or start milestone evaluation while any primary/overflow job is pending or
    running.
+
+06:27 PDT addendum:
+
+- A third independent review found that the authored writer still trusted a
+  caller-provided capture decision index even though it privately replayed the
+  state. The writer now requires that index to equal the exact-replayed
+  recipe's bounded action count before boundary validation or any output. A
+  regression supplies an off-by-one index and proves both rejection and an
+  empty stream. Optimized and ASan/UBSan suites each remained green at 414
+  engine, 37 reward, 2 contact-bot, and 2 loader tests.
+- A final documentation review found and removed the obsolete loader-local
+  validator name from `AGENTS.md`; guidance now names the engine-owned
+  `bb_state_bank_boundary_valid` shared by writers, readers, and scanners.
+  Three independent reviewers approved final exact head
+  `51a9b94dc4f26fb70a20d2ab6e641af6144f801f` with no P0-P3 findings, and
+  exact-head CI run `29418716064` passed in 4m11s including ASan/UBSan. PR #28
+  merged to `main` as `29fc531b15495d660290a1d4cf128e565a9fb6b7`.
+  GitHub merged authoritatively; its local branch-cleanup step alone failed
+  because a separate worktree owns `main`, so the remote feature branch was
+  deleted manually. Nothing was deployed to the occupied 2070 checkout.
+- A 06:26 read-only live check found seed 42 at exact step 11,841,568,768
+  (98.68% of 12B), epoch 90,343. The primary and BBTV services still had zero
+  restarts, overflow remained absent and gated, the only compute PID remained
+  trainer 431596, and the GPU sample was 81 C with hardware slowdown inactive.
+  The queue-owned cap/evaluation/seed transition is being observed without
+  intervention.
