@@ -588,3 +588,50 @@ and remain gitignored. This removes edition contamination only: all 15,348
 selected records are still from half one, with 12,001 (78.2%) on turns 1–2.
 Authored fixtures remain necessary for passing, handoffs, late-game score/clock,
 Stalling, and reroll-budget decisions.
+
+### Descriptive S1–S6 coverage of the strict bank
+
+Build the engine-linked scanner, then run the manifest-producing report layer
+with the exact D191 inputs and the exact binary/source hashes from that build:
+
+```sh
+make scenario-scan
+shasum -a 256 build/bank_scenario_scan
+# Set this to the reviewed binary hash printed above; do not derive it inside
+# the report command after review.
+SCANNER_SHA256=REPLACE_WITH_REVIEWED_PLATFORM_SPECIFIC_BINARY_SHA256
+mkdir -p validation/states/bb2025-strict/scenarios
+python3 tools/report_scenario_coverage.py \
+  validation/states/bb2025-strict/bank.bbs \
+  --filter-manifest validation/states/bb2025-strict/manifest.json \
+  --scanner build/bank_scenario_scan \
+  --scanner-source tools/bank_scenario_scan.c=fb68615b4ee482cdf580f7d77aa1a03724502abd205736d0de4049c1571b3095 \
+  --scanner-source tools/bank_scenario_scan.h=1b692c4ca7396b8f59f9740ef62cc4db2aea6ec784ba4c5c2ce767e2360f1c34 \
+  --scanner-source tools/bank_scenario_predicates.c=5e4d12147adf5ed2f55bca679e6d516fa70b9de104f758e5c754af0f7d58407c \
+  --scanner-source tools/bank_scenario_predicates.h=79103b277edf01aad0e3e9c9d49767edffd9a85c755d39c9e5c1dfe827ac65bb \
+  --records validation/states/bb2025-strict/scenarios/records.jsonl \
+  --report validation/states/bb2025-strict/scenarios/report.json \
+  --manifest validation/states/bb2025-strict/scenarios/manifest.json \
+  --expect-bank-sha256 bcd9daf55ac5d177f48160092f17a9b4978da877455b830ba33a9c1b5ba84d22 \
+  --expect-filter-manifest-sha256 dd97785dea348c19f4e210688842ccc22ae44a00c9c9052366968e164950610d \
+  --expect-scanner-sha256 "$SCANNER_SHA256"
+```
+
+The source hashes above bind the reviewed D192 sources. The scanner binary hash
+is platform/build-path specific and must be frozen after that exact build; it
+must not be computed implicitly by the report invocation. If scanner sources
+legitimately change, rebuild, re-review, and intentionally update every
+affected pin rather than bypassing a mismatch. `records.jsonl` contains
+deterministic per-state facts. `report.json` publishes raw-record,
+distinct-replay, and three-records-
+per-replay-capped counts, turn bands, overlaps, race-pair composition, and
+replay-ID-disjoint descriptive splits. The manifest is the commit marker and
+is published last. Existing outputs are never overwritten.
+
+These are overlapping, pre-negatrait opportunity predicates, not chosen-action
+or outcome labels. S2/S4 use static fresh-opponent movement geometry; S3 is
+ordering pressure rather than ordering quality; S5 is a straight-line score
+horizon; and S6 is fixed direct-block diversity plus one selected zero-roll
+move's assist sensitivity. Do not feed the records or split labels into
+training without a separate reviewed sampling contract. See
+`docs/plans/strict-bank-scenario-coverage.md` and D192.

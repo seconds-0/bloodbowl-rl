@@ -5,9 +5,9 @@ deterministic C11 rules engine → PufferLib 4.0 native env → PPO + action
 masking + self-play curriculum, with BC support from curated FUMBBL replays.
 
 **Read `AGENTS.md` first.** Then read the tail of `DECISIONS.md` (currently
-through D191) and, for reward/replay work,
+through D192) and, for reward/replay work,
 `docs/reward-and-replay-audit-2026-07-09.md`. The ledger is chronological; the
-July audit and D177–D189 supersede older prose that calls the June v4 reward
+July audit and D177–D192 supersede older prose that calls the June v4 reward
 economy "settled." Where this file and newer ledger evidence disagree, the
 newer evidence wins.
 
@@ -53,6 +53,14 @@ newer evidence wins.
   the hash-pinned, manifest-producing `tools/filter_state_bank.py` subset: 15,348
   records from 5,328 strict BB2025 IDs. It remains all half one and opening-
   censored; filtering edition does not create passing or late-game coverage.
+- **Strict-bank scenario coverage (D192):** `bank_scenario_scan` and
+  `report_scenario_coverage.py` classify overlapping S1–S6 opportunity
+  structures only; they do not label actions, outcomes, regret, or curriculum
+  weights. Canonical raw counts are S1 5,023; S2 3,047; S3 12,661; S4 2,883;
+  S5 3,605; and S6 11,763 across 15,348 records / 5,328 replay IDs. Preserve
+  the exact bank/manifest/source/binary pins and replay-disjoint splits. Use
+  the measured thin/empty regions to size authored fixtures; never wire this
+  historical opening-censored bank into training without a separate review.
 - **BC loader (D180):** use the bounded streaming loader and replay-disjoint
   split. Replay-first is the current default, not the final sampler; next
   stratify by roster/matchup, depth, and action family.
