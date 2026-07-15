@@ -141,6 +141,15 @@ re-derive by hand; (b) RNG misuse (reuse/bias) — check `bb_rng` consumption co
     record tests before widening the shared gate. For authored nested captures,
     also prove that the transcript ends before the pending choice and outcome so
     no continuation action becomes an implicit label.
+12. **Authored axis quotas** — bind every requested axis cell inside the recipe
+    and independently rediscover it; never accept a test-only or out-of-band
+    cell label. For the exact F3 half-two turn axis, require one fresh-boundary
+    record for turns 1-8 under each active-side orientation (`BB_HOME` and
+    `BB_AWAY`), exactly 16 total. Do not size an orientation axis with
+    `BB_TEAM_COUNT`, which is the 30-entry roster catalogue. Reject axis fields
+    on non-axis recipes. Treat the quota validator as structural coverage only:
+    the authored writer must still preflight full provenance, byte-exact replay,
+    raw-snapshot admission, and one-action continuation before byte zero.
 
 **Failure looks like:** shrunken minimal action trace + seed reproducing the violation.
 **Triage:** replay the shrunken trace under a debugger; the violated invariant names

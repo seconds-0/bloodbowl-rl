@@ -12,6 +12,9 @@
 #define AD_MAX_DICE 8192
 #define AD_CONTINUATION_DICE 256
 #define AD_ERROR_CAP 192
+#define AD_F3_SECOND_HALF_TURN_COUNT 8
+#define AD_F3_SECOND_HALF_AXIS_COUNT \
+    ((BB_AWAY + 1) * AD_F3_SECOND_HALF_TURN_COUNT)
 
 typedef enum {
     AD_RECIPE_FIRST_TEAM_TURN = 0,
@@ -20,6 +23,7 @@ typedef enum {
     AD_RECIPE_F2_HANDOFF_OPPORTUNITY,
     AD_RECIPE_F5_SCORE_OR_WAIT,
     AD_RECIPE_F4_PENDING_DODGE_REROLL,
+    AD_RECIPE_F3_EXACT_SECOND_HALF_TURN,
     AD_RECIPE_KIND_COUNT,
 } ad_recipe_kind;
 
@@ -31,6 +35,10 @@ typedef struct {
     uint64_t controller_seed;
     uint64_t controller_stream;
     ad_recipe_kind kind;
+    // Configured only for AD_RECIPE_F3_EXACT_SECOND_HALF_TURN. Keeping these
+    // inside the recipe binds the requested axis cell through rediscovery.
+    int capture_turn;
+    int capture_active_team;
     int home_team;
     int away_team;
     int exclude_team;
@@ -62,6 +70,19 @@ int ad_discover_first_team_turn(ad_recipe* recipe, char error[AD_ERROR_CAP]);
 // five or later. No clock, score, player, ball, or procedure field is written.
 int ad_discover_f3_late_second_half(ad_recipe* recipe,
                                     char error[AD_ERROR_CAP]);
+
+// Reach an exact fresh team-turn boundary for one half-two turn/orientation
+// cell. The request is stored in the recipe and therefore covered by complete
+// provenance rediscovery and byte-exact replay.
+int ad_discover_f3_second_half_turn(ad_recipe* recipe, int turn,
+                                    int active_team,
+                                    char error[AD_ERROR_CAP]);
+
+// Require exactly one structurally valid recipe for each half-two turn 1-8 and
+// active-team orientation. The writer remains the provenance/replay gate; this
+// is a coverage/quota contract, not a sampler or label.
+int ad_validate_f3_second_half_turn_axis(const ad_recipe* recipes, size_t count,
+                                         char error[AD_ERROR_CAP]);
 
 // Purely validate that a supported fresh team-turn state has a standing,
 // unused active-team carrier whose legal ACTIVATE -> DECLARE PASS path reaches

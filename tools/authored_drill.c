@@ -65,7 +65,8 @@ static void ad_count_die(void* user, int sides, int value) {
 }
 
 static int ad_has_team_turn(const bb_match* match) {
-    return match->stack_top > 0 &&
+    return match != NULL && match->stack_top > 0 &&
+           match->stack_top <= BB_STACK_MAX &&
            match->stack[match->stack_top - 1].proc == BB_PROC_TEAM_TURN;
 }
 
@@ -267,8 +268,16 @@ int ad_f4_pending_dodge_reroll_valid(const bb_match* match) {
 }
 
 static int ad_recipe_config_valid(const ad_recipe* recipe) {
+    int f3_axis = recipe->kind == AD_RECIPE_F3_EXACT_SECOND_HALF_TURN;
+    int capture_config_valid = f3_axis
+        ? recipe->capture_turn >= 1 &&
+              recipe->capture_turn <= AD_F3_SECOND_HALF_TURN_COUNT &&
+              recipe->capture_active_team >= BB_HOME &&
+              recipe->capture_active_team <= BB_AWAY
+        : recipe->capture_turn == 0 && recipe->capture_active_team == 0;
     return recipe->kind >= AD_RECIPE_FIRST_TEAM_TURN &&
            recipe->kind < AD_RECIPE_KIND_COUNT &&
+           capture_config_valid &&
            recipe->home_team >= -1 && recipe->home_team < BB_TEAM_COUNT &&
            recipe->away_team >= -1 && recipe->away_team < BB_TEAM_COUNT &&
            recipe->exclude_team >= -1 && recipe->exclude_team < BB_TEAM_COUNT &&
@@ -280,11 +289,23 @@ static int ad_recipe_config_valid(const ad_recipe* recipe) {
            recipe->procgen.skillup_secondary_pct <= 1.0f;
 }
 
-static int ad_capture_ready(const bb_match* match, ad_recipe_kind kind) {
+static int ad_f3_second_half_turn_capture_valid(
+    const bb_match* match, const ad_recipe* recipe) {
+    return bb_state_bank_boundary_valid(match) &&
+           match->half == 2 &&
+           match->active_team == recipe->capture_active_team &&
+           match->turn[match->active_team] == recipe->capture_turn;
+}
+
+static int ad_capture_ready(const bb_match* match, const ad_recipe* recipe) {
+    ad_recipe_kind kind = recipe->kind;
     // F4 is deliberately a nested TEST decision, so it must be tested before
     // the fresh-team-turn gate shared by every earlier recipe family.
     if (kind == AD_RECIPE_F4_PENDING_DODGE_REROLL) {
         return ad_f4_pending_dodge_reroll_valid(match);
+    }
+    if (kind == AD_RECIPE_F3_EXACT_SECOND_HALF_TURN) {
+        return ad_f3_second_half_turn_capture_valid(match, recipe);
     }
     if (!ad_has_team_turn(match)) return 0;
     if (kind == AD_RECIPE_FIRST_TEAM_TURN) return 1;
@@ -297,7 +318,8 @@ static int ad_capture_ready(const bb_match* match, ad_recipe_kind kind) {
     if (kind == AD_RECIPE_F5_SCORE_OR_WAIT) {
         return ad_f5_score_or_wait_valid(match);
     }
-    return match->half == 2 && match->active_team <= BB_AWAY &&
+    return kind == AD_RECIPE_F3_LATE_SECOND_HALF && match->half == 2 &&
+           match->active_team <= BB_AWAY &&
            match->turn[match->active_team] >= 5;
 }
 
@@ -345,7 +367,7 @@ static int ad_discover(ad_recipe* recipe, ad_recipe_kind kind,
 
     while (status == BB_STATUS_DECISION && recipe->action_count < AD_MAX_ACTIONS) {
         if (sink.overflow) return ad_fail(error, "dice transcript exceeds %d", AD_MAX_DICE);
-        if (ad_capture_ready(&match, kind)) {
+        if (ad_capture_ready(&match, recipe)) {
             bb_action legal[BB_LEGAL_MAX];
             if (bb_legal_actions(&match, legal) <= 0) {
                 return ad_fail(error, "captured decision has no legal actions");
@@ -383,6 +405,54 @@ int ad_discover_first_team_turn(ad_recipe* recipe, char error[AD_ERROR_CAP]) {
 int ad_discover_f3_late_second_half(ad_recipe* recipe,
                                     char error[AD_ERROR_CAP]) {
     return ad_discover(recipe, AD_RECIPE_F3_LATE_SECOND_HALF, error);
+}
+
+int ad_discover_f3_second_half_turn(ad_recipe* recipe, int turn,
+                                    int active_team,
+                                    char error[AD_ERROR_CAP]) {
+    if (recipe == NULL) return ad_fail(error, "null recipe");
+    recipe->capture_turn = turn;
+    recipe->capture_active_team = active_team;
+    return ad_discover(recipe, AD_RECIPE_F3_EXACT_SECOND_HALF_TURN, error);
+}
+
+int ad_validate_f3_second_half_turn_axis(const ad_recipe* recipes, size_t count,
+                                         char error[AD_ERROR_CAP]) {
+    if (recipes == NULL) return ad_fail(error, "null F3 axis recipes");
+    if (count != AD_F3_SECOND_HALF_AXIS_COUNT) {
+        return ad_fail(error, "F3 axis count %zu differs from %d",
+                       count, AD_F3_SECOND_HALF_AXIS_COUNT);
+    }
+
+    unsigned char seen[BB_AWAY + 1][AD_F3_SECOND_HALF_TURN_COUNT] = {{0}};
+    for (size_t i = 0; i < count; i++) {
+        const ad_recipe* recipe = &recipes[i];
+        if (!ad_recipe_config_valid(recipe) ||
+            recipe->kind != AD_RECIPE_F3_EXACT_SECOND_HALF_TURN ||
+            !ad_f3_second_half_turn_capture_valid(&recipe->captured, recipe)) {
+            return ad_fail(error, "F3 axis capture %zu is invalid", i);
+        }
+        int team = recipe->capture_active_team;
+        int turn_index = recipe->capture_turn - 1;
+        if (seen[team][turn_index]) {
+            return ad_fail(error,
+                           "duplicate F3 axis capture for team %d turn %d",
+                           team, recipe->capture_turn);
+        }
+        seen[team][turn_index] = 1;
+    }
+    for (int team = BB_HOME; team <= BB_AWAY; team++) {
+        for (int turn_index = 0;
+             turn_index < AD_F3_SECOND_HALF_TURN_COUNT; turn_index++) {
+            if (!seen[team][turn_index]) {
+                return ad_fail(error,
+                               "missing F3 axis capture for team %d turn %d",
+                               team, turn_index + 1);
+            }
+        }
+    }
+    if (error != NULL) error[0] = '\0';
+    return 0;
 }
 
 int ad_discover_f1_pass_opportunity(ad_recipe* recipe,
@@ -449,7 +519,7 @@ int ad_replay_exact(const ad_recipe* recipe, bb_match* out,
         return ad_fail(error, "dice transcript was not consumed exactly");
     }
     if (status != BB_STATUS_DECISION ||
-        !ad_capture_ready(&match, recipe->kind)) {
+        !ad_capture_ready(&match, recipe)) {
         return ad_fail(error, "capture status/procedure differs");
     }
     if (memcmp(&match, &recipe->captured, sizeof match) != 0) {
@@ -548,6 +618,10 @@ static int ad_rediscover_recipe(const ad_recipe* source, ad_recipe* out,
             break;
         case AD_RECIPE_F4_PENDING_DODGE_REROLL:
             rc = ad_discover_f4_pending_dodge_reroll(out, error);
+            break;
+        case AD_RECIPE_F3_EXACT_SECOND_HALF_TURN:
+            rc = ad_discover_f3_second_half_turn(
+                out, source->capture_turn, source->capture_active_team, error);
             break;
         default:
             return ad_fail(error, "unknown authored recipe kind %d",

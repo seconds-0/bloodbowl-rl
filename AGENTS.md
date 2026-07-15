@@ -285,6 +285,20 @@ changes a reward, active queue, production default, or promotion verdict.
   fail-before-header behavior, production-loader byte identity/masks, and the
   continuation canary. This is one opportunity template, not F4 axis coverage,
   quotas, counterfactual authorization, publication, training, or deployment.
+  The first F3 axis expands only the fresh-boundary half-two turn/orientation
+  contract: exactly one recipe for each active-side orientation (Home and Away)
+  at turns 1 through 8, for 16 cells total. Store the requested turn and active
+  side inside the recipe so independent rediscovery binds the cell; reject
+  those fields on every non-axis recipe. Do not confuse `BB_TEAM_COUNT`'s 30
+  roster catalogue entries with the two active-side orientations. The quota
+  validator proves structural coverage only; writer preflight remains the
+  seed/transcript/provenance, exact-replay, boundary, and continuation gate.
+  The 16 fixed proofs use distinct controller seeds 1000-1015 and pass exact
+  writer/reload identity. A 256-seed x 16-cell optimized/sanitized sweep agrees
+  on 4,088 captures, 8 clean match ends, and zero unexpected failures. This
+  does not cover score, possession, receiving history, material, reroll budget,
+  roster, race pair, or tactical quality, and it does not authorize a bank,
+  sidecar, manifest, training input, reward change, evaluation, or deployment.
 - The corpus is sharply prefix-censored: it is not sufficient by itself for
   second halves, late drives, stalling, comeback play, or rare actions.
 - Correct BB2025 human possession is about `0.474` on genuine team-turn

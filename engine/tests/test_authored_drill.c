@@ -924,3 +924,205 @@ BB_TEST(authored_drill_f4_reaches_pending_dodge_reroll_before_choice) {
     BB_CHECK(bb_state_bank_boundary_valid(&old_family.captured));
     BB_CHECK(!ad_f4_pending_dodge_reroll_valid(&old_family.captured));
 }
+
+BB_TEST(authored_drill_f3_exact_second_half_turn_axis_is_complete) {
+    const size_t expected_count = AD_F3_SECOND_HALF_AXIS_COUNT;
+    static const int
+        expected_actions[BB_AWAY + 1][AD_F3_SECOND_HALF_TURN_COUNT] = {
+        {505, 329, 385, 408, 502, 607, 491, 571},
+        {373, 439, 352, 495, 459, 562, 597, 598},
+    };
+    static const int
+        expected_dice[BB_AWAY + 1][AD_F3_SECOND_HALF_TURN_COUNT] = {
+        {111, 95, 141, 123, 164, 168, 185, 180},
+        {118, 101, 128, 149, 158, 147, 198, 204},
+    };
+    ad_recipe* recipes = calloc(expected_count, sizeof(*recipes));
+    BB_CHECK(recipes != NULL);
+    if (recipes == NULL) return;
+    char error[AD_ERROR_CAP];
+
+    size_t index = 0;
+    for (int team = BB_HOME; team <= BB_AWAY; team++) {
+        for (int turn = 1; turn <= AD_F3_SECOND_HALF_TURN_COUNT; turn++) {
+            ad_recipe* recipe = &recipes[index++];
+            *recipe = ad_test_recipe();
+            recipe->controller_seed = 1000u +
+                (uint64_t)(team * AD_F3_SECOND_HALF_TURN_COUNT + turn - 1);
+            BB_CHECK_EQ(ad_discover_f3_second_half_turn(
+                            recipe, turn, team, error),
+                        0);
+            BB_CHECK_EQ(recipe->kind,
+                        AD_RECIPE_F3_EXACT_SECOND_HALF_TURN);
+            BB_CHECK_EQ(recipe->capture_turn, turn);
+            BB_CHECK_EQ(recipe->capture_active_team, team);
+            BB_CHECK_EQ(recipe->captured.half, 2);
+            BB_CHECK_EQ(recipe->captured.active_team, team);
+            BB_CHECK_EQ(recipe->captured.turn[team], turn);
+            BB_CHECK(bb_state_bank_boundary_valid(&recipe->captured));
+            BB_CHECK_EQ(recipe->action_count,
+                        expected_actions[team][turn - 1]);
+            BB_CHECK_EQ(recipe->dice_count, expected_dice[team][turn - 1]);
+
+            bb_match replayed;
+            BB_CHECK_EQ(ad_replay_exact(recipe, &replayed, error), 0);
+            BB_CHECK_EQ(memcmp(&replayed, &recipe->captured,
+                               sizeof replayed),
+                        0);
+            BB_CHECK_EQ(ad_verify_one_action_continuation(
+                            &replayed, NULL, NULL, NULL, error),
+                        0);
+
+            ad_recipe rediscovered = ad_test_recipe();
+            rediscovered.controller_seed = recipe->controller_seed;
+            BB_CHECK_EQ(ad_discover_f3_second_half_turn(
+                            &rediscovered, turn, team, error),
+                        0);
+            BB_CHECK_EQ(memcmp(recipe, &rediscovered, sizeof *recipe), 0);
+        }
+    }
+    BB_CHECK_EQ(index, expected_count);
+    BB_CHECK_EQ(ad_validate_f3_second_half_turn_axis(
+                    recipes, expected_count, error),
+                0);
+
+    BB_CHECK(ad_validate_f3_second_half_turn_axis(
+                 recipes, expected_count - 1, error) != 0);
+    BB_CHECK(strstr(error, "count") != NULL ||
+             strstr(error, "missing") != NULL);
+
+    ad_recipe saved = recipes[expected_count - 1];
+    recipes[expected_count - 1] = recipes[0];
+    BB_CHECK(ad_validate_f3_second_half_turn_axis(
+                 recipes, expected_count, error) != 0);
+    BB_CHECK(strstr(error, "duplicate") != NULL ||
+             strstr(error, "missing") != NULL);
+    recipes[expected_count - 1] = saved;
+
+    recipes[0].captured.turn[BB_HOME]++;
+    BB_CHECK(ad_validate_f3_second_half_turn_axis(
+                 recipes, expected_count, error) != 0);
+    BB_CHECK(strstr(error, "capture") != NULL);
+    recipes[0].captured.turn[BB_HOME]--;
+
+    bb_match captured_saved = recipes[0].captured;
+    recipes[0].captured.stack_top = 0;
+    BB_CHECK(ad_validate_f3_second_half_turn_axis(
+                 recipes, expected_count, error) != 0);
+    recipes[0].captured = captured_saved;
+    recipes[0].captured.stack_top = BB_STACK_MAX + 1;
+    BB_CHECK(ad_validate_f3_second_half_turn_axis(
+                 recipes, expected_count, error) != 0);
+    recipes[0].captured = captured_saved;
+    recipes[0].captured.stack_top = UINT8_MAX;
+    BB_CHECK(ad_validate_f3_second_half_turn_axis(
+                 recipes, expected_count, error) != 0);
+    recipes[0].captured = captured_saved;
+    recipes[0].captured.stack_top = 1;
+    BB_CHECK(ad_validate_f3_second_half_turn_axis(
+                 recipes, expected_count, error) != 0);
+    recipes[0].captured = captured_saved;
+    recipes[0].captured.stack[0].proc = BB_PROC_MOVE;
+    BB_CHECK(ad_validate_f3_second_half_turn_axis(
+                 recipes, expected_count, error) != 0);
+    recipes[0].captured = captured_saved;
+
+    int occupied = -1;
+    for (int slot = 0; slot < BB_NUM_PLAYERS; slot++) {
+        if (recipes[0].captured.players[slot].location == BB_LOC_ON_PITCH) {
+            occupied = slot;
+            break;
+        }
+    }
+    BB_CHECK(occupied >= 0);
+    if (occupied >= 0) {
+        const bb_player* player = &recipes[0].captured.players[occupied];
+        recipes[0].captured.grid[player->x][player->y] = 0;
+        BB_CHECK(ad_validate_f3_second_half_turn_axis(
+                     recipes, expected_count, error) != 0);
+        recipes[0].captured = captured_saved;
+    }
+
+    ad_recipe invalid = ad_test_recipe();
+    BB_CHECK(ad_discover_f3_second_half_turn(
+                 &invalid, 0, BB_HOME, error) != 0);
+    BB_CHECK(strstr(error, "invalid recipe configuration") != NULL);
+    invalid = ad_test_recipe();
+    BB_CHECK(ad_discover_f3_second_half_turn(
+                 &invalid, 9, BB_HOME, error) != 0);
+    BB_CHECK(strstr(error, "invalid recipe configuration") != NULL);
+    invalid = ad_test_recipe();
+    BB_CHECK(ad_discover_f3_second_half_turn(
+                 &invalid, 1, -1, error) != 0);
+    BB_CHECK(strstr(error, "invalid recipe configuration") != NULL);
+    invalid = ad_test_recipe();
+    BB_CHECK(ad_discover_f3_second_half_turn(
+                 &invalid, 1, BB_AWAY + 1, error) != 0);
+    BB_CHECK(strstr(error, "invalid recipe configuration") != NULL);
+    invalid = ad_test_recipe();
+    invalid.capture_turn = 1;
+    BB_CHECK(ad_discover_f3_late_second_half(&invalid, error) != 0);
+    BB_CHECK(strstr(error, "invalid recipe configuration") != NULL);
+
+    FILE* file = tmpfile();
+    BB_CHECK(file != NULL);
+    if (file != NULL) {
+        ad_bbs_record records[AD_F3_SECOND_HALF_AXIS_COUNT];
+        size_t expected_bytes = 16 + expected_count *
+                                       (12 + sizeof(bb_match));
+        uint8_t* first_bytes = malloc(expected_bytes);
+        uint8_t* second_bytes = malloc(expected_bytes);
+        BB_CHECK(first_bytes != NULL);
+        BB_CHECK(second_bytes != NULL);
+        if (first_bytes == NULL || second_bytes == NULL) {
+            free(first_bytes);
+            free(second_bytes);
+            BB_CHECK_EQ(fclose(file), 0);
+            free(recipes);
+            return;
+        }
+        for (size_t i = 0; i < expected_count; i++) {
+            records[i] = (ad_bbs_record){
+                0xA3000100u + (uint32_t)i,
+                (uint32_t)recipes[i].action_count,
+                &recipes[i],
+            };
+        }
+        BB_CHECK_EQ(ad_bbs_write(file, records, expected_count, error), 0);
+        BB_CHECK_EQ(fseek(file, 0, SEEK_END), 0);
+        BB_CHECK_EQ(ftell(file), expected_bytes);
+        rewind(file);
+        size_t first_read = fread(first_bytes, 1, expected_bytes, file);
+        BB_CHECK_EQ(first_read, expected_bytes);
+        BB_CHECK_EQ(fclose(file), 0);
+
+        file = tmpfile();
+        BB_CHECK(file != NULL);
+        if (file != NULL) {
+            BB_CHECK_EQ(ad_bbs_write(file, records, expected_count, error), 0);
+            rewind(file);
+            size_t second_read = fread(second_bytes, 1, expected_bytes, file);
+            BB_CHECK_EQ(second_read, expected_bytes);
+            if (first_read == expected_bytes && second_read == expected_bytes) {
+                BB_CHECK_EQ(memcmp(first_bytes, second_bytes, expected_bytes),
+                            0);
+            }
+            BB_CHECK_EQ(fclose(file), 0);
+        }
+
+        file = tmpfile();
+        BB_CHECK(file != NULL);
+        if (file != NULL) {
+            recipes[expected_count - 1].capture_turn = 7;
+            BB_CHECK(ad_bbs_write(file, records, expected_count, error) != 0);
+            BB_CHECK(strstr(error, "provenance") != NULL);
+            BB_CHECK_EQ(ftell(file), 0);
+            recipes[expected_count - 1].capture_turn = 8;
+            BB_CHECK_EQ(fclose(file), 0);
+        }
+        free(first_bytes);
+        free(second_bytes);
+    }
+
+    free(recipes);
+}
