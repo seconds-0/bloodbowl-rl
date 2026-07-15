@@ -4817,3 +4817,94 @@ Next steps:
    exact-head code reviews before merge. Do not deploy this CPU-only metadata
    infrastructure or authorize sidecars, bank publication, training inputs,
    rewards, or evaluation.
+
+## 2026-07-15 14:56 PDT — seed 43 at 5.44B; BBTV live; identity registry implementation proven and committed
+
+Live queue and BBTV health:
+
+- The primary queue remains authoritative `active/running` on
+  `final-main-control`, arm `both`, seed 43/current index 2, with one completed
+  arm. `SCREEN_STATUS.json` was fresh at 14:52 PDT. Queue PID 431309, wrapper
+  PID 431316, and the sole completion-gate/GPU-compute PID 473422 remain
+  stable; the primary and three BBTV services have zero restarts. The overflow
+  service remains inactive/dead with absent state and zero restarts.
+- Exact read-only validation again matched all 65 primary pins at plan SHA-256
+  `4ee72e3c58f09786cdd3bbf78a772e8de2d9a93e21a8b065cf0c5976ecced270`
+  and all 74 overflow pins at plan SHA-256
+  `d90ee01c8c459f599c8601934f545ccb7783261edae3bcb6e9e3878036d37d3e`.
+  Both pin-error results are `None`, overflow state is absent, and the exact
+  gate reports only PID 473422.
+- The latest complete telemetry panel observed exact step 5,438,177,280 at
+  epoch 41,489 over 108 games: performance 0.574074, draw rate 0.333333,
+  possession 0.384664, illegal/sampled-repair fraction 0.180717, ball progress
+  8.509688, 12.212963 blocks thrown, 2.046296 blocks against the carrier,
+  carrier-target fraction 0.179006, Pass intentions 0.009259, and zero Hand-off
+  intentions. Reward clipping, non-finite reward, engine-error, demonstration,
+  and fallback counters remain zero. The immediately preceding dashboard was
+  around 181-184K SPS with roughly ten hours remaining for this seed; that
+  display remains observational rather than completion evidence.
+- The newest complete 16,066,560-byte checkpoint was exact step 5,393,481,728
+  at 14:49 PDT. Four GPU samples ranged from 80-83 C, 89% fan, 79-80%
+  utilization, 5,554/8,192 MiB, and 113.28-127.64 W. Software thermal slowdown
+  was inactive in the first sample and active in the next three; hardware
+  slowdown was inactive in all four. Temperature remains below the literal
+  frozen 88 C three-poll guard, so no tuning was performed. Disk is 7% used
+  with 893 GiB free, inode use is 1%, memory has 9.3 GiB available, and swap
+  use is 43 MiB.
+- The 14:44 PDT overflow watcher exited successfully after logging `primary
+  service is still active; waiting`; the timer remained active/waiting for its
+  14:54 poll and created no overflow state.
+- `bbstream`, `bbweb`, and `bbtv-tunnel` remain active with zero restarts. At
+  14:48 PDT BBTV selected seed-43 checkpoint 5,343,543,296 against the frozen
+  turnover3 baseline. Learner source SHA-256 is
+  `b1f093efcbdde9895231e0196ef091af87d740ee5f7c625d74059c9c56080903`,
+  converted output SHA-256 is
+  `24009ecc7cc9c1441bdec083c3ac76dc239bd3f2b2baadf089406350464b75ed`,
+  and `selection.json` SHA-256 is
+  `3748b75183a810ec00f2122eefe3aca37739347d8219d6976dff60b9c045fffc`.
+  The public page returned HTTP 200 in 0.184 seconds. A bounded public WSS client
+  received protocol-v1 hello and match-start messages for frozen Bretonnian
+  versus learner Nurgle, followed by a snapshot, advancing deltas, and ping.
+  The first selection-file probe used the wrong checkout-relative path, the
+  system-Python WSS probe lacked its optional package, and the installed
+  `websocat` client rejected the invocation; each failed before changing remote
+  state and was rerun successfully against the service-declared selection path
+  and installed `wscat` client. BBTV remains CPU-only and observational.
+
+Persistent authored identity registry:
+
+- The approved test-first tranche is now implemented in the isolated
+  `tranche/authored-identity-registry` worktree. The fixed schema-1 registry has
+  exactly five immutable templates and 26 opaque `AE000001` through `AE00001A`
+  allocations, complete bit-exact configuration projection, global executable
+  uniqueness, fail-atomic mapping, a separately frozen A9 compatibility
+  schedule, and writer admission/continuation routing through auditable gates.
+- The trusted compatibility bundle compiles candidate sources from an explicit
+  allowlist and reproduced all six parent semantic streams, all 26 canonical
+  outcomes, every one-bit mutation of every raw canonical match, the curated
+  malformed-match corpus, byte-identical BBS/raw artifacts, registry identity,
+  provenance rejection, and structural source ownership. The complete engine,
+  reward, loader, and contact suites passed optimized and under ASan/UBSan;
+  Clang static analysis was clean. The full Linux verifier also passed on the
+  2070 host, including GNU writer interposition, without touching the running
+  trainer.
+- Production plus authority files were introduced atomically as commit
+  `ef3e1ea` after the local target-authority verifier passed. The bootstrap
+  history verifier then reconstructed and verified exactly that one new commit
+  (`1/1`) from plan commit `a80116f`; the implementation worktree is clean.
+  This remains CPU-only metadata/proof infrastructure and has not been deployed
+  to the frozen training or BBTV checkouts.
+- Claude Code authentication remains unavailable, so Fable was not invoked and
+  no Fable approval is claimed.
+
+Next steps:
+
+1. Continue the hourly read-only operational loop, preserving every frozen
+   queue, thermal, overflow, checkpoint-selection, and BBTV boundary.
+2. Push exact implementation head `ef3e1ea`, open its PR, collect three fresh
+   independent exact-head P0-P3 reviews, and require ordinary hosted CI plus
+   the protected post-merge authority workflow before considering the registry
+   merged.
+3. Keep sidecars, bank publication, training inputs, reward changes,
+   deployment, and milestone evaluation out of scope until their separate
+   contracts and terminal queue gates authorize them.
