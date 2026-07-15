@@ -10,6 +10,7 @@
 
 #define AD_MAX_ACTIONS 8192
 #define AD_MAX_DICE 8192
+#define AD_CONTINUATION_DICE 256
 #define AD_ERROR_CAP 192
 
 typedef struct {
@@ -47,6 +48,15 @@ int ad_discover_first_team_turn(ad_recipe* recipe, char error[AD_ERROR_CAP]);
 // replay every packed legal action, and require raw-state identity.
 int ad_replay_exact(const ad_recipe* recipe, bb_match* out,
                     char error[AD_ERROR_CAP]);
+
+// Validate a loaded BBS1 state, choose the lowest packed legal action, and
+// apply it to a private copy with a bounded deterministic dice suffix. This is
+// a post-serialization resumability gate, not a policy-quality label.
+int ad_verify_one_action_continuation(const bb_match* loaded,
+                                      uint32_t* packed_action,
+                                      bb_status* result_status,
+                                      int* dice_used,
+                                      char error[AD_ERROR_CAP]);
 
 // BBS1 compatibility stamp shared with the Puffer loader.
 uint32_t ad_bbs_fingerprint(void);

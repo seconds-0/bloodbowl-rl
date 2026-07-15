@@ -197,7 +197,9 @@ changes a reward, active queue, production default, or promotion verdict.
   writers, readers, and scanners: before a demo record can enter reset
   selection it must have bounded procedure/team/enum indices, bidirectionally
   consistent grid/player coordinates, and a valid ball state. New bank writers
-  and readers must fail closed on malformed raw snapshots.
+  and readers must fail closed on malformed raw snapshots. Authored records
+  must additionally pass `ad_verify_one_action_continuation` after loading;
+  this canonical-action canary proves resumability, not action quality.
 - The historical BBS state bank is mixed by source replay: 123 of 15,471
   records come from 42 BB2020 replay IDs. Before any future replay-state
   scenario/curriculum, run `tools/filter_state_bank.py` with the pinned mixed-

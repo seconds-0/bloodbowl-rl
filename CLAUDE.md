@@ -73,7 +73,9 @@ newer evidence wins.
   group and quarantine paired counterfactual outcomes from training inputs.
   BBS1 currently admits only the shared MATCH -> TEAM_TURN boundary; nested
   target/reroll decisions need explicit procedure-specific validation before
-  the writer or loader may accept them.
+  the writer or loader may accept them. Every emitted authored record must also
+  pass the canonical one-action continuation gate after loading; the gate is a
+  resumability check and must never be interpreted as an action label.
 - **BC loader (D180):** use the bounded streaming loader and replay-disjoint
   split. Replay-first is the current default, not the final sampler; next
   stratify by roster/matchup, depth, and action family.

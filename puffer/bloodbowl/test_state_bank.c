@@ -104,6 +104,16 @@ BB_TEST(state_bank_accepts_exact_replayed_authored_record) {
     BB_CHECK_EQ(bbe_state_bank_n, 1);
     if (bbe_state_bank_n == 1) {
         BB_CHECK_EQ(memcmp(&bbe_state_bank[0], &replayed, sizeof replayed), 0);
+        uint32_t packed_action = 0;
+        bb_status status = BB_STATUS_ERROR;
+        int dice_used = -1;
+        BB_CHECK_EQ(ad_verify_one_action_continuation(
+                        &bbe_state_bank[0], &packed_action, &status,
+                        &dice_used, error),
+                    0);
+        BB_CHECK(packed_action != 0);
+        BB_CHECK(status != BB_STATUS_ERROR);
+        BB_CHECK(dice_used >= 0 && dice_used <= AD_CONTINUATION_DICE);
     }
     reset_state_bank_loader(BBE_STATE_BANK_PATH);
     BB_CHECK_EQ(remove(path), 0);

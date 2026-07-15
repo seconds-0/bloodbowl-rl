@@ -20,6 +20,10 @@ typedef struct {
     int mismatch;
 } ad_check_sink;
 
+typedef struct {
+    int seen;
+} ad_count_sink;
+
 static int ad_fail(char error[AD_ERROR_CAP], const char* fmt, ...) {
     if (error != NULL) {
         va_list args;
@@ -50,6 +54,13 @@ static void ad_check_die(void* user, int sides, int value) {
         sink->recipe->dice_values[i] != value) {
         sink->mismatch = 1;
     }
+}
+
+static void ad_count_die(void* user, int sides, int value) {
+    (void)sides;
+    (void)value;
+    ad_count_sink* sink = user;
+    sink->seen++;
 }
 
 static int ad_has_team_turn(const bb_match* match) {
@@ -217,6 +228,55 @@ int ad_replay_exact(const ad_recipe* recipe, bb_match* out,
     return 0;
 }
 
+int ad_verify_one_action_continuation(const bb_match* loaded,
+                                      uint32_t* packed_action,
+                                      bb_status* result_status,
+                                      int* dice_used,
+                                      char error[AD_ERROR_CAP]) {
+    if (loaded == NULL) return ad_fail(error, "null continuation state");
+    if (!bb_state_bank_boundary_valid(loaded)) {
+        return ad_fail(error, "continuation state is not a safe BBS1 boundary");
+    }
+
+    bb_action legal[BB_LEGAL_MAX];
+    int count = bb_legal_actions(loaded, legal);
+    if (count <= 0) return ad_fail(error, "continuation has no legal action");
+    int selected = 0;
+    for (int i = 1; i < count; i++) {
+        if (bb_action_pack(legal[i]) < bb_action_pack(legal[selected])) {
+            selected = i;
+        }
+    }
+
+    uint8_t dice[AD_CONTINUATION_DICE];
+    memset(dice, 1, sizeof dice);
+    bb_rng rng;
+    bb_rng_script(&rng, dice, AD_CONTINUATION_DICE);
+    ad_count_sink sink = {0};
+    bb_rng_set_sink(&rng, ad_count_die, &sink);
+
+    bb_match resumed = *loaded;
+    bb_status status = bb_apply(&resumed, legal[selected], &rng);
+    if (bb_rng_error(&rng)) {
+        return ad_fail(error, "continuation dice suffix exhausted or invalid");
+    }
+    if (status != BB_STATUS_DECISION && status != BB_STATUS_RUNNING &&
+        status != BB_STATUS_MATCH_OVER) {
+        return ad_fail(error, "continuation reached engine status %d", status);
+    }
+    if (sink.seen < 0 || sink.seen > AD_CONTINUATION_DICE) {
+        return ad_fail(error, "continuation dice count is out of bounds");
+    }
+
+    if (packed_action != NULL) {
+        *packed_action = bb_action_pack(legal[selected]);
+    }
+    if (result_status != NULL) *result_status = status;
+    if (dice_used != NULL) *dice_used = sink.seen;
+    if (error != NULL) error[0] = '\0';
+    return 0;
+}
+
 uint32_t ad_bbs_fingerprint(void) {
     return (uint32_t)sizeof(bb_match) * 2654435761u
          ^ ((uint32_t)BB_TEAM_COUNT << 20)
@@ -273,6 +333,14 @@ int ad_bbs_write(FILE* file, const ad_bbs_record* records, size_t count,
             return ad_fail(error,
                            "authored BBS record %zu is not a safe BBS1 boundary",
                            i);
+        }
+        char continuation_error[AD_ERROR_CAP];
+        if (ad_verify_one_action_continuation(
+                &verified[i], NULL, NULL, NULL, continuation_error) != 0) {
+            free(verified);
+            return ad_fail(error,
+                           "authored BBS record %zu cannot continue: %s",
+                           i, continuation_error);
         }
     }
     if (ad_write_bytes(file, "BBS1", 4) != 0 || ad_write_u32(file, 1) != 0 ||
