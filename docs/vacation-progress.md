@@ -2564,3 +2564,17 @@ Next steps:
    the training GPU is idle, explicitly quiesce BBTV, freeze the Stage-A
    manifest, execute/validate the paired matrix, restore the viewer, and record
    its exact hashes. Never promote from the result automatically.
+
+Post-entry merge verification at 22:25 PDT:
+
+- Exact PR #17 head `cd2337682671ee3326fa940273f58d5e64dc77a6`
+  passed GitHub run `29391178519`: code generation, all reward/replay/analyzer
+  contracts including the new milestone evaluator tests, BC filtering and
+  bounded streaming, compiled unit tests, and ASan/UBSan. The only annotation
+  is the repository-wide `actions/checkout@v4` Node-20 deprecation notice.
+- PR #17 merged without further changes as
+  `d933dc06aa019b0a4819c14344604bae0b78d648`. The monitoring branch then merged
+  that exact `origin/main`; because its evaluator blobs already matched the
+  reviewed PR, the merge introduced no evaluator conflict or reverse diff.
+  Deployment to the occupied RTX checkout remains intentionally deferred until
+  a post-run evaluation window; the pinned live experiment remains untouched.
