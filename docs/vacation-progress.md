@@ -4226,3 +4226,100 @@ over the occupied 2070 or either frozen queue.
   layer. It must begin from merged main, preserve F1-F5 opportunity-only
   semantics, and remain CPU-only while the frozen queues own the GPU. Canonical
   publication and training remain unauthorized until their own reviewed gates.
+
+## 2026-07-15 10:40 PDT — seed 43 healthy; exact F3 axis merged after P1 fix
+
+Live queue and BBTV health:
+
+- The primary queue remains authoritative `running` on job
+  `final-main-control`, screen arm `both`, seed 43/current index 2, with one
+  completed arm. `SCREEN_STATUS.json` was fresh at 10:39 PDT. Queue PID 431309,
+  wrapper PID 431316, and trainer PID 473422 are unchanged; every relevant
+  service reports zero restarts, and trainer PID 473422 remains the only GPU
+  compute process. The overflow service is inactive/dead with no state and no
+  restarts. Its 10:31 watcher completed successfully after observing that the
+  primary remains active, and the timer remains active/waiting.
+- Exact read-only validation again matched all 65 primary pins at plan SHA-256
+  `4ee72e3c58f09786cdd3bbf78a772e8de2d9a93e21a8b065cf0c5976ecced270`
+  and all 74 overflow pins at plan SHA-256
+  `d90ee01c8c459f599c8601934f545ccb7783261edae3bcb6e9e3878036d37d3e`.
+  Both pin errors are `None`; the exact overflow gate sees only PID 473422.
+- The latest complete telemetry panel is exact step 2,618,949,632 at epoch
+  19,980 over 129 games: performance 0.565891, draw rate 0.449612, possession
+  0.352049, illegal/sampled-repair fraction 0.183556, ball progress 8.484664,
+  20.062016 Rush intentions, 14.038759 blocks thrown, 1.992248 blocks against
+  the carrier, carrier-target fraction 0.149916, Pass intentions 0.015504, and
+  zero Hand-off intentions. Reward clipping, non-finite reward, engine-error,
+  demonstration, and fallback counters remain zero. Recent SPS samples are
+  about 178K-187K. The newest complete 16,066,560-byte checkpoint is exact step
+  2,596,929,536 in run directory `1784123019013`; roughly 9.38B seed-43 steps
+  remain, so any approximately 14.5-hour estimate is observational and excludes
+  final evaluation and queue-transition uncertainty.
+- Four GPU samples at 10:39-10:40 PDT ranged from 81-83 C, 88-89% fan, 79-82%
+  utilization, 5,554/8,192 MiB, and 99.82-133.55 W. Software thermal slowdown
+  was active in two samples and inactive in two; hardware slowdown was inactive
+  in all four. This confirms the earlier software flag is intermittent and
+  remains a watch item, not authority to retune the frozen job. Disk remains 7%
+  used with 894 GiB free, inodes 1% used, memory 9.6 GiB available, and swap
+  use 28 MiB.
+- `bbstream`, `bbweb`, and `bbtv-tunnel` remain active with zero restarts. BBTV
+  selected seed-43 checkpoint 2,546,991,104 at 10:34 PDT against the frozen
+  turnover3 baseline. Source SHA-256 is
+  `0286a8bf19be6058f8ad656c71e88cdb6b807b122a2bbf31d91ab564d3f3a83a`,
+  converted output SHA-256 is
+  `53c84404ee0cc87173c5dc7f2aa59d4cbb340cc36f088131ce885128ec760ab9`,
+  and `selection.json` SHA-256 is
+  `c9a465b422fae0c4501acfccbfca8e14838fa759387939ed1dfca05f34330ef3`.
+  The public page returned HTTP 200 in 0.183 seconds. A valid HTTP/1.1 WebSocket
+  probe returned 101 and delivered the correct learner/frozen `hello`,
+  `match_start`, full `snapshot`, and advancing `delta` stream before the
+  deliberate five-second open-socket timeout. An initial probe used a decoded
+  key shorter than the protocol's required 16 bytes and received HTTP 400; it
+  was immediately corrected and is not a service failure. BBTV remains CPU-only
+  and observational.
+
+Completed F3 turn/orientation-axis work:
+
+- PR #37 began at exact head
+  `b6da35f2baa542112363f7123f4d86afd216a617`, adding one fresh-boundary F3
+  recipe for each half-two active-side turn 1-8 under Home and Away: 16 exact
+  cells with stored cell provenance, distinct controller seeds 1000-1015,
+  independent rediscovery, byte-exact replay/writer/load identity, quota
+  rejection, and one-action continuation. Optimized and sanitized 256-seed x
+  16-cell sweeps agree on 4,088 captures, 8 clean turn-one match ends, and zero
+  unexpected failures.
+- Independent review found and reproduced one blocking P1 at the first head: a
+  direct malformed quota caller with `stack_top=255` could read frame 254 before
+  raw-boundary validation. The head was not merged. Exact fix head
+  `154b1986fc6b8753f521fc5d5261cbe29083965a` routes the public F3 cell predicate
+  through the complete fresh-boundary validator before endpoint reads, bounds
+  the discovery helper, and adds optimized/sanitized regressions for depths 0,
+  1, 33, and 255, wrong root procedure, and grid/player inconsistency. The
+  original reviewer reran the same UBSan reproducer and confirmed clean
+  rejection. A second adversarial reviewer ran 770 sanitizer cases across every
+  byte value for stack depth, active team, and root procedure plus coordinate
+  and grid corruption with zero unexpected results or sanitizer findings.
+- All three independent reviewers approved exact fix head `154b198...` with no
+  remaining P0-P3 findings. Hosted CI run `29436928565` passed in 4m20s. Local
+  and review suites each pass 430 engine, 37 reward, 2 contact-bot, and 9 loader
+  tests optimized and under ASan/UBSan; production and Puffer static analysis
+  are clean. PR #37 merged authoritatively to `main` as
+  `443697ad1065cc8aaddc084f0be88bcb103fe587`; the remote feature branch was
+  deleted separately after the known benign local `main`-worktree cleanup
+  message. No source, BBS artifact, reward, training input, service, or frozen
+  queue was deployed or changed.
+- Claude Code authentication still reports `loggedIn: false`, so Fable remains
+  unavailable for this tranche and no Fable approval is claimed.
+
+Next steps:
+
+1. Continue hourly read-only queue, integrity, thermal, capacity, overflow, and
+   BBTV checks. Do not tune the intermittent software-thermal flag or select a
+   model from live curves/viewer aesthetics.
+2. From exact merged main, select and plan the next single-family authored-bank
+   axis/quota tranche. Keep it CPU-only and separately reviewed; do not combine
+   multiple families merely to accelerate publication.
+3. Do not construct or publish a canonical authored bank, write sidecars or a
+   manifest transaction, change rewards/training, deploy to the 2070, or run
+   milestone evaluation until their separately reviewed gates and the frozen
+   queues' terminal state authorize them.
