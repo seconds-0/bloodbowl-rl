@@ -17,6 +17,17 @@ reads off the screen) before every roll.
 Obs-v3 (1612B): `32×24B players | 16B ball/ctx | 48B scalars | 2×390B TZ planes`
 Obs-v4 (2782B): v3 + three appended 390B planes (26×15, uint8):
 
+The inherited 16-byte decision-context block also has one documented nested-
+decision exception (D201): when the top frame is `TEST(Dodge)` and its parent
+is the matching `MOVE`, context byte 9 carries the pending destination `x+1`
+and byte 12 carries `y+1`. The x-coordinate is mirrored for the away coach,
+like every other spatial feature; zero means no matching pending Dodge. These
+bytes do not change observation size or checkpoint tensor shape. They prevent
+two state-bank resets with the same player, target number, reroll mask, and
+board—but different post-reroll destinations—from becoming observationally
+identical. All other procedure-frame x/y fields remain deliberately hidden
+because their meanings are not uniformly spatial.
+
 ### Planes A1/A2 — block outcome probabilities (offsets 1612 / 2002)
 
 (Upgraded from dice-tier codes per Alex: dice counts hide skill
@@ -57,8 +68,9 @@ and prices pickup-in-traffic exactly where the scrum standoff lives.
   carry only the former.
 - No reroll-adjusted compound probabilities — reroll use is itself a
   decision the policy owns.
-- Heads/masks unchanged (30/33/391). Engine state untouched — pure
-  encoder change; bank fingerprint (bb_match layout) unaffected.
+- Heads/masks unchanged (30/33/391). Engine state untouched — the D201
+  context-byte addition and the appended planes are encoder-only; bank
+  fingerprint (`bb_match` layout) is unaffected.
 
 ## Compatibility & rollout
 

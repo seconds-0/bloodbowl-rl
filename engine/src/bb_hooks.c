@@ -1,6 +1,7 @@
 // bb_hooks.c — skill-hook dispatchers.
 #include "bb/bb_hooks.h"
 #include "bb/bb_proc.h"
+#include "bb/bb_skills.h"
 
 bb_skill_hooks bb_hooks[BB_SKILL_COUNT];
 bb_skillset bb_aura_skills; // union of registered aura skills (BB_SKILL_AURA)
@@ -71,6 +72,15 @@ int bb_hook_reroll(const bb_match* m, const bb_ctx* c) {
     for (int sk = bb_next_skill(&p->skills, 0); sk >= 0;
          sk = bb_next_skill(&p->skills, sk + 1)) {
         if (bb_hooks[sk].reroll_kinds & (1u << c->kind)) {
+            // SK#TACKLE: an opposition player leaving this player's Tackle
+            // Zone cannot use Dodge. A Dodge TEST is rolled before the mover
+            // leaves its origin square, so the live player coordinate is the
+            // exact square whose adjacent Tackle markers suppress only the
+            // Dodge-skill re-roll. Team re-rolls and Pro remain independent.
+            if (c->kind == BB_TEST_DODGE && sk == BB_SK_DODGE &&
+                bb_has_tackle_adjacent(m, c->player)) {
+                continue;
+            }
             // No bb_cover here: this is a QUERY (also reached from const
             // bb_legal_actions); coverage is recorded when the re-roll is
             // actually consumed, in test_apply (review P3).

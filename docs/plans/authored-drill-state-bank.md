@@ -34,8 +34,13 @@ frozen vacation queue or the production/BBTV checkout on the occupied RTX 2070.
    replay injects those game-die faces through `bb_rng_script` and verifies the
    sides sequence as well as complete consumption.
 4. Capture only `BB_STATUS_DECISION` states with a nonempty, loader-valid
-   procedure stack and at least one legal action. Until a nested-procedure
-   validator lands, only the current team-turn boundary may enter BBS1.
+   procedure stack and at least one legal action. The current writer remains
+   restricted to the fresh-team-turn boundary. The production loader also has
+   an exact validator for the first supported nested shape—a failed first-step,
+   non-Rush Dodge reroll decision. It requires remaining ordinary MA, rejects
+   Rooted and activation-cleared status flags, and keeps a resolved-Rush state
+   out of scope via its retained `match.ret` result. The writer must not emit
+   that shape until the separate F4 recipe tranche lands.
 5. Regeneration must replay every action as legal, consume exactly the recorded
    dice, reproduce the captured raw `bb_match` byte-for-byte, and produce the
    same bank, sidecars, and manifest bytes on a second run.
@@ -69,23 +74,44 @@ or any failed validation leave no committed transaction and overwrite nothing.
 
 ### Current BBS1 safety boundary
 
-The phase-1 writer and production loader intentionally accept only the shared,
-structurally validated `MATCH(phase 3) -> TEAM_TURN(phase 1)` stack shape. This
-is the historical bank's executable contract and is sufficient for fresh
-team-turn proof records. Merely checking procedure IDs is unsafe: corrupt frame
-parameters can become player/team indices during legal-action enumeration.
-The writer also requires each record's capture decision index to equal its
-exact-replayed recipe action count, so authentic state bytes cannot be paired
-with false capture provenance.
+The phase-1 writer and every historical scenario scanner intentionally accept
+only the shared, structurally validated
+`MATCH(phase 3) -> TEAM_TURN(phase 1)` stack shape. This is sufficient for the
+existing F1/F2/F3/F5 fresh-team-turn proof records. Merely checking procedure
+IDs is unsafe: corrupt frame parameters can become player/team indices during
+legal-action enumeration. The writer also requires each record's capture
+decision index to equal its exact-replayed recipe action count, so authentic
+state bytes cannot be paired with false capture provenance.
 
-F1/F2 target-choice and F4 reroll-window records therefore remain planned, not
-currently serializable. Before any such record is admitted, a later tranche
-must add one shared procedure-specific validator for the exact stack shapes it
-publishes (including all lower frames that can resume), exercise the writer and
-Puffer loader through the same malformed-frame table, and keep every other
-nested shape rejected. Using a new versioned format instead is acceptable if it
-provides the same fail-closed guarantee. The loader must never be widened to
-"any decision state" just to make a quota pass.
+The production loader and canonical one-action continuation canary now use a
+separate resumable admission gate. It admits that ordinary boundary plus one
+exact five-frame nested shape:
+`MATCH -> TEAM_TURN -> ACTIVATION(Move) -> MOVE -> TEST(Dodge)` at the reroll
+choice after a failed, first-step, non-Rush Dodge. The validator checks the
+complete parent chain, active mover and grid, adjacent empty destination,
+marked origin, ordinary MA remaining, absence of Rooted/Distracted/Eye Gouged,
+pending-test latches, failed die, recomputed target including implemented
+hooks, valid generated skill bits, and real Use/Decline legal actions. A
+resolved Rush retains its success in `match.ret` and is intentionally rejected
+by this first validator. The pending destination is encoded egocentrically in
+observation context bytes 9/12, preventing transition-distinct reset states
+from aliasing behind an identical nonspatial reroll mask. Optimized tests prove
+both continuations: a successful team reroll
+continues the Move, while Decline knocks the mover down, preserves the reroll,
+and turns over. The Puffer integration test proves raw-byte loader identity,
+TEST target plus pending-destination observation, destination-alias separation,
+deciding-coach Use/Decline masks, and the waiting coach's null mask. Tackle at
+the origin suppresses only the Dodge skill reroll; Team Re-roll and Pro remain
+independently available under their normal rules.
+
+This validator is F4 infrastructure, not an authored F4 record. The writer is
+still fresh-team-turn-only, and no reroll choice, result, regret, reward, or
+action-quality label has been serialized. The F4 recipe tranche must separately
+reach this window by legal initialized play, bind its transcript through
+rediscovery and exact replay, switch only the reviewed writer path to resumable
+admission, and rerun malformed-frame, loader, continuation, sanitizer, and
+deterministic-writer checks. Every other nested shape remains rejected. The
+loader must never be widened to "any decision state" just to make a quota pass.
 
 ### BBS metadata namespace
 
@@ -285,10 +311,13 @@ episode.
    its manifest.
 
 The phase-1 writer now enforces the core of step 4 before emitting any batch:
-it validates the shared BBS1 boundary, selects the lowest packed legal action,
+it validates the fresh-team-turn BBS1 boundary, selects the lowest packed legal
+action,
 applies that action to a private copy with a 256-face all-ones scripted suffix,
 and rejects RNG exhaustion or engine error. The Puffer integration test repeats
-the gate on the actually reloaded record. Family compilers must still record
+the gate on the actually reloaded record. The continuation helper and loader
+also accept the separately validated pending-Dodge reroll shape, while the
+writer remains fresh-team-turn-only. Family compilers must still record
 the reconciled per-record totals in their report and manifest.
 
 The first F3 proof recipe uses a third, independent controller RNG stream to

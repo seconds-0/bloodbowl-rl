@@ -964,6 +964,94 @@ BB_TEST(movement_dodge_skill_self_reroll) {
     BB_CHECK_EQ(m.players[mover].y, 6);
 }
 
+// SK "Tackle (Active)": an opposition player attempting to Dodge from a
+// square Marked by this player "cannot use the Dodge Skill". Tackle suppresses
+// only that skill-granted re-roll: a Team Re-roll or Pro remains independently
+// legal. The no-Tackle control is movement_dodge_skill_self_reroll above.
+BB_TEST(movement_tackle_suppresses_only_dodge_skill_reroll) {
+    { // Dodge is the only source: no window opens and the failed Dodge stands.
+        bb_match m;
+        fx_match_midturn(&m, BB_HOME, 0);
+        int mover = fx_lineman(&m, BB_HOME, 0, 10, 7);
+        int marker = fx_lineman(&m, BB_AWAY, 0, 10, 8);
+        fx_give_skill(&m, mover, BB_SK_DODGE);
+        fx_give_skill(&m, marker, BB_SK_TACKLE);
+        static const uint8_t dice[] = {2, 3, 3};
+        bb_rng rng;
+        bb_rng_script(&rng, dice, 3);
+
+        BB_CHECK_EQ(begin_move(&m, &rng, mover), BB_STATUS_DECISION);
+        BB_CHECK_EQ(fx_apply(&m, act(BB_A_STEP, 0, 10, 6), &rng),
+                    BB_STATUS_DECISION);
+        BB_CHECK(!fx_has_type(&m, BB_A_USE_REROLL));
+        BB_CHECK_EQ(m.players[mover].stance, BB_STANCE_PRONE);
+        BB_CHECK_EQ(m.active_team, BB_AWAY);
+        BB_CHECK_EQ(rng.script_pos, 3);
+        BB_CHECK(!bb_rng_error(&rng));
+    }
+
+    { // A Team Re-roll is still offered and can rescue the Dodge.
+        bb_match m;
+        fx_match_midturn(&m, BB_HOME, 1);
+        int mover = fx_lineman(&m, BB_HOME, 0, 10, 7);
+        int marker = fx_lineman(&m, BB_AWAY, 0, 10, 8);
+        fx_give_skill(&m, mover, BB_SK_DODGE);
+        fx_give_skill(&m, marker, BB_SK_TACKLE);
+        static const uint8_t dice[] = {2, 4};
+        bb_rng rng;
+        bb_rng_script(&rng, dice, 2);
+
+        BB_CHECK_EQ(begin_move(&m, &rng, mover), BB_STATUS_DECISION);
+        BB_CHECK_EQ(fx_apply(&m, act(BB_A_STEP, 0, 10, 6), &rng),
+                    BB_STATUS_DECISION);
+        BB_CHECK(fx_find(&m,
+                         act(BB_A_USE_REROLL, BB_RR_TEAM, 0, 0)) >= 0);
+        BB_CHECK_EQ(fx_find(
+                        &m,
+                        act(BB_A_USE_REROLL, BB_RR_SKILL, BB_SK_DODGE, 0)),
+                    -1);
+        BB_CHECK_EQ(fx_apply(
+                        &m, act(BB_A_USE_REROLL, BB_RR_TEAM, 0, 0), &rng),
+                    BB_STATUS_DECISION);
+        BB_CHECK_EQ(m.rerolls[BB_HOME], 0);
+        BB_CHECK_EQ(m.players[mover].stance, BB_STANCE_STANDING);
+        BB_CHECK_EQ(m.players[mover].y, 6);
+        BB_CHECK_EQ(rng.script_pos, 2);
+        BB_CHECK(!bb_rng_error(&rng));
+    }
+
+    { // Pro is still offered and can rescue the Dodge after its 3+ gate.
+        bb_match m;
+        fx_match_midturn(&m, BB_HOME, 0);
+        int mover = fx_lineman(&m, BB_HOME, 0, 10, 7);
+        int marker = fx_lineman(&m, BB_AWAY, 0, 10, 8);
+        fx_give_skill(&m, mover, BB_SK_DODGE);
+        fx_give_skill(&m, mover, BB_SK_PRO);
+        fx_give_skill(&m, marker, BB_SK_TACKLE);
+        static const uint8_t dice[] = {2, 3, 4};
+        bb_rng rng;
+        bb_rng_script(&rng, dice, 3);
+
+        BB_CHECK_EQ(begin_move(&m, &rng, mover), BB_STATUS_DECISION);
+        BB_CHECK_EQ(fx_apply(&m, act(BB_A_STEP, 0, 10, 6), &rng),
+                    BB_STATUS_DECISION);
+        BB_CHECK(fx_find(&m,
+                         act(BB_A_USE_REROLL, BB_RR_PRO, 0, 0)) >= 0);
+        BB_CHECK_EQ(fx_find(
+                        &m,
+                        act(BB_A_USE_REROLL, BB_RR_SKILL, BB_SK_DODGE, 0)),
+                    -1);
+        BB_CHECK_EQ(fx_apply(
+                        &m, act(BB_A_USE_REROLL, BB_RR_PRO, 0, 0), &rng),
+                    BB_STATUS_DECISION);
+        BB_CHECK_EQ(m.players[mover].stance, BB_STANCE_STANDING);
+        BB_CHECK_EQ(m.players[mover].y, 6);
+        BB_CHECK(m.players[mover].flags & BB_PF_USED_SKILL_B);
+        BB_CHECK_EQ(rng.script_pos, 3);
+        BB_CHECK(!bb_rng_error(&rng));
+    }
+}
+
 // SK "Pro (Active)": "During this player's activation, they may attempt to
 // re-roll a single dice. ... the player must roll a D6: on a 3+ the dice may
 // be re-rolled, on a 1-2 the dice may not be re-rolled." Pro is its OWN

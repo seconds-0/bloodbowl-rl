@@ -193,9 +193,16 @@ changes a reward, active queue, production default, or promotion verdict.
   joined records. See `runs/replay-audit-20260713/`.
 - Never mix BB2020 records into BB2025 training or evaluation.
 - A BBS1 match-size/fingerprint match proves build compatibility, not record
-  integrity. Preserve the engine-owned `bb_state_bank_boundary_valid` shared by
-  writers, readers, and scanners: before a demo record can enter reset
-  selection it must have bounded procedure/team/enum indices, bidirectionally
+  integrity. Preserve the engine-owned validator split: scenario scanners and
+  fresh-turn writers call `bb_state_bank_boundary_valid`, while production
+  reset admission and continuation canaries call
+  `bb_state_bank_resumable_valid`. The latter currently admits only the exact
+  fresh-team-turn shape plus the exact five-frame failed non-Rush Dodge TEST
+  reroll window described below. Its pending MOVE destination must be exposed
+  egocentrically in observation context bytes 9/12 because a reset has no
+  preceding STEP history and reroll masks are nonspatial. Before either shape
+  enters reset selection it
+  must have bounded procedure/team/enum/skill indices, bidirectionally
   consistent grid/player coordinates, and a valid ball state. New bank writers
   and readers must fail closed on malformed raw snapshots. Authored records
   must additionally pass `ad_verify_one_action_continuation` after loading;
@@ -239,9 +246,21 @@ changes a reward, active queue, production default, or promotion verdict.
   train/dev/test by recipe template, keep paired rollout/regret diagnostics out
   of BBS/observations/rewards/BC labels, and require deterministic manifest-last
   publication plus loader and one-action continuation validation.
-  The current shared BBS1 validator admits only the exact MATCH -> TEAM_TURN
-  boundary; do not widen it to arbitrary decision states. Target/reroll drills
-  require an explicit shared validator for every resumable frame first. The F1
+  The shared BBS1 reset gate admits only the exact `MATCH -> TEAM_TURN`
+  boundary and one procedure-specific nested shape:
+  `MATCH -> TEAM_TURN -> ACTIVATION(Move) -> MOVE -> TEST(Dodge)` at a failed
+  first-step, non-Rush reroll decision. The nested validator recomputes the
+  Dodge target, requires real Use/Decline actions and remaining ordinary MA,
+  and rejects Rooted or activation-cleared Distracted/Eye Gouged movers, every
+  other TEST kind, parent shape, malformed skill bit, or continuation field.
+  A legally resolved Rush retains its result in `match.ret` and remains
+  deliberately outside this first shape. Tackle suppresses only the Dodge
+  skill reroll at the origin; Team Re-roll and Pro availability are independent.
+  Scenario
+  scanners must remain on the fresh-turn-only validator; the authored writer
+  also remains fresh-turn-only until the separate F4 recipe tranche changes it.
+  Do not widen either gate to arbitrary decision states. Any later target or
+  reroll shape needs its own complete lower-frame validator first. The F1
   proof keeps that boundary: a non-dash-PA, non-No-Ball carrier's private copy
   must reach a standing, tackle-zone-capable, non-No-Ball teammate target
   through legal activation and Pass declaration with zero dice. The ordinary

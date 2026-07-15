@@ -10,10 +10,10 @@ training curve can be interpreted. Everything routes through `bb_rng` dice
 injection: seeded PCG-64 or a recorded dice script. That design makes statistical,
 golden, and replay-differential checks possible.
 
-**Current status (2026-07-14):** `make test` runs 392 engine + 27 reward + 2
-scripted-bot tests; `make asan` passes the same 421. The current vacation-overflow
-ship cycle also passed 149 tool/analyzer tests locally (two expected vendored
-Puffer skips); hosted CI remains authoritative for the Torch-dependent BC tests.
+**Current status:** `make test` and `make asan` are the authoritative local
+suite inventories; use the counts printed by the exact head under review rather
+than copying a historical total into a new decision. Hosted CI remains
+authoritative for the Torch-dependent BC tests.
 This does not mean all seven originally planned layers are
 complete. `[BUILT]` is runnable now, `[PARTIAL]` has useful coverage with known
 gaps, `[ORACLE]` is external reference code, and `[PLANNED]` is not implemented.
@@ -103,8 +103,9 @@ re-derive by hand; (b) RNG misuse (reuse/bias) — check `bb_rng` consumption co
    rule-defined exceptions (Blitz!/riot kickoff events, touchdown turn handling).
 4. **Turnover causality** — turnover flag set only by an enumerated cause (failed
    dodge/rush/pickup, carrier KD, failed pass chain, sent-off, …) and always ends activation.
-5. **Re-roll conservation** — team re-rolls never increase mid-half (except enumerated
-   gains); max one team re-roll per turn; each die re-rolled at most once.
+5. **Re-roll conservation** — team re-rolls never increase mid-half except
+   enumerated one-drive/Leader gains; BB2025 permits multiple team re-rolls in
+   one turn, but each die or dice pool may be re-rolled at most once.
 6. **Mask-soundness** — `step()` accepts action ⟺ bit set in legal mask. Metamorphic
    half: sampled masked-out actions are rejected *without state mutation* (memcmp).
 7. **Dice-script conformance** — injected script consumed exactly; over/under-read = bug.
@@ -123,6 +124,18 @@ re-derive by hand; (b) RNG misuse (reuse/bias) — check `bb_rng` consumption co
    else does. Full liturgy: puffer-env-dev skill, footgun 14.
 9. **Procedure-stack sanity** — bounded depth; empty between activations; no leaks.
 10. **Stat bounds** — MA/ST/AG/PA/AV within rulebook ranges; score monotonic.
+11. **Raw snapshot admission** — BBS1 size/fingerprint proves ABI compatibility,
+    not safe content. Scenario scanners and fresh-turn writers use
+    `bb_state_bank_boundary_valid`; production reset admission and continuation
+    use `bb_state_bank_resumable_valid`. The resumable union is intentionally
+    limited to the exact fresh-turn shape and the exact failed first-step,
+    non-Rush Dodge TEST reroll stack. The latter requires remaining ordinary
+    MA, rejects movement-prohibiting or activation-cleared flags, and exposes
+    its parent MOVE destination egocentrically in observation context bytes
+    9/12. A resolved Rush retains nonzero `match.ret` provenance and is not the
+    same admitted shape. Every new nested shape needs complete lower-frame,
+    index, observation-alias, legal-mask, both-branch continuation,
+    loader-byte, and malformed-record tests before widening the shared gate.
 
 **Failure looks like:** shrunken minimal action trace + seed reproducing the violation.
 **Triage:** replay the shrunken trace under a debugger; the violated invariant names
@@ -131,7 +144,7 @@ the subsystem (ball ⇒ scatter/catch/push code; conservation ⇒ injury/box tra
 ## Layer 4 — Fuzzing + sanitizers
 
 **Validates:** crash-freedom, UB-freedom, OOB on adversarial action/dice streams.
-**Ours:** `make asan` exercises the same current 418-test suite under sanitizers;
+**Ours:** `make asan` exercises the current test suite under sanitizers;
 `engine/tests/fuzz_match.c` provides the fuzz entry surface. Keep the planned
 long-lived corpus/minimization work separate from the already-green sanitizer
 suite; do not describe ASan success as exhaustive fuzz coverage.
