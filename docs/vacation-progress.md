@@ -3525,3 +3525,87 @@ Next steps and safety boundary:
   no actionable P0-P3 issue; dual-mode local tests and exact-head hosted CI are
   the positive evidence. The merged source remains undeployed and the occupied
   2070 checkout, queue inputs, services, and BBTV processes were not changed.
+
+## 2026-07-15 06:06 PDT — hourly health check and authored-state safety review
+
+Live experiment and autonomy state:
+
+- At 06:04 PDT `final-main-control` remained healthy on seed 42 at exact
+  learner step 11,598,430,208 (epoch 88,488), 96.65% of its nominal 12B cap.
+  The advance since the 05:13 observation was approximately 186K steps/s,
+  implying roughly 36 minutes to the nominal cap if that short-window rate
+  holds; this is an observation, not a completion claim. The next queue job,
+  `final-second-control`, remains pending.
+- The latest complete 109-game native panel reported performance 0.6101,
+  1.6514 touchdowns/game, draw rate 0.3578, possession 0.3721, historical
+  in-pool win rate 0.6094, illegal/sampled-repair fraction 0.1684, forward ball
+  progress 8.891 squares, 20.275 Rush intentions, 11.844 blocks thrown, 1.954
+  blocks against the carrier, carrier-target fraction 0.1759, 1D fraction
+  0.2024, 2D-red fraction 0.0421, and zero pass and handoff intentions. Reward
+  clipping, non-finite reward, engine-error, demonstration, and fallback
+  counters all remained zero.
+- The primary service is active/running with queue PID 431309 and zero
+  restarts. The exact compute-PID gate still reports only trainer PID 431596.
+  Run `1784058310965` has 233 complete 16,066,560-byte checkpoints; the latest
+  complete checkpoint observed was exact step 11,585,847,296.
+- All 65 primary and 74 overflow pinned inputs revalidated without error at
+  unchanged plan SHA-256 values
+  `4ee72e3c58f09786cdd3bbf78a772e8de2d9a93e21a8b065cf0c5976ecced270`
+  and
+  `d90ee01c8c459f599c8601934f545ccb7783261edae3bcb6e9e3878036d37d3e`.
+  Overflow state remains absent, its service inactive/dead with zero restarts,
+  and its enabled timer active/waiting. The 05:58 watcher invocation returned
+  success after correctly reporting that the primary was still active.
+- The sampled GPU state was 81 C, 89% fan, 81% utilization, 5,554/8,192 MiB,
+  and 142.95 W. Software thermal limiting was active, hardware slowdown was
+  inactive, and the sample remained below the frozen 88 C three-poll guard.
+  Disk remained 7% used with 895 GiB free, inodes 1% used, memory 8.5 GiB
+  available, and swap use 27 MiB.
+- `bbstream`, `bbweb`, and `bbtv-tunnel` remained active with zero restarts.
+  The CPU viewer selected exact checkpoint 11,485,970,432 at 05:56 PDT, source
+  SHA-256
+  `7ff2b60156903178522fb72d6f5c9b362c005f646c401e04c04557997bbfdb0f`,
+  against the frozen turnover3 baseline. The public page returned HTTP 200 in
+  0.242 seconds. BBTV remains observational and owns no GPU compute process.
+
+Authored deterministic state-bank work:
+
+- PR #28 initially established separate procgen/game RNG streams, action and
+  dice transcripts, exact reinitialization/replay, full raw-state drift checks,
+  and a proof BBS1 writer. Independent review correctly blocked merge on two
+  paths: corrupt `TEAM_TURN.a` could reach out-of-bounds legal-action logic,
+  and a caller could mutate a replayed raw `bb_match` before asking the public
+  writer to serialize it.
+- Exact head `8e5dbac95baf93d4d22bdfaa96f53057035fe2d3` now makes the writer consume a
+  recipe and serialize only its own private exact-replay output. A single
+  engine-owned `bb_state_bank_boundary_valid` function is shared by the writer,
+  Puffer loader, and scenario scanner. BBS1 remains intentionally narrow: it
+  accepts only the supported `MATCH phase 3 -> TEAM_TURN phase 1` boundary with
+  canonical frames, valid clock/team metadata, player/grid bijection, and
+  consistent ball state; future nested decision windows require explicit
+  procedure-specific validation rather than widening this predicate.
+- Regression coverage now rejects caller mutation, corrupt turn-team indices,
+  invalid or mismatched clock metadata, zero source IDs, and nonzero metadata
+  padding, then proves a positively loaded record can safely enumerate legal
+  actions. A clean optimized run and ASan/UBSan run each passed 414 engine, 37
+  reward, 2 contact-bot, and 2 loader tests. Clang static analysis and
+  `git diff --check` passed. The shared validator accepted all 16,528 nonempty
+  historical BBS records available locally. The 25 empty/header-only shard
+  files were excluded explicitly because they contain no whole record.
+- The fixes are pushed and exact-head hosted CI plus three independent
+  re-reviews are in progress. Prior-head approvals are not being reused.
+  Nothing from this PR or the earlier merged source work has been installed in
+  the occupied 2070 checkout.
+
+Next steps and safety boundary:
+
+1. Require exact-head CI success and fresh approval from all three reviewers;
+   fix any actionable P0-P3 finding before merging PR #28.
+2. After merge, implement the separately reviewed F1-F5 authored recipe
+   families, quotas, sidecars/transactional manifest, and one-action
+   continuation checks. The current proof foundation alone is not a training
+   bank and authorizes no deployment.
+3. Continue read-only monitoring through the seed-42 cap and the queue-owned
+   transition into seed 43. Do not manually start overflow, interrupt a queue,
+   or start milestone evaluation while any primary/overflow job is pending or
+   running.
