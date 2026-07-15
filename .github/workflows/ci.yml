@@ -18,6 +18,7 @@ jobs:
         run: |
           PYTHONPATH=tools python3 -m unittest \
             tools.test_analyze_reward_candidate_transfer \
+            tools.test_analyze_reward_learning_curve \
             tools.test_analyze_reward_screen \
             tools.test_analyze_reward_transfer \
             tools.test_bbp_behavior_audit \
