@@ -3157,3 +3157,18 @@ Next steps and safety boundary:
 3. Continue hourly live checks and BBTV latest-checkpoint visibility. Start the
    fixed milestone evaluator only after primary plus overflow are terminal, the
    GPU is idle, the overflow timer cannot fire, and BBTV is explicitly quiesced.
+
+02:40 PDT addendum:
+
+- The final complete-diff Fable review found one documentation-only error in the
+  clamp identity and otherwise approved the code, terminal semantics,
+  dictionary/dashboard migration, tests, and vacation-queue boundary. The two
+  guides now state the tested identities: component sum plus residual equals
+  raw `episode_return`; raw return minus signed clamp delta equals post-clamp
+  return; any nonzero clamp delta independently fails integrity.
+- Reward/replay/analyzer contracts, corpus streaming checks, the normal C suite,
+  and ASan/UBSan all passed in exact-head GitHub run `29405017314` on
+  `946ae5ffb38c1ef1fc61dc3e381d28e2c528090f`. PR #23 merged as
+  `97edd7c1799471d6cfc4ea55930590a4e0f0c990`. This makes the ledger available
+  to future builds only; no file, process, pin, plan, module, or service in the
+  occupied 2070 audit checkout was changed.
