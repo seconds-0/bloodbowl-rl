@@ -90,6 +90,10 @@ BEHAVIOR_METRIC_KEYS = (
     "knockdowns_own",
     "carrier_knockdowns",
 )
+SIDE_BEHAVIOR_METRIC_KEYS = ("blocks_thrown_t0", "blocks_thrown_t1")
+JOINT_BEHAVIOR_METRIC_KEYS = tuple(
+    key for key in BEHAVIOR_METRIC_KEYS if key not in SIDE_BEHAVIOR_METRIC_KEYS
+)
 BEHAVIOR_FRACTION_KEYS = (
     "illegal_frac",
     "carrier_block_frac",
@@ -685,6 +689,13 @@ def cell_filename(seed: int, target: int, anchor: str, orientation: int) -> str:
     return f"s{seed}-t{target:012d}-{anchor}-o{orientation}.json"
 
 
+def focal_team_for_orientation(orientation: Any) -> int:
+    """Map the declared backend orientation to the focal policy's team slot."""
+    if isinstance(orientation, bool) or orientation not in (0, 1):
+        raise MilestoneEvalError(f"invalid milestone orientation: {orientation!r}")
+    return int(orientation)
+
+
 def expected_cells(plan: dict[str, Any]) -> list[dict[str, Any]]:
     rows = []
     for seed_index, seed in enumerate(plan["training_seeds"]):
@@ -697,6 +708,7 @@ def expected_cells(plan: dict[str, Any]) -> list[dict[str, Any]]:
                             "target_steps": target,
                             "anchor": anchor["name"],
                             "orientation": orientation,
+                            "focal_team": focal_team_for_orientation(orientation),
                             # Common across milestones in the same stratum.
                             "match_seed": (
                                 30_000
@@ -723,6 +735,7 @@ def validate_cell(
         "target_steps": expected["target_steps"],
         "anchor": expected["anchor"],
         "orientation": expected["orientation"],
+        "focal_team": expected["focal_team"],
         "match_seed": expected["match_seed"],
         "games_requested": plan["games_per_cell"],
         "milestone_eval_manifest_sha256": sha256(
@@ -740,6 +753,25 @@ def validate_cell(
         plan, expected["training_seed"], expected["target_steps"]
     )
     anchor = next(x for x in plan["anchors"] if x["name"] == expected["anchor"])
+    focal_team = focal_team_for_orientation(expected["orientation"])
+    if expected["focal_team"] != focal_team:
+        raise MilestoneEvalError(f"{path.name} focal-team mapping drift")
+    focal_path = checkpoint["native"]
+    anchor_path = anchor["path"]
+    expected_policy_a, expected_policy_b = (
+        (focal_path, anchor_path) if focal_team == 0 else (anchor_path, focal_path)
+    )
+    path_identity = {
+        "focal_checkpoint": focal_path,
+        "anchor_checkpoint": anchor_path,
+        "policy_a": expected_policy_a,
+        "policy_b": expected_policy_b,
+    }
+    for key, value in path_identity.items():
+        if cell.get(key) != value:
+            raise MilestoneEvalError(
+                f"{path.name} {key}={cell.get(key)!r}, expected {value!r}"
+            )
     if cell.get("focal_checkpoint_sha256") != checkpoint["native_sha256"]:
         raise MilestoneEvalError(f"{path.name} focal checkpoint drift")
     if cell.get("anchor_checkpoint_sha256") != anchor["sha256"]:
@@ -817,7 +849,6 @@ def validate_cell(
         raise MilestoneEvalError(
             f"{path.name} per-side block volume does not sum to total"
         )
-    focal_team = expected["orientation"]
     opponent_team = 1 - focal_team
     return {
         **identity,
@@ -832,7 +863,7 @@ def validate_cell(
         "opponent_tds": opponent_tds,
         "focal_checkpoint_sha256": checkpoint["native_sha256"],
         "anchor_checkpoint_sha256": anchor["sha256"],
-        "joint_behavior": behavior,
+        "joint_behavior": {key: behavior[key] for key in JOINT_BEHAVIOR_METRIC_KEYS},
         "focal_blocks_thrown": behavior[f"blocks_thrown_t{focal_team}"],
         "opponent_blocks_thrown": behavior[f"blocks_thrown_t{opponent_team}"],
         "file": path.name,
@@ -1020,7 +1051,10 @@ def run_cell(root: Path, plan_path: Path, cell_path: Path) -> int:
     args["vec"]["num_threads"] = 16
     focal_path = checkpoint["native"]
     anchor_path = anchor["path"]
-    if expected["orientation"] == 0:
+    focal_team = focal_team_for_orientation(expected["orientation"])
+    if expected["focal_team"] != focal_team:
+        raise MilestoneEvalError("cell focal-team mapping drift")
+    if focal_team == 0:
         policy_a, policy_b = focal_path, anchor_path
         focal_key, opponent_key = "env/slot_0_score", "env/slot_1_score"
         focal_tds_key, opponent_tds_key = "env/tds_t0", "env/tds_t1"
@@ -1049,6 +1083,7 @@ def run_cell(root: Path, plan_path: Path, cell_path: Path) -> int:
         focal_tds_key,
         opponent_tds_key,
         *(f"env/{key}" for key in INTEGRITY_KEYS),
+        *(f"env/{key}" for key in BEHAVIOR_METRIC_KEYS),
     ]
     missing = [key for key in required if key not in numeric]
     if missing:
@@ -1072,6 +1107,7 @@ def run_cell(root: Path, plan_path: Path, cell_path: Path) -> int:
                     "target_steps",
                     "anchor",
                     "orientation",
+                    "focal_team",
                     "match_seed",
                 )
             },
@@ -1232,7 +1268,7 @@ def analyze(directory: str | Path) -> dict[str, Any]:
                 },
                 "joint_behavior": {
                     key: mean([row["joint_behavior"][key] for row in cells])
-                    for key in BEHAVIOR_METRIC_KEYS
+                    for key in JOINT_BEHAVIOR_METRIC_KEYS
                 },
             }
             if points:
@@ -1250,9 +1286,13 @@ def analyze(directory: str | Path) -> dict[str, Any]:
             point["focal_blocks_thrown_delta_warm"] = (
                 point["macro_focal_blocks_thrown"] - warm["macro_focal_blocks_thrown"]
             )
+            point["opponent_blocks_thrown_delta_warm"] = (
+                point["macro_opponent_blocks_thrown"]
+                - warm["macro_opponent_blocks_thrown"]
+            )
             point["joint_behavior_delta_warm"] = {
                 key: point["joint_behavior"][key] - warm["joint_behavior"][key]
-                for key in BEHAVIOR_METRIC_KEYS
+                for key in JOINT_BEHAVIOR_METRIC_KEYS
             }
         trajectories[str(seed)] = points
         nominations[str(seed)] = nominate(points)

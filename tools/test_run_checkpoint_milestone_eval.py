@@ -20,13 +20,19 @@ ZERO_INTEGRITY = {key: 0.0 for key in milestone.INTEGRITY_KEYS}
 
 class MilestoneEvalTests(unittest.TestCase):
     @staticmethod
-    def behavior_metrics(target: int) -> dict[str, float]:
+    def behavior_metrics(target: int, orientation: int) -> dict[str, float]:
         progress = target / 1_000_000_000
+        if orientation == 0:
+            blocks_t0 = 4.0 + progress
+            blocks_t1 = 6.0
+        else:
+            blocks_t0 = 3.0
+            blocks_t1 = 8.0 + 2.0 * progress
         return {
             "illegal_frac": 0.10,
-            "blocks_thrown": 10.0 + progress,
-            "blocks_thrown_t0": 4.0 + progress,
-            "blocks_thrown_t1": 6.0,
+            "blocks_thrown": blocks_t0 + blocks_t1,
+            "blocks_thrown_t0": blocks_t0,
+            "blocks_thrown_t1": blocks_t1,
             "blocks_vs_carrier": 1.0,
             "carrier_block_frac": 0.10,
             "block_1d_frac": 0.20,
@@ -151,6 +157,13 @@ class MilestoneEvalTests(unittest.TestCase):
                 row for row in plan["anchors"] if row["name"] == expected["anchor"]
             )
             score = scores[expected["target_steps"]]
+            focal_path = checkpoint["native"]
+            anchor_path = anchor["path"]
+            policy_a, policy_b = (
+                (focal_path, anchor_path)
+                if expected["focal_team"] == 0
+                else (anchor_path, focal_path)
+            )
             cell = {
                 "schema_version": 1,
                 "milestone_eval_manifest_sha256": manifest_sha,
@@ -159,6 +172,7 @@ class MilestoneEvalTests(unittest.TestCase):
                 "embedded_steps": checkpoint["embedded_steps"],
                 "anchor": expected["anchor"],
                 "orientation": expected["orientation"],
+                "focal_team": expected["focal_team"],
                 "match_seed": expected["match_seed"],
                 "games_requested": milestone.FIXED_GAMES_PER_CELL,
                 "games": milestone.FIXED_GAMES_PER_CELL,
@@ -169,11 +183,17 @@ class MilestoneEvalTests(unittest.TestCase):
                 "focal_loss_rate": 0.8 - score,
                 "focal_tds": 1.0 + score,
                 "opponent_tds": 1.5 - score,
+                "focal_checkpoint": focal_path,
                 "focal_checkpoint_sha256": checkpoint["native_sha256"],
+                "anchor_checkpoint": anchor_path,
                 "anchor_checkpoint_sha256": anchor["sha256"],
+                "policy_a": policy_a,
+                "policy_b": policy_b,
                 "implementation": {},
                 "integrity": dict(ZERO_INTEGRITY),
-                "raw_env_metrics": self.behavior_metrics(expected["target_steps"]),
+                "raw_env_metrics": self.behavior_metrics(
+                    expected["target_steps"], expected["orientation"]
+                ),
             }
             (directory / expected["path"]).write_text(
                 json.dumps(cell, indent=2, sort_keys=True) + "\n",
@@ -210,11 +230,19 @@ class MilestoneEvalTests(unittest.TestCase):
             self.assertAlmostEqual(aggregate["score_delta_warm"]["mean"], 0.11)
             self.assertAlmostEqual(
                 points[2]["joint_behavior_delta_warm"]["blocks_thrown"],
-                2.0,
+                3.0,
             )
             self.assertAlmostEqual(
                 points[2]["focal_blocks_thrown_delta_warm"],
-                1.0,
+                3.0,
+            )
+            self.assertAlmostEqual(
+                points[2]["opponent_blocks_thrown_delta_warm"],
+                0.0,
+            )
+            self.assertNotIn(
+                "blocks_thrown_t0",
+                points[2]["joint_behavior"],
             )
             self.assertEqual(aggregate["score"]["clusters"], 3)
 
@@ -241,6 +269,64 @@ class MilestoneEvalTests(unittest.TestCase):
                 "raw environment behavior metrics",
             ):
                 milestone.validate_cell(path, plan, expected)
+            cell["raw_env_metrics"] = []
+            path.write_text(
+                json.dumps(cell, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(
+                milestone.MilestoneEvalError,
+                "raw environment behavior metrics",
+            ):
+                milestone.validate_cell(path, plan, expected)
+
+    def test_orientation_maps_focal_and_opponent_block_slots(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            plan = self.synthetic_plan(directory)
+            self.write_cells(
+                directory,
+                plan,
+                {target: 0.5 for target in milestone.FIXED_TARGET_STEPS},
+            )
+            expected = [
+                row
+                for row in milestone.expected_cells(plan)
+                if row["training_seed"] == 42
+                and row["target_steps"] == 0
+                and row["anchor"] == "statmatch1"
+            ]
+            rows = {
+                row["orientation"]: milestone.validate_cell(
+                    directory / row["path"], plan, row
+                )
+                for row in expected
+            }
+            self.assertEqual(rows[0]["focal_blocks_thrown"], 4.0)
+            self.assertEqual(rows[0]["opponent_blocks_thrown"], 6.0)
+            self.assertEqual(rows[1]["focal_blocks_thrown"], 8.0)
+            self.assertEqual(rows[1]["opponent_blocks_thrown"], 3.0)
+            orientation_one = next(row for row in expected if row["orientation"] == 1)
+            path = directory / orientation_one["path"]
+            cell = json.loads(path.read_text(encoding="utf-8"))
+            cell["policy_a"], cell["policy_b"] = (
+                cell["policy_b"],
+                cell["policy_a"],
+            )
+            path.write_text(
+                json.dumps(cell, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(
+                milestone.MilestoneEvalError,
+                "policy_a=",
+            ):
+                milestone.validate_cell(path, plan, orientation_one)
+            with self.assertRaisesRegex(
+                milestone.MilestoneEvalError,
+                "invalid milestone orientation",
+            ):
+                milestone.focal_team_for_orientation(2)
 
     def test_invalid_behavior_metrics_are_rejected(self):
         mutations = (
@@ -251,6 +337,14 @@ class MilestoneEvalTests(unittest.TestCase):
             (
                 "fractions are invalid",
                 lambda metrics: metrics.__setitem__("illegal_frac", 1.1),
+            ),
+            (
+                "metrics are negative",
+                lambda metrics: metrics.__setitem__("pass_attempts", -0.1),
+            ),
+            (
+                "metrics are incomplete",
+                lambda metrics: metrics.pop("handoff_attempts"),
             ),
             (
                 "block volume does not sum",

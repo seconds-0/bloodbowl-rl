@@ -99,9 +99,25 @@ For every lineage, seed, and frozen milestone:
   possession, ball movement, dodge/Rush/pickup/pass/handoff attempts, and
   knockdown outcomes; and
 - report focal and opponent block volume from the existing per-team counters.
-  The other behavior metrics are currently match-level aggregates over both
-  policies. Keep them labelled `joint_behavior`: they diagnose trajectory drift
-  under fixed opponents but cannot be attributed to the focal policy alone.
+
+The other behavior metrics are currently match-level aggregates over both
+policies. Keep them labelled `joint_behavior`: they diagnose trajectory drift
+under fixed opponents but cannot be attributed to the focal policy alone.
+
+Telemetry preflight recorded 2026-07-15 before the first evaluation:
+
+- the current native `Log` and a live schema-2 panel contain every fixed
+  behavior key. `bbe_finish_episode` constructs the joint panel from explicit
+  match-level counters or sums over both team arrays; only
+  `blocks_thrown_t0/t1` retain a team slot;
+- the runner's single orientation mapping loads the focal checkpoint as policy
+  A/team 0 for orientation 0 and policy B/team 1 for orientation 1. Every cell
+  records that focal-team identity and restart validation rechecks it; and
+- a live panel reported total blocks `12.8000001907` versus per-team sum
+  `12.7999997139` (absolute float32 difference below `5e-7`). The cell contract
+  allows `2e-4` absolute drift, then fails closed. The module identity and this
+  arithmetic are revalidated for every future cell, so later binding or
+  telemetry drift cannot silently pass on the strength of this preflight.
 
 At eight checkpoints, three seeds, four anchors, two backend roles, and 2,048
 games, Stage A is 393,216 games per ancestry. This is descriptive trajectory
