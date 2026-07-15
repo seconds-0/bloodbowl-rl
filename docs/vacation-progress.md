@@ -4541,3 +4541,101 @@ Next steps:
 3. Do not publish or stage a bank, add a training input, change reward defaults,
    deploy source to the 2070, or start milestone evaluation until the frozen
    queues are terminal and their separate gates explicitly authorize it.
+
+## 2026-07-15 12:38 PDT — seed 43 healthy; proof composition merged and fixed builder under review
+
+Live queue and BBTV health:
+
+- The primary queue remains authoritative `running` on
+  `final-main-control`, arm `both`, seed 43/current index 2, with one completed
+  arm. `SCREEN_STATUS.json` was fresh at 12:36 PDT. Queue PID 431309, wrapper
+  PID 431316, and trainer PID 473422 remain stable; the primary service and all
+  BBTV services have zero restarts. The overflow service remains inactive/dead
+  with absent state and zero restarts. Its 12:32 watcher exited successfully
+  after observing that primary is still active, and its timer remains
+  active/waiting for the next scheduled gate check.
+- Exact read-only validation matched all 65 primary pins at plan SHA-256
+  `4ee72e3c58f09786cdd3bbf78a772e8de2d9a93e21a8b065cf0c5976ecced270`
+  and all 74 overflow pins at plan SHA-256
+  `d90ee01c8c459f599c8601934f545ccb7783261edae3bcb6e9e3878036d37d3e`.
+  Both pin-error results are `None`, overflow state is absent, and the exact
+  completion-gate parser sees only trainer PID 473422.
+- The latest complete telemetry panel observed exact step 3,911,450,624 at
+  epoch 29,841 over 95 games: performance 0.552632, draw rate 0.473684,
+  possession 0.377596, illegal/sampled-repair fraction 0.189851, ball progress
+  9.123853, 22.400000 Rush intentions, 14.736842 blocks thrown, 2.073684 blocks
+  against the carrier, carrier-target fraction 0.150673, Pass intentions
+  0.010526, and zero Hand-off intentions. Reward clipping, non-finite reward,
+  engine-error, demonstration, and fallback counters remain zero. A later
+  dashboard sample reported about 186.0K SPS. The newest complete
+  16,066,560-byte checkpoint was exact step 3,895,328,768 at 12:34 PDT.
+  Roughly 8.09B seed-43 steps remain, so the displayed approximately 12-hour
+  estimate is observational and excludes final evaluation and queue-transition
+  uncertainty.
+- Four GPU samples at 12:35 PDT ranged from 81-82 C, 88% fan, 74-78%
+  utilization, 5,554/8,192 MiB, and 110.41-155.71 W. Software thermal slowdown
+  was active in all four while hardware slowdown was inactive in all four.
+  Temperature remains below the literal frozen 88 C three-poll guard, so the
+  recurrence remains monitored rather than manually tuned. Disk is 7% used
+  with 894 GiB free, inode use is 1%, memory has 9.5 GiB available, and swap
+  use is 41 MiB.
+- `bbstream`, `bbweb`, and `bbtv-tunnel` remain active with zero restarts. BBTV
+  selected seed-43 checkpoint 3,895,328,768 at 12:36 PDT against the frozen
+  turnover3 baseline. Learner source SHA-256 is
+  `9d57c3602a3908124607b874083a0c9b9e7cc881a7578df0bab84748588bb51f`,
+  converted output SHA-256 is
+  `c1fe959a41be92f0fae9c9dc5e42a1eb80211d2ec0e1d950e120e83a105d41b5`,
+  and `selection.json` SHA-256 is
+  `730cee3ea7ca68e79c46c99252f3a7bcc9a97ca4e2aabdd052d1303b07f1ba9a`.
+  The public page returned HTTP 200 in 0.310 seconds. A seven-second public WSS
+  client received the correct learner/frozen `hello`, `match_start`, snapshot,
+  twelve advancing deltas, and a ping before deliberate timeout. BBTV remains
+  CPU-only and observational.
+- One monitoring path guess and one probe-mode issue were corrected and kept in
+  this record: `selection.json` lives under the audit checkout rather than the
+  production checkout, and this macOS `websocat` requires reverse
+  unidirectional plus synchronous stdio (`-n --no-async-stdio -U`) when run
+  without an interactive terminal. The corrected path and real message stream
+  supplied the authoritative values above; neither failed probe changed state.
+
+Completed authored proof infrastructure:
+
+- PR #40 merged exact reviewed head
+  `84c1e83265579ae9889a48b9b36bb0613f098d95` to `main` as
+  `247e63121b5fe67e66a8e01cdc70557cf7d4d1c8` after all three fresh reviews
+  reported no P0-P3 findings and hosted CI run `29443324693` passed in 4m39s.
+  Its structural gate composes exactly the existing F1/F2/F3/F4/F5 proof mix
+  4/4/16/1/1; it publishes no bank and changes no training input or live source.
+- The next CPU-only builder tranche was planned before code and challenged by
+  three reviewers. The initial semantic-ID proposal was rejected because it
+  collided with legacy authored fixture IDs and did not encode version/variant.
+  The corrected contract preserves the proof-local positional A9 metadata,
+  explicitly defers durable identity to a collision-audited sidecar schema,
+  pins the complete base configuration and all 26 transcript counts, and uses
+  private heap staging plus copy-on-success caller semantics.
+- PR #41 is open at exact head
+  `1f9075a841fc35282247a993120f8b67054f0efc`. Fail-first compilation proved
+  the builder API was absent. The implementation removes both duplicated test
+  constructors, keeps record pointers caller-owned, and reproduces the parent
+  58,568-byte BBS SHA-256
+  `c984e22178901539157be062764dcaff1efac345836dffb5be17a5b7537447a1`
+  plus ordered 58,240-byte raw-body SHA-256
+  `6991cb6100f8da218bce89ce7828479ff8efb84cbfbf8cea158f767071a213f8`.
+  Full optimized and ASan/UBSan suites pass 434 engine, 37 reward, 2
+  contact-bot, and 12 loader tests; both static-analysis targets and diff checks
+  are clean. Hosted CI run `29445059268` and three fresh exact-head reviews are
+  in progress, so PR #41 is not yet merge-authorized.
+
+Next steps:
+
+1. Keep the read-only hourly operational loop authoritative. Do not tune the
+   recurring software-thermal flag, choose a checkpoint from viewer aesthetics,
+   or manually start overflow.
+2. Resolve every P0-P3 finding on PR #41, restart SHA-specific reviews after any
+   change, and merge only an exact green reviewed head. Do not deploy it: the
+   builder is in-memory proof infrastructure only.
+3. After merge, separately plan the persistent recipe/template/version/variant
+   identity registry before sidecar bytes or manifest-last publication. The
+   proof-local A9 IDs are explicitly not safe joins. Continue to forbid bank
+   publication, training input changes, reward changes, and milestone
+   evaluation until their separate contracts and terminal queue state permit.
