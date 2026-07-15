@@ -3896,3 +3896,36 @@ Rules-layer follow-up and next steps:
   and neither frozen queue or BBTV service was changed. The next authored-bank
   step remains the narrow F2 Hand-off-opportunity proof on the corrected rules
   foundation.
+
+08:32 PDT addendum:
+
+- The first F2 proof now reaches the same loader-valid half-two, away-turn-1,
+  tied 0-0 fresh-team-turn boundary after 414 legal decisions and 108 recorded
+  game dice, with away slot 23 carrying. On a discarded private copy it
+  requires legal carrier activation and Hand-off declaration with zero dice,
+  followed by at least one adjacent legal target that can actually attempt the
+  Catch. It serializes no declaration frame, target set, chosen action, target,
+  outcome, reward, BC label, or policy-quality judgment.
+- The proof preserves D198's BB2025 distinction: a Standing No Ball teammate
+  with a Tackle Zone remains a legal Hand-off target and then automatically
+  fails the Catch, but a No-Ball-only target set is not classified as a viable
+  authored transfer opportunity. Adversarial tests also reject a No Ball
+  carrier, a spent Hand-off budget, malformed boundaries, and provenance drift
+  before byte zero. Production loading reproduces the exact raw match and
+  passes the one-action continuation gate.
+- Optimized and ASan/UBSan suites each passed 424 engine, 37 reward, 2
+  contact-bot, and 5 loader tests. Independent optimized/sanitized writers
+  emitted the identical 2,268-byte record with SHA-256
+  `15532cf03342e6e1b8b78677a85bdca119bfd25ea645d7d9bb614cc6fbda90fa`.
+  A separate 256-controller-seed sweep matched in both builds: 146 reached
+  valid exact-replayable captures, 110 ended cleanly without capture, and none
+  produced an invalid success or unexpected failure.
+- Three independent reviewers approved exact head
+  `3d86e5a02167acfc4e77987c0bd82d9ef25ee9bb` with no P0-P3 findings.
+  Exact-head CI run `29427847436` passed. PR #33 merged authoritatively to
+  `main` as `b66610b8a1281dd9e7b4bf20e9f90698a9382a34`; its remote feature
+  branch was deleted. The normal local branch cleanup failed only because a
+  different worktree owns `main`, as in prior merges. No source or authored
+  artifact was deployed to the occupied 2070 checkout, and neither frozen
+  queue nor BBTV was changed. This remains one proof template, not F2 coverage,
+  publication, training, or deployment authorization.
