@@ -305,3 +305,61 @@ BB_TEST(authored_drill_writer_preflights_mixed_batch_before_header) {
     BB_CHECK_EQ(ftell(file), 0);
     BB_CHECK_EQ(fclose(file), 0);
 }
+
+BB_TEST(authored_drill_f1_reaches_real_pass_opportunity) {
+    ad_recipe recipe = ad_test_recipe();
+    char error[AD_ERROR_CAP];
+    BB_CHECK_EQ(ad_discover_f1_pass_opportunity(&recipe, error), 0);
+    BB_CHECK(recipe.action_count > 0);
+    BB_CHECK(recipe.action_count < AD_MAX_ACTIONS / 4);
+    BB_CHECK(recipe.dice_count > 0);
+    BB_CHECK(recipe.dice_count < AD_MAX_DICE / 4);
+    BB_CHECK(bb_state_bank_boundary_valid(&recipe.captured));
+    BB_CHECK_EQ(recipe.captured.half, 2);
+    BB_CHECK_EQ(recipe.captured.active_team, BB_AWAY);
+    BB_CHECK_EQ(recipe.captured.turn[BB_AWAY], 1);
+    BB_CHECK_EQ(recipe.captured.score[BB_HOME], 0);
+    BB_CHECK_EQ(recipe.captured.score[BB_AWAY], 0);
+    BB_CHECK_EQ(recipe.captured.ball.state, BB_BALL_HELD);
+    BB_CHECK(recipe.captured.ball.carrier < BB_NUM_PLAYERS);
+    if (recipe.captured.ball.carrier >= BB_NUM_PLAYERS) return;
+    BB_CHECK_EQ(BB_TEAM_OF(recipe.captured.ball.carrier), BB_AWAY);
+    BB_CHECK_EQ(recipe.captured.players[recipe.captured.ball.carrier].stance,
+                BB_STANCE_STANDING);
+    bb_match original = recipe.captured;
+    BB_CHECK(ad_f1_pass_opportunity_valid(&recipe.captured));
+    BB_CHECK_EQ(memcmp(&recipe.captured, &original, sizeof original), 0);
+
+    bb_match replayed;
+    BB_CHECK_EQ(ad_replay_exact(&recipe, &replayed, error), 0);
+    BB_CHECK_EQ(memcmp(&replayed, &recipe.captured, sizeof replayed), 0);
+    BB_CHECK_EQ(ad_verify_one_action_continuation(
+                    &replayed, NULL, NULL, NULL, error),
+                0);
+
+    FILE* file = tmpfile();
+    BB_CHECK(file != NULL);
+    if (file != NULL) {
+        ad_bbs_record record = {
+            0xA1000001u, (uint32_t)recipe.action_count, &recipe,
+        };
+        recipe.controller_stream++;
+        BB_CHECK(ad_bbs_write(file, &record, 1, error) != 0);
+        BB_CHECK(strstr(error, "provenance") != NULL);
+        BB_CHECK_EQ(ftell(file), 0);
+        BB_CHECK_EQ(fclose(file), 0);
+        recipe.controller_stream--;
+    }
+
+    ad_recipe rediscovered = ad_test_recipe();
+    BB_CHECK_EQ(ad_discover_f1_pass_opportunity(&rediscovered, error), 0);
+    BB_CHECK_EQ(memcmp(&recipe, &rediscovered, sizeof recipe), 0);
+
+    ad_recipe no_pass = ad_test_recipe();
+    BB_CHECK_EQ(ad_discover_first_team_turn(&no_pass, error), 0);
+    original = no_pass.captured;
+    BB_CHECK(!ad_f1_pass_opportunity_valid(&no_pass.captured));
+    BB_CHECK_EQ(memcmp(&no_pass.captured, &original, sizeof original), 0);
+    no_pass.captured.stack[1].a = 255;
+    BB_CHECK(!ad_f1_pass_opportunity_valid(&no_pass.captured));
+}

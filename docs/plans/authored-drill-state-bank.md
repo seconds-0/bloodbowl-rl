@@ -299,6 +299,15 @@ rediscovery, exact replay, safe serialization, production-loader byte identity,
 and one-action continuation. This proves one tied-score late-second-half
 template only; it does not establish F3 axis coverage, quotas, or publication.
 
+The first F1 proof also stays at the fresh-team-turn boundary. Its fixed
+trajectory reaches half two, away turn 1, tied 0-0 after 414 legal decisions and
+108 in-match dice. A pure validator copies that state, selects the legal carrier
+activation and Pass declaration, requires both transitions to consume zero
+dice, and requires at least one legal Pass target occupied by a catch-capable
+teammate. The copy is discarded: no carrier, action, nested frame, or target is
+serialized or treated as a policy label. This proves one opportunity template,
+not passing quality, F1 axis coverage, quotas, or publication.
+
 ## Acceptance gates
 
 The tranche is complete only when all are true:
