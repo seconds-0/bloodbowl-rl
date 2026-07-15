@@ -18,12 +18,21 @@
 #define AD_F2_HANDOFF_TARGET_BUCKET_COUNT 2
 #define AD_F2_HANDOFF_TARGET_AXIS_COUNT \
     ((BB_AWAY + 1) * AD_F2_HANDOFF_TARGET_BUCKET_COUNT)
+#define AD_F1_PASS_CARRIER_PRESSURE_BUCKET_COUNT 2
+#define AD_F1_PASS_CARRIER_PRESSURE_AXIS_COUNT \
+    ((BB_AWAY + 1) * AD_F1_PASS_CARRIER_PRESSURE_BUCKET_COUNT)
 
 typedef enum {
     AD_F2_TARGET_COUNT_NONE = 0,
     AD_F2_TARGET_COUNT_EXACTLY_ONE,
     AD_F2_TARGET_COUNT_TWO_OR_MORE,
 } ad_f2_target_count_bucket;
+
+typedef enum {
+    AD_F1_CARRIER_PRESSURE_NONE = 0,
+    AD_F1_CARRIER_PRESSURE_OPEN,
+    AD_F1_CARRIER_PRESSURE_MARKED,
+} ad_f1_carrier_pressure_bucket;
 
 typedef enum {
     AD_RECIPE_FIRST_TEAM_TURN = 0,
@@ -34,6 +43,7 @@ typedef enum {
     AD_RECIPE_F4_PENDING_DODGE_REROLL,
     AD_RECIPE_F3_EXACT_SECOND_HALF_TURN,
     AD_RECIPE_F2_EXACT_HANDOFF_TARGET_COUNT,
+    AD_RECIPE_F1_EXACT_PASS_CARRIER_PRESSURE,
     AD_RECIPE_KIND_COUNT,
 } ad_recipe_kind;
 
@@ -46,11 +56,12 @@ typedef struct {
     uint64_t controller_stream;
     ad_recipe_kind kind;
     // Axis requests live inside the recipe so independent rediscovery binds
-    // the requested cell. capture_turn is F3-only; active team is used by F3
-    // and exact F2; the target bucket is exact-F2-only.
+    // the requested cell. capture_turn is F3-only; active team is used by the
+    // exact F1/F2/F3 axes; the two family buckets are otherwise kind-specific.
     int capture_turn;
     int capture_active_team;
     ad_f2_target_count_bucket capture_handoff_target_bucket;
+    ad_f1_carrier_pressure_bucket capture_pass_carrier_pressure;
     int home_team;
     int away_team;
     int exclude_team;
@@ -106,6 +117,17 @@ int ad_f1_pass_opportunity_valid(const bb_match* match);
 // the captured BBS state remains the supported fresh team-turn boundary.
 int ad_discover_f1_pass_opportunity(ad_recipe* recipe,
                                     char error[AD_ERROR_CAP]);
+
+// Reach an exact active-side/open-or-marked-carrier cell while retaining the
+// complete F1 Pass-opportunity predicate and fresh-team-turn boundary.
+int ad_discover_f1_pass_carrier_pressure(
+    ad_recipe* recipe, int active_team,
+    ad_f1_carrier_pressure_bucket pressure, char error[AD_ERROR_CAP]);
+
+// Require exactly one structurally valid recipe for every Home/Away x
+// open/marked Pass-carrier cell.
+int ad_validate_f1_pass_carrier_pressure_axis(
+    const ad_recipe* recipes, size_t count, char error[AD_ERROR_CAP]);
 
 // Purely validate that a supported fresh team-turn state has a standing,
 // unused active-team carrier whose legal ACTIVATE -> DECLARE HAND-OFF path

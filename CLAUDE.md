@@ -144,6 +144,21 @@ newer evidence wins.
   unexpected failures. This proves structural opportunity diversity only; it
   does not label Hand-off, a receiver, or tactical quality and does not
   authorize publication, training, reward changes, evaluation, or deployment.
+  The first F1 axis likewise stays at the fresh-team-turn boundary and requires
+  four cells: Home/Away active-side orientation crossed with an open or marked
+  carrier who still satisfies the complete Pass-opportunity predicate. Derive
+  pressure with `bb_is_marked` only after full raw-boundary and F1 validation;
+  geometric adjacency is not a substitute for engine Tackle-Zone semantics.
+  Store and independently rediscover both side and pressure, reject the
+  pressure field on non-axis recipes, and keep the private Pass declaration and
+  target probe out of the serialized record. This proves state-level
+  opportunity structure only. The optimized 4,096-seed-per-cell sweep yields
+  Home/open 1,323, Home/marked 948, Away/open 1,464, and Away/marked 996 exact
+  captures, with complementary clean ends and zero unexpected failure; the
+  ASan/UBSan sweep matches every count without a sanitizer finding. The axis
+  labels neither Pass nor any receiver/target and authorizes no publication,
+  training, reward,
+  evaluation, deployment, BBTV, or frozen-queue change.
 - **BC loader (D180):** use the bounded streaming loader and replay-disjoint
   split. Replay-first is the current default, not the final sampler; next
   stratify by roster/matchup, depth, and action family.

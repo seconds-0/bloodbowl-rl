@@ -191,6 +191,14 @@ the writer emits even the BBS1 header.
 
 ## Family matrix
 
+The implemented proof layer is deliberately narrower than this eventual bank
+matrix. F1 now has a four-cell fresh-turn structural axis—Home/Away active-side
+orientation crossed with open/marked carrier pressure—whose captures retain
+the full zero-die legal Pass-opportunity predicate. Pressure is computed with
+engine Tackle-Zone semantics after safe boundary validation; no receiver is
+selected and no action-quality label is created. This does not satisfy the
+broader F1 matrix below and does not authorize artifact publication or training.
+
 The first complete bank is count-balanced across five families. Thin variants
 fail the build rather than borrowing excess records from an easy family.
 
