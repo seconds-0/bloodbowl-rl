@@ -3375,3 +3375,44 @@ Next steps and safety boundary:
   approval, the exact committed-diff inline review, local normal/sanitizer
   evidence, and exact-head CI. No code or artifact from this tranche was
   installed in the occupied 2070 checkout.
+
+04:55 PDT addendum:
+
+- A read-only 04:51 host check found the primary queue still healthy on
+  `final-main-control` at exact learner step 10,790,502,400 (epoch 82,324),
+  approximately 89.9% of 12B. The primary, `bbstream`, `bbweb`, and
+  `bbtv-tunnel` services remain active/running with zero restarts; the overflow
+  service remains inactive/dead with no state, and its 04:41 watcher invocation
+  correctly returned success after reporting that the primary was still
+  active. The only GPU compute PID remains trainer `431596`; the sampled GPU
+  state was 81 C, 89% fan, 80% utilization, 5,554/8,192 MiB, and 149.28 W,
+  with software thermal limiting active, hardware slowdown inactive, and no
+  approach to the 88 C three-poll guard. Disk remains 7% used with 896 GiB
+  free, memory 8.6 GiB available, and swap use 27 MiB.
+- The latest complete native panel (`n=113`) reported performance 0.6018,
+  1.5310 touchdowns/game, draw rate 0.3540, possession 0.3717, historical
+  in-pool win rate 0.6062, illegal/sampled-repair fraction 0.1655, forward ball
+  progress 8.377 squares, 19.425 Rush intentions, 12.796 blocks thrown, 2.062
+  blocks against the carrier, carrier-target fraction 0.1658, 1D fraction
+  0.1780, 2D-red fraction 0.0279, and zero pass/handoff intentions. All reward
+  clipping, non-finite reward, engine-error, demonstration, and fallback
+  counters remain zero.
+- BBTV advanced observationally to exact checkpoint 10,686,955,520 at 04:43,
+  source SHA-256
+  `3c21dbb75ab6ce7295b0f60137b34c78bdf74c42a0fd756df299a4665bf86ec6`,
+  against the frozen turnover3 baseline. Its server remains CPU-only and the
+  public page returned HTTP 200 in 0.378 seconds.
+- While beginning authored-fixture planning, a focused bug hunt confirmed that
+  the demo-state loader accepted unsafe raw record content even when the BBS1
+  build fingerprint matched. The pre-fix regression proved acceptance of an
+  oversized stack, impossible player coordinate, corrupt grid slot, invalid
+  ball carrier, and invalid procedure ID. PR #26 added bounds/enum,
+  bidirectional grid/player, ball, and procedure validation plus a dedicated
+  ingestion test; all 15,471 historical records remained accepted and two
+  forced demo-reset episodes completed with zero fallback. The exact commit
+  passed 401 engine, 37 reward, 2 contact-bot, and 1 loader tests normally and
+  under ASan/UBSan; exact-head CI run `29413024709` passed in 4m05s. PR #26
+  merged to `main` as `fb5f9271d1abdc59ccf5b536c7e933d0e3aeed10`.
+  Claude/Fable remained unavailable because `claude auth status` reported no
+  active login, so that auth failure was not counted as a review verdict. The
+  fix was not installed in the occupied 2070 checkout.
