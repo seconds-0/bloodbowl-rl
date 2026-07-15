@@ -69,19 +69,14 @@ class MilestoneEvalTests(unittest.TestCase):
     def synthetic_plan(self, directory: Path) -> dict:
         anchors = [
             {
-                "name": "alpha",
-                "path": "/tmp/alpha.bin",
+                "name": name,
+                "path": f"/tmp/{name}.bin",
                 "bytes": milestone.EXPECTED_NATIVE_BYTES,
-                "sha256": "a" * 64,
-            },
-            {
-                "name": "beta",
-                "path": "/tmp/beta.bin",
-                "bytes": milestone.EXPECTED_NATIVE_BYTES,
-                "sha256": "b" * 64,
-            },
+                "sha256": checkpoint_sha,
+            }
+            for name, checkpoint_sha in milestone.FIXED_ANCHOR_SHA256.items()
         ]
-        targets = [0, 1_000, 2_000, 4_000]
+        targets = list(milestone.FIXED_TARGET_STEPS)
         checkpoints = {
             str(seed): [
                 {
@@ -100,9 +95,11 @@ class MilestoneEvalTests(unittest.TestCase):
         plan = {
             "schema_version": 1,
             "matrix_id": "test-matrix",
+            "profile": "control-final",
             "training_seeds": list(milestone.CONTROL_SEEDS),
             "target_steps": targets,
-            "games_per_cell": 1_000,
+            "max_target_gap_steps": milestone.FIXED_MAX_TARGET_GAP_STEPS,
+            "games_per_cell": milestone.FIXED_GAMES_PER_CELL,
             "orientations": [0, 1],
             "anchors": anchors,
             "checkpoints": checkpoints,
@@ -134,8 +131,8 @@ class MilestoneEvalTests(unittest.TestCase):
                 "anchor": expected["anchor"],
                 "orientation": expected["orientation"],
                 "match_seed": expected["match_seed"],
-                "games_requested": 1_000,
-                "games": 1_000,
+                "games_requested": milestone.FIXED_GAMES_PER_CELL,
+                "games": milestone.FIXED_GAMES_PER_CELL,
                 "focal_score": score,
                 "opponent_score": 1.0 - score,
                 "draw_rate": 0.4,
@@ -160,15 +157,24 @@ class MilestoneEvalTests(unittest.TestCase):
             self.write_cells(
                 directory,
                 plan,
-                {0: 0.40, 1_000: 0.50, 2_000: 0.51, 4_000: 0.505},
+                {
+                    0: 0.40,
+                    1_000_000_000: 0.50,
+                    2_000_000_000: 0.51,
+                    4_000_000_000: 0.505,
+                    6_000_000_000: 0.505,
+                    8_000_000_000: 0.505,
+                    10_000_000_000: 0.505,
+                    12_000_000_000: 0.505,
+                },
             )
             report = milestone.analyze(directory)
-            self.assertEqual(report["cell_count"], 48)
-            self.assertEqual(report["total_games"], 48_000)
+            self.assertEqual(report["cell_count"], 192)
+            self.assertEqual(report["total_games"], 393_216)
             points = report["trajectories"]["42"]
             self.assertAlmostEqual(points[2]["score_delta_warm"], 0.11)
             nomination = report["stage_b_nominations"]["42"]
-            self.assertEqual(nomination["target_steps"], 1_000)
+            self.assertEqual(nomination["target_steps"], 1_000_000_000)
             self.assertFalse(nomination["exploratory"])
             aggregate = report["aggregate_trajectory"][2]
             self.assertAlmostEqual(aggregate["score_delta_warm"]["mean"], 0.11)
@@ -189,7 +195,7 @@ class MilestoneEvalTests(unittest.TestCase):
             self.write_cells(
                 directory,
                 plan,
-                {0: 0.40, 1_000: 0.50, 2_000: 0.51, 4_000: 0.505},
+                {target: 0.5 for target in milestone.FIXED_TARGET_STEPS},
             )
             expected = milestone.expected_cells(plan)[0]
             path = directory / expected["path"]
@@ -211,14 +217,15 @@ class MilestoneEvalTests(unittest.TestCase):
             self.write_cells(
                 directory,
                 plan,
-                {0: 0.40, 1_000: 0.50, 2_000: 0.51, 4_000: 0.505},
+                {target: 0.5 for target in milestone.FIXED_TARGET_STEPS},
             )
             milestone.complete(directory)
             completion = directory / "MILESTONE_EVAL_COMPLETE.json"
-            report = milestone.validate_completion(
-                completion, milestone.sha256(completion)
-            )
-            self.assertEqual(report["total_games"], 48_000)
+            with mock.patch.object(milestone, "verify_plan_sources"):
+                report = milestone.validate_completion(
+                    completion, milestone.sha256(completion)
+                )
+            self.assertEqual(report["total_games"], 393_216)
             first = directory / milestone.expected_cells(plan)[0]["path"]
             cell = json.loads(first.read_text(encoding="utf-8"))
             cell["focal_score"] += 0.01
@@ -226,8 +233,9 @@ class MilestoneEvalTests(unittest.TestCase):
                 json.dumps(cell, indent=2, sort_keys=True) + "\n",
                 encoding="utf-8",
             )
-            with self.assertRaises(milestone.MilestoneEvalError):
-                milestone.validate_completion(completion)
+            with mock.patch.object(milestone, "verify_plan_sources"):
+                with self.assertRaises(milestone.MilestoneEvalError):
+                    milestone.validate_completion(completion)
 
     def test_terminal_is_fixed_nominee_when_curve_never_plateaus_early(self):
         points = [
