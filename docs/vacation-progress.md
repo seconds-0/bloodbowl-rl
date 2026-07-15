@@ -3172,3 +3172,91 @@ Next steps and safety boundary:
   `97edd7c1799471d6cfc4ea55930590a4e0f0c990`. This makes the ledger available
   to future builds only; no file, process, pin, plan, module, or service in the
   occupied 2070 audit checkout was changed.
+
+## 2026-07-15 03:28 PDT — hourly health check and strict-BB2025 scenario foundation
+
+Live experiment and autonomy state:
+
+- At 03:27 PDT `final-main-control` remained healthy at exact learner step
+  9,840,099,328 (epoch 75,073), approximately 82.0% of its 12B seed-42 run.
+  The latest complete 94-game native panel reported performance 0.5532, 1.5957
+  touchdowns/game, draw rate 0.3404, possession 0.3764, historical in-pool win
+  rate 0.6018, illegal/sampled-repair fraction 0.1721, forward ball progress
+  8.342 squares, 19.032 Rush intentions, 11.766 blocks thrown, 1.989 blocks
+  against the carrier, carrier-target fraction 0.1941, 1D fraction 0.2171,
+  2D-red fraction 0.0328, 0.0213 pass intentions, and zero handoffs. Reward
+  clipping, non-finite reward, engine-error, demonstration, and fallback
+  counters were all zero.
+- The exact primary service remains active/running with queue PID `431309` and
+  zero restarts; `final-main-control` remains running and
+  `final-second-control` pending. Trainer PID `431596` is still the only GPU
+  compute process. Run `1784058310965` now has 198 complete 16,066,560-byte
+  checkpoints; the latest observed interval checkpoint is exact step
+  9,838,002,176.
+- All 65 primary and 74 overflow pins revalidated with no error at unchanged
+  plan SHA-256 values
+  `4ee72e3c58f09786cdd3bbf78a772e8de2d9a93e21a8b065cf0c5976ecced270`
+  and
+  `d90ee01c8c459f599c8601934f545ccb7783261edae3bcb6e9e3878036d37d3e`.
+  Overflow state is still absent. Its watcher service is inactive/dead with a
+  successful result and zero restarts, while the enabled timer remains
+  active/waiting.
+- Seven GPU samples over 30 seconds held at 80–83 C, 88–89% fan, 76–81%
+  utilization, 5,554 MiB VRAM, and 113.39–166.42 W. Software thermal limiting
+  was intermittent; hardware thermal slowdown was absent. No sample approached
+  the 88 C three-poll queue guard. Disk remains 7% used with 896 GiB free,
+  inodes 1% used, memory 8.7 GiB available, and swap use 27 MiB.
+- `bbstream`, `bbweb`, and `bbtv-tunnel` are active with zero restarts. The CPU
+  viewer selected exact checkpoint 9,738,125,312 at 03:22 PDT, source SHA-256
+  `5859f805f793b5e2497f640d750f689117d3ca30a13eb5d7a23ec4a4ed1619ce`,
+  against the frozen turnover3 baseline. Public HTTP returned 200 in 0.242
+  seconds. BBTV remains observational and holds no GPU process.
+
+Strict-edition state-bank tranche:
+
+- A standalone streaming filter now turns the historical mixed BBS bank into
+  an exact, provenance-bound BB2025 subset without decoding or rewriting match
+  blobs. It requires the canonical bank and allowlist hashes, validates all
+  BBS1 boundaries and metadata, detects source mutation, and publishes a
+  selected-ID sidecar plus deterministic manifest through exclusive,
+  ownership-safe same-directory hard links. The manifest is the commit marker;
+  racing writers cannot be overwritten.
+- The canonical double-run selected 15,348 records from 5,328 replay IDs and
+  excluded 123 records from 42 IDs. An independent polite fetch confirmed all
+  42 exclusions embed `rulesVersion=BB2020`. The output bank SHA-256 is
+  `bcd9daf55ac5d177f48160092f17a9b4978da877455b830ba33a9c1b5ba84d22`;
+  the selected-ID SHA-256 is
+  `7e22604b51010317059213f285e30a90d6f8fc2b2b358ec5d71fbcd09130c6fd`.
+  The existing reader accepted every record, and the header plus full ordered
+  body matched the source exactly.
+- Two complete Fable reviews approved the filter with no blockers; its
+  concurrency and post-commit cleanup notes were hardened before publication.
+  Eight focused tests, 179 Python contracts, all 431 normal C tests, and all
+  431 ASan/UBSan tests passed. Exact-head GitHub CI run `29407279791` passed on
+  `6d6f325852def41c9372fab35780c4bea5697b71`; PR #24 merged as
+  `a03a2ab3cbb28f2a7d92b697ee3f131ef0643b86`. A durable gitignored 33 MiB
+  artifact and sidecars now exist locally. Nothing was copied to or rebuilt in
+  the active 2070 checkout.
+- A clean post-merge worktree is now recovering the audit's S1–S6 scenario
+  taxonomy. The dump path proves each BBS record is the first resumable
+  decision of a fresh team turn and is committed only after the next replay op
+  succeeds. Fable's read-only plan review recommends a deterministic C fact
+  scanner plus a Python provenance/report layer. The report must classify
+  opportunity structure only, publish record/replay/per-replay-capped
+  denominators and overlaps, and label static opponent reach, geometric score
+  horizons, S3 ordering pressure, and S6 one-move assist counterfactuals as the
+  approximations they are. No replay outcome may become an action-quality
+  label.
+
+Next steps and safety boundary:
+
+1. Write fixtures and contract tests before the S1–S6 scanner. Keep bucket
+   flags non-exclusive, prove `S2` is contained in `S1`, and publish thin
+   turn-band counts rather than smoothing away the opening bias.
+2. Do not wire the strict bank or classifier into training. Use its measured
+   empty/thin buckets only to size a separately reviewed authored-fixture
+   tranche for passing, handoffs, second half, score/clock, Stalling, and
+   contextual rerolls.
+3. Continue hourly live/BBTV checks. The milestone evaluator still waits for
+   both queues terminal, an idle GPU, an inert overflow timer, and explicit
+   BBTV quiescence.
