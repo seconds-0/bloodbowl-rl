@@ -9,7 +9,7 @@ and behavioral cloning from FUMBBL replays.
 1. Read the tail of `DECISIONS.md`. It is the chronological program ledger;
    later entries amend earlier ones without deleting history.
 2. For reward, replay, or training work, read
-   `docs/reward-and-replay-audit-2026-07-09.md`. D177–D191 summarize its durable
+   `docs/reward-and-replay-audit-2026-07-09.md`. D177–D192 summarize its durable
    conclusions and the subsequent vacation-training decisions.
 3. Load the relevant project skill under `.claude/skills/`:
    - `training-experiments` for any run, A/B, checkpoint, metric, or promotion;
@@ -208,6 +208,15 @@ changes a reward, active queue, production default, or promotion verdict.
   dominance. It does not repair opening censorship. The next sampler should
   stratify replay, roster/matchup, turn or drive depth, and action family, with
   explicit setup/opening caps and grouped metrics.
+- Strict-bank S1–S6 outputs are descriptive, overlapping opportunity
+  predicates. `S2` is contained in `S1`; `S4` and `S5` are disjoint carrier
+  perspectives; `S3` is ordering pressure rather than ordering quality; and
+  `S6` is fixed direct-block diversity plus one-move zero-roll assist
+  sensitivity. Keep record, distinct-replay, and three-per-replay-capped
+  denominators together. Never use replay outcomes as action-quality labels,
+  infer unseen continuation quality from a turn-start snapshot, or turn the
+  coverage report into a sampler/training input without a separate reviewed
+  contract.
 - The corpus is sharply prefix-censored: it is not sufficient by itself for
   second halves, late drives, stalling, comeback play, or rare actions.
 - Correct BB2025 human possession is about `0.474` on genuine team-turn

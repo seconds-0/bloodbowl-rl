@@ -16,13 +16,15 @@ SAN_FLAGS = -fsanitize=address,undefined -fno-omit-frame-pointer -O1
 SRC      := $(wildcard engine/src/*.c)
 OBJ      := $(SRC:engine/src/%.c=$(BUILD)/obj/%.o)
 TEST_SRC := $(wildcard engine/tests/test_*.c)
+SCENARIO_SRC := tools/bank_scenario_predicates.c
+SCENARIO_TEST_SRC := $(SCENARIO_SRC) tools/bank_scenario_scan.c
 LIB      := $(BUILD)/libbb.a
 TESTBIN  := $(BUILD)/bb_tests
 PUFFER_REWARD_TESTBIN := $(BUILD)/puffer_reward_tests
 PUFFER_CONTACT_TESTBIN := $(BUILD)/puffer_contact_bot_tests
 PUFFER_TESTBINS := $(PUFFER_REWARD_TESTBIN) $(PUFFER_CONTACT_TESTBIN)
 
-.PHONY: all test asan fuzz coverage coverage-run lockstep ballstats blockstats human-ball-advancement blockev-mc clean
+.PHONY: all test asan fuzz coverage coverage-run lockstep ballstats blockstats human-ball-advancement blockev-mc scenario-scan clean
 
 all: test
 
@@ -43,8 +45,8 @@ $(LIB): $(OBJ)
 # NOTE: tests link the object files directly (not libbb.a) — skill hook
 # registrations live in constructor-only objects that a static archive would
 # drop. External consumers of libbb.a must use -force_load / --whole-archive.
-$(TESTBIN): $(TEST_SRC) engine/tests/bb_test.h engine/tests/bb_fixtures.h engine/tests/bb_test_main.c $(OBJ)
-	$(CC) $(CFLAGS) -Iengine/tests engine/tests/bb_test_main.c $(TEST_SRC) $(OBJ) -o $@ $(LDFLAGS)
+$(TESTBIN): $(TEST_SRC) $(SCENARIO_TEST_SRC) tools/bank_scenario_scan.h engine/tests/bb_test.h engine/tests/bb_fixtures.h engine/tests/bb_test_main.c $(OBJ)
+	$(CC) $(CFLAGS) -DBBS_SCANNER_LIBRARY -Iengine/tests engine/tests/bb_test_main.c $(TEST_SRC) $(SCENARIO_TEST_SRC) $(OBJ) -o $@ $(LDFLAGS)
 
 $(PUFFER_REWARD_TESTBIN): puffer/bloodbowl/test_reward_send_off.c puffer/bloodbowl/bloodbowl.h puffer/bloodbowl/contact_bot.h engine/tests/bb_test.h engine/tests/bb_fixtures.h
 	$(CC) $(CFLAGS) -Iengine/tests -Ipuffer/bloodbowl -Wno-unused-function $< -o $@ -lm $(LDFLAGS)
@@ -93,6 +95,11 @@ ballstats: $(OBJ)
 blockstats: $(OBJ)
 	$(CC) $(CFLAGS) tools/bb_blockstats.c $(OBJ) -o $(BUILD)/bb_blockstats -lm $(LDFLAGS)
 	@echo "run: ./$(BUILD)/bb_blockstats validation/normalized/*.jsonl"
+
+scenario-scan: $(OBJ) tools/bank_scenario_scan.c tools/bank_scenario_scan.h $(SCENARIO_SRC) tools/bank_scenario_predicates.h
+	$(CC) $(CFLAGS) tools/bank_scenario_scan.c $(SCENARIO_SRC) $(OBJ) \
+		-o $(BUILD)/bank_scenario_scan $(LDFLAGS)
+	@echo "run: ./$(BUILD)/bank_scenario_scan validation/states/bb2025-strict/bank.bbs"
 
 human-ball-advancement: ballstats
 	python3 tools/human_ball_advancement.py --runner ./$(BUILD)/bb_ballstats \
