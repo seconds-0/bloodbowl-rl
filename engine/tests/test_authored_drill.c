@@ -10,6 +10,8 @@ static ad_recipe ad_test_recipe(void) {
     recipe.procgen_stream = 17;
     recipe.game_seed = 0xD11CE5u;
     recipe.game_stream = 23;
+    recipe.controller_seed = 0xF300F3u;
+    recipe.controller_stream = 31;
     recipe.home_team = 0;
     recipe.away_team = 1;
     recipe.exclude_team = -1;
@@ -21,6 +23,8 @@ BB_TEST(authored_drill_exact_replay_reproduces_raw_state) {
     ad_recipe recipe = ad_test_recipe();
     char error[AD_ERROR_CAP];
     BB_CHECK_EQ(ad_discover_first_team_turn(&recipe, error), 0);
+    BB_CHECK_EQ(recipe.controller_seed, 0);
+    BB_CHECK_EQ(recipe.controller_stream, 0);
     BB_CHECK(recipe.action_count > 0);
     BB_CHECK(recipe.dice_count > 0);
 
@@ -155,7 +159,42 @@ BB_TEST(authored_drill_bbs_writer_emits_canonical_header_and_record) {
     record.decision_index = (uint32_t)recipe.action_count;
     recipe.captured.score[0]++;
     BB_CHECK(ad_bbs_write(file, &record, 1, error) != 0);
-    BB_CHECK(strstr(error, "replay failed") != NULL);
+    BB_CHECK(strstr(error, "provenance") != NULL ||
+             strstr(error, "replay failed") != NULL);
+    BB_CHECK_EQ(ftell(file), 0);
+    BB_CHECK_EQ(fclose(file), 0);
+
+    recipe = ad_test_recipe();
+    BB_CHECK_EQ(ad_discover_first_team_turn(&recipe, error), 0);
+    record.recipe = &recipe;
+    file = tmpfile();
+    BB_CHECK(file != NULL);
+    if (file == NULL) return;
+    recipe.game_seed++;
+    BB_CHECK(ad_bbs_write(file, &record, 1, error) != 0);
+    BB_CHECK(strstr(error, "provenance") != NULL);
+    BB_CHECK_EQ(ftell(file), 0);
+    BB_CHECK_EQ(fclose(file), 0);
+
+    recipe = ad_test_recipe();
+    BB_CHECK_EQ(ad_discover_first_team_turn(&recipe, error), 0);
+    record.recipe = &recipe;
+    file = tmpfile();
+    BB_CHECK(file != NULL);
+    if (file == NULL) return;
+    recipe.controller_seed++;
+    BB_CHECK(ad_bbs_write(file, &record, 1, error) != 0);
+    BB_CHECK(strstr(error, "provenance") != NULL);
+    BB_CHECK_EQ(ftell(file), 0);
+    BB_CHECK_EQ(fclose(file), 0);
+
+    recipe.controller_seed--;
+    file = tmpfile();
+    BB_CHECK(file != NULL);
+    if (file == NULL) return;
+    recipe.controller_stream++;
+    BB_CHECK(ad_bbs_write(file, &record, 1, error) != 0);
+    BB_CHECK(strstr(error, "provenance") != NULL);
     BB_CHECK_EQ(ftell(file), 0);
     BB_CHECK_EQ(fclose(file), 0);
 }
@@ -194,4 +233,75 @@ BB_TEST(authored_drill_one_action_continuation_is_canonical_and_safe) {
     BB_CHECK(ad_verify_one_action_continuation(
                  &loaded, &applied, &status, &dice_used, error) != 0);
     BB_CHECK(strstr(error, "boundary") != NULL);
+}
+
+BB_TEST(authored_drill_f3_reaches_late_second_half_by_legal_play) {
+    ad_recipe recipe = ad_test_recipe();
+    char error[AD_ERROR_CAP];
+    BB_CHECK_EQ(ad_discover_f3_late_second_half(&recipe, error), 0);
+    BB_CHECK(recipe.action_count > 0);
+    BB_CHECK(recipe.action_count < AD_MAX_ACTIONS / 4);
+    BB_CHECK(recipe.dice_count > 0);
+    BB_CHECK(recipe.dice_count < AD_MAX_DICE / 4);
+    BB_CHECK_EQ(recipe.captured.half, 2);
+    BB_CHECK_EQ(recipe.captured.score[BB_HOME], 0);
+    BB_CHECK_EQ(recipe.captured.score[BB_AWAY], 0);
+    BB_CHECK(recipe.captured.active_team <= BB_AWAY);
+    if (recipe.captured.active_team > BB_AWAY) return;
+    BB_CHECK(recipe.captured.turn[recipe.captured.active_team] >= 5);
+    BB_CHECK(bb_state_bank_boundary_valid(&recipe.captured));
+
+    bb_match replayed;
+    BB_CHECK_EQ(ad_replay_exact(&recipe, &replayed, error), 0);
+    BB_CHECK_EQ(memcmp(&replayed, &recipe.captured, sizeof replayed), 0);
+    BB_CHECK_EQ(ad_verify_one_action_continuation(
+                    &replayed, NULL, NULL, NULL, error),
+                0);
+
+    FILE* file = tmpfile();
+    BB_CHECK(file != NULL);
+    if (file != NULL) {
+        ad_bbs_record record = {
+            0xA3000001u, (uint32_t)recipe.action_count, &recipe,
+        };
+        recipe.controller_seed++;
+        BB_CHECK(ad_bbs_write(file, &record, 1, error) != 0);
+        BB_CHECK(strstr(error, "provenance") != NULL);
+        BB_CHECK_EQ(ftell(file), 0);
+        BB_CHECK_EQ(fclose(file), 0);
+        recipe.controller_seed--;
+    }
+
+    ad_recipe rediscovered = ad_test_recipe();
+    BB_CHECK_EQ(ad_discover_f3_late_second_half(&rediscovered, error), 0);
+    BB_CHECK_EQ(memcmp(&recipe, &rediscovered, sizeof recipe), 0);
+}
+
+BB_TEST(authored_drill_writer_preflights_mixed_batch_before_header) {
+    ad_recipe first = ad_test_recipe();
+    ad_recipe late = ad_test_recipe();
+    char error[AD_ERROR_CAP];
+    BB_CHECK_EQ(ad_discover_first_team_turn(&first, error), 0);
+    BB_CHECK_EQ(ad_discover_f3_late_second_half(&late, error), 0);
+    ad_bbs_record records[2] = {
+        {0xA0000002u, (uint32_t)first.action_count, &first},
+        {0xA3000002u, (uint32_t)late.action_count, &late},
+    };
+
+    FILE* file = tmpfile();
+    BB_CHECK(file != NULL);
+    if (file == NULL) return;
+    BB_CHECK_EQ(ad_bbs_write(file, records, 2, error), 0);
+    BB_CHECK_EQ(fseek(file, 0, SEEK_END), 0);
+    BB_CHECK_EQ(ftell(file), 16 + 2 * (12 + (long)sizeof(bb_match)));
+    BB_CHECK_EQ(fclose(file), 0);
+
+    file = tmpfile();
+    BB_CHECK(file != NULL);
+    if (file == NULL) return;
+    late.controller_seed++;
+    BB_CHECK(ad_bbs_write(file, records, 2, error) != 0);
+    BB_CHECK(strstr(error, "record 1 provenance failed") != NULL);
+    BB_CHECK_EQ(ftell(file), 0);
+    BB_CHECK_EQ(fclose(file), 0);
 }

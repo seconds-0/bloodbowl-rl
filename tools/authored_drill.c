@@ -103,6 +103,19 @@ static int ad_pick_pre_turn(const bb_match* match, const bb_action* legal, int n
     return best;
 }
 
+static int ad_pick_long_horizon(const bb_match* match,
+                                const bb_action* legal, int n,
+                                bb_rng* controller_rng) {
+    int in_setup = n > 0 &&
+        (legal[0].type == BB_A_SETUP_PLACE ||
+         legal[0].type == BB_A_SETUP_REMOVE);
+    if (in_setup) return ad_pick_pre_turn(match, legal, n);
+    for (int i = 0; i < n; i++) {
+        if (legal[i].type == BB_A_SETUP_DONE) return i;
+    }
+    return (int)(bb_rng_next(controller_rng) % (uint32_t)n);
+}
+
 static int ad_action_is_legal(const bb_match* match, uint32_t packed) {
     bb_action legal[BB_LEGAL_MAX];
     int n = bb_legal_actions(match, legal);
@@ -113,7 +126,9 @@ static int ad_action_is_legal(const bb_match* match, uint32_t packed) {
 }
 
 static int ad_recipe_config_valid(const ad_recipe* recipe) {
-    return recipe->home_team >= -1 && recipe->home_team < BB_TEAM_COUNT &&
+    return recipe->kind >= AD_RECIPE_FIRST_TEAM_TURN &&
+           recipe->kind < AD_RECIPE_KIND_COUNT &&
+           recipe->home_team >= -1 && recipe->home_team < BB_TEAM_COUNT &&
            recipe->away_team >= -1 && recipe->away_team < BB_TEAM_COUNT &&
            recipe->exclude_team >= -1 && recipe->exclude_team < BB_TEAM_COUNT &&
            recipe->procgen.skillup_max_players >= 0 &&
@@ -124,11 +139,37 @@ static int ad_recipe_config_valid(const ad_recipe* recipe) {
            recipe->procgen.skillup_secondary_pct <= 1.0f;
 }
 
-int ad_discover_first_team_turn(ad_recipe* recipe, char error[AD_ERROR_CAP]) {
-    if (recipe == NULL) return ad_fail(error, "null recipe");
-    if (!ad_recipe_config_valid(recipe)) return ad_fail(error, "invalid recipe configuration");
+static int ad_capture_ready(const bb_match* match, ad_recipe_kind kind) {
+    if (!ad_has_team_turn(match)) return 0;
+    if (kind == AD_RECIPE_FIRST_TEAM_TURN) return 1;
+    return match->half == 2 && match->active_team <= BB_AWAY &&
+           match->turn[match->active_team] >= 5;
+}
+
+static void ad_clear_discovery(ad_recipe* recipe) {
+    memset(&recipe->initialized, 0, sizeof recipe->initialized);
+    memset(&recipe->captured, 0, sizeof recipe->captured);
+    memset(recipe->actions, 0, sizeof recipe->actions);
+    memset(recipe->decision_teams, 0, sizeof recipe->decision_teams);
+    memset(recipe->dice_sides, 0, sizeof recipe->dice_sides);
+    memset(recipe->dice_values, 0, sizeof recipe->dice_values);
     recipe->action_count = 0;
     recipe->dice_count = 0;
+}
+
+static int ad_discover(ad_recipe* recipe, ad_recipe_kind kind,
+                       char error[AD_ERROR_CAP]) {
+    if (recipe == NULL) return ad_fail(error, "null recipe");
+    recipe->kind = kind;
+    // The first-team-turn controller is a pure packed-action ordering and does
+    // not consume a controller RNG. Canonical zeroes prevent inert caller
+    // values from masquerading as seed provenance during full rediscovery.
+    if (kind == AD_RECIPE_FIRST_TEAM_TURN) {
+        recipe->controller_seed = 0;
+        recipe->controller_stream = 0;
+    }
+    if (!ad_recipe_config_valid(recipe)) return ad_fail(error, "invalid recipe configuration");
+    ad_clear_discovery(recipe);
 
     bb_rng procgen_rng;
     bb_rng_seed(&procgen_rng, recipe->procgen_seed, recipe->procgen_stream);
@@ -142,11 +183,14 @@ int ad_discover_first_team_turn(ad_recipe* recipe, char error[AD_ERROR_CAP]) {
     bb_rng_seed(&game_rng, recipe->game_seed, recipe->game_stream);
     ad_record_sink sink = {recipe, 0};
     bb_rng_set_sink(&game_rng, ad_record_die, &sink);
+    bb_rng controller_rng;
+    bb_rng_seed(&controller_rng, recipe->controller_seed,
+                recipe->controller_stream);
     bb_status status = bb_advance(&match, &game_rng);
 
     while (status == BB_STATUS_DECISION && recipe->action_count < AD_MAX_ACTIONS) {
         if (sink.overflow) return ad_fail(error, "dice transcript exceeds %d", AD_MAX_DICE);
-        if (ad_has_team_turn(&match)) {
+        if (ad_capture_ready(&match, kind)) {
             bb_action legal[BB_LEGAL_MAX];
             if (bb_legal_actions(&match, legal) <= 0) {
                 return ad_fail(error, "captured decision has no legal actions");
@@ -159,7 +203,9 @@ int ad_discover_first_team_turn(ad_recipe* recipe, char error[AD_ERROR_CAP]) {
         bb_action legal[BB_LEGAL_MAX];
         int n = bb_legal_actions(&match, legal);
         if (n <= 0) return ad_fail(error, "decision %d has no legal action", recipe->action_count);
-        int picked = ad_pick_pre_turn(&match, legal, n);
+        int picked = kind == AD_RECIPE_FIRST_TEAM_TURN
+            ? ad_pick_pre_turn(&match, legal, n)
+            : ad_pick_long_horizon(&match, legal, n, &controller_rng);
         if (picked < 0 || picked >= n) return ad_fail(error, "controller failed at decision %d", recipe->action_count);
         int i = recipe->action_count++;
         recipe->actions[i] = bb_action_pack(legal[picked]);
@@ -171,7 +217,17 @@ int ad_discover_first_team_turn(ad_recipe* recipe, char error[AD_ERROR_CAP]) {
     if (recipe->action_count >= AD_MAX_ACTIONS) {
         return ad_fail(error, "action transcript exceeds %d", AD_MAX_ACTIONS);
     }
-    return ad_fail(error, "match ended with status %d before a team turn", status);
+    return ad_fail(error, "match ended with status %d before capture %d",
+                   status, kind);
+}
+
+int ad_discover_first_team_turn(ad_recipe* recipe, char error[AD_ERROR_CAP]) {
+    return ad_discover(recipe, AD_RECIPE_FIRST_TEAM_TURN, error);
+}
+
+int ad_discover_f3_late_second_half(ad_recipe* recipe,
+                                    char error[AD_ERROR_CAP]) {
+    return ad_discover(recipe, AD_RECIPE_F3_LATE_SECOND_HALF, error);
 }
 
 int ad_replay_exact(const ad_recipe* recipe, bb_match* out,
@@ -294,6 +350,29 @@ static int ad_write_u32(FILE* file, uint32_t value) {
     return ad_write_bytes(file, bytes, sizeof bytes);
 }
 
+static int ad_rediscover_recipe(const ad_recipe* source, ad_recipe* out,
+                                char error[AD_ERROR_CAP]) {
+    *out = *source;
+    int rc;
+    switch (source->kind) {
+        case AD_RECIPE_FIRST_TEAM_TURN:
+            rc = ad_discover_first_team_turn(out, error);
+            break;
+        case AD_RECIPE_F3_LATE_SECOND_HALF:
+            rc = ad_discover_f3_late_second_half(out, error);
+            break;
+        default:
+            return ad_fail(error, "unknown authored recipe kind %d",
+                           source->kind);
+    }
+    if (rc != 0) return rc;
+    if (memcmp(source, out, sizeof *out) != 0) {
+        return ad_fail(error, "rediscovered recipe provenance differs");
+    }
+    if (error != NULL) error[0] = '\0';
+    return 0;
+}
+
 int ad_bbs_write(FILE* file, const ad_bbs_record* records, size_t count,
                  char error[AD_ERROR_CAP]) {
     if (file == NULL || records == NULL || count == 0) {
@@ -304,31 +383,50 @@ int ad_bbs_write(FILE* file, const ad_bbs_record* records, size_t count,
     }
     bb_match* verified = calloc(count, sizeof(*verified));
     if (verified == NULL) return ad_fail(error, "cannot allocate verified BBS records");
+    ad_recipe* rediscovered = malloc(sizeof(*rediscovered));
+    if (rediscovered == NULL) {
+        free(verified);
+        return ad_fail(error, "cannot allocate rediscovered BBS recipe");
+    }
 
-    // Exact-replay and validate the complete batch before emitting even the
-    // header. This binds serialized bytes to transcripts and keeps malformed
-    // later records from leaving a plausible prefix.
+    // Independently rediscover, exact-replay, and validate the complete batch
+    // before emitting even the header. This binds declared seeds and controller
+    // provenance to transcripts, binds serialized bytes to exact replay, and
+    // keeps malformed later records from leaving a plausible prefix.
     for (size_t i = 0; i < count; i++) {
         const ad_bbs_record* record = &records[i];
         if ((record->source_id & 0xF0000000u) != 0xA0000000u ||
             record->recipe == NULL) {
+            free(rediscovered);
             free(verified);
             return ad_fail(error, "invalid authored BBS record %zu", i);
         }
+        char provenance_error[AD_ERROR_CAP];
+        if (ad_rediscover_recipe(record->recipe, rediscovered,
+                                 provenance_error) != 0) {
+            free(rediscovered);
+            free(verified);
+            return ad_fail(error,
+                           "authored BBS record %zu provenance failed: %s",
+                           i, provenance_error);
+        }
         char replay_error[AD_ERROR_CAP];
-        if (ad_replay_exact(record->recipe, &verified[i], replay_error) != 0) {
+        if (ad_replay_exact(rediscovered, &verified[i], replay_error) != 0) {
+            free(rediscovered);
             free(verified);
             return ad_fail(error, "authored BBS record %zu replay failed: %s",
                            i, replay_error);
         }
         if (record->decision_index !=
-            (uint32_t)record->recipe->action_count) {
+            (uint32_t)rediscovered->action_count) {
+            free(rediscovered);
             free(verified);
             return ad_fail(error,
                            "authored BBS record %zu decision index differs",
                            i);
         }
         if (!bb_state_bank_boundary_valid(&verified[i])) {
+            free(rediscovered);
             free(verified);
             return ad_fail(error,
                            "authored BBS record %zu is not a safe BBS1 boundary",
@@ -337,12 +435,14 @@ int ad_bbs_write(FILE* file, const ad_bbs_record* records, size_t count,
         char continuation_error[AD_ERROR_CAP];
         if (ad_verify_one_action_continuation(
                 &verified[i], NULL, NULL, NULL, continuation_error) != 0) {
+            free(rediscovered);
             free(verified);
             return ad_fail(error,
                            "authored BBS record %zu cannot continue: %s",
                            i, continuation_error);
         }
     }
+    free(rediscovered);
     if (ad_write_bytes(file, "BBS1", 4) != 0 || ad_write_u32(file, 1) != 0 ||
         ad_write_u32(file, (uint32_t)sizeof(bb_match)) != 0 ||
         ad_write_u32(file, ad_bbs_fingerprint()) != 0) {

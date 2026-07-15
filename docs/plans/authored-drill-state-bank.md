@@ -150,6 +150,18 @@ At completion, require exact action count, exact dice consumption, no sticky RNG
 error, no engine error, and byte-identical capture hashes. The Pass-2 matches—not
 the discovery copies—are serialized into BBS1.
 
+Serializer preflight repeats Pass 1 from configuration-only fields before it
+performs Pass 2. It requires full recipe byte identity, including initialized
+and captured matches, the complete action/dice/decision-team transcripts, their
+counts, and all unused transcript capacity. This independently binds the
+declared procgen and game seeds, plus every controller stream actually used, to
+the bytes being serialized. Recipe kinds without a controller RNG require
+canonical zero controller fields so inert values cannot masquerade as evidence;
+successfully replaying a caller-supplied transcript is necessary but is not, by
+itself, evidence that the declared seeds generated it. The complete mixed batch
+is rediscovered, replayed, boundary-validated, and continuation-checked before
+the writer emits even the BBS1 header.
+
 ## Family matrix
 
 The first complete bank is count-balanced across five families. Thin variants
@@ -278,6 +290,14 @@ applies that action to a private copy with a 256-face all-ones scripted suffix,
 and rejects RNG exhaustion or engine error. The Puffer integration test repeats
 the gate on the actually reloaded record. Family compilers must still record
 the reconciled per-record totals in their report and manifest.
+
+The first F3 proof recipe uses a third, independent controller RNG stream to
+play through real drives and halftime. Its fixed test trajectory reaches half
+two at a fresh team-turn boundary with active-team turn 5 after 660 legal
+decisions and 175 in-match dice. The test requires byte-identical independent
+rediscovery, exact replay, safe serialization, production-loader byte identity,
+and one-action continuation. This proves one tied-score late-second-half
+template only; it does not establish F3 axis coverage, quotas, or publication.
 
 ## Acceptance gates
 

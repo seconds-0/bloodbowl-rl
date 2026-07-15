@@ -13,11 +13,20 @@
 #define AD_CONTINUATION_DICE 256
 #define AD_ERROR_CAP 192
 
+typedef enum {
+    AD_RECIPE_FIRST_TEAM_TURN = 0,
+    AD_RECIPE_F3_LATE_SECOND_HALF,
+    AD_RECIPE_KIND_COUNT,
+} ad_recipe_kind;
+
 typedef struct {
     uint64_t procgen_seed;
     uint64_t procgen_stream;
     uint64_t game_seed;
     uint64_t game_stream;
+    uint64_t controller_seed;
+    uint64_t controller_stream;
+    ad_recipe_kind kind;
     int home_team;
     int away_team;
     int exclude_team;
@@ -43,6 +52,12 @@ typedef struct {
 // advance, and legal apply calls. The built-in controller is deterministic and
 // setup-aware; it receives match state as const and cannot mutate it.
 int ad_discover_first_team_turn(ad_recipe* recipe, char error[AD_ERROR_CAP]);
+
+// Play through real drives and halftime with an independent deterministic
+// controller stream, capturing a fresh team-turn boundary in half two at turn
+// five or later. No clock, score, player, ball, or procedure field is written.
+int ad_discover_f3_late_second_half(ad_recipe* recipe,
+                                    char error[AD_ERROR_CAP]);
 
 // Reinitialize from the procgen seed, inject the exact recorded in-match dice,
 // replay every packed legal action, and require raw-state identity.
