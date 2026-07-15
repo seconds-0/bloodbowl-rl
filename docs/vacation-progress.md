@@ -4727,3 +4727,93 @@ Next steps:
 3. Keep sidecars, bank publication, training-input changes, reward changes,
    deployment, and milestone evaluation out of scope until their separate
    contracts and terminal queue gates authorize them.
+
+## 2026-07-15 14:07 PDT — seed 43 at 4.90B; BBTV live; identity registry plan approved before code
+
+Live queue and BBTV health:
+
+- The primary queue remains authoritative `active/running` on
+  `final-main-control`, arm `both`, seed 43/current index 2, with one completed
+  arm. `SCREEN_STATUS.json` was fresh at 14:04 PDT. Queue PID 431309, wrapper
+  PID 431316, and the sole completion-gate/GPU-compute PID 473422 remain
+  stable; the primary and three BBTV services have zero restarts. The overflow
+  service remains inactive/dead with absent state and zero restarts.
+- Exact read-only validation again matched all 65 primary pins at plan SHA-256
+  `4ee72e3c58f09786cdd3bbf78a772e8de2d9a93e21a8b065cf0c5976ecced270`
+  and all 74 overflow pins at plan SHA-256
+  `d90ee01c8c459f599c8601934f545ccb7783261edae3bcb6e9e3878036d37d3e`.
+  Both pin-error results are `None`, overflow state is absent, and the exact
+  gate reports only PID 473422.
+- The latest complete telemetry panel observed exact step 4,899,733,504 at
+  epoch 37,381 over 124 games: performance 0.536290, draw rate 0.362903,
+  possession 0.383661, illegal/sampled-repair fraction 0.178112, ball progress
+  8.976910, 20.104839 Rush intentions, 11.524194 blocks thrown, 1.693548 blocks
+  against the carrier, carrier-target fraction 0.157885, Pass intentions
+  0.024194, and zero Hand-off intentions. Reward clipping, non-finite reward,
+  engine-error, demonstration, and fallback counters remain zero. The live
+  dashboard reported 188.3K SPS and approximately 10h28m remaining for this
+  seed, excluding evaluation and queue-transition uncertainty.
+- The newest complete 16,066,560-byte checkpoint was exact step 4,894,097,408
+  at 14:04 PDT. Four GPU samples ranged from 80-82 C, 89% fan, 76-79%
+  utilization, 5,554/8,192 MiB, and 114.14-121.84 W. Software thermal slowdown
+  was active and hardware slowdown inactive in all four. Temperature remains
+  below the literal frozen 88 C three-poll guard, so no tuning was performed.
+  Disk is 7% used with 893 GiB free, inode use is 1%, memory has 9.3 GiB
+  available, and swap use is 42 MiB.
+- The 14:00 PDT overflow watcher exited successfully after logging `primary
+  service is still active; waiting`; the timer remained active/waiting for its
+  14:10 poll and created no overflow state.
+- `bbstream`, `bbweb`, and `bbtv-tunnel` remain active with zero restarts. At
+  14:04 PDT BBTV selected seed-43 checkpoint 4,844,158,976 against the frozen
+  turnover3 baseline. Learner source SHA-256 is
+  `dd88b65d39da985ef117505d780285d280376dd13b5a66cbb28785904e313f39`,
+  converted output SHA-256 is
+  `1c1334bc3e25cff53249d4c861bbcbebc8bbdcc6d1aa291f608ca3903e59846e`,
+  and `selection.json` SHA-256 is
+  `0d0cc1f52500d86adf743733df151c6b92e46df79007cc7c1620c070a0b9ba62`.
+  The public page returned HTTP 200 in 0.273 seconds. An eight-second public WSS
+  client received the correct learner/frozen hello, Khorne-versus-Amazon match
+  start, snapshot, advancing deltas, and ping before deliberate timeout. BBTV
+  remains CPU-only and observational.
+
+Persistent authored identity registry:
+
+- The exact parent recipe oracle was generated before production edits with an
+  explicit padding-free serializer and reproduced identically optimized and
+  under ASan/UBSan. The permanent streams are configuration 2,508 bytes at
+  `d4f7826c...`, used action/decision transcripts 44,315 bytes at
+  `62e7312c...`, used dice 5,662 bytes at `33ff55ef...`, canonical unused
+  transcript storage 1,441,731 bytes at `016f7ea2...`, initialized matches
+  55,782 bytes at `fa5b06eb...`, and captured matches 55,782 bytes at
+  `4cecac27...`. The full hashes and exact encodings are in the reviewed plan.
+- Twelve adversarial review rounds converted the initial compact-ID idea into
+  an opaque AE ordinal registry with global executable uniqueness, immutable
+  template/kind bindings, exact fixed-26 schema-1 containment, a separate
+  frozen A9 schedule, complete configuration matching, bit-exact float identity,
+  and permanent semantic/A9 preservation. The plan also defines a target-
+  authority verifier that cannot trust candidate commands, checks every newly
+  reachable commit, recursively owns the full `ad_recipe` graph, executes the
+  candidate writer, interposes on its real admission/continuation path for all
+  26 records, and directly freezes admission/continuation behavior through an
+  immutable bit-flip plus curated adversarial corpus.
+- All three independent reviewers reported no P0-P3 finding at exact plan
+  SHA-256
+  `ff336e20beea6acd63d74b0bb72d7b508685836b6d007422c451a7459dfecc71`.
+  The plan was then committed unchanged as `a80116f` on
+  `tranche/authored-identity-registry`. No production implementation existed at
+  that commit, preserving the test-first boundary.
+- Claude Code authentication remains `loggedIn: false` with no auth method, so
+  Fable remains unavailable and no Fable review is claimed.
+
+Next steps:
+
+1. Continue the hourly read-only operational loop and preserve every frozen
+   queue, thermal, overflow, checkpoint-selection, and BBTV boundary.
+2. Begin the approved identity tranche test-first: capture the remaining direct
+   gate result digests from the untouched parent, add fail-first public/internal
+   contract tests, then implement only the reviewed fixed-26 registry and
+   authority verifier.
+3. Run optimized and sanitizer suites, static checks, hosted CI, and three fresh
+   exact-head code reviews before merge. Do not deploy this CPU-only metadata
+   infrastructure or authorize sidecars, bank publication, training inputs,
+   rewards, or evaluation.
