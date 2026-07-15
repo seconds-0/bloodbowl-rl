@@ -61,6 +61,45 @@ INTEGRITY_KEYS = (
     "demo_episodes",
     "demo_fallbacks",
 )
+# Existing native match telemetry needed to distinguish a score-only plateau
+# from behavior drift. These are match-level (both policies), except the two
+# explicitly side-split block-volume counters. They must therefore be reported
+# as joint diagnostics, never mislabelled as focal-policy-only measurements.
+BEHAVIOR_METRIC_KEYS = (
+    "illegal_frac",
+    "blocks_thrown",
+    "blocks_thrown_t0",
+    "blocks_thrown_t1",
+    "blocks_vs_carrier",
+    "carrier_block_frac",
+    "block_1d_frac",
+    "block_2d_frac",
+    "block_3d_frac",
+    "block_2dred_frac",
+    "block_3dred_frac",
+    "possession_rate",
+    "ball_fwd_adv",
+    "ball_path_len",
+    "dodge_attempts",
+    "gfi_attempts",
+    "pickup_attempts",
+    "pickup_success",
+    "pass_attempts",
+    "handoff_attempts",
+    "knockdowns_inflicted",
+    "knockdowns_own",
+    "carrier_knockdowns",
+)
+BEHAVIOR_FRACTION_KEYS = (
+    "illegal_frac",
+    "carrier_block_frac",
+    "block_1d_frac",
+    "block_2d_frac",
+    "block_3d_frac",
+    "block_2dred_frac",
+    "block_3dred_frac",
+    "possession_rate",
+)
 NAME_PATTERN = re.compile(r"[a-z][a-z0-9_-]{0,63}")
 SHA_PATTERN = re.compile(r"[0-9a-f]{64}")
 SPEC_KEYS = {
@@ -737,6 +776,49 @@ def validate_cell(
     bad = {key: value for key, value in parsed_integrity.items() if value != 0.0}
     if bad:
         raise MilestoneEvalError(f"{path.name} integrity counters nonzero: {bad}")
+    raw_metrics = cell.get("raw_env_metrics")
+    if not isinstance(raw_metrics, dict):
+        raise MilestoneEvalError(
+            f"{path.name} raw environment behavior metrics are missing"
+        )
+    missing_behavior = [key for key in BEHAVIOR_METRIC_KEYS if key not in raw_metrics]
+    if missing_behavior:
+        raise MilestoneEvalError(
+            f"{path.name} raw environment behavior metrics are incomplete: "
+            + ", ".join(missing_behavior)
+        )
+    behavior = {
+        key: finite(raw_metrics[key], f"{path.name} raw_env_metrics.{key}")
+        for key in BEHAVIOR_METRIC_KEYS
+    }
+    negative = {key: value for key, value in behavior.items() if value < 0.0}
+    if negative:
+        raise MilestoneEvalError(
+            f"{path.name} raw environment behavior metrics are negative: {negative}"
+        )
+    bad_fractions = {
+        key: behavior[key]
+        for key in BEHAVIOR_FRACTION_KEYS
+        if behavior[key] > 1.0 + 1e-6
+    }
+    if bad_fractions:
+        raise MilestoneEvalError(
+            f"{path.name} raw environment behavior fractions are invalid: "
+            f"{bad_fractions}"
+        )
+    if (
+        abs(
+            behavior["blocks_thrown_t0"]
+            + behavior["blocks_thrown_t1"]
+            - behavior["blocks_thrown"]
+        )
+        > 2e-4
+    ):
+        raise MilestoneEvalError(
+            f"{path.name} per-side block volume does not sum to total"
+        )
+    focal_team = expected["orientation"]
+    opponent_team = 1 - focal_team
     return {
         **identity,
         "embedded_steps": checkpoint["embedded_steps"],
@@ -750,6 +832,9 @@ def validate_cell(
         "opponent_tds": opponent_tds,
         "focal_checkpoint_sha256": checkpoint["native_sha256"],
         "anchor_checkpoint_sha256": anchor["sha256"],
+        "joint_behavior": behavior,
+        "focal_blocks_thrown": behavior[f"blocks_thrown_t{focal_team}"],
+        "opponent_blocks_thrown": behavior[f"blocks_thrown_t{opponent_team}"],
         "file": path.name,
         "file_sha256": sha256(path),
     }
@@ -1119,6 +1204,12 @@ def analyze(directory: str | Path) -> dict[str, Any]:
                 "macro_score": mean([row["focal_score"] for row in cells]),
                 "macro_tds_for": mean([row["focal_tds"] for row in cells]),
                 "macro_tds_against": mean([row["opponent_tds"] for row in cells]),
+                "macro_focal_blocks_thrown": mean(
+                    [row["focal_blocks_thrown"] for row in cells]
+                ),
+                "macro_opponent_blocks_thrown": mean(
+                    [row["opponent_blocks_thrown"] for row in cells]
+                ),
                 "by_anchor": {
                     anchor["name"]: mean(
                         [
@@ -1139,6 +1230,10 @@ def analyze(directory: str | Path) -> dict[str, Any]:
                     )
                     for orientation in plan["orientations"]
                 },
+                "joint_behavior": {
+                    key: mean([row["joint_behavior"][key] for row in cells])
+                    for key in BEHAVIOR_METRIC_KEYS
+                },
             }
             if points:
                 point["score_delta_previous"] = (
@@ -1152,6 +1247,13 @@ def analyze(directory: str | Path) -> dict[str, Any]:
             point["tds_against_delta_warm"] = (
                 point["macro_tds_against"] - warm["macro_tds_against"]
             )
+            point["focal_blocks_thrown_delta_warm"] = (
+                point["macro_focal_blocks_thrown"] - warm["macro_focal_blocks_thrown"]
+            )
+            point["joint_behavior_delta_warm"] = {
+                key: point["joint_behavior"][key] - warm["joint_behavior"][key]
+                for key in BEHAVIOR_METRIC_KEYS
+            }
         trajectories[str(seed)] = points
         nominations[str(seed)] = nominate(points)
     aggregate_trajectory = []
@@ -1199,6 +1301,9 @@ def analyze(directory: str | Path) -> dict[str, Any]:
         "stage_b_nominations": nominations,
         "warning": (
             "These anchors are unseen exact checkpoints but lineage-connected. "
+            "joint_behavior contains match-level metrics for both policies; "
+            "it diagnoses behavior drift but cannot be attributed to the focal "
+            "policy alone. "
             "The fixed nomination compresses Stage B evaluation; it is not a "
             "reward or production promotion gate. Exact ordinary bootstrap "
             "intervals use only three seed strata and must be read with the "

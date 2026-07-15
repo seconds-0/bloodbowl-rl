@@ -19,6 +19,35 @@ ZERO_INTEGRITY = {key: 0.0 for key in milestone.INTEGRITY_KEYS}
 
 
 class MilestoneEvalTests(unittest.TestCase):
+    @staticmethod
+    def behavior_metrics(target: int) -> dict[str, float]:
+        progress = target / 1_000_000_000
+        return {
+            "illegal_frac": 0.10,
+            "blocks_thrown": 10.0 + progress,
+            "blocks_thrown_t0": 4.0 + progress,
+            "blocks_thrown_t1": 6.0,
+            "blocks_vs_carrier": 1.0,
+            "carrier_block_frac": 0.10,
+            "block_1d_frac": 0.20,
+            "block_2d_frac": 0.60,
+            "block_3d_frac": 0.10,
+            "block_2dred_frac": 0.08,
+            "block_3dred_frac": 0.02,
+            "possession_rate": 0.40,
+            "ball_fwd_adv": 8.0,
+            "ball_path_len": 10.0,
+            "dodge_attempts": 20.0,
+            "gfi_attempts": 18.0,
+            "pickup_attempts": 4.0,
+            "pickup_success": 3.0,
+            "pass_attempts": 0.02,
+            "handoff_attempts": 0.01,
+            "knockdowns_inflicted": 5.0,
+            "knockdowns_own": 2.0,
+            "carrier_knockdowns": 0.5,
+        }
+
     def test_resolve_target_uses_greatest_step_not_above_target(self):
         rows = [
             (100, Path("100.bin")),
@@ -144,6 +173,7 @@ class MilestoneEvalTests(unittest.TestCase):
                 "anchor_checkpoint_sha256": anchor["sha256"],
                 "implementation": {},
                 "integrity": dict(ZERO_INTEGRITY),
+                "raw_env_metrics": self.behavior_metrics(expected["target_steps"]),
             }
             (directory / expected["path"]).write_text(
                 json.dumps(cell, indent=2, sort_keys=True) + "\n",
@@ -178,7 +208,76 @@ class MilestoneEvalTests(unittest.TestCase):
             self.assertFalse(nomination["exploratory"])
             aggregate = report["aggregate_trajectory"][2]
             self.assertAlmostEqual(aggregate["score_delta_warm"]["mean"], 0.11)
+            self.assertAlmostEqual(
+                points[2]["joint_behavior_delta_warm"]["blocks_thrown"],
+                2.0,
+            )
+            self.assertAlmostEqual(
+                points[2]["focal_blocks_thrown_delta_warm"],
+                1.0,
+            )
             self.assertEqual(aggregate["score"]["clusters"], 3)
+
+    def test_cell_without_behavior_metrics_is_rejected(self):
+        """Stage-A cells must preserve the protocol's raw behavior evidence."""
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            plan = self.synthetic_plan(directory)
+            self.write_cells(
+                directory,
+                plan,
+                {target: 0.5 for target in milestone.FIXED_TARGET_STEPS},
+            )
+            expected = milestone.expected_cells(plan)[0]
+            path = directory / expected["path"]
+            cell = json.loads(path.read_text(encoding="utf-8"))
+            del cell["raw_env_metrics"]
+            path.write_text(
+                json.dumps(cell, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(
+                milestone.MilestoneEvalError,
+                "raw environment behavior metrics",
+            ):
+                milestone.validate_cell(path, plan, expected)
+
+    def test_invalid_behavior_metrics_are_rejected(self):
+        mutations = (
+            (
+                "must be finite",
+                lambda metrics: metrics.__setitem__("gfi_attempts", float("nan")),
+            ),
+            (
+                "fractions are invalid",
+                lambda metrics: metrics.__setitem__("illegal_frac", 1.1),
+            ),
+            (
+                "block volume does not sum",
+                lambda metrics: metrics.__setitem__("blocks_thrown_t0", 99.0),
+            ),
+        )
+        for message, mutate in mutations:
+            with self.subTest(
+                message=message
+            ), tempfile.TemporaryDirectory() as temporary:
+                directory = Path(temporary)
+                plan = self.synthetic_plan(directory)
+                self.write_cells(
+                    directory,
+                    plan,
+                    {target: 0.5 for target in milestone.FIXED_TARGET_STEPS},
+                )
+                expected = milestone.expected_cells(plan)[0]
+                path = directory / expected["path"]
+                cell = json.loads(path.read_text(encoding="utf-8"))
+                mutate(cell["raw_env_metrics"])
+                path.write_text(
+                    json.dumps(cell, indent=2, sort_keys=True) + "\n",
+                    encoding="utf-8",
+                )
+                with self.assertRaisesRegex(milestone.MilestoneEvalError, message):
+                    milestone.validate_cell(path, plan, expected)
 
     def test_exact_cluster_bootstrap_uses_all_seed_resamples(self):
         summary = milestone.exact_cluster_bootstrap([0.4, 0.5, 0.6])
