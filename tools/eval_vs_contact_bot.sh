@@ -79,7 +79,7 @@ if ! "$ROOT/tools/install_puffer_env.sh" --check "$ROOT/vendor/PufferLib"; then
   echo "  $ROOT/tools/install_puffer_env.sh $ROOT/vendor/PufferLib" >&2
   exit 1
 fi
-grep -q 'if i == 96:' "$ROOT/vendor/PufferLib/pufferlib/pufferl.py" || {
+grep -q 'if i == 160:' "$ROOT/vendor/PufferLib/pufferlib/pufferl.py" || {
   echo "Puffer dashboard patch missing; interval n/late metrics would be hidden" >&2
   exit 1
 }

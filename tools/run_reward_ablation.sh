@@ -256,7 +256,7 @@ grep -q 'league_preseed' pufferlib/selfplay.py || {
   echo "vendored selfplay.py lacks training/selfplay_league.patch" >&2; exit 1; }
 grep -q 'Warm-started training from' pufferlib/pufferl.py || {
   echo "vendored pufferl.py lacks the warm-start patch" >&2; exit 1; }
-grep -q 'if i == 96:' pufferlib/pufferl.py || {
+grep -q 'if i == 160:' pufferlib/pufferl.py || {
   echo "vendored pufferl.py lacks the full Blood Bowl dashboard patch" >&2; exit 1; }
 grep -q 'PUFFER_ENV_JSON' pufferlib/pufferl.py || {
   echo "vendored pufferl.py lacks machine-readable environment logging" >&2; exit 1; }

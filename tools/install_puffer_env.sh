@@ -56,7 +56,7 @@ if [ "$MODE" = "check" ]; then
         exit 1
     fi
     DASHBOARD_PY="$PUFFER/pufferlib/pufferl.py"
-    for marker in 'if i == 96:' 'PUFFER_ENV_JSON' \
+    for marker in 'if i == 160:' 'PUFFER_ENV_JSON' \
                   "'_puffer_schema': 2" "'_puffer_final_reprint'" \
                   'phase_eval=phase_eval, phase_epoch=epoch'; do
         if ! grep -Fq "$marker" "$DASHBOARD_PY"; then
@@ -114,14 +114,14 @@ if [ -f "$ROOT/validation/states/bank.bbs" ]; then
     echo "staged:    $PUFFER/resources/bloodbowl/state_bank.bbs"
 fi
 
-# Blood Bowl's my_log currently emits 88 keys, and vecenv appends "n" after
+# Blood Bowl's my_log currently emits 123 keys, and vecenv appends "n" after
 # the env binding returns. Keep the vendored dict allocations comfortably above
 # that so adding telemetry does not resurrect the historical heap overflow.
 for f in "$PUFFER/src/bindings.cu" "$PUFFER/src/bindings_cpu.cpp" "$PUFFER/src/pufferlib.cu"; do
     [ -f "$f" ] || continue
     perl -0pi -e \
-        's/create_dict\((32|64|96)\)(\s*;\s*\/\/ bloodbowl my_log emits )[^\n]*/create_dict(96)$2 88 keys + "n"; keep headroom/g;
-         s/create_dict\((32|64)\);/create_dict(96);/g' "$f"
+        's/create_dict\((32|64|96|128|160)\)(\s*;\s*\/\/ bloodbowl my_log emits )[^\n]*/create_dict(160)$2 123 keys + "n"; keep headroom/g;
+         s/create_dict\((32|64|96|128)\);/create_dict(160);/g' "$f"
 done
 
 # Apply the match-mode sweep fix to vendored pufferlib/sweep.py (D131). Upstream
@@ -141,7 +141,7 @@ if [ -f "$SWEEP_PY" ] && ! grep -q "match_enemy_model_path" "$SWEEP_PY"; then
 fi
 
 # Puffer's stock dashboard truncates environment metrics after 30 keys. Blood
-# Bowl emits 88 plus vecenv's `n`; without this patch, later correctness and
+# Bowl emits 123 plus vecenv's `n`; without this patch, later correctness and
 # behavior telemetry exists in C but never reaches evaluation logs.
 DASHBOARD_PY="$PUFFER/pufferlib/pufferl.py"
 if [ -f "$DASHBOARD_PY" ] && grep -q 'if i == 30:' "$DASHBOARD_PY"; then
@@ -151,7 +151,11 @@ if [ -f "$DASHBOARD_PY" ] && grep -q 'if i == 30:' "$DASHBOARD_PY"; then
         echo "warning: dashboard-limit patch did not apply; later Blood Bowl metrics will be hidden" >&2
     fi
 fi
-if [ -f "$DASHBOARD_PY" ] && ! grep -q 'if i == 96:' "$DASHBOARD_PY"; then
+if [ -f "$DASHBOARD_PY" ] && grep -q 'if i == 96:' "$DASHBOARD_PY"; then
+    perl -pi -e 's/if i == 96:/if i == 160:/' "$DASHBOARD_PY"
+    echo "upgraded:  Puffer dashboard capacity 96 -> 160 metrics"
+fi
+if [ -f "$DASHBOARD_PY" ] && ! grep -q 'if i == 160:' "$DASHBOARD_PY"; then
     echo "warning: Puffer dashboard still truncates Blood Bowl telemetry" >&2
 fi
 if [ -f "$DASHBOARD_PY" ] && ! grep -q 'PUFFER_ENV_JSON' "$DASHBOARD_PY"; then
