@@ -19,6 +19,7 @@ typedef enum {
     AD_RECIPE_F1_PASS_OPPORTUNITY,
     AD_RECIPE_F2_HANDOFF_OPPORTUNITY,
     AD_RECIPE_F5_SCORE_OR_WAIT,
+    AD_RECIPE_F4_PENDING_DODGE_REROLL,
     AD_RECIPE_KIND_COUNT,
 } ad_recipe_kind;
 
@@ -97,8 +98,20 @@ int ad_f5_score_or_wait_valid(const bb_match* match);
 int ad_discover_f5_score_or_wait(ad_recipe* recipe,
                                  char error[AD_ERROR_CAP]);
 
+// Purely validate the exact supported nested F4 decision: a failed first-step,
+// non-Rush Dodge awaiting a real reroll Use/Decline choice. The pending choice
+// itself is the capture endpoint; no selected action or outcome is a label.
+int ad_f4_pending_dodge_reroll_valid(const bb_match* match);
+
+// Play only legal engine actions until the exact nested F4 predicate is true.
+// Discovery stops before applying either reroll choice and records every
+// preceding legal action and game die for byte-exact replay.
+int ad_discover_f4_pending_dodge_reroll(ad_recipe* recipe,
+                                        char error[AD_ERROR_CAP]);
+
 // Reinitialize from the procgen seed, inject the exact recorded in-match dice,
-// replay every packed legal action, and require raw-state identity.
+// replay every packed legal action, and require recipe-specific endpoint and
+// raw-state identity.
 int ad_replay_exact(const ad_recipe* recipe, bb_match* out,
                     char error[AD_ERROR_CAP]);
 

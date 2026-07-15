@@ -28,6 +28,12 @@ static ad_recipe ad_test_f5_recipe(void) {
     return recipe;
 }
 
+static ad_recipe ad_test_f4_recipe(void) {
+    ad_recipe recipe = ad_test_recipe();
+    recipe.controller_seed = 1;
+    return recipe;
+}
+
 static int ad_test_apply_legal(bb_match* match, bb_action_type type, int arg,
                                bb_rng* rng) {
     bb_action legal[BB_LEGAL_MAX];
@@ -511,28 +517,31 @@ BB_TEST(authored_drill_f3_reaches_late_second_half_by_legal_play) {
 BB_TEST(authored_drill_writer_preflights_mixed_batch_before_header) {
     ad_recipe first = ad_test_recipe();
     ad_recipe late = ad_test_recipe();
+    ad_recipe nested = ad_test_f4_recipe();
     char error[AD_ERROR_CAP];
     BB_CHECK_EQ(ad_discover_first_team_turn(&first, error), 0);
     BB_CHECK_EQ(ad_discover_f3_late_second_half(&late, error), 0);
-    ad_bbs_record records[2] = {
+    BB_CHECK_EQ(ad_discover_f4_pending_dodge_reroll(&nested, error), 0);
+    ad_bbs_record records[3] = {
         {0xA0000002u, (uint32_t)first.action_count, &first},
         {0xA3000002u, (uint32_t)late.action_count, &late},
+        {0xA4000002u, (uint32_t)nested.action_count, &nested},
     };
 
     FILE* file = tmpfile();
     BB_CHECK(file != NULL);
     if (file == NULL) return;
-    BB_CHECK_EQ(ad_bbs_write(file, records, 2, error), 0);
+    BB_CHECK_EQ(ad_bbs_write(file, records, 3, error), 0);
     BB_CHECK_EQ(fseek(file, 0, SEEK_END), 0);
-    BB_CHECK_EQ(ftell(file), 16 + 2 * (12 + (long)sizeof(bb_match)));
+    BB_CHECK_EQ(ftell(file), 16 + 3 * (12 + (long)sizeof(bb_match)));
     BB_CHECK_EQ(fclose(file), 0);
 
     file = tmpfile();
     BB_CHECK(file != NULL);
     if (file == NULL) return;
-    late.controller_seed++;
-    BB_CHECK(ad_bbs_write(file, records, 2, error) != 0);
-    BB_CHECK(strstr(error, "record 1 provenance failed") != NULL);
+    nested.controller_stream++;
+    BB_CHECK(ad_bbs_write(file, records, 3, error) != 0);
+    BB_CHECK(strstr(error, "record 2 provenance failed") != NULL);
     BB_CHECK_EQ(ftell(file), 0);
     BB_CHECK_EQ(fclose(file), 0);
 }
@@ -789,4 +798,129 @@ BB_TEST(authored_drill_f5_reaches_real_score_or_stall_opportunity) {
     BB_CHECK_EQ(memcmp(&no_score.captured, &original, sizeof original), 0);
     no_score.captured.stack[1].a = 255;
     BB_CHECK(!ad_f5_score_or_wait_valid(&no_score.captured));
+}
+
+BB_TEST(authored_drill_f4_reaches_pending_dodge_reroll_before_choice) {
+    ad_recipe recipe = ad_test_f4_recipe();
+    char error[AD_ERROR_CAP];
+    BB_CHECK_EQ(ad_discover_f4_pending_dodge_reroll(&recipe, error), 0);
+    BB_CHECK_EQ(recipe.kind, AD_RECIPE_F4_PENDING_DODGE_REROLL);
+    BB_CHECK_EQ(recipe.action_count, 384);
+    BB_CHECK_EQ(recipe.dice_count, 110);
+    BB_CHECK_EQ(recipe.controller_seed, 1);
+    BB_CHECK(!bb_state_bank_boundary_valid(&recipe.captured));
+    BB_CHECK(bb_state_bank_dodge_reroll_valid(&recipe.captured));
+    BB_CHECK(bb_state_bank_resumable_valid(&recipe.captured));
+    BB_CHECK_EQ(recipe.captured.decision_team, BB_AWAY);
+    BB_CHECK_EQ(recipe.captured.stack_top, 5);
+
+    const bb_frame* test =
+        &recipe.captured.stack[recipe.captured.stack_top - 1];
+    BB_CHECK_EQ(test->proc, BB_PROC_TEST);
+    BB_CHECK_EQ(test->phase, 1);
+    BB_CHECK_EQ(test->a, 17);
+    BB_CHECK_EQ(test->b, BB_TEST_DODGE);
+    BB_CHECK_EQ(test->x, 3);
+    BB_CHECK_EQ(test->y, 0);
+    BB_CHECK_EQ(recipe.captured.players[test->a].moved, 0);
+    BB_CHECK_EQ(recipe.captured.players[test->a].rushes, 0);
+    BB_CHECK_EQ(recipe.captured.ret, 0);
+
+    // The transcript ends with the Step that produced the failed Dodge. The
+    // pending reroll action, its policy choice, and its outcome are absent.
+    bb_action last = bb_action_unpack(recipe.actions[recipe.action_count - 1]);
+    BB_CHECK_EQ(last.type, BB_A_STEP);
+    BB_CHECK_EQ(last.x, 14);
+    BB_CHECK_EQ(last.y, 6);
+    BB_CHECK_EQ(recipe.dice_sides[recipe.dice_count - 1], 6);
+    BB_CHECK(recipe.dice_values[recipe.dice_count - 1] < test->x);
+
+    bb_action legal[BB_LEGAL_MAX];
+    int legal_count = bb_legal_actions(&recipe.captured, legal);
+    BB_CHECK_EQ(legal_count, 3);
+    BB_CHECK(fx_find(&recipe.captured,
+                     (bb_action){BB_A_USE_REROLL, BB_RR_TEAM, 0, 0}) >= 0);
+    BB_CHECK(fx_find(&recipe.captured,
+                     (bb_action){BB_A_USE_REROLL, BB_RR_SKILL,
+                                 BB_SK_DODGE, 0}) >= 0);
+    BB_CHECK(fx_find(&recipe.captured,
+                     (bb_action){BB_A_DECLINE_REROLL, 0, 0, 0}) >= 0);
+
+    bb_match replayed;
+    BB_CHECK_EQ(ad_replay_exact(&recipe, &replayed, error), 0);
+    BB_CHECK_EQ(memcmp(&replayed, &recipe.captured, sizeof replayed), 0);
+    uint32_t continuation_action = 0;
+    BB_CHECK_EQ(ad_verify_one_action_continuation(
+                    &replayed, &continuation_action, NULL, NULL, error),
+                0);
+    BB_CHECK_EQ(continuation_action,
+                bb_action_pack((bb_action){BB_A_USE_REROLL, BB_RR_TEAM,
+                                           0, 0}));
+
+    FILE* file = tmpfile();
+    BB_CHECK(file != NULL);
+    uint8_t first_bytes[16 + 12 + sizeof(bb_match)];
+    if (file != NULL) {
+        ad_bbs_record record = {
+            0xA4000001u, (uint32_t)recipe.action_count, &recipe,
+        };
+        BB_CHECK_EQ(ad_bbs_write(file, &record, 1, error), 0);
+        BB_CHECK_EQ(fseek(file, 0, SEEK_END), 0);
+        BB_CHECK_EQ(ftell(file), (long)sizeof first_bytes);
+        rewind(file);
+        size_t first_read = fread(first_bytes, 1, sizeof first_bytes, file);
+        BB_CHECK_EQ(first_read, sizeof first_bytes);
+        if (first_read != sizeof first_bytes) {
+            BB_CHECK(!ferror(file));
+            BB_CHECK_EQ(fclose(file), 0);
+            return;
+        }
+        BB_CHECK_EQ(fclose(file), 0);
+
+        file = tmpfile();
+        BB_CHECK(file != NULL);
+        if (file != NULL) {
+            uint8_t second_bytes[sizeof first_bytes];
+            BB_CHECK_EQ(ad_bbs_write(file, &record, 1, error), 0);
+            rewind(file);
+            size_t second_read =
+                fread(second_bytes, 1, sizeof second_bytes, file);
+            BB_CHECK_EQ(second_read, sizeof second_bytes);
+            if (second_read == sizeof second_bytes) {
+                BB_CHECK_EQ(memcmp(first_bytes, second_bytes,
+                                   sizeof first_bytes),
+                            0);
+            } else {
+                BB_CHECK(!ferror(file));
+            }
+            BB_CHECK_EQ(fclose(file), 0);
+        }
+    }
+
+    ad_recipe rediscovered = ad_test_f4_recipe();
+    BB_CHECK_EQ(ad_discover_f4_pending_dodge_reroll(&rediscovered, error), 0);
+    BB_CHECK_EQ(memcmp(&recipe, &rediscovered, sizeof recipe), 0);
+
+    ad_recipe changed = recipe;
+    changed.captured.stack[changed.captured.stack_top - 1].x++;
+    BB_CHECK(ad_replay_exact(&changed, &replayed, error) != 0);
+    BB_CHECK(strstr(error, "captured match") != NULL);
+
+    file = tmpfile();
+    BB_CHECK(file != NULL);
+    if (file != NULL) {
+        ad_bbs_record record = {
+            0xA4000001u, (uint32_t)recipe.action_count, &recipe,
+        };
+        recipe.controller_stream++;
+        BB_CHECK(ad_bbs_write(file, &record, 1, error) != 0);
+        BB_CHECK(strstr(error, "provenance") != NULL);
+        BB_CHECK_EQ(ftell(file), 0);
+        BB_CHECK_EQ(fclose(file), 0);
+    }
+
+    ad_recipe old_family = ad_test_recipe();
+    BB_CHECK_EQ(ad_discover_first_team_turn(&old_family, error), 0);
+    BB_CHECK(bb_state_bank_boundary_valid(&old_family.captured));
+    BB_CHECK(!ad_f4_pending_dodge_reroll_valid(&old_family.captured));
 }

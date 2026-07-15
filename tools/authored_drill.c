@@ -262,6 +262,10 @@ int ad_f5_score_or_wait_valid(const bb_match* match) {
     return 1;
 }
 
+int ad_f4_pending_dodge_reroll_valid(const bb_match* match) {
+    return bb_state_bank_dodge_reroll_valid(match);
+}
+
 static int ad_recipe_config_valid(const ad_recipe* recipe) {
     return recipe->kind >= AD_RECIPE_FIRST_TEAM_TURN &&
            recipe->kind < AD_RECIPE_KIND_COUNT &&
@@ -277,6 +281,11 @@ static int ad_recipe_config_valid(const ad_recipe* recipe) {
 }
 
 static int ad_capture_ready(const bb_match* match, ad_recipe_kind kind) {
+    // F4 is deliberately a nested TEST decision, so it must be tested before
+    // the fresh-team-turn gate shared by every earlier recipe family.
+    if (kind == AD_RECIPE_F4_PENDING_DODGE_REROLL) {
+        return ad_f4_pending_dodge_reroll_valid(match);
+    }
     if (!ad_has_team_turn(match)) return 0;
     if (kind == AD_RECIPE_FIRST_TEAM_TURN) return 1;
     if (kind == AD_RECIPE_F1_PASS_OPPORTUNITY) {
@@ -391,6 +400,11 @@ int ad_discover_f5_score_or_wait(ad_recipe* recipe,
     return ad_discover(recipe, AD_RECIPE_F5_SCORE_OR_WAIT, error);
 }
 
+int ad_discover_f4_pending_dodge_reroll(ad_recipe* recipe,
+                                        char error[AD_ERROR_CAP]) {
+    return ad_discover(recipe, AD_RECIPE_F4_PENDING_DODGE_REROLL, error);
+}
+
 int ad_replay_exact(const ad_recipe* recipe, bb_match* out,
                     char error[AD_ERROR_CAP]) {
     if (recipe == NULL || out == NULL) return ad_fail(error, "null replay input");
@@ -434,7 +448,8 @@ int ad_replay_exact(const ad_recipe* recipe, bb_match* out,
         game_rng.script_pos != recipe->dice_count) {
         return ad_fail(error, "dice transcript was not consumed exactly");
     }
-    if (status != BB_STATUS_DECISION || !ad_has_team_turn(&match)) {
+    if (status != BB_STATUS_DECISION ||
+        !ad_capture_ready(&match, recipe->kind)) {
         return ad_fail(error, "capture status/procedure differs");
     }
     if (memcmp(&match, &recipe->captured, sizeof match) != 0) {
@@ -531,6 +546,9 @@ static int ad_rediscover_recipe(const ad_recipe* source, ad_recipe* out,
         case AD_RECIPE_F5_SCORE_OR_WAIT:
             rc = ad_discover_f5_score_or_wait(out, error);
             break;
+        case AD_RECIPE_F4_PENDING_DODGE_REROLL:
+            rc = ad_discover_f4_pending_dodge_reroll(out, error);
+            break;
         default:
             return ad_fail(error, "unknown authored recipe kind %d",
                            source->kind);
@@ -595,11 +613,14 @@ int ad_bbs_write(FILE* file, const ad_bbs_record* records, size_t count,
                            "authored BBS record %zu decision index differs",
                            i);
         }
-        if (!bb_state_bank_boundary_valid(&verified[i])) {
+        int safe = rediscovered->kind == AD_RECIPE_F4_PENDING_DODGE_REROLL
+            ? bb_state_bank_resumable_valid(&verified[i])
+            : bb_state_bank_boundary_valid(&verified[i]);
+        if (!safe) {
             free(rediscovered);
             free(verified);
             return ad_fail(error,
-                           "authored BBS record %zu is not a safe BBS1 boundary",
+                           "authored BBS record %zu is not a safe BBS1 decision",
                            i);
         }
         char continuation_error[AD_ERROR_CAP];

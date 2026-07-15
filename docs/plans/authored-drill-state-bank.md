@@ -34,13 +34,13 @@ frozen vacation queue or the production/BBTV checkout on the occupied RTX 2070.
    replay injects those game-die faces through `bb_rng_script` and verifies the
    sides sequence as well as complete consumption.
 4. Capture only `BB_STATUS_DECISION` states with a nonempty, loader-valid
-   procedure stack and at least one legal action. The current writer remains
-   restricted to the fresh-team-turn boundary. The production loader also has
-   an exact validator for the first supported nested shape—a failed first-step,
-   non-Rush Dodge reroll decision. It requires remaining ordinary MA, rejects
-   Rooted and activation-cleared status flags, and keeps a resolved-Rush state
-   out of scope via its retained `match.ret` result. The writer must not emit
-   that shape until the separate F4 recipe tranche lands.
+   procedure stack and at least one legal action. The writer remains restricted
+   to the fresh-team-turn boundary except for the exact F4 pending-Dodge recipe.
+   The production loader's validator for that first supported nested shape
+   requires a failed first-step, non-Rush Dodge with remaining ordinary MA,
+   rejects Rooted and activation-cleared status flags, and keeps a resolved-
+   Rush state out of scope via its retained `match.ret` result. No other recipe
+   kind or nested procedure may substitute the broader resumable gate.
 5. Regeneration must replay every action as legal, consume exactly the recorded
    dice, reproduce the captured raw `bb_match` byte-for-byte, and produce the
    same bank, sidecars, and manifest bytes on a second run.
@@ -74,10 +74,11 @@ or any failed validation leave no committed transaction and overwrite nothing.
 
 ### Current BBS1 safety boundary
 
-The phase-1 writer and every historical scenario scanner intentionally accept
-only the shared, structurally validated
-`MATCH(phase 3) -> TEAM_TURN(phase 1)` stack shape. This is sufficient for the
-existing F1/F2/F3/F5 fresh-team-turn proof records. Merely checking procedure
+Every historical scenario scanner intentionally accepts only the shared,
+structurally validated `MATCH(phase 3) -> TEAM_TURN(phase 1)` stack shape. The
+authored writer requires that boundary for F1/F2/F3/F5 and selectively accepts
+the exact nested F4 shape described below only when the recipe kind is F4.
+Merely checking procedure
 IDs is unsafe: corrupt frame parameters can become player/team indices during
 legal-action enumeration. The writer also requires each record's capture
 decision index to equal its exact-replayed recipe action count, so authentic
@@ -104,14 +105,14 @@ deciding-coach Use/Decline masks, and the waiting coach's null mask. Tackle at
 the origin suppresses only the Dodge skill reroll; Team Re-roll and Pro remain
 independently available under their normal rules.
 
-This validator is F4 infrastructure, not an authored F4 record. The writer is
-still fresh-team-turn-only, and no reroll choice, result, regret, reward, or
-action-quality label has been serialized. The F4 recipe tranche must separately
-reach this window by legal initialized play, bind its transcript through
-rediscovery and exact replay, switch only the reviewed writer path to resumable
-admission, and rerun malformed-frame, loader, continuation, sanitizer, and
-deterministic-writer checks. Every other nested shape remains rejected. The
-loader must never be widened to "any decision state" just to make a quota pass.
+The fixed authored F4 proof now reaches this window by legal initialized play,
+binds its complete transcript through rediscovery and exact replay, and permits
+only the F4 writer path to use resumable admission. No reroll choice, result,
+regret, reward, or action-quality label is serialized. Malformed captured bytes,
+controller-provenance drift, unsafe mixed batches, loader byte drift, invalid
+continuation, and nondeterministic writer bytes are regression failures. Every
+other nested shape remains rejected. The loader must never be widened to "any
+decision state" just to make a quota pass.
 
 ### BBS metadata namespace
 
@@ -311,13 +312,13 @@ episode.
    its manifest.
 
 The phase-1 writer now enforces the core of step 4 before emitting any batch:
-it validates the fresh-team-turn BBS1 boundary, selects the lowest packed legal
-action,
+it validates the fresh-team-turn BBS1 boundary for F1/F2/F3/F5 or the exact
+pending-Dodge resumable shape for F4, selects the lowest packed legal action,
 applies that action to a private copy with a 256-face all-ones scripted suffix,
 and rejects RNG exhaustion or engine error. The Puffer integration test repeats
 the gate on the actually reloaded record. The continuation helper and loader
-also accept the separately validated pending-Dodge reroll shape, while the
-writer remains fresh-team-turn-only. Family compilers must still record
+accept the same separately validated pending-Dodge reroll shape. Family
+compilers must still record
 the reconciled per-record totals in their report and manifest.
 
 The first F3 proof recipe uses a third, independent controller RNG stream to
@@ -369,6 +370,21 @@ serialize a scoring path, resolve the Crowd Takes Action roll, or label which
 choice is strategically correct. This proves one F5 opportunity template, not
 clock/score/threat/Steady-Footing axes, tactical quality, quotas,
 counterfactuals, publication, or training authorization.
+
+The first F4 proof uses controller seed 1 and reaches the loader's exact nested
+pending-Dodge shape after 384 legal decisions and 110 in-match dice. Away slot
+17 has failed a first-step, non-Rush Dodge toward `(14, 6)` on a 3+ while Team
+Re-roll, Dodge, and Decline are all genuinely legal. The action transcript ends
+with that Step; capture happens before any of those three choices, so neither a
+reroll action nor its result is serialized. Independent rediscovery and exact
+replay reproduce the raw bytes. The writer permits resumable admission only for
+this recipe kind, preflights mixed boundary/F4 batches before byte zero, and
+emits byte-identical records across repeated writes. The production Puffer
+loader recovers the same raw state, TEST context, deciding-coach masks, waiting-
+coach null mask, and one-action continuation. This proves one F4 opportunity
+template only; other TEST kinds, Rush-Dodge chains, later-step Dodges, F4 axes,
+quotas, counterfactuals, sidecars, publication, training, and deployment remain
+unauthorized.
 
 D198 closes the two engine/helper gaps exposed while reviewing this proof: PA-
 players no longer receive Pass declaration, and `bb_can_catch` now excludes No

@@ -125,9 +125,11 @@ re-derive by hand; (b) RNG misuse (reuse/bias) — check `bb_rng` consumption co
 9. **Procedure-stack sanity** — bounded depth; empty between activations; no leaks.
 10. **Stat bounds** — MA/ST/AG/PA/AV within rulebook ranges; score monotonic.
 11. **Raw snapshot admission** — BBS1 size/fingerprint proves ABI compatibility,
-    not safe content. Scenario scanners and fresh-turn writers use
-    `bb_state_bank_boundary_valid`; production reset admission and continuation
-    use `bb_state_bank_resumable_valid`. The resumable union is intentionally
+    not safe content. Scenario scanners use `bb_state_bank_boundary_valid`.
+    Authored writers use that boundary for F1/F2/F3/F5 and may use
+    `bb_state_bank_resumable_valid` only for the exact F4 pending-Dodge recipe;
+    production reset admission and continuation also use the resumable gate.
+    The resumable union is intentionally
     limited to the exact fresh-turn shape and the exact failed first-step,
     non-Rush Dodge TEST reroll stack. The latter requires remaining ordinary
     MA, rejects movement-prohibiting or activation-cleared flags, and exposes
@@ -135,7 +137,10 @@ re-derive by hand; (b) RNG misuse (reuse/bias) — check `bb_rng` consumption co
     9/12. A resolved Rush retains nonzero `match.ret` provenance and is not the
     same admitted shape. Every new nested shape needs complete lower-frame,
     index, observation-alias, legal-mask, both-branch continuation,
-    loader-byte, and malformed-record tests before widening the shared gate.
+    loader-byte, deterministic-writer, mixed-batch preflight, and malformed-
+    record tests before widening the shared gate. For authored nested captures,
+    also prove that the transcript ends before the pending choice and outcome so
+    no continuation action becomes an implicit label.
 
 **Failure looks like:** shrunken minimal action trace + seed reproducing the violation.
 **Triage:** replay the shrunken trace under a debugger; the violated invariant names

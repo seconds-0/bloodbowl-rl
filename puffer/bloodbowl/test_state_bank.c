@@ -145,6 +145,12 @@ static ad_recipe authored_f5_test_recipe(void) {
     return recipe;
 }
 
+static ad_recipe authored_f4_test_recipe(void) {
+    ad_recipe recipe = authored_test_recipe();
+    recipe.controller_seed = 1;
+    return recipe;
+}
+
 BB_TEST(state_bank_accepts_exact_replayed_authored_record) {
     ad_recipe recipe = authored_test_recipe();
     char error[AD_ERROR_CAP];
@@ -303,6 +309,68 @@ BB_TEST(state_bank_accepts_exact_replayed_score_or_stall_record) {
         const bb_match* loaded = &bbe_state_bank[0];
         BB_CHECK_EQ(memcmp(loaded, &recipe.captured, sizeof *loaded), 0);
         BB_CHECK(ad_f5_score_or_wait_valid(loaded));
+        BB_CHECK_EQ(ad_verify_one_action_continuation(
+                        loaded, NULL, NULL, NULL, error),
+                    0);
+    }
+    reset_state_bank_loader(BBE_STATE_BANK_PATH);
+    BB_CHECK_EQ(remove(path), 0);
+}
+
+BB_TEST(state_bank_accepts_exact_replayed_pending_dodge_reroll_record) {
+    ad_recipe recipe = authored_f4_test_recipe();
+    char error[AD_ERROR_CAP];
+    BB_CHECK_EQ(ad_discover_f4_pending_dodge_reroll(&recipe, error), 0);
+    BB_CHECK_EQ(recipe.action_count, 384);
+    BB_CHECK_EQ(recipe.dice_count, 110);
+    BB_CHECK(!bb_state_bank_boundary_valid(&recipe.captured));
+    BB_CHECK(bb_state_bank_dodge_reroll_valid(&recipe.captured));
+    BB_CHECK(bb_state_bank_resumable_valid(&recipe.captured));
+
+    char path[256];
+    snprintf(path, sizeof path, "/tmp/bloodbowl-authored-f4-%ld.bbs",
+             (long)getpid());
+    FILE* file = fopen(path, "wb");
+    BB_CHECK(file != NULL);
+    if (file == NULL) return;
+    ad_bbs_record record = {
+        0xA4000001u, (uint32_t)recipe.action_count, &recipe,
+    };
+    BB_CHECK_EQ(ad_bbs_write(file, &record, 1, error), 0);
+    BB_CHECK_EQ(fclose(file), 0);
+
+    reset_state_bank_loader(path);
+    bbe_state_bank_load();
+    BB_CHECK_EQ(bbe_state_bank_n, 1);
+    if (bbe_state_bank_n == 1) {
+        const bb_match* loaded = &bbe_state_bank[0];
+        BB_CHECK_EQ(memcmp(loaded, &recipe.captured, sizeof *loaded), 0);
+        BB_CHECK(!bb_state_bank_boundary_valid(loaded));
+        BB_CHECK(ad_f4_pending_dodge_reroll_valid(loaded));
+        BB_CHECK(bb_state_bank_resumable_valid(loaded));
+
+        StateBankEnvFixture fixture;
+        setup_state_bank_env(&fixture, loaded);
+        Bloodbowl* env = &fixture.env;
+        BB_CHECK_EQ(env->n_legal, 3);
+        uint8_t* home = env->obs_ptr[BB_HOME] + BBE_CTX_OFF;
+        uint8_t* away = env->obs_ptr[BB_AWAY] + BBE_CTX_OFF;
+        BB_CHECK_EQ(home[4], BB_PROC_TEST);
+        BB_CHECK_EQ(home[5], 1);
+        BB_CHECK_EQ(home[8], 3);
+        BB_CHECK_EQ(home[10], 0);
+        BB_CHECK_EQ(away[4], BB_PROC_TEST);
+        BB_CHECK_EQ(away[5], 1);
+        BB_CHECK_EQ(away[8], 3);
+        BB_CHECK_EQ(away[10], 1);
+        unsigned char* home_mask = env->action_mask_ptr[BB_HOME];
+        unsigned char* away_mask = env->action_mask_ptr[BB_AWAY];
+        BB_CHECK_EQ(home_mask[BB_A_NONE], 1);
+        BB_CHECK_EQ(home_mask[BB_A_USE_REROLL], 0);
+        BB_CHECK_EQ(home_mask[BB_A_DECLINE_REROLL], 0);
+        BB_CHECK_EQ(away_mask[BB_A_USE_REROLL], 1);
+        BB_CHECK_EQ(away_mask[BB_A_DECLINE_REROLL], 1);
+
         BB_CHECK_EQ(ad_verify_one_action_continuation(
                         loaded, NULL, NULL, NULL, error),
                     0);
