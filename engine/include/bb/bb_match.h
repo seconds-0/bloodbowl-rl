@@ -161,12 +161,19 @@ void bb_match_init_forced(bb_match* m, bb_rng* rng, int home, int away, int excl
 void bb_match_init_forced_p(bb_match* m, bb_rng* rng, int home, int away, int exclude,
                             const bb_procgen_params* pp);
 
-// Validate the currently supported BBS1 reset boundary: a structurally safe
-// MATCH -> TEAM_TURN decision whose index-bearing fields can be consumed by
-// legal-action enumeration, observation encoding, and reward bookkeeping.
-// BBS1 is intentionally restricted to this fresh/mid team-turn boundary until
-// every other procedure has an equally explicit snapshot validator.
+// Validate the ordinary BBS1 fresh/mid-team-turn reset boundary.
 bool bb_state_bank_boundary_valid(const bb_match* m);
+
+// Validate the first explicitly supported nested BBS1 decision: a failed
+// non-Rush Dodge's generic TEST re-roll window beneath an exact
+// MATCH -> TEAM_TURN -> ACTIVATION -> MOVE parent chain. Every field consumed
+// while either Use Re-roll or Decline unwinds is checked before legal-action
+// enumeration. This intentionally admits no other TEST kind or stack shape.
+bool bb_state_bank_dodge_reroll_valid(const bb_match* m);
+
+// Shared production admission gate for BBS1 resets. Scenario scanners that
+// require fresh team turns must continue to call bb_state_bank_boundary_valid.
+bool bb_state_bank_resumable_valid(const bb_match* m);
 
 // Advance the engine until a coach decision is required or the match ends.
 // All dice are drawn from `rng`. Returns the resulting status.

@@ -451,8 +451,8 @@ int ad_verify_one_action_continuation(const bb_match* loaded,
                                       int* dice_used,
                                       char error[AD_ERROR_CAP]) {
     if (loaded == NULL) return ad_fail(error, "null continuation state");
-    if (!bb_state_bank_boundary_valid(loaded)) {
-        return ad_fail(error, "continuation state is not a safe BBS1 boundary");
+    if (!bb_state_bank_resumable_valid(loaded)) {
+        return ad_fail(error, "continuation state is not a safe BBS1 decision");
     }
 
     bb_action legal[BB_LEGAL_MAX];

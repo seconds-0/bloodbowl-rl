@@ -1468,7 +1468,7 @@ static void bbe_state_bank_load(void) {
             half >= 1 && half <= 3 && turn >= 1 && turn <= 8 &&
             match->half == half && match->active_team <= BB_AWAY &&
             match->turn[match->active_team] == turn;
-        kept += metadata_valid && bb_state_bank_boundary_valid(match);
+        kept += metadata_valid && bb_state_bank_resumable_valid(match);
     }
     fclose(f);
     if (kept == 0) {

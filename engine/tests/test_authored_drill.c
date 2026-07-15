@@ -1,5 +1,6 @@
 #include "authored_drill.h"
 #include "bb_test.h"
+#include "bb_fixtures.h"
 #include "bb/bb_reachability.h"
 #include "bb/gen_skills.h"
 
@@ -37,6 +38,33 @@ static int ad_test_apply_legal(bb_match* match, bb_action_type type, int arg,
         }
     }
     return BB_STATUS_ERROR;
+}
+
+static bb_match ad_test_pending_dodge_reroll(void) {
+    bb_match match;
+    fx_match_midturn(&match, BB_HOME, 2);
+    int mover = fx_lineman(&match, BB_HOME, 0, 10, 7);
+    fx_lineman(&match, BB_AWAY, 0, 10, 8);
+
+    uint8_t die = 2;
+    bb_rng rng;
+    bb_rng_script(&rng, &die, 1);
+    BB_CHECK_EQ(fx_run(&match, &rng), BB_STATUS_DECISION);
+    BB_CHECK(fx_find(&match, (bb_action){BB_A_ACTIVATE, mover, 0, 0}) >= 0);
+    BB_CHECK_EQ(fx_apply(&match,
+                        (bb_action){BB_A_ACTIVATE, mover, 0, 0}, &rng),
+                BB_STATUS_DECISION);
+    BB_CHECK(fx_find(&match,
+                     (bb_action){BB_A_DECLARE, BB_ACT_MOVE, 0, 0}) >= 0);
+    BB_CHECK_EQ(fx_apply(&match,
+                        (bb_action){BB_A_DECLARE, BB_ACT_MOVE, 0, 0}, &rng),
+                BB_STATUS_DECISION);
+    BB_CHECK(fx_find(&match, (bb_action){BB_A_STEP, 0, 10, 6}) >= 0);
+    BB_CHECK_EQ(fx_apply(&match, (bb_action){BB_A_STEP, 0, 10, 6}, &rng),
+                BB_STATUS_DECISION);
+    BB_CHECK_EQ(rng.script_pos, 1);
+    BB_CHECK(!bb_rng_error(&rng));
+    return match;
 }
 
 static int ad_test_handoff_target_count(const bb_match* source,
@@ -281,7 +309,118 @@ BB_TEST(authored_drill_one_action_continuation_is_canonical_and_safe) {
     loaded.stack[1].a = 255;
     BB_CHECK(ad_verify_one_action_continuation(
                  &loaded, &applied, &status, &dice_used, error) != 0);
-    BB_CHECK(strstr(error, "boundary") != NULL);
+    BB_CHECK(strstr(error, "decision") != NULL);
+}
+
+BB_TEST(state_bank_dodge_reroll_boundary_is_exact_and_continuable) {
+    bb_match pending = ad_test_pending_dodge_reroll();
+    bb_match original = pending;
+    BB_CHECK(!bb_state_bank_boundary_valid(&pending));
+    BB_CHECK(bb_state_bank_dodge_reroll_valid(&pending));
+    BB_CHECK(bb_state_bank_resumable_valid(&pending));
+    BB_CHECK_EQ(memcmp(&pending, &original, sizeof pending), 0);
+    BB_CHECK_EQ(pending.stack_top, 5);
+
+    bb_action legal[BB_LEGAL_MAX];
+    int count = bb_legal_actions(&pending, legal);
+    BB_CHECK_EQ(count, 2);
+    BB_CHECK(fx_find(&pending,
+                     (bb_action){BB_A_USE_REROLL, BB_RR_TEAM, 0, 0}) >= 0);
+    BB_CHECK(fx_find(&pending,
+                     (bb_action){BB_A_DECLINE_REROLL, 0, 0, 0}) >= 0);
+
+    bb_match used = pending;
+    uint8_t success_die = 4;
+    bb_rng use_rng;
+    bb_rng_script(&use_rng, &success_die, 1);
+    BB_CHECK_EQ(fx_apply(&used,
+                        (bb_action){BB_A_USE_REROLL, BB_RR_TEAM, 0, 0},
+                        &use_rng),
+                BB_STATUS_DECISION);
+    BB_CHECK_EQ(use_rng.script_pos, 1);
+    BB_CHECK(!bb_rng_error(&use_rng));
+    BB_CHECK_EQ(used.rerolls[BB_HOME], 1);
+    BB_CHECK_EQ(used.players[0].x, 10);
+    BB_CHECK_EQ(used.players[0].y, 6);
+    BB_CHECK_EQ(used.players[0].stance, BB_STANCE_STANDING);
+
+    bb_match declined = pending;
+    uint8_t armour_dice[] = {3, 3};
+    bb_rng decline_rng;
+    bb_rng_script(&decline_rng, armour_dice, 2);
+    BB_CHECK_EQ(fx_apply(&declined,
+                        (bb_action){BB_A_DECLINE_REROLL, 0, 0, 0},
+                        &decline_rng),
+                BB_STATUS_DECISION);
+    BB_CHECK_EQ(decline_rng.script_pos, 2);
+    BB_CHECK(!bb_rng_error(&decline_rng));
+    BB_CHECK_EQ(declined.rerolls[BB_HOME], 2);
+    BB_CHECK_EQ(declined.players[0].x, 10);
+    BB_CHECK_EQ(declined.players[0].y, 6);
+    BB_CHECK_EQ(declined.players[0].stance, BB_STANCE_PRONE);
+    BB_CHECK_EQ(declined.decision_team, BB_AWAY);
+
+    char error[AD_ERROR_CAP];
+    uint32_t applied = 0;
+    bb_status status = BB_STATUS_ERROR;
+    int dice_used = -1;
+    BB_CHECK_EQ(ad_verify_one_action_continuation(
+                    &pending, &applied, &status, &dice_used, error),
+                0);
+    BB_CHECK_EQ(applied, bb_action_pack(
+                             (bb_action){BB_A_USE_REROLL, BB_RR_TEAM, 0, 0}));
+    BB_CHECK(status == BB_STATUS_DECISION || status == BB_STATUS_RUNNING ||
+             status == BB_STATUS_MATCH_OVER);
+    BB_CHECK(dice_used > 0 && dice_used <= AD_CONTINUATION_DICE);
+    BB_CHECK_EQ(memcmp(&pending, &original, sizeof pending), 0);
+
+#define REJECT_MUTATION(statement) do {                                      \
+        bb_match changed = pending;                                          \
+        statement;                                                           \
+        BB_CHECK(!bb_state_bank_dodge_reroll_valid(&changed));               \
+        BB_CHECK(!bb_state_bank_resumable_valid(&changed));                  \
+    } while (0)
+    REJECT_MUTATION(changed.stack_top = 4);
+    REJECT_MUTATION(changed.ret = 1);
+    REJECT_MUTATION(changed.stack[2].proc = BB_PROC_MOVE);
+    REJECT_MUTATION(changed.stack[2].phase = 0);
+    REJECT_MUTATION(changed.stack[2].a = 1);
+    REJECT_MUTATION(changed.stack[2].b = BB_ACT_BLITZ);
+    REJECT_MUTATION(changed.stack[2].x = 1);
+    REJECT_MUTATION(changed.stack[2].data = 1);
+    REJECT_MUTATION(changed.stack[3].proc = BB_PROC_TEST);
+    REJECT_MUTATION(changed.stack[3].phase = 1);
+    REJECT_MUTATION(changed.stack[3].a = 1);
+    REJECT_MUTATION(changed.stack[3].data = 0);
+    REJECT_MUTATION(changed.stack[3].x = 12);
+    REJECT_MUTATION(changed.stack[4].proc = BB_PROC_MOVE);
+    REJECT_MUTATION(changed.stack[4].phase = 0);
+    REJECT_MUTATION(changed.stack[4].a = 1);
+    REJECT_MUTATION(changed.stack[4].b = BB_TEST_RUSH);
+    REJECT_MUTATION(changed.stack[4].x = 2);
+    REJECT_MUTATION(changed.stack[4].y = 1);
+    REJECT_MUTATION(changed.stack[4].data &= (uint16_t)~(1u << 2));
+    REJECT_MUTATION(changed.stack[4].data |= (uint16_t)(1u << 1));
+    REJECT_MUTATION(changed.stack[4].data =
+                        (uint16_t)((changed.stack[4].data & 0x0FFFu) |
+                                   (3u << 12)));
+    REJECT_MUTATION(changed.players[0].flags &=
+                        (uint16_t)~BB_PF_ACTIVATING);
+    REJECT_MUTATION(changed.players[0].flags |= BB_PF_USED);
+    REJECT_MUTATION(changed.players[0].moved = 1);
+    REJECT_MUTATION(changed.players[0].rushes = 1);
+    REJECT_MUTATION(changed.rerolls[BB_HOME] = 0);
+    REJECT_MUTATION(bb_give_ball(&changed, 0));
+    REJECT_MUTATION(changed.ball.state = BB_BALL_ON_GROUND;
+                    changed.ball.x = 10;
+                    changed.ball.y = 6);
+#undef REJECT_MUTATION
+
+    bb_match unknown_skill = pending;
+    unknown_skill.players[0].skills.w[BB_SKILL_COUNT >> 6] |=
+        (uint64_t)1 << (BB_SKILL_COUNT & 63);
+    BB_CHECK(!bb_state_bank_dodge_reroll_valid(&unknown_skill));
+    BB_CHECK(!bb_state_bank_resumable_valid(&unknown_skill));
 }
 
 BB_TEST(authored_drill_f3_reaches_late_second_half_by_legal_play) {

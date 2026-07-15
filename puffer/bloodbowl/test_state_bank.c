@@ -66,6 +66,56 @@ static bb_match valid_bank_match(void) {
     return match;
 }
 
+static bb_match pending_dodge_reroll_match(void) {
+    bb_match match;
+    fx_match_midturn(&match, BB_HOME, 2);
+    int mover = fx_lineman(&match, BB_HOME, 0, 10, 7);
+    fx_lineman(&match, BB_AWAY, 0, 10, 8);
+    uint8_t die = 2;
+    bb_rng rng;
+    bb_rng_script(&rng, &die, 1);
+    BB_CHECK_EQ(fx_run(&match, &rng), BB_STATUS_DECISION);
+    BB_CHECK_EQ(fx_apply(&match,
+                        (bb_action){BB_A_ACTIVATE, mover, 0, 0}, &rng),
+                BB_STATUS_DECISION);
+    BB_CHECK_EQ(fx_apply(&match,
+                        (bb_action){BB_A_DECLARE, BB_ACT_MOVE, 0, 0}, &rng),
+                BB_STATUS_DECISION);
+    BB_CHECK_EQ(fx_apply(&match, (bb_action){BB_A_STEP, 0, 10, 6}, &rng),
+                BB_STATUS_DECISION);
+    BB_CHECK_EQ(rng.script_pos, 1);
+    BB_CHECK(!bb_rng_error(&rng));
+    return match;
+}
+
+typedef struct {
+    Bloodbowl env;
+    uint8_t obs[BBE_AGENTS * BBE_OBS_SIZE];
+    float actions[BBE_AGENTS * 3];
+    unsigned char mask[BBE_AGENTS * BBE_MASK_SIZE];
+    float rewards[BBE_AGENTS];
+    float terminals[BBE_AGENTS];
+} StateBankEnvFixture;
+
+static void setup_state_bank_env(StateBankEnvFixture* fixture,
+                                 const bb_match* match) {
+    memset(fixture, 0, sizeof *fixture);
+    Bloodbowl* env = &fixture->env;
+    env->match = *match;
+    env->num_agents = BBE_AGENTS;
+    for (int agent = 0; agent < BBE_AGENTS; agent++) {
+        env->obs_ptr[agent] = fixture->obs + agent * BBE_OBS_SIZE;
+        env->action_ptr[agent] = fixture->actions + agent * 3;
+        env->action_mask_ptr[agent] =
+            fixture->mask + agent * BBE_MASK_SIZE;
+        env->reward_ptr[agent] = fixture->rewards + agent;
+        env->terminal_ptr[agent] = fixture->terminals + agent;
+        env->v4_dirty[agent] = 1;
+    }
+    bbe_refresh_legal(env);
+    bbe_emit_all(env);
+}
+
 static int load_one(const char* path, const bb_match* match) {
     write_state_bank(path, match);
     reset_state_bank_loader(path);
@@ -261,6 +311,76 @@ BB_TEST(state_bank_accepts_exact_replayed_score_or_stall_record) {
     BB_CHECK_EQ(remove(path), 0);
 }
 
+BB_TEST(state_bank_accepts_pending_dodge_reroll_and_emits_decision) {
+    char path[256];
+    snprintf(path, sizeof path, "/tmp/bloodbowl-dodge-bank-%ld.bbs",
+             (long)getpid());
+    bb_match pending = pending_dodge_reroll_match();
+    BB_CHECK(!bb_state_bank_boundary_valid(&pending));
+    BB_CHECK(bb_state_bank_dodge_reroll_valid(&pending));
+    BB_CHECK_EQ(load_one(path, &pending), 1);
+
+    if (bbe_state_bank_n == 1) {
+        const bb_match* loaded = &bbe_state_bank[0];
+        BB_CHECK_EQ(memcmp(loaded, &pending, sizeof pending), 0);
+
+        StateBankEnvFixture fixture;
+        setup_state_bank_env(&fixture, loaded);
+        Bloodbowl* env = &fixture.env;
+        BB_CHECK_EQ(env->n_legal, 2);
+        uint8_t* home = env->obs_ptr[BB_HOME] + BBE_CTX_OFF;
+        uint8_t* away = env->obs_ptr[BB_AWAY] + BBE_CTX_OFF;
+        BB_CHECK_EQ(home[4], BB_PROC_TEST);
+        BB_CHECK_EQ(home[5], 1);
+        BB_CHECK_EQ(home[8], 3);
+        BB_CHECK_EQ(home[10], 1);
+        BB_CHECK_EQ(away[4], BB_PROC_TEST);
+        BB_CHECK_EQ(away[5], 1);
+        BB_CHECK_EQ(away[8], 3);
+        BB_CHECK_EQ(away[10], 0);
+
+        unsigned char* home_mask = env->action_mask_ptr[BB_HOME];
+        unsigned char* away_mask = env->action_mask_ptr[BB_AWAY];
+        BB_CHECK_EQ(home_mask[BB_A_USE_REROLL], 1);
+        BB_CHECK_EQ(home_mask[BB_A_DECLINE_REROLL], 1);
+        BB_CHECK_EQ(away_mask[BB_A_NONE], 1);
+        BB_CHECK_EQ(away_mask[BB_A_USE_REROLL], 0);
+        BB_CHECK_EQ(away_mask[BB_A_DECLINE_REROLL], 0);
+
+        bb_match used = *loaded;
+        uint8_t success_die = 4;
+        bb_rng use_rng;
+        bb_rng_script(&use_rng, &success_die, 1);
+        BB_CHECK_EQ(fx_apply(
+                        &used,
+                        (bb_action){BB_A_USE_REROLL, BB_RR_TEAM, 0, 0},
+                        &use_rng),
+                    BB_STATUS_DECISION);
+        BB_CHECK_EQ(used.rerolls[BB_HOME], 1);
+        BB_CHECK_EQ(used.players[0].stance, BB_STANCE_STANDING);
+
+        bb_match declined = *loaded;
+        uint8_t armour_dice[] = {3, 3};
+        bb_rng decline_rng;
+        bb_rng_script(&decline_rng, armour_dice, 2);
+        BB_CHECK_EQ(fx_apply(
+                        &declined,
+                        (bb_action){BB_A_DECLINE_REROLL, 0, 0, 0},
+                        &decline_rng),
+                    BB_STATUS_DECISION);
+        BB_CHECK_EQ(declined.rerolls[BB_HOME], 2);
+        BB_CHECK_EQ(declined.players[0].stance, BB_STANCE_PRONE);
+        BB_CHECK_EQ(declined.decision_team, BB_AWAY);
+
+        char error[AD_ERROR_CAP];
+        BB_CHECK_EQ(ad_verify_one_action_continuation(
+                        loaded, NULL, NULL, NULL, error),
+                    0);
+    }
+    reset_state_bank_loader(BBE_STATE_BANK_PATH);
+    BB_CHECK_EQ(remove(path), 0);
+}
+
 BB_TEST(state_bank_rejects_unsafe_record_content) {
     char path[256];
     snprintf(path, sizeof path, "/tmp/bloodbowl-state-bank-%ld.bbs",
@@ -328,6 +448,11 @@ BB_TEST(state_bank_rejects_unsafe_record_content) {
     bb_match bad_weather = valid;
     bad_weather.weather = BB_WEATHER_BLIZZARD + 1;
     BB_CHECK_EQ(load_one(path, &bad_weather), 0);
+
+    bb_match bad_skill = valid;
+    bad_skill.players[0].skills.w[BB_SKILL_COUNT >> 6] |=
+        (uint64_t)1 << (BB_SKILL_COUNT & 63);
+    BB_CHECK_EQ(load_one(path, &bad_skill), 0);
 
     write_state_bank_meta(path, &valid, 0, valid.half,
                           valid.turn[valid.active_team], 0);

@@ -75,9 +75,17 @@ newer evidence wins.
   canonical zeroes; exact replay alone is not seed provenance. Never construct late-game context by writing score,
   half, turn, players, grid, ball, or procedure frames. Split by recipe-template
   group and quarantine paired counterfactual outcomes from training inputs.
-  BBS1 currently admits only the shared MATCH -> TEAM_TURN boundary; nested
-  target/reroll decisions need explicit procedure-specific validation before
-  the writer or loader may accept them. Every emitted authored record must also
+  BBS1 production reset admission currently admits the shared
+  `MATCH -> TEAM_TURN` boundary plus one exact nested shape: a failed first-step,
+  non-Rush Dodge reroll window under
+  `MATCH -> TEAM_TURN -> ACTIVATION(Move) -> MOVE -> TEST(Dodge)`. The nested
+  validator recomputes the target, requires real Use/Decline actions, and
+  rejects all other TEST/parent shapes and malformed skill bits. Scenario
+  scanners and the current authored writer remain fresh-team-turn-only; do not
+  substitute the broader resumable gate where a classifier assumes that
+  boundary. Later target/reroll decisions need their own procedure-specific
+  validation before the writer or loader may accept them. Every emitted
+  authored record must also
   pass the canonical one-action continuation gate after loading; the gate is a
   resumability check and must never be interpreted as an action label. The F1
   proof privately verifies a non-dash-PA, non-No-Ball carrier's zero-die legal
