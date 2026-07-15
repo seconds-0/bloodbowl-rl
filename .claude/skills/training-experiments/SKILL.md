@@ -569,9 +569,9 @@ Post-run long-horizon characterization uses
 `docs/plans/r0-milestone-evaluation.md`. Accept only a completed and revalidated
 `control-final` screen. Resolve the predeclared 0/1/2/4/6/8/10/12B points by
 embedded native step (never mtime), freeze every hash before matching, use
-common seeds and both native backend roles, and require an exclusive idle GPU.
-Do not stop a training or BBTV process to make the evaluator run; remain
-pending. Label the vacation static banks as in-pool, historical exact anchors
+common seeds and both native backend roles, and require an exclusive idle GPU
+with the BBTV follower explicitly quiesced. Do not stop a training or BBTV
+process to make the evaluator run; remain pending. Label the vacation static banks as in-pool, historical exact anchors
 as lineage-connected transfer rather than independent holdout, scripted bots
 as functional probes, and forced rosters as stratification because procgen
 trained on every roster ID. The fixed plateau rule only compresses a later

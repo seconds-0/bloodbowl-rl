@@ -156,8 +156,9 @@ After an accepted R0 `control-final` screen, use
 `tools/run_checkpoint_milestone_eval.py` and
 `docs/plans/r0-milestone-evaluation.md` for the predeclared 0/1/2/4/6/8/10/12B
 trajectory. Resolve checkpoints by embedded step, hash every selected native
-file, and require an exclusive idle GPU; the evaluator must remain pending
-rather than stopping a training or BBTV process. Keep static-pool dashboard
+file, and require an exclusive idle GPU with the BBTV follower explicitly
+quiesced; the evaluator must remain pending rather than stopping a training or
+BBTV process. Keep static-pool dashboard
 scores labeled in-pool, historical anchors labeled unseen exact checkpoints
 but lineage-connected, scripted bots separate, and the forced roster grid
 labeled stratification rather than unseen-roster transfer. The fixed plateau
