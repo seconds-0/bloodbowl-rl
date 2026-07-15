@@ -5,9 +5,9 @@ deterministic C11 rules engine → PufferLib 4.0 native env → PPO + action
 masking + self-play curriculum, with BC support from curated FUMBBL replays.
 
 **Read `AGENTS.md` first.** Then read the tail of `DECISIONS.md` (currently
-through D187) and, for reward/replay work,
+through D188) and, for reward/replay work,
 `docs/reward-and-replay-audit-2026-07-09.md`. The ledger is chronological; the
-July audit and D177–D187 supersede older prose that calls the June v4 reward
+July audit and D177–D188 supersede older prose that calls the June v4 reward
 economy "settled." Where this file and newer ledger evidence disagree, the
 newer evidence wins.
 
@@ -51,7 +51,7 @@ newer evidence wins.
 - **BC loader (D180):** use the bounded streaming loader and replay-disjoint
   split. Replay-first is the current default, not the final sampler; next
   stratify by roster/matchup, depth, and action family.
-- **Long-horizon curve (D187):** the frozen seed-42 0–6B curve improves against
+- **Long-horizon curve (D187/D188):** the frozen seed-42 0–6B curve improves against
   its four static training banks but is non-monotonic, in-pool evidence. Do not
   select the newest checkpoint or reward from it. Post-run selection uses the
   fixed paired milestone protocol; future reward work needs gamma-corrected
@@ -75,7 +75,7 @@ newer evidence wins.
   entries and host discovery.
 - **Curriculum ladder** (stage knob = `--env.demo-endzone-maxdist`): 6 → 9 → 12 → 0 (= "uniform": any demo-bank start, no endzone filter) → kickoff starts (`--env.demo-reset-pct 0`). +3 squares per stage, never more (D51: 6→12 overshot). Advance at tds plateau; warm-start each stage from the previous stage's highest-STEP ckpt.
 - The June queue is superseded by the July queue in
-  `.claude/skills/training-experiments/SKILL.md` and D177–D187.
+  `.claude/skills/training-experiments/SKILL.md` and D177–D188.
 
 ## Hard-won facts (verified — don't relearn these)
 
