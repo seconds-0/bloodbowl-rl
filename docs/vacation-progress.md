@@ -4999,3 +4999,89 @@ Next steps:
    reward changes, deployment, and milestone evaluation out of scope until all
    authority findings are closed and the live queue gates separately authorize
    later work.
+
+## 2026-07-15 16:15 PDT — seed 43 at 6.31B; BBTV following; registry remains blocked
+
+Live queue and BBTV health:
+
+- The primary queue remains authoritative `active/running` on
+  `final-main-control`, arm `both`, seed 43/current index 2, with one completed
+  arm. `SCREEN_STATUS.json` was fresh at 16:11 PDT. Queue PID 431309, wrapper
+  PID 431316, and the sole completion-gate/GPU-compute PID 473422 remain
+  stable; the primary and three BBTV services have zero restarts. The overflow
+  service remains inactive/dead with absent state and zero restarts.
+- Exact read-only validation again matched all 65 primary pins at plan SHA-256
+  `4ee72e3c58f09786cdd3bbf78a772e8de2d9a93e21a8b065cf0c5976ecced270`
+  and all 74 overflow pins at plan SHA-256
+  `d90ee01c8c459f599c8601934f545ccb7783261edae3bcb6e9e3878036d37d3e`.
+  Both pin-error results are `None`, overflow state is absent, and the exact
+  completion gate reports only PID 473422.
+- The latest complete telemetry panel observed exact step 6,312,558,592 at
+  epoch 48,160 over 104 games: performance 0.485577, draw rate 0.432692,
+  possession 0.375612, illegal/sampled-repair fraction 0.180296, ball progress
+  8.581603, 13.923077 blocks thrown, 2.346154 blocks against the carrier,
+  carrier-target fraction 0.181280, Pass intentions 0.038462, and zero Hand-off
+  intentions. Reward clipping, non-finite reward, engine-error, demonstration,
+  and fallback counters remain zero. The recent dashboard ranged around
+  181.7K-190.6K SPS; at the sampled 185.5K SPS, roughly 8h31m remained to the
+  frozen 12B-step seed target. This estimate is observational only.
+- The newest complete 16,066,560-byte checkpoint was exact step 6,292,373,504
+  at 16:10 PDT. Four GPU samples ranged from 81-83 C, 88-89% fan, 76-82%
+  utilization, 5,554/8,192 MiB, and 112.76-143.05 W. Software thermal slowdown
+  was active in three samples and hardware slowdown inactive in all four.
+  Temperature remains below the literal frozen 88 C three-poll guard, so no
+  tuning was performed. Disk is 7% used with 893 GiB free, inode use is 1%,
+  memory has 9.1 GiB available, and swap use is 43 MiB.
+- The 16:01 PDT overflow watcher exited successfully after logging `primary
+  service is still active; waiting`; the timer remained active/waiting for its
+  16:11 poll and created no overflow state.
+- `bbstream`, `bbweb`, and `bbtv-tunnel` remain active with zero restarts. At
+  16:13 PDT BBTV selected seed-43 checkpoint 6,292,373,504 against the frozen
+  turnover3 baseline. Learner source SHA-256 is
+  `48543f080d9b4529dbb440699d3b5db76f02522382cbd79c5f39406d32a78e05`,
+  converted output SHA-256 is
+  `92c9f15e4cc1eb84363be44ad508a868218bc0838b7be2bdab4035d091084426`,
+  and `selection.json` SHA-256 is
+  `7b70c2950e4e05be0d631027f935bc8549d1d1234549d5358bde870a59dec09f`.
+  The public page returned HTTP 200 in 0.292 seconds. A bounded public WSS
+  client received protocol-v1 hello and match-start messages for learner Human
+  versus frozen Shambling Undead, followed by a snapshot, advancing setup
+  deltas, and ping. BBTV remains CPU-only and observational.
+
+Persistent authored identity registry:
+
+- The second exact-head correction was completed as atomic registry commit
+  `4fb7e8bd8089c0a62ad1b13d2cd9b5a5b32c5e44`. It added pre-diagnostic alias
+  checks, immutable public ABI/signature/constants authority,
+  composition-valid paired semantic-axis swaps, exact writer `count` control
+  structure, all-26 count-one interposition, and all-family/all-index
+  provenance negatives. A compiling count-selective bad writer was rejected by
+  the new structural check.
+- Full optimized and ASan/UBSan suites passed 442 engine, 37 reward, 2 contact,
+  and 12 loader tests. The local verifier passed in 33.15 seconds, the native
+  Linux verifier including GNU interposition passed in 130.18 seconds while
+  PID 473422 remained the sole GPU owner, and the exact digest-pinned,
+  networkless, read-only, non-root container verifier passed in 248.71 seconds.
+  Bootstrap history again passed `1/1`; the branch was force-updated only with
+  an explicit lease and PR #42's evidence was refreshed.
+- Fresh exact-head review then found one real P2, so the PR remains draft and
+  merge-blocked: for a caller-declared 27-element array, `error` can alias
+  element 27 just beyond the fixed 26-element overlap extent and the later
+  count diagnostic can modify caller storage. The paired semantic-axis change
+  was confirmed correct. No approval from `4fb7e8b` will be reused after the
+  correction, and ordinary CI alone cannot override this finding.
+- Claude Code authentication remains unavailable, so Fable was not invoked and
+  no Fable approval is claimed.
+
+Next steps:
+
+1. Continue the hourly read-only operational loop, preserving every frozen
+   queue, thermal, overflow, checkpoint-selection, and BBTV boundary.
+2. Extend alias checking to the safely computed greater of supplied and fixed
+   extents, add production and immutable over-count regressions, regenerate
+   authority hashes, and rerun the complete local/Linux/container/history proof
+   stack before another exact-head CI and three-review cycle.
+3. Keep PR #42 draft and keep sidecars, bank publication, training inputs,
+   reward changes, deployment, and milestone evaluation out of scope until all
+   findings are closed and the live queue gates separately authorize later
+   work.
