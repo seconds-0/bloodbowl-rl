@@ -3674,3 +3674,78 @@ Next steps and safety boundary:
   As with PR #28, only local branch cleanup failed because another worktree
   owns `main`; the authoritative merge was verified and the remote branch was
   deleted manually. No merged source was deployed to the live checkout.
+
+## 2026-07-15 07:03 PDT — hourly health check and F3 authored-proof validation
+
+Live experiment and autonomy state:
+
+- Seed 43 is running normally in `final-main-control` after seed 42's accepted
+  completion. At 07:02 PDT it had reached exact learner step 212,467,712 at
+  epoch 1,620. The latest complete 90-game native panel reported performance
+  0.4611, 1.3111 touchdowns/game, draw rate 0.4778, possession 0.3165,
+  illegal/sampled-repair fraction 0.2149, forward ball progress 8.518, 18.822
+  Rush intentions, 15.144 blocks thrown, 1.300 blocks against the carrier,
+  carrier-target fraction 0.0929, 0.0444 Pass intentions, and zero Hand-off
+  intentions. Reward clipping, non-finite reward, engine-error, demonstration,
+  and fallback counters all remained zero. This is an early 90-game training
+  panel, not checkpoint-selection or promotion evidence.
+- The primary queue remains active/running with queue PID 431309, one of three
+  main-lineage arms complete, seed 43 current, and zero service restarts. The
+  exact completion-gate parser reports only trainer PID 473422. The current run
+  directory `1784123019013` had five complete checkpoints; the newest observed
+  was exact step 199,884,800.
+- All 65 primary and 74 overflow pinned inputs revalidated with no error at the
+  unchanged plan SHA-256 values
+  `4ee72e3c58f09786cdd3bbf78a772e8de2d9a93e21a8b065cf0c5976ecced270`
+  and
+  `d90ee01c8c459f599c8601934f545ccb7783261edae3bcb6e9e3878036d37d3e`.
+  Overflow state remains absent, its service inactive/dead with zero restarts,
+  and its timer active. The 06:53 watcher invocation exited successfully after
+  correctly reporting that the primary was still active.
+- The sampled GPU state was 81 C, 89% fan, 77% utilization, 5,554/8,192 MiB,
+  and 109.56 W; both software and hardware slowdown flags were inactive in
+  that sample. Disk remained 7% used with 895 GiB free, inodes 1% used, memory
+  9.9 GiB available, and swap use 27 MiB.
+- `bbstream`, `bbweb`, and `bbtv-tunnel` remain active with zero restarts. BBTV
+  has rolled to seed 43 and selected exact checkpoint 50,069,504 at 06:51 PDT,
+  source SHA-256
+  `c908a38352ca45c89f9a0834300b7894d2fd357ee1bc14ab61ae7d7f6e715021`,
+  against the frozen turnover3 baseline. The public page returned HTTP 200 in
+  0.291 seconds. The CPU viewer remains observational and owns no GPU compute
+  process.
+
+Authored deterministic state-bank work:
+
+- The first F3 proof recipe now reaches a fresh supported team-turn boundary
+  in half two, active-team turn 5, tied 0–0, through 660 enumerated legal engine
+  decisions and 175 recorded game dice. Setup remains deterministic and all
+  later choices use a third RNG stream independent of procgen and game dice.
+  No match, clock, score, grid, player, ball, resource, status, or procedure
+  field is synthesized.
+- Exact replay alone did not prove that caller-declared seeds generated an
+  otherwise valid transcript. The writer now independently rediscovers each
+  complete recipe from its configuration fields and requires full recipe byte
+  identity before replay or serialization, binding procgen, game, and
+  controller seeds to initialized/captured bytes and all transcripts. A mixed
+  first-turn/F3 regression proves that provenance failure in the later record
+  leaves the output at byte zero.
+- Focused checks, the complete optimized suite, and the complete ASan/UBSan
+  suite pass at 417 engine, 37 reward, 2 contact-bot, and 3 production-loader
+  tests. Clang static analysis and `git diff --check` pass. Guidance and D196
+  record the narrow claim: one tied late-second-half F3 template only, with no
+  quota, bank-publication, training, or deployment authorization. The live
+  checkout and both queues remain untouched.
+
+Next steps and safety boundary:
+
+1. Commit and push the F3 branch, require exact-head hosted CI and independent
+   review of long-horizon RNG/provenance, memory bounds, semantic scope, loader
+   behavior, and the no-surgery boundary; fix every actionable P0-P3 finding
+   before merge.
+2. Continue one reviewed proof recipe per remaining family. Keep F1/F2/F5 on
+   the already validated fresh-team-turn boundary; do not admit F4's nested
+   reroll frame until its complete resumable stack has an explicit shared
+   validator.
+3. Continue hourly read-only live/BBTV monitoring. Do not alter the occupied
+   source checkout, manually start overflow, or start milestone evaluation
+   while either frozen queue remains pending or running.
