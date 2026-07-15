@@ -86,9 +86,11 @@ newer evidence wins.
   pending destination is exposed egocentrically in observation context bytes
   9/12 so reset observations are transition-complete. Tackle suppresses the
   Dodge skill reroll while leaving Team Re-roll and Pro independent. Scenario
-  scanners and the current authored writer remain fresh-team-turn-only; do not
-  substitute the broader resumable gate where a classifier assumes that
-  boundary. Later target/reroll decisions need their own procedure-specific
+  scanners remain fresh-team-turn-only; do not substitute the broader resumable
+  gate where a classifier assumes that boundary. The authored writer may use
+  resumable admission only for the exact F4 pending-Dodge recipe kind; every
+  F1/F2/F3/F5 record remains fresh-team-turn-only. Later target/reroll decisions
+  need their own procedure-specific
   validation before the writer or loader may accept them. Every emitted
   authored record must also
   pass the canonical one-action continuation gate after loading; the gate is a
@@ -108,6 +110,14 @@ newer evidence wins.
   activation and Move declaration must still offer End Activation. This proves
   that score-now and Stall are available, never which choice is better, and no
   path/action/preference metadata is stored.
+  The fixed F4 proof uses controller seed 1 and legally reaches the exact
+  pending-Dodge reroll window after 384 decisions and 110 dice. Its transcript
+  ends with the failed Step before Team/Dodge/Decline is selected; no reroll
+  action, result, reward, regret, or policy label is stored. Independent
+  rediscovery, exact replay, deterministic BBS bytes, mixed-batch preflight,
+  production-loader byte identity, decision masks, and continuation are
+  mandatory. This selective writer exception does not authorize any other
+  nested frame or any training/publication artifact.
 - **BC loader (D180):** use the bounded streaming loader and replay-disjoint
   split. Replay-first is the current default, not the final sampler; next
   stratify by roster/matchup, depth, and action family.

@@ -256,10 +256,10 @@ changes a reward, active queue, production default, or promotion verdict.
   A legally resolved Rush retains its result in `match.ret` and remains
   deliberately outside this first shape. Tackle suppresses only the Dodge
   skill reroll at the origin; Team Re-roll and Pro availability are independent.
-  Scenario
-  scanners must remain on the fresh-turn-only validator; the authored writer
-  also remains fresh-turn-only until the separate F4 recipe tranche changes it.
-  Do not widen either gate to arbitrary decision states. Any later target or
+  Scenario scanners must remain on the fresh-turn-only validator. The authored
+  writer may use the resumable validator only for the exact F4 pending-Dodge
+  recipe kind; F1/F2/F3/F5 remain fresh-turn-only. Do not widen either gate to
+  arbitrary decision states. Any later target or
   reroll shape needs its own complete lower-frame validator first. The F1
   proof keeps that boundary: a non-dash-PA, non-No-Ball carrier's private copy
   must reach a standing, tackle-zone-capable, non-No-Ball teammate target
@@ -277,6 +277,14 @@ changes a reward, active queue, production default, or promotion verdict.
   with End Activation still legal. The probe establishes that scoring and
   Stalling are both available; it does not say which is strategically correct,
   apply the Stalling choice, or serialize a path, action, or preference.
+  The fixed F4 proof legally reaches the exact nested pending-Dodge window with
+  controller seed 1 after 384 decisions and 110 dice. Capture occurs before
+  choosing Team Re-roll, Dodge, or Decline: the final recorded action is the
+  failed Step, so no pending action or outcome becomes a label. Require full
+  rediscovery/replay identity, deterministic writer bytes, mixed-batch
+  fail-before-header behavior, production-loader byte identity/masks, and the
+  continuation canary. This is one opportunity template, not F4 axis coverage,
+  quotas, counterfactual authorization, publication, training, or deployment.
 - The corpus is sharply prefix-censored: it is not sufficient by itself for
   second halves, late drives, stalling, comeback play, or rare actions.
 - Correct BB2025 human possession is about `0.474` on genuine team-turn
