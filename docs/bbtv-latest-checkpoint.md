@@ -27,9 +27,16 @@ The public page remains <https://bbtv.seconds0.com>. The WebSocket remains at
   touching or restoring an older checkpoint cannot roll the stream backward;
 - fingerprints the converter and environment config in every cache entry and
   rebuilds when either changes;
-- uses a separate, float-built Puffer environment at
-  `/home/rache/bloodbowl-rl-bbtv/vendor/PufferLib`, so it cannot rebuild or
-  replace the native module imported by the live trainer;
+- runs conversion with its declared production converter interpreter and CUDA
+  hidden; the CPU viewer `PYTHONPATH` is injected only into match children;
+- uses a separate CPU/fp32 Puffer environment at
+  `/home/rache/bloodbowl-rl-bbtv-cpu/vendor/PufferLib`, so it cannot rebuild or
+  replace the native module imported by the live trainer and cannot occupy the
+  GPU-compute process list used by the vacation overflow handoff gate;
+- verifies at launcher startup that the imported native module is physically
+  inside that viewer root and reports `env_name=bloodbowl`, `gpu=0`, and
+  `precision_bytes=4` while CUDA is hidden, then retains that isolation for each
+  match-server child;
 - falls back to the prior league9-vs-league8 stream if discovery or conversion
   fails; and
 - runs at nice level 19 and idle I/O priority.
@@ -71,6 +78,14 @@ cat /home/rache/bloodbowl-rl-audit/runs/bbtv-follow/selection.json
 cat /home/rache/bloodbowl-rl-audit/runs/bbtv-follow/server_status.json
 ```
 
+The CPU viewer is an isolated copy of the already-isolated BBTV Puffer source,
+built in its own tree with `./build.sh bloodbowl --cpu`. Before switching the
+service, verify a real spare-port WebSocket cycle (`hello`, `match_start`, and
+`snapshot`), record the imported `_C` path/hash, and run the exact pinned
+overflow parser. While primary training is live, that parser should report only
+the trainer PID; BBTV must not appear. A successful import alone is insufficient
+because Python path order can silently select `_C` from another Puffer tree.
+
 To compare with or immediately roll back to deterministic greedy viewing, set
 `BBTV_SAMPLE=0` in the service environment and restart only
 `bbstream.service`. Removing that override restores sampled viewing.
@@ -82,6 +97,10 @@ rm ~/.config/systemd/user/bbstream.service.d/follow-latest.conf
 systemctl --user daemon-reload
 systemctl --user restart bbstream.service
 ```
+
+Rollback is this whole-override removal, not a partial follower/viewer-root
+revert. The CPU-hiding follower paired with the old GPU-built viewer is a known
+crash configuration.
 
 Do not delete or rewrite the audit checkpoint tree to repair BBTV. If no valid
 checkpoint is discoverable, inspect `server_status.json`, the conversion
