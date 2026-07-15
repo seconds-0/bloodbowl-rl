@@ -373,6 +373,30 @@ transfer-opportunity predicate. This proves one Hand-off opportunity template,
 not Hand-off quality, F2 axis coverage, quotas, target-window validation,
 publication, or training authorization.
 
+The first F2 axis tranche now adds exactly four fresh-team-turn cells without
+replacing that legacy proof: Home/Away active-side orientation crossed with
+exactly one versus two-or-more legal catch-capable Hand-off targets. A shared
+input-preserving counter first applies the complete raw BBS boundary validator,
+then uses a discarded private copy to perform the carrier's legal activation
+and Hand-off declaration with zero dice. It counts qualifying target actions
+for which `bb_can_catch` is true, preserving D198/D199's distinction between a
+rules-legal No Ball Hand-off target and a target that can attempt the Catch.
+The requested side and target bucket are stored in the recipe and independently
+rediscovered; the target bucket must be zero for every other recipe kind, and
+two-or-more is explicitly a bucket rather than exactly two. Fixed controller
+seeds Home/multiple 2, Home/one 4, Away/one 8, and Away/multiple 13 bind exact
+action/dice counts, replay bytes, deterministic writer bytes, loader identity,
+and one-action continuation. The structural quota rejects missing, duplicate,
+mismatched, non-axis, and malformed captures, including adversarial stack
+depths 0, 1, 33, and 255 before any unchecked frame access. Matching optimized
+and ASan/UBSan sweeps over seeds 0-4095 for every cell produce 1,246 Home/one,
+994 Home/multiple, 1,189 Away/one, and 1,291 Away/multiple captures; all other
+attempts end cleanly and zero fail unexpectedly. This proves reachability and
+target-count/orientation structure only. Target marking, receiver identity,
+scoring range, carrier pressure, score/clock, roster/race, tactical quality,
+publication, training, reward changes, evaluation, and deployment remain
+separate contracts.
+
 The first F5 proof uses controller seed 410 and reaches a loader-valid half-one,
 home-turn-2, tied 0-0 fresh-team-turn boundary after 51 legal decisions and 19
 in-match dice. Home slot 6 holds the ball at `(19, 10)` with MA 6, exactly six

@@ -299,6 +299,21 @@ changes a reward, active queue, production default, or promotion verdict.
   does not cover score, possession, receiving history, material, reroll budget,
   roster, race pair, or tactical quality, and it does not authorize a bank,
   sidecar, manifest, training input, reward change, evaluation, or deployment.
+  The first F2 axis likewise stays at the fresh-turn boundary and crosses the
+  two active-side orientations with exactly one versus two-or-more legal
+  catch-capable Hand-off targets, for four cells total. The shared pure counter
+  privately follows the carrier's zero-die legal activation and Hand-off
+  declaration after complete raw-boundary validation; it counts catch-capable
+  target actions, not rules-legal No Ball auto-failure targets. Store side and
+  bucket in the recipe, reject the bucket on every other recipe kind, and keep
+  two-or-more explicitly non-exact. The fixed cells use controller seeds 4/2
+  for Home one/multiple and 8/13 for Away one/multiple. Matching optimized and
+  sanitized 4,096-seed x four-cell sweeps yield 1,246/994/1,189/1,291 captures,
+  the complementary attempts end cleanly, and none fail unexpectedly. This is
+  opportunity structure, never evidence that Hand-off or any target is the
+  right action; marking, receiver identity, score/clock, roster/race, tactical
+  quality, publication, training, rewards, evaluation, and deployment remain
+  separate contracts.
 - The corpus is sharply prefix-censored: it is not sufficient by itself for
   second halves, late drives, stalling, comeback play, or rare actions.
 - Correct BB2025 human possession is about `0.474` on genuine team-turn
