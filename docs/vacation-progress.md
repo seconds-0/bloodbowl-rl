@@ -2290,3 +2290,72 @@ Post-gate verification at 21:19 PDT:
   `809f1c6`. Reward/replay/analyzer contracts, BC streaming checks, build and
   unit tests, and the ASan/UBSan suite all passed. The monitoring branch is
   clean and remains an unmerged draft so later hourly evidence can be appended.
+
+## 2026-07-14 21:31 PDT — first vacation check and exact BBTV step labels
+
+Experiment and host state:
+
+- The learner reached 5,849,874,432 steps (epoch 44,630). The current 100-game
+  panel reported 1.6000 touchdowns/game, performance 0.5050, draw rate 0.4500,
+  possession 0.3898, historical win rate 0.5831, and illegal fraction 0.1781.
+  Reward clipping, non-finite rewards, engine errors, demonstrations, and
+  demonstration fallbacks all remain zero.
+- The newest completed checkpoint is 5,842,927,616 steps, written at 21:29:48
+  PDT; the trainer log and `SCREEN_STATUS.json` remain fresh. Queue PID `431309`,
+  wrapper PID `431316`, and trainer PID `431596` are unchanged with zero service
+  restarts. GPU state is 81 C, 89% fan, 79% utilization, 5,737/8,192 MiB, about
+  119 W, with hardware slowdown inactive. The volume still has 898 GiB free;
+  memory has 8.7 GiB available and swap use is 27 MiB.
+- Both plans revalidated after the viewer deployment: all 65 primary pins match
+  plan SHA `4ee72e3c58f09786cdd3bbf78a772e8de2d9a93e21a8b065cf0c5976ecced270`,
+  and all 74 overflow pins match plan SHA
+  `d90ee01c8c459f599c8601934f545ccb7783261edae3bcb6e9e3878036d37d3e`.
+  Overflow state remains absent. The 21:23 watcher invocation was a successful
+  primary-active no-op. An earlier probe requested the nonexistent
+  `experiment-overflow-watch@...timer`; the actual reviewed unit is
+  `vacation-overflow-watch@...timer`, and it is enabled, active, and waiting.
+  This was a monitoring-command naming error, not a scheduler outage.
+
+Viewer-only provenance correction:
+
+- The known long-tag defect truncated the last two digits of the native step in
+  public converted filenames even though `selection.json` retained the exact
+  value. The focused fix now reserves the complete 12-digit step, ten-digit
+  source digest, and `_torch.bin` pruning suffix before abbreviating the tag.
+  A long-tag regression plus a 12-case empty/short/very-long tag and step-boundary
+  matrix passed; all 14 follower tests, Python compilation, Bash syntax,
+  ShellCheck, and whitespace checks passed.
+- PR #16 passed its complete PR-head CI: reward/replay/analyzer contracts, BC
+  filtering/streaming, build/unit tests, and ASan/UBSan. Inline review found no
+  P0--P3 product finding. External Codex review could not start because its
+  installed bundled executable is missing; Gemini stopped at interactive
+  authentication. The only hosted annotation is the repository-wide
+  `actions/checkout@v4` Node-20 deprecation notice. PR #16 merged as
+  `8e99a9b9cecaacddce6675be44b17e38515ca01d`; merged-main CI is still running
+  at this timestamp.
+- The exact one-file merged archive is
+  `/home/rache/deployments/pr16-8e99a9b-bbtv.tar`, SHA-256
+  `e56f5239a892947f6c78003d23eee77f0e7404b793c0f1569ce388e52545f2b4`.
+  Prior bytes and deployment record are backed up under
+  `/home/rache/deployments/pr16-bbtv-backup-before-8e99a9b`. Deployed
+  `follow_latest.py` SHA-256 is
+  `548617ab133a44fd688ede7489a65c56ae92c1a8018bac99e7abe93ca9540e2b`;
+  `.deployed-bbtv-source.json` SHA-256 is
+  `5095a7507db1fe7abb4224b65e97c3357da6d9f99424eb3033af0099b8cd45a2`.
+- Restarted only `bbstream.service`, deliberately changing its PID from
+  `444521` to `453879`. Trainer/queue, `bbweb`, and tunnel PIDs did not change.
+  The new sampled child selected exact native step 5,792,989,184 with source
+  SHA prefix `912a7deee3`, and its public agent label now contains the complete
+  `step005792989184` value. The public page returned HTTP 200; a fresh external
+  secure-WebSocket session received the exact matchup followed by `hello`,
+  `match_start`, full `snapshot`, and advancing `delta` messages.
+
+Next steps:
+
+1. Require merged-main CI to pass and observe at least one normal two-game BBTV
+   rollover with the new full-step naming before closing the viewer fix.
+2. Continue the hourly queue/progress/integrity, pin, thermal, capacity,
+   overflow, BBTV, and public-stream checks. Do not interpret the displayed
+   sampled game as evaluation evidence.
+3. Preserve every fixed checkpoint milestone. Do not choose, transfer, or
+   promote any policy from live panels or viewer aesthetics.
