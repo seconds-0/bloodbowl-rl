@@ -564,6 +564,20 @@ runtime/progress/capacity/thermal guards cannot strand GPU work. Do not add an
 inner `setsid`, `nohup`, daemonizer, or process supervisor to a queue-owned
 training path.
 
+Post-run long-horizon characterization uses
+`tools/run_checkpoint_milestone_eval.py` under the fixed protocol in
+`docs/plans/r0-milestone-evaluation.md`. Accept only a completed and revalidated
+`control-final` screen. Resolve the predeclared 0/1/2/4/6/8/10/12B points by
+embedded native step (never mtime), freeze every hash before matching, use
+common seeds and both native backend roles, and require an exclusive idle GPU.
+Do not stop a training or BBTV process to make the evaluator run; remain
+pending. Label the vacation static banks as in-pool, historical exact anchors
+as lineage-connected transfer rather than independent holdout, scripted bots
+as functional probes, and forced rosters as stratification because procgen
+trained on every roster ID. The fixed plateau rule only compresses a later
+evaluation. It cannot select/promote a reward, mutate a queue, or change a
+production default.
+
 ---
 
 ## 12. Session checklist
