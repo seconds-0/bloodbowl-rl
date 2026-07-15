@@ -3,6 +3,19 @@
 *Design doc, 2026-06-09. Status: approved concept (Alex: "we should literally run
 football practice. Pre set up scenarios/drills"), phase 1 in progress.*
 
+## July 2026 implementation contract
+
+The original concept below remains the motivation, but
+`docs/plans/authored-drill-state-bank.md` is now the authoritative engineering
+contract. In particular, a drill spec no longer grants permission to place
+players or set ball/score/turn/procedure fields directly. A deterministic
+controller must reach every capture from a real engine initializer through
+legal actions, record its action and dice transcripts, and reproduce the raw
+state byte-for-byte on a second scripted-RNG pass. The plan also adds grouped
+splits, manifest-last provenance, hardened-loader and continuation validation,
+balanced F1–F5/S7/S8 families, and strict separation of evaluation-only paired
+rollouts from training bytes.
+
 ## Why
 
 Every skill this project has actually created came from a **start-state

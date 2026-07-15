@@ -18,6 +18,7 @@ OBJ      := $(SRC:engine/src/%.c=$(BUILD)/obj/%.o)
 TEST_SRC := $(wildcard engine/tests/test_*.c)
 SCENARIO_SRC := tools/bank_scenario_predicates.c
 SCENARIO_TEST_SRC := $(SCENARIO_SRC) tools/bank_scenario_scan.c
+AUTHORED_DRILL_SRC := tools/authored_drill.c
 LIB      := $(BUILD)/libbb.a
 TESTBIN  := $(BUILD)/bb_tests
 PUFFER_REWARD_TESTBIN := $(BUILD)/puffer_reward_tests
@@ -46,8 +47,8 @@ $(LIB): $(OBJ)
 # NOTE: tests link the object files directly (not libbb.a) — skill hook
 # registrations live in constructor-only objects that a static archive would
 # drop. External consumers of libbb.a must use -force_load / --whole-archive.
-$(TESTBIN): $(TEST_SRC) $(SCENARIO_TEST_SRC) tools/bank_scenario_scan.h engine/tests/bb_test.h engine/tests/bb_fixtures.h engine/tests/bb_test_main.c $(OBJ)
-	$(CC) $(CFLAGS) -DBBS_SCANNER_LIBRARY -Iengine/tests engine/tests/bb_test_main.c $(TEST_SRC) $(SCENARIO_TEST_SRC) $(OBJ) -o $@ $(LDFLAGS)
+$(TESTBIN): $(TEST_SRC) $(SCENARIO_TEST_SRC) $(AUTHORED_DRILL_SRC) tools/bank_scenario_scan.h tools/authored_drill.h engine/tests/bb_test.h engine/tests/bb_fixtures.h engine/tests/bb_test_main.c $(OBJ)
+	$(CC) $(CFLAGS) -DBBS_SCANNER_LIBRARY -Iengine/tests -Itools engine/tests/bb_test_main.c $(TEST_SRC) $(SCENARIO_TEST_SRC) $(AUTHORED_DRILL_SRC) $(OBJ) -o $@ $(LDFLAGS)
 
 $(PUFFER_REWARD_TESTBIN): puffer/bloodbowl/test_reward_send_off.c puffer/bloodbowl/bloodbowl.h puffer/bloodbowl/contact_bot.h engine/tests/bb_test.h engine/tests/bb_fixtures.h
 	$(CC) $(CFLAGS) -Iengine/tests -Ipuffer/bloodbowl -Wno-unused-function $< -o $@ -lm $(LDFLAGS)
@@ -55,8 +56,8 @@ $(PUFFER_REWARD_TESTBIN): puffer/bloodbowl/test_reward_send_off.c puffer/bloodbo
 $(PUFFER_CONTACT_TESTBIN): puffer/bloodbowl/test_contact_bot.c puffer/bloodbowl/bloodbowl.h puffer/bloodbowl/contact_bot.h engine/tests/bb_test.h
 	$(CC) $(CFLAGS) -Iengine/tests -Ipuffer/bloodbowl -Wno-unused-function $< -o $@ -lm $(LDFLAGS)
 
-$(PUFFER_STATE_BANK_TESTBIN): puffer/bloodbowl/test_state_bank.c puffer/bloodbowl/bloodbowl.h engine/tests/bb_test.h engine/tests/bb_fixtures.h
-	$(CC) $(CFLAGS) -Iengine/tests -Ipuffer/bloodbowl -Wno-unused-function $< -o $@ -lm $(LDFLAGS)
+$(PUFFER_STATE_BANK_TESTBIN): puffer/bloodbowl/test_state_bank.c puffer/bloodbowl/bloodbowl.h $(AUTHORED_DRILL_SRC) tools/authored_drill.h engine/tests/bb_test.h engine/tests/bb_fixtures.h
+	$(CC) $(CFLAGS) -Iengine/tests -Ipuffer/bloodbowl -Itools -Wno-unused-function $< $(AUTHORED_DRILL_SRC) -o $@ -lm $(LDFLAGS)
 
 test: $(TESTBIN) $(PUFFER_TESTBINS)
 	./$(TESTBIN) $(TEST)

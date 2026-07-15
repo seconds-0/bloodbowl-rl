@@ -222,6 +222,14 @@ changes a reward, active queue, production default, or promotion verdict.
   infer unseen continuation quality from a turn-start snapshot, or turn the
   coverage report into a sampler/training input without a separate reviewed
   contract.
+- Authored drill states must follow
+  `docs/plans/authored-drill-state-bank.md`: initialize a real match, reach
+  every capture through legal engine actions, record all actions/dice, then
+  reinitialize and reproduce the raw state byte-for-byte with scripted RNG.
+  Direct match/grid/ball/score/turn/procedure surgery is forbidden. Group
+  train/dev/test by recipe template, keep paired rollout/regret diagnostics out
+  of BBS/observations/rewards/BC labels, and require deterministic manifest-last
+  publication plus loader and one-action continuation validation.
 - The corpus is sharply prefix-censored: it is not sufficient by itself for
   second halves, late drives, stalling, comeback play, or rare actions.
 - Correct BB2025 human possession is about `0.474` on genuine team-turn

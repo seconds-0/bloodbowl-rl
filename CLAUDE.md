@@ -64,6 +64,13 @@ newer evidence wins.
   the exact bank/manifest/source/binary pins and replay-disjoint splits. Use
   the measured thin/empty regions to size authored fixtures; never wire this
   historical opening-censored bank into training without a separate review.
+- **Authored drill bank plan:** use
+  `docs/plans/authored-drill-state-bank.md`. Every state starts from an engine
+  initializer and is reached only through legal `bb_apply` actions; discovery
+  records every action/die, and exact replay must reproduce the raw match bytes
+  with `bb_rng_script`. Never construct late-game context by writing score,
+  half, turn, players, grid, ball, or procedure frames. Split by recipe-template
+  group and quarantine paired counterfactual outcomes from training inputs.
 - **BC loader (D180):** use the bounded streaming loader and replay-disjoint
   split. Replay-first is the current default, not the final sampler; next
   stratify by roster/matchup, depth, and action family.

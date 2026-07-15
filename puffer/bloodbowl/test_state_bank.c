@@ -2,6 +2,7 @@
 #include "bb_test.h"
 #include "bloodbowl.h"
 #include "bb_fixtures.h"
+#include "authored_drill.h"
 
 #include <unistd.h>
 
@@ -54,6 +55,42 @@ static int load_one(const char* path, const bb_match* match) {
     reset_state_bank_loader(path);
     bbe_state_bank_load();
     return bbe_state_bank_n;
+}
+
+BB_TEST(state_bank_accepts_exact_replayed_authored_record) {
+    ad_recipe recipe;
+    memset(&recipe, 0, sizeof recipe);
+    recipe.procgen_seed = 0xA1170EEDu;
+    recipe.procgen_stream = 17;
+    recipe.game_seed = 0xD11CE5u;
+    recipe.game_stream = 23;
+    recipe.home_team = 0;
+    recipe.away_team = 1;
+    recipe.exclude_team = -1;
+    recipe.procgen = bb_procgen_params_default();
+    char error[AD_ERROR_CAP];
+    BB_CHECK_EQ(ad_discover_first_team_turn(&recipe, error), 0);
+    bb_match replayed;
+    BB_CHECK_EQ(ad_replay_exact(&recipe, &replayed, error), 0);
+
+    char path[256];
+    snprintf(path, sizeof path, "/tmp/bloodbowl-authored-bank-%ld.bbs",
+             (long)getpid());
+    FILE* file = fopen(path, "wb");
+    BB_CHECK(file != NULL);
+    if (file == NULL) return;
+    ad_bbs_record record = {0xA0000001u, (uint32_t)recipe.action_count, replayed};
+    BB_CHECK_EQ(ad_bbs_write(file, &record, 1, error), 0);
+    BB_CHECK_EQ(fclose(file), 0);
+
+    reset_state_bank_loader(path);
+    bbe_state_bank_load();
+    BB_CHECK_EQ(bbe_state_bank_n, 1);
+    if (bbe_state_bank_n == 1) {
+        BB_CHECK_EQ(memcmp(&bbe_state_bank[0], &replayed, sizeof replayed), 0);
+    }
+    reset_state_bank_loader(BBE_STATE_BANK_PATH);
+    BB_CHECK_EQ(remove(path), 0);
 }
 
 BB_TEST(state_bank_rejects_unsafe_record_content) {
