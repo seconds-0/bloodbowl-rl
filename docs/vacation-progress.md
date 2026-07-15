@@ -4019,3 +4019,87 @@ Next steps and safety boundary:
   to the occupied 2070 checkout, and neither frozen queue nor BBTV was changed.
   F4 remains the only missing first-family proof and remains blocked on a
   reviewed shared validator for nested reroll decisions.
+
+## 2026-07-15 09:34 PDT — hourly health check and F4 review-fix handoff
+
+Live experiment and autonomy state:
+
+- Seed 43 remains healthy in `final-main-control`. Its latest complete native
+  panel was exact learner step 1,885,339,648 at epoch 14,383 over 94 games:
+  performance 0.5745, 1.4787 touchdowns/game, draw rate 0.4468, possession
+  0.3656, illegal/sampled-repair fraction 0.2016, forward ball progress 8.448,
+  20.436 Rush intentions, 14.766 blocks thrown, 1.968 blocks against the
+  carrier, carrier-target fraction 0.1417, and zero Pass and Hand-off
+  intentions. Reward clipping, non-finite reward, engine-error,
+  demonstration, and fallback counters remain zero. This 94-game training
+  panel is observational telemetry, not selection or promotion evidence.
+- The primary user service is active/running with PID 431309, screen state
+  `running`, one completed arm, seed 43 current, and zero restarts. Trainer PID
+  473422 remains the only GPU compute process. The newest complete checkpoint
+  observed was exact step 1,847,853,056 in run directory `1784123019013`.
+  Screen status updated normally at 09:33 PDT. The dashboard estimated roughly
+  14h47m remaining; that is a throughput estimate, not a completion promise.
+- Read-only validation matched all 65 primary pins at unchanged plan SHA-256
+  `4ee72e3c58f09786cdd3bbf78a772e8de2d9a93e21a8b065cf0c5976ecced270`
+  and all 74 overflow pins at unchanged plan SHA-256
+  `d90ee01c8c459f599c8601934f545ccb7783261edae3bcb6e9e3878036d37d3e`.
+  Overflow state remains absent. Its watcher exited successfully at 09:26
+  after reporting that the primary service was still active; the timer remains
+  active/waiting and next checks without bypassing the completion gate.
+- The 09:32 GPU sample was 81 C, 88% fan, 82% utilization, 5,554/8,192 MiB,
+  and 120.89 W. Software thermal limiting was active while hardware slowdown
+  was inactive. Because this condition has appeared in multiple hourly
+  samples, continue watching temperature, throughput, and hardware slowdown;
+  do not retune an occupied frozen run without a separate evidence threshold.
+  Disk remains 7% used with 894 GiB free, inodes 1% used, memory 9.7 GiB
+  available, and swap use 27 MiB.
+- `bbstream`, `bbweb`, and `bbtv-tunnel` are active with zero restarts. BBTV
+  selected seed 43 checkpoint 1,797,914,624 at 09:27 PDT, source SHA-256
+  `a4826ce1b609368add36de8ef5897f004dbfab70e6ddc240ba55c00327bda05c`,
+  against the frozen turnover3 baseline. The converted viewer artifact hashes
+  to `003a787f052b4044a4419607ce988e03090e0be9272bc688f1fd76c4e9c06988`.
+  The public page returned HTTP 200 in 0.223 seconds and `/ws` returned the
+  expected HTTP 101 upgrade before the read-only timeout. The CPU viewer owns
+  no GPU compute process.
+
+F4 validator review and next steps:
+
+- PR #35 exact head `e7f04a018dbb559b6f4c98a961d1826db0d48e06` passed hosted CI but was not
+  merged: independent review found three merge-blocking defects. Different
+  pending Dodge destinations emitted identical reset observations and masks;
+  Rooted and other unreachable activation states could pass raw-state
+  admission; and the engine incorrectly offered the Dodge skill reroll when
+  leaving a standing Tackle marker. A stale loader comment also contradicted
+  the new validator union.
+- Review-fix head `4f58fd132d55b59128d05c8f2657bf1889edfca2` now exposes the pending MOVE
+  destination egocentrically in spare observation context bytes 9/12 without
+  changing the 2,782-byte tensor shape. A metamorphic loader test proves two
+  accepted same-target/same-mask states with different destinations now emit
+  different observations and that the same successful reroll reaches the two
+  different squares. The strict validator rejects Rooted, Distracted, Eye
+  Gouged, exhausted-MA, and negative-MA mutations.
+- A focused legal trace settled a reviewer disagreement about Rush provenance.
+  After a successful Rush queues a failed Dodge, moved/rushes remain zero but
+  the Rush success persists in `match.ret`; the current validator's exact
+  `ret == 0` contract therefore really is non-Rush. The legal Rush-then-Dodge
+  fixture is deliberately rejected, while synthetic MA 0/-1 states are also
+  rejected. This avoids widening the first nested shape during a safety fix.
+- The global BB2025 rule fix now suppresses only the Dodge skill reroll when a
+  standing opposition Tackle player marks the origin. Exact scripted tests
+  retain the no-Tackle Dodge control and prove that Tackle+Dodge alone opens no
+  reroll window, while Team Re-roll and Pro remain independently available and
+  can rescue the failed Dodge. D201/D202, `AGENTS.md`, `CLAUDE.md`, the
+  observation spec, authored-bank plan, and validation skill record the
+  boundary.
+- Optimized and ASan/UBSan suites each pass 428 engine, 37 reward, 2
+  contact-bot, and 7 production-loader tests. Focused Clang static analysis and
+  `git diff --check` pass; committed golden traces still resimulate exactly.
+  The review-fix head is pushed but remains unmerged pending fresh independent
+  exact-head review and hosted CI. No source or authored artifact was deployed
+  to the occupied 2070 checkout, and neither frozen queue nor BBTV was changed.
+
+Next: require reviewers to reproduce closure of their exact findings on
+`4f58fd1`, fix every new P0-P3 issue, and merge only with unanimous exact-head
+approval plus green hosted CI. Then implement the separate legal F4 authored
+recipe and writer change; do not conflate validator infrastructure with a
+training record, action label, reward change, or deployment authorization.
