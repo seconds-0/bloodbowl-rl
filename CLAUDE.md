@@ -118,6 +118,19 @@ newer evidence wins.
   production-loader byte identity, decision masks, and continuation are
   mandatory. This selective writer exception does not authorize any other
   nested frame or any training/publication artifact.
+  The first F3 axis remains on the ordinary fresh-turn boundary and requires
+  exactly 16 half-two cells: turns 1-8 for each of the two active-side
+  orientations. The requested turn and side are stored provenance, must be zero
+  for every non-axis recipe, and are independently rediscovered. Use
+  `BB_HOME..BB_AWAY`, never the 30-entry roster catalogue, when sizing this
+  orientation axis. Its quota validator proves one structurally valid recipe
+  per cell; the writer still owns full provenance, exact replay, boundary, and
+  continuation admission. Distinct controller seeds 1000-1015 prove the fixed
+  matrix, while matching optimized/sanitized 256-seed x 16-cell sweeps yield
+  4,088 captures, 8 clean ends, and no unexpected failure. Score, possession,
+  receiving, material, reroll, roster/race, and tactical-quality diversity plus
+  sidecars, publication, training, rewards, evaluation, and deployment remain
+  separate contracts.
 - **BC loader (D180):** use the bounded streaming loader and replay-disjoint
   split. Replay-first is the current default, not the final sampler; next
   stratify by roster/matchup, depth, and action family.

@@ -221,6 +221,88 @@ BB_TEST(state_bank_accepts_exact_replayed_late_second_half_record) {
     BB_CHECK_EQ(remove(path), 0);
 }
 
+BB_TEST(state_bank_accepts_complete_f3_second_half_turn_axis) {
+    const size_t count = AD_F3_SECOND_HALF_AXIS_COUNT;
+    ad_recipe* recipes = calloc(count, sizeof(*recipes));
+    BB_CHECK(recipes != NULL);
+    if (recipes == NULL) return;
+    ad_bbs_record records[AD_F3_SECOND_HALF_AXIS_COUNT];
+    char error[AD_ERROR_CAP];
+
+    size_t index = 0;
+    for (int team = BB_HOME; team <= BB_AWAY; team++) {
+        for (int turn = 1; turn <= AD_F3_SECOND_HALF_TURN_COUNT; turn++) {
+            ad_recipe* recipe = &recipes[index];
+            *recipe = authored_test_recipe();
+            recipe->controller_seed = 1000u +
+                                      (uint64_t)(team * 8 + turn - 1);
+            BB_CHECK_EQ(ad_discover_f3_second_half_turn(
+                            recipe, turn, team, error),
+                        0);
+            records[index] = (ad_bbs_record){
+                0xA3000100u + (uint32_t)index,
+                (uint32_t)recipe->action_count,
+                recipe,
+            };
+            index++;
+        }
+    }
+    BB_CHECK_EQ(index, count);
+    BB_CHECK_EQ(ad_validate_f3_second_half_turn_axis(
+                    recipes, count, error),
+                0);
+
+    char path[256];
+    snprintf(path, sizeof path, "/tmp/bloodbowl-authored-f3-axis-%ld.bbs",
+             (long)getpid());
+    FILE* file = fopen(path, "wb");
+    BB_CHECK(file != NULL);
+    if (file == NULL) {
+        free(recipes);
+        return;
+    }
+    BB_CHECK_EQ(ad_bbs_write(file, records, count, error), 0);
+    BB_CHECK_EQ(fclose(file), 0);
+
+    reset_state_bank_loader(path);
+    bbe_state_bank_load();
+    BB_CHECK_EQ(bbe_state_bank_n, count);
+    if (bbe_state_bank_n == (int)count) {
+        unsigned char
+            seen[BB_AWAY + 1][AD_F3_SECOND_HALF_TURN_COUNT] = {{0}};
+        for (size_t i = 0; i < count; i++) {
+            const bb_match* loaded = &bbe_state_bank[i];
+            const ad_recipe* recipe = &recipes[i];
+            BB_CHECK_EQ(memcmp(loaded, &recipe->captured, sizeof *loaded), 0);
+            BB_CHECK(bb_state_bank_boundary_valid(loaded));
+            BB_CHECK_EQ(loaded->half, 2);
+            BB_CHECK_EQ(loaded->active_team,
+                        recipe->capture_active_team);
+            int loaded_team = loaded->active_team;
+            if (loaded_team >= BB_HOME && loaded_team <= BB_AWAY) {
+                int loaded_turn = loaded->turn[loaded_team];
+                BB_CHECK_EQ(loaded_turn, recipe->capture_turn);
+                if (loaded_turn >= 1 &&
+                    loaded_turn <= AD_F3_SECOND_HALF_TURN_COUNT) {
+                    seen[loaded_team][loaded_turn - 1]++;
+                }
+            }
+            BB_CHECK_EQ(ad_verify_one_action_continuation(
+                            loaded, NULL, NULL, NULL, error),
+                        0);
+        }
+        for (int team = BB_HOME; team <= BB_AWAY; team++) {
+            for (int turn_index = 0;
+                 turn_index < AD_F3_SECOND_HALF_TURN_COUNT; turn_index++) {
+                BB_CHECK_EQ(seen[team][turn_index], 1);
+            }
+        }
+    }
+    reset_state_bank_loader(BBE_STATE_BANK_PATH);
+    BB_CHECK_EQ(remove(path), 0);
+    free(recipes);
+}
+
 BB_TEST(state_bank_accepts_exact_replayed_pass_opportunity_record) {
     ad_recipe recipe = authored_test_recipe();
     char error[AD_ERROR_CAP];

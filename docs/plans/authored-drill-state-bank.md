@@ -329,6 +329,23 @@ rediscovery, exact replay, safe serialization, production-loader byte identity,
 and one-action continuation. This proves one tied-score late-second-half
 template only; it does not establish F3 axis coverage, quotas, or publication.
 
+The first F3 axis tranche now establishes exact half-two turn/orientation
+coverage without replacing that legacy late-F3 proof. A separate recipe kind
+stores the requested turn and active side, and only that kind may carry the
+axis fields. Its structural quota contract requires exactly one fresh-team-turn
+capture for each turn 1 through 8 under Home and Away active-side orientation:
+16 cells, not `BB_TEAM_COUNT * 8` (the former is a 30-entry roster catalogue).
+Each fixed cell uses a distinct controller seed from 1000 through 1015 and must
+independently rediscover, exact-replay, serialize, reload byte-identically, and
+continue for one canonical action. The quota validator rejects missing,
+duplicate, mismatched, or non-axis recipes; the writer remains the authoritative
+provenance/replay/admission gate. Independent optimized and ASan/UBSan sweeps of
+controller seeds 0-255 across all 16 cells agree exactly: 4,088 captures, 8
+clean match ends (turn-one only), and zero unexpected failures. This is only a
+turn/orientation coverage proof. It does not cover score, possession, receiving
+history, material, reroll budget, roster, race pair, tactical quality, sidecars,
+reports, manifest-last publication, training, rewards, evaluation, or deployment.
+
 The first F1 proof also stays at the fresh-team-turn boundary. Its fixed
 trajectory reaches half two, away turn 1, tied 0-0 after 414 legal decisions and
 108 in-match dice. An input-preserving validator requires a non-dash-PA,
