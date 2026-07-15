@@ -3805,3 +3805,65 @@ Next steps and safety boundary:
   The fixed optimized/sanitized 61,912-byte recipe SHA-256 remained
   `5908432e21034920e6aa80ed702145952dc5eda4b3f3d9a2199da0225d91d6e1`.
   No source or artifact was deployed to the occupied 2070 checkout.
+
+## 2026-07-15 07:54 PDT — hourly health check and rules-layer follow-up
+
+Live experiment and autonomy state:
+
+- Seed 43 remains healthy in `final-main-control`. At 07:52 PDT its last
+  complete native panel was exact learner step 772,669,440 at epoch 5,894 over
+  85 games: performance 0.5353, 1.1294 touchdowns/game, draw rate 0.3647,
+  possession 0.3037, illegal/sampled-repair fraction 0.2169, forward ball
+  progress 9.615, 19.176 Rush intentions, 13.247 blocks thrown, 1.165 blocks
+  against the carrier, carrier-target fraction 0.1025, and zero Pass or
+  Hand-off intentions. Reward clipping, non-finite reward, engine-error,
+  demonstration, and fallback counters all remain zero. This small live panel
+  is observational training telemetry, not checkpoint-selection or promotion
+  evidence.
+- The primary queue is active/running with service PID 431309, screen state
+  `running`, one of three arms complete, seed 43 current, and zero restarts.
+  Trainer PID 473422 is the only GPU compute process. The newest complete
+  checkpoint observed was exact step 749,207,552 in run directory
+  `1784123019013`. Recent progress implies roughly 185-190K agent steps/second,
+  so any completion estimate remains approximate and excludes queue-owned
+  final evaluation.
+- All 65 primary and 74 overflow pinned inputs revalidated with no error at the
+  unchanged plan SHA-256 values
+  `4ee72e3c58f09786cdd3bbf78a772e8de2d9a93e21a8b065cf0c5976ecced270`
+  and
+  `d90ee01c8c459f599c8601934f545ccb7783261edae3bcb6e9e3878036d37d3e`.
+  Overflow state remains absent, its service inactive/dead with zero restarts,
+  and its timer active. The 07:48 watcher invocation exited successfully after
+  correctly reporting that the primary service was still active.
+- The sampled GPU state was 81 C, 89% fan, 76% utilization, 5,554/8,192 MiB,
+  and 112.50 W, with software thermal limiting and hardware slowdown both
+  inactive. Disk remains 7% used with 895 GiB free, inodes 1% used, memory
+  9.8 GiB available, and swap use 27 MiB.
+- `bbstream`, `bbweb`, and `bbtv-tunnel` are active with zero restarts. BBTV
+  selected seed 43 checkpoint 699,269,120 at 07:48 PDT, source SHA-256
+  `dbda2a9ec9adac1ba78ea9a0df7fced24d57184dd75634dfc2c9b4ddfcf77047`,
+  against the frozen turnover3 baseline. The public page returned HTTP 200 in
+  0.290 seconds and `/ws` returned the expected HTTP 101 WebSocket upgrade.
+  The CPU viewer remains observational and owns no GPU compute process.
+
+Rules-layer follow-up and next steps:
+
+- The F1 audit's PA-dash and No Ball false positives were traced to engine
+  legality, not reward shaping. A separate local branch now makes the shared
+  catch predicate reject No Ball players, with the intended consequences for
+  Hand-off, pass landing, scatter/throw-in, and kickoff touchback; Pass
+  declaration is no longer offered to PA-dash players while Hand-off remains
+  available. Focused tests cover PA-dash declaration, No Ball Hand-off,
+  accurate-pass bounce without a catch die, and all-No-Ball touchback fallback.
+- The complete optimized and ASan/UBSan suites pass at 422 engine, 37 reward,
+  2 contact-bot, and 4 production-loader tests. Three affected golden traces
+  were deliberately regenerated twice and produced identical hashes; the
+  other five remained byte-identical. Clang static analysis and
+  `git diff --check` pass. D198 and contributor guidance keep this explicitly
+  outside reward shaping, state-bank admission, training, and live deployment.
+- Next, commit and publish the rules fix, require exact-head hosted CI and
+  independent review of rules semantics, RNG/dice behavior, golden
+  determinism, and scope, then fix every actionable P0-P3 finding before any
+  merge. Continue the F2 authored proof only after that rules foundation is
+  merged. The occupied 2070 checkout, frozen queues, and BBTV services remain
+  untouched.
