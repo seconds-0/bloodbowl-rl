@@ -2,6 +2,7 @@
 #include "bb_test.h"
 #include "bb_fixtures.h"
 #include "bb/bb_blockev.h"
+#include "bb/bb_hooks.h"
 #include "bb/bb_reachability.h"
 
 static void reach_fixture(bb_match* m, int* carrier) {
@@ -155,6 +156,21 @@ BB_TEST(reach_endzone_exemption_is_sprint_aware_and_not_rooted) {
     BB_CHECK(bb_carrier_exposure_endzone_exempt(&m, carrier));
     m.players[carrier].flags |= BB_PF_ROOTED;
     BB_CHECK(!bb_carrier_exposure_endzone_exempt(&m, carrier));
+}
+
+// Stalling feasibility is a read-only query. In particular, checking an
+// activation gate must not count the Skill as exercised before any action or
+// die is actually resolved.
+BB_TEST(reach_stalling_gate_query_has_no_coverage_side_effect) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int carrier = fx_lineman(&m, BB_HOME, 0, 24, 7);
+    fx_give_skill(&m, carrier, BB_SK_BONE_HEAD);
+    fx_ball_held(&m, carrier);
+
+    uint64_t before = bb_skill_exercised[BB_SK_BONE_HEAD];
+    BB_CHECK(!bb_can_score_without_dice(&m, carrier));
+    BB_CHECK_EQ(bb_skill_exercised[BB_SK_BONE_HEAD], before);
 }
 
 BB_TEST(reach_prone_opponents_ignored) {

@@ -249,6 +249,18 @@ team-rerolled.
 | 7 | 0 |
 | 8 | 0 |
 
+The executable engine now implements this consequence in the activation/team-
+turn procedure boundary (D193). Eligibility is snapshotted before the declared
+action, using an occupancy-aware reach field plus compulsory activation-roll
+checks; the ordinary knockdown procedure owns Steady Footing, ball release,
+armour/injury, and Turnover resolution. This is simulator law, not a reward
+term. Residual scope is explicit: Fumblerooski is not implemented, and the
+engine's broader Steady Footing path still auto-rolls without exposing the
+FAQ-permitted team-reroll choice. The current action interface can voluntarily
+end the whole team turn—and correctly treats that as forgoing the carrier—but
+does not yet expose the finer choice to forego only one player and continue
+activating others.
+
 The classic turn-8 score and 2–1 grind remain important tempo concepts, but an
 old unconditional “stall whenever possible” prior is no longer rule-correct in
 early turns. In league play, a team also adds one unit when calculating

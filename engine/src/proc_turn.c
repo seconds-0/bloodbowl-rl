@@ -7,6 +7,8 @@
 // a = team. phase 0: turn start bookkeeping. phase 1: activation loop.
 // phase 2: turn end bookkeeping.
 
+enum { ACT_STALLING_CANDIDATE = 1 << 0 };
+
 static void turn_start(bb_match* m, int team) {
     m->active_team = (uint8_t)team;
     m->turn[team]++;
@@ -102,6 +104,21 @@ static bool can_activate(const bb_match* m, int s) {
     return true;
 }
 
+static int stalling_forgone_carrier(const bb_match* m, int team) {
+    if (m->ball.state != BB_BALL_HELD ||
+        m->ball.carrier >= BB_NUM_PLAYERS ||
+        BB_TEAM_OF(m->ball.carrier) != team ||
+        !can_activate(m, m->ball.carrier) ||
+        !bb_can_score_without_dice(m, m->ball.carrier)) {
+        return -1;
+    }
+    return m->ball.carrier;
+}
+
+static bool stalling_crowd_acts(bb_match* m, bb_rng* rng, int team) {
+    return bb_d6(rng) >= m->turn[team];
+}
+
 static void team_turn_advance(bb_match* m, bb_rng* rng) {
     bb_frame* f = bb_top(m);
     int team = f->a;
@@ -165,10 +182,20 @@ static int team_turn_legal(const bb_match* m, bb_action* out) {
 }
 
 static void team_turn_apply(bb_match* m, bb_action a, bb_rng* rng) {
-    (void)rng;
     bb_frame* f = bb_top(m);
     if (a.type == BB_A_END_TURN) {
         f->phase = 2;
+        int carrier = stalling_forgone_carrier(m, f->a);
+        if (carrier >= 0) {
+            // Foregoing the carrier's activation still invokes the crowd.
+            // The crowd roll itself cannot be rerolled. KNOCKDOWN owns the
+            // conditional turnover so Steady Footing on a 6 correctly avoids
+            // both the knockdown and turnover (May 2026 FAQ).
+            m->players[carrier].flags |= BB_PF_USED;
+            if (stalling_crowd_acts(m, rng, f->a)) {
+                bb_knockdown(m, carrier, BB_KD_OTHER, 0);
+            }
+        }
         return;
     }
     bb_push(m, BB_PROC_ACTIVATION, a.arg, 0, 0, 0);
@@ -259,7 +286,6 @@ static bool has_reachable_blitz_target(const bb_match* m, int slot) {
 }
 
 static void activation_advance(bb_match* m, bb_rng* rng) {
-    (void)rng;
     bb_frame* f = bb_top(m);
     int slot = f->a;
     if (f->phase == 0) {
@@ -270,6 +296,9 @@ static void activation_advance(bb_match* m, bb_rng* rng) {
         // Distracted for the whole drive (review H4).
         m->players[slot].flags &= (uint16_t)~BB_PF_DISTRACTED;
         m->players[slot].flags |= BB_PF_ACTIVATING;
+        if (bb_can_score_without_dice(m, slot)) {
+            f->data |= ACT_STALLING_CANDIDATE;
+        }
         // The negatrait gate rolls AFTER the declaration ("after declaring
         // their Action", mirror) — in activation_apply.
         bb_need_decision(m, BB_TEAM_OF(slot));
@@ -279,10 +308,27 @@ static void activation_advance(bb_match* m, bb_rng* rng) {
         bb_need_decision(m, BB_TEAM_OF(slot));
         return;
     }
+    if (f->phase == 3) { // crowd knockdown (and descendants) resolved
+        bb_pop(m);
+        return;
+    }
     // Child finished (or turnover unwound it).
     bb_player* p = &m->players[slot];
     p->flags &= (uint16_t)~BB_PF_ACTIVATING;
     p->flags |= BB_PF_USED;
+    bool stalling = (f->data & ACT_STALLING_CANDIDATE) && !m->turnover &&
+                    p->location == BB_LOC_ON_PITCH &&
+                    p->stance == BB_STANCE_STANDING &&
+                    m->ball.state == BB_BALL_HELD &&
+                    m->ball.carrier == slot;
+    f->data &= (uint16_t)~ACT_STALLING_CANDIDATE;
+    if (stalling && stalling_crowd_acts(m, rng, BB_TEAM_OF(slot))) {
+        // Keep ACTIVATION beneath the resolution chain. KNOCKDOWN causes the
+        // turnover only if Steady Footing does not prevent the knockdown.
+        f->phase = 3;
+        bb_knockdown(m, slot, BB_KD_OTHER, 0);
+        return;
+    }
     bb_pop(m);
 }
 
