@@ -3503,3 +3503,25 @@ Next steps and safety boundary:
 3. Continue hourly read-only live/BBTV monitoring. Do not deploy this rule fix,
    start overflow manually, or start milestone evaluation while either queue
    remains pending/running.
+
+05:25 PDT addendum:
+
+- The final Stalling tree added a read-only query-purity canary, making the
+  verified totals 411 engine, 37 reward, 2 contact-bot, and 1 loader test in
+  both optimized and ASan/UBSan builds. Rules and operator guidance now state
+  three residuals explicitly: Fumblerooski is not implemented; Steady Footing
+  still lacks its FAQ-permitted team-reroll choice; and the 454-way policy
+  interface can end the whole team turn but cannot yet forego only one player
+  and continue activating others.
+- PR #27 passed exact-head CI run `29414745156` in 4m08s on commit
+  `3f4a81cbb8fc16f8cf4d9ee056413e3d67b64002` and merged to `main` as
+  `0844ec6f444a434da161aeaff25df920b68bf7c9`. The remote feature branch was
+  deleted manually because another local worktree owns `main` and prevented
+  `gh` from performing local cleanup after the authoritative GitHub merge.
+- No external-model verdict was available: Claude/Fable remained logged out,
+  the required Codex CLI wrapper pointed to a missing vendor binary, and
+  Gemini stopped at interactive authentication. Those availability failures
+  were not counted as reviews. The inline rules/procedure/RNG/ABI review found
+  no actionable P0-P3 issue; dual-mode local tests and exact-head hosted CI are
+  the positive evidence. The merged source remains undeployed and the occupied
+  2070 checkout, queue inputs, services, and BBTV processes were not changed.
