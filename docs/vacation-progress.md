@@ -4323,3 +4323,113 @@ Next steps:
    manifest transaction, change rewards/training, deploy to the 2070, or run
    milestone evaluation until their separately reviewed gates and the frozen
    queues' terminal state authorize them.
+
+## 2026-07-15 11:15 PDT — seed 43 healthy; exact F2 target-count axis merged
+
+Live queue and BBTV health:
+
+- The primary queue remains authoritative `running` on
+  `final-main-control`, arm `both`, seed 43/current index 2, with one completed
+  arm. `SCREEN_STATUS.json` was fresh at 11:05 PDT. Queue PID 431309, wrapper
+  PID 431316, and trainer PID 473422 are unchanged; the queue and viewer
+  services report zero restarts, and trainer PID 473422 remains the only GPU
+  compute process. The overflow service remains inactive/dead with no state or
+  restarts. Its 11:04 watcher completed successfully after reporting that the
+  primary remains active, and the timer remains active/waiting.
+- Exact read-only validation again matched all 65 primary pins at plan SHA-256
+  `4ee72e3c58f09786cdd3bbf78a772e8de2d9a93e21a8b065cf0c5976ecced270`
+  and all 74 overflow pins at plan SHA-256
+  `d90ee01c8c459f599c8601934f545ccb7783261edae3bcb6e9e3878036d37d3e`.
+  Both pin-error results are `None`.
+- The latest complete telemetry panel observed exact step 2,905,341,952 at
+  epoch 22,165 over 106 games: performance 0.537736, draw rate 0.452830,
+  possession 0.379134, illegal/sampled-repair fraction 0.203135, ball progress
+  7.988945, 18.066038 Rush intentions, 14.198113 blocks thrown, 2.207547
+  blocks against the carrier, carrier-target fraction 0.155201, Pass intentions
+  0.009434, and zero Hand-off intentions. Reward clipping, non-finite reward,
+  engine-error, demonstration, and fallback counters remain zero. The newest
+  complete 16,066,560-byte checkpoint was exact step 2,896,560,128. Roughly
+  9.09B seed-43 steps remain, so any approximately 14-hour estimate is
+  observational and excludes final evaluation and queue-transition uncertainty.
+- Four GPU samples at 11:06 PDT ranged from 80-83 C, 88-89% fan, 76-79%
+  utilization, 5,554/8,192 MiB, and 100.40-150.04 W. Software thermal slowdown
+  was active in all four samples while hardware slowdown was inactive in all
+  four. This is a stronger short-window recurrence of the software flag, but
+  temperature remains below the frozen 88 C three-poll guard. It is a watch
+  item, not authority to retune the immutable job. Disk is 7% used with 894 GiB
+  free, inode use is 1%, memory has 9.8 GiB available, and swap use is 31 MiB.
+- `bbstream`, `bbweb`, and `bbtv-tunnel` remain active with zero restarts. BBTV
+  selected seed-43 checkpoint 2,846,621,696 at 11:00 PDT against the frozen
+  turnover3 baseline. Source SHA-256 is
+  `c1fe1ffbc96e1b7fb37d0006aa520cd639ea55ee7e3cf731ed02c1e89b31f6c6`,
+  converted output SHA-256 is
+  `8f67c8390b2b2602bc1e5fe0337ed3671dc38e2d19b4ac69d6d54087109f482e`,
+  and `selection.json` SHA-256 is
+  `f280174d88f510ee5cbdde359a652fbcf5d459058a040381d27711aa143436e2`.
+  The public page returned HTTP 200 in 0.221 seconds. A valid HTTP/1.1
+  WebSocket probe returned 101 and streamed the correct frozen/learner
+  `hello`, `match_start`, snapshot, and advancing data before the deliberate
+  five-second open-socket timeout. BBTV remains CPU-only and observational.
+- Three monitoring-command errors were corrected and retained in this record:
+  GNU `df` rejects combining `-i` with `--output`, the queue plan field is
+  `pinned_files` rather than `pins`, and checkpoints live under
+  `vendor/PufferLib/checkpoints` rather than a guessed `experiments` directory.
+  Corrected inode, pin, and run-manifest-guided checkpoint reads produced the
+  authoritative values above. None of the failed probes changed remote state.
+
+Completed F2 target-count/orientation-axis work:
+
+- Branch `tranche/f2-handoff-target-count-axis` started from exact merged main
+  `443697ad1065cc8aaddc084f0be88bcb103fe587`. A read-only 4,096-seed
+  exploratory classifier found every proposed cell before code was written,
+  and `docs/plans/f2-handoff-target-count-axis.md` fixed the success contract.
+  Fail-first compilation then proved the counter, stored bucket, exact recipe,
+  and quota API did not already exist.
+- Exact implementation head
+  `478a5c00189696a1203927736d45f5d935becf5e` adds four fresh-boundary cells:
+  Home/Away crossed with exactly one versus two-or-more legal catch-capable
+  Hand-off targets. It appends the recipe kind, stores side/bucket provenance,
+  independently rediscovers it, and shares one complete-boundary-first,
+  input-preserving zero-die legal probe with the legacy F2 predicate. A
+  rules-legal No Ball Hand-off target is deliberately not counted as
+  catch-capable. No action, receiver, nested target window, result, reward,
+  regret, or policy label is serialized.
+- Fixed seeds Home/one 4, Home/multiple 2, Away/one 8, and Away/multiple 13
+  bind exact action/dice transcripts 202/62, 27/9, 27/10, and 27/10. Matching
+  optimized and ASan/UBSan exact-endpoint sweeps over 4,096 controller seeds
+  per cell produced 1,246/994/1,189/1,291 captures and
+  2,850/3,102/2,907/2,805 clean match ends, with zero invalid successes,
+  unexpected failures, or sanitizer findings.
+- Local and independent suites pass 431 engine, 37 reward, 2 contact-bot, and
+  10 production-loader tests optimized and under ASan/UBSan. Production and
+  Puffer static analysis plus diff checks are clean. One adversarial reviewer
+  additionally exercised all byte values for sensitive raw-state fields,
+  malformed recipe extremes, 100,000 one-byte mutations, and 10,000 randomized
+  raw matches under sanitizers: 110,000 randomized cases, zero failures or
+  findings. Another independently reproduced both complete exact-endpoint
+  sweeps and confirmed the legacy 2,268-byte F2 BBS hash remained
+  `15532cf03342e6e1b8b78677a85bdca119bfd25ea645d7d9bb614cc6fbda90fa`.
+- All three independent reviewers approved the exact head with no P0-P3
+  findings. Hosted CI run `29438985734` passed at that same SHA. PR #38 merged
+  authoritatively to `main` as
+  `b45e8b2cce87423a2c12343d943cda87c77736cf`; the remote feature branch was
+  deleted separately after the known benign local `main`-worktree cleanup
+  message. No source, BBS artifact, reward, training input, service, BBTV path,
+  or frozen queue was deployed or changed.
+- D205, `AGENTS.md`, `CLAUDE.md`, the authored-bank plan, and the validation
+  skill now preserve the exact opportunity-only semantics and remaining gaps.
+  Claude Code authentication still reports `loggedIn: false`, so Fable remains
+  unavailable and no Fable approval is claimed.
+
+Next steps:
+
+1. Continue hourly read-only queue, integrity, thermal, capacity, overflow, and
+   BBTV checks. Watch the recurring software-thermal flag against the literal
+   frozen guard without manually tuning the run.
+2. From exact merged main, compare the remaining F1, F4, and F5 coverage gaps
+   and plan only one bounded CPU tranche at a time. The live zero Pass/Hand-off
+   rates are evidence for better evaluation coverage, not permission to pay
+   those actions or label a target.
+3. Do not publish an authored bank, add training input, change reward defaults,
+   deploy source to the 2070, or run milestone evaluation until their separate
+   reviewed contracts and the frozen queues' terminal state authorize them.
