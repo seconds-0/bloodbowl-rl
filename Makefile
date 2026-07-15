@@ -14,6 +14,7 @@ LDFLAGS ?=
 SAN_FLAGS = -fsanitize=address,undefined -fno-omit-frame-pointer -O1
 
 SRC      := $(wildcard engine/src/*.c)
+ENGINE_HDR := $(wildcard engine/include/bb/*.h)
 OBJ      := $(SRC:engine/src/%.c=$(BUILD)/obj/%.o)
 TEST_SRC := $(wildcard engine/tests/test_*.c)
 SCENARIO_SRC := tools/bank_scenario_predicates.c
@@ -50,13 +51,13 @@ $(LIB): $(OBJ)
 $(TESTBIN): $(TEST_SRC) $(SCENARIO_TEST_SRC) $(AUTHORED_DRILL_SRC) tools/bank_scenario_scan.h tools/authored_drill.h engine/tests/bb_test.h engine/tests/bb_fixtures.h engine/tests/bb_test_main.c $(OBJ)
 	$(CC) $(CFLAGS) -DBBS_SCANNER_LIBRARY -Iengine/tests -Itools engine/tests/bb_test_main.c $(TEST_SRC) $(SCENARIO_TEST_SRC) $(AUTHORED_DRILL_SRC) $(OBJ) -o $@ $(LDFLAGS)
 
-$(PUFFER_REWARD_TESTBIN): puffer/bloodbowl/test_reward_send_off.c puffer/bloodbowl/bloodbowl.h puffer/bloodbowl/contact_bot.h engine/tests/bb_test.h engine/tests/bb_fixtures.h
+$(PUFFER_REWARD_TESTBIN): puffer/bloodbowl/test_reward_send_off.c puffer/bloodbowl/bloodbowl.h puffer/bloodbowl/contact_bot.h engine/tests/bb_test.h engine/tests/bb_fixtures.h $(SRC) $(ENGINE_HDR)
 	$(CC) $(CFLAGS) -Iengine/tests -Ipuffer/bloodbowl -Wno-unused-function $< -o $@ -lm $(LDFLAGS)
 
-$(PUFFER_CONTACT_TESTBIN): puffer/bloodbowl/test_contact_bot.c puffer/bloodbowl/bloodbowl.h puffer/bloodbowl/contact_bot.h engine/tests/bb_test.h
+$(PUFFER_CONTACT_TESTBIN): puffer/bloodbowl/test_contact_bot.c puffer/bloodbowl/bloodbowl.h puffer/bloodbowl/contact_bot.h engine/tests/bb_test.h $(SRC) $(ENGINE_HDR)
 	$(CC) $(CFLAGS) -Iengine/tests -Ipuffer/bloodbowl -Wno-unused-function $< -o $@ -lm $(LDFLAGS)
 
-$(PUFFER_STATE_BANK_TESTBIN): puffer/bloodbowl/test_state_bank.c puffer/bloodbowl/bloodbowl.h $(AUTHORED_DRILL_SRC) tools/authored_drill.h engine/tests/bb_test.h engine/tests/bb_fixtures.h
+$(PUFFER_STATE_BANK_TESTBIN): puffer/bloodbowl/test_state_bank.c puffer/bloodbowl/bloodbowl.h $(AUTHORED_DRILL_SRC) tools/authored_drill.h engine/tests/bb_test.h engine/tests/bb_fixtures.h $(SRC) $(ENGINE_HDR)
 	$(CC) $(CFLAGS) -Iengine/tests -Ipuffer/bloodbowl -Itools -Wno-unused-function $< $(AUTHORED_DRILL_SRC) -o $@ -lm $(LDFLAGS)
 
 test: $(TESTBIN) $(PUFFER_TESTBINS)

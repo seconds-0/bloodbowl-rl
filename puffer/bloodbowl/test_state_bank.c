@@ -16,7 +16,9 @@ static void write_le32(FILE* file, uint32_t value) {
     BB_CHECK_EQ(fwrite(bytes, 1, sizeof bytes, file), sizeof bytes);
 }
 
-static void write_state_bank(const char* path, const bb_match* match) {
+static void write_state_bank_meta(const char* path, const bb_match* match,
+                                  uint32_t source_id, uint8_t half,
+                                  uint8_t turn, uint8_t pad0) {
     FILE* file = fopen(path, "wb");
     BB_CHECK(file != NULL);
     if (file == NULL) return;
@@ -26,9 +28,23 @@ static void write_state_bank(const char* path, const bb_match* match) {
     write_le32(file, (uint32_t)sizeof(bb_match));
     write_le32(file, bbe_state_fingerprint());
     uint8_t metadata[BBE_STATE_BANK_REC_META] = {0};
+    metadata[0] = (uint8_t)source_id;
+    metadata[1] = (uint8_t)(source_id >> 8);
+    metadata[2] = (uint8_t)(source_id >> 16);
+    metadata[3] = (uint8_t)(source_id >> 24);
+    metadata[8] = half;
+    metadata[9] = turn;
+    metadata[10] = pad0;
     BB_CHECK_EQ(fwrite(metadata, 1, sizeof metadata, file), sizeof metadata);
     BB_CHECK_EQ(fwrite(match, sizeof *match, 1, file), 1);
     BB_CHECK_EQ(fclose(file), 0);
+}
+
+static void write_state_bank(const char* path, const bb_match* match) {
+    uint8_t turn = match->active_team <= BB_AWAY
+        ? match->turn[match->active_team] : 1;
+    write_state_bank_meta(path, match, 1u, match->half,
+                          turn, 0);
 }
 
 static void reset_state_bank_loader(const char* path) {
@@ -79,7 +95,7 @@ BB_TEST(state_bank_accepts_exact_replayed_authored_record) {
     FILE* file = fopen(path, "wb");
     BB_CHECK(file != NULL);
     if (file == NULL) return;
-    ad_bbs_record record = {0xA0000001u, (uint32_t)recipe.action_count, replayed};
+    ad_bbs_record record = {0xA0000001u, (uint32_t)recipe.action_count, &recipe};
     BB_CHECK_EQ(ad_bbs_write(file, &record, 1, error), 0);
     BB_CHECK_EQ(fclose(file), 0);
 
@@ -100,6 +116,8 @@ BB_TEST(state_bank_rejects_unsafe_record_content) {
 
     bb_match valid = valid_bank_match();
     BB_CHECK_EQ(load_one(path, &valid), 1);
+    bb_action legal[BB_LEGAL_MAX];
+    BB_CHECK(bb_legal_actions(&valid, legal) > 0);
 
     bb_match bad_stack = valid;
     bad_stack.stack_top = BB_STACK_MAX + 1;
@@ -131,6 +149,18 @@ BB_TEST(state_bank_rejects_unsafe_record_content) {
     bad_proc.stack[0].proc = BB_PROC_COUNT;
     BB_CHECK_EQ(load_one(path, &bad_proc), 0);
 
+    bb_match bad_turn_team = valid;
+    bad_turn_team.stack[1].a = 255;
+    BB_CHECK_EQ(load_one(path, &bad_turn_team), 0);
+
+    bb_match bad_half = valid;
+    bad_half.half = 0;
+    BB_CHECK_EQ(load_one(path, &bad_half), 0);
+
+    bb_match bad_turn = valid;
+    bad_turn.turn[bad_turn.active_team] = 0;
+    BB_CHECK_EQ(load_one(path, &bad_turn), 0);
+
     bb_match bad_team_selector = valid;
     bad_team_selector.active_team = BB_AWAY + 1;
     BB_CHECK_EQ(load_one(path, &bad_team_selector), 0);
@@ -146,6 +176,24 @@ BB_TEST(state_bank_rejects_unsafe_record_content) {
     bb_match bad_weather = valid;
     bad_weather.weather = BB_WEATHER_BLIZZARD + 1;
     BB_CHECK_EQ(load_one(path, &bad_weather), 0);
+
+    write_state_bank_meta(path, &valid, 0, valid.half,
+                          valid.turn[valid.active_team], 0);
+    reset_state_bank_loader(path);
+    bbe_state_bank_load();
+    BB_CHECK_EQ(bbe_state_bank_n, 0);
+
+    write_state_bank_meta(path, &valid, 1, valid.half,
+                          (uint8_t)(valid.turn[valid.active_team] + 1), 0);
+    reset_state_bank_loader(path);
+    bbe_state_bank_load();
+    BB_CHECK_EQ(bbe_state_bank_n, 0);
+
+    write_state_bank_meta(path, &valid, 1, valid.half,
+                          valid.turn[valid.active_team], 1);
+    reset_state_bank_loader(path);
+    bbe_state_bank_load();
+    BB_CHECK_EQ(bbe_state_bank_n, 0);
 
     reset_state_bank_loader(BBE_STATE_BANK_PATH);
     BB_CHECK_EQ(remove(path), 0);

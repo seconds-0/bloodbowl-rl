@@ -38,51 +38,6 @@ static int scan_error(const char** error, const char* message) {
     return 2;
 }
 
-static int record_content_valid(const bb_match* match) {
-    if (match->team_id[0] >= BB_TEAM_COUNT ||
-        match->team_id[1] >= BB_TEAM_COUNT ||
-        match->stack_top > BB_STACK_MAX) {
-        return 0;
-    }
-    for (int slot = 0; slot < BB_NUM_PLAYERS; slot++) {
-        const bb_player* player = &match->players[slot];
-        if (player->position_id >= BB_MAX_POSITIONS ||
-            player->location > BB_LOC_ABSENT ||
-            player->stance > BB_STANCE_STUNNED_USED) {
-            return 0;
-        }
-        if (player->location == BB_LOC_ON_PITCH &&
-            (!bb_on_pitch_xy(player->x, player->y) ||
-             match->grid[player->x][player->y] != slot + 1)) {
-            return 0;
-        }
-    }
-    for (int x = 0; x < BB_PITCH_LEN; x++) {
-        for (int y = 0; y < BB_PITCH_WID; y++) {
-            uint8_t value = match->grid[x][y];
-            if (value == 0) continue;
-            int slot = value - 1;
-            if (slot >= BB_NUM_PLAYERS ||
-                match->players[slot].location != BB_LOC_ON_PITCH ||
-                match->players[slot].x != x ||
-                match->players[slot].y != y) {
-                return 0;
-            }
-        }
-    }
-    if (match->ball.state > BB_BALL_IN_AIR) return 0;
-    if (match->ball.state == BB_BALL_ON_GROUND &&
-        !bb_on_pitch_xy(match->ball.x, match->ball.y)) {
-        return 0;
-    }
-    if (match->ball.state == BB_BALL_HELD &&
-        (match->ball.carrier >= BB_NUM_PLAYERS ||
-         match->players[match->ball.carrier].location != BB_LOC_ON_PITCH)) {
-        return 0;
-    }
-    return 1;
-}
-
 static int emit_record(FILE* output, uint64_t index, uint32_t replay_id,
                        uint32_t command, uint8_t half, uint8_t turn,
                        const bb_match* match,
@@ -180,7 +135,7 @@ int bbs_scan_stream(FILE* file, FILE* output, const char** error) {
         if (half < 1 || half > 3 || turn < 1 || turn > 8) {
             return scan_error(error, "metadata half/turn out of range");
         }
-        if (!record_content_valid(&match)) {
+        if (!bb_state_bank_boundary_valid(&match)) {
             return scan_error(error, "record content indices are invalid");
         }
         if (match.half != half || match.active_team > BB_AWAY ||

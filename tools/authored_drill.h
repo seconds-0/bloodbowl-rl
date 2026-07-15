@@ -35,7 +35,7 @@ typedef struct {
 typedef struct {
     uint32_t source_id;
     uint32_t decision_index;
-    bb_match match;
+    const ad_recipe* recipe;
 } ad_bbs_record;
 
 // Discover the first genuine team-turn decision using only engine init,
@@ -51,8 +51,11 @@ int ad_replay_exact(const ad_recipe* recipe, bb_match* out,
 // BBS1 compatibility stamp shared with the Puffer loader.
 uint32_t ad_bbs_fingerprint(void);
 
-// Write an ordinary BBS1 stream. Authored IDs must use the reserved 0xA high
-// nibble; the writer fails closed on malformed records or I/O errors.
+// Write an ordinary BBS1 stream. The writer exact-replays every recipe into
+// private storage and serializes only those verified bytes; callers cannot
+// supply a separately mutable raw match. Authored IDs must use the reserved
+// 0xA high nibble. A failed call invalidates the caller-owned stream; atomic
+// publication is the responsibility of the later manifest transaction.
 int ad_bbs_write(FILE* file, const ad_bbs_record* records, size_t count,
                  char error[AD_ERROR_CAP]);
 

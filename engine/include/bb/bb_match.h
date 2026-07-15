@@ -161,6 +161,13 @@ void bb_match_init_forced(bb_match* m, bb_rng* rng, int home, int away, int excl
 void bb_match_init_forced_p(bb_match* m, bb_rng* rng, int home, int away, int exclude,
                             const bb_procgen_params* pp);
 
+// Validate the currently supported BBS1 reset boundary: a structurally safe
+// MATCH -> TEAM_TURN decision whose index-bearing fields can be consumed by
+// legal-action enumeration, observation encoding, and reward bookkeeping.
+// BBS1 is intentionally restricted to this fresh/mid team-turn boundary until
+// every other procedure has an equally explicit snapshot validator.
+bool bb_state_bank_boundary_valid(const bb_match* m);
+
 // Advance the engine until a coach decision is required or the match ends.
 // All dice are drawn from `rng`. Returns the resulting status.
 bb_status bb_advance(bb_match* m, bb_rng* rng);

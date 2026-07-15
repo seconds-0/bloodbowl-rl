@@ -34,7 +34,8 @@ frozen vacation queue or the production/BBTV checkout on the occupied RTX 2070.
    replay injects those game-die faces through `bb_rng_script` and verifies the
    sides sequence as well as complete consumption.
 4. Capture only `BB_STATUS_DECISION` states with a nonempty, loader-valid
-   procedure stack and at least one legal action.
+   procedure stack and at least one legal action. Until a nested-procedure
+   validator lands, only the current team-turn boundary may enter BBS1.
 5. Regeneration must replay every action as legal, consume exactly the recorded
    dice, reproduce the captured raw `bb_match` byte-for-byte, and produce the
    same bank, sidecars, and manifest bytes on a second run.
@@ -65,6 +66,23 @@ Publication follows the D191/D192 discipline: temp files in the destination
 directory, `fsync`, exclusive ownership-safe final links, directory `fsync`,
 and manifest last. Existing outputs, aliases, source mutation, partial replay,
 or any failed validation leave no committed transaction and overwrite nothing.
+
+### Current BBS1 safety boundary
+
+The phase-1 writer and production loader intentionally accept only the shared,
+structurally validated `MATCH(phase 3) -> TEAM_TURN(phase 1)` stack shape. This
+is the historical bank's executable contract and is sufficient for fresh
+team-turn proof records. Merely checking procedure IDs is unsafe: corrupt frame
+parameters can become player/team indices during legal-action enumeration.
+
+F1/F2 target-choice and F4 reroll-window records therefore remain planned, not
+currently serializable. Before any such record is admitted, a later tranche
+must add one shared procedure-specific validator for the exact stack shapes it
+publishes (including all lower frames that can resume), exercise the writer and
+Puffer loader through the same malformed-frame table, and keep every other
+nested shape rejected. Using a new versioned format instead is acceptable if it
+provides the same fail-closed guarantee. The loader must never be widened to
+"any decision state" just to make a quota pass.
 
 ### BBS metadata namespace
 

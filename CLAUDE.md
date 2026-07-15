@@ -71,6 +71,9 @@ newer evidence wins.
   with `bb_rng_script`. Never construct late-game context by writing score,
   half, turn, players, grid, ball, or procedure frames. Split by recipe-template
   group and quarantine paired counterfactual outcomes from training inputs.
+  BBS1 currently admits only the shared MATCH -> TEAM_TURN boundary; nested
+  target/reroll decisions need explicit procedure-specific validation before
+  the writer or loader may accept them.
 - **BC loader (D180):** use the bounded streaming loader and replay-disjoint
   split. Replay-first is the current default, not the final sampler; next
   stratify by roster/matchup, depth, and action family.

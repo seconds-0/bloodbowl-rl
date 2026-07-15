@@ -38,6 +38,79 @@ void bb_need_decision(bb_match* m, int team) {
     m->decision_team = (uint8_t)team;
 }
 
+bool bb_state_bank_boundary_valid(const bb_match* m) {
+    if (m == NULL || m->status != BB_STATUS_DECISION ||
+        m->half < 1 || m->half > 3 ||
+        m->turn[0] > 8 || m->turn[1] > 8 ||
+        m->active_team > BB_AWAY || m->kicking_team > BB_AWAY ||
+        m->decision_team != m->active_team ||
+        m->turn[m->active_team] < 1 ||
+        m->team_id[0] >= BB_TEAM_COUNT || m->team_id[1] >= BB_TEAM_COUNT ||
+        m->weather > BB_WEATHER_BLIZZARD || m->stack_top != 2) {
+        return false;
+    }
+
+    // The raw BBS1 format is currently a team-turn-boundary corpus, not a
+    // general procedure-stack serialization. Exact frame shapes make lower
+    // frames safe when TEAM_TURN eventually pops; merely checking proc enums
+    // allowed corrupt params (for example team=255) to index out of bounds.
+    const bb_frame* root = &m->stack[0];
+    const bb_frame* turn = &m->stack[1];
+    if (root->proc != BB_PROC_MATCH || root->phase != 3 ||
+        root->a != 0 || root->b != 0 || root->x != 0 || root->y != 0 ||
+        (root->data & (uint16_t)~6u) != 0 ||
+        turn->proc != BB_PROC_TEAM_TURN || turn->phase != 1 ||
+        turn->a != m->active_team || turn->b != 0 ||
+        turn->x != 0 || turn->y != 0 || turn->data != 0 || m->turnover) {
+        return false;
+    }
+
+    int ball_flags = 0;
+    for (int slot = 0; slot < BB_NUM_PLAYERS; slot++) {
+        const bb_player* player = &m->players[slot];
+        if (player->position_id >= BB_MAX_POSITIONS ||
+            player->location > BB_LOC_ABSENT ||
+            player->stance > BB_STANCE_STUNNED_USED ||
+            (player->flags & (uint16_t)~0x0FFFu) != 0) {
+            return false;
+        }
+        if (player->flags & BB_PF_HAS_BALL) ball_flags++;
+        if (player->location == BB_LOC_ON_PITCH) {
+            if (!bb_on_pitch_xy(player->x, player->y) ||
+                m->grid[player->x][player->y] != slot + 1) return false;
+        } else if (player->flags & BB_PF_HAS_BALL) {
+            return false;
+        }
+    }
+
+    for (int x = 0; x < BB_PITCH_LEN; x++) {
+        for (int y = 0; y < BB_PITCH_WID; y++) {
+            uint8_t value = m->grid[x][y];
+            if (value == 0) continue;
+            int slot = value - 1;
+            if (slot >= BB_NUM_PLAYERS ||
+                m->players[slot].location != BB_LOC_ON_PITCH ||
+                m->players[slot].x != x || m->players[slot].y != y) {
+                return false;
+            }
+        }
+    }
+
+    if (m->ball.state == BB_BALL_HELD) {
+        if (m->ball.carrier >= BB_NUM_PLAYERS || ball_flags != 1) return false;
+        const bb_player* carrier = &m->players[m->ball.carrier];
+        if (carrier->location != BB_LOC_ON_PITCH ||
+            !(carrier->flags & BB_PF_HAS_BALL) ||
+            m->ball.x != carrier->x || m->ball.y != carrier->y) return false;
+    } else {
+        if (m->ball.state > BB_BALL_ON_GROUND ||
+            m->ball.carrier != BB_NO_PLAYER || ball_flags != 0) return false;
+        if (m->ball.state == BB_BALL_ON_GROUND &&
+            !bb_on_pitch_xy(m->ball.x, m->ball.y)) return false;
+    }
+    return true;
+}
+
 // --- Board helpers ---------------------------------------------------------------
 
 bool bb_adjacent(int x1, int y1, int x2, int y2) {

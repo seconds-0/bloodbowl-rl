@@ -27,6 +27,10 @@ BB_TEST(authored_drill_exact_replay_reproduces_raw_state) {
     bb_match replayed;
     BB_CHECK_EQ(ad_replay_exact(&recipe, &replayed, error), 0);
     BB_CHECK_EQ(memcmp(&replayed, &recipe.captured, sizeof replayed), 0);
+
+    ad_recipe rediscovered = ad_test_recipe();
+    BB_CHECK_EQ(ad_discover_first_team_turn(&rediscovered, error), 0);
+    BB_CHECK_EQ(memcmp(&recipe, &rediscovered, sizeof recipe), 0);
 }
 
 BB_TEST(authored_drill_replay_fails_closed_on_transcript_drift) {
@@ -46,6 +50,11 @@ BB_TEST(authored_drill_replay_fails_closed_on_transcript_drift) {
     BB_CHECK(strstr(error, "decision team") != NULL);
 
     changed = base;
+    changed.initialized.score[0]++;
+    BB_CHECK(ad_replay_exact(&changed, &out, error) != 0);
+    BB_CHECK(strstr(error, "initialized match") != NULL);
+
+    changed = base;
     BB_CHECK(changed.dice_count > 0);
     if (changed.dice_count <= 0) return;
     changed.dice_count--;
@@ -56,6 +65,11 @@ BB_TEST(authored_drill_replay_fails_closed_on_transcript_drift) {
     changed.dice_values[changed.dice_count] = 1;
     changed.dice_sides[changed.dice_count] = 6;
     changed.dice_count++;
+    BB_CHECK(ad_replay_exact(&changed, &out, error) != 0);
+    BB_CHECK(strstr(error, "dice transcript") != NULL);
+
+    changed = base;
+    changed.dice_sides[0] = (uint8_t)(changed.dice_sides[0] == 6 ? 8 : 6);
     BB_CHECK(ad_replay_exact(&changed, &out, error) != 0);
     BB_CHECK(strstr(error, "dice transcript") != NULL);
 
@@ -75,19 +89,45 @@ BB_TEST(authored_drill_bbs_writer_emits_canonical_header_and_record) {
     FILE* file = tmpfile();
     BB_CHECK(file != NULL);
     if (file == NULL) return;
-    ad_bbs_record record = {0xA0000001u, (uint32_t)recipe.action_count, replayed};
+    ad_bbs_record record = {0xA0000001u, (uint32_t)recipe.action_count, &recipe};
     BB_CHECK_EQ(ad_bbs_write(file, &record, 1, error), 0);
     BB_CHECK_EQ(fseek(file, 0, SEEK_END), 0);
     BB_CHECK_EQ(ftell(file), 16 + 12 + (long)sizeof(bb_match));
     rewind(file);
-    uint8_t header[16];
-    BB_CHECK_EQ(fread(header, 1, sizeof header, file), sizeof header);
+    uint8_t bytes[28];
+    BB_CHECK_EQ(fread(bytes, 1, sizeof bytes, file), sizeof bytes);
+    const uint8_t* header = bytes;
     BB_CHECK_EQ(memcmp(header, "BBS1", 4), 0);
+    uint32_t version = (uint32_t)header[4] |
+                       ((uint32_t)header[5] << 8) |
+                       ((uint32_t)header[6] << 16) |
+                       ((uint32_t)header[7] << 24);
+    uint32_t match_size = (uint32_t)header[8] |
+                          ((uint32_t)header[9] << 8) |
+                          ((uint32_t)header[10] << 16) |
+                          ((uint32_t)header[11] << 24);
     uint32_t fingerprint = (uint32_t)header[12] |
                            ((uint32_t)header[13] << 8) |
                            ((uint32_t)header[14] << 16) |
                            ((uint32_t)header[15] << 24);
     BB_CHECK_EQ(fingerprint, ad_bbs_fingerprint());
+    BB_CHECK_EQ(version, 1);
+    BB_CHECK_EQ(match_size, sizeof(bb_match));
+    const uint8_t* metadata = bytes + 16;
+    uint32_t source_id = (uint32_t)metadata[0] |
+                         ((uint32_t)metadata[1] << 8) |
+                         ((uint32_t)metadata[2] << 16) |
+                         ((uint32_t)metadata[3] << 24);
+    uint32_t decision_index = (uint32_t)metadata[4] |
+                              ((uint32_t)metadata[5] << 8) |
+                              ((uint32_t)metadata[6] << 16) |
+                              ((uint32_t)metadata[7] << 24);
+    BB_CHECK_EQ(source_id, 0xA0000001u);
+    BB_CHECK_EQ(decision_index, recipe.action_count);
+    BB_CHECK_EQ(metadata[8], replayed.half);
+    BB_CHECK_EQ(metadata[9], replayed.turn[replayed.active_team]);
+    BB_CHECK_EQ(metadata[10], 0);
+    BB_CHECK_EQ(metadata[11], 0);
     BB_CHECK_EQ(fclose(file), 0);
 
     file = tmpfile();
@@ -103,8 +143,9 @@ BB_TEST(authored_drill_bbs_writer_emits_canonical_header_and_record) {
     BB_CHECK(file != NULL);
     if (file == NULL) return;
     record.source_id = 0xA0000001u;
-    record.match.grid[0][0] = BB_NUM_PLAYERS + 1;
+    recipe.captured.score[0]++;
     BB_CHECK(ad_bbs_write(file, &record, 1, error) != 0);
+    BB_CHECK(strstr(error, "replay failed") != NULL);
     BB_CHECK_EQ(ftell(file), 0);
     BB_CHECK_EQ(fclose(file), 0);
 }

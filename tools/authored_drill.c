@@ -6,6 +6,7 @@
 #include "bb/gen_skills.h"
 
 #include <stdarg.h>
+#include <stdlib.h>
 #include <string.h>
 
 typedef struct {
@@ -223,50 +224,6 @@ uint32_t ad_bbs_fingerprint(void) {
          ^ (uint32_t)BB_A_TYPE_COUNT;
 }
 
-static int ad_on_pitch_xy(int x, int y) {
-    return x >= 0 && x < BB_PITCH_LEN && y >= 0 && y < BB_PITCH_WID;
-}
-
-static int ad_bbs_match_valid(const bb_match* match) {
-    if (match->status != BB_STATUS_DECISION || match->stack_top == 0 ||
-        match->stack_top > BB_STACK_MAX ||
-        match->team_id[0] >= BB_TEAM_COUNT || match->team_id[1] >= BB_TEAM_COUNT ||
-        match->active_team > BB_AWAY || match->kicking_team > BB_AWAY ||
-        match->decision_team > BB_AWAY || match->weather > BB_WEATHER_BLIZZARD) {
-        return 0;
-    }
-    for (int depth = 0; depth < match->stack_top; depth++) {
-        if (match->stack[depth].proc <= BB_PROC_NONE ||
-            match->stack[depth].proc >= BB_PROC_COUNT) return 0;
-    }
-    for (int slot = 0; slot < BB_NUM_PLAYERS; slot++) {
-        const bb_player* player = &match->players[slot];
-        if (player->position_id >= BB_MAX_POSITIONS ||
-            player->location > BB_LOC_ABSENT ||
-            player->stance > BB_STANCE_STUNNED_USED) return 0;
-        if (player->location == BB_LOC_ON_PITCH &&
-            (!ad_on_pitch_xy(player->x, player->y) ||
-             match->grid[player->x][player->y] != slot + 1)) return 0;
-    }
-    for (int x = 0; x < BB_PITCH_LEN; x++) {
-        for (int y = 0; y < BB_PITCH_WID; y++) {
-            uint8_t value = match->grid[x][y];
-            if (value == 0) continue;
-            int slot = value - 1;
-            if (slot >= BB_NUM_PLAYERS ||
-                match->players[slot].location != BB_LOC_ON_PITCH ||
-                match->players[slot].x != x || match->players[slot].y != y) return 0;
-        }
-    }
-    if (match->ball.state > BB_BALL_IN_AIR) return 0;
-    if (match->ball.state == BB_BALL_ON_GROUND &&
-        !ad_on_pitch_xy(match->ball.x, match->ball.y)) return 0;
-    if (match->ball.state == BB_BALL_HELD &&
-        (match->ball.carrier >= BB_NUM_PLAYERS ||
-         match->players[match->ball.carrier].location != BB_LOC_ON_PITCH)) return 0;
-    return 1;
-}
-
 static int ad_write_bytes(FILE* file, const void* bytes, size_t size) {
     return fwrite(bytes, 1, size, file) == size ? 0 : -1;
 }
@@ -282,32 +239,52 @@ int ad_bbs_write(FILE* file, const ad_bbs_record* records, size_t count,
     if (file == NULL || records == NULL || count == 0) {
         return ad_fail(error, "BBS writer requires a file and records");
     }
-    // Validate the complete batch before emitting even the header. The outer
-    // publisher still uses temp files + manifest-last, but this keeps the
-    // primitive itself from creating a plausible prefix for a bad batch.
+    if (count > SIZE_MAX / sizeof(bb_match)) {
+        return ad_fail(error, "BBS record count overflows allocation");
+    }
+    bb_match* verified = calloc(count, sizeof(*verified));
+    if (verified == NULL) return ad_fail(error, "cannot allocate verified BBS records");
+
+    // Exact-replay and validate the complete batch before emitting even the
+    // header. This binds serialized bytes to transcripts and keeps malformed
+    // later records from leaving a plausible prefix.
     for (size_t i = 0; i < count; i++) {
         const ad_bbs_record* record = &records[i];
         if ((record->source_id & 0xF0000000u) != 0xA0000000u ||
-            !ad_bbs_match_valid(&record->match)) {
+            record->recipe == NULL) {
+            free(verified);
             return ad_fail(error, "invalid authored BBS record %zu", i);
+        }
+        char replay_error[AD_ERROR_CAP];
+        if (ad_replay_exact(record->recipe, &verified[i], replay_error) != 0) {
+            free(verified);
+            return ad_fail(error, "authored BBS record %zu replay failed: %s",
+                           i, replay_error);
+        }
+        if (!bb_state_bank_boundary_valid(&verified[i])) {
+            free(verified);
+            return ad_fail(error, "authored BBS record %zu is not a safe BBS1 boundary", i);
         }
     }
     if (ad_write_bytes(file, "BBS1", 4) != 0 || ad_write_u32(file, 1) != 0 ||
         ad_write_u32(file, (uint32_t)sizeof(bb_match)) != 0 ||
         ad_write_u32(file, ad_bbs_fingerprint()) != 0) {
+        free(verified);
         return ad_fail(error, "failed to write BBS header");
     }
     for (size_t i = 0; i < count; i++) {
         const ad_bbs_record* record = &records[i];
-        uint8_t meta[4] = {record->match.half,
-                           record->match.turn[record->match.active_team], 0, 0};
+        const bb_match* match = &verified[i];
+        uint8_t meta[4] = {match->half, match->turn[match->active_team], 0, 0};
         if (ad_write_u32(file, record->source_id) != 0 ||
             ad_write_u32(file, record->decision_index) != 0 ||
             ad_write_bytes(file, meta, sizeof meta) != 0 ||
-            ad_write_bytes(file, &record->match, sizeof record->match) != 0) {
+            ad_write_bytes(file, match, sizeof *match) != 0) {
+            free(verified);
             return ad_fail(error, "failed to write BBS record %zu", i);
         }
     }
+    free(verified);
     if (fflush(file) != 0 || ferror(file)) return ad_fail(error, "failed to flush BBS stream");
     if (error != NULL) error[0] = '\0';
     return 0;
