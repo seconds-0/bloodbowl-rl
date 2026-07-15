@@ -13,6 +13,10 @@ input, output, time bound, success validator, and recovery policy is frozen in
 plan after first start halts the queue. A failed job prevents every later job
 from running.
 
+For the concise live state/action matrix and return-day commands, use
+`docs/vacation-operator-runbook.md`. It narrows operational ambiguity but does
+not add recovery or experiment authority.
+
 ## The 24 hours before departure
 
 1. Finish and atomically analyze the active `500M x 2` possession/gain screen.

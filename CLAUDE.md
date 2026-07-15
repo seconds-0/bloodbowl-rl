@@ -166,6 +166,9 @@ newer evidence wins.
   Never change a production default from unattended evidence. Operational
   details and the departure smoke gate are in
   `docs/vacation-autonomy-2026-07.md`.
+  The concise fault/return procedure is
+  `docs/vacation-operator-runbook.md`; follow its state-to-action table rather
+  than improvising a restart or manual overflow start.
 - The accepted-candidate vacation queue is frozen by
   `tools/freeze_vacation_queue.py` only after the main `1B x 2` paired
   confirmation, scripted transfer, and learned-anchor transfer are complete.
