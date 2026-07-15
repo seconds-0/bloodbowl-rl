@@ -14,6 +14,7 @@ import argparse
 import datetime as dt
 import fcntl
 import hashlib
+import itertools
 import json
 import math
 import os
@@ -911,6 +912,39 @@ def mean(values: list[float]) -> float:
     return statistics.fmean(values)
 
 
+def percentile(sorted_values: list[float], probability: float) -> float:
+    if not sorted_values:
+        raise MilestoneEvalError("cannot take a percentile of an empty list")
+    if not 0.0 <= probability <= 1.0:
+        raise MilestoneEvalError("percentile probability is outside [0, 1]")
+    position = (len(sorted_values) - 1) * probability
+    lower = int(math.floor(position))
+    upper = int(math.ceil(position))
+    if lower == upper:
+        return sorted_values[lower]
+    fraction = position - lower
+    return sorted_values[lower] * (1.0 - fraction) + sorted_values[upper] * fraction
+
+
+def exact_cluster_bootstrap(values: list[float]) -> dict[str, Any]:
+    """Exact ordinary bootstrap over the three declared seed strata."""
+    if len(values) != len(CONTROL_SEEDS):
+        raise MilestoneEvalError(
+            f"cluster bootstrap requires exactly {len(CONTROL_SEEDS)} seed strata"
+        )
+    resampled = sorted(
+        mean(list(sample)) for sample in itertools.product(values, repeat=len(values))
+    )
+    return {
+        "mean": mean(values),
+        "sample_sd": statistics.stdev(values),
+        "lower_95": percentile(resampled, 0.025),
+        "upper_95": percentile(resampled, 0.975),
+        "clusters": len(values),
+        "exact_resamples": len(resampled),
+    }
+
+
 def nominate(points: list[dict[str, Any]]) -> dict[str, Any]:
     trained = [point for point in points if point["target_steps"] > 0]
     best_score = max(point["macro_score"] for point in trained)
@@ -997,6 +1031,37 @@ def analyze(directory: str | Path) -> dict[str, Any]:
             )
         trajectories[str(seed)] = points
         nominations[str(seed)] = nominate(points)
+    aggregate_trajectory = []
+    for index, target in enumerate(plan["target_steps"]):
+        seed_points = [
+            trajectories[str(seed)][index] for seed in plan["training_seeds"]
+        ]
+        aggregate_trajectory.append(
+            {
+                "target_steps": target,
+                "embedded_steps_by_seed": {
+                    str(seed): trajectories[str(seed)][index]["embedded_steps"]
+                    for seed in plan["training_seeds"]
+                },
+                "score": exact_cluster_bootstrap(
+                    [point["macro_score"] for point in seed_points]
+                ),
+                "score_delta_warm": exact_cluster_bootstrap(
+                    [point["score_delta_warm"] for point in seed_points]
+                ),
+                "tds_for_delta_warm": exact_cluster_bootstrap(
+                    [point["tds_for_delta_warm"] for point in seed_points]
+                ),
+                "tds_against_delta_warm": exact_cluster_bootstrap(
+                    [point["tds_against_delta_warm"] for point in seed_points]
+                ),
+                "cluster_unit": (
+                    "evaluation_seed_batch_for_shared_warm_policy"
+                    if target == 0
+                    else "training_seed"
+                ),
+            }
+        )
     return {
         "schema_version": SCHEMA_VERSION,
         "analysis": "control_final_checkpoint_milestones",
@@ -1007,11 +1072,14 @@ def analyze(directory: str | Path) -> dict[str, Any]:
         "total_games": sum(row["games"] for row in rows),
         "runs": rows,
         "trajectories": trajectories,
+        "aggregate_trajectory": aggregate_trajectory,
         "stage_b_nominations": nominations,
         "warning": (
             "These anchors are unseen exact checkpoints but lineage-connected. "
             "The fixed nomination compresses Stage B evaluation; it is not a "
-            "reward or production promotion gate."
+            "reward or production promotion gate. Exact ordinary bootstrap "
+            "intervals use only three seed strata and must be read with the "
+            "raw paired strata, not as high-powered confidence claims."
         ),
     }
 
