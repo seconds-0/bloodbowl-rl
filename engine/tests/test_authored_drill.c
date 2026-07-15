@@ -1,5 +1,6 @@
 #include "authored_drill.h"
 #include "bb_test.h"
+#include "bb/gen_skills.h"
 
 #include <string.h>
 
@@ -326,9 +327,22 @@ BB_TEST(authored_drill_f1_reaches_real_pass_opportunity) {
     BB_CHECK_EQ(BB_TEAM_OF(recipe.captured.ball.carrier), BB_AWAY);
     BB_CHECK_EQ(recipe.captured.players[recipe.captured.ball.carrier].stance,
                 BB_STANCE_STANDING);
+    BB_CHECK(recipe.captured.players[recipe.captured.ball.carrier].pa > 0);
     bb_match original = recipe.captured;
     BB_CHECK(ad_f1_pass_opportunity_valid(&recipe.captured));
     BB_CHECK_EQ(memcmp(&recipe.captured, &original, sizeof original), 0);
+    bb_match no_pa = recipe.captured;
+    no_pa.players[no_pa.ball.carrier].pa = 0;
+    BB_CHECK(!ad_f1_pass_opportunity_valid(&no_pa));
+    bb_match no_receivers = recipe.captured;
+    for (int slot = BB_AWAY * BB_TEAM_SLOTS;
+         slot < (BB_AWAY + 1) * BB_TEAM_SLOTS; slot++) {
+        if (slot != no_receivers.ball.carrier) {
+            bb_add_skill(&no_receivers.players[slot].skills, BB_SK_NO_BALL);
+        }
+    }
+    BB_CHECK(bb_state_bank_boundary_valid(&no_receivers));
+    BB_CHECK(!ad_f1_pass_opportunity_valid(&no_receivers));
 
     bb_match replayed;
     BB_CHECK_EQ(ad_replay_exact(&recipe, &replayed, error), 0);

@@ -147,7 +147,9 @@ int ad_f1_pass_opportunity_valid(const bb_match* match) {
     }
     int carrier = match->ball.carrier;
     const bb_player* player = &match->players[carrier];
-    if (player->stance != BB_STANCE_STANDING) return 0;
+    // proc_ball treats PA '-' as unable to pass. Keep the authored predicate
+    // rules-correct even while the broader activation mask is fixed separately.
+    if (player->stance != BB_STANCE_STANDING || player->pa <= 0) return 0;
 
     bb_action action;
     if (!ad_find_legal(match, BB_A_ACTIVATE, carrier, &action)) return 0;
@@ -172,7 +174,8 @@ int ad_f1_pass_opportunity_valid(const bb_match* match) {
         int target = bb_slot_at(&probe, legal[i].x, legal[i].y);
         if (target >= 0 && target != carrier &&
             BB_TEAM_OF(target) == match->active_team &&
-            bb_can_catch(&probe, target)) {
+            bb_can_catch(&probe, target) &&
+            !bb_has_skill(&probe.players[target].skills, BB_SK_NO_BALL)) {
             return 1;
         }
     }
