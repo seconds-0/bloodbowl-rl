@@ -240,9 +240,17 @@ changes a reward, active queue, production default, or promotion verdict.
 - "Secure the ball," "safe actions first," blocking, screening, and forward
   movement are contextual strategies. Do not turn them into unconditional event
   coupons.
-- BB2025 Stalling is real: crowd-action probability declines by turn and reaches
-  zero on turns 7–8. Possession is not automatically valuable independent of
-  score and clock.
+- BB2025 Stalling is real. Snapshot eligibility when the carrier is activated:
+  they must then hold the ball and have a scoring path requiring no Dodge,
+  Rush, Block, activation gate/Trait, or other die. If they finish still
+  carrying, or voluntarily end the team turn before activating them, roll the
+  non-rerollable crowd D6 through `bb_rng`; `D6 >= current turn` uses the
+  ordinary knockdown chain. The finer rulebook choice to forego only that
+  player and continue the turn is not yet a distinct action-space surface.
+  A prior Turnover and a completed Pass/Hand-off that transfers possession are
+  exemptions. The roll is still consumed on turns 7–8 even though the crowd
+  cannot act. Possession is not automatically valuable independent of score
+  and clock.
 - Prefer terminal match utility, exact discounted PBRS where needed, auxiliary
   learning targets, temporary small scaffolds, and diverse opponents—in that
   order of authority.

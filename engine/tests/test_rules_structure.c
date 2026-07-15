@@ -13,6 +13,7 @@
 // reported in the structured output of the test-writing task.
 #include "bb/bb_match.h"
 #include "bb/bb_proc.h"
+#include "bb/bb_reachability.h"
 #include "bb/gen_teams.h"
 #include "bb_fixtures.h"
 #include "bb_test.h"
@@ -1499,6 +1500,7 @@ BB_TEST(struct_touchdown_move_into_end_zone) {
     BB_CHECK_EQ(m.decision_team, 0);       // kicking team sets up first
     BB_CHECK_EQ(m.ball.state, BB_BALL_OFF_PITCH);
     BB_CHECK_EQ(m.players[scorer].location, BB_LOC_RESERVES); // pitch cleared
+    BB_CHECK(!bb_rng_error(&rng)); // touchdown never falls through to Stalling
 }
 
 // GAME SCORING A TOUCHDOWN: "...a player picking up the ball in the
@@ -1544,6 +1546,231 @@ BB_TEST(struct_no_touchdown_for_prone_carrier_in_end_zone) {
     BB_CHECK_EQ(m.players[carrier].x, 25);
     BB_CHECK_EQ(m.ball.state, BB_BALL_ON_GROUND);
     stx_expect_turn_ended(&m, 0); // Falling Over with the ball is a Turnover
+}
+
+// GAME STALLING: a player who held the ball when activated, could score
+// without dice, and ends the activation still carrying without scoring is
+// Stalling. At activation end, D6 >= the current team turn means the crowd
+// Knocks the player Down and causes a Turnover.
+BB_TEST(struct_stalling_crowd_knocks_down_carrier_and_ends_turn) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int carrier = fx_lineman(&m, BB_HOME, 0, 24, 7);
+    fx_lineman(&m, BB_AWAY, 0, 17, 7);
+    fx_ball_held(&m, carrier);
+
+    // Team turn 1: every crowd-action D6 succeeds. Armour 1+1 holds; the
+    // dropped ball bounces back toward midfield.
+    const uint8_t dice[] = {1, 1, 1, 4};
+    bb_rng rng;
+    bb_rng_script(&rng, dice, 4);
+    BB_CHECK_EQ(fx_run(&m, &rng), BB_STATUS_DECISION);
+    BB_CHECK_EQ(stx_activate(&m, carrier, BB_ACT_MOVE, &rng),
+                BB_STATUS_DECISION);
+    BB_CHECK_EQ(fx_apply(&m, stx_act(BB_A_END_ACTIVATION, 0, 0, 0), &rng),
+                BB_STATUS_DECISION);
+
+    BB_CHECK_EQ(m.players[carrier].stance, BB_STANCE_PRONE);
+    BB_CHECK_EQ(m.ball.state, BB_BALL_ON_GROUND);
+    BB_CHECK_EQ(rng.script_pos, 4);
+    BB_CHECK(!bb_rng_error(&rng));
+    stx_expect_turn_ended(&m, BB_HOME);
+}
+
+// GAME STALLING: the crowd only acts when its D6 is at least the current
+// team turn. The roll is still made when it cannot succeed.
+BB_TEST(struct_stalling_crowd_threshold_uses_current_team_turn) {
+    {
+        bb_match m;
+        fx_match_midturn(&m, BB_HOME, 0);
+        m.turn[BB_HOME] = 5; // turn_start advances this to turn 6
+        int carrier = fx_lineman(&m, BB_HOME, 0, 24, 7);
+        fx_lineman(&m, BB_HOME, 1, 3, 3); // keep the turn open
+        fx_lineman(&m, BB_AWAY, 0, 17, 7);
+        fx_ball_held(&m, carrier);
+        const uint8_t dice[] = {5}; // 5 < turn 6: crowd does not act
+        bb_rng rng;
+        bb_rng_script(&rng, dice, 1);
+        fx_run(&m, &rng);
+        stx_activate(&m, carrier, BB_ACT_MOVE, &rng);
+        fx_apply(&m, stx_act(BB_A_END_ACTIVATION, 0, 0, 0), &rng);
+        BB_CHECK_EQ(m.active_team, BB_HOME);
+        BB_CHECK_EQ(m.players[carrier].stance, BB_STANCE_STANDING);
+        BB_CHECK_EQ(m.ball.carrier, carrier);
+        BB_CHECK_EQ(rng.script_pos, 1);
+        BB_CHECK(!bb_rng_error(&rng));
+    }
+    {
+        bb_match m;
+        fx_match_midturn(&m, BB_HOME, 0);
+        m.turn[BB_HOME] = 6; // current turn 7: even a 6 cannot succeed
+        int carrier = fx_lineman(&m, BB_HOME, 0, 24, 7);
+        fx_lineman(&m, BB_HOME, 1, 3, 3);
+        fx_lineman(&m, BB_AWAY, 0, 17, 7);
+        fx_ball_held(&m, carrier);
+        const uint8_t dice[] = {6};
+        bb_rng rng;
+        bb_rng_script(&rng, dice, 1);
+        fx_run(&m, &rng);
+        stx_activate(&m, carrier, BB_ACT_MOVE, &rng);
+        fx_apply(&m, stx_act(BB_A_END_ACTIVATION, 0, 0, 0), &rng);
+        BB_CHECK_EQ(m.active_team, BB_HOME);
+        BB_CHECK_EQ(m.players[carrier].stance, BB_STANCE_STANDING);
+        BB_CHECK_EQ(rng.script_pos, 1);
+        BB_CHECK(!bb_rng_error(&rng));
+    }
+}
+
+// GAME STALLING: if reaching the end zone requires a Rush, the player is not
+// Stalling when they remain in possession at activation end.
+BB_TEST(struct_stalling_exempt_when_scoring_requires_rush) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int carrier = fx_player(&m, BB_HOME, 0, 23, 7, 1, 3, 3, 4, 9);
+    fx_lineman(&m, BB_HOME, 1, 3, 3);
+    fx_lineman(&m, BB_AWAY, 0, 17, 7);
+    fx_ball_held(&m, carrier);
+    bb_rng rng;
+    bb_rng_script(&rng, 0, 0);
+    fx_run(&m, &rng);
+    BB_CHECK(!bb_can_score_without_dice(&m, carrier));
+    stx_activate(&m, carrier, BB_ACT_MOVE, &rng);
+    fx_apply(&m, stx_act(BB_A_END_ACTIVATION, 0, 0, 0), &rng);
+    BB_CHECK_EQ(m.active_team, BB_HOME);
+    BB_CHECK_EQ(m.players[carrier].stance, BB_STANCE_STANDING);
+    BB_CHECK(!bb_rng_error(&rng)); // no crowd roll was attempted
+}
+
+// GAME STALLING: if every scoring path starts by leaving a Marked square,
+// reaching the end zone requires a Dodge and the player is exempt.
+BB_TEST(struct_stalling_exempt_when_scoring_requires_dodge) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int carrier = fx_lineman(&m, BB_HOME, 0, 24, 7);
+    fx_lineman(&m, BB_HOME, 1, 3, 3);
+    fx_lineman(&m, BB_AWAY, 0, 24, 8); // marks the carrier's origin
+    fx_ball_held(&m, carrier);
+    bb_rng rng;
+    bb_rng_script(&rng, 0, 0);
+    fx_run(&m, &rng);
+    BB_CHECK(!bb_can_score_without_dice(&m, carrier));
+    stx_activate(&m, carrier, BB_ACT_MOVE, &rng);
+    fx_apply(&m, stx_act(BB_A_END_ACTIVATION, 0, 0, 0), &rng);
+    BB_CHECK_EQ(m.active_team, BB_HOME);
+    BB_CHECK_EQ(m.players[carrier].stance, BB_STANCE_STANDING);
+    BB_CHECK(!bb_rng_error(&rng));
+}
+
+// GAME STALLING: a compulsory activation-trait roll also means the player
+// could not score without dice. The successful Bone Head roll is the only
+// die consumed here; there is no subsequent crowd roll.
+BB_TEST(struct_stalling_exempt_when_scoring_requires_activation_gate) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int carrier = fx_lineman(&m, BB_HOME, 0, 24, 7);
+    fx_lineman(&m, BB_HOME, 1, 3, 3);
+    fx_lineman(&m, BB_AWAY, 0, 17, 7);
+    fx_give_skill(&m, carrier, BB_SK_BONE_HEAD);
+    fx_ball_held(&m, carrier);
+    const uint8_t dice[] = {6}; // Bone Head passes
+    bb_rng rng;
+    bb_rng_script(&rng, dice, 1);
+    fx_run(&m, &rng);
+    BB_CHECK(!bb_can_score_without_dice(&m, carrier));
+    stx_activate(&m, carrier, BB_ACT_MOVE, &rng);
+    fx_apply(&m, stx_act(BB_A_END_ACTIVATION, 0, 0, 0), &rng);
+    BB_CHECK_EQ(m.active_team, BB_HOME);
+    BB_CHECK_EQ(rng.script_pos, 1);
+    BB_CHECK(!bb_rng_error(&rng));
+}
+
+// GAME STALLING: a successful Pass or Hand-off that leaves the activated
+// player without the ball is explicitly exempt. This pins the Hand-off case.
+BB_TEST(struct_stalling_exempt_after_successful_handoff) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int carrier = fx_lineman(&m, BB_HOME, 0, 24, 7);
+    int receiver = fx_lineman(&m, BB_HOME, 1, 24, 8);
+    fx_lineman(&m, BB_HOME, 2, 3, 3);
+    fx_lineman(&m, BB_AWAY, 0, 17, 7);
+    fx_ball_held(&m, carrier);
+    const uint8_t dice[] = {5}; // receiver catches the Hand-off
+    bb_rng rng;
+    bb_rng_script(&rng, dice, 1);
+    fx_run(&m, &rng);
+    stx_activate(&m, carrier, BB_ACT_HANDOFF, &rng);
+    fx_apply(&m, stx_act(BB_A_HANDOFF_TARGET, 0, 24, 8), &rng);
+    BB_CHECK_EQ(m.active_team, BB_HOME);
+    BB_CHECK_EQ(m.ball.carrier, receiver);
+    BB_CHECK_EQ(rng.script_pos, 1);
+    BB_CHECK(!bb_rng_error(&rng));
+}
+
+// GAME STALLING: choosing to end the team turn before activating an eligible
+// carrier counts as foregoing that activation and still invokes the crowd.
+BB_TEST(struct_stalling_forgone_carrier_invokes_crowd) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int carrier = fx_lineman(&m, BB_HOME, 0, 24, 7);
+    fx_lineman(&m, BB_HOME, 1, 3, 3);
+    fx_lineman(&m, BB_AWAY, 0, 17, 7);
+    fx_ball_held(&m, carrier);
+    const uint8_t dice[] = {1, 1, 1, 4}; // crowd, armour, bounce
+    bb_rng rng;
+    bb_rng_script(&rng, dice, 4);
+    fx_run(&m, &rng);
+    fx_apply(&m, stx_act(BB_A_END_TURN, 0, 0, 0), &rng);
+    BB_CHECK_EQ(m.players[carrier].stance, BB_STANCE_PRONE);
+    BB_CHECK_EQ(m.ball.state, BB_BALL_ON_GROUND);
+    BB_CHECK_EQ(rng.script_pos, 4);
+    BB_CHECK(!bb_rng_error(&rng));
+    stx_expect_turn_ended(&m, BB_HOME);
+}
+
+// GAME STALLING: when some other activation causes a Turnover before the
+// carrier can activate, the carrier had no opportunity and no crowd roll is
+// made for them.
+BB_TEST(struct_stalling_no_roll_after_earlier_turnover) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int carrier = fx_lineman(&m, BB_HOME, 0, 24, 7);
+    int mover = fx_lineman(&m, BB_HOME, 1, 10, 7);
+    fx_lineman(&m, BB_AWAY, 0, 10, 8); // marks mover
+    fx_lineman(&m, BB_AWAY, 1, 17, 7);
+    fx_ball_held(&m, carrier);
+    const uint8_t dice[] = {2, 3, 3}; // failed Dodge, armour holds
+    bb_rng rng;
+    bb_rng_script(&rng, dice, 3);
+    fx_run(&m, &rng);
+    stx_activate(&m, mover, BB_ACT_MOVE, &rng);
+    fx_apply(&m, stx_act(BB_A_STEP, 0, 9, 7), &rng);
+    BB_CHECK_EQ(m.ball.carrier, carrier);
+    BB_CHECK_EQ(rng.script_pos, 3);
+    BB_CHECK(!bb_rng_error(&rng));
+    stx_expect_turn_ended(&m, BB_HOME);
+}
+
+// FAQ (May 2026): Steady Footing may prevent the crowd's Knocked Down result;
+// on a 6 there is no Armour roll and no Turnover, so the team turn continues.
+BB_TEST(struct_stalling_steady_footing_six_prevents_turnover) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int carrier = fx_lineman(&m, BB_HOME, 0, 24, 7);
+    fx_lineman(&m, BB_HOME, 1, 3, 3);
+    fx_lineman(&m, BB_AWAY, 0, 17, 7);
+    fx_give_skill(&m, carrier, BB_SK_STEADY_FOOTING);
+    fx_ball_held(&m, carrier);
+    const uint8_t dice[] = {1, 6}; // crowd acts; Steady Footing prevents it
+    bb_rng rng;
+    bb_rng_script(&rng, dice, 2);
+    fx_run(&m, &rng);
+    stx_activate(&m, carrier, BB_ACT_MOVE, &rng);
+    fx_apply(&m, stx_act(BB_A_END_ACTIVATION, 0, 0, 0), &rng);
+    BB_CHECK_EQ(m.active_team, BB_HOME);
+    BB_CHECK_EQ(m.players[carrier].stance, BB_STANCE_STANDING);
+    BB_CHECK_EQ(m.ball.carrier, carrier);
+    BB_CHECK_EQ(rng.script_pos, 2);
+    BB_CHECK(!bb_rng_error(&rng));
 }
 
 // Shared driver: the ACTIVE team (home) pushes the INACTIVE team's standing

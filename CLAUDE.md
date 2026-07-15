@@ -249,7 +249,7 @@ newer evidence wins.
 
 ### Engine / rules / oracles (stable since v1)
 - PufferLib 4.0 (`vendor/PufferLib`, branch 4.0) uses `src/vecenv.h` macros — the online `env_binding.h` ABI is dead 3.0. `ocean/chess/` is the template; `ocean/convert/` is stale.
-- Rules source: `docs/vendor/bloodbowlbase/` mirror (May 2026 FAQ, inline `<del>` errata — second sentence is current law). BB2025: 30 teams, Devious category, Elite Skills 0–4 cap. May 2026 errata removed the "D6 never below 1" floor. Team re-rolls UNLIMITED per turn (D15).
+- Rules source: `docs/vendor/bloodbowlbase/` mirror (May 2026 FAQ, inline `<del>` errata — second sentence is current law). BB2025: 30 teams, Devious category, Elite Skills 0–4 cap. May 2026 errata removed the "D6 never below 1" floor. Team re-rolls UNLIMITED per turn (D15). Stalling eligibility is snapshotted at carrier activation: a no-Dodge/no-Rush/no-gate scoring path plus retained possession invokes the non-rerollable crowd D6 at activation end; voluntarily ending the team turn before activating that carrier also invokes it, while an earlier Turnover or a successful Pass/Hand-off transfer does not (D193). The roll is still consumed on turns 7–8. The distinct policy choice to forego one player but continue with others is not yet represented in the 454-way action interface. Keep Stalling in engine semantics, never duplicate it as a reward fine.
 - FUMBBL replays: `game` = END-of-game snapshot; kickoff state from setup-phase `fieldModelSetPlayerCoordinate`; dice/decisions in `reportList.reports`. `vendor/ffb/.../PlayerState.java` is the authoritative bit table.
 - Jervis: parallel bb2020/bb2025 suites (~174 files, diff for deltas); foul conversion broken (@Ignore). ActionCalculator (281 rows) defaults Season3=BB2025 — valid oracle odds. FFB headless needs MySQL ≤5.6/MariaDB ≤10.4; `gamestate/get` is the differential extraction point.
 
@@ -282,6 +282,11 @@ newer evidence wins.
     or rare-action competence.
 19. **Do not touch the production checkout or evaluator while using the 2070 audit
     checkout.** Confirm paths and processes before sync, build, kill, or launch.
+20. **Do not infer Stalling from distance alone.** Use
+    `bb_can_score_without_dice` at activation start and preserve its exemptions;
+    checking only the end position misclassifies Rush/Dodge/Trait paths, prior
+    Turnovers, and successful possession transfers. Crowd and Steady Footing
+    dice must remain in the engine RNG stream.
 
 ## Conventions
 
