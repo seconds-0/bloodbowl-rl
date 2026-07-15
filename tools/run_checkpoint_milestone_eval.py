@@ -552,10 +552,14 @@ def freeze_manifest(spec: dict[str, Any]) -> dict[str, Any]:
     core = {
         "schema_version": SCHEMA_VERSION,
         "matrix_id": spec["matrix_id"],
+        "root": spec["root"],
         "spec": spec["spec_path"],
         "spec_sha256": spec["spec_sha256"],
         "screen_complete": spec["screen_complete"],
         "screen_complete_sha256": spec["screen_complete_sha256"],
+        "screen_manifest": str(
+            (Path(spec["screen_complete"]).parent / "SCREEN_MANIFEST.json").resolve()
+        ),
         "screen_manifest_sha256": report["screen"]["manifest_sha256"],
         "profile": "control-final",
         "training_seeds": list(CONTROL_SEEDS),
@@ -589,6 +593,47 @@ def checkpoint_record(plan: dict[str, Any], seed: int, target: int) -> dict[str,
     if len(matches) != 1:
         raise MilestoneEvalError(f"missing/duplicate seed {seed} target {target}")
     return matches[0]
+
+
+def validate_plan_contract(plan: dict[str, Any]) -> None:
+    if plan.get("schema_version") != SCHEMA_VERSION:
+        raise MilestoneEvalError("unsupported milestone manifest schema")
+    if plan.get("profile") != "control-final":
+        raise MilestoneEvalError("milestone manifest is not control-final")
+    if plan.get("training_seeds") != list(CONTROL_SEEDS):
+        raise MilestoneEvalError("milestone manifest seeds differ from 42/43/44")
+    if tuple(plan.get("target_steps", ())) != FIXED_TARGET_STEPS:
+        raise MilestoneEvalError("milestone manifest target steps drifted")
+    if plan.get("max_target_gap_steps") != FIXED_MAX_TARGET_GAP_STEPS:
+        raise MilestoneEvalError("milestone manifest target-gap contract drifted")
+    if plan.get("games_per_cell") != FIXED_GAMES_PER_CELL:
+        raise MilestoneEvalError("milestone manifest game count drifted")
+    if plan.get("orientations") != [0, 1]:
+        raise MilestoneEvalError("milestone manifest orientations drifted")
+    anchors = plan.get("anchors")
+    if (
+        not isinstance(anchors, list)
+        or {
+            record.get("name"): record.get("sha256")
+            for record in anchors
+            if isinstance(record, dict)
+        }
+        != FIXED_ANCHOR_SHA256
+    ):
+        raise MilestoneEvalError("milestone manifest anchor contract drifted")
+    checkpoints = plan.get("checkpoints")
+    if not isinstance(checkpoints, dict) or set(checkpoints) != {
+        str(seed) for seed in CONTROL_SEEDS
+    }:
+        raise MilestoneEvalError("milestone manifest checkpoint seeds are incomplete")
+    for seed in CONTROL_SEEDS:
+        records = checkpoints[str(seed)]
+        if not isinstance(records, list) or [
+            record.get("target_steps") for record in records if isinstance(record, dict)
+        ] != list(FIXED_TARGET_STEPS):
+            raise MilestoneEvalError(
+                f"milestone manifest seed {seed} targets are incomplete"
+            )
 
 
 def cell_filename(seed: int, target: int, anchor: str, orientation: int) -> str:
@@ -730,6 +775,67 @@ def verify_implementation(plan: dict[str, Any]) -> None:
         raise MilestoneEvalError("implementation drift before cell: config_tree")
 
 
+def verify_file_identity(path_value: Any, expected: Any, label: str) -> Path:
+    path = absolute_file(path_value, label)
+    if sha256(path) != need_sha(expected, f"{label} SHA-256"):
+        raise MilestoneEvalError(f"{label} SHA-256 drift")
+    return path
+
+
+def verify_plan_sources(
+    plan: dict[str, Any], expected: dict[str, Any] | None = None
+) -> None:
+    validate_plan_contract(plan)
+    verify_file_identity(plan.get("spec"), plan.get("spec_sha256"), "milestone spec")
+    verify_file_identity(
+        plan.get("screen_complete"),
+        plan.get("screen_complete_sha256"),
+        "source screen completion",
+    )
+    verify_file_identity(
+        plan.get("screen_manifest"),
+        plan.get("screen_manifest_sha256"),
+        "source screen manifest",
+    )
+    seeds = (
+        [expected["training_seed"]]
+        if expected is not None
+        else list(plan["training_seeds"])
+    )
+    targets = (
+        [expected["target_steps"]]
+        if expected is not None
+        else list(plan["target_steps"])
+    )
+    for seed in seeds:
+        for target in targets:
+            checkpoint = checkpoint_record(plan, seed, target)
+            verify_file_identity(
+                checkpoint.get("screen_result"),
+                checkpoint.get("screen_result_sha256"),
+                f"seed {seed} screen result",
+            )
+            verify_file_identity(
+                checkpoint.get("run_manifest"),
+                checkpoint.get("run_manifest_sha256"),
+                f"seed {seed} run manifest",
+            )
+            verify_file_identity(
+                checkpoint.get("native"),
+                checkpoint.get("native_sha256"),
+                f"seed {seed} target {target} checkpoint",
+            )
+    anchor_names = (
+        [expected["anchor"]]
+        if expected is not None
+        else [record["name"] for record in plan["anchors"]]
+    )
+    for name in anchor_names:
+        anchor = next(record for record in plan["anchors"] if record["name"] == name)
+        verify_file_identity(anchor.get("path"), anchor.get("sha256"), f"anchor {name}")
+    verify_implementation(plan)
+
+
 def require_idle_gpu() -> None:
     result = subprocess.run(
         [
@@ -777,13 +883,14 @@ def require_idle_gpu() -> None:
 
 def run_cell(root: Path, plan_path: Path, cell_path: Path) -> int:
     plan = load_object(plan_path, "milestone manifest")
+    validate_plan_contract(plan)
     expected = next(
         (row for row in expected_cells(plan) if row["path"] == cell_path.name), None
     )
     if expected is None:
         raise MilestoneEvalError(f"unplanned milestone cell: {cell_path}")
+    verify_plan_sources(plan, expected)
     require_idle_gpu()
-    verify_implementation(plan)
     checkpoint = checkpoint_record(
         plan, expected["training_seed"], expected["target_steps"]
     )
@@ -975,6 +1082,7 @@ def analyze(directory: str | Path) -> dict[str, Any]:
     directory = Path(directory).expanduser().resolve()
     plan_path = directory / "MILESTONE_EVAL_MANIFEST.json"
     plan = load_object(plan_path, "milestone manifest")
+    validate_plan_contract(plan)
     rows = [
         validate_cell(directory / expected["path"], plan, expected)
         for expected in expected_cells(plan)
@@ -1125,6 +1233,8 @@ def validate_completion(
     if completion.get("schema_version") != SCHEMA_VERSION:
         raise MilestoneEvalError("unsupported milestone completion schema")
     directory = path.parent
+    plan = load_object(directory / "MILESTONE_EVAL_MANIFEST.json", "milestone manifest")
+    verify_plan_sources(plan)
     report = analyze(directory)
     stored = load_object(directory / "ANALYSIS.json", "milestone analysis")
     if stored != report:
