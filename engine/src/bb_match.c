@@ -231,6 +231,7 @@ bool bb_can_catch(const bb_match* m, int slot) {
     if (p->location != BB_LOC_ON_PITCH) return false;
     if (p->stance != BB_STANCE_STANDING) return false;
     if (p->flags & (BB_PF_DISTRACTED | BB_PF_NO_TZ)) return false;
+    if (bb_has_skill(&p->skills, BB_SK_NO_BALL)) return false;
     return true;
 }
 

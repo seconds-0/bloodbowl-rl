@@ -654,7 +654,11 @@ static int move_legal(const bb_match* m, bb_action* out) {
                 int nx = p->x + dx, ny = p->y + dy;
                 if (!bb_on_pitch_xy(nx, ny)) continue;
                 int s = bb_slot_at(m, nx, ny);
-                if (s >= 0 && BB_TEAM_OF(s) == BB_TEAM_OF(slot) && bb_can_catch(m, s)) {
+                // Hand-off eligibility is Standing + Tackle Zone. No Ball is
+                // still a legal target, then automatically fails the required
+                // Catch in BB_PROC_CATCH without consuming a catch die.
+                if (s >= 0 && BB_TEAM_OF(s) == BB_TEAM_OF(slot) &&
+                    bb_exerts_tz(m, s)) {
                     out[n++] = (bb_action){BB_A_HANDOFF_TARGET, 0, (uint8_t)nx, (uint8_t)ny};
                 }
             }

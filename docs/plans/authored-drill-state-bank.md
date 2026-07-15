@@ -312,6 +312,14 @@ or nested frame is serialized or treated as a policy label. This proves one
 opportunity template, not passing quality, F1 axis coverage, quotas, or
 publication.
 
+D198 closes the two engine/helper gaps exposed while reviewing this proof: PA-
+players no longer receive Pass declaration, and `bb_can_catch` now excludes No
+Ball. No Ball players cannot intercept or receive a Touchback, while an
+ordinary Pass may still target their occupied square and then Bounce. A
+Standing No Ball team-mate with a Tackle Zone remains a legal Hand-off target,
+then automatically fails the required Catch without a catch die. The F1
+verifier retains its explicit guards as defense in depth.
+
 ## Acceptance gates
 
 The tranche is complete only when all are true:
