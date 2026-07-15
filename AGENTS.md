@@ -9,7 +9,7 @@ and behavioral cloning from FUMBBL replays.
 1. Read the tail of `DECISIONS.md`. It is the chronological program ledger;
    later entries amend earlier ones without deleting history.
 2. For reward, replay, or training work, read
-   `docs/reward-and-replay-audit-2026-07-09.md`. D177–D186 summarize its durable
+   `docs/reward-and-replay-audit-2026-07-09.md`. D177–D187 summarize its durable
    conclusions and the subsequent vacation-training decisions.
 3. Load the relevant project skill under `.claude/skills/`:
    - `training-experiments` for any run, A/B, checkpoint, metric, or promotion;
@@ -54,6 +54,11 @@ default.
   gate (D185). The active vacation queue therefore characterizes R0 only; do not
   switch candidates or describe R0 as promoted. D186 permits one separately
   frozen third-ancestry R0 overflow only after exact primary completion.
+- The frozen seed-42 6B curve improves against all four static training banks
+  but is non-monotonic and in-pool (D187). Select no live/newest checkpoint from
+  it. Use the fixed post-run milestone matrix, and treat near-absent pass/handoff
+  coverage plus missing per-component reward attribution as future research
+  requirements rather than reasons to alter the vacation queues.
 - Human-looking block, rush, possession, or action rates are diagnostics, not
   optimization objectives. Tournament/match utility and held-out transfer are
   the decision criteria.
