@@ -146,6 +146,21 @@ class RewardLearningCurveTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "absent or mismatched"):
                 curve.analyze_log(path, window_steps=100)
 
+    def test_rejects_marker_and_bank_set_schema_drift(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "marker.log"
+            write_log(path, [panel(100, 2, _puffer_final_reprint=-1)])
+            with self.assertRaisesRegex(ValueError, "exact non-negative integer"):
+                curve.analyze_log(path, window_steps=100)
+
+            second = panel(200, 2)
+            second["hist_n_bank_1"] = 0.0
+            second["hist_score_bank_1"] = 0.0
+            path = Path(tmp) / "banks.log"
+            write_log(path, [panel(100, 2), second])
+            with self.assertRaisesRegex(ValueError, "bank ID set changed"):
+                curve.analyze_log(path, window_steps=100)
+
 
 if __name__ == "__main__":
     unittest.main()

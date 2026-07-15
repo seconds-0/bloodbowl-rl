@@ -55,7 +55,6 @@ MEAN_METRICS = (
     "gfi_attempts",
     "pass_attempts",
     "handoff_attempts",
-    "historical_winrate",
 )
 
 # These are also panel means. Multiplying by n recovers a run/window total.
@@ -90,6 +89,13 @@ def _exact_nonnegative_int(value: Any, label: str) -> int:
     return integer
 
 
+def _binary_marker(value: Any, label: str) -> int:
+    marker = _exact_nonnegative_int(value, label)
+    if marker not in (0, 1):
+        raise ValueError(f"{label} must be 0 or 1")
+    return marker
+
+
 def _clean_float(value: float) -> float:
     # Avoid reports containing the confusing JSON value -0.0.
     return 0.0 if value == 0.0 else value
@@ -108,6 +114,7 @@ class Aggregate:
     )
     bank_games: dict[int, float] = field(default_factory=lambda: defaultdict(float))
     bank_scores: dict[int, float] = field(default_factory=lambda: defaultdict(float))
+    bank_ids: tuple[int, ...] | None = None
 
     def add(self, panel: dict[str, Any]) -> None:
         n = _exact_nonnegative_int(panel["n"], "panel n")
@@ -151,7 +158,15 @@ class Aggregate:
             raise ValueError(
                 "historical bank score/count fields are absent or mismatched"
             )
-        for bank in sorted(n_by_bank):
+        panel_bank_ids = tuple(sorted(n_by_bank))
+        if self.bank_ids is None:
+            self.bank_ids = panel_bank_ids
+        elif panel_bank_ids != self.bank_ids:
+            raise ValueError(
+                "historical bank ID set changed within an analysis window: "
+                f"expected {self.bank_ids}, got {panel_bank_ids}"
+            )
+        for bank in panel_bank_ids:
             games_rate = n_by_bank[bank]
             score_rate = score_by_bank[bank]
             if games_rate < 0.0 or score_rate < 0.0:
@@ -208,16 +223,16 @@ def _validate_train_panel(panel: dict[str, Any]) -> tuple[int, int] | None:
     schema = _exact_nonnegative_int(panel.get("_puffer_schema", 0), "schema")
     if schema != 2:
         raise ValueError(f"learning-curve analysis requires schema 2, got {schema}")
-    if _finite_number(panel.get("_puffer_final_reprint", 0), "final marker") > 0:
+    if _binary_marker(panel.get("_puffer_final_reprint", 0), "final marker"):
         return None
-    if _finite_number(panel.get("_puffer_phase_eval", 0), "phase marker") > 0:
+    if _binary_marker(panel.get("_puffer_phase_eval", 0), "phase marker"):
         return None
     n = _exact_nonnegative_int(panel.get("n", 0), "panel n")
     if n == 0:
         return None
-    if _finite_number(panel.get("_puffer_env_cumulative", 0), "cumulative marker") != 0:
+    if _binary_marker(panel.get("_puffer_env_cumulative", 0), "cumulative marker"):
         raise ValueError("schema-2 training panels must be independent, not cumulative")
-    if _finite_number(panel.get("_puffer_backend_native", 0), "backend marker") != 1:
+    if not _binary_marker(panel.get("_puffer_backend_native", 0), "backend marker"):
         raise ValueError("learning-curve analysis requires the native backend")
     step = _exact_nonnegative_int(
         panel.get("_puffer_agent_steps"), "_puffer_agent_steps"
