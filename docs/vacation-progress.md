@@ -2359,3 +2359,16 @@ Next steps:
    sampled game as evaluation evidence.
 3. Preserve every fixed checkpoint milestone. Do not choose, transfer, or
    promote any policy from live panels or viewer aesthetics.
+
+Post-entry verification at 21:38 PDT:
+
+- Merged-main CI run `29389029603` passed all stages on exact merge
+  `8e99a9b9cecaacddce6675be44b17e38515ca01d`. Journal-head CI run
+  `29389177912` also passed on commit `055e719`.
+- The initial post-deploy two-game sampled cycle completed normally. Without a
+  service restart, follower PID `453879` advanced from exact step 5,792,989,184
+  to exact step 5,892,866,048 (source SHA prefix `41baf4c394`) at 21:37:50 PDT.
+  The new converted filename retains full `step005892866048`, the digest, and
+  `_torch.bin`. A fresh public WSS connection received that exact new matchup,
+  a full snapshot, and advancing deltas. The viewer correction is therefore
+  closed; routine hourly monitoring continues.
