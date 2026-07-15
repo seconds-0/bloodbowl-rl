@@ -4209,3 +4209,20 @@ PR #36, fix every P0-P3 finding, and merge only when the reviewed head is still
 identical. Then begin axis/quota/sidecar/manifest work in a separate tranche.
 Do not publish an authored bank, change reward/training inputs, or deploy source
 over the occupied 2070 or either frozen queue.
+
+10:02 PDT addendum:
+
+- All three independent reviewers approved PR #36 exact head
+  `a5f4a2e3b30ec05330eba1e630d66109922be5f3` with no P0-P3 findings after
+  independently rerunning focused/full optimized and sanitizer checks. Each
+  verified local/remote/GitHub head identity and a clean review worktree. Hosted
+  CI run `29434458719` passed in 4m21s; GitHub reported `MERGEABLE` and `CLEAN`.
+- PR #36 merged authoritatively to `main` as
+  `2a70fbe1438bc3a6e3469219b89ebf9e7499992c`; the remote feature branch was
+  deleted separately. GitHub completed the merge before local cleanup reported
+  only that another worktree already owns `main`, the same benign worktree-
+  ownership condition seen on prior merges. No source was deployed to the 2070.
+- The next separate tranche is the authored-bank axis/quota/sidecar/manifest
+  layer. It must begin from merged main, preserve F1-F5 opportunity-only
+  semantics, and remain CPU-only while the frozen queues own the GPU. Canonical
+  publication and training remain unauthorized until their own reviewed gates.
