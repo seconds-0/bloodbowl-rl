@@ -118,15 +118,17 @@ do not use a naive per-game binomial interval as the only uncertainty estimate.
 Stage A may nominate exactly two policies per seed/ancestry for Stage B:
 
 1. the exact 12B terminal checkpoint; and
-2. the earliest milestone whose equal-anchor macro score is within 0.01 of the
-   maximum Stage-A milestone and for which neither of the next two milestones
-   is more than 0.02 better.
+2. the earliest nonterminal milestone whose equal-anchor macro score is within
+   0.01 of the maximum Stage-A milestone and for which two later milestones
+   exist and neither is more than 0.02 better.
 
-If no milestone satisfies the second rule, use the highest-scoring milestone
-and label the choice exploratory. If the nominated point differs across seeds,
-preserve each seed's own nomination; never swap seed identities or choose one
-seed's visually best checkpoint for all seeds. This rule is a compression rule
-for additional evaluation, not a production-selection gate.
+If no milestone satisfies the second rule, use the highest-scoring nonterminal
+milestone and label the choice exploratory. This keeps the Stage-B comparator
+distinct from the terminal instead of allowing a vacuous terminal-vs-terminal
+comparison. If the nominated point differs across seeds, preserve each seed's
+own nomination; never swap seed identities or choose one seed's visually best
+checkpoint for all seeds. This rule is a compression rule for additional
+evaluation, not a production-selection gate.
 
 ## Stage B: transfer confirmation
 
@@ -172,6 +174,8 @@ training invalid and does not promote R0.
 
 The milestone evaluator must be a separate post-run tool and artifact tree. It
 must not modify or become an input to the active primary or overflow queues.
+The four learned anchors are ordered exactly as declared in the protocol; that
+order is part of the common-match-seed assignment and may not be permuted.
 
 The runner must:
 

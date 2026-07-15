@@ -31,6 +31,7 @@ jobs:
             tools.test_freeze_vacation_queue \
             tools.test_freeze_vacation_overflow \
             tools.test_run_frozen_reward_screen \
+            tools.test_run_checkpoint_milestone_eval \
             tools.test_run_reward_learned_transfer \
             tools.test_start_vacation_overflow \
             tools.test_validate_primary_queue_completion \
