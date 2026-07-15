@@ -4639,3 +4639,91 @@ Next steps:
    proof-local A9 IDs are explicitly not safe joins. Continue to forbid bank
    publication, training input changes, reward changes, and milestone
    evaluation until their separate contracts and terminal queue state permit.
+
+## 2026-07-15 13:25 PDT — seed 43 advancing; builder merged; identity registry held at pre-code review
+
+Live queue and BBTV health:
+
+- The primary queue remains authoritative `running` on
+  `final-main-control`, arm `both`, seed 43/current index 2, with one completed
+  arm. `SCREEN_STATUS.json` was fresh at 13:20 PDT. Queue PID 431309, wrapper
+  PID 431316, and the sole completion-gate/GPU-compute PID 473422 remain
+  stable; the primary service and all BBTV services have zero restarts. The
+  overflow service remains inactive/dead with absent state and zero restarts.
+  Its 13:16 watcher correctly exited after observing that primary is still
+  active, and its timer remains active/waiting for the next fail-closed check.
+- Exact read-only validation again matched all 65 primary pins at plan SHA-256
+  `4ee72e3c58f09786cdd3bbf78a772e8de2d9a93e21a8b065cf0c5976ecced270`
+  and all 74 overflow pins at plan SHA-256
+  `d90ee01c8c459f599c8601934f545ccb7783261edae3bcb6e9e3878036d37d3e`.
+  Both pin-error results are `None` and no unowned compute process is present.
+- The latest complete telemetry panel observed exact step 4,405,985,280 at
+  epoch 33,614 over 89 games: performance 0.539326, draw rate 0.404494,
+  possession 0.385914, illegal/sampled-repair fraction 0.189978, ball progress
+  8.880769, 19.865168 Rush intentions, 12.044944 blocks thrown, 1.662921 blocks
+  against the carrier, carrier-target fraction 0.138115, Pass intentions
+  0.022472, and zero Hand-off intentions. Reward clipping, non-finite reward,
+  engine-error, demonstration, and fallback counters remain zero. Later
+  samples reached at least step 4,407,033,856 at roughly 187.5K SPS. The newest
+  complete 16,066,560-byte checkpoint was exact step 4,394,713,088 at about
+  13:19 PDT. Approximately 7.59B seed-43 steps remain, or about 11.3 hours at
+  the observed rate, excluding evaluation and transition uncertainty.
+- Four GPU samples ranged from 80-82 C, 88-89% fan, 74-80% utilization,
+  5,554/8,192 MiB, and 110.19-147.68 W. Software thermal slowdown was active
+  in all four and hardware slowdown inactive in all four. Temperature remains
+  below the literal frozen 88 C three-poll guard, so the recurring software
+  thermal state remains monitored rather than manually tuned. Disk is 7% used
+  with 893 GiB free, inode use is 1%, memory has 9.4 GiB available, and swap
+  use is 42 MiB.
+- `bbstream`, `bbweb`, and `bbtv-tunnel` remain active with zero restarts. At
+  13:18 PDT BBTV selected seed-43 checkpoint 4,344,774,656 against the frozen
+  turnover3 baseline. Learner source SHA-256 is
+  `ced4c7ba5b8ef5887addc67135c327b7fc434c0037e2c37deb1a7b9aa954f1b5`,
+  converted output SHA-256 is
+  `86da68de1737326882b7e4a6c411610f02646b379d6e82606febfd22cee19718`,
+  and `selection.json` SHA-256 is
+  `58bdd178e008d9d69cd0598d3e677e3f59abe96ea9defd111adfc86e2805ca7d`.
+  The public page returned HTTP 200 in 0.237 seconds. An eight-second public WSS
+  client received the correct learner/frozen hello, match start, snapshot,
+  advancing deltas, and ping before deliberate timeout. BBTV remains CPU-only
+  and observational.
+
+Authored proof and identity work:
+
+- PR #41 merged exact reviewed head
+  `546b7090e6605280285abac6780891ea47e3ba93` to `main` as
+  `ca971ca201f9502f4a7317a405a6fdd3d0fe3a5c`. Hosted CI run `29445663474`
+  passed in 4m35s, all three fresh exact-head reviews reported no P0-P3
+  finding, and one reviewer additionally exercised allocator-failure paths.
+  The remote feature branch was deleted after authoritative merge. This is
+  CPU-only in-memory proof infrastructure; no deployment or live source change
+  was made.
+- The persistent authored identity registry is being designed in a fresh
+  worktree at exact merged base `ca971ca201f9502f4a7317a405a6fdd3d0fe3a5c`.
+  Four independent plan-review rounds have forced the design from a truncated
+  semantic bit-packing proposal into opaque globally append-only AE ordinals,
+  normalized immutable template/kind descriptors, a separate frozen A9 proof
+  schedule, complete configuration projections, revision-1-only execution,
+  exact-target serialization, and a byte-immutable schema-1 ledger of exactly
+  26 rows. No implementation has begun.
+- The remaining pre-code work is narrow but material: pin an explicit
+  little-endian parent oracle for all configuration, action/decision-team,
+  dice, initialized-match, and captured-match content; reject duplicate
+  executable configurations globally across templates; and test the pure
+  field matcher directly so earlier composition failures cannot mask an
+  omitted identity field. The plan stays uncommitted and implementation stays
+  blocked until these requirements have exact evidence and clean re-review.
+- Claude Code authentication still reports unavailable, so Fable has not been
+  invoked and no Fable approval is claimed. Its reviewed headless invocation
+  and authentication gate remain preserved in durable Codex memory.
+
+Next steps:
+
+1. Continue the hourly read-only operational loop, preserving the frozen queue,
+   overflow, thermal, checkpoint-selection, and BBTV boundaries.
+2. Generate and pin the parent recipe-content oracle without modifying the
+   parent source, finish the registry plan's global uniqueness and pure-matcher
+   contract, and obtain fresh plan-only review before writing production code.
+3. Keep sidecars, bank publication, training-input changes, reward changes,
+   deployment, and milestone evaluation out of scope until their separate
+   contracts and terminal queue gates authorize them.
