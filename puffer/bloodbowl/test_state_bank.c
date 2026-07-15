@@ -335,6 +335,95 @@ BB_TEST(state_bank_accepts_exact_replayed_pass_opportunity_record) {
     BB_CHECK_EQ(remove(path), 0);
 }
 
+BB_TEST(state_bank_accepts_complete_f1_pass_carrier_pressure_axis) {
+    static const uint64_t
+        controller_seed[BB_AWAY + 1][AD_F1_PASS_CARRIER_PRESSURE_BUCKET_COUNT] = {
+        {4, 2},
+        {10, 8},
+    };
+    const size_t count = AD_F1_PASS_CARRIER_PRESSURE_AXIS_COUNT;
+    ad_recipe* recipes = calloc(count, sizeof(*recipes));
+    BB_CHECK(recipes != NULL);
+    if (recipes == NULL) return;
+    ad_bbs_record records[AD_F1_PASS_CARRIER_PRESSURE_AXIS_COUNT];
+    char error[AD_ERROR_CAP];
+
+    size_t index = 0;
+    for (int team = BB_HOME; team <= BB_AWAY; team++) {
+        for (int pressure = AD_F1_CARRIER_PRESSURE_OPEN;
+             pressure <= AD_F1_CARRIER_PRESSURE_MARKED; pressure++) {
+            ad_recipe* recipe = &recipes[index];
+            *recipe = authored_test_recipe();
+            recipe->controller_seed = controller_seed[team][pressure - 1];
+            BB_CHECK_EQ(ad_discover_f1_pass_carrier_pressure(
+                            recipe, team, pressure, error),
+                        0);
+            records[index] = (ad_bbs_record){
+                0xA1000100u + (uint32_t)index,
+                (uint32_t)recipe->action_count,
+                recipe,
+            };
+            index++;
+        }
+    }
+    BB_CHECK_EQ(index, count);
+    BB_CHECK_EQ(ad_validate_f1_pass_carrier_pressure_axis(
+                    recipes, count, error),
+                0);
+
+    char path[256];
+    snprintf(path, sizeof path, "/tmp/bloodbowl-authored-f1-axis-%ld.bbs",
+             (long)getpid());
+    FILE* file = fopen(path, "wb");
+    BB_CHECK(file != NULL);
+    if (file == NULL) {
+        free(recipes);
+        return;
+    }
+    BB_CHECK_EQ(ad_bbs_write(file, records, count, error), 0);
+    BB_CHECK_EQ(fclose(file), 0);
+
+    reset_state_bank_loader(path);
+    bbe_state_bank_load();
+    BB_CHECK_EQ(bbe_state_bank_n, count);
+    if (bbe_state_bank_n == (int)count) {
+        unsigned char
+            seen[BB_AWAY + 1][AD_F1_PASS_CARRIER_PRESSURE_BUCKET_COUNT] = {{0}};
+        for (size_t i = 0; i < count; i++) {
+            const bb_match* loaded = &bbe_state_bank[i];
+            const ad_recipe* recipe = &recipes[i];
+            BB_CHECK_EQ(memcmp(loaded, &recipe->captured, sizeof *loaded), 0);
+            BB_CHECK(bb_state_bank_boundary_valid(loaded));
+            BB_CHECK(ad_f1_pass_opportunity_valid(loaded));
+            BB_CHECK_EQ(loaded->active_team, recipe->capture_active_team);
+            int carrier = loaded->ball.carrier;
+            int pressure = bb_is_marked(loaded, carrier)
+                ? AD_F1_CARRIER_PRESSURE_MARKED
+                : AD_F1_CARRIER_PRESSURE_OPEN;
+            BB_CHECK_EQ(pressure, recipe->capture_pass_carrier_pressure);
+            int team = loaded->active_team;
+            if (team >= BB_HOME && team <= BB_AWAY &&
+                pressure >= AD_F1_CARRIER_PRESSURE_OPEN &&
+                pressure <= AD_F1_CARRIER_PRESSURE_MARKED) {
+                seen[team][pressure - 1]++;
+            }
+            BB_CHECK_EQ(ad_verify_one_action_continuation(
+                            loaded, NULL, NULL, NULL, error),
+                        0);
+        }
+        for (int team = BB_HOME; team <= BB_AWAY; team++) {
+            for (int pressure_index = 0;
+                 pressure_index < AD_F1_PASS_CARRIER_PRESSURE_BUCKET_COUNT;
+                 pressure_index++) {
+                BB_CHECK_EQ(seen[team][pressure_index], 1);
+            }
+        }
+    }
+    reset_state_bank_loader(BBE_STATE_BANK_PATH);
+    BB_CHECK_EQ(remove(path), 0);
+    free(recipes);
+}
+
 BB_TEST(state_bank_accepts_exact_replayed_handoff_opportunity_record) {
     ad_recipe recipe = authored_test_recipe();
     char error[AD_ERROR_CAP];

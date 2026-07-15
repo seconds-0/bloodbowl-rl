@@ -275,12 +275,13 @@ int ad_f4_pending_dodge_reroll_valid(const bb_match* match) {
 static int ad_recipe_config_valid(const ad_recipe* recipe) {
     int f3_axis = recipe->kind == AD_RECIPE_F3_EXACT_SECOND_HALF_TURN;
     int f2_axis = recipe->kind == AD_RECIPE_F2_EXACT_HANDOFF_TARGET_COUNT;
+    int f1_axis = recipe->kind == AD_RECIPE_F1_EXACT_PASS_CARRIER_PRESSURE;
     int capture_config_valid =
         (f3_axis
              ? recipe->capture_turn >= 1 &&
                    recipe->capture_turn <= AD_F3_SECOND_HALF_TURN_COUNT
              : recipe->capture_turn == 0) &&
-        (f3_axis || f2_axis
+        (f3_axis || f2_axis || f1_axis
              ? recipe->capture_active_team >= BB_HOME &&
                    recipe->capture_active_team <= BB_AWAY
              : recipe->capture_active_team == 0) &&
@@ -290,7 +291,14 @@ static int ad_recipe_config_valid(const ad_recipe* recipe) {
                    recipe->capture_handoff_target_bucket <=
                        AD_F2_TARGET_COUNT_TWO_OR_MORE
              : recipe->capture_handoff_target_bucket ==
-                   AD_F2_TARGET_COUNT_NONE);
+                   AD_F2_TARGET_COUNT_NONE) &&
+        (f1_axis
+             ? recipe->capture_pass_carrier_pressure >=
+                       AD_F1_CARRIER_PRESSURE_OPEN &&
+                   recipe->capture_pass_carrier_pressure <=
+                       AD_F1_CARRIER_PRESSURE_MARKED
+             : recipe->capture_pass_carrier_pressure ==
+                   AD_F1_CARRIER_PRESSURE_NONE);
     return recipe->kind >= AD_RECIPE_FIRST_TEAM_TURN &&
            recipe->kind < AD_RECIPE_KIND_COUNT &&
            capture_config_valid &&
@@ -324,6 +332,19 @@ static int ad_f2_handoff_target_count_capture_valid(
                 : target_count >= 2);
 }
 
+static int ad_f1_pass_carrier_pressure_capture_valid(
+    const bb_match* match, const ad_recipe* recipe) {
+    if (!ad_f1_pass_opportunity_valid(match) ||
+        match->active_team != recipe->capture_active_team) {
+        return 0;
+    }
+    int marked = bb_is_marked(match, match->ball.carrier);
+    return recipe->capture_pass_carrier_pressure ==
+               AD_F1_CARRIER_PRESSURE_MARKED
+        ? marked
+        : !marked;
+}
+
 static int ad_capture_ready(const bb_match* match, const ad_recipe* recipe) {
     ad_recipe_kind kind = recipe->kind;
     // F4 is deliberately a nested TEST decision, so it must be tested before
@@ -336,6 +357,9 @@ static int ad_capture_ready(const bb_match* match, const ad_recipe* recipe) {
     }
     if (kind == AD_RECIPE_F2_EXACT_HANDOFF_TARGET_COUNT) {
         return ad_f2_handoff_target_count_capture_valid(match, recipe);
+    }
+    if (kind == AD_RECIPE_F1_EXACT_PASS_CARRIER_PRESSURE) {
+        return ad_f1_pass_carrier_pressure_capture_valid(match, recipe);
     }
     if (!ad_has_team_turn(match)) return 0;
     if (kind == AD_RECIPE_FIRST_TEAM_TURN) return 1;
@@ -488,6 +512,59 @@ int ad_validate_f3_second_half_turn_axis(const ad_recipe* recipes, size_t count,
 int ad_discover_f1_pass_opportunity(ad_recipe* recipe,
                                     char error[AD_ERROR_CAP]) {
     return ad_discover(recipe, AD_RECIPE_F1_PASS_OPPORTUNITY, error);
+}
+
+int ad_discover_f1_pass_carrier_pressure(
+    ad_recipe* recipe, int active_team,
+    ad_f1_carrier_pressure_bucket pressure, char error[AD_ERROR_CAP]) {
+    if (recipe == NULL) return ad_fail(error, "null recipe");
+    recipe->capture_active_team = active_team;
+    recipe->capture_pass_carrier_pressure = pressure;
+    return ad_discover(recipe, AD_RECIPE_F1_EXACT_PASS_CARRIER_PRESSURE, error);
+}
+
+int ad_validate_f1_pass_carrier_pressure_axis(
+    const ad_recipe* recipes, size_t count, char error[AD_ERROR_CAP]) {
+    if (recipes == NULL) return ad_fail(error, "null F1 axis recipes");
+    if (count != AD_F1_PASS_CARRIER_PRESSURE_AXIS_COUNT) {
+        return ad_fail(error, "F1 axis count %zu differs from %d",
+                       count, AD_F1_PASS_CARRIER_PRESSURE_AXIS_COUNT);
+    }
+
+    unsigned char
+        seen[BB_AWAY + 1][AD_F1_PASS_CARRIER_PRESSURE_BUCKET_COUNT] = {{0}};
+    for (size_t i = 0; i < count; i++) {
+        const ad_recipe* recipe = &recipes[i];
+        if (!ad_recipe_config_valid(recipe) ||
+            recipe->kind != AD_RECIPE_F1_EXACT_PASS_CARRIER_PRESSURE ||
+            !ad_f1_pass_carrier_pressure_capture_valid(
+                &recipe->captured, recipe)) {
+            return ad_fail(error, "F1 axis capture %zu is invalid", i);
+        }
+        int team = recipe->capture_active_team;
+        int pressure_index = recipe->capture_pass_carrier_pressure - 1;
+        if (seen[team][pressure_index]) {
+            return ad_fail(
+                error,
+                "duplicate F1 axis capture for team %d carrier pressure %d",
+                team, recipe->capture_pass_carrier_pressure);
+        }
+        seen[team][pressure_index] = 1;
+    }
+    for (int team = BB_HOME; team <= BB_AWAY; team++) {
+        for (int pressure_index = 0;
+             pressure_index < AD_F1_PASS_CARRIER_PRESSURE_BUCKET_COUNT;
+             pressure_index++) {
+            if (!seen[team][pressure_index]) {
+                return ad_fail(
+                    error,
+                    "missing F1 axis capture for team %d carrier pressure %d",
+                    team, pressure_index + 1);
+            }
+        }
+    }
+    if (error != NULL) error[0] = '\0';
+    return 0;
 }
 
 int ad_discover_f2_handoff_opportunity(ad_recipe* recipe,
@@ -710,6 +787,11 @@ static int ad_rediscover_recipe(const ad_recipe* source, ad_recipe* out,
             rc = ad_discover_f2_handoff_target_count(
                 out, source->capture_active_team,
                 source->capture_handoff_target_bucket, error);
+            break;
+        case AD_RECIPE_F1_EXACT_PASS_CARRIER_PRESSURE:
+            rc = ad_discover_f1_pass_carrier_pressure(
+                out, source->capture_active_team,
+                source->capture_pass_carrier_pressure, error);
             break;
         default:
             return ad_fail(error, "unknown authored recipe kind %d",

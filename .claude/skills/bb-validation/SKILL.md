@@ -159,6 +159,15 @@ re-derive by hand; (b) RNG misuse (reuse/bias) — check `bb_rng` consumption co
     exactly two. Store both side and bucket in the recipe and independently
     rediscover them. This quota proves opportunity structure, not that Hand-off
     or any receiver is a correct policy label.
+    For the exact F1 Pass carrier-pressure axis, require one fresh-boundary
+    record for each Home/Away active-side orientation crossed with open/marked
+    carrier pressure, exactly four total. First run the complete input-preserving
+    F1 Pass-opportunity validation; only then classify the validated carrier with
+    `bb_is_marked`. Do not infer pressure from raw adjacency, and do not select a
+    receiver to define the state bucket. Store side and pressure in the recipe,
+    reject pressure on non-axis kinds, and independently rediscover the exact
+    cell. This quota proves structural Pass-opportunity context only, never that
+    Pass or any receiver/target is tactically correct.
 
 **Failure looks like:** shrunken minimal action trace + seed reproducing the violation.
 **Triage:** replay the shrunken trace under a debugger; the violated invariant names

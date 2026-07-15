@@ -314,6 +314,22 @@ changes a reward, active queue, production default, or promotion verdict.
   right action; marking, receiver identity, score/clock, roster/race, tactical
   quality, publication, training, rewards, evaluation, and deployment remain
   separate contracts.
+  The first F1 axis also stays at the fresh-turn boundary and crosses the two
+  active-side orientations with an open versus marked ball carrier, for four
+  cells total. Classify pressure only after the complete F1 Pass-opportunity
+  predicate succeeds, then use `bb_is_marked` on the validated carrier; do not
+  replace engine Tackle-Zone semantics with geometric adjacency. Store side and
+  pressure inside the recipe, reject the pressure field on every other recipe
+  kind, and independently rediscover both. This axis says only that a real Pass
+  opportunity exists under two carrier-pressure contexts. It does not choose
+  Pass, a receiver, or a target, and it does not establish tactical quality.
+  The 4,096-seed-per-cell optimized endpoint sweep yields Home/open 1,323,
+  Home/marked 948, Away/open 1,464, and Away/marked 996 exact captures; all
+  complementary attempts end cleanly and none fail unexpectedly. The
+  ASan/UBSan sweep matches every count with no sanitizer finding.
+  Receiver identity/marking, Pass range, interception, score/clock, roster/race,
+  publication, training, rewards, evaluation, deployment, BBTV, and the frozen
+  vacation queues remain separate contracts.
 - The corpus is sharply prefix-censored: it is not sufficient by itself for
   second halves, late drives, stalling, comeback play, or rare actions.
 - Correct BB2025 human possession is about `0.474` on genuine team-turn
