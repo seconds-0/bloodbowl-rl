@@ -53,6 +53,9 @@ newer evidence wins.
   the hash-pinned, manifest-producing `tools/filter_state_bank.py` subset: 15,348
   records from 5,328 strict BB2025 IDs. It remains all half one and opening-
   censored; filtering edition does not create passing or late-game coverage.
+  The BBS1 fingerprint is an ABI/build guard, not content validation; preserve
+  the loader's bounds, enum, grid/player, and ball-state checks for every raw
+  snapshot before it can enter curriculum reset selection.
 - **Strict-bank scenario coverage (D192):** `bank_scenario_scan` and
   `report_scenario_coverage.py` classify overlapping S1–S6 opportunity
   structures only; they do not label actions, outcomes, regret, or curriculum

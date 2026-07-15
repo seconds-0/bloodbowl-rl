@@ -1407,6 +1407,70 @@ static uint32_t bbe_le32(const uint8_t* b) {
            ((uint32_t)b[3] << 24);
 }
 
+// BBS1's fingerprint rejects snapshots from a different engine build, but it
+// does not authenticate each raw bb_match record. Reject index-bearing bytes
+// that reset, observation encoding, reward pricing, or procedure dispatch may
+// dereference before a banked state reaches those paths. This is structural
+// validation for trusted, locally built banks, not a general wire format.
+static int bbe_state_bank_match_valid(const bb_match* match) {
+    if (match->status != BB_STATUS_DECISION || match->stack_top == 0 ||
+        match->stack_top > BB_STACK_MAX ||
+        match->team_id[0] >= BB_TEAM_COUNT ||
+        match->team_id[1] >= BB_TEAM_COUNT ||
+        match->active_team > BB_AWAY || match->kicking_team > BB_AWAY ||
+        match->decision_team > BB_AWAY ||
+        match->weather > BB_WEATHER_BLIZZARD) {
+        return 0;
+    }
+
+    for (int depth = 0; depth < match->stack_top; depth++) {
+        if (match->stack[depth].proc <= BB_PROC_NONE ||
+            match->stack[depth].proc >= BB_PROC_COUNT) {
+            return 0;
+        }
+    }
+
+    for (int slot = 0; slot < BB_NUM_PLAYERS; slot++) {
+        const bb_player* player = &match->players[slot];
+        if (player->position_id >= BB_MAX_POSITIONS ||
+            player->location > BB_LOC_ABSENT ||
+            player->stance > BB_STANCE_STUNNED_USED) {
+            return 0;
+        }
+        if (player->location == BB_LOC_ON_PITCH &&
+            (!bb_on_pitch_xy(player->x, player->y) ||
+             match->grid[player->x][player->y] != slot + 1)) {
+            return 0;
+        }
+    }
+
+    for (int x = 0; x < BB_PITCH_LEN; x++) {
+        for (int y = 0; y < BB_PITCH_WID; y++) {
+            uint8_t value = match->grid[x][y];
+            if (value == 0) continue;
+            int slot = value - 1;
+            if (slot >= BB_NUM_PLAYERS ||
+                match->players[slot].location != BB_LOC_ON_PITCH ||
+                match->players[slot].x != x ||
+                match->players[slot].y != y) {
+                return 0;
+            }
+        }
+    }
+
+    if (match->ball.state > BB_BALL_IN_AIR) return 0;
+    if (match->ball.state == BB_BALL_ON_GROUND &&
+        !bb_on_pitch_xy(match->ball.x, match->ball.y)) {
+        return 0;
+    }
+    if (match->ball.state == BB_BALL_HELD &&
+        (match->ball.carrier >= BB_NUM_PLAYERS ||
+         match->players[match->ball.carrier].location != BB_LOC_ON_PITCH)) {
+        return 0;
+    }
+    return 1;
+}
+
 // Load the bank once. Call sites: the binding's init entry points (before
 // any stepping thread exists) and, for standalone callers (driver, tests),
 // lazily from the first bbe_reset_match with demo_reset_pct > 0.
@@ -1450,23 +1514,7 @@ static void bbe_state_bank_load(void) {
             fread(&bank[kept], sizeof(bb_match), 1, f) != 1) {
             break;
         }
-        // Resumable points only; anything else would error out of c_step.
-        // Index-bearing bytes are validated too: reward pricing and obs
-        // encoding index team/position tables with them, and the BBS1
-        // fingerprint guards the engine BUILD, not record content (panel).
-        if (bank[kept].status == BB_STATUS_DECISION &&
-            bank[kept].stack_top > 0 &&
-            bank[kept].team_id[0] < BB_TEAM_COUNT &&
-            bank[kept].team_id[1] < BB_TEAM_COUNT) {
-            int ok = 1;
-            for (int s = 0; s < BB_NUM_PLAYERS; s++) {
-                if (bank[kept].players[s].position_id >= BB_MAX_POSITIONS) {
-                    ok = 0;
-                    break;
-                }
-            }
-            kept += ok;
-        }
+        kept += bbe_state_bank_match_valid(&bank[kept]);
     }
     fclose(f);
     if (kept == 0) {
