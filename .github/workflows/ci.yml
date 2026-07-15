@@ -26,6 +26,7 @@ jobs:
             tools.test_experiment_queue \
             tools.test_game_stats \
             tools.test_human_possession \
+            tools.test_filter_state_bank \
             tools.test_replay_corpus_audit \
             tools.test_reward_manifest \
             tools.test_run_reward_candidate_transfer \
