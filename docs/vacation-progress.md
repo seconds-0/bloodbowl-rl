@@ -2578,3 +2578,89 @@ Post-entry merge verification at 22:25 PDT:
   reviewed PR, the merge introduced no evaluator conflict or reverse diff.
   Deployment to the occupied RTX checkout remains intentionally deferred until
   a post-run evaluation window; the pinned live experiment remains untouched.
+
+## 2026-07-14 23:02 PDT — hourly health check and reproducible curve correction
+
+Live experiment and autonomy state:
+
+- At 23:00:27 PDT the first primary control arm remained healthy on seed 42 at
+  exact step 6,859,522,048 (epoch 52,333). Its latest 128-game train panel
+  reported 1.6016 touchdowns/game, performance 0.5391, draw rate 0.3750,
+  possession 0.3803, historical in-pool win rate 0.5896,
+  illegal/sampled-repair fraction 0.1833, forward ball progress 8.065 squares,
+  17.328 Rush intentions, 11.570 blocks thrown, 0.0156 pass intentions, and no
+  handoff. Reward clipping, non-finite rewards, engine errors, demonstrations,
+  and demonstration fallbacks were all zero in the panel.
+- Queue PID `431309`, screen wrapper PID `431316`, trainer wrapper PID `431592`,
+  and trainer PID `431596` are unchanged. The queue and user service are
+  `running` with zero restarts; `final-main-control` is running and
+  `final-second-control` remains pending. The current run directory contains
+  138 interval checkpoints. The newest completed checkpoint at the check was
+  exact step 6,841,696,256, 16,066,560 bytes, written at 22:59:23 PDT.
+- The RTX 2070 was 81 C, 89% fan, 79% utilization, 5,737/8,192 MiB VRAM, and
+  122.86 W. Software thermal limiting remained active while hardware slowdown
+  remained inactive. The volume had 898 GiB free at 7% use, memory had 8.6 GiB
+  available, and swap use was 27 MiB.
+- Read-only plan revalidation again matched all 65 primary pins at SHA-256
+  `4ee72e3c58f09786cdd3bbf78a772e8de2d9a93e21a8b065cf0c5976ecced270`
+  and all 74 overflow pins at SHA-256
+  `d90ee01c8c459f599c8601934f545ccb7783261edae3bcb6e9e3878036d37d3e`.
+  Both pin validators returned no error. Overflow state remains absent; its
+  enabled timer is active/waiting, and the 22:51 watcher exited successfully
+  after observing the active primary service.
+- `bbstream`, `bbweb`, and `bbtv-tunnel` are active with their original PIDs and
+  zero restarts. At 23:01:59 PDT the follower selected exact checkpoint
+  6,841,696,256, seed 42, source SHA-256
+  `ca108eed03b45d80b4573a9a173690548171594c68a2ff3bb637a635b73d3e44`.
+  <https://bbtv.seconds0.com/> returned HTTP 200 in 0.264 seconds. BBTV remains
+  a qualitative latest-versus-frozen-warm viewer, never selection evidence.
+
+Learning-curve audit correction and implementation:
+
+- PR #18 merged D187's frozen 6B behavioral interpretation and the associated
+  `AGENTS.md`, `CLAUDE.md`, and training-skill guidance. A subsequent reusable
+  implementation audit found two scratch-analysis defects that require an
+  append-only D188 correction: Puffer's `hist_score_bank_*` and
+  `hist_n_bank_*` are both per-panel rates normalized by panel `n`, and D187's
+  scratch table mixed a nominal-6B mask with the exact-checkpoint-overshoot mask
+  across columns. The qualitative result is unchanged, but exact endpoint
+  numbers must use one declared mask and correct episode weights.
+- The unified fixed windows are `(0, 500,000,000]` and
+  `(5,500,000,000, 6,000,000,000]`. Their static-pool scores are
+  `0.5337228569 -> 0.6205900025`. First/last counts are 3,810/3,815 panels,
+  365,615/395,560 episodes, and 175,000.000869/183,050.000779 frozen-bank
+  games. The exact source extends to step 6,005,587,968, but the 5.59M-step
+  checkpoint overshoot is deliberately excluded from the nominal last band.
+  Every aggregate integrity total is zero.
+- D188 records the full corrected table without rewriting D187. Guidance now
+  points through D188. `tools/analyze_reward_learning_curve.py` hashes the full
+  source, requires schema-2 independent native train panels and an exact cap,
+  declares interval boundaries, applies `metric*n` episode weights, restores
+  both sides of the static-pool ratio with `n`, labels the banks as in-pool, and
+  explicitly says its output cannot select or promote a checkpoint or reward.
+  An unequal-panel-size regression would report the deliberately constructed
+  `17/25 = 0.68`, catching the original weighting class of error.
+- The immutable 431,525,243-byte frozen log reproduced the report at SHA-256
+  `7fa83012f4bc9f0beb5a74d3cf7c3ea8618b93259d339ae865ee3f9246c17b5f`:
+  45,815 eligible panels, 4,821,395 episodes, exact cap 6,005,587,968, the two
+  corrected static scores above, and no nonzero integrity total. The D188 and
+  analyzer commits are `07cf4c8` and `92d5e6f` on
+  `codex/reward-learning-curve-analyzer`; they are not merged at this entry.
+- Local verification passes 166 analyzer/queue/replay/reward tests with two
+  platform skips, Ruff, formatting, Python compilation, whitespace checks, 392
+  compiled engine tests, 27 reward tests, and two contact-bot tests. The same
+  392/27/2 compiled suites pass under ASan/UBSan.
+
+Safety and next steps:
+
+1. Self-review the two-commit D188/analyzer branch, open a PR, require fresh
+   green GitHub CI on its exact head, address any review findings, and merge.
+   Then merge the resulting `main` into this monitoring branch before pushing
+   any post-merge journal update.
+2. Continue hourly checks of exact progress, integrity, checkpoint production,
+   service/PID identity, both pin sets, thermal/capacity state, the fail-closed
+   overflow watcher, BBTV selection, and public HTTP transport.
+3. Do not deploy the analyzer or milestone evaluator into the occupied pinned
+   checkout and do not interrupt primary or overflow work. Stage-A evaluation
+   remains an explicit post-run action only after accepted completion, an idle
+   GPU, and BBTV quiescence; it cannot promote a reward automatically.
