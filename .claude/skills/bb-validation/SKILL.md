@@ -178,6 +178,15 @@ re-derive by hand; (b) RNG misuse (reuse/bias) — check `bb_rng` consumption co
     still goes through independent writer rediscovery, exact replay, raw-state
     admission, and one-action continuation. Sidecars, splits, reports,
     manifest-last publication, staging, and training remain separate gates.
+14. **Authored proof-bundle construction** — use
+    `ad_build_authored_proof_bundle` rather than duplicating the fixed base
+    configuration, cell seeds, or order. Require exact capacities for both
+    caller-owned arrays, no caller-output write on failure, checked temporary
+    staging, complete composition validation before commit, and record pointers
+    rebound to their caller recipes. Preserve the proof-local positional
+    `0xA9000000 + index` metadata only for byte compatibility. It is not a
+    durable recipe/template/version/variant identity or sidecar join key; a
+    later collision-audited identity schema remains mandatory.
 
 **Failure looks like:** shrunken minimal action trace + seed reproducing the violation.
 **Triage:** replay the shrunken trace under a debugger; the violated invariant names

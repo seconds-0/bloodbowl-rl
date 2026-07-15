@@ -167,6 +167,12 @@ newer evidence wins.
   publication transaction, or training input. The ordinary writer remains the
   provenance/replay/admission/continuation authority; sidecars, splits, reports,
   manifest-last publication, staging, and training stay separately gated.
+  Use `ad_build_authored_proof_bundle` as the only owner of the fixed proof
+  configuration, seed schedule, order, and positional A9 record metadata. It
+  builds in temporary checked storage and commits atomically into caller-owned
+  arrays. `0xA9000000 + index` preserves the reviewed proof bytes but is not a
+  persistent identity or sidecar key; the later metadata schema must define a
+  collision-audited recipe/version/variant registry before publication.
 - **BC loader (D180):** use the bounded streaming loader and replay-disjoint
   split. Replay-first is the current default, not the final sampler; next
   stratify by roster/matchup, depth, and action family.

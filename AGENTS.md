@@ -339,6 +339,14 @@ changes a reward, active queue, production default, or promotion verdict.
   the bundle gate is only structural composition. Metadata sidecars,
   train/dev/test grouping, reports, manifest-last publication, staging, and
   training require separate reviewed contracts.
+  Build that proof bundle only through `ad_build_authored_proof_bundle`; it
+  owns the complete fixed base configuration, 26 cell seeds, proof order, and
+  proof-local `0xA9000000 + index` BBS metadata. The builder stages and
+  validates privately, commits caller memory only on success, and rebinds each
+  record to the caller-owned recipe. These A9 values are positional test/proof
+  compatibility IDs, never durable recipe/template/version/variant identities
+  or sidecar join keys. A later reviewed identity-schema tranche must allocate
+  the collision-audited persistent namespace before sidecars or publication.
 - The corpus is sharply prefix-censored: it is not sufficient by itself for
   second halves, late drives, stalling, comeback play, or rare actions.
 - Correct BB2025 human possession is about `0.474` on genuine team-turn

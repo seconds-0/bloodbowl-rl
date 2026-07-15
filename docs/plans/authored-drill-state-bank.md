@@ -210,6 +210,17 @@ continuation. This 4/4/16/1/1 bundle is not count-balanced and does not satisfy
 the family matrix below. It is neither a canonical bank nor authorization for
 sidecars, manifest publication, staging, or training.
 
+The fixed proof bundle is now constructed by one production-owned in-memory
+builder rather than duplicated test helpers. It pins the complete base recipe,
+26 controller seeds, transcript counts, fixed order, and the existing
+proof-local `0xA9000000 + index` BBS metadata. It validates in temporary heap
+storage, leaves caller outputs unchanged on failure, copies all recipes only
+after complete composition succeeds, and then constructs records pointing into
+the caller-owned array. The A9 values preserve the reviewed proof artifact but
+are positional compatibility metadata, not stable recipe IDs, versions,
+variants, or sidecar keys. Persistent identity design, sidecars, balance,
+splits, publication, staging, and training remain separate reviewed work.
+
 The first complete bank is count-balanced across five families. Thin variants
 fail the build rather than borrowing excess records from an easy family.
 
