@@ -161,6 +161,13 @@ static int ad_discover(ad_recipe* recipe, ad_recipe_kind kind,
                        char error[AD_ERROR_CAP]) {
     if (recipe == NULL) return ad_fail(error, "null recipe");
     recipe->kind = kind;
+    // The first-team-turn controller is a pure packed-action ordering and does
+    // not consume a controller RNG. Canonical zeroes prevent inert caller
+    // values from masquerading as seed provenance during full rediscovery.
+    if (kind == AD_RECIPE_FIRST_TEAM_TURN) {
+        recipe->controller_seed = 0;
+        recipe->controller_stream = 0;
+    }
     if (!ad_recipe_config_valid(recipe)) return ad_fail(error, "invalid recipe configuration");
     ad_clear_discovery(recipe);
 

@@ -154,7 +154,9 @@ Serializer preflight repeats Pass 1 from configuration-only fields before it
 performs Pass 2. It requires full recipe byte identity, including initialized
 and captured matches, the complete action/dice/decision-team transcripts, their
 counts, and all unused transcript capacity. This independently binds the
-declared procgen, game, and controller seeds to the bytes being serialized;
+declared procgen and game seeds, plus every controller stream actually used, to
+the bytes being serialized. Recipe kinds without a controller RNG require
+canonical zero controller fields so inert values cannot masquerade as evidence;
 successfully replaying a caller-supplied transcript is necessary but is not, by
 itself, evidence that the declared seeds generated it. The complete mixed batch
 is rediscovered, replayed, boundary-validated, and continuation-checked before

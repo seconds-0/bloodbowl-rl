@@ -23,6 +23,8 @@ BB_TEST(authored_drill_exact_replay_reproduces_raw_state) {
     ad_recipe recipe = ad_test_recipe();
     char error[AD_ERROR_CAP];
     BB_CHECK_EQ(ad_discover_first_team_turn(&recipe, error), 0);
+    BB_CHECK_EQ(recipe.controller_seed, 0);
+    BB_CHECK_EQ(recipe.controller_stream, 0);
     BB_CHECK(recipe.action_count > 0);
     BB_CHECK(recipe.dice_count > 0);
 
@@ -169,6 +171,28 @@ BB_TEST(authored_drill_bbs_writer_emits_canonical_header_and_record) {
     BB_CHECK(file != NULL);
     if (file == NULL) return;
     recipe.game_seed++;
+    BB_CHECK(ad_bbs_write(file, &record, 1, error) != 0);
+    BB_CHECK(strstr(error, "provenance") != NULL);
+    BB_CHECK_EQ(ftell(file), 0);
+    BB_CHECK_EQ(fclose(file), 0);
+
+    recipe = ad_test_recipe();
+    BB_CHECK_EQ(ad_discover_first_team_turn(&recipe, error), 0);
+    record.recipe = &recipe;
+    file = tmpfile();
+    BB_CHECK(file != NULL);
+    if (file == NULL) return;
+    recipe.controller_seed++;
+    BB_CHECK(ad_bbs_write(file, &record, 1, error) != 0);
+    BB_CHECK(strstr(error, "provenance") != NULL);
+    BB_CHECK_EQ(ftell(file), 0);
+    BB_CHECK_EQ(fclose(file), 0);
+
+    recipe.controller_seed--;
+    file = tmpfile();
+    BB_CHECK(file != NULL);
+    if (file == NULL) return;
+    recipe.controller_stream++;
     BB_CHECK(ad_bbs_write(file, &record, 1, error) != 0);
     BB_CHECK(strstr(error, "provenance") != NULL);
     BB_CHECK_EQ(ftell(file), 0);

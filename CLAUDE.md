@@ -70,8 +70,9 @@ newer evidence wins.
   records every action/die, and exact replay must reproduce the raw match bytes
   with `bb_rng_script`. Before serialization, independently rediscover the full
   recipe from configuration-only fields and require byte identity, binding the
-  declared procgen, game, and controller seeds to the action/dice transcript;
-  exact replay alone is not seed provenance. Never construct late-game context by writing score,
+  declared procgen and game seeds, plus each controller stream actually used,
+  to the action/dice transcript. Controller fields unused by a recipe kind are
+  canonical zeroes; exact replay alone is not seed provenance. Never construct late-game context by writing score,
   half, turn, players, grid, ball, or procedure frames. Split by recipe-template
   group and quarantine paired counterfactual outcomes from training inputs.
   BBS1 currently admits only the shared MATCH -> TEAM_TURN boundary; nested

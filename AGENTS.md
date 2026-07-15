@@ -232,7 +232,9 @@ changes a reward, active queue, production default, or promotion verdict.
   Before serialization, the writer must independently rerun discovery from the
   recipe's configuration-only fields and require full recipe byte identity;
   exact replay of a caller-supplied transcript alone does not prove that its
-  declared procgen, game, and controller seeds generated that transcript.
+  declared procgen and game seeds, plus every controller seed actually used by
+  that recipe kind, generated the transcript. Unused controller fields must be
+  canonical zeroes so inert caller values cannot masquerade as provenance.
   Direct match/grid/ball/score/turn/procedure surgery is forbidden. Group
   train/dev/test by recipe template, keep paired rollout/regret diagnostics out
   of BBS/observations/rewards/BC labels, and require deterministic manifest-last
