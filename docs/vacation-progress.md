@@ -3635,3 +3635,42 @@ Next steps and safety boundary:
   trainer 431596, and the GPU sample was 81 C with hardware slowdown inactive.
   The queue-owned cap/evaluation/seed transition is being observed without
   intervention.
+
+06:49 PDT addendum:
+
+- Seed 42 reached its queue-owned terminal checkpoint and exited zero at
+  06:41:18 PDT. The accepted result has no acceptance failures, records exact
+  step 11,999,903,744, 10,057 final-evaluation episodes, and binds checkpoint
+  SHA-256
+  `cc9ecd5f29f700e83a0852af7f85b3652a6d6bfe1d2de1038458a332263950f9`
+  plus log SHA-256
+  `e201c5606a2c75b9f93bc1cc9c1fee2997c11a0a8857f3fc5c246bca41531368`.
+  Final evaluation reported performance 0.5721, 1.5165 touchdowns/game, draw
+  rate 0.3846, possession 0.3818, illegal/sampled-repair fraction 0.1720,
+  forward ball progress 8.378, 18.851 Rush intentions, 11.759 blocks thrown,
+  2.129 blocks against the carrier, carrier-target fraction 0.1943, pass
+  intentions 0.0161, and handoffs 0.00010. All reward clipping, non-finite,
+  error, demonstration, and fallback counters were zero.
+- The expected GPU-idle interval from 06:41 to 06:43 was the screen's CPU-only
+  parse of the 863 MB append-only log, not a queue failure. The parser used one
+  CPU core, wrote the accepted result at 06:43:33, and the screen automatically
+  launched seed 43 at 06:43:35 without intervention. By 06:46 seed 43 had
+  reached exact step 27,000,832 with zero integrity counters. Its sole GPU
+  compute PID was 473422; the sample was 81 C, 85% fan, 78% utilization,
+  5,554/8,192 MiB, 121.85 W, software thermal limiting active, and hardware
+  slowdown inactive. `final-main-control` remains the running queue job with
+  one of three arms complete; `final-second-control` remains pending.
+- The separately CPU-only one-action continuation tranche added a writer
+  pre-emission canary and repeats it after real BBS close/load/byte verification.
+  It validates before legal enumeration, applies the lowest packed legal action
+  only to a private copy with a bounded 256-face scripted suffix, and rejects
+  RNG or engine error. Full historical diagnostics continued all 15,471 mixed
+  and 15,348 strict-bank records without mutation or sanitizer findings. D195
+  records that this proves resumability, never action quality, and leaves all
+  F1-F5/report/manifest/training work pending. Three independent reviewers
+  approved exact head `217ae6703ec45f47226da66da830690ab8ba869f` with no
+  P0-P3 findings; exact-head CI run `29420244059` passed in 4m09s. PR #29
+  merged to `main` as `1a031b748fe763fd34b6238ef1899c0dcd3d3780`.
+  As with PR #28, only local branch cleanup failed because another worktree
+  owns `main`; the authoritative merge was verified and the remote branch was
+  deleted manually. No merged source was deployed to the live checkout.
