@@ -333,10 +333,14 @@ BB_TEST(state_bank_accepts_pending_dodge_reroll_and_emits_decision) {
         BB_CHECK_EQ(home[4], BB_PROC_TEST);
         BB_CHECK_EQ(home[5], 1);
         BB_CHECK_EQ(home[8], 3);
+        BB_CHECK_EQ(home[9], 11);
+        BB_CHECK_EQ(home[12], 7);
         BB_CHECK_EQ(home[10], 1);
         BB_CHECK_EQ(away[4], BB_PROC_TEST);
         BB_CHECK_EQ(away[5], 1);
         BB_CHECK_EQ(away[8], 3);
+        BB_CHECK_EQ(away[9], 16);
+        BB_CHECK_EQ(away[12], 7);
         BB_CHECK_EQ(away[10], 0);
 
         unsigned char* home_mask = env->action_mask_ptr[BB_HOME];
@@ -376,6 +380,42 @@ BB_TEST(state_bank_accepts_pending_dodge_reroll_and_emits_decision) {
         BB_CHECK_EQ(ad_verify_one_action_continuation(
                         loaded, NULL, NULL, NULL, error),
                     0);
+
+        // A second accepted state with the same mover, target number, legal
+        // rerolls, and masks but a different pending destination must not
+        // alias after a reset. The same successful action has a different
+        // transition consequence, so the destination is observation context.
+        bb_match alternate = *loaded;
+        alternate.stack[3].x = 9;
+        BB_CHECK(bb_state_bank_dodge_reroll_valid(&alternate));
+        StateBankEnvFixture alternate_fixture;
+        setup_state_bank_env(&alternate_fixture, &alternate);
+        BB_CHECK_EQ(memcmp(fixture.mask, alternate_fixture.mask,
+                           sizeof fixture.mask),
+                    0);
+        BB_CHECK(memcmp(fixture.obs, alternate_fixture.obs,
+                        sizeof fixture.obs) != 0);
+        uint8_t* alternate_home =
+            alternate_fixture.env.obs_ptr[BB_HOME] + BBE_CTX_OFF;
+        uint8_t* alternate_away =
+            alternate_fixture.env.obs_ptr[BB_AWAY] + BBE_CTX_OFF;
+        BB_CHECK_EQ(alternate_home[9], 10);
+        BB_CHECK_EQ(alternate_home[12], 7);
+        BB_CHECK_EQ(alternate_away[9], 17);
+        BB_CHECK_EQ(alternate_away[12], 7);
+
+        bb_match alternate_used = alternate;
+        bb_rng alternate_rng;
+        bb_rng_script(&alternate_rng, &success_die, 1);
+        BB_CHECK_EQ(fx_apply(
+                        &alternate_used,
+                        (bb_action){BB_A_USE_REROLL, BB_RR_TEAM, 0, 0},
+                        &alternate_rng),
+                    BB_STATUS_DECISION);
+        BB_CHECK_EQ(alternate_used.players[0].x, 9);
+        BB_CHECK_EQ(alternate_used.players[0].y, 6);
+        BB_CHECK_EQ(alternate_rng.script_pos, 1);
+        BB_CHECK(!bb_rng_error(&alternate_rng));
     }
     reset_state_bank_loader(BBE_STATE_BANK_PATH);
     BB_CHECK_EQ(remove(path), 0);

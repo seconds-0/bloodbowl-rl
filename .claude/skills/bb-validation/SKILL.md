@@ -129,9 +129,13 @@ re-derive by hand; (b) RNG misuse (reuse/bias) — check `bb_rng` consumption co
     `bb_state_bank_boundary_valid`; production reset admission and continuation
     use `bb_state_bank_resumable_valid`. The resumable union is intentionally
     limited to the exact fresh-turn shape and the exact failed first-step,
-    non-Rush Dodge TEST reroll stack. Every new nested shape needs complete
-    lower-frame, index, legal-mask, both-branch continuation, loader-byte, and
-    malformed-record tests before widening the shared gate.
+    non-Rush Dodge TEST reroll stack. The latter requires remaining ordinary
+    MA, rejects movement-prohibiting or activation-cleared flags, and exposes
+    its parent MOVE destination egocentrically in observation context bytes
+    9/12. A resolved Rush retains nonzero `match.ret` provenance and is not the
+    same admitted shape. Every new nested shape needs complete lower-frame,
+    index, observation-alias, legal-mask, both-branch continuation,
+    loader-byte, and malformed-record tests before widening the shared gate.
 
 **Failure looks like:** shrunken minimal action trace + seed reproducing the violation.
 **Triage:** replay the shrunken trace under a debugger; the violated invariant names

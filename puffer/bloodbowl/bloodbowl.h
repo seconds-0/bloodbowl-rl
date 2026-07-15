@@ -27,9 +27,11 @@
 //                [7]  frame b likewise (bbe_frame_b_is_slot)
 //                [8]  pending TEST target number (2..6 when the top frame
 //                     is a TEST reroll window, else 0)
-//                [9]  spare
+//                [9]  pending Dodge destination x+1 (egocentric; 0 unless
+//                     top TEST(Dodge) has a matching parent MOVE)
 //                [10] I am the deciding coach, [11] my team is active
-//                [12..15] spare
+//                [12] pending Dodge destination y+1 (same condition)
+//                [13..15] spare
 //   [784..831] scalars (BBE_SCALAR_OFF):
 //                [0]  half, [1] my turn, [2] opp turn
 //                [3]  my score, [4] opp score
@@ -915,10 +917,12 @@ static void bbe_encode_obs(Bloodbowl* env, int agent) {
         b[5] = top->phase;
         // Frame a/b are player slots only for whitelisted procs (see
         // bbe_frame_*_is_slot); remap those egocentrically (+1, 0 =
-        // none/not-a-slot). Frame x/y are NOT exposed: their semantics vary
-        // per proc (squares, latch bits, skill payloads), so away-mirroring
-        // can't be applied consistently — the legal-action mask carries the
-        // spatial decision context instead.
+        // none/not-a-slot). Top-frame x/y are otherwise NOT exposed: their
+        // semantics vary per proc (squares, latch bits, skill payloads), so
+        // away-mirroring cannot be applied consistently. The one explicit
+        // exception below exposes a pending Dodge's destination from its
+        // parent MOVE: reroll masks are nonspatial, and a bank reset has no
+        // preceding STEP observation from which to recover that consequence.
         b[6] = (bbe_frame_a_is_slot(top->proc) && top->a < BB_NUM_PLAYERS)
                    ? (unsigned char)(1 + bbe_ego_slot(me, top->a))
                    : 0;
@@ -930,6 +934,18 @@ static void bbe_encode_obs(Bloodbowl* env, int agent) {
         // x), else 0. Lets the policy price a reroll directly instead of
         // re-deriving stats/modifiers from the board rows.
         b[8] = top->proc == BB_PROC_TEST ? top->x : 0;
+        if (top->proc == BB_PROC_TEST && top->b == BB_TEST_DODGE &&
+            m->stack_top >= 2) {
+            const bb_frame* move = &m->stack[m->stack_top - 2];
+            if (move->proc == BB_PROC_MOVE && move->a == top->a &&
+                bb_on_pitch_xy(move->x, move->y)) {
+                int dx = me == BB_HOME
+                             ? move->x
+                             : (BB_PITCH_LEN - 1 - move->x);
+                b[9] = (unsigned char)(dx + 1);
+                b[12] = (unsigned char)(move->y + 1);
+            }
+        }
     }
     b[10] = (unsigned char)(m->decision_team == me);
     b[11] = (unsigned char)(m->active_team == me);
@@ -1393,8 +1409,9 @@ void (*bbe_feed_hook)(const Bloodbowl* env, int kind, int a, int b) = 0;
 // Missing file = curriculum silently off (the chess pattern); a header that
 // fails the match_size/fingerprint guards is reported and ignored — training
 // on stale-engine states would be silent corruption. BBS1 currently accepts
-// only the shared, structurally validated MATCH -> TEAM_TURN boundary; nested
-// procedure decisions require a future explicit validator before admission.
+// the shared, structurally validated MATCH -> TEAM_TURN boundary plus the one
+// explicitly validated pending-Dodge reroll stack documented in D201. Every
+// other nested procedure decision remains fail-closed.
 #define BBE_STATE_BANK_PATH "resources/bloodbowl/state_bank.bbs"
 #define BBE_STATE_BANK_REC_META 12 // replay_id u32, cmd u32, half, turn, pad[2]
 

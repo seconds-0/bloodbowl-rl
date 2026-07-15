@@ -198,7 +198,10 @@ changes a reward, active queue, production default, or promotion verdict.
   reset admission and continuation canaries call
   `bb_state_bank_resumable_valid`. The latter currently admits only the exact
   fresh-team-turn shape plus the exact five-frame failed non-Rush Dodge TEST
-  reroll window described below. Before either shape enters reset selection it
+  reroll window described below. Its pending MOVE destination must be exposed
+  egocentrically in observation context bytes 9/12 because a reset has no
+  preceding STEP history and reroll masks are nonspatial. Before either shape
+  enters reset selection it
   must have bounded procedure/team/enum/skill indices, bidirectionally
   consistent grid/player coordinates, and a valid ball state. New bank writers
   and readers must fail closed on malformed raw snapshots. Authored records
@@ -247,8 +250,13 @@ changes a reward, active queue, production default, or promotion verdict.
   boundary and one procedure-specific nested shape:
   `MATCH -> TEAM_TURN -> ACTIVATION(Move) -> MOVE -> TEST(Dodge)` at a failed
   first-step, non-Rush reroll decision. The nested validator recomputes the
-  Dodge target, requires real Use/Decline actions, and rejects every other TEST
-  kind, parent shape, malformed skill bit, or continuation field. Scenario
+  Dodge target, requires real Use/Decline actions and remaining ordinary MA,
+  and rejects Rooted or activation-cleared Distracted/Eye Gouged movers, every
+  other TEST kind, parent shape, malformed skill bit, or continuation field.
+  A legally resolved Rush retains its result in `match.ret` and remains
+  deliberately outside this first shape. Tackle suppresses only the Dodge
+  skill reroll at the origin; Team Re-roll and Pro availability are independent.
+  Scenario
   scanners must remain on the fresh-turn-only validator; the authored writer
   also remains fresh-turn-only until the separate F4 recipe tranche changes it.
   Do not widen either gate to arbitrary decision states. Any later target or

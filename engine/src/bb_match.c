@@ -150,7 +150,9 @@ bool bb_state_bank_dodge_reroll_valid(const bb_match* m) {
         player->location != BB_LOC_ON_PITCH ||
         player->stance != BB_STANCE_STANDING ||
         !(player->flags & BB_PF_ACTIVATING) ||
-        (player->flags & BB_PF_USED) || player->moved != 0 ||
+        (player->flags & (BB_PF_USED | BB_PF_ROOTED | BB_PF_DISTRACTED |
+                          BB_PF_EYE_GOUGED)) ||
+        player->moved != 0 || player->moved >= player->ma ||
         player->rushes != 0 ||
         (m->ball.state == BB_BALL_HELD && m->ball.carrier == mover)) {
         return false;

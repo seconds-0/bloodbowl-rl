@@ -67,6 +67,34 @@ static bb_match ad_test_pending_dodge_reroll(void) {
     return match;
 }
 
+static bb_match ad_test_pending_rush_then_dodge_reroll(void) {
+    bb_match match;
+    fx_match_midturn(&match, BB_HOME, 2);
+    int mover = fx_player(&match, BB_HOME, 0, 10, 7, 0, 3, 3, 4, 9);
+    fx_lineman(&match, BB_AWAY, 0, 10, 8);
+
+    // MA 0 makes the first step a Rush. The Rush succeeds, then the Dodge
+    // fails. MOVE has not committed moved/rushes yet, but match.ret retains
+    // the successful Rush result. This legally reached state proves why the
+    // first strict nested admission remains explicitly non-Rush.
+    uint8_t dice[] = {2, 2};
+    bb_rng rng;
+    bb_rng_script(&rng, dice, 2);
+    BB_CHECK_EQ(fx_run(&match, &rng), BB_STATUS_DECISION);
+    BB_CHECK_EQ(fx_apply(&match,
+                        (bb_action){BB_A_ACTIVATE, mover, 0, 0}, &rng),
+                BB_STATUS_DECISION);
+    BB_CHECK_EQ(fx_apply(&match,
+                        (bb_action){BB_A_DECLARE, BB_ACT_MOVE, 0, 0}, &rng),
+                BB_STATUS_DECISION);
+    BB_CHECK_EQ(fx_apply(&match,
+                        (bb_action){BB_A_STEP, 0, 10, 6}, &rng),
+                BB_STATUS_DECISION);
+    BB_CHECK_EQ(rng.script_pos, 2);
+    BB_CHECK(!bb_rng_error(&rng));
+    return match;
+}
+
 static int ad_test_handoff_target_count(const bb_match* source,
                                         int* catch_capable) {
     bb_match match = *source;
@@ -407,8 +435,13 @@ BB_TEST(state_bank_dodge_reroll_boundary_is_exact_and_continuable) {
     REJECT_MUTATION(changed.players[0].flags &=
                         (uint16_t)~BB_PF_ACTIVATING);
     REJECT_MUTATION(changed.players[0].flags |= BB_PF_USED);
+    REJECT_MUTATION(changed.players[0].flags |= BB_PF_ROOTED);
+    REJECT_MUTATION(changed.players[0].flags |= BB_PF_DISTRACTED);
+    REJECT_MUTATION(changed.players[0].flags |= BB_PF_EYE_GOUGED);
     REJECT_MUTATION(changed.players[0].moved = 1);
     REJECT_MUTATION(changed.players[0].rushes = 1);
+    REJECT_MUTATION(changed.players[0].ma = 0);
+    REJECT_MUTATION(changed.players[0].ma = -1);
     REJECT_MUTATION(changed.rerolls[BB_HOME] = 0);
     REJECT_MUTATION(bb_give_ball(&changed, 0));
     REJECT_MUTATION(changed.ball.state = BB_BALL_ON_GROUND;
@@ -421,6 +454,16 @@ BB_TEST(state_bank_dodge_reroll_boundary_is_exact_and_continuable) {
         (uint64_t)1 << (BB_SKILL_COUNT & 63);
     BB_CHECK(!bb_state_bank_dodge_reroll_valid(&unknown_skill));
     BB_CHECK(!bb_state_bank_resumable_valid(&unknown_skill));
+}
+
+BB_TEST(state_bank_dodge_reroll_after_resolved_rush_is_out_of_scope) {
+    bb_match pending = ad_test_pending_rush_then_dodge_reroll();
+    BB_CHECK_EQ(pending.players[0].ma, 0);
+    BB_CHECK_EQ(pending.players[0].moved, 0);
+    BB_CHECK_EQ(pending.players[0].rushes, 0);
+    BB_CHECK(pending.ret != 0); // retained successful Rush result
+    BB_CHECK(!bb_state_bank_dodge_reroll_valid(&pending));
+    BB_CHECK(!bb_state_bank_resumable_valid(&pending));
 }
 
 BB_TEST(authored_drill_f3_reaches_late_second_half_by_legal_play) {

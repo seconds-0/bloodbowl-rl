@@ -79,8 +79,13 @@ newer evidence wins.
   `MATCH -> TEAM_TURN` boundary plus one exact nested shape: a failed first-step,
   non-Rush Dodge reroll window under
   `MATCH -> TEAM_TURN -> ACTIVATION(Move) -> MOVE -> TEST(Dodge)`. The nested
-  validator recomputes the target, requires real Use/Decline actions, and
-  rejects all other TEST/parent shapes and malformed skill bits. Scenario
+  validator recomputes the target, requires real Use/Decline actions and
+  ordinary MA remaining, rejects Rooted/Distracted/Eye Gouged movers, and
+  rejects all other TEST/parent shapes and malformed skill bits. A resolved
+  Rush leaves provenance in `match.ret` and is outside this first shape. The
+  pending destination is exposed egocentrically in observation context bytes
+  9/12 so reset observations are transition-complete. Tackle suppresses the
+  Dodge skill reroll while leaving Team Re-roll and Pro independent. Scenario
   scanners and the current authored writer remain fresh-team-turn-only; do not
   substitute the broader resumable gate where a classifier assumes that
   boundary. Later target/reroll decisions need their own procedure-specific

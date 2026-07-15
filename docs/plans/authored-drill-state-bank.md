@@ -37,8 +37,10 @@ frozen vacation queue or the production/BBTV checkout on the occupied RTX 2070.
    procedure stack and at least one legal action. The current writer remains
    restricted to the fresh-team-turn boundary. The production loader also has
    an exact validator for the first supported nested shape—a failed first-step,
-   non-Rush Dodge reroll decision—but the writer must not emit that shape until
-   the separate F4 recipe tranche lands.
+   non-Rush Dodge reroll decision. It requires remaining ordinary MA, rejects
+   Rooted and activation-cleared status flags, and keeps a resolved-Rush state
+   out of scope via its retained `match.ret` result. The writer must not emit
+   that shape until the separate F4 recipe tranche lands.
 5. Regeneration must replay every action as legal, consume exactly the recorded
    dice, reproduce the captured raw `bb_match` byte-for-byte, and produce the
    same bank, sidecars, and manifest bytes on a second run.
@@ -87,13 +89,20 @@ exact five-frame nested shape:
 `MATCH -> TEAM_TURN -> ACTIVATION(Move) -> MOVE -> TEST(Dodge)` at the reroll
 choice after a failed, first-step, non-Rush Dodge. The validator checks the
 complete parent chain, active mover and grid, adjacent empty destination,
-marked origin, pending-test latches, failed die, recomputed target including
-implemented hooks, valid generated skill bits, and real Use/Decline legal
-actions. Optimized tests prove both continuations: a successful team reroll
+marked origin, ordinary MA remaining, absence of Rooted/Distracted/Eye Gouged,
+pending-test latches, failed die, recomputed target including implemented
+hooks, valid generated skill bits, and real Use/Decline legal actions. A
+resolved Rush retains its success in `match.ret` and is intentionally rejected
+by this first validator. The pending destination is encoded egocentrically in
+observation context bytes 9/12, preventing transition-distinct reset states
+from aliasing behind an identical nonspatial reroll mask. Optimized tests prove
+both continuations: a successful team reroll
 continues the Move, while Decline knocks the mover down, preserves the reroll,
 and turns over. The Puffer integration test proves raw-byte loader identity,
-TEST target observation, deciding-coach Use/Decline masks, and the waiting
-coach's null mask.
+TEST target plus pending-destination observation, destination-alias separation,
+deciding-coach Use/Decline masks, and the waiting coach's null mask. Tackle at
+the origin suppresses only the Dodge skill reroll; Team Re-roll and Pro remain
+independently available under their normal rules.
 
 This validator is F4 infrastructure, not an authored F4 record. The writer is
 still fresh-team-turn-only, and no reroll choice, result, regret, reward, or
