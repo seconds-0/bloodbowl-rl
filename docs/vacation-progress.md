@@ -3349,3 +3349,29 @@ Next steps and safety boundary:
    authored-fixture tranche. Do not stage the strict bank in the occupied 2070
    checkout or start the milestone evaluator before both queues are terminal,
    the GPU is idle, the overflow timer is inert, and BBTV is quiesced.
+
+04:41 PDT addendum:
+
+- PR #25 passed exact-head GitHub CI run `29412069280` on
+  `dd817eff6d59432a9144f4d01d1078202ae224f4` and merged to `main` as
+  `9a4112ef3ef07740f5c485caaf362e1891fe6c55`. The remote feature branch was
+  deleted manually after GitHub's automatic cleanup could not switch a local
+  worktree whose `main` branch is in use elsewhere.
+- A force rebuild from the merged tree produced scanner binary SHA-256
+  `fa4572123be07ddff77ad2edd3c8bc02e50459eb76378175749447ee5ec2d2d4`.
+  The durable gitignored post-merge transaction now exists at
+  `validation/states/bb2025-strict/scenarios/`: records SHA-256
+  `6c4c4ef221a9d8667cf098c6fe91aa72a2d34b228e0b985201fc46bb87058daa`,
+  report SHA-256
+  `2983f2e0c1f01902a56c7ff079df2d0b59ab00e7314cc3e5bd2ec1988f5eae88`,
+  and manifest SHA-256
+  `9842b1e6b0c05acb576db562d96579da61a63187e7e33da162ddbb810646c911`.
+  The manifest binds merged Git/tree identity, the clean tracked engine,
+  D191 inputs, four source hashes, the exact binary, command, thresholds, and
+  both output hashes.
+- The optional Codex review CLI was broken locally and Gemini required
+  interactive authentication, so neither produced review evidence. The merged
+  review set is the actionable Fable C review, Fable's explicit provenance
+  approval, the exact committed-diff inline review, local normal/sanitizer
+  evidence, and exact-head CI. No code or artifact from this tranche was
+  installed in the occupied 2070 checkout.
