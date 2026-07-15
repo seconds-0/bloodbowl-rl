@@ -2664,3 +2664,39 @@ Safety and next steps:
    checkout and do not interrupt primary or overflow work. Stage-A evaluation
    remains an explicit post-run action only after accepted completion, an idle
    GPU, and BBTV quiescence; it cannot promote a reward automatically.
+
+Post-entry review and merge verification at 23:26 PDT:
+
+- PR #19 (<https://github.com/seconds-0/bloodbowl-rl/pull/19>) opened from the
+  clean D188/analyzer branch. The installed Codex reviewer could not start
+  because its package pointed at a missing native binary, and Gemini required
+  an interactive login. Inline review found and fixed three P2 hardening gaps:
+  remove the misleading generic mean of `historical_winrate` in favor of the
+  restored bank ratio, require binary Puffer markers, and reject historical
+  bank-ID schema drift.
+- At the user's request, Claude Code v2.1.209 was verified in non-interactive
+  mode and Fable was consulted headlessly as a read-only independent reviewer.
+  Fable approved the weighting, endpoint, provenance, D188, and CI contracts,
+  then identified three low/nit gaps: possible overlap for short endpoint
+  windows, no explicit all-zero integrity verdict, and theoretical acceptance
+  of an episode-bearing step-zero panel. Commit `1560d9c` rejects overlapping
+  windows, emits `integrity_totals_all_zero` in every aggregate, rejects step
+  zero after preserving empty startup panels, and adds regressions for all
+  three. A focused Fable re-review approved every fix and found no regression.
+- Exact-head local verification passed 168 Python contract tests with two
+  platform skips, Ruff, formatting, compilation, whitespace checks, and the
+  normal plus ASan/UBSan 392-engine/27-reward/2-contact-bot suites. The frozen
+  6B log still reproduces 45,815 panels, 4,821,395 episodes, static scores
+  `0.5337228569 -> 0.6205900025`, and explicit all-zero integrity verdicts.
+  GitHub run `29393972805` then passed reward/replay/analyzer contracts, BC
+  filtering/streaming, compiled tests, and ASan/UBSan on exact head
+  `1560d9c0bcc1786b83aa289f009ed8b046fba67b`.
+- PR #19 merged as `5fc6ae98dd03851de8f86305c0eefad6bc780823`.
+  The monitoring branch merged that exact `origin/main`; its remaining PR diff
+  is still only this durable journal. Claude/Fable consultation guidance was
+  also added to `/Users/alexanderhuth/.codex/memories/memory_summary.md`: for
+  nontrivial plan review, scientific interpretation, PR review, or debugging,
+  prefer bounded `claude -p --model fable --effort xhigh` consultation with
+  read-only tool allowlists and structured output, then independently verify
+  the result. No live queue, pinned input, service, reward, checkpoint, or
+  deployed production default changed during this work.
