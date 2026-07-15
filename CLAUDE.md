@@ -85,6 +85,11 @@ newer evidence wins.
   teammate target while serializing only the fresh-team-turn state. The raw
   match keeps its ordinary ball-carrier field, but no separate probe metadata,
   chosen action, target, or nested frame is serialized or labeled.
+  The fixed F2 proof applies the same fresh-team-turn/private-probe contract to
+  Hand-off: the carrier's legal activation and Hand-off declaration consume
+  zero dice and expose at least one adjacent catch-capable teammate. A target
+  set containing only rules-legal No Ball teammates is rejected as an authored
+  transfer opportunity, without changing engine Hand-off legality.
 - **BC loader (D180):** use the bounded streaming loader and replay-disjoint
   split. Replay-first is the current default, not the final sampler; next
   stratify by roster/matchup, depth, and action family.

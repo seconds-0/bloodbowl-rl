@@ -17,6 +17,7 @@ typedef enum {
     AD_RECIPE_FIRST_TEAM_TURN = 0,
     AD_RECIPE_F3_LATE_SECOND_HALF,
     AD_RECIPE_F1_PASS_OPPORTUNITY,
+    AD_RECIPE_F2_HANDOFF_OPPORTUNITY,
     AD_RECIPE_KIND_COUNT,
 } ad_recipe_kind;
 
@@ -70,6 +71,18 @@ int ad_f1_pass_opportunity_valid(const bb_match* match);
 // the captured BBS state remains the supported fresh team-turn boundary.
 int ad_discover_f1_pass_opportunity(ad_recipe* recipe,
                                     char error[AD_ERROR_CAP]);
+
+// Purely validate that a supported fresh team-turn state has a standing,
+// unused active-team carrier whose legal ACTIVATE -> DECLARE HAND-OFF path
+// reaches at least one adjacent catch-capable team-mate without consuming a
+// die. A No Ball target may be rules-legal but does not satisfy this proof.
+int ad_f2_handoff_opportunity_valid(const bb_match* match);
+
+// Play only legal engine actions until the F2 predicate above is true. The
+// nested activation/declaration/target frames are privately probed, not stored;
+// the captured BBS state remains the supported fresh team-turn boundary.
+int ad_discover_f2_handoff_opportunity(ad_recipe* recipe,
+                                       char error[AD_ERROR_CAP]);
 
 // Reinitialize from the procgen seed, inject the exact recorded in-match dice,
 // replay every packed legal action, and require raw-state identity.
