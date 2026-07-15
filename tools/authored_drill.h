@@ -189,6 +189,17 @@ int ad_discover_f4_pending_dodge_reroll(ad_recipe* recipe,
 int ad_validate_authored_proof_bundle(
     const ad_recipe* recipes, size_t count, char error[AD_ERROR_CAP]);
 
+// Build the current fixed 26-record proof bundle in production-owned order.
+// Both capacities must equal AD_AUTHORED_PROOF_BUNDLE_COUNT. The A9 source IDs
+// are proof-local positional metadata, not persistent recipe/variant identity.
+// Recipes, records, and error storage are required, suitably aligned, and
+// mutually disjoint. Caller outputs are committed only after complete
+// discovery and validation.
+int ad_build_authored_proof_bundle(
+    ad_recipe* recipes, size_t recipe_capacity,
+    ad_bbs_record* records, size_t record_capacity,
+    char error[AD_ERROR_CAP]);
+
 // Reinitialize from the procgen seed, inject the exact recorded in-match dice,
 // replay every packed legal action, and require recipe-specific endpoint and
 // raw-state identity.

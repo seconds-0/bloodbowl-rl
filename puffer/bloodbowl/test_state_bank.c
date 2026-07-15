@@ -151,66 +151,6 @@ static ad_recipe authored_f4_test_recipe(void) {
     return recipe;
 }
 
-static int authored_build_proof_bundle(
-    ad_recipe recipes[AD_AUTHORED_PROOF_BUNDLE_COUNT],
-    char error[AD_ERROR_CAP]) {
-    static const uint64_t
-        f1_seed[BB_AWAY + 1][AD_F1_PASS_CARRIER_PRESSURE_BUCKET_COUNT] = {
-        {4, 2},
-        {10, 8},
-    };
-    static const uint64_t
-        f2_seed[BB_AWAY + 1][AD_F2_HANDOFF_TARGET_BUCKET_COUNT] = {
-        {4, 2},
-        {8, 13},
-    };
-    size_t index = 0;
-
-    for (int team = BB_HOME; team <= BB_AWAY; team++) {
-        for (int pressure = AD_F1_CARRIER_PRESSURE_OPEN;
-             pressure <= AD_F1_CARRIER_PRESSURE_MARKED; pressure++) {
-            recipes[index] = authored_test_recipe();
-            recipes[index].controller_seed = f1_seed[team][pressure - 1];
-            if (ad_discover_f1_pass_carrier_pressure(
-                    &recipes[index++], team, pressure, error) != 0) {
-                return -1;
-            }
-        }
-    }
-    for (int team = BB_HOME; team <= BB_AWAY; team++) {
-        for (int bucket = AD_F2_TARGET_COUNT_EXACTLY_ONE;
-             bucket <= AD_F2_TARGET_COUNT_TWO_OR_MORE; bucket++) {
-            recipes[index] = authored_test_recipe();
-            recipes[index].controller_seed = f2_seed[team][bucket - 1];
-            if (ad_discover_f2_handoff_target_count(
-                    &recipes[index++], team, bucket, error) != 0) {
-                return -1;
-            }
-        }
-    }
-    uint64_t f3_seed = 1000;
-    for (int team = BB_HOME; team <= BB_AWAY; team++) {
-        for (int turn = 1; turn <= AD_F3_SECOND_HALF_TURN_COUNT; turn++) {
-            recipes[index] = authored_test_recipe();
-            recipes[index].controller_seed = f3_seed++;
-            if (ad_discover_f3_second_half_turn(
-                    &recipes[index++], turn, team, error) != 0) {
-                return -1;
-            }
-        }
-    }
-    recipes[index] = authored_f4_test_recipe();
-    if (ad_discover_f4_pending_dodge_reroll(
-            &recipes[index++], error) != 0) {
-        return -1;
-    }
-    recipes[index] = authored_f5_test_recipe();
-    if (ad_discover_f5_score_or_wait(&recipes[index++], error) != 0) {
-        return -1;
-    }
-    return index == AD_AUTHORED_PROOF_BUNDLE_COUNT ? 0 : -1;
-}
-
 BB_TEST(state_bank_accepts_exact_replayed_authored_record) {
     ad_recipe recipe = authored_test_recipe();
     char error[AD_ERROR_CAP];
@@ -911,15 +851,10 @@ BB_TEST(state_bank_accepts_complete_authored_proof_bundle) {
     if (recipes == NULL) return;
     ad_bbs_record records[AD_AUTHORED_PROOF_BUNDLE_COUNT];
     char error[AD_ERROR_CAP];
-    BB_CHECK_EQ(authored_build_proof_bundle(recipes, error), 0);
+    BB_CHECK_EQ(ad_build_authored_proof_bundle(
+                    recipes, count, records, count, error),
+                0);
     BB_CHECK_EQ(ad_validate_authored_proof_bundle(recipes, count, error), 0);
-    for (size_t i = 0; i < count; i++) {
-        records[i] = (ad_bbs_record){
-            0xA9000000u + (uint32_t)i,
-            (uint32_t)recipes[i].action_count,
-            &recipes[i],
-        };
-    }
 
     char path[256];
     snprintf(path, sizeof path, "/tmp/bloodbowl-authored-proof-%ld.bbs",
@@ -945,7 +880,7 @@ BB_TEST(state_bank_accepts_complete_authored_proof_bundle) {
         if (file != NULL) {
             first_read = fread(first_bytes, 1, expected_bytes, file);
             BB_CHECK_EQ(first_read, expected_bytes);
-            BB_CHECK_EQ(fgetc(file), EOF);
+            if (first_read == expected_bytes) BB_CHECK_EQ(fgetc(file), EOF);
             BB_CHECK_EQ(fclose(file), 0);
         }
 
@@ -954,10 +889,13 @@ BB_TEST(state_bank_accepts_complete_authored_proof_bundle) {
         BB_CHECK(file != NULL);
         if (file != NULL) {
             BB_CHECK_EQ(ad_bbs_write(file, records, count, error), 0);
-            rewind(file);
-            second_read = fread(second_bytes, 1, expected_bytes, file);
-            BB_CHECK_EQ(second_read, expected_bytes);
-            BB_CHECK_EQ(fgetc(file), EOF);
+            int seek_result = fseek(file, 0, SEEK_SET);
+            BB_CHECK_EQ(seek_result, 0);
+            if (seek_result == 0) {
+                second_read = fread(second_bytes, 1, expected_bytes, file);
+                BB_CHECK_EQ(second_read, expected_bytes);
+                if (second_read == expected_bytes) BB_CHECK_EQ(fgetc(file), EOF);
+            }
             if (first_read == expected_bytes &&
                 second_read == expected_bytes) {
                 BB_CHECK_EQ(memcmp(first_bytes, second_bytes, expected_bytes),

@@ -741,6 +741,127 @@ int ad_validate_authored_proof_bundle(
     return 0;
 }
 
+static ad_recipe ad_proof_base_recipe(void) {
+    ad_recipe recipe;
+    memset(&recipe, 0, sizeof recipe);
+    recipe.procgen_seed = 0xA1170EEDu;
+    recipe.procgen_stream = 17;
+    recipe.game_seed = 0xD11CE5u;
+    recipe.game_stream = 23;
+    recipe.controller_stream = 31;
+    recipe.home_team = 0;
+    recipe.away_team = 1;
+    recipe.exclude_team = -1;
+    recipe.procgen = (bb_procgen_params){4, 2, 0.0f};
+    return recipe;
+}
+
+int ad_build_authored_proof_bundle(
+    ad_recipe* recipes, size_t recipe_capacity,
+    ad_bbs_record* records, size_t record_capacity,
+    char error[AD_ERROR_CAP]) {
+    if (error == NULL) return -1;
+    if (recipes == NULL || records == NULL) {
+        return ad_fail(error, "null authored proof builder output");
+    }
+    if (recipe_capacity != AD_AUTHORED_PROOF_BUNDLE_COUNT ||
+        record_capacity != AD_AUTHORED_PROOF_BUNDLE_COUNT) {
+        return ad_fail(error,
+                       "authored proof builder capacities %zu/%zu differ from %d",
+                       recipe_capacity, record_capacity,
+                       AD_AUTHORED_PROOF_BUNDLE_COUNT);
+    }
+
+    ad_recipe* staged = calloc(AD_AUTHORED_PROOF_BUNDLE_COUNT,
+                               sizeof(*staged));
+    if (staged == NULL) {
+        return ad_fail(error, "authored proof builder allocation failed");
+    }
+    static const uint64_t
+        f1_seed[BB_AWAY + 1][AD_F1_PASS_CARRIER_PRESSURE_BUCKET_COUNT] = {
+        {4, 2},
+        {10, 8},
+    };
+    static const uint64_t
+        f2_seed[BB_AWAY + 1][AD_F2_HANDOFF_TARGET_BUCKET_COUNT] = {
+        {4, 2},
+        {8, 13},
+    };
+    size_t index = 0;
+
+    for (int team = BB_HOME; team <= BB_AWAY; team++) {
+        for (int pressure = AD_F1_CARRIER_PRESSURE_OPEN;
+             pressure <= AD_F1_CARRIER_PRESSURE_MARKED; pressure++) {
+            staged[index] = ad_proof_base_recipe();
+            staged[index].controller_seed = f1_seed[team][pressure - 1];
+            if (ad_discover_f1_pass_carrier_pressure(
+                    &staged[index], team, pressure, error) != 0) {
+                free(staged);
+                return -1;
+            }
+            index++;
+        }
+    }
+    for (int team = BB_HOME; team <= BB_AWAY; team++) {
+        for (int bucket = AD_F2_TARGET_COUNT_EXACTLY_ONE;
+             bucket <= AD_F2_TARGET_COUNT_TWO_OR_MORE; bucket++) {
+            staged[index] = ad_proof_base_recipe();
+            staged[index].controller_seed = f2_seed[team][bucket - 1];
+            if (ad_discover_f2_handoff_target_count(
+                    &staged[index], team, bucket, error) != 0) {
+                free(staged);
+                return -1;
+            }
+            index++;
+        }
+    }
+    uint64_t f3_seed = 1000;
+    for (int team = BB_HOME; team <= BB_AWAY; team++) {
+        for (int turn = 1; turn <= AD_F3_SECOND_HALF_TURN_COUNT; turn++) {
+            staged[index] = ad_proof_base_recipe();
+            staged[index].controller_seed = f3_seed++;
+            if (ad_discover_f3_second_half_turn(
+                    &staged[index], turn, team, error) != 0) {
+                free(staged);
+                return -1;
+            }
+            index++;
+        }
+    }
+    staged[index] = ad_proof_base_recipe();
+    staged[index].controller_seed = 1;
+    if (ad_discover_f4_pending_dodge_reroll(&staged[index], error) != 0) {
+        free(staged);
+        return -1;
+    }
+    index++;
+    staged[index] = ad_proof_base_recipe();
+    staged[index].controller_seed = 410;
+    if (ad_discover_f5_score_or_wait(&staged[index], error) != 0) {
+        free(staged);
+        return -1;
+    }
+    index++;
+
+    if (index != AD_AUTHORED_PROOF_BUNDLE_COUNT ||
+        ad_validate_authored_proof_bundle(staged, index, error) != 0) {
+        free(staged);
+        return -1;
+    }
+
+    memcpy(recipes, staged, index * sizeof(*recipes));
+    free(staged);
+    for (size_t i = 0; i < index; i++) {
+        records[i] = (ad_bbs_record){
+            0xA9000000u + (uint32_t)i,
+            (uint32_t)recipes[i].action_count,
+            &recipes[i],
+        };
+    }
+    error[0] = '\0';
+    return 0;
+}
+
 int ad_replay_exact(const ad_recipe* recipe, bb_match* out,
                     char error[AD_ERROR_CAP]) {
     if (recipe == NULL || out == NULL) return ad_fail(error, "null replay input");
