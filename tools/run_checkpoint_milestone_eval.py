@@ -281,6 +281,10 @@ def validate_spec(path: Path) -> dict[str, Any]:
         raise MilestoneEvalError(
             "anchor names/hashes differ from the predeclared transfer set"
         )
+    if [record["name"] for record in anchors] != list(FIXED_ANCHOR_SHA256):
+        raise MilestoneEvalError(
+            "anchor order differs from the predeclared common-seed strata"
+        )
     return {
         "schema_version": SCHEMA_VERSION,
         "matrix_id": matrix_id,
@@ -613,6 +617,8 @@ def validate_plan_contract(plan: dict[str, Any]) -> None:
     anchors = plan.get("anchors")
     if (
         not isinstance(anchors, list)
+        or [record.get("name") for record in anchors if isinstance(record, dict)]
+        != list(FIXED_ANCHOR_SHA256)
         or {
             record.get("name"): record.get("sha256")
             for record in anchors
@@ -1055,7 +1061,10 @@ def exact_cluster_bootstrap(values: list[float]) -> dict[str, Any]:
 def nominate(points: list[dict[str, Any]]) -> dict[str, Any]:
     trained = [point for point in points if point["target_steps"] > 0]
     best_score = max(point["macro_score"] for point in trained)
-    for index, point in enumerate(trained):
+    # A plateau comparator must be distinct from the terminal and must have two
+    # later observed milestones. Otherwise "neither of the next two" would be
+    # satisfied vacuously and Stage B could degenerate into terminal vs itself.
+    for index, point in enumerate(trained[:-2]):
         if point["macro_score"] < best_score - 0.01:
             continue
         later = trained[index + 1 : index + 3]
@@ -1066,14 +1075,20 @@ def nominate(points: list[dict[str, Any]]) -> dict[str, Any]:
             return {
                 "target_steps": point["target_steps"],
                 "embedded_steps": point["embedded_steps"],
-                "rule": "earliest_within_0.01_of_max_without_next_two_gt_0.02",
+                "rule": (
+                    "earliest_nonterminal_within_0.01_of_max_"
+                    "without_next_two_gt_0.02"
+                ),
                 "exploratory": False,
             }
-    best = max(trained, key=lambda point: point["macro_score"])
+    nonterminal = trained[:-1]
+    if not nonterminal:
+        raise MilestoneEvalError("plateau nomination requires a nonterminal milestone")
+    best = max(nonterminal, key=lambda point: point["macro_score"])
     return {
         "target_steps": best["target_steps"],
         "embedded_steps": best["embedded_steps"],
-        "rule": "highest_scoring_fallback",
+        "rule": "highest_scoring_nonterminal_fallback",
         "exploratory": True,
     }
 

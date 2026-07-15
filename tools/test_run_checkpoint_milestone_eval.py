@@ -237,7 +237,17 @@ class MilestoneEvalTests(unittest.TestCase):
                 with self.assertRaises(milestone.MilestoneEvalError):
                     milestone.validate_completion(completion)
 
-    def test_terminal_is_fixed_nominee_when_curve_never_plateaus_early(self):
+    def test_plan_contract_rejects_reordered_anchor_seed_strata(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            plan = self.synthetic_plan(directory)
+            plan["anchors"].reverse()
+            with self.assertRaisesRegex(
+                milestone.MilestoneEvalError, "anchor contract drifted"
+            ):
+                milestone.validate_plan_contract(plan)
+
+    def test_nonterminal_fallback_remains_distinct_from_terminal(self):
         points = [
             {"target_steps": 0, "embedded_steps": 0, "macro_score": 0.4},
             {"target_steps": 1, "embedded_steps": 1, "macro_score": 0.50},
@@ -245,10 +255,8 @@ class MilestoneEvalTests(unittest.TestCase):
             {"target_steps": 4, "embedded_steps": 4, "macro_score": 0.56},
         ]
         nomination = milestone.nominate(points)
-        # The terminal point satisfies the fixed rule vacuously; this keeps a
-        # monotonically rising curve on its exact final checkpoint.
-        self.assertEqual(nomination["target_steps"], 4)
-        self.assertFalse(nomination["exploratory"])
+        self.assertEqual(nomination["target_steps"], 2)
+        self.assertTrue(nomination["exploratory"])
 
     def test_idle_gpu_gate_fails_closed_on_existing_owner(self):
         with mock.patch.object(
