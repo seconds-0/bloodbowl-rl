@@ -197,16 +197,20 @@ class Aggregate:
                 "score_sum": _clean_float(score),
                 "score": (_clean_float(score / games) if games else None),
             }
+        integrity_totals = {
+            metric: _clean_float(self.integrity_totals[metric])
+            for metric in INTEGRITY_METRICS
+        }
         return {
             "panel_count": self.panel_count,
             "episode_count": self.episode_count,
             "min_step": self.min_step,
             "max_step": self.max_step,
             "episode_weighted_means": means,
-            "integrity_totals": {
-                metric: _clean_float(self.integrity_totals[metric])
-                for metric in INTEGRITY_METRICS
-            },
+            "integrity_totals": integrity_totals,
+            "integrity_totals_all_zero": all(
+                value == 0.0 for value in integrity_totals.values()
+            ),
             "static_training_pool": {
                 "games": _clean_float(total_games),
                 "score_sum": _clean_float(total_score),
@@ -237,6 +241,8 @@ def _validate_train_panel(panel: dict[str, Any]) -> tuple[int, int] | None:
     step = _exact_nonnegative_int(
         panel.get("_puffer_agent_steps"), "_puffer_agent_steps"
     )
+    if step == 0:
+        raise ValueError("completed schema-2 train panels require a positive step")
     return step, n
 
 
@@ -323,8 +329,11 @@ def analyze_log(
         raise ValueError(
             f"endpoint_step {nominal_endpoint} exceeds analysis max {analysis_max}"
         )
-    if nominal_endpoint < window_steps:
-        raise ValueError("endpoint_step must be at least one window_steps interval")
+    if nominal_endpoint < 2 * window_steps:
+        raise ValueError(
+            "endpoint_step must be at least two window_steps intervals so "
+            "first and last endpoint windows do not overlap"
+        )
     overall = Aggregate()
     first = Aggregate()
     last = Aggregate()

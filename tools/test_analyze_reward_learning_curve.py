@@ -72,15 +72,17 @@ class RewardLearningCurveTests(unittest.TestCase):
         self.assertAlmostEqual(pool["score_sum"], 17.0)
         self.assertAlmostEqual(pool["score"], 0.68)
         self.assertAlmostEqual(overall["integrity_totals"]["reward_clip_episodes"], 3.0)
+        self.assertFalse(overall["integrity_totals_all_zero"])
         self.assertEqual(report["endpoints"]["first"]["data"]["episode_count"], 10)
         self.assertEqual(report["endpoints"]["last"]["data"]["episode_count"], 30)
 
     def test_skips_startup_final_reprint_and_eval_panels(self):
         startup = panel(0, 0)
         train = panel(100, 4, tds=1.25)
-        final = panel(100, 4, tds=99.0, _puffer_final_reprint=1)
+        train_later = panel(200, 4, tds=1.25)
+        final = panel(200, 4, tds=99.0, _puffer_final_reprint=1)
         evaluation = panel(
-            110,
+            210,
             20,
             tds=77.0,
             _puffer_phase_eval=1,
@@ -88,13 +90,14 @@ class RewardLearningCurveTests(unittest.TestCase):
         )
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "train.log"
-            write_log(path, [startup, train, final, evaluation])
+            write_log(path, [startup, train, train_later, final, evaluation])
             report = curve.analyze_log(path, window_steps=100)
 
-        self.assertEqual(report["source"]["machine_panels_seen"], 4)
-        self.assertEqual(report["source"]["eligible_train_panels_seen"], 1)
-        self.assertEqual(report["overall"]["episode_count"], 4)
+        self.assertEqual(report["source"]["machine_panels_seen"], 5)
+        self.assertEqual(report["source"]["eligible_train_panels_seen"], 2)
+        self.assertEqual(report["overall"]["episode_count"], 8)
         self.assertEqual(report["overall"]["episode_weighted_means"]["tds"], 1.25)
+        self.assertTrue(report["overall"]["integrity_totals_all_zero"])
 
     def test_requires_exact_requested_max_step(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -120,6 +123,18 @@ class RewardLearningCurveTests(unittest.TestCase):
         self.assertEqual(last["end_step_inclusive"], 200)
         self.assertEqual(last["data"]["episode_count"], 3)
 
+    def test_rejects_overlapping_endpoint_windows(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "train.log"
+            write_log(path, [panel(100, 2), panel(150, 2)])
+            with self.assertRaisesRegex(ValueError, "do not overlap"):
+                curve.analyze_log(
+                    path,
+                    max_step=150,
+                    endpoint_step=150,
+                    window_steps=100,
+                )
+
     def test_rejects_schema1_and_nonmonotonic_train_panels(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "schema1.log"
@@ -139,7 +154,7 @@ class RewardLearningCurveTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "source SHA-256 mismatch"):
                 curve.analyze_log(path, window_steps=100, expected_sha256="0" * 64)
 
-            broken = panel(100, 2)
+            broken = panel(200, 2)
             del broken["hist_score_bank_0"]
             path = Path(tmp) / "bank.log"
             write_log(path, [broken])
@@ -151,6 +166,11 @@ class RewardLearningCurveTests(unittest.TestCase):
             path = Path(tmp) / "marker.log"
             write_log(path, [panel(100, 2, _puffer_final_reprint=-1)])
             with self.assertRaisesRegex(ValueError, "exact non-negative integer"):
+                curve.analyze_log(path, window_steps=100)
+
+            path = Path(tmp) / "step-zero.log"
+            write_log(path, [panel(0, 2), panel(200, 2)])
+            with self.assertRaisesRegex(ValueError, "require a positive step"):
                 curve.analyze_log(path, window_steps=100)
 
             second = panel(200, 2)
