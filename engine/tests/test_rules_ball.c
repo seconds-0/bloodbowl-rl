@@ -546,15 +546,13 @@ BB_TEST(ball_pass_blizzard_quick_short_only) {
 // INTERCEPTIONS  (GAME "INTERCEPTIONS")
 // ============================================================================
 
-// ENGINE-DIVERGENCE: interceptions are not implemented (proc_ball.c
-// TODO(phase3)). GAME/INTERCEPTIONS: ruler from thrower to landing square;
+// GAME/INTERCEPTIONS: ruler from thrower to landing square;
 // "If the Range Ruler overlaps any squares containing a Standing opposition
 // player, then their Coach may choose one of them to attempt to Intercept";
 // AG test, -3 vs an Accurate Pass (-2 vs Inaccurate), -1 per player Marking
 // the interceptor; "if the Agility Test is successful, or a natural 6 is
 // rolled ... The player immediately gains possession of the ball and a
-// Turnover is caused." (The defending coach's pick should be a decision
-// point for team 1; the engine never offers one.)
+// Turnover is caused."
 BB_TEST(ball_pass_interception_accurate_minus_three) {
     bb_match m;
     fx_match_midturn(&m, 0, 0);
@@ -570,9 +568,35 @@ BB_TEST(ball_pass_interception_accurate_minus_three) {
     fx_run(&m, &rng);
     fx_activate(&m, &rng, thrower, BB_ACT_PASS);
     fx_apply(&m, mk(BB_A_PASS_TARGET, 0, 9, 7), &rng);
-    BB_CHECK_EQ(m.ball.carrier, opp);            // FAILS (engine: receiver catches)
+    BB_CHECK_EQ(m.ball.carrier, opp);
     BB_CHECK(m.players[opp].flags & BB_PF_HAS_BALL);
-    BB_CHECK_EQ(m.decision_team, 1);             // FAILS: interception = turnover
+    BB_CHECK_EQ(m.decision_team, 1);             // interception = turnover
+}
+
+// GAME/NO BALL: this player "may not attempt to Intercept a Pass" and may
+// never possess the ball. A No Ball player under the ruler is not an
+// interception candidate; the pass continues to its target normally.
+BB_TEST(ball_no_ball_cannot_intercept) {
+    bb_match m;
+    fx_match_midturn(&m, 0, 0);
+    int thrower = fx_player(&m, 0, 0, 5, 7, 6, 3, 3, 2, 9);
+    int receiver = fx_lineman(&m, 0, 1, 9, 7);
+    int no_ball = fx_player(&m, 1, 0, 7, 7, 6, 3, 2, 3, 9);
+    fx_give_skill(&m, no_ball, BB_SK_NO_BALL);
+    fx_ball_held(&m, thrower);
+    uint8_t script[] = {5, 6}; // accurate Short Pass; receiver catches
+    bb_rng rng;
+    bb_rng_script(&rng, script, 2);
+    fx_run(&m, &rng);
+    fx_activate(&m, &rng, thrower, BB_ACT_PASS);
+    bb_status st = fx_apply(&m, mk(BB_A_PASS_TARGET, 0, 9, 7), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK(!bb_rng_error(&rng));
+    BB_CHECK_EQ(rng.script_pos, 2);
+    BB_CHECK_EQ(m.ball.carrier, receiver);
+    BB_CHECK(m.players[receiver].flags & BB_PF_HAS_BALL);
+    BB_CHECK_EQ(m.players[no_ball].flags & BB_PF_HAS_BALL, 0);
+    BB_CHECK_EQ(m.decision_team, 0);
 }
 
 // ============================================================================
@@ -889,9 +913,10 @@ BB_TEST(ball_handoff_target_legality) {
     BB_CHECK(fx_find(&m, mk(BB_A_HANDOFF_TARGET, 0, 8, 7)) == -1);
 }
 
-// GAME/NO BALL: a player with this compulsory trait may never possess the
-// ball, so they are not a legal Hand-off receiver or catch-capable target.
-BB_TEST(ball_handoff_no_ball_receiver_illegal) {
+// GAME/NO BALL: a Standing team-mate with a Tackle Zone remains a legal
+// Hand-off target, but automatically fails the required Catch as a natural 1.
+// No catch die is rolled; the ball Bounces and the failed Hand-off turns over.
+BB_TEST(ball_handoff_no_ball_receiver_auto_fails) {
     bb_match m;
     fx_match_midturn(&m, 0, 0);
     int carrier = fx_lineman(&m, 0, 0, 5, 7);
@@ -899,12 +924,23 @@ BB_TEST(ball_handoff_no_ball_receiver_illegal) {
     fx_give_skill(&m, receiver, BB_SK_NO_BALL);
     fx_lineman(&m, 1, 0, 20, 2);
     fx_ball_held(&m, carrier);
+    uint8_t script[] = {5}; // no catch die; Bounce (+1,0)
     bb_rng rng;
-    bb_rng_script(&rng, 0, 0);
+    bb_rng_script(&rng, script, 1);
     fx_run(&m, &rng);
     BB_CHECK(!bb_can_catch(&m, receiver));
     fx_activate(&m, &rng, carrier, BB_ACT_HANDOFF);
-    BB_CHECK_EQ(fx_find(&m, mk(BB_A_HANDOFF_TARGET, 0, 6, 7)), -1);
+    BB_CHECK(fx_find(&m, mk(BB_A_HANDOFF_TARGET, 0, 6, 7)) >= 0);
+    bb_status st = fx_apply(&m, mk(BB_A_HANDOFF_TARGET, 0, 6, 7), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK(!bb_rng_error(&rng));
+    BB_CHECK_EQ(rng.script_pos, 1);
+    BB_CHECK_EQ(m.ball.state, BB_BALL_ON_GROUND);
+    BB_CHECK_EQ(m.ball.carrier, BB_NO_PLAYER);
+    BB_CHECK_EQ(m.ball.x, 7);
+    BB_CHECK_EQ(m.ball.y, 7);
+    BB_CHECK_EQ(m.players[receiver].flags & BB_PF_HAS_BALL, 0);
+    BB_CHECK_EQ(m.decision_team, 1);
 }
 
 // GAME/PERFORMING A HAND-OFF: the receiver must be "a

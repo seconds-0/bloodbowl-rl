@@ -213,7 +213,9 @@ static int ruler_candidates(const bb_match* m, int thrower, int tx, int ty, uint
         last_x = cx;
         last_y = cy;
         int s = bb_slot_at(m, cx, cy);
-        if (s >= 0 && BB_TEAM_OF(s) != BB_TEAM_OF(thrower) && bb_exerts_tz(m, s)) {
+        if (s >= 0 && BB_TEAM_OF(s) != BB_TEAM_OF(thrower) &&
+            bb_exerts_tz(m, s) &&
+            !bb_has_skill(&m->players[s].skills, BB_SK_NO_BALL)) {
             bool dup = false;
             for (int k = 0; k < n; k++) {
                 if (out[k] == (uint8_t)s) dup = true;

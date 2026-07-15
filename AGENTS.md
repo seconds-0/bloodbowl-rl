@@ -261,9 +261,10 @@ changes a reward, active queue, production default, or promotion verdict.
 - Every rulebook "may" is policy surface. Do not auto-resolve an optional choice.
 - Route every die through `bb_rng`; preserve determinism and injectable scripts.
 - A player with PA `-` cannot declare a Pass Action but may still Hand-off.
-  `No Ball` players are never catch/Hand-off/Touchback recipients; an ordinary
-  Pass may still target their square, after which the ball Bounces without a
-  catch attempt. Keep these legality rules in the engine mask, not a reward.
+  `No Ball` players cannot catch, intercept, or receive a Touchback. They remain
+  legal Hand-off targets when Standing with a Tackle Zone, but automatically
+  fail the required Catch without a catch die; an ordinary Pass may also target
+  their square and then Bounce. Keep these rules in the engine, not a reward.
 - Reward declarations or settled state, not realized dice luck, except for true
   terminal/objective outcomes. Expected-value shaping can still redefine the
   objective, so it also requires held-out match validation.
