@@ -159,3 +159,39 @@ BB_TEST(authored_drill_bbs_writer_emits_canonical_header_and_record) {
     BB_CHECK_EQ(ftell(file), 0);
     BB_CHECK_EQ(fclose(file), 0);
 }
+
+BB_TEST(authored_drill_one_action_continuation_is_canonical_and_safe) {
+    ad_recipe recipe = ad_test_recipe();
+    char error[AD_ERROR_CAP];
+    BB_CHECK_EQ(ad_discover_first_team_turn(&recipe, error), 0);
+
+    bb_match loaded;
+    BB_CHECK_EQ(ad_replay_exact(&recipe, &loaded, error), 0);
+    bb_match original = loaded;
+    bb_action legal[BB_LEGAL_MAX];
+    int legal_count = bb_legal_actions(&loaded, legal);
+    BB_CHECK(legal_count > 0);
+    if (legal_count <= 0) return;
+    uint32_t expected = bb_action_pack(legal[0]);
+    for (int i = 1; i < legal_count; i++) {
+        uint32_t packed = bb_action_pack(legal[i]);
+        if (packed < expected) expected = packed;
+    }
+
+    uint32_t applied = 0;
+    bb_status status = BB_STATUS_ERROR;
+    int dice_used = -1;
+    BB_CHECK_EQ(ad_verify_one_action_continuation(
+                    &loaded, &applied, &status, &dice_used, error),
+                0);
+    BB_CHECK_EQ(applied, expected);
+    BB_CHECK(status == BB_STATUS_DECISION || status == BB_STATUS_RUNNING ||
+             status == BB_STATUS_MATCH_OVER);
+    BB_CHECK(dice_used >= 0 && dice_used <= AD_CONTINUATION_DICE);
+    BB_CHECK_EQ(memcmp(&loaded, &original, sizeof loaded), 0);
+
+    loaded.stack[1].a = 255;
+    BB_CHECK(ad_verify_one_action_continuation(
+                 &loaded, &applied, &status, &dice_used, error) != 0);
+    BB_CHECK(strstr(error, "boundary") != NULL);
+}

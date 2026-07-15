@@ -272,6 +272,13 @@ episode.
    publish only the optimized transaction with both validation identities in
    its manifest.
 
+The phase-1 writer now enforces the core of step 4 before emitting any batch:
+it validates the shared BBS1 boundary, selects the lowest packed legal action,
+applies that action to a private copy with a 256-face all-ones scripted suffix,
+and rejects RNG exhaustion or engine error. The Puffer integration test repeats
+the gate on the actually reloaded record. Family compilers must still record
+the reconciled per-record totals in their report and manifest.
+
 ## Acceptance gates
 
 The tranche is complete only when all are true:
