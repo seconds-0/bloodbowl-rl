@@ -6044,3 +6044,99 @@ Next steps:
 3. Continue the frozen queue and CPU-only BBTV read-only monitoring loop. Do not
    deploy this bootstrap to the occupied 2070; it intentionally contains no
    production serializer or training artifact.
+
+## 2026-07-15 23:10 PDT — seed 43 at 10.90B; BBTV current; PR #44 replacement green and under fresh review
+
+Live queue and BBTV health:
+
+- The primary queue remains authoritative `active/running` on
+  `final-main-control`, arm `both`, seed 43/current index 2, with one completed
+  arm and `final-second-control` pending. `SCREEN_STATUS.json` was fresh at
+  23:03 PDT and reported `waiting for current trainer`. Queue PID 431309,
+  screen wrapper PID 431316, and the sole exact GPU PID 473422 remain present.
+  The primary queue and `bbstream`, `bbweb`, and `bbtv-tunnel` are active with
+  zero restarts. Overflow remains inactive/dead with absent state and zero
+  restarts; its timer is active/waiting, and the 22:58 watcher exited
+  successfully after logging `primary service is still active; waiting`.
+- Read-only validation matched all 65 primary pins at plan SHA-256
+  `4ee72e3c58f09786cdd3bbf78a772e8de2d9a93e21a8b065cf0c5976ecced270`
+  and all 74 overflow pins at plan SHA-256
+  `d90ee01c8c459f599c8601934f545ccb7783261edae3bcb6e9e3878036d37d3e`.
+  Both pin errors were `None`; the exact compute-process query returned only
+  PID 473422, so CPU-only BBTV remains outside the completion gate.
+- The newest complete telemetry record observed exact step 10,904,928,256 at
+  epoch 83,197 over 106 games: performance 0.608491, draw rate 0.330189,
+  possession 0.405108, illegal/sampled-repair fraction 0.168630, ball progress
+  9.002607, 13.650944 blocks thrown, 2.367924 blocks against the carrier,
+  carrier-target fraction 0.177656, and zero Pass or Hand-off intentions.
+  Reward clipping, non-finite reward, engine-error, demonstration, and fallback
+  counters remain zero. The latest dashboard sample reported 177.0K SPS; this
+  throughput is observational and is not promotion evidence.
+- The newest complete 16,066,560-byte checkpoint observed was exact step
+  10,886,709,248 at 23:02:26 PDT. The bounded GPU sample was 80 C, 89% fan,
+  77% utilization, 5,554/8,192 MiB, and 120.51 W. Software thermal slowdown
+  was active and hardware slowdown inactive. Temperature remains below the
+  frozen literal 88 C three-poll guard, so no tuning was performed. Disk is 7%
+  used with 956,233,723,904 bytes available and 1% inode use; memory has about
+  9.11 GB available, and swap uses about 183 MB of 4.29 GB.
+- At 23:02 PDT the follower selected the complete seed-43 checkpoint at exact
+  step 10,836,770,816 against the frozen turnover3 baseline. Learner source
+  SHA-256 is
+  `c6b6956878cf7b4f93c1aa8dc7a1e17443e441aa22e0e17b70b23f0dd7afc08e`,
+  converted output SHA-256 is
+  `be88791fa62aab8f7a6bdd95cacd4c2de588c06b8e7a41f84bcda3d3ccb9c8dc`,
+  and `selection.json` SHA-256 is
+  `aa60a9592e5826c363dc3accc3b609b47da18f41d9a4fe6b15a688c916f7ccb9`.
+  The public page returned HTTP 200 in 0.210 seconds, and a bounded public WSS
+  probe received match `m_1784181737_1` with advancing sequence numbers
+  368–371. BBTV remains CPU-only and observational. The initial local
+  `websocat` probe connected but hit a client-side macOS argument error; the
+  successful bounded probe used the already-installed isolated BBTV Python
+  environment and changed no service or state.
+
+Serializer-free sidecar authority review:
+
+- The third fresh review of prior exact head `f1cff21` reproduced a high-impact
+  candidate/link boundary gap: because candidate objects were audited only for
+  undefined imports, a future candidate could define global `memcmp` and, with
+  the deliberate `-fno-builtin` verifier build, neutralize trusted probe byte
+  comparisons. The PR correctly remained draft and that SHA is superseded.
+- Exact replacement head
+  `8f3b624c91296eda7069caaa9544ac4216f545fc` gives the serializer object an
+  exact eight-symbol defined-export allowlist and audits every other candidate
+  translation unit linked into trusted probes for trusted-serializer,
+  system/library, linker-wrapper, and sanitizer interposition exports. A
+  compiled canary defines all eight allowed serializer symbols plus `memcmp`,
+  `memcpy`, allocator/stream functions, `__wrap_memcmp`, and `__real_memcmp`,
+  and proves both real export-audit paths reject before link. Documentation now
+  distinguishes the exact serializer allowlist from the forbidden-export audit
+  on every other linked candidate object.
+- The authority was fully resealed into the same single bootstrap commit.
+  Ruff, Python bytecode, diff checks, sealed sidecar authority, authored
+  identity, native bootstrap history `1/1`, digest-pinned Clang-container
+  bootstrap history `1/1`, optimized tests, and ASan/UBSan tests all pass on
+  exact `8f3b624`. Both test modes report 442 engine, 37 reward, 2 contact-bot,
+  and 12 state-bank tests with zero failures. The branch was replaced only with
+  the exact `f1cff21` force-with-lease, and the remote PR body was re-read after
+  correction to verify its exact SHA and boundary text.
+- Hosted CI and immutable identity history are both green on exact base
+  `a4e7e06d6e2cfa8f7f2896d9dc8187ecbcbc8665` and head `8f3b624`; GitHub reports
+  the draft PR clean and mergeable. Three entirely fresh read-only reviews were
+  requested. Two are running, while the reviewer who found the prior defect is
+  being retried after the review service rejected its first dispatch before
+  analysis. No predecessor approval counts. PR #44 remains draft and unmerged;
+  no serializer, sidecar/bank, reward, queue input, training service, or BBTV
+  process was deployed. Claude remains unauthenticated, so Fable was not
+  invoked and no Fable review is claimed.
+
+Next steps:
+
+1. Require three clean reviews on the unchanged exact `a4e7e06d..8f3b624c`
+   pair. Any reproduced blocker requires another correction, reseal,
+   replacement SHA, hosted-check restart, and fresh review cycle.
+2. If all three reviews remain clean, take PR #44 out of draft, re-read exact
+   base/head/checks/merge state, merge through the protected guardrails, and
+   verify the new sidecar authority on the resulting protected main push.
+3. Continue the hourly read-only queue, resource, integrity, watcher,
+   checkpoint, and public-BBTV loop. Do not deploy this serializer-free
+   bootstrap into the occupied 2070 checkout.
