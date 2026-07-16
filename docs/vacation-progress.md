@@ -5483,3 +5483,107 @@ Next steps:
   container authority passed, and the expanded future serializer probe
   compiled cleanly under Linux Clang. No source was committed or deployed to
   the occupied 2070, and the production serializer remains absent.
+
+## 2026-07-15 19:24 PDT — seed 43 at 8.40B; BBTV at 8.34B; PR #44 held for authority gaps
+
+Live queue and BBTV health:
+
+- The primary queue remains authoritative `active/running` on
+  `final-main-control`, arm `both`, seed 43/current index 2, with one completed
+  arm. `SCREEN_STATUS.json` was fresh at 19:18 PDT. Queue PID 431309, screen
+  wrapper PID 431316, and the sole completion-gate/GPU-compute PID 473422 remain
+  present. The primary queue and all three BBTV services report zero restarts;
+  overflow remains inactive/dead with absent state and zero restarts.
+- Exact read-only validation matched all 65 primary pins at plan SHA-256
+  `4ee72e3c58f09786cdd3bbf78a772e8de2d9a93e21a8b065cf0c5976ecced270`
+  and all 74 overflow pins at plan SHA-256
+  `d90ee01c8c459f599c8601934f545ccb7783261edae3bcb6e9e3878036d37d3e`.
+  Both pin-error results were `None`; the exact completion parser reported only
+  trainer PID 473422, so BBTV remains excluded from the GPU process list.
+- The latest complete telemetry panel observed exact step 8,398,438,400 at
+  epoch 64,074 over 114 games: performance 0.609649, draw rate 0.359649,
+  possession 0.388988, illegal/sampled-repair fraction 0.176746, ball progress
+  8.898785, 13.789474 blocks thrown, 1.973684 blocks against the carrier,
+  carrier-target fraction 0.146074, Pass intentions 0.035088, and zero Hand-off
+  intentions. Reward clipping, non-finite reward, engine-error, demonstration,
+  and fallback counters remain zero. The last eight rendered dashboard samples
+  ranged from 181.4K to 192.2K SPS and averaged about 186.1K; that implies about
+  5h23m to the frozen 12B seed target. The panel and estimate are observational,
+  not promotion evidence.
+- The newest observed complete 16,066,560-byte learner checkpoint was exact step
+  8,389,787,648 at 19:18 PDT with SHA-256
+  `728427cb10e0c458f8067deb05b9703d09924ad97665a7242f665dcba9085bfa`.
+  Four GPU samples ranged from 81-83 C, 88-89% fan, 77-78% utilization,
+  5,554/8,192 MiB, and 120.41-139.25 W. Software thermal slowdown was active in
+  three samples and hardware slowdown inactive in all four. Temperature remains
+  below the literal frozen 88 C three-poll guard, so no tuning was performed.
+  Disk is 7% used with 892 GiB free, inode use is 1%, memory has 8.9 GiB
+  available, and swap uses 165 MiB with 3.8 GiB available.
+- The 19:19 PDT overflow watcher exited successfully after logging `primary
+  service is still active; waiting`; the timer remained active/waiting for its
+  19:29 poll and created no overflow state.
+- `bbstream`, `bbweb`, and `bbtv-tunnel` remain active. At 19:17 PDT BBTV
+  selected seed-43 checkpoint 8,339,849,216 against the frozen turnover3
+  baseline. Learner source SHA-256 is
+  `93858dfff6162eb90a853ab5ba74a100e80979d5c95ba2c04f5b96f64a2de715`,
+  converted output SHA-256 is
+  `2ea0c61a53fb1972a8c805c8e54014982d38f790c642bad1892b2ced7550b739`,
+  and `selection.json` SHA-256 is
+  `f1f91623a584d9c1957c6135e472de57ae0bbc8ebdff058234790b935bb319ef`.
+  The public page returned HTTP 200 in 0.241 seconds. A bounded public WSS client
+  received protocol-v1 hello, a learner Bretonnian versus frozen Nurgle match
+  start naming the exact 8,339,849,216-step learner, and a half-two snapshot.
+  BBTV remains CPU-only and observational.
+- The first detail probe looked for `SCREEN_STATUS.json` and checkpoints at the
+  queue root instead of the queue-owned work/run directories; its unchecked
+  checkpoint substitution consequently hashed empty stdin. The corrected path
+  and direct checkpoint query produced the status and digest above. The first
+  WSS parser also looked for `type` instead of protocol field `t`, received but
+  did not recognize the initial messages, and timed out; the corrected bounded
+  parser immediately proved hello, match start, and snapshot. These were probe
+  errors, not service failures. No service was restarted.
+
+Serializer-free sidecar authority review:
+
+- Draft PR #44 is pinned to exact base
+  `a4e7e06d6e2cfa8f7f2896d9dc8187ecbcbc8665` and exact head
+  `38108a5744309649b2bbd3dc9d68bbb87ba4cbea`. Hosted ordinary CI passed in
+  5m28s, including the new bootstrap authority and sanitizers, and the existing
+  immutable identity-history check passed in 1m47s. Local/native/container and
+  bootstrap-history checks also passed. The PR remains draft and was not
+  merged.
+- Three independent exact-head reviews requested changes. They reproduced that
+  the future immutable gate does not yet cover the complete public-ABI negative
+  space: partial/interior overlaps, every null role, symmetric count/capacity
+  boundaries, checked extent arithmetic, and allowed half-open endpoint
+  adjacency. They also found insufficient per-index A9-record to AE-recipe
+  reconciliation, missing successful-but-corrupt BBS writer modes, call-count
+  checks that do not prove builder/identity/family return values control
+  success, and Python-only hash vectors that do not exercise the future C hash
+  and framing implementation.
+- One review additionally reproduced a real current false negative by swapping
+  unused procedure enum meanings while preserving later numeric values: the
+  verifier still passed because it freezes catalogue count and corpus-observed
+  values, not every advertised enum symbol/value mapping. Equivalent gaps exist
+  for noncanonical weather, legacy recipe-kind, and unobserved reroll-option
+  values. These are merge-blocking authority defects, not failures of the
+  canonical expected streams; independent checks of all 26 current rows and
+  both exact JSONL hashes remained clean.
+- Any authority-byte change invalidates the current seal and review/CI evidence,
+  so the fact corpus/oracle/seal, native and isolated container checks,
+  bootstrap history, hosted CI, and three exact-head reviews must all restart
+  on one new commit. No serializer, sidecar/bank, training input, reward,
+  service, queue, or BBTV change was deployed to the occupied 2070. Claude
+  authentication is still unavailable, so Fable was not invoked and no Fable
+  review is claimed.
+
+Next steps:
+
+1. Continue the hourly read-only queue, integrity, resource, watcher, checkpoint,
+   and public-BBTV loop while leaving both frozen queues authoritative.
+2. Implement the complete enum/ABI/reconciliation/writer/predicate/hash-vector
+   authority corrections, regenerate and reseal all trusted artifacts, and
+   rerun every local, Linux, container, history, and hosted gate.
+3. Merge PR #44 only after three independent reviews and all hosted checks are
+   clean on one unchanged replacement SHA. Keep the production serializer and
+   milestone evaluation out of scope until their separate terminal gates.
