@@ -220,6 +220,64 @@ newer evidence wins.
   length/NUL and BBS oracle semantics, malicious candidates, and full D210
   isolation before implementation; its protected workflow covers exact-SHA
   `pull_request_target`, `merge_group`, and main push.
+  The additive bootstrap files are `tools/authored_sidecar.h`,
+  `tools/authored_sidecar_oracle.json`,
+  `tools/authored_sidecar_authority/`, and the protected sidecar workflow.
+  Run `make authored-sidecar-authority-verify`. Once merged, every one of those
+  authority bytes is immutable; the bootstrap contains no
+  `tools/authored_sidecar.c`, and the later implementation PR may add that one
+  owned source without editing the ABI/oracles/probes/fixtures/verifiers/
+  workflow. Fixed output lengths are 39,460 and 119,389 bytes and exclude a
+  terminator. The independent fact corpus binds all 30 generated team IDs and
+  all 58,568 returned BBS bytes before either canonical 26-line oracle is
+  accepted.
+  The bootstrap additionally freezes exact numeric meanings for every schema
+  enum, direct candidate-C NIST and framed hash vectors, and complete per-row
+  A9/AE reconciliation mutations including a fully backed external
+  byte-identical recipe. Writer records are serializer-owned while their 26
+  distinct recipe pointers must resolve to the active caller extent; private
+  copies and caller-record passthrough reject. Candidate-owned helpers in the
+  same translation unit are tested directly because GNU `--wrap` cannot
+  intercept their internal calls. A trusted F5-false transform must reach the
+  dedicated atomic-rejection probe mode because the fixed row requires that
+  fact true. The mode exits zero only after a normal nonzero serializer return,
+  unchanged outputs, lengths, caller inputs, and complete allocated output
+  guards, plus applicable writer/stream cleanup. Run every transformed F5/hash
+  binary optimized and under ASan/UBSan; crashes, aborts, in-guard overwrites,
+  out-of-allocation writes, and corrupt-then-error paths reject. The three
+  zero-hash transforms
+  must remain successful and match exact trusted JSONL where only their
+  52/52/26 digest fields change, rejecting hard-coded-output or rejection-only
+  hash canaries. Normal builds remain fully strict; only the separately compiled
+  transformed candidate object suppresses unused parameter/function/variable/
+  const-variable warnings orphaned by trusted body replacement. The serializer
+  object has the approved functional-import allowlist and exact defined-export
+  allowlist in optimized and sanitized builds; sanitized imports additionally
+  admit only compiler ASan/UBSan runtime namespaces. Every other candidate
+  object is audited in both variants
+  against the trusted probes' actual platform/compiler imports after removing
+  only a frozen intentional-candidate-API allowlist. Bootstrap self-tests cover
+  ordinary, sanitizer-conditional, and ELF GNU-unique `memcmp`, `fputc`,
+  wrapper, fortified, and runtime exports, preventing candidate interposition
+  on trusted probe behavior. The F5 helper
+  binds the captured carrier to selected
+  Activate/Declare Move actions, retains End Activation, and proves zero dice
+  through `script_pos == 0` after both transitions. Each family call binds to
+  its admitted row with both categorical directions forced; every row also has
+  a separate, exactly counted and individually perturbed captured legal-set
+  enumeration for its legal hash. The seven-role checked-extent contract covers
+  greater-of-supplied/fixed input counts crossed with oversized capacities,
+  capacity-only suffixes, short-capacity diagnostic aliases,
+  null/count/capacity, arithmetic overflow, partial overlap, containment, and
+  both permitted ordered public-success half-open adjacencies at exact and
+  oversized capacities before any diagnostic. Exact source ownership,
+  non-shadowable system headers, a closed source-call vocabulary, and a linked
+  object import allowlist reinforce the pure boundary. Conditional-preprocessor
+  decoys and duplicate protected definitions reject; a second check inspects
+  the trusted compiler's active macro-expanded protected bodies for forbidden
+  identifiers, real call order, and result use. The serializer has a
+  64-allocation per-call audit/resource budget. A textual call counter or
+  corpus-only enum count does not satisfy these gates.
 - **BC loader (D180):** use the bounded streaming loader and replay-disjoint
   split. Replay-first is the current default, not the final sampler; next
   stratify by roster/matchup, depth, and action family.

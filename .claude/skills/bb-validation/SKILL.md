@@ -217,6 +217,63 @@ re-derive by hand; (b) RNG misuse (reuse/bias) — check `bb_rng` consumption co
     oracle contract, malicious candidates, and D210 isolation; its protected
     workflow handles exact-SHA `pull_request_target`, `merge_group`, and main
     push.
+    The implemented bootstrap authority is `tools/authored_sidecar.h`,
+    `tools/authored_sidecar_oracle.json`,
+    `tools/authored_sidecar_authority/`, and
+    `.github/workflows/authored-sidecar-authority.yml`. Run
+    `make authored-sidecar-authority-verify`. Those bytes become immutable on
+    merge; the bootstrap must have no `tools/authored_sidecar.c`, and the later
+    serializer may add only that owned source without changing the frozen
+    ABI/oracles/probes/fixtures/verifiers/workflow. Its public paired lengths
+    are 39,460/119,389 bytes with no output NUL. The trusted fact path binds all
+    30 generated team IDs and the complete 58,568-byte BBS writer result before
+    independently canonicalizing both 26-line streams.
+    Require exact numeric assertions for every schema enum, direct execution of
+    the candidate C SHA/action/dice/legal framing helpers on NIST and
+    empty/single/multi vectors and every-index A9/AE reconciliation mutations,
+    including a fully backed byte-identical recipe outside the supplied
+    extent. Require exact caller-recipe pointer provenance and
+    serializer-owned writer records. Test candidate-owned same-translation-unit
+    helpers directly; linker wrapping cannot intercept their internal calls.
+    Bind each family predicate to its admitted row, force both categorical
+    directions, and make the F5 helper bind the carrier-selected Activate and
+    Declare Move actions while proving zero scripted-die consumption after both
+    transitions. Separately count and perturb the captured-match legal-set
+    enumeration for every row; family-internal legal queries are not hash
+    evidence. An F5-false transform must use the dedicated atomic-rejection mode
+    for the mandatory fixed-row fact. That mode must observe a normal serializer
+    failure, preserve both outputs, returned lengths, caller inputs, and every
+    byte in the allocated guards beyond the declared capacities, verify
+    applicable writer/stream cleanup, and exit zero only after those checks.
+    Run every transformed F5/hash binary optimized and under ASan/UBSan;
+    crashes, aborts, in-guard overwrites, out-of-allocation writes, and
+    corrupt-then-error paths reject. Zeroed hash transforms
+    must preserve serializer success and
+    match exact trusted 52/52/26-field JSONL changes so hard-coded-output and
+    rejection-only hash canaries fail. Keep normal builds fully strict; suppress
+    only unused parameter/function/variable/const-variable warnings while
+    separately compiling the transformed candidate object, never trusted
+    probe/engine sources. The seven-role
+    alias matrix covers greater-of-supplied/fixed input extents crossed with
+    oversized capacities, capacity-only suffixes, short-capacity diagnostic
+    aliases, overflow, and both ordered public-success half-open endpoint
+    orientations at exact and oversized capacities before any diagnostic write.
+    Reject serializer symbols outside the exact owned/authority paths,
+    shadowable system-header lookup, conditional-preprocessor decoys, duplicate
+    protected definitions, unknown source calls, unapproved functional object
+    imports (sanitized builds additionally admit only compiler ASan/UBSan
+    runtime namespaces), and
+    any serializer-object global export beyond the eight reviewed public helper/
+    serializer symbols in optimized and sanitized builds. For every other
+    candidate object linked into a probe, audit both build variants against the
+    trusted probes' actual platform/compiler imports minus a frozen allowlist of
+    intentional candidate APIs. Self-test ordinary, sanitizer-conditional, and
+    ELF GNU-unique exports including `memcmp`, `fputc`, wrapper, fortified, and
+    runtime names so candidate code cannot interpose on trusted probe behavior;
+    then inspect the trusted compiler's active macro-expanded protected bodies
+    for forbidden identifiers, actual call ordering, and result use. The pure
+    serializer is limited to 64 candidate-visible heap allocations per call.
+    Mere lexical call presence is not behavioral proof.
 
 **Failure looks like:** shrunken minimal action trace + seed reproducing the violation.
 **Triage:** replay the shrunken trace under a debugger; the violated invariant names

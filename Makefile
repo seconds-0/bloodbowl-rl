@@ -28,7 +28,7 @@ PUFFER_CONTACT_TESTBIN := $(BUILD)/puffer_contact_bot_tests
 PUFFER_STATE_BANK_TESTBIN := $(BUILD)/puffer_state_bank_tests
 PUFFER_TESTBINS := $(PUFFER_REWARD_TESTBIN) $(PUFFER_CONTACT_TESTBIN) $(PUFFER_STATE_BANK_TESTBIN)
 
-.PHONY: all test asan authored-identity-verify fuzz coverage coverage-run lockstep ballstats blockstats human-ball-advancement blockev-mc scenario-scan clean
+.PHONY: all test asan authored-identity-verify authored-sidecar-authority-verify fuzz coverage coverage-run lockstep ballstats blockstats human-ball-advancement blockev-mc scenario-scan clean
 
 all: test
 
@@ -76,6 +76,9 @@ asan:
 
 authored-identity-verify:
 	python3 tools/authored_identity_compat/verify_candidate.py .
+
+authored-sidecar-authority-verify:
+	python3 tools/authored_sidecar_authority/verify_candidate.py .
 
 # libFuzzer harness. Apple clang has no libFuzzer: use Homebrew LLVM
 # (brew install llvm) on macOS, or any stock clang on Linux (CI nightly).

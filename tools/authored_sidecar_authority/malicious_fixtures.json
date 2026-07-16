@@ -1,0 +1,190 @@
+{
+  "schema": "bloodbowl-authored-sidecar-malicious-fixtures-v1",
+  "fixtures": [
+    {
+      "name": "strlen-bbs",
+      "replace": "/* MUTATION */",
+      "with": "strlen(bbs);",
+      "expected": "forbidden length/filesystem call: strlen"
+    },
+    {
+      "name": "embedded-nul-filter",
+      "replace": "/* MUTATION */",
+      "with": "if (bbs[0] == '\\0') return -1;",
+      "expected": "BBS payload is filtered or stopped at an embedded NUL"
+    },
+    {
+      "name": "length-plus-one",
+      "replace": "ad_sidecar_sha256(bbs, bbs_length, bbs_digest)",
+      "with": "ad_sidecar_sha256(bbs, bbs_length + 1, bbs_digest)",
+      "expected": "BBS comparison includes the convenience NUL"
+    },
+    {
+      "name": "early-terminator",
+      "replace": "/* MUTATION */",
+      "with": "memchr(bbs, '\\0', bbs_length);",
+      "expected": "forbidden length/filesystem call: memchr"
+    },
+    {
+      "name": "inclusive-capacity",
+      "replace": "/* PUBLIC_MUTATION */",
+      "with": "records_capacity + 1;",
+      "expected": "output capacity is treated as an inclusive maximum"
+    },
+    {
+      "name": "writer-bypass",
+      "replace": "ad_bbs_write(stream, records, count, error)",
+      "with": "fake_writer(stream, records, count, error)",
+      "expected": "stage must call ad_bbs_write exactly once"
+    },
+    {
+      "name": "unchecked-builder-result",
+      "replace": "if (ad_build_authored_proof_bundle() != 0) return -1;",
+      "with": "ad_build_authored_proof_bundle();",
+      "expected": "required stage result is not checked: ad_build_authored_proof_bundle"
+    },
+    {
+      "name": "unchecked-identity-result",
+      "replace": "if (ad_identify_authored_proof_bundle() != 0) return -1;",
+      "with": "ad_identify_authored_proof_bundle();",
+      "expected": "required stage result is not checked: ad_identify_authored_proof_bundle"
+    },
+    {
+      "name": "unchecked-reconciliation-result",
+      "replace": "if (ad_sidecar_reconcile_bundle() != 0) return -1;",
+      "with": "ad_sidecar_reconcile_bundle();",
+      "expected": "required stage result is not checked: ad_sidecar_reconcile_bundle"
+    },
+    {
+      "name": "dead-bbs-digest-check",
+      "replace": "ad_sidecar_sha256(bbs, bbs_length, bbs_digest);\n    if (memcmp(bbs_digest, AD_SIDECAR_BBS_SHA256, sizeof bbs_digest) != 0) return -1;",
+      "with": "if (0) { ad_sidecar_sha256(bbs, bbs_length, bbs_digest);\n        if (memcmp(bbs_digest, AD_SIDECAR_BBS_SHA256, sizeof bbs_digest) != 0) return -1; }",
+      "expected": "required authority logic is placed in explicit dead code"
+    },
+    {
+      "name": "writer-duplicate",
+      "replace": "ad_bbs_write(stream, records, count, error)",
+      "with": "ad_bbs_write(stream, records, count, error) + ad_bbs_write(stream, records, count, error)",
+      "expected": "stage must call ad_bbs_write exactly once"
+    },
+    {
+      "name": "writer-reordered-after-row-build",
+      "replace": "ad_bbs_write(stream, records, count, error)",
+      "with": "ad_sidecar_build_rows(); ad_bbs_write(stream, records, count, error)",
+      "expected": "stage must call ad_sidecar_build_rows exactly once"
+    },
+    {
+      "name": "oracle-mismatch",
+      "replace": "c984e22178901539157be062764dcaff1efac345836dffb5be17a5b7537447a1",
+      "with": "d984e22178901539157be062764dcaff1efac345836dffb5be17a5b7537447a1",
+      "expected": "frozen BBS digest is absent"
+    },
+    {
+      "name": "field-omission",
+      "delete_key": "family",
+      "expected": "schema key literal count differs: family"
+    },
+    {
+      "name": "field-reinterpretation",
+      "replace": "\"active_team\"",
+      "with": "\"decision_team\"",
+      "expected": "schema key literal count differs: active_team"
+    },
+    {
+      "name": "missing-alias-gate",
+      "replace": "if (ad_sidecar_alias_contract(",
+      "with": "if (fake_alias_contract(",
+      "expected": "public entry must apply the complete alias contract once"
+    },
+    {
+      "name": "equality-only-alias-gate",
+      "replace": "ad_sidecar_ranges_overlap(&starts[left], &ends[right])",
+      "with": "starts[left] == starts[right]",
+      "expected": "alias contract does not compare every range pair"
+    },
+    {
+      "name": "ignored-family-result",
+      "replace": "int f1 = ad_f1_pass_opportunity_valid();",
+      "with": "ad_f1_pass_opportunity_valid(); int f1 = 0;",
+      "expected": "typed row builder ignores result from ad_f1_pass_opportunity_valid"
+    },
+    {
+      "name": "bypassed-action-framing",
+      "replace": "int ha = ad_sidecar_hash_actions(\n        recipe->actions, recipe->decision_teams, recipe->action_count,\n        actions_digest);",
+      "with": "int ha = 0;",
+      "expected": "typed row builder bypasses candidate framing helper: ad_sidecar_hash_actions"
+    },
+    {
+      "name": "fallible-after-first-copy",
+      "replace": "memcpy(recipes_jsonl",
+      "with": "if (late_failure()) return -1; memcpy(recipes_jsonl",
+      "expected": "fallible control flow remains after the first commit copy"
+    },
+    {
+      "name": "output-trailing-nul",
+      "replace": "*records_length = staged_records_length;",
+      "with": "records_jsonl[staged_records_length] = '\\0'; *records_length = staged_records_length;",
+      "expected": "serializer writes a trailing output terminator"
+    },
+    {
+      "name": "forbidden-reward-label",
+      "replace": "/* MUTATION */",
+      "with": "const char* bad = \"reward\";",
+      "expected": "forbidden supervision label appears: reward"
+    },
+    {
+      "name": "conditional-preprocessor-decoy",
+      "replace": "/* MUTATION */",
+      "with": "#if 0\n#endif",
+      "expected": "conditional preprocessing is forbidden"
+    },
+    {
+      "name": "preprocessor-call-substitution",
+      "replace": "/* MUTATION */",
+      "with": "#define memcpy fake_memcpy",
+      "expected": "production source preprocessor directive is not frozen: define"
+    },
+    {
+      "name": "fixed-only-record-alias-extent",
+      "replace": "record_count > AD_AUTHORED_PROOF_BUNDLE_COUNT\n            ? record_count : AD_AUTHORED_PROOF_BUNDLE_COUNT",
+      "with": "AD_AUTHORED_PROOF_BUNDLE_COUNT",
+      "expected": "record alias extent is not the greater supplied/fixed count"
+    },
+    {
+      "name": "fixed-only-recipe-alias-extent",
+      "replace": "recipe_count > AD_AUTHORED_PROOF_BUNDLE_COUNT\n            ? recipe_count : AD_AUTHORED_PROOF_BUNDLE_COUNT",
+      "with": "AD_AUTHORED_PROOF_BUNDLE_COUNT",
+      "expected": "recipe alias extent is not the greater supplied/fixed count"
+    },
+    {
+      "name": "returned-length-only-output-extent",
+      "replace": "ad_sidecar_checked_extent(records_jsonl, records_capacity, &starts[2]);",
+      "with": "ad_sidecar_checked_extent(records_jsonl, AD_AUTHORED_RECORDS_JSONL_LENGTH, &starts[2]);",
+      "expected": "record output alias extent ignores capacity"
+    },
+    {
+      "name": "diagnostic-before-alias-proof",
+      "replace": "/* PUBLIC_MUTATION */",
+      "with": "error[0] = 'X';",
+      "expected": "diagnostic is written before alias safety is established"
+    },
+    {
+      "name": "constant-f5-helper",
+      "replace": "if (!ad_sidecar_find_legal(\n            &probe, BB_A_ACTIVATE, probe.ball.carrier, &action)) return 0;",
+      "with": "return 1;",
+      "expected": "F5 helper does not perform the complete private engine probe"
+    },
+    {
+      "name": "early-f5-success",
+      "replace": "if (!ad_sidecar_find_legal(\n            &probe, BB_A_ACTIVATE, probe.ball.carrier, &action)) return 0;",
+      "with": "if (match) return 1; if (!ad_sidecar_find_legal(\n            &probe, BB_A_ACTIVATE, probe.ball.carrier, &action)) return 0;",
+      "expected": "F5 helper has an unproved success return path"
+    },
+    {
+      "name": "duplicate-protected-definition",
+      "replace": "/* MUTATION */",
+      "with": "int ad_sidecar_hash_legal() { return 0; }",
+      "expected": "protected function definition count differs: ad_sidecar_hash_legal"
+    }
+  ]
+}

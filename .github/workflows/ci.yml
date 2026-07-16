@@ -53,6 +53,8 @@ jobs:
             training.test_bc_pretrain_streaming
       - name: Build + unit tests
         run: make test
+      - name: Authored sidecar bootstrap authority
+        run: make authored-sidecar-authority-verify
       - name: ASan/UBSan tests
         run: make asan
   # nightly job (long fuzz, replay differential, chi-square) added in Phase 4

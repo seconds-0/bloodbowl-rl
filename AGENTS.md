@@ -400,6 +400,76 @@ changes a reward, active queue, production default, or promotion verdict.
   oracle contract, malicious candidates, and D210 container isolation before
   implementation; its protected workflow covers exact-SHA
   `pull_request_target`, `merge_group`, and main-push history.
+  The bootstrap implementation lives in `tools/authored_sidecar.h`,
+  `tools/authored_sidecar_oracle.json`,
+  `tools/authored_sidecar_authority/`, and
+  `.github/workflows/authored-sidecar-authority.yml`; after merge those files
+  are byte-immutable and `make authored-sidecar-authority-verify` is mandatory.
+  The bootstrap commit must not contain `tools/authored_sidecar.c`. A later
+  serializer PR may add only that owned production source under the established
+  authority; it may not amend the header, oracle, expected JSONL, probes,
+  malicious fixtures, verifiers, seal recipe, or protected workflow. The
+  public fixed output lengths are 39,460 and 119,389 bytes, with no output NUL.
+  The authority's fact probe, not production code, independently rebuilds all
+  26 states, exercises the writer's 58,568 length-counted BBS bytes, validates
+  all 30 generated team IDs, and canonicalizes the two complete oracles.
+  The authority must also bind every advertised enum symbol to its exact
+  numeric meaning, not merely catalogue counts or values reached by the 26
+  states. Its future implementation probe directly exercises the candidate C
+  SHA/framing helpers on NIST and empty/single/multi vectors; reconciles every
+  A9/AE row and major recipe projection, including an out-of-range
+  byte-identical recipe clone. The writer must receive serializer-owned ordered
+  record storage whose 26 distinct recipe pointers resolve to aligned elements
+  of the active caller recipe extent; builder-owned or copied recipes and
+  caller-owned record passthrough reject. Candidate-owned helpers defined in
+  the same translation unit are tested directly, never through ineffective
+  GNU `--wrap` seams. A trusted transformed F5 helper forced false must reject
+  the fixed row through the probe's dedicated atomic-rejection mode, because
+  true is a mandatory admission fact. That mode must observe a normal nonzero
+  serializer return, preserve both outputs, both returned lengths, and both
+  caller inputs, cover the complete allocated output guard beyond each declared
+  capacity, and prove the applicable writer/stream cleanup before the probe
+  exits zero. Every transformed F5/hash binary runs optimized and under
+  ASan/UBSan, so a crash, abort, in-guard overwrite, out-of-allocation write, or
+  corrupt-then-error path rejects. The
+  three transformed hash helpers must instead keep serialization successful
+  and exactly match trusted JSONL in which only the corresponding 52/52/26
+  digest fields change; rejection-only or hard-coded-output hash canaries fail.
+  Each unmodified candidate build remains strict. Only a separately compiled
+  trusted-mutation candidate object suppresses the four unused parameter,
+  function, variable, and const-variable warnings that whole-body replacement
+  can introduce, without weakening trusted probe/engine sources. The F5 helper
+  must bind the captured carrier to the selected
+  Activate action, feed the selected Declare Move action through the private
+  match, retain End Activation, and prove `script_pos == 0` after both engine
+  transitions. Family predicates are tied to each admitted row and both
+  categorical directions. Each row additionally needs its separate captured-
+  match legal-set enumeration and a targeted contradiction at that exact call;
+  family-internal legality queries do not count as the legal hash derivation.
+  The authority forces builder, identity, family-predicate, and
+  successful-corrupt-writer contradictions and tests all seven storage roles
+  for nulls, symmetric count/capacity boundaries, checked pointer arithmetic,
+  partial overlaps, containment, and ordered public-success half-open endpoint
+  adjacency at exact and oversized capacities. Alias extents use the greater
+  supplied/fixed input counts and the full supplied output capacities,
+  including combined 27-element/count-capacity cases, capacity-only suffixes,
+  and short-capacity diagnostic aliases, before any diagnostic. Conditional-
+  preprocessor decoys and duplicate protected definitions reject. The owned
+  source uses non-shadowable system-header lookup, a closed call vocabulary,
+  exact serializer-symbol ownership, a compiler-object functional-import
+  allowlist (plus compiler ASan/UBSan runtime imports only when sanitized), and
+  an exact serializer-object defined-export allowlist in optimized and
+  sanitized builds. Every other candidate object is audited in both variants against the
+  trusted probes' actual platform/compiler imports, excluding only a frozen
+  allowlist of intentional candidate APIs. Ordinary, sanitizer-conditional,
+  and ELF GNU-unique canaries cover `memcmp`, `fputc`, wrapper, fortified, and
+  runtime exports and reject before link, so candidate code cannot interpose on
+  trusted probe behavior;
+  the trusted compiler's active macro-expanded protected bodies independently
+  recheck forbidden identifiers, real call ordering, and result use. Call
+  presence alone is never sufficient authority. The pure serializer has a
+  frozen audit/resource budget of at most 64 candidate-visible heap allocations
+  per call.
 - The corpus is sharply prefix-censored: it is not sufficient by itself for
   second halves, late drives, stalling, comeback play, or rare actions.
 - Correct BB2025 human possession is about `0.474` on genuine team-turn
