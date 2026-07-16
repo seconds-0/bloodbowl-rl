@@ -5184,3 +5184,27 @@ Next steps:
 3. Keep sidecars, bank publication, training inputs, reward changes,
    deployment, and milestone evaluation out of scope until their separately
    reviewed contracts and the live queue terminal gates authorize them.
+
+### 17:13 PDT merge addendum
+
+- Hosted CI passed exact implementation head
+  `1d70165db297e6b934a37c39cbc8c553fe659977`. Three independent clean
+  exact-head reviews then passed; each exercised the complete corrected history
+  path, all confirmed immutable hashes and alias coverage, and two independently
+  forced timeout cleanup. PR #42 was marked ready only after those gates.
+- The first CLI merge attempt made no remote change because local `main` is
+  already attached to a preservation worktree. GitHub's exact-head merge API
+  was then used with reviewed SHA `1d70165`; PR #42 merged successfully as
+  main commit `5c0874c4766a5d819460c67b73592c29a55afbe2` at 17:08 PDT.
+- The protected push-to-main `Authored identity authority` workflow passed on
+  exact merge commit `5c0874c` in 3m08s, including verification of every newly
+  reachable registry-bearing commit. Redundant post-merge ordinary CI passed
+  the complete reward/replay/analyzer, BC, optimized, and ASan/UBSan gates in
+  4m41s on the same merge SHA. The remote feature branch was deleted only after
+  both workflows were green.
+- The persistent identity authority is therefore merged and deployed as
+  CPU-only provenance infrastructure. It still publishes no sidecar or bank,
+  changes no reward/training input, and grants no milestone-evaluation or model
+  promotion authority. Next work remains a separately planned, tested, and
+  reviewed sidecar-publication tranche while live frozen-queue monitoring
+  continues.
