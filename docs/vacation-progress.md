@@ -5085,3 +5085,102 @@ Next steps:
    reward changes, deployment, and milestone evaluation out of scope until all
    findings are closed and the live queue gates separately authorize later
    work.
+
+## 2026-07-15 17:03 PDT — seed 43 at 6.85B; BBTV live; history timeout corrected
+
+Live queue and BBTV health:
+
+- The primary queue remains authoritative `active/running` on
+  `final-main-control`, arm `both`, seed 43/current index 2, with one completed
+  arm. `SCREEN_STATUS.json` was fresh at 16:59 PDT. Queue PID 431309, wrapper
+  PID 431316, and the sole completion-gate/GPU-compute PID 473422 remain
+  stable; the primary and three BBTV services have zero restarts. The overflow
+  service remains inactive/dead with absent state and zero restarts.
+- Exact read-only validation again matched all 65 primary pins at plan SHA-256
+  `4ee72e3c58f09786cdd3bbf78a772e8de2d9a93e21a8b065cf0c5976ecced270`
+  and all 74 overflow pins at plan SHA-256
+  `d90ee01c8c459f599c8601934f545ccb7783261edae3bcb6e9e3878036d37d3e`.
+  Both pin-error results are `None`, overflow state is absent, and the exact
+  completion gate reports only PID 473422.
+- The latest complete telemetry panel observed exact step 6,854,803,456 at
+  epoch 52,297 over 108 games: performance 0.527778, draw rate 0.444444,
+  possession 0.361842, illegal/sampled-repair fraction 0.173841, ball progress
+  7.794588, 13.046296 blocks thrown, 1.888889 blocks against the carrier,
+  carrier-target fraction 0.152072, Pass intentions 0.037037, and zero Hand-off
+  intentions. Reward clipping, non-finite reward, engine-error, demonstration,
+  and fallback counters remain zero. Recent rendered dashboards ranged from
+  168.2K to 194.2K SPS; at a representative 185K SPS, roughly 7h44m remained
+  to the frozen 12B-step seed target. This estimate is observational only.
+- The newest complete 16,066,560-byte checkpoint was exact step 6,841,696,256
+  at 16:59 PDT. Four GPU samples ranged from 81-83 C, 88-89% fan, 77-81%
+  utilization, 5,554/8,192 MiB, and 119.80-169.46 W. Software thermal slowdown
+  was active in two samples and hardware slowdown inactive in all four.
+  Temperature remains below the literal frozen 88 C three-poll guard, so no
+  tuning was performed. Disk is 7% used with 893 GiB free, inode use is 1%,
+  memory has 9.1 GiB available, and swap use is 45 MiB.
+- The 16:56 PDT overflow watcher exited successfully after logging `primary
+  service is still active; waiting`; the timer remained active/waiting for its
+  17:06 poll and created no overflow state.
+- `bbstream`, `bbweb`, and `bbtv-tunnel` remain active with zero restarts. At
+  16:57 PDT BBTV selected seed-43 checkpoint 6,791,757,824 against the frozen
+  turnover3 baseline. Learner source SHA-256 is
+  `89971fed4d1686a371179627cba3cefc9e4f9740a4aa93abf423bf5a75237801`,
+  converted output SHA-256 is
+  `aad1a23ef34deaca7b5eb1cc981f3f4e0be593e423ccdd5e60b100ffffefddcc`,
+  and `selection.json` SHA-256 is
+  `2e6a4c774e712598105d722a9fe5c2f41f7954c726e16dbf50af64ee83728c85`.
+  The public page returned HTTP 200 in 0.315 seconds. A bounded public WSS
+  client received protocol-v1 hello, frozen Tomb Kings versus learner Goblin
+  match start, a half-one snapshot at turns 2/2 with a held ball, advancing
+  deltas, and ping. BBTV remains CPU-only and observational.
+- The first local WSS probe used the system Python without `websockets`; a
+  second remote attempt incorrectly combined `ssh -n` with a stdin script, and
+  the next parser checked `type` instead of protocol field `t`. These were
+  probe errors, not viewer failures. The corrected bounded raw-message probe in
+  the installed BBTV environment produced the successful transport evidence
+  above.
+
+Persistent authored identity registry:
+
+- Hosted GCC 15 CI on superseded commit `3b5d1e5` exposed undefined behavior
+  in the identity-alias regression harness: one 32-byte identity tail was used
+  as a public 192-byte error buffer. Commit `8bb4c7f` corrected both the unit
+  test and immutable probe to allocate `27 * sizeof(identity) + AD_ERROR_CAP`,
+  keep declared capacity 27, place the alias at element 27, and compare every
+  backing byte. Production mapper code did not change. The complete local,
+  native-Linux, pinned-container, and hosted-CI stack passed that correction,
+  and one exact-head review was clean.
+- A different exact-head reviewer then reproduced a protected-authority P1:
+  `verify_history.py` allowed the entire containerized candidate verifier only
+  60 seconds even though its individual compile/probe phases each have that
+  bound. The exact command was killed at 60 seconds, so `8bb4c7f` remained
+  draft and no approval from it is reusable.
+- D213 records the correction now frozen as atomic commit
+  `1d70165db297e6b934a37c39cbc8c553fe659977`: one complete candidate gets a
+  300-second outer allowance inside the existing 900-second aggregate and
+  20-minute workflow bounds, with runtime invariants rejecting an undersized
+  complete-verifier or aggregate limit. Full optimized and ASan/UBSan suites
+  again passed 442 engine, 37 reward, 2 contact, and 12 loader tests. The local
+  immutable verifier and native-Linux verifier, including GNU interposition,
+  passed; PID 473422 remained the sole GPU owner.
+- Most importantly, the exact digest-pinned, networkless, read-only, non-root
+  history command crossed the former cutoff and completed `1/1` successfully.
+  The branch was lease-updated only from known head `8bb4c7f`. PR #42 remains
+  draft: hosted CI and all three exact-head reviews have restarted on
+  `1d70165` and were still pending at this journal boundary. No merge,
+  deployment, sidecar publication, bank consumption, reward change, or live
+  queue mutation occurred.
+- Claude Code authentication remains unavailable, so Fable was not invoked and
+  no Fable approval is claimed.
+
+Next steps:
+
+1. Continue the hourly read-only operational loop, preserving every frozen
+   queue, thermal, overflow, checkpoint-selection, and BBTV boundary.
+2. Require green hosted CI plus three independent no-P0-P3 reviews of exact
+   head `1d70165`; any finding or byte change restarts the gates again. Only
+   then mark PR #42 ready, merge it, and require the protected push-to-main
+   authority workflow to pass.
+3. Keep sidecars, bank publication, training inputs, reward changes,
+   deployment, and milestone evaluation out of scope until their separately
+   reviewed contracts and the live queue terminal gates authorize them.
