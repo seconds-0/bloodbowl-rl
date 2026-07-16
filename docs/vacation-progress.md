@@ -5336,3 +5336,115 @@ Next steps:
   service, BBTV behavior, or frozen-queue change. The next source tranche is
   the separately reviewed serializer-free sidecar-authority bootstrap required
   by the design; live monitoring remains the active operational step.
+
+## 2026-07-15 18:29 PDT — seed 43 at 7.81B; BBTV at 7.79B; sidecar authority sealed locally
+
+Live queue and BBTV health:
+
+- The primary queue remains authoritative `active/running` on
+  `final-main-control`, arm `both`, seed 43/current index 2, with one completed
+  arm. `SCREEN_STATUS.json` was fresh at 18:26 PDT. Queue PID 431309, wrapper
+  PID 431316, and the sole completion-gate/GPU-compute PID 473422 remain
+  stable; the primary and all three BBTV services have zero restarts. The
+  overflow service remains inactive/dead with absent state and zero restarts.
+- Exact read-only validation at 18:26 PDT matched all 65 primary pins at plan
+  SHA-256
+  `4ee72e3c58f09786cdd3bbf78a772e8de2d9a93e21a8b065cf0c5976ecced270`
+  and all 74 overflow pins at plan SHA-256
+  `d90ee01c8c459f599c8601934f545ccb7783261edae3bcb6e9e3878036d37d3e`.
+  Both pin-error results were `None`, overflow state was absent, and the exact
+  completion gate reported only PID 473422.
+- The latest complete telemetry panel observed exact step 7,810,973,696 at
+  epoch 59,592 over 97 games: performance 0.577320, draw rate 0.412371,
+  possession 0.369793, illegal/sampled-repair fraction 0.175599, ball progress
+  8.434479, 13.298969 blocks thrown, 2.051546 blocks against the carrier,
+  carrier-target fraction 0.171523, and zero Pass and Hand-off intentions.
+  Reward clipping, non-finite reward, engine-error, demonstration, and fallback
+  counters remain zero. The last eight rendered dashboard samples ranged from
+  176.2K to 194.4K SPS and averaged about 186.4K; that implies roughly 6h14m
+  to the frozen 12B seed target. This estimate and panel are observational,
+  not promotion evidence.
+- The newest complete 16,066,560-byte checkpoint was exact step 7,790,526,464
+  at 18:24 PDT with SHA-256
+  `ec5d479cb6efbf8fc3ad6be2321797754250bdb5bfa8caf6f5fea0650366cb67`.
+  Four trend samples ranged from 81-84 C, 89% fan, 73-75% utilization,
+  5,554/8,192 MiB, and 107.72-156.76 W. Software thermal slowdown was active
+  in those four samples and hardware slowdown inactive; an immediately prior
+  sample reported 83 C without software slowdown. Temperature remains below
+  the literal frozen 88 C three-poll guard, so no tuning was performed. Disk
+  is 7% used with 892 GiB free, inode use is 1%, memory has 8.9 GiB available,
+  and swap use is 54 MiB.
+- The 18:24 PDT overflow watcher exited successfully after logging `primary
+  service is still active; waiting`; the timer remained active/waiting for its
+  18:34 poll and created no overflow state.
+- `bbstream`, `bbweb`, and `bbtv-tunnel` remain active with zero restarts. The
+  follower advanced during this bounded snapshot: `selection.json` moved from
+  7,690,649,600 at 18:17 to the newest complete 7,790,526,464-step checkpoint
+  at 18:27. The final learner source SHA-256 is
+  `ec5d479cb6efbf8fc3ad6be2321797754250bdb5bfa8caf6f5fea0650366cb67`,
+  converted output SHA-256 is
+  `cb9e3dd2b4ac28fc266308c4a24a09f5aad8cff5f9ee1470ba2cadf3c7270f94`,
+  and final `selection.json` SHA-256 is
+  `c1362f521741856da7341fd70899952f40fc7fb7ebd47849a5d4d3c849eb6315`.
+  The public page returned HTTP 200 in 0.295 seconds. A bounded public WSS
+  client received protocol-v1 hello, learner Dwarf versus frozen Wood Elf
+  match start naming that exact 7,790,526,464-step learner, a half-one
+  snapshot, and advancing deltas. BBTV remains CPU-only and observational.
+
+Serializer-free sidecar authority bootstrap:
+
+- A clean branch/worktree was created from exact main merge
+  `a4e7e06d6e2cfa8f7f2896d9dc8187ecbcbc8665`. The uncommitted bootstrap now
+  freezes one public length-delimited paired-output ABI while intentionally
+  leaving `tools/authored_sidecar.c` absent. Counts are exact 26-element counts;
+  capacities are byte counts, outputs receive no terminator, failure preserves
+  both buffers and returned lengths, and all complete extents are pairwise
+  disjoint.
+- The candidate authority seals 14 byte-immutable files: the public header,
+  trusted ABI/fact/serializer probes, independent oracle builder, source-shape
+  checker, candidate/history verifiers, malicious-fixture corpus, two complete
+  expected JSONL streams, sealing recipe, and exact-SHA three-trigger workflow.
+  The binary fact corpus is 234,024 bytes at SHA-256
+  `d2698b678d7844b37580be1bf2a20f0e94ad8a2623235d0067dac459d741bb3e`.
+- The independently canonicalized `records.jsonl` is exactly 39,460 bytes at
+  SHA-256
+  `ca4411f264a41e0f08d1cab1340c52ce97721b427c187bffb7571d5491ece764`;
+  `recipes.jsonl` is exactly 119,389 bytes at SHA-256
+  `a5242691425c3e8d995cae9722f74700acff69ed1281095f26271b70ea1f9f4d`.
+  Each has 26 canonical ASCII/LF rows in the frozen field order. The trusted
+  fact probe separately exercised the unchanged public writer through
+  `open_memstream`, confirmed all 58,568 returned BBS bytes at the frozen
+  `c984e221...` digest, counted 49,593 embedded NULs beginning at offset 5,
+  and excluded only the convenience NUL at `buffer[length]`.
+- The bootstrap includes independent NIST and framed action/dice/legal SHA-256
+  vectors plus 15 named malicious source mutations covering `strlen`, NUL
+  filtering/stopping, `length + 1`, inclusive capacities, writer bypass/
+  duplication/reordering, oracle mismatch, field omission/reinterpretation,
+  missing alias checks, fallible work after the first copy, output terminators,
+  and forbidden reward supervision. A separately compiled wrong-count header
+  is the ABI-negative fixture.
+- `make authored-sidecar-authority-verify` passed locally. It proved the exact
+  public header ABI, rejected every malicious fixture for its declared reason,
+  regenerated both complete oracles from candidate engine facts, and obtained
+  byte-identical optimized and ASan/UBSan fact corpora. The ordinary CI change
+  adds this verifier, while the protected workflow uses the same digest-pinned,
+  tokenless, networkless, read-only-source, non-root D210 container and exact
+  `pull_request_target`/`merge_group`/main-push SHA handling. No bootstrap bytes
+  are committed yet; resealing remains mandatory after any finding.
+- Claude Code authentication remains unavailable, so Fable was not invoked and
+  no Fable approval is claimed.
+
+Next steps:
+
+1. Continue the hourly read-only queue/BBTV loop without changing either frozen
+   queue, source pin, service, checkpoint, or thermal policy.
+2. Audit the sealed bootstrap source and run the existing identity authority,
+   authored tests, full optimized/sanitizer suites, native Linux verifier,
+   exact digest-pinned container bootstrap/history command, and workflow-YAML
+   checks. Any defect changes bytes, regenerates both oracles if applicable,
+   and reseals all 14 hashes before commit.
+3. Only after exact-head hosted CI and three independent reviews are clean,
+   merge the serializer-free authority and require its first protected
+   push-to-main history proof. Do not add the production serializer, publish a
+   sidecar/bank, change training/rewards, deploy to the occupied 2070, or run
+   milestone evaluation in this tranche.
