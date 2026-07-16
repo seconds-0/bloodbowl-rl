@@ -5770,3 +5770,89 @@ Next steps:
    after the replacement push. Merge only if every gate remains clean on that
    unchanged SHA; keep the production serializer and milestone evaluation out
    of this bootstrap tranche.
+
+## 2026-07-15 21:32 PDT — seed 43 at 9.87B; BBTV at 9.79B; corrected PR #44 head published and green
+
+Live queue and BBTV health:
+
+- The primary queue remains authoritative `active/running` on
+  `final-main-control`, arm `both`, seed 43/current index 2, with one completed
+  arm. `SCREEN_STATUS.json` was fresh at 21:31 PDT and still reported `waiting
+  for current trainer`. Queue PID 431309, screen wrapper PID 431316, and the
+  sole exact completion-gate/GPU PID 473422 remain present. The primary queue
+  and `bbstream`, `bbweb`, and `bbtv-tunnel` all report zero restarts. Overflow
+  remains inactive/dead with absent state and zero restarts.
+- Read-only validation again matched all 65 primary pins at plan SHA-256
+  `4ee72e3c58f09786cdd3bbf78a772e8de2d9a93e21a8b065cf0c5976ecced270`
+  and all 74 overflow pins at plan SHA-256
+  `d90ee01c8c459f599c8601934f545ccb7783261edae3bcb6e9e3878036d37d3e`.
+  Both pin errors were `None`; the exact GPU parser returned only PID 473422,
+  so BBTV remains outside the completion gate.
+- The newest complete telemetry record observed exact step 9,868,935,168 at
+  epoch 75,293 over 99 games: performance 0.611111, draw rate 0.292929,
+  possession 0.403495, illegal/sampled-repair fraction 0.184556, ball progress
+  8.382411, 13.151515 blocks thrown, 2.303030 blocks against the carrier,
+  carrier-target fraction 0.196062, 0.020202 Pass intentions, and zero Hand-off
+  intentions. Reward clipping, non-finite reward, engine-error, demonstration,
+  and fallback counters remain zero. The following dashboard reported 183.4K
+  SPS and an observational 3h13m remaining to the frozen 12B seed target;
+  neither is promotion evidence.
+- The newest complete 16,066,560-byte checkpoint observed was exact step
+  9,838,002,176 at 21:28 PDT. The bounded resource sample was 81 C, 89% fan,
+  79% utilization, 5,554/8,192 MiB, and 122.37 W. Software thermal slowdown was
+  active and hardware slowdown inactive in this sample. Temperature remains
+  below the literal frozen 88 C three-poll guard, so no tuning was performed.
+  Disk remains 7% used with 891 GiB free, inode use is 1%, memory has 8.7 GiB
+  available, and swap uses 172 MiB with 3.8 GiB available.
+- The 21:30 PDT overflow watcher exited successfully after logging `primary
+  service is still active; waiting`; its timer remained active and created no
+  overflow state.
+- All three BBTV services remain active. At 21:28 PDT the follower selected
+  the complete seed-43 checkpoint at exact step 9,788,063,744 against the
+  frozen turnover3 baseline. The learner source SHA-256 is
+  `83fde6f4d93f8b28e45286f9493c11715049a80c3546a251c89b3cc41187d3c9`,
+  converted output SHA-256 is
+  `84528ad7dfd5dfd3d75a21a910592abefb8f264964ea13fc78eebf24c6336af7`,
+  and `selection.json` SHA-256 is
+  `497bf4d417464311db4cde805c94a75da10eb375a0e5b2adfa23d86ab1015868`.
+  The public page returned HTTP 200 in 0.250 seconds, and a bounded public WSS
+  probe received match `m_1784176107_1` with advancing sequence numbers
+  387–390. BBTV remains CPU-only and observational. No process or service was
+  restarted.
+
+Serializer-free sidecar authority review:
+
+- The corrected authority is resealed in the single exact commit
+  `e8c116f3cdd23e843bfab97329d236e0b24fb658` and force-pushed with an exact
+  lease to draft PR #44. Its body now records all reproduced review corrections
+  and the exact replacement identity. The protected hosted ordinary CI and
+  immutable identity-history checks are both green on this SHA.
+- The frozen 234,423-byte fact corpus and exact 39,460/119,389-byte JSONL
+  outputs remain unchanged. Native sealed authority, authored-identity,
+  native one-commit bootstrap history, and digest-pinned Clang-container
+  one-commit bootstrap history checks all pass. The source self-test now
+  rejects 48 malicious cases, including the final balanced-call regression for
+  a cast-hidden unconsumed digest.
+- Three fresh independent read-only reviews were requested against exact head
+  `e8c116f` and exact base
+  `a4e7e06d6e2cfa8f7f2896d9dc8187ecbcbc8665`; two are running and one dispatch
+  was rejected by the review service before analysis began, so a replacement
+  third review is required. The PR remains draft and was not merged or
+  deployed; it cannot leave draft until three exact-head verdicts are clean.
+  No serializer, sidecar/bank, reward, training input, queue, or BBTV change
+  was deployed. Claude remains unauthenticated, so Fable was not invoked and no
+  Fable review is claimed.
+
+Next steps:
+
+1. Continue the hourly read-only queue, integrity, resource, watcher,
+   checkpoint, and public-BBTV loop while both frozen queues remain
+   authoritative.
+2. Collect and consolidate the exact-head review verdicts and dispatch a
+   replacement for the rejected review task. Any reproduced P0/P1 or quick P2
+   finding requires another correction, complete reseal, replacement SHA, and
+   full local/hosted/review restart.
+3. If three reviews remain clean on unchanged `e8c116f`, take PR #44 out of
+   draft and merge only through its protected green guardrails, then verify the
+   protected main-push authority proof. Keep the production serializer and
+   milestone evaluation in later terminal tranches.
