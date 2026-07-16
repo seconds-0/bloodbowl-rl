@@ -197,6 +197,29 @@ newer evidence wins.
   complete-batch admission/continuation before its first write callback. This
   registry still authorizes no
   sidecar, bank publication, training input, reward, evaluation, or deployment.
+  The next reviewed design is `docs/plans/authored-sidecar-schema.md`: paired
+  26-line `records.jsonl`/`recipes.jsonl` schemas reconcile frozen A9 record
+  order with AE identity and bind canonical transcript, dice, legal-action,
+  and raw-state hashes. They carry no action, receiver, or target selected or
+  recommended at or after capture and no separate receiver/target, reward,
+  outcome, regret, value, split, or curriculum label. Pre-capture packed actions
+  stop before capture, may retain historical arguments/receivers/targets, serve
+  replay provenance only, and are forbidden as BC/policy/receiver-target
+  labels. This is a schema plan,
+  not a serializer or publisher; filesystem transactions, manifests, bank
+  consumers, training, evaluation, and deployment remain later gates. Keep the
+  D209 identity authority byte-immutable: bootstrap a separate sidecar
+  authority first, then implement serialization only after its workflow exists
+  on the trusted base. Both F5 facts are false outside F5 and independently
+  required true on the fixed F5 row. The serializer must exercise the unchanged
+  public BBS writer exactly once through serializer-owned memory-backed
+  `FILE *` storage, compare and discard its frozen bytes, and must not refactor
+  D209's immutable writer into a new preflight API. Both complete streams stage
+  privately before the two final non-failing caller-output copies. The
+  serializer-free bootstrap must freeze the future ABI, exact memory-stream
+  length/NUL and BBS oracle semantics, malicious candidates, and full D210
+  isolation before implementation; its protected workflow covers exact-SHA
+  `pull_request_target`, `merge_group`, and main push.
 - **BC loader (D180):** use the bounded streaming loader and replay-disjoint
   split. Replay-first is the current default, not the final sampler; next
   stratify by roster/matchup, depth, and action family.
