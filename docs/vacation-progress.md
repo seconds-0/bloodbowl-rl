@@ -5208,3 +5208,104 @@ Next steps:
   promotion authority. Next work remains a separately planned, tested, and
   reviewed sidecar-publication tranche while live frozen-queue monitoring
   continues.
+
+## 2026-07-15 17:53 PDT — seed 43 at 7.43B; BBTV advancing; sidecar design still review-blocked
+
+Live queue and BBTV health:
+
+- The primary queue remains authoritative `active/running` on
+  `final-main-control`, arm `both`, seed 43/current index 2, with one completed
+  arm. `SCREEN_STATUS.json` was fresh at 17:51 PDT. Queue PID 431309, wrapper
+  PID 431316, and the sole completion-gate/GPU-compute PID 473422 remain
+  stable. The primary and all three BBTV services have zero restarts. The
+  overflow service remains inactive/dead with absent state and zero restarts.
+- Exact read-only validation at 17:37 PDT matched all 65 primary pins at plan
+  SHA-256
+  `4ee72e3c58f09786cdd3bbf78a772e8de2d9a93e21a8b065cf0c5976ecced270`
+  and all 74 overflow pins at plan SHA-256
+  `d90ee01c8c459f599c8601934f545ccb7783261edae3bcb6e9e3878036d37d3e`.
+  Both pin-error results were `None`, overflow state was absent, and the exact
+  completion gate reported only PID 473422.
+- The latest complete telemetry panel observed exact step 7,429,685,248 at
+  epoch 56,683 over 106 games: performance 0.622642, draw rate 0.301887,
+  possession 0.361683, illegal/sampled-repair fraction 0.174181, ball progress
+  8.752751, 13.188680 blocks thrown, 2.207547 blocks against the carrier,
+  carrier-target fraction 0.174891, Pass intentions 0.009434, and zero Hand-off
+  intentions. Reward clipping, non-finite reward, engine-error, demonstration,
+  and fallback counters remain zero. The last eight rendered dashboard samples
+  ranged from 183.6K to 191.7K SPS; at their roughly 188.25K mean, about 6h45m
+  remained to the frozen 12B seed target. This is observational, not promotion
+  evidence.
+- The newest complete 16,066,560-byte checkpoint was exact step 7,391,019,008
+  at 17:48 PDT with SHA-256
+  `4b90c9167d44290cec2c71c7fc21a108c08c1040bd11ed29fd77bf0448b53fc1`.
+  Four GPU samples ranged from 81-83 C, 88-89% fan, 77-80% utilization,
+  5,554/8,192 MiB, and 121.86-166.35 W. Software thermal slowdown was active
+  in all samples and hardware slowdown inactive in all four. Temperature
+  remains below the literal frozen 88 C three-poll guard, so no tuning was
+  performed. Disk is 7% used with 892 GiB free, inode use is 1%, memory has
+  8.9 GiB available, and swap use is 54 MiB.
+- The 17:51 PDT overflow watcher exited successfully after logging `primary
+  service is still active; waiting`; the timer remained active/waiting for its
+  18:01 poll and created no overflow state.
+- `bbstream`, `bbweb`, and `bbtv-tunnel` remain active with zero restarts. At
+  17:43 PDT BBTV selected seed-43 checkpoint 7,291,142,144 against the frozen
+  turnover3 baseline. Learner source SHA-256 is
+  `28c849fe0f786e10ec8c865b1324dec17b6fa072edec8413e36e09ba2e97cb25`,
+  converted output SHA-256 is
+  `1d34ccc8a13f9cd2fdb24289dd22f70ce61dcb747295aa92f526cefbb30740a9`,
+  and `selection.json` SHA-256 is
+  `dff95dffda79c0c927aa45bb5b49680028179e6fe51c6c3db29a6c2414cce0f8`.
+  The public page returned HTTP 200 in 0.248 seconds. A fresh bounded public WSS
+  client received protocol-v1 hello, frozen High Elf versus learner Orc match
+  start identifying the exact 7,291,142,144-step learner, and a half-one
+  snapshot. BBTV remains CPU-only and observational.
+- The first selection probe incorrectly assumed `selection.json` lived under
+  the production checkout rather than the audit root, and a local `websocat`
+  invocation returned `EINVAL`. Those were probe errors, not viewer failures.
+  The corrected audit-root read and bounded public WSS client in BBTV's installed
+  Python environment produced the evidence above. No service was restarted.
+
+Persistent authored sidecar design:
+
+- PR #43 is a schema-design-only successor to the merged identity registry. It
+  still adds no serializer, SHA implementation, file transaction, bank,
+  consumer, training input, reward change, evaluation, deployment, BBTV
+  change, or frozen-queue mutation. `make test TEST=authored` passed 23 authored
+  engine/identity tests and 2 authored loader tests with zero failures.
+- Exact heads `ab0abb3` and `f4cd052` were correctly rejected by independent
+  review. The resulting design now pins every scalar/enum domain, exact F4
+  action mappings, seven-byte hash domains, inactive-side turn zero,
+  action-count maximum 8191 versus dice-count maximum 8192, historical packed
+  receiver/target provenance versus forbidden capture/future labels, two-output
+  call atomicity, and exact-once reuse of the immutable writer through a
+  memory-backed `FILE *`.
+- Current exact head `b36ffb93fd2333d5619adf04026f62aebcf128b5`
+  additionally requires a serializer-free authority bootstrap that freezes the
+  complete future ABI, memory-stream length/terminator and BBS oracle contract,
+  malicious candidates, full D210 tokenless/networkless/read-only isolation,
+  and exact-SHA `pull_request_target`, `merge_group`, and main-push history.
+  The protected identity history check passed this head and ordinary CI was
+  still running at this journal boundary.
+- Fresh exact-head review found one remaining wording defect, so `b36ffb9` is
+  not mergeable and no approval/check will be reused: D214 called the binary
+  BBS bytes `non-NUL`, even though the artifact contains embedded NULs. The
+  precise contract must compare all 58,568 length-counted bytes, including
+  embedded NULs, and exclude only `open_memstream`'s convenience terminator at
+  `buffer[length]`. Reviewers are continuing their full scan before the next
+  amendment and complete gate restart.
+- Claude Code authentication remains unavailable, so Fable was not invoked and
+  no Fable approval is claimed.
+
+Next steps:
+
+1. Continue the hourly read-only operational loop, preserving every frozen
+   queue, thermal, overflow, checkpoint-selection, and BBTV boundary.
+2. Batch every exact-head finding, correct the binary-length wording, amend PR
+   #43 with an explicit lease, and restart hosted CI, protected history, and all
+   three independent exact-head reviews. Do not merge until all are green and
+   clean on one unchanged SHA.
+3. Keep serializer implementation, sidecar/bank publication, training inputs,
+   reward changes, deployment, and milestone evaluation out of scope until
+   their separately reviewed authority and live-queue terminal gates authorize
+   them.
