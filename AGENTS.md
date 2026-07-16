@@ -371,6 +371,35 @@ changes a reward, active queue, production default, or promotion verdict.
   batch loops. Sidecars, persistent
   bank publication, training, rewards, evaluation, BBTV changes, and deployment
   remain separately unauthorized.
+  The first reviewed metadata design is
+  `docs/plans/authored-sidecar-schema.md`. It specifies paired, 26-line
+  `records.jsonl` and `recipes.jsonl` streams that reconcile legacy A9 BBS
+  order with immutable AE identity, frame transcript/legal-action hashes, and
+  repeat join fields fail-closed. It deliberately defines no split because the
+  five current template groups are the five primary families; pretending a
+  template-disjoint 70/15/15 assignment is balanced would be false. The schema
+  contains no action, receiver, or target selected or recommended at or after
+  capture and no separate receiver/target, reward, regret, outcome, value,
+  curriculum-weight, or promotion label. Its pre-capture packed action
+  transcript is replay provenance only, stops strictly before capture, may
+  retain historical action arguments/receivers/targets, and is forbidden as
+  BC/policy/receiver-target supervision. Treat this as design only:
+  no serializer, compiler CLI, output directory, manifest-last transaction,
+  bank consumer, or training authorization exists until later reviewed
+  tranches implement them. Never modify D209's immutable identity authority to
+  add sidecars. Bootstrap an additive sidecar authority with no serializer in
+  one reviewed PR, then implement serialization only after that workflow is on
+  the trusted base. Non-F5 rows canonically emit both F5 facts as false; the
+  fixed F5 row must independently prove both true. The implementation must
+  invoke the unchanged public BBS writer exactly once through serializer-owned
+  memory-backed `FILE *` storage, compare and discard the frozen BBS bytes, and
+  may not refactor D209's immutable writer into a new preflight API. Both
+  complete sidecars are built in serializer-owned staging before the two final
+  non-failing caller-output copies. The serializer-free authority bootstrap
+  must freeze the complete future ABI, exact memory-stream length/NUL and BBS
+  oracle contract, malicious candidates, and D210 container isolation before
+  implementation; its protected workflow covers exact-SHA
+  `pull_request_target`, `merge_group`, and main-push history.
 - The corpus is sharply prefix-censored: it is not sufficient by itself for
   second halves, late drives, stalling, comeback play, or rare actions.
 - Correct BB2025 human possession is about `0.474` on genuine team-turn

@@ -185,8 +185,38 @@ re-derive by hand; (b) RNG misuse (reuse/bias) — check `bb_rng` consumption co
     staging, complete composition validation before commit, and record pointers
     rebound to their caller recipes. Preserve the proof-local positional
     `0xA9000000 + index` metadata only for byte compatibility. It is not a
-    durable recipe/template/version/variant identity or sidecar join key; a
-    later collision-audited identity schema remains mandatory.
+    durable recipe/template/version/variant identity or sidecar join key.
+15. **Authored identity and sidecar boundary** — schema 1's closed immutable
+    registry allocates only `0xAE000001..0xAE00001A` for the fixed 26 proofs;
+    resolve those identities through the public mapper and never decode AE bits
+    or use positional A9 values as durable identity. The first metadata design
+    is `docs/plans/authored-sidecar-schema.md`: paired canonical 26-line record
+    and recipe streams must reconcile A9 order, AE identity, record pointers,
+    decision indices, complete rediscovery/replay, safe boundary validation,
+    and one-action continuation before byte zero. The future serializer must
+    call the unchanged public BBS writer exactly once through
+    serializer-owned memory-backed `FILE *` storage, compare and discard its
+    frozen bytes, and must not refactor D209's immutable writer into a new
+    preflight API. Hash actions together with
+    decision teams, hash dice sides together with faces, and domain-separate
+    sorted legal actions. No action, receiver, or target selected or recommended
+    at or after capture, nor any separate receiver/target, reward, regret,
+    outcome, value, split, curriculum-weight, or policy label may enter either
+    schema. Pre-capture packed actions stop before capture, may retain historical
+    action arguments/receivers/targets, remain replay provenance only, and are
+    forbidden as BC/policy/receiver-target supervision.
+    The design itself authorizes no serializer, file I/O, manifest, bank,
+    consumer, training, evaluation, BBTV, or deployment. Do not extend D209's
+    immutable authority files: add a sidecar-only authority in a serializer-free
+    bootstrap PR, then implement only after its workflow is trusted on the
+    base. Non-F5 rows use false/false for the two F5 facts; the fixed F5 row
+    must independently prove true/true. Both complete streams stage in
+    serializer-owned checked storage before the two final non-failing
+    caller-output copies. Before implementation, the serializer-free authority
+    bootstrap freezes the complete future ABI, memory-stream length/NUL and BBS
+    oracle contract, malicious candidates, and D210 isolation; its protected
+    workflow handles exact-SHA `pull_request_target`, `merge_group`, and main
+    push.
 
 **Failure looks like:** shrunken minimal action trace + seed reproducing the violation.
 **Triage:** replay the shrunken trace under a debugger; the violated invariant names
