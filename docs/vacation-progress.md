@@ -5587,3 +5587,94 @@ Next steps:
 3. Merge PR #44 only after three independent reviews and all hosted checks are
    clean on one unchanged replacement SHA. Keep the production serializer and
    milestone evaluation out of scope until their separate terminal gates.
+
+## 2026-07-15 20:24 PDT — seed 43 at 9.08B; BBTV at 9.04B; PR #44 replacement authority still local
+
+Live queue and BBTV health:
+
+- The primary queue remains authoritative `active/running` on
+  `final-main-control`, arm `both`, seed 43/current index 2, with one completed
+  arm. `SCREEN_STATUS.json` was fresh at 20:20 PDT and still reported `waiting
+  for current trainer`. Queue PID 431309, screen wrapper PID 431316, and the
+  sole exact completion-gate/GPU PID 473422 remain present. The primary queue
+  and all three BBTV services report zero restarts. Overflow remains
+  inactive/dead with absent state and zero restarts.
+- Read-only validation again matched all 65 primary pins at plan SHA-256
+  `4ee72e3c58f09786cdd3bbf78a772e8de2d9a93e21a8b065cf0c5976ecced270`
+  and all 74 overflow pins at plan SHA-256
+  `d90ee01c8c459f599c8601934f545ccb7783261edae3bcb6e9e3878036d37d3e`.
+  Both pin errors were `None`; the exact GPU parser returned only PID 473422,
+  so BBTV remains outside the completion gate.
+- The newest complete telemetry record observed exact step 9,084,600,320 at
+  epoch 69,309 over 115 games: performance 0.600000, draw rate 0.295652,
+  possession 0.395996, illegal/sampled-repair fraction 0.178537, ball progress
+  8.476651, 14.173913 blocks thrown, 2.295652 blocks against the carrier,
+  carrier-target fraction 0.165886, and zero Pass and Hand-off intentions.
+  Reward clipping, non-finite reward, engine-error, demonstration, and fallback
+  counters remain zero. The immediately following dashboard showed 187.9K SPS
+  and an observational 4h18m remaining to the frozen 12B target; neither is
+  promotion evidence.
+- The bounded resource sample was 80 C, 89% fan, 78% utilization,
+  5,554/8,192 MiB, and 112.49 W. Software thermal slowdown was active and
+  hardware slowdown inactive. Temperature remains below the literal 88 C
+  three-poll queue guard, so no tuning was performed. Disk remains 7% used
+  with 892 GiB free, inode use 1%, memory 8.8 GiB available, and swap 170 MiB
+  used with 3.8 GiB available.
+- The 20:14 PDT overflow watcher exited successfully after logging `primary
+  service is still active; waiting`; the timer remained active for its 20:24
+  poll and created no overflow state.
+- `bbstream`, `bbweb`, and `bbtv-tunnel` remain active. At 20:20 PDT the
+  follower selected the complete seed-43 checkpoint at exact step
+  9,038,987,264 against the frozen turnover3 baseline. The 16,066,560-byte
+  learner source SHA-256 is
+  `dd59e3f500e0bcdea7b8f43cf5d79f52f9dd27c1a4161013c1a5f1fc7b272772`,
+  the converted output SHA-256 is
+  `4a645c49f7a38702b5819085adb5ab47116559bd8b64eae8683dbb0b2b627056`,
+  and `selection.json` SHA-256 is
+  `4a1c00005a9204ded82ed56d54e81ce78dfb1d1ff9987ffe8827e18e94dcfe9d`.
+  The public page returned HTTP 200 in 0.344 seconds. BBTV remains CPU-only and
+  observational. The first selection probe again used the production root
+  rather than the audit root and received `FileNotFoundError`; the corrected
+  read-only path produced the evidence above. No service was restarted.
+
+Serializer-free sidecar authority review:
+
+- Draft PR #44's remote head `0409f3ac6ac909a99f1fb7df3e138b7308cff9d6`
+  is explicitly superseded and remains unmergeable. Three independent reviews
+  found that the future probe attempted ineffective GNU wrapping of two
+  candidate-owned same-translation-unit helpers; writer checks did not prove
+  caller-recipe provenance or serializer-owned ordered record staging; dynamic
+  invalid-count and output-capacity suffix aliases were untested; textual
+  source checks admitted conditional-preprocessor decoys; and categorical
+  family tests were one-directional or unbound to their admitted rows.
+- The local unsealed replacement now removes the impossible same-object wrap
+  seams, directly tests complete reconciliation and the F5 private engine
+  helper, requires writer records outside both caller arrays and every distinct
+  writer recipe pointer inside the exact caller recipe extent, covers fully
+  backed byte-identical external recipes, binds F1/F2/F4/F5/pressure calls to
+  writer-admitted rows, and forces both directions of the F1-pressure and F2
+  buckets. Its alias cross-products cover counts 0/25/27 inside the greater
+  supplied/fixed input extents, roles placed solely in 64-byte output-capacity
+  suffixes, error preservation on null preflights, and public-success endpoint
+  adjacency. Conditional preprocessing, duplicate protected definitions, and
+  diagnostics before alias proof now reject.
+- Native macOS compilation, the exact digest-pinned Linux/amd64 Clang object
+  compilation, Python syntax checks, 26 malicious-fixture self-tests, and
+  `git diff --check` pass for the current local bytes. The authority oracle is
+  intentionally stale until review corrections stop changing trusted files;
+  no reseal, amended commit, force-push, new hosted evidence, merge, serializer,
+  deployment, queue change, or 2070 experiment change has occurred. Claude
+  remains unauthenticated, so Fable was not invoked and no Fable review is
+  claimed.
+
+Next steps:
+
+1. Continue the hourly read-only queue, integrity, resource, watcher,
+   checkpoint, and public-BBTV loop while both frozen queues remain authoritative.
+2. Finish the replacement-head self-audit, reseal once, and rerun native,
+   pinned-container, identity, optimized, sanitizer, and exact bootstrap-history
+   gates before amending and publishing one new exact PR head.
+3. Restart hosted checks and three independent exact-head reviews after that
+   push. Merge only if all remain clean on the unchanged SHA; then require the
+   first protected main-push proof. Keep the production serializer and
+   milestone evaluation outside this bootstrap tranche.
