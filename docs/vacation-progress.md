@@ -5856,3 +5856,49 @@ Next steps:
    draft and merge only through its protected green guardrails, then verify the
    protected main-push authority proof. Keep the production serializer and
    milestone evaluation in later terminal tranches.
+
+## 2026-07-15 21:45 PDT — PR #44 superseded again for transformed-proof blockers; training untouched
+
+Authority correction:
+
+- Two fresh exact-`e8c116f` reviewers requested changes before merge. One
+  reproduced that trusted whole-body F5/hash rewrites would leave parameters
+  and a private helper unused under `-Wall -Wextra -Werror`, so the future
+  transformed build could fail at compilation before its intended behavioral
+  test. The other proved that merely requiring canonical public success to
+  disappear admitted a rejection-only canary: a serializer could check helper
+  values, fail when transformed, and otherwise emit hard-coded canonical
+  bytes. Both are future immutable-gate defects; neither changes the current
+  canonical corpus.
+- The single corrected bootstrap commit is now exact head
+  `d13c216c00186c7d9e8d4cd68c6f090381987497`. Each trusted helper mutation now
+  must keep the public serializer successful and match a generated transformed
+  JSONL oracle in which only its corresponding fields change: one F5 boolean,
+  52 action digests, 52 dice digests, or 26 legal digests. A hard-coded-output
+  or rejection-only canary therefore fails. The synthetic compiler path waives
+  only unused-parameter and unused-function warnings introduced by trusted
+  whole-body replacement, and bootstrap compiles an explicit waiver fixture.
+- The authority was completely resealed. Native sealed authority,
+  authored-identity, native `1/1` bootstrap history, and digest-pinned
+  Clang-container `1/1` bootstrap history checks pass. The protected hosted
+  immutable-history check is also green on `d13c216f`; ordinary CI is pending.
+  The canonical 234,423-byte fact corpus and exact 39,460/119,389-byte JSONL
+  streams remain unchanged.
+- PR #44 remains draft. Two prior reviewers are performing fresh `d13c216f`
+  reviews, and a third independent reviewer replaced the prescribed local
+  Codex CLI pass because that launcher failed before review with a missing
+  vendor binary (`ENOENT`). No result from `e8c116f` is reusable. No merge,
+  deployment, serializer, sidecar/bank, reward, training input, queue, service,
+  or BBTV change occurred. The complete 21:32 live queue/BBTV snapshot remains
+  current monitoring evidence; the RTX 2070 process was not touched.
+
+Next steps:
+
+1. Require hosted ordinary CI and all three independent exact-`d13c216f`
+   verdicts to be green; any reproduced blocker restarts the seal/head/review
+   cycle again.
+2. Keep both vacation queues read-only and capture the next complete hourly
+   queue, integrity, telemetry, resource, watcher, checkpoint, and public-BBTV
+   snapshot by 22:32 PDT.
+3. Merge only through protected guardrails on one unchanged exact head, then
+   verify the protected main-push proof before starting any later tranche.
