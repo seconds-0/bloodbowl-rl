@@ -5309,3 +5309,30 @@ Next steps:
    reward changes, deployment, and milestone evaluation out of scope until
    their separately reviewed authority and live-queue terminal gates authorize
    them.
+
+### 18:07 PDT sidecar-schema merge addendum
+
+- Review of `b36ffb9` converged independently on only the recorded binary-NUL
+  wording defect. Exact replacement head
+  `9e3a300afc0862792cab6d6e28585d8cc7e78c70` corrected D214 to compare every
+  one of the 58,568 length-counted BBS bytes, including 49,593 embedded NULs,
+  while excluding only `open_memstream`'s convenience terminator at
+  `buffer[length]`. The authority plan now explicitly rejects `strlen`, NUL
+  filtering/early stopping, `length + 1`, and early-terminator candidates.
+- Hosted CI passed exact head `9e3a300` in 4m13s and the protected identity
+  history check passed it in 1m45s. Three fresh independent reviews of that
+  unchanged SHA returned clean no-P0-P3 verdicts; two independently rebuilt
+  and compared the memory-stream BBS oracle and all rechecked the earlier
+  scalar, label, writer, atomicity, ABI/isolation, workflow-trigger, balance,
+  and scope findings.
+- PR #43 was marked ready only after those gates and merged at 18:01 PDT as
+  exact main commit `a4e7e06d6e2cfa8f7f2896d9dc8187ecbcbc8665`. The protected
+  push-to-main identity authority passed the merge SHA in 3m11s, and redundant
+  post-merge ordinary CI passed the same SHA in 4m38s. The remote feature branch
+  was deleted with an exact lease only after both checks passed, and the clean
+  local main worktree was fast-forwarded to the exact merge.
+- The merged object is still design/provenance guidance only. It deploys no
+  serializer, sidecar, bank, training input, reward, evaluation, model,
+  service, BBTV behavior, or frozen-queue change. The next source tranche is
+  the separately reviewed serializer-free sidecar-authority bootstrap required
+  by the design; live monitoring remains the active operational step.
