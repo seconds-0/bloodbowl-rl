@@ -5448,3 +5448,38 @@ Next steps:
    push-to-main history proof. Do not add the production serializer, publish a
    sidecar/bank, change training/rewards, deploy to the occupied 2070, or run
    milestone evaluation in this tranche.
+
+### 18:56 PDT sidecar-authority audit correction
+
+- The first fact-corpus seal recorded above was deliberately invalidated before
+  commit. A new catalogue cross-check exposed that its manually written team-ID
+  list used display-style hyphens while `bb_team_defs[].id` canonically uses
+  underscores. The trusted C probe now emits all 30 generated IDs and the
+  independent builder requires their exact ordered equality. The corrected
+  binary fact corpus is 234,423 bytes at SHA-256
+  `601d875d37ab59e205c987c1592ad7abd21a77e5a7be47576cdc1d23d6208815`.
+  The two canonical JSONL byte streams and their hashes did not change.
+- The corrected local seal now contains 15 rather than 14 immutable files
+  because a hostile-process isolation self-test was added. It proves both the
+  inner and outer verifier timeout and four-MiB output bounds. Candidate and
+  authority symlinks are rejected, the bootstrap history forbids any production
+  serializer body, and regenerated oracle metadata must equal the entire sealed
+  oracle rather than only its output hashes.
+- The frozen future serializer probe now also covers all 21 pairwise aliases
+  among record/recipe inputs, both outputs, both returned lengths, and error
+  storage; exact and oversized capacities; count/capacity overflow and null
+  error preflights; pointer/source/decision/config/transcript/raw-state drift;
+  caller permutations; injected writer/open/flush/close failure; and every
+  observed heap-allocation failure. Linux interposition additionally requires
+  post-writer derivation of all F1/F2/F4/F5 and legal-action facts. The public
+  header now exposes the exact 39,460/119,389 output lengths. The source-shape
+  authority requires SHA-256 over exactly `bbs_length` returned bytes and a
+  mandatory frozen-digest failure; it permits no direct BBS-byte or C-string
+  terminator inspection.
+- After resealing, native optimized/sanitized authority, the immutable identity
+  authority, the authored subset, 442 optimized and sanitizer engine tests, 37
+  reward tests, 2 contact-bot tests, and 12 loader tests all passed. The exact
+  digest-pinned, networkless, read-only, capability-free, non-root Linux
+  container authority passed, and the expanded future serializer probe
+  compiled cleanly under Linux Clang. No source was committed or deployed to
+  the occupied 2070, and the production serializer remains absent.
