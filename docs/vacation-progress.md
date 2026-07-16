@@ -5992,3 +5992,55 @@ Next steps:
 3. Continue hourly read-only queue/BBTV monitoring while both frozen queues
    remain authoritative. Merge only through protected green guardrails, and
    keep the production serializer and milestone evaluation in later tranches.
+
+## 2026-07-15 22:28 PDT — queue still healthy; PR #44 guard-region blocker fixed in `ede8efb`
+
+Live read-only follow-up:
+
+- A bounded 22:15 PDT host check found the primary queue, `final-main-control`
+  trainer, and `bbstream`, `bbweb`, and `bbtv-tunnel` all active; overflow
+  remained inactive. Queue PID 431309, wrapper PID 431316, and sole GPU PID
+  473422 were unchanged. The GPU sample was 84 C, 89% fan, 80% utilization,
+  5,554/8,192 MiB, and 168.96 W, with both software and hardware thermal
+  slowdown inactive. This remains below the frozen 88 C guard. No service,
+  process, queue input, or BBTV selection was changed.
+
+Authority correction and publication:
+
+- Exact head `d9fb1977` passed hosted CI and immutable identity history plus
+  two fresh independent approvals, but the third review reproduced another
+  real transformed-only memory-safety gap before merge. The F5 rejection probe
+  allocated 65 guard bytes beyond each declared output capacity while its
+  sentinel initialization/check covered only the capacity and first trailing
+  byte. A failure path could therefore overwrite a later allocated guard byte
+  and return an error without detection. The optimized-only transformed build
+  also left writes beyond that allocation dependent on whether they happened
+  to crash. The PR correctly remained draft; no old green result was reused.
+- Replacement exact head
+  `ede8efb4d1f69b72bf05d1896e3e6850c566ea00` initializes and checks every
+  allocated byte of both output guards in the dedicated F5 atomic-rejection
+  mode. Every transformed F5, action-hash, dice-hash, and legal-hash candidate
+  now runs in both optimized and ASan/UBSan variants, so later in-guard writes
+  are caught by sentinels and out-of-allocation or other transformed-only
+  memory errors are sanitizer-gated. `AGENTS.md`, `CLAUDE.md`, the plan, and the
+  `bb-validation` skill record the complete boundary.
+- The replacement was fully resealed and force-pushed with the exact
+  `d9fb1977` lease. Sealed authority, authored identity, strict Clang object,
+  Python/Ruff/JSON/diff checks, native bootstrap history `1/1`, digest-pinned
+  isolated Clang-container history `1/1`, optimized tests, and ASan/UBSan tests
+  pass locally. Both test modes report 442 engine, 37 reward, 2 contact-bot,
+  and 12 state-bank tests with zero failures. PR #44's body names the new exact
+  SHA and guard/sanitizer semantics. Hosted checks and three new exact-head
+  reviews are now running; every predecessor verdict is invalid. The PR remains
+  draft and unmerged.
+
+Next steps:
+
+1. Require hosted CI, immutable identity history, and all three fresh
+   `a4e7e06d..ede8efb4` reviews to pass on the unchanged replacement SHA.
+2. If clean, take PR #44 out of draft, recheck exact head/base/checks, merge
+   through the green guard, and require the new protected main-push sidecar
+   authority workflow to prove the merged range.
+3. Continue the frozen queue and CPU-only BBTV read-only monitoring loop. Do not
+   deploy this bootstrap to the occupied 2070; it intentionally contains no
+   production serializer or training artifact.
