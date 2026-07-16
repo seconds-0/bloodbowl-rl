@@ -20,6 +20,7 @@ TEST_SRC := $(wildcard engine/tests/test_*.c)
 SCENARIO_SRC := tools/bank_scenario_predicates.c
 SCENARIO_TEST_SRC := $(SCENARIO_SRC) tools/bank_scenario_scan.c
 AUTHORED_DRILL_SRC := tools/authored_drill.c
+AUTHORED_IDENTITY_SRC := tools/authored_identity.c tools/authored_writer_gates.c
 LIB      := $(BUILD)/libbb.a
 TESTBIN  := $(BUILD)/bb_tests
 PUFFER_REWARD_TESTBIN := $(BUILD)/puffer_reward_tests
@@ -27,7 +28,7 @@ PUFFER_CONTACT_TESTBIN := $(BUILD)/puffer_contact_bot_tests
 PUFFER_STATE_BANK_TESTBIN := $(BUILD)/puffer_state_bank_tests
 PUFFER_TESTBINS := $(PUFFER_REWARD_TESTBIN) $(PUFFER_CONTACT_TESTBIN) $(PUFFER_STATE_BANK_TESTBIN)
 
-.PHONY: all test asan fuzz coverage coverage-run lockstep ballstats blockstats human-ball-advancement blockev-mc scenario-scan clean
+.PHONY: all test asan authored-identity-verify fuzz coverage coverage-run lockstep ballstats blockstats human-ball-advancement blockev-mc scenario-scan clean
 
 all: test
 
@@ -48,8 +49,8 @@ $(LIB): $(OBJ)
 # NOTE: tests link the object files directly (not libbb.a) — skill hook
 # registrations live in constructor-only objects that a static archive would
 # drop. External consumers of libbb.a must use -force_load / --whole-archive.
-$(TESTBIN): $(TEST_SRC) $(SCENARIO_TEST_SRC) $(AUTHORED_DRILL_SRC) tools/bank_scenario_scan.h tools/authored_drill.h engine/tests/bb_test.h engine/tests/bb_fixtures.h engine/tests/bb_test_main.c $(OBJ)
-	$(CC) $(CFLAGS) -DBBS_SCANNER_LIBRARY -Iengine/tests -Itools engine/tests/bb_test_main.c $(TEST_SRC) $(SCENARIO_TEST_SRC) $(AUTHORED_DRILL_SRC) $(OBJ) -o $@ $(LDFLAGS)
+$(TESTBIN): $(TEST_SRC) $(SCENARIO_TEST_SRC) $(AUTHORED_DRILL_SRC) $(AUTHORED_IDENTITY_SRC) tools/bank_scenario_scan.h tools/authored_drill.h tools/authored_identity_internal.h tools/authored_identity_ledger.def tools/authored_identity_legacy_proof.def engine/tests/bb_test.h engine/tests/bb_fixtures.h engine/tests/bb_test_main.c $(OBJ)
+	$(CC) $(CFLAGS) -DBBS_SCANNER_LIBRARY -Iengine/tests -Itools engine/tests/bb_test_main.c $(TEST_SRC) $(SCENARIO_TEST_SRC) $(AUTHORED_DRILL_SRC) $(AUTHORED_IDENTITY_SRC) $(OBJ) -o $@ $(LDFLAGS)
 
 $(PUFFER_REWARD_TESTBIN): puffer/bloodbowl/test_reward_send_off.c puffer/bloodbowl/bloodbowl.h puffer/bloodbowl/contact_bot.h engine/tests/bb_test.h engine/tests/bb_fixtures.h $(SRC) $(ENGINE_HDR)
 	$(CC) $(CFLAGS) -Iengine/tests -Ipuffer/bloodbowl -Wno-unused-function $< -o $@ -lm $(LDFLAGS)
@@ -57,8 +58,8 @@ $(PUFFER_REWARD_TESTBIN): puffer/bloodbowl/test_reward_send_off.c puffer/bloodbo
 $(PUFFER_CONTACT_TESTBIN): puffer/bloodbowl/test_contact_bot.c puffer/bloodbowl/bloodbowl.h puffer/bloodbowl/contact_bot.h engine/tests/bb_test.h $(SRC) $(ENGINE_HDR)
 	$(CC) $(CFLAGS) -Iengine/tests -Ipuffer/bloodbowl -Wno-unused-function $< -o $@ -lm $(LDFLAGS)
 
-$(PUFFER_STATE_BANK_TESTBIN): puffer/bloodbowl/test_state_bank.c puffer/bloodbowl/bloodbowl.h $(AUTHORED_DRILL_SRC) tools/authored_drill.h engine/tests/bb_test.h engine/tests/bb_fixtures.h $(SRC) $(ENGINE_HDR)
-	$(CC) $(CFLAGS) -Iengine/tests -Ipuffer/bloodbowl -Itools -Wno-unused-function $< $(AUTHORED_DRILL_SRC) -o $@ -lm $(LDFLAGS)
+$(PUFFER_STATE_BANK_TESTBIN): puffer/bloodbowl/test_state_bank.c puffer/bloodbowl/bloodbowl.h $(AUTHORED_DRILL_SRC) $(AUTHORED_IDENTITY_SRC) tools/authored_drill.h tools/authored_identity_internal.h engine/tests/bb_test.h engine/tests/bb_fixtures.h $(SRC) $(ENGINE_HDR)
+	$(CC) $(CFLAGS) -Iengine/tests -Ipuffer/bloodbowl -Itools -Wno-unused-function $< $(AUTHORED_DRILL_SRC) $(AUTHORED_IDENTITY_SRC) -o $@ -lm $(LDFLAGS)
 
 test: $(TESTBIN) $(PUFFER_TESTBINS)
 	./$(TESTBIN) $(TEST)
@@ -72,6 +73,9 @@ blockev-mc: $(OBJ)
 
 asan:
 	$(MAKE) BUILD=build/asan CFLAGS="-std=c11 $(SAN_FLAGS) -Wall -Wextra -Werror -Iengine/include" test
+
+authored-identity-verify:
+	python3 tools/authored_identity_compat/verify_candidate.py .
 
 # libFuzzer harness. Apple clang has no libFuzzer: use Homebrew LLVM
 # (brew install llvm) on macOS, or any stock clang on Linux (CI nightly).

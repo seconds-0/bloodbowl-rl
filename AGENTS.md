@@ -347,6 +347,30 @@ changes a reward, active queue, production default, or promotion verdict.
   compatibility IDs, never durable recipe/template/version/variant identities
   or sidecar join keys. A later reviewed identity-schema tranche must allocate
   the collision-audited persistent namespace before sidecars or publication.
+  Identity schema 1 allocates only the fixed opaque AE source IDs
+  `0xAE000001..0xAE00001A`. The immutable ledger owns template/revision/cell/
+  variant identity and the complete bit-exact discovery configuration; the
+  separate immutable schedule alone owns legacy proof order, and the writer
+  continues emitting the exact positional A9 bytes. Never decode semantics
+  from AE bits, use A9 as a join key, equate raw/transcript provenance with
+  identity, append ordinal 27, introduce revision 2, or edit the ledger,
+  schedule, oracle, trusted probes, history checker, or authority workflow.
+  Writer admission must remain routed through the separately interposable
+  fresh, resumable, and continuation gateways. Run the full unit/sanitizer
+  suites plus `make authored-identity-verify`; Linux CI must interpose the real
+  public writer, prove exact one-return gateway ASTs and whole-batch preflight
+  before the first write callback, and verify every newly reachable commit in
+  a fresh tokenless/networkless container with candidate and authority mounts
+  read-only. The immutable public-mapper probe must reject an independent
+  mutation of every defining configuration field plus composition-valid paired
+  semantic-axis swaps while preserving all input and output bytes. Freeze the
+  public identity struct, signatures, and constants; reject recipe/identity/
+  error aliases across the greater supplied/fixed extents before any diagnostic
+  write. Bind all 26 count-one writer
+  paths, every family's provenance, and the exact structural `count` use in the
+  batch loops. Sidecars, persistent
+  bank publication, training, rewards, evaluation, BBTV changes, and deployment
+  remain separately unauthorized.
 - The corpus is sharply prefix-censored: it is not sufficient by itself for
   second halves, late drives, stalling, comeback play, or rare actions.
 - Correct BB2025 human possession is about `0.474` on genuine team-turn
