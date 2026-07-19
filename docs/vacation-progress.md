@@ -6140,3 +6140,115 @@ Next steps:
 3. Continue the hourly read-only queue, resource, integrity, watcher,
    checkpoint, and public-BBTV loop. Do not deploy this serializer-free
    bootstrap into the occupied 2070 checkout.
+
+## 2026-07-19 16:24 PDT — unattended interval reconstructed; primary complete; overflow at 10.27B; BBTV live
+
+Monitoring lapse and recovery scope:
+
+- No durable snapshot was written between the preceding 23:10 PDT July 15
+  entry and this one. At recovery time the journal was about 89 hours stale.
+  This violated the requested hourly reporting cadence even though the frozen
+  host automation continued. The interval below is reconstructed from immutable
+  queue state, manifested result/completion artifacts, systemd timestamps,
+  current process/resource state, and fresh public viewer probes. It is not a
+  claim that live human/agent monitoring occurred during that gap.
+- The serializer-free authority PR also stopped progressing after a fresh
+  review found a candidate-header preprocessing gap at about 23:43 PDT July 15.
+  PR #44 remained draft and unmerged. A local correction is present but has not
+  yet completed its reseal/full-check/review publication cycle. No sidecar
+  authority change was deployed to the occupied 2070 checkout.
+
+Recovered primary queue history:
+
+- `final-main-control` completed all three 12B-step R0 baseline runs and wrote
+  `SCREEN_COMPLETE.json` at 18:42:56 PDT July 16. Its completion SHA-256 is
+  `194196b7b6b868c6e8b382880f0933a6aeb4bc81b86e7a5181fad2e4ec929dc8`.
+  Seeds 42/43/44 each passed with 10,057/10,020/10,030 final-policy games,
+  performance 0.572139/0.567315/0.572682, score differential
+  +0.221040/+0.208483/+0.220937, and zero reward-clipping, non-finite reward,
+  engine-error, demonstration, or fallback episodes. Their checkpoint hashes
+  are `cc9ecd5f29f700e83a0852af7f85b3652a6d6bfe1d2de1038458a332263950f9`,
+  `603a81b63cfc739129269c08c68b225db52bd5a19043a622dec1d906276fad09`,
+  and `8a72bc2c8cfefd889c33f224391890c250c8d8d77a660118bb9ef77d9a61499d`.
+- `final-second-control` then completed all three 12B-step runs from the fixed
+  second ancestry and wrote `SCREEN_COMPLETE.json` at 00:48:02 PDT July 19.
+  Its completion SHA-256 is
+  `5e7588254b94f1d1345fccdf67005db69f6629a2f0c256602ecbbe66b148ce37`.
+  Seeds 42/43/44 each passed with 10,002/10,092/10,094 final-policy games,
+  performance 0.527045/0.541716/0.519566, score differential
+  +0.091482/+0.120987/+0.058649, and the same all-zero integrity counters.
+  Their checkpoint hashes are
+  `216ac6b3b5c5834eb1907689af2ae455a710f73a633980db42827cbfa7846921`,
+  `20c67a40d3671f8f6be1bff88b9d095b4009f6cab46700c634784197a1b6bc1c`,
+  and `da9613ffe9d0fef33142b586e2d917111483c11da0ea4808cc94fca93e586603`.
+- The primary queue recorded both jobs complete with exit code zero, validated
+  their declared success hashes, and atomically closed at 00:50:44 PDT July 19
+  with message `all queued jobs completed and validated`. Its user systemd unit
+  is now inactive/dead with result success, exit status zero, and zero restarts.
+  These six runs are no-promotion R0 characterization evidence; differences
+  between the two ancestry groups are not a reward-candidate promotion test.
+
+Overflow transition and current training health:
+
+- The timer-driven overflow gate observed the completed primary queue, proved
+  the GPU idle, revalidated primary completion and all frozen inputs, and
+  started `experiment-queue@vacation-r0-overflow-20260714-v1.service` at
+  01:01:28 PDT July 19. `primary-completion-gate` completed with success SHA-256
+  `f990f7b267bfd994b93b9f83f065f49b7eed40ed5b84b88448c367e49e2d816e`;
+  `final-third-control` began at 01:06:01. The overflow unit is active/running,
+  result success so far, and has zero restarts.
+- A fresh read-only check matches all 65 primary pins at plan SHA-256
+  `4ee72e3c58f09786cdd3bbf78a772e8de2d9a93e21a8b065cf0c5976ecced270`
+  and all 74 overflow pins at plan SHA-256
+  `d90ee01c8c459f599c8601934f545ccb7783261edae3bcb6e9e3878036d37d3e`;
+  both pin errors are `None`. Overflow state is running `final-third-control`,
+  arm `both`, seed 42/current index 1, with zero completed arms.
+- The latest complete telemetry observed exact step 10,267,525,120 at epoch
+  78,334 over 84 games: performance 0.416667, draw rate 0.309524, possession
+  0.381502, illegal/sampled-repair fraction 0.198833, ball progress 10.485082,
+  13.666667 blocks thrown, 1.547619 blocks against the carrier, carrier-target
+  fraction 0.114679, and zero Pass or Hand-off intentions. Reward clipping,
+  non-finite reward, engine-error, demonstration, and fallback counters remain
+  zero. The dashboard reported 183.6K SPS and an observational 2h37m to this
+  seed's 12B target; neither is promotion evidence.
+- The newest complete 16,066,560-byte checkpoint observed was exact step
+  10,237,509,632 at 16:20:21 PDT. The bounded GPU sample was 83 C, 88% fan,
+  76% utilization, 5,554/8,192 MiB, and 177.34 W, with software and hardware
+  thermal slowdown inactive. This remains below the frozen literal 88 C
+  three-poll guard. Disk is 10% used with 869 GiB free and 1% inode use; memory
+  has about 8.6 GiB available and swap uses about 174 MiB of 4 GiB. No process,
+  service, queue input, or guard was changed.
+
+BBTV recovery evidence:
+
+- The actual user units `bbstream`, `bbweb`, and `bbtv-tunnel` are all
+  active/running with zero restarts. The earlier system-level query that called
+  them inactive was against the wrong unit manager; fresh `systemctl --user`
+  evidence resolves that ambiguity.
+- At 16:13 PDT the follower selected the complete overflow seed-42 checkpoint
+  at exact step 10,137,632,768 against the frozen netblock ancestry. Learner
+  source SHA-256 is
+  `67a1a027ff8dd65fc9620d4c846a3353b67aefa6311f3697962389070f9ad8fd`,
+  converted output SHA-256 is
+  `80316b3404d196fbfd7357a3dcccfc23e2b59545c8b4f406c0257f813c2a34a1`,
+  baseline source SHA-256 is
+  `9964cf4d4c9c2654157e898ff17327732e73c4c85a5883e7d311d8d3baade05e`,
+  and `selection.json` SHA-256 is
+  `b4db64e284c9009471817a52c12289652c533dbe6bed141e64a15c6ab652e679`.
+- `https://bbtv.seconds0.com/` returned HTTP 200 in 0.200 seconds. A fresh
+  bounded public WSS connection received match `m_1784503167_2` with advancing
+  sequence numbers 1049-1052. BBTV remains CPU-only and observational; it does
+  not enter the queue completion or promotion gates.
+
+Next steps:
+
+1. Resume at-least-hourly durable snapshots from this recovery point while the
+   overflow queue owns the GPU; validate each transition and never disturb a
+   healthy frozen run merely to regain monitoring control.
+2. Finish the local trusted-probe preprocessing correction, reseal and run the
+   complete native plus digest-pinned history/test/sanitizer suite, then publish
+   one exact replacement PR #44 head with no reused verdicts.
+3. Require hosted checks and three clean reviews on that unchanged head before
+   any merge. Separately analyze the six complete R0 results and eventual third
+   ancestry as no-promotion characterization evidence; do not infer a reward
+   win or alter production defaults from these runs.
