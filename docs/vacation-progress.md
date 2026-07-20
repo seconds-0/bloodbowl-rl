@@ -6329,3 +6329,85 @@ Next steps:
 3. Keep PR #44 at its published safe head and draft state while re-evaluating its
    remaining ordinary correctness scope. Do not publish the removed classifier-
    triggering work. Resume hourly journal snapshots and public BBTV checks.
+
+## 2026-07-19 21:22 PDT — evaluation boundary merged; isolated full-rerun recovery implemented and locally green
+
+Status:
+
+- The old overflow remains terminal and untouched. Its plan, queue state,
+  screen manifest, failed status, and rejected seed-42 result retain SHA-256
+  values `d90ee01c8c459f599c8601934f545ccb7783261edae3bcb6e9e3878036d37d3e`,
+  `42154a7f77ed4ea71a292bd4d1a391a9b10e2cb9ebd60420ceb6c8901473a34e`,
+  `133893835baa02e22bc781ef2e9e2a5697176ee2444b7a7859d06de6e28ea151`,
+  `0a7d452359f8d3564e1185c9a60832b7ac72f012b48448a5322d8c2e3d3596c8`,
+  and `5f3c459dba99652cc0d8b24957563ca77ca7a16e02e1478ff10c4568e73a0a25`.
+  `SCREEN_COMPLETE.json` and seed-43/44 results remain absent. No host files or
+  services were changed during this interval.
+- PR #45 merged the exact requested-game acceptance correction to protected
+  `main` as merge commit `1e017cd6715ba0d7438183691e028ae672bbf8fb` after
+  green hosted checks and three clean exact-head reviews. Future screens now
+  accept the explicit 10,000-game request inclusively; the old frozen screen is
+  not retroactively accepted.
+- The replacement policy is now a full fresh rerun, not checkpoint/result
+  reuse. This gives up roughly 18 GPU-hours to preserve an ordinary single
+  `control-final` artifact format and clear three-seed provenance.
+
+Completed since the previous entry:
+
+- In the isolated local branch `codex/vacation-overflow-recovery`, added a
+  closed terminal-evidence validator and a separately named recovery freezer.
+  The proposed recovery root is
+  `/home/rache/bloodbowl-rl-recovery-20260719`; proposed queue ID is
+  `vacation-r0-overflow-recovery-20260719-v1`.
+- The first bounded/restart-safe job revalidates the exact old plan, terminal
+  halt, failed screen status, R0/netblock schedule, seed-42 rejected result,
+  16,066,560-byte checkpoint, zero train/eval integrity counters, absent old
+  completion and seed-43/44 results, and the corrected inclusive 10,000-game
+  source rule. Its proof explicitly denies result reuse, old-queue restart,
+  reward promotion, and milestone evaluation.
+- The second job is the unchanged, non-resume-safe ordinary R0
+  `control-final`: fresh netblock-warm seeds 42/43/44 at 12B requested steps
+  each, 72-hour bound, 10-minute progress freshness, and the existing queue
+  process/capacity/thermal/result guards.
+- Added D216, a dedicated recovery plan, and matching instructions in
+  `AGENTS.md`, `CLAUDE.md`, the training/fleet skills, and the vacation operator
+  runbook. Focused recovery tests are 8/8 green; the wider queue/screen contract
+  selection is 82 green with two expected local vendor-checkout skips. Black,
+  Ruff, Python compilation, and `git diff --check` pass. `make test` passes 442
+  engine, 37 reward, 2 contact-bot, and 12 state-bank tests.
+
+Host and BBTV health:
+
+- At 21:21 PDT the old overflow unit is inactive/dead with zero restarts. The
+  GPU is idle at 56 C, 0% utilization, 69/8,192 MiB VRAM, and 8.79 W. Root disk
+  has 869 GiB free and 66,914,183 free inodes; about 10 GiB RAM is available and
+  swap usage is 174 MiB.
+- `bbstream`, `bbweb`, and `bbtv-tunnel` are active/running with zero restarts.
+  The current selection SHA-256 is
+  `346bb81a2ad0669ca7351f6712c1857f5d2e9dbe72a0d5b92408ab24c17339ee`;
+  it still shows exact seed-42 step 11,999,903,744, learner source
+  `5aff922209eabb6226282cb170ce2dfce771a11a641edfbf89220517c061b323`
+  against netblock warm
+  `9964cf4d4c9c2654157e898ff17327732e73c4c85a5883e7d311d8d3baade05e`.
+  The converted learner remains
+  `2949e87c801e6fddb4ea4043d43cd11a7baa8af076a37258710b4be4f8163ba7`.
+  Public HTTP returned 200 in 0.232 seconds. One probe initially used the wrong
+  production-root selection path and stopped at that subcheck; the corrected
+  audit-root path was then verified.
+
+Blockers / next steps:
+
+1. The recovery source is not yet committed, reviewed, merged, deployed, or
+   frozen on the host. Keep the GPU intentionally idle until all of those gates
+   pass; do not run from the local worktree.
+2. Commit the exact local recovery diff, open its PR, obtain green hosted checks
+   and three fresh exact-head reviews, correct any findings, and merge only the
+   reviewed head.
+3. Deploy the merged tree to the separate recovery root, build/check its Puffer
+   environment, copy and verify the exact static pool, freeze the real plan,
+   record its plan hash, re-prove old hashes and idle GPU/BBTV health, then start
+   only the generic queue service. Confirm the terminal-evidence proof completes
+   before any trainer appears.
+4. Continue chat updates about every 30 minutes and durable journal entries at
+   least hourly. BBTV remains CPU-only qualitative observation and never changes
+   training or promotion decisions.
