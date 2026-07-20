@@ -6621,3 +6621,63 @@ Blockers / next steps:
 3. Continue the unchanged frozen schedule through seeds 43 and 44. Defer the
    predeclared milestone evaluation and any new reward work until the entire
    screen is accepted and the GPU is exclusively idle.
+
+## 2026-07-20 15:08 PDT — seed 42 reaches 11.18B; analyze-only harness audit returns
+
+Status:
+
+- The isolated recovery queue and `full-control-rerun` remain active/running
+  with zero restarts. Arm `both`, seed 42 is in native training phase at exact
+  step 11,183,980,544 of 12B, about 93.2% of this seed's request. At the
+  elapsed average rate, the training boundary is roughly 1.25 hours away,
+  followed by the exact 10,000-game evaluation.
+- Queue plan SHA-256 remains
+  `822bb912dbf3992c5fa6f04ddcaa5354897db10d03f2e66934b846c198b6a111`,
+  and all 54 frozen inputs revalidate with no pin error. The latest schema-2
+  panel remains train phase with reward clip/excess, reward non-finite,
+  component mismatch/nonfinite, engine-error, demonstration, and fallback
+  counters all zero.
+- The latest complete native checkpoint observed is exact step 11,136,401,408,
+  16,066,560 bytes, SHA-256
+  `09bedbaec5abf89cabbffc413e0509be6576c01f69a0bd2ec991cd430b803de2`.
+
+Host and BBTV health:
+
+- The RTX 2070 sampled 83 C, 77% utilization, and 5,554/8,192 MiB. The trainer
+  remains the only GPU compute PID. Software thermal slowdown is active,
+  hardware slowdown inactive, and temperature is below the frozen 88 C guard.
+  Root disk is 11% used with 856 GiB free; host memory reports 7.8 GiB
+  available.
+- `bbstream`, `bbweb`, and `bbtv-tunnel` remain active/running with zero
+  restarts. BBTV is following exact seed-42 checkpoint step 11,136,401,408
+  against the frozen warm policy. Public HTTP returned 200 in 0.175 seconds.
+
+Completed / research status:
+
+- A separate analyze-only sub-agent completed an ordinary RL harness audit
+  without changing tracked files or touching the live host. It reported no P0
+  reason to stop the active run, but identified four proposed P1 areas for
+  independent review before another reward search: sampled-versus-applied
+  action identity under marginal three-head masks, recurrent collection versus
+  PPO-recompute state parity, omitted public observation fields, and remaining
+  auto-resolved BB2025 optional choices. It also proposed P2 instrumentation
+  for decision-cap truncations and frozen-bank load failures.
+- Independently inspected the local mask/decode path and confirmed the central
+  mechanism behind the first finding: legal tuples are projected into marginal
+  type/argument/square masks, and a non-exact sampled combination is repaired
+  to a different legal action while incrementing `illegal`. The current live
+  panel reports `illegal_frac=0.20366`. Cross-layer rollout-buffer/log-probability
+  proof and the other audit findings still require independent review before
+  they are accepted into the program ledger or changed.
+
+Blockers / next steps:
+
+1. No live-run blocker. Let seed 42 finish and evaluate; do not modify this
+   non-resume-safe frozen harness lineage.
+2. Cross-review the audit findings and convert confirmed issues into
+   behavior-locking tests. Do not launch another reward search merely from the
+   first report.
+3. If the two central trainer-boundary findings survive review, prioritize
+   sampled/applied transition identity and recurrent-state parity before the
+   next reward A/B. Preserve the current three-seed screen as the final baseline
+   for this harness version.
