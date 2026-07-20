@@ -6252,3 +6252,80 @@ Next steps:
    any merge. Separately analyze the six complete R0 results and eventual third
    ancestry as no-promotion characterization evidence; do not infer a reward
    win or alter production defaults from these runs.
+
+## 2026-07-19 20:50 PDT — overflow halted on one-game evaluation shortfall; GPU safe; BBTV shows final seed-42 checkpoint
+
+Monitoring and scope correction:
+
+- This snapshot is about 4h26m after the 16:24 recovery entry, so the durable
+  journal again missed the requested hourly cadence. Work resumed after the
+  user explicitly requested goal resumption and established a boundary against
+  exploit-style or adversarial security work. The unpublished macro-boundary
+  experiment was removed in full. Its worktree is clean at the already-published
+  PR #44 head `2178c1e4d854f53fae93317ec66bd7f3d9c4e2d9`; none of that local experiment
+  was pushed, merged, deployed, or applied to the 2070 host.
+- The goal service still exposes the prior goal record as blocked and refuses a
+  duplicate goal while offering no agent-side resume operation. Execution is
+  continuing under the user's explicit resume instruction; this journal records
+  actual progress without misreporting the old goal as complete.
+
+Overflow queue transition and exact failure:
+
+- `experiment-queue@vacation-r0-overflow-20260714-v1.service` became inactive
+  at 19:00:45 PDT after 17h59m wall time, with zero unit restarts. The generic
+  systemd result is `success` and process status is zero because the queue
+  controller exited cleanly after recording its own fail-closed outcome; the
+  authoritative `QUEUE_STATE.json` instead says `state=halted`, and has SHA-256
+  `42154a7f77ed4ea71a292bd4d1a391a9b10e2cb9ebd60420ceb6c8901473a34e`.
+  `primary-completion-gate` remains complete, while `final-third-control`
+  recorded exit code 1 and no later work ran.
+- Seed 42 itself completed the intended 11,999,903,744 rollout-aligned steps.
+  Its 16,066,560-byte checkpoint has SHA-256
+  `5aff922209eabb6226282cb170ce2dfce771a11a641edfbf89220517c061b323`.
+  Training completed without reward clipping, non-finite rewards, engine-error
+  episodes, demonstrations, or fallbacks. Final evaluation likewise has all
+  those integrity counters at zero.
+- The sole acceptance failure is mechanical: final evaluation observed exactly
+  10,000 games against a frozen minimum of 10,001. The screen therefore rejected
+  the arm as `insufficient_games`, wrote no `SCREEN_COMPLETE.json`, marked
+  `SCREEN_STATUS.json` failed, and did not launch seeds 43 or 44. The observed
+  seed-42 evaluation was performance 0.464150, draw rate 0.367300, score
+  differential -0.117200, possession 0.396979, illegal/sampled-repair fraction
+  0.197008, ball progress 10.771859, 14.207200 blocks thrown, 1.676100 blocks
+  against the carrier, 0.010000 Pass attempts, and 0.000300 Hand-off attempts.
+  These metrics are characterization evidence only because the frozen screen did
+  not pass.
+- No restart was attempted. The screen job is declared non-resume-safe, and a
+  whole-job rerun would overwrite or collide with existing provenance. Recovery
+  will remain paused until a separate, ordinary, evidence-preserving evaluation
+  path is designed and verified locally. The failed artifacts and checkpoint
+  remain untouched.
+
+Host and BBTV health:
+
+- The GPU is idle at 56 C, zero utilization, 69/8,192 MiB, and 8.90 W. Root disk
+  remains 10% used with 869 GiB free; about 10 GiB memory is available and swap
+  remains about 174 MiB of 4 GiB. No training process is present.
+- `bbstream`, `bbweb`, and `bbtv-tunnel` remain active/running with zero
+  restarts. At 20:41 PDT the follower selected the completed seed-42 checkpoint
+  at exact step 11,999,903,744 against the frozen warm checkpoint. Selection
+  SHA-256 is `b79c55f4a54394d2dded27f078a3115746d4d81a6245703fe58101da70561755`;
+  the learner source and converted-output SHA-256 values are respectively
+  `5aff922209eabb6226282cb170ce2dfce771a11a641edfbf89220517c061b323`
+  and `2949e87c801e6fddb4ea4043d43cd11a7baa8af076a37258710b4be4f8163ba7`.
+  `https://bbtv.seconds0.com/` returned HTTP 200 in 0.282 seconds. BBTV therefore
+  continues showing the newest completed model despite the evaluation halt.
+
+Next steps:
+
+1. Treat the GPU as intentionally idle while reviewing the frozen screen's
+   ordinary evaluation-count semantics and prior successful results. Design a
+   provenance-preserving recovery that reuses the completed immutable checkpoint
+   without claiming the failed 10,000-game artifact passed.
+2. Validate any recovery entirely off-host first, then create a separately named,
+   pinned recovery plan and artifact namespace; never edit the halted queue or
+   its artifacts in place. Restart training only after exact input hashes,
+   non-collision behavior, completion validation, and BBTV coexistence are proven.
+3. Keep PR #44 at its published safe head and draft state while re-evaluating its
+   remaining ordinary correctness scope. Do not publish the removed classifier-
+   triggering work. Resume hourly journal snapshots and public BBTV checks.
