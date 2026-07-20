@@ -6415,3 +6415,90 @@ Blockers / next steps:
 4. Continue chat updates about every 30 minutes and durable journal entries at
    least hourly. BBTV remains CPU-only qualitative observation and never changes
    training or promotion decisions.
+
+## 2026-07-19 22:06 PDT — reviewed recovery merged, isolated queue deployed, seed 42 training healthy
+
+Status:
+
+- PR #46 passed both hosted checks and three fresh exact-head reviews, then
+  merged to protected `main` as
+  `3fade1429f16b204a04f2380a5dfabf2006a1389`. The reviewed head was
+  `92089cdd0c8ed1b68f27f90725b041604957209b`; the merge tree is
+  `0d8c55f958bf6dbccaa8c761004b0ec1d0a065bf`.
+- The separately rooted recovery service is active/running with zero restarts.
+  Its restart-safe terminal-evidence job completed, and its fresh non-resume-
+  safe `full-control-rerun` is now running arm `both`, seed 42. Queue plan
+  SHA-256 is
+  `822bb912dbf3992c5fa6f04ddcaa5354897db10d03f2e66934b846c198b6a111`;
+  the terminal proof SHA-256 recorded in queue state is
+  `9a22d43c125978ecb9790efa9497ba6fa50875144e641cc51cefecbc96867654`.
+- The latest durable training record is epoch 135 at 17,825,792 agent steps.
+  Train-phase reward clipping, non-finite reward, component mismatch/nonfinite,
+  engine-error, demonstration, and fallback counters are all zero. This early
+  window is roughly consistent with the prior ~180K-step/s 2070 rate; use a
+  longer interval before treating that as an ETA.
+
+Completed since the previous entry:
+
+- The final review pass closed the live-start gaps: the proof now uses the exact
+  pinned `nvidia-smi` to require an empty compute-process list immediately before
+  PPO, both validation layers require the one reviewed recovery root, all seven
+  Puffer patch files are pinned, and the BBTV service executes the merged
+  recovery launcher/follower rather than the older production follower. The
+  numbered deployment plan was corrected so BBTV verification precedes training.
+- Deployed the exact merged Git archive into the new
+  `/home/rache/bloodbowl-rl-recovery-20260719` root. Archive SHA-256 is
+  `0dae2b61d5d3cf40dc801d473caf5534c6859eefd939b53b50d8433f0cea8aab`;
+  all 4,213 tracked entries, contents, symlinks, and modes were checked after
+  extraction. The new root records this in `.deployed-source.json`.
+- Built and drift-checked a separate fp32/GPU Blood Bowl runtime. Its installed
+  source identity is
+  `441f89570a2060586e3e84a0cc9cdae1f906c0f2596c43b71acc5b3a37cbfcd6`;
+  its Linux `_C` module SHA-256 is
+  `5be655877462e856e3d93897883245420f4e4b1d656b684befe6b2d29821e414`
+  with `env_name=bloodbowl`, `gpu=1`, and fp32. The first freeze correctly
+  refused an unrelated copied macOS module; that unused file was preserved
+  outside the runtime, leaving one exact Linux module, and the same freezer then
+  succeeded. No queue state existed before service start.
+- Copied the 62 MiB static four-bank pool into the recovery root and verified
+  every file against the old pool. The netblock warm remains 16,066,560 bytes
+  with SHA-256
+  `9964cf4d4c9c2654157e898ff17327732e73c4c85a5883e7d311d8d3baade05e`.
+  Immediately before start, all 54 frozen pins revalidated, the old service was
+  inactive, the GPU process list was empty, 923.9 GB and 66.9M inodes were free,
+  and every old plan/state/manifest/status/result/checkpoint identity matched.
+- Consulted Fable through Claude Code's read-only headless mode; it independently
+  approved the ordinary recovery provenance, queue, and BBTV design with no
+  P0-P2 findings. Updated the persistent `fable-model-dispatch` memory with the
+  verified noninteractive/read-only invocation, buffered-JSON behavior, and a
+  budget guard for future long reviews.
+
+Host and BBTV health:
+
+- At 22:06 PDT the RTX 2070 was 79 C, 75% utilized, and using 5,554/8,192 MiB.
+  The only GPU compute PID is the new trainer. The queue and BBTV services are
+  both active/running with zero restarts, and `SCREEN_STATUS.json` is fresh with
+  message `waiting for current trainer`.
+- BBTV now runs the merged recovery follower with both checkpoint roots in its
+  live command and writes selection/cache only under
+  `/home/rache/bloodbowl-rl-recovery-20260719/runs/bbtv-follow`. It still selects
+  the latest complete old seed-42 step 11,999,903,744 against netblock warm,
+  exactly as intended until a newer complete recovery checkpoint appears.
+  The isolated viewer remains `bloodbowl`, CPU-only, and fp32 with module hash
+  `0814398b0685438e9b23bfbb20f45d5b88fcd2c0c829f5448dec2ec59d8188d1`.
+  Local and public WebSockets each delivered `hello`, `match_start`, and
+  `snapshot`; public HTTP returned 200 in 0.244 seconds.
+
+Blockers / next steps:
+
+1. No current blocker. Observe seed-42 progress, screen freshness, all integrity
+   counters, temperature, disk/inodes, service restarts, and BBTV selection. Do
+   not alter the running non-resume-safe job.
+2. Confirm the first new manifested recovery checkpoint appears and that BBTV
+   advances only after it is complete and stable. The viewer remains qualitative
+   and is not an evaluation or promotion signal.
+3. If the recovery service halts or the PPO process is interrupted, preserve all
+   evidence and do not restart this queue. Otherwise allow the frozen schedule to
+   proceed through seeds 42, 43, and 44 and their exact 10,000-game evaluations.
+4. Continue durable entries at least hourly and chat updates about every 30
+   minutes while actively monitoring.
