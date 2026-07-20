@@ -234,14 +234,20 @@ For D215/D216 overflow recovery, never deploy into or write under
 `vacation-r0-overflow-recovery-20260719-v1`. Freeze and record a new plan hash;
 the first queue job must validate the old terminal evidence before the fresh
 three-seed trainer starts. Prove old hashes unchanged before and after setup,
-prove the two roots differ, and keep BBTV CPU-only and observational. Never copy
-old mutable state into the recovery root, reuse the old rejected checkpoint as
+require the exact reviewed recovery root, and keep BBTV CPU-only and
+observational. The frozen preflight must use its exact pinned `nvidia-smi` and
+revalidate an empty compute-process list immediately before advancing to PPO;
+the complete seven-file Puffer patch bundle must be pinned too. Never copy old
+mutable state into the recovery root, reuse the old rejected checkpoint as
 output, or run old and new trainers concurrently.
 Install the separately rooted `experiment-recovery-queue@.service`; the existing
 `experiment-queue@.service` is audit-root-only. Configure the CPU BBTV follower
 to search both checkpoint roots while writing its state/cache under the recovery
-root, and verify it keeps the last complete old matchup until a newer complete
-recovery checkpoint is available.
+root. Execute the launcher and follower from the exact merged recovery checkout
+and set `BBTV_ROOT=/home/rache/bloodbowl-rl` only for unchanged production
+runtime assets. Verify the live command includes both checkpoint roots and the
+recovery state dir, and that it keeps the last complete old matchup until a
+newer complete recovery checkpoint is available.
 Use `docs/vacation-operator-runbook.md` for the exact read-only snapshot,
 state-to-action matrix, overflow watcher grace period, BBTV fault isolation,
 and return-day sequence. It is deliberately non-authorizing: do not improvise

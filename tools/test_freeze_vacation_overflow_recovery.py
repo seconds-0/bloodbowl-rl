@@ -74,6 +74,9 @@ class VacationOverflowRecoveryFreezerTests(unittest.TestCase):
                 "game_stats.py",
             )
         }
+        patches = [
+            write_file(root / "training" / name) for name in freezer.PUFFER_PATCHES
+        ]
         spec = {
             "schema_version": 1,
             "queue_id": queue_id,
@@ -103,7 +106,7 @@ class VacationOverflowRecoveryFreezerTests(unittest.TestCase):
             "pool_path": pool,
             "nvidia_smi_path": nvidia,
         }
-        validated["test_sources"] = list(sources.values()) + [
+        validated["test_sources"] = list(sources.values()) + patches + [
             Path(sys.executable).resolve(),
             Path("/bin/bash"),
             spec_path,
@@ -123,6 +126,9 @@ class VacationOverflowRecoveryFreezerTests(unittest.TestCase):
             ).hexdigest()
             with (
                 mock.patch.object(freezer, "REVIEWED_WARM_SHA256", warm_sha),
+                mock.patch.object(
+                    freezer, "REVIEWED_RECOVERY_ROOT", fixture["root_path"]
+                ),
                 mock.patch.object(
                     freezer,
                     "REVIEWED_WARM_BYTES",
@@ -151,6 +157,13 @@ class VacationOverflowRecoveryFreezerTests(unittest.TestCase):
             spec["queue_id"] = "another-queue"
             write_json(spec_path, spec)
             with self.assertRaisesRegex(freezer.RecoveryFreezeError, "queue ID"):
+                freezer.validate_spec(spec_path)
+
+            spec["queue_id"] = freezer.RECOVERY_QUEUE_ID
+            write_json(spec_path, spec)
+            with self.assertRaisesRegex(
+                freezer.RecoveryFreezeError, "reviewed exact root"
+            ):
                 freezer.validate_spec(spec_path)
 
     def test_freeze_emits_preflight_then_full_three_seed_control_screen(self):
@@ -192,6 +205,11 @@ class VacationOverflowRecoveryFreezerTests(unittest.TestCase):
             prior_paths = {str(path.resolve()) for path in spec["prior_paths"].values()}
             pinned = {pin["path"] for pin in plan["pinned_files"]}
             self.assertLessEqual(prior_paths, pinned)
+            patch_paths = {
+                str((spec["root_path"] / "training" / name).resolve())
+                for name in freezer.PUFFER_PATCHES
+            }
+            self.assertLessEqual(patch_paths, pinned)
             mutable = {
                 value for job in plan["jobs"] for value in job.get("mutable_paths", [])
             }

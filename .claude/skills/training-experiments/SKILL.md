@@ -572,7 +572,11 @@ root/queue, and the exact two-job shape: deterministic terminal-evidence
 preflight, then a fresh ordinary R0 `control-final` at 12B for seeds 42/43/44
 from netblock. The old checkpoint may be hashed as authorization context but is
 not a result, warm start, candidate input, or milestone-evaluation input. Keep
-the PPO job non-resume-safe and treat another interruption as terminal.
+the PPO job non-resume-safe and treat another interruption as terminal. The
+freezer and evidence validator must accept only the exact reviewed recovery
+root, pin every file in the seven-file Puffer patch bundle, and use the exact
+pinned `nvidia-smi` to require no compute PID when the preflight success is
+revalidated immediately before PPO starts.
 
 D187 freezes the interpretation of the first seed-42 6B curve. Improvement
 against the four static banks is in-pool and non-monotonic, not a newest-policy

@@ -8,6 +8,7 @@ import hashlib
 import json
 import math
 import os
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -19,6 +20,7 @@ from game_stats import completed_game_requirement_met
 SCHEMA_VERSION = 1
 PRIOR_QUEUE_ID = "vacation-r0-overflow-20260714-v1"
 REVIEWED_PRIOR_ROOT = Path("/home/rache/bloodbowl-rl-audit")
+REVIEWED_RECOVERY_ROOT = Path("/home/rache/bloodbowl-rl-recovery-20260719")
 PRIOR_FILE_KEYS = (
     "plan",
     "state",
@@ -92,6 +94,7 @@ CONFIG_KEYS = {
     "prior_checkpoint",
     "corrected_launcher",
     "corrected_game_stats",
+    "nvidia_smi",
     "warning",
 }
 FILE_KEYS = {"path", "bytes", "sha256"}
@@ -193,6 +196,8 @@ def validate_config(path: Path) -> dict[str, Any]:
     recovery_root = Path(root_value).expanduser().resolve()
     if not recovery_root.is_dir():
         raise RecoveryEvidenceError(f"recovery root is missing: {recovery_root}")
+    if recovery_root != Path(REVIEWED_RECOVERY_ROOT).expanduser().resolve():
+        raise RecoveryEvidenceError("recovery root is not the reviewed exact root")
     prior_root = Path(REVIEWED_PRIOR_ROOT).expanduser().resolve()
     if (
         recovery_root == prior_root
@@ -235,6 +240,7 @@ def validate_config(path: Path) -> dict[str, Any]:
 
     launcher = validate_file(config["corrected_launcher"], "corrected launcher")
     helper = validate_file(config["corrected_game_stats"], "corrected game helper")
+    nvidia_smi = validate_file(config["nvidia_smi"], "nvidia-smi")
     loaded_helper = Path(game_stats.__file__).resolve()
     if helper != loaded_helper:
         raise RecoveryEvidenceError(
@@ -268,7 +274,50 @@ def validate_config(path: Path) -> dict[str, Any]:
         "prefix": prefix,
         "launcher_path": launcher,
         "game_stats_path": helper,
+        "nvidia_smi_path": nvidia_smi,
     }
+
+
+def gpu_compute_pids(nvidia_smi: Path) -> list[int]:
+    try:
+        completed = subprocess.run(
+            [
+                str(nvidia_smi),
+                "--query-compute-apps=pid",
+                "--format=csv,noheader,nounits",
+            ],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+            timeout=15,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RecoveryEvidenceError(
+            f"nvidia-smi compute-process query could not complete: {exc}"
+        ) from exc
+    if completed.returncode != 0:
+        raise RecoveryEvidenceError(
+            "nvidia-smi compute-process query failed: "
+            f"{completed.stderr.strip() or completed.stdout.strip()}"
+        )
+    pids: list[int] = []
+    for line in completed.stdout.splitlines():
+        value = line.strip()
+        if not value or value in {"[Not Found]", "N/A"}:
+            continue
+        try:
+            pid = int(value)
+        except ValueError as exc:
+            raise RecoveryEvidenceError(
+                f"nvidia-smi returned a malformed compute PID: {value!r}"
+            ) from exc
+        if pid <= 0:
+            raise RecoveryEvidenceError(
+                f"nvidia-smi returned an invalid compute PID: {pid}"
+            )
+        pids.append(pid)
+    return sorted(set(pids))
 
 
 def require_integrity_zero(metrics: Any, phase: str) -> None:
@@ -287,6 +336,11 @@ def require_integrity_zero(metrics: Any, phase: str) -> None:
 
 
 def recovery_report(config: dict[str, Any]) -> dict[str, Any]:
+    compute_pids = gpu_compute_pids(config["nvidia_smi_path"])
+    if compute_pids:
+        raise RecoveryEvidenceError(
+            f"GPU is not idle; compute PIDs are present: {compute_pids}"
+        )
     paths = config["prior_paths"]
     plan = load_object(paths["plan"], "prior queue plan")
     expected_ids = ["primary-completion-gate", "final-third-control"]
@@ -454,6 +508,7 @@ def recovery_report(config: dict[str, Any]) -> dict[str, Any]:
         "unstarted_seeds": [43, 44],
         "integrity_counters_zero": True,
         "prior_completion_absent": True,
+        "gpu_compute_pids_empty": True,
         "result_reuse_authorized": False,
         "in_place_restart_authorized": False,
         "reward_promotion_authorized": False,

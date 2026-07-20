@@ -18,12 +18,17 @@ is read-only evidence.
 - Queue ID: `vacation-r0-overflow-recovery-20260719-v1`.
 - Job 1, `terminal-evidence-preflight`: bounded and restart-safe. Recompute a
   compact authorization proof from the exact old plan/state/manifest/status/
-  result/checkpoint and current corrected launcher/helper.
+  result/checkpoint and current corrected launcher/helper. The proof uses the
+  exact pinned `nvidia-smi` binary and requires an empty compute-process list;
+  its success validator recomputes that idle-GPU fact immediately before the
+  queue advances to the trainer.
 - Job 2, `full-control-rerun`: non-resume-safe ordinary `control-final`, R0
   `both`, netblock warm ancestry, 12B requested steps, learner seeds 42/43/44,
   10,000 final-policy games per seed.
 - Runtime: 72-hour job ceiling, 10-minute progress freshness, 30-second queue
   polling, frozen disk/inode/thermal limits, queue-owned process group.
+- Provenance: the exact seven-file Puffer patch bundle, including
+  `torch_pufferl_trusted_load.patch`, is individually pinned in the queue plan.
 - Service: separately rooted `experiment-recovery-queue@.service`; never the
   audit-root `experiment-queue@.service`.
 - BBTV: CPU-only, newest complete manifested checkpoint across the old and
@@ -69,18 +74,25 @@ The recovery proof does not:
    tests plus the full repository suite.
 2. Obtain fresh exact-head reviews and green hosted checks; merge before any
    host deployment.
-3. Create the separate host root from the exact merged revision. Build/check
-   its Puffer environment and copy the exact static pool without touching the
-   old audit tree.
+3. Create exactly `/home/rache/bloodbowl-rl-recovery-20260719` from the exact
+   merged revision. Build/check its Puffer environment and copy the exact
+   static pool without touching the old audit tree. Both the freezer and proof
+   validator reject every other root.
 4. Write the closed recovery spec, freeze the plan once, record its SHA-256,
    and revalidate every pin.
-5. Prove the old audit identities are unchanged, the old/new roots are
-   distinct, no trainer or GPU compute PID exists, capacity/thermal status is
-   healthy, and BBTV's CPU-only public path is healthy.
+5. Prove the old audit identities are unchanged, no trainer or GPU compute PID
+   exists, capacity/thermal status is healthy, and BBTV's CPU-only public path
+   is healthy. The frozen preflight repeats the exact GPU-process query before
+   trainer launch; a manual snapshot is not a substitute.
 6. Install/start only
    `experiment-recovery-queue@vacation-r0-overflow-recovery-20260719-v1.service`.
    Confirm the preflight proof completes before the first trainer appears.
-7. Monitor queue state, screen status, current seed/steps, integrity telemetry,
+7. Install the BBTV override only after the exact merged recovery checkout is
+   present. Its `ExecStart` must be the recovery checkout's launcher and
+   follower, while `BBTV_ROOT=/home/rache/bloodbowl-rl` supplies the unchanged
+   production interpreter, server, and fallback assets. Verify the live
+   follower command contains both checkpoint roots and the recovery state dir.
+8. Monitor queue state, screen status, current seed/steps, integrity telemetry,
    newest complete checkpoint, GPU health, disk/inodes, and BBTV; append the
    durable progress journal at least hourly.
 

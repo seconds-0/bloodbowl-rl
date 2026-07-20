@@ -46,6 +46,7 @@ ssh -n -o BatchMode=yes -o ConnectTimeout=10 rache@100.97.209.46 '
   systemctl --user show \
     experiment-queue@vacation-r0-baseline-20260714-v1.service \
     experiment-queue@vacation-r0-overflow-20260714-v1.service \
+    experiment-recovery-queue@vacation-r0-overflow-recovery-20260719-v1.service \
     bbstream.service bbweb.service bbtv-tunnel.service \
     -p Id -p ActiveState -p SubState -p MainPID -p NRestarts --no-pager
   systemctl --user list-timers --all --no-pager | grep vacation-overflow
@@ -130,10 +131,62 @@ PY
 '
 ```
 
+Monitor the separately rooted D216 queue with its own exact plan and mutable
+state paths. This block is read-only and may report `ABSENT` before deployment:
+
+```bash
+ssh -n -o BatchMode=yes -o ConnectTimeout=10 rache@100.97.209.46 '
+  root=/home/rache/bloodbowl-rl-recovery-20260719
+  queue=vacation-r0-overflow-recovery-20260719-v1
+  if [ ! -d "$root" ]; then
+    echo "D216_RECOVERY_ROOT_ABSENT"
+    exit 0
+  fi
+  cd "$root"
+  vendor/PufferLib/.venv/bin/python - <<"PY"
+import json
+from pathlib import Path
+import sys
+
+queue_id = "vacation-r0-overflow-recovery-20260719-v1"
+plan_path = Path("runs") / queue_id / "QUEUE_PLAN.json"
+state_path = plan_path.with_name("QUEUE_STATE.json")
+status_path = plan_path.parent / "work/full-control/SCREEN_STATUS.json"
+if not plan_path.exists():
+    print("recovery_plan ABSENT")
+    raise SystemExit(0)
+plan = json.loads(plan_path.read_text())
+module = Path("tools/experiment_queue.py").resolve()
+declared = {
+    item["sha256"]
+    for item in plan["pinned_files"]
+    if Path(item["path"]).resolve() == module
+}
+import hashlib
+observed = hashlib.sha256(module.read_bytes()).hexdigest()
+if declared != {observed}:
+    raise SystemExit(f"refusing unpinned recovery monitor import: {module}")
+sys.path.insert(0, "tools")
+import experiment_queue
+print("recovery_plan_sha256", experiment_queue.sha256(plan_path))
+print("recovery_pinned_files", len(plan["pinned_files"]))
+print("recovery_pin_error", experiment_queue.pinned_files_error(plan))
+print("recovery_state", state_path.read_text().strip() if state_path.exists() else "ABSENT")
+print("recovery_screen_status", status_path.read_text().strip() if status_path.exists() else "ABSENT")
+for path in (
+    Path("runs/bbtv-follow/selection.json"),
+    Path("runs/bbtv-follow/server_status.json"),
+):
+    print(path, path.read_text().strip() if path.exists() else "ABSENT")
+PY
+'
+```
+
 Also inspect the current trainer log's last complete `PUFFER_ENV_JSON`, newest
-complete checkpoint, `runs/bbtv-follow/selection.json`, overflow watcher
-journal, and public HTTP/WebSocket. A dashboard line is a sample, not a
-completion artifact.
+complete checkpoint, recovery-root
+`/home/rache/bloodbowl-rl-recovery-20260719/runs/bbtv-follow/selection.json`,
+overflow watcher journal, and public HTTP/WebSocket. A dashboard line is a
+sample, not a completion artifact.
 
 ## State-to-action table
 

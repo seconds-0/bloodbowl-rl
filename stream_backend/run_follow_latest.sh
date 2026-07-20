@@ -4,13 +4,14 @@ set -euo pipefail
 # BBTV production launcher for the RTX 2070. The follower only consumes
 # complete checkpoints from manifested reward-screen runs and never writes to
 # the trainer's checkpoint tree.
-ROOT=${BBTV_ROOT:-"$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"}
+SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT=${BBTV_ROOT:-"$SCRIPT_ROOT"}
 AUDIT_ROOT=${BBTV_AUDIT_ROOT:-"$(dirname "$ROOT")/bloodbowl-rl-audit"}
 RECOVERY_ROOT=${BBTV_RECOVERY_ROOT:-"$(dirname "$ROOT")/bloodbowl-rl-recovery-20260719"}
 VIEWER_ROOT=${BBTV_VIEWER_ROOT:-"$(dirname "$ROOT")/bloodbowl-rl-bbtv-cpu/vendor/PufferLib"}
 SERVER_PYTHON=${BBTV_SERVER_PYTHON:-"$(dirname "$ROOT")/bloodbowl-rl-bbtv/vendor/PufferLib/.venv/bin/python"}
 CHECKPOINT_ROOTS=${BBTV_CHECKPOINT_ROOTS:-"$AUDIT_ROOT/vendor/PufferLib/checkpoints/bloodbowl:$RECOVERY_ROOT/vendor/PufferLib/checkpoints/bloodbowl"}
-STATE_DIR=${BBTV_STATE_DIR:-"$AUDIT_ROOT/runs/bbtv-follow"}
+STATE_DIR=${BBTV_STATE_DIR:-"$RECOVERY_ROOT/runs/bbtv-follow"}
 
 IFS=: read -r -a CHECKPOINT_ROOT_ARRAY <<< "$CHECKPOINT_ROOTS"
 CHECKPOINT_ARGS=()
@@ -63,7 +64,7 @@ esac
 
 exec nice -n 19 ionice -c 3 \
   "$ROOT/vendor/PufferLib/.venv/bin/python" \
-  "$ROOT/stream_backend/follow_latest.py" \
+  "$SCRIPT_ROOT/stream_backend/follow_latest.py" \
   "${CHECKPOINT_ARGS[@]}" \
   --state-dir "$STATE_DIR" \
   --converter-python "$ROOT/vendor/PufferLib/.venv/bin/python" \

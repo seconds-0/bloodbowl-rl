@@ -397,9 +397,14 @@ newer evidence wins.
   `control-final` run for seeds 42/43/44 from netblock. Never reuse the old
   result/checkpoint as accepted output, restart the old queue, or start
   milestone evaluation from the rejected artifact.
-  Use only the separately rooted `experiment-recovery-queue@.service`. BBTV may
-  read manifested checkpoints from both roots, but writes its selection/cache
-  in the recovery root and switches only after a newer checkpoint is complete.
+  Use only the separately rooted `experiment-recovery-queue@.service`. Require
+  the exact reviewed recovery root, all seven Puffer patch files, and an empty
+  exact-pinned `nvidia-smi` compute-process result in the proof validation that
+  runs immediately before PPO. BBTV may read manifested checkpoints from both
+  roots, but writes its selection/cache in the recovery root and switches only
+  after a newer checkpoint is complete. Its launcher and follower execute from
+  the exact merged recovery checkout; `BBTV_ROOT=/home/rache/bloodbowl-rl`
+  supplies only the unchanged production runtime assets.
 - Post-run R0 trajectory evaluation is frozen in
   `docs/plans/r0-milestone-evaluation.md` and implemented by
   `tools/run_checkpoint_milestone_eval.py`. It accepts only a completed,

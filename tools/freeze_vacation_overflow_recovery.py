@@ -19,8 +19,18 @@ import validate_vacation_overflow_recovery as recovery_validator
 
 SCHEMA_VERSION = 1
 RECOVERY_QUEUE_ID = "vacation-r0-overflow-recovery-20260719-v1"
+REVIEWED_RECOVERY_ROOT = recovery_validator.REVIEWED_RECOVERY_ROOT
 REVIEWED_WARM_SHA256 = recovery_validator.NETBLOCK_SHA256
 REVIEWED_WARM_BYTES = 16_066_560
+PUFFER_PATCHES = (
+    "pufferl_env_dashboard_limit.patch",
+    "pufferl_env_json.patch",
+    "pufferl_env_json_metadata_upgrade.patch",
+    "pufferl_env_phase_contract.patch",
+    "pufferl_eval_episode_gate.patch",
+    "pufferl_metrics_keyerror.patch",
+    "torch_pufferl_trusted_load.patch",
+)
 SPEC_KEYS = {
     "schema_version",
     "queue_id",
@@ -121,6 +131,7 @@ def preflight_payload(spec: dict[str, Any]) -> dict[str, Any]:
         "corrected_game_stats": freeze_vacation_queue.file_record(
             spec["root_path"] / "tools/game_stats.py"
         ),
+        "nvidia_smi": freeze_vacation_queue.file_record(spec["nvidia_smi_path"]),
         "warning": recovery_validator.WARNING,
     }
 
@@ -170,6 +181,8 @@ def validate_spec(path: Path) -> dict[str, Any]:
     root = Path(root_value).expanduser().resolve()
     if not root.is_dir():
         raise RecoveryFreezeError(f"recovery root is missing: {root}")
+    if root != Path(REVIEWED_RECOVERY_ROOT).expanduser().resolve():
+        raise RecoveryFreezeError("recovery root is not the reviewed exact root")
     prior_paths = {
         "plan": absolute_file(spec.get("prior_plan"), "prior plan"),
         "state": absolute_file(spec.get("prior_state"), "prior state"),
@@ -287,7 +300,7 @@ def runtime_source_paths(
         spec["nvidia_smi_path"],
         *spec["prior_paths"].values(),
     ]
-    sources.extend(sorted((root / "training").glob("puffer*.patch")))
+    sources.extend(root / "training" / name for name in PUFFER_PATCHES)
     return sources
 
 

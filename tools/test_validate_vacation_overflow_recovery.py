@@ -157,6 +157,9 @@ class VacationOverflowRecoveryValidationTests(unittest.TestCase):
         )
         launcher = Path(__file__).resolve().parents[1] / "tools/run_reward_screen.sh"
         helper = Path(game_stats.__file__).resolve()
+        nvidia_smi = recovery_root / "nvidia-smi"
+        nvidia_smi.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        nvidia_smi.chmod(0o755)
         paths = {
             "plan": plan,
             "state": state,
@@ -166,6 +169,7 @@ class VacationOverflowRecoveryValidationTests(unittest.TestCase):
             "checkpoint": checkpoint,
             "launcher": launcher,
             "game_stats": helper,
+            "nvidia_smi": nvidia_smi,
             "screen_dir": screen_dir,
             "recovery_root": recovery_root,
             "prior_root": prior_root,
@@ -189,6 +193,7 @@ class VacationOverflowRecoveryValidationTests(unittest.TestCase):
             "prior_checkpoint": record(checkpoint),
             "corrected_launcher": record(launcher),
             "corrected_game_stats": record(helper),
+            "nvidia_smi": record(nvidia_smi),
             "warning": recovery.WARNING,
         }
         config_path = write_json(recovery_root / "RECOVERY_PREFLIGHT.json", config)
@@ -215,6 +220,9 @@ class VacationOverflowRecoveryValidationTests(unittest.TestCase):
             config_path, paths, reviewed = self.make_fixture(Path(tmp))
             with (
                 mock.patch.object(recovery, "REVIEWED_PRIOR_ROOT", paths["prior_root"]),
+                mock.patch.object(
+                    recovery, "REVIEWED_RECOVERY_ROOT", paths["recovery_root"]
+                ),
                 mock.patch.object(recovery, "REVIEWED_PRIOR_FILES", reviewed),
             ):
                 config = recovery.validate_config(config_path)
@@ -243,6 +251,9 @@ class VacationOverflowRecoveryValidationTests(unittest.TestCase):
             )
             with (
                 mock.patch.object(recovery, "REVIEWED_PRIOR_ROOT", paths["prior_root"]),
+                mock.patch.object(
+                    recovery, "REVIEWED_RECOVERY_ROOT", paths["recovery_root"]
+                ),
                 mock.patch.object(recovery, "REVIEWED_PRIOR_FILES", reviewed),
             ):
                 config = recovery.validate_config(config_path)
@@ -263,6 +274,9 @@ class VacationOverflowRecoveryValidationTests(unittest.TestCase):
             )
             with (
                 mock.patch.object(recovery, "REVIEWED_PRIOR_ROOT", paths["prior_root"]),
+                mock.patch.object(
+                    recovery, "REVIEWED_RECOVERY_ROOT", paths["recovery_root"]
+                ),
                 mock.patch.object(recovery, "REVIEWED_PRIOR_FILES", reviewed),
             ):
                 config = recovery.validate_config(config_path)
@@ -276,6 +290,9 @@ class VacationOverflowRecoveryValidationTests(unittest.TestCase):
             config_path, paths, reviewed = self.make_fixture(Path(tmp))
             with (
                 mock.patch.object(recovery, "REVIEWED_PRIOR_ROOT", paths["prior_root"]),
+                mock.patch.object(
+                    recovery, "REVIEWED_RECOVERY_ROOT", paths["recovery_root"]
+                ),
                 mock.patch.object(recovery, "REVIEWED_PRIOR_FILES", reviewed),
             ):
                 config = recovery.validate_config(config_path)
@@ -301,6 +318,9 @@ class VacationOverflowRecoveryValidationTests(unittest.TestCase):
             self.rebind(config_path, "prior_state", reviewed, "state", paths["state"])
             with (
                 mock.patch.object(recovery, "REVIEWED_PRIOR_ROOT", paths["prior_root"]),
+                mock.patch.object(
+                    recovery, "REVIEWED_RECOVERY_ROOT", paths["recovery_root"]
+                ),
                 mock.patch.object(recovery, "REVIEWED_PRIOR_FILES", reviewed),
             ):
                 config = recovery.validate_config(config_path)
@@ -315,6 +335,9 @@ class VacationOverflowRecoveryValidationTests(unittest.TestCase):
             proof = paths["recovery_root"] / "proof/RECOVERY_AUTHORIZED.json"
             with (
                 mock.patch.object(recovery, "REVIEWED_PRIOR_ROOT", paths["prior_root"]),
+                mock.patch.object(
+                    recovery, "REVIEWED_RECOVERY_ROOT", paths["recovery_root"]
+                ),
                 mock.patch.object(recovery, "REVIEWED_PRIOR_FILES", reviewed),
             ):
                 self.assertEqual(
@@ -353,6 +376,37 @@ class VacationOverflowRecoveryValidationTests(unittest.TestCase):
                     ),
                     2,
                 )
+
+    def test_rejects_any_other_recovery_root_or_busy_gpu(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path, paths, reviewed = self.make_fixture(Path(tmp))
+            with (
+                mock.patch.object(recovery, "REVIEWED_PRIOR_ROOT", paths["prior_root"]),
+                mock.patch.object(recovery, "REVIEWED_PRIOR_FILES", reviewed),
+            ):
+                with self.assertRaisesRegex(
+                    recovery.RecoveryEvidenceError, "reviewed exact root"
+                ):
+                    recovery.validate_config(config_path)
+
+            paths["nvidia_smi"].write_text(
+                "#!/bin/sh\nprintf '4242\\n'\n", encoding="utf-8"
+            )
+            config = json.loads(config_path.read_text(encoding="utf-8"))
+            config["nvidia_smi"] = record(paths["nvidia_smi"])
+            write_json(config_path, config)
+            with (
+                mock.patch.object(recovery, "REVIEWED_PRIOR_ROOT", paths["prior_root"]),
+                mock.patch.object(
+                    recovery, "REVIEWED_RECOVERY_ROOT", paths["recovery_root"]
+                ),
+                mock.patch.object(recovery, "REVIEWED_PRIOR_FILES", reviewed),
+            ):
+                validated = recovery.validate_config(config_path)
+                with self.assertRaisesRegex(
+                    recovery.RecoveryEvidenceError, "GPU is not idle"
+                ):
+                    recovery.recovery_report(validated)
 
 
 if __name__ == "__main__":

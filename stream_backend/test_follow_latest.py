@@ -387,6 +387,25 @@ class FollowLatestTests(unittest.TestCase):
             "BBTV_STATE_DIR=%h/bloodbowl-rl-recovery-20260719/runs/bbtv-follow",
             override,
         )
+        self.assertIn("BBTV_ROOT=%h/bloodbowl-rl", override)
+        self.assertIn(
+            "ExecStart=%h/bloodbowl-rl-recovery-20260719/stream_backend/"
+            "run_follow_latest.sh",
+            override,
+        )
+        self.assertIn('SCRIPT_ROOT="$(cd ', launcher)
+        self.assertIn('ROOT=${BBTV_ROOT:-"$SCRIPT_ROOT"}', launcher)
+        self.assertIn(
+            'STATE_DIR=${BBTV_STATE_DIR:-"$RECOVERY_ROOT/runs/bbtv-follow"}',
+            launcher,
+        )
+        self.assertNotIn(
+            'STATE_DIR=${BBTV_STATE_DIR:-"$AUDIT_ROOT/runs/bbtv-follow"}',
+            launcher,
+        )
+        self.assertIn(
+            '"$SCRIPT_ROOT/stream_backend/follow_latest.py"', launcher
+        )
         self.assertIn('"${CHECKPOINT_ARGS[@]}"', launcher)
         self.assertIn('--state-dir "$STATE_DIR"', launcher)
 
