@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import os
+import re
 import subprocess
 import tempfile
 import unittest
@@ -123,13 +124,34 @@ class ExperimentContractTests(unittest.TestCase):
             "SCREEN_COMPLETE.json",
             "materialize_result validate",
             'TOTAL_AGENTS=2048',
-            'MIN_EVAL_GAMES=10001',
+            'MIN_EVAL_GAMES=',
+            '"game_stats_sha256": sha(game_stats)',
+            'raise SystemExit("game_stats.py changed after screen plan freeze")',
             'DRY_RUN=0',
             'process.json',
             'acceptance_pass',
         ):
             self.assertIn(contract, source)
+        self.assertLess(
+            source.index('raise SystemExit("game_stats.py changed after screen plan freeze")'),
+            source.index("from game_stats import ("),
+        )
         self.assertNotIn('TOTAL_AGENTS="${TOTAL_AGENTS:-', source)
+
+    def test_reward_screen_accepts_the_requested_eval_game_count(self):
+        screen = (ROOT / "tools/run_reward_screen.sh").read_text(
+            encoding="utf-8")
+        launcher = (ROOT / "tools/run_reward_ablation.sh").read_text(
+            encoding="utf-8")
+        minimum = re.search(r"^MIN_EVAL_GAMES=([0-9]+)$", screen, re.MULTILINE)
+        requested = re.search(r"--eval-episodes ([0-9]+)", launcher)
+        self.assertIsNotNone(minimum)
+        self.assertIsNotNone(requested)
+        self.assertEqual(
+            int(minimum.group(1)),
+            int(requested.group(1)),
+            "an evaluation that completes the requested games must be accepted",
+        )
 
     def test_screen_and_arm_fail_fast_on_patch_bundle_drift(self):
         screen = (ROOT / "tools/run_reward_screen.sh").read_text(

@@ -53,6 +53,11 @@ PAIR_RE = re.compile(r"([a-z_][a-z_0-9]*)\s+([-+]?\d+\.\d+|[-+]?\d+)")
 ENV_JSON_PREFIX = "PUFFER_ENV_JSON "
 
 
+def completed_game_requirement_met(observed, minimum):
+    """Return whether a finite completed-game count meets its inclusive floor."""
+    return math.isfinite(observed) and observed >= minimum
+
+
 def strip_ansi(s):
     s = re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", s)
     return s.replace("\u2502", " ").replace("\u2503", " ")  # box verticals

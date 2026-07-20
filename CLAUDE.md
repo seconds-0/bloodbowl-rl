@@ -429,8 +429,10 @@ newer evidence wins.
     zero.** Use a complete canonical reward manifest and validate its SHA; never
     inherit old synthesis defaults into a causal arm.
 16. **A final Steps line is not an accepted result.** Require explicit eval phase,
-    minimum completed games, final cumulative reprint, checkpoint hash, and zero
-    integrity counters. Use the screen/transfer analyzers.
+    the explicitly requested completed games, final cumulative reprint,
+    checkpoint hash, and zero integrity counters. The acceptance floor must
+    equal the request; exact completion is valid and cannot rely on vectorized
+    overshoot. Use the screen/transfer analyzers.
 17. **Directory names are not edition proof.** Filter replay IDs from embedded
     `rulesVersion`; never mix BB2020 into BB2025 because a shard happens to parse.
 18. **Replay-first is not depth-balanced.** It removes long-replay dominance but

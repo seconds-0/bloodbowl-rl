@@ -83,9 +83,12 @@ For any causal comparison:
   or omission semantics; explicit zero and missing are different.
 - Record hashes for source/config/module/Puffer patches, warm checkpoint,
   opponent pool, reward manifest, plan, result, and final checkpoint.
-- Require explicit train/eval phase telemetry, enough completed full games, a
-  final cumulative reprint, and zero clip, non-finite, engine-error, demo, and
-  fallback counters. Reject an arm that fails integrity; do not average it in.
+- Require explicit train/eval phase telemetry, the requested number of completed
+  full games, a final cumulative reprint, and zero clip, non-finite,
+  engine-error, demo, and fallback counters. The acceptance floor must equal the
+  explicit evaluation request; completing that exact request is valid and must
+  not depend on vectorized overshoot. Reject an arm that fails integrity; do not
+  average it in.
 - On an episode-ending step, preserve explicit objective reward (TD) and result
   utility, but do not let incidental action/board shaping co-stack with the
   terminal result. Keep deliberately episode-terminal terms separately visible

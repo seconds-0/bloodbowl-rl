@@ -71,8 +71,10 @@ For every causal arm:
    checkpoint, pool, backend, optimizer, seeds, execution order, and eval policy.
 2. Supply a complete reward JSON; omitted and explicit-zero fields are different.
 3. Record all hashes and persist immutable plan/status/result/completion records.
-4. Require explicit phase telemetry, enough complete kickoff games, a final
-   cumulative reprint, and zero clip/non-finite/engine-error/demo/fallback counts.
+4. Require explicit phase telemetry, the requested complete kickoff games, a
+   final cumulative reprint, and zero clip/non-finite/engine-error/demo/fallback
+   counts. Keep the acceptance floor equal to the explicit evaluation request;
+   exact completion is valid and must not rely on vectorized overshoot.
 5. Reject integrity failures rather than averaging them into the comparison.
 6. Report W/D/L, TD for/against, both sides, paired common-seed differences, and
    in-sample versus held-out results separately.

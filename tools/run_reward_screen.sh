@@ -57,7 +57,7 @@ VF_CLIP_COEF=0.5
 MAX_GRAD_NORM=1.5
 EXPECTED_POOL_HASH=18ec7cac858b71a6657003f454f19e232fb060f08b644c1e9e2f101076a9aac0
 MIN_TRAIN_GAMES=1
-MIN_EVAL_GAMES=10001
+MIN_EVAL_GAMES=10000
 
 case "$STEPS:$POLL_SECONDS" in
   *[!0-9:]*) echo "STEPS and POLL_SECONDS must be positive integers" >&2; exit 1 ;;
@@ -421,6 +421,7 @@ schedule = [
 ]
 launcher = root / "tools/run_reward_ablation.sh"
 screen_script = root / "tools/run_reward_screen.sh"
+game_stats = root / "tools/game_stats.py"
 contract = {
     "screen_profile": screen_profile,
     "prefix": prefix,
@@ -444,6 +445,7 @@ contract = {
     "rewards": rewards,
     "implementation": {
         "screen_script_sha256": sha(screen_script),
+        "game_stats_sha256": sha(game_stats),
         "launcher_sha256": sha(launcher),
         "candidate_transfer_analyzer_sha256": sha(
             root / "tools/analyze_reward_candidate_transfer.py"),
@@ -581,15 +583,37 @@ materialize_result() {
     "$manifest_path" "$WARM" "$POOL" "$STEPS" "$log" "$result" \
     "$SCREEN_MANIFEST" "$SCREEN_MANIFEST_SHA" "$MIN_TRAIN_GAMES" \
     "$MIN_EVAL_GAMES" <<'PY'
-import hashlib, json, math, os, pathlib, sys
+import hashlib, json, os, pathlib, sys
 (
     root, mode, arm, seed, tag, reward_manifest_path, warm_path, pool_path,
     requested_steps, log_path, result_path, screen_manifest_path,
     screen_manifest_sha, min_train_games, min_eval_games,
 ) = sys.argv[1:]
 root = pathlib.Path(root).resolve()
+
+def sha(path):
+    return hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()
+
+screen_manifest_file = pathlib.Path(screen_manifest_path)
+if not screen_manifest_file.is_file():
+    raise SystemExit(f"missing screen manifest: {screen_manifest_file}")
+if sha(screen_manifest_file) != screen_manifest_sha:
+    raise SystemExit("screen manifest content changed after plan freeze")
+screen = json.loads(screen_manifest_file.read_text(encoding="utf-8"))["contract"]
+game_stats_path = root / "tools/game_stats.py"
+if (
+    not game_stats_path.is_file()
+    or sha(game_stats_path)
+    != screen["implementation"]["game_stats_sha256"]
+):
+    raise SystemExit("game_stats.py changed after screen plan freeze")
+
 sys.path.insert(0, str(root / "tools"))
-from game_stats import dashboard_windows, weighted_dashboard
+from game_stats import (
+    completed_game_requirement_met,
+    dashboard_windows,
+    weighted_dashboard,
+)
 from reward_manifest import load_manifest
 
 def need_file(path, label):
@@ -598,18 +622,12 @@ def need_file(path, label):
         raise SystemExit(f"missing {label}: {path}")
     return path
 
-def sha(path):
-    return hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()
-
 log = need_file(log_path, "trainer log")
 status_path = need_file(log_path + ".status.json", "trainer status")
 process_path = need_file(log_path + ".process.json", "trainer process sidecar")
 run_dir_path = need_file(log_path + ".run_dir", "run-directory sidecar")
 run_manifest_path = need_file(log_path + ".manifest.json", "run manifest")
 screen_manifest_file = need_file(screen_manifest_path, "screen manifest")
-if sha(screen_manifest_file) != screen_manifest_sha:
-    raise SystemExit("screen manifest content changed after plan freeze")
-screen = json.loads(screen_manifest_file.read_text(encoding="utf-8"))["contract"]
 
 run_dir = pathlib.Path(run_dir_path.read_text(encoding="utf-8").strip())
 if not run_dir.is_absolute() or not run_dir.is_dir():
@@ -751,7 +769,7 @@ for phase, metrics in phase_metrics.items():
 for phase, minimum in (
         ("train", int(min_train_games)), ("eval", int(min_eval_games))):
     observed = phase_metrics[phase].get("n", 0.0)
-    if not math.isfinite(observed) or observed < minimum:
+    if not completed_game_requirement_met(observed, minimum):
         failures.append({
             "phase": phase, "kind": "insufficient_games",
             "observed": observed, "minimum": minimum,
