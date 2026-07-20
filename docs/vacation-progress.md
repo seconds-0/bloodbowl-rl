@@ -6502,3 +6502,70 @@ Blockers / next steps:
    proceed through seeds 42, 43, and 44 and their exact 10,000-game evaluations.
 4. Continue durable entries at least hourly and chat updates about every 30
    minutes while actively monitoring.
+
+## 2026-07-20 07:51 PDT — recovery seed 42 passes 6.4B with healthy provenance and live BBTV follow
+
+Status:
+
+- The isolated recovery queue is active/running under the exact
+  `experiment-recovery-queue@vacation-r0-overflow-recovery-20260719-v1.service`
+  unit with zero restarts. Queue state remains `running` on
+  `full-control-rerun`; the screen is on arm `both`, seed 42, in training phase
+  at exact step 6,404,308,992 of the declared 12B request. The queue plan
+  SHA-256 remains
+  `822bb912dbf3992c5fa6f04ddcaa5354897db10d03f2e66934b846c198b6a111`,
+  and the pinned-file validator reports no error across all 54 inputs.
+- The latest complete native checkpoint observed is exact step 6,392,250,368,
+  16,066,560 bytes, SHA-256
+  `f6ac4e694d74438916ec587003ba2958730daba7dd8a9ffc85fa6410fc76d04c`.
+  The latest complete telemetry is schema 2, native/train phase, with reward
+  clip, non-finite reward, component mismatch/nonfinite, engine-error,
+  demonstration, and fallback counters all zero. Final evaluation has not yet
+  begun, as expected for seed 42 at this step.
+- Elapsed throughput is roughly 183K agent-steps/s from trainer start, while the
+  most recent checkpoint interval was about 183K steps/s. A conservative
+  working estimate is about 8.5 hours to seed 42's training boundary and about
+  45 hours of training across the unfinished portion of seeds 42/43/44, plus
+  their three exact 10,000-game final evaluations. This is an operational ETA,
+  not an acceptance result.
+
+Host and BBTV health:
+
+- The RTX 2070 sampled 80–82 C, 74–81% utilization, and 5,554/8,192 MiB. The
+  only GPU compute PID is the seed-42 trainer. Software thermal slowdown was
+  reported active, hardware slowdown inactive, and temperature remains below
+  the frozen 88 C guard; the queue alone owns its three-poll thermal response.
+  Root disk is 11% used with 858 GiB and 66.9M inodes free; host memory reports
+  8.7 GiB available.
+- `bbstream`, `bbweb`, and `bbtv-tunnel` are active/running with zero restarts.
+  BBTV selected the latest stable manifested recovery checkpoint available at
+  its last poll, seed-42 step 6,342,311,936, against the frozen netblock warm
+  policy, and public HTTP returned 200 in 0.272 seconds. The newer 6,392,250,368
+  checkpoint appeared after that selection and should be consumed by the next
+  bounded follower cycle. BBTV remains CPU-only qualitative observation, not
+  evaluation or promotion evidence.
+
+Completed / corrections since the previous entry:
+
+- Confirmed that an initial status probe used the generic
+  `experiment-queue@...` unit name and therefore reported an irrelevant inactive
+  unit. Inspection of the trainer's cgroup identified the exact isolated
+  `experiment-recovery-queue@...` unit; it is healthy, owns both wrapper and PPO
+  processes, and has zero restarts. No experiment or service was changed.
+- Revalidated the exact plan hash and every frozen input through the pinned
+  queue module, confirmed fresh screen/progress files, sampled the GPU three
+  times, hashed the newest checkpoint, and checked the public viewer transport.
+
+Blockers / next steps:
+
+1. No current blocker and no intervention is warranted. Leave the non-resume-
+   safe seed-42 trainer untouched while monitoring freshness, integrity,
+   thermal state, capacity, service restarts, and checkpoint cadence.
+2. Allow the frozen schedule to complete seed 42 training plus its exact
+   10,000-game evaluation, then repeat without adaptation for seeds 43 and 44.
+   A transient training/evaluation handoff is not a failure; require the
+   explicit final reprint and immutable success artifacts.
+3. After the whole accepted screen completes and the GPU is exclusively idle,
+   run only the predeclared immutable milestone analysis/evaluation protocol.
+   Do not select a checkpoint from BBTV or live dashboard aesthetics and do not
+   tune the reward mid-run.
