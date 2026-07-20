@@ -142,6 +142,21 @@ def discover_candidates(checkpoint_root: Path) -> list[Candidate]:
     return sorted(candidates, key=lambda item: (item.run_order, item.step))
 
 
+def discover_candidates_across_roots(
+    checkpoint_roots: list[Path],
+) -> list[Candidate]:
+    """Combine manifested checkpoints from isolated experiment roots."""
+    candidates = [
+        candidate
+        for checkpoint_root in checkpoint_roots
+        for candidate in discover_candidates(checkpoint_root)
+    ]
+    return sorted(
+        candidates,
+        key=lambda item: (item.run_order, item.step, str(item.manifest_path)),
+    )
+
+
 def stable_native(path: Path, expected_bytes: int, seconds: float) -> os.stat_result:
     before = path.stat()
     if before.st_size != expected_bytes:
@@ -283,7 +298,10 @@ def convert_native(
 
 
 def prepare_pair(args: argparse.Namespace) -> dict[str, Any]:
-    candidates = discover_candidates(args.checkpoint_root)
+    checkpoint_roots = getattr(args, "checkpoint_roots", None)
+    if checkpoint_roots is None:
+        checkpoint_roots = [args.checkpoint_root]
+    candidates = discover_candidates_across_roots(checkpoint_roots)
     if not candidates:
         raise RuntimeError("no stable post-bootstrap manifested checkpoint exists")
     current = candidates[-1]
@@ -497,7 +515,14 @@ def run_forever(args: argparse.Namespace) -> int:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--checkpoint-root", type=Path, required=True)
+    parser.add_argument(
+        "--checkpoint-root",
+        dest="checkpoint_roots",
+        type=Path,
+        action="append",
+        required=True,
+        help="checkpoint directory to search; repeat for isolated run roots",
+    )
     parser.add_argument("--state-dir", type=Path, required=True)
     parser.add_argument("--cache-dir", type=Path)
     parser.add_argument("--converter-python", type=Path, required=True)
@@ -527,7 +552,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="prepare and print one selection without launching server.py",
     )
     args = parser.parse_args(argv)
-    args.checkpoint_root = args.checkpoint_root.expanduser().resolve()
+    args.checkpoint_roots = [
+        path.expanduser().resolve() for path in args.checkpoint_roots
+    ]
     args.state_dir = args.state_dir.expanduser().resolve()
     args.cache_dir = (
         args.cache_dir.expanduser().resolve()

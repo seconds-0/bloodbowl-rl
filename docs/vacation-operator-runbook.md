@@ -21,6 +21,20 @@ Current frozen identities:
 Later ledger entries supersede this snapshot. Never copy these identifiers into
 a new queue without a fresh freeze/review.
 
+July 19 terminal update: the optional overflow is now terminal `halted`. Seed
+42 completed all rollout-aligned training steps and exactly 10,000 evaluation
+games with clean integrity counters, but the frozen screen required 10,001, so
+no completion proof exists and seeds 43/44 did not start. D215 corrects future
+screens only. D216 permits a separately reviewed full rerun under
+`/home/rache/bloodbowl-rl-recovery-20260719` with queue ID
+`vacation-r0-overflow-recovery-20260719-v1`; its plan hash is recorded only
+after exact merged deployment and one-time freeze. Until that hash is reviewed
+and journaled, the replacement is not runnable.
+The recovery uses `experiment-recovery-queue@.service`, not the audit-root
+queue template. BBTV reads complete manifested checkpoints across both roots,
+writes its selection/cache only in the recovery root, and must keep the current
+old matchup until a newer complete recovery checkpoint appears.
+
 ## Read-only status snapshot
 
 Run through Tailscale from the Mac. Every SSH command is noninteractive so a
@@ -133,6 +147,9 @@ completion artifact.
 | Overflow remains armed/state-absent after that grace period | During the vacation, diagnose and leave the reviewed timer/gate authoritative; do not evaluate. On return, only the user may choose to keep waiting or explicitly cancel the never-started overflow. A cancellation must disable the timer, record the live state/hashes and decision, and be proved before evaluation; it is not queue completion. |
 | Overflow service/state `running` with fresh progress and valid pins | Observe and journal exactly like primary. Do not start milestone evaluation. |
 | Overflow state exists as `halted`, `failed`, or `interrupted` | Terminal evidence. The timer must not relaunch it. Preserve it and require a new reviewed queue ID for any authorized replacement. |
+| Reviewed D216 recovery state absent | Verify the old terminal identities, exact merged recovery source, isolated root, frozen new plan hash/pins, idle GPU, and healthy BBTV. Do not start from an unfrozen spec or a local unmerged tree. |
+| D216 preflight complete and recovery screen `running` with fresh progress | Observe and journal like any other queue. Confirm only the recovery root is mutable and BBTV remains observational. Do not evaluate or touch the old root. |
+| D216 recovery `halted`, `failed`, or `interrupted` | Terminal evidence again. Preserve both roots and require a new human decision plus separately reviewed plan; never restart the PPO job in place. |
 | Primary or overflow state `complete`, but its recorded success artifact is missing, changed, or fails its validator | Treat as failed evidence. Do not rerun or evaluate it. |
 | An unexpected GPU compute PID appears | Identify it from `/proc/<pid>` and its systemd cgroup. Do not kill an unknown process merely to satisfy the gate. BBTV must remain CPU-only under D189. |
 | BBTV briefly reconnects at a checkpoint/match boundary | Observational only; wait for its bounded follower recovery. Never touch training. |
@@ -203,6 +220,8 @@ authoritative state recovered afterward.
 - editing `QUEUE_PLAN.json`, `QUEUE_STATE.json`, a success artifact, or any pin;
 - restarting a halted/interrupted PPO screen in place;
 - starting overflow early or manually bypassing its watcher/completion gate;
+- treating D215 as retroactive acceptance, reusing the rejected seed-42 result,
+  or starting the D216 recovery before its exact merged plan is frozen/reviewed;
 - cancelling/disarming an absent overflow during the vacation or without the
   returning user's explicit decision and durable record;
 - running evaluation while primary or overflow is pending/running;

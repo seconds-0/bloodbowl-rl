@@ -563,6 +563,17 @@ requires primary-service inactivity, unchanged pins, no existing overflow state,
 and no GPU compute PID. It cannot run after primary failure/halt/drift, relaunch
 an interrupted PPO screen, choose a reward, or change production.
 
+D215/D216 govern the terminal July overflow. Its seed-42 training and 10,000
+evaluation games are rejected historical evidence because that frozen screen
+required 10,001; do not relabel or splice them into a completed screen. Preserve
+the old root and queue unchanged. A human-authorized replacement must use
+`tools/freeze_vacation_overflow_recovery.py`, the separately named recovery
+root/queue, and the exact two-job shape: deterministic terminal-evidence
+preflight, then a fresh ordinary R0 `control-final` at 12B for seeds 42/43/44
+from netblock. The old checkpoint may be hashed as authorization context but is
+not a result, warm start, candidate input, or milestone-evaluation input. Keep
+the PPO job non-resume-safe and treat another interruption as terminal.
+
 D187 freezes the interpretation of the first seed-42 6B curve. Improvement
 against the four static banks is in-pool and non-monotonic, not a newest-policy
 selector. The same curve shows more carrier-focused risk, persistent Rush use

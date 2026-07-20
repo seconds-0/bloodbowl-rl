@@ -47,6 +47,15 @@ pair and restores the previous successful pairing (or the static fallback).
 Conversion and match cycles also have finite timeouts, so a wedged child cannot
 leave the follower alive but permanently stalled.
 
+For D216 recovery, pass both the immutable audit checkpoint root and the
+isolated recovery checkpoint root with repeated `--checkpoint-root` arguments.
+Run ordering remains the launcher-generated numeric directory identity across
+both roots, then checkpoint step. Keep the follower's mutable `runs/bbtv-follow`
+state/cache under `/home/rache/bloodbowl-rl-recovery-20260719`, not the old audit
+root. Until the recovery produces a newer complete manifested checkpoint, the
+follower continues streaming the old final seed-42 checkpoint; an absent new
+root or partial checkpoint is ignored.
+
 The follower rechecks after every two streamed games. Home and away are swapped
 between those games by the existing match runner. A just-finished checkpoint can
 therefore take up to one two-game cycle to appear.
@@ -74,8 +83,8 @@ Apply or inspect it with:
 systemctl --user daemon-reload
 systemctl --user restart bbstream.service
 systemctl --user status bbstream.service
-cat /home/rache/bloodbowl-rl-audit/runs/bbtv-follow/selection.json
-cat /home/rache/bloodbowl-rl-audit/runs/bbtv-follow/server_status.json
+cat /home/rache/bloodbowl-rl-recovery-20260719/runs/bbtv-follow/selection.json
+cat /home/rache/bloodbowl-rl-recovery-20260719/runs/bbtv-follow/server_status.json
 ```
 
 The CPU viewer is an isolated copy of the already-isolated BBTV Puffer source,

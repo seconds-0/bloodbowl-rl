@@ -227,6 +227,21 @@ or allow the timer to relaunch existing state.
 A persisted queue halt is terminal across restart and reboot. Do not edit its
 state to resume it. Preserve the evidence and deploy a new reviewed queue
 ID/plan/state after diagnosis if the user-authorized experiment should continue.
+
+For D215/D216 overflow recovery, never deploy into or write under
+`/home/rache/bloodbowl-rl-audit`. Use the exact merged source in the isolated
+`/home/rache/bloodbowl-rl-recovery-20260719` root and the queue ID
+`vacation-r0-overflow-recovery-20260719-v1`. Freeze and record a new plan hash;
+the first queue job must validate the old terminal evidence before the fresh
+three-seed trainer starts. Prove old hashes unchanged before and after setup,
+prove the two roots differ, and keep BBTV CPU-only and observational. Never copy
+old mutable state into the recovery root, reuse the old rejected checkpoint as
+output, or run old and new trainers concurrently.
+Install the separately rooted `experiment-recovery-queue@.service`; the existing
+`experiment-queue@.service` is audit-root-only. Configure the CPU BBTV follower
+to search both checkpoint roots while writing its state/cache under the recovery
+root, and verify it keeps the last complete old matchup until a newer complete
+recovery checkpoint is available.
 Use `docs/vacation-operator-runbook.md` for the exact read-only snapshot,
 state-to-action matrix, overflow watcher grace period, BBTV fault isolation,
 and return-day sequence. It is deliberately non-authorizing: do not improvise
