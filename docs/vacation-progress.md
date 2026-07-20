@@ -6406,8 +6406,12 @@ Blockers / next steps:
 3. Deploy the merged tree to the separate recovery root, build/check its Puffer
    environment, copy and verify the exact static pool, freeze the real plan,
    record its plan hash, re-prove old hashes and idle GPU/BBTV health, then start
-   only the generic queue service. Confirm the terminal-evidence proof completes
-   before any trainer appears.
+   only the separately rooted `experiment-recovery-queue@.service`. The audit-
+   rooted generic template cannot launch the isolated plan. Confirm the
+   terminal-evidence proof completes before any trainer appears. BBTV will read
+   complete manifested checkpoints from both roots while moving its mutable
+   selection/cache to the recovery root, so it keeps the current old seed-42
+   matchup until a newer recovery checkpoint is complete.
 4. Continue chat updates about every 30 minutes and durable journal entries at
    least hourly. BBTV remains CPU-only qualitative observation and never changes
    training or promotion decisions.
