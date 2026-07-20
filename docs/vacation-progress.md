@@ -6569,3 +6569,55 @@ Blockers / next steps:
    run only the predeclared immutable milestone analysis/evaluation protocol.
    Do not select a checkpoint from BBTV or live dashboard aesthetics and do not
    tune the reward mid-run.
+
+## 2026-07-20 12:51 PDT — recovery seed 42 reaches 9.67B with all guards healthy
+
+Status:
+
+- The isolated recovery queue and its `full-control-rerun` remain
+  active/running with zero service restarts. Arm `both`, seed 42 is in native
+  training phase at exact step 9,672,458,240 of the 12B request, about 80.6% of
+  this seed's training. `SCREEN_STATUS.json` and the trainer log are fresh.
+- Queue plan SHA-256 remains
+  `822bb912dbf3992c5fa6f04ddcaa5354897db10d03f2e66934b846c198b6a111`;
+  its 54 frozen inputs revalidate with no pin error. The terminal-evidence
+  preflight remains complete with success SHA-256
+  `9a22d43c125978ecb9790efa9497ba6fa50875144e641cc51cefecbc96867654`.
+- The latest complete native checkpoint observed is exact step 9,638,248,448,
+  16,066,560 bytes, SHA-256
+  `8c0bfd8f52037a4c1dff4272539d0c973342868c34193fb20393b99f54cbebff`.
+  The latest schema-2 panel remains in train phase with reward clip/excess,
+  reward non-finite, component mismatch/nonfinite, engine-error,
+  demonstration, and fallback counters all zero. Final evaluation has not yet
+  begun, as expected.
+- Average elapsed throughput remains about 182K agent-steps/s. At that rate,
+  seed 42 should reach its training boundary in roughly 3.6 hours; about 40
+  training hours remain across the unfinished portions of seeds 42/43/44,
+  followed by their exact 10,000-game evaluations. This remains an operational
+  estimate rather than an acceptance result.
+
+Host and BBTV health:
+
+- The RTX 2070 sampled 80–81 C, 72–77% utilization, and 5,554/8,192 MiB. The
+  seed-42 trainer remains the only GPU compute PID. Software thermal slowdown
+  is active, hardware slowdown inactive, and all temperature samples remain
+  below the frozen 88 C queue guard. Root disk is 11% used with 857 GiB and
+  66.9M inodes free; host memory reports 8.1 GiB available.
+- `bbstream`, `bbweb`, and `bbtv-tunnel` remain active/running with zero
+  restarts. BBTV is following exact seed-42 checkpoint step 9,588,310,016
+  against the frozen netblock warm policy. Public HTTP returned 200 in 0.238
+  seconds. The follower is observational and continues to select only complete
+  manifested checkpoints; its games and live panel values are not evaluation
+  or checkpoint-selection evidence.
+
+Blockers / next steps:
+
+1. No current blocker or operator decision. Continue read-only monitoring and
+   leave this non-resume-safe trainer untouched.
+2. Expect seed 42 to enter its exact 10,000-game evaluation after the 12B
+   training boundary. Treat the phase handoff as normal and require completed
+   games, final cumulative reprint, final checkpoint, and zero integrity totals
+   before the screen advances to seed 43.
+3. Continue the unchanged frozen schedule through seeds 43 and 44. Defer the
+   predeclared milestone evaluation and any new reward work until the entire
+   screen is accepted and the GPU is exclusively idle.
