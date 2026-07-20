@@ -174,6 +174,29 @@ primary plan, both original validators, primary-service inactivity, unchanged
 pins, and an idle GPU. Never append the active plan, deploy over one of its
 pinned files, start the overflow early, or timer-relaunch existing state.
 
+D215/D216 supersede the continuation path after the July overflow's terminal
+seed-42 halt. Preserve `/home/rache/bloodbowl-rl-audit` unchanged and never
+reinterpret, edit, or restart `vacation-r0-overflow-20260714-v1`. The only
+authorized replacement is the separately reviewed
+`tools/freeze_vacation_overflow_recovery.py` plan in
+`/home/rache/bloodbowl-rl-recovery-20260719`: first validate the exact old
+terminal evidence and corrected inclusive 10,000-game boundary, then freshly
+run the ordinary R0 `control-final` seeds 42/43/44 from netblock. The old
+seed-42 result/checkpoint is authorization context only, never a reused result,
+warm start, promotion input, or milestone-evaluation input. A recovery PPO
+interruption is terminal under the same non-resume-safe rule.
+Launch it only with the separately rooted `experiment-recovery-queue@.service`.
+Both recovery validators must require the exact reviewed root, pin the complete
+seven-file Puffer patch bundle, and recompute an empty compute-process list with
+the exact pinned `nvidia-smi` immediately before the queue advances to PPO.
+BBTV may search complete manifested checkpoints across the old and recovery
+roots, but its mutable state/cache belongs in the recovery root and it must keep
+showing the last complete old matchup until a newer complete recovery checkpoint
+exists. Execute the BBTV launcher and follower from the exact merged recovery
+checkout; use `BBTV_ROOT=/home/rache/bloodbowl-rl` only for the unchanged
+production interpreter/server/fallback assets, and verify the live two-root
+command before starting training.
+
 After an accepted R0 `control-final` screen, use
 `tools/run_checkpoint_milestone_eval.py` and
 `docs/plans/r0-milestone-evaluation.md` for the predeclared 0/1/2/4/6/8/10/12B

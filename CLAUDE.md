@@ -388,6 +388,23 @@ newer evidence wins.
   inactive primary service, unchanged pins, no prior overflow state, and no GPU
   compute PID. The overflow is third-ancestry characterization, never a reward
   rescue, candidate switch, promotion, or permission to edit the active plan.
+- D215/D216 record that the July overflow terminally halted after seed 42
+  finished exactly 10,000 evaluation games against its frozen 10,001 minimum.
+  Keep the old audit root and queue byte-unchanged. The only reviewed recovery
+  shape is `tools/freeze_vacation_overflow_recovery.py` in the separate
+  `/home/rache/bloodbowl-rl-recovery-20260719` root: a restart-safe exact
+  terminal-evidence proof followed by a fresh, ordinary, non-resume-safe R0
+  `control-final` run for seeds 42/43/44 from netblock. Never reuse the old
+  result/checkpoint as accepted output, restart the old queue, or start
+  milestone evaluation from the rejected artifact.
+  Use only the separately rooted `experiment-recovery-queue@.service`. Require
+  the exact reviewed recovery root, all seven Puffer patch files, and an empty
+  exact-pinned `nvidia-smi` compute-process result in the proof validation that
+  runs immediately before PPO. BBTV may read manifested checkpoints from both
+  roots, but writes its selection/cache in the recovery root and switches only
+  after a newer checkpoint is complete. Its launcher and follower execute from
+  the exact merged recovery checkout; `BBTV_ROOT=/home/rache/bloodbowl-rl`
+  supplies only the unchanged production runtime assets.
 - Post-run R0 trajectory evaluation is frozen in
   `docs/plans/r0-milestone-evaluation.md` and implemented by
   `tools/run_checkpoint_milestone_eval.py`. It accepts only a completed,

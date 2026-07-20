@@ -47,6 +47,15 @@ pair and restores the previous successful pairing (or the static fallback).
 Conversion and match cycles also have finite timeouts, so a wedged child cannot
 leave the follower alive but permanently stalled.
 
+For D216 recovery, pass both the immutable audit checkpoint root and the
+isolated recovery checkpoint root with repeated `--checkpoint-root` arguments.
+Run ordering remains the launcher-generated numeric directory identity across
+both roots, then checkpoint step. Keep the follower's mutable `runs/bbtv-follow`
+state/cache under `/home/rache/bloodbowl-rl-recovery-20260719`, not the old audit
+root. Until the recovery produces a newer complete manifested checkpoint, the
+follower continues streaming the old final seed-42 checkpoint; an absent new
+root or partial checkpoint is ignored.
+
 The follower rechecks after every two streamed games. Home and away are swapped
 between those games by the existing match runner. A just-finished checkpoint can
 therefore take up to one two-game cycle to appear.
@@ -61,8 +70,14 @@ is recorded in `server_status.json`.
 
 ## RTX 2070 service
 
-The repository launcher is `stream_backend/run_follow_latest.sh`. Production is
-enabled with a reversible systemd user-service override:
+The exact D216 launcher and follower execute from the merged recovery checkout.
+`BBTV_ROOT=/home/rache/bloodbowl-rl` deliberately keeps the unchanged
+production interpreter, match server, fallback policies, and environment setup
+as runtime assets. This split prevents an older production checkout from
+silently ignoring the two-root arguments while avoiding a second server stack.
+The launcher defaults mutable state to the recovery root even when it is run
+directly. Production is enabled with a reversible systemd user-service
+override:
 
 The checked-in override template is
 `stream_backend/bbstream-follow-latest.conf`; install it as
@@ -71,12 +86,28 @@ The checked-in override template is
 Apply or inspect it with:
 
 ```bash
+test "$(git -C /home/rache/bloodbowl-rl-recovery-20260719 rev-parse HEAD)" = \
+  "$(git -C /home/rache/bloodbowl-rl-recovery-20260719 rev-parse origin/main)"
+test -z "$(git -C /home/rache/bloodbowl-rl-recovery-20260719 status --porcelain)"
 systemctl --user daemon-reload
 systemctl --user restart bbstream.service
 systemctl --user status bbstream.service
-cat /home/rache/bloodbowl-rl-audit/runs/bbtv-follow/selection.json
-cat /home/rache/bloodbowl-rl-audit/runs/bbtv-follow/server_status.json
+pid="$(systemctl --user show bbstream.service -p MainPID --value)"
+tr '\0' ' ' < "/proc/$pid/cmdline"; printf '\n'
+cat /home/rache/bloodbowl-rl-recovery-20260719/runs/bbtv-follow/selection.json
+cat /home/rache/bloodbowl-rl-recovery-20260719/runs/bbtv-follow/server_status.json
 ```
+
+The live command must execute
+`/home/rache/bloodbowl-rl-recovery-20260719/stream_backend/follow_latest.py`,
+contain both repeated `--checkpoint-root` paths, and contain
+`--state-dir /home/rache/bloodbowl-rl-recovery-20260719/runs/bbtv-follow`.
+Before restart, hash `run_follow_latest.sh` and `follow_latest.py` in that
+checkout and compare them with the same paths at its recorded merged Git
+revision. Smoke discovery must retain the old selection when the recovery root
+is absent or has only a partial checkpoint, then select a complete newer
+recovery checkpoint when one is available. Keep CUDA hidden and confirm the
+viewer contributes no GPU compute PID.
 
 The CPU viewer is an isolated copy of the already-isolated BBTV Puffer source,
 built in its own tree with `./build.sh bloodbowl --cpu`. Before switching the

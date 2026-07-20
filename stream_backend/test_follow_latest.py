@@ -75,6 +75,31 @@ class FollowLatestTests(unittest.TestCase):
         self.assertEqual(candidates[-1].tag, "new-arm")
         self.assertEqual(candidates[-1].step, 50)
 
+    def test_discovery_across_roots_prefers_newest_run_identity(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            old_root = base / "old"
+            new_root = base / "new"
+            old_root.mkdir()
+            new_root.mkdir()
+            warm = base / "warm.bin"
+            warm.write_bytes(b"w" * 16)
+            old = old_root / "1001"
+            old.mkdir()
+            write_manifest(old, tag="old-root", seed=42, warm=warm)
+            (old / "0000000000000100.bin").write_bytes(b"a" * 16)
+            new = new_root / "1002"
+            new.mkdir()
+            write_manifest(new, tag="new-root", seed=43, warm=warm)
+            (new / "0000000000000050.bin").write_bytes(b"b" * 16)
+
+            candidates = follow_latest.discover_candidates_across_roots(
+                [old_root, new_root]
+            )
+
+        self.assertEqual(candidates[-1].tag, "new-root")
+        self.assertEqual(candidates[-1].step, 50)
+
     def test_stability_gate_rejects_wrong_size(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "checkpoint.bin"
@@ -324,6 +349,7 @@ class FollowLatestTests(unittest.TestCase):
                     side_effect=AssertionError):
                 args = follow_latest.parse_args([
                     "--checkpoint-root", str(checkpoint_root),
+                    "--checkpoint-root", str(root / "future-checkpoints"),
                     "--state-dir", str(root / "state"),
                     "--converter-python", str(venv_python),
                     "--converter-script", str(script),
@@ -335,7 +361,53 @@ class FollowLatestTests(unittest.TestCase):
                 ])
         self.assertEqual(args.converter_python, venv_python.absolute())
         self.assertNotEqual(args.converter_python, real_python.resolve())
+        self.assertEqual(
+            args.checkpoint_roots,
+            [checkpoint_root.resolve(), (root / "future-checkpoints").resolve()],
+        )
         self.assertTrue(args.sample)
+
+    def test_recovery_follower_reads_both_roots_and_writes_new_state(self):
+        root = Path(__file__).resolve().parents[1]
+        override = (root / "stream_backend/bbstream-follow-latest.conf").read_text(
+            encoding="utf-8"
+        )
+        launcher = (root / "stream_backend/run_follow_latest.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            "bloodbowl-rl-audit/vendor/PufferLib/checkpoints/bloodbowl:",
+            override,
+        )
+        self.assertIn(
+            "bloodbowl-rl-recovery-20260719/vendor/PufferLib/checkpoints/bloodbowl",
+            override,
+        )
+        self.assertIn(
+            "BBTV_STATE_DIR=%h/bloodbowl-rl-recovery-20260719/runs/bbtv-follow",
+            override,
+        )
+        self.assertIn("BBTV_ROOT=%h/bloodbowl-rl", override)
+        self.assertIn(
+            "ExecStart=%h/bloodbowl-rl-recovery-20260719/stream_backend/"
+            "run_follow_latest.sh",
+            override,
+        )
+        self.assertIn('SCRIPT_ROOT="$(cd ', launcher)
+        self.assertIn('ROOT=${BBTV_ROOT:-"$SCRIPT_ROOT"}', launcher)
+        self.assertIn(
+            'STATE_DIR=${BBTV_STATE_DIR:-"$RECOVERY_ROOT/runs/bbtv-follow"}',
+            launcher,
+        )
+        self.assertNotIn(
+            'STATE_DIR=${BBTV_STATE_DIR:-"$AUDIT_ROOT/runs/bbtv-follow"}',
+            launcher,
+        )
+        self.assertIn(
+            '"$SCRIPT_ROOT/stream_backend/follow_latest.py"', launcher
+        )
+        self.assertIn('"${CHECKPOINT_ARGS[@]}"', launcher)
+        self.assertIn('--state-dir "$STATE_DIR"', launcher)
 
 
 if __name__ == "__main__":
