@@ -333,8 +333,10 @@ surface, match() mechanics): `reference/vecenv-internals.md`.
   audited `training/pufferl_eval_episode_gate.patch` accumulates completed games
   across intervals and scales the eval budget to the requested target. An arm is
   accepted only after the requested full games, explicit final phase/status
-  reprint, checkpoint hash, and zero integrity counters. A frozen dashboard line
-  alone proves neither a hang nor completion.
+  reprint, checkpoint hash, and zero integrity counters. Set the acceptance
+  floor to that same request: an exact count is complete and must not require an
+  incidental vectorized overshoot. A frozen dashboard line alone proves neither
+  a hang nor completion.
 - `tools/install_puffer_env.sh` applies the audited Puffer stack in this order:
   dashboard limit, env JSON, JSON metadata upgrade, phase contract, eval episode
   gate, dynamic metrics-key fix, and trusted Torch load. `tools/run_reward_screen.sh`
