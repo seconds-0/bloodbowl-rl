@@ -84,14 +84,16 @@ The recovery proof does not:
    exists, capacity/thermal status is healthy, and BBTV's CPU-only public path
    is healthy. The frozen preflight repeats the exact GPU-process query before
    trainer launch; a manual snapshot is not a substitute.
-6. Install/start only
-   `experiment-recovery-queue@vacation-r0-overflow-recovery-20260719-v1.service`.
-   Confirm the preflight proof completes before the first trainer appears.
-7. Install the BBTV override only after the exact merged recovery checkout is
+6. Install the BBTV override only after the exact merged recovery checkout is
    present. Its `ExecStart` must be the recovery checkout's launcher and
    follower, while `BBTV_ROOT=/home/rache/bloodbowl-rl` supplies the unchanged
    production interpreter, server, and fallback assets. Verify the live
-   follower command contains both checkpoint roots and the recovery state dir.
+   follower command contains both checkpoint roots and the recovery state dir,
+   that its CPU viewer passes the documented smoke cycle, and that it contributes
+   no GPU compute PID.
+7. Only after the BBTV checks pass, install/start
+   `experiment-recovery-queue@vacation-r0-overflow-recovery-20260719-v1.service`.
+   Confirm the frozen preflight proof completes before the first trainer appears.
 8. Monitor queue state, screen status, current seed/steps, integrity telemetry,
    newest complete checkpoint, GPU health, disk/inodes, and BBTV; append the
    durable progress journal at least hourly.
