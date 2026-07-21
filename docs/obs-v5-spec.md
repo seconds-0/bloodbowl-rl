@@ -97,6 +97,14 @@ names an offered engine action (or an explicit macro-move env action).
   semantically interchangeable with obs-v5 despite shape compatibility.
 - Do not warm-start a v5 run from v4, compare their curves as one lineage, or
   merge their replay pairs without a separately reviewed bridge experiment.
+- Current flat checkpoints require the canonical adjacent `.lineage.json` from
+  `tools/checkpoint_lineage.py`. The record binds checkpoint content,
+  obs-v5/exact-joint-v1 semantics, policy shape, producer manifest,
+  source/module/Puffer-patch identities, and ancestry eligibility. Blob size,
+  output-head sizes, filename, and location are never lineage evidence.
+- The 50M exact-action canary starts fresh with no warm checkpoint, no external
+  pool, and zero frozen banks. Its lineage is qualification-only and must be
+  rejected as a warm start, pool seed, promotion candidate, or causal result.
 - Re-extract behavioral-cloning observations under v5 before treating replay
   supervision as information-set matched.
 - Existing live v4 runs and BBTV viewers keep their pinned builds until normal

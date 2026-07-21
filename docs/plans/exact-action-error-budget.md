@@ -79,14 +79,17 @@ canary is disposable qualification evidence, not a warm start or a result cell.
 Launch that stage only through the dedicated one-arm profile:
 
 ```bash
-WARM=/abs/warm.bin POOL=/abs/pool STEPS=50000000 \
+env -u WARM -u POOL STEPS=50000000 \
   SCREEN_PROFILE=exact-action-canary PREFIX=exact-action-canary-v1 \
   bash tools/run_reward_screen.sh
 ```
 
 The profile accepts exactly 50M requested steps, freezes R0, seed 42, and one
-arm, rejects candidate-selection inputs, and records `qualification_only: true`
-in `SCREEN_MANIFEST.json`.
+arm, rejects candidate-selection and legacy warm/pool inputs, uses deterministic
+fresh obs-v5 initialization with no frozen banks, and records
+`qualification_only: true` in `SCREEN_MANIFEST.json`. Its checkpoint receives a
+hash-bound lineage sidecar that makes it permanently ineligible as a warm start
+or pool seed.
 
 ## Success criteria
 

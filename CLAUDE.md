@@ -255,6 +255,15 @@ newer evidence wins.
 
 ### Obs / checkpoints / build
 - **obs-v5 = 2782 bytes** (obs-v4 probability planes plus decision-window truth; spec `docs/obs-v5-spec.md`). Rolled block faces are visible at reroll/choose windows, TEST kind and active movement expenditure are explicit, invalid ball coordinates zero, and Touchback placements are spatially addressable. **Three OBS_SIZE sync points must agree** (static asserts catch 2 of 3): `BBE_OBS_SIZE` in `puffer/bloodbowl/bloodbowl.h`, `#define OBS_SIZE` in `puffer/bloodbowl/binding.c:8`, `--obs-size` in `training/convert_checkpoint.py` (default 2782; v3 ckpts need `--obs-size 1612`). Obs-v4 has the same shape but different semantics: blob size cannot distinguish it, so require source/module provenance and no v4 warm-start, replay mixing, or direct curve comparison without a reviewed bridge. Obs-v3 and older checkpoints remain input-shape **incompatible**.
+- **Current checkpoint lineage is external and mandatory.** A flat blob has no
+  header; require its canonical `.lineage.json` from
+  `tools/checkpoint_lineage.py`, which binds obs-v5/exact-joint-v1, policy
+  shape, checkpoint hash, producer manifest, source/module/Puffer patch hashes,
+  and eligibility. Repaired warm/pool launchers reject missing, mismatched, or
+  qualification-only sidecars. Build current pools with `tools/build_league.py`;
+  `--legacy-unlabeled` is historical reconstruction only. Launch the disposable
+  exact-action canary with `WARM` and `POOL` unset: it is fresh, pool-free, and
+  permanently ineligible as ancestry.
 - **`puffer/bloodbowl/` is the SOURCE OF TRUTH; `vendor/PufferLib/ocean/bloodbowl/` is an installed snapshot** written by `tools/install_puffer_env.sh` — the build compiles the snapshot, NOT your edit. The snapshot can lag (the Mac checkout's may still say 1612). Drift guard: `tools/install_puffer_env.sh --check` (exit 1 = re-install). Run it before any build on a training box.
 - After ANY env code change, ON THE TARGET: `bash tools/install_puffer_env.sh`,
   `bash tools/install_puffer_env.sh --check`, then

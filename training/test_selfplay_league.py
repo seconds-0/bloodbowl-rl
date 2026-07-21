@@ -34,6 +34,7 @@ import sys
 import tempfile
 import types
 import unittest
+from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -42,6 +43,8 @@ PATCH = os.path.join(ROOT, 'training', 'selfplay_league.patch')
 sys.path.insert(0, os.path.join(ROOT, 'tools'))
 from build_league import (  # noqa: E402
     DEFAULT_EXPECT_BYTES, LeagueError, build_league, parse_seed_args)
+from checkpoint_lineage import (  # noqa: E402
+    lineage_from_run_manifest, sidecar_path, write_lineage)
 
 
 def find_pufferlib():
@@ -169,7 +172,8 @@ class BuildLeagueTest(unittest.TestCase):
 
     def test_layout_matches_selfplay_conventions(self):
         out = os.path.join(self.tmp, 'league')
-        manifest = build_league(out, self.seeds, self.EXPECT)
+        manifest = build_league(
+            out, self.seeds, self.EXPECT, allow_legacy_unlabeled=True)
         pool = os.path.join(out, 'pool')
         # File naming: f'{i:016d}.bin' (selfplay.py:171/:247 convention).
         for i, (name, src) in enumerate(self.seeds):
@@ -198,13 +202,14 @@ class BuildLeagueTest(unittest.TestCase):
         make_seed(bad, self.EXPECT - 1)
         with self.assertRaisesRegex(LeagueError, 'expected'):
             build_league(os.path.join(self.tmp, 'league2'),
-                         self.seeds + [('bad', bad)], self.EXPECT)
+                         self.seeds + [('bad', bad)], self.EXPECT,
+                         allow_legacy_unlabeled=True)
 
     def test_rejects_missing_seed(self):
         with self.assertRaisesRegex(LeagueError, 'does not exist'):
             build_league(os.path.join(self.tmp, 'league3'),
                          [('ghost', os.path.join(self.tmp, 'ghost.bin'))],
-                         self.EXPECT)
+                         self.EXPECT, allow_legacy_unlabeled=True)
 
     def test_rejects_duplicate_name(self):
         with self.assertRaisesRegex(LeagueError, 'duplicate'):
@@ -216,9 +221,86 @@ class BuildLeagueTest(unittest.TestCase):
 
     def test_refuses_nonempty_pool(self):
         out = os.path.join(self.tmp, 'league4')
-        build_league(out, self.seeds, self.EXPECT)
+        build_league(
+            out, self.seeds, self.EXPECT, allow_legacy_unlabeled=True)
         with self.assertRaisesRegex(LeagueError, 'refusing'):
-            build_league(out, self.seeds, self.EXPECT)
+            build_league(
+                out, self.seeds, self.EXPECT, allow_legacy_unlabeled=True)
+
+    def test_copy_failure_leaves_no_partial_pool_and_retry_succeeds(self):
+        out = os.path.join(self.tmp, 'atomic-league')
+        real_copy = shutil.copyfile
+        calls = 0
+
+        def fail_third_copy(source, destination):
+            nonlocal calls
+            calls += 1
+            if calls == 3:
+                raise OSError('synthetic copy failure')
+            return real_copy(source, destination)
+
+        with mock.patch('build_league.shutil.copyfile', side_effect=fail_third_copy):
+            with self.assertRaisesRegex(LeagueError, 'atomically'):
+                build_league(
+                    out, self.seeds, self.EXPECT,
+                    allow_legacy_unlabeled=True)
+        self.assertFalse(os.path.exists(os.path.join(out, 'pool')))
+        self.assertFalse(any(name.startswith('.pool.tmp.')
+                             for name in os.listdir(out)))
+
+        manifest = build_league(
+            out, self.seeds, self.EXPECT, allow_legacy_unlabeled=True)
+        self.assertEqual(len(manifest['seeds']), len(self.seeds))
+
+    def test_current_pool_requires_and_copies_eligible_lineage(self):
+        with self.assertRaisesRegex(LeagueError, 'lineage'):
+            build_league(
+                os.path.join(self.tmp, 'missing-lineage'),
+                self.seeds, self.EXPECT)
+
+        current_seeds = []
+        for name, _ in self.seeds:
+            checkpoint = os.path.join(self.tmp, f'current-{name}.bin')
+            make_seed(checkpoint, DEFAULT_EXPECT_BYTES)
+            current_seeds.append((name, checkpoint))
+
+        for index, (_, checkpoint) in enumerate(current_seeds):
+            manifest_path = os.path.join(self.tmp, f'run-{index}.json')
+            with open(manifest_path, 'w') as handle:
+                json.dump({
+                    'schema_version': 1,
+                    'mode': 'native_static_pool_reward_ablation',
+                    'seed': str(index),
+                    'observation_abi': 'obs-v5',
+                    'observation_version': '5',
+                    'action_abi': 'exact-joint-v1',
+                    'initialization': 'lineage-v5',
+                    'qualification_only': '0',
+                    'policy_hidden_size': '512',
+                    'policy_num_layers': '3',
+                    'policy_expansion_factor': '1',
+                    'expected_checkpoint_bytes': str(DEFAULT_EXPECT_BYTES),
+                    'source_sha256': '1' * 64,
+                    'compiled_module_sha256': '2' * 64,
+                    'puffer_patch_bundle_sha256': '3' * 64,
+                    'screen_manifest_sha256': '4' * 64,
+                    'warm_lineage_sha256': '5' * 64,
+                    'pool_lineage_bundle_sha256': '6' * 64,
+                }, handle, sort_keys=True)
+                handle.write('\n')
+            payload = lineage_from_run_manifest(
+                checkpoint, manifest_path, allow_eligible_publication=True)
+            write_lineage(sidecar_path(checkpoint), payload)
+
+        out = os.path.join(self.tmp, 'current-lineage')
+        manifest = build_league(
+            out, current_seeds, DEFAULT_EXPECT_BYTES)
+        self.assertEqual(manifest['version'], 2)
+        self.assertTrue(manifest['lineage_required'])
+        for seed in manifest['seeds']:
+            self.assertTrue(seed['lineage_file'].endswith('.lineage.json'))
+            self.assertTrue(os.path.isfile(os.path.join(
+                out, 'pool', seed['lineage_file'])))
 
 
 class PatchedSetupTest(unittest.TestCase):
@@ -242,7 +324,8 @@ class PatchedSetupTest(unittest.TestCase):
             make_seed(p, self.EXPECT)
             seeds.append((n, p))
         out = os.path.join(self.tmp, 'league')
-        build_league(out, seeds, self.EXPECT)
+        build_league(
+            out, seeds, self.EXPECT, allow_legacy_unlabeled=True)
         return os.path.join(out, 'pool')
 
     def test_patch_is_applicable_or_already_applied_to_vendor(self):

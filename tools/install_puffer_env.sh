@@ -121,15 +121,47 @@ if [ "$MODE" = "check" ]; then
     header_backend_hash="$(sed -n \
         's/^#define PUFFER_EXACT_ACTION_SOURCE_HASH "\([0-9a-f]*\)"$/\1/p' \
         "$PUFFER/src/exact_action_build_hash.h" 2>/dev/null || true)"
-    compiled_backend_hash="$(cd "$PUFFER" && "$PYBIN" -c \
-        'from pufferlib import _C; print(getattr(_C, "exact_action_source_hash", "<missing>"))' \
+    header_environment_hash="$(sed -n \
+        's/^#define PUFFER_ENV_SOURCE_HASH "\([0-9a-f]*\)"$/\1/p' \
+        "$PUFFER/src/exact_action_build_hash.h" 2>/dev/null || true)"
+    header_observation_abi="$(sed -n \
+        's/^#define PUFFER_OBSERVATION_ABI "\([^"]*\)"$/\1/p' \
+        "$PUFFER/src/exact_action_build_hash.h" 2>/dev/null || true)"
+    header_observation_version="$(sed -n \
+        's/^#define PUFFER_OBSERVATION_VERSION \([0-9][0-9]*\)$/\1/p' \
+        "$PUFFER/src/exact_action_build_hash.h" 2>/dev/null || true)"
+    header_action_abi="$(sed -n \
+        's/^#define PUFFER_ACTION_ABI "\([^"]*\)"$/\1/p' \
+        "$PUFFER/src/exact_action_build_hash.h" 2>/dev/null || true)"
+    compiled_contract="$(cd "$PUFFER" && "$PYBIN" -c \
+        'from pufferlib import _C; print(getattr(_C, "exact_action_source_hash", "<missing>"), getattr(_C, "environment_source_hash", "<missing>"), getattr(_C, "observation_abi", "<missing>"), getattr(_C, "observation_version", "<missing>"), getattr(_C, "action_abi", "<missing>"))' \
         2>/dev/null || true)"
+    read -r compiled_backend_hash compiled_environment_hash \
+        compiled_observation_abi compiled_observation_version \
+        compiled_action_abi <<< "$compiled_contract"
     if [ "$current_backend_hash" != "$header_backend_hash" ] || \
        [ "$current_backend_hash" != "$compiled_backend_hash" ]; then
         echo "drift check: exact-action source/module digest mismatch" >&2
         echo "  sources: $current_backend_hash" >&2
         echo "  header:  ${header_backend_hash:-<missing>}" >&2
         echo "  module:  ${compiled_backend_hash:-<missing>}" >&2
+        echo "  fix: reinstall, then rebuild PufferLib for bloodbowl" >&2
+        exit 1
+    fi
+    if [ "$want" != "$header_environment_hash" ] || \
+       [ "$want" != "$compiled_environment_hash" ] || \
+       [ "$header_observation_abi" != "obs-v5" ] || \
+       [ "$compiled_observation_abi" != "obs-v5" ] || \
+       [ "$header_observation_version" != "5" ] || \
+       [ "$compiled_observation_version" != "5" ] || \
+       [ "$header_action_abi" != "exact-joint-v1" ] || \
+       [ "$compiled_action_abi" != "exact-joint-v1" ]; then
+        echo "drift check: compiled observation/action lineage mismatch" >&2
+        echo "  environment source: $want" >&2
+        echo "  header/module source: ${header_environment_hash:-<missing>} / ${compiled_environment_hash:-<missing>}" >&2
+        echo "  header/module obs ABI: ${header_observation_abi:-<missing>} / ${compiled_observation_abi:-<missing>}" >&2
+        echo "  header/module obs: ${header_observation_version:-<missing>} / ${compiled_observation_version:-<missing>}" >&2
+        echo "  header/module action: ${header_action_abi:-<missing>} / ${compiled_action_abi:-<missing>}" >&2
         echo "  fix: reinstall, then rebuild PufferLib for bloodbowl" >&2
         exit 1
     fi
@@ -299,8 +331,10 @@ EXACT_BACKEND_HASH="$(exact_backend_hash)" || {
     echo "error: could not hash exact-action backend sources" >&2
     exit 1
 }
-printf '#pragma once\n#define PUFFER_EXACT_ACTION_SOURCE_HASH "%s"\n' \
-    "$EXACT_BACKEND_HASH" > "$PUFFER/src/exact_action_build_hash.h"
+INSTALLED_SOURCE_HASH="$(cat "$DST/.content_hash")"
+printf '#pragma once\n#define PUFFER_EXACT_ACTION_SOURCE_HASH "%s"\n#define PUFFER_ENV_SOURCE_HASH "%s"\n#define PUFFER_OBSERVATION_ABI "obs-v5"\n#define PUFFER_OBSERVATION_VERSION 5\n#define PUFFER_ACTION_ABI "exact-joint-v1"\n' \
+    "$EXACT_BACKEND_HASH" "$INSTALLED_SOURCE_HASH" \
+    > "$PUFFER/src/exact_action_build_hash.h"
 echo "recorded:   exact-action backend digest $EXACT_BACKEND_HASH"
 
 echo "installed: $DST"

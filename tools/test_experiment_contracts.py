@@ -44,6 +44,23 @@ class ExperimentContractTests(unittest.TestCase):
         self.assertIn("trailing Puffer overrides are not allowed", result.stderr)
         self.assertNotIn("missing reward manifest", result.stderr)
 
+    def test_reward_launcher_rejects_non_v5_checkpoint_size_before_runtime(self):
+        result = run_script(
+            "tools/run_reward_ablation.sh",
+            env={
+                "TAG": "wrong-size-contract-test",
+                "REWARD_MANIFEST": "missing.json",
+                "BOOTSTRAP_MODE": "fresh-v5-qualification",
+                "EXPECT_BYTES": "13670400",
+            },
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "obs-v5/exact-joint-v1 requires EXPECT_BYTES=16066560",
+            result.stderr,
+        )
+        self.assertNotIn("vendored Python missing", result.stderr)
+
     def test_frozen_eval_rejects_trailing_override_before_checkpoint_io(self):
         with tempfile.TemporaryDirectory() as tmp:
             result = run_script(
@@ -344,7 +361,7 @@ class ExperimentContractTests(unittest.TestCase):
             },
         )
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("missing warm checkpoint", result.stderr)
+        self.assertIn("exact-action-canary forbids WARM", result.stderr)
 
         source = (ROOT / "tools/run_reward_screen.sh").read_text(
             encoding="utf-8"
@@ -352,7 +369,7 @@ class ExperimentContractTests(unittest.TestCase):
         self.assertIn("exact-action-canary", source)
         self.assertIn("arms=(both)", source)
         self.assertIn("seeds=(42)", source)
-        self.assertIn('"qualification_only": screen_profile == "exact-action-canary"', source)
+        self.assertIn('"qualification_only": qualification_only', source)
         self.assertIn("--complete-log", source)
         self.assertLess(
             source.index('terminate_current_arm "$pid" "$process_group"'),
@@ -360,6 +377,49 @@ class ExperimentContractTests(unittest.TestCase):
                 'write_screen_status failed 1 "hard-integrity error budget exhausted"'
             ),
         )
+
+    def test_exact_action_canary_requires_fresh_v5_without_legacy_assets(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "screen"
+            base = {
+                "STEPS": "50000000",
+                "SCREEN_PROFILE": "exact-action-canary",
+                "OUT_DIR": str(out),
+            }
+            for key in ("WARM", "POOL"):
+                env = dict(base)
+                env[key] = "legacy-input"
+                result = run_script("tools/run_reward_screen.sh", env=env)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(
+                    f"exact-action-canary forbids {key}", result.stderr)
+                self.assertFalse(out.exists())
+
+            result = run_script("tools/run_reward_screen.sh", env=base)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertNotIn("WARM is required", result.stderr)
+            self.assertNotIn("POOL is required", result.stderr)
+            self.assertTrue(
+                "vendored Python missing" in result.stderr or
+                "flock is required" in result.stderr,
+                result.stderr,
+            )
+            self.assertTrue(out.exists())
+
+        screen = (ROOT / "tools/run_reward_screen.sh").read_text(
+            encoding="utf-8")
+        arm = (ROOT / "tools/run_reward_ablation.sh").read_text(
+            encoding="utf-8")
+        for contract in (
+            "fresh-v5-qualification", "obs-v5", "exact-joint-v1",
+            '"qualification_only": qualification_only',
+            'NUM_FROZEN_BANKS=0',
+        ):
+            self.assertIn(contract, screen)
+        self.assertIn('BOOTSTRAP_MODE="$BOOTSTRAP_MODE"', screen)
+        self.assertIn('case "$BOOTSTRAP_MODE" in', arm)
+        self.assertIn('--selfplay.enabled 0', arm)
+        self.assertIn('--vec.num-frozen-banks 0', arm)
 
     @unittest.skipUnless(VENDOR_CHECKOUT, "vendored Puffer checkout unavailable")
     def test_puffer_machine_log_uses_explicit_loop_phase_and_fresh_panels(self):
@@ -495,6 +555,16 @@ class ExperimentContractTests(unittest.TestCase):
             "pufferlib/__init__.py",
             "pufferlib/models.py",
             "pufferlib/muon.py",
+        ):
+            self.assertIn(field, screen)
+            self.assertIn(field, arm)
+        self.assertIn('"compiled_semantic_contract": compiled_contract', screen)
+        for field in (
+            "compiled_exact_action_source_sha256",
+            "compiled_environment_source_sha256",
+            "compiled_observation_abi",
+            "compiled_observation_version",
+            "compiled_action_abi",
         ):
             self.assertIn(field, screen)
             self.assertIn(field, arm)
