@@ -82,6 +82,8 @@ SCREEN_CRITICAL_VENDOR_FILES = {
     "pufferlib/muon.py",
     "src/pufferlib.cu",
     "src/bindings.cu",
+    "src/bindings_cpu.cpp",
+    "src/kernels.cu",
     "src/vecenv.h",
 }
 class FreezeError(ValueError):

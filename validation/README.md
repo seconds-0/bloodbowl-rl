@@ -451,20 +451,24 @@ and the head projections `bbe_action_arg`/`bbe_action_sq` are byte-identical
 to training. Divergence reporting is unchanged; records stop at the first
 divergence (nothing past it is applied).
 
-### `.bbp` format v3 (binary, little-endian)
+### `.bbp` format v4 (binary, little-endian)
 
-v3 marks obs-v5 semantics while retaining obs-v4's 2782-byte physical shape.
+v4 adds exact sequential action semantics while retaining the 454-byte mask:
+the stored slices are the type support, argument support conditioned on the
+target type, and square support conditioned on the target type+argument. It
+also canonicalizes inactive heads to arg=32 and square=390. v3 marks obs-v5
+semantics while retaining obs-v4's 2782-byte physical shape.
 Historical v2 spans obs-v3 (1612 B) and obs-v4 (2782 B); v1 carried 832 B.
 Readers (`bc_pretrain.py`, `extract_pairs.py`, `bbp_behavior_audit.py`, and
-`replay_corpus_audit.py`) size records from the header and accept v3. The BC
-loader includes the header version in its corpus-lineage key, so v2/2782 and
-v3/2782 cannot mix in one training corpus; the audit reports preserve the
-versioned header identity.
+`replay_corpus_audit.py`) size records from the header and accept v4. The BC
+loader includes the header version in its corpus-lineage key, so equal-shape
+v2/v3/v4 records cannot mix in one training corpus; the audit reports preserve
+the versioned header identity.
 
 ```
 header (16 bytes):
   magic     char[4]  "BBP1"
-  version   u32      3 (semantic obs-v5 marker)
+  version   u32      4 (exact sequential action semantics)
   obs_size  u32      2782 (BBE_OBS_SIZE; same physical shape as obs-v4)
   mask_size u32      454  (BBE_MASK_SIZE = 30 + 33 + 391 head bits)
 record (12 + obs_size + mask_size + 4 = 3252 bytes each):
@@ -474,7 +478,7 @@ record (12 + obs_size + mask_size + 4 = 3252 bytes each):
                      targets are all in this agent's egocentric frame
   pad       u8[3]    zero
   obs       u8[2782] bbe_encode_obs at the decision, BEFORE the action
-  mask      u8[454]  bbe_fill_mask legality bits, heads packed 30|33|391
+  mask      u8[454]  selected conditional masks, packed 30|33|391
   type      u8       action-type head target (bb_action_type)
   arg       u8       arg head target via bbe_action_arg (player slots
                      ego-remapped exactly like obs rows; 32 = sentinel)

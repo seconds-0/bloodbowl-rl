@@ -274,7 +274,13 @@ newer evidence wins.
   `rulesVersion`; use `runs/replay-audit-20260713/bb2025-nonempty.ids` and the
   streaming loader.
 - Warm relaunch: ANCHOR=newest ckpt, but **newest mtime ≠ highest step across run dirs** — check the step number embedded in the filename.
-- **Masked sampling is now the default in BOTH backends** (D38): torch applies per-head `masked_fill(-inf)` before sampling, stores masks in experience, re-applies at train-time. All pre-fix torch-run intuitions (illegal_frac 1.000 era) are rebased. CUDA backend was always masked.
+- **Exact joint sampling is the accepted action contract in BOTH backends**
+  (D218). The env transports the current packed joint support; native/Torch
+  sample type, then arg conditioned on type, then square conditioned on both.
+  The selected 454-bit conditional masks are stored and reused by PPO. Inactive
+  heads are singleton sentinels, so they contribute zero log-probability and
+  entropy. `bbe_decode` rejects instead of repairing. Historical marginal-mask
+  checkpoints/corpora are a distinct behavior lineage; new pairs are BBP v4.
 
 ### Reward economy (July-audited interpretation)
 - **Reward objective outcomes or decision quality, not lucky dice.** Realized

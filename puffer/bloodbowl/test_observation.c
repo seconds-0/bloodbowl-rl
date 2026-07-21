@@ -233,8 +233,179 @@ BB_TEST(touchback_player_recipients_remain_exactly_addressable) {
     f.env.legal[1] = (bb_action){BB_A_TOUCHBACK, 1, 0, 0};
     bbe_fill_mask(&f.env, BB_HOME);
 
-    float heads[3] = {BB_A_TOUCHBACK, 1, 0};
+    BB_CHECK_EQ(f.env.legal_sq[0], 390);
+    BB_CHECK_EQ(f.env.legal_sq[1], 390);
+    float heads[3] = {BB_A_TOUCHBACK, 1, 390};
     bb_action picked = bbe_decode(&f.env, BB_HOME, heads);
     BB_CHECK(bb_action_eq(picked, f.env.legal[1]));
     BB_CHECK_EQ(f.env.illegal, 0);
+}
+
+BB_TEST(policy_decode_rejects_marginally_legal_jointly_invalid_tuple) {
+    ObservationFixture f;
+    observation_fixture_init(&f);
+    f.env.match.status = BB_STATUS_DECISION;
+    f.env.n_legal = 2;
+    f.env.legal[0] = (bb_action){BB_A_SPECIAL_TARGET, 0, 2, 4};
+    f.env.legal[1] = (bb_action){BB_A_SPECIAL_TARGET, 1, 9, 11};
+    bbe_fill_mask(&f.env, BB_HOME);
+
+    // Every component is marginally enabled, but this cross-product tuple was
+    // never offered by the engine. The policy path must not silently execute
+    // either neighboring legal action.
+    float heads[3] = {BB_A_SPECIAL_TARGET, 0,
+                      (float)(11 * BB_PITCH_LEN + 9)};
+    bb_action picked = bbe_decode(&f.env, BB_HOME, heads);
+    BB_CHECK_EQ(picked.type, BB_A_NONE);
+    BB_CHECK_EQ(f.env.illegal, 1);
+}
+
+BB_TEST(exact_support_conditions_each_head_and_canonicalizes_inactive_heads) {
+    ObservationFixture f;
+    observation_fixture_init(&f);
+    f.env.match.status = BB_STATUS_DECISION;
+    f.env.n_legal = 4;
+    f.env.legal[0] = (bb_action){BB_A_SPECIAL_TARGET, 0, 2, 4};
+    f.env.legal[1] = (bb_action){BB_A_SPECIAL_TARGET, 1, 9, 11};
+    f.env.legal[2] = (bb_action){BB_A_END_TURN, 0, 0, 0};
+    f.env.legal[3] = (bb_action){BB_A_DECLINE_REROLL, 0, 0, 0};
+    bbe_fill_mask(&f.env, BB_HOME);
+
+    unsigned char effective[BBE_MASK_SIZE];
+    bbe_fill_effective_action_mask(&f.env, BB_HOME, BB_A_SPECIAL_TARGET, 0,
+                                   effective);
+    BB_CHECK(effective[BB_A_SPECIAL_TARGET]);
+    BB_CHECK(effective[BB_A_END_TURN]);
+    BB_CHECK(effective[BB_A_DECLINE_REROLL]);
+    BB_CHECK(effective[BBE_HEAD_TYPE + 0]);
+    BB_CHECK(effective[BBE_HEAD_TYPE + 1]);
+    BB_CHECK(!effective[BBE_HEAD_TYPE + 32]);
+    BB_CHECK(effective[BBE_HEAD_TYPE + BBE_HEAD_ARG +
+                       4 * BB_PITCH_LEN + 2]);
+    BB_CHECK(!effective[BBE_HEAD_TYPE + BBE_HEAD_ARG +
+                        11 * BB_PITCH_LEN + 9]);
+
+    bbe_fill_effective_action_mask(&f.env, BB_HOME, BB_A_END_TURN, 32,
+                                   effective);
+    int arg_bits = 0, square_bits = 0;
+    for (int i = 0; i < BBE_HEAD_ARG; i++)
+        arg_bits += effective[BBE_HEAD_TYPE + i] != 0;
+    for (int i = 0; i < BBE_HEAD_SQ; i++)
+        square_bits += effective[BBE_HEAD_TYPE + BBE_HEAD_ARG + i] != 0;
+    BB_CHECK_EQ(arg_bits, 1);
+    BB_CHECK(effective[BBE_HEAD_TYPE + 32]);
+    BB_CHECK_EQ(square_bits, 1);
+    BB_CHECK(effective[BBE_HEAD_TYPE + BBE_HEAD_ARG + 390]);
+}
+
+BB_TEST(policy_decode_rejects_nonfinite_fractional_and_out_of_range_heads) {
+    ObservationFixture f;
+    observation_fixture_init(&f);
+    f.env.match.status = BB_STATUS_DECISION;
+    f.env.n_legal = 1;
+    f.env.legal[0] = (bb_action){BB_A_END_TURN, 0, 0, 0};
+    bbe_fill_mask(&f.env, BB_HOME);
+
+    float malformed[][3] = {
+        {NAN, 32, 390},
+        {INFINITY, 32, 390},
+        {-INFINITY, 32, 390},
+        {BB_A_END_TURN, NAN, 390},
+        {BB_A_END_TURN, 32, NAN},
+        {BB_A_END_TURN + 0.5f, 32, 390},
+        {BB_A_END_TURN, 31.5f, 390},
+        {BB_A_END_TURN, 32, 389.5f},
+        {BB_A_END_TURN, 32, 391},
+        {-1, 32, 390},
+    };
+    bb_match before = f.env.match;
+    bb_action legal_before = f.env.legal[0];
+    for (size_t i = 0; i < sizeof malformed / sizeof malformed[0]; i++) {
+        bb_action picked = bbe_decode(&f.env, BB_HOME, malformed[i]);
+        BB_CHECK_EQ(picked.type, BB_A_NONE);
+        BB_CHECK_EQ(memcmp(&f.env.match, &before, sizeof before), 0);
+        BB_CHECK(bb_action_eq(f.env.legal[0], legal_before));
+    }
+    BB_CHECK_EQ(f.env.illegal,
+                (int)(sizeof malformed / sizeof malformed[0]));
+}
+
+BB_TEST(policy_decode_rejects_distinct_engine_actions_with_same_projection) {
+    ObservationFixture f;
+    observation_fixture_init(&f);
+    f.env.match.status = BB_STATUS_DECISION;
+    f.env.n_legal = 2;
+    f.env.legal[0] = (bb_action){BB_A_END_TURN, 0, 0, 0};
+    f.env.legal[1] = (bb_action){BB_A_END_TURN, 1, 0, 0};
+    bbe_fill_mask(&f.env, BB_HOME);
+
+    float heads[3] = {BB_A_END_TURN, 32, 390};
+    bb_action picked = bbe_decode(&f.env, BB_HOME, heads);
+    BB_CHECK_EQ(picked.type, BB_A_NONE);
+    BB_CHECK_EQ(f.env.illegal, 1);
+
+    // Exact duplicate enumeration does not create semantic ambiguity.
+    f.env.legal[1] = f.env.legal[0];
+    bbe_fill_mask(&f.env, BB_HOME);
+    picked = bbe_decode(&f.env, BB_HOME, heads);
+    BB_CHECK(bb_action_eq(picked, f.env.legal[0]));
+    BB_CHECK_EQ(f.env.illegal, 1);
+}
+
+BB_TEST(push_square_keeps_crowd_and_chain_variant_in_argument_head) {
+    ObservationFixture f;
+    observation_fixture_init(&f);
+    f.env.match.status = BB_STATUS_DECISION;
+    f.env.n_legal = 2;
+    // A boundary chain-push fixture can offer these at the same clipped
+    // square. The raw arg changes engine behavior and must remain semantic.
+    f.env.legal[0] = (bb_action){BB_A_PUSH_SQUARE, 1, 0, 4};
+    f.env.legal[1] = (bb_action){BB_A_PUSH_SQUARE, 2, 0, 4};
+    bbe_fill_mask(&f.env, BB_HOME);
+
+    BB_CHECK_EQ(f.env.legal_arg[0], 1);
+    BB_CHECK_EQ(f.env.legal_arg[1], 2);
+    int square = 4 * BB_PITCH_LEN;
+    float crowd[3] = {BB_A_PUSH_SQUARE, 1, (float)square};
+    float chain[3] = {BB_A_PUSH_SQUARE, 2, (float)square};
+    BB_CHECK(bb_action_eq(bbe_decode(&f.env, BB_HOME, crowd),
+                          f.env.legal[0]));
+    BB_CHECK(bb_action_eq(bbe_decode(&f.env, BB_HOME, chain),
+                          f.env.legal[1]));
+    BB_CHECK_EQ(f.env.illegal, 0);
+}
+
+BB_TEST(macro_step_requires_canonical_inactive_argument) {
+    ObservationFixture f;
+    observation_fixture_init(&f);
+    f.env.match.status = BB_STATUS_DECISION;
+    f.env.match.stack_top = 1;
+    f.env.match.stack[0] = (bb_frame){BB_PROC_MOVE, 0, 0, 0, 0, 0, 0};
+    f.env.match.players[0].x = 1;
+    f.env.match.players[0].y = 1;
+    f.env.n_legal = 1;
+    f.env.legal[0] = (bb_action){BB_A_STEP, 0, 2, 1};
+    f.env.macro_moves = 1;
+    f.env.reach_mover = 0;
+    for (int i = 0; i < BB_PITCH_LEN * BB_PITCH_WID; i++)
+        f.env.reach_parent[i] = -1;
+    int source = 1 * BB_PITCH_LEN + 1;
+    int first = 1 * BB_PITCH_LEN + 2;
+    int destination = 1 * BB_PITCH_LEN + 3;
+    f.env.reach_parent[first] = source;
+    f.env.reach_parent[destination] = first;
+    bbe_fill_mask(&f.env, BB_HOME);
+
+    float canonical[3] = {BB_A_STEP, 32, (float)destination};
+    bb_action picked = bbe_decode(&f.env, BB_HOME, canonical);
+    BB_CHECK_EQ(picked.type, BB_A_STEP);
+    BB_CHECK_EQ(picked.x, 2);
+    BB_CHECK_EQ(picked.y, 1);
+    BB_CHECK_EQ(f.env.illegal, 0);
+
+    f.env.macro_len = 0;
+    float polluted[3] = {BB_A_STEP, 0, (float)destination};
+    picked = bbe_decode(&f.env, BB_HOME, polluted);
+    BB_CHECK_EQ(picked.type, BB_A_NONE);
+    BB_CHECK_EQ(f.env.illegal, 1);
 }

@@ -126,6 +126,13 @@ binding on the Mac, (b) BC pretraining (standalone, outside pufferl entirely —
 
 ## 2. Exactly how MY_ACTION_MASK maps to multi-head sampling
 
+> July 2026 update (D218): the marginal-only flow described in this historical
+> architecture survey is superseded for Blood Bowl. The env now also transports
+> packed joint support and samples sequential conditional heads; rollout/PPO
+> stores the selected 454-wide conditional masks. See
+> `docs/plans/exact-action-identity.md` and
+> `training/puffer_exact_joint_actions.patch` for the accepted contract.
+
 The semantics, end to end (this answers the CRITICAL item):
 
 1. **Env side**: `MY_ACTION_MASK N` with `N == sum(ACT_SIZES)` allocates
@@ -417,7 +424,7 @@ def make_policy(obs_size=2304, hidden=512, layers=3):
 def masked_bc_loss(logits_split, mask, target):   # mask: (B,454) bool, target: (B,3) long
     loss, off = 0.0, 0
     for h, (lg, A) in enumerate(zip(logits_split, ACT_SIZES)):
-        lg = lg.masked_fill(~mask[:, off:off+A], -1e4)   # match pufferlib.cu:437
+        lg = lg.masked_fill(~mask[:, off:off+A], -torch.inf)
         loss = loss + nn.functional.cross_entropy(lg, target[:, h]); off += A
     return loss
 ```
@@ -492,7 +499,9 @@ Read of `pufferlib/selfplay.py` + `src/pufferlib.cu:1728-1865` + `src/bindings.c
 - **Entity transformer on the native path** — no attention kernels exist; hand-writing fused
   attention fwd+bwd in bf16 CUDA is weeks of work for marginal gain at 32 entities.
 - **Raw board planes in OBS** — 20 GB rollout buffer (§3).
-- **Torch-path training for the real runs** — no masks, <200k sps.
+- **Torch-path training for throughput-critical real runs** — exact masks are
+  supported, but the CPU path remains below 200k SPS and the CUDA-native path
+  is the production-throughput choice.
 - **Separate x/y heads** — non-product legal sets (§5.2).
 
 ---
@@ -518,10 +527,10 @@ Read of `pufferlib/selfplay.py` + `src/pufferlib.cu:1728-1865` + `src/bindings.c
 | Fixed Encoder/MinGRU/Decoder policy; only hidden/layers configurable | `src/pufferlib.cu:1679-1726`, `src/bindings.cu:402-403` |
 | Custom encoder hook + nmmo3 example (conv/embedding/multihot machinery) | `src/ocean.cu:574-590,29-51,217-370,398-476` |
 | Encoder = biasless Linear; Decoder = Linear with fused value column | `src/models.cu:412-418,485-493,506`; value read `src/pufferlib.cu:463,565` |
-| Mask semantics: flattened per-head offsets, −1e4, independent heads, joint logprob | `src/pufferlib.cu:431-440,443-569` (sample), `:702-750,841-899` (train), `src/vecenv.h:448-459` |
+| Mask semantics: flattened selected conditional masks, exact sequential support, joint logprob | `training/puffer_exact_joint_actions.patch`, `src/vecenv.h` |
 | MAX_ATN_HEADS=16 | `src/kernels.cu:79` |
 | Chess: 167-byte token obs, 97-action single head, two-phase pick, legality-in-obs | `ocean/chess/binding.c:4-8`, `ocean/chess/chess.h:279-296,357-358,469,1666-1716` |
-| LSTM/GRU only on torch path; torch path has no masks, <200k sps on --cpu | `pufferlib/models.py:105-245`, `pufferlib/torch_pufferl.py:475-515`, `docs/vendor/pufferlib/docs.html` |
+| LSTM/GRU only on torch path; Torch/CPU exact masks work but remain <200k SPS | `pufferlib/models.py`, `pufferlib/torch_pufferl.py`, `training/puffer_exact_joint_actions.patch` |
 | Frozen banks = same build_policy, load flat-fp32 save_weights snapshots | `src/pufferlib.cu:1728-1865`, `src/bindings.cu:180-229`, `pufferlib/selfplay.py:119-211,267-277` |
 | Rollout buffer sizing (obs/mask in bf16 × horizon × agents) | `src/pufferlib.cu:51-138` |
 | Weight file layout / 16-byte alignment | `src/kernels.cu:424-458`, `src/puffernet.h:49-80` |

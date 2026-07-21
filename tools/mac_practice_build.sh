@@ -10,8 +10,8 @@
 #     Fix: compile WITHOUT -fopenmp (vecenv/bindings_cpu use only `#pragma omp`,
 #     no omp_* API, so pragmas degrade to single-threaded loops).
 #   * Run with: puffer train bloodbowl --slowly --selfplay.enabled 0
-#     (selfplay pool + action masks are CUDA-backend only; the env's
-#     decode-snap-to-legal keeps maskless sampling legal.)
+#     (the Torch backend now consumes Blood Bowl's exact conditional masks;
+#     self-play pool management remains a native/CUDA concern.)
 set -euo pipefail
 
 cd "$(dirname "$0")/../vendor/PufferLib"

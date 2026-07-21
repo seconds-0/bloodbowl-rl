@@ -190,6 +190,24 @@ class BBPBehaviorAuditTests(unittest.TestCase):
         self.assertEqual(result["records"], 1)
         self.assertEqual(result["headers"], {"v3/obs2782/mask454": 1})
 
+    def test_accepts_v4_exact_action_shard(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pairs = Path(tmp) / "pairs"
+            pairs.mkdir()
+            obs_size = 2782
+            self.write_shard(
+                pairs,
+                10,
+                version=4,
+                obs_size=obs_size,
+                records=[self.make_record(10, obs_size)],
+            )
+
+            result = behavior_audit.audit(pairs)
+
+        self.assertEqual(result["records"], 1)
+        self.assertEqual(result["headers"], {"v4/obs2782/mask454": 1})
+
     def test_exact_filter_ignores_unrequested_record_bodies_and_requires_all_ids(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

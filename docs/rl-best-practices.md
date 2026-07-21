@@ -90,15 +90,21 @@ Defer indefinitely: full PSRO as the trainer (each iteration = a full RL run + O
 
 **What the literature says.** Hard masking is sound and load-bearing — a state-dependent differentiable transform with valid policy gradients; penalties don't scale ([Huang & Ontañón 2020/2022](https://arxiv.org/abs/2006.14171)). Independent heads over a shared trunk are proven at scale: OpenAI Five, [Gym-µRTS](https://arxiv.org/abs/2105.13807), and Tencent's MOBA agent which *deliberately decoupled* heads and beat pros ([Ye et al., AAAI 2020](https://arxiv.org/abs/1912.09729)). Known failure modes: (1) marginal recombination — a product of marginals can't represent correlated joint optima ([Tavakoli et al. 2018, BDQ](https://arxiv.org/abs/1711.08946); [Tang et al., NeurIPS 2022](https://openreview.net/forum?id=Jd70afzIvJ4) for bias-free conditions); (2) loss pollution from argument heads the chosen action type ignores — SC2LE masks unused argument heads out of the loss ([Vinyals et al. 2017](https://arxiv.org/abs/1708.04782)); AlphaStar went autoregressive to condition each argument on the previous ones.
 
-**What we do.** Three independent heads with per-head legality masks over a shared MinGRU trunk (the published mitigation for recombination is already in place).
+**What we do.** Three semantic logits heads share the MinGRU trunk, while the
+sampler consumes the engine's packed joint support sequentially: type,
+argument conditioned on type, then square conditioned on both. Across 53,995
+seeded windows, only 59.1% of the marginal Cartesian product was a projected
+engine action and 76.3% of windows had dependencies, so this was material.
+The selected conditional masks occupy the existing 454-wide rollout slot and
+are reused unchanged for PPO recomputation. Inactive heads are singleton
+sentinels and contribute zero probability/entropy. Decoder repair is forbidden.
 
-**The gap.** Unknown joint-invalidity rate; unused heads likely contribute noise to the PPO ratio and entropy.
-
-**Recommended changes (diagnostic before surgery).**
-1. Log the fraction of sampled joint actions that are jointly-invalid-but-marginally-valid, segmented by state type (handoffs, blitzes, scoring range). If <1-2%, recombination is a non-issue. *Hours.*
-2. Mask unused argument heads out of log-prob and entropy in `sample_logits` (SC2LE practice). *Hours.*
-3. If (1) is material: sequential conditional masking — sample head 1, recompute head-2 mask conditioned on the type, sample, recompute head-3 mask; the C engine can emit per-(type)/per-(type,player) masks as cheaply as the joint mask. Joint support becomes exactly the engine-legal set, no new parameters. *~2-3 days.*
-4. Only on further evidence: lightweight autoregressive conditioning (embed sampled head-1 action into head-2/3 inputs); fallback exotic option is DouZero-style (state, action)-pair scoring over the legal list ([Zha et al., ICML 2021](https://arxiv.org/abs/2106.06135)). *Weeks — needs proof first.*
+**Residual.** The support is autoregressive but the three logits are still
+state-only; later-head preferences do not receive an embedding of earlier
+samples. Add that conditioning only if an exact-action learning panel shows a
+remaining expressivity limit. A more expensive fallback is DouZero-style
+(state, action)-pair scoring over the legal list ([Zha et al., ICML
+2021](https://arxiv.org/abs/2106.06135)).
 
 Never evaluate unmasked — behavior degrades when the mask is removed post-training (Huang & Ontañón).
 

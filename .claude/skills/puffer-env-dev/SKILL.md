@@ -153,31 +153,26 @@ One `c_step` = one ply. Layout: `num_agents = 2`, both slots belong to one env.
 `#define MY_ACTION_MASK N` where `N == sum(ACT_SIZES)` (total flattened logits). The vec
 allocates `total_agents * N` uchars (vecenv.h:448-459); write 1 for each legal action of
 the **next** decision when you write that slot's obs (chess memsets the mask then sets
-legal bits). The mask is consumed GPU-side: `masked_logit` in `src/pufferlib.cu:430-439`
-sets masked logits to `-1e4` during sampling and the same masking applies in the train
-pass. The policy never *sees* the mask as input — chess additionally encodes legality
-into obs features (`O_VALID_FROM`/`O_VALID_TO` square lists) so the net can learn it.
-All-zero mask doesn't crash (uniform over -1e4 logits) but samples garbage — always
-leave ≥1 bit set (give BB an explicit end-turn/no-op action that is always legal).
+legal bits). The mask is consumed by both native and Torch backends during rollout and
+PPO recomputation. Native kernels explicitly skip unsupported logits in normalization,
+sampling, entropy, and gradient loops; Torch uses `masked_fill(-inf)`. The policy never
+*sees* the mask as input — chess additionally encodes legality into obs features
+(`O_VALID_FROM`/`O_VALID_TO` square lists) so the net can learn it. Every head must have
+at least one enabled value. Blood Bowl's exact-support path asserts/fails closed on an
+empty conditional slice rather than treating it as a usable distribution.
 
-**Masked sampling is now the default in BOTH backends** (D38, the unmasked-sampler
-bug: pre-fix torch runs played at illegal_frac 1.000 through the decode fallback —
-all intuitions from that era are rebased). The installed vendored torch baseline
-exposes the vec `action_mask` (cpu+gpu), and `apply_action_mask` does a per-head
-`masked_fill(-inf)` BEFORE rollout sampling, stores masks in experience, and
-re-applies them at train-time recompute (mask-consistent ratios/entropy, all-zero
-head-row guard). `training/torch_pufferl_bcreg.patch` itself is now only the
-historical BC-loss patch; it does not carry masking. An UNPATCHED torch backend
-samples raw logits, so `c_step` must
-still tolerate any in-range action value (chess answers invalid picks with
-`reward_invalid_*` penalties, binding.c kwargs).
-
-Blood Bowl's current marginal per-head mask is only a projection of complete
-legal triples; independently sampled legal head values may still compose a
-triple the engine never enumerated, after which `bbe_decode` repairs it. D217
-fixes Touchback square addressability but does not solve this general
-sampled-versus-executed mismatch. Do not interpret a low bounds-error rate as
-proof that PPO stored the action the engine executed.
+**Blood Bowl uses exact joint sampling in BOTH backends** (D218). Keep the
+semantic `{type,arg,square}` logits, but transport the current ragged packed
+joint support through `MY_JOINT_ACTION_MAX`. Rollout samples type, then
+`arg|type`, then `square|type,arg`; it overwrites the ordinary 454-wide rollout
+mask with the selected conditional masks. PPO recompute continues using those
+stored masks, so ratio and entropy are distribution-identical without storing
+ragged support for the whole horizon. Inactive heads must be singleton arg=32
+or square=390. `bbe_decode` fails closed on a tuple outside support; it never
+snaps to a neighbor. Torch frozen rows must store their own action, logprob, and
+selected mask together. New BC pairs are BBP v4 with the same conditional-mask
+meaning. Run `training/test_exact_joint_actions.py`, the installed-snapshot
+check, and native/Torch ratio-one checks after any sampler change.
 
 ## 6. MultiDiscrete actions
 
@@ -221,7 +216,7 @@ cd vendor/PufferLib
                                  # to import; verify: python -c 'from pufferlib import _C;
                                  # assert _C.precision_bytes==4')
 ./build.sh bloodbowl --debug     # -O0 -g
-./build.sh bloodbowl --cpu       # Mac/CPU: torch-only backend (<200k sps, no masks)
+./build.sh bloodbowl --cpu       # Mac/CPU: Torch backend (<200k sps; exact masks supported)
 
 # 4. Train / eval / match (CLI == python -m pufferlib.pufferl):
 puffer train bloodbowl --train.learning-rate 0.001 --env.some-key 3 --vec.num-threads 4
@@ -244,7 +239,8 @@ every key must be readable by my_init), `[policy]` (hidden_size, num_layers), `[
 **macOS (this machine)**: build.sh hardcodes `-mavx2 -mfma` (build.sh:144-146, x86-only —
 strip for Apple Silicon), has empty `SANITIZE_FLAGS` on Darwin, and the default CUDA mode
 needs nvcc. On the Mac, only `--local/--fast` standalones and `--cpu` are viable; real
-training (and anything mask-dependent) happens on a Linux GPU box.
+training happens on a Linux GPU box. Exact-mask semantics can be exercised locally on
+Torch/CPU; CUDA graph capture and native-kernel behavior still require a CUDA runner.
 
 **Mac practice runs — verified working recipe (2026-06, bloodbowl)**:
 - `tools/mac_practice_build.sh` in bloodbowl-rl, NOT `./build.sh --cpu`. Three walls:

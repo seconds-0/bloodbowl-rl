@@ -38,7 +38,7 @@ RUNNER = os.path.join(ROOT, "build", "bb_lockstep")
 PAIR_DIR = os.path.join(ROOT, "validation", "pairs")
 
 MAGIC = b"BBP1"
-KNOWN_VERSIONS = (1, 2, 3)  # v3 marks obs-v5; v2/2782 is historical obs-v4
+KNOWN_VERSIONS = (1, 2, 3, 4)  # v4 adds exact conditional action semantics
 MASK_SIZE = 454
 HEAD_TYPE, HEAD_ARG, HEAD_SQ = 30, 33, 391
 HEADER_LEN = 16

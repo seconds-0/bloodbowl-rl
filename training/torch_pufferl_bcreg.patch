@@ -43,7 +43,7 @@
 +# ===========================================================================
 +import struct
 +
-+_BC_MAGIC, _BC_VERSIONS, _BC_HEADER_LEN = b'BBP1', (1, 2), 16
++_BC_MAGIC, _BC_VERSIONS, _BC_HEADER_LEN = b'BBP1', (1, 2, 3, 4), 16
 +
 +def _bc_resolve_pairs_dir(path):
 +    '''Resolve a relative bc_pairs_dir against the CWD first, then the repo

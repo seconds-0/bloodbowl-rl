@@ -10,6 +10,7 @@
 #define ACT_SIZES {30, 33, 391}
 #define OBS_TENSOR_T ByteTensor
 #define MY_ACTION_MASK 454
+#define MY_JOINT_ACTION_MAX 4487 // BB_LEGAL_MAX + 391 virtual destinations
 
 #define MY_VEC_INIT
 #define MY_USES_PERM
@@ -20,6 +21,77 @@
 _Static_assert(OBS_SIZE == BBE_OBS_SIZE, "OBS_SIZE out of sync with bloodbowl.h");
 _Static_assert(MY_ACTION_MASK == BBE_MASK_SIZE,
                "MY_ACTION_MASK out of sync with bloodbowl.h");
+_Static_assert(MY_JOINT_ACTION_MAX >= BB_LEGAL_MAX + BBE_HEAD_SQ,
+               "joint support capacity cannot hold legal + virtual actions");
+
+static uint32_t bbe_pack_joint(int type, int arg, int square) {
+    return (uint32_t)type | ((uint32_t)arg << 10) |
+           ((uint32_t)square << 20);
+}
+
+// Compact the exact semantic support for one vec buffer. The native sampler
+// consumes these tuples sequentially (type -> arg|type -> square|type,arg)
+// and stores the three selected conditional masks in the ordinary rollout
+// mask, so PPO recomputation needs no ragged history buffer.
+void my_pack_joint_actions(StaticVec* vec, Env* envs, int env_start,
+                           int env_count, int buf) {
+    int agent_start = buf * vec->agents_per_buffer;
+    int agent_end = agent_start + vec->agents_per_buffer;
+    int joint_start = agent_start * MY_JOINT_ACTION_MAX;
+    int cursor = 0;
+    for (int ei = env_start; ei < env_start + env_count; ei++) {
+        Env* env = &envs[ei];
+        for (int slot = 0; slot < env->num_agents; slot++) {
+            ptrdiff_t action_off = env->action_ptr[slot] - vec->actions;
+            int phys = (int)(action_off / NUM_ATNS);
+            if (action_off < 0 || action_off % NUM_ATNS != 0 ||
+                phys < agent_start || phys >= agent_end) {
+                fprintf(stderr,
+                        "bloodbowl: joint-support row escaped vec buffer "
+                        "(buf=%d row=%d expected=[%d,%d))\n",
+                        buf, phys, agent_start, agent_end);
+                abort();
+            }
+            int off = joint_start + cursor;
+            int count = 0;
+            if (env->match.status != BB_STATUS_DECISION ||
+                env->match.decision_team != slot || env->n_legal <= 0) {
+                vec->joint_actions[off] =
+                    bbe_pack_joint(BB_A_NONE, 32, 390);
+                count = 1;
+            } else {
+                for (int i = 0; i < env->n_legal; i++) {
+                    vec->joint_actions[off + count++] = bbe_pack_joint(
+                        env->legal[i].type, env->legal_arg[i],
+                        env->legal_sq[i]);
+                }
+                if (env->macro_moves && env->reach_mover >= 0) {
+                    for (int d = 0; d < 390; d++) {
+                        if (env->reach_parent[d] < 0) continue;
+                        int x = d % BB_PITCH_LEN;
+                        int y = d / BB_PITCH_LEN;
+                        int sq = bbe_sq_index(slot, x, y);
+                        vec->joint_actions[off + count++] =
+                            bbe_pack_joint(BB_A_STEP, 32, sq);
+                    }
+                }
+            }
+            if (count <= 0 || count > MY_JOINT_ACTION_MAX ||
+                cursor + count > vec->agents_per_buffer * MY_JOINT_ACTION_MAX) {
+                fprintf(stderr,
+                        "bloodbowl: exact joint support overflow "
+                        "(row=%d count=%d cursor=%d cap=%d)\n",
+                        phys, count, cursor,
+                        vec->agents_per_buffer * MY_JOINT_ACTION_MAX);
+                abort();
+            }
+            vec->joint_action_offsets[phys] = off;
+            vec->joint_action_counts[phys] = count;
+            cursor += count;
+        }
+    }
+    vec->joint_buffer_counts[buf] = cursor;
+}
 
 // ACT_SIZES must stay a plain brace literal (see the header comment above),
 // so tie its PARTITION to the BBE_HEAD_* source of truth instead of deriving
