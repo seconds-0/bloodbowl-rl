@@ -42,10 +42,14 @@ class ExactJointActionPatchTests(unittest.TestCase):
 
     def test_torch_sampler_returns_effective_mask_for_ordinary_ppo_recompute(self):
         required = (
+            "def compact_joint_actions(",
+            "source = offsets_long[rows] + within",
             "def sample_joint_logits(",
             "prefix &= values == selected[rows]",
             "torch.cat(masks, dim=1).to(torch.uint8)",
             "action, logprob, _, effective_mask = sample_joint_logits(",
+            "action mask row has empty head support",
+            "source_offsets_cpu = self.vec_joint_offsets.clone()",
         )
         for fragment in required:
             self.assertIn(fragment, self.patch)
@@ -80,6 +84,8 @@ class ExactJointActionPatchTests(unittest.TestCase):
             "if (!action_enabled(\n+                        a.action_mask, mask_base, logits_offset, j))",
             "a.grad_logits[grad_logits_base + logits_offset + j] = 0.0f;",
             "assert(enabled_count > 0);",
+            "gpu_vec_step: synchronous stepping requires one buffer",
+            "cpu_vec_step: synchronous stepping requires one buffer",
         ):
             self.assertIn(fragment, self.patch)
         self.assertNotIn("+        if (m == 0.0f) l = -1e4f;", self.patch)
@@ -90,6 +96,10 @@ class ExactJointActionPatchTests(unittest.TestCase):
         set_perm = self.patch.split("void static_vec_set_perm", 1)[1]
         set_perm = set_perm.split("void static_vec_set_env_tags", 1)[0]
         self.assertIn("static_vec_reset(vec);", set_perm)
+        self.assertIn(
+            "permutation is a one-time pre-rollout operation",
+            self.patch,
+        )
 
     def test_joint_support_is_uploaded_before_cuda_graph_sampling(self):
         """Graph warmup must never sample uninitialized ragged metadata."""
@@ -105,8 +115,8 @@ class ExactJointActionPatchTests(unittest.TestCase):
 
     @unittest.skipUnless(torch is not None, "requires torch")
     def test_actual_patched_torch_sampler_matches_support_and_recompute(self):
-        """Execute the helper body shipped in the patch, not a test copy."""
-        start = self.patch.index("+def sample_joint_logits(")
+        """Execute the added helper bodies with a reference categorical."""
+        start = self.patch.index("+def apply_action_mask(")
         lines = []
         for line in self.patch[start:].splitlines():
             if not line.startswith("+"):
@@ -137,7 +147,16 @@ class ExactJointActionPatchTests(unittest.TestCase):
 
         namespace = {"torch": torch, "sample_logits": sample_logits}
         exec("\n".join(lines), namespace)
+        masker = namespace["apply_action_mask"]
+        compactor = namespace["compact_joint_actions"]
         sampler = namespace["sample_joint_logits"]
+
+        logits = [torch.tensor([[1.0, 2.0, 3.0]])]
+        masked = masker(
+            logits, torch.tensor([[1, 0, 1]], dtype=torch.uint8), [3])
+        self.assertTrue(torch.isneginf(masked[0][0, 1]))
+        with self.assertRaisesRegex(RuntimeError, "empty head support"):
+            masker(logits, torch.zeros((1, 3), dtype=torch.uint8), [3])
 
         def pack(values):
             return sum(int(value) << (10 * head)
@@ -147,6 +166,26 @@ class ExactJointActionPatchTests(unittest.TestCase):
             [(0, 1, 2), (0, 2, 3), (1, 4, 5)],
             [(2, 6, 7), (2, 6, 8)],
         ]
+        # Native buffers occupy fixed-capacity regions, and permutation can
+        # make logical visitation order differ from physical row order. Prove
+        # the shipped host compactor obeys authoritative row offsets rather
+        # than slicing a global prefix.
+        scrambled = torch.full((16,), -1, dtype=torch.int32)
+        scrambled[8:11] = torch.tensor(
+            [pack(values) for values in rows[0]], dtype=torch.int32)
+        scrambled[0:2] = torch.tensor(
+            [pack(values) for values in rows[1]], dtype=torch.int32)
+        compact, compact_offsets = compactor(
+            scrambled,
+            torch.tensor([8, 0], dtype=torch.int32),
+            torch.tensor([3, 2], dtype=torch.int32),
+        )
+        self.assertEqual(
+            compact.tolist(),
+            [pack(values) for row in rows for values in row],
+        )
+        self.assertEqual(compact_offsets.tolist(), [0, 3])
+
         packed = torch.tensor(
             [pack(values) for row in rows for values in row],
             dtype=torch.int32,

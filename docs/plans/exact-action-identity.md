@@ -102,8 +102,7 @@ bash tools/install_puffer_env.sh
 bash tools/install_puffer_env.sh --check
 installed standalone optimized self-test and deterministic FNV repeat
 Torch/native backend action-contract tests in the pinned Puffer checkout
-native CUDA graph-capture smoke with finite rollout/recompute ratio, entropy,
-and gradients
+native CUDA compilation for the pinned target architecture
 git diff --check
 ```
 
@@ -119,8 +118,10 @@ run reaches its experiment boundary, a separate reviewed deployment will:
 1. preserve the final pre-repair baseline artifacts;
 2. install the merged source into a new isolated checkout;
 3. verify imported module and Puffer patch hashes;
-4. run a deterministic integrity smoke requiring zero policy repairs; and
-5. run a reward-frozen paired causal screen before any long obs-v5 training.
+4. run a native CUDA graph-capture smoke with finite rollout/recompute ratio,
+   entropy, and gradients;
+5. run a deterministic integrity smoke requiring zero policy repairs; and
+6. run a reward-frozen paired causal screen before any long obs-v5 training.
 
 ## Risks and simplification opportunities
 

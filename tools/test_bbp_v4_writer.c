@@ -1,3 +1,5 @@
+#define _POSIX_C_SOURCE 200809L
+
 #define main bb_lockstep_cli_main
 #include "bb_lockstep.c"
 #undef main

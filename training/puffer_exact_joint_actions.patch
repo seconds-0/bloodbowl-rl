@@ -1,8 +1,8 @@
 diff --git a/pufferlib/torch_pufferl.py b/pufferlib/torch_pufferl.py
-index f4d45d9..7d322f6 100644
+index f4d45d9..fa9ab8e 100644
 --- a/pufferlib/torch_pufferl.py
 +++ b/pufferlib/torch_pufferl.py
-@@ -46,6 +46,56 @@ def _entropy(logits):
+@@ -46,6 +46,81 @@ def _entropy(logits):
      p_log_p = logits * logits_to_probs(logits)
      return -p_log_p.sum(-1)
 
@@ -13,9 +13,34 @@ index f4d45d9..7d322f6 100644
 +    for h, n in enumerate(act_sizes):
 +        mh = mask[:, off:off + n].bool()
 +        off += n
-+        ok = mh.any(dim=-1, keepdim=True)
-+        out.append(logits[h].masked_fill((~mh) & ok, float('-inf')))
++        if not bool(mh.any(dim=-1).all().item()):
++            raise RuntimeError('action mask row has empty head support')
++        out.append(logits[h].masked_fill(~mh, float('-inf')))
 +    return out
++
++def compact_joint_actions(packed, offsets, counts):
++    """Gather ragged row segments into physical-row order on the host.
++
++    Native vec packing keeps each buffer in a fixed-capacity region and may
++    visit physical rows out of order after a self-play permutation. Offsets
++    are therefore authoritative; slicing a global prefix is not.
++    """
++    counts_long = counts.long()
++    offsets_long = offsets.long()
++    if counts_long.ndim != 1 or offsets_long.shape != counts_long.shape:
++        raise RuntimeError('joint action offsets/counts must be matching vectors')
++    if not bool((counts_long > 0).all().item()):
++        raise RuntimeError('every joint action row must have nonempty support')
++    compact_offsets = torch.cumsum(counts_long, dim=0) - counts_long
++    total = int(counts_long.sum().item())
++    rows = torch.repeat_interleave(
++        torch.arange(counts_long.numel(), device=counts.device), counts_long)
++    within = torch.arange(total, device=counts.device) - compact_offsets[rows]
++    source = offsets_long[rows] + within
++    if source.numel() != total or int(source.min().item()) < 0 or \
++            int(source.max().item()) >= packed.numel():
++        raise RuntimeError('joint action offset/count escapes packed capacity')
++    return packed[source], compact_offsets.int()
 +
 +def sample_joint_logits(logits, packed, offsets, counts, act_sizes):
 +    """Sample semantic heads from ragged exact joint support.
@@ -59,7 +84,7 @@ index f4d45d9..7d322f6 100644
  def sample_logits(logits, action=None):
      is_discrete = isinstance(logits, torch.Tensor)
      if isinstance(logits, torch.distributions.Normal):
-@@ -97,6 +147,7 @@ class _CudaPtr:
+@@ -97,6 +171,7 @@ class _CudaPtr:
  _TORCH_TO_CTYPE = {
      torch.uint8:   ctypes.c_uint8,
      torch.float32: ctypes.c_float,
@@ -67,7 +92,7 @@ index f4d45d9..7d322f6 100644
  }
 
  def _actions_for_vec_step(action):
-@@ -144,6 +195,27 @@ class PuffeRL:
+@@ -144,6 +219,27 @@ class PuffeRL:
              self.vec_terminals = _cpu_tensor(vec.terminals_ptr,
                  (total_agents,), torch.float32)
 
@@ -95,7 +120,7 @@ index f4d45d9..7d322f6 100644
          vec.reset()
          horizon = config['horizon']
          num_atns = vec.num_atns
-@@ -155,6 +227,10 @@ class PuffeRL:
+@@ -155,6 +251,10 @@ class PuffeRL:
          self.logprobs = torch.zeros(horizon, total_agents, device=device)
          self.rewards = torch.zeros(horizon, total_agents, device=device)
          self.terminals = torch.zeros(horizon, total_agents, device=device)
@@ -106,19 +131,20 @@ index f4d45d9..7d322f6 100644
          self.ratio = torch.ones(total_agents, horizon, device=device)
          self.state = policy.initial_state(total_agents, device=device)
 
-@@ -219,7 +295,25 @@ class PuffeRL:
+@@ -219,7 +320,26 @@ class PuffeRL:
              prof.mark(1)
              with torch.no_grad():
                  logits, value, state = self.policy.forward_eval(o_device, self.state)
 -                action, logprob, _ = sample_logits(logits)
 +                if self.vec_joint_actions is not None:
-+                    joint_n = int(self._vec.joint_action_count)
-+                    packed = torch.as_tensor(
-+                        self.vec_joint_actions[:joint_n], device=device).clone()
-+                    offsets = torch.as_tensor(
-+                        self.vec_joint_offsets, device=device).clone()
-+                    counts = torch.as_tensor(
-+                        self.vec_joint_counts, device=device).clone()
++                    counts_cpu = self.vec_joint_counts.clone()
++                    source_offsets_cpu = self.vec_joint_offsets.clone()
++                    packed_cpu, offsets_cpu = compact_joint_actions(
++                        self.vec_joint_actions, source_offsets_cpu,
++                        counts_cpu)
++                    packed = packed_cpu.to(device=device)
++                    offsets = offsets_cpu.to(device=device)
++                    counts = counts_cpu.to(device=device)
 +                    action, logprob, _, effective_mask = sample_joint_logits(
 +                        logits, packed, offsets, counts, self.act_sizes_list)
 +                elif self.vec_action_mask is not None:
@@ -133,7 +159,7 @@ index f4d45d9..7d322f6 100644
              prof.mark(2)
 
              with torch.no_grad():
-@@ -230,6 +324,10 @@ class PuffeRL:
+@@ -230,6 +348,10 @@ class PuffeRL:
                  self.rewards[t] = torch.as_tensor(r, device=device)
                  self.terminals[t] = torch.as_tensor(d, device=device).float()
                  self.values[t] = value.flatten()
@@ -144,7 +170,7 @@ index f4d45d9..7d322f6 100644
 
              prof.mark(2)
              actions_flat = _actions_for_vec_step(action)
-@@ -277,6 +375,8 @@ class PuffeRL:
+@@ -277,6 +399,8 @@ class PuffeRL:
          lp = self.logprobs.T.contiguous()
          rew = self.rewards.T.contiguous().clamp(-1, 1)
          ter = self.terminals.T.contiguous()
@@ -153,7 +179,7 @@ index f4d45d9..7d322f6 100644
 
          P = Profile
          prof.mark(0)
-@@ -301,9 +401,14 @@ class PuffeRL:
+@@ -301,9 +425,14 @@ class PuffeRL:
              mb_values = val[idx]
              mb_returns = advantages[idx] + mb_values
              mb_advantages = advantages[idx]
@@ -168,7 +194,7 @@ index f4d45d9..7d322f6 100644
              actions, newlogprob, entropy = sample_logits(logits, action=mb_actions)
              prof.mark(2)
              prof.elapsed(P.TRAIN_FORWARD, 1, 2)
-@@ -516,4 +621,3 @@ def load_policy(args, vec):
+@@ -516,4 +645,3 @@ def load_policy(args, vec):
          policy.load_state_dict(state_dict)
 
      return policy
@@ -572,7 +598,16 @@ index 7981b09..fdd68b6 100644
                  float logp = l - logsumexp;
                  float p = __expf(logp);
                  float d_logit = (j == act) ? d_new_logp : 0.0f;
-@@ -2098,6 +2203,11 @@ std::unique_ptr<PuffeRL> create_pufferl_impl(HypersT& hypers,
+@@ -1871,3 +1976,8 @@ extern "C" void pufferl_set_agent_perm(PuffeRL* pufferl, const int* perm) {
++    if (pufferl->global_step != 0 || pufferl->vec->agent_perm != NULL) {
++        fprintf(stderr,
++            "pufferl_set_agent_perm: permutation is a one-time pre-rollout operation\n");
++        abort();
++    }
+     int total = pufferl->vec->total_agents;
+     int num_buffers = pufferl->hypers.num_buffers;
+     int buf_size = total / num_buffers;
+@@ -2098,6 +2208,11 @@ std::unique_ptr<PuffeRL> create_pufferl_impl(HypersT& hypers,
          }
      }
 
@@ -802,7 +837,20 @@ index 42958d3..67cb6e9 100644
  }
 
  void gpu_vec_step(StaticVec* vec) {
-@@ -761,6 +878,17 @@ void gpu_vec_step(StaticVec* vec) {
+@@ -752,18 +869,35 @@ void gpu_vec_step(StaticVec* vec) {
+-    assert(vec->buffers == 1);
++    if (vec->buffers != 1) {
++        fprintf(stderr, "gpu_vec_step: synchronous stepping requires one buffer\n");
++        abort();
++    }
+     cudaMemcpy(vec->actions, vec->gpu_actions,
+         (size_t)vec->total_agents * NUM_ATNS * sizeof(float),
+         cudaMemcpyDeviceToHost);
+     _static_vec_env_step(vec);
+     cudaMemcpy(vec->gpu_observations, vec->observations,
+         (size_t)vec->total_agents * OBS_SIZE * obs_element_size(),
+         cudaMemcpyHostToDevice);
+     cudaMemcpy(vec->gpu_rewards, vec->rewards,
          vec->total_agents * sizeof(float), cudaMemcpyHostToDevice);
      cudaMemcpy(vec->gpu_terminals, vec->terminals,
          vec->total_agents * sizeof(float), cudaMemcpyHostToDevice);
@@ -820,3 +868,10 @@ index 42958d3..67cb6e9 100644
  }
 
  void cpu_vec_step(StaticVec* vec) {
+-    assert(vec->buffers == 1);
++    if (vec->buffers != 1) {
++        fprintf(stderr, "cpu_vec_step: synchronous stepping requires one buffer\n");
++        abort();
++    }
+     _static_vec_env_step(vec);
+ }
