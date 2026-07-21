@@ -32,7 +32,7 @@ from typing import Any
 
 BBP_HEADER = struct.Struct("<4sIII")
 BBP_MAGIC = b"BBP1"
-BBP_KNOWN_VERSIONS = (1, 2, 3)
+BBP_KNOWN_VERSIONS = (1, 2, 3, 4)
 RULES_RE = re.compile(
     rb'"gameOptionId"\s*:\s*"rulesVersion"\s*,\s*'
     rb'"gameOptionValue"\s*:\s*"([^"]+)"'

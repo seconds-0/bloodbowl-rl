@@ -488,7 +488,15 @@ changes a reward, active queue, production default, or promotion verdict.
   that boundary without a separately reviewed bridge. See `docs/obs-v5-spec.md`.
 - Apply the audited Puffer patches in repository order and test them. Important
   patches include the env phase contract, eval episode gate, dynamic metrics-key
-  fix, trusted Torch load, and BC/masking changes.
+  fix, trusted Torch load, and exact joint-action changes. For Blood Bowl,
+  marginal legality is not sufficient: rollout must sample only the packed
+  joint support and store the selected conditional masks for PPO recompute.
+  `illegal_frac` is an integrity counter and must remain exactly zero; decoder
+  repair is not an accepted policy path.
+- BBP v4 is the first replay-pair lineage with exact conditional masks and
+  canonical inactive-head sentinels (`arg=32`, `square=390`). Do not train a
+  current BC/action experiment from v1-v3 pairs or mix those lineages merely
+  because obs/mask dimensions are unchanged.
 - Record `_C.__file__`, `_C.env_name`, GPU flag, precision bytes, and the imported
   module hash. A source-tree hash alone does not prove which extension ran.
 - Never assume the final dashboard line means evaluation completed. Require the

@@ -79,8 +79,8 @@ sys.path.insert(0, os.path.join(ROOT, "vendor", "PufferLib"))
 # header's mask_size below — the shards only pin the sum).
 ACT_SIZES = (30, 33, 391)
 MAGIC = b"BBP1"
-KNOWN_VERSIONS = (1, 2, 3)  # BBP v3 is the semantic obs-v5 marker. Historical
-                            # v2/2782 is obs-v4 and must not mix with v3/2782.
+KNOWN_VERSIONS = (1, 2, 3, 4)  # v4: exact sequential action-mask semantics.
+                               # v3: obs-v5 with historical marginal masks.
 HEADER_LEN = 16
 REPLAY_ID_SCAN_BATCH = 65_536
 
@@ -307,6 +307,17 @@ class ShardIndex:
 
     def __exit__(self, _exc_type, _exc, _tb):
         self.close()
+
+
+def require_exact_action_lineage(index, allow_legacy=False):
+    """Reject historical marginal-mask corpora for current BC runs."""
+    version = index.shards[0].version
+    if version != 4 and not allow_legacy:
+        raise SystemExit(
+            f"BBP v{version} uses historical observation/action semantics; "
+            "current BC requires exact-action BBP v4. Pass "
+            "--allow-legacy-bbp only for an explicitly historical reproduction.")
+    return version
 
 
 def split_replay_ids(replay_ids, val_frac, seed):
@@ -610,6 +621,10 @@ def main():
         "--replay-ids", default=None,
         help="exact replay-ID allowlist; generate the BB2025 list with "
              "tools/replay_corpus_audit.py --write-bb2025-ids")
+    ap.add_argument(
+        "--allow-legacy-bbp", action="store_true",
+        help="permit v1-v3 only for an explicitly historical reproduction; "
+             "current exact-action BC requires v4")
     ap.add_argument("--config", default=os.path.join(ROOT, "puffer", "config",
                                                      "bloodbowl.ini"))
     ap.add_argument("--out", default=os.path.join(ROOT, "training", "checkpoints",
@@ -660,6 +675,7 @@ def main():
         cache_size=args.open_shard_cache,
     )
     try:
+        require_exact_action_lineage(index, args.allow_legacy_bbp)
         train_ids, val_ids = split_replay_ids(
             index.nonempty_replay_ids, args.val_frac, args.seed)
         train_data = LazyReplayDataset(index, train_ids)

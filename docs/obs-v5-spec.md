@@ -72,26 +72,27 @@ through the away mirror into apparent on-pitch positions.
 
 ### Touchback action projection
 
-`BB_A_TOUCHBACK` is spatial in the factored action projection. A normal
-recipient action remains `(type=TOUCHBACK, arg=egocentric player, engine
-square=0,0)`, which projects to square-head index 0 for home and 25 for away.
-When no eligible standing recipient exists, an engine fallback action remains
-`(type=TOUCHBACK, arg=sentinel, square=x,y)`, but each legal placement now has
-its own mirrored square-head value and exact decoding round-trips it.
+`BB_A_TOUCHBACK` has two disjoint exact-action forms. A normal recipient action
+remains `(type=TOUCHBACK, arg=egocentric player, engine square=0,0)`, but its
+inactive square head canonicalizes to sentinel 390 for both sides. When no
+eligible standing recipient exists, an engine fallback action remains
+`(type=TOUCHBACK, arg=sentinel, square=x,y)`; its inactive argument canonicalizes
+to 32 while each legal placement has its own mirrored square-head value and
+exact decoding round-trips it.
 
-This makes Touchbacks addressable; it does not solve the broader accepted debt
-that independent marginal heads can compose a legal type, arg, and square into
-a triple that was not one enumerated engine action. That conditional-action
-redesign is a separate tranche.
+Touchbacks remain addressable. The exact-action tranche now consumes the joint
+support and samples sequential conditional heads, so a policy tuple always
+names an offered engine action (or an explicit macro-move env action).
 
 ## Compatibility and experiment rules
 
 - Physical shape stays 2,782, so checkpoint blob size and network parameter
   count cannot distinguish obs-v4 from obs-v5.
 - `BBE_OBS_VERSION` is 5 and source/module provenance is mandatory.
-- Newly extracted replay pairs use BBP version 3; historical BBP v2/2782 is
-  obs-v4. The BC loader includes header version in its lineage key and rejects
-  a corpus that mixes v2/2782 with v3/2782 before opening training memmaps.
+- Newly extracted replay pairs use BBP version 4 for exact conditional action
+  masks. Historical BBP v3/2782 is obs-v5 with marginal action masks and
+  v2/2782 is obs-v4. The BC loader includes header version in its lineage key
+  and rejects mixed lineages before opening training memmaps.
 - Obs-v4 weights, replay-pair observations, and training curves are not
   semantically interchangeable with obs-v5 despite shape compatibility.
 - Do not warm-start a v5 run from v4, compare their curves as one lineage, or

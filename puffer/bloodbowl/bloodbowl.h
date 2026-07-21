@@ -55,9 +55,9 @@
 //              the mover's own marked count, player byte [23], was visible).
 //
 // Action heads (ACT_SIZES {30, 33, 391}): bb_action type | arg (0-31 direct,
-// 32 = sentinel for 0xFE/0xFF args) | square (y*26+x, 390 = none).
-// Decoding snaps to the nearest legal action (exact -> same-type -> first),
-// so even maskless backends (torch/MPS practice runs) stay legal.
+// 32 = inactive/sentinel) | square (y*26+x, 390 = inactive/none). The Puffer
+// backends sample these sequentially from exact joint support. Decode accepts
+// only an unambiguous offered tuple and aborts before mutation on violations.
 #pragma once
 
 #include <stdlib.h>
@@ -226,7 +226,7 @@ typedef struct {
     // of completed episodes with at least one clipped/non-finite emission.
     float reward_clip_episodes;
     float reward_nonfinite_episodes;
-    float illegal_frac;    // sampled actions that had to be snapped to legal
+    float illegal_frac;    // exact-action contract violations (must stay zero)
     // Behavioral micro-stats, summed per episode (dashboard shows per-episode
     // means after the /n aggregation). Motivated by a spectator finding:
     // policies never declared blocks and walked out of tackle zones
@@ -1119,6 +1119,33 @@ static bool bbe_type_spatial(int type) {
     }
 }
 
+// Whether the semantic argument head participates in this action type. Raw
+// engine actions retain a fixed arg byte, but values in that byte are not
+// policy choices for the types omitted here. Canonicalizing those actions to
+// the sentinel makes the inactive head contribute exactly zero probability
+// and entropy under conditional sampling.
+static bool bbe_type_has_arg(int type) {
+    switch (type) {
+    case BB_A_SETUP_PLACE:
+    case BB_A_SETUP_REMOVE:
+    case BB_A_TOUCHBACK:
+    case BB_A_ACTIVATE:
+    case BB_A_DECLARE:
+    case BB_A_CHOOSE_DIE:
+    case BB_A_PUSH_SQUARE:
+    case BB_A_FOLLOW_UP:
+    case BB_A_USE_REROLL:
+    case BB_A_USE_SKILL:
+    case BB_A_DECLINE_SKILL:
+    case BB_A_APOTHECARY:
+    case BB_A_CHOOSE_OPTION:
+    case BB_A_SPECIAL_TARGET:
+        return true;
+    default:
+        return false;
+    }
+}
+
 // arg is a player slot for these types (egocentric remap applies).
 static bool bbe_arg_is_slot(int type) {
     switch (type) {
@@ -1140,13 +1167,21 @@ static int bbe_sq_index(int agent, int x, int y) {
 // Head-space square index for a legal action: real square (incl. (0,0)) for
 // spatial types, the 390 "none" sentinel otherwise.
 static int bbe_action_sq(int agent, bb_action a) {
-    return bbe_type_spatial(a.type) ? bbe_sq_index(agent, a.x, a.y) : 390;
+    // Touchback has two disjoint forms: a player recipient uses only arg;
+    // the 0xFF fallback placement uses only square.
+    bool spatial = bbe_type_spatial(a.type);
+    if (a.type == BB_A_TOUCHBACK && a.arg != 0xFF) spatial = false;
+    return spatial ? bbe_sq_index(agent, a.x, a.y) : 390;
 }
 
 // Head-space arg index for a legal action: player slots remapped to the
 // agent's egocentric view (matching obs rows); 0xFE/0xFF markers and args
 // beyond the direct range collapse into sentinel 32.
 static int bbe_action_arg(int agent, bb_action a) {
+    if (!bbe_type_has_arg(a.type) ||
+        (a.type == BB_A_TOUCHBACK && a.arg == 0xFF)) {
+        return 32;
+    }
     int arg = a.arg;
     if (bbe_arg_is_slot(a.type) && arg < BB_NUM_PLAYERS) {
         arg = bbe_ego_slot(agent, arg);
@@ -1374,40 +1409,152 @@ static void bbe_fill_mask(Bloodbowl* env, int agent) {
     }
 }
 
-// Snap the sampled heads onto a legal action. Uses the head projections
-// bbe_fill_mask cached for the deciding agent on this exact legal list; one
-// scan replaces the old three recompute passes with identical selection:
-// first exact (type, arg, sq) match, else first same-type same-square, else
-// first same-type, else legal[0]. Only the exact tier is non-illegal.
+// Build one stage of the exact sequential support used by standalone tests
+// and reference backend checks. head 0 is unconditional; head 1 is
+// conditioned on type; head 2 on type+arg. Returns the number of enabled
+// values. Macro STEP destinations are virtual env actions and are included in
+// the same semantic support as adjacent engine STEP actions.
+static int bbe_fill_joint_head_mask(const Bloodbowl* env, int agent, int head,
+                                    int type, int arg,
+                                    unsigned char* out, int out_len) {
+    memset(out, 0, (size_t)out_len);
+    for (int i = 0; i < env->n_legal; i++) {
+        int t = env->legal[i].type;
+        int a = env->legal_arg[i];
+        int s = env->legal_sq[i];
+        if (head >= 1 && t != type) continue;
+        if (head >= 2 && a != arg) continue;
+        int value = head == 0 ? t : (head == 1 ? a : s);
+        if (value >= 0 && value < out_len) out[value] = 1;
+    }
+    if (env->macro_moves && env->reach_mover >= 0) {
+        if (head == 0) {
+            out[BB_A_STEP] = 1;
+        } else if (type == BB_A_STEP && head == 1) {
+            out[32] = 1;
+        } else if (type == BB_A_STEP && arg == 32 && head == 2) {
+            for (int d = 0; d < 390; d++) {
+                if (env->reach_parent[d] < 0) continue;
+                int x = d % BB_PITCH_LEN;
+                int y = d / BB_PITCH_LEN;
+                int sq = bbe_sq_index(agent, x, y);
+                out[sq] = 1;
+            }
+        }
+    }
+    int n = 0;
+    for (int i = 0; i < out_len; i++) n += out[i] != 0;
+    return n;
+}
+
+static void bbe_fill_effective_action_mask(const Bloodbowl* env, int agent,
+                                           int type, int arg,
+                                           unsigned char out[BBE_MASK_SIZE]) {
+    int sizes[3] = {BBE_HEAD_TYPE, BBE_HEAD_ARG, BBE_HEAD_SQ};
+    int offsets[3] = {0, BBE_HEAD_TYPE, BBE_HEAD_TYPE + BBE_HEAD_ARG};
+    for (int h = 0; h < 3; h++) {
+        int n = bbe_fill_joint_head_mask(env, agent, h, type, arg,
+                                         out + offsets[h], sizes[h]);
+        if (n <= 0) {
+            fprintf(stderr,
+                    "bloodbowl: empty effective support at head %d "
+                    "(type=%d arg=%d)\n",
+                    h, type, arg);
+            abort();
+        }
+    }
+}
+
+static int bbe_sample_support_bit(const unsigned char* support, int len,
+                                  bb_rng* rng) {
+    int n = 0;
+    for (int i = 0; i < len; i++) n += support[i] != 0;
+    if (n <= 0) return -1;
+    int pick = (int)(bb_rng_next(rng) % (uint32_t)n);
+    for (int i = 0; i < len; i++) {
+        if (support[i] && pick-- == 0) return i;
+    }
+    return -1;
+}
+
+// Uniform-logit reference sampler used by standalone diagnostics and C tests.
+// Production native/Torch samplers use policy logits but must produce these
+// same conditional support slices.
+static void bbe_sample_joint_uniform(const Bloodbowl* env, int agent,
+                                     float action[3], bb_rng* rng) {
+    if (env->match.status != BB_STATUS_DECISION ||
+        env->match.decision_team != agent || env->n_legal <= 0) {
+        action[0] = BB_A_NONE;
+        action[1] = 32;
+        action[2] = 390;
+        return;
+    }
+    unsigned char support[BBE_HEAD_SQ];
+    int sizes[3] = {BBE_HEAD_TYPE, BBE_HEAD_ARG, BBE_HEAD_SQ};
+    int type = 0, arg = 32;
+    for (int h = 0; h < 3; h++) {
+        int n = bbe_fill_joint_head_mask(env, agent, h, type, arg, support,
+                                         sizes[h]);
+        int selected = n > 0
+            ? bbe_sample_support_bit(support, sizes[h], rng) : -1;
+        if (selected < 0) {
+            fprintf(stderr,
+                    "bloodbowl: empty exact support at head %d "
+                    "(type=%d arg=%d)\n",
+                    h, type, arg);
+            abort();
+        }
+        action[h] = (float)selected;
+        if (h == 0) type = selected;
+        if (h == 1) arg = selected;
+    }
+}
+
+// Decode an exact semantic tuple. Policy sampling must already be restricted
+// to the joint support; a malformed/external tuple fails closed as BB_A_NONE
+// instead of silently executing a neighboring legal action.
 static bb_action bbe_decode(Bloodbowl* env, int agent, const float* heads) {
     (void)agent; // projections were cached for the deciding agent
+    static const int sizes[3] = {BBE_HEAD_TYPE, BBE_HEAD_ARG, BBE_HEAD_SQ};
+    for (int h = 0; h < 3; h++) {
+        if (!isfinite(heads[h]) || heads[h] < 0.0f ||
+            heads[h] >= (float)sizes[h] ||
+            heads[h] != floorf(heads[h])) {
+            env->illegal++;
+            return (bb_action){BB_A_NONE, 0, 0, 0};
+        }
+    }
     int t = (int)heads[0];
     int arg = (int)heads[1];
     int sq = (int)heads[2];
     if (t == BB_A_SETUP_PLACE && env->setup_fast) {
-        // Arithmetic resolution against the stamped template — selection
-        // tiers identical to the generic scan below (incl. illegal++).
+        // Arithmetic resolution against the stamped rectangular template.
         int bs = (arg >= 0 && arg < BBE_HEAD_ARG)
                      ? env->setup_block_start[arg] : -1;
         uint16_t off = (sq >= 0 && sq < BBE_HEAD_SQ)
                            ? env->setup_sq_off[sq] : (uint16_t)0xFFFF;
         if (bs >= 0 && off != 0xFFFF) return env->legal[bs + off];
         env->illegal++;
-        if (off != 0xFFFF) return env->legal[env->setup_t0 + off];
-        return env->legal[env->setup_t0];
+        return (bb_action){BB_A_NONE, 0, 0, 0};
     }
-    int same_type_sq = -1, same_type = -1;
+    int exact = -1;
     for (int i = 0; i < env->n_legal; i++) {
         if (env->legal[i].type != t) continue;
-        if (env->legal_sq[i] == sq) {
-            if (env->legal_arg[i] == arg) return env->legal[i]; // exact
-            if (same_type_sq < 0) same_type_sq = i;
+        if (env->legal_sq[i] == sq && env->legal_arg[i] == arg) {
+            if (exact < 0) {
+                exact = i;
+            } else if (!bb_action_eq(env->legal[exact], env->legal[i])) {
+                // Two different engine actions may never collapse onto one
+                // policy tuple. Identical duplicate enumeration is harmless.
+                env->illegal++;
+                return (bb_action){BB_A_NONE, 0, 0, 0};
+            }
         }
-        if (same_type < 0) same_type = i;
     }
+    if (exact >= 0) return env->legal[exact];
     // v5 macro-moves (D82): a STEP to a reachable non-adjacent destination
     // is a PLANNED PATH, not an illegal pick. Ego->absolute, then route.
-    if (env->macro_moves && t == BB_A_STEP && same_type_sq < 0 &&
+    if (env->macro_moves && t == BB_A_STEP && arg == 32 &&
         sq >= 0 && sq < 390 && env->reach_mover >= 0 &&
         env->match.stack_top > 0 &&
         env->match.stack[env->match.stack_top - 1].proc == BB_PROC_MOVE &&
@@ -1421,9 +1568,7 @@ static bb_action bbe_decode(Bloodbowl* env, int agent, const float* heads) {
         }
     }
     env->illegal++;
-    if (same_type_sq >= 0) return env->legal[same_type_sq];
-    if (same_type >= 0) return env->legal[same_type];
-    return env->legal[0];
+    return (bb_action){BB_A_NONE, 0, 0, 0};
 }
 
 // --- Spectator event feed ----------------------------------------------------
@@ -2648,6 +2793,14 @@ static void c_step(Bloodbowl* env) {
                       : bbe_contact_bot_pick(m, env->legal, env->n_legal);
         } else {
             act = bbe_decode(env, agent, env->action_ptr[agent]);
+            if (act.type == BB_A_NONE) {
+                fprintf(stderr,
+                        "bloodbowl: policy supplied a tuple outside exact "
+                        "joint support (type=%.0f arg=%.0f square=%.0f)\n",
+                        env->action_ptr[agent][0], env->action_ptr[agent][1],
+                        env->action_ptr[agent][2]);
+                abort();
+            }
         }
         // Setup shaping: forced DONE (budget exhausted -> sole legal action)
         // vs voluntary legal DONE. Must inspect n_legal BEFORE bb_apply.
@@ -3181,8 +3334,9 @@ static void c_step(Bloodbowl* env) {
     bool episode_finished = false;
     if (m->status == BB_STATUS_ERROR ||
         (m->status == BB_STATUS_DECISION && env->n_legal <= 0)) {
-        // Both should be unreachable (decode snaps to legal; every decision
-        // window offers at least one action). The second guard matters: a
+        // Both should be unreachable (exact conditional sampling emits a
+        // listed tuple; every decision window offers at least one action).
+        // The second guard matters: a
         // DECISION whose legal set came back empty would otherwise livelock
         // the env forever — the mask path emits a defensive null action, but
         // the step path would never apply anything and never terminate.

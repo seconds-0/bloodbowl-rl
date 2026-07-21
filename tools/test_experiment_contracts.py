@@ -173,9 +173,13 @@ class ExperimentContractTests(unittest.TestCase):
             "pufferl_eval_episode_gate.patch",
             "pufferl_metrics_keyerror.patch",
             "torch_pufferl_trusted_load.patch",
+            "puffer_exact_joint_actions.patch",
         ):
             self.assertIn(patch, screen)
             self.assertIn(patch, arm)
+        for source in ("src/bindings_cpu.cpp", "src/kernels.cu"):
+            self.assertIn(source, screen)
+            self.assertIn(source, arm)
 
     def test_reward_screen_has_exact_possession_gain_decomposition(self):
         source = (ROOT / "tools/run_reward_screen.sh").read_text(

@@ -144,26 +144,9 @@ static void step_action(RewardFixture* f, bb_action a) {
     c_step(env);
 }
 
-static int sample_masked_test(const unsigned char* mask, int len, bb_rng* rng) {
-    int n = 0;
-    for (int i = 0; i < len; i++) n += mask[i] != 0;
-    if (n == 0) return -1;
-    int k = (int)(bb_rng_next(rng) % (uint32_t)n);
-    for (int i = 0; i < len; i++) {
-        if (mask[i] && k-- == 0) return i;
-    }
-    return -1;
-}
-
 static void step_random_masked(RewardFixture* f, bb_rng* rng) {
     for (int a = 0; a < BBE_AGENTS; a++) {
-        const unsigned char* mask = f->env.action_mask_ptr[a];
-        f->env.action_ptr[a][0] =
-            (float)sample_masked_test(mask, BBE_HEAD_TYPE, rng);
-        f->env.action_ptr[a][1] = (float)sample_masked_test(
-            mask + BBE_HEAD_TYPE, BBE_HEAD_ARG, rng);
-        f->env.action_ptr[a][2] = (float)sample_masked_test(
-            mask + BBE_HEAD_TYPE + BBE_HEAD_ARG, BBE_HEAD_SQ, rng);
+        bbe_sample_joint_uniform(&f->env, a, f->env.action_ptr[a], rng);
     }
     c_step(&f->env);
 }
@@ -307,6 +290,7 @@ BB_TEST(puffer_possession_bookkeeping_ignores_kickoff_charge_flip) {
     m->status = BB_STATUS_DECISION;
     f.env.prev_active_team = BB_HOME;
     bbe_refresh_legal(&f.env);
+    bbe_emit_all(&f.env);
     BB_CHECK(!bb_in_team_turn(m, m->active_team));
 
     step_action(&f, (bb_action){BB_A_END_TURN, 0, 0, 0});

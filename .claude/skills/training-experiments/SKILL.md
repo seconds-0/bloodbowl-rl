@@ -303,6 +303,19 @@ See §4. Check the invariants before every reward-config launch. No exceptions.
   had `illegal_frac 1.000` and a decode-fallback shadow policy — all its measured
   dynamics are invalid). CUDA-backend results (D26–D28, D34) are unaffected.
 
+### D218 — Exact sampled/executed action law
+
+- Per-head marginal masks are historical and insufficient for Blood Bowl.
+  Accepted native and Torch runs must consume packed joint support, sample
+  sequential conditional heads, store the selected conditional masks, and
+  require `illegal_frac == 0`.
+- `bbe_decode` is a fail-closed assertion boundary, not a repair policy. Any
+  decoder rejection, empty conditional head, missing exact-backend installer
+  marker, or non-unit zero-update PPO ratio invalidates the run.
+- BBP v4 is required for newly extracted action/BC pairs. v1-v3 pairs retain
+  historical marginal/inactive-head semantics and cannot enter an exact-action
+  training corpus by shape compatibility alone.
+
 ### D174/D176 — Current BC and opponent verdicts
 
 - D174 supersedes the old "sequence context first" ranking: frame-stacked

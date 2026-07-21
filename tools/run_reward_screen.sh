@@ -386,12 +386,14 @@ patches = [
     root / "training/pufferl_eval_episode_gate.patch",
     root / "training/pufferl_metrics_keyerror.patch",
     root / "training/torch_pufferl_trusted_load.patch",
+    root / "training/puffer_exact_joint_actions.patch",
 ]
 vendor_sources = [
     "pufferlib/__init__.py", "pufferlib/pufferl.py",
     "pufferlib/selfplay.py", "pufferlib/torch_pufferl.py",
     "pufferlib/models.py", "pufferlib/muon.py", "src/pufferlib.cu",
-    "src/bindings.cu", "src/vecenv.h",
+    "src/bindings.cu", "src/bindings_cpu.cpp", "src/kernels.cu",
+    "src/vecenv.h",
 ]
 vendor_paths = [vendor / relative for relative in vendor_sources]
 patch_bundle_sha = sha256sum_bundle(patches, [str(path) for path in patches])

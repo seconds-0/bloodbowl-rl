@@ -328,6 +328,7 @@ PATCH_HASH="$({
   sha256sum "$ROOT/training/pufferl_eval_episode_gate.patch"
   sha256sum "$ROOT/training/pufferl_metrics_keyerror.patch"
   sha256sum "$ROOT/training/torch_pufferl_trusted_load.patch"
+  sha256sum "$ROOT/training/puffer_exact_joint_actions.patch"
 } | sha256sum | awk '{print $1}')"
 if [ -n "$EXPECTED_PUFFER_PATCH_BUNDLE_SHA256" ] && \
    [ "$PATCH_HASH" != "$EXPECTED_PUFFER_PATCH_BUNDLE_SHA256" ]; then
@@ -339,7 +340,8 @@ VENDOR_HEAD="$(git rev-parse HEAD 2>/dev/null || printf '%s' '<not-a-git-checkou
 VENDOR_SOURCE_HASH="$({
   sha256sum pufferlib/__init__.py pufferlib/pufferl.py \
     pufferlib/selfplay.py pufferlib/torch_pufferl.py pufferlib/models.py \
-    pufferlib/muon.py src/pufferlib.cu src/bindings.cu src/vecenv.h
+    pufferlib/muon.py src/pufferlib.cu src/bindings.cu \
+    src/bindings_cpu.cpp src/kernels.cu src/vecenv.h
 } | sha256sum | awk '{print $1}')"
 
 echo "tag=$TAG seed=$SEED requested_steps=$STEPS final_steps=$FINAL_STEPS rollout_quantum=$ROLLOUT_QUANTUM"

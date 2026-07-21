@@ -97,6 +97,22 @@ class ReplayCorpusAuditTests(unittest.TestCase):
         self.assertEqual(result["obs_size"], obs_size)
         self.assertEqual(result["records"], 1)
 
+    def test_bbp_v4_exact_action_header_is_supported(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "10.bbp"
+            obs_size, mask_size = 2782, 454
+            record_size = 12 + obs_size + mask_size + 4
+            path.write_bytes(
+                struct.pack("<4sIII", b"BBP1", 4, obs_size, mask_size)
+                + bytes(record_size)
+            )
+
+            result = corpus_audit.inspect_bbp(path)
+
+        self.assertEqual(result["version"], 4)
+        self.assertEqual(result["obs_size"], obs_size)
+        self.assertEqual(result["records"], 1)
+
     def test_audit_fails_loudly_when_pairs_directory_is_missing(self):
         with tempfile.TemporaryDirectory() as tmp:
             manifest, replays, _pairs = self.make_fixture(Path(tmp))

@@ -39,6 +39,26 @@ snapshot_hash() {
         | xargs -0 $SHA256 | $SHA256 | awk '{print $1}')
 }
 
+# Hash every source that defines exact-action transport or sampling. The
+# installer writes this digest into a generated header; both native and CPU
+# extension modules expose the compiled value. --check then compares current
+# sources, generated header, and imported module instead of trusting mtimes.
+exact_backend_hash() {
+    (
+        cd "$PUFFER"
+        for rel in \
+            pufferlib/torch_pufferl.py \
+            src/bindings.cu \
+            src/bindings_cpu.cpp \
+            src/kernels.cu \
+            src/pufferlib.cu \
+            src/vecenv.h; do
+            [ -f "$rel" ] || exit 1
+            $SHA256 "$rel"
+        done | $SHA256 | awk '{print $1}'
+    )
+}
+
 if [ "$MODE" = "check" ]; then
     [ -d "$DST" ] || { echo "drift check: $DST not installed — run tools/install_puffer_env.sh" >&2; exit 1; }
     want="$(snapshot_hash "$ROOT/puffer/bloodbowl")"
@@ -71,6 +91,18 @@ if [ "$MODE" = "check" ]; then
         echo "  fix: tools/install_puffer_env.sh $PUFFER" >&2
         exit 1
     fi
+    for exact_marker in \
+        'sample_joint_logits' \
+        'joint_action_offsets' \
+        'Exact sequential support'; do
+        if ! grep -R -Fq "$exact_marker" \
+            "$PUFFER/pufferlib/torch_pufferl.py" \
+            "$PUFFER/src/vecenv.h" "$PUFFER/src/pufferlib.cu"; then
+            echo "drift check: exact-action backend marker missing: $exact_marker" >&2
+            echo "  fix: run tools/install_puffer_env.sh $PUFFER" >&2
+            exit 1
+        fi
+    done
     PYBIN="$PUFFER/.venv/bin/python"
     if [ ! -x "$PYBIN" ]; then
         echo "drift check: vendored Python is missing: $PYBIN" >&2
@@ -80,6 +112,25 @@ if [ "$MODE" = "check" ]; then
         "$PYBIN" -c 'from pufferlib import _C; print(_C.__file__)')"
     if [ ! -f "$current_module" ]; then
         echo "drift check: imported pufferlib/_C module is missing: $current_module" >&2
+        exit 1
+    fi
+    current_backend_hash="$(exact_backend_hash)" || {
+        echo "drift check: exact-action backend sources are incomplete" >&2
+        exit 1
+    }
+    header_backend_hash="$(sed -n \
+        's/^#define PUFFER_EXACT_ACTION_SOURCE_HASH "\([0-9a-f]*\)"$/\1/p' \
+        "$PUFFER/src/exact_action_build_hash.h" 2>/dev/null || true)"
+    compiled_backend_hash="$(cd "$PUFFER" && "$PYBIN" -c \
+        'from pufferlib import _C; print(getattr(_C, "exact_action_source_hash", "<missing>"))' \
+        2>/dev/null || true)"
+    if [ "$current_backend_hash" != "$header_backend_hash" ] || \
+       [ "$current_backend_hash" != "$compiled_backend_hash" ]; then
+        echo "drift check: exact-action source/module digest mismatch" >&2
+        echo "  sources: $current_backend_hash" >&2
+        echo "  header:  ${header_backend_hash:-<missing>}" >&2
+        echo "  module:  ${compiled_backend_hash:-<missing>}" >&2
+        echo "  fix: reinstall, then rebuild PufferLib for bloodbowl" >&2
         exit 1
     fi
     if [ ! "$current_module" -nt "$DST/.content_hash" ]; then
@@ -221,6 +272,36 @@ if [ -f "$TORCH_PUFFERL_PY" ] && \
         echo "warning: trusted-checkpoint load patch did not apply" >&2
     fi
 fi
+
+# Exact semantic action identity. This extends the generic vec interface with
+# a transient ragged joint-support buffer; native and Torch rollout sampling
+# turn it into the same selected conditional masks already stored by PPO.
+# Apply after the dashboard/trusted-load patches because the saved patch is
+# based on that fully installed Puffer tree.
+EXACT_PATCH="$ROOT/training/puffer_exact_joint_actions.patch"
+if [ -f "$EXACT_PATCH" ] && \
+   ! grep -q 'sample_joint_logits' "$TORCH_PUFFERL_PY"; then
+    if git -C "$PUFFER" apply "$EXACT_PATCH"; then
+        echo "applied:   exact joint-action sampling -> Puffer native/Torch backends"
+    else
+        echo "error: exact joint-action patch did not apply" >&2
+        exit 1
+    fi
+fi
+if ! grep -q 'sample_joint_logits' "$TORCH_PUFFERL_PY" || \
+   ! grep -q 'joint_action_offsets' "$PUFFER/src/vecenv.h" || \
+   ! grep -q 'Exact sequential support' "$PUFFER/src/pufferlib.cu"; then
+    echo "error: exact joint-action backend support is incomplete" >&2
+    exit 1
+fi
+
+EXACT_BACKEND_HASH="$(exact_backend_hash)" || {
+    echo "error: could not hash exact-action backend sources" >&2
+    exit 1
+}
+printf '#pragma once\n#define PUFFER_EXACT_ACTION_SOURCE_HASH "%s"\n' \
+    "$EXACT_BACKEND_HASH" > "$PUFFER/src/exact_action_build_hash.h"
+echo "recorded:   exact-action backend digest $EXACT_BACKEND_HASH"
 
 echo "installed: $DST"
 echo "           $PUFFER/config/bloodbowl.ini"

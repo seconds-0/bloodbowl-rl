@@ -8,7 +8,7 @@ corpus, observations, or masks into memory.
 
 Validated invariants:
 
-* the 16-byte ``BBP1`` header and supported v1/v2/v3 format version;
+* the 16-byte ``BBP1`` header and supported v1/v2/v3/v4 format version;
 * body size is an exact multiple of the header-derived record size;
 * every record's replay ID matches its numeric shard filename;
 * agent and action targets are in range; and
@@ -41,7 +41,7 @@ from typing import Any, Iterable
 
 BBP_HEADER = struct.Struct("<4sIII")
 BBP_MAGIC = b"BBP1"
-BBP_KNOWN_VERSIONS = (1, 2, 3)
+BBP_KNOWN_VERSIONS = (1, 2, 3, 4)
 BBP_HEADER_SIZE = BBP_HEADER.size
 
 HEAD_TYPE = 30

@@ -94,6 +94,35 @@ class StreamingShardTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
+            self.write_shard(root, 42, 1, obs_size=2782, version=4)
+            index = bc_pretrain.ShardIndex.from_directory(root)
+            self.assertEqual(index.shards[0].version, 4)
+            self.assertEqual(
+                bc_pretrain.require_exact_action_lineage(index), 4)
+            index.close()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write_shard(root, 42, 1, obs_size=2782, version=3)
+            index = bc_pretrain.ShardIndex.from_directory(root)
+            with self.assertRaisesRegex(SystemExit, "requires exact-action BBP v4"):
+                bc_pretrain.require_exact_action_lineage(index)
+            self.assertEqual(
+                bc_pretrain.require_exact_action_lineage(
+                    index, allow_legacy=True),
+                3,
+            )
+            index.close()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write_shard(root, 42, 1, obs_size=2782, version=3)
+            self.write_shard(root, 43, 1, obs_size=2782, version=4)
+            with self.assertRaisesRegex(SystemExit, "header mismatch across shards"):
+                bc_pretrain.ShardIndex.from_directory(root)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
             self.write_shard(root, 40, 2, record_replay_id=41)
             with self.assertRaisesRegex(SystemExit, "record replay IDs"):
                 bc_pretrain.ShardIndex.from_directory(root)
@@ -120,6 +149,23 @@ class StreamingShardTests(unittest.TestCase):
                             sum(bc_pretrain.ACT_SIZES)) + b"partial")
             with self.assertRaisesRegex(SystemExit, "whole number"):
                 bc_pretrain.ShardIndex.from_directory(root)
+
+    def test_v4_singleton_inactive_heads_have_zero_bc_gradient(self):
+        logits = [
+            torch.tensor([[0.2, -0.3] + [0.0] * 28], requires_grad=True),
+            torch.randn(1, 33, requires_grad=True),
+            torch.randn(1, 391, requires_grad=True),
+        ]
+        mask = torch.zeros(1, sum(bc_pretrain.ACT_SIZES), dtype=torch.bool)
+        mask[0, 0] = True
+        mask[0, 1] = True
+        mask[0, bc_pretrain.ACT_SIZES[0] + 32] = True
+        mask[0, bc_pretrain.ACT_SIZES[0] + bc_pretrain.ACT_SIZES[1] + 390] = True
+        target = torch.tensor([[0, 32, 390]], dtype=torch.int64)
+        loss, _hits = bc_pretrain.masked_losses(logits, mask, target)
+        loss.backward()
+        self.assertEqual(torch.count_nonzero(logits[1].grad).item(), 0)
+        self.assertEqual(torch.count_nonzero(logits[2].grad).item(), 0)
 
     def test_replay_first_and_record_weighted_sampling_semantics(self):
         with tempfile.TemporaryDirectory() as tmp:
