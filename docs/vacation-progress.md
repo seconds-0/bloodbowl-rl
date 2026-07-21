@@ -7229,3 +7229,25 @@ Next steps:
    artifact, build merged main in a new isolated Puffer tree, require the
    independent qualification verdict to accept, and only then start the fresh
    50M zero-error canary.
+
+16:34 PDT addendum:
+
+- Recurrent CUDA qualification PR #52 merged to `main` as
+  `a52fc6e2f4ece5a7ff16bb4791e3aca4dd72f2e3`. Both the PR-head and main-push
+  immutable-history and complete CI/sanitizer runs passed. The remote topic
+  branch was deleted. A final exact-head review found no P0/P1; its one P2 was
+  closed by making the gate explicitly fp32-only, because BF16-stored behavior
+  log probabilities can move a correct unchanged PPO ratio outside a strict
+  near-unity tolerance. The focused 17-test contract and complete tool/training
+  suites remained green after that correction.
+- No deployment followed the merge. The live queue and all three BBTV services
+  remain active with zero restarts and unchanged PIDs. Seed 44 reached
+  3,672,113,152 steps at epoch 28,015; the latest 91-game panel reported 1.670
+  touchdowns/game, all reward/error integrity counters at exact zero, and the
+  expected pre-repair-only `illegal_frac=0.21656`. GPU state was 82 C, 76%
+  utilization, 5,554/8,192 MiB, and about 149 W.
+- BBTV advanced independently and atomically to seed 44's 3,495,821,312-step
+  checkpoint against the frozen baseline at 16:19 PDT. The next authorized
+  action remains read-only monitoring until full queue completion; do not
+  capture the predecessor control, rebuild Puffer, deploy merged main, or run
+  qualification early.
