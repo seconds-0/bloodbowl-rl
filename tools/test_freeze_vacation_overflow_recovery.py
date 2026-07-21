@@ -67,6 +67,8 @@ class VacationOverflowRecoveryFreezerTests(unittest.TestCase):
                 "experiment_queue.py",
                 "run_frozen_reward_screen.py",
                 "run_reward_screen.sh",
+                "live_integrity_guard.py",
+                "trainer_status_wrapper.sh",
                 "analyze_reward_screen.py",
                 "analyze_reward_candidate_transfer.py",
                 "validate_vacation_artifact.py",

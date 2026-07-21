@@ -89,6 +89,16 @@ For any causal comparison:
   explicit evaluation request; completing that exact request is valid and must
   not depend on vectorized overshoot. Reject an arm that fails integrity; do not
   average it in.
+- Zero-tolerance acceptance is paired with a bounded operational error budget,
+  not an end-of-run surprise. Exact support/decode defects abort on the first
+  transition. `tools/live_integrity_guard.py` incrementally checks every machine
+  panel during reward screens, stops the recorded trainer on any missing,
+  malformed, non-finite, or nonzero hard-integrity field, and fails if no
+  complete panel appears for 180 seconds. Its state, failure artifact, wrapper,
+  hard-key registry, and poll budget are frozen into screen provenance. A
+  repaired runtime must also pass the staged preflight and a disposable 50M-step
+  canary before receiving a long causal budget; never use that canary as a warm
+  start or accepted result.
 - On an episode-ending step, preserve explicit objective reward (TD) and result
   utility, but do not let incidental action/board shaping co-stack with the
   terminal result. Keep deliberately episode-terminal terms separately visible
@@ -492,7 +502,10 @@ changes a reward, active queue, production default, or promotion verdict.
   marginal legality is not sufficient: rollout must sample only the packed
   joint support and store the selected conditional masks for PPO recompute.
   `illegal_frac` is an integrity counter and must remain exactly zero; decoder
-  repair is not an accepted policy path.
+  repair is not an accepted policy path. The environment aborts the first
+  policy tuple outside exact support; reward-screen live and final gates provide
+  independent enforcement rather than waiting for a multi-billion-step arm to
+  finish.
 - BBP v4 is the first replay-pair lineage with exact conditional masks and
   canonical inactive-head sentinels (`arg=32`, `square=390`). Do not train a
   current BC/action experiment from v1-v3 pairs or mix those lineages merely

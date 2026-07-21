@@ -138,6 +138,23 @@ class ExperimentContractTests(unittest.TestCase):
         )
         self.assertNotIn('TOTAL_AGENTS="${TOTAL_AGENTS:-', source)
 
+    def test_reward_screen_has_zero_budget_live_integrity_guard(self):
+        source = (ROOT / "tools/run_reward_screen.sh").read_text(
+            encoding="utf-8")
+        for contract in (
+            "tools/live_integrity_guard.py",
+            "tools/trainer_status_wrapper.sh",
+            "LIVE_INTEGRITY_FAILURE.json",
+            "illegal_frac",
+            "hard_integrity_keys",
+            "contamination_budget",
+            "detection_poll_seconds",
+            "max_panel_silence_seconds",
+            "terminate_current_arm",
+        ):
+            self.assertIn(contract, source)
+        self.assertIn("integrity = HARD_INTEGRITY_KEYS", source)
+
     def test_reward_screen_accepts_the_requested_eval_game_count(self):
         screen = (ROOT / "tools/run_reward_screen.sh").read_text(
             encoding="utf-8")
@@ -283,6 +300,61 @@ class ExperimentContractTests(unittest.TestCase):
         )
         self.assertIn("arms=(both both both)", source)
         self.assertIn("seeds=(42 43 44)", source)
+
+    def test_exact_action_canary_is_one_reward_frozen_50m_arm(self):
+        result = run_script(
+            "tools/run_reward_screen.sh",
+            env={
+                "WARM": "missing.bin",
+                "POOL": "missing-pool",
+                "STEPS": "50000001",
+                "SCREEN_PROFILE": "exact-action-canary",
+            },
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("exact-action-canary requires STEPS=50000000", result.stderr)
+        self.assertNotIn("missing warm checkpoint", result.stderr)
+
+        result = run_script(
+            "tools/run_reward_screen.sh",
+            env={
+                "WARM": "missing.bin",
+                "POOL": "missing-pool",
+                "STEPS": "50000000",
+                "SCREEN_PROFILE": "exact-action-canary",
+                "CANDIDATE_ARM": "gain_only",
+            },
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("candidate transfer inputs are only valid", result.stderr)
+        self.assertNotIn("missing warm checkpoint", result.stderr)
+
+        result = run_script(
+            "tools/run_reward_screen.sh",
+            env={
+                "WARM": "missing.bin",
+                "POOL": "missing-pool",
+                "STEPS": "50000000",
+                "SCREEN_PROFILE": "exact-action-canary",
+            },
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("missing warm checkpoint", result.stderr)
+
+        source = (ROOT / "tools/run_reward_screen.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("exact-action-canary", source)
+        self.assertIn("arms=(both)", source)
+        self.assertIn("seeds=(42)", source)
+        self.assertIn('"qualification_only": screen_profile == "exact-action-canary"', source)
+        self.assertIn("--complete-log", source)
+        self.assertLess(
+            source.index('terminate_current_arm "$pid" "$process_group"'),
+            source.index(
+                'write_screen_status failed 1 "hard-integrity error budget exhausted"'
+            ),
+        )
 
     @unittest.skipUnless(VENDOR_CHECKOUT, "vendored Puffer checkout unavailable")
     def test_puffer_machine_log_uses_explicit_loop_phase_and_fresh_panels(self):

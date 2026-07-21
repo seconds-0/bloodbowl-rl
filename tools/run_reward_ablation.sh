@@ -320,6 +320,8 @@ MODULE_PATH="$("$PYBIN" -c 'from pufferlib import _C; print(_C.__file__)')"
 [ -f "$MODULE_PATH" ] || { echo "imported pufferlib module missing: $MODULE_PATH" >&2; exit 1; }
 MODULE_HASH="$(sha256sum "$MODULE_PATH" | awk '{print $1}')"
 LAUNCHER_HASH="$(sha256sum "$ROOT/tools/run_reward_ablation.sh" | awk '{print $1}')"
+STATUS_WRAPPER="$ROOT/tools/trainer_status_wrapper.sh"
+STATUS_WRAPPER_HASH="$(sha256sum "$STATUS_WRAPPER" | awk '{print $1}')"
 PATCH_HASH="$({
   sha256sum "$ROOT/training/pufferl_env_dashboard_limit.patch"
   sha256sum "$ROOT/training/pufferl_env_json.patch"
@@ -402,6 +404,7 @@ META_ARGS=(
   default_config_sha256 "$DEFAULT_CONFIG_HASH"
   compiled_module "$MODULE_PATH" compiled_module_sha256 "$MODULE_HASH"
   launcher_sha256 "$LAUNCHER_HASH" puffer_patch_bundle_sha256 "$PATCH_HASH"
+  status_wrapper_sha256 "$STATUS_WRAPPER_HASH"
   vendor_head "$VENDOR_HEAD" vendor_source_sha256 "$VENDOR_SOURCE_HASH"
   native_precision_bytes "$precision" total_agents "$TOTAL_AGENTS"
   num_buffers "$NUM_BUFFERS" num_threads "$NUM_THREADS" horizon "$HORIZON"
@@ -440,19 +443,7 @@ PY
 BEFORE_RUNS=$(mktemp)
 find checkpoints/bloodbowl -mindepth 1 -maxdepth 1 -type d \
   -exec basename {} \; 2>/dev/null | sort > "$BEFORE_RUNS" || true
-WRAPPER=(/bin/bash -c '
-  status=$1
-  log=$2
-  shift 2
-  set +e
-  "$@" >> "$log" 2>&1
-  rc=$?
-  tmp="${status}.tmp.$$"
-  printf "{\"exit_code\":%d,\"pid\":%d,\"completed_utc\":\"%s\"}\n" \
-    "$rc" "$$" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$tmp"
-  mv "$tmp" "$status"
-  exit "$rc"
-' /bin/bash "$STATUS_FILE" "$LOG" "${CMD[@]}")
+WRAPPER=(/bin/bash "$STATUS_WRAPPER" "$STATUS_FILE" "$LOG" "${CMD[@]}")
 if [ "$DETACH" = "1" ]; then
   setsid nohup "${WRAPPER[@]}" > /dev/null 2>&1 < /dev/null &
 else
