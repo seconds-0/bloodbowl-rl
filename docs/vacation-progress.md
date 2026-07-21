@@ -6681,3 +6681,52 @@ Blockers / next steps:
    sampled/applied transition identity and recurrent-state parity before the
    next reward A/B. Preserve the current three-seed screen as the final baseline
    for this harness version.
+
+## 2026-07-20 17:21 PDT — first harness-repair tranche verified locally
+
+Status:
+
+- The live recovery queue and BBTV were deliberately not touched during this
+  interval. Their last read-only verification remains the 15:08 PDT entry
+  above; no newer GPU/process/checkpoint claim is inferred from elapsed time.
+- Work proceeded in the isolated local branch
+  `tranche/decision-window-observation-truth` from `origin/main` at
+  `3fade1429f16b204a04f2380a5dfabf2006a1389`. No file under either live host
+  artifact root was copied, edited, installed, or deployed.
+
+Completed:
+
+- Converted the confirmed decision-information findings into a bounded obs-v5
+  tranche while preserving the 2,782-byte tensor: rolled block symbols at
+  reroll/choose windows, TEST kind, active movement/Rush expenditure, valid
+  ball-coordinate gating, and spatially addressable fallback Touchbacks.
+  D201's pending-Dodge bytes remain unchanged. The two identical Push sides
+  are normalized so the observation exposes only the public die symbol, not an
+  internal RNG subtype.
+- Added six focused mutation/mirroring/boundary/projection tests. They failed
+  on the old encoder for the audited reasons and pass after the minimal change.
+  Full optimized and ASan/UBSan suites each pass 442 engine, 37 reward, 2
+  contact-bot, 12 loader, and 6 observation tests.
+- Installed the changed environment into an isolated copied Puffer tree,
+  passed the installed-snapshot drift check, built the optimized standalone and
+  Mac CPU/fp32 binding, and passed the 100-episode standalone self-test. The
+  seed-42 100-episode FNV changes intentionally from obs-v4
+  `afb3850b011cc9f2` to obs-v5 `b12a03950a1cdd28`; the v5 hash reproduced
+  exactly twice. A 500-episode local profile measured both observation encodes
+  together at about 237 ns per step.
+- Updated `DECISIONS.md` (D217), `AGENTS.md`, `CLAUDE.md`, the Puffer/validation
+  skills, converter comments, and obs-v5 specification to make the same-shape
+  semantic lineage break explicit. No v4 checkpoint or replay observation is
+  authorized as a v5 warm start/input without a separate bridge.
+
+Blockers / next steps:
+
+1. Complete inline and external PR review, hosted CI, guarded merge, and
+   post-merge source validation. Do not deploy obs-v5 into the occupied 2070
+   recovery checkout or BBTV.
+2. Resume a read-only live poll separately; the journal must distinguish that
+   current operational evidence from this local source-validation work.
+3. After this tranche, address the broader marginal-head sampled-versus-executed
+   action mismatch and recurrent rollout/recompute parity before resuming reward
+   experiments. Replay conversion, BC extraction, and any v5 training require a
+   separate reviewed bridge plan.
