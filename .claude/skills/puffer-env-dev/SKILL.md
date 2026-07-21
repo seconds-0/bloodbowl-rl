@@ -405,6 +405,27 @@ measure graph-on/off deterministic parity and throughput, primary/frozen
 post-terminal parity, construction checksums, and zero-update ratios on the
 target GPU.
 
+Install `training/puffer_frozen_prio_mask.patch` after the recurrent patch, then
+install `training/puffer_recurrent_cuda_qualification.patch` last and use
+`tools/qualify_recurrent_cuda.py` for target-GPU evidence. Frozen sampling must
+be explicitly masked: zero advantage is not exclusion when `prio_alpha=0`
+because `0^0` produces unit weight.
+Build this qualification in fp32. BF16 rounds the stored behavior log
+probability before PPO recomputation and is deliberately rejected rather than
+given a misleading near-unity ratio tolerance.
+The runner uses fresh subprocesses and a bounded raw snapshot; it rejects
+an observed candidate that differs from its predeclared clean source commit or
+candidate module/backend/environment hashes,
+missing banks/buffers, incomplete sampled ratio-row coverage, changed weights,
+non-finite or nonzero hard-integrity values, any selected frozen row, and an
+absent, loosely shaped, unhashed, or identity-mismatched
+same-host predecessor throughput report. The predecessor module/backend/
+environment hashes must be declared both when captured and when consumed. Its
+explicit recurrent-state clear is
+only the paired post-terminal control and must never be used to alter ordinary
+training/evaluation behavior. Qualification outputs and checkpoints are never
+eligible ancestry.
+
 ## Historical BC-regularized PPO patch (rejected for new runs)
 
 The AlphaStar-style human anchor was tested after D27. When `[train] bc_coef > 0`,

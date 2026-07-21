@@ -143,12 +143,25 @@ checkpoints, and remember that stopped instances can be reclaimed.
   permanently marked qualification-only; do not continue from it.
 - The recurrent runtime is part of the frozen implementation identity. Before
   the exact-action canary, a fresh isolated build must prove zero primary and
-  frozen state after CUDA graph warmup, graph-on/off deterministic output
+  frozen state after CUDA graph warmup, graph-on/off deterministic active-row output
   parity, fresh train→eval game boundaries, primary/frozen post-terminal parity,
   Torch/native parity, finite exact zero-update ratios, and target-GPU
   throughput without material regression. Training requires
   `reset_state=True`; direct training while evaluation mode is active fails.
-  Do not infer these guarantees from patch markers or CPU tests.
+  Do not infer these guarantees from patch markers or CPU tests. Use the
+  post-boundary fp32 `tools/qualify_recurrent_cuda.py` gate with a predeclared
+  candidate source commit plus module/backend/environment hashes and an
+  immutable same-host/config/precision throughput artifact captured from the immediately
+  preceding exact-action runtime. It must cover every learner row through the
+  reported sampled indices, prove byte-identical weights at learning rate zero,
+  and accept all mandatory gates before the 50M canary. The ratio gate must use
+  a real frozen bank and select zero frozen rows, including at `prio_alpha=0`.
+  BF16 is not accepted because stored behavior-log-probability quantization can
+  move an unchanged recomputation ratio beyond a strict near-unity budget.
+  The throughput predecessor must be its exact hashed wrapper and confined cell,
+  with module/backend/environment hashes declared both when captured and when
+  consumed, not a loose metrics dictionary or an unplanned old binary. Missing baseline,
+  coverage, bank/buffer, tensor, or hard-integrity evidence fails closed.
 
 ---
 

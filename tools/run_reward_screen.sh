@@ -512,6 +512,8 @@ patches = [
     root / "training/torch_pufferl_trusted_load.patch",
     root / "training/puffer_exact_joint_actions.patch",
     root / "training/puffer_recurrent_eval_state.patch",
+    root / "training/puffer_frozen_prio_mask.patch",
+    root / "training/puffer_recurrent_cuda_qualification.patch",
 ]
 vendor_sources = [
     "pufferlib/__init__.py", "pufferlib/pufferl.py",

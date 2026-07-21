@@ -116,6 +116,26 @@ if [ "$MODE" = "check" ]; then
             exit 1
         fi
     done
+    for qualification_marker in \
+        'eligible_agents' \
+        'qualification_recurrent_state' \
+        'qualification_snapshot'; do
+        if ! grep -R -Fq "$qualification_marker" \
+            "$PUFFER/src/pufferlib.cu" "$PUFFER/src/bindings.cu"; then
+            echo "drift check: recurrent CUDA qualification marker missing: $qualification_marker" >&2
+            echo "  fix: run tools/install_puffer_env.sh $PUFFER" >&2
+            exit 1
+        fi
+    done
+    for exact_patch in \
+        "$ROOT/training/puffer_recurrent_cuda_qualification.patch" \
+        "$ROOT/training/puffer_frozen_prio_mask.patch"; do
+        if ! git -C "$PUFFER" apply --reverse --check --no-index "$exact_patch"; then
+            echo "drift check: installed qualification patch is stale: $exact_patch" >&2
+            echo "  fix: recreate the pinned Puffer tree and reinstall the complete patch stack" >&2
+            exit 1
+        fi
+    done
     PYBIN="$PUFFER/.venv/bin/python"
     if [ ! -x "$PYBIN" ]; then
         echo "drift check: vendored Python is missing: $PYBIN" >&2
@@ -356,6 +376,52 @@ if ! grep -q 'reset_recurrent_state_on_terminal' "$PUFFER/src/pufferlib.cu" || \
    ! grep -q 'set_evaluation_mode' "$PUFFER/src/bindings.cu" || \
    ! grep -q 'pending_terminals' "$TORCH_PUFFERL_PY"; then
     echo "error: recurrent evaluation-state support is incomplete" >&2
+    exit 1
+fi
+
+# Frozen PPO rows must be mathematically ineligible for priority sampling;
+# zero advantages are insufficient when alpha=0 because pow(0, 0) is one.
+FROZEN_PRIO_PATCH="$ROOT/training/puffer_frozen_prio_mask.patch"
+if [ -f "$FROZEN_PRIO_PATCH" ] && \
+   ! grep -q 'eligible_agents' "$PUFFER/src/pufferlib.cu"; then
+    if git -C "$PUFFER" apply --no-index "$FROZEN_PRIO_PATCH"; then
+        echo "applied:   exact frozen-row exclusion -> prioritized PPO sampler"
+    else
+        echo "error: frozen-row priority-mask patch did not apply" >&2
+        exit 1
+    fi
+elif [ -f "$FROZEN_PRIO_PATCH" ] && \
+     ! git -C "$PUFFER" apply --reverse --check --no-index "$FROZEN_PRIO_PATCH"; then
+    echo "error: installed frozen-row priority-mask patch is stale" >&2
+    echo "  fix: recreate the pinned Puffer tree and reinstall the complete patch stack" >&2
+    exit 1
+fi
+if ! grep -q 'eligible_agents' "$PUFFER/src/pufferlib.cu"; then
+    echo "error: exact frozen-row exclusion is incomplete" >&2
+    exit 1
+fi
+
+# Read-only CUDA qualification evidence. Apply last: it inspects the exact
+# rollout, recurrent, and PPO tensors produced by the preceding semantic
+# patches, and therefore belongs to the same compiled backend identity.
+QUALIFICATION_PATCH="$ROOT/training/puffer_recurrent_cuda_qualification.patch"
+if [ -f "$QUALIFICATION_PATCH" ] && \
+   ! grep -q 'qualification_recurrent_state' "$PUFFER/src/bindings.cu"; then
+    if git -C "$PUFFER" apply --no-index "$QUALIFICATION_PATCH"; then
+        echo "applied:   bounded recurrent CUDA qualification evidence -> Puffer native backend"
+    else
+        echo "error: recurrent CUDA qualification patch did not apply" >&2
+        exit 1
+    fi
+elif [ -f "$QUALIFICATION_PATCH" ] && \
+     ! git -C "$PUFFER" apply --reverse --check --no-index "$QUALIFICATION_PATCH"; then
+    echo "error: installed recurrent CUDA qualification patch is stale" >&2
+    echo "  fix: recreate the pinned Puffer tree and reinstall the complete patch stack" >&2
+    exit 1
+fi
+if ! grep -q 'qualification_recurrent_state' "$PUFFER/src/bindings.cu" || \
+   ! grep -q 'qualification_snapshot' "$PUFFER/src/bindings.cu"; then
+    echo "error: recurrent CUDA qualification evidence is incomplete" >&2
     exit 1
 fi
 

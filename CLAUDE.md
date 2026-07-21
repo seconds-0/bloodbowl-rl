@@ -274,6 +274,25 @@ newer evidence wins.
   keep the captured gate row-sized, then measure graph-on/off parity, target-GPU
   throughput, primary/frozen post-terminal parity, and zero-update ratios before
   any canary.
+- **The target-GPU recurrent gate is executable and fail closed.** Install
+  `puffer_frozen_prio_mask.patch` after recurrent state hardening and
+  `puffer_recurrent_cuda_qualification.patch` last,
+  then run `tools/qualify_recurrent_cuda.py` in an isolated checkout. Its two
+  native evidence calls are size-bounded and unused by ordinary execution. The
+  qualification build must be fp32; BF16 behavior-log-probability storage does
+  not satisfy this gate's strict recomputation-ratio contract. The
+  run command requires predeclared clean source-commit, candidate-module,
+  backend-source, and environment hashes and rejects a merely self-consistent
+  unexpected build. The final verdict requires all-bank construction zero,
+  graph parity,
+  primary/frozen post-terminal automatic/manual-zero parity, full observed
+  learner-row ratio coverage with unchanged weight bytes and zero frozen-row
+  selections even at `prio_alpha=0`, zero hard counters, and a strictly wrapped,
+  hashed same-host/config/precision predecessor throughput control whose
+  module/backend/environment hashes were declared at capture and consumption.
+  No baseline,
+  incomplete coverage, malformed/non-finite data, or failed gate means no 50M
+  canary. All outputs are qualification-only and ancestry-ineligible.
 - **`puffer/bloodbowl/` is the SOURCE OF TRUTH; `vendor/PufferLib/ocean/bloodbowl/` is an installed snapshot** written by `tools/install_puffer_env.sh` — the build compiles the snapshot, NOT your edit. The snapshot can lag (the Mac checkout's may still say 1612). Drift guard: `tools/install_puffer_env.sh --check` (exit 1 = re-install). Run it before any build on a training box.
 - After ANY env code change, ON THE TARGET: `bash tools/install_puffer_env.sh`,
   `bash tools/install_puffer_env.sh --check`, then
