@@ -14,7 +14,7 @@ policy therefore had less public information than both the scripted policy and
 a human player, and could not realize the owner-optimal die choice assumed by
 the probability planes and block-EV diagnostics.
 
-The same audit found three related information/addressability defects:
+The same audit found four related information/addressability defects:
 
 - a generic TEST exposed its target but not the kind of roll that failed;
 - movement and Rush expenditure during the active activation were hidden;
@@ -73,7 +73,8 @@ through the away mirror into apparent on-pitch positions.
 ### Touchback action projection
 
 `BB_A_TOUCHBACK` is spatial in the factored action projection. A normal
-recipient action remains `(type=TOUCHBACK, arg=egocentric player, square=0,0)`.
+recipient action remains `(type=TOUCHBACK, arg=egocentric player, engine
+square=0,0)`, which projects to square-head index 0 for home and 25 for away.
 When no eligible standing recipient exists, an engine fallback action remains
 `(type=TOUCHBACK, arg=sentinel, square=x,y)`, but each legal placement now has
 its own mirrored square-head value and exact decoding round-trips it.
