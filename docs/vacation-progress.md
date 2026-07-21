@@ -6730,3 +6730,44 @@ Blockers / next steps:
    action mismatch and recurrent rollout/recompute parity before resuming reward
    experiments. Replay conversion, BC extraction, and any v5 training require a
    separate reviewed bridge plan.
+
+## 2026-07-20 17:58 PDT — obs-v5 harness repair merged source-only
+
+Status:
+
+- PR #47, `fix: expose decision-window state in obs v5`, passed both required
+  hosted checks and merged to `main` as squash commit
+  `753cdfa01322171da6f48d24ef722c022d705684`. The remote feature branch was
+  deleted after verifying that the merge commit tree exactly matches the
+  reviewed head `4182c36cc36faa123d50ccd603a456b0a2b1530f`.
+- This was deliberately a source-only merge. The live RTX 2070 recovery queue,
+  its installed module and checkpoints, and BBTV were not contacted, rebuilt,
+  restarted, or deployed during this tranche.
+
+Completed:
+
+- Independent reviews confirmed the observation implementation and found two
+  release-boundary gaps, both repaired before merge: same-shape obs-v4/v5 replay
+  lineage now uses BBP v2/v3 identity throughout the BC loader, extractor, and
+  canonical corpus auditors; and the mandatory training/fleet skills no longer
+  identify obs-v4 or `bc_v4.bin` as the current runtime/anchor.
+- Fable's read-only review found two specification wording errors. The final
+  spec now counts all four representation defects and distinguishes the
+  Touchback recipient's engine square `(0,0)` from mirrored square-head indices
+  0 (home) and 25 (away).
+- Final local gates passed: 499 native/C tests, 203 tool tests, 24 training
+  tests, focused BBP-v3 reader/lineage tests, `git diff --check`, and the earlier
+  full ASan/UBSan run. Final GitHub CI and immutable-history checks both passed.
+
+Blockers / next steps:
+
+1. Do not load a v4 checkpoint or BBP-v2/2782 corpus into obs-v5. Flat
+   checkpoints remain headerless, so a new v5 training/evaluation launch needs
+   a reviewed provenance manifest and a new v5-compatible initialization plan.
+2. Before further reward experiments, repair the higher-priority
+   sampled-versus-executed factored-action mismatch so PPO learns from the
+   transition the engine actually executed; then audit recurrent rollout versus
+   recompute state parity.
+3. Keep the current live 2070 recovery run and BBTV pinned to their existing
+   source/runtime until their immutable experiment boundary is reached. A
+   future obs-v5 deployment is a separate, explicit operation.
