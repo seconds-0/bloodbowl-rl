@@ -499,6 +499,15 @@ changes a reward, active queue, production default, or promotion verdict.
   Blob size cannot distinguish v4 from v5; require source/module provenance and
   do not warm-start, mix replay observations, or directly compare curves across
   that boundary without a separately reviewed bridge. See `docs/obs-v5-spec.md`.
+  Current flat checkpoints require the canonical
+  `<checkpoint>.lineage.json` sidecar; `tools/checkpoint_lineage.py` binds the
+  blob to obs-v5, exact-joint-v1, policy shape, source/module/Puffer-patch
+  identities, producer manifest, and ancestry eligibility. Same-size unlabeled
+  blobs fail closed. `tools/build_league.py` copies only eligible sidecars by
+  default; `--legacy-unlabeled` is historical reconstruction only and does not
+  make a pool admissible to repaired launchers. The 50M exact-action canary must
+  run fresh with `WARM` and `POOL` unset, zero frozen banks, and its
+  qualification-only checkpoint must never become ancestry.
 - Apply the audited Puffer patches in repository order and test them. Important
   patches include the env phase contract, eval episode gate, dynamic metrics-key
   fix, trusted Torch load, and exact joint-action changes. For Blood Bowl,

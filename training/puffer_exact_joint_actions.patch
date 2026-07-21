@@ -211,15 +211,19 @@ index 0f64be1..566ca22 100644
 
  #define _PUFFER_STRINGIFY(x) #x
  #define PUFFER_STRINGIFY(x) _PUFFER_STRINGIFY(x)
-@@ -509,6 +510,7 @@ PYBIND11_MODULE(_C, m) {
+@@ -509,6 +510,11 @@ PYBIND11_MODULE(_C, m) {
      m.attr("precision_bytes") = (int)sizeof(precision_t);
      m.attr("env_name") = PUFFER_STRINGIFY(ENV_NAME);
      m.attr("gpu") = 1;
 +    m.attr("exact_action_source_hash") = PUFFER_EXACT_ACTION_SOURCE_HASH;
++    m.attr("environment_source_hash") = PUFFER_ENV_SOURCE_HASH;
++    m.attr("observation_abi") = PUFFER_OBSERVATION_ABI;
++    m.attr("observation_version") = PUFFER_OBSERVATION_VERSION;
++    m.attr("action_abi") = PUFFER_ACTION_ABI;
 
      // Core functions
      m.def("log", &puf_log);
-@@ -606,10 +608,25 @@ PYBIND11_MODULE(_C, m) {
+@@ -606,10 +612,25 @@ PYBIND11_MODULE(_C, m) {
          .def_property_readonly("gpu_obs_ptr",       [](VecEnv& ve) { return (long long)ve.vec->gpu_observations; })
          .def_property_readonly("gpu_rewards_ptr",   [](VecEnv& ve) { return (long long)ve.vec->gpu_rewards; })
          .def_property_readonly("gpu_terminals_ptr", [](VecEnv& ve) { return (long long)ve.vec->gpu_terminals; })
@@ -257,15 +261,19 @@ index 30400be..f946354 100644
 
  namespace py = pybind11;
 
-@@ -164,6 +165,7 @@ PYBIND11_MODULE(_C, m) {
+@@ -164,6 +165,11 @@ PYBIND11_MODULE(_C, m) {
      m.attr("precision_bytes") = 4;
      m.attr("env_name") = PUFFER_STRINGIFY(ENV_NAME);
      m.attr("gpu") = 0;
 +    m.attr("exact_action_source_hash") = PUFFER_EXACT_ACTION_SOURCE_HASH;
++    m.attr("environment_source_hash") = PUFFER_ENV_SOURCE_HASH;
++    m.attr("observation_abi") = PUFFER_OBSERVATION_ABI;
++    m.attr("observation_version") = PUFFER_OBSERVATION_VERSION;
++    m.attr("action_abi") = PUFFER_ACTION_ABI;
 
      m.def("puff_advantage_cpu", &py_puff_advantage_cpu);
      m.def("create_vec", &create_vec, py::arg("args"), py::arg("gpu") = 0);
-@@ -179,6 +181,20 @@ PYBIND11_MODULE(_C, m) {
+@@ -179,6 +185,20 @@ PYBIND11_MODULE(_C, m) {
          .def_property_readonly("obs_ptr", [](VecEnv& ve) { return (long long)ve.vec->observations; })
          .def_property_readonly("rewards_ptr", [](VecEnv& ve) { return (long long)ve.vec->rewards; })
          .def_property_readonly("terminals_ptr", [](VecEnv& ve) { return (long long)ve.vec->terminals; })

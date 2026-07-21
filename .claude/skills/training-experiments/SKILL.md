@@ -117,8 +117,8 @@ checkpoints, and remember that stopped instances can be reclaimed.
   **`training/bc_v4.bin`** (val exact 0.508, D53) and the 2.09M v4 pairs under
   `validation/pairs_v4` remain valid only in an explicitly pinned obs-v4 runtime.
   Never warm-start or evaluate them under the current v5 runtime merely because
-  the shape loads. New obs-v5 exports use BBP v3; the streaming loader rejects a
-  mixed v2/v3 corpus even though both lineages have 2782-byte observations.
+  the shape loads. New exact-action obs-v5 exports use BBP v4; current BC/action
+  training rejects BBP v1-v3 even though the tensor dimensions still match.
 - **OBS SIZE SYNC POINTS — all three must agree:**
   1. `BBE_OBS_SIZE` in `puffer/bloodbowl/bloodbowl.h` (~line 96)
   2. `#define OBS_SIZE` in `puffer/bloodbowl/binding.c` line 8
@@ -130,6 +130,17 @@ checkpoints, and remember that stopped instances can be reclaimed.
   obs-v5 are instead same-shape but semantically incompatible. Flat checkpoints
   do not carry an observation-lineage header, so require a pinned source/module
   identity and external manifest; never infer compatibility from dimensions.
+- Current checkpoints require the canonical adjacent `.lineage.json` produced
+  and validated by `tools/checkpoint_lineage.py`. It binds the checkpoint hash,
+  obs-v5/exact-joint-v1 ABI, policy shape, producer manifest, source/module/
+  Puffer patch identities, and ancestry eligibility. Missing, mismatched, or
+  qualification-only sidecars are not accepted warm starts or pool seeds.
+  `tools/build_league.py` requires and copies eligible lineage by default;
+  `--legacy-unlabeled` is for historical reconstruction only.
+- The `exact-action-canary` is a fixed fresh-initialization qualification run.
+  Launch it with both `WARM` and `POOL` absent (use `env -u WARM -u POOL` when
+  the shell may inherit them). It uses zero frozen banks, and its output is
+  permanently marked qualification-only; do not continue from it.
 
 ---
 

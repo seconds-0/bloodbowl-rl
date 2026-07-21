@@ -75,6 +75,28 @@ class ExactJointActionPatchTests(unittest.TestCase):
         self.assertIn("Exact sequential support", installer)
         self.assertIn("exact joint-action backend support is incomplete", installer)
 
+    def test_compiled_module_exports_semantic_lineage_not_only_tensor_shape(self):
+        installer = INSTALLER.read_text(encoding="utf-8")
+        for fragment in (
+            "PUFFER_ENV_SOURCE_HASH",
+            "PUFFER_OBSERVATION_VERSION",
+            "PUFFER_ACTION_ABI",
+            '"obs-v5"',
+            '"exact-joint-v1"',
+            'getattr(_C, "environment_source_hash"',
+            'getattr(_C, "observation_abi"',
+            'getattr(_C, "observation_version"',
+            'getattr(_C, "action_abi"',
+        ):
+            self.assertIn(fragment, installer)
+        for fragment in (
+            'm.attr("environment_source_hash") = PUFFER_ENV_SOURCE_HASH;',
+            'm.attr("observation_abi") = PUFFER_OBSERVATION_ABI;',
+            'm.attr("observation_version") = PUFFER_OBSERVATION_VERSION;',
+            'm.attr("action_abi") = PUFFER_ACTION_ABI;',
+        ):
+            self.assertEqual(self.patch.count(fragment), 2)
+
     def test_packed_interface_fails_closed_outside_supported_shape(self):
         for fragment in (
             "get_num_act_sizes() > 3",
