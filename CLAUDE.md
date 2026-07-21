@@ -281,6 +281,16 @@ newer evidence wins.
   heads are singleton sentinels, so they contribute zero log-probability and
   entropy. `bbe_decode` rejects instead of repairing. Historical marginal-mask
   checkpoints/corpora are a distinct behavior lineage; new pairs are BBP v4.
+- **Exact-action error budget:** scientific contamination tolerance remains
+  zero, but detection is fail-fast. The engine aborts on the first decode/support
+  violation; reward screens incrementally guard every complete machine panel,
+  include `illegal_frac` and the reward/error counters in final train/eval
+  integrity, fail after 180 seconds without an integrity-bearing panel, and use
+  an embedded watchdog that survives outer-screen loss to terminate the trainer
+  through a status-publishing wrapper. The screen and embedded watchdog must use
+  independent incremental state files. Before a long post-v5 run, require
+  provenance, CUDA graph/zero-update checks, deterministic full games, then a
+  disposable 50M-step reward-frozen canary. Never continue from its checkpoint.
 
 ### Reward economy (July-audited interpretation)
 - **Reward objective outcomes or decision quality, not lucky dice.** Realized

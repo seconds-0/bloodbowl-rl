@@ -267,6 +267,8 @@ def runtime_source_paths(
         root / "tools/run_frozen_reward_screen.py",
         root / "tools/run_reward_screen.sh",
         root / "tools/run_reward_ablation.sh",
+        root / "tools/live_integrity_guard.py",
+        root / "tools/trainer_status_wrapper.sh",
         root / "tools/analyze_reward_candidate_transfer.py",
         root / "tools/analyze_reward_screen.py",
         root / "tools/validate_vacation_artifact.py",

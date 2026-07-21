@@ -162,6 +162,19 @@ Monitor all of:
 - engine error, demo, and fallback counters;
 - immutable result/checkpoint hashes.
 
+For repaired exact-action runs, zero tolerance is enforced live as well as at
+acceptance. The frozen `live_integrity_guard.py` must scan each new machine panel
+both from the screen poll loop and from the watchdog embedded beside the detached
+trainer, stop the recorded trainer/process group on any hard field failure, and
+emit `LIVE_INTEGRITY_FAILURE.json`; 180 seconds without an integrity-bearing
+panel is itself a failure. Metadata-only startup panels do not reset that clock.
+The screen and embedded watchdog must use independent incremental state files
+while sharing the failure artifact. Verify the wrapper's atomic nonzero status
+and absence of its trainer child before treating the GPU as idle. Do not relaunch
+under the same run ID or let a later arm advance. A fresh runtime receives only
+the staged provenance/CUDA/deterministic checks and a disposable 50M-step canary
+before any long paired screen.
+
 A final training Steps line is not completion. The audited evaluator may continue
 until the completed-game gate is satisfied. Do not kill it merely because the
 dashboard is no longer advancing training steps. Acceptance requires the explicit

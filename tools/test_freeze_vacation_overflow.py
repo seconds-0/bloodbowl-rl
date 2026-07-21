@@ -251,6 +251,8 @@ class VacationOverflowFreezerTests(unittest.TestCase):
                 "validate_primary_queue_completion.py",
                 "start_vacation_overflow.py",
                 "run_reward_screen.sh",
+                "live_integrity_guard.py",
+                "trainer_status_wrapper.sh",
                 "analyze_reward_screen.py",
                 "analyze_reward_candidate_transfer.py",
             )

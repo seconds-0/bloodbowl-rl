@@ -138,6 +138,28 @@ class ExperimentContractTests(unittest.TestCase):
         )
         self.assertNotIn('TOTAL_AGENTS="${TOTAL_AGENTS:-', source)
 
+    def test_reward_screen_has_zero_budget_live_integrity_guard(self):
+        source = (ROOT / "tools/run_reward_screen.sh").read_text(
+            encoding="utf-8")
+        launcher = (ROOT / "tools/run_reward_ablation.sh").read_text(
+            encoding="utf-8")
+        for contract in (
+            "tools/live_integrity_guard.py",
+            "tools/trainer_status_wrapper.sh",
+            "LIVE_INTEGRITY_FAILURE.json",
+            "illegal_frac",
+            "hard_integrity_keys",
+            "contamination_budget",
+            "detection_poll_seconds",
+            "max_panel_silence_seconds",
+            "terminate_current_arm",
+        ):
+            self.assertIn(contract, source)
+        self.assertIn("integrity = HARD_INTEGRITY_KEYS", source)
+        self.assertIn('${log}.live-integrity-screen-state.json', source)
+        self.assertIn('${LOG}.live-integrity-watchdog-state.json', launcher)
+        self.assertNotIn('${LOG}.live-integrity-screen-state.json', launcher)
+
     def test_reward_screen_accepts_the_requested_eval_game_count(self):
         screen = (ROOT / "tools/run_reward_screen.sh").read_text(
             encoding="utf-8")
@@ -284,6 +306,61 @@ class ExperimentContractTests(unittest.TestCase):
         self.assertIn("arms=(both both both)", source)
         self.assertIn("seeds=(42 43 44)", source)
 
+    def test_exact_action_canary_is_one_reward_frozen_50m_arm(self):
+        result = run_script(
+            "tools/run_reward_screen.sh",
+            env={
+                "WARM": "missing.bin",
+                "POOL": "missing-pool",
+                "STEPS": "50000001",
+                "SCREEN_PROFILE": "exact-action-canary",
+            },
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("exact-action-canary requires STEPS=50000000", result.stderr)
+        self.assertNotIn("missing warm checkpoint", result.stderr)
+
+        result = run_script(
+            "tools/run_reward_screen.sh",
+            env={
+                "WARM": "missing.bin",
+                "POOL": "missing-pool",
+                "STEPS": "50000000",
+                "SCREEN_PROFILE": "exact-action-canary",
+                "CANDIDATE_ARM": "gain_only",
+            },
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("candidate transfer inputs are only valid", result.stderr)
+        self.assertNotIn("missing warm checkpoint", result.stderr)
+
+        result = run_script(
+            "tools/run_reward_screen.sh",
+            env={
+                "WARM": "missing.bin",
+                "POOL": "missing-pool",
+                "STEPS": "50000000",
+                "SCREEN_PROFILE": "exact-action-canary",
+            },
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("missing warm checkpoint", result.stderr)
+
+        source = (ROOT / "tools/run_reward_screen.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("exact-action-canary", source)
+        self.assertIn("arms=(both)", source)
+        self.assertIn("seeds=(42)", source)
+        self.assertIn('"qualification_only": screen_profile == "exact-action-canary"', source)
+        self.assertIn("--complete-log", source)
+        self.assertLess(
+            source.index('terminate_current_arm "$pid" "$process_group"'),
+            source.index(
+                'write_screen_status failed 1 "hard-integrity error budget exhausted"'
+            ),
+        )
+
     @unittest.skipUnless(VENDOR_CHECKOUT, "vendored Puffer checkout unavailable")
     def test_puffer_machine_log_uses_explicit_loop_phase_and_fresh_panels(self):
         source = PUFFERL_SOURCE.read_text(encoding="utf-8")
@@ -303,6 +380,23 @@ class ExperimentContractTests(unittest.TestCase):
         self.assertNotIn("find pufferlib -maxdepth 1 -name '_C*.so'", source)
         self.assertIn('DETACH="${DETACH:-1}"', source)
         self.assertIn('PROCESS_GROUP="$(ps -o pgid=', source)
+        for contract in (
+            "LIVE_INTEGRITY_GUARD",
+            "LIVE_INTEGRITY_FAILURE",
+            "LIVE_INTEGRITY_MAX_SILENCE",
+            "LIVE_INTEGRITY_POLL_SECONDS",
+            "LIVE_INTEGRITY_MARKER",
+            "live_integrity_guard_sha256",
+        ):
+            self.assertIn(contract, source)
+
+        screen = (ROOT / "tools/run_reward_screen.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            'LIVE_INTEGRITY_FAILURE="$OUT_DIR/LIVE_INTEGRITY_FAILURE.json"',
+            screen,
+        )
 
     def test_vacation_screen_keeps_trainer_in_queue_process_group(self):
         wrapper = (ROOT / "tools/run_frozen_reward_screen.py").read_text(

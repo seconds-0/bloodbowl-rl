@@ -740,6 +740,8 @@ class FreezeVacationQueueTests(unittest.TestCase):
             "tools/run_frozen_reward_screen.py",
             "tools/run_reward_screen.sh",
             "tools/run_reward_ablation.sh",
+            "tools/live_integrity_guard.py",
+            "tools/trainer_status_wrapper.sh",
             "tools/run_reward_candidate_transfer.py",
             "tools/analyze_reward_candidate_transfer.py",
             "tools/analyze_reward_screen.py",

@@ -316,6 +316,26 @@ See §4. Check the invariants before every reward-config launch. No exceptions.
   historical marginal/inactive-head semantics and cannot enter an exact-action
   training corpus by shape compatibility alone.
 
+### D219 — Zero-contamination fail-fast error budget
+
+- Zero accepted violations does not permit an unbounded late rejection. Current
+  reward screens must freeze and run `tools/live_integrity_guard.py`, include
+  `illegal_frac` in the same hard registry as reward/non-finite/error counters,
+  terminate the recorded trainer on the first bad complete panel, and fail after
+  180 seconds without an integrity-bearing machine panel. The same watchdog must
+  live beside a detached trainer so outer-screen loss cannot remove the bound;
+  the screen and watchdog use independent incremental state files, and metadata-only
+  startup panels do not reset liveness. The exact env/backend remains
+  first-transition fatal. Qualify a newly installed runtime through static
+  provenance, CUDA graph/zero-update/deterministic smokes, and a disposable
+  50M-step canary before launching the paired causal screen; never warm-start
+  from or analyze the canary as a result cell.
+- Apply the 180-second silence gate only while the trainer is live. Recovery and
+  final validation must use complete-log mode: rescan all remaining bytes and
+  enforce the same exact-zero registry without falsely aging a stopped log into
+  a liveness failure. Terminate the trainer before publishing failure status so
+  status I/O cannot delay containment.
+
 ### D174/D176 — Current BC and opponent verdicts
 
 - D174 supersedes the old "sequence context first" ranking: frame-stacked

@@ -26,7 +26,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 : "${WARM:?WARM is required}"
 : "${POOL:?POOL is required}"
 : "${STEPS:?STEPS is required (explicit experiment budget)}"
-: "${SCREEN_PROFILE:?SCREEN_PROFILE is required (distance-possession, possession-gain, paired-confirmation, paired-final, or control-final)}"
+: "${SCREEN_PROFILE:?SCREEN_PROFILE is required (distance-possession, possession-gain, exact-action-canary, paired-confirmation, paired-final, or control-final)}"
 CANDIDATE_ARM="${CANDIDATE_ARM:-}"
 TRANSFER_COMPLETE="${TRANSFER_COMPLETE:-}"
 EXPECTED_TRANSFER_SHA256="${EXPECTED_TRANSFER_SHA256:-}"
@@ -58,6 +58,7 @@ MAX_GRAD_NORM=1.5
 EXPECTED_POOL_HASH=18ec7cac858b71a6657003f454f19e232fb060f08b644c1e9e2f101076a9aac0
 MIN_TRAIN_GAMES=1
 MIN_EVAL_GAMES=10000
+MAX_PANEL_SILENCE_SECONDS=180
 
 case "$STEPS:$POLL_SECONDS" in
   *[!0-9:]*) echo "STEPS and POLL_SECONDS must be positive integers" >&2; exit 1 ;;
@@ -81,10 +82,15 @@ case "$ARM_DETACH" in
   *) echo "ARM_DETACH must be 0 or 1" >&2; exit 1 ;;
 esac
 case "$SCREEN_PROFILE" in
-  distance-possession|possession-gain|control-final)
+  distance-possession|possession-gain|exact-action-canary|control-final)
     [ -z "$CANDIDATE_ARM$TRANSFER_COMPLETE$EXPECTED_TRANSFER_SHA256" ] || {
       echo "candidate transfer inputs are only valid with a paired profile" >&2
       exit 1; }
+    if [ "$SCREEN_PROFILE" = "exact-action-canary" ] && \
+       [ "$STEPS" -ne 50000000 ]; then
+      echo "exact-action-canary requires STEPS=50000000" >&2
+      exit 1
+    fi
     ;;
   paired-confirmation|paired-final)
     case "$CANDIDATE_ARM" in
@@ -99,7 +105,7 @@ case "$SCREEN_PROFILE" in
       exit 1
     fi
     ;;
-  *) echo "SCREEN_PROFILE must be distance-possession, possession-gain, paired-confirmation, paired-final, or control-final" >&2
+  *) echo "SCREEN_PROFILE must be distance-possession, possession-gain, exact-action-canary, paired-confirmation, paired-final, or control-final" >&2
      exit 1 ;;
 esac
 
@@ -142,6 +148,12 @@ case "$SCREEN_PROFILE" in
     arms=(both neither possession_only gain_only \
           gain_only possession_only neither both)
     seeds=(42 42 42 42 43 43 43 43)
+    ;;
+  exact-action-canary)
+    # Qualification only: one reward-frozen arm bounds repaired-runtime
+    # exposure before any causal screen receives a long budget.
+    arms=(both)
+    seeds=(42)
     ;;
   paired-confirmation)
     arms=(both "$CANDIDATE_ARM" "$CANDIDATE_ARM" both)
@@ -189,7 +201,8 @@ freeze_screen_manifest() {
     "$CLIP_COEF" "$VF_COEF" "$VF_CLIP_COEF" "$MAX_GRAD_NORM" \
     "$EXPECTED_POOL_HASH" "$MIN_TRAIN_GAMES" "$MIN_EVAL_GAMES" \
     "$SCREEN_PROFILE" "$CANDIDATE_ARM" "$TRANSFER_COMPLETE" \
-    "$EXPECTED_TRANSFER_SHA256" "$ARM_DETACH" <<'PY'
+    "$EXPECTED_TRANSFER_SHA256" "$ARM_DETACH" "$POLL_SECONDS" \
+    "$MAX_PANEL_SILENCE_SECONDS" <<'PY'
 import datetime, hashlib, json, pathlib, subprocess, sys, sysconfig
 
 (
@@ -199,7 +212,7 @@ import datetime, hashlib, json, pathlib, subprocess, sys, sysconfig
     checkpoint_steps, replay_ratio, clip_coef, vf_coef, vf_clip_coef,
     max_grad_norm, expected_pool_hash, min_train_games, min_eval_games,
     screen_profile, candidate_arm, transfer_complete_path,
-    expected_transfer_sha, arm_detach,
+    expected_transfer_sha, arm_detach, poll_seconds, max_panel_silence_seconds,
 ) = sys.argv[1:]
 root = pathlib.Path(root_path).resolve()
 vendor = root / "vendor" / "PufferLib"
@@ -307,6 +320,7 @@ from reward_manifest import load_manifest
 from analyze_reward_candidate_transfer import (
     TransferError, validate_completion_evidence,
 )
+from live_integrity_guard import HARD_INTEGRITY_KEYS
 if screen_profile == "distance-possession":
     reward_files = {
         "r0": root / "puffer/config/rewards/r0_full.json",
@@ -327,6 +341,14 @@ elif screen_profile == "possession-gain":
         "gain_only", "possession_only", "neither", "both",
     )
     schedule_seeds = (42, 42, 42, 42, 43, 43, 43, 43)
+elif screen_profile == "exact-action-canary":
+    if int(steps) != 50_000_000:
+        raise SystemExit("exact-action-canary requires exactly 50M requested steps")
+    reward_files = {
+        "both": root / "puffer/config/rewards/r0_full.json",
+    }
+    arm_order = ("both",)
+    schedule_seeds = (42,)
 elif screen_profile == "control-final":
     reward_files = {
         "both": root / "puffer/config/rewards/r0_full.json",
@@ -424,8 +446,11 @@ schedule = [
 launcher = root / "tools/run_reward_ablation.sh"
 screen_script = root / "tools/run_reward_screen.sh"
 game_stats = root / "tools/game_stats.py"
+live_integrity_guard = root / "tools/live_integrity_guard.py"
+status_wrapper = root / "tools/trainer_status_wrapper.sh"
 contract = {
     "screen_profile": screen_profile,
+    "qualification_only": screen_profile == "exact-action-canary",
     "prefix": prefix,
     "out_dir": str(pathlib.Path(out_dir).resolve()),
     "requested_steps": int(steps),
@@ -445,9 +470,17 @@ contract = {
         "historical_game_share": str(historical_share),
     },
     "rewards": rewards,
+    "error_budget": {
+        "contamination_budget": 0,
+        "detection_poll_seconds": int(poll_seconds),
+        "max_panel_silence_seconds": int(max_panel_silence_seconds),
+        "hard_integrity_keys": list(HARD_INTEGRITY_KEYS),
+    },
     "implementation": {
         "screen_script_sha256": sha(screen_script),
         "game_stats_sha256": sha(game_stats),
+        "live_integrity_guard_sha256": sha(live_integrity_guard),
+        "status_wrapper_sha256": sha(status_wrapper),
         "launcher_sha256": sha(launcher),
         "candidate_transfer_analyzer_sha256": sha(
             root / "tools/analyze_reward_candidate_transfer.py"),
@@ -609,6 +642,13 @@ if (
     != screen["implementation"]["game_stats_sha256"]
 ):
     raise SystemExit("game_stats.py changed after screen plan freeze")
+live_integrity_guard_path = root / "tools/live_integrity_guard.py"
+if (
+    not live_integrity_guard_path.is_file()
+    or sha(live_integrity_guard_path)
+    != screen["implementation"]["live_integrity_guard_sha256"]
+):
+    raise SystemExit("live_integrity_guard.py changed after screen plan freeze")
 
 sys.path.insert(0, str(root / "tools"))
 from game_stats import (
@@ -617,6 +657,15 @@ from game_stats import (
     weighted_dashboard,
 )
 from reward_manifest import load_manifest
+from live_integrity_guard import HARD_INTEGRITY_KEYS
+
+error_budget = screen.get("error_budget")
+if not isinstance(error_budget, dict):
+    raise SystemExit("screen lacks a frozen error budget")
+if error_budget.get("contamination_budget") != 0:
+    raise SystemExit("screen contamination budget is not zero")
+if tuple(error_budget.get("hard_integrity_keys", ())) != HARD_INTEGRITY_KEYS:
+    raise SystemExit("screen hard-integrity registry drifted")
 
 def need_file(path, label):
     path = pathlib.Path(path)
@@ -662,6 +711,12 @@ expected_contract = {
     "default_config_sha256": screen["implementation"]["default_config_sha256"],
     "compiled_module_sha256": screen["implementation"]["compiled_module_sha256"],
     "launcher_sha256": screen["implementation"]["launcher_sha256"],
+    "status_wrapper_sha256": screen["implementation"]["status_wrapper_sha256"],
+    "live_integrity_guard_sha256": screen["implementation"]["live_integrity_guard_sha256"],
+    "live_integrity_max_silence": str(
+        screen["error_budget"]["max_panel_silence_seconds"]),
+    "live_integrity_poll_seconds": str(
+        screen["error_budget"]["detection_poll_seconds"]),
     "puffer_patch_bundle_sha256": screen["implementation"]["puffer_patch_bundle_sha256"],
     "vendor_head": screen["implementation"]["vendor_head"],
     "vendor_source_sha256": screen["implementation"]["vendor_source_sha256"],
@@ -737,17 +792,10 @@ if checkpoint.stat().st_size != expected_bytes:
     raise SystemExit(
         f"final checkpoint is {checkpoint.stat().st_size} bytes; expected {expected_bytes}")
 
+integrity = HARD_INTEGRITY_KEYS
 required = (
     "n", "tds", "perf", "possession_rate", "blocks_thrown",
-    "block_2d_frac", "block_2dred_frac", "illegal_frac",
-    "reward_clip_frac", "reward_clip_frac_nonzero", "reward_clip_excess",
-    "reward_nonfinite_frac", "reward_clip_episodes",
-    "reward_nonfinite_episodes", "error_episodes", "demo_fallbacks",
-)
-integrity = (
-    "reward_clip_frac", "reward_clip_frac_nonzero", "reward_clip_excess",
-    "reward_nonfinite_frac", "reward_clip_episodes",
-    "reward_nonfinite_episodes", "error_episodes", "demo_fallbacks",
+    "block_2d_frac", "block_2dred_frac", *integrity,
 )
 phase_metrics = {
     phase: weighted_dashboard(log, phase=phase)
@@ -842,6 +890,35 @@ if failures:
 PY
 }
 
+terminate_current_arm() {
+  local pid=$1 process_group=$2
+  if [ "$ARM_DETACH" = "1" ]; then
+    kill -TERM -- "-$process_group" 2>/dev/null || true
+  else
+    # Queue-owned screens share the queue job's process group. Signal only the
+    # recorded wrapper; its TERM trap forwards to the exact trainer child.
+    kill -TERM "$pid" 2>/dev/null || true
+  fi
+  for _ in $(seq 1 40); do
+    kill -0 "$pid" 2>/dev/null || return 0
+    sleep 0.25
+  done
+  if [ "$ARM_DETACH" = "1" ]; then
+    kill -KILL -- "-$process_group" 2>/dev/null || true
+  else
+    kill -KILL "$pid" 2>/dev/null || true
+  fi
+}
+
+guard_complete_log() {
+  local log=$1
+  "$PYBIN" "$ROOT/tools/live_integrity_guard.py" \
+    --log "$log" --state "${log}.live-integrity-screen-state.json" \
+    --failure "$OUT_DIR/LIVE_INTEGRITY_FAILURE.json" \
+    --complete-log \
+    --max-panel-silence-seconds "$MAX_PANEL_SILENCE_SECONDS"
+}
+
 wait_for_status() {
   local tag=$1 log=$2
   local process="${log}.process.json"
@@ -849,13 +926,26 @@ wait_for_status() {
     echo "missing process sidecar after launcher returned for $tag" >&2
     return 1
   }
-  local pid
-  pid="$($PYBIN - "$process" <<'PY'
+  local pid process_group guard_state guard_failure
+  read -r pid process_group < <($PYBIN - "$process" <<'PY'
 import json, sys
-print(int(json.load(open(sys.argv[1], encoding="utf-8"))["pid"]))
+payload = json.load(open(sys.argv[1], encoding="utf-8"))
+print(int(payload["pid"]), int(payload["process_group"]))
 PY
-)"
+)
+  # The durable watchdog is a redundant writer. Keep its incremental cursor
+  # independent so overlapping polls cannot race or roll this cursor backward.
+  guard_state="${log}.live-integrity-screen-state.json"
+  guard_failure="$OUT_DIR/LIVE_INTEGRITY_FAILURE.json"
   while [ ! -f "${log}.status.json" ]; do
+    if ! "$PYBIN" "$ROOT/tools/live_integrity_guard.py" \
+        --log "$log" --state "$guard_state" --failure "$guard_failure" \
+        --max-panel-silence-seconds "$MAX_PANEL_SILENCE_SECONDS"; then
+      echo "hard-integrity error budget exhausted; terminating $tag" >&2
+      terminate_current_arm "$pid" "$process_group"
+      write_screen_status failed 1 "hard-integrity error budget exhausted"
+      return 1
+    fi
     if ! kill -0 "$pid" 2>/dev/null; then
       for _ in $(seq 1 10); do
         [ -f "${log}.status.json" ] && break
@@ -873,6 +963,7 @@ PY
     write_screen_status running 0 "waiting for current trainer"
     sleep "$POLL_SECONDS"
   done
+  guard_complete_log "$log"
 }
 
 for index in "${!arms[@]}"; do
@@ -892,6 +983,7 @@ for index in "${!arms[@]}"; do
   write_screen_status running 0 "validating arm artifacts"
 
   if [ -f "$result" ]; then
+    guard_complete_log "$log"
     materialize_result validate "$arm" "$seed" "$tag" "$manifest" \
       "$log" "$result"
     COMPLETED_ARMS=$((COMPLETED_ARMS + 1))
@@ -938,6 +1030,9 @@ PY
         MAX_GRAD_NORM="$MAX_GRAD_NORM" EXPECTED_POOL_HASH="$EXPECTED_POOL_HASH" \
         DETACH="$ARM_DETACH" \
         QUEUE_OWNED="$([ "$ARM_DETACH" = "0" ] && printf 1 || printf 0)" \
+        LIVE_INTEGRITY_FAILURE="$OUT_DIR/LIVE_INTEGRITY_FAILURE.json" \
+        LIVE_INTEGRITY_MAX_SILENCE="$MAX_PANEL_SILENCE_SECONDS" \
+        LIVE_INTEGRITY_POLL_SECONDS="$POLL_SECONDS" \
         /bin/bash "$ROOT/tools/run_reward_ablation.sh"
     wait_for_status "$tag" "$log"
   fi
@@ -952,6 +1047,9 @@ PY
     tail -40 "$log" >&2
     exit 1
   fi
+  # Covers clean detached recovery and closes any final-log race after the
+  # wrapper's atomic status publication.
+  guard_complete_log "$log"
   for _ in $(seq 1 20); do
     [ -f "${log}.run_dir" ] && break
     sleep 1
