@@ -6910,3 +6910,56 @@ Next steps:
    repaired obs-v5/exact-action harness before committing days to long training.
    Recurrent rollout-versus-recompute state parity remains the next independent
    harness-audit tranche.
+
+## 2026-07-21 11:05 PDT — final pre-repair seed active; zero-budget guard merged
+
+Status:
+
+- The isolated recovery queue remains active with zero observed service
+  restart. Seeds 42 and 43 have atomic accepted result files; the final seed 44
+  started at 10:54 PDT and reached 57,933,824 of the requested 12B steps at
+  roughly 184K SPS. The current estimate is about 18 hours to the training
+  boundary plus final evaluation; a checkpoint alone is not completion.
+- The RTX 2070 was 83 C, 77% utilized, and using 5,554/8,192 MiB. The root
+  filesystem was 12% used with 849 GiB free. The queue-owned trainer was the
+  only GPU compute process.
+- BBTV remained active and observational, serving the prior seed's exact
+  11,999,903,744-step manifested checkpoint against the frozen baseline while
+  seed 44 trained. Its two-root follower and CPU viewer isolation remained in
+  place.
+
+Completed this hour:
+
+- PR #49, `Fail fast on exact-action integrity errors`, merged to `main` as
+  `c7eb510b604de7fbda030dd0b6a5b82a095fc42d` after local suites, immutable
+  history, hosted CI, Codex review, and Fable review passed. The repaired
+  harness now has an exact-zero contamination budget, a 30-second poll budget,
+  a 180-second panel-liveness gate, and a durable watchdog with independent
+  screen/watchdog cursors.
+- Reconfirmed that this running seed is the deliberately frozen pre-repair
+  marginal-action baseline. Its live `illegal_frac` near 0.223 is the known
+  D218 defect and is not retroactively judged under D219; every future
+  exact-action run must instead report exact zero.
+- Began read-only validation of the post-boundary qualification path. The
+  current canary contract still accepts same-sized warm/pool files, while D217
+  forbids silently loading obs-v4 policies into obs-v5. No canary or deployment
+  has been launched from those incompatible artifacts.
+
+Current blockers / risks:
+
+- Seed 44 and the screen/queue completion artifacts are still pending. Do not
+  rebuild, deploy, stop BBTV, or run evaluation on the occupied checkout.
+- Obs-v4 and obs-v5 checkpoints have the same flat size, so bytes and shape do
+  not prove lineage. The repaired canary needs an explicit v5-safe cold/bootstrap
+  contract before it can be trusted.
+- Recurrent rollout/recompute state parity and CUDA-graph warmup restoration
+  remain an independent qualification question; source review is in progress.
+
+Next steps:
+
+1. Continue read-only monitoring of seed 44 and preserve the immutable boundary.
+2. Select and implement the smallest test-first source tranche that closes the
+   v5 bootstrap and recurrent-state qualification gaps without touching the
+   live host.
+3. After atomic queue completion, preserve all pre-repair evidence before any
+   isolated repaired-runtime install, CUDA smoke, or disposable 50M canary.
