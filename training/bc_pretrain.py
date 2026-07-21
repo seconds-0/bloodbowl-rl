@@ -79,7 +79,8 @@ sys.path.insert(0, os.path.join(ROOT, "vendor", "PufferLib"))
 # header's mask_size below — the shards only pin the sum).
 ACT_SIZES = (30, 33, 391)
 MAGIC = b"BBP1"
-KNOWN_VERSIONS = (1, 2)  # Layout is header-driven; v2 spans obs-v3 and obs-v4.
+KNOWN_VERSIONS = (1, 2)  # v2 spans v3 and same-shape v4/v5; provenance must
+                         # distinguish v4/v5 because the header cannot (D217).
 HEADER_LEN = 16
 REPLAY_ID_SCAN_BATCH = 65_536
 

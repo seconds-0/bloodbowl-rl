@@ -122,6 +122,11 @@ re-derive by hand; (b) RNG misuse (reuse/bias) — check `bb_rng` consumption co
    Run before AND after every env change: intended-no-op refactor ⇒
    identical hash; intended obs/mask change ⇒ hash changes and nothing
    else does. Full liturgy: puffer-env-dev skill, footgun 14.
+   D217's obs-v5 boundary is a pinned example: the 100-episode seed-42 hash
+   intentionally changes from v4 `afb3850b011cc9f2` to v5
+   `b12a03950a1cdd28`, and repeat v5 runs must match. Equal 2,782-byte shape
+   does not establish semantic compatibility; record `BBE_OBS_VERSION` plus
+   imported-module/source identity.
 9. **Procedure-stack sanity** — bounded depth; empty between activations; no leaks.
 10. **Stat bounds** — MA/ST/AG/PA/AV within rulebook ranges; score monotonic.
 11. **Raw snapshot admission** — BBS1 size/fingerprint proves ABI compatibility,

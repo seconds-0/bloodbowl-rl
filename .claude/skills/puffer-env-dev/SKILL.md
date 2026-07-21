@@ -20,6 +20,12 @@ and `docs/reward-and-replay-audit-2026-07-09.md`. Upstream success/exit status i
 not sufficient: the audited path requires explicit phase, provenance, completed
 games, final cumulative reprint, and reward-integrity telemetry.
 
+For observation work, also read D217 and `docs/obs-v5-spec.md`. Obs-v5 retains
+obs-v4's 2,782-byte tensor shape but changes reserved-byte semantics and
+Touchback projection. Blob size cannot distinguish those lineages: require the
+exact source/module identity, and never treat a shape-loadable v4 checkpoint or
+pair shard as semantically v5 without a separately reviewed bridge.
+
 ## 1. The binding ABI
 
 A 4.0 env = `ocean/<name>/<name>.h` (all game logic) + `ocean/<name>/binding.c` (macros +
@@ -165,6 +171,13 @@ historical BC-loss patch; it does not carry masking. An UNPATCHED torch backend
 samples raw logits, so `c_step` must
 still tolerate any in-range action value (chess answers invalid picks with
 `reward_invalid_*` penalties, binding.c kwargs).
+
+Blood Bowl's current marginal per-head mask is only a projection of complete
+legal triples; independently sampled legal head values may still compose a
+triple the engine never enumerated, after which `bbe_decode` repairs it. D217
+fixes Touchback square addressability but does not solve this general
+sampled-versus-executed mismatch. Do not interpret a low bounds-error rate as
+proof that PPO stored the action the engine executed.
 
 ## 6. MultiDiscrete actions
 

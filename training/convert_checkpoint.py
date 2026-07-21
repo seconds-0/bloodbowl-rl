@@ -47,12 +47,14 @@ bias terms; the CUDA backend's layers are pure matmuls with NO biases.
     you can judge the warm-start fidelity loss).
   cuda -> torch: biases are zero-filled.
 
-OBS-V4 LINEAGE: the default obs size is 2782 (obs v4, decision-support
-planes) — 16,066,560 bytes = 4,016,640 fp32 for heads (30, 33, 391) /
-hidden 512 / 3 layers. The encoder input dim is part of the parameter count,
-so older checkpoints cannot be loaded into a current policy. For obs-v3
-(1612; 13,670,400 bytes) or obs-v2 (832; 12,072,960 bytes) checkpoints, pass
-the corresponding explicit --obs-size.
+OBS-V5 LINEAGE: the default obs size is 2782 (obs-v4 decision-support planes
+plus obs-v5 decision-window semantics) — 16,066,560 bytes = 4,016,640 fp32 for
+heads (30, 33, 391) / hidden 512 / 3 layers. Obs-v4 has the SAME shape and
+parameter count but different reserved-byte/Touchback semantics; this converter
+cannot identify or bridge it from blob size. Require source provenance and do
+not treat a shape-loadable v4 artifact as a v5 warm start. For obs-v3 (1612;
+13,670,400 bytes) or obs-v2 (832; 12,072,960 bytes), pass the corresponding
+explicit --obs-size.
 
 Verified against a real artifact (obs-v2 lineage): a CUDA-backend
 checkpoint from a GPU training run is exactly 12,072,960 bytes =
@@ -80,9 +82,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # Mirrors ACT_SIZES in puffer/bloodbowl/binding.c and bc_pretrain.py.
 DEFAULT_ACT_SIZES = (30, 33, 391)
-# BBE_OBS_SIZE (obs v4, decision-support planes). Older lineages are a
-# different parameter count — convert with an explicit --obs-size:
-# obs-v3 (TZ planes) = 1612, obs-v2 = 832.
+# BBE_OBS_SIZE (obs v5 semantics, obs-v4's 2782-byte shape). Blob size cannot
+# distinguish v4 from v5; provenance is required. Older shapes need an explicit
+# --obs-size: obs-v3 (TZ planes) = 1612, obs-v2 = 832.
 DEFAULT_OBS_SIZE = 2782
 OBS_V3_SIZE = 1612
 LEGACY_OBS_SIZE = 832

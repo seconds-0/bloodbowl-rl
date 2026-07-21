@@ -5,7 +5,7 @@ deterministic C11 rules engine → PufferLib 4.0 native env → PPO + action
 masking + self-play curriculum, with BC support from curated FUMBBL replays.
 
 **Read `AGENTS.md` first.** Then read the tail of `DECISIONS.md` (currently
-through D192) and, for reward/replay work,
+through D217) and, for reward/replay work,
 `docs/reward-and-replay-audit-2026-07-09.md`. The ledger is chronological; the
 July audit and D177–D192 supersede older prose that calls the June v4 reward
 economy "settled." Where this file and newer ledger evidence disagree, the
@@ -254,7 +254,7 @@ newer evidence wins.
 ## Hard-won facts (verified — don't relearn these)
 
 ### Obs / checkpoints / build
-- **obs-v4 = 2782 bytes** (probability planes A1/A2/B; spec `docs/obs-v4-spec.md`). **Three OBS_SIZE sync points must agree** (static asserts catch 2 of 3): `BBE_OBS_SIZE` in `puffer/bloodbowl/bloodbowl.h`, `#define OBS_SIZE` in `puffer/bloodbowl/binding.c:8`, `--obs-size` in `training/convert_checkpoint.py` (default 2782; v3 ckpts need `--obs-size 1612`). Old obs-v3-lineage checkpoints are input-shape **incompatible**.
+- **obs-v5 = 2782 bytes** (obs-v4 probability planes plus decision-window truth; spec `docs/obs-v5-spec.md`). Rolled block faces are visible at reroll/choose windows, TEST kind and active movement expenditure are explicit, invalid ball coordinates zero, and Touchback placements are spatially addressable. **Three OBS_SIZE sync points must agree** (static asserts catch 2 of 3): `BBE_OBS_SIZE` in `puffer/bloodbowl/bloodbowl.h`, `#define OBS_SIZE` in `puffer/bloodbowl/binding.c:8`, `--obs-size` in `training/convert_checkpoint.py` (default 2782; v3 ckpts need `--obs-size 1612`). Obs-v4 has the same shape but different semantics: blob size cannot distinguish it, so require source/module provenance and no v4 warm-start, replay mixing, or direct curve comparison without a reviewed bridge. Obs-v3 and older checkpoints remain input-shape **incompatible**.
 - **`puffer/bloodbowl/` is the SOURCE OF TRUTH; `vendor/PufferLib/ocean/bloodbowl/` is an installed snapshot** written by `tools/install_puffer_env.sh` — the build compiles the snapshot, NOT your edit. The snapshot can lag (the Mac checkout's may still say 1612). Drift guard: `tools/install_puffer_env.sh --check` (exit 1 = re-install). Run it before any build on a training box.
 - After ANY env code change, ON THE TARGET: `bash tools/install_puffer_env.sh`,
   `bash tools/install_puffer_env.sh --check`, then

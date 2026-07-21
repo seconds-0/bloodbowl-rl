@@ -5,7 +5,7 @@
 // engine to the next decision, and emits observations + per-head legality
 // masks. Episodes are full matches over procedurally generated rosters.
 //
-// Observation (uint8, BBE_OBS_SIZE = 2782B, obs v4), egocentric: each agent
+// Observation (uint8, BBE_OBS_SIZE = 2782B, obs v5), egocentric: each agent
 // sees its own players first and the pitch x-mirrored for the away coach, so
 // "forward" is always +x. Layout (offsets from the BBE_* macros below):
 //   [0..767]   32 players x BBE_PLAYER_BYTES (24): rows 0-15 = my team,
@@ -31,7 +31,8 @@
 //                     top TEST(Dodge) has a matching parent MOVE)
 //                [10] I am the deciding coach, [11] my team is active
 //                [12] pending Dodge destination y+1 (same condition)
-//                [13..15] spare
+//                [13..15] rolled block faces 0..2 (bb_block_die; 0 = absent),
+//                         only at BLOCK reroll/choose-die phases
 //   [784..831] scalars (BBE_SCALAR_OFF):
 //                [0]  half, [1] my turn, [2] opp turn
 //                [3]  my score, [4] opp score
@@ -39,7 +40,10 @@
 //                [8..13] blitz/pass/handoff/foul/ttm/secure used this turn
 //                [14] my apothecaries, [15] opp apothecaries
 //                [16] my bribes, [17] opp bribes, [18] I am kicking
-//                [19..47] spare (team ids deliberately NOT observed — see
+//                [19] active MOVE player's squares moved + 1 (0 = no mover)
+//                [20] active MOVE player's Rushes spent + 1 (0 = no mover)
+//                [21] top TEST kind + 1 (0 = not a TEST decision)
+//                [22..47] spare (team ids deliberately NOT observed — see
 //                         the encoder comment; forces roster-reading)
 //   [832..1611] tackle-zone planes (obs v3, BBE_TZ_OFF): two per-square
 //              TZ-count planes of 390 bytes each (index y*26 + x, x
@@ -101,9 +105,10 @@
 #include "contact_bot.h"
 #include "offense_bot.h"
 
+#define BBE_OBS_VERSION 5      // semantic ABI; v4 has the same 2782-byte shape
 #define BBE_PLAYER_BYTES 24    // 11 stat/state bytes + 12 skill-id slots + TZ byte
 #define BBE_SKILL_SLOTS 12     // >= max base-roster skills (10) + procgen cap
-#define BBE_OBS_SIZE 2782      // v3 1612 + 3*390 decision-support planes (obs v4)
+#define BBE_OBS_SIZE 2782      // v4 shape retained; decision context is obs v5
 #define BBE_CTX_OFF (BB_NUM_PLAYERS * BBE_PLAYER_BYTES) // 768
 #define BBE_SCALAR_OFF (BBE_CTX_OFF + 16)               // 784
 #define BBE_TZ_OFF (BBE_SCALAR_OFF + 48)                // 832
@@ -841,6 +846,29 @@ static bool bbe_frame_b_is_slot(int proc) {
     }
 }
 
+// Find the currently active movement procedure even when a nested TEST,
+// BLOCK, or other resolution frame is the decision at the top of the stack.
+// A procedure stack represents only the active call chain, so the nearest
+// valid MOVE frame is the active mover and cannot be a completed activation.
+static int bbe_active_move_slot(const bb_match* m) {
+    for (int i = (int)m->stack_top - 1; i >= 0; i--) {
+        const bb_frame* frame = &m->stack[i];
+        if (frame->proc == BB_PROC_MOVE) {
+            return frame->a < BB_NUM_PLAYERS ? frame->a : BB_NO_PLAYER;
+        }
+    }
+    return BB_NO_PLAYER;
+}
+
+// The physical block die has five public symbols: its two Push faces are
+// visually and legally identical. The engine distinguishes them only to model
+// the six equiprobable sides, so collapse PUSH_2 before exposing a face to the
+// policy rather than creating a non-public RNG side channel.
+static int bbe_public_block_face(int face) {
+    if (face == BB_BD_PUSH_2) return BB_BD_PUSH_1;
+    return face >= BB_BD_ATTACKER_DOWN && face <= BB_BD_POW ? face : 0;
+}
+
 static void bbe_encode_obs(Bloodbowl* env, int agent) {
     unsigned char* o = env->obs_ptr[agent];
     // Zero only the conditionally-written regions: player/ctx/scalars
@@ -903,7 +931,8 @@ static void bbe_encode_obs(Bloodbowl* env, int agent) {
 
     unsigned char* b = o + BBE_CTX_OFF;
     b[0] = m->ball.state;
-    if (m->ball.state != BB_BALL_OFF_PITCH) {
+    if (m->ball.state != BB_BALL_OFF_PITCH &&
+        bb_on_pitch_xy(m->ball.x, m->ball.y)) {
         int bx = me == BB_HOME ? m->ball.x : (BB_PITCH_LEN - 1 - m->ball.x);
         b[1] = (unsigned char)(bx + 1);
         b[2] = (unsigned char)(m->ball.y + 1);
@@ -946,6 +975,18 @@ static void bbe_encode_obs(Bloodbowl* env, int agent) {
                 b[12] = (unsigned char)(move->y + 1);
             }
         }
+        // Rolled block faces are public at both policy decisions that use
+        // them: whether to reroll the pool (phase 1) and which die to choose
+        // (phase 2). The engine stores up to three nonzero bb_block_die enum
+        // values in frame.data; unused face bytes remain zero from memset.
+        if (top->proc == BB_PROC_BLOCK &&
+            (top->phase == 1 || top->phase == 2)) {
+            int ndice = blk_ndice(top);
+            for (int i = 0; i < ndice && i < 3; i++) {
+                b[13 + i] =
+                    (unsigned char)bbe_public_block_face(blk_die(top, i));
+            }
+        }
     }
     b[10] = (unsigned char)(m->decision_team == me);
     b[11] = (unsigned char)(m->active_team == me);
@@ -970,10 +1011,17 @@ static void bbe_encode_obs(Bloodbowl* env, int agent) {
     s[16] = m->bribes[me];
     s[17] = m->bribes[1 - me];
     s[18] = (unsigned char)(m->kicking_team == me);
-    // s[19]/s[20] intentionally unused: team ids are NOT observed. Identity
-    // is fully derivable from the visible per-player stats/skills, and hiding
-    // the id forces the policy to read rosters — the structural guarantee
-    // behind the held-out / homebrew team generalization tests.
+    int mover = bbe_active_move_slot(m);
+    if (mover != BB_NO_PLAYER) {
+        s[19] = (unsigned char)(m->players[mover].moved + 1u);
+        s[20] = (unsigned char)(m->players[mover].rushes + 1u);
+    }
+    if (top && top->proc == BB_PROC_TEST && top->b < BB_TEST_KIND_COUNT) {
+        s[21] = (unsigned char)(top->b + 1u);
+    }
+    // Team ids are NOT observed. Identity is fully derivable from visible
+    // player stats/skills, and hiding the id forces the policy to read rosters
+    // — the structural guarantee behind held-out/homebrew generalization.
 
     // [BBE_TZ_OFF..] obs v3 tackle-zone planes: my coverage, then the
     // opponent's (destination danger), per square, x-mirrored for the away
@@ -1055,6 +1103,7 @@ static bool bbe_type_spatial(int type) {
     switch (type) {
     case BB_A_SETUP_PLACE:
     case BB_A_KICK_TARGET:
+    case BB_A_TOUCHBACK: // fallback placement uses x/y; recipient uses (0,0)
     case BB_A_STEP:
     case BB_A_JUMP:
     case BB_A_BLOCK_TARGET:

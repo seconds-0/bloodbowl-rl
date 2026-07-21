@@ -96,6 +96,60 @@ static void st_check_obs(const Bloodbowl* env) {
         if (top->proc == BB_PROC_TEST) {
             ST_CHECK(b[8] >= 2 && b[8] <= 6, "TEST target %d outside 2..6", b[8]);
         }
+        // Obs-v5 decision truth. Re-derive directly from public frame/player
+        // fields rather than calling encoder helpers.
+        for (int i = 0; i < 3; i++) {
+            int exp_face = 0;
+            if (top->proc == BB_PROC_BLOCK &&
+                (top->phase == 1 || top->phase == 2)) {
+                int ndice = ((top->data >> 9) & 3) + 1;
+                if (i < ndice) {
+                    int face = (top->data >> (3 * i)) & 7;
+                    if (face == BB_BD_PUSH_2) face = BB_BD_PUSH_1;
+                    if (face >= BB_BD_ATTACKER_DOWN && face <= BB_BD_POW)
+                        exp_face = face;
+                }
+            }
+            ST_CHECK(b[13 + i] == exp_face,
+                     "proc %d phase %d agent %d: block face %d byte %d != %d",
+                     top->proc, top->phase, agent, i, b[13 + i], exp_face);
+        }
+        const unsigned char* scalar =
+            env->obs_ptr[agent] + BBE_SCALAR_OFF;
+        int move_slot = BB_NO_PLAYER;
+        for (int i = (int)m->stack_top - 1; i >= 0; i--) {
+            if (m->stack[i].proc == BB_PROC_MOVE) {
+                if (m->stack[i].a < BB_NUM_PLAYERS) move_slot = m->stack[i].a;
+                break;
+            }
+        }
+        int exp_moved = move_slot == BB_NO_PLAYER
+                            ? 0 : m->players[move_slot].moved + 1;
+        int exp_rushes = move_slot == BB_NO_PLAYER
+                             ? 0 : m->players[move_slot].rushes + 1;
+        int exp_kind = top->proc == BB_PROC_TEST &&
+                               top->b < BB_TEST_KIND_COUNT
+                           ? top->b + 1 : 0;
+        ST_CHECK(scalar[19] == exp_moved,
+                 "proc %d agent %d: moved byte %d != %d",
+                 top->proc, agent, scalar[19], exp_moved);
+        ST_CHECK(scalar[20] == exp_rushes,
+                 "proc %d agent %d: rushes byte %d != %d",
+                 top->proc, agent, scalar[20], exp_rushes);
+        ST_CHECK(scalar[21] == exp_kind,
+                 "proc %d agent %d: TEST-kind byte %d != %d",
+                 top->proc, agent, scalar[21], exp_kind);
+        int ball_xy_valid = m->ball.state != BB_BALL_OFF_PITCH &&
+                            bb_on_pitch_xy(m->ball.x, m->ball.y);
+        int exp_ball_x = ball_xy_valid
+                             ? 1 + (agent == BB_AWAY
+                                        ? BB_PITCH_LEN - 1 - m->ball.x
+                                        : m->ball.x)
+                             : 0;
+        int exp_ball_y = ball_xy_valid ? m->ball.y + 1 : 0;
+        ST_CHECK(b[1] == exp_ball_x && b[2] == exp_ball_y,
+                 "agent %d: ball bytes %d,%d != %d,%d",
+                 agent, b[1], b[2], exp_ball_x, exp_ball_y);
         // Review M14's exact repro: at every ACTIVATE decision (TEAM_TURN on
         // top, a = team id 0/1) BOTH agents must see "no slot" — the away
         // agent used to see "opponent row 17" for the home team's turn.

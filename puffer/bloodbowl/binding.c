@@ -5,7 +5,7 @@
 // defines as plain literals.
 #include "bloodbowl.h"
 
-#define OBS_SIZE 2782 // obs v4 (mirrors BBE_OBS_SIZE; static-assert below)
+#define OBS_SIZE 2782 // obs v5 semantic ABI; v4 shape retained (see header)
 #define NUM_ATNS 3
 #define ACT_SIZES {30, 33, 391}
 #define OBS_TENSOR_T ByteTensor

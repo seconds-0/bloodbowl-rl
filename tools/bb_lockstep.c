@@ -223,7 +223,11 @@ static void report_divergence(runner* R, long cmd, const char* cls,
 //   header (16 bytes):
 //     magic     char[4]  "BBP1"
 //     version   u32      2
-//     obs_size  u32      BBE_OBS_SIZE  (1612; v1 wrote 832)
+//     obs_size  u32      BBE_OBS_SIZE  (2782 for obs-v4/v5; v3 wrote 1612,
+//                                      v1 wrote 832)
+// The v2 header predates same-shape obs-v5 and does not carry the semantic ABI;
+// D217 therefore requires exact extractor/source provenance and forbids mixing
+// shape-identical v4/v5 shards without a separately reviewed format bridge.
 //     mask_size u32      BBE_MASK_SIZE (454)
 //   record (12 + obs_size + mask_size + 4 = 2082 bytes), one per
 //   successfully applied act/place op (a place op is a BB_A_SETUP_PLACE
