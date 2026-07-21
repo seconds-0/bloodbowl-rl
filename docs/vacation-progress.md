@@ -7030,3 +7030,67 @@ Next steps:
    main to a new isolated checkout, pass native CUDA construction/recurrent/
    exact-support/zero-update gates, and only then run the disposable fresh 50M
    canary under the exact-zero error budget.
+
+## 2026-07-21 13:45 PDT — v5 lineage merged; recurrent state tranche in verification
+
+Status:
+
+- The recovery queue, BBTV follower, web service, and tunnel remain active with
+  their original process trees. Nothing on the RTX 2070 was modified or
+  restarted. GPU state was 81 C, 74% utilization, and 5,554/8,192 MiB.
+- Seed 44 reached 1,858,076,672 of 12B requested steps. The latest panel had 81
+  completed games, 1.309 touchdowns/game, and all reward/error integrity
+  counters at exactly zero. Its `illegal_frac=0.21534` remains evidence from
+  the intentionally frozen pre-repair marginal-action runtime, not an
+  acceptable value for the repaired harness.
+- The cumulative behavior aggregate now covers 1,199,701 completed games:
+  1.185 touchdowns, 16.422 blocks, 0.618 two-die attacker-choice share, 0.045
+  two-die red share, 3.784 pickup attempts / 2.188 successes, and 0.317
+  possession rate per game.
+- BBTV is actively serving seed 44's atomically completed 1,797,914,624-step
+  checkpoint against the frozen baseline while training continues.
+
+Completed this hour:
+
+- Fresh obs-v5/exact-action qualification and checkpoint-lineage PR #50 passed
+  hosted immutable-history and sanitizer CI and merged to main as
+  `d1e200b4980f6b0dbb56200b2dfe471ecf80862b`.
+- Implemented the isolated recurrent evaluation-state patch and installer
+  identity. It restores primary and every frozen-bank recurrent buffer after
+  CUDA graph warmup, carries Torch pending outcomes across rollout calls,
+  resets terminal rows before the next game's observation, and rejects PPO
+  training modes whose rollout/recompute state cannot match.
+- A correctness review found that the first captured reset kernel shape would
+  launch about 403 million no-op threads per training rollout. The design now
+  launches one thread per active row and performs layer/hidden writes only for
+  actual evaluation terminal rows. Direct backend training is also rejected
+  while evaluation mode is active.
+- Train-to-evaluation transitions now discard partial training games and clear
+  state once, so evaluation panels begin from fresh games. Standalone eval and
+  match avoid a redundant second reset at global step zero.
+- Verification is green so far: the recurrent patch applies exactly and
+  idempotently after the exact-action patch on a fresh pinned Puffer tree;
+  executable Torch boundary tests pass; 232 tools tests, 37 training tests,
+  442 native tests, all focused Puffer tests, and the complete ASan/UBSan suite
+  pass locally.
+
+Current blockers / risks:
+
+- Native CUDA graph construction, primary/frozen state checksums, deterministic
+  graph-on/off parity, post-terminal parity, zero-update PPO ratios, and
+  throughput comparison require the isolated 2070 runtime after the immutable
+  baseline boundary. No long repaired run is authorized before every one is
+  exact/finite and every integrity counter is zero.
+- The recurrent tranche still needs final independent review, commit, hosted
+  CI, and merge. One requested sub-agent test review hit the classifier and was
+  not retried; review remains ordinary correctness-only.
+- Seed 44 has not reached atomic queue completion. The live checkout remains
+  read-only.
+
+Next steps:
+
+1. Finish recurrent-state review, rerun the complete gates, open the PR, fix
+   any concrete finding, and merge only with green hosted CI.
+2. Continue read-only seed 44 and BBTV monitoring through atomic completion.
+3. Preserve baseline evidence, then use a separate repaired checkout for the
+   deployment-bound CUDA qualification and fresh 50M exact-zero canary.
