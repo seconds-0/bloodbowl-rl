@@ -6771,3 +6771,42 @@ Blockers / next steps:
 3. Keep the current live 2070 recovery run and BBTV pinned to their existing
    source/runtime until their immutable experiment boundary is reached. A
    future obs-v5 deployment is a separate, explicit operation.
+
+## 2026-07-21 03:53 PDT — exact-action tranche implementation in progress
+
+Status:
+
+- Source-only work continues in isolated branch `tranche/exact-action-identity`
+  from merged obs-v5 commit `753cdfa`. The live RTX 2070 recovery checkout,
+  trainer, checkpoints, and BBTV have not been contacted or changed.
+- A fail-first fixture reproduced the harness finding: a tuple whose type,
+  argument, and square were each marginally legal caused the decoder to execute
+  a different enumerated action. The decoder now rejects that tuple.
+
+Completed so far:
+
+- A 64-game / 54,653-window seeded characterization measured only 58.9% of the
+  marginal Cartesian product as projected joint actions; 74.8% of decision
+  windows had dependencies. Mean joint support was about 203 actions and the
+  observed maximum was 2,730.
+- Implemented exact sequential support for the standalone path and a transient
+  packed-support design for native/Torch Puffer rollout: sample type, then
+  argument conditioned on type, then square conditioned on both. The selected
+  conditional masks reuse the existing 454-wide rollout storage for exact PPO
+  recomputation. Inactive heads are canonical singleton sentinels.
+- The focused observation/action tests and all 37 reward tests pass. A fresh
+  temporary Puffer install accepted the tracked patch; the installed C binding
+  and CPU Python binding pass local syntax compilation, and the Torch reference
+  proves sampled support membership plus rollout/recompute log-probability and
+  entropy equality.
+- Replay-pair lineage is being advanced to BBP v4 because the physical record
+  shape is unchanged while mask and inactive-head semantics changed.
+
+Next steps:
+
+1. Finish complete optimized, sanitizer, Python, installed-snapshot, and
+   deterministic standalone gates; add the final decision/compatibility ledger.
+2. Run independent reviews, fix findings, open the source-only PR, wait for
+   hosted checks, and merge only if the exact-action contract survives review.
+3. Do not deploy this tranche into the occupied recovery run or viewer. Any
+   post-boundary deployment and paired v4/v5 learning screen remain separate.
