@@ -455,8 +455,11 @@ divergence (nothing past it is applied).
 
 v3 marks obs-v5 semantics while retaining obs-v4's 2782-byte physical shape.
 Historical v2 spans obs-v3 (1612 B) and obs-v4 (2782 B); v1 carried 832 B.
-Readers (`bc_pretrain.py`, `extract_pairs.py`) size records from the header and
-include its version in corpus-lineage checks, so v2/2782 and v3/2782 cannot mix.
+Readers (`bc_pretrain.py`, `extract_pairs.py`, `bbp_behavior_audit.py`, and
+`replay_corpus_audit.py`) size records from the header and accept v3. The BC
+loader includes the header version in its corpus-lineage key, so v2/2782 and
+v3/2782 cannot mix in one training corpus; the audit reports preserve the
+versioned header identity.
 
 ```
 header (16 bytes):
