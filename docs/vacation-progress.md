@@ -7164,3 +7164,68 @@ Next steps:
    artifact, build merged main in a fresh isolated checkout, require every CUDA
    gate to pass, and then run the disposable fresh 50M canary under the exact
    zero error budget.
+
+## 2026-07-21 16:10 PDT — qualification review clean; source gates complete
+
+Status:
+
+- The recovery queue, BBTV follower/server, web service, and tunnel remain
+  active with zero restarts and their original process trees. Tailscale is
+  direct to `wsl-ubuntu`; the public BBTV page returns HTTP 200. Nothing on the
+  RTX 2070 was modified, rebuilt, restarted, or deployed.
+- Seed 44 reached 3,430,809,600 of 12B requested steps at epoch 26,174. The
+  latest 80-game panel reported 1.750 touchdowns/game and every reward/error
+  integrity counter at exactly zero. Its `illegal_frac=0.22049` remains
+  descriptive pre-repair marginal-action evidence and would invalidate a
+  repaired exact-action run.
+- GPU state was 81 C, 74% utilization, 5,554/8,192 MiB, and about 125 W. The
+  seed-44 trainer was the only GPU compute process. The root filesystem remains
+  12% used with 848 GiB free, and about 9.3 GiB RAM was available.
+- BBTV selected seed 44's atomically complete 3,346,006,016-step checkpoint
+  against the frozen baseline at 16:05 PDT and continues to advance only at
+  complete-checkpoint matchup boundaries.
+
+Completed since the prior entry:
+
+- Independent read-only review of the recurrent CUDA qualification tranche
+  found no remaining P0/P1 blocker. Its three final hardening suggestions were
+  closed: the ratio gate now spans two buffers with a real 50/50 primary/frozen
+  partition, invalid or zero-primary native layouts fail, and graph-disabled
+  execution is explicitly a correctness-parity cell rather than a throughput
+  substitute.
+- Closed a final output-boundary edge case test-first. A rejected output inside
+  the source checkout or an occupied foreign directory can no longer be
+  created in or overwritten by best-effort failure reporting; only an external
+  new/empty output may receive the atomic rejection record.
+- Recorded D220: one immutable target-GPU verdict is mandatory before the
+  disposable canary, qualification artifacts are never training ancestry, and
+  this source tranche grants no authority over the occupied live runtime.
+- Final local verification passed: 442 engine tests, 37 reward tests, 2 contact
+  bot tests, 12 state-bank tests, 12 observation tests, the BBP v4 writer, the
+  same complete ASan/UBSan matrix, 232 tool tests with 2 dependency skips, and
+  55 training tests with 1 dependency skip. The 17 focused qualification
+  contracts, Python compilation, Ruff, shell syntax, diff checks, and exact
+  reverse applicability of both new Puffer patches are also green.
+
+Current blockers / risks:
+
+- Native CUDA compilation and execution remain intentionally unproven on the
+  Mac. They must run in a fresh isolated target checkout only after the recovery
+  queue reaches its immutable completion boundary.
+- The qualification source candidate is locally green but not yet committed,
+  pushed, reviewed through hosted CI, or merged. No deployment is authorized by
+  local success.
+- Seed 44 has roughly 8.57B requested steps plus final evaluation remaining.
+  Preserve the trainer, current Puffer tree, BBTV services, and baseline
+  throughput opportunity unchanged.
+
+Next steps:
+
+1. Commit the exact source candidate, open its PR, resolve every concrete
+   hosted review/CI finding, and merge only when all required checks are green.
+2. Continue hourly read-only monitoring of seed 44, BBTV, integrity, thermals,
+   capacity, and service/process containment through atomic completion.
+3. After completion only, capture the predeclared predecessor throughput
+   artifact, build merged main in a new isolated Puffer tree, require the
+   independent qualification verdict to accept, and only then start the fresh
+   50M zero-error canary.
