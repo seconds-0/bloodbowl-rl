@@ -262,9 +262,12 @@ for immutable experiment manifests, result files, or completion proofs.
 ## Checkpoints and transfer
 
 Select checkpoints by embedded step plus manifest/hash, not newest mtime. Verify
-observation size and architecture before loading. Current obs-v4 size is 2782;
-older lineages are incompatible unless deliberately converted with the correct
-`--obs-size`.
+observation lineage, source/module identity, size, and architecture before
+loading. Current source uses obs-v5 at 2782 bytes. Obs-v4 is also 2782 bytes but
+semantically incompatible; active historical/live v4 runs remain valid only in
+their deliberately pinned v4 runtime. Flat checkpoint shape cannot distinguish
+v4 from v5. Older obs-v3 is shape-incompatible unless deliberately converted
+with the correct `--obs-size 1612`.
 
 Native↔Torch conversion is lossy with respect to biases: native-to-Torch
 zero-fills them and Torch-to-native drops them. Apply conversions symmetrically,

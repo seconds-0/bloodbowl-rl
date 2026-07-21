@@ -107,22 +107,29 @@ checkpoints, and remember that stopped instances can be reclaimed.
 
 ---
 
-## 2. Current era: v4
+## 2. Current era: v5
 
-- **obs-v4 = 2782 bytes** — probability planes A1/A2/B. Spec: `docs/obs-v4-spec.md`.
-- Anchor: **`training/bc_v4.bin`** (val exact 0.508, D53). **It lives ON THE BOXES
-  only** — it is not in the local repo and `fleet.sh setup` excludes `training/*.bin`;
-  copy it box-to-box for any new box. 2.09M pairs in `validation/pairs_v4`
-  (`validation/pairs` is a symlink to it on v4 boxes).
+- **obs-v5 = 2782 bytes** — the obs-v4 probability planes plus observable block
+  faces and decision-window movement, rush, TEST, ball-validity, and touchback
+  state. Spec: `docs/obs-v5-spec.md`. Obs-v4 is also 2782 bytes, so tensor shape
+  cannot identify or validate the semantic lineage.
+- There is **no accepted obs-v5 BC anchor yet**. Historical
+  **`training/bc_v4.bin`** (val exact 0.508, D53) and the 2.09M v4 pairs under
+  `validation/pairs_v4` remain valid only in an explicitly pinned obs-v4 runtime.
+  Never warm-start or evaluate them under the current v5 runtime merely because
+  the shape loads. New obs-v5 exports use BBP v3; the streaming loader rejects a
+  mixed v2/v3 corpus even though both lineages have 2782-byte observations.
 - **OBS SIZE SYNC POINTS — all three must agree:**
   1. `BBE_OBS_SIZE` in `puffer/bloodbowl/bloodbowl.h` (~line 96)
   2. `#define OBS_SIZE` in `puffer/bloodbowl/binding.c` line 8
   3. `--obs-size` in `training/convert_checkpoint.py` (`DEFAULT_OBS_SIZE`, now 2782)
   A `_Static_assert` ties (1)↔(2) at build time; **(3) is the unguarded one** — a
   wrong `--obs-size` converts to silent garbage (this exact miss bit D54).
-- **Old obs-v3 lineage checkpoints are input-shape INCOMPATIBLE** with v4. Converting
-  a v3 checkpoint requires explicit `--obs-size 1612`. Never mix lineages in a run or
-  a tournament without converting deliberately.
+- **Old obs-v3 lineage checkpoints are input-shape INCOMPATIBLE** with v4/v5.
+  Converting a v3 checkpoint requires explicit `--obs-size 1612`. Obs-v4 and
+  obs-v5 are instead same-shape but semantically incompatible. Flat checkpoints
+  do not carry an observation-lineage header, so require a pinned source/module
+  identity and external manifest; never infer compatibility from dimensions.
 
 ---
 
@@ -385,8 +392,10 @@ and apply conversions symmetrically.
 1. Ship both checkpoints to **box-1** (judge GPU). Box-to-box via `ssh -A`, never
    Mac→ssh4 for big files.
 2. Convert: `python training/convert_checkpoint.py --to-cuda <torch.bin> -o <out>`
-   — **mind `--obs-size`** (2782 default = v4; v3 ckpts need `--obs-size 1612`).
-   Wrong size = silent garbage; nothing checks it for you (§2).
+   — **mind `--obs-size`** (2782 default = current v5; v3 ckpts need explicit
+   `--obs-size 1612`). A 2782-byte v4 checkpoint is still semantically invalid in
+   v5 despite matching the default. Wrong size or lineage = silent garbage;
+   dimensions alone do not check it for you (§2).
 3. Run on box-1 from `/root/bloodbowl-rl/vendor/PufferLib`:
    ```bash
    puffer match bloodbowl --load-model-path A_cuda.bin \
