@@ -233,7 +233,8 @@ def main():
     ap.add_argument("--num-layers", type=int)
     ap.add_argument("--obs-size", type=int, default=DEFAULT_OBS_SIZE,
                     help=f"encoder input dim (default {DEFAULT_OBS_SIZE} = "
-                         f"obs v4; pass {OBS_V3_SIZE} for obs-v3 or "
+                         f"obs-v5 shared shape; size cannot identify obs-v4; "
+                         f"pass {OBS_V3_SIZE} for obs-v3 or "
                          f"{LEGACY_OBS_SIZE} for obs-v2 lineage checkpoints)")
     ap.add_argument("--act-sizes", default=",".join(map(str, DEFAULT_ACT_SIZES)),
                     help="comma-separated action head sizes")

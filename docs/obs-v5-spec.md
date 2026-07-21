@@ -85,9 +85,12 @@ redesign is a separate tranche.
 
 ## Compatibility and experiment rules
 
-- Physical shape stays 2,782, so blob size and network parameter count cannot
-  distinguish obs-v4 from obs-v5.
+- Physical shape stays 2,782, so checkpoint blob size and network parameter
+  count cannot distinguish obs-v4 from obs-v5.
 - `BBE_OBS_VERSION` is 5 and source/module provenance is mandatory.
+- Newly extracted replay pairs use BBP version 3; historical BBP v2/2782 is
+  obs-v4. The BC loader includes header version in its lineage key and rejects
+  a corpus that mixes v2/2782 with v3/2782 before opening training memmaps.
 - Obs-v4 weights, replay-pair observations, and training curves are not
   semantically interchangeable with obs-v5 despite shape compatibility.
 - Do not warm-start a v5 run from v4, compare their curves as one lineage, or

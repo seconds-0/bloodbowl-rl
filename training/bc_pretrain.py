@@ -79,8 +79,8 @@ sys.path.insert(0, os.path.join(ROOT, "vendor", "PufferLib"))
 # header's mask_size below — the shards only pin the sum).
 ACT_SIZES = (30, 33, 391)
 MAGIC = b"BBP1"
-KNOWN_VERSIONS = (1, 2)  # v2 spans v3 and same-shape v4/v5; provenance must
-                         # distinguish v4/v5 because the header cannot (D217).
+KNOWN_VERSIONS = (1, 2, 3)  # BBP v3 is the semantic obs-v5 marker. Historical
+                            # v2/2782 is obs-v4 and must not mix with v3/2782.
 HEADER_LEN = 16
 REPLAY_ID_SCAN_BATCH = 65_536
 
@@ -88,9 +88,9 @@ REPLAY_ID_SCAN_BATCH = 65_536
 def rec_dtype(obs_size, mask_size):
     """Return the header-driven BBP record layout.
 
-    Legacy obs-v2/v3 and current obs-v4 shards remain readable, but an index
-    rejects mixed observation sizes because each size is a distinct policy
-    checkpoint lineage.
+    Legacy shards remain readable, but an index rejects mixed header versions
+    or shapes. Version is load-bearing because BBP v2/2782 is obs-v4 while
+    BBP v3/2782 is same-shape obs-v5.
     """
     return np.dtype([
         ("replay", "<u4"), ("cmd", "<u4"), ("agent", "u1"), ("pad", "u1", (3,)),
@@ -233,14 +233,14 @@ class ShardIndex:
         lineage = None
         for replay_id, path in _selected_shard_paths(pair_dir, replay_ids):
             info = _read_shard_info(path, replay_id)
-            current = (info.obs_size, info.mask_size)
+            current = (info.version, info.obs_size, info.mask_size)
             if lineage is None:
                 lineage = current
             elif current != lineage:
                 raise SystemExit(
                     f"{path}: header mismatch across shards — "
-                    f"{info.obs_size}/{info.mask_size} vs "
-                    f"{lineage[0]}/{lineage[1]}; never mix obs lineages "
+                    f"v{info.version}/{info.obs_size}/{info.mask_size} vs "
+                    f"v{lineage[0]}/{lineage[1]}/{lineage[2]}; never mix obs lineages "
                     "in one corpus")
             shards.append(info)
         return cls(shards, cache_size=cache_size)

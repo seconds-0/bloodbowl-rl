@@ -75,9 +75,10 @@ natural absent-die sentinel and the dice count is the nonzero prefix length.
    square projection and exact decode round-trips the selected placement. Also
    preserve ordinary player-recipient Touchbacks.
 5. **Lineage documentation.** Introduce `BBE_OBS_VERSION 5`, update binding and
-   converter documentation, add the obs-v5 semantic specification, and record
-   the no-warm-start/no-direct-curve-comparison rule in `AGENTS.md` and
-   `CLAUDE.md`.
+   converter documentation, stamp newly extracted replay pairs as BBP v3, make
+   the BC loader reject version-mixed corpora, add the obs-v5 semantic
+   specification, and record the no-warm-start/no-direct-curve-comparison rule
+   in `AGENTS.md` and `CLAUDE.md`.
 
 The focused tests must fail against the unmodified encoder/projection before
 implementation. Production changes remain minimal: encoder guards/assignments,
