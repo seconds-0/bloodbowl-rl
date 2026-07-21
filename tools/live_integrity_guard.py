@@ -13,6 +13,7 @@ import dataclasses
 import datetime as dt
 import json
 import math
+import os
 import time
 from pathlib import Path
 from typing import Any
@@ -52,12 +53,18 @@ def _utc_now() -> str:
 
 def _write_atomic(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(
-        json.dumps(payload, indent=2, sort_keys=True, allow_nan=False) + "\n",
-        encoding="utf-8",
-    )
-    temporary.replace(path)
+    # The screen and durable watchdog can discover the same failure together.
+    # A per-process temporary prevents their shared evidence publication from
+    # racing on one deterministic .tmp pathname.
+    temporary = path.with_name(f".{path.name}.tmp.{os.getpid()}")
+    try:
+        temporary.write_text(
+            json.dumps(payload, indent=2, sort_keys=True, allow_nan=False) + "\n",
+            encoding="utf-8",
+        )
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _fail(

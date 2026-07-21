@@ -141,6 +141,8 @@ class ExperimentContractTests(unittest.TestCase):
     def test_reward_screen_has_zero_budget_live_integrity_guard(self):
         source = (ROOT / "tools/run_reward_screen.sh").read_text(
             encoding="utf-8")
+        launcher = (ROOT / "tools/run_reward_ablation.sh").read_text(
+            encoding="utf-8")
         for contract in (
             "tools/live_integrity_guard.py",
             "tools/trainer_status_wrapper.sh",
@@ -154,6 +156,9 @@ class ExperimentContractTests(unittest.TestCase):
         ):
             self.assertIn(contract, source)
         self.assertIn("integrity = HARD_INTEGRITY_KEYS", source)
+        self.assertIn('${log}.live-integrity-screen-state.json', source)
+        self.assertIn('${LOG}.live-integrity-watchdog-state.json', launcher)
+        self.assertNotIn('${LOG}.live-integrity-screen-state.json', launcher)
 
     def test_reward_screen_accepts_the_requested_eval_game_count(self):
         screen = (ROOT / "tools/run_reward_screen.sh").read_text(

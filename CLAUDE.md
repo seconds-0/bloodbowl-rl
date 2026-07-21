@@ -287,7 +287,8 @@ newer evidence wins.
   include `illegal_frac` and the reward/error counters in final train/eval
   integrity, fail after 180 seconds without an integrity-bearing panel, and use
   an embedded watchdog that survives outer-screen loss to terminate the trainer
-  through a status-publishing wrapper. Before a long post-v5 run, require
+  through a status-publishing wrapper. The screen and embedded watchdog must use
+  independent incremental state files. Before a long post-v5 run, require
   provenance, CUDA graph/zero-update checks, deterministic full games, then a
   disposable 50M-step reward-frozen canary. Never continue from its checkpoint.
 

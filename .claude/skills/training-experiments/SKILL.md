@@ -324,7 +324,8 @@ See §4. Check the invariants before every reward-config launch. No exceptions.
   terminate the recorded trainer on the first bad complete panel, and fail after
   180 seconds without an integrity-bearing machine panel. The same watchdog must
   live beside a detached trainer so outer-screen loss cannot remove the bound;
-  metadata-only startup panels do not reset liveness. The exact env/backend remains
+  the screen and watchdog use independent incremental state files, and metadata-only
+  startup panels do not reset liveness. The exact env/backend remains
   first-transition fatal. Qualify a newly installed runtime through static
   provenance, CUDA graph/zero-update/deterministic smokes, and a disposable
   50M-step canary before launching the paired causal screen; never warm-start

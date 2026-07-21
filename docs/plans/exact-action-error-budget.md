@@ -47,9 +47,9 @@ terminates the active trainer. Metadata-only panels before an episode completes
 are consumed but do not reset liveness. The screen and durable watchdog embedded
 beside the trainer poll at most every 30 seconds, so the detection budget is one
 dashboard-emission interval plus one poll even if the outer screen or SSH session
-disappears. The monitor
-records its byte offset and an atomic failure artifact; truncation or replacement
-of the log also fails closed.
+disappears. Each monitor records its byte offset in an independent state file,
+so redundant overlapping polls cannot race; both share one atomic failure
+artifact. Truncation or replacement of the log also fails closed.
 
 Initial hard keys:
 

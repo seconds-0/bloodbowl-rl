@@ -168,7 +168,8 @@ both from the screen poll loop and from the watchdog embedded beside the detache
 trainer, stop the recorded trainer/process group on any hard field failure, and
 emit `LIVE_INTEGRITY_FAILURE.json`; 180 seconds without an integrity-bearing
 panel is itself a failure. Metadata-only startup panels do not reset that clock.
-Verify the wrapper's atomic nonzero status
+The screen and embedded watchdog must use independent incremental state files
+while sharing the failure artifact. Verify the wrapper's atomic nonzero status
 and absence of its trainer child before treating the GPU as idle. Do not relaunch
 under the same run ID or let a later arm advance. A fresh runtime receives only
 the staged provenance/CUDA/deterministic checks and a disposable 50M-step canary

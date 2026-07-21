@@ -913,7 +913,7 @@ terminate_current_arm() {
 guard_complete_log() {
   local log=$1
   "$PYBIN" "$ROOT/tools/live_integrity_guard.py" \
-    --log "$log" --state "${log}.live-integrity-state.json" \
+    --log "$log" --state "${log}.live-integrity-screen-state.json" \
     --failure "$OUT_DIR/LIVE_INTEGRITY_FAILURE.json" \
     --complete-log \
     --max-panel-silence-seconds "$MAX_PANEL_SILENCE_SECONDS"
@@ -933,7 +933,9 @@ payload = json.load(open(sys.argv[1], encoding="utf-8"))
 print(int(payload["pid"]), int(payload["process_group"]))
 PY
 )
-  guard_state="${log}.live-integrity-state.json"
+  # The durable watchdog is a redundant writer. Keep its incremental cursor
+  # independent so overlapping polls cannot race or roll this cursor backward.
+  guard_state="${log}.live-integrity-screen-state.json"
   guard_failure="$OUT_DIR/LIVE_INTEGRITY_FAILURE.json"
   while [ ! -f "${log}.status.json" ]; do
     if ! "$PYBIN" "$ROOT/tools/live_integrity_guard.py" \
