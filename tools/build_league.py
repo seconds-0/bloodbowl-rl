@@ -38,9 +38,9 @@ checks the byte size but only fprintf-warns and RETURNS on mismatch (the
 bank silently keeps its previous weights), so this tool hard-verifies every
 seed's size up front. 16,066,560 bytes = the current bloodbowl policy (obs
 2782 = obs v5, heads {30,33,391}, hidden 512, 3 layers —
-training/test_convert_checkpoint.py). Older lineages require an explicit
-override: obs-v3 (1612) is 13,670,400 bytes and obs-v2 (832) is 12,072,960
-bytes.
+training/test_convert_checkpoint.py). Historical obs-v3 (13,670,400-byte) and
+obs-v2 (12,072,960-byte) pools require both an explicit size and the
+`--legacy-unlabeled` reconstruction mode; current launchers reject them.
 
 Usage:
     tools/build_league.py --out <run-dir> --seeds name0=/path/a.bin \

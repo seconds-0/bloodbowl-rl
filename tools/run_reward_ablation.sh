@@ -139,6 +139,10 @@ if [ "$STEPS" -le 0 ] || [ "$TOTAL_AGENTS" -le 0 ] || \
   echo "step/agent/buffer/byte/horizon/minibatch/checkpoint values must be positive" >&2
   exit 1
 fi
+if [ "$EXPECT_BYTES" -ne 16066560 ]; then
+  echo "obs-v5/exact-joint-v1 requires EXPECT_BYTES=16066560; got $EXPECT_BYTES" >&2
+  exit 1
+fi
 if [ $(( TOTAL_AGENTS % NUM_BUFFERS )) -ne 0 ]; then
   echo "TOTAL_AGENTS must be divisible by NUM_BUFFERS" >&2
   exit 1

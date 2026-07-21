@@ -44,6 +44,23 @@ class ExperimentContractTests(unittest.TestCase):
         self.assertIn("trailing Puffer overrides are not allowed", result.stderr)
         self.assertNotIn("missing reward manifest", result.stderr)
 
+    def test_reward_launcher_rejects_non_v5_checkpoint_size_before_runtime(self):
+        result = run_script(
+            "tools/run_reward_ablation.sh",
+            env={
+                "TAG": "wrong-size-contract-test",
+                "REWARD_MANIFEST": "missing.json",
+                "BOOTSTRAP_MODE": "fresh-v5-qualification",
+                "EXPECT_BYTES": "13670400",
+            },
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "obs-v5/exact-joint-v1 requires EXPECT_BYTES=16066560",
+            result.stderr,
+        )
+        self.assertNotIn("vendored Python missing", result.stderr)
+
     def test_frozen_eval_rejects_trailing_override_before_checkpoint_io(self):
         with tempfile.TemporaryDirectory() as tmp:
             result = run_script(
