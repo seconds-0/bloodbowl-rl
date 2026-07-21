@@ -13,6 +13,14 @@ static uint32_t read_u32(const uint8_t* p) {
 }
 
 int main(void) {
+    runner context_runner = {0};
+    char long_context[1024];
+    memset(long_context, 'x', sizeof long_context - 1);
+    long_context[sizeof long_context - 1] = '\0';
+    ctx_push(&context_runner, long_context);
+    assert(context_runner.ctx_n == 1);
+    assert(strlen(context_runner.ctx[0]) == sizeof context_runner.ctx[0] - 1);
+
     char path[] = "/tmp/bbp-v4-writer-XXXXXX";
     int fd = mkstemp(path);
     assert(fd >= 0);

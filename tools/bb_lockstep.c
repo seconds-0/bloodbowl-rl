@@ -175,12 +175,19 @@ typedef struct {
     const char* cur_op;
 } runner;
 
+static void ctx_copy(char dst[512], const char* line) {
+    size_t n = strlen(line);
+    if (n >= 512) n = 511;
+    memcpy(dst, line, n);
+    dst[n] = '\0';
+}
+
 static void ctx_push(runner* R, const char* line) {
     if (R->ctx_n < CTX_OPS) {
-        snprintf(R->ctx[R->ctx_n++], sizeof R->ctx[0], "%s", line);
+        ctx_copy(R->ctx[R->ctx_n++], line);
     } else {
         memmove(R->ctx[0], R->ctx[1], sizeof R->ctx[0] * (CTX_OPS - 1));
-        snprintf(R->ctx[CTX_OPS - 1], sizeof R->ctx[0], "%s", line);
+        ctx_copy(R->ctx[CTX_OPS - 1], line);
     }
 }
 
