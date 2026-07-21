@@ -1,0 +1,287 @@
+diff --git a/src/bindings.cu b/src/bindings.cu
+index 3b28c8c..ec09dbf 100644
+--- a/src/bindings.cu
++++ b/src/bindings.cu
+@@ -3,6 +3,8 @@
+ #include <pybind11/pybind11.h>
+ #include <pybind11/stl.h>
+ #include <pybind11/numpy.h>
++#include <cmath>
++#include <cstring>
+ #include "pufferlib.cu"
+ #include "exact_action_build_hash.h"
+ 
+@@ -186,6 +188,262 @@ void set_evaluation_mode(pybind11::object pufferl_obj, bool enabled) {
+     pufferl.evaluation_mode = enabled;
+ }
+ 
++static constexpr size_t QUALIFICATION_MAX_SNAPSHOT_BYTES = 64ULL << 20;
++
++py::list qualification_shape(const int64_t* shape) {
++    py::list result;
++    for (int i = 0; i < ndim(shape); i++) result.append(shape[i]);
++    return result;
++}
++
++float qualification_precision_value(const unsigned char* bytes) {
++#ifdef PRECISION_FLOAT
++    float value;
++    std::memcpy(&value, bytes, sizeof(value));
++    return value;
++#else
++    uint16_t bf16;
++    std::memcpy(&bf16, bytes, sizeof(bf16));
++    uint32_t bits = (uint32_t)bf16 << 16;
++    float value;
++    std::memcpy(&value, &bits, sizeof(value));
++    return value;
++#endif
++}
++
++py::dict qualification_state_entry(
++        PrecisionTensor& tensor, int bank, int buffer, int active_rows) {
++    if (tensor.data == nullptr) {
++        throw std::runtime_error("qualification recurrent state is unallocated");
++    }
++    if (ndim(tensor.shape) < 3 || active_rows <= 0 ||
++            active_rows > tensor.shape[1]) {
++        throw std::runtime_error("qualification recurrent active-row layout is invalid");
++    }
++    int64_t elements = numel(tensor.shape);
++    size_t nbytes = (size_t)elements * sizeof(precision_t);
++    std::vector<unsigned char> host(nbytes);
++    cudaError_t copied = cudaMemcpy(
++        host.data(), tensor.data, nbytes, cudaMemcpyDeviceToHost);
++    if (copied != cudaSuccess) {
++        throw std::runtime_error("qualification recurrent state copy failed");
++    }
++
++    int64_t nonzero = 0;
++    int64_t nonfinite = 0;
++    float max_abs = 0.0f;
++    int64_t active_nonzero = 0;
++    int64_t active_nonfinite = 0;
++    float active_max_abs = 0.0f;
++    int64_t row_width = 1;
++    for (int dim = 2; dim < ndim(tensor.shape); dim++) {
++        row_width *= tensor.shape[dim];
++    }
++    for (int64_t i = 0; i < elements; i++) {
++        const unsigned char* raw = host.data() + i * sizeof(precision_t);
++        bool any = false;
++        for (size_t j = 0; j < sizeof(precision_t); j++) any |= raw[j] != 0;
++        nonzero += any ? 1 : 0;
++        float value = qualification_precision_value(raw);
++        if (!std::isfinite(value)) nonfinite++;
++        max_abs = std::max(max_abs, std::fabs(value));
++        int64_t row = (i / row_width) % tensor.shape[1];
++        if (row < active_rows) {
++            active_nonzero += any ? 1 : 0;
++            if (!std::isfinite(value)) active_nonfinite++;
++            active_max_abs = std::max(active_max_abs, std::fabs(value));
++        }
++    }
++
++    py::dict entry;
++    entry["bank"] = bank;
++    entry["buffer"] = buffer;
++    entry["shape"] = qualification_shape(tensor.shape);
++    entry["elements"] = elements;
++    entry["bytes"] = nbytes;
++    entry["active_rows"] = active_rows;
++    entry["active_elements"] =
++        (int64_t)tensor.shape[0] * active_rows * row_width;
++    entry["nonzero"] = nonzero;
++    entry["nonfinite"] = nonfinite;
++    entry["max_abs"] = max_abs;
++    entry["active_nonzero"] = active_nonzero;
++    entry["active_nonfinite"] = active_nonfinite;
++    entry["active_max_abs"] = active_max_abs;
++    return entry;
++}
++
++py::dict qualification_recurrent_state(
++        py::object pufferl_obj, bool clear = false) {
++    PuffeRL& pufferl = pufferl_obj.cast<PuffeRL&>();
++    if (cudaDeviceSynchronize() != cudaSuccess) {
++        throw std::runtime_error("qualification pre-state synchronization failed");
++    }
++    if (clear) {
++        for (int bank = 0; bank < 1 + pufferl.num_frozen_banks; bank++) {
++            PrecisionTensor* states = bank == 0
++                ? pufferl.buffer_states
++                : pufferl.frozen_banks[bank - 1].buffer_states;
++            for (int buffer = 0; buffer < pufferl.hypers.num_buffers; buffer++) {
++                puf_zero(&states[buffer], pufferl.default_stream);
++            }
++        }
++        if (cudaStreamSynchronize(pufferl.default_stream) != cudaSuccess) {
++            throw std::runtime_error("qualification state-clear synchronization failed");
++        }
++    }
++
++    int block_size = pufferl.vec->total_agents / pufferl.hypers.num_buffers;
++    py::list layout;
++    py::list entries;
++    for (int bank = 0; bank < 1 + pufferl.num_frozen_banks; bank++) {
++        PrecisionTensor* states = bank == 0
++            ? pufferl.buffer_states
++            : pufferl.frozen_banks[bank - 1].buffer_states;
++        int bank_start = pufferl.bank_layout == nullptr
++            ? 0 : pufferl.bank_layout[bank];
++        int bank_end = pufferl.bank_layout == nullptr
++            ? block_size : pufferl.bank_layout[bank + 1];
++        if (bank == 0) layout.append(bank_start);
++        layout.append(bank_end);
++        for (int buffer = 0; buffer < pufferl.hypers.num_buffers; buffer++) {
++            entries.append(qualification_state_entry(
++                states[buffer], bank, buffer, bank_end - bank_start));
++        }
++    }
++    py::dict result;
++    result["cleared"] = clear;
++    result["num_banks"] = 1 + pufferl.num_frozen_banks;
++    result["num_buffers"] = pufferl.hypers.num_buffers;
++    result["agents_per_buffer"] = block_size;
++    result["bank_layout"] = layout;
++    result["entries"] = entries;
++    return result;
++}
++
++py::dict qualification_precision_tensor(
++        const char* name, PrecisionTensor& tensor,
++        size_t* used_bytes, size_t max_bytes) {
++    py::dict result;
++    result["name"] = name;
++    result["dtype"] = USE_BF16 ? "bf16" : "f32";
++    result["shape"] = qualification_shape(tensor.shape);
++    result["present"] = tensor.data != nullptr;
++    if (tensor.data == nullptr) {
++        result["data"] = py::bytes();
++        result["bytes"] = 0;
++        return result;
++    }
++    size_t nbytes = (size_t)numel(tensor.shape) * sizeof(precision_t);
++    if (nbytes > max_bytes || *used_bytes > max_bytes - nbytes) {
++        throw std::runtime_error("snapshot exceeds qualification byte limit");
++    }
++    std::vector<char> host(nbytes);
++    if (cudaMemcpy(host.data(), tensor.data, nbytes,
++            cudaMemcpyDeviceToHost) != cudaSuccess) {
++        throw std::runtime_error("qualification tensor copy failed");
++    }
++    *used_bytes += nbytes;
++    result["data"] = py::bytes(host.data(), nbytes);
++    result["bytes"] = nbytes;
++    return result;
++}
++
++py::dict qualification_int_tensor(
++        const char* name, IntTensor& tensor,
++        size_t* used_bytes, size_t max_bytes) {
++    py::dict result;
++    result["name"] = name;
++    result["dtype"] = "i32";
++    result["shape"] = qualification_shape(tensor.shape);
++    result["present"] = tensor.data != nullptr;
++    size_t nbytes = tensor.data == nullptr
++        ? 0 : (size_t)numel(tensor.shape) * sizeof(int);
++    if (nbytes > max_bytes || *used_bytes > max_bytes - nbytes) {
++        throw std::runtime_error("snapshot exceeds qualification byte limit");
++    }
++    std::vector<char> host(nbytes);
++    if (nbytes > 0 && cudaMemcpy(host.data(), tensor.data, nbytes,
++            cudaMemcpyDeviceToHost) != cudaSuccess) {
++        throw std::runtime_error("qualification index copy failed");
++    }
++    *used_bytes += nbytes;
++    result["data"] = nbytes == 0 ? py::bytes() : py::bytes(host.data(), nbytes);
++    result["bytes"] = nbytes;
++    return result;
++}
++
++py::dict qualification_snapshot(
++        py::object pufferl_obj,
++        size_t max_bytes = QUALIFICATION_MAX_SNAPSHOT_BYTES) {
++    if (max_bytes == 0 || max_bytes > QUALIFICATION_MAX_SNAPSHOT_BYTES) {
++        throw std::runtime_error("invalid qualification snapshot byte limit");
++    }
++    PuffeRL& pufferl = pufferl_obj.cast<PuffeRL&>();
++    if (cudaDeviceSynchronize() != cudaSuccess) {
++        throw std::runtime_error("qualification snapshot synchronization failed");
++    }
++    size_t used = 0;
++    py::dict tensors;
++    tensors["observations"] = qualification_precision_tensor(
++        "observations", pufferl.rollouts.observations, &used, max_bytes);
++    tensors["actions"] = qualification_precision_tensor(
++        "actions", pufferl.rollouts.actions, &used, max_bytes);
++    tensors["values"] = qualification_precision_tensor(
++        "values", pufferl.rollouts.values, &used, max_bytes);
++    tensors["logprobs"] = qualification_precision_tensor(
++        "logprobs", pufferl.rollouts.logprobs, &used, max_bytes);
++    tensors["rewards"] = qualification_precision_tensor(
++        "rewards", pufferl.rollouts.rewards, &used, max_bytes);
++    tensors["terminals"] = qualification_precision_tensor(
++        "terminals", pufferl.rollouts.terminals, &used, max_bytes);
++    tensors["action_mask"] = qualification_precision_tensor(
++        "action_mask", pufferl.rollouts.action_mask, &used, max_bytes);
++    tensors["mb_ratio"] = qualification_precision_tensor(
++        "mb_ratio", pufferl.train_buf.mb_ratio, &used, max_bytes);
++    tensors["selected_rows"] = qualification_int_tensor(
++        "selected_rows", pufferl.prio_bufs.idx, &used, max_bytes);
++
++    py::list decoder_outputs;
++    int block_size = pufferl.vec->total_agents / pufferl.hypers.num_buffers;
++    for (int bank = 0; bank < 1 + pufferl.num_frozen_banks; bank++) {
++        PolicyActivations* activations = bank == 0
++            ? pufferl.buffer_activations
++            : pufferl.frozen_banks[bank - 1].buffer_activations;
++        int bank_start = pufferl.bank_layout == nullptr
++            ? 0 : pufferl.bank_layout[bank];
++        int bank_end = pufferl.bank_layout == nullptr
++            ? block_size : pufferl.bank_layout[bank + 1];
++        for (int buffer = 0; buffer < pufferl.hypers.num_buffers; buffer++) {
++            DecoderActivations* decoder =
++                (DecoderActivations*)activations[buffer].decoder;
++            py::dict entry;
++            entry["bank"] = bank;
++            entry["buffer"] = buffer;
++            int active_rows = bank_end - bank_start;
++            entry["active_rows"] = active_rows;
++            PrecisionTensor active_output = decoder->out;
++            if (ndim(active_output.shape) < 1 || active_rows <= 0 ||
++                    active_rows > active_output.shape[0]) {
++                throw std::runtime_error("qualification decoder active-row layout is invalid");
++            }
++            active_output.shape[0] = active_rows;
++            entry["tensor"] = qualification_precision_tensor(
++                "decoder_output", active_output, &used, max_bytes);
++            decoder_outputs.append(entry);
++        }
++    }
++
++    py::dict result;
++    result["max_bytes"] = max_bytes;
++    result["used_bytes"] = used;
++    result["num_banks"] = 1 + pufferl.num_frozen_banks;
++    result["num_buffers"] = pufferl.hypers.num_buffers;
++    result["tensors"] = tensors;
++    result["decoder_outputs"] = decoder_outputs;
++    return result;
++}
++
+ pybind11::dict train(pybind11::object pufferl_obj) {
+     PuffeRL& pufferl = pufferl_obj.cast<PuffeRL&>();
+     if (!pufferl.hypers.reset_state || pufferl.evaluation_mode) {
+@@ -548,6 +806,10 @@ PYBIND11_MODULE(_C, m) {
+     m.def("render", &render);
+     m.def("rollouts", &rollouts);
+     m.def("set_evaluation_mode", &set_evaluation_mode);
++    m.def("qualification_recurrent_state", &qualification_recurrent_state,
++        py::arg("pufferl"), py::arg("clear") = false);
++    m.def("qualification_snapshot", &qualification_snapshot,
++        py::arg("pufferl"), py::arg("max_bytes") = QUALIFICATION_MAX_SNAPSHOT_BYTES);
+     m.def("train", &train);
+     m.def("close", &puf_close);
+     m.def("save_weights", &save_weights);

@@ -529,6 +529,30 @@ changes a reward, active queue, production default, or promotion verdict.
   parity, primary/frozen post-terminal parity, exact-zero construction checks,
   zero-update ratio parity, and a measured no-regression throughput smoke on the
   target GPU.
+- Apply `training/puffer_frozen_prio_mask.patch` after recurrent state and before
+  qualification. Frozen rows must have exactly zero priority even at
+  `prio_alpha=0`; zeroed advantages alone are insufficient because `0^0` is one.
+  Apply `training/puffer_recurrent_cuda_qualification.patch` last. It adds only
+  bounded, qualification-only host copies and an explicit all-bank state-clear
+  control; ordinary rollout/train/eval paths do not call it. Use
+  `tools/qualify_recurrent_cuda.py` in fresh subprocesses to require exact-zero
+  construction state. This gate is fp32-only; reject BF16 rather than applying
+  a ratio tolerance that ignores stored-log-probability quantization. Freeze
+  its required source-commit, candidate-module,
+  backend-source, and environment digests before the first behavioral cell;
+  observed self-consistency is not a substitute for those expected values.
+  Then require graph-on/off first-rollout parity, automatic-versus-manual
+  first-post-terminal parity across primary and frozen banks, complete sampled
+  learner-row coverage with finite near-unity zero-weight-update PPO ratios and
+  literal zero selected frozen rows derived from the recorded bank layout,
+  byte-identical weights, zero hard-integrity counters, and throughput within
+  the frozen same-host predecessor budget. The predecessor must be the exact
+  hashed wrapper plus its confined hashed cell record, and its module/backend/
+  environment hashes must be declared at capture and consumption; arbitrary
+  JSON or an unplanned old binary is invalid.
+  A missing predecessor throughput
+  artifact is a failure, not an ungated pass. Qualification artifacts are
+  permanently ineligible as checkpoint ancestry.
 - BBP v4 is the first replay-pair lineage with exact conditional masks and
   canonical inactive-head sentinels (`arg=32`, `square=390`). Do not train a
   current BC/action experiment from v1-v3 pairs or mix those lineages merely
