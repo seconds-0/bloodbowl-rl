@@ -402,10 +402,20 @@ filesystem writes.
    after that proof and registry/pointer/source/decision-index reconciliation
    may rows derive fields from the admitted states. Test every field against
    direct engine observations. Authority fixtures must reject a serializer that
-   bypasses, duplicates, moves, or substitutes the writer call.
+   bypasses, duplicates, moves, or substitutes the writer call. The ordered
+   writer record array is serializer-owned, while every one of its 26 distinct
+   recipe pointers must resolve to the exact active caller-supplied recipe
+   element for that canonical row; content-equal builder/private recipes and
+   direct caller-record passthrough reject.
 4. **Family facts.** Mutation-test every F1/F2/F3/F4/F5 field through its public
-   predicate. Ensure inactive-family fields have their canonical empty value.
-   No field may be accepted merely because the recipe kind claims it.
+   predicate, binding each call to its writer-admitted row and forcing both
+   directions of every categorical value. Directly test candidate-owned helpers
+   defined in the serializer translation unit rather than attempting GNU linker
+   interposition on same-object calls. The F5 End Activation helper must pass a
+   valid proof state and reject altered engine states while structurally using
+   the private Activate -> Declare Move -> End Activation path. Ensure
+   inactive-family fields have their canonical empty value. No field may be
+   accepted merely because the recipe kind claims it.
 5. **Recipe rows.** Pin every projection field and both transcript arrays.
    Reject missing/extra/reordered action, decision-team, die-side, or die-value
    data and any used-prefix/count disagreement.
@@ -415,8 +425,14 @@ filesystem writes.
    recipe permutations while emitting the frozen legacy order.
 7. **Failure atomicity.** Exercise null/short/long counts, zero/one-byte-short
    capacities, checked-size overflow, every input/output/error alias direction,
-   allocation failure, writer failure, and injected failure at every stage
-   through the final row. Build both outputs in serializer-owned staging;
+   invalid-count aliases inside the greater supplied/fixed input extent, and
+   aliases solely inside oversized output-capacity suffixes. Prove accepted
+   half-open endpoint adjacency through the public serializer. Alias safety must
+   precede every diagnostic. Exercise allocation failure, writer failure, and
+   every externally injectable stage through the final row; test
+   same-translation-unit pure helpers directly. Build both outputs in
+   serializer-owned staging and use at most 64 candidate-visible heap
+   allocations per call;
    verify no fallible operation remains once the two final copies begin. Inputs
    and both caller outputs remain byte-identical on every rejection.
 8. **Determinism and preservation.** Optimized and ASan/UBSan builds must emit
@@ -444,6 +460,46 @@ filesystem writes.
    Length/NUL fixtures specifically reject `strlen`, filtering or stopping at
    embedded NULs, comparing `length + 1`, or including an early terminator;
    every embedded NUL within the returned `length` is ordinary BBS payload.
+   Conditional preprocessing and duplicate or macro-renamed protected
+   definitions reject, and a separate trusted-preprocessor pass checks the
+   active macro-expanded protected bodies, so the textual authority cannot
+   validate an inactive or substituted decoy implementation.
+   The source boundary additionally requires exact serializer-symbol ownership,
+   non-shadowable system-header resolution, a closed source-call vocabulary,
+   an approved linked-object functional-import set (plus compiler ASan/UBSan
+   runtime imports only in sanitized builds), and an exact serializer-object
+   global export set containing only the eight reviewed serializer/helper symbols.
+   Both optimized and sanitized serializer objects receive that exact check.
+   Every other candidate object is audited in both build variants against the
+   trusted probes' actual platform/compiler imports after subtracting only a
+   frozen allowlist of intentional candidate APIs. Bootstrap must compile
+   ordinary, sanitizer-conditional, and ELF GNU-unique canaries covering
+   `memcmp`, `fputc`, wrapper, fortified, and runtime exports and prove the
+   audits reject them before link, so production code cannot override trusted
+   probe behavior. Literal-aware lexical checks and
+   compiler-active checks both reject forbidden process/filesystem identifiers.
+   A trusted F5-false transform must use a dedicated atomic-rejection probe
+   mode because true is a mandatory fixed-row admission fact. That mode expects
+   the serializer to return normally with failure, proves both outputs, both
+   returned lengths, both caller inputs, and the complete allocated guard beyond
+   each declared capacity unchanged, verifies the applicable writer/stream
+   cleanup, and only then exits zero. Run every transformed F5/hash binary in
+   optimized and ASan/UBSan variants; a crash, abort, in-guard overwrite,
+   out-of-allocation write, or corrupt-then-error path fails the authority. The
+   three zero-hash transforms must
+   remain successful and match transformed canonical JSONL in which only the
+   corresponding 52/52/26 digest fields differ; hard-coded-output and
+   rejection-only hash canaries therefore fail. Unmodified builds remain fully
+   strict. The synthetic path separately compiles only the transformed candidate
+   object while suppressing unused parameter/function/variable/const-variable
+   warnings, leaves trusted probe/engine sources strict, and self-tests both
+   strict rejection and synthetic acceptance for all four categories. The F5
+   transition binds the captured carrier and consumes
+   zero scripted dice. Every row has a separate targeted legal-set hash
+   enumeration. Alias regressions cross fully backed 27-element inputs with
+   oversized capacities, combine short capacities with diagnostic aliases, and
+   prove both alignment-permitted endpoint orientations at exact and oversized
+   capacities.
    The PR contains no production serializer body.
 
    The new protected runner inherits D210's complete isolation model: execute

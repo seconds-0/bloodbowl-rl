@@ -1,0 +1,371 @@
+{
+  "schema": "bloodbowl-authored-sidecar-authority-v1",
+  "authority_version": 1,
+  "production_header": "tools/authored_sidecar.h",
+  "production_source": "tools/authored_sidecar.c",
+  "production_symbol": "ad_serialize_authored_sidecars",
+  "feature_test_macro": "_POSIX_C_SOURCE=200809L",
+  "record_count": 26,
+  "fact_corpus": {
+    "length": 234423,
+    "sha256": "601d875d37ab59e205c987c1592ad7abd21a77e5a7be47576cdc1d23d6208815"
+  },
+  "record_keys": [
+    "schema",
+    "record_index",
+    "source_kind",
+    "bbs_source_id",
+    "capture_decision_index",
+    "identity_schema_version",
+    "authored_source_id",
+    "template_id",
+    "template_key",
+    "recipe_revision",
+    "cell_id",
+    "variant_id",
+    "variant_seed_u64",
+    "family",
+    "boundary",
+    "raw_match_sha256",
+    "initialized_match_sha256",
+    "actions_sha256",
+    "dice_sha256",
+    "legal_actions_count",
+    "legal_actions_sha256",
+    "half",
+    "home_turn",
+    "away_turn",
+    "active_team",
+    "decision_team",
+    "home_score",
+    "away_score",
+    "kicking_team",
+    "weather",
+    "home_rerolls",
+    "away_rerolls",
+    "home_players_pitch",
+    "away_players_pitch",
+    "home_players_reserve",
+    "away_players_reserve",
+    "home_players_ko",
+    "away_players_ko",
+    "home_players_casualty",
+    "away_players_casualty",
+    "home_players_sent_off",
+    "away_players_sent_off",
+    "ball_state",
+    "ball_carrier",
+    "procedure_depth",
+    "procedure_ids",
+    "f1_carrier_pressure",
+    "f2_handoff_targets",
+    "f3_capture_turn",
+    "f3_orientation",
+    "f4_reroll_options",
+    "f5_score_without_dice",
+    "f5_end_activation_legal"
+  ],
+  "recipe_keys": [
+    "schema",
+    "record_index",
+    "identity_schema_version",
+    "authored_source_id",
+    "template_id",
+    "template_key",
+    "recipe_revision",
+    "cell_id",
+    "variant_id",
+    "variant_seed_u64",
+    "procgen_seed_u64",
+    "procgen_stream_u64",
+    "game_seed_u64",
+    "game_stream_u64",
+    "controller_seed_u64",
+    "controller_stream_u64",
+    "recipe_kind",
+    "capture_turn",
+    "capture_active_team",
+    "capture_handoff_target_bucket",
+    "capture_pass_carrier_pressure",
+    "home_team",
+    "away_team",
+    "exclude_team",
+    "skillup_max_players",
+    "skillup_max_each",
+    "skillup_secondary_pct_bits",
+    "initialized_match_sha256",
+    "raw_match_sha256",
+    "action_count",
+    "actions",
+    "decision_teams",
+    "actions_sha256",
+    "dice_count",
+    "dice_sides",
+    "dice_values",
+    "dice_sha256"
+  ],
+  "layout": {
+    "bb_match": 2240,
+    "ad_recipe": 61928,
+    "ad_bbs_record": 16,
+    "ad_authored_identity": 32,
+    "bb_team_count": 30,
+    "bb_skill_count": 108,
+    "bb_action_type_count": 30,
+    "bb_proc_count": 29,
+    "bb_legal_max": 4096,
+    "ad_max_actions": 8192,
+    "ad_max_dice": 8192,
+    "ad_error_cap": 192
+  },
+  "team_ids": [
+    "amazon",
+    "black_orc",
+    "bretonnian",
+    "chaos_chosen",
+    "chaos_dwarf",
+    "chaos_renegades",
+    "dark_elf",
+    "dwarf",
+    "elven_union",
+    "gnome",
+    "goblin",
+    "halfling",
+    "high_elf",
+    "human",
+    "imperial_nobility",
+    "khorne",
+    "lizardmen",
+    "necromantic_horror",
+    "norse",
+    "nurgle",
+    "ogre",
+    "old_world_alliance",
+    "orc",
+    "shambling_undead",
+    "skaven",
+    "snotling",
+    "tomb_kings",
+    "underworld_denizens",
+    "vampire",
+    "wood_elf"
+  ],
+  "procedure_ids": [
+    "none",
+    "match",
+    "pregame",
+    "setup",
+    "kickoff",
+    "team-turn",
+    "activation",
+    "move",
+    "dodge",
+    "rush",
+    "pickup",
+    "block",
+    "push",
+    "knockdown",
+    "armour",
+    "injury",
+    "casualty",
+    "pass",
+    "catch",
+    "scatter",
+    "throw-in",
+    "handoff",
+    "foul",
+    "ttm",
+    "test",
+    "touchdown",
+    "turnover",
+    "end-drive",
+    "ko-recovery"
+  ],
+  "enum_mappings": {
+    "ball_state": [
+      "off-pitch",
+      "ground",
+      "held",
+      "in-air"
+    ],
+    "recipe_kind": [
+      "first-team-turn",
+      "legacy-F3",
+      "legacy-F1",
+      "legacy-F2",
+      "F5",
+      "F4",
+      "exact-F3",
+      "exact-F2",
+      "exact-F1"
+    ],
+    "f1_pressure": [
+      "none",
+      "open",
+      "marked"
+    ],
+    "f2_bucket": [
+      "none",
+      "exactly-one",
+      "two-or-more"
+    ],
+    "f4_options": [
+      "decline",
+      "dodge",
+      "pro",
+      "team"
+    ]
+  },
+  "bbs_open_memstream": {
+    "returned_length": 58568,
+    "returned_sha256": "c984e22178901539157be062764dcaff1efac345836dffb5be17a5b7537447a1",
+    "embedded_nul_count": 49593,
+    "first_embedded_nul_offset": 5,
+    "convenience_nul_excluded": true
+  },
+  "outputs": {
+    "records.jsonl": {
+      "length": 39460,
+      "sha256": "ca4411f264a41e0f08d1cab1340c52ce97721b427c187bffb7571d5491ece764",
+      "line_count": 26
+    },
+    "recipes.jsonl": {
+      "length": 119389,
+      "sha256": "a5242691425c3e8d995cae9722f74700acff69ed1281095f26271b70ea1f9f4d",
+      "line_count": 26
+    }
+  },
+  "nist_sha256": {
+    "empty": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "abc": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+    "million_a": "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0"
+  },
+  "framed_hash_vectors": {
+    "actions": [
+      {
+        "length": 11,
+        "preimage_hex": "4242414354310000000000",
+        "sha256": "0701073366e61d05f8a567522a1e9fda6a7aca2dd79f142c74b6c632056646a2"
+      },
+      {
+        "length": 16,
+        "preimage_hex": "42424143543100010000000403020101",
+        "sha256": "ac763e91f6894e86fd936ce81f9887bde2f7854fe6ef58d3389babe089af2f62"
+      },
+      {
+        "length": 26,
+        "preimage_hex": "42424143543100030000000000000000ffffffff011234567800",
+        "sha256": "c531efce2610800d2c10a9f6e2f8439d81458c38abb4264b7daa12ad09cf2319"
+      }
+    ],
+    "dice": [
+      {
+        "length": 11,
+        "preimage_hex": "4242444945310000000000",
+        "sha256": "ae5c9f679d0a744934bc6648e0e72c8a528c8637410b37599897437b32c64703"
+      },
+      {
+        "length": 13,
+        "preimage_hex": "42424449453100010000000604",
+        "sha256": "b8ffc012864b1e0734a1e39864d4292d4cb02c59c9cfd0048a56396397ad86ee"
+      },
+      {
+        "length": 17,
+        "preimage_hex": "4242444945310003000000020106060803",
+        "sha256": "24c81de066665df5435255f058b42226b20445ef9d4c8a2a41d2dfab9b2d46bc"
+      }
+    ],
+    "legal": [
+      {
+        "length": 11,
+        "preimage_hex": "42424c4547310000000000",
+        "sha256": "d7a977accf7d0fbb44e3c4c235b4f8cfdca2443915ee09fb6b80ccb82dca18fe"
+      },
+      {
+        "length": 15,
+        "preimage_hex": "42424c454731000100000004030201",
+        "sha256": "31c0d5189875da6f0e69108f7d245168eca4a4f73abc87259cf4c1db7c5be4a9"
+      },
+      {
+        "length": 23,
+        "preimage_hex": "42424c45473100030000000000000012345678ffffffff",
+        "sha256": "d015a25d403fe44cf23edb867e191290d22ab7cf43ad7da6d9f923da94aeda88"
+      }
+    ]
+  },
+  "abi": {
+    "return_type": "int",
+    "fixed_output_lengths": {
+      "AD_AUTHORED_RECORDS_JSONL_LENGTH": 39460,
+      "AD_AUTHORED_RECIPES_JSONL_LENGTH": 119389
+    },
+    "parameters": [
+      [
+        "records",
+        "const ad_bbs_record*"
+      ],
+      [
+        "record_count",
+        "size_t"
+      ],
+      [
+        "recipes",
+        "const ad_recipe*"
+      ],
+      [
+        "recipe_count",
+        "size_t"
+      ],
+      [
+        "records_jsonl",
+        "char*"
+      ],
+      [
+        "records_capacity",
+        "size_t"
+      ],
+      [
+        "records_length",
+        "size_t*"
+      ],
+      [
+        "recipes_jsonl",
+        "char*"
+      ],
+      [
+        "recipes_capacity",
+        "size_t"
+      ],
+      [
+        "recipes_length",
+        "size_t*"
+      ],
+      [
+        "error",
+        "char[AD_ERROR_CAP]"
+      ]
+    ],
+    "count_semantics": "exactly-26-elements",
+    "capacity_semantics": "byte-count-not-inclusive",
+    "output_termination": "length-delimited-no-NUL",
+    "failure_atomicity": "both-buffers-and-both-lengths-unchanged",
+    "alias_contract": "all-complete-extents-pairwise-disjoint"
+  },
+  "authority_files": {
+    "tools/authored_sidecar.h": "a76bc06ca7f42d27772267b7723a633ed8a460617ae085afc211bd01a44db2bb",
+    "tools/authored_sidecar_authority/abi_probe.c": "f515ef3b1b45a8c0e402da6f55c465e91e7f6a6921af9e0c86dc568232fd68c5",
+    "tools/authored_sidecar_authority/build_oracle.py": "fa8588e438c662714dfafebb6c9fd8ebf6c3be2e1119917fd28d1ee32c8b190c",
+    "tools/authored_sidecar_authority/expected/records.jsonl": "ca4411f264a41e0f08d1cab1340c52ce97721b427c187bffb7571d5491ece764",
+    "tools/authored_sidecar_authority/expected/recipes.jsonl": "a5242691425c3e8d995cae9722f74700acff69ed1281095f26271b70ea1f9f4d",
+    "tools/authored_sidecar_authority/fact_probe.c": "e315d06a110c6b44c55711f3df3b76200991dd183d475d065b4d6d0b9a413a7b",
+    "tools/authored_sidecar_authority/fixture_selftest.py": "f2b7284fca1f373c7c623ef8fc2ac35e33fc81dad5813e997a8eeea127623384",
+    "tools/authored_sidecar_authority/isolation_selftest.py": "f5b68b6593ff42ad3a488eb751c82f65fcc1bd9c73ee5290af7f8eb6dce2426e",
+    "tools/authored_sidecar_authority/malicious_fixtures.json": "236de1a15ba4ec84f64cd31c62af2893491a15640ec3cd859d0235cefc142442",
+    "tools/authored_sidecar_authority/seal_oracle.py": "fc10277cd983685524844f4396e57fc5a1d993457fdf1c32d9c0abb5efbf3ebf",
+    "tools/authored_sidecar_authority/serializer_probe.c": "bcc1f01d6ca6f293b2603ccd1204f872709fd36cadd2eed53e412394df999b66",
+    "tools/authored_sidecar_authority/source_check.py": "779cdd21d888a9ff2f125449f105bd70185f60e184b12f991bfdf69d82fbe978",
+    "tools/authored_sidecar_authority/verify_candidate.py": "df387e45de522efdee69e680b449bb32395777b2ec1d45e14542c0d6658331be",
+    "tools/authored_sidecar_authority/verify_history.py": "ca164a0c8bd0e572bf44f04458ccabf58ab568776d52b3359273821142dcbb60",
+    ".github/workflows/authored-sidecar-authority.yml": "f36d946027ab1c1d231d7d73912ab8135c09aa0a968319fbc47a241c37f4ec23"
+  }
+}
