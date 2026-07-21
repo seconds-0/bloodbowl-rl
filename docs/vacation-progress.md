@@ -6850,3 +6850,63 @@ Next steps:
 3. If both gates pass, commit, open the source-only PR, run hosted reviewers and
    CI, fix any findings, and merge. Deployment/training remains a separate
    post-boundary operation.
+
+## 2026-07-21 05:47 PDT — exact-action tranche reviewed and merged
+
+Status:
+
+- PR #48, `Preserve exact Blood Bowl action identity`, merged to `main` as
+  squash commit `921725632fd4e4bc75f35d1f3285ecce0213179e` after both final
+  hosted gates passed. The remote feature branch was deleted.
+- This was still source-only. No live checkout, service, checkpoint, queue, or
+  BBTV runtime was replaced. The recovery seed-43 trainer remained active at
+  roughly 15 CPU cores and normal 70--79% GPU utilization; BBTV's follower and
+  current matchup server remained active and had selected a recent recovery
+  checkpoint around step 8.34B.
+
+Completed this hour:
+
+- Fixed a Torch multi-buffer defect found during final inline review. Native
+  joint supports occupy fixed-capacity per-buffer regions and physical row
+  offsets can be nonmonotonic after permutation, so slicing one global prefix
+  omitted later buffers. Torch now gathers each row from its authoritative
+  offset/count segment and compacts the result in physical-row order.
+- A real two-buffer compiled `_C` reproduction contained a 17,942-entry hole
+  between live regions. All 1,536 ordinary/remapped samples stayed in exact
+  support and rollout/recomputed log-probability and entropy matched exactly.
+- Fable's headless review identified empty-mask, permutation-lifecycle, and
+  optimized-guard assumptions. Empty Torch mask rows now reject, offsets are
+  snapshotted before compaction, permutation is enforced as a one-time
+  pre-rollout operation, and synchronous CPU/GPU stepping uses unconditional
+  one-buffer guards rather than removable assertions. The proposed entropy
+  NaN was refuted against the real pinned sampler: 1,792 sparse masked rows had
+  finite gradients/log-probability/entropy and matched the independent entropy
+  reference within `7.15e-7`.
+- A fresh compiled CPU backend ran 64 real engine steps: 512/512 selected tuples
+  belonged to exact support and rollout/recompute differences were at most
+  `9.54e-7`. Fresh source/header/module provenance agreed on digest
+  `61c169b62eb86f55c1eb9eb9f83231172477319616f1bd204132a989d0f1b4fc`.
+- A new isolated, `nice -n 19` sm_75 fp32 build on the RTX 2070 succeeded
+  without launching CUDA runtime work. Its module imported as the expected
+  Blood Bowl GPU backend, embedded the same source digest, and hashed to
+  `d92cc5f25bba9d7d6876b588590c7bd27faa628791bf7ba06a05981b048b7da8`.
+  GPU temperature fell from 82C to 81C after compilation and the live trainer
+  remained healthy.
+- Final local optimized and ASan/UBSan C suites, 205 tool tests, 27 training
+  tests, the Torch-enabled exact suite, fresh installer check, and independent
+  harness review all passed. Final GitHub immutable-history and CI checks also
+  passed. A Linux-only intentional-truncation warning found by CI was converted
+  to an explicit bounded copy and protected by a long-context regression.
+
+Next steps:
+
+1. Preserve the current recovery experiment and BBTV unchanged until the
+   immutable run boundary. Do not interpret its old action-quality telemetry as
+   evidence for exact-action learning.
+2. At the boundary, deploy merged `main` into a new isolated runtime, verify the
+   exact module digest, then run the deferred native CUDA graph-capture and
+   rollout/recompute finite-ratio smoke with zero integrity violations.
+3. If that runtime gate passes, run a reward-frozen paired causal screen of the
+   repaired obs-v5/exact-action harness before committing days to long training.
+   Recurrent rollout-versus-recompute state parity remains the next independent
+   harness-audit tranche.
