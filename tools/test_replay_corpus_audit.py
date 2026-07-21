@@ -50,8 +50,13 @@ class ReplayCorpusAuditTests(unittest.TestCase):
 
             obs_size, mask_size, records = 8, 5, replay_id - 8
             record_size = 12 + obs_size + mask_size + 4
+            bbp_version = 3 if replay_id == 11 else 2
             with (pairs / f"{replay_id}.bbp").open("wb") as f:
-                f.write(struct.pack("<4sIII", b"BBP1", 2, obs_size, mask_size))
+                f.write(
+                    struct.pack(
+                        "<4sIII", b"BBP1", bbp_version, obs_size, mask_size
+                    )
+                )
                 f.write(bytes(record_size * records))
         return manifest_path, replay_cache, pairs
 
@@ -75,6 +80,22 @@ class ReplayCorpusAuditTests(unittest.TestCase):
             path.write_bytes(struct.pack("<4sIII", b"BBP1", 2, 8, 5) + b"x")
             with self.assertRaisesRegex(ValueError, "not divisible"):
                 corpus_audit.inspect_bbp(path)
+
+    def test_bbp_v3_obs_v5_header_is_supported(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "10.bbp"
+            obs_size, mask_size = 2782, 454
+            record_size = 12 + obs_size + mask_size + 4
+            path.write_bytes(
+                struct.pack("<4sIII", b"BBP1", 3, obs_size, mask_size)
+                + bytes(record_size)
+            )
+
+            result = corpus_audit.inspect_bbp(path)
+
+        self.assertEqual(result["version"], 3)
+        self.assertEqual(result["obs_size"], obs_size)
+        self.assertEqual(result["records"], 1)
 
     def test_audit_fails_loudly_when_pairs_directory_is_missing(self):
         with tempfile.TemporaryDirectory() as tmp:

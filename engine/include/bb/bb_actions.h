@@ -21,7 +21,7 @@ typedef enum {
     BB_A_SETUP_REMOVE,   // arg = player slot (back to reserves during setup)
     BB_A_SETUP_DONE,     // formation confirmed
     BB_A_KICK_TARGET,    // x,y = nominated kick target square
-    BB_A_TOUCHBACK,      // arg = player slot to give the ball to
+    BB_A_TOUCHBACK,      // arg = recipient slot, or 0xFF + x,y fallback square
 
     // --- Team turn ---
     BB_A_ACTIVATE,       // arg = player slot, begin its activation

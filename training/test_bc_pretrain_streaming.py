@@ -87,6 +87,13 @@ class StreamingShardTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
+            self.write_shard(root, 40, 1, obs_size=2782, version=2)
+            self.write_shard(root, 41, 1, obs_size=2782, version=3)
+            with self.assertRaisesRegex(SystemExit, "header mismatch across shards"):
+                bc_pretrain.ShardIndex.from_directory(root)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
             self.write_shard(root, 40, 2, record_replay_id=41)
             with self.assertRaisesRegex(SystemExit, "record replay IDs"):
                 bc_pretrain.ShardIndex.from_directory(root)

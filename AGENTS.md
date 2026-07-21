@@ -480,7 +480,12 @@ changes a reward, active queue, production default, or promotion verdict.
 
 - Keep the current observation size synchronized in `bloodbowl.h`, `binding.c`,
   and `training/convert_checkpoint.py`. Checkpoint lineages with different input
-  sizes are incompatible.
+  sizes are incompatible. Obs-v5 is also a semantic lineage break at the same
+  2,782-byte shape: it exposes rolled block faces, TEST kind, and active movement
+  expenditure, validates ball coordinates, and spatially projects Touchbacks.
+  Blob size cannot distinguish v4 from v5; require source/module provenance and
+  do not warm-start, mix replay observations, or directly compare curves across
+  that boundary without a separately reviewed bridge. See `docs/obs-v5-spec.md`.
 - Apply the audited Puffer patches in repository order and test them. Important
   patches include the env phase contract, eval episode gate, dynamic metrics-key
   fix, trusted Torch load, and BC/masking changes.

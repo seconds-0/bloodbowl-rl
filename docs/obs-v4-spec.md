@@ -1,5 +1,10 @@
 # Obs-v4: decision-support planes (information parity with the FUMBBL UI)
 
+> Historical semantic ABI. Obs-v5 retains this 2,782-byte shape and all three
+> planes but assigns previously reserved bytes and corrects Touchback
+> projection. See `docs/obs-v5-spec.md`; equal tensor shape does not make v4
+> checkpoints or replay observations semantically compatible with v5.
+
 **Motivation (D46/D52 chain, Alex 2026-06-07):** the agent's block-tier
 distribution is wildly inhuman (2d:2d-red ≈ 1.9:1 vs human 46:1) and flat
 across training. Root cause hypothesis: FUMBBL's UI shows a human the dice

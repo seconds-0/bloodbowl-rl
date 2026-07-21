@@ -5,13 +5,13 @@ Run with the PufferLib venv:
   vendor/PufferLib/.venv/bin/python training/test_convert_checkpoint.py
 
 Covers:
-  1. layout totals: the current obs-v4 default (16,066,560 bytes for obs
-     2782), the obs-v3 lineage (13,670,400 bytes for obs 1612), and the
+  1. layout totals: the current obs-v5 semantic ABI / obs-v4 shared shape
+     (16,066,560 bytes for obs 2782), the obs-v3 lineage (13,670,400 bytes for obs 1612), and the
      legacy obs-v2 lineage, which must match the real CUDA-backend artifact
      byte-for-byte (12,072,960 bytes for obs 832 / heads (30,33,391) /
      hidden 512 / 3 layers). Real blob path:
      training/checkpoints/cuda_real_*.bin or $CUDA_CKPT (obs-v2 lineage);
-     round-trip tests fall back to a synthetic obs-v4 blob if absent.
+     round-trip tests fall back to a synthetic 2782-byte-shape blob if absent.
   2. cuda -> torch -> cuda is byte-identical.
   3. the cuda->torch state_dict loads into the REAL torch policy (built
      exactly like the trainer via bc_pretrain.load_policy_like_trainer)
@@ -70,7 +70,7 @@ def test_layout_matches_real_artifact():
 
 def load_blob():
     """(blob, src, obs_size): real artifacts are obs-v2 lineage (832);
-    the synthetic fallback exercises the obs-v4 default layout."""
+    the synthetic fallback exercises the current 2782-byte default layout."""
     path = find_real_blob()
     if path is not None:
         return np.fromfile(path, dtype="<f4"), path, LEGACY_OBS_SIZE

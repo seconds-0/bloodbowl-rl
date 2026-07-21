@@ -7,9 +7,9 @@ with --dump-pairs, landing one shard per replay at validation/pairs/<id>.bbp.
 Prints per-replay yields and corpus totals (replays, pairs, pairs/replay,
 bytes).
 
-The .bbp format (v2 = obs v3) is documented in the comment block of
-tools/bb_lockstep.c and in validation/README.md: a 16-byte header
-("BBP1", version u32, obs_size u32 = 1612, mask_size u32 = 454) followed
+The .bbp format (v3 = same-shape semantic obs-v5 marker) is documented in the
+comment block of tools/bb_lockstep.c and in validation/README.md: a 16-byte header
+("BBP1", version u32, obs_size u32, mask_size u32 = 454) followed
 by (12 + obs_size + mask_size + 4)-byte records (replay_id u32, cmd u32,
 agent u8, pad[3], obs[obs_size], mask[mask_size], type u8, arg u8, sq u16,
 little-endian). Record sizing honors the HEADER fields, so v1 shards
@@ -38,7 +38,7 @@ RUNNER = os.path.join(ROOT, "build", "bb_lockstep")
 PAIR_DIR = os.path.join(ROOT, "validation", "pairs")
 
 MAGIC = b"BBP1"
-KNOWN_VERSIONS = (1, 2)  # v1 = obs 832 B, v2 = obs v3 (1612 B, TZ planes)
+KNOWN_VERSIONS = (1, 2, 3)  # v3 marks obs-v5; v2/2782 is historical obs-v4
 MASK_SIZE = 454
 HEAD_TYPE, HEAD_ARG, HEAD_SQ = 30, 33, 391
 HEADER_LEN = 16
@@ -48,7 +48,7 @@ def validate_shard(path):
     """Header + per-record invariant check; returns the record count.
 
     Record size comes from the HEADER's obs_size/mask_size (backward-compat:
-    v1 obs-832 shards still validate; v2 = obs v3, 1612 B)."""
+    historical shards still validate; version plus shape identifies lineage)."""
     with open(path, "rb") as f:
         raw = f.read()
     if len(raw) < HEADER_LEN:
@@ -56,7 +56,7 @@ def validate_shard(path):
     magic, ver, osz, msz = struct.unpack("<4sIII", raw[:HEADER_LEN])
     if magic != MAGIC or ver not in KNOWN_VERSIONS or msz != MASK_SIZE:
         raise ValueError(f"{path}: bad header {magic} v{ver} obs={osz} mask={msz}")
-    rec_len = 4 + 4 + 4 + osz + msz + 4  # v2: 2082, v1: 1302
+    rec_len = 4 + 4 + 4 + osz + msz + 4
     body = raw[HEADER_LEN:]
     if len(body) % rec_len:
         raise ValueError(f"{path}: body {len(body)}B not a multiple of {rec_len}")

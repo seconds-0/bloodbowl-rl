@@ -20,6 +20,12 @@ and `docs/reward-and-replay-audit-2026-07-09.md`. Upstream success/exit status i
 not sufficient: the audited path requires explicit phase, provenance, completed
 games, final cumulative reprint, and reward-integrity telemetry.
 
+For observation work, also read D217 and `docs/obs-v5-spec.md`. Obs-v5 retains
+obs-v4's 2,782-byte tensor shape but changes reserved-byte semantics and
+Touchback projection. Blob size cannot distinguish those lineages: require the
+exact source/module identity, and never treat a shape-loadable v4 checkpoint or
+pair shard as semantically v5 without a separately reviewed bridge.
+
 ## 1. The binding ABI
 
 A 4.0 env = `ocean/<name>/<name>.h` (all game logic) + `ocean/<name>/binding.c` (macros +
@@ -165,6 +171,13 @@ historical BC-loss patch; it does not carry masking. An UNPATCHED torch backend
 samples raw logits, so `c_step` must
 still tolerate any in-range action value (chess answers invalid picks with
 `reward_invalid_*` penalties, binding.c kwargs).
+
+Blood Bowl's current marginal per-head mask is only a projection of complete
+legal triples; independently sampled legal head values may still compose a
+triple the engine never enumerated, after which `bbe_decode` repairs it. D217
+fixes Touchback square addressability but does not solve this general
+sampled-versus-executed mismatch. Do not interpret a low bounds-error rate as
+proof that PPO stored the action the engine executed.
 
 ## 6. MultiDiscrete actions
 
@@ -360,25 +373,26 @@ surface, match() mechanics): `reference/vecenv-internals.md`.
   and BC warm starts. CUDA backend loads its OWN flat-fp32 .bin fine;
   state_dict-style .bins (BC pretrain output) need the converter noted in
   training/bc_pretrain.py before GPU warm-start.
-- **Every obs bump = LINEAGE BREAK. Current: obs-v4, `BBE_OBS_SIZE` = 2782**
-  (v3 1612 + 3×390 decision-support probability planes; spec
-  `docs/obs-v4-spec.md`, offsets in `puffer/bloodbowl/bloodbowl.h`).
-  Lineage history: v2 832 → v3 1612 (tackle-zone planes) → v4 2782. The
-  encoder input dim is part of the parameter count, so checkpoints NEVER
-  cross lineages — pre-v4 artifacts are archived in `checkpoints-backup/`,
-  never warm-start from them. THREE OBS_SIZE sync points must agree
+- **Every obs bump = LINEAGE BREAK. Current runtime: obs-v5, `BBE_OBS_SIZE` =
+  2782** (obs-v4's three probability planes plus decision-window truth; spec
+  `docs/obs-v5-spec.md`). Lineage history: v2 832 → v3 1612 → v4 2782 → v5
+  2782. The equal v4/v5 shape makes size insufficient: never warm-start a v5
+  runtime from a v4 checkpoint. BBP v3 identifies newly extracted obs-v5
+  shards; historical BBP v2/2782 identifies obs-v4, and the BC loader rejects
+  mixed versions. THREE OBS_SIZE sync points must still agree
   (static asserts catch 2 of 3): `BBE_OBS_SIZE` in `bloodbowl.h`,
   `#define OBS_SIZE` in `binding.c`, and `training/convert_checkpoint.py`
   (`DEFAULT_OBS_SIZE = 2782`; converting an older artifact needs an
   explicit `--obs-size 1612` for v3 / `--obs-size 832` for v2 — binding.c's
   literal once lagged at 1612 and the `_Static_assert` caught it exactly as
-  designed, D54). BC pairs never mix obs lineages in one corpus — current
-  historical pair store is 2,085,330 v4 records across 12,304 shards, but the
+  designed, D54). The current historical pair store remains 2,085,330 obs-v4
+  records across 12,304 BBP-v2 shards; it is not current obs-v5 training data.
+  The
   strict embedded-rulesVersion BB2025 surface is 9,118 non-empty replay IDs and
   1,622,231 joined records (`runs/replay-audit-20260713/`). Never call shard count
-  replay count or mix BB2020 into BC. Current anchor lineage:
-  **bc_v4** (val exact 0.508; lives on the training boxes — local
-  `training/` only holds ≤ bc_v3b).
+  replay count or mix BB2020 into BC. Historical anchor lineage:
+  **bc_v4** (not valid for obs-v5 warm-start; val exact 0.508; lives on the
+  training boxes — local `training/` only holds ≤ bc_v3b).
 
 ## Historical BC-regularized PPO patch (rejected for new runs)
 
@@ -411,9 +425,11 @@ facilities in the installed patch stack; they are not supplied by this BC patch.
   on the CUDA box
   (`rm -rf build && ./build.sh bloodbowl --float`; bf16 default build refuses
   to import), `--selfplay.enabled 0` (pool is native-only), warm start from a
-  CURRENT-lineage anchor (state_dict loads directly in the torch backend — no
-  converter; the script's hardcoded training/bc_v1.bin is dead obs-v2 lineage,
-  pass a bc_v4 checkpoint), B-profile reward knobs, bc_coef 1.0 annealed.
+  v4 anchor under a pinned v4 runtime (state_dict loads directly in the torch
+  backend — no converter; the script's hardcoded training/bc_v1.bin is dead
+  obs-v2 lineage). Never run this historical recipe against the current v5
+  runtime, even with a shape-loadable bc_v4 checkpoint. B-profile reward knobs,
+  bc_coef 1.0 annealed.
 - Current arms launch via `tools/run_synthesis_c.sh`, run ON the box from the
   repo root. Contract: `ANCHOR=<path>` `STEPS=<n>` env vars + extra
   `--env.*` / `--train.frozen-enemy-path <ckpt>` args forwarded via `"$@"`.

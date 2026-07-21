@@ -190,7 +190,7 @@ class BuildLeagueTest(unittest.TestCase):
                           '0000000000000002.bin'])
 
     def test_default_expect_bytes_is_the_cuda_blob(self):
-        # Current obs-v4 flat-fp32 artifact (test_convert_checkpoint.py).
+        # Historical obs-v4 flat-fp32 artifact (test_convert_checkpoint.py).
         self.assertEqual(DEFAULT_EXPECT_BYTES, 16_066_560)
 
     def test_rejects_wrong_size(self):
