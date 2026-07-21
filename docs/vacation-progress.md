@@ -6810,3 +6810,43 @@ Next steps:
    hosted checks, and merge only if the exact-action contract survives review.
 3. Do not deploy this tranche into the occupied recovery run or viewer. Any
    post-boundary deployment and paired v4/v5 learning screen remain separate.
+
+## 2026-07-21 04:50 PDT — exact-action audit blockers closed locally
+
+Status:
+
+- The source-only exact-action branch remains isolated. The live RTX 2070
+  recovery trainer, its checkout/checkpoints, and BBTV have not been contacted
+  or changed.
+- Independent harness review found and blocked a native numerical defect before
+  commit: replacing masked logits with negative infinity inside Puffer's old
+  loops could create NaN normalization, entropy, and gradients. The native
+  sampler and PPO kernel now explicitly skip unsupported entries in every
+  normalization, inverse-CDF, entropy, and gradient loop; unsupported logits
+  receive zero gradient and empty support fails closed.
+
+Completed this hour:
+
+- Fixed meaningful PUSH_SQUARE arguments, canonical macro STEP arguments,
+  CUDA-graph startup initialization, Torch int32 pointer views, future queue
+  manifest parity, BBP-v4 writer coverage, stale mask/decode guidance, and the
+  exact-backend Torch semantic test.
+- Rebased the complete backend patch onto the actual pinned Puffer commit. A
+  fresh install succeeded; the installed C and CPU bindings compiled and linked
+  on arm64; the imported `_C` exposed the exact backend-source digest. The
+  installer now compares current sources, generated build header, and compiled
+  module digest rather than trusting timestamps alone.
+- Full optimized and ASan/UBSan C suites pass: 442 engine, 37 reward, 2 contact,
+  12 state-bank, 12 observation, plus the BBP-v4 writer. Tool tests pass 205
+  with 2 expected skips; training tests pass 27 with 1 expected skip; the
+  Torch-enabled exact-action suite passes all 9 tests.
+
+Next steps:
+
+1. Complete the final real Torch rollout/recompute smoke and independent stable
+   diff review.
+2. Run a short isolated native CUDA construction/finite-probability smoke
+   without touching or stopping the occupied recovery experiment.
+3. If both gates pass, commit, open the source-only PR, run hosted reviewers and
+   CI, fix any findings, and merge. Deployment/training remains a separate
+   post-boundary operation.
