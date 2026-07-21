@@ -7094,3 +7094,73 @@ Next steps:
 2. Continue read-only seed 44 and BBTV monitoring through atomic completion.
 3. Preserve baseline evidence, then use a separate repaired checkout for the
    deployment-bound CUDA qualification and fresh 50M exact-zero canary.
+
+## 2026-07-21 14:50 PDT — recurrent hardening merged; executable CUDA gate underway
+
+Status:
+
+- The recovery queue, BBTV follower, web service, and tunnel are all active in
+  their user service manager with their original process trees. Nothing on the
+  RTX 2070 was modified, rebuilt, restarted, or deployed. The GPU read 80 C,
+  75% utilization, and 5,554/8,192 MiB.
+- Seed 44 reached 2,563,768,320 of 12B requested steps. Its latest 88-game
+  training panel reported 1.284 touchdowns/game and all reward/error integrity
+  counters at exactly zero. `illegal_frac=0.21192` remains descriptive evidence
+  from the immutable pre-repair marginal-action runtime and would invalidate a
+  repaired exact-action run.
+- The cumulative seed-44 aggregate now covers 1,674,257 completed games: 1.220
+  touchdowns, 16.294 resolved blocks, 0.619 two-die attacker-choice share,
+  0.044 two-die red share, 3.822 pickup attempts / 2.214 successes, 0.020 pass
+  attempts, zero handoffs, and 0.320 possession rate per game.
+- BBTV has advanced normally and is serving seed 44's atomically completed
+  2,447,114,240-step checkpoint against the frozen baseline.
+
+Completed this hour:
+
+- Recurrent evaluation-state hardening PR #51 passed hosted immutable-history
+  and full test/sanitizer CI and merged to main as
+  `afc8008933548438ca93c41341f5f08fdd294386`.
+- Started a new source-only qualification worktree from that merge. The frozen
+  plan turns the deployment-bound requirements into one fail-closed executable
+  verdict: exact-zero primary/frozen construction state, graph-on/off first
+  output parity, automatic-versus-explicit-zero first-post-terminal parity,
+  complete observed learner-row PPO ratio coverage, unchanged weight bytes,
+  zero hard counters, and same-host predecessor throughput within budget.
+- Added two bounded qualification-only native evidence calls: an all-bank
+  recurrent-state report/clear control and a size-limited raw snapshot of real
+  rollout, decoder, recomputed-ratio, and selected-index tensors. Ordinary
+  train/eval/match/BBTV paths do not call them, and they expose no device
+  pointer or environment/action/RNG mutation surface.
+- Added `tools/qualify_recurrent_cuda.py` with fresh subprocess isolation,
+  fp32/BF16 decoding, atomic hashed cell artifacts, deterministic sampled-row
+  coverage, exact weight hashing, hard-integrity validation, and mandatory
+  predecessor throughput provenance. A missing baseline is a failure rather
+  than an ungated measurement.
+- Test-first validation is green so far: 232 tool tests (2 skips), 49 training
+  tests (1 skip under Python 3.11 with Torch), 442 engine tests plus all focused
+  Puffer tests, patch apply-check, Python compilation, shell syntax, and diff
+  checks. The native CUDA build/execution remains intentionally target-bound.
+
+Current blockers / risks:
+
+- The new qualification tranche is under independent read-only code review and
+  is not yet committed, pushed, or merged. Its native patch cannot be compiled
+  on the Mac; a fresh isolated RTX 2070 build is a mandatory post-boundary gate.
+- Seed 44 remains far from its immutable completion boundary. Do not capture the
+  predecessor throughput control, install the repaired backend, or run CUDA
+  qualification while the trainer owns the GPU.
+- The graph-disabled Puffer close path dereferences an absent graph array. The
+  graph-off comparison therefore runs in its own subprocess and relies on
+  process teardown after the snapshot; it does not change the runtime under
+  test or weaken the parity verdict.
+
+Next steps:
+
+1. Resolve every concrete qualification-review finding, run full source and
+   sanitizer verification, then commit/open/review/merge the tranche.
+2. Continue hourly read-only monitoring of seed 44 and BBTV through the atomic
+   queue boundary.
+3. After completion only, preserve the exact-action predecessor throughput
+   artifact, build merged main in a fresh isolated checkout, require every CUDA
+   gate to pass, and then run the disposable fresh 50M canary under the exact
+   zero error budget.
