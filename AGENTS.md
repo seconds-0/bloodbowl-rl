@@ -92,9 +92,11 @@ For any causal comparison:
 - Zero-tolerance acceptance is paired with a bounded operational error budget,
   not an end-of-run surprise. Exact support/decode defects abort on the first
   transition. `tools/live_integrity_guard.py` incrementally checks every machine
-  panel during reward screens, stops the recorded trainer on any missing,
-  malformed, non-finite, or nonzero hard-integrity field, and fails if no
-  complete panel appears for 180 seconds. Its state, failure artifact, wrapper,
+  panel both from the screen and from a watchdog embedded beside the detached
+  trainer, stops that trainer on any missing, malformed, non-finite, or nonzero
+  hard-integrity field, and fails if no integrity-bearing panel appears for 180
+  seconds. Metadata-only startup panels do not reset that clock. Its state,
+  failure artifact, wrapper,
   hard-key registry, and poll budget are frozen into screen provenance. A
   repaired runtime must also pass the staged preflight and a disposable 50M-step
   canary before receiving a long causal budget; never use that canary as a warm

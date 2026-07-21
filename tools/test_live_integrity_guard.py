@@ -130,6 +130,45 @@ class LiveIntegrityGuardTests(unittest.TestCase):
                     "no complete machine integrity panel"):
                 guard.check_log(log, state, failure, now=10_000.0)
 
+    def test_metadata_only_panel_is_consumed_without_resetting_liveness(self):
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            log = root / "arm.log"
+            state = root / "guard-state.json"
+            failure = root / "guard-failure.json"
+            metadata = {
+                "_puffer_schema": 2,
+                "_puffer_agent_steps": 0.0,
+                "_puffer_phase_eval": 0,
+            }
+            log.write_text(
+                "PUFFER_ENV_JSON " + json.dumps(metadata) + "\n",
+                encoding="utf-8",
+            )
+            result = guard.check_log(log, state, failure, now=100.0)
+            self.assertEqual(result.new_panels, 0)
+            self.assertEqual(result.total_panels, 0)
+            self.assertFalse(failure.exists())
+
+            with self.assertRaisesRegex(
+                    guard.IntegrityFailure,
+                    "no complete machine integrity panel"):
+                guard.check_log(log, state, failure, now=281.0)
+
+    def test_completed_log_rejects_unterminated_tail(self):
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            log = root / "arm.log"
+            state = root / "guard-state.json"
+            failure = root / "guard-failure.json"
+            log.write_text(panel() + "PUFFER_ENV_JSON {", encoding="utf-8")
+            with self.assertRaisesRegex(
+                    guard.IntegrityFailure, "unterminated final log record"):
+                guard.check_log(
+                    log, state, failure, now=1.0, enforce_liveness=False)
+            payload = json.loads(failure.read_text(encoding="utf-8"))
+            self.assertEqual(payload["kind"], "log_incomplete_tail")
+
 
 if __name__ == "__main__":
     unittest.main()

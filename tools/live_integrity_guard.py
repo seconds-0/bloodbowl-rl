@@ -228,6 +228,15 @@ def check_log(
             if not line.endswith(b"\n"):
                 # The trainer may still be writing this record. Re-read it on
                 # the next poll rather than accepting a partial JSON prefix.
+                if not enforce_liveness:
+                    _fail(
+                        failure_path,
+                        log_path,
+                        "log_incomplete_tail",
+                        "complete trainer log has an unterminated final log "
+                        f"record at byte {line_start}",
+                        offset=line_start,
+                    )
                 break
             next_offset = stream.tell()
             marker = line.find(PREFIX)
@@ -261,6 +270,22 @@ def check_log(
                     f"machine panel at byte {line_start} lacks schema >= 2",
                     offset=line_start,
                 )
+            steps = panel.get("_puffer_agent_steps")
+            if not _number(steps) or float(steps) < 0:
+                _fail(
+                    failure_path,
+                    log_path,
+                    "panel_steps_invalid",
+                    f"machine panel at byte {line_start} has invalid agent steps",
+                    offset=line_start,
+                )
+            # Before an episode completes, Puffer's schema-2 phase contract
+            # intentionally emits only _puffer_* metadata. Consume that record
+            # without resetting the integrity-panel liveness clock. Once any
+            # environment metric is present, the complete hard registry is
+            # mandatory.
+            if not any(not key.startswith("_") for key in panel):
+                continue
             missing = [key for key in HARD_INTEGRITY_KEYS if key not in panel]
             if missing:
                 _fail(
@@ -301,15 +326,6 @@ def check_log(
                     f"zero-budget integrity violation: {nonzero}",
                     offset=line_start,
                     metrics=nonzero,
-                )
-            steps = panel.get("_puffer_agent_steps")
-            if not _number(steps) or float(steps) < 0:
-                _fail(
-                    failure_path,
-                    log_path,
-                    "panel_steps_invalid",
-                    f"machine panel at byte {line_start} has invalid agent steps",
-                    offset=line_start,
                 )
             latest_steps = float(steps)
             last_panel_seen = observed_now

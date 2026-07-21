@@ -43,8 +43,11 @@ process status prevents result publication and all later arms.
 
 Every complete `PUFFER_ENV_JSON` panel must contain finite zero values for the
 frozen hard-integrity keys. A missing, malformed, non-finite, or nonzero field
-terminates the active trainer. The screen polls at most every 30 seconds, so the
-detection budget is one dashboard-emission interval plus one poll. The monitor
+terminates the active trainer. Metadata-only panels before an episode completes
+are consumed but do not reset liveness. The screen and durable watchdog embedded
+beside the trainer poll at most every 30 seconds, so the detection budget is one
+dashboard-emission interval plus one poll even if the outer screen or SSH session
+disappears. The monitor
 records its byte offset and an atomic failure artifact; truncation or replacement
 of the log also fails closed.
 
@@ -133,7 +136,7 @@ Before deployment, run a throwaway process-containment reproduction proving a
 guard failure kills the trainer and leaves a nonzero atomic status while the
 queue supervisor remains able to record the stopped job.
 
-The source verification completed 2026-07-21: 215 tool tests (2 dependency
+The source verification completed 2026-07-21: 220 tool tests (2 dependency
 skips), 27 training tests (1 dependency skip), the 442-test native suite, and
 the ASan/UBSan suite passed. Fable's analyze-only review found no P0-P2 path that
 could accept a violation, advance a later arm, or leave trainer compute alive;

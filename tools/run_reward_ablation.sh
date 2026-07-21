@@ -58,6 +58,9 @@ QUEUE_OWNED="${QUEUE_OWNED:-0}"
 EXPECTED_POOL_HASH="${EXPECTED_POOL_HASH:-18ec7cac858b71a6657003f454f19e232fb060f08b644c1e9e2f101076a9aac0}"
 SCREEN_MANIFEST_SHA256="${SCREEN_MANIFEST_SHA256:-}"
 EXPECTED_PUFFER_PATCH_BUNDLE_SHA256="${EXPECTED_PUFFER_PATCH_BUNDLE_SHA256:-}"
+LIVE_INTEGRITY_FAILURE="${LIVE_INTEGRITY_FAILURE:-}"
+LIVE_INTEGRITY_MAX_SILENCE="${LIVE_INTEGRITY_MAX_SILENCE:-180}"
+LIVE_INTEGRITY_POLL_SECONDS="${LIVE_INTEGRITY_POLL_SECONDS:-30}"
 
 for digest_name in SCREEN_MANIFEST_SHA256 \
                    EXPECTED_PUFFER_PATCH_BUNDLE_SHA256; do
@@ -75,6 +78,18 @@ case "$QUEUE_OWNED" in
   0|1) ;;
   *) echo "QUEUE_OWNED must be 0 or 1" >&2; exit 1 ;;
 esac
+case "$LIVE_INTEGRITY_MAX_SILENCE:$LIVE_INTEGRITY_POLL_SECONDS" in
+  *[!0-9:]*) echo "live-integrity silence and poll budgets must be positive integers" >&2; exit 1 ;;
+esac
+if [ "$LIVE_INTEGRITY_MAX_SILENCE" -le 0 ] || \
+   [ "$LIVE_INTEGRITY_POLL_SECONDS" -le 0 ]; then
+  echo "live-integrity silence and poll budgets must be positive" >&2
+  exit 1
+fi
+if [ -n "$SCREEN_MANIFEST_SHA256" ] && [ -z "$LIVE_INTEGRITY_FAILURE" ]; then
+  echo "a screen-owned arm requires LIVE_INTEGRITY_FAILURE" >&2
+  exit 1
+fi
 if [ "$DETACH" = "0" ] && [ "$QUEUE_OWNED" != "1" ]; then
   echo "DETACH=0 is reserved for a queue-owned process group" >&2
   exit 1
@@ -152,8 +167,9 @@ RUN_MANIFEST="${LOG}.manifest.json"
 STATUS_FILE="${LOG}.status.json"
 RUN_DIR_FILE="${LOG}.run_dir"
 PROCESS_FILE="${LOG}.process.json"
+GUARD_MARKER="${LOG}.guard-failed"
 for artifact in "$LOG" "$RUN_MANIFEST" "$STATUS_FILE" "$RUN_DIR_FILE" \
-                "$PROCESS_FILE"; do
+                "$PROCESS_FILE" "$GUARD_MARKER"; do
   [ ! -e "$artifact" ] || {
     echo "refusing to overwrite existing run artifact: $artifact" >&2
     exit 1
@@ -322,6 +338,8 @@ MODULE_HASH="$(sha256sum "$MODULE_PATH" | awk '{print $1}')"
 LAUNCHER_HASH="$(sha256sum "$ROOT/tools/run_reward_ablation.sh" | awk '{print $1}')"
 STATUS_WRAPPER="$ROOT/tools/trainer_status_wrapper.sh"
 STATUS_WRAPPER_HASH="$(sha256sum "$STATUS_WRAPPER" | awk '{print $1}')"
+LIVE_GUARD="$ROOT/tools/live_integrity_guard.py"
+LIVE_GUARD_HASH="$(sha256sum "$LIVE_GUARD" | awk '{print $1}')"
 PATCH_HASH="$({
   sha256sum "$ROOT/training/pufferl_env_dashboard_limit.patch"
   sha256sum "$ROOT/training/pufferl_env_json.patch"
@@ -405,6 +423,9 @@ META_ARGS=(
   compiled_module "$MODULE_PATH" compiled_module_sha256 "$MODULE_HASH"
   launcher_sha256 "$LAUNCHER_HASH" puffer_patch_bundle_sha256 "$PATCH_HASH"
   status_wrapper_sha256 "$STATUS_WRAPPER_HASH"
+  live_integrity_guard_sha256 "$LIVE_GUARD_HASH"
+  live_integrity_max_silence "$LIVE_INTEGRITY_MAX_SILENCE"
+  live_integrity_poll_seconds "$LIVE_INTEGRITY_POLL_SECONDS"
   vendor_head "$VENDOR_HEAD" vendor_source_sha256 "$VENDOR_SOURCE_HASH"
   native_precision_bytes "$precision" total_agents "$TOTAL_AGENTS"
   num_buffers "$NUM_BUFFERS" num_threads "$NUM_THREADS" horizon "$HORIZON"
@@ -444,13 +465,26 @@ BEFORE_RUNS=$(mktemp)
 find checkpoints/bloodbowl -mindepth 1 -maxdepth 1 -type d \
   -exec basename {} \; 2>/dev/null | sort > "$BEFORE_RUNS" || true
 WRAPPER=(/bin/bash "$STATUS_WRAPPER" "$STATUS_FILE" "$LOG" "${CMD[@]}")
+WATCHDOG_ENV=()
+if [ -n "$SCREEN_MANIFEST_SHA256" ]; then
+  WATCHDOG_ENV=(env \
+    LIVE_INTEGRITY_GUARD="$LIVE_GUARD" \
+    LIVE_INTEGRITY_PYTHON="$PYBIN" \
+    LIVE_INTEGRITY_STATE="${LOG}.live-integrity-state.json" \
+    LIVE_INTEGRITY_FAILURE="$LIVE_INTEGRITY_FAILURE" \
+    LIVE_INTEGRITY_MAX_SILENCE="$LIVE_INTEGRITY_MAX_SILENCE" \
+    LIVE_INTEGRITY_POLL_SECONDS="$LIVE_INTEGRITY_POLL_SECONDS" \
+    LIVE_INTEGRITY_MARKER="$GUARD_MARKER")
+fi
 if [ "$DETACH" = "1" ]; then
-  setsid nohup "${WRAPPER[@]}" > /dev/null 2>&1 < /dev/null &
+  setsid nohup "${WATCHDOG_ENV[@]}" "${WRAPPER[@]}" \
+    > /dev/null 2>&1 < /dev/null &
 else
   # Vacation queues supervise one process group. Keep the trainer in the
   # queue runner's group so runtime/thermal termination cannot strand the
   # otherwise-detached arm; systemd KillMode=control-group remains a backstop.
-  "${WRAPPER[@]}" > /dev/null 2>&1 < /dev/null &
+  "${WATCHDOG_ENV[@]}" "${WRAPPER[@]}" \
+    > /dev/null 2>&1 < /dev/null &
 fi
 PID=$!
 PROCESS_GROUP="$(ps -o pgid= -p "$PID" | tr -d ' ')"

@@ -375,6 +375,23 @@ class ExperimentContractTests(unittest.TestCase):
         self.assertNotIn("find pufferlib -maxdepth 1 -name '_C*.so'", source)
         self.assertIn('DETACH="${DETACH:-1}"', source)
         self.assertIn('PROCESS_GROUP="$(ps -o pgid=', source)
+        for contract in (
+            "LIVE_INTEGRITY_GUARD",
+            "LIVE_INTEGRITY_FAILURE",
+            "LIVE_INTEGRITY_MAX_SILENCE",
+            "LIVE_INTEGRITY_POLL_SECONDS",
+            "LIVE_INTEGRITY_MARKER",
+            "live_integrity_guard_sha256",
+        ):
+            self.assertIn(contract, source)
+
+        screen = (ROOT / "tools/run_reward_screen.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            'LIVE_INTEGRITY_FAILURE="$OUT_DIR/LIVE_INTEGRITY_FAILURE.json"',
+            screen,
+        )
 
     def test_vacation_screen_keeps_trainer_in_queue_process_group(self):
         wrapper = (ROOT / "tools/run_frozen_reward_screen.py").read_text(

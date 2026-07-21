@@ -712,6 +712,11 @@ expected_contract = {
     "compiled_module_sha256": screen["implementation"]["compiled_module_sha256"],
     "launcher_sha256": screen["implementation"]["launcher_sha256"],
     "status_wrapper_sha256": screen["implementation"]["status_wrapper_sha256"],
+    "live_integrity_guard_sha256": screen["implementation"]["live_integrity_guard_sha256"],
+    "live_integrity_max_silence": str(
+        screen["error_budget"]["max_panel_silence_seconds"]),
+    "live_integrity_poll_seconds": str(
+        screen["error_budget"]["detection_poll_seconds"]),
     "puffer_patch_bundle_sha256": screen["implementation"]["puffer_patch_bundle_sha256"],
     "vendor_head": screen["implementation"]["vendor_head"],
     "vendor_source_sha256": screen["implementation"]["vendor_source_sha256"],
@@ -1023,6 +1028,9 @@ PY
         MAX_GRAD_NORM="$MAX_GRAD_NORM" EXPECTED_POOL_HASH="$EXPECTED_POOL_HASH" \
         DETACH="$ARM_DETACH" \
         QUEUE_OWNED="$([ "$ARM_DETACH" = "0" ] && printf 1 || printf 0)" \
+        LIVE_INTEGRITY_FAILURE="$OUT_DIR/LIVE_INTEGRITY_FAILURE.json" \
+        LIVE_INTEGRITY_MAX_SILENCE="$MAX_PANEL_SILENCE_SECONDS" \
+        LIVE_INTEGRITY_POLL_SECONDS="$POLL_SECONDS" \
         /bin/bash "$ROOT/tools/run_reward_ablation.sh"
     wait_for_status "$tag" "$log"
   fi

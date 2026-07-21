@@ -164,9 +164,11 @@ Monitor all of:
 
 For repaired exact-action runs, zero tolerance is enforced live as well as at
 acceptance. The frozen `live_integrity_guard.py` must scan each new machine panel
-within the screen poll loop, stop the recorded wrapper/process group on any hard
-field failure, and emit `LIVE_INTEGRITY_FAILURE.json`; 180 seconds without a
-complete panel is itself a failure. Verify the wrapper's atomic nonzero status
+both from the screen poll loop and from the watchdog embedded beside the detached
+trainer, stop the recorded trainer/process group on any hard field failure, and
+emit `LIVE_INTEGRITY_FAILURE.json`; 180 seconds without an integrity-bearing
+panel is itself a failure. Metadata-only startup panels do not reset that clock.
+Verify the wrapper's atomic nonzero status
 and absence of its trainer child before treating the GPU as idle. Do not relaunch
 under the same run ID or let a later arm advance. A fresh runtime receives only
 the staged provenance/CUDA/deterministic checks and a disposable 50M-step canary
