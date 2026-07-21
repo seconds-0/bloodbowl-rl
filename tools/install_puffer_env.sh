@@ -39,14 +39,15 @@ snapshot_hash() {
         | xargs -0 $SHA256 | $SHA256 | awk '{print $1}')
 }
 
-# Hash every source that defines exact-action transport or sampling. The
-# installer writes this digest into a generated header; both native and CPU
-# extension modules expose the compiled value. --check then compares current
-# sources, generated header, and imported module instead of trusting mtimes.
+# Hash every source that defines exact-action transport, sampling, or recurrent
+# evaluation semantics. The installer writes this digest into a generated
+# header; both native and CPU extension modules expose the compiled value.
+# --check then compares current sources, generated header, and imported module.
 exact_backend_hash() {
     (
         cd "$PUFFER"
         for rel in \
+            pufferlib/pufferl.py \
             pufferlib/torch_pufferl.py \
             src/bindings.cu \
             src/bindings_cpu.cpp \
@@ -99,6 +100,18 @@ if [ "$MODE" = "check" ]; then
             "$PUFFER/pufferlib/torch_pufferl.py" \
             "$PUFFER/src/vecenv.h" "$PUFFER/src/pufferlib.cu"; then
             echo "drift check: exact-action backend marker missing: $exact_marker" >&2
+            echo "  fix: run tools/install_puffer_env.sh $PUFFER" >&2
+            exit 1
+        fi
+    done
+    for recurrent_contract in \
+        'src/pufferlib.cu:reset_recurrent_state_on_terminal' \
+        'src/bindings.cu:set_evaluation_mode' \
+        'pufferlib/torch_pufferl.py:pending_terminals'; do
+        recurrent_file="${recurrent_contract%%:*}"
+        recurrent_marker="${recurrent_contract#*:}"
+        if ! grep -Fq "$recurrent_marker" "$PUFFER/$recurrent_file"; then
+            echo "drift check: recurrent evaluation marker missing: $recurrent_marker" >&2
             echo "  fix: run tools/install_puffer_env.sh $PUFFER" >&2
             exit 1
         fi
@@ -324,6 +337,25 @@ if ! grep -q 'sample_joint_logits' "$TORCH_PUFFERL_PY" || \
    ! grep -q 'joint_action_offsets' "$PUFFER/src/vecenv.h" || \
    ! grep -q 'Exact sequential support' "$PUFFER/src/pufferlib.cu"; then
     echo "error: exact joint-action backend support is incomplete" >&2
+    exit 1
+fi
+
+# Recurrent evaluation contract. Apply only after exact-action support because
+# both patches extend the same native and Torch rollout paths.
+RECURRENT_PATCH="$ROOT/training/puffer_recurrent_eval_state.patch"
+if [ -f "$RECURRENT_PATCH" ] && \
+   ! grep -q 'reset_recurrent_state_rows' "$TORCH_PUFFERL_PY"; then
+    if git -C "$PUFFER" apply "$RECURRENT_PATCH"; then
+        echo "applied:   recurrent evaluation-state boundaries -> Puffer native/Torch backends"
+    else
+        echo "error: recurrent evaluation-state patch did not apply" >&2
+        exit 1
+    fi
+fi
+if ! grep -q 'reset_recurrent_state_on_terminal' "$PUFFER/src/pufferlib.cu" || \
+   ! grep -q 'set_evaluation_mode' "$PUFFER/src/bindings.cu" || \
+   ! grep -q 'pending_terminals' "$TORCH_PUFFERL_PY"; then
+    echo "error: recurrent evaluation-state support is incomplete" >&2
     exit 1
 fi
 

@@ -518,6 +518,17 @@ changes a reward, active queue, production default, or promotion verdict.
   policy tuple outside exact support; reward-screen live and final gates provide
   independent enforcement rather than waiting for a multi-billion-step arm to
   finish.
+- Apply `training/puffer_recurrent_eval_state.patch` after the exact-action
+  patch. CUDA graph warmup must leave primary and every frozen recurrent buffer
+  at exact zero. PPO training requires `reset_state=True` and evaluation mode
+  off; persistent-state training is unsupported because recomputation does not
+  capture trajectory initial state. Evaluation starts from fresh games, carries
+  state across rollout-call boundaries, and zeros each terminal row before the
+  next game's observation. The graph-captured reset launch must be row-sized,
+  not hidden-state-sized. Before a repaired run, require graph-on/off output
+  parity, primary/frozen post-terminal parity, exact-zero construction checks,
+  zero-update ratio parity, and a measured no-regression throughput smoke on the
+  target GPU.
 - BBP v4 is the first replay-pair lineage with exact conditional masks and
   canonical inactive-head sentinels (`arg=32`, `square=390`). Do not train a
   current BC/action experiment from v1-v3 pairs or mix those lineages merely

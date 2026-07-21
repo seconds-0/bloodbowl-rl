@@ -264,6 +264,16 @@ newer evidence wins.
   `--legacy-unlabeled` is historical reconstruction only. Launch the disposable
   exact-action canary with `WARM` and `POOL` unset: it is fresh, pool-free, and
   permanently ineligible as ancestry.
+- **Recurrent evaluation has an explicit boundary contract.** The installed
+  patch stack applies `puffer_recurrent_eval_state.patch` after exact actions.
+  Graph warmup restores primary and every frozen-bank state to exact zero;
+  train→eval starts fresh games and clears state once; nonterminal evaluation
+  state persists across rollout calls; terminal rows clear before the next
+  game's observation. Training is allowed only with `reset_state=True` and
+  evaluation mode off. Do not ship a hidden-state-sized no-op reset launch:
+  keep the captured gate row-sized, then measure graph-on/off parity, target-GPU
+  throughput, primary/frozen post-terminal parity, and zero-update ratios before
+  any canary.
 - **`puffer/bloodbowl/` is the SOURCE OF TRUTH; `vendor/PufferLib/ocean/bloodbowl/` is an installed snapshot** written by `tools/install_puffer_env.sh` — the build compiles the snapshot, NOT your edit. The snapshot can lag (the Mac checkout's may still say 1612). Drift guard: `tools/install_puffer_env.sh --check` (exit 1 = re-install). Run it before any build on a training box.
 - After ANY env code change, ON THE TARGET: `bash tools/install_puffer_env.sh`,
   `bash tools/install_puffer_env.sh --check`, then

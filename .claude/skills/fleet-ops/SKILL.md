@@ -175,6 +175,15 @@ under the same run ID or let a later arm advance. A fresh runtime receives only
 the staged provenance/CUDA/deterministic checks and a disposable 50M-step canary
 before any long paired screen.
 
+The staged CUDA checks must include recurrent boundaries: exact-zero primary
+and every frozen-bank state after graph warmup; deterministic graph-on/off first
+outputs; fresh train→eval games; primary/frozen first-post-terminal equivalence
+to zero state; Torch/native boundary parity; finite exact zero-update PPO ratios;
+and a target-GPU throughput comparison. Training requires `reset_state=True`
+with evaluation mode off. A row-sized captured reset gate is acceptable; a
+layers × rows × hidden no-op launch is not. Any mismatch consumes the entire
+error budget and blocks the canary.
+
 A final training Steps line is not completion. The audited evaluator may continue
 until the completed-game gate is satisfied. Do not kill it merely because the
 dashboard is no longer advancing training steps. Acceptance requires the explicit

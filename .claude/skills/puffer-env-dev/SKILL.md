@@ -390,6 +390,21 @@ surface, match() mechanics): `reference/vecenv-internals.md`.
   **bc_v4** (not valid for obs-v5 warm-start; val exact 0.508; lives on the
   training boxes — local `training/` only holds ≤ bc_v3b).
 
+### Recurrent evaluation state
+
+The current installed Puffer stack applies
+`training/puffer_recurrent_eval_state.patch` after exact joint actions. CUDA
+graph warmup must restore primary and every frozen-bank recurrent buffer to
+exact zero. Training is valid only with `reset_state=True` and evaluation mode
+off because PPO does not retain each segment's initial recurrent state.
+Evaluation starts from fresh games, preserves state across nonterminal rollout
+calls, and clears a terminal row before forwarding the next game's observation.
+Keep the captured device-gated reset launch proportional to active rows, not
+layers × rows × hidden size. Source tests are not CUDA acceptance: before a run,
+measure graph-on/off deterministic parity and throughput, primary/frozen
+post-terminal parity, construction checksums, and zero-update ratios on the
+target GPU.
+
 ## Historical BC-regularized PPO patch (rejected for new runs)
 
 The AlphaStar-style human anchor was tested after D27. When `[train] bc_coef > 0`,

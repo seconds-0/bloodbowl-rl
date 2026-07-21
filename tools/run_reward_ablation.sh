@@ -425,6 +425,7 @@ PATCH_HASH="$({
   sha256sum "$ROOT/training/pufferl_metrics_keyerror.patch"
   sha256sum "$ROOT/training/torch_pufferl_trusted_load.patch"
   sha256sum "$ROOT/training/puffer_exact_joint_actions.patch"
+  sha256sum "$ROOT/training/puffer_recurrent_eval_state.patch"
 } | sha256sum | awk '{print $1}')"
 if [ -n "$EXPECTED_PUFFER_PATCH_BUNDLE_SHA256" ] && \
    [ "$PATCH_HASH" != "$EXPECTED_PUFFER_PATCH_BUNDLE_SHA256" ]; then
