@@ -6963,3 +6963,70 @@ Next steps:
    live host.
 3. After atomic queue completion, preserve all pre-repair evidence before any
    isolated repaired-runtime install, CUDA smoke, or disposable 50M canary.
+
+## 2026-07-21 12:45 PDT — v5-safe qualification implemented; seed 44 healthy
+
+Status:
+
+- The recovery queue and BBTV user services are both active. The earlier
+  system-level `systemctl` query reported inactive because these are user
+  services; `systemctl --user` confirms both are running with their original
+  process trees and no restart.
+- Seed 44 reached 1,171,390,464 of 12B requested steps at about 183.5K SPS.
+  At that cadence, roughly 16.4 hours of training plus final evaluation remain.
+  GPU state was 82 C, 77% utilization, and 5,554/8,192 MiB.
+- The current pre-repair panel had zero reward/error integrity counters but
+  `illegal_frac=0.20498`, again expected only for this frozen marginal-action
+  baseline. It is not an acceptable value for any repaired run.
+- BBTV is active and now serving seed 44's completed 1,048,838,144-step
+  checkpoint against the frozen baseline. This is the intended observational
+  behavior: it follows atomically completed checkpoints while the trainer
+  continues and does not read partially written weights.
+
+Completed this hour:
+
+- Two independent read-only harness reviews confirmed the next qualification
+  blocker: obs-v4 and obs-v5 have the same checkpoint size, yet the 50M canary
+  still required the historical v4 warm checkpoint and marginal-action pool.
+  That canary could not have qualified the repaired runtime.
+- Implemented an isolated, test-first fresh-v5 qualification tranche on branch
+  `tranche/fresh-obs-v5-qualification-lineage`. The exact-action canary now
+  rejects inherited `WARM`/`POOL`, uses deterministic fresh initialization,
+  disables external self-play pools and frozen banks, and records obs-v5 plus
+  exact-joint-v1 semantics in screen/run manifests.
+- Added canonical content-addressed checkpoint lineage sidecars binding the
+  checkpoint hash, observation/action ABI, policy shape, producer manifest,
+  source/module/Puffer-patch identities, and eligibility. Qualification-only
+  outputs are permanently rejected as warm starts or pool seeds. Repaired
+  non-fresh launchers require eligible lineage for the warm checkpoint and
+  every bank; the pool builder copies sidecars by default and labels its
+  unlabeled mode historical-only.
+- Removed the hard-coded legacy pool identity from repaired source. A future
+  causal screen must explicitly pin the newly constructed v5 pool and lineage
+  bundle; it cannot fall back to the historical pool.
+- Source verification passed: 228 tool tests (2 dependency skips), 28 training
+  tests (1 dependency skip), 442 native tests, all focused Puffer tests, and
+  the complete ASan/UBSan suite. No live checkout, service, trainer, or viewer
+  file was modified.
+
+Current blockers / risks:
+
+- The lineage tranche still needs independent code review, commit, hosted CI,
+  and merge.
+- Confirmed recurrent-state defects still gate deployment: CUDA-graph warmup
+  contaminates persistent state, native eval carries state across games, and
+  Torch/native persistent-eval semantics disagree. Default training zeros at
+  horizon boundaries, so this is the immediately following source tranche,
+  not a reason to mix legacy v4 artifacts into the canary.
+- Seed 44 has not reached its atomic completion boundary. Do not deploy or run
+  CUDA qualification on the occupied RTX 2070.
+
+Next steps:
+
+1. Review and merge the fresh-v5 checkpoint-lineage tranche.
+2. Ship the bounded recurrent evaluation-state hardening tranche and its
+   source tests while seed 44 continues.
+3. After queue completion, preserve the final baseline evidence, deploy merged
+   main to a new isolated checkout, pass native CUDA construction/recurrent/
+   exact-support/zero-update gates, and only then run the disposable fresh 50M
+   canary under the exact-zero error budget.
