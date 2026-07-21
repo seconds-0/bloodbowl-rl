@@ -141,6 +141,14 @@ checkpoints, and remember that stopped instances can be reclaimed.
   Launch it with both `WARM` and `POOL` absent (use `env -u WARM -u POOL` when
   the shell may inherit them). It uses zero frozen banks, and its output is
   permanently marked qualification-only; do not continue from it.
+- The recurrent runtime is part of the frozen implementation identity. Before
+  the exact-action canary, a fresh isolated build must prove zero primary and
+  frozen state after CUDA graph warmup, graph-on/off deterministic output
+  parity, fresh train→eval game boundaries, primary/frozen post-terminal parity,
+  Torch/native parity, finite exact zero-update ratios, and target-GPU
+  throughput without material regression. Training requires
+  `reset_state=True`; direct training while evaluation mode is active fails.
+  Do not infer these guarantees from patch markers or CPU tests.
 
 ---
 

@@ -511,6 +511,7 @@ patches = [
     root / "training/pufferl_metrics_keyerror.patch",
     root / "training/torch_pufferl_trusted_load.patch",
     root / "training/puffer_exact_joint_actions.patch",
+    root / "training/puffer_recurrent_eval_state.patch",
 ]
 vendor_sources = [
     "pufferlib/__init__.py", "pufferlib/pufferl.py",
