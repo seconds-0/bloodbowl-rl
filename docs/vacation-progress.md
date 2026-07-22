@@ -7314,3 +7314,66 @@ Next steps:
 3. Only afterward build merged main in a fresh isolated fp32 Puffer tree, run
    and independently validate every CUDA qualification cell, and admit the
    fresh 50M canary only on a complete accepted verdict.
+
+## 2026-07-21 18:07 PDT — seed 44 healthy; lineage guard under final review
+
+Status:
+
+- The recovery queue remains active on `full-control-rerun`; no
+  `QUEUE_COMPLETE.json` exists. Seed 44 reached 4,689,756,160 of 12B requested
+  steps at epoch 35,779. The queue, `bbstream`, `bbweb`, and `bbtv-tunnel` are
+  active/running with zero restarts and unchanged main PIDs. Nothing on the RTX
+  2070 was modified, rebuilt, restarted, or deployed.
+- The latest 86-game panel reported 2.0465 touchdowns/game, 0.3654 possession,
+  0.1381 carrier-target block share, and 0.03660 two-die-red block share. Every
+  reward clip/non-finite/component-mismatch, engine-error, and demo-fallback
+  integrity field remains exactly zero. Its `illegal_frac=0.19770` is still the
+  frozen pre-repair marginal-action diagnostic and is not admissible for a
+  repaired exact-action run.
+- The trainer PID 653090 remains the only GPU compute process. GPU state was
+  84 C, 72% utilization, 5,554/8,192 MiB, and 140.8 W. Root storage remains 12%
+  used with 847 GiB free; about 9.1 GiB RAM is available.
+- BBTV advanced atomically to seed 44's complete 4,544,528,384-step checkpoint
+  against the frozen baseline at 17:58 PDT. The public page returns HTTP 200.
+
+Completed this hour:
+
+- Opened predecessor-lineage clarification PR #53 and kept it source-only. It
+  now freezes three physically distinct roles: exact predecessor commit
+  `afc8008933548438ca93c41341f5f08fdd294386`, exact candidate commit
+  `a52fc6e2f4ece5a7ff16bb4791e3aca4dd72f2e3`, and a clean merged control-runner
+  checkout. The recovery Puffer tree is explicitly protected and ineligible.
+- Independent read-only review found two concrete failure-evidence provenance
+  gaps. First, a readable malformed baseline could omit the predecessor root;
+  second, a syntactically valid but stale baseline could name the wrong root.
+  Both were reproduced test-first and closed. The production `run` command now
+  requires an independent `--predecessor-source-root`, protects it before
+  baseline parsing, and requires it to equal the fully revalidated artifact
+  root. The predecessor module binary, backend, environment, source commit,
+  source-local Puffer path, and installer result are rechecked on consumption.
+- Current PR head is `f20b7d2969aa9ad16b1104340cc6dceb6e62523d`.
+  The focused qualification suite is 20/20 with Ruff, Python compilation, and
+  diff hygiene green. Fresh hosted checks and a fresh exact-head read-only
+  review are running; prior green revisions were intentionally invalidated by
+  the fixes and confer no merge authority.
+
+Current blockers / risks:
+
+- About 7.31B requested seed-44 training steps plus final evaluation remain.
+  The occupied historical runtime must remain unchanged through atomic
+  completion and evidence preservation.
+- PR #53 is not merge-authorized until both hosted checks pass on exact head
+  `f20b7d2` and the new independent review reports no actionable finding.
+- No target-GPU qualification evidence exists yet. Source success cannot admit
+  the canary, and the repaired runtime still has a literal zero error budget.
+
+Next steps:
+
+1. Finish exact-head review and hosted checks for PR #53; fix any concrete
+   finding test-first and merge only if the final head is completely green.
+2. Continue hourly read-only monitoring of seed 44, BBTV, integrity, thermals,
+   capacity, and process containment through atomic completion.
+3. After completion only, preserve/validate final evidence, capture the exact
+   predecessor control from its fresh isolated checkout, build the candidate in
+   a different isolated fp32 tree, and require the independently recomputed CUDA
+   qualification verdict before any disposable 50M canary.
