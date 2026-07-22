@@ -7587,3 +7587,28 @@ Blocker and next steps:
   the exact queue/checkpoint/BBTV evidence off-box with a relative-path hash
   inventory. Only after local file-set and hash equality may the isolated
   predecessor and candidate qualification trees be created.
+
+19:27 PDT auditor-review and merge addendum:
+
+- The strict auditor was moved alone onto a clean branch from merged main and
+  published as PR #54. Independent Fable and Codex reviews both requested that
+  acceptance use the final reprint's own completed-game count, require that
+  reprint to be the last machine panel, reject duplicate inode/content evidence,
+  and make the CLI evaluation floor explicit. Fable also identified displaced
+  machine markers. All valid findings were fixed in `f93f59b` with focused
+  regressions. Fable's warning that 10,000 games reproduced the old 10,001-game
+  failure boundary was historically inapplicable to this fresh recovery: D215
+  and the live command explicitly request and inclusively accept exactly 10,000.
+  The safer explicit CLI argument was adopted regardless.
+- The final local focused/adjacent suite is 19/19 green, with Python compilation,
+  Ruff, and whitespace checks green. Hosted `immutable-history` passed in 3m07s
+  and full CI passed in 5m32s. PR #54 merged to main as
+  `0964636f51b6a23d6d4282f4e0deb26a96544eb9`; the remote topic branch was
+  deleted. The completed Codex review's four high/medium findings match the
+  fixes exactly. A bounded Fable follow-up attempted a disabled browser tool
+  and ended without a verdict, so it is recorded only as a transport failure,
+  never as approval or rejection.
+- The merged code has not been deployed or copied to the occupied recovery
+  host. It remains a post-stop independent validator only. The monitoring branch
+  now carries the same hardening commit as `63d1520`; live seed 44 and BBTV were
+  untouched throughout review and merge.
