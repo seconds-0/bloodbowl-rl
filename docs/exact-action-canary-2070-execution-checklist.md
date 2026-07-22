@@ -183,14 +183,15 @@ literal `$` in the Bash command. A single `$out` or `$stripped` would be expande
 by systemd before Bash assigns it and can turn a real compute PID into an empty
 string.
 
-Before installing the real unit, construct two disposable, non-training user
-units outside every source/output root using the same `$$` command-substitution
-and `$${name}` shell-local syntax. Replace only the probe body: the empty-output
-unit must exit zero; the fixed `123` output unit and a command that exits nonzero
-must both fail. Require `systemd-analyze --user verify` on those unit files,
-capture their exact bytes/status/journal, then remove them and require their unit
-names absent. This synthetic proof must run only after the recovery boundary and
-off-box preservation; it launches no GPU process.
+Before installing the real unit, construct three separately named disposable,
+non-training user units outside every source/output root using the same `$$`
+command-substitution and `$${name}` shell-local syntax. Replace only the probe
+body: the empty-output unit must exit zero; the fixed `123` output unit must
+fail; and the probe-command-nonzero unit must independently fail. Require
+`systemd-analyze --user verify` on all three unit files, capture each unit's
+exact bytes/status/journal separately, then remove all three and require every
+unit name absent. This synthetic proof must run only after the recovery boundary
+and off-box preservation; it launches no GPU process.
 
 Then require `systemd-analyze --user verify` success for the exact real unit,
 exact installed unit-byte equality with Gate 3, `systemctl --user is-enabled`
