@@ -51,8 +51,16 @@ environment state, and RNG state cannot leak between cells. Every cell records
 the imported module path and SHA-256, compiled backend/environment identities,
 observation/action ABIs, effective configuration, seed, precision, elapsed
 time, and output hashes.
-Before any behavioral cell, the operator must freeze and pass the clean source
-commit plus the candidate module, backend-source, and environment SHA-256 values.
+Before any behavioral cell, the operator must freeze and pass the clean control-
+runner commit; the clean candidate source root and commit; and the candidate
+module, backend-source, and environment SHA-256 values. The candidate Puffer
+tree must be the vendored tree inside that exact source checkout, and that
+checkout's own installer drift check must accept it.
+The executable freezes the predecessor and candidate roles to the full commits
+named below; operator-supplied alternatives or swapped roles fail. It rejects
+the protected recovery root, requires the control-runner, predecessor, and
+candidate checkout roots to be pairwise distinct, and keeps outputs outside
+each source checkout.
 The runner compares those declared values to independently observed files and
 compiled attributes; a self-consistent but unexpected build is therefore not
 accepted. Qualification is fp32-only: BF16 storage rounds the behavior log
@@ -127,9 +135,13 @@ subprocesses using the target production shape. Compare decisions per second to
 an immutable report from the immediately preceding exact-action backend on the
 same idle host and configuration. The predecessor is accepted only through the
 exact hashed `preceding_exact_action_throughput_baseline` wrapper and its confined,
-hashed cell record. Its module/backend/environment hashes must be predeclared
+hashed cell record. Its clean source root and commit plus
+module/backend/environment hashes must be predeclared
 when captured and again when consumed; arbitrary throughput JSON or an
 unplanned old exact-action binary is invalid. Require matching
+the control-runner commit/hash and rehash the predecessor module binary on every
+consumption/validation, in addition to rerunning its source-local installer
+check. Also require matching
 host/GPU/config/precision and obs-v5/exact-joint/environment identity, zero
 hard-integrity counters, and no more than the predeclared material
 regression fraction. Graph-disabled execution is already exercised by the
@@ -151,18 +163,43 @@ must be rejected by checkpoint-lineage admission.
 
 ## Target execution order
 
-1. On the still-installed predecessor, freeze its module/backend/environment
-   digests and run `capture-throughput` with all three corresponding
-   `--expected-predecessor-*` / `--expected-environment-sha256` arguments.
-2. Recreate the pinned Puffer tree, install the full patch stack, rebuild in
-   fp32, and
-   run the installer drift check. Freeze the clean repository commit and the
-   rebuilt candidate module/backend/environment digests before any behavioral
-   cell.
-3. Run `qualify_recurrent_cuda.py run` with the baseline path, all four
-   candidate expectations, and both predecessor module/backend expectations.
-   Output must be a new external directory.
-4. Run `qualify_recurrent_cuda.py validate <QUALIFICATION.json>` unchanged.
+The occupied recovery runtime is not the throughput predecessor. It predates
+obs-v5/exact-joint execution, emits nonzero repaired-action telemetry, and its
+run manifest does not record the required observation/action ABI. Preserve it
+as historical experiment evidence, but never pass its module hash to
+`capture-throughput`.
+
+1. After atomic recovery completion, preserve all live evidence unchanged.
+   Create a fresh isolated checkout of exact commit
+   `afc8008933548438ca93c41341f5f08fdd294386`, install that commit's complete
+   exact-action plus recurrent-state patch stack into its own pinned Puffer
+   tree, and build fp32. This is the immediately preceding exact-action
+   runtime: it must report obs-v5, exact-joint-v1, matching compiled
+   backend/environment hashes, and no qualification surface.
+2. In a separate clean checkout of exact candidate
+   `a52fc6e2f4ece5a7ff16bb4791e3aca4dd72f2e3`, install the full candidate
+   patch stack into that checkout's own `vendor/PufferLib`, rebuild in fp32,
+   and run that commit's installer drift check. This candidate Puffer tree is
+   different from the predecessor tree.
+3. Use a third clean control-runner checkout at the merged commit containing
+   this lineage contract. Freeze its commit and runner hash. From that checkout,
+   run `capture-throughput` against only the isolated predecessor tree, passing
+   `--predecessor-source-root`, full
+   `--expected-predecessor-source-commit`, both predecessor module/backend
+   digests, and `--expected-environment-sha256`. Keep the output outside all
+   source checkouts. Do not modify or reuse the recovery Puffer tree.
+4. From the same unchanged control-runner checkout, run
+   `qualify_recurrent_cuda.py run` against only the candidate Puffer tree. Pass
+   `--candidate-source-root`, full `--expected-source-commit`, the baseline,
+   all candidate hashes, and the full predecessor source/module/backend
+   expectations. Independently pass `--predecessor-source-root`; it must be
+   the exact same root revalidated from the baseline artifact and is protected
+   from success and failure output before baseline validation begins. Output
+   must be a new external directory.
+5. Run `qualify_recurrent_cuda.py validate <QUALIFICATION.json>` from that same
+   unchanged control-runner checkout. The validator rechecks both source roots,
+   both commits, both source-local Puffer paths, both installer checks, every
+   runtime hash, and the runner commit/hash.
    Only that independently recomputed accepted verdict authorizes the separate
    disposable 50M canary.
 

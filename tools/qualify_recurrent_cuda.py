@@ -26,7 +26,7 @@ from typing import Any, Iterable, Mapping
 import numpy as np
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 QUALIFICATION_ONLY = True
 MANDATORY_GATES = (
     "construction_state",
@@ -82,6 +82,10 @@ BACKEND_SOURCE_FILES = (
     "src/vecenv.h",
 )
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+GIT_COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
+PREDECESSOR_SOURCE_COMMIT = "afc8008933548438ca93c41341f5f08fdd294386"
+CANDIDATE_SOURCE_COMMIT = "a52fc6e2f4ece5a7ff16bb4791e3aca4dd72f2e3"
+PROTECTED_RECOVERY_ROOT = Path("/home/rache/bloodbowl-rl-recovery-20260719")
 
 
 class QualificationError(RuntimeError):
@@ -536,8 +540,8 @@ def validate_baseline_artifact(path: Path) -> dict[str, Any]:
     wrapper = _read_json(wrapper_path)
     required_wrapper_keys = {
         "schema_version", "qualification_only", "role", "identity",
-        "expected_predecessor", "throughput", "cell_record",
-        "cell_record_sha256", "runner_sha256",
+        "expected_predecessor", "predecessor_source", "runner_source",
+        "throughput", "cell_record", "cell_record_sha256", "runner_sha256",
     }
     if set(wrapper) != required_wrapper_keys:
         raise QualificationError("throughput baseline wrapper schema is not exact")
@@ -550,6 +554,9 @@ def validate_baseline_artifact(path: Path) -> dict[str, Any]:
     current_runner_hash = sha256(Path(__file__).resolve())
     if wrapper.get("runner_sha256") != current_runner_hash:
         raise QualificationError("throughput baseline runner identity drifted")
+    runner_source = current_runner_source_identity()
+    if wrapper.get("runner_source") != runner_source:
+        raise QualificationError("throughput baseline runner checkout drifted")
     cell_path = Path(str(wrapper.get("cell_record", ""))).resolve()
     try:
         cell_path.relative_to(wrapper_path.parent)
@@ -572,10 +579,25 @@ def validate_baseline_artifact(path: Path) -> dict[str, Any]:
     if not isinstance(identity, Mapping):
         raise QualificationError("throughput predecessor identity is missing")
     identity = validate_module_identity(identity, qualification_surface=False)
+    validate_current_identity_files(identity)
     expected_predecessor = wrapper.get("expected_predecessor")
     if not isinstance(expected_predecessor, Mapping):
         raise QualificationError("throughput predecessor expectation is missing")
     validate_expected_predecessor_identity(identity, expected_predecessor)
+    predecessor_source = wrapper.get("predecessor_source")
+    if not isinstance(predecessor_source, Mapping):
+        raise QualificationError("throughput predecessor source identity is missing")
+    predecessor_source = validate_source_checkout_record(
+        predecessor_source,
+        expected_commit=str(expected_predecessor["source_commit"]),
+        role="predecessor",
+    )
+    if cell.get("predecessor_source") != predecessor_source:
+        raise QualificationError("throughput wrapper/cell source identity mismatch")
+    if cell.get("runner_source") != runner_source:
+        raise QualificationError("throughput wrapper/cell runner identity mismatch")
+    if identity.get("puffer_root") != predecessor_source["puffer_root"]:
+        raise QualificationError("throughput module is outside predecessor source checkout")
     if wrapper.get("identity") != identity:
         raise QualificationError("throughput wrapper/cell identity mismatch")
     throughput = cell.get("throughput")
@@ -589,6 +611,8 @@ def validate_baseline_artifact(path: Path) -> dict[str, Any]:
     return {
         "identity": identity,
         "expected_predecessor": dict(expected_predecessor),
+        "predecessor_source": predecessor_source,
+        "runner_source": runner_source,
         "throughput": dict(throughput),
         "cell": cell,
         "cell_path": str(cell_path),
@@ -889,10 +913,12 @@ def validate_expected_candidate_identity(
     for key in ("module_sha256", "backend_sha256", "environment_sha256"):
         _require_sha256(expected.get(key), f"frozen candidate {key}")
     source_commit = expected.get("source_commit")
-    if not isinstance(source_commit, str) or re.fullmatch(
-        r"[0-9a-f]{40,64}", source_commit
+    if not isinstance(source_commit, str) or GIT_COMMIT_PATTERN.fullmatch(
+        source_commit
     ) is None:
         raise QualificationError("frozen candidate source commit is malformed")
+    if source_commit != CANDIDATE_SOURCE_COMMIT:
+        raise QualificationError("frozen candidate source commit is not canonical")
     for identity_key, expected_key in mapping.items():
         if identity.get(identity_key) != expected.get(expected_key):
             raise QualificationError(
@@ -908,8 +934,15 @@ def validate_expected_predecessor_identity(
         "compiled_backend_sha256": "backend_sha256",
         "environment_sha256": "environment_sha256",
     }
-    if set(expected) != set(mapping.values()):
+    if set(expected) != {"source_commit", *mapping.values()}:
         raise QualificationError("frozen predecessor identity schema is not exact")
+    source_commit = expected.get("source_commit")
+    if not isinstance(source_commit, str) or GIT_COMMIT_PATTERN.fullmatch(
+        source_commit
+    ) is None:
+        raise QualificationError("frozen predecessor source commit is malformed")
+    if source_commit != PREDECESSOR_SOURCE_COMMIT:
+        raise QualificationError("frozen predecessor source commit is not canonical")
     for expected_key in mapping.values():
         _require_sha256(expected.get(expected_key), f"frozen predecessor {expected_key}")
     for identity_key, expected_key in mapping.items():
@@ -1267,15 +1300,241 @@ def _require_clean_source_and_external_output(output: Path) -> Path:
     return source_root
 
 
-def _failure_record_output(output: Path) -> Path | None:
-    """Return a path that this invocation may safely use for failure evidence."""
-    output = Path(output).resolve()
+def current_runner_source_identity() -> dict[str, str]:
     source_root = Path(__file__).resolve().parents[1]
     try:
-        output.relative_to(source_root)
+        top = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"], cwd=source_root,
+            text=True, capture_output=True, check=True, timeout=30,
+        ).stdout.strip()
+        commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=source_root,
+            text=True, capture_output=True, check=True, timeout=30,
+        ).stdout.strip()
+        status = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=all"],
+            cwd=source_root, text=True, capture_output=True, check=True, timeout=30,
+        ).stdout
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise QualificationError(f"cannot inspect control-runner checkout: {exc}") from exc
+    if Path(top).resolve() != source_root or status:
+        raise QualificationError("control-runner checkout is not exact and clean")
+    if GIT_COMMIT_PATTERN.fullmatch(commit) is None:
+        raise QualificationError("control-runner commit is malformed")
+    try:
+        source_root.relative_to(PROTECTED_RECOVERY_ROOT)
     except ValueError:
         pass
     else:
+        raise QualificationError("control runner cannot use the protected recovery root")
+    return {
+        "source_root": str(source_root),
+        "source_commit": commit,
+        "runner_sha256": sha256(Path(__file__).resolve()),
+    }
+
+
+def validate_source_checkout(
+    source_root: Path,
+    puffer_root: Path,
+    *,
+    expected_commit: str,
+    role: str,
+) -> dict[str, str]:
+    """Bind one built Puffer tree to a clean, exact source checkout."""
+    if role not in {"candidate", "predecessor"}:
+        raise QualificationError("source checkout role is invalid")
+    if not isinstance(expected_commit, str) or GIT_COMMIT_PATTERN.fullmatch(
+        expected_commit
+    ) is None:
+        raise QualificationError(f"{role} source commit must be a full lowercase Git SHA")
+    canonical_commit = {
+        "candidate": CANDIDATE_SOURCE_COMMIT,
+        "predecessor": PREDECESSOR_SOURCE_COMMIT,
+    }[role]
+    if expected_commit != canonical_commit:
+        raise QualificationError(f"{role} source commit is not the frozen canonical commit")
+    source_root = Path(source_root).resolve()
+    puffer_root = Path(puffer_root).resolve()
+    try:
+        source_root.relative_to(PROTECTED_RECOVERY_ROOT)
+    except ValueError:
+        pass
+    else:
+        raise QualificationError(f"{role} cannot use the protected recovery root")
+    if puffer_root != source_root / "vendor" / "PufferLib":
+        raise QualificationError(
+            f"{role} Puffer root is not the isolated tree inside its source checkout"
+        )
+    try:
+        top = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=source_root,
+            text=True,
+            capture_output=True,
+            timeout=30,
+        )
+        head = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=source_root,
+            text=True,
+            capture_output=True,
+            timeout=30,
+        )
+        status = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=all"],
+            cwd=source_root,
+            text=True,
+            capture_output=True,
+            timeout=30,
+        )
+    except OSError as exc:
+        raise QualificationError(f"cannot inspect {role} source checkout: {exc}") from exc
+    if top.returncode != 0 or Path(top.stdout.strip()).resolve() != source_root:
+        raise QualificationError(f"{role} source root is not an exact Git checkout root")
+    if head.returncode != 0 or head.stdout.strip() != expected_commit:
+        raise QualificationError(f"{role} source checkout is not at the frozen commit")
+    if status.returncode != 0 or status.stdout:
+        raise QualificationError(f"{role} source checkout is not clean")
+    installer = source_root / "tools" / "install_puffer_env.sh"
+    if not installer.is_file():
+        raise QualificationError(f"{role} source installer is missing")
+    try:
+        installer_check = subprocess.run(
+            [str(installer), "--check", str(puffer_root)],
+            cwd=source_root,
+            text=True,
+            capture_output=True,
+            timeout=300,
+        )
+    except OSError as exc:
+        raise QualificationError(f"cannot check {role} installed runtime: {exc}") from exc
+    if installer_check.returncode != 0:
+        detail = installer_check.stderr[-4000:] or installer_check.stdout[-4000:]
+        raise QualificationError(f"{role} source/module drift check failed: {detail}")
+    return {
+        "role": role,
+        "source_root": str(source_root),
+        "source_commit": expected_commit,
+        "puffer_root": str(puffer_root),
+        "installer_check_sha256": canonical_hash({
+            "stdout": installer_check.stdout,
+            "stderr": installer_check.stderr,
+        }),
+    }
+
+
+def validate_source_checkout_record(
+    record: Mapping[str, Any], *, expected_commit: str, role: str
+) -> dict[str, str]:
+    required = {
+        "role", "source_root", "source_commit", "puffer_root",
+        "installer_check_sha256",
+    }
+    if set(record) != required or record.get("role") != role:
+        raise QualificationError(f"recorded {role} source identity schema is not exact")
+    if record.get("source_commit") != expected_commit:
+        raise QualificationError(f"recorded {role} source commit drifted")
+    _require_sha256(
+        record.get("installer_check_sha256"), f"recorded {role} installer-check digest"
+    )
+    observed = validate_source_checkout(
+        Path(str(record.get("source_root", ""))),
+        Path(str(record.get("puffer_root", ""))),
+        expected_commit=expected_commit,
+        role=role,
+    )
+    if dict(record) != observed:
+        raise QualificationError(f"recorded {role} source checkout drifted")
+    return observed
+
+
+def require_output_outside_source(output: Path, source_root: Path, *, role: str) -> None:
+    try:
+        Path(output).resolve().relative_to(Path(source_root).resolve())
+    except ValueError:
+        return
+    raise QualificationError(f"qualification output must be outside the {role} checkout")
+
+
+def require_distinct_source_roots(*roots: Path) -> None:
+    resolved = [Path(root).resolve() for root in roots]
+    if len(set(resolved)) != len(resolved):
+        raise QualificationError("control-runner, predecessor, and candidate roots must differ")
+
+
+def require_predecessor_source_root(
+    supplied_root: Path, recorded_source: Mapping[str, Any]
+) -> Path:
+    """Require the independently supplied predecessor root to match its artifact."""
+    supplied_root = Path(supplied_root).resolve()
+    recorded_root = Path(str(recorded_source.get("source_root", ""))).resolve()
+    if supplied_root != recorded_root:
+        raise QualificationError(
+            "baseline predecessor source root differs from the independently supplied root"
+        )
+    return supplied_root
+
+
+def _failure_record_output(
+    output: Path, args: argparse.Namespace | None = None
+) -> Path | None:
+    """Return a path that this invocation may safely use for failure evidence."""
+    output = Path(output).resolve()
+    forbidden = [Path(__file__).resolve().parents[1], PROTECTED_RECOVERY_ROOT]
+    if args is not None:
+        supplied = vars(args)
+        for name in ("candidate_source_root", "predecessor_source_root"):
+            value = supplied.get(name)
+            if value is not None:
+                forbidden.append(Path(value).resolve())
+        baseline = supplied.get("baseline_throughput")
+        if baseline is not None:
+            try:
+                wrapper = _read_json(Path(baseline).resolve())
+                recorded = wrapper.get("predecessor_source")
+                required = {
+                    "role", "source_root", "source_commit", "puffer_root",
+                    "installer_check_sha256",
+                }
+                if not isinstance(recorded, Mapping) or set(recorded) != required:
+                    raise QualificationError(
+                        "baseline predecessor source identity schema is not exact"
+                    )
+                source_root_value = recorded.get("source_root")
+                puffer_root_value = recorded.get("puffer_root")
+                expected_commit = supplied.get("expected_predecessor_source_commit")
+                if (
+                    recorded.get("role") != "predecessor"
+                    or not isinstance(source_root_value, str)
+                    or not isinstance(puffer_root_value, str)
+                    or recorded.get("source_commit") != expected_commit
+                ):
+                    raise QualificationError(
+                        "baseline predecessor source identity is malformed"
+                    )
+                _require_sha256(
+                    recorded.get("installer_check_sha256"),
+                    "baseline predecessor installer-check digest",
+                )
+                source_root = Path(source_root_value)
+                puffer_root = Path(puffer_root_value)
+                if (
+                    not source_root.is_absolute()
+                    or puffer_root.resolve()
+                    != source_root.resolve() / "vendor" / "PufferLib"
+                ):
+                    raise QualificationError(
+                        "baseline predecessor source paths are malformed"
+                    )
+                forbidden.append(source_root.resolve())
+            except (QualificationError, OSError, TypeError, ValueError):
+                return None
+    for root in forbidden:
+        try:
+            output.relative_to(Path(root).resolve())
+        except ValueError:
+            continue
         return None
     if output.exists():
         if not output.is_dir() or any(output.iterdir()):
@@ -1285,7 +1544,8 @@ def _failure_record_output(output: Path) -> Path | None:
 
 def run_qualification(args: argparse.Namespace) -> int:
     output = Path(args.output).resolve()
-    source_root = _require_clean_source_and_external_output(output)
+    runner_source_root = _require_clean_source_and_external_output(output)
+    runner_source = current_runner_source_identity()
     expected_candidate = {
         "source_commit": args.expected_source_commit,
         "module_sha256": args.expected_candidate_module_sha256,
@@ -1293,32 +1553,47 @@ def run_qualification(args: argparse.Namespace) -> int:
         "environment_sha256": args.expected_environment_sha256,
     }
     expected_predecessor = {
+        "source_commit": args.expected_predecessor_source_commit,
         "module_sha256": args.expected_predecessor_module_sha256,
         "backend_sha256": args.expected_predecessor_backend_sha256,
         "environment_sha256": args.expected_environment_sha256,
     }
-    current_commit = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=source_root, text=True,
-        capture_output=True, check=True,
-    ).stdout.strip()
-    if expected_candidate["source_commit"] != current_commit:
-        raise QualificationError("current source commit differs from frozen candidate")
+    candidate_source = validate_source_checkout(
+        args.candidate_source_root,
+        args.puffer_root,
+        expected_commit=expected_candidate["source_commit"],
+        role="candidate",
+    )
+    require_output_outside_source(
+        output, Path(candidate_source["source_root"]), role="candidate source"
+    )
+    baseline_record = validate_baseline_artifact(
+        Path(args.baseline_throughput).resolve()
+    )
+    predecessor_source_root = require_predecessor_source_root(
+        args.predecessor_source_root,
+        baseline_record["predecessor_source"],
+    )
+    require_distinct_source_roots(
+        runner_source_root,
+        Path(candidate_source["source_root"]),
+        predecessor_source_root,
+    )
+    require_output_outside_source(
+        output,
+        predecessor_source_root,
+        role="predecessor source",
+    )
+    if baseline_record["runner_source"] != runner_source:
+        raise QualificationError("baseline was not captured by this control runner")
+    if baseline_record["expected_predecessor"] != expected_predecessor:
+        raise QualificationError("baseline differs from frozen predecessor identity")
     if expected_candidate["backend_sha256"] != backend_source_hash(args.puffer_root):
         raise QualificationError("current backend sources differ from frozen candidate")
     if expected_candidate["environment_sha256"] != installed_snapshot_hash(
         args.puffer_root
     ):
         raise QualificationError("installed environment differs from frozen candidate")
-    installer_check = subprocess.run(
-        [str(source_root / "tools" / "install_puffer_env.sh"), "--check",
-         str(Path(args.puffer_root).resolve())],
-        cwd=source_root,
-        text=True,
-        capture_output=True,
-    )
-    if installer_check.returncode != 0:
-        detail = installer_check.stderr[-4000:] or installer_check.stdout[-4000:]
-        raise QualificationError(f"Puffer source/module drift check failed: {detail}")
     output.mkdir(parents=True, exist_ok=True)
     gates: dict[str, dict[str, Any]] = {}
     records: list[dict[str, Any]] = []
@@ -1331,6 +1606,8 @@ def run_qualification(args: argparse.Namespace) -> int:
     if not isinstance(construction_identity, Mapping):
         raise QualificationError("construction module identity is missing")
     validate_expected_candidate_identity(construction_identity, expected_candidate)
+    if construction_identity.get("puffer_root") != candidate_source["puffer_root"]:
+        raise QualificationError("candidate module is outside its frozen source checkout")
     validate_zero_state(
         construction["state"], expected_banks=2, expected_buffers=1
     )
@@ -1451,11 +1728,6 @@ def run_qualification(args: argparse.Namespace) -> int:
     )
     records.append(throughput)
     _require_same_identity(records)
-    baseline_record = validate_baseline_artifact(
-        Path(args.baseline_throughput).resolve()
-    )
-    if baseline_record["expected_predecessor"] != expected_predecessor:
-        raise QualificationError("baseline differs from frozen predecessor identity")
     validate_predecessor_transition(baseline_record["identity"], identity)
     baseline = baseline_record["throughput"]
     throughput_metrics = validate_throughput(
@@ -1472,22 +1744,23 @@ def run_qualification(args: argparse.Namespace) -> int:
         "identity": identity,
         "expected_candidate": expected_candidate,
         "expected_predecessor": expected_predecessor,
-        "source_commit": subprocess.run(
+        "candidate_source": candidate_source,
+        "runner_source_commit": subprocess.run(
             ["git", "rev-parse", "HEAD"],
-            cwd=source_root,
+            cwd=runner_source_root,
             text=True,
             capture_output=True,
             check=True,
         ).stdout.strip(),
         "runner_sha256": sha256(Path(__file__).resolve()),
         "source_files": {
-            str(path.relative_to(source_root)): sha256(path)
+            str(path.relative_to(runner_source_root)): sha256(path)
             for path in (
-                source_root / "training/puffer_exact_joint_actions.patch",
-                source_root / "training/puffer_recurrent_eval_state.patch",
-                source_root / "training/puffer_frozen_prio_mask.patch",
-                source_root / "training/puffer_recurrent_cuda_qualification.patch",
-                source_root / "tools/install_puffer_env.sh",
+                runner_source_root / "training/puffer_exact_joint_actions.patch",
+                runner_source_root / "training/puffer_recurrent_eval_state.patch",
+                runner_source_root / "training/puffer_frozen_prio_mask.patch",
+                runner_source_root / "training/puffer_recurrent_cuda_qualification.patch",
+                runner_source_root / "tools/install_puffer_env.sh",
                 Path(__file__).resolve(),
             )
         },
@@ -1510,9 +1783,7 @@ def run_qualification(args: argparse.Namespace) -> int:
             "cell_record": baseline_record["cell_path"],
             "cell_record_sha256": baseline_record["cell_sha256"],
         },
-        "installer_check_sha256": hashlib.sha256(
-            installer_check.stdout.encode("utf-8")
-        ).hexdigest(),
+        "installer_check_sha256": candidate_source["installer_check_sha256"],
         **combined,
     }
     write_json_atomic(output / "QUALIFICATION.json", final)
@@ -1537,8 +1808,8 @@ def validate_qualification(path: Path) -> dict[str, Any]:
         ["git", "status", "--porcelain"], cwd=source_root, text=True,
         capture_output=True, check=True,
     ).stdout
-    if current_status or final.get("source_commit") != current_commit:
-        raise QualificationError("qualification source checkout/commit drifted")
+    if current_status or final.get("runner_source_commit") != current_commit:
+        raise QualificationError("qualification runner checkout/commit drifted")
     expected_source_files = {
         str(path.relative_to(source_root)): sha256(path)
         for path in (
@@ -1627,11 +1898,23 @@ def validate_qualification(path: Path) -> dict[str, Any]:
     if not isinstance(expected_candidate, Mapping):
         raise QualificationError("frozen candidate identity is missing")
     validate_expected_candidate_identity(identity, expected_candidate)
-    if expected_candidate.get("source_commit") != current_commit:
-        raise QualificationError("frozen candidate source commit differs from validator")
+    candidate_source_raw = final.get("candidate_source")
+    if not isinstance(candidate_source_raw, Mapping):
+        raise QualificationError("frozen candidate source identity is missing")
+    candidate_source = validate_source_checkout_record(
+        candidate_source_raw,
+        expected_commit=str(expected_candidate.get("source_commit", "")),
+        role="candidate",
+    )
+    if identity.get("puffer_root") != candidate_source["puffer_root"]:
+        raise QualificationError("candidate module/source checkout binding drifted")
     _require_sha256(
         final.get("installer_check_sha256"), "qualification installer-check digest"
     )
+    if final.get("installer_check_sha256") != candidate_source[
+        "installer_check_sha256"
+    ]:
+        raise QualificationError("qualification candidate installer-check digest drifted")
     precision = int(identity["precision_bytes"])
     if precision not in GRAPH_ATOL_BY_PRECISION or precision not in RATIO_ATOL_BY_PRECISION:
         raise QualificationError(f"unsupported qualification precision: {precision}")
@@ -1750,6 +2033,11 @@ def validate_qualification(path: Path) -> dict[str, Any]:
     if sha256(baseline_path) != baseline_entry.get("sha256"):
         raise QualificationError("throughput baseline artifact drifted")
     baseline_record = validate_baseline_artifact(baseline_path)
+    require_distinct_source_roots(
+        source_root,
+        Path(candidate_source["source_root"]),
+        Path(baseline_record["predecessor_source"]["source_root"]),
+    )
     if (baseline_entry.get("cell_record") != baseline_record["cell_path"]
             or baseline_entry.get("cell_record_sha256") != baseline_record[
                 "cell_sha256"
@@ -1792,18 +2080,40 @@ def validate_qualification(path: Path) -> dict[str, Any]:
 
 def capture_throughput(args: argparse.Namespace) -> int:
     output = Path(args.output).resolve()
-    _require_clean_source_and_external_output(output)
+    runner_source_root = _require_clean_source_and_external_output(output)
+    runner_source = current_runner_source_identity()
+    predecessor_source = validate_source_checkout(
+        args.predecessor_source_root,
+        args.puffer_root,
+        expected_commit=args.expected_predecessor_source_commit,
+        role="predecessor",
+    )
+    require_output_outside_source(
+        output, Path(predecessor_source["source_root"]), role="predecessor source"
+    )
+    require_distinct_source_roots(
+        runner_source_root, Path(predecessor_source["source_root"])
+    )
     output.mkdir(parents=True, exist_ok=True)
     record = _run_worker(
         args, kind="throughput", name="throughput-baseline", cudagraphs=0,
         output=output, preceding_runtime=True,
     )
     expected_predecessor = {
+        "source_commit": args.expected_predecessor_source_commit,
         "module_sha256": args.expected_predecessor_module_sha256,
         "backend_sha256": args.expected_predecessor_backend_sha256,
         "environment_sha256": args.expected_environment_sha256,
     }
     validate_expected_predecessor_identity(record["identity"], expected_predecessor)
+    if record["identity"].get("puffer_root") != predecessor_source["puffer_root"]:
+        raise QualificationError("predecessor module is outside its frozen source checkout")
+    cell_path = Path(record["record_path"])
+    cell = _read_json(cell_path)
+    cell["predecessor_source"] = predecessor_source
+    cell["runner_source"] = runner_source
+    write_json_atomic(cell_path, cell)
+    record["record_sha256"] = sha256(cell_path)
     payload = {
         "schema_version": SCHEMA_VERSION,
         "qualification_only": True,
@@ -1811,6 +2121,8 @@ def capture_throughput(args: argparse.Namespace) -> int:
         "runner_sha256": record["runner_sha256"],
         "identity": record["identity"],
         "expected_predecessor": expected_predecessor,
+        "predecessor_source": predecessor_source,
+        "runner_source": runner_source,
         "throughput": record["throughput"],
         "cell_record": record["record_path"],
         "cell_record_sha256": record["record_sha256"],
@@ -1844,10 +2156,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     add_common_arguments(run)
     run.add_argument("--output", required=True, type=Path)
     run.add_argument("--baseline-throughput", required=True, type=Path)
+    run.add_argument("--candidate-source-root", required=True, type=Path)
+    run.add_argument("--predecessor-source-root", required=True, type=Path)
     run.add_argument("--expected-source-commit", required=True)
     run.add_argument("--expected-candidate-module-sha256", required=True)
     run.add_argument("--expected-candidate-backend-sha256", required=True)
     run.add_argument("--expected-environment-sha256", required=True)
+    run.add_argument("--expected-predecessor-source-commit", required=True)
     run.add_argument("--expected-predecessor-module-sha256", required=True)
     run.add_argument("--expected-predecessor-backend-sha256", required=True)
     run.add_argument(
@@ -1861,6 +2176,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     add_common_arguments(capture)
     capture.add_argument("--output", required=True, type=Path)
+    capture.add_argument("--predecessor-source-root", required=True, type=Path)
+    capture.add_argument("--expected-predecessor-source-commit", required=True)
     capture.add_argument("--expected-predecessor-module-sha256", required=True)
     capture.add_argument("--expected-predecessor-backend-sha256", required=True)
     capture.add_argument("--expected-environment-sha256", required=True)
@@ -1903,7 +2220,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "run":
         if args.max_regression_fraction != DEFAULT_MAX_REGRESSION_FRACTION:
             raise QualificationError("throughput regression budget is frozen at 0.10")
-        failure_output = _failure_record_output(args.output)
+        failure_output = _failure_record_output(args.output, args)
         try:
             return run_qualification(args)
         except Exception as exc:

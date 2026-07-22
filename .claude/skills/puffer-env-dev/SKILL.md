@@ -421,7 +421,16 @@ non-finite or nonzero hard-integrity values, any selected frozen row, and an
 absent, loosely shaped, unhashed, or identity-mismatched
 same-host predecessor throughput report. The predecessor module/backend/
 environment hashes must be declared both when captured and when consumed. Its
-explicit recurrent-state clear is
+runtime must be built after the immutable recovery boundary in a fresh isolated
+fp32 checkout at exact commit `afc8008933548438ca93c41341f5f08fdd294386`.
+Require obs-v5, exact-joint-v1, matching compiled hashes, and no qualification
+surface. Keep exact candidate `a52fc6e2f4ece5a7ff16bb4791e3aca4dd72f2e3`
+in a different isolated source checkout and Puffer tree. A third clean merged
+control-runner checkout must record and revalidate both full commits,
+source-local Puffer paths, installer checks, and runtime hashes. The occupied
+recovery runtime is marginal-action historical evidence, not a predecessor;
+never modify or reuse the recovery Puffer tree.
+The explicit recurrent-state clear is
 only the paired post-terminal control and must never be used to alter ordinary
 training/evaluation behavior. Qualification outputs and checkpoints are never
 eligible ancestry.

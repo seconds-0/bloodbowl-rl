@@ -290,6 +290,14 @@ newer evidence wins.
   selections even at `prio_alpha=0`, zero hard counters, and a strictly wrapped,
   hashed same-host/config/precision predecessor throughput control whose
   module/backend/environment hashes were declared at capture and consumption.
+  The predecessor is a fresh isolated fp32 build of exact commit
+  `afc8008933548438ca93c41341f5f08fdd294386` (obs-v5/exact-joint-v1, no
+  qualification surface) after the recovery boundary. Keep exact candidate
+  `a52fc6e2f4ece5a7ff16bb4791e3aca4dd72f2e3` in a different isolated source
+  checkout and Puffer tree; use a third clean merged control-runner checkout
+  that records and revalidates both source commits and installer checks. Never
+  modify or reuse the recovery Puffer tree; the live marginal-action module is
+  historical evidence only.
   No baseline,
   incomplete coverage, malformed/non-finite data, or failed gate means no 50M
   canary. All outputs are qualification-only and ancestry-ineligible.
