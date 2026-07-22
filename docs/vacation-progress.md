@@ -7523,3 +7523,67 @@ Next steps:
   this goal. Honest canary viewing requires a separate reviewed obs-v5/exact-
   action CPU viewer and qualification-only follower contract, not a root-only
   service edit.
+
+## 2026-07-21 19:06 PDT — seed 44 at 5.33B; strict stopped-log auditor ready
+
+Status:
+
+- The authoritative queue remains `state=running` with
+  `current_job=full-control-rerun` and message
+  `running job full-control-rerun`. `SCREEN_COMPLETE.json` remains absent, so
+  the recovery boundary is closed. The queue, trainer, BBTV follower, web
+  server, and tunnel retain their original PIDs (610736, 653090, 610386,
+  127413, and 35307), all four services are active/running with zero restarts,
+  and nothing on the live runtime was modified, rebuilt, restarted, or
+  deployed.
+- Seed 44 reached 5,331,222,528 of 12B requested steps at epoch 40,673. The
+  latest complete 79-game panel reports 1.6329 TD/game, 0.3337 possession,
+  0.1184 carrier-target block share, and 0.03482 two-die-red share. Every one
+  of the 15 recovery-valid reward clip/non-finite/component-ledger,
+  engine-error, and demo-fallback fields is exactly zero. The historical
+  pre-exact-action `illegal_frac=0.20918` remains diagnostic only for this
+  frozen lineage.
+- The recent observed rate is about 180K steps/s, leaving roughly 6.67B steps
+  or 10.3 training hours before final evaluation. This is an estimate only;
+  queue completion, successful service exit, the exact screen artifact, the
+  frozen validator, and the independent complete-log scan remain authoritative.
+- Trainer PID 653090 remains the sole GPU compute process. The RTX 2070 was
+  81 C and 76% utilized, with 5,554/8,192 MiB in use and 119/175 W draw. The
+  filesystem remains 12% used with 847 GiB free, and about 9.0 GiB RAM is
+  available.
+- BBTV atomically selected seed 44's complete 5,293,604,864-step checkpoint
+  against the frozen baseline at 19:06 PDT. The selection SHA-256 is
+  `f623ff3b146167b31a20a588cbbe9e1ec237ae566cf3132fcdf3afb6f3cf8ae0`,
+  and <https://bbtv.seconds0.com/> returns HTTP 200.
+
+Completed this interval:
+
+- Added `tools/audit_recovery_complete_logs.py`, a streaming, read-only,
+  lineage-specific acceptance audit for the three completed recovery logs. It
+  hashes every byte, requires strict schema/step/phase monotonicity, an
+  independent train panel, independent cumulative eval panel, exactly one
+  populated cumulative final eval reprint, at least 10,000 completed eval
+  games, and exact-zero values for all 15 integrity fields valid in the frozen
+  recovery lineage. It reports but deliberately does not gate the historical
+  marginal-action `illegal_frac`.
+- The parser rejects non-standard JSON constants, duplicate keys, partial
+  startup telemetry, non-integral counters, missing/non-finite/nonzero hard
+  fields, duplicate input paths, wrong log count, and a file whose device,
+  inode, size, or nanosecond mtime changes during its scan. It performs no
+  writes and has not been copied to or run against the active recovery tree.
+- Seven focused auditor tests and ten adjacent telemetry analyzer tests pass
+  (`17/17`) with the expected `PYTHONPATH=tools`; Python compilation, Ruff,
+  and `git diff --check` also pass. A first adjacent-test invocation without
+  that import path produced only the expected `game_stats` import error and
+  was rerun correctly; it exposed no product defect.
+
+Blocker and next steps:
+
+- The only blocker is the intentional atomic training boundary. Continue
+  read-only monitoring; do not scan the 2.3 GiB completed logs again or place
+  the new auditor on the live checkout while seed 44 is writing.
+- At atomic completion, run the frozen screen validator and this independent
+  strict scan only after all three logs are stopped and stable, then preserve
+  the exact queue/checkpoint/BBTV evidence off-box with a relative-path hash
+  inventory. Only after local file-set and hash equality may the isolated
+  predecessor and candidate qualification trees be created.
