@@ -8208,6 +8208,56 @@ the stopped queue/service/process predicates, run the frozen screen validator
 and independent three-log auditor, and preserve and verify the exact evidence
 off-box before creating any qualification root.
 
+## 2026-07-22 07:05 PDT — throughput allocation mismatch closed in code
+
+Rejected second control attempt:
+
+- Merged runner `ffa49ad` correctly preserved the explicit venv interpreter,
+  and the fresh v2 control checkout, identities, and focused tests all accepted.
+  Under a newly recorded idle/cool host precondition, the untouched predecessor
+  capture then rejected during learner construction before any transition. Its
+  timing output, stderr, unit properties, journal, command, and host evidence
+  are preserved under
+  `predecessor-throughput-attempt2-rejected-cuda-oom`; the authorized
+  `predecessor-throughput` path remains absent and no candidate cell has run.
+- The exact cause was a scope mismatch: the timing runner used the complete
+  2,048 x 64 rollout quantum, 131,072 transitions, as one learner minibatch,
+  while the already frozen 50M canary contract uses minibatches of 16,384.
+  Independent tensor-shape accounting estimates about 16.93 GiB for the former
+  allocation and about 4.96 GiB for the latter. The exact-action backend and
+  observation repair account for only tens of MiB and did not cause this
+  failure. A larger GPU would merely conceal the 2070-parity error.
+
+Correction and evidence:
+
+- Added fail-first coverage and made 16,384 an explicit, immutable throughput
+  parameter for both predecessor and candidate cells. The runner rejects any
+  operator override, requires divisibility/parity with the fixed rollout, and
+  binds the value into the compared configuration hash. The stopped canary
+  analyzer now independently rejects a manifest with any other minibatch.
+- All 30 focused qualification tests and 19 analyzer tests pass, with clean
+  Ruff, byte-compilation, and diff checks. Fable approved the complete change;
+  an independent CUDA allocation and exact-head review reported no P0-P3
+  issue. Hosted CI and immutable-history both passed exact PR #62 head
+  `8b25924`, which merged as
+  `2261cd4c707733679b9482d2ab52eca3088afd54`, tree
+  `939b882ba74f51e8e7b31d6bd1d6e8d2c6f1af7d`. The merged runner SHA-256 is
+  `65dd97f2abffdd243655caa0d5bbf34e5e2eab164e8a567b9eaae305c178e7a8`;
+  the merged stopped analyzer SHA-256 is
+  `3ea835d5f7c893571e3a885c4d5ad8a7cd61e16fdd372e968b5d11b955b5d3fd`.
+
+Live state and next steps:
+
+- BBTV follower, web, and tunnel are restored; the public viewer is healthy and
+  the GPU compute list is empty. Both rejected attempts and both obsolete
+  control roots remain immutable evidence.
+- Update and merge the two operator checklists so only merged runner `2261cd4`,
+  a fresh `qualification-control-20260722-v3` root, and the exact 16,384
+  minibatch are executable authority. Then reproduce the predecessor timing
+  precondition and retry into the still-absent authorized output. Any restart,
+  nonzero hard-integrity field, identity drift, configuration mismatch, or
+  malformed evidence rejects the run before candidate qualification.
+
 ## 2026-07-22 06:18 PDT — isolated runtimes frozen; runner defect fixed
 
 Qualification construction:
