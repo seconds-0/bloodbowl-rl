@@ -133,7 +133,12 @@ turn that limitation into a fail-closed coverage gate.
 Measure a frozen number of warmup and timed rollouts in fresh graph-enabled
 subprocesses using the target production shape. Compare decisions per second to
 an immutable report from the immediately preceding exact-action backend on the
-same idle host and configuration. The predecessor is accepted only through the
+same idle host and configuration. The production graph boundary is exact:
+every graph-enabled cell uses `cudagraphs=10`, matching the frozen
+Puffer/canary default, while only the explicit graph-off parity cell may use
+`-1`. Zero is not a boolean false value; it captures the first execution before
+CUDA library lazy initialization and is rejected before backend load. The
+predecessor is accepted only through the
 exact hashed `preceding_exact_action_throughput_baseline` wrapper and its confined,
 hashed cell record. Its clean source root and commit plus
 module/backend/environment hashes must be predeclared

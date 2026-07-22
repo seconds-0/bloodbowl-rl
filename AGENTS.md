@@ -533,7 +533,10 @@ changes a reward, active queue, production default, or promotion verdict.
   off; persistent-state training is unsupported because recomputation does not
   capture trajectory initial state. Evaluation starts from fresh games, carries
   state across rollout-call boundaries, and zeros each terminal row before the
-  next game's observation. The graph-captured reset launch must be row-sized,
+  next game's observation. Graph-enabled qualification cells must use
+  `cudagraphs=10`, matching the frozen Puffer/canary warmup boundary; `0` means
+  capture on the first execution and is invalid, while `-1` is reserved for the
+  explicit graph-off parity cell. The graph-captured reset launch must be row-sized,
   not hidden-state-sized. Before a repaired run, require graph-on/off output
   parity, primary/frozen post-terminal parity, exact-zero construction checks,
   zero-update ratio parity, and a measured no-regression throughput smoke on the

@@ -269,7 +269,11 @@ newer evidence wins.
   Graph warmup restores primary and every frozen-bank state to exact zero;
   train→eval starts fresh games and clears state once; nonterminal evaluation
   state persists across rollout calls; terminal rows clear before the next
-  game's observation. Training is allowed only with `reset_state=True` and
+  game's observation. Graph-enabled qualification cells use `cudagraphs=10`,
+  exactly matching the frozen Puffer/canary warmup boundary. Reject `0` because
+  it captures the first execution before CUDA lazy initialization; reserve `-1`
+  for the explicit graph-off parity cell. Training is allowed only with
+  `reset_state=True` and
   evaluation mode off. Do not ship a hidden-state-sized no-op reset launch:
   keep the captured gate row-sized, then measure graph-on/off parity, target-GPU
   throughput, primary/frozen post-terminal parity, and zero-update ratios before
