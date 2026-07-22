@@ -8208,6 +8208,75 @@ the stopped queue/service/process predicates, run the frozen screen validator
 and independent three-log auditor, and preserve and verify the exact evidence
 off-box before creating any qualification root.
 
+## 2026-07-22 08:57 PDT — predecessor CUDA control accepted and preserved
+
+Authority and preflight:
+
+- PR #64 passed full hosted CI, immutable-history, Fable review, and an
+  independent exact-head CUDA review with no P0-P3 finding, then merged as
+  `cf13fe5e22b95da0afac033188dcea96432d6909`, tree
+  `82c184a5983a4add2278237d121604ac3833c263`. It freezes every graph-enabled
+  qualification cell to the production `cudagraphs=10` warmup boundary,
+  reserves `-1` for the explicit graph-off parity cell, and rejects zero before
+  loading the backend.
+- PR #65 bound both execution checklists to that exact runner and fresh control
+  root, passed independent exact-head review with no P0-P3 finding plus full
+  CI and immutable-history, and merged as
+  `4d6686e4c2c7478f125abf98649ab9c6961b2bfc`, tree
+  `077a86af6c19f59f6e8c9d99cf68254f284595eb`. The exact checklist hashes and
+  v4 authority record are preserved both locally and on the 2070.
+- Fresh control root
+  `/home/rache/bloodbowl-rl-qualification-control-20260722-v4` is detached at
+  exact runner `cf13fe5`, runner SHA-256 `916fa6ef...`, and a clean tree. Under
+  the exact predecessor interpreter it passed all 33 runner and 19 independent
+  analyzer tests. The first analyzer command used the repository root even
+  though that suite requires `tools/` on its import path; it emitted no
+  accepted artifact. The corrected intended-directory invocation passed and is
+  preserved as `control-v4-preflight-tests.txt`.
+
+Accepted untouched predecessor control:
+
+- BBTV selection and service state were preserved, only `bbstream.service` was
+  stopped, and web plus tunnel remained active. The v4 host precondition bound
+  the exact control, predecessor, Puffer, module, backend, environment, CPU,
+  and thread identities and accepted three samples at 48 C, 0% utilization,
+  69 MiB, and no compute PID. Its SHA-256 is `1b44df02...`.
+- Fresh one-shot unit
+  `bloodbowl-qualification-predecessor-throughput-v4.service` ran with
+  `Restart=no`, the frozen 16,384 minibatch, and production graph warmup 10.
+  It completed with `Result=success`, exit status zero, zero restarts, empty
+  stdout/stderr, and exactly two output records. The accepted wrapper SHA-256
+  is `76601cea...`; the confined cell SHA-256 is `7cbee4ec...`; canonical
+  configuration SHA-256 is `99ed1302...`.
+- The exact control validator and a separate standard-library validator both
+  accepted from fresh processes. They independently confirmed runner/source/
+  module/backend/environment identity, fp32 `obs-v5` / `exact-joint-v1`,
+  `cudagraphs=10`, minibatch 16,384, positive internally consistent timing,
+  and the exact ordered 16-key integrity registry at literal zero. Eight timed
+  rollouts produced 1,048,576 steps in 5.495645952 seconds, approximately
+  190,801 steps/s; median rollout time was 0.6832 seconds and p95 was 0.7217.
+- BBTV was restored immediately after validation. Follower, page, and tunnel
+  are active/running with zero restarts; the public page returned HTTP 200 and
+  GPU compute is empty. The completed transient control unit was retired after
+  its terminal properties and journal were preserved.
+
+Preservation and next gate:
+
+- The accepted baseline and all v4 authority, precondition, service, unit,
+  journal, test, validator, stdout, and stderr evidence are preserved off-box
+  at
+  `/Users/alexanderhuth/BloodBowlRLArtifacts/qualification-v4-predecessor-throughput-20260722`.
+  The local/remote relative file set, modes, sizes, and all 23 hashed entries
+  match; preservation-manifest SHA-256 is `fe9dd81e...`. Qualification and
+  canary eligibility remain false for these artifacts, and all three rejected
+  predecessor attempts remain historical diagnostics only.
+- Next, record a fresh candidate timing precondition, run the unchanged exact
+  `cf13fe5` recurrent-CUDA qualification under candidate interpreter and
+  runtime `a52fc6e2`, preserve its closed output, and independently validate it
+  twice. Do not materialize or launch the 50M canary unless every mandatory
+  candidate gate accepts and every transition cell remains literal-zero across
+  all 16 integrity fields.
+
 ## 2026-07-22 08:22 PDT — zero-warmup CUDA capture defect isolated
 
 V3 authority and rejected attempt:
