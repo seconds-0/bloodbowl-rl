@@ -10,6 +10,7 @@ import subprocess
 import tempfile
 import textwrap
 import unittest
+from types import SimpleNamespace
 from unittest import mock
 
 import numpy as np
@@ -422,6 +423,38 @@ class QualificationValidatorTests(unittest.TestCase):
             self.q.sha256(LEAGUE_PATCH),
         )
         self.assertIn("pufferlib/selfplay.py", self.q.BACKEND_SOURCE_FILES)
+        self.assertEqual(
+            self.q.PREDECESSOR_BACKEND_SOURCE_FILES,
+            (
+                "pufferlib/pufferl.py",
+                "pufferlib/torch_pufferl.py",
+                "src/bindings.cu",
+                "src/bindings_cpu.cpp",
+                "src/kernels.cu",
+                "src/pufferlib.cu",
+                "src/vecenv.h",
+            ),
+        )
+        self.assertNotIn(
+            "pufferlib/selfplay.py", self.q.PREDECESSOR_BACKEND_SOURCE_FILES
+        )
+
+    def test_qualification_surface_rejects_either_partial_binding(self):
+        for binding in self.q.QUALIFICATION_SURFACE_BINDINGS:
+            with self.subTest(binding=binding), self.assertRaisesRegex(
+                self.q.QualificationError, "qualification surface is partial"
+            ):
+                self.q.qualification_surface_state(
+                    SimpleNamespace(**{binding: object()})
+                )
+        self.assertIs(self.q.qualification_surface_state(SimpleNamespace()), False)
+        self.assertIs(
+            self.q.qualification_surface_state(SimpleNamespace(**{
+                binding: object()
+                for binding in self.q.QUALIFICATION_SURFACE_BINDINGS
+            })),
+            True,
+        )
 
     def test_qualification_source_identity_rejects_selfplay_drift_and_deletion(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -464,6 +497,92 @@ class QualificationValidatorTests(unittest.TestCase):
             selfplay.unlink()
             with self.assertRaises(self.q.QualificationError):
                 self.q.backend_source_hash(puffer)
+
+    def test_predecessor_keeps_historical_compiled_digest_but_binds_full_runtime(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            puffer = pathlib.Path(temporary)
+            for index, relative in enumerate(self.q.BACKEND_SOURCE_FILES):
+                path = puffer / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(f"surface-{index}\n".encode())
+            module = puffer / "pufferlib/_C.so"
+            module.write_bytes(b"predecessor-module\n")
+            snapshot = puffer / "ocean/bloodbowl/.content_hash"
+            snapshot.parent.mkdir(parents=True, exist_ok=True)
+            snapshot.write_text("b" * 64 + "\n", encoding="ascii")
+
+            compiled = self.q.backend_source_hash(
+                puffer, source_files=self.q.PREDECESSOR_BACKEND_SOURCE_FILES
+            )
+            backend = SimpleNamespace(
+                exact_action_source_hash=compiled,
+                environment_source_hash="b" * 64,
+                observation_abi="obs-v5",
+                observation_version=5,
+                action_abi="exact-joint-v1",
+                precision_bytes=4,
+                env_name="bloodbowl",
+            )
+            identity = self.q._module_identity(backend, module, puffer)
+
+            self.assertIs(identity["qualification_surface"], False)
+            self.assertEqual(identity["backend_sources_sha256"], compiled)
+            self.assertEqual(
+                identity["runtime_sources_sha256"],
+                self.q.backend_source_hash(puffer),
+            )
+            self.q.validate_module_identity(identity, qualification_surface=False)
+            self.q.validate_current_identity_files(identity)
+
+            (puffer / "pufferlib/selfplay.py").write_bytes(
+                b"changed-runtime-selfplay-semantics\n"
+            )
+            with self.assertRaisesRegex(
+                self.q.QualificationError, "runtime sources drifted"
+            ):
+                self.q.validate_current_identity_files(identity)
+
+    def test_candidate_compiled_and_runtime_digests_use_complete_registry(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            puffer = pathlib.Path(temporary)
+            for index, relative in enumerate(self.q.BACKEND_SOURCE_FILES):
+                path = puffer / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(f"candidate-{index}\n".encode())
+            module = puffer / "pufferlib/_C.so"
+            module.write_bytes(b"candidate-module\n")
+            snapshot = puffer / "ocean/bloodbowl/.content_hash"
+            snapshot.parent.mkdir(parents=True, exist_ok=True)
+            snapshot.write_text("b" * 64 + "\n", encoding="ascii")
+
+            compiled = self.q.backend_source_hash(puffer)
+            backend = SimpleNamespace(
+                exact_action_source_hash=compiled,
+                environment_source_hash="b" * 64,
+                observation_abi="obs-v5",
+                observation_version=5,
+                action_abi="exact-joint-v1",
+                precision_bytes=4,
+                env_name="bloodbowl",
+                qualification_recurrent_state=object(),
+                qualification_snapshot=object(),
+            )
+            identity = self.q._module_identity(backend, module, puffer)
+
+            self.assertIs(identity["qualification_surface"], True)
+            self.assertEqual(identity["backend_sources_sha256"], compiled)
+            self.assertEqual(identity["runtime_sources_sha256"], compiled)
+            self.q.validate_module_identity(identity, qualification_surface=True)
+            self.q.validate_current_identity_files(identity)
+
+            missing_runtime = dict(identity)
+            del missing_runtime["runtime_sources_sha256"]
+            with self.assertRaisesRegex(
+                self.q.QualificationError, "runtime_sources_sha256"
+            ):
+                self.q.validate_module_identity(
+                    missing_runtime, qualification_surface=True
+                )
 
     def test_hard_integrity_rejects_redundant_nonzero_reward_counters(self):
         self.assertEqual(self.q.HARD_INTEGRITY_KEYS, (
@@ -572,6 +691,7 @@ class QualificationValidatorTests(unittest.TestCase):
             "module_sha256": digest,
             "compiled_backend_sha256": digest,
             "backend_sources_sha256": digest,
+            "runtime_sources_sha256": digest,
             "environment_sha256": "b" * 64,
             "installed_snapshot_sha256": "b" * 64,
             "observation_abi": "obs-v5",
@@ -611,11 +731,19 @@ class QualificationValidatorTests(unittest.TestCase):
             "source_commit": self.q.PREDECESSOR_SOURCE_COMMIT,
             "module_sha256": expected["module_sha256"],
             "backend_sha256": expected["backend_sha256"],
+            "runtime_sha256": predecessor_identity["runtime_sources_sha256"],
             "environment_sha256": expected["environment_sha256"],
         }
         self.q.validate_expected_predecessor_identity(
             predecessor_identity, predecessor_expected
         )
+        with self.assertRaisesRegex(
+            self.q.QualificationError, "frozen runtime_sha256"
+        ):
+            self.q.validate_expected_predecessor_identity(
+                predecessor_identity,
+                dict(predecessor_expected, runtime_sha256="c" * 64),
+            )
         for key, value in (
             ("compiled_env", "other"),
             ("observation_abi", "obs-v4"),
@@ -637,6 +765,7 @@ class QualificationValidatorTests(unittest.TestCase):
             "module": "/puffer/pufferlib/_C.so", "puffer_root": "/puffer",
             "module_sha256": digest, "compiled_backend_sha256": digest,
             "backend_sources_sha256": digest,
+            "runtime_sources_sha256": digest,
             "environment_sha256": "b" * 64,
             "installed_snapshot_sha256": "b" * 64,
             "observation_abi": "obs-v5", "observation_version": 5,
@@ -694,6 +823,7 @@ class QualificationValidatorTests(unittest.TestCase):
                     "source_commit": self.q.PREDECESSOR_SOURCE_COMMIT,
                     "module_sha256": digest,
                     "backend_sha256": digest,
+                    "runtime_sha256": digest,
                     "environment_sha256": "b" * 64,
                 },
                 "predecessor_source": source,
@@ -1146,6 +1276,7 @@ class QualificationValidatorTests(unittest.TestCase):
                         self.q.PREDECESSOR_SOURCE_COMMIT,
                         "--expected-predecessor-module-sha256", "d" * 64,
                         "--expected-predecessor-backend-sha256", "e" * 64,
+                        "--expected-predecessor-runtime-sha256", "f" * 64,
                     ])
                     with mock.patch.object(self.q, "parse_args", return_value=args), \
                             mock.patch.object(
@@ -1181,6 +1312,7 @@ class QualificationValidatorTests(unittest.TestCase):
             self.q.PREDECESSOR_SOURCE_COMMIT,
             "--expected-predecessor-module-sha256", "d" * 64,
             "--expected-predecessor-backend-sha256", "e" * 64,
+            "--expected-predecessor-runtime-sha256", "f" * 64,
         ]
         capture_args = [
             "capture-throughput",
@@ -1191,6 +1323,7 @@ class QualificationValidatorTests(unittest.TestCase):
             self.q.PREDECESSOR_SOURCE_COMMIT,
             "--expected-predecessor-module-sha256", "a" * 64,
             "--expected-predecessor-backend-sha256", "b" * 64,
+            "--expected-predecessor-runtime-sha256", "d" * 64,
             "--expected-environment-sha256", "c" * 64,
         ]
         for command_args in (run_args, capture_args):
@@ -1199,6 +1332,18 @@ class QualificationValidatorTests(unittest.TestCase):
             with self.subTest(command=command_args[0]), mock.patch("sys.stderr"), \
                     self.assertRaises(SystemExit) as raised:
                 self.q.parse_args(omitted)
+            self.assertEqual(raised.exception.code, 2)
+
+            runtime_index = command_args.index(
+                "--expected-predecessor-runtime-sha256"
+            )
+            omitted_runtime = (
+                command_args[:runtime_index] + command_args[runtime_index + 2:]
+            )
+            with self.subTest(
+                command=command_args[0], required="runtime"
+            ), mock.patch("sys.stderr"), self.assertRaises(SystemExit) as raised:
+                self.q.parse_args(omitted_runtime)
             self.assertEqual(raised.exception.code, 2)
 
     def test_top_level_acceptance_is_and_of_all_named_mandatory_gates(self):
@@ -1449,6 +1594,7 @@ class QualificationPatchContractTests(unittest.TestCase):
         predecessor = "afc8008933548438ca93c41341f5f08fdd294386"
         rejected_candidate = "a52fc6e2f4ece5a7ff16bb4791e3aca4dd72f2e3"
         plan = PLAN.read_text(encoding="utf-8")
+        checklist = QUALIFICATION_CHECKLIST.read_text(encoding="utf-8")
         self.assertIn(predecessor, plan)
         self.assertIn(rejected_candidate, plan)
         self.assertIn("own pinned Puffer", plan)
@@ -1460,6 +1606,23 @@ class QualificationPatchContractTests(unittest.TestCase):
         self.assertIn("Do not modify or reuse the recovery Puffer tree", plan)
         self.assertIn("`cudagraphs=10`", plan)
         self.assertNotIn("On the still-installed predecessor", plan)
+        self.assertNotIn(
+            "Launch only from the exact isolated `a52fc6e2", plan
+        )
+        self.assertNotIn("checkout of exact candidate", plan)
+        normalized_plan = " ".join(plan.split())
+        self.assertIn(
+            f"`{rejected_candidate}` attempt and all of its authorities are "
+            "permanently rejected",
+            normalized_plan,
+        )
+        self.assertEqual(
+            checklist.count("--expected-predecessor-runtime-sha256"), 2
+        )
+        self.assertIn(
+            "0bf5c09cdc5507bbdf28b3c4c470349c1fecca6b742d2252c27416f7250d14c8",
+            checklist,
+        )
         for path in (AGENTS, CLAUDE, PUFFER_SKILL, TRAINING_SKILL):
             with self.subTest(path=path):
                 text = path.read_text(encoding="utf-8")

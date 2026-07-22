@@ -1,17 +1,33 @@
 # RTX 2070 recurrent-CUDA qualification execution checklist
 
-Status: prepared 2026-07-21 for execution only after the recovery queue's
-atomic completion and off-box preservation. This checklist does not authorize
-an early build, service change, trainer launch, checkpoint promotion, or use of
-qualification/canary output as training ancestry.
+Status: recovery boundary complete and preserved; schema-3 recapture pending a
+merged D224 control/candidate commit. This checklist does not authorize a
+trainer launch, checkpoint promotion, or use of qualification/canary output as
+training ancestry. Any older literal runner/candidate identity below is a
+historical rejection record, not current execution authority.
+
+The first schema-3 predecessor capture failed before timing or GPU work because
+the immutable predecessor's compiled attribute used its historical backend
+registry while the runner recomputed the expanded registry containing
+`pufferlib/selfplay.py`. Preserve its empty output and rejection record; never
+retry, overwrite, or reuse that directory. Schema 3 now requires both a
+role-correct compiled-source digest and a complete runtime-source digest. The
+runtime digest always includes `selfplay.py` for predecessor and candidate and
+is independently revalidated from disk.
+The rejected schema-3 target is
+`/home/rache/bloodbowl-rl-qualification-artifacts-20260722-schema3/predecessor-throughput`;
+its rejection record is
+`predecessor-throughput-attempt1-rejection.txt` in that artifact root with
+SHA-256 `efc013889b4e2eab008210f9b0b7387728bab82349515bce7d93b4e33238d26f`.
+Neither path is an input or retry target.
 
 ## Frozen identities
 
 | Role | Exact identity |
 |---|---|
-| Control runner | `cf13fe5e22b95da0afac033188dcea96432d6909` |
+| Control runner | `<newly merged clean D224 commit>` |
 | Predecessor | `afc8008933548438ca93c41341f5f08fdd294386` |
-| Candidate | `a52fc6e2f4ece5a7ff16bb4791e3aca4dd72f2e3` |
+| Candidate | same full commit as control runner, in a separate clean checkout |
 | PufferLib base | `9836f0d2e78889c1aaf189c04d161b6fc61a9386` |
 | Python | `3.11.15` |
 | Portable requirements | `7914e9637f419c1b3ff32cd9331c19b2e7ce30ab123db816fe48d50c4c3f2d7b` |
@@ -19,41 +35,43 @@ qualification/canary output as training ancestry.
 | Observation/action ABI | `obs-v5` / `exact-joint-v1` |
 | CUDA graph warmup | exactly 10 epochs before capture |
 
-The corresponding outer Git tree identities are runner
-`82c184a5983a4add2278237d121604ac3833c263`, predecessor
-`f89318a58c9038a888419f9a0720478c1cf1a325`, and candidate
-`57731b2af496a4e382d263bbfe123bc219f6bd51`. The frozen control-runner
-`tools/qualify_recurrent_cuda.py` SHA-256 is
-`916fa6efa851c3d966658de8635dade2da61646945dabbf930774389659c140e`.
+Freeze the newly merged control/candidate commit, tree, runner SHA-256, and all
+source identities before creating new remote roots. The runner rejects an
+operator-supplied candidate commit unless it equals its own clean `HEAD` and
+the separate clean candidate checkout. Record the predecessor's existing
+historical compiled-source digest and the complete runtime-source digest; do
+not rebuild it merely to change the compiled attribute.
 
 The earlier control roots are retained as immutable rejection evidence. The
 first root, at commit `9274f45480d5bfff7943d3ce80fbc15c96760665`, proved
 that the old runner dereferenced the explicitly supplied venv Python symlink
 and therefore launched the managed base interpreter without the venv's
 packages. Its rejected empty output is preserved only at
-`<artifacts>/predecessor-throughput-attempt1-rejected-python-resolve`. The
+`/home/rache/bloodbowl-rl-qualification-artifacts-20260722/predecessor-throughput-attempt1-rejected-python-resolve`. The
 second root, at commit `ffa49adfd71644fe3ffa10106df1fcdc7421b0c7`, fixed
 that interpreter defect but attempted the complete 131,072-transition rollout
 as one learner minibatch, rather than matching the canary's fixed 16,384
 minibatch, and failed before any transition with a CUDA allocation error. Its
 rejected output is preserved only at
-`<artifacts>/predecessor-throughput-attempt2-rejected-cuda-oom`. A third root,
+`/home/rache/bloodbowl-rl-qualification-artifacts-20260722/predecessor-throughput-attempt2-rejected-cuda-oom`. A third root,
 at commit `2261cd4c707733679b9482d2ab52eca3088afd54`, fixed the
 allocation mismatch but treated Puffer's `cudagraphs` warmup-epoch count as a
 boolean and requested capture at epoch zero. First-use CUDA library allocation
 therefore invalidated the capture before any timing evidence; its rejected
 output is preserved only at
-`<artifacts>/predecessor-throughput-attempt3-rejected-cuda-graph-capture`.
-The authorized `<artifacts>/predecessor-throughput` target must remain absent
+`/home/rache/bloodbowl-rl-qualification-artifacts-20260722/predecessor-throughput-attempt3-rejected-cuda-graph-capture`.
+The authorized `<artifacts>/predecessor-throughput-v2` target must remain absent
 before the corrected capture. None of the old runners is an executable
 qualification authority. Only the merged runner identity above may create new
 throughput or qualification evidence.
 
 The predecessor installer SHA-256 is
 `577434b35c785cdb271647434ad974f1cb57f3a6dde3620d8f176d3aaa5be119`.
-The candidate installer SHA-256 is
-`de7bf4769cba18c127cb2278d8bbf9cb2f62508bcdde876341c6fe0f6a20d08f`.
-Both commits carry identical `tools/cpu_cap.sh` bytes with SHA-256
+The pre-merge candidate installer SHA-256 is
+`aeafca4e191bb88d97fd7aa4b1664d42ad1ee560467d240608975804e67a5094`;
+rehash it from the final merged commit before deployment and reject any
+unexpected difference. Both commits carry identical `tools/cpu_cap.sh` bytes
+with SHA-256
 `75ec32025777510523dc1e0d160d7a011fb4275792d15f20564afe99fe5e1907`.
 
 The common ordered patch inventory is byte-identical in both roles:
@@ -71,13 +89,18 @@ The common ordered patch inventory is byte-identical in both roles:
 | 9 | `training/puffer_exact_joint_actions.patch` | `d6c32180ee89f75d6cb885fd6aaa4d98c0d5a57e0722637636775565e924e0eb` |
 | 10 | `training/puffer_recurrent_eval_state.patch` | `b24ec966dd8d6058067080ff37c3057198bfe8ac1e778999fcd91394fc253b61` |
 
-The predecessor commit contains neither candidate-only patch. The candidate
-must then apply, in order:
+The predecessor source commit contains the league patch file, but its
+historical installer does not apply it; its Puffer runtime must retain the
+upstream/unpatched `selfplay.py`. It also lacks the two qualification-era patch
+files. The current candidate must apply and prove full reverse applicability
+for all three patches below; freeze their order from the merged installer's
+emitted manifest:
 
 | Order | Patch | SHA-256 |
 |---:|---|---|
-| 11 | `training/puffer_frozen_prio_mask.patch` | `602b719cbfbb76c4ac27d2f5227ff00ee22c8b5d9ab4ea9b90767b29ea87ee67` |
-| 12 | `training/puffer_recurrent_cuda_qualification.patch` | `5bc310ce914d5167eb69d6b62e772d9bfbedf95cbf1cf283bd3f1be2b989976f` |
+| current | `training/selfplay_league.patch` | `ffaad9b6ea7f5d1dd9436783ad1b6b0d958482c5c108bd662c028a17ff2a39a5` |
+| current | `training/puffer_frozen_prio_mask.patch` | `602b719cbfbb76c4ac27d2f5227ff00ee22c8b5d9ab4ea9b90767b29ea87ee67` |
+| current | `training/puffer_recurrent_cuda_qualification.patch` | `5bc310ce914d5167eb69d6b62e772d9bfbedf95cbf1cf283bd3f1be2b989976f` |
 
 Re-hash these files from each detached outer checkout before installation and
 record the exact ordered inventory in each external build-identity record.
@@ -86,15 +109,21 @@ Any absence, addition, reordering, or digest mismatch rejects that runtime.
 Target roots are pairwise distinct and outside the protected recovery tree:
 
 ```text
-/home/rache/bloodbowl-rl-qualification-control-20260722-v4
-/home/rache/bloodbowl-rl-qualification-predecessor-afc8008
-/home/rache/bloodbowl-rl-qualification-candidate-a52fc6e
-/home/rache/bloodbowl-rl-qualification-artifacts-20260722
+/home/rache/bloodbowl-rl-qualification-control-20260722-v6
+/home/rache/bloodbowl-rl-qualification-predecessor-afc8008-schema3
+/home/rache/bloodbowl-rl-qualification-candidate-<merged-D224-short-sha>
+/home/rache/bloodbowl-rl-qualification-artifacts-20260722-schema3-v2
 ```
 
 The control runner remains clean and unchanged. Predecessor and candidate each
 own a separate ignored `vendor/PufferLib` checkout and `.venv`. Output
 directories are external, new, and empty.
+The listed predecessor root is the existing already-built, exact, clean-checked
+schema-3 predecessor and is reused read-only for the corrected capture. Do not
+recreate, reinstall, or rebuild it under D224. If it is absent or any identity
+or installer check drifts, stop for separate review. Only the v6 control root,
+new merged-commit candidate root, and schema3-v2 artifact root are newly
+created.
 
 ## Boundary gate
 
@@ -161,8 +190,9 @@ For each outer source checkout:
    `CCACHE_DISABLE=1`.
 8. Run that exact source's `tools/install_puffer_env.sh` in install mode. The
    predecessor must apply exact actions and recurrent-state hardening only; the
-   candidate must additionally apply frozen-priority masking followed by the
-   qualification patch. Record ordered patch names and SHA-256 values.
+   candidate must additionally apply the self-play league patch,
+   frozen-priority masking, and then the qualification patch. Record ordered
+   patch names and SHA-256 values.
 9. From the source-local Puffer root, remove only its `build/` directory and
    run `./build.sh bloodbowl --float`. Do not use the recovery Puffer tree or a
    module from another checkout.
@@ -175,8 +205,9 @@ Before any behavioral cell, atomically write an external build-identity record
 containing outer commit/tree, Puffer pin, ordered patch hashes, normalized
 package hashes, Python/uv/Torch/CUDA package versions, driver and compiler
 versions, module path/hash, compiled and independently recomputed backend hash,
-environment/installed-snapshot hash, ABIs, precision, qualification-surface
-role, resolved CUDA-library hashes, CPU model/quota/affinity/thread variables,
+complete runtime-source hash, environment/installed-snapshot hash, ABIs,
+precision, qualification-surface role, resolved CUDA-library hashes, CPU
+model/quota/affinity/thread variables,
 GPU name/bus ID, and installer-check stdout/stderr digest.
 
 ## Comparable host state
@@ -208,11 +239,12 @@ not already exist. Pass:
 capture-throughput
 --puffer-root <predecessor>/vendor/PufferLib
 --python <predecessor>/vendor/PufferLib/.venv/bin/python
---output <artifacts>/predecessor-throughput
+--output <artifacts>/predecessor-throughput-v2
 --predecessor-source-root <predecessor>
 --expected-predecessor-source-commit afc8008933548438ca93c41341f5f08fdd294386
 --expected-predecessor-module-sha256 <frozen predecessor module SHA-256>
 --expected-predecessor-backend-sha256 <frozen predecessor backend SHA-256>
+--expected-predecessor-runtime-sha256 0bf5c09cdc5507bbdf28b3c4c470349c1fecca6b742d2252c27416f7250d14c8
 --expected-environment-sha256 <frozen installed environment SHA-256>
 --seed 271828
 --ratio-call-limit 64
@@ -252,16 +284,17 @@ run
 --puffer-root <candidate>/vendor/PufferLib
 --python <candidate>/vendor/PufferLib/.venv/bin/python
 --output <artifacts>/candidate-qualification
---baseline-throughput <artifacts>/predecessor-throughput/THROUGHPUT_BASELINE.json
+--baseline-throughput <artifacts>/predecessor-throughput-v2/THROUGHPUT_BASELINE.json
 --candidate-source-root <candidate>
 --predecessor-source-root <predecessor>
---expected-source-commit a52fc6e2f4ece5a7ff16bb4791e3aca4dd72f2e3
+--expected-source-commit <newly merged clean D224 control/candidate commit>
 --expected-candidate-module-sha256 <frozen candidate module SHA-256>
 --expected-candidate-backend-sha256 <frozen candidate backend SHA-256>
 --expected-environment-sha256 <same frozen installed environment SHA-256>
 --expected-predecessor-source-commit afc8008933548438ca93c41341f5f08fdd294386
 --expected-predecessor-module-sha256 <same predecessor module SHA-256>
 --expected-predecessor-backend-sha256 <same predecessor backend SHA-256>
+--expected-predecessor-runtime-sha256 0bf5c09cdc5507bbdf28b3c4c470349c1fecca6b742d2252c27416f7250d14c8
 --max-regression-fraction 0.10
 --seed 271828
 --ratio-call-limit 64

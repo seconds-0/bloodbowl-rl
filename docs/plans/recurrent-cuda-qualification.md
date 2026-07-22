@@ -1,11 +1,12 @@
 # Recurrent CUDA qualification
 
-Status: test-first source tranche, 2026-07-21. This plan does not authorize a
-live deployment, service restart, checkpoint promotion, or reuse of any
-qualification output as training ancestry.
+Status: D224 schema-3 recapture correction, 2026-07-22. This plan does not
+authorize a trainer launch, checkpoint promotion, or reuse of any qualification
+output as training ancestry.
 
-Base: merged `origin/main` at
-`afc8008933548438ca93c41341f5f08fdd294386`.
+The throughput predecessor remains exact commit
+`afc8008933548438ca93c41341f5f08fdd294386`. The control runner and candidate
+must use the same newly merged D224 commit in separate clean checkouts.
 
 ## Purpose
 
@@ -51,6 +52,14 @@ environment state, and RNG state cannot leak between cells. Every cell records
 the imported module path and SHA-256, compiled backend/environment identities,
 observation/action ABIs, effective configuration, seed, precision, elapsed
 time, and output hashes.
+Schema 3 records backend identity on two axes. The role-correct
+`backend_sources_sha256` reproduces the source registry that generated the
+native module's compiled attribute: the immutable predecessor's historical
+registry omits `pufferlib/selfplay.py`, while the candidate's current registry
+includes it. Independently, `runtime_sources_sha256` always hashes the complete
+current runtime closure, including `selfplay.py`, for both roles. Both are
+mandatory and recomputed from disk on every validation. This authenticates the
+historical module without creating a runtime drift exemption.
 Before any behavioral cell, the operator must freeze and pass the clean control-
 runner commit; the clean candidate source root and commit; and the candidate
 module, backend-source, and environment SHA-256 values. The candidate Puffer
@@ -141,7 +150,7 @@ CUDA library lazy initialization and is rejected before backend load. The
 predecessor is accepted only through the
 exact hashed `preceding_exact_action_throughput_baseline` wrapper and its confined,
 hashed cell record. Its clean source root and commit plus
-module/backend/environment hashes must be predeclared
+module/backend/runtime/environment hashes must be predeclared
 when captured and again when consumed; arbitrary throughput JSON or an
 unplanned old exact-action binary is invalid. Require matching
 the control-runner commit/hash and rehash the predecessor module binary on every
@@ -169,10 +178,11 @@ qualification directory must contain a literal `qualification_only: true` and
 must be rejected by checkpoint-lineage admission.
 
 The merged control checkout must fail closed if asked to launch the
-`exact-action-canary`; it owns the widened 16-key registry, whereas the frozen
-candidate manifest owns the original 11-key live registry. Launch only from the
-exact isolated `a52fc6e2f4ece5a7ff16bb4791e3aca4dd72f2e3` checkout, then run
-stopped validation from the clean merged control checkout.
+`exact-action-canary`. The sole
+`a52fc6e2f4ece5a7ff16bb4791e3aca4dd72f2e3` attempt and all of its authorities
+are permanently rejected. No current checkout is authorized to launch a
+replacement; only a separate reviewed post-qualification change may name its
+exact commit, registry, manifest, unit, and one-shot authority.
 
 ## Target execution order
 
@@ -182,29 +192,35 @@ run manifest does not record the required observation/action ABI. Preserve it
 as historical experiment evidence, but never pass its module hash to
 `capture-throughput`.
 
-1. After atomic recovery completion, preserve all live evidence unchanged.
-   Create a fresh isolated checkout of exact commit
-   `afc8008933548438ca93c41341f5f08fdd294386`, install that commit's complete
-   exact-action plus recurrent-state patch stack into its own pinned Puffer
-   tree, and build fp32. This is the immediately preceding exact-action
-   runtime: it must report obs-v5, exact-joint-v1, matching compiled
-   backend/environment hashes, and no qualification surface.
-2. In a separate clean checkout of exact candidate
-   `a52fc6e2f4ece5a7ff16bb4791e3aca4dd72f2e3`, install the full candidate
-   patch stack into that checkout's own `vendor/PufferLib`, rebuild in fp32,
-   and run that commit's installer drift check. This candidate Puffer tree is
-   different from the predecessor tree.
+1. The post-recovery predecessor is already built in its isolated checkout and
+   its own pinned Puffer tree at exact commit
+   `afc8008933548438ca93c41341f5f08fdd294386`. Revalidate that existing fp32
+   build and use it read-only: it must report obs-v5,
+   exact-joint-v1, matching compiled backend/environment hashes, the frozen
+   complete runtime digest, and no qualification surface. D224 does not
+   authorize reinstalling or rebuilding it. If the existing tree is absent or
+   drifted, stop for a separate reviewed reconstruction plan.
+2. In a separate clean candidate checkout at the same newly merged D224 commit
+   as the clean control runner, install the full candidate patch stack into
+   that checkout's own `vendor/PufferLib`, rebuild in fp32, and run that
+   commit's installer drift check. The candidate Puffer tree is explicitly
+   different from the predecessor tree and the control-runner tree.
 3. Use a third clean control-runner checkout at the merged commit containing
    this lineage contract. Freeze its commit and runner hash. From that checkout,
    run `capture-throughput` against only the isolated predecessor tree, passing
    `--predecessor-source-root`, full
    `--expected-predecessor-source-commit`, both predecessor module/backend
-   digests, and `--expected-environment-sha256`. Keep the output outside all
+   digests, the independently frozen complete predecessor runtime digest, and
+   `--expected-environment-sha256`. Keep the output outside all
    source checkouts. Do not modify or reuse the recovery Puffer tree.
+   The first schema-3 attempt failed before timing because its runner compared
+   the historical compiled attribute to the expanded runtime registry. Preserve
+   that rejected empty output and use an entirely new output directory after
+   the D224 correction; never retry or overwrite it.
 4. From the same unchanged control-runner checkout, run
    `qualify_recurrent_cuda.py run` against only the candidate Puffer tree. Pass
    `--candidate-source-root`, full `--expected-source-commit`, the baseline,
-   all candidate hashes, and the full predecessor source/module/backend
+   all candidate hashes, and the full predecessor source/module/backend/runtime
    expectations. Independently pass `--predecessor-source-root`; it must be
    the exact same root revalidated from the baseline artifact and is protected
    from success and failure output before baseline validation begins. Output
