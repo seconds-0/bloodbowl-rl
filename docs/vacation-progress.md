@@ -8208,6 +8208,62 @@ the stopped queue/service/process predicates, run the frozen screen validator
 and independent three-log auditor, and preserve and verify the exact evidence
 off-box before creating any qualification root.
 
+## 2026-07-22 10:55 PDT — corrected v3 canary authority through Gate 2
+
+Authority correction and merge:
+
+- PR #66 merged as `2d540a351e12fe41610231bd5878a0ca2e448551`,
+  and both post-merge `main` checks accepted. The merged v2 authority and
+  recurrent-CUDA qualification remained internally exact.
+- The first v2 synthetic empty-GPU unit then failed before real-unit install
+  for a useful fail-closed reason: systemd expanded the bare `printf "%s"`
+  format as its user-shell specifier before Bash. The real v2 unit was never
+  installed or started, all disposable probes were removed, the GPU remained
+  empty, and the six rejected authorization/unit/probe artifacts were frozen
+  by exact path and SHA-256 under the immutable v2 execution root.
+- PR #67 corrected the unit to authored `printf "%%s"`, separated accepted v2
+  plan output from fresh v3 service/authorization evidence, and closed the
+  Gate 1-6 chronology. Two independent correction reviews found no remaining
+  P0-P3; focused 34/34 qualification and 19/19 analyzer tests, Ruff,
+  compilation, and diff hygiene passed. PR and post-merge checks all accepted;
+  it merged as `6d3aedcdb6191a365c705f73823d6d98bf8fa217`, tree
+  `4edf7c355b2b505dc4548bcdc7f96a774e933b0a`.
+- The exact merged v3 authority is preserved locally and on the 2070. Its
+  authority, mode/size, and inventory SHA-256 values are respectively
+  `5980d2bb...`, `418ba9a0...`, and `4f06d522...`; all 10 remote files and the
+  complete index independently verify.
+
+Accepted execution gates:
+
+- Gate 1 accepted twice from fresh read-only invocations. Candidate `a52fc6e2`
+  and control `cf13fe5` remain clean at exact trees; the qualification's 13-file
+  closure and both preservation inventories accept; every launch-source hash,
+  the accepted v2 manifest/zero-byte released lock, all v1/v2 rejection hashes,
+  and the empty stopped-validation directory match. The v1, v2, and v3 real
+  unit identities and all rejected v2 probe units are absent.
+- Gate 2 did not rerun the launcher or rewrite its manifest. It created the
+  previously absent v3 execution root only after revalidation and wrote exactly
+  six files: two fresh validator stdout/stderr/status triplets. Both statuses
+  are zero, both stderr files are empty, and the accepted stdout files are
+  byte-identical with SHA-256 `025b40e1...`.
+- The canonical v3 real-unit source now exists under the v3 execution root and
+  is byte-identical to merged checklist commit `6d3aedc`; SHA-256 is
+  `3d2714da...`. It has not been installed. The Gate 3 authorization generator
+  is under independent read-only review before execution.
+
+Current host state and next step:
+
+- GPU compute is empty. `bbstream`, `bbweb`, and `bbtv-tunnel` remain
+  active/running with `NRestarts=0`, and <https://bbtv.seconds0.com/> returns
+  HTTP 200. No training process, checkpoint, log, run directory, or completion
+  artifact has been created by the canary.
+- Next, independently review and execute the canonical Gate 3 authorization,
+  copy and verify it off-box, then run corrected disposable empty/fixed/
+  command-failure units. Install/start the real one-shot v3 unit only if every
+  exact identity and positive/negative probe accepts with the GPU still empty.
+- PR #59's journal CI test is green. Its immutable-history check hit a single
+  container timeout rather than a semantic failure and has been rerun.
+
 ## 2026-07-22 09:47 PDT — candidate CUDA qualification accepted; v2 canary gate in review
 
 Accepted candidate qualification:
