@@ -7822,3 +7822,41 @@ Next steps:
   `main` because another registered worktree owns it, but the merge itself and
   remote deletion were independently verified. The merged tool remains
   undeployed and has not read the live writing recovery tree.
+
+20:34 PDT monitoring and qualification-freeze addendum:
+
+- The queue remains `state=running`, `current_job=full-control-rerun`, with
+  exact plan identity and no `SCREEN_COMPLETE.json`. Seed 44 reached exact step
+  6,287,654,912 of 12B at epoch 47,970. The latest complete 85-game train panel
+  reports 1.6235 TD/game, 0.3705 possession, 0.1347 carrier-target block share,
+  and 0.04482 two-die-red share. All 15 recovery-valid hard-integrity fields
+  are exactly zero; historical `illegal_frac=0.20703` remains diagnostic only.
+- The 20:05--20:34 interval averaged about 181K steps/s. Roughly 5.71B steps or
+  8.8 training hours remain at that rate. The queue boundary and post-training
+  validators remain authoritative, not this estimate.
+- Queue, trainer, BBTV follower, web server, and tunnel retain PIDs 610736,
+  653090, 610386, 127413, and 35307. All four user services remain active with
+  zero restarts, and trainer 653090 remains the sole GPU compute process. The
+  RTX 2070 was 81 C and 72% utilized, with 5,554/8,192 MiB allocated and
+  111.16/175 W draw. The recovery filesystem has 847 GiB free and about 8.8
+  GiB RAM is available.
+- BBTV selected seed 44 step 6,192,496,640 at 20:29 PDT. Its selection SHA-256
+  is `4813ab7bfb10b55ce6f819ae525e26096cee7f8cf5a6f79e31887a3fe55b6593`,
+  and the public viewer returns HTTP 200.
+- Froze and pushed the six-gate post-stop preservation checklist as `7d8d9fa`.
+  A clean detached local tools checkout now exists at exact merge `c1600ada`;
+  both tool hashes match the checklist and its 19 focused/adjacent tests pass
+  under Python 3.11. Local capacity is 56 GiB versus an expected roughly 3--4
+  GiB evidence copy. Nothing was created or changed on the 2070.
+- Derived every common and candidate-only Puffer patch digest directly from
+  exact predecessor `afc8008` and candidate `a52fc6e`, plus their installer,
+  CPU-cap, outer-tree, and frozen-runner identities. The qualification
+  checklist now rejects any absent, added, reordered, or same-named/different-
+  byte patch before installation. These additions are pushed as `f0903ca` and
+  `a5bfb89`.
+
+Next steps remain unchanged: continue read-only monitoring. At the atomic
+boundary, establish the external service/process gates, run the frozen screen
+validator and independent stopped-log audit, and require the exact verified
+off-box preservation copy before creating any 2070 qualification root or
+interrupting BBTV.
