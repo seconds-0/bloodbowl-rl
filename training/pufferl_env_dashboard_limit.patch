@@ -27,7 +27,7 @@ diff --git a/pufferlib/pufferl.py b/pufferlib/pufferl.py
 +            # Blood Bowl emits a large diagnostic contract. Truncating at 30
 +            # hid possession, turnover, defense, and integrity metrics from
 +            # logs even though the binding returned them successfully.
-+            if i == 96:
++            if i == 160:
                  break
  
      if clear:

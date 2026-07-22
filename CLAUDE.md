@@ -5,9 +5,9 @@ deterministic C11 rules engine → PufferLib 4.0 native env → PPO + action
 masking + self-play curriculum, with BC support from curated FUMBBL replays.
 
 **Read `AGENTS.md` first.** Then read the tail of `DECISIONS.md` (currently
-through D189) and, for reward/replay work,
+through D217) and, for reward/replay work,
 `docs/reward-and-replay-audit-2026-07-09.md`. The ledger is chronological; the
-July audit and D177–D189 supersede older prose that calls the June v4 reward
+July audit and D177–D192 supersede older prose that calls the June v4 reward
 economy "settled." Where this file and newer ledger evidence disagree, the
 newer evidence wins.
 
@@ -48,6 +48,178 @@ newer evidence wins.
 - **Replay edition/coverage gate (D179):** 15,347 raw = 11,580 BB2025 + 3,767
   BB2020. Use the strict 9,118-ID non-empty BB2025 allowlist. The 1,622,231
   joined BB2025 records are sharply opening-censored and rare-action poor.
+- **Strict replay-state bank (D191):** the historical BBS bank contains 123
+  BB2020-source records among 15,471. Future scenario/curriculum work must use
+  the hash-pinned, manifest-producing `tools/filter_state_bank.py` subset: 15,348
+  records from 5,328 strict BB2025 IDs. It remains all half one and opening-
+  censored; filtering edition does not create passing or late-game coverage.
+  The BBS1 fingerprint is an ABI/build guard, not content validation; preserve
+  the loader's bounds, enum, grid/player, and ball-state checks for every raw
+  snapshot before it can enter curriculum reset selection.
+- **Strict-bank scenario coverage (D192):** `bank_scenario_scan` and
+  `report_scenario_coverage.py` classify overlapping S1–S6 opportunity
+  structures only; they do not label actions, outcomes, regret, or curriculum
+  weights. Canonical raw counts are S1 5,023; S2 3,047; S3 12,661; S4 2,883;
+  S5 3,605; and S6 11,763 across 15,348 records / 5,328 replay IDs. Preserve
+  the exact bank/manifest/source/binary pins and replay-disjoint splits. Use
+  the measured thin/empty regions to size authored fixtures; never wire this
+  historical opening-censored bank into training without a separate review.
+- **Authored drill bank plan:** use
+  `docs/plans/authored-drill-state-bank.md`. Every state starts from an engine
+  initializer and is reached only through legal `bb_apply` actions; discovery
+  records every action/die, and exact replay must reproduce the raw match bytes
+  with `bb_rng_script`. Before serialization, independently rediscover the full
+  recipe from configuration-only fields and require byte identity, binding the
+  declared procgen and game seeds, plus each controller stream actually used,
+  to the action/dice transcript. Controller fields unused by a recipe kind are
+  canonical zeroes; exact replay alone is not seed provenance. Never construct late-game context by writing score,
+  half, turn, players, grid, ball, or procedure frames. Split by recipe-template
+  group and quarantine paired counterfactual outcomes from training inputs.
+  BBS1 production reset admission currently admits the shared
+  `MATCH -> TEAM_TURN` boundary plus one exact nested shape: a failed first-step,
+  non-Rush Dodge reroll window under
+  `MATCH -> TEAM_TURN -> ACTIVATION(Move) -> MOVE -> TEST(Dodge)`. The nested
+  validator recomputes the target, requires real Use/Decline actions and
+  ordinary MA remaining, rejects Rooted/Distracted/Eye Gouged movers, and
+  rejects all other TEST/parent shapes and malformed skill bits. A resolved
+  Rush leaves provenance in `match.ret` and is outside this first shape. The
+  pending destination is exposed egocentrically in observation context bytes
+  9/12 so reset observations are transition-complete. Tackle suppresses the
+  Dodge skill reroll while leaving Team Re-roll and Pro independent. Scenario
+  scanners remain fresh-team-turn-only; do not substitute the broader resumable
+  gate where a classifier assumes that boundary. The authored writer may use
+  resumable admission only for the exact F4 pending-Dodge recipe kind; every
+  F1/F2/F3/F5 record remains fresh-team-turn-only. Later target/reroll decisions
+  need their own procedure-specific
+  validation before the writer or loader may accept them. Every emitted
+  authored record must also
+  pass the canonical one-action continuation gate after loading; the gate is a
+  resumability check and must never be interpreted as an action label. The F1
+  proof privately verifies a non-dash-PA, non-No-Ball carrier's zero-die legal
+  activation -> Pass declaration -> standing, tackle-zone-capable, non-No-Ball
+  teammate target while serializing only the fresh-team-turn state. The raw
+  match keeps its ordinary ball-carrier field, but no separate probe metadata,
+  chosen action, target, or nested frame is serialized or labeled.
+  The fixed F2 proof applies the same fresh-team-turn/private-probe contract to
+  Hand-off: the carrier's legal activation and Hand-off declaration consume
+  zero dice and expose at least one adjacent catch-capable teammate. A target
+  set containing only rules-legal No Ball teammates is rejected as an authored
+  transfer opportunity, without changing engine Hand-off legality.
+  The fixed F5 proof likewise serializes only a fresh team-turn state. Its
+  active carrier must satisfy `bb_can_score_without_dice`; a private zero-die
+  activation and Move declaration must still offer End Activation. This proves
+  that score-now and Stall are available, never which choice is better, and no
+  path/action/preference metadata is stored.
+  The fixed F4 proof uses controller seed 1 and legally reaches the exact
+  pending-Dodge reroll window after 384 decisions and 110 dice. Its transcript
+  ends with the failed Step before Team/Dodge/Decline is selected; no reroll
+  action, result, reward, regret, or policy label is stored. Independent
+  rediscovery, exact replay, deterministic BBS bytes, mixed-batch preflight,
+  production-loader byte identity, decision masks, and continuation are
+  mandatory. This selective writer exception does not authorize any other
+  nested frame or any training/publication artifact.
+  The first F3 axis remains on the ordinary fresh-turn boundary and requires
+  exactly 16 half-two cells: turns 1-8 for each of the two active-side
+  orientations. The requested turn and side are stored provenance, must be zero
+  for every non-axis recipe, and are independently rediscovered. Use
+  `BB_HOME..BB_AWAY`, never the 30-entry roster catalogue, when sizing this
+  orientation axis. Its quota validator proves one structurally valid recipe
+  per cell; the writer still owns full provenance, exact replay, boundary, and
+  continuation admission. Distinct controller seeds 1000-1015 prove the fixed
+  matrix, while matching optimized/sanitized 256-seed x 16-cell sweeps yield
+  4,088 captures, 8 clean ends, and no unexpected failure. Score, possession,
+  receiving, material, reroll, roster/race, and tactical-quality diversity plus
+  sidecars, publication, training, rewards, evaluation, and deployment remain
+  separate contracts.
+  The first F2 axis remains on that same fresh-turn boundary and requires four
+  cells: Home/Away active-side orientation crossed with exactly one versus
+  two-or-more legal catch-capable Hand-off targets. Its input-preserving counter
+  first validates the complete raw boundary, then privately performs the legal
+  zero-die carrier activation and Hand-off declaration. Count only targets that
+  can attempt the Catch; a rules-legal No Ball target is not included. Store
+  side and bucket as rediscovered provenance, reject the bucket on non-axis
+  recipes, and never treat two-or-more as exactly two. Fixed seeds 4/2/8/13
+  bind the four cells. Matching optimized and sanitizer sweeps over 4,096 seeds
+  per cell yield 1,246/994/1,189/1,291 exact-replayable captures and zero
+  unexpected failures. This proves structural opportunity diversity only; it
+  does not label Hand-off, a receiver, or tactical quality and does not
+  authorize publication, training, reward changes, evaluation, or deployment.
+  The first F1 axis likewise stays at the fresh-team-turn boundary and requires
+  four cells: Home/Away active-side orientation crossed with an open or marked
+  carrier who still satisfies the complete Pass-opportunity predicate. Derive
+  pressure with `bb_is_marked` only after full raw-boundary and F1 validation;
+  geometric adjacency is not a substitute for engine Tackle-Zone semantics.
+  Store and independently rediscover both side and pressure, reject the
+  pressure field on non-axis recipes, and keep the private Pass declaration and
+  target probe out of the serialized record. This proves state-level
+  opportunity structure only. The optimized 4,096-seed-per-cell sweep yields
+  Home/open 1,323, Home/marked 948, Away/open 1,464, and Away/marked 996 exact
+  captures, with complementary clean ends and zero unexpected failure; the
+  ASan/UBSan sweep matches every count without a sanitizer finding. The axis
+  labels neither Pass nor any receiver/target and authorizes no publication,
+  training, reward,
+  evaluation, deployment, BBTV, or frozen-queue change.
+  The cross-family proof-bundle validator composes exactly 26 existing proofs:
+  F1 4, F2 4, F3 16, F4 1, and F5 1. Primary family is the exact recipe kind,
+  not overlapping state predicates; input order is irrelevant. The validator
+  reuses the complete typed axis/predicate gates and remains structural only.
+  The 4/4/16/1/1 mix is intentionally not balanced and is not a canonical bank,
+  publication transaction, or training input. The ordinary writer remains the
+  provenance/replay/admission/continuation authority; sidecars, splits, reports,
+  manifest-last publication, staging, and training stay separately gated.
+  Use `ad_build_authored_proof_bundle` as the only owner of the fixed proof
+  configuration, seed schedule, order, and positional A9 record metadata. It
+  builds in temporary checked storage and commits atomically into caller-owned
+  arrays. `0xA9000000 + index` preserves the reviewed proof bytes but is not a
+  persistent identity or sidecar key; the later metadata schema must define a
+  collision-audited recipe/version/variant registry before publication.
+  Identity schema 1 reserves opaque durable authored IDs
+  `0xAE000001..0xAE00001A` for those exact 26 recipes while deliberately
+  preserving the legacy A9 BBS bytes. Resolve identities only through the
+  immutable template/allocation ledger and separate frozen proof schedule;
+  never derive meaning from AE bits or proof position. The defining projection
+  is every discovery configuration field, including bit-exact procgen float
+  bits; transcripts and raw states remain writer provenance, not identity.
+  Schema 1 is closed at 26 rows and revision 1. Do not append a row, reinterpret
+  an ID, edit the ledger/schedule/oracle/authority bundle, or weaken the
+  writer's fresh/resumable/continuation gateways. Any future revision or cell
+  requires the separately reviewed general compiler contract. Run
+  `make authored-identity-verify`; the protected Linux authority must also
+  verify every newly reachable commit in a fresh tokenless, networkless,
+  read-only-source container. The immutable mapper probe must reject every
+  defining configuration field through the public API, including paired
+  composition-valid swaps for every semantic axis. Its authority also freezes
+  the public result ABI, function signatures, and constants. Recipe, identity,
+  and error storage are mutually disjoint; alias rejection over the greater
+  supplied/fixed extents precedes every error write. The Linux writer probe
+  must cover every canonical record at count one,
+  every family's provenance, the writer's exact allowed `count` uses, and
+  complete-batch admission/continuation before its first write callback. This
+  registry still authorizes no
+  sidecar, bank publication, training input, reward, evaluation, or deployment.
+  The next reviewed design is `docs/plans/authored-sidecar-schema.md`: paired
+  26-line `records.jsonl`/`recipes.jsonl` schemas reconcile frozen A9 record
+  order with AE identity and bind canonical transcript, dice, legal-action,
+  and raw-state hashes. They carry no action, receiver, or target selected or
+  recommended at or after capture and no separate receiver/target, reward,
+  outcome, regret, value, split, or curriculum label. Pre-capture packed actions
+  stop before capture, may retain historical arguments/receivers/targets, serve
+  replay provenance only, and are forbidden as BC/policy/receiver-target
+  labels. This is a schema plan,
+  not a serializer or publisher; filesystem transactions, manifests, bank
+  consumers, training, evaluation, and deployment remain later gates. Keep the
+  D209 identity authority byte-immutable: bootstrap a separate sidecar
+  authority first, then implement serialization only after its workflow exists
+  on the trusted base. Both F5 facts are false outside F5 and independently
+  required true on the fixed F5 row. The serializer must exercise the unchanged
+  public BBS writer exactly once through serializer-owned memory-backed
+  `FILE *` storage, compare and discard its frozen bytes, and must not refactor
+  D209's immutable writer into a new preflight API. Both complete streams stage
+  privately before the two final non-failing caller-output copies. The
+  serializer-free bootstrap must freeze the future ABI, exact memory-stream
+  length/NUL and BBS oracle semantics, malicious candidates, and full D210
+  isolation before implementation; its protected workflow covers exact-SHA
+  `pull_request_target`, `merge_group`, and main push.
 - **BC loader (D180):** use the bounded streaming loader and replay-disjoint
   split. Replay-first is the current default, not the final sampler; next
   stratify by roster/matchup, depth, and action family.
@@ -55,8 +227,10 @@ newer evidence wins.
   its four static training banks but is non-monotonic, in-pool evidence. Do not
   select the newest checkpoint or reward from it. Post-run selection uses the
   fixed paired milestone protocol; future reward work needs gamma-corrected
-  distance/anneal and no-rush A/Bs, replay-derived rare-action scenarios, and
-  per-component emitted-reward attribution.
+  distance/anneal and no-rush A/Bs plus replay-derived rare-action scenarios.
+  D190 supplies per-component emitted-reward attribution for future builds.
+  It is not present in, and must not trigger a rebuild of, the pinned vacation
+  queues; do not make retroactive component claims about their panels.
 - Canonical artifacts:
   `runs/reward-screens/reward-screen-20260709-v1/SCREEN_COMPLETE.json`,
   `runs/reward-transfer-20260713-v1/ANALYSIS.json`, and
@@ -80,7 +254,58 @@ newer evidence wins.
 ## Hard-won facts (verified — don't relearn these)
 
 ### Obs / checkpoints / build
-- **obs-v4 = 2782 bytes** (probability planes A1/A2/B; spec `docs/obs-v4-spec.md`). **Three OBS_SIZE sync points must agree** (static asserts catch 2 of 3): `BBE_OBS_SIZE` in `puffer/bloodbowl/bloodbowl.h`, `#define OBS_SIZE` in `puffer/bloodbowl/binding.c:8`, `--obs-size` in `training/convert_checkpoint.py` (default 2782; v3 ckpts need `--obs-size 1612`). Old obs-v3-lineage checkpoints are input-shape **incompatible**.
+- **obs-v5 = 2782 bytes** (obs-v4 probability planes plus decision-window truth; spec `docs/obs-v5-spec.md`). Rolled block faces are visible at reroll/choose windows, TEST kind and active movement expenditure are explicit, invalid ball coordinates zero, and Touchback placements are spatially addressable. **Three OBS_SIZE sync points must agree** (static asserts catch 2 of 3): `BBE_OBS_SIZE` in `puffer/bloodbowl/bloodbowl.h`, `#define OBS_SIZE` in `puffer/bloodbowl/binding.c:8`, `--obs-size` in `training/convert_checkpoint.py` (default 2782; v3 ckpts need `--obs-size 1612`). Obs-v4 has the same shape but different semantics: blob size cannot distinguish it, so require source/module provenance and no v4 warm-start, replay mixing, or direct curve comparison without a reviewed bridge. Obs-v3 and older checkpoints remain input-shape **incompatible**.
+- **Current checkpoint lineage is external and mandatory.** A flat blob has no
+  header; require its canonical `.lineage.json` from
+  `tools/checkpoint_lineage.py`, which binds obs-v5/exact-joint-v1, policy
+  shape, checkpoint hash, producer manifest, source/module/Puffer patch hashes,
+  and eligibility. Repaired warm/pool launchers reject missing, mismatched, or
+  qualification-only sidecars. Build current pools with `tools/build_league.py`;
+  `--legacy-unlabeled` is historical reconstruction only. Launch the disposable
+  exact-action canary with `WARM` and `POOL` unset: it is fresh, pool-free, and
+  permanently ineligible as ancestry.
+- **Recurrent evaluation has an explicit boundary contract.** The installed
+  patch stack applies `puffer_recurrent_eval_state.patch` after exact actions.
+  Graph warmup restores primary and every frozen-bank state to exact zero;
+  train→eval starts fresh games and clears state once; nonterminal evaluation
+  state persists across rollout calls; terminal rows clear before the next
+  game's observation. Training is allowed only with `reset_state=True` and
+  evaluation mode off. Do not ship a hidden-state-sized no-op reset launch:
+  keep the captured gate row-sized, then measure graph-on/off parity, target-GPU
+  throughput, primary/frozen post-terminal parity, and zero-update ratios before
+  any canary.
+- **The target-GPU recurrent gate is executable and fail closed.** Install
+  `puffer_frozen_prio_mask.patch` after recurrent state hardening and
+  `puffer_recurrent_cuda_qualification.patch` last,
+  then run `tools/qualify_recurrent_cuda.py` in an isolated checkout. Its two
+  native evidence calls are size-bounded and unused by ordinary execution. The
+  qualification build must be fp32; BF16 behavior-log-probability storage does
+  not satisfy this gate's strict recomputation-ratio contract. The
+  run command requires predeclared clean source-commit, candidate-module,
+  backend-source, and environment hashes and rejects a merely self-consistent
+  unexpected build. The final verdict requires all-bank construction zero,
+  graph parity,
+  primary/frozen post-terminal automatic/manual-zero parity, full observed
+  learner-row ratio coverage with unchanged weight bytes and zero frozen-row
+  selections even at `prio_alpha=0`, all 16 control hard counters at literal
+  zero in every transition-executing cell (construction emits no episode
+  telemetry), and a strictly wrapped,
+  hashed same-host/config/precision predecessor throughput control whose
+  module/backend/environment hashes were declared at capture and consumption.
+  The predecessor is a fresh isolated fp32 build of exact commit
+  `afc8008933548438ca93c41341f5f08fdd294386` (obs-v5/exact-joint-v1, no
+  qualification surface) after the recovery boundary. Keep exact candidate
+  `a52fc6e2f4ece5a7ff16bb4791e3aca4dd72f2e3` in a different isolated source
+  checkout and Puffer tree; use a third clean merged control-runner checkout
+  that records and revalidates both source commits and installer checks. Never
+  modify or reuse the recovery Puffer tree; the live marginal-action module is
+  historical evidence only.
+  No baseline,
+  incomplete coverage, malformed/non-finite data, or failed gate means no 50M
+  canary. All outputs are qualification-only and ancestry-ineligible. Launch
+  the canary only from the exact immutable `a52fc6e2` checkout. The merged
+  control launcher rejects that profile before creating output because its
+  widened registry is intentionally not the frozen candidate manifest.
 - **`puffer/bloodbowl/` is the SOURCE OF TRUTH; `vendor/PufferLib/ocean/bloodbowl/` is an installed snapshot** written by `tools/install_puffer_env.sh` — the build compiles the snapshot, NOT your edit. The snapshot can lag (the Mac checkout's may still say 1612). Drift guard: `tools/install_puffer_env.sh --check` (exit 1 = re-install). Run it before any build on a training box.
 - After ANY env code change, ON THE TARGET: `bash tools/install_puffer_env.sh`,
   `bash tools/install_puffer_env.sh --check`, then
@@ -100,7 +325,29 @@ newer evidence wins.
   `rulesVersion`; use `runs/replay-audit-20260713/bb2025-nonempty.ids` and the
   streaming loader.
 - Warm relaunch: ANCHOR=newest ckpt, but **newest mtime ≠ highest step across run dirs** — check the step number embedded in the filename.
-- **Masked sampling is now the default in BOTH backends** (D38): torch applies per-head `masked_fill(-inf)` before sampling, stores masks in experience, re-applies at train-time. All pre-fix torch-run intuitions (illegal_frac 1.000 era) are rebased. CUDA backend was always masked.
+- **Exact joint sampling is the accepted action contract in BOTH backends**
+  (D218). The env transports the current packed joint support; native/Torch
+  sample type, then arg conditioned on type, then square conditioned on both.
+  The selected 454-bit conditional masks are stored and reused by PPO. Inactive
+  heads are singleton sentinels, so they contribute zero log-probability and
+  entropy. `bbe_decode` rejects instead of repairing. Historical marginal-mask
+  checkpoints/corpora are a distinct behavior lineage; new pairs are BBP v4.
+- **Exact-action error budget:** scientific contamination tolerance remains
+  zero, but detection is fail-fast. The engine aborts on the first decode/support
+  violation; reward screens incrementally guard every complete machine panel,
+  include `illegal_frac` and the reward/error counters in final train/eval
+  integrity, fail after 180 seconds without an integrity-bearing panel, and use
+  an embedded watchdog that survives outer-screen loss to terminate the trainer
+  through a status-publishing wrapper. The screen and embedded watchdog must use
+  independent incremental state files. Before a long post-v5 run, require
+  provenance, CUDA graph/zero-update checks, deterministic full games, then a
+  disposable 50M-step reward-frozen canary. Never continue from its checkpoint.
+  Exact candidate `a52fc6e2` freezes the original 11-key live registry into its
+  manifest. The merged control qualification and independent stopped checks
+  also require exact zero for signed clamp delta, clipped samples, terminal and
+  non-terminal clipped samples, and non-finite samples per episode. Those five
+  are redundant under coherent telemetry, but any disagreement invalidates the
+  evidence; preserve the exact candidate identity and bind both registries.
 
 ### Reward economy (July-audited interpretation)
 - **Reward objective outcomes or decision quality, not lucky dice.** Realized
@@ -119,6 +366,14 @@ newer evidence wins.
   possession-annuity/ball-gain family survived scripted transfer, but the audit
   has not identified which component helps defense. Decompose it before
   retuning coefficients.
+- Future builds expose a 28-channel emitted-reward ledger from the team-0/home
+  perspective. Interpret component totals as pre-clamp raw reward. Require
+  `sum(components) + residual` to match raw `episode_return`, then require
+  `episode_return - reward_clip_signed_delta` to match
+  `reward_postclip_return`, within float tolerance. A nonzero clamp delta fails
+  integrity independently even when both identities hold; mismatch/non-finite
+  counters also fail. This is diagnostic attribution, not evidence that any
+  shaping term is beneficial.
 - Distance shaping is required for present learnability, not validated as final
   utility. Raw `Phi(s')-Phi(s)` is not exact PBRS under `gamma=0.995`; prefer
   `beta*(gamma*Phi(s')-Phi(s))` or demonstrate non-inferiority while annealing.
@@ -206,6 +461,23 @@ newer evidence wins.
   inactive primary service, unchanged pins, no prior overflow state, and no GPU
   compute PID. The overflow is third-ancestry characterization, never a reward
   rescue, candidate switch, promotion, or permission to edit the active plan.
+- D215/D216 record that the July overflow terminally halted after seed 42
+  finished exactly 10,000 evaluation games against its frozen 10,001 minimum.
+  Keep the old audit root and queue byte-unchanged. The only reviewed recovery
+  shape is `tools/freeze_vacation_overflow_recovery.py` in the separate
+  `/home/rache/bloodbowl-rl-recovery-20260719` root: a restart-safe exact
+  terminal-evidence proof followed by a fresh, ordinary, non-resume-safe R0
+  `control-final` run for seeds 42/43/44 from netblock. Never reuse the old
+  result/checkpoint as accepted output, restart the old queue, or start
+  milestone evaluation from the rejected artifact.
+  Use only the separately rooted `experiment-recovery-queue@.service`. Require
+  the exact reviewed recovery root, all seven Puffer patch files, and an empty
+  exact-pinned `nvidia-smi` compute-process result in the proof validation that
+  runs immediately before PPO. BBTV may read manifested checkpoints from both
+  roots, but writes its selection/cache in the recovery root and switches only
+  after a newer checkpoint is complete. Its launcher and follower execute from
+  the exact merged recovery checkout; `BBTV_ROOT=/home/rache/bloodbowl-rl`
+  supplies only the unchanged production runtime assets.
 - Post-run R0 trajectory evaluation is frozen in
   `docs/plans/r0-milestone-evaluation.md` and implemented by
   `tools/run_checkpoint_milestone_eval.py`. It accepts only a completed,
@@ -223,7 +495,7 @@ newer evidence wins.
 
 ### Engine / rules / oracles (stable since v1)
 - PufferLib 4.0 (`vendor/PufferLib`, branch 4.0) uses `src/vecenv.h` macros — the online `env_binding.h` ABI is dead 3.0. `ocean/chess/` is the template; `ocean/convert/` is stale.
-- Rules source: `docs/vendor/bloodbowlbase/` mirror (May 2026 FAQ, inline `<del>` errata — second sentence is current law). BB2025: 30 teams, Devious category, Elite Skills 0–4 cap. May 2026 errata removed the "D6 never below 1" floor. Team re-rolls UNLIMITED per turn (D15).
+- Rules source: `docs/vendor/bloodbowlbase/` mirror (May 2026 FAQ, inline `<del>` errata — second sentence is current law). BB2025: 30 teams, Devious category, Elite Skills 0–4 cap. May 2026 errata removed the "D6 never below 1" floor. Team re-rolls UNLIMITED per turn (D15). Stalling eligibility is snapshotted at carrier activation: a no-Dodge/no-Rush/no-gate scoring path plus retained possession invokes the non-rerollable crowd D6 at activation end; voluntarily ending the team turn before activating that carrier also invokes it, while an earlier Turnover or a successful Pass/Hand-off transfer does not (D193). The roll is still consumed on turns 7–8. The distinct policy choice to forego one player but continue with others is not yet represented in the 454-way action interface. A PA- player cannot declare Pass but may Hand-off. No Ball players cannot catch, intercept, or receive a Touchback; they remain legal Hand-off targets when otherwise eligible but auto-fail the required Catch without a catch die, and their square remains a legal Pass target before the ball Bounces (D198). Keep rules legality in engine semantics, never duplicate it as a reward fine.
 - FUMBBL replays: `game` = END-of-game snapshot; kickoff state from setup-phase `fieldModelSetPlayerCoordinate`; dice/decisions in `reportList.reports`. `vendor/ffb/.../PlayerState.java` is the authoritative bit table.
 - Jervis: parallel bb2020/bb2025 suites (~174 files, diff for deltas); foul conversion broken (@Ignore). ActionCalculator (281 rows) defaults Season3=BB2025 — valid oracle odds. FFB headless needs MySQL ≤5.6/MariaDB ≤10.4; `gamestate/get` is the differential extraction point.
 
@@ -247,8 +519,10 @@ newer evidence wins.
     zero.** Use a complete canonical reward manifest and validate its SHA; never
     inherit old synthesis defaults into a causal arm.
 16. **A final Steps line is not an accepted result.** Require explicit eval phase,
-    minimum completed games, final cumulative reprint, checkpoint hash, and zero
-    integrity counters. Use the screen/transfer analyzers.
+    the explicitly requested completed games, final cumulative reprint,
+    checkpoint hash, and zero integrity counters. The acceptance floor must
+    equal the request; exact completion is valid and cannot rely on vectorized
+    overshoot. Use the screen/transfer analyzers.
 17. **Directory names are not edition proof.** Filter replay IDs from embedded
     `rulesVersion`; never mix BB2020 into BB2025 because a shard happens to parse.
 18. **Replay-first is not depth-balanced.** It removes long-replay dominance but
@@ -256,6 +530,11 @@ newer evidence wins.
     or rare-action competence.
 19. **Do not touch the production checkout or evaluator while using the 2070 audit
     checkout.** Confirm paths and processes before sync, build, kill, or launch.
+20. **Do not infer Stalling from distance alone.** Use
+    `bb_can_score_without_dice` at activation start and preserve its exemptions;
+    checking only the end position misclassifies Rush/Dodge/Trait paths, prior
+    Turnovers, and successful possession transfers. Crowd and Steady Footing
+    dice must remain in the engine RNG stream.
 
 ## Conventions
 

@@ -82,6 +82,8 @@ SCREEN_CRITICAL_VENDOR_FILES = {
     "pufferlib/muon.py",
     "src/pufferlib.cu",
     "src/bindings.cu",
+    "src/bindings_cpu.cpp",
+    "src/kernels.cu",
     "src/vecenv.h",
 }
 class FreezeError(ValueError):
@@ -547,6 +549,12 @@ def build_screen_config(
         "require_gate": require_gate,
         "implementation": {
             "launcher_sha256": sha256(root / "tools/run_reward_screen.sh"),
+            "live_integrity_guard_sha256": sha256(
+                root / "tools/live_integrity_guard.py"
+            ),
+            "status_wrapper_sha256": sha256(
+                root / "tools/trainer_status_wrapper.sh"
+            ),
             "screen_analyzer_sha256": sha256(
                 root / "tools/analyze_reward_screen.py"
             ),
@@ -737,6 +745,8 @@ def freeze(spec: dict[str, Any]) -> Path:
         root / "tools/run_frozen_reward_screen.py",
         root / "tools/run_reward_screen.sh",
         root / "tools/run_reward_ablation.sh",
+        root / "tools/live_integrity_guard.py",
+        root / "tools/trainer_status_wrapper.sh",
         root / "tools/run_reward_candidate_transfer.py",
         root / "tools/analyze_reward_candidate_transfer.py",
         root / "tools/analyze_reward_screen.py",

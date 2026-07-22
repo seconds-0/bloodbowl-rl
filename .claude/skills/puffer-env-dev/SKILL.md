@@ -20,6 +20,12 @@ and `docs/reward-and-replay-audit-2026-07-09.md`. Upstream success/exit status i
 not sufficient: the audited path requires explicit phase, provenance, completed
 games, final cumulative reprint, and reward-integrity telemetry.
 
+For observation work, also read D217 and `docs/obs-v5-spec.md`. Obs-v5 retains
+obs-v4's 2,782-byte tensor shape but changes reserved-byte semantics and
+Touchback projection. Blob size cannot distinguish those lineages: require the
+exact source/module identity, and never treat a shape-loadable v4 checkpoint or
+pair shard as semantically v5 without a separately reviewed bridge.
+
 ## 1. The binding ABI
 
 A 4.0 env = `ocean/<name>/<name>.h` (all game logic) + `ocean/<name>/binding.c` (macros +
@@ -109,14 +115,14 @@ it is not a run-wide maximum.
 
 **HARD KEY LIMIT (bit us 2026-06-05):** `vec_log` in `src/bindings_cpu.cpp` AND
 `src/bindings.cu` allocates the output dict with a FIXED capacity (upstream: 32;
-ours: 96 via `training/puffer_dict_capacity.patch`) and appends `"n"` after
+ours: 160 via `training/puffer_dict_capacity.patch`) and appends `"n"` after
 `my_log` returns. `dict_set`'s capacity check is a bare `assert` upstream —
 **compiles out under NDEBUG**, so exceeding capacity is a silent 24-bytes-per-key
 heap overrun that surfaces as `free(): corrupted unsorted chunks` at the FIRST
 log aggregation with completed episodes (~epoch 3 / ~786K steps, `n==0`
 early-returns before that). It reproduces at any thread count / cwd / config —
 do not chase those. Our vendored `dict_set` now aborts loudly with the key name.
-Blood Bowl currently emits 88 keys plus `"n"`. When adding Log keys, recount
+Blood Bowl currently emits 123 keys plus `"n"`. When adding Log keys, recount
 `dict_set` calls in `my_log` (+1 for `"n"`) against the `create_dict` capacity
 at both vec_log call sites and update the installer/dashboard guidance.
 
@@ -147,24 +153,26 @@ One `c_step` = one ply. Layout: `num_agents = 2`, both slots belong to one env.
 `#define MY_ACTION_MASK N` where `N == sum(ACT_SIZES)` (total flattened logits). The vec
 allocates `total_agents * N` uchars (vecenv.h:448-459); write 1 for each legal action of
 the **next** decision when you write that slot's obs (chess memsets the mask then sets
-legal bits). The mask is consumed GPU-side: `masked_logit` in `src/pufferlib.cu:430-439`
-sets masked logits to `-1e4` during sampling and the same masking applies in the train
-pass. The policy never *sees* the mask as input — chess additionally encodes legality
-into obs features (`O_VALID_FROM`/`O_VALID_TO` square lists) so the net can learn it.
-All-zero mask doesn't crash (uniform over -1e4 logits) but samples garbage — always
-leave ≥1 bit set (give BB an explicit end-turn/no-op action that is always legal).
+legal bits). The mask is consumed by both native and Torch backends during rollout and
+PPO recomputation. Native kernels explicitly skip unsupported logits in normalization,
+sampling, entropy, and gradient loops; Torch uses `masked_fill(-inf)`. The policy never
+*sees* the mask as input — chess additionally encodes legality into obs features
+(`O_VALID_FROM`/`O_VALID_TO` square lists) so the net can learn it. Every head must have
+at least one enabled value. Blood Bowl's exact-support path asserts/fails closed on an
+empty conditional slice rather than treating it as a usable distribution.
 
-**Masked sampling is now the default in BOTH backends** (D38, the unmasked-sampler
-bug: pre-fix torch runs played at illegal_frac 1.000 through the decode fallback —
-all intuitions from that era are rebased). The installed vendored torch baseline
-exposes the vec `action_mask` (cpu+gpu), and `apply_action_mask` does a per-head
-`masked_fill(-inf)` BEFORE rollout sampling, stores masks in experience, and
-re-applies them at train-time recompute (mask-consistent ratios/entropy, all-zero
-head-row guard). `training/torch_pufferl_bcreg.patch` itself is now only the
-historical BC-loss patch; it does not carry masking. An UNPATCHED torch backend
-samples raw logits, so `c_step` must
-still tolerate any in-range action value (chess answers invalid picks with
-`reward_invalid_*` penalties, binding.c kwargs).
+**Blood Bowl uses exact joint sampling in BOTH backends** (D218). Keep the
+semantic `{type,arg,square}` logits, but transport the current ragged packed
+joint support through `MY_JOINT_ACTION_MAX`. Rollout samples type, then
+`arg|type`, then `square|type,arg`; it overwrites the ordinary 454-wide rollout
+mask with the selected conditional masks. PPO recompute continues using those
+stored masks, so ratio and entropy are distribution-identical without storing
+ragged support for the whole horizon. Inactive heads must be singleton arg=32
+or square=390. `bbe_decode` fails closed on a tuple outside support; it never
+snaps to a neighbor. Torch frozen rows must store their own action, logprob, and
+selected mask together. New BC pairs are BBP v4 with the same conditional-mask
+meaning. Run `training/test_exact_joint_actions.py`, the installed-snapshot
+check, and native/Torch ratio-one checks after any sampler change.
 
 ## 6. MultiDiscrete actions
 
@@ -208,7 +216,7 @@ cd vendor/PufferLib
                                  # to import; verify: python -c 'from pufferlib import _C;
                                  # assert _C.precision_bytes==4')
 ./build.sh bloodbowl --debug     # -O0 -g
-./build.sh bloodbowl --cpu       # Mac/CPU: torch-only backend (<200k sps, no masks)
+./build.sh bloodbowl --cpu       # Mac/CPU: Torch backend (<200k sps; exact masks supported)
 
 # 4. Train / eval / match (CLI == python -m pufferlib.pufferl):
 puffer train bloodbowl --train.learning-rate 0.001 --env.some-key 3 --vec.num-threads 4
@@ -231,7 +239,8 @@ every key must be readable by my_init), `[policy]` (hidden_size, num_layers), `[
 **macOS (this machine)**: build.sh hardcodes `-mavx2 -mfma` (build.sh:144-146, x86-only —
 strip for Apple Silicon), has empty `SANITIZE_FLAGS` on Darwin, and the default CUDA mode
 needs nvcc. On the Mac, only `--local/--fast` standalones and `--cpu` are viable; real
-training (and anything mask-dependent) happens on a Linux GPU box.
+training happens on a Linux GPU box. Exact-mask semantics can be exercised locally on
+Torch/CPU; CUDA graph capture and native-kernel behavior still require a CUDA runner.
 
 **Mac practice runs — verified working recipe (2026-06, bloodbowl)**:
 - `tools/mac_practice_build.sh` in bloodbowl-rl, NOT `./build.sh --cpu`. Three walls:
@@ -333,8 +342,10 @@ surface, match() mechanics): `reference/vecenv-internals.md`.
   audited `training/pufferl_eval_episode_gate.patch` accumulates completed games
   across intervals and scales the eval budget to the requested target. An arm is
   accepted only after the requested full games, explicit final phase/status
-  reprint, checkpoint hash, and zero integrity counters. A frozen dashboard line
-  alone proves neither a hang nor completion.
+  reprint, checkpoint hash, and zero integrity counters. Set the acceptance
+  floor to that same request: an exact count is complete and must not require an
+  incidental vectorized overshoot. A frozen dashboard line alone proves neither
+  a hang nor completion.
 - `tools/install_puffer_env.sh` applies the audited Puffer stack in this order:
   dashboard limit, env JSON, JSON metadata upgrade, phase contract, eval episode
   gate, dynamic metrics-key fix, and trusted Torch load. `tools/run_reward_screen.sh`
@@ -358,25 +369,83 @@ surface, match() mechanics): `reference/vecenv-internals.md`.
   and BC warm starts. CUDA backend loads its OWN flat-fp32 .bin fine;
   state_dict-style .bins (BC pretrain output) need the converter noted in
   training/bc_pretrain.py before GPU warm-start.
-- **Every obs bump = LINEAGE BREAK. Current: obs-v4, `BBE_OBS_SIZE` = 2782**
-  (v3 1612 + 3×390 decision-support probability planes; spec
-  `docs/obs-v4-spec.md`, offsets in `puffer/bloodbowl/bloodbowl.h`).
-  Lineage history: v2 832 → v3 1612 (tackle-zone planes) → v4 2782. The
-  encoder input dim is part of the parameter count, so checkpoints NEVER
-  cross lineages — pre-v4 artifacts are archived in `checkpoints-backup/`,
-  never warm-start from them. THREE OBS_SIZE sync points must agree
+- **Every obs bump = LINEAGE BREAK. Current runtime: obs-v5, `BBE_OBS_SIZE` =
+  2782** (obs-v4's three probability planes plus decision-window truth; spec
+  `docs/obs-v5-spec.md`). Lineage history: v2 832 → v3 1612 → v4 2782 → v5
+  2782. The equal v4/v5 shape makes size insufficient: never warm-start a v5
+  runtime from a v4 checkpoint. BBP v3 identifies newly extracted obs-v5
+  shards; historical BBP v2/2782 identifies obs-v4, and the BC loader rejects
+  mixed versions. THREE OBS_SIZE sync points must still agree
   (static asserts catch 2 of 3): `BBE_OBS_SIZE` in `bloodbowl.h`,
   `#define OBS_SIZE` in `binding.c`, and `training/convert_checkpoint.py`
   (`DEFAULT_OBS_SIZE = 2782`; converting an older artifact needs an
   explicit `--obs-size 1612` for v3 / `--obs-size 832` for v2 — binding.c's
   literal once lagged at 1612 and the `_Static_assert` caught it exactly as
-  designed, D54). BC pairs never mix obs lineages in one corpus — current
-  historical pair store is 2,085,330 v4 records across 12,304 shards, but the
+  designed, D54). The current historical pair store remains 2,085,330 obs-v4
+  records across 12,304 BBP-v2 shards; it is not current obs-v5 training data.
+  The
   strict embedded-rulesVersion BB2025 surface is 9,118 non-empty replay IDs and
   1,622,231 joined records (`runs/replay-audit-20260713/`). Never call shard count
-  replay count or mix BB2020 into BC. Current anchor lineage:
-  **bc_v4** (val exact 0.508; lives on the training boxes — local
-  `training/` only holds ≤ bc_v3b).
+  replay count or mix BB2020 into BC. Historical anchor lineage:
+  **bc_v4** (not valid for obs-v5 warm-start; val exact 0.508; lives on the
+  training boxes — local `training/` only holds ≤ bc_v3b).
+
+### Recurrent evaluation state
+
+The current installed Puffer stack applies
+`training/puffer_recurrent_eval_state.patch` after exact joint actions. CUDA
+graph warmup must restore primary and every frozen-bank recurrent buffer to
+exact zero. Training is valid only with `reset_state=True` and evaluation mode
+off because PPO does not retain each segment's initial recurrent state.
+Evaluation starts from fresh games, preserves state across nonterminal rollout
+calls, and clears a terminal row before forwarding the next game's observation.
+Keep the captured device-gated reset launch proportional to active rows, not
+layers × rows × hidden size. Source tests are not CUDA acceptance: before a run,
+measure graph-on/off deterministic parity and throughput, primary/frozen
+post-terminal parity, construction checksums, and zero-update ratios on the
+target GPU.
+
+Install `training/puffer_frozen_prio_mask.patch` after the recurrent patch, then
+install `training/puffer_recurrent_cuda_qualification.patch` last and use
+`tools/qualify_recurrent_cuda.py` for target-GPU evidence. Frozen sampling must
+be explicitly masked: zero advantage is not exclusion when `prio_alpha=0`
+because `0^0` produces unit weight.
+Build this qualification in fp32. BF16 rounds the stored behavior log
+probability before PPO recomputation and is deliberately rejected rather than
+given a misleading near-unity ratio tolerance.
+The runner uses fresh subprocesses and a bounded raw snapshot; it rejects
+an observed candidate that differs from its predeclared clean source commit or
+candidate module/backend/environment hashes,
+missing banks/buffers, incomplete sampled ratio-row coverage, changed weights,
+non-finite or nonzero values across the 16-key control hard-integrity registry
+in every transition-executing cell (the construction-only cell emits no episode
+telemetry), any selected frozen row, and an
+absent, loosely shaped, unhashed, or identity-mismatched
+same-host predecessor throughput report. The predecessor module/backend/
+environment hashes must be declared both when captured and when consumed. Its
+runtime must be built after the immutable recovery boundary in a fresh isolated
+fp32 checkout at exact commit `afc8008933548438ca93c41341f5f08fdd294386`.
+Require obs-v5, exact-joint-v1, matching compiled hashes, and no qualification
+surface. Keep exact candidate `a52fc6e2f4ece5a7ff16bb4791e3aca4dd72f2e3`
+in a different isolated source checkout and Puffer tree. A third clean merged
+control-runner checkout must record and revalidate both full commits,
+source-local Puffer paths, installer checks, and runtime hashes. The occupied
+recovery runtime is marginal-action historical evidence, not a predecessor;
+never modify or reuse the recovery Puffer tree.
+The exact `a52fc6e2` canary manifest keeps its original 11-key live fail-fast
+registry. Control qualification and independent stopped validation additionally
+gate signed clamp delta, clipped samples, terminal/non-terminal clipped samples,
+and non-finite samples per episode. These five should be redundant with the
+primary ratios, but any nonzero or disagreement invalidates evidence; do not
+dirty the candidate checkout to widen its manifest. The merged control
+`run_reward_screen.sh` therefore rejects the `exact-action-canary` profile
+before output creation. Invoke that profile only from the exact isolated
+`a52fc6e2` candidate checkout; analyze the stopped artifact from the clean
+merged control checkout.
+The explicit recurrent-state clear is
+only the paired post-terminal control and must never be used to alter ordinary
+training/evaluation behavior. Qualification outputs and checkpoints are never
+eligible ancestry.
 
 ## Historical BC-regularized PPO patch (rejected for new runs)
 
@@ -409,9 +478,11 @@ facilities in the installed patch stack; they are not supplied by this BC patch.
   on the CUDA box
   (`rm -rf build && ./build.sh bloodbowl --float`; bf16 default build refuses
   to import), `--selfplay.enabled 0` (pool is native-only), warm start from a
-  CURRENT-lineage anchor (state_dict loads directly in the torch backend — no
-  converter; the script's hardcoded training/bc_v1.bin is dead obs-v2 lineage,
-  pass a bc_v4 checkpoint), B-profile reward knobs, bc_coef 1.0 annealed.
+  v4 anchor under a pinned v4 runtime (state_dict loads directly in the torch
+  backend — no converter; the script's hardcoded training/bc_v1.bin is dead
+  obs-v2 lineage). Never run this historical recipe against the current v5
+  runtime, even with a shape-loadable bc_v4 checkpoint. B-profile reward knobs,
+  bc_coef 1.0 annealed.
 - Current arms launch via `tools/run_synthesis_c.sh`, run ON the box from the
   repo root. Contract: `ANCHOR=<path>` `STEPS=<n>` env vars + extra
   `--env.*` / `--train.frozen-enemy-path <ckpt>` args forwarded via `"$@"`.

@@ -12,12 +12,16 @@
 #     requires fp32 precision; default CUDA build is bf16).
 #   * selfplay pool is native-only -> --selfplay.enabled 0 (pure mirror
 #     selfplay; both slots share the current policy).
-#   * action masks are native-only -> the env's decode-snap-to-legal absorbs
-#     maskless sampling (same as every --slowly run).
+#   * exact conditional action masks are supported by the Torch backend.
 # Reward shaping: B profile (event-realized knobs, tools/train_profile.sh).
 # Warm start: training/bc_v1.bin (torch state_dict, loads directly).
 # BC anchor: bc_coef 1.0, cosine-annealed to 0.1 over total_timesteps.
 set -euo pipefail
+if [ "${ALLOW_LEGACY_BCREG:-0}" != "1" ]; then
+  echo "run_bcreg.sh is a historical BBP/checkpoint-v1 reproduction only." >&2
+  echo "Current exact-action training requires BBP v4; set ALLOW_LEGACY_BCREG=1 only to reproduce the rejected historical arm." >&2
+  exit 1
+fi
 # Mac uses the repo venv; GPU boxes install into system python.
 PYBIN="python3"
 [ -x "vendor/PufferLib/.venv/bin/python" ] && PYBIN="vendor/PufferLib/.venv/bin/python"

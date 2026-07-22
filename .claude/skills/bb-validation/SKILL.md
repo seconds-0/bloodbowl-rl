@@ -10,10 +10,10 @@ training curve can be interpreted. Everything routes through `bb_rng` dice
 injection: seeded PCG-64 or a recorded dice script. That design makes statistical,
 golden, and replay-differential checks possible.
 
-**Current status (2026-07-14):** `make test` runs 392 engine + 27 reward + 2
-scripted-bot tests; `make asan` passes the same 421. The current vacation-overflow
-ship cycle also passed 149 tool/analyzer tests locally (two expected vendored
-Puffer skips); hosted CI remains authoritative for the Torch-dependent BC tests.
+**Current status:** `make test` and `make asan` are the authoritative local
+suite inventories; use the counts printed by the exact head under review rather
+than copying a historical total into a new decision. Hosted CI remains
+authoritative for the Torch-dependent BC tests.
 This does not mean all seven originally planned layers are
 complete. `[BUILT]` is runnable now, `[PARTIAL]` has useful coverage with known
 gaps, `[ORACLE]` is external reference code, and `[PLANNED]` is not implemented.
@@ -103,8 +103,9 @@ re-derive by hand; (b) RNG misuse (reuse/bias) — check `bb_rng` consumption co
    rule-defined exceptions (Blitz!/riot kickoff events, touchdown turn handling).
 4. **Turnover causality** — turnover flag set only by an enumerated cause (failed
    dodge/rush/pickup, carrier KD, failed pass chain, sent-off, …) and always ends activation.
-5. **Re-roll conservation** — team re-rolls never increase mid-half (except enumerated
-   gains); max one team re-roll per turn; each die re-rolled at most once.
+5. **Re-roll conservation** — team re-rolls never increase mid-half except
+   enumerated one-drive/Leader gains; BB2025 permits multiple team re-rolls in
+   one turn, but each die or dice pool may be re-rolled at most once.
 6. **Mask-soundness** — `step()` accepts action ⟺ bit set in legal mask. Metamorphic
    half: sampled masked-out actions are rejected *without state mutation* (memcmp).
 7. **Dice-script conformance** — injected script consumed exactly; over/under-read = bug.
@@ -121,8 +122,106 @@ re-derive by hand; (b) RNG misuse (reuse/bias) — check `bb_rng` consumption co
    Run before AND after every env change: intended-no-op refactor ⇒
    identical hash; intended obs/mask change ⇒ hash changes and nothing
    else does. Full liturgy: puffer-env-dev skill, footgun 14.
+   D217's obs-v5 boundary is a pinned example: the 100-episode seed-42 hash
+   intentionally changes from v4 `afb3850b011cc9f2` to v5
+   `b12a03950a1cdd28`, and repeat v5 runs must match. Equal 2,782-byte shape
+   does not establish semantic compatibility; record `BBE_OBS_VERSION` plus
+   imported-module/source identity.
 9. **Procedure-stack sanity** — bounded depth; empty between activations; no leaks.
 10. **Stat bounds** — MA/ST/AG/PA/AV within rulebook ranges; score monotonic.
+11. **Raw snapshot admission** — BBS1 size/fingerprint proves ABI compatibility,
+    not safe content. Scenario scanners use `bb_state_bank_boundary_valid`.
+    Authored writers use that boundary for F1/F2/F3/F5 and may use
+    `bb_state_bank_resumable_valid` only for the exact F4 pending-Dodge recipe;
+    production reset admission and continuation also use the resumable gate.
+    The resumable union is intentionally
+    limited to the exact fresh-turn shape and the exact failed first-step,
+    non-Rush Dodge TEST reroll stack. The latter requires remaining ordinary
+    MA, rejects movement-prohibiting or activation-cleared flags, and exposes
+    its parent MOVE destination egocentrically in observation context bytes
+    9/12. A resolved Rush retains nonzero `match.ret` provenance and is not the
+    same admitted shape. Every new nested shape needs complete lower-frame,
+    index, observation-alias, legal-mask, both-branch continuation,
+    loader-byte, deterministic-writer, mixed-batch preflight, and malformed-
+    record tests before widening the shared gate. For authored nested captures,
+    also prove that the transcript ends before the pending choice and outcome so
+    no continuation action becomes an implicit label.
+12. **Authored axis quotas** — bind every requested axis cell inside the recipe
+    and independently rediscover it; never accept a test-only or out-of-band
+    cell label. For the exact F3 half-two turn axis, require one fresh-boundary
+    record for turns 1-8 under each active-side orientation (`BB_HOME` and
+    `BB_AWAY`), exactly 16 total. Do not size an orientation axis with
+    `BB_TEAM_COUNT`, which is the 30-entry roster catalogue. Reject axis fields
+    on non-axis recipes. Treat the quota validator as structural coverage only:
+    the authored writer must still preflight full provenance, byte-exact replay,
+    raw-snapshot admission, and one-action continuation before byte zero.
+    For the exact F2 Hand-off target-count axis, require one fresh-boundary
+    record for each Home/Away active-side orientation crossed with exactly one
+    or two-or-more legal catch-capable targets, exactly four total. Count only
+    after full raw-boundary validation and a private legal zero-die
+    `ACTIVATE -> DECLARE HAND-OFF` probe; do not count a rules-legal No Ball
+    target that cannot attempt the Catch, and do not relabel two-or-more as
+    exactly two. Store both side and bucket in the recipe and independently
+    rediscover them. This quota proves opportunity structure, not that Hand-off
+    or any receiver is a correct policy label.
+    For the exact F1 Pass carrier-pressure axis, require one fresh-boundary
+    record for each Home/Away active-side orientation crossed with open/marked
+    carrier pressure, exactly four total. First run the complete input-preserving
+    F1 Pass-opportunity validation; only then classify the validated carrier with
+    `bb_is_marked`. Do not infer pressure from raw adjacency, and do not select a
+    receiver to define the state bucket. Store side and pressure in the recipe,
+    reject pressure on non-axis kinds, and independently rediscover the exact
+    cell. This quota proves structural Pass-opportunity context only, never that
+    Pass or any receiver/target is tactically correct.
+13. **Authored proof-bundle composition** — accept exactly 26 supported proof
+    recipes: complete F1/F2/F3 axes (4/4/16) plus one exact F4 and one exact F5.
+    Partition only by exact recipe kind so overlapping state facts cannot double
+    count a record; accept arbitrary input order. Reuse the typed family quota
+    validators and exact opportunity predicates after complete configuration
+    validation. This is a structural proof bundle, not a balanced/canonical
+    bank and not publication or training authorization. Every serialized batch
+    still goes through independent writer rediscovery, exact replay, raw-state
+    admission, and one-action continuation. Sidecars, splits, reports,
+    manifest-last publication, staging, and training remain separate gates.
+14. **Authored proof-bundle construction** — use
+    `ad_build_authored_proof_bundle` rather than duplicating the fixed base
+    configuration, cell seeds, or order. Require exact capacities for both
+    caller-owned arrays, no caller-output write on failure, checked temporary
+    staging, complete composition validation before commit, and record pointers
+    rebound to their caller recipes. Preserve the proof-local positional
+    `0xA9000000 + index` metadata only for byte compatibility. It is not a
+    durable recipe/template/version/variant identity or sidecar join key.
+15. **Authored identity and sidecar boundary** — schema 1's closed immutable
+    registry allocates only `0xAE000001..0xAE00001A` for the fixed 26 proofs;
+    resolve those identities through the public mapper and never decode AE bits
+    or use positional A9 values as durable identity. The first metadata design
+    is `docs/plans/authored-sidecar-schema.md`: paired canonical 26-line record
+    and recipe streams must reconcile A9 order, AE identity, record pointers,
+    decision indices, complete rediscovery/replay, safe boundary validation,
+    and one-action continuation before byte zero. The future serializer must
+    call the unchanged public BBS writer exactly once through
+    serializer-owned memory-backed `FILE *` storage, compare and discard its
+    frozen bytes, and must not refactor D209's immutable writer into a new
+    preflight API. Hash actions together with
+    decision teams, hash dice sides together with faces, and domain-separate
+    sorted legal actions. No action, receiver, or target selected or recommended
+    at or after capture, nor any separate receiver/target, reward, regret,
+    outcome, value, split, curriculum-weight, or policy label may enter either
+    schema. Pre-capture packed actions stop before capture, may retain historical
+    action arguments/receivers/targets, remain replay provenance only, and are
+    forbidden as BC/policy/receiver-target supervision.
+    The design itself authorizes no serializer, file I/O, manifest, bank,
+    consumer, training, evaluation, BBTV, or deployment. Do not extend D209's
+    immutable authority files: add a sidecar-only authority in a serializer-free
+    bootstrap PR, then implement only after its workflow is trusted on the
+    base. Non-F5 rows use false/false for the two F5 facts; the fixed F5 row
+    must independently prove true/true. Both complete streams stage in
+    serializer-owned checked storage before the two final non-failing
+    caller-output copies. Before implementation, the serializer-free authority
+    bootstrap freezes the complete future ABI, memory-stream length/NUL and BBS
+    oracle contract, malicious candidates, and D210 isolation; its protected
+    workflow handles exact-SHA `pull_request_target`, `merge_group`, and main
+    push.
 
 **Failure looks like:** shrunken minimal action trace + seed reproducing the violation.
 **Triage:** replay the shrunken trace under a debugger; the violated invariant names
@@ -131,7 +230,7 @@ the subsystem (ball ⇒ scatter/catch/push code; conservation ⇒ injury/box tra
 ## Layer 4 — Fuzzing + sanitizers
 
 **Validates:** crash-freedom, UB-freedom, OOB on adversarial action/dice streams.
-**Ours:** `make asan` exercises the same current 418-test suite under sanitizers;
+**Ours:** `make asan` exercises the current test suite under sanitizers;
 `engine/tests/fuzz_match.c` provides the fuzz entry surface. Keep the planned
 long-lived corpus/minimization work separate from the already-green sanitizer
 suite; do not describe ASan success as exhaustive fuzz coverage.

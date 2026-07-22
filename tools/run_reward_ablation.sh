@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # Launch one native, static-pool reward-ablation arm from a complete manifest.
 #
-# Required:
+# Required for every mode:
 #   TAG=<unique arm tag>
 #   REWARD_MANIFEST=<puffer/config/rewards/*.json>
-#   WARM=<obs-v4 native flat-fp32 checkpoint>
-#   POOL=<directory containing league_seeds.json and exactly four seed blobs>
+#   BOOTSTRAP_MODE=fresh-v5-qualification|lineage-v5
+# lineage-v5 additionally requires WARM and POOL with eligible obs-v5 lineage
+# sidecars. fresh-v5-qualification forbids both inputs.
 #
 # Optional:
 #   STEPS=250000000 SEED=42 LOG=/tmp/$TAG.log
@@ -26,13 +27,33 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 : "${TAG:?TAG is required}"
 : "${REWARD_MANIFEST:?REWARD_MANIFEST is required}"
-: "${WARM:?WARM is required}"
-: "${POOL:?POOL is required}"
 
 if [ $# -ne 0 ]; then
   echo "trailing Puffer overrides are not allowed by this ablation contract" >&2
   exit 1
 fi
+
+: "${BOOTSTRAP_MODE:?BOOTSTRAP_MODE is required}"
+case "$BOOTSTRAP_MODE" in
+  fresh-v5-qualification)
+    [ -z "${WARM:-}" ] || {
+      echo "fresh-v5-qualification forbids WARM" >&2; exit 1; }
+    [ -z "${POOL:-}" ] || {
+      echo "fresh-v5-qualification forbids POOL" >&2; exit 1; }
+    WARM=""
+    POOL=""
+    QUALIFICATION_ONLY=1
+    ;;
+  lineage-v5)
+    : "${WARM:?WARM is required for lineage-v5}"
+    : "${POOL:?POOL is required for lineage-v5}"
+    QUALIFICATION_ONLY=0
+    ;;
+  *)
+    echo "BOOTSTRAP_MODE must be fresh-v5-qualification or lineage-v5" >&2
+    exit 1
+    ;;
+esac
 
 STEPS="${STEPS:-250000000}"
 SEED="${SEED:-42}"
@@ -55,9 +76,12 @@ VF_CLIP_COEF="${VF_CLIP_COEF:-0.5}"
 MAX_GRAD_NORM="${MAX_GRAD_NORM:-1.5}"
 DETACH="${DETACH:-1}"
 QUEUE_OWNED="${QUEUE_OWNED:-0}"
-EXPECTED_POOL_HASH="${EXPECTED_POOL_HASH:-18ec7cac858b71a6657003f454f19e232fb060f08b644c1e9e2f101076a9aac0}"
+EXPECTED_POOL_HASH="${EXPECTED_POOL_HASH:-}"
 SCREEN_MANIFEST_SHA256="${SCREEN_MANIFEST_SHA256:-}"
 EXPECTED_PUFFER_PATCH_BUNDLE_SHA256="${EXPECTED_PUFFER_PATCH_BUNDLE_SHA256:-}"
+LIVE_INTEGRITY_FAILURE="${LIVE_INTEGRITY_FAILURE:-}"
+LIVE_INTEGRITY_MAX_SILENCE="${LIVE_INTEGRITY_MAX_SILENCE:-180}"
+LIVE_INTEGRITY_POLL_SECONDS="${LIVE_INTEGRITY_POLL_SECONDS:-30}"
 
 for digest_name in SCREEN_MANIFEST_SHA256 \
                    EXPECTED_PUFFER_PATCH_BUNDLE_SHA256; do
@@ -75,6 +99,18 @@ case "$QUEUE_OWNED" in
   0|1) ;;
   *) echo "QUEUE_OWNED must be 0 or 1" >&2; exit 1 ;;
 esac
+case "$LIVE_INTEGRITY_MAX_SILENCE:$LIVE_INTEGRITY_POLL_SECONDS" in
+  *[!0-9:]*) echo "live-integrity silence and poll budgets must be positive integers" >&2; exit 1 ;;
+esac
+if [ "$LIVE_INTEGRITY_MAX_SILENCE" -le 0 ] || \
+   [ "$LIVE_INTEGRITY_POLL_SECONDS" -le 0 ]; then
+  echo "live-integrity silence and poll budgets must be positive" >&2
+  exit 1
+fi
+if [ -n "$SCREEN_MANIFEST_SHA256" ] && [ -z "$LIVE_INTEGRITY_FAILURE" ]; then
+  echo "a screen-owned arm requires LIVE_INTEGRITY_FAILURE" >&2
+  exit 1
+fi
 if [ "$DETACH" = "0" ] && [ "$QUEUE_OWNED" != "1" ]; then
   echo "DETACH=0 is reserved for a queue-owned process group" >&2
   exit 1
@@ -87,8 +123,8 @@ abspath() {
   esac
 }
 REWARD_MANIFEST="$(abspath "$REWARD_MANIFEST")"
-WARM="$(abspath "$WARM")"
-POOL="$(abspath "$POOL")"
+[ -z "$WARM" ] || WARM="$(abspath "$WARM")"
+[ -z "$POOL" ] || POOL="$(abspath "$POOL")"
 LOG="$(abspath "$LOG")"
 
 case "$STEPS:$SEED:$TOTAL_AGENTS:$NUM_BUFFERS:$EXPECT_BYTES:$HORIZON:$MINIBATCH_SIZE:$CHECKPOINT_STEPS" in
@@ -101,6 +137,10 @@ if [ "$STEPS" -le 0 ] || [ "$TOTAL_AGENTS" -le 0 ] || \
    [ "$HORIZON" -le 0 ] || [ "$MINIBATCH_SIZE" -le 0 ] || \
    [ "$CHECKPOINT_STEPS" -le 0 ]; then
   echo "step/agent/buffer/byte/horizon/minibatch/checkpoint values must be positive" >&2
+  exit 1
+fi
+if [ "$EXPECT_BYTES" -ne 16066560 ]; then
+  echo "obs-v5/exact-joint-v1 requires EXPECT_BYTES=16066560; got $EXPECT_BYTES" >&2
   exit 1
 fi
 if [ $(( TOTAL_AGENTS % NUM_BUFFERS )) -ne 0 ]; then
@@ -122,8 +162,19 @@ PYBIN="$ROOT/vendor/PufferLib/.venv/bin/python"
 PUFFER_BIN="$ROOT/vendor/PufferLib/.venv/bin/puffer"
 [ -x "$PYBIN" ] || { echo "vendored Python missing: $PYBIN" >&2; exit 1; }
 [ -x "$PUFFER_BIN" ] || { echo "vendored puffer entrypoint missing: $PUFFER_BIN" >&2; exit 1; }
-read -r FROZEN_PER_BANK HISTORICAL_GAME_SHARE < <(
-  "$PYBIN" - "$TOTAL_AGENTS" "$NUM_BUFFERS" "$FROZEN_BANK_PCT" <<'PY'
+if [ "$BOOTSTRAP_MODE" = "fresh-v5-qualification" ]; then
+  FROZEN_BANK_PCT=0
+  NUM_FROZEN_BANKS=0
+  FROZEN_PER_BANK=0
+  HISTORICAL_GAME_SHARE=0
+  [ -z "$EXPECTED_POOL_HASH" ] || {
+    echo "fresh-v5-qualification forbids EXPECTED_POOL_HASH" >&2; exit 1; }
+else
+  NUM_FROZEN_BANKS=4
+  [ -n "$EXPECTED_POOL_HASH" ] || {
+    echo "lineage-v5 requires EXPECTED_POOL_HASH" >&2; exit 1; }
+  read -r FROZEN_PER_BANK HISTORICAL_GAME_SHARE < <(
+    "$PYBIN" - "$TOTAL_AGENTS" "$NUM_BUFFERS" "$FROZEN_BANK_PCT" <<'PY'
 import math, sys
 total, buffers = map(int, sys.argv[1:3])
 try:
@@ -142,18 +193,22 @@ if total_frozen >= apb // 2:
         f"four banks reserve {total_frozen} rows/buffer, must be < {apb//2}")
 print(per_bank, total_frozen / (apb / 2.0))
 PY
-)
+  )
+fi
 
 [ -f "$REWARD_MANIFEST" ] || { echo "missing reward manifest: $REWARD_MANIFEST" >&2; exit 1; }
-[ -f "$WARM" ] || { echo "missing warm checkpoint: $WARM" >&2; exit 1; }
-[ -f "$POOL/league_seeds.json" ] || { echo "missing $POOL/league_seeds.json" >&2; exit 1; }
+if [ "$BOOTSTRAP_MODE" = "lineage-v5" ]; then
+  [ -f "$WARM" ] || { echo "missing warm checkpoint: $WARM" >&2; exit 1; }
+  [ -f "$POOL/league_seeds.json" ] || { echo "missing $POOL/league_seeds.json" >&2; exit 1; }
+fi
 
 RUN_MANIFEST="${LOG}.manifest.json"
 STATUS_FILE="${LOG}.status.json"
 RUN_DIR_FILE="${LOG}.run_dir"
 PROCESS_FILE="${LOG}.process.json"
+GUARD_MARKER="${LOG}.guard-failed"
 for artifact in "$LOG" "$RUN_MANIFEST" "$STATUS_FILE" "$RUN_DIR_FILE" \
-                "$PROCESS_FILE"; do
+                "$PROCESS_FILE" "$GUARD_MARKER"; do
   [ ! -e "$artifact" ] || {
     echo "refusing to overwrite existing run artifact: $artifact" >&2
     exit 1
@@ -191,17 +246,24 @@ print(manifest["name"], digest)
 PY
 )
 
-warm_size=$(wc -c < "$WARM")
-if [ "$warm_size" -ne "$EXPECT_BYTES" ]; then
-  echo "warm checkpoint is $warm_size bytes; expected $EXPECT_BYTES" >&2
-  exit 1
-fi
+WARM_HASH=""
+WARM_LINEAGE_HASH=""
+POOL_HASH=""
+POOL_BANKS=0
+POOL_MANIFEST_HASH=""
+POOL_LINEAGE_BUNDLE_HASH=""
+warm_size=0
+if [ "$BOOTSTRAP_MODE" = "lineage-v5" ]; then
+  warm_size=$(wc -c < "$WARM")
+  if [ "$warm_size" -ne "$EXPECT_BYTES" ]; then
+    echo "warm checkpoint is $warm_size bytes; expected $EXPECT_BYTES" >&2
+    exit 1
+  fi
 
-# Validate the pool body, bank order, hashes, and architecture before any
-# trainer allocates GPU state. Print both the raw manifest hash and one
-# deterministic content-identity hash over the ordered banks.
-read -r POOL_HASH POOL_BANKS POOL_MANIFEST_HASH < <(
-  "$PYBIN" - "$POOL" "$EXPECT_BYTES" <<'PY'
+  # Validate the pool body, bank order, hashes, lineage paths, and architecture
+  # before any trainer allocates GPU state.
+  read -r POOL_HASH POOL_BANKS POOL_MANIFEST_HASH < <(
+    "$PYBIN" - "$POOL" "$EXPECT_BYTES" <<'PY'
 import hashlib, json, pathlib, sys
 pool = pathlib.Path(sys.argv[1])
 expect = int(sys.argv[2])
@@ -231,6 +293,15 @@ for index, seed in enumerate(seeds):
         raise SystemExit(f"{path}: {len(blob)} bytes, expected {expect}")
     if seed.get("bytes") != len(blob) or seed.get("sha256") != digest:
         raise SystemExit(f"{path}: manifest size/hash mismatch")
+    lineage_file = seed.get("lineage_file")
+    if not isinstance(lineage_file, str) or not lineage_file:
+        raise SystemExit(f"pool bank {index} lacks lineage_file")
+    lineage_path = pool / lineage_file
+    if not lineage_path.is_file():
+        raise SystemExit(f"pool bank {index} lineage is missing: {lineage_path}")
+    lineage_sha = seed.get("lineage_sha256")
+    if not isinstance(lineage_sha, str) or len(lineage_sha) != 64:
+        raise SystemExit(f"pool bank {index} lacks lineage_sha256")
     if digest in seen_hashes:
         raise SystemExit(f"pool bank {index} duplicates another checkpoint")
     seen_hashes.add(digest)
@@ -240,23 +311,25 @@ canonical = json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()
 print(hashlib.sha256(canonical).hexdigest(), len(seeds),
       hashlib.sha256(manifest_raw).hexdigest())
 PY
-)
-if [ "$POOL_HASH" != "$EXPECTED_POOL_HASH" ]; then
-  echo "pool identity $POOL_HASH does not match expected $EXPECTED_POOL_HASH" >&2
-  exit 1
+  )
+  if [ "$POOL_HASH" != "$EXPECTED_POOL_HASH" ]; then
+    echo "pool identity $POOL_HASH does not match expected $EXPECTED_POOL_HASH" >&2
+    exit 1
+  fi
 fi
 
 if ! /bin/bash "$ROOT/tools/install_puffer_env.sh" --check; then
   echo "installed Blood Bowl snapshot is stale; install and rebuild before launch" >&2
   exit 1
 fi
+SOURCE_HASH="$(cat ocean/bloodbowl/.content_hash)"
 grep -q '^league_preseed' config/bloodbowl.ini || {
   echo "installed config lacks league_preseed" >&2; exit 1; }
 grep -q 'league_preseed' pufferlib/selfplay.py || {
   echo "vendored selfplay.py lacks training/selfplay_league.patch" >&2; exit 1; }
 grep -q 'Warm-started training from' pufferlib/pufferl.py || {
   echo "vendored pufferl.py lacks the warm-start patch" >&2; exit 1; }
-grep -q 'if i == 96:' pufferlib/pufferl.py || {
+grep -q 'if i == 160:' pufferlib/pufferl.py || {
   echo "vendored pufferl.py lacks the full Blood Bowl dashboard patch" >&2; exit 1; }
 grep -q 'PUFFER_ENV_JSON' pufferlib/pufferl.py || {
   echo "vendored pufferl.py lacks machine-readable environment logging" >&2; exit 1; }
@@ -268,12 +341,31 @@ grep -q "'_puffer_schema': 2" pufferlib/pufferl.py || {
 probe="$($PYBIN - <<'PY'
 from pufferlib import _C
 print(getattr(_C, "env_name", None), int(bool(getattr(_C, "gpu", False))),
-      int(_C.precision_bytes))
+      int(_C.precision_bytes),
+      getattr(_C, "exact_action_source_hash", "<missing>"),
+      getattr(_C, "environment_source_hash", "<missing>"),
+      getattr(_C, "observation_abi", "<missing>"),
+      getattr(_C, "observation_version", "<missing>"),
+      getattr(_C, "action_abi", "<missing>"))
 PY
 )"
-read -r cenv cgpu precision <<< "$probe"
+read -r cenv cgpu precision COMPILED_EXACT_ACTION_SOURCE_HASH \
+  COMPILED_ENVIRONMENT_SOURCE_HASH COMPILED_OBSERVATION_ABI \
+  COMPILED_OBSERVATION_VERSION COMPILED_ACTION_ABI <<< "$probe"
 if [ "$cenv" != "bloodbowl" ] || [ "$cgpu" != "1" ]; then
   echo "invalid native build: env=$cenv gpu=$cgpu" >&2; exit 1
+fi
+if [[ ! "$COMPILED_EXACT_ACTION_SOURCE_HASH" =~ ^[0-9a-f]{64}$ ]] || \
+   [ "$COMPILED_ENVIRONMENT_SOURCE_HASH" != "$SOURCE_HASH" ] || \
+   [ "$COMPILED_OBSERVATION_ABI" != "obs-v5" ] || \
+   [ "$COMPILED_OBSERVATION_VERSION" != "5" ] || \
+   [ "$COMPILED_ACTION_ABI" != "exact-joint-v1" ]; then
+  echo "compiled native module does not satisfy the obs-v5/exact-action contract" >&2
+  echo "  exact-action source: ${COMPILED_EXACT_ACTION_SOURCE_HASH:-<missing>}" >&2
+  echo "  environment source: ${COMPILED_ENVIRONMENT_SOURCE_HASH:-<missing>} (expected $SOURCE_HASH)" >&2
+  echo "  observation: ${COMPILED_OBSERVATION_ABI:-<missing>} / ${COMPILED_OBSERVATION_VERSION:-<missing>}" >&2
+  echo "  action: ${COMPILED_ACTION_ABI:-<missing>}" >&2
+  exit 1
 fi
 if [ "${RIG_ALLOW_FLOAT:-0}" = "1" ] && [ "$precision" != "4" ]; then
   echo "RIG_ALLOW_FLOAT=1 requires the Turing fp32 build (precision_bytes=4); got $precision" >&2
@@ -290,7 +382,7 @@ fi
 . "$ROOT/tools/cpu_cap.sh"
 NUM_THREADS="${NUM_THREADS:-${OMP_NUM_THREADS:-8}}"
 
-WARM_HASH="$(sha256sum "$WARM" | awk '{print $1}')"
+[ -z "$WARM" ] || WARM_HASH="$(sha256sum "$WARM" | awk '{print $1}')"
 CONFIG_HASH="$(sha256sum config/bloodbowl.ini | awk '{print $1}')"
 DEFAULT_CONFIG_HASH="$(sha256sum config/default.ini | awk '{print $1}')"
 CONFIG_TREE_HASH="$("$PYBIN" - config <<'PY'
@@ -315,11 +407,15 @@ for child in sorted(root.rglob("*")):
 print(digest.hexdigest())
 PY
 )"
-SOURCE_HASH="$(cat ocean/bloodbowl/.content_hash)"
 MODULE_PATH="$("$PYBIN" -c 'from pufferlib import _C; print(_C.__file__)')"
 [ -f "$MODULE_PATH" ] || { echo "imported pufferlib module missing: $MODULE_PATH" >&2; exit 1; }
 MODULE_HASH="$(sha256sum "$MODULE_PATH" | awk '{print $1}')"
 LAUNCHER_HASH="$(sha256sum "$ROOT/tools/run_reward_ablation.sh" | awk '{print $1}')"
+STATUS_WRAPPER="$ROOT/tools/trainer_status_wrapper.sh"
+STATUS_WRAPPER_HASH="$(sha256sum "$STATUS_WRAPPER" | awk '{print $1}')"
+LIVE_GUARD="$ROOT/tools/live_integrity_guard.py"
+LIVE_GUARD_HASH="$(sha256sum "$LIVE_GUARD" | awk '{print $1}')"
+CHECKPOINT_LINEAGE_HASH="$(sha256sum "$ROOT/tools/checkpoint_lineage.py" | awk '{print $1}')"
 PATCH_HASH="$({
   sha256sum "$ROOT/training/pufferl_env_dashboard_limit.patch"
   sha256sum "$ROOT/training/pufferl_env_json.patch"
@@ -328,6 +424,10 @@ PATCH_HASH="$({
   sha256sum "$ROOT/training/pufferl_eval_episode_gate.patch"
   sha256sum "$ROOT/training/pufferl_metrics_keyerror.patch"
   sha256sum "$ROOT/training/torch_pufferl_trusted_load.patch"
+  sha256sum "$ROOT/training/puffer_exact_joint_actions.patch"
+  sha256sum "$ROOT/training/puffer_recurrent_eval_state.patch"
+  sha256sum "$ROOT/training/puffer_frozen_prio_mask.patch"
+  sha256sum "$ROOT/training/puffer_recurrent_cuda_qualification.patch"
 } | sha256sum | awk '{print $1}')"
 if [ -n "$EXPECTED_PUFFER_PATCH_BUNDLE_SHA256" ] && \
    [ "$PATCH_HASH" != "$EXPECTED_PUFFER_PATCH_BUNDLE_SHA256" ]; then
@@ -339,14 +439,57 @@ VENDOR_HEAD="$(git rev-parse HEAD 2>/dev/null || printf '%s' '<not-a-git-checkou
 VENDOR_SOURCE_HASH="$({
   sha256sum pufferlib/__init__.py pufferlib/pufferl.py \
     pufferlib/selfplay.py pufferlib/torch_pufferl.py pufferlib/models.py \
-    pufferlib/muon.py src/pufferlib.cu src/bindings.cu src/vecenv.h
+    pufferlib/muon.py src/pufferlib.cu src/bindings.cu \
+    src/bindings_cpu.cpp src/kernels.cu src/vecenv.h
 } | sha256sum | awk '{print $1}')"
 
+if [ "$BOOTSTRAP_MODE" = "lineage-v5" ]; then
+  read -r WARM_LINEAGE_HASH POOL_LINEAGE_BUNDLE_HASH < <(
+    "$PYBIN" - "$ROOT" "$WARM" "$POOL" "$SOURCE_HASH" \
+      "$MODULE_HASH" "$PATCH_HASH" <<'PY'
+import hashlib, json, pathlib, sys
+root, warm_path, pool_path, source_sha, module_sha, patch_sha = sys.argv[1:]
+sys.path.insert(0, str(pathlib.Path(root) / "tools"))
+from checkpoint_lineage import lineage_digest, sidecar_path, validate_lineage
+
+expected = {
+    "source_sha256": source_sha,
+    "compiled_module_sha256": module_sha,
+    "puffer_patch_bundle_sha256": patch_sha,
+}
+warm = pathlib.Path(warm_path)
+warm_payload = validate_lineage(
+    warm, sidecar_path(warm), expected=expected, require_eligible=True)
+pool = pathlib.Path(pool_path)
+manifest = json.loads((pool / "league_seeds.json").read_text(encoding="utf-8"))
+identities = []
+for index, seed in enumerate(manifest["seeds"]):
+    checkpoint = pool / seed["file"]
+    lineage = pool / seed["lineage_file"]
+    payload = validate_lineage(
+        checkpoint, lineage, expected=expected, require_eligible=True)
+    payload_sha = lineage_digest(payload)
+    if payload_sha != seed["lineage_sha256"]:
+        raise SystemExit(f"pool bank {index} lineage digest differs from manifest")
+    identities.append({
+        "bank": index,
+        "checkpoint_sha256": hashlib.sha256(checkpoint.read_bytes()).hexdigest(),
+        "lineage_sha256": payload_sha,
+    })
+bundle = hashlib.sha256(json.dumps(
+    identities, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+print(lineage_digest(warm_payload), bundle)
+PY
+  )
+fi
+
 echo "tag=$TAG seed=$SEED requested_steps=$STEPS final_steps=$FINAL_STEPS rollout_quantum=$ROLLOUT_QUANTUM"
+echo "bootstrap=$BOOTSTRAP_MODE observation_abi=obs-v5 observation_version=5 action_abi=exact-joint-v1 qualification_only=$QUALIFICATION_ONLY"
 echo "reward=$REWARD_NAME reward_sha256=$REWARD_HASH"
 echo "pool=$POOL pool_identity_sha256=$POOL_HASH pool_manifest_sha256=$POOL_MANIFEST_HASH banks=$POOL_BANKS pct=$FROZEN_BANK_PCT rows_per_bank=$FROZEN_PER_BANK historical_game_share=$HISTORICAL_GAME_SHARE"
 echo "warm=$WARM warm_sha256=$WARM_HASH"
 echo "source_sha256=$SOURCE_HASH config_sha256=$CONFIG_HASH module_sha256=$MODULE_HASH"
+echo "compiled_exact_action_source_sha256=$COMPILED_EXACT_ACTION_SOURCE_HASH compiled_observation=$COMPILED_OBSERVATION_ABI/$COMPILED_OBSERVATION_VERSION compiled_action=$COMPILED_ACTION_ABI"
 echo "native_precision_bytes=$precision total_agents=$TOTAL_AGENTS buffers=$NUM_BUFFERS threads=$NUM_THREADS horizon=$HORIZON minibatch=$MINIBATCH_SIZE"
 echo "lr=$LR ent_coef=$ENT_COEF gamma=$GAMMA gae_lambda=$GAE_LAMBDA replay_ratio=$REPLAY_RATIO log=$LOG"
 
@@ -355,13 +498,8 @@ CMD=("$PUFFER_BIN" train bloodbowl --tag "$TAG" \
   --train.gpus 1 --eval-episodes 10000 \
   --checkpoint-interval "$CHECKPOINT_INTERVAL" \
   --policy.hidden-size 512 --policy.num-layers 3 --policy.expansion-factor 1 \
-  --selfplay.enabled 1 --selfplay.league-preseed "$POOL" \
-  --selfplay.swap-winrate 1.1 --selfplay.opp-timeout-steps "$OPP_TIMEOUT" \
-  --selfplay.snapshot-interval 1000000000000 \
   --vec.total-agents "$TOTAL_AGENTS" --vec.num-buffers "$NUM_BUFFERS" \
   --vec.num-threads "$NUM_THREADS" \
-  --vec.num-frozen-banks 4 --vec.frozen-bank-pct "$FROZEN_BANK_PCT" \
-  --load-model-path "$WARM" \
   "${REWARD_ARGS[@]}" \
   --env.demo-reset-pct 0 --env.demo-endzone-maxdist 0 \
   --env.demo-pickup-maxdist 0 --env.demo-postkick-maxturn 0 \
@@ -378,6 +516,17 @@ CMD=("$PUFFER_BIN" train bloodbowl --tag "$TAG" \
   --train.update-epochs 1 --train.beta1 0.95 --train.beta2 0.999 \
   --train.eps 0.000000000001)
 
+if [ "$BOOTSTRAP_MODE" = "fresh-v5-qualification" ]; then
+  CMD+=(--selfplay.enabled 0 --vec.num-frozen-banks 0 \
+    --vec.frozen-bank-pct 0)
+else
+  CMD+=(--selfplay.enabled 1 --selfplay.league-preseed "$POOL" \
+    --selfplay.swap-winrate 1.1 --selfplay.opp-timeout-steps "$OPP_TIMEOUT" \
+    --selfplay.snapshot-interval 1000000000000 \
+    --vec.num-frozen-banks 4 --vec.frozen-bank-pct "$FROZEN_BANK_PCT" \
+    --load-model-path "$WARM")
+fi
+
 if [ "${DRY_RUN:-0}" = "1" ]; then
   printf 'DRY-RUN command:'
   printf ' %q' "${CMD[@]}"
@@ -387,19 +536,36 @@ fi
 
 META_ARGS=(
   tag "$TAG" seed "$SEED" requested_steps "$STEPS" final_steps "$FINAL_STEPS"
+  bootstrap_mode "$BOOTSTRAP_MODE" initialization \
+  "$([ "$QUALIFICATION_ONLY" = "1" ] && printf fresh || printf lineage-v5)" \
+  qualification_only "$QUALIFICATION_ONLY" observation_abi obs-v5 \
+  observation_version 5 action_abi exact-joint-v1 \
+  policy_hidden_size 512 policy_num_layers 3 policy_expansion_factor 1 \
   rollout_quantum "$ROLLOUT_QUANTUM" reward_name "$REWARD_NAME"
   reward_sha256 "$REWARD_HASH" reward_manifest "$REWARD_MANIFEST"
   pool "$POOL" pool_identity_sha256 "$POOL_HASH"
   pool_manifest_sha256 "$POOL_MANIFEST_HASH"
+  pool_lineage_bundle_sha256 "$POOL_LINEAGE_BUNDLE_HASH"
   historical_game_share "$HISTORICAL_GAME_SHARE"
-  frozen_bank_pct "$FROZEN_BANK_PCT" num_frozen_banks 4
+  frozen_bank_pct "$FROZEN_BANK_PCT" num_frozen_banks "$NUM_FROZEN_BANKS"
   expected_pool_hash "$EXPECTED_POOL_HASH"
-  warm "$WARM" warm_sha256 "$WARM_HASH" warm_bytes "$warm_size"
+  warm "$WARM" warm_sha256 "$WARM_HASH" warm_bytes "$warm_size" \
+  warm_lineage_sha256 "$WARM_LINEAGE_HASH"
   source_sha256 "$SOURCE_HASH" config_sha256 "$CONFIG_HASH"
+  compiled_exact_action_source_sha256 "$COMPILED_EXACT_ACTION_SOURCE_HASH"
+  compiled_environment_source_sha256 "$COMPILED_ENVIRONMENT_SOURCE_HASH"
+  compiled_observation_abi "$COMPILED_OBSERVATION_ABI"
+  compiled_observation_version "$COMPILED_OBSERVATION_VERSION"
+  compiled_action_abi "$COMPILED_ACTION_ABI"
   config_tree_sha256 "$CONFIG_TREE_HASH"
   default_config_sha256 "$DEFAULT_CONFIG_HASH"
   compiled_module "$MODULE_PATH" compiled_module_sha256 "$MODULE_HASH"
   launcher_sha256 "$LAUNCHER_HASH" puffer_patch_bundle_sha256 "$PATCH_HASH"
+  status_wrapper_sha256 "$STATUS_WRAPPER_HASH"
+  live_integrity_guard_sha256 "$LIVE_GUARD_HASH"
+  checkpoint_lineage_sha256 "$CHECKPOINT_LINEAGE_HASH"
+  live_integrity_max_silence "$LIVE_INTEGRITY_MAX_SILENCE"
+  live_integrity_poll_seconds "$LIVE_INTEGRITY_POLL_SECONDS"
   vendor_head "$VENDOR_HEAD" vendor_source_sha256 "$VENDOR_SOURCE_HASH"
   native_precision_bytes "$precision" total_agents "$TOTAL_AGENTS"
   num_buffers "$NUM_BUFFERS" num_threads "$NUM_THREADS" horizon "$HORIZON"
@@ -421,7 +587,9 @@ if len(pairs) % 2:
 manifest = dict(zip(pairs[::2], pairs[1::2]))
 manifest.update({
     "schema_version": 1,
-    "mode": "native_static_pool_reward_ablation",
+    "mode": ("native_fresh_v5_qualification"
+             if manifest["bootstrap_mode"] == "fresh-v5-qualification"
+             else "native_static_pool_reward_ablation"),
     "command": sys.argv[split + 1:],
 })
 path.write_text(json.dumps(
@@ -438,26 +606,27 @@ PY
 BEFORE_RUNS=$(mktemp)
 find checkpoints/bloodbowl -mindepth 1 -maxdepth 1 -type d \
   -exec basename {} \; 2>/dev/null | sort > "$BEFORE_RUNS" || true
-WRAPPER=(/bin/bash -c '
-  status=$1
-  log=$2
-  shift 2
-  set +e
-  "$@" >> "$log" 2>&1
-  rc=$?
-  tmp="${status}.tmp.$$"
-  printf "{\"exit_code\":%d,\"pid\":%d,\"completed_utc\":\"%s\"}\n" \
-    "$rc" "$$" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$tmp"
-  mv "$tmp" "$status"
-  exit "$rc"
-' /bin/bash "$STATUS_FILE" "$LOG" "${CMD[@]}")
+WRAPPER=(/bin/bash "$STATUS_WRAPPER" "$STATUS_FILE" "$LOG" "${CMD[@]}")
+WATCHDOG_ENV=()
+if [ -n "$SCREEN_MANIFEST_SHA256" ]; then
+  WATCHDOG_ENV=(env \
+    LIVE_INTEGRITY_GUARD="$LIVE_GUARD" \
+    LIVE_INTEGRITY_PYTHON="$PYBIN" \
+    LIVE_INTEGRITY_STATE="${LOG}.live-integrity-watchdog-state.json" \
+    LIVE_INTEGRITY_FAILURE="$LIVE_INTEGRITY_FAILURE" \
+    LIVE_INTEGRITY_MAX_SILENCE="$LIVE_INTEGRITY_MAX_SILENCE" \
+    LIVE_INTEGRITY_POLL_SECONDS="$LIVE_INTEGRITY_POLL_SECONDS" \
+    LIVE_INTEGRITY_MARKER="$GUARD_MARKER")
+fi
 if [ "$DETACH" = "1" ]; then
-  setsid nohup "${WRAPPER[@]}" > /dev/null 2>&1 < /dev/null &
+  setsid nohup "${WATCHDOG_ENV[@]}" "${WRAPPER[@]}" \
+    > /dev/null 2>&1 < /dev/null &
 else
   # Vacation queues supervise one process group. Keep the trainer in the
   # queue runner's group so runtime/thermal termination cannot strand the
   # otherwise-detached arm; systemd KillMode=control-group remains a backstop.
-  "${WRAPPER[@]}" > /dev/null 2>&1 < /dev/null &
+  "${WATCHDOG_ENV[@]}" "${WRAPPER[@]}" \
+    > /dev/null 2>&1 < /dev/null &
 fi
 PID=$!
 PROCESS_GROUP="$(ps -o pgid= -p "$PID" | tr -d ' ')"
@@ -481,8 +650,9 @@ echo "LAUNCHED pid=$PID"
       {
         echo "reward-ablation tag=$TAG"
         echo "reward=$REWARD_NAME sha256=$REWARD_HASH"
-        echo "pool=$POOL identity_sha256=$POOL_HASH manifest_sha256=$POOL_MANIFEST_HASH pct=$FROZEN_BANK_PCT"
-        echo "warm=$WARM sha256=$WARM_HASH seed=$SEED requested_steps=$STEPS final_steps=$FINAL_STEPS"
+        echo "bootstrap=$BOOTSTRAP_MODE qualification_only=$QUALIFICATION_ONLY obs=obs-v5 action=exact-joint-v1"
+        echo "pool=$POOL identity_sha256=$POOL_HASH manifest_sha256=$POOL_MANIFEST_HASH lineage_bundle_sha256=$POOL_LINEAGE_BUNDLE_HASH pct=$FROZEN_BANK_PCT"
+        echo "warm=$WARM sha256=$WARM_HASH lineage_sha256=$WARM_LINEAGE_HASH seed=$SEED requested_steps=$STEPS final_steps=$FINAL_STEPS"
         echo "run_manifest_sha256=$(sha256sum "$RUN_MANIFEST" | awk '{print $1}')"
       } > "${directory}PROFILE"
       cp "$RUN_MANIFEST" "${directory}RUN_MANIFEST.json"

@@ -1,5 +1,6 @@
 // bb_match.c — match lifecycle, procedure-stack plumbing, board queries.
 #include "bb/bb_match.h"
+#include "bb/bb_hooks.h"
 #include "bb/bb_proc.h"
 #include "bb/gen_teams.h"
 #include <string.h>
@@ -36,6 +37,171 @@ void bb_pop(bb_match* m) {
 void bb_need_decision(bb_match* m, int team) {
     m->status = BB_STATUS_DECISION;
     m->decision_team = (uint8_t)team;
+}
+
+static bool state_bank_common_valid(const bb_match* m) {
+    if (m == NULL || m->status != BB_STATUS_DECISION ||
+        m->half < 1 || m->half > 3 ||
+        m->turn[0] > 8 || m->turn[1] > 8 ||
+        m->active_team > BB_AWAY || m->kicking_team > BB_AWAY ||
+        m->decision_team != m->active_team ||
+        m->turn[m->active_team] < 1 ||
+        m->team_id[0] >= BB_TEAM_COUNT || m->team_id[1] >= BB_TEAM_COUNT ||
+        m->weather > BB_WEATHER_BLIZZARD || m->stack_top < 2 ||
+        m->stack_top > BB_STACK_MAX) {
+        return false;
+    }
+
+    // Raw BBS1 is not a general procedure-stack serialization. Every admitted
+    // shape shares these exact lower frames; merely checking proc enums allowed
+    // corrupt params (for example team=255) to index out of bounds.
+    const bb_frame* root = &m->stack[0];
+    const bb_frame* turn = &m->stack[1];
+    if (root->proc != BB_PROC_MATCH || root->phase != 3 ||
+        root->a != 0 || root->b != 0 || root->x != 0 || root->y != 0 ||
+        (root->data & (uint16_t)~6u) != 0 ||
+        turn->proc != BB_PROC_TEAM_TURN || turn->phase != 1 ||
+        turn->a != m->active_team || turn->b != 0 ||
+        turn->x != 0 || turn->y != 0 || turn->data != 0 || m->turnover) {
+        return false;
+    }
+
+    int ball_flags = 0;
+    for (int slot = 0; slot < BB_NUM_PLAYERS; slot++) {
+        const bb_player* player = &m->players[slot];
+        if (player->position_id >= BB_MAX_POSITIONS ||
+            player->location > BB_LOC_ABSENT ||
+            player->stance > BB_STANCE_STUNNED_USED ||
+            (player->flags & (uint16_t)~0x0FFFu) != 0) {
+            return false;
+        }
+        for (int word = 0; word < BB_SKILL_WORDS; word++) {
+            int first_skill = word * 64;
+            if (first_skill >= BB_SKILL_COUNT) {
+                if (player->skills.w[word] != 0) return false;
+            } else if (first_skill + 64 > BB_SKILL_COUNT) {
+                int valid_bits = BB_SKILL_COUNT - first_skill;
+                if (player->skills.w[word] & (~0ULL << valid_bits)) {
+                    return false;
+                }
+            }
+        }
+        if (player->flags & BB_PF_HAS_BALL) ball_flags++;
+        if (player->location == BB_LOC_ON_PITCH) {
+            if (!bb_on_pitch_xy(player->x, player->y) ||
+                m->grid[player->x][player->y] != slot + 1) return false;
+        } else if (player->flags & BB_PF_HAS_BALL) {
+            return false;
+        }
+    }
+
+    for (int x = 0; x < BB_PITCH_LEN; x++) {
+        for (int y = 0; y < BB_PITCH_WID; y++) {
+            uint8_t value = m->grid[x][y];
+            if (value == 0) continue;
+            int slot = value - 1;
+            if (slot >= BB_NUM_PLAYERS ||
+                m->players[slot].location != BB_LOC_ON_PITCH ||
+                m->players[slot].x != x || m->players[slot].y != y) {
+                return false;
+            }
+        }
+    }
+
+    if (m->ball.state == BB_BALL_HELD) {
+        if (m->ball.carrier >= BB_NUM_PLAYERS || ball_flags != 1) return false;
+        const bb_player* carrier = &m->players[m->ball.carrier];
+        if (carrier->location != BB_LOC_ON_PITCH ||
+            !(carrier->flags & BB_PF_HAS_BALL) ||
+            m->ball.x != carrier->x || m->ball.y != carrier->y) return false;
+    } else {
+        if (m->ball.state > BB_BALL_ON_GROUND ||
+            m->ball.carrier != BB_NO_PLAYER || ball_flags != 0) return false;
+        if (m->ball.state == BB_BALL_ON_GROUND &&
+            !bb_on_pitch_xy(m->ball.x, m->ball.y)) return false;
+    }
+    return true;
+}
+
+bool bb_state_bank_boundary_valid(const bb_match* m) {
+    return state_bank_common_valid(m) && m->stack_top == 2;
+}
+
+bool bb_state_bank_dodge_reroll_valid(const bb_match* m) {
+    enum {
+        MV_AWAIT_TEST = 1 << 4,
+        TF_WAITING = 1 << 2,
+    };
+    if (!state_bank_common_valid(m) || m->stack_top != 5 || m->ret != 0) {
+        return false;
+    }
+
+    const bb_frame* activation = &m->stack[2];
+    const bb_frame* move = &m->stack[3];
+    const bb_frame* test = &m->stack[4];
+    if (activation->proc != BB_PROC_ACTIVATION || activation->phase != 1 ||
+        activation->a >= BB_NUM_PLAYERS || activation->b != BB_ACT_MOVE ||
+        activation->x != 0 || activation->y != 0 || activation->data != 0) {
+        return false;
+    }
+    int mover = activation->a;
+    const bb_player* player = &m->players[mover];
+    if (BB_TEAM_OF(mover) != m->active_team ||
+        player->location != BB_LOC_ON_PITCH ||
+        player->stance != BB_STANCE_STANDING ||
+        !(player->flags & BB_PF_ACTIVATING) ||
+        (player->flags & (BB_PF_USED | BB_PF_ROOTED | BB_PF_DISTRACTED |
+                          BB_PF_EYE_GOUGED)) ||
+        player->moved != 0 || player->moved >= player->ma ||
+        player->rushes != 0 ||
+        (m->ball.state == BB_BALL_HELD && m->ball.carrier == mover)) {
+        return false;
+    }
+    if (move->proc != BB_PROC_MOVE || move->phase != 0 ||
+        move->a != mover || move->b != BB_ACT_MOVE ||
+        move->data != MV_AWAIT_TEST ||
+        !bb_on_pitch_xy(move->x, move->y) ||
+        !bb_adjacent(player->x, player->y, move->x, move->y) ||
+        m->grid[move->x][move->y] != 0 ||
+        (m->ball.state == BB_BALL_ON_GROUND &&
+         m->ball.x == move->x && m->ball.y == move->y) ||
+        bb_tackle_zones(m, m->active_team, player->x, player->y) <= 0) {
+        return false;
+    }
+    if (test->proc != BB_PROC_TEST || test->phase != 1 ||
+        test->a != mover || test->b != BB_TEST_DODGE || test->y != 0 ||
+        (test->data & 0x0FFFu) != TF_WAITING) {
+        return false;
+    }
+    int failed_die = (test->data >> 12) & 0xF;
+    if (failed_die < 1 || failed_die > 5 || failed_die >= test->x) {
+        return false;
+    }
+
+    bb_ctx context = {
+        BB_TEST_DODGE, (uint8_t)mover, BB_NO_PLAYER, (uint8_t)mover,
+        (int8_t)player->x, (int8_t)player->y,
+        (int8_t)move->x, (int8_t)move->y, -1, 0,
+    };
+    int modifiers = -bb_tackle_zones(m, m->active_team, move->x, move->y) +
+                    bb_hook_mods(m, &context);
+    if (test->x != bb_test_target(player->ag, modifiers)) return false;
+
+    bb_action legal[BB_LEGAL_MAX];
+    int count = bb_legal_actions(m, legal);
+    bool has_use = false;
+    bool has_decline = false;
+    for (int i = 0; i < count; i++) {
+        if (legal[i].type == BB_A_USE_REROLL) has_use = true;
+        else if (legal[i].type == BB_A_DECLINE_REROLL) has_decline = true;
+        else return false;
+    }
+    return has_use && has_decline;
+}
+
+bool bb_state_bank_resumable_valid(const bb_match* m) {
+    return bb_state_bank_boundary_valid(m) ||
+           bb_state_bank_dodge_reroll_valid(m);
 }
 
 // --- Board helpers ---------------------------------------------------------------
@@ -158,6 +324,7 @@ bool bb_can_catch(const bb_match* m, int slot) {
     if (p->location != BB_LOC_ON_PITCH) return false;
     if (p->stance != BB_STANCE_STANDING) return false;
     if (p->flags & (BB_PF_DISTRACTED | BB_PF_NO_TZ)) return false;
+    if (bb_has_skill(&p->skills, BB_SK_NO_BALL)) return false;
     return true;
 }
 

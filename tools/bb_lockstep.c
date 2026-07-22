@@ -175,12 +175,19 @@ typedef struct {
     const char* cur_op;
 } runner;
 
+static void ctx_copy(char dst[512], const char* line) {
+    size_t n = strlen(line);
+    if (n >= 512) n = 511;
+    memcpy(dst, line, n);
+    dst[n] = '\0';
+}
+
 static void ctx_push(runner* R, const char* line) {
     if (R->ctx_n < CTX_OPS) {
-        snprintf(R->ctx[R->ctx_n++], sizeof R->ctx[0], "%s", line);
+        ctx_copy(R->ctx[R->ctx_n++], line);
     } else {
         memmove(R->ctx[0], R->ctx[1], sizeof R->ctx[0] * (CTX_OPS - 1));
-        snprintf(R->ctx[CTX_OPS - 1], sizeof R->ctx[0], "%s", line);
+        ctx_copy(R->ctx[CTX_OPS - 1], line);
     }
 }
 
@@ -212,20 +219,21 @@ static void report_divergence(runner* R, long cmd, const char* cls,
 }
 
 // --- BC pair dump (--dump-pairs <out.bbp>) -----------------------------------
-// .bbp format v2: binary, little-endian, written by this runner; consumed by
+// .bbp format v4: binary, little-endian, written by this runner; consumed by
 // training/bc_pretrain.py (extraction orchestrated by
 // validation/extract_pairs.py). Also documented in validation/README.md.
-// v2 = obs v3 (1612 B, tackle-zone planes appended); v1 carried the 832-B
-// obs. Readers must size records from the HEADER's obs_size/mask_size, so
-// v1 shards stay readable — but v1 obs cannot feed an obs-v3 policy (the
-// encoder input dim changed); re-extract the corpus for obs-v3 BC.
+// v4 identifies exact sequential action support and canonical inactive-head
+// sentinels. v3 identifies obs-v5's semantic ABI at the same 2782-byte shape.
+// Historical v2 spans obs-v3 (1612 B) and obs-v4 (2782 B); v1 carried 832 B.
+// Readers size records from the header and include VERSION in lineage checks:
+// v2/2782, v3/2782, and v4/2782 must never mix despite equal physical shape.
 //
 //   header (16 bytes):
 //     magic     char[4]  "BBP1"
-//     version   u32      2
-//     obs_size  u32      BBE_OBS_SIZE  (1612; v1 wrote 832)
+//     version   u32      4 (exact-action semantics; layout unchanged)
+//     obs_size  u32      BBE_OBS_SIZE  (2782; historical v2 may also be 2782)
 //     mask_size u32      BBE_MASK_SIZE (454)
-//   record (12 + obs_size + mask_size + 4 = 2082 bytes), one per
+//   record (12 + obs_size + mask_size + 4 = 3252 bytes), one per
 //   successfully applied act/place op (a place op is a BB_A_SETUP_PLACE
 //   action), for the DECIDING coach only:
 //     replay_id u32      numeric FUMBBL replay id
@@ -233,8 +241,9 @@ static void report_divergence(runner* R, long cmd, const char* cls,
 //     agent     u8       deciding team (0 home / 1 away); obs, mask and the
 //                        action targets are in this agent's egocentric frame
 //     pad       u8[3]    zero
-//     obs       u8[1612] bbe_encode_obs at the decision, BEFORE the action
-//     mask      u8[454]  bbe_fill_mask legality bits, heads packed 30|33|391
+//     obs       u8[2782] bbe_encode_obs at the decision, BEFORE the action
+//     mask      u8[454]  exact masks used for this target: type support,
+//                        arg conditioned on type, square on type+arg
 //     type      u8       action-type head target (bb_action_type)
 //     arg       u8       arg head target via bbe_action_arg (player slots
 //                        ego-remapped like obs rows; 32 = sentinel)
@@ -291,7 +300,7 @@ static void pd_open(const char* path) {
         exit(2);
     }
     fwrite("BBP1", 1, 4, PD.f);
-    pd_u32(2); // v2: obs v3 (TZ planes); readers size records via the header
+    pd_u32(4); // v4: exact sequential action semantics; layout unchanged
     pd_u32(BBE_OBS_SIZE);
     pd_u32(BBE_MASK_SIZE);
     PD.env.num_agents = BBE_AGENTS;
@@ -306,20 +315,25 @@ static void pd_open(const char* path) {
 
 // Stage one (obs, mask, action) record for the deciding side. Called AFTER
 // the runner's legality check passed, BEFORE bb_apply.
+static void pd_stage_prepared(const Bloodbowl* env, int agent, bb_action a,
+                              long cmd) {
+    PD.cmd = (uint32_t)cmd;
+    PD.agent = (uint8_t)agent;
+    memcpy(PD.obs, env->obs_ptr[agent], BBE_OBS_SIZE);
+    PD.a_type = a.type;
+    PD.a_arg = (uint8_t)bbe_action_arg(agent, a);
+    PD.a_sq = (uint16_t)bbe_action_sq(agent, a);
+    bbe_fill_effective_action_mask(env, agent, PD.a_type, PD.a_arg, PD.mask);
+    PD.staged = 1;
+}
+
 static void pd_stage(runner* R, bb_action a, long cmd) {
     if (!PD.f) return;
     PD.env.match = R->m; // mirror the lockstep match into the env shell
     bbe_refresh_legal(&PD.env);
     bbe_emit_all(&PD.env); // the exact per-step encode training runs
     int agent = R->m.decision_team;
-    PD.cmd = (uint32_t)cmd;
-    PD.agent = (uint8_t)agent;
-    memcpy(PD.obs, PD.env.obs_ptr[agent], BBE_OBS_SIZE);
-    memcpy(PD.mask, PD.env.action_mask_ptr[agent], BBE_MASK_SIZE);
-    PD.a_type = a.type;
-    PD.a_arg = (uint8_t)bbe_action_arg(agent, a);
-    PD.a_sq = (uint16_t)bbe_action_sq(agent, a);
-    PD.staged = 1;
+    pd_stage_prepared(&PD.env, agent, a, cmd);
 }
 
 static void pd_commit(void) {

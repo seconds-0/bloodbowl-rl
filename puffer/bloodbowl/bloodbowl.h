@@ -5,7 +5,7 @@
 // engine to the next decision, and emits observations + per-head legality
 // masks. Episodes are full matches over procedurally generated rosters.
 //
-// Observation (uint8, BBE_OBS_SIZE = 2782B, obs v4), egocentric: each agent
+// Observation (uint8, BBE_OBS_SIZE = 2782B, obs v5), egocentric: each agent
 // sees its own players first and the pitch x-mirrored for the away coach, so
 // "forward" is always +x. Layout (offsets from the BBE_* macros below):
 //   [0..767]   32 players x BBE_PLAYER_BYTES (24): rows 0-15 = my team,
@@ -27,9 +27,12 @@
 //                [7]  frame b likewise (bbe_frame_b_is_slot)
 //                [8]  pending TEST target number (2..6 when the top frame
 //                     is a TEST reroll window, else 0)
-//                [9]  spare
+//                [9]  pending Dodge destination x+1 (egocentric; 0 unless
+//                     top TEST(Dodge) has a matching parent MOVE)
 //                [10] I am the deciding coach, [11] my team is active
-//                [12..15] spare
+//                [12] pending Dodge destination y+1 (same condition)
+//                [13..15] rolled block faces 0..2 (bb_block_die; 0 = absent),
+//                         only at BLOCK reroll/choose-die phases
 //   [784..831] scalars (BBE_SCALAR_OFF):
 //                [0]  half, [1] my turn, [2] opp turn
 //                [3]  my score, [4] opp score
@@ -37,7 +40,10 @@
 //                [8..13] blitz/pass/handoff/foul/ttm/secure used this turn
 //                [14] my apothecaries, [15] opp apothecaries
 //                [16] my bribes, [17] opp bribes, [18] I am kicking
-//                [19..47] spare (team ids deliberately NOT observed — see
+//                [19] active MOVE player's squares moved + 1 (0 = no mover)
+//                [20] active MOVE player's Rushes spent + 1 (0 = no mover)
+//                [21] top TEST kind + 1 (0 = not a TEST decision)
+//                [22..47] spare (team ids deliberately NOT observed — see
 //                         the encoder comment; forces roster-reading)
 //   [832..1611] tackle-zone planes (obs v3, BBE_TZ_OFF): two per-square
 //              TZ-count planes of 390 bytes each (index y*26 + x, x
@@ -49,14 +55,15 @@
 //              the mover's own marked count, player byte [23], was visible).
 //
 // Action heads (ACT_SIZES {30, 33, 391}): bb_action type | arg (0-31 direct,
-// 32 = sentinel for 0xFE/0xFF args) | square (y*26+x, 390 = none).
-// Decoding snaps to the nearest legal action (exact -> same-type -> first),
-// so even maskless backends (torch/MPS practice runs) stay legal.
+// 32 = inactive/sentinel) | square (y*26+x, 390 = inactive/none). The Puffer
+// backends sample these sequentially from exact joint support. Decode accepts
+// only an unambiguous offered tuple and aborts before mutation on violations.
 #pragma once
 
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>   // sqrtf — aggregate-stat-matching pseudo-reward (D114)
+#include <float.h>  // FLT_EPSILON — component-ledger reconciliation tolerance
 #include <stdio.h>
 
 // --- Engine amalgamation (build.sh compiles binding.c as a single TU) -------
@@ -98,9 +105,10 @@
 #include "contact_bot.h"
 #include "offense_bot.h"
 
+#define BBE_OBS_VERSION 5      // semantic ABI; v4 has the same 2782-byte shape
 #define BBE_PLAYER_BYTES 24    // 11 stat/state bytes + 12 skill-id slots + TZ byte
 #define BBE_SKILL_SLOTS 12     // >= max base-roster skills (10) + procgen cap
-#define BBE_OBS_SIZE 2782      // v3 1612 + 3*390 decision-support planes (obs v4)
+#define BBE_OBS_SIZE 2782      // v4 shape retained; decision context is obs v5
 #define BBE_CTX_OFF (BB_NUM_PLAYERS * BBE_PLAYER_BYTES) // 768
 #define BBE_SCALAR_OFF (BBE_CTX_OFF + 16)               // 784
 #define BBE_TZ_OFF (BBE_SCALAR_OFF + 48)                // 832
@@ -115,6 +123,42 @@
 #define BBE_DEFAULT_REWARD_TD 0.4f
 #define BBE_DEFAULT_REWARD_WIN 0.6f
 #define BBE_DEFAULT_REWARD_DRAW 0.0f
+
+// Effective emitted-reward taxonomy. Each entry is the signed contribution
+// seen by one agent before Puffer's [-1, 1] clamp. The block-exposure entry is
+// deliberately the existing combined declaration-time EV expression: splitting
+// its three addends would change float accumulation order in the live reward.
+typedef enum {
+    BBE_REWARD_SETUP_DONE,
+    BBE_REWARD_SETUP_AUTOFIX,
+    BBE_REWARD_BALL_GAIN,
+    BBE_REWARD_BALL_LOSS,
+    BBE_REWARD_DISTANCE_BALL,
+    BBE_REWARD_DISTANCE_ENDZONE,
+    BBE_REWARD_INJURY_INFLICTED,
+    BBE_REWARD_INJURY_TAKEN,
+    BBE_REWARD_SEND_OFF,
+    BBE_REWARD_TOUCHBACK,
+    BBE_REWARD_SURF_INFLICTED,
+    BBE_REWARD_SURF_TAKEN,
+    BBE_REWARD_BLOCK_EXPOSURE,
+    BBE_REWARD_BLOCK_SELF_INJURY,
+    BBE_REWARD_BLOCK_SEQUENCE,
+    BBE_REWARD_BLOCK_TURNOVER,
+    BBE_REWARD_POSSESSION,
+    BBE_REWARD_BLOCK_ASSIST,
+    BBE_REWARD_RUSH,
+    BBE_REWARD_CARRIER_EXPOSURE,
+    BBE_REWARD_CARRIER_EXPOSURE_SOFT,
+    BBE_REWARD_CARRIER_THREAT,
+    BBE_REWARD_DEFENSIVE_THREAT,
+    BBE_REWARD_DEFENSIVE_THREAT_SOFT,
+    BBE_REWARD_TOUCHDOWN,
+    BBE_REWARD_RESULT_WINLOSS,
+    BBE_REWARD_RESULT_DRAW,
+    BBE_REWARD_STATMATCH,
+    BBE_REWARD_COMPONENT_COUNT,
+} bbe_reward_component;
 
 _Static_assert(BBE_HEAD_TYPE == BB_A_TYPE_COUNT,
                "action-type head out of sync with bb_actions.h");
@@ -182,7 +226,7 @@ typedef struct {
     // of completed episodes with at least one clipped/non-finite emission.
     float reward_clip_episodes;
     float reward_nonfinite_episodes;
-    float illegal_frac;    // sampled actions that had to be snapped to legal
+    float illegal_frac;    // exact-action contract violations (must stay zero)
     // Behavioral micro-stats, summed per episode (dashboard shows per-episode
     // means after the /n aggregation). Motivated by a spectator finding:
     // policies never declared blocks and walked out of tackle zones
@@ -254,6 +298,17 @@ typedef struct {
     // (should stay at 0.0 — anything else means a corrupt/stale bank).
     float demo_episodes;
     float demo_fallbacks;
+    // Team-0/home signed component returns. Team 0 is the primary learner in
+    // frozen-bank envs and matches the existing episode_return perspective.
+    // Integrity checks below still run independently for both agents.
+    float reward_component[BBE_REWARD_COMPONENT_COUNT];
+    float reward_component_residual;
+    float reward_component_mismatch_samples;
+    float reward_component_nonfinite_samples;
+    float reward_terminal_suppressed_signed;
+    float reward_terminal_suppressed_abs;
+    float reward_postclip_return;
+    float reward_clip_signed_delta;
     float n;
 } Log;
 
@@ -563,6 +618,19 @@ typedef struct {
     // base and adds only the emitted objective/result terms, so even discarded
     // non-finite shaping cannot poison the episode-return dashboard.
     float step_return_base[BBE_AGENTS];
+    // Per-step scratch is committed only when the reward is actually emitted.
+    // Terminal composition discards incidental scratch, retains TD, then adds
+    // result/statmatch. Episode arrays retain both agents for invariant checks;
+    // Log exports team 0 to reconcile with episode_return.
+    float step_reward_component[BBE_AGENTS][BBE_REWARD_COMPONENT_COUNT];
+    float ep_reward_component[BBE_AGENTS][BBE_REWARD_COMPONENT_COUNT];
+    float ep_reward_component_residual[BBE_AGENTS];
+    float ep_reward_postclip_return[BBE_AGENTS];
+    float ep_reward_clip_signed_delta[BBE_AGENTS];
+    float ep_reward_terminal_suppressed_signed[BBE_AGENTS];
+    float ep_reward_terminal_suppressed_abs[BBE_AGENTS];
+    int ep_reward_component_mismatch_samples;
+    int ep_reward_component_nonfinite_samples;
     int ep_reward_samples;
     int ep_reward_clipped;
     int ep_reward_nonzero;
@@ -638,6 +706,17 @@ typedef struct {
     int setup_block_start[BBE_HEAD_ARG];   // projected arg -> block start (-1)
     uint16_t setup_sq_off[BBE_HEAD_SQ];    // sq -> template offset (0xFFFF)
 } Bloodbowl;
+
+// Single mutation seam for ordinary reward contributions. Keeping the two
+// pre-existing additions in their original order preserves reward behavior;
+// the third addition is observation-only scratch for later commit.
+static inline void bbe_reward_add(Bloodbowl* env, int agent,
+                                  bbe_reward_component component,
+                                  float value) {
+    env->reward_ptr[agent][0] += value;
+    env->ep_return[agent] += value;
+    env->step_reward_component[agent][component] += value;
+}
 
 static bool bbe_reward_config_scalars_valid(const Bloodbowl* env,
                                             const char** bad_field) {
@@ -767,6 +846,29 @@ static bool bbe_frame_b_is_slot(int proc) {
     }
 }
 
+// Find the currently active movement procedure even when a nested TEST,
+// BLOCK, or other resolution frame is the decision at the top of the stack.
+// A procedure stack represents only the active call chain, so the nearest
+// valid MOVE frame is the active mover and cannot be a completed activation.
+static int bbe_active_move_slot(const bb_match* m) {
+    for (int i = (int)m->stack_top - 1; i >= 0; i--) {
+        const bb_frame* frame = &m->stack[i];
+        if (frame->proc == BB_PROC_MOVE) {
+            return frame->a < BB_NUM_PLAYERS ? frame->a : BB_NO_PLAYER;
+        }
+    }
+    return BB_NO_PLAYER;
+}
+
+// The physical block die has five public symbols: its two Push faces are
+// visually and legally identical. The engine distinguishes them only to model
+// the six equiprobable sides, so collapse PUSH_2 before exposing a face to the
+// policy rather than creating a non-public RNG side channel.
+static int bbe_public_block_face(int face) {
+    if (face == BB_BD_PUSH_2) return BB_BD_PUSH_1;
+    return face >= BB_BD_ATTACKER_DOWN && face <= BB_BD_POW ? face : 0;
+}
+
 static void bbe_encode_obs(Bloodbowl* env, int agent) {
     unsigned char* o = env->obs_ptr[agent];
     // Zero only the conditionally-written regions: player/ctx/scalars
@@ -829,7 +931,8 @@ static void bbe_encode_obs(Bloodbowl* env, int agent) {
 
     unsigned char* b = o + BBE_CTX_OFF;
     b[0] = m->ball.state;
-    if (m->ball.state != BB_BALL_OFF_PITCH) {
+    if (m->ball.state != BB_BALL_OFF_PITCH &&
+        bb_on_pitch_xy(m->ball.x, m->ball.y)) {
         int bx = me == BB_HOME ? m->ball.x : (BB_PITCH_LEN - 1 - m->ball.x);
         b[1] = (unsigned char)(bx + 1);
         b[2] = (unsigned char)(m->ball.y + 1);
@@ -843,10 +946,12 @@ static void bbe_encode_obs(Bloodbowl* env, int agent) {
         b[5] = top->phase;
         // Frame a/b are player slots only for whitelisted procs (see
         // bbe_frame_*_is_slot); remap those egocentrically (+1, 0 =
-        // none/not-a-slot). Frame x/y are NOT exposed: their semantics vary
-        // per proc (squares, latch bits, skill payloads), so away-mirroring
-        // can't be applied consistently — the legal-action mask carries the
-        // spatial decision context instead.
+        // none/not-a-slot). Top-frame x/y are otherwise NOT exposed: their
+        // semantics vary per proc (squares, latch bits, skill payloads), so
+        // away-mirroring cannot be applied consistently. The one explicit
+        // exception below exposes a pending Dodge's destination from its
+        // parent MOVE: reroll masks are nonspatial, and a bank reset has no
+        // preceding STEP observation from which to recover that consequence.
         b[6] = (bbe_frame_a_is_slot(top->proc) && top->a < BB_NUM_PLAYERS)
                    ? (unsigned char)(1 + bbe_ego_slot(me, top->a))
                    : 0;
@@ -858,6 +963,30 @@ static void bbe_encode_obs(Bloodbowl* env, int agent) {
         // x), else 0. Lets the policy price a reroll directly instead of
         // re-deriving stats/modifiers from the board rows.
         b[8] = top->proc == BB_PROC_TEST ? top->x : 0;
+        if (top->proc == BB_PROC_TEST && top->b == BB_TEST_DODGE &&
+            m->stack_top >= 2) {
+            const bb_frame* move = &m->stack[m->stack_top - 2];
+            if (move->proc == BB_PROC_MOVE && move->a == top->a &&
+                bb_on_pitch_xy(move->x, move->y)) {
+                int dx = me == BB_HOME
+                             ? move->x
+                             : (BB_PITCH_LEN - 1 - move->x);
+                b[9] = (unsigned char)(dx + 1);
+                b[12] = (unsigned char)(move->y + 1);
+            }
+        }
+        // Rolled block faces are public at both policy decisions that use
+        // them: whether to reroll the pool (phase 1) and which die to choose
+        // (phase 2). The engine stores up to three nonzero bb_block_die enum
+        // values in frame.data; unused face bytes remain zero from memset.
+        if (top->proc == BB_PROC_BLOCK &&
+            (top->phase == 1 || top->phase == 2)) {
+            int ndice = blk_ndice(top);
+            for (int i = 0; i < ndice && i < 3; i++) {
+                b[13 + i] =
+                    (unsigned char)bbe_public_block_face(blk_die(top, i));
+            }
+        }
     }
     b[10] = (unsigned char)(m->decision_team == me);
     b[11] = (unsigned char)(m->active_team == me);
@@ -882,10 +1011,17 @@ static void bbe_encode_obs(Bloodbowl* env, int agent) {
     s[16] = m->bribes[me];
     s[17] = m->bribes[1 - me];
     s[18] = (unsigned char)(m->kicking_team == me);
-    // s[19]/s[20] intentionally unused: team ids are NOT observed. Identity
-    // is fully derivable from the visible per-player stats/skills, and hiding
-    // the id forces the policy to read rosters — the structural guarantee
-    // behind the held-out / homebrew team generalization tests.
+    int mover = bbe_active_move_slot(m);
+    if (mover != BB_NO_PLAYER) {
+        s[19] = (unsigned char)(m->players[mover].moved + 1u);
+        s[20] = (unsigned char)(m->players[mover].rushes + 1u);
+    }
+    if (top && top->proc == BB_PROC_TEST && top->b < BB_TEST_KIND_COUNT) {
+        s[21] = (unsigned char)(top->b + 1u);
+    }
+    // Team ids are NOT observed. Identity is fully derivable from visible
+    // player stats/skills, and hiding the id forces the policy to read rosters
+    // — the structural guarantee behind held-out/homebrew generalization.
 
     // [BBE_TZ_OFF..] obs v3 tackle-zone planes: my coverage, then the
     // opponent's (destination danger), per square, x-mirrored for the away
@@ -967,6 +1103,7 @@ static bool bbe_type_spatial(int type) {
     switch (type) {
     case BB_A_SETUP_PLACE:
     case BB_A_KICK_TARGET:
+    case BB_A_TOUCHBACK: // fallback placement uses x/y; recipient uses (0,0)
     case BB_A_STEP:
     case BB_A_JUMP:
     case BB_A_BLOCK_TARGET:
@@ -975,6 +1112,33 @@ static bool bbe_type_spatial(int type) {
     case BB_A_FOUL_TARGET:
     case BB_A_TTM_TARGET:
     case BB_A_PUSH_SQUARE:
+    case BB_A_SPECIAL_TARGET:
+        return true;
+    default:
+        return false;
+    }
+}
+
+// Whether the semantic argument head participates in this action type. Raw
+// engine actions retain a fixed arg byte, but values in that byte are not
+// policy choices for the types omitted here. Canonicalizing those actions to
+// the sentinel makes the inactive head contribute exactly zero probability
+// and entropy under conditional sampling.
+static bool bbe_type_has_arg(int type) {
+    switch (type) {
+    case BB_A_SETUP_PLACE:
+    case BB_A_SETUP_REMOVE:
+    case BB_A_TOUCHBACK:
+    case BB_A_ACTIVATE:
+    case BB_A_DECLARE:
+    case BB_A_CHOOSE_DIE:
+    case BB_A_PUSH_SQUARE:
+    case BB_A_FOLLOW_UP:
+    case BB_A_USE_REROLL:
+    case BB_A_USE_SKILL:
+    case BB_A_DECLINE_SKILL:
+    case BB_A_APOTHECARY:
+    case BB_A_CHOOSE_OPTION:
     case BB_A_SPECIAL_TARGET:
         return true;
     default:
@@ -1003,13 +1167,21 @@ static int bbe_sq_index(int agent, int x, int y) {
 // Head-space square index for a legal action: real square (incl. (0,0)) for
 // spatial types, the 390 "none" sentinel otherwise.
 static int bbe_action_sq(int agent, bb_action a) {
-    return bbe_type_spatial(a.type) ? bbe_sq_index(agent, a.x, a.y) : 390;
+    // Touchback has two disjoint forms: a player recipient uses only arg;
+    // the 0xFF fallback placement uses only square.
+    bool spatial = bbe_type_spatial(a.type);
+    if (a.type == BB_A_TOUCHBACK && a.arg != 0xFF) spatial = false;
+    return spatial ? bbe_sq_index(agent, a.x, a.y) : 390;
 }
 
 // Head-space arg index for a legal action: player slots remapped to the
 // agent's egocentric view (matching obs rows); 0xFE/0xFF markers and args
 // beyond the direct range collapse into sentinel 32.
 static int bbe_action_arg(int agent, bb_action a) {
+    if (!bbe_type_has_arg(a.type) ||
+        (a.type == BB_A_TOUCHBACK && a.arg == 0xFF)) {
+        return 32;
+    }
     int arg = a.arg;
     if (bbe_arg_is_slot(a.type) && arg < BB_NUM_PLAYERS) {
         arg = bbe_ego_slot(agent, arg);
@@ -1237,40 +1409,152 @@ static void bbe_fill_mask(Bloodbowl* env, int agent) {
     }
 }
 
-// Snap the sampled heads onto a legal action. Uses the head projections
-// bbe_fill_mask cached for the deciding agent on this exact legal list; one
-// scan replaces the old three recompute passes with identical selection:
-// first exact (type, arg, sq) match, else first same-type same-square, else
-// first same-type, else legal[0]. Only the exact tier is non-illegal.
+// Build one stage of the exact sequential support used by standalone tests
+// and reference backend checks. head 0 is unconditional; head 1 is
+// conditioned on type; head 2 on type+arg. Returns the number of enabled
+// values. Macro STEP destinations are virtual env actions and are included in
+// the same semantic support as adjacent engine STEP actions.
+static int bbe_fill_joint_head_mask(const Bloodbowl* env, int agent, int head,
+                                    int type, int arg,
+                                    unsigned char* out, int out_len) {
+    memset(out, 0, (size_t)out_len);
+    for (int i = 0; i < env->n_legal; i++) {
+        int t = env->legal[i].type;
+        int a = env->legal_arg[i];
+        int s = env->legal_sq[i];
+        if (head >= 1 && t != type) continue;
+        if (head >= 2 && a != arg) continue;
+        int value = head == 0 ? t : (head == 1 ? a : s);
+        if (value >= 0 && value < out_len) out[value] = 1;
+    }
+    if (env->macro_moves && env->reach_mover >= 0) {
+        if (head == 0) {
+            out[BB_A_STEP] = 1;
+        } else if (type == BB_A_STEP && head == 1) {
+            out[32] = 1;
+        } else if (type == BB_A_STEP && arg == 32 && head == 2) {
+            for (int d = 0; d < 390; d++) {
+                if (env->reach_parent[d] < 0) continue;
+                int x = d % BB_PITCH_LEN;
+                int y = d / BB_PITCH_LEN;
+                int sq = bbe_sq_index(agent, x, y);
+                out[sq] = 1;
+            }
+        }
+    }
+    int n = 0;
+    for (int i = 0; i < out_len; i++) n += out[i] != 0;
+    return n;
+}
+
+static void bbe_fill_effective_action_mask(const Bloodbowl* env, int agent,
+                                           int type, int arg,
+                                           unsigned char out[BBE_MASK_SIZE]) {
+    int sizes[3] = {BBE_HEAD_TYPE, BBE_HEAD_ARG, BBE_HEAD_SQ};
+    int offsets[3] = {0, BBE_HEAD_TYPE, BBE_HEAD_TYPE + BBE_HEAD_ARG};
+    for (int h = 0; h < 3; h++) {
+        int n = bbe_fill_joint_head_mask(env, agent, h, type, arg,
+                                         out + offsets[h], sizes[h]);
+        if (n <= 0) {
+            fprintf(stderr,
+                    "bloodbowl: empty effective support at head %d "
+                    "(type=%d arg=%d)\n",
+                    h, type, arg);
+            abort();
+        }
+    }
+}
+
+static int bbe_sample_support_bit(const unsigned char* support, int len,
+                                  bb_rng* rng) {
+    int n = 0;
+    for (int i = 0; i < len; i++) n += support[i] != 0;
+    if (n <= 0) return -1;
+    int pick = (int)(bb_rng_next(rng) % (uint32_t)n);
+    for (int i = 0; i < len; i++) {
+        if (support[i] && pick-- == 0) return i;
+    }
+    return -1;
+}
+
+// Uniform-logit reference sampler used by standalone diagnostics and C tests.
+// Production native/Torch samplers use policy logits but must produce these
+// same conditional support slices.
+static void bbe_sample_joint_uniform(const Bloodbowl* env, int agent,
+                                     float action[3], bb_rng* rng) {
+    if (env->match.status != BB_STATUS_DECISION ||
+        env->match.decision_team != agent || env->n_legal <= 0) {
+        action[0] = BB_A_NONE;
+        action[1] = 32;
+        action[2] = 390;
+        return;
+    }
+    unsigned char support[BBE_HEAD_SQ];
+    int sizes[3] = {BBE_HEAD_TYPE, BBE_HEAD_ARG, BBE_HEAD_SQ};
+    int type = 0, arg = 32;
+    for (int h = 0; h < 3; h++) {
+        int n = bbe_fill_joint_head_mask(env, agent, h, type, arg, support,
+                                         sizes[h]);
+        int selected = n > 0
+            ? bbe_sample_support_bit(support, sizes[h], rng) : -1;
+        if (selected < 0) {
+            fprintf(stderr,
+                    "bloodbowl: empty exact support at head %d "
+                    "(type=%d arg=%d)\n",
+                    h, type, arg);
+            abort();
+        }
+        action[h] = (float)selected;
+        if (h == 0) type = selected;
+        if (h == 1) arg = selected;
+    }
+}
+
+// Decode an exact semantic tuple. Policy sampling must already be restricted
+// to the joint support; a malformed/external tuple fails closed as BB_A_NONE
+// instead of silently executing a neighboring legal action.
 static bb_action bbe_decode(Bloodbowl* env, int agent, const float* heads) {
     (void)agent; // projections were cached for the deciding agent
+    static const int sizes[3] = {BBE_HEAD_TYPE, BBE_HEAD_ARG, BBE_HEAD_SQ};
+    for (int h = 0; h < 3; h++) {
+        if (!isfinite(heads[h]) || heads[h] < 0.0f ||
+            heads[h] >= (float)sizes[h] ||
+            heads[h] != floorf(heads[h])) {
+            env->illegal++;
+            return (bb_action){BB_A_NONE, 0, 0, 0};
+        }
+    }
     int t = (int)heads[0];
     int arg = (int)heads[1];
     int sq = (int)heads[2];
     if (t == BB_A_SETUP_PLACE && env->setup_fast) {
-        // Arithmetic resolution against the stamped template — selection
-        // tiers identical to the generic scan below (incl. illegal++).
+        // Arithmetic resolution against the stamped rectangular template.
         int bs = (arg >= 0 && arg < BBE_HEAD_ARG)
                      ? env->setup_block_start[arg] : -1;
         uint16_t off = (sq >= 0 && sq < BBE_HEAD_SQ)
                            ? env->setup_sq_off[sq] : (uint16_t)0xFFFF;
         if (bs >= 0 && off != 0xFFFF) return env->legal[bs + off];
         env->illegal++;
-        if (off != 0xFFFF) return env->legal[env->setup_t0 + off];
-        return env->legal[env->setup_t0];
+        return (bb_action){BB_A_NONE, 0, 0, 0};
     }
-    int same_type_sq = -1, same_type = -1;
+    int exact = -1;
     for (int i = 0; i < env->n_legal; i++) {
         if (env->legal[i].type != t) continue;
-        if (env->legal_sq[i] == sq) {
-            if (env->legal_arg[i] == arg) return env->legal[i]; // exact
-            if (same_type_sq < 0) same_type_sq = i;
+        if (env->legal_sq[i] == sq && env->legal_arg[i] == arg) {
+            if (exact < 0) {
+                exact = i;
+            } else if (!bb_action_eq(env->legal[exact], env->legal[i])) {
+                // Two different engine actions may never collapse onto one
+                // policy tuple. Identical duplicate enumeration is harmless.
+                env->illegal++;
+                return (bb_action){BB_A_NONE, 0, 0, 0};
+            }
         }
-        if (same_type < 0) same_type = i;
     }
+    if (exact >= 0) return env->legal[exact];
     // v5 macro-moves (D82): a STEP to a reachable non-adjacent destination
     // is a PLANNED PATH, not an illegal pick. Ego->absolute, then route.
-    if (env->macro_moves && t == BB_A_STEP && same_type_sq < 0 &&
+    if (env->macro_moves && t == BB_A_STEP && arg == 32 &&
         sq >= 0 && sq < 390 && env->reach_mover >= 0 &&
         env->match.stack_top > 0 &&
         env->match.stack[env->match.stack_top - 1].proc == BB_PROC_MOVE &&
@@ -1284,9 +1568,7 @@ static bb_action bbe_decode(Bloodbowl* env, int agent, const float* heads) {
         }
     }
     env->illegal++;
-    if (same_type_sq >= 0) return env->legal[same_type_sq];
-    if (same_type >= 0) return env->legal[same_type];
-    return env->legal[0];
+    return (bb_action){BB_A_NONE, 0, 0, 0};
 }
 
 // --- Spectator event feed ----------------------------------------------------
@@ -1320,8 +1602,10 @@ void (*bbe_feed_hook)(const Bloodbowl* env, int kind, int a, int b) = 0;
 // validation/build_state_bank.py, staged by tools/install_puffer_env.sh.
 // Missing file = curriculum silently off (the chess pattern); a header that
 // fails the match_size/fingerprint guards is reported and ignored — training
-// on stale-engine states would be silent corruption. Only BB_STATUS_DECISION
-// records are kept (resumable by definition).
+// on stale-engine states would be silent corruption. BBS1 currently accepts
+// the shared, structurally validated MATCH -> TEAM_TURN boundary plus the one
+// explicitly validated pending-Dodge reroll stack documented in D201. Every
+// other nested procedure decision remains fail-closed.
 #define BBE_STATE_BANK_PATH "resources/bloodbowl/state_bank.bbs"
 #define BBE_STATE_BANK_REC_META 12 // replay_id u32, cmd u32, half, turn, pad[2]
 
@@ -1370,31 +1654,32 @@ static void bbe_state_bank_load(void) {
         fclose(f);
         return;
     }
+    if ((uint64_t)n > SIZE_MAX / sizeof(bb_match)) {
+        fclose(f);
+        return;
+    }
     bb_match* bank = (bb_match*)malloc((size_t)n * sizeof(bb_match));
+    if (bank == NULL) {
+        fclose(f);
+        return;
+    }
     int kept = 0;
     for (long i = 0; i < n; i++) {
-        if (fseek(f, 16 + i * (long)rec_len + BBE_STATE_BANK_REC_META,
-                  SEEK_SET) != 0 ||
+        uint8_t metadata[BBE_STATE_BANK_REC_META];
+        if (fseek(f, 16 + i * (long)rec_len, SEEK_SET) != 0 ||
+            fread(metadata, 1, sizeof metadata, f) != sizeof metadata ||
             fread(&bank[kept], sizeof(bb_match), 1, f) != 1) {
             break;
         }
-        // Resumable points only; anything else would error out of c_step.
-        // Index-bearing bytes are validated too: reward pricing and obs
-        // encoding index team/position tables with them, and the BBS1
-        // fingerprint guards the engine BUILD, not record content (panel).
-        if (bank[kept].status == BB_STATUS_DECISION &&
-            bank[kept].stack_top > 0 &&
-            bank[kept].team_id[0] < BB_TEAM_COUNT &&
-            bank[kept].team_id[1] < BB_TEAM_COUNT) {
-            int ok = 1;
-            for (int s = 0; s < BB_NUM_PLAYERS; s++) {
-                if (bank[kept].players[s].position_id >= BB_MAX_POSITIONS) {
-                    ok = 0;
-                    break;
-                }
-            }
-            kept += ok;
-        }
+        const bb_match* match = &bank[kept];
+        uint8_t half = metadata[8];
+        uint8_t turn = metadata[9];
+        int metadata_valid = bbe_le32(metadata) != 0 &&
+            metadata[10] == 0 && metadata[11] == 0 &&
+            half >= 1 && half <= 3 && turn >= 1 && turn <= 8 &&
+            match->half == half && match->active_team <= BB_AWAY &&
+            match->turn[match->active_team] == turn;
+        kept += metadata_valid && bb_state_bank_resumable_valid(match);
     }
     fclose(f);
     if (kept == 0) {
@@ -1604,14 +1889,14 @@ static void bbe_update_ball_possession(Bloodbowl* env, bool scored) {
             if (prev >= 0) {
                 bbe_end_ball_possession(env, x, y);
                 if (!scored && pay_rewards) {
-                    env->reward_ptr[prev][0] += env->reward_ball_loss;
-                    env->ep_return[prev] += env->reward_ball_loss;
+                    bbe_reward_add(env, prev, BBE_REWARD_BALL_LOSS,
+                                   env->reward_ball_loss);
                 }
             }
             bbe_start_ball_possession(env, cur, x, y);
             if (!scored && pay_rewards) {
-                env->reward_ptr[cur][0] += env->reward_ball_gain;
-                env->ep_return[cur] += env->reward_ball_gain;
+                bbe_reward_add(env, cur, BBE_REWARD_BALL_GAIN,
+                               env->reward_ball_gain);
             }
         }
         if (scored) bbe_end_ball_possession(env, x, y);
@@ -1619,8 +1904,8 @@ static void bbe_update_ball_possession(Bloodbowl* env, bool scored) {
         int prev = env->possessor;
         bbe_end_ball_possession(env, x, y);
         if (pay_rewards) {
-            env->reward_ptr[prev][0] += env->reward_ball_loss;
-            env->ep_return[prev] += env->reward_ball_loss;
+            bbe_reward_add(env, prev, BBE_REWARD_BALL_LOSS,
+                           env->reward_ball_loss);
         }
     } else if (m->ball.state == BB_BALL_OFF_PITCH && env->possessor >= 0) {
         for (int i = 0; i < m->stack_top; i++) {
@@ -1837,6 +2122,21 @@ static void bbe_reset_match(Bloodbowl* env) {
     env->ep_return[0] = env->ep_return[1] = 0;
     env->step_objective_reward[0] = env->step_objective_reward[1] = 0;
     env->step_return_base[0] = env->step_return_base[1] = 0;
+    memset(env->step_reward_component, 0,
+           sizeof env->step_reward_component);
+    memset(env->ep_reward_component, 0, sizeof env->ep_reward_component);
+    memset(env->ep_reward_component_residual, 0,
+           sizeof env->ep_reward_component_residual);
+    memset(env->ep_reward_postclip_return, 0,
+           sizeof env->ep_reward_postclip_return);
+    memset(env->ep_reward_clip_signed_delta, 0,
+           sizeof env->ep_reward_clip_signed_delta);
+    memset(env->ep_reward_terminal_suppressed_signed, 0,
+           sizeof env->ep_reward_terminal_suppressed_signed);
+    memset(env->ep_reward_terminal_suppressed_abs, 0,
+           sizeof env->ep_reward_terminal_suppressed_abs);
+    env->ep_reward_component_mismatch_samples = 0;
+    env->ep_reward_component_nonfinite_samples = 0;
     env->ep_reward_samples = 0;
     env->ep_reward_clipped = 0;
     env->ep_reward_nonzero = 0;
@@ -1922,9 +2222,53 @@ static void c_reset(Bloodbowl* env) {
     bbe_emit_all(env);
 }
 
+static void bbe_commit_reward_components(Bloodbowl* env,
+                                         unsigned suppressed_nonfinite_mask) {
+    for (int a = 0; a < BBE_AGENTS; a++) {
+        float component_sum = 0.0f;
+        float component_abs_sum = 0.0f;
+        bool components_finite = true;
+        for (int c = 0; c < BBE_REWARD_COMPONENT_COUNT; c++) {
+            float value = env->step_reward_component[a][c];
+            if (!isfinite(value)) {
+                components_finite = false;
+                continue;
+            }
+            env->ep_reward_component[a][c] += value;
+            component_sum += value;
+            component_abs_sum += fabsf(value);
+        }
+
+        float raw = env->reward_ptr[a][0];
+        bool raw_finite = isfinite(raw);
+        if (!components_finite || !raw_finite ||
+            (suppressed_nonfinite_mask & (1u << a))) {
+            env->ep_reward_component_nonfinite_samples++;
+        }
+        if (!components_finite || !raw_finite) continue;
+
+        // Re-folding by component can differ from the original emission by a
+        // few ulps. Preserve that signed residual for run-level dashboard
+        // reconciliation and count only materially larger mismatches; later
+        // aggregation still warrants a float tolerance, not exact equality.
+        float residual = raw - component_sum;
+        env->ep_reward_component_residual[a] += residual;
+        float tolerance =
+            8.0f * FLT_EPSILON * (1.0f + fabsf(raw) + component_abs_sum);
+        if (fabsf(residual) > tolerance) {
+            env->ep_reward_component_mismatch_samples++;
+        }
+
+        float postclip = fminf(1.0f, fmaxf(-1.0f, raw));
+        env->ep_reward_postclip_return[a] += postclip;
+        env->ep_reward_clip_signed_delta[a] += raw - postclip;
+    }
+}
+
 static void bbe_record_reward_emission_masked(Bloodbowl* env,
                                                unsigned nonfinite_mask,
                                                bool terminal) {
+    bbe_commit_reward_components(env, nonfinite_mask);
     for (int a = 0; a < BBE_AGENTS; a++) {
         float raw = env->reward_ptr[a][0];
         env->ep_reward_samples++;
@@ -1982,6 +2326,34 @@ static void bbe_finish_episode(Bloodbowl* env) {
         float pre_terminal = env->reward_ptr[a][0];
         if (!isfinite(pre_terminal)) suppressed_nonfinite_mask |= 1u << a;
         float objective = env->step_objective_reward[a];
+        float suppressed = pre_terminal - objective;
+        if (isfinite(suppressed)) {
+            // `abs` is the absolute NET suppressed subtotal on this terminal
+            // emission, not the sum of absolute per-component contributions.
+            env->ep_reward_terminal_suppressed_signed[a] += suppressed;
+            env->ep_reward_terminal_suppressed_abs[a] += fabsf(suppressed);
+        }
+
+        float observed_objective =
+            env->step_reward_component[a][BBE_REWARD_TOUCHDOWN];
+        if (isfinite(objective) && isfinite(observed_objective)) {
+            float tolerance = 8.0f * FLT_EPSILON *
+                (1.0f + fabsf(objective) + fabsf(observed_objective));
+            if (fabsf(objective - observed_objective) > tolerance) {
+                env->ep_reward_component_mismatch_samples++;
+            }
+        }
+
+        // Rebuild both the effective reward and its scratch ledger with the
+        // same terminal authority. The assignment expressions remain exactly
+        // as before; only result/statmatch below are new effective components.
+        memset(env->step_reward_component[a], 0,
+               sizeof env->step_reward_component[a]);
+        env->step_reward_component[a][BBE_REWARD_TOUCHDOWN] = objective;
+        bbe_reward_component result_component =
+            m->score[0] == m->score[1] ? BBE_REWARD_RESULT_DRAW
+                                       : BBE_REWARD_RESULT_WINLOSS;
+        env->step_reward_component[a][result_component] = bonus[a];
         env->reward_ptr[a][0] = objective + bonus[a];
         env->ep_return[a] = env->step_return_base[a] + objective + bonus[a];
         env->terminal_ptr[a][0] = 1.0f;
@@ -2156,8 +2528,7 @@ static void bbe_finish_episode(Bloodbowl* env) {
         statmatch = -env->reward_statmatch_scale * sqrtf(ss);
     }
     for (int a = 0; a < BBE_AGENTS; a++) {
-        env->reward_ptr[a][0] += statmatch;
-        env->ep_return[a]     += statmatch;
+        bbe_reward_add(env, a, BBE_REWARD_STATMATCH, statmatch);
     }
     // Record only after every terminal component—including statmatch—has
     // stacked. This is exactly the raw emission PPO clamps before GAE.
@@ -2174,6 +2545,22 @@ static void bbe_finish_episode(Bloodbowl* env) {
     env->log.reward_episode_abs_max_mean += env->ep_reward_abs_max;
     env->log.reward_clip_episodes += env->ep_reward_clipped > 0;
     env->log.reward_nonfinite_episodes += env->ep_reward_nonfinite > 0;
+    for (int c = 0; c < BBE_REWARD_COMPONENT_COUNT; c++) {
+        env->log.reward_component[c] += env->ep_reward_component[0][c];
+    }
+    env->log.reward_component_residual +=
+        env->ep_reward_component_residual[0];
+    env->log.reward_component_mismatch_samples +=
+        (float)env->ep_reward_component_mismatch_samples;
+    env->log.reward_component_nonfinite_samples +=
+        (float)env->ep_reward_component_nonfinite_samples;
+    env->log.reward_terminal_suppressed_signed +=
+        env->ep_reward_terminal_suppressed_signed[0];
+    env->log.reward_terminal_suppressed_abs +=
+        env->ep_reward_terminal_suppressed_abs[0];
+    env->log.reward_postclip_return += env->ep_reward_postclip_return[0];
+    env->log.reward_clip_signed_delta +=
+        env->ep_reward_clip_signed_delta[0];
     env->log.statmatch_term += statmatch;
     // episode_return was logged above from slot 0's pre-statmatch ep_return;
     // fold the statmatch term in so the dashboard's episode_return is total.
@@ -2222,8 +2609,8 @@ static void bbe_count_action(Bloodbowl* env, bb_action act) {
                 env->pending_gfi_slot = top->a;
                 BBE_FEED(env, BBE_EV_GFI, top->a, -1);
                 if (env->reward_rush_cost != 0.0f) {
-                    env->reward_ptr[team][0] -= env->reward_rush_cost;
-                    env->ep_return[team] -= env->reward_rush_cost;
+                    bbe_reward_add(env, team, BBE_REWARD_RUSH,
+                                   -env->reward_rush_cost);
                 }
             }
             if (bb_tackle_zones(m, BB_TEAM_OF(top->a), p->x, p->y) > 0) {
@@ -2377,8 +2764,8 @@ static void bbe_apply_kickoff_touchback_reward(Bloodbowl* env) {
     env->kickoff_touchback_latched = 1;
     env->ep_touchbacks++;
     if (env->reward_kickoff_touchback != 0.0f) {
-        env->reward_ptr[kicking][0] += env->reward_kickoff_touchback;
-        env->ep_return[kicking] += env->reward_kickoff_touchback;
+        bbe_reward_add(env, kicking, BBE_REWARD_TOUCHBACK,
+                       env->reward_kickoff_touchback);
     }
 }
 
@@ -2388,6 +2775,8 @@ static void c_step(Bloodbowl* env) {
         env->terminal_ptr[a][0] = 0.0f;
         env->step_objective_reward[a] = 0.0f;
         env->step_return_base[a] = env->ep_return[a];
+        memset(env->step_reward_component[a], 0,
+               sizeof env->step_reward_component[a]);
     }
     bb_match* m = &env->match;
     if (m->status == BB_STATUS_DECISION && env->n_legal > 0) {
@@ -2404,6 +2793,14 @@ static void c_step(Bloodbowl* env) {
                       : bbe_contact_bot_pick(m, env->legal, env->n_legal);
         } else {
             act = bbe_decode(env, agent, env->action_ptr[agent]);
+            if (act.type == BB_A_NONE) {
+                fprintf(stderr,
+                        "bloodbowl: policy supplied a tuple outside exact "
+                        "joint support (type=%.0f arg=%.0f square=%.0f)\n",
+                        env->action_ptr[agent][0], env->action_ptr[agent][1],
+                        env->action_ptr[agent][2]);
+                abort();
+            }
         }
         // Setup shaping: forced DONE (budget exhausted -> sole legal action)
         // vs voluntary legal DONE. Must inspect n_legal BEFORE bb_apply.
@@ -2411,8 +2808,10 @@ static void c_step(Bloodbowl* env) {
             float r = env->n_legal == 1 ? env->reward_setup_autofix
                                         : env->reward_setup_done;
             if (r != 0.0f) {
-                env->reward_ptr[agent][0] += r;
-                env->ep_return[agent] += r;
+                bbe_reward_component component =
+                    env->n_legal == 1 ? BBE_REWARD_SETUP_AUTOFIX
+                                      : BBE_REWARD_SETUP_DONE;
+                bbe_reward_add(env, agent, component, r);
             }
         }
         bbe_count_action(env, act);
@@ -2481,16 +2880,17 @@ static void c_step(Bloodbowl* env) {
                      env->reward_k_value * ev.p_def_removed *
                          player_cost_100k(m, bdef) + // bb_blockev.c (same TU)
                      env->reward_k_ball * ev.p_ball_out);
-                env->reward_ptr[bteam][0] += exposure;
-                env->reward_ptr[1 - bteam][0] -= exposure;
-                env->ep_return[bteam] += exposure;
-                env->ep_return[1 - bteam] -= exposure;
+                bbe_reward_add(env, bteam, BBE_REWARD_BLOCK_EXPOSURE,
+                               exposure);
+                bbe_reward_add(env, 1 - bteam, BBE_REWARD_BLOCK_EXPOSURE,
+                               -exposure);
                 if (env->reward_k_self_injury != 0.0f) {
                     float self_injury =
                         env->reward_k_self_injury * ev.p_att_removed *
                         player_cost_100k(m, batt) * p_deliver;
-                    env->reward_ptr[bteam][0] -= self_injury;
-                    env->ep_return[bteam] -= self_injury;
+                    bbe_reward_add(env, bteam,
+                                   BBE_REWARD_BLOCK_SELF_INJURY,
+                                   -self_injury);
                 }
                 if (env->reward_k_turnover != 0.0f) {
                     // Net-EV block discipline (D158): charge the turnover COST
@@ -2508,8 +2908,8 @@ static void c_step(Bloodbowl* env) {
                     // defender here would double-pay them (review F4). Pre-dice
                     // EV — cardinal-rule clean (D147).
                     float turnover_cost = env->reward_k_turnover * ev.p_turnover;
-                    env->reward_ptr[bteam][0] -= turnover_cost;
-                    env->ep_return[bteam] -= turnover_cost;
+                    bbe_reward_add(env, bteam, BBE_REWARD_BLOCK_TURNOVER,
+                                   -turnover_cost);
                 }
                 // Sequencing charge: own-turnover risk x unbanked safe
                 // activations; exempt on the team's last turn of the half
@@ -2528,8 +2928,8 @@ static void c_step(Bloodbowl* env) {
                                    !(sp->flags & BB_PF_USED);
                     }
                     float seq = env->reward_k_seq * p_own_to * (float)pending;
-                    env->reward_ptr[bteam][0] -= seq;
-                    env->ep_return[bteam] -= seq;
+                    bbe_reward_add(env, bteam, BBE_REWARD_BLOCK_SEQUENCE,
+                                   -seq);
                 }
             }
         }
@@ -2676,10 +3076,8 @@ static void c_step(Bloodbowl* env) {
             int annuity_events = held - (scored < held ? scored : held);
             if (annuity_events > 0 && env->reward_possession != 0.0f) {
                 float r = env->reward_possession * (float)annuity_events;
-                env->reward_ptr[t][0] += r;
-                env->reward_ptr[1 - t][0] -= r;
-                env->ep_return[t] += r;
-                env->ep_return[1 - t] -= r;
+                bbe_reward_add(env, t, BBE_REWARD_POSSESSION, r);
+                bbe_reward_add(env, 1 - t, BBE_REWARD_POSSESSION, -r);
             }
         }
         // Every positional turn-end hook follows the same monotonic boundary
@@ -2701,13 +3099,14 @@ static void c_step(Bloodbowl* env) {
                 bb_carrier_exposure ex = bb_carrier_exposure_eval(m, t);
                 if (ex.full) {
                     if (env->reward_carrier_exposure != 0.0f) {
-                        env->reward_ptr[t][0] -= env->reward_carrier_exposure;
-                        env->ep_return[t] -= env->reward_carrier_exposure;
+                        bbe_reward_add(env, t, BBE_REWARD_CARRIER_EXPOSURE,
+                                       -env->reward_carrier_exposure);
                         env->ep_carrier_exposed_full++;
                     }
                 } else if (ex.soft && env->reward_carrier_exposure_soft != 0.0f) {
-                    env->reward_ptr[t][0] -= env->reward_carrier_exposure_soft;
-                    env->ep_return[t] -= env->reward_carrier_exposure_soft;
+                    bbe_reward_add(env, t,
+                                   BBE_REWARD_CARRIER_EXPOSURE_SOFT,
+                                   -env->reward_carrier_exposure_soft);
                     env->ep_carrier_exposed_soft++;
                 }
             }
@@ -2728,10 +3127,10 @@ static void c_step(Bloodbowl* env) {
                     float def_r = env->reward_carrier_threat * tc;
                     float hold_r = env->reward_carrier_threat *
                                    (BB_CARRIER_THREAT_T_MAX - tc);
-                    env->reward_ptr[defender][0] += def_r;
-                    env->reward_ptr[holder][0] += hold_r;
-                    env->ep_return[defender] += def_r;
-                    env->ep_return[holder] += hold_r;
+                    bbe_reward_add(env, defender, BBE_REWARD_CARRIER_THREAT,
+                                   def_r);
+                    bbe_reward_add(env, holder, BBE_REWARD_CARRIER_THREAT,
+                                   hold_r);
                     env->ep_carrier_threat += th.uncapped_total;
                 }
             }
@@ -2748,10 +3147,8 @@ static void c_step(Bloodbowl* env) {
                 float d0 = fav[0] - env->prev_contact_fav[0];
                 float d1 = fav[1] - env->prev_contact_fav[1];
                 float r0 = env->reward_k_assist * (d0 - d1);
-                env->reward_ptr[0][0] += r0;
-                env->reward_ptr[1][0] -= r0;
-                env->ep_return[0] += r0;
-                env->ep_return[1] -= r0;
+                bbe_reward_add(env, 0, BBE_REWARD_BLOCK_ASSIST, r0);
+                bbe_reward_add(env, 1, BBE_REWARD_BLOCK_ASSIST, -r0);
                 env->ep_contact_fav += fav[0] + fav[1];
                 env->prev_contact_fav[0] = fav[0];
                 env->prev_contact_fav[1] = fav[1];
@@ -2784,13 +3181,13 @@ static void c_step(Bloodbowl* env) {
                 int soft = soft_true < 4 ? soft_true : 4;
                 if (hard > 0 && env->reward_defensive_threat != 0.0f) {
                     float pen = env->reward_defensive_threat * (float)hard;
-                    env->reward_ptr[t][0] -= pen;
-                    env->ep_return[t] -= pen;
+                    bbe_reward_add(env, t, BBE_REWARD_DEFENSIVE_THREAT,
+                                   -pen);
                 }
                 if (soft > 0 && env->reward_defensive_threat_soft != 0.0f) {
                     float pen = env->reward_defensive_threat_soft * (float)soft;
-                    env->reward_ptr[t][0] -= pen;
-                    env->ep_return[t] -= pen;
+                    bbe_reward_add(env, t,
+                                   BBE_REWARD_DEFENSIVE_THREAT_SOFT, -pen);
                 }
                 env->ep_def_threats_1t += hard_true;
                 env->ep_def_threats_2t += dt.n_threats_2turn;
@@ -2809,13 +3206,11 @@ static void c_step(Bloodbowl* env) {
                 BBE_FEED(env, BBE_EV_TD,
                          m->ball.state == BB_BALL_HELD ? m->ball.carrier : -1,
                          -1);
-                env->reward_ptr[t][0] += env->reward_td * (float)d;
-                env->reward_ptr[1 - t][0] -= env->reward_td * (float)d;
-                env->step_objective_reward[t] += env->reward_td * (float)d;
-                env->step_objective_reward[1 - t] -=
-                    env->reward_td * (float)d;
-                env->ep_return[t] += env->reward_td * (float)d;
-                env->ep_return[1 - t] -= env->reward_td * (float)d;
+                float td_reward = env->reward_td * (float)d;
+                bbe_reward_add(env, t, BBE_REWARD_TOUCHDOWN, td_reward);
+                bbe_reward_add(env, 1 - t, BBE_REWARD_TOUCHDOWN, -td_reward);
+                env->step_objective_reward[t] += td_reward;
+                env->step_objective_reward[1 - t] -= td_reward;
                 env->ep_tds_team[t] += d;
                 env->score_prev[t] = m->score[t];
             }
@@ -2850,10 +3245,11 @@ static void c_step(Bloodbowl* env) {
                 int d = out - env->out_prev[t];
                 if (d > 0) {
                     float w = env->reward_injury_value_scaled ? weight : (float)d;
-                    env->reward_ptr[t][0] += env->reward_injury_taken * w;
-                    env->ep_return[t] += env->reward_injury_taken * w;
-                    env->reward_ptr[1 - t][0] += env->reward_injury_inflicted * w;
-                    env->ep_return[1 - t] += env->reward_injury_inflicted * w;
+                    bbe_reward_add(env, t, BBE_REWARD_INJURY_TAKEN,
+                                   env->reward_injury_taken * w);
+                    bbe_reward_add(env, 1 - t,
+                                   BBE_REWARD_INJURY_INFLICTED,
+                                   env->reward_injury_inflicted * w);
                 }
                 env->out_prev[t] = out;
                 env->out_mask_prev[t] = mask;
@@ -2874,8 +3270,7 @@ static void c_step(Bloodbowl* env) {
                 env->ep_send_offs += d;
                 if (env->reward_send_off != 0.0f) {
                     float r = env->reward_send_off * (float)d;
-                    env->reward_ptr[t][0] += r;
-                    env->ep_return[t] += r;
+                    bbe_reward_add(env, t, BBE_REWARD_SEND_OFF, r);
                 }
             }
             env->sent_off_prev[t] = sent;
@@ -2902,8 +3297,7 @@ static void c_step(Bloodbowl* env) {
                 if (!scored && !isnan(pf) &&
                     !isnan(env->pot_fetch_prev[t])) {
                     float dr = pf - env->pot_fetch_prev[t];
-                    env->reward_ptr[t][0] += dr;
-                    env->ep_return[t] += dr;
+                    bbe_reward_add(env, t, BBE_REWARD_DISTANCE_BALL, dr);
                 }
                 env->pot_fetch_prev[t] = pf;
                 // Carry channel: active only while this team holds the ball.
@@ -2917,8 +3311,7 @@ static void c_step(Bloodbowl* env) {
                 if (!scored && !isnan(pc) &&
                     !isnan(env->pot_carry_prev[t])) {
                     float dr = pc - env->pot_carry_prev[t];
-                    env->reward_ptr[t][0] += dr;
-                    env->ep_return[t] += dr;
+                    bbe_reward_add(env, t, BBE_REWARD_DISTANCE_ENDZONE, dr);
                 }
                 env->pot_carry_prev[t] = pc;
             }
@@ -2929,10 +3322,10 @@ static void c_step(Bloodbowl* env) {
             for (int t = 0; t < 2; t++) {
                 int d = m->surfs[t] - env->surf_prev[t];
                 if (d > 0) {
-                    env->reward_ptr[t][0] += env->reward_surf_taken * (float)d;
-                    env->ep_return[t] += env->reward_surf_taken * (float)d;
-                    env->reward_ptr[1 - t][0] += env->reward_surf_inflicted * (float)d;
-                    env->ep_return[1 - t] += env->reward_surf_inflicted * (float)d;
+                    bbe_reward_add(env, t, BBE_REWARD_SURF_TAKEN,
+                                   env->reward_surf_taken * (float)d);
+                    bbe_reward_add(env, 1 - t, BBE_REWARD_SURF_INFLICTED,
+                                   env->reward_surf_inflicted * (float)d);
                 }
                 env->surf_prev[t] = m->surfs[t];
             }
@@ -2941,8 +3334,9 @@ static void c_step(Bloodbowl* env) {
     bool episode_finished = false;
     if (m->status == BB_STATUS_ERROR ||
         (m->status == BB_STATUS_DECISION && env->n_legal <= 0)) {
-        // Both should be unreachable (decode snaps to legal; every decision
-        // window offers at least one action). The second guard matters: a
+        // Both should be unreachable (exact conditional sampling emits a
+        // listed tuple; every decision window offers at least one action).
+        // The second guard matters: a
         // DECISION whose legal set came back empty would otherwise livelock
         // the env forever — the mask path emits a defensive null action, but
         // the step path would never apply anything and never terminate.

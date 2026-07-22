@@ -15,17 +15,6 @@ static int action_in_legal(bb_action a, const bb_action* legal, int n) {
     return 0;
 }
 
-static int sample_masked_head(const unsigned char* mask, int len, bb_rng* rng) {
-    int n = 0;
-    for (int i = 0; i < len; i++) n += mask[i] != 0;
-    if (n == 0) return 0;
-    int k = (int)(bb_rng_next(rng) % (uint32_t)n);
-    for (int i = 0; i < len; i++) {
-        if (mask[i] && k-- == 0) return i;
-    }
-    return 0;
-}
-
 static void hash_bytes(uint64_t* h, const void* ptr, size_t len) {
     const unsigned char* p = (const unsigned char*)ptr;
     for (size_t i = 0; i < len; i++) {
@@ -77,13 +66,7 @@ static ContactHookStats run_contact_hook(int scripted, int scripted_team,
     while (out.completed < games &&
            out.decisions < (long)games * CONTACT_DECISION_CAP) {
         for (int a = 0; a < BBE_AGENTS; a++) {
-            const unsigned char* m = env.action_mask_ptr[a];
-            env.action_ptr[a][0] =
-                (float)sample_masked_head(m, BBE_HEAD_TYPE, &pol);
-            env.action_ptr[a][1] =
-                (float)sample_masked_head(m + BBE_HEAD_TYPE, BBE_HEAD_ARG, &pol);
-            env.action_ptr[a][2] = (float)sample_masked_head(
-                m + BBE_HEAD_TYPE + BBE_HEAD_ARG, BBE_HEAD_SQ, &pol);
+            bbe_sample_joint_uniform(&env, a, env.action_ptr[a], &pol);
         }
         hash_bytes(&out.digest, actions, sizeof actions);
         c_step(&env);

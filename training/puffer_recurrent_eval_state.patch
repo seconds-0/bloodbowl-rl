@@ -1,0 +1,300 @@
+diff --git a/pufferlib/torch_pufferl.py b/pufferlib/torch_pufferl.py
+index 4cf6184..9442a16 100644
+--- a/pufferlib/torch_pufferl.py
++++ b/pufferlib/torch_pufferl.py
+@@ -189,6 +189,27 @@ def _cpu_tensor(ptr, shape, dtype):
+     arr = (ctype * n).from_address(ptr)
+     return torch.frombuffer(arr, dtype=dtype).reshape(shape)
+
++def reset_recurrent_state_rows(state, terminals):
++    if not state:
++        return ()
++    terminals = torch.as_tensor(terminals).reshape(-1).bool()
++    result = []
++    for tensor in state:
++        if tensor.ndim != 3 or tensor.shape[1] != terminals.numel():
++            raise RuntimeError(
++                'recurrent state batch does not match terminal rows')
++        mask = terminals.to(device=tensor.device).view(1, -1, 1)
++        result.append(torch.where(mask, torch.zeros_like(tensor), tensor))
++    return tuple(result)
++
++def prepare_recurrent_rollout(state, rewards, terminals,
++        reset_state, evaluation_mode):
++    if reset_state and not evaluation_mode:
++        state = tuple(torch.zeros_like(s) for s in state) if state else ()
++        rewards = torch.zeros_like(rewards)
++        terminals = torch.zeros_like(terminals)
++    return state, rewards, terminals
++
+ class PuffeRL:
+     def __init__(self, args, vec, policy, verbose=True):
+         config = args['train']
+@@ -258,6 +279,10 @@ class PuffeRL:
+             if self.mask_size > 0 else None)
+         self.ratio = torch.ones(total_agents, horizon, device=device)
+         self.state = policy.initial_state(total_agents, device=device)
++        self.reset_state = bool(args['reset_state'])
++        self.evaluation_mode = False
++        self.pending_rewards = torch.zeros(total_agents, device=device)
++        self.pending_terminals = torch.zeros(total_agents, device=device)
+
+         self.batch_size = total_agents * horizon
+         self.minibatch_segments = config['minibatch_size'] // horizon
+@@ -301,16 +326,27 @@ class PuffeRL:
+     def num_params(self):
+         return self.model_size
+
++    def set_evaluation_mode(self, enabled):
++        enabled = bool(enabled)
++        if enabled == self.evaluation_mode:
++            return
++        if enabled and self.global_step > 0:
++            self._vec.reset()
++        self.state = tuple(torch.zeros_like(s) for s in self.state)
++        self.pending_rewards.zero_()
++        self.pending_terminals.zero_()
++        self.evaluation_mode = enabled
++
+     def rollouts(self):
+         prof = self.profile
+         config = self.config
+         device = self.device
+         horizon = config['horizon']
+
+-        self.state = tuple(torch.zeros_like(s) for s in self.state) if self.state else ()
++        self.state, r, d = prepare_recurrent_rollout(
++            self.state, self.pending_rewards, self.pending_terminals,
++            self.reset_state, self.evaluation_mode)
+         o = self.vec_obs
+-        r = torch.zeros(self.total_agents, device=device)
+-        d = torch.zeros(self.total_agents, device=device)
+
+         P = Profile
+         prof.mark(0)
+@@ -319,6 +355,8 @@ class PuffeRL:
+
+             prof.mark(1)
+             with torch.no_grad():
++                if self.evaluation_mode:
++                    self.state = reset_recurrent_state_rows(self.state, d)
+                 logits, value, state = self.policy.forward_eval(o_device, self.state)
+                 if self.vec_joint_actions is not None:
+                     counts_cpu = self.vec_joint_counts.clone()
+@@ -369,12 +407,18 @@ class PuffeRL:
+             prof.elapsed(P.EVAL_GPU, 1, 2)
+             prof.elapsed(P.EVAL_ENV, 2, 3)
+
++        self.pending_rewards = torch.as_tensor(r, device=device).clone()
++        self.pending_terminals = torch.as_tensor(d, device=device).clone()
++
+         prof.mark(1)
+         prof.elapsed(P.ROLLOUT, 0, 1)
+         self.global_step += self.total_agents * horizon
+         self.env_logs = self._vec.log()
+
+     def train(self):
++        if not self.reset_state or self.evaluation_mode:
++            raise RuntimeError(
++                'training requires reset_state=True and evaluation_mode=False')
+         prof = self.profile
+         losses = defaultdict(float)
+         config = self.config
+diff --git a/pufferlib/pufferl.py b/pufferlib/pufferl.py
+index 929c300..a23109c 100644
+--- a/pufferlib/pufferl.py
++++ b/pufferlib/pufferl.py
+@@ -204,6 +204,10 @@ def validate_config(args):
+     assert minibatch_size <= horizon * total_agents, \
+         f'minibatch_size {minibatch_size} > total_agents {total_agents} * horizon {horizon}'
+
++def require_training_state_reset(args):
++    if not args['reset_state']:
++        raise ValueError('training requires reset_state=True')
++
+ def _resolve_backend(args):
+     compiled_env = getattr(_C, 'env_name', None)
+     assert compiled_env is None or compiled_env == args['env_name'], \
+@@ -214,6 +218,7 @@ def _resolve_backend(args):
+     return _C
+
+ def _train_worker(args):
++    require_training_state_reset(args)
+     backend = _resolve_backend(args)
+     pufferl = backend.create_pufferl(args)
+     args.pop('nccl_id', None)
+@@ -225,6 +230,7 @@ def _train_worker(args):
+
+ def _train(env_name, args, sweep_obj=None, result_queue=None, verbose=False):
+     '''Single-GPU training worker. Process target for both DDP ranks and sweep trials.'''
++    require_training_state_reset(args)
+     backend = _resolve_backend(args)
+     rank = args['rank']
+     run_id = str(int(1000*time.time()))
+@@ -289,6 +295,7 @@ def _train(env_name, args, sweep_obj=None, result_queue=None, verbose=False):
+     last_phase_eval = False
+     last_phase_epoch = -1
+     for epoch in range(train_epochs + eval_epochs):
++        backend.set_evaluation_mode(pufferl, epoch >= train_epochs)
+         backend.rollouts(pufferl)
+
+         if epoch < train_epochs:
+@@ -445,6 +452,7 @@ def _train(env_name, args=None, gpus=None, **kwargs):
+
+ def train(env_name, args=None, gpus=None, **kwargs):
+     args = args or load_config(env_name)
++    require_training_state_reset(args)
+     validate_config(args)
+
+     subprocess = gpus is not None
+@@ -555,6 +563,8 @@ def eval(env_name, args=None, load_path=None):
+         backend.load_weights(pufferl, load_path)
+         print(f'Loaded weights from {load_path}')
+
++    backend.set_evaluation_mode(pufferl, True)
++
+     while True:
+         backend.render(pufferl, 0)
+         backend.rollouts(pufferl)
+@@ -629,6 +639,7 @@ def match(env_name, policy_a_path, policy_b_path, num_games=4096, args=None, ver
+
+     backend.load_weights(pufferl, policy_a_path)
+     backend.load_frozen_bank(pufferl, 0, policy_b_path)
++    backend.set_evaluation_mode(pufferl, True)
+
+     logs = {}
+     while True:
+diff --git a/src/pufferlib.cu b/src/pufferlib.cu
+index 583d9a1..3b163a3 100644
+--- a/src/pufferlib.cu
++++ b/src/pufferlib.cu
+@@ -406,6 +406,8 @@ typedef struct {
+     long last_log_step;
+     int train_warmup;
+     bool rollout_captured;
++    bool evaluation_mode;
++    int* evaluation_mode_puf;
+     bool train_captured;
+     ulong seed;
+     curandStatePhilox4_32_10_t** rng_states;  // per-buffer persistent RNG states [num_buffers]
+@@ -420,6 +422,21 @@ typedef struct {
+     // Bank 0 = primary (learner). NULL = no layout set (primary owns full chunk).
+     int* bank_layout;
+ } PuffeRL;
++
++__global__ void reset_recurrent_state_on_terminal(
++        precision_t* state, const float* terminals,
++        const int* evaluation_mode, int state_stride, int active_rows,
++        int hidden_size, int num_layers) {
++    int row = blockIdx.x * blockDim.x + threadIdx.x;
++    if (row >= active_rows || *evaluation_mode == 0 ||
++            terminals[row] == 0.0f) return;
++    for (int layer = 0; layer < num_layers; layer++) {
++        for (int column = 0; column < hidden_size; column++) {
++            state[(layer * state_stride + row) * hidden_size + column] =
++                from_float(0.0f);
++        }
++    }
++}
+
+ Dict* log_environments_impl(PuffeRL& pufferl) {
+     // Capacity raised from 32 to 64 to accommodate chess's per-bank
+@@ -749,6 +766,11 @@ extern "C" void net_callback_wrapper(void* ctx, int buf, int t) {
+             mask_stride_b = mask_stride;
+         }
+
++        reset_recurrent_state_on_terminal<<<
++            grid_size(bank_size), BLOCK_SIZE, 0, stream>>>(
++                s_bank->data, env.terminals.data + sub_start,
++                pufferl->evaluation_mode_puf, s_bank->shape[1], bank_size,
++                s_bank->shape[2], s_bank->shape[0]);
+         PrecisionTensor dec_puf = policy_forward(p_bank, *w_bank, *a_bank, obs_b, *s_bank, stream);
+
+         PrecisionTensor p_logstd = {};
+@@ -2101,6 +2123,9 @@ std::unique_ptr<PuffeRL> create_pufferl_impl(HypersT& hypers,
+     pufferl->train_activations = policy_reg_train(&pufferl->policy, pufferl->weights, acts, grads, B_TT);
+     pufferl->buffer_activations = (PolicyActivations*)calloc(num_buffers, sizeof(PolicyActivations));
+     pufferl->buffer_states = (PrecisionTensor*)calloc(num_buffers, sizeof(PrecisionTensor));
++    pufferl->evaluation_mode = false;
++    cudaMalloc(&pufferl->evaluation_mode_puf, sizeof(int));
++    cudaMemset(pufferl->evaluation_mode_puf, 0, sizeof(int));
+     for (int i = 0; i < num_buffers; i++) {
+         pufferl->buffer_activations[i] = policy_reg_rollout(
+             &pufferl->policy, pufferl->weights, acts, inf_batch);
+@@ -2278,6 +2303,13 @@ std::unique_ptr<PuffeRL> create_pufferl_impl(HypersT& hypers,
+             rng_init<<<grid_size(agents_per_buf), BLOCK_SIZE>>>(
+                 pufferl->rng_states[i], pufferl->seed + i, agents_per_buf);
+         }
++        for (int bank = 0; bank < 1 + pufferl->num_frozen_banks; bank++) {
++            PrecisionTensor* bs = (bank == 0) ? pufferl->buffer_states
++                : pufferl->frozen_banks[bank - 1].buffer_states;
++            for (int b = 0; b < num_buffers; b++) {
++                puf_zero(&bs[b], pufferl->default_stream);
++            }
++        }
+         cudaDeviceSynchronize();
+
+         pufferl->epoch = 0;
+@@ -2360,6 +2392,7 @@ void close_impl(PuffeRL& pufferl) {
+     }
+     free(pufferl.frozen_banks);
+     free(pufferl.bank_layout);
++    cudaFree(pufferl.evaluation_mode_puf);
+
+     if (pufferl.nccl_comm != nullptr) {
+         ncclCommDestroy(pufferl.nccl_comm);
+diff --git a/src/bindings.cu b/src/bindings.cu
+index 26d7741..cf9f8de 100644
+--- a/src/bindings.cu
++++ b/src/bindings.cu
+@@ -141,6 +141,6 @@ void rollouts(pybind11::object pufferl_obj) {
+     // state symmetrically — otherwise frozen banks accumulate indefinitely while
+     // primary resets, giving primary an unfair in-distribution advantage).
+-    if (pufferl.hypers.reset_state) {
++    if (pufferl.hypers.reset_state && !pufferl.evaluation_mode) {
+         for (int i = 0; i < pufferl.hypers.num_buffers; i++) {
+             puf_zero(&pufferl.buffer_states[i], pufferl.default_stream);
+         }
+@@ -163,8 +163,34 @@ void rollouts(pybind11::object pufferl_obj) {
+     pufferl.global_step += pufferl.hypers.horizon * pufferl.hypers.total_agents;
+ }
+
++void set_evaluation_mode(pybind11::object pufferl_obj, bool enabled) {
++    PuffeRL& pufferl = pufferl_obj.cast<PuffeRL&>();
++    if (enabled == pufferl.evaluation_mode) return;
++    if (enabled && pufferl.global_step > 0) {
++        static_vec_reset(pufferl.vec);
++    }
++    for (int i = 0; i < pufferl.hypers.num_buffers; i++) {
++        puf_zero(&pufferl.buffer_states[i], pufferl.default_stream);
++    }
++    for (int b = 0; b < pufferl.num_frozen_banks; b++) {
++        for (int i = 0; i < pufferl.hypers.num_buffers; i++) {
++            puf_zero(&pufferl.frozen_banks[b].buffer_states[i],
++                pufferl.default_stream);
++        }
++    }
++    int device_enabled = enabled ? 1 : 0;
++    cudaMemcpyAsync(pufferl.evaluation_mode_puf, &device_enabled, sizeof(int),
++        cudaMemcpyHostToDevice, pufferl.default_stream);
++    cudaStreamSynchronize(pufferl.default_stream);
++    pufferl.evaluation_mode = enabled;
++}
++
+ pybind11::dict train(pybind11::object pufferl_obj) {
+     PuffeRL& pufferl = pufferl_obj.cast<PuffeRL&>();
++    if (!pufferl.hypers.reset_state || pufferl.evaluation_mode) {
++        throw std::runtime_error(
++            "training requires reset_state=True and evaluation_mode=False");
++    }
+     {
+         pybind11::gil_scoped_release no_gil;
+         train_impl(pufferl);
+@@ -521,6 +547,7 @@ PYBIND11_MODULE(_C, m) {
+     m.def("eval_log", &puf_eval_log);
+     m.def("render", &render);
+     m.def("rollouts", &rollouts);
++    m.def("set_evaluation_mode", &set_evaluation_mode);
+     m.def("train", &train);
+     m.def("close", &puf_close);
+     m.def("save_weights", &save_weights);

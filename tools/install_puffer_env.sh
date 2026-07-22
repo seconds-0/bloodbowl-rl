@@ -39,6 +39,27 @@ snapshot_hash() {
         | xargs -0 $SHA256 | $SHA256 | awk '{print $1}')
 }
 
+# Hash every source that defines exact-action transport, sampling, or recurrent
+# evaluation semantics. The installer writes this digest into a generated
+# header; both native and CPU extension modules expose the compiled value.
+# --check then compares current sources, generated header, and imported module.
+exact_backend_hash() {
+    (
+        cd "$PUFFER"
+        for rel in \
+            pufferlib/pufferl.py \
+            pufferlib/torch_pufferl.py \
+            src/bindings.cu \
+            src/bindings_cpu.cpp \
+            src/kernels.cu \
+            src/pufferlib.cu \
+            src/vecenv.h; do
+            [ -f "$rel" ] || exit 1
+            $SHA256 "$rel"
+        done | $SHA256 | awk '{print $1}'
+    )
+}
+
 if [ "$MODE" = "check" ]; then
     [ -d "$DST" ] || { echo "drift check: $DST not installed — run tools/install_puffer_env.sh" >&2; exit 1; }
     want="$(snapshot_hash "$ROOT/puffer/bloodbowl")"
@@ -56,7 +77,7 @@ if [ "$MODE" = "check" ]; then
         exit 1
     fi
     DASHBOARD_PY="$PUFFER/pufferlib/pufferl.py"
-    for marker in 'if i == 96:' 'PUFFER_ENV_JSON' \
+    for marker in 'if i == 160:' 'PUFFER_ENV_JSON' \
                   "'_puffer_schema': 2" "'_puffer_final_reprint'" \
                   'phase_eval=phase_eval, phase_epoch=epoch'; do
         if ! grep -Fq "$marker" "$DASHBOARD_PY"; then
@@ -71,6 +92,50 @@ if [ "$MODE" = "check" ]; then
         echo "  fix: tools/install_puffer_env.sh $PUFFER" >&2
         exit 1
     fi
+    for exact_marker in \
+        'sample_joint_logits' \
+        'joint_action_offsets' \
+        'Exact sequential support'; do
+        if ! grep -R -Fq "$exact_marker" \
+            "$PUFFER/pufferlib/torch_pufferl.py" \
+            "$PUFFER/src/vecenv.h" "$PUFFER/src/pufferlib.cu"; then
+            echo "drift check: exact-action backend marker missing: $exact_marker" >&2
+            echo "  fix: run tools/install_puffer_env.sh $PUFFER" >&2
+            exit 1
+        fi
+    done
+    for recurrent_contract in \
+        'src/pufferlib.cu:reset_recurrent_state_on_terminal' \
+        'src/bindings.cu:set_evaluation_mode' \
+        'pufferlib/torch_pufferl.py:pending_terminals'; do
+        recurrent_file="${recurrent_contract%%:*}"
+        recurrent_marker="${recurrent_contract#*:}"
+        if ! grep -Fq "$recurrent_marker" "$PUFFER/$recurrent_file"; then
+            echo "drift check: recurrent evaluation marker missing: $recurrent_marker" >&2
+            echo "  fix: run tools/install_puffer_env.sh $PUFFER" >&2
+            exit 1
+        fi
+    done
+    for qualification_marker in \
+        'eligible_agents' \
+        'qualification_recurrent_state' \
+        'qualification_snapshot'; do
+        if ! grep -R -Fq "$qualification_marker" \
+            "$PUFFER/src/pufferlib.cu" "$PUFFER/src/bindings.cu"; then
+            echo "drift check: recurrent CUDA qualification marker missing: $qualification_marker" >&2
+            echo "  fix: run tools/install_puffer_env.sh $PUFFER" >&2
+            exit 1
+        fi
+    done
+    for exact_patch in \
+        "$ROOT/training/puffer_recurrent_cuda_qualification.patch" \
+        "$ROOT/training/puffer_frozen_prio_mask.patch"; do
+        if ! git -C "$PUFFER" apply --reverse --check --no-index "$exact_patch"; then
+            echo "drift check: installed qualification patch is stale: $exact_patch" >&2
+            echo "  fix: recreate the pinned Puffer tree and reinstall the complete patch stack" >&2
+            exit 1
+        fi
+    done
     PYBIN="$PUFFER/.venv/bin/python"
     if [ ! -x "$PYBIN" ]; then
         echo "drift check: vendored Python is missing: $PYBIN" >&2
@@ -80,6 +145,57 @@ if [ "$MODE" = "check" ]; then
         "$PYBIN" -c 'from pufferlib import _C; print(_C.__file__)')"
     if [ ! -f "$current_module" ]; then
         echo "drift check: imported pufferlib/_C module is missing: $current_module" >&2
+        exit 1
+    fi
+    current_backend_hash="$(exact_backend_hash)" || {
+        echo "drift check: exact-action backend sources are incomplete" >&2
+        exit 1
+    }
+    header_backend_hash="$(sed -n \
+        's/^#define PUFFER_EXACT_ACTION_SOURCE_HASH "\([0-9a-f]*\)"$/\1/p' \
+        "$PUFFER/src/exact_action_build_hash.h" 2>/dev/null || true)"
+    header_environment_hash="$(sed -n \
+        's/^#define PUFFER_ENV_SOURCE_HASH "\([0-9a-f]*\)"$/\1/p' \
+        "$PUFFER/src/exact_action_build_hash.h" 2>/dev/null || true)"
+    header_observation_abi="$(sed -n \
+        's/^#define PUFFER_OBSERVATION_ABI "\([^"]*\)"$/\1/p' \
+        "$PUFFER/src/exact_action_build_hash.h" 2>/dev/null || true)"
+    header_observation_version="$(sed -n \
+        's/^#define PUFFER_OBSERVATION_VERSION \([0-9][0-9]*\)$/\1/p' \
+        "$PUFFER/src/exact_action_build_hash.h" 2>/dev/null || true)"
+    header_action_abi="$(sed -n \
+        's/^#define PUFFER_ACTION_ABI "\([^"]*\)"$/\1/p' \
+        "$PUFFER/src/exact_action_build_hash.h" 2>/dev/null || true)"
+    compiled_contract="$(cd "$PUFFER" && "$PYBIN" -c \
+        'from pufferlib import _C; print(getattr(_C, "exact_action_source_hash", "<missing>"), getattr(_C, "environment_source_hash", "<missing>"), getattr(_C, "observation_abi", "<missing>"), getattr(_C, "observation_version", "<missing>"), getattr(_C, "action_abi", "<missing>"))' \
+        2>/dev/null || true)"
+    read -r compiled_backend_hash compiled_environment_hash \
+        compiled_observation_abi compiled_observation_version \
+        compiled_action_abi <<< "$compiled_contract"
+    if [ "$current_backend_hash" != "$header_backend_hash" ] || \
+       [ "$current_backend_hash" != "$compiled_backend_hash" ]; then
+        echo "drift check: exact-action source/module digest mismatch" >&2
+        echo "  sources: $current_backend_hash" >&2
+        echo "  header:  ${header_backend_hash:-<missing>}" >&2
+        echo "  module:  ${compiled_backend_hash:-<missing>}" >&2
+        echo "  fix: reinstall, then rebuild PufferLib for bloodbowl" >&2
+        exit 1
+    fi
+    if [ "$want" != "$header_environment_hash" ] || \
+       [ "$want" != "$compiled_environment_hash" ] || \
+       [ "$header_observation_abi" != "obs-v5" ] || \
+       [ "$compiled_observation_abi" != "obs-v5" ] || \
+       [ "$header_observation_version" != "5" ] || \
+       [ "$compiled_observation_version" != "5" ] || \
+       [ "$header_action_abi" != "exact-joint-v1" ] || \
+       [ "$compiled_action_abi" != "exact-joint-v1" ]; then
+        echo "drift check: compiled observation/action lineage mismatch" >&2
+        echo "  environment source: $want" >&2
+        echo "  header/module source: ${header_environment_hash:-<missing>} / ${compiled_environment_hash:-<missing>}" >&2
+        echo "  header/module obs ABI: ${header_observation_abi:-<missing>} / ${compiled_observation_abi:-<missing>}" >&2
+        echo "  header/module obs: ${header_observation_version:-<missing>} / ${compiled_observation_version:-<missing>}" >&2
+        echo "  header/module action: ${header_action_abi:-<missing>} / ${compiled_action_abi:-<missing>}" >&2
+        echo "  fix: reinstall, then rebuild PufferLib for bloodbowl" >&2
         exit 1
     fi
     if [ ! "$current_module" -nt "$DST/.content_hash" ]; then
@@ -114,14 +230,14 @@ if [ -f "$ROOT/validation/states/bank.bbs" ]; then
     echo "staged:    $PUFFER/resources/bloodbowl/state_bank.bbs"
 fi
 
-# Blood Bowl's my_log currently emits 88 keys, and vecenv appends "n" after
+# Blood Bowl's my_log currently emits 123 keys, and vecenv appends "n" after
 # the env binding returns. Keep the vendored dict allocations comfortably above
 # that so adding telemetry does not resurrect the historical heap overflow.
 for f in "$PUFFER/src/bindings.cu" "$PUFFER/src/bindings_cpu.cpp" "$PUFFER/src/pufferlib.cu"; do
     [ -f "$f" ] || continue
     perl -0pi -e \
-        's/create_dict\((32|64|96)\)(\s*;\s*\/\/ bloodbowl my_log emits )[^\n]*/create_dict(96)$2 88 keys + "n"; keep headroom/g;
-         s/create_dict\((32|64)\);/create_dict(96);/g' "$f"
+        's/create_dict\((32|64|96|128|160)\)(\s*;\s*\/\/ bloodbowl my_log emits )[^\n]*/create_dict(160)$2 123 keys + "n"; keep headroom/g;
+         s/create_dict\((32|64|96|128)\);/create_dict(160);/g' "$f"
 done
 
 # Apply the match-mode sweep fix to vendored pufferlib/sweep.py (D131). Upstream
@@ -141,7 +257,7 @@ if [ -f "$SWEEP_PY" ] && ! grep -q "match_enemy_model_path" "$SWEEP_PY"; then
 fi
 
 # Puffer's stock dashboard truncates environment metrics after 30 keys. Blood
-# Bowl emits 88 plus vecenv's `n`; without this patch, later correctness and
+# Bowl emits 123 plus vecenv's `n`; without this patch, later correctness and
 # behavior telemetry exists in C but never reaches evaluation logs.
 DASHBOARD_PY="$PUFFER/pufferlib/pufferl.py"
 if [ -f "$DASHBOARD_PY" ] && grep -q 'if i == 30:' "$DASHBOARD_PY"; then
@@ -151,7 +267,11 @@ if [ -f "$DASHBOARD_PY" ] && grep -q 'if i == 30:' "$DASHBOARD_PY"; then
         echo "warning: dashboard-limit patch did not apply; later Blood Bowl metrics will be hidden" >&2
     fi
 fi
-if [ -f "$DASHBOARD_PY" ] && ! grep -q 'if i == 96:' "$DASHBOARD_PY"; then
+if [ -f "$DASHBOARD_PY" ] && grep -q 'if i == 96:' "$DASHBOARD_PY"; then
+    perl -pi -e 's/if i == 96:/if i == 160:/' "$DASHBOARD_PY"
+    echo "upgraded:  Puffer dashboard capacity 96 -> 160 metrics"
+fi
+if [ -f "$DASHBOARD_PY" ] && ! grep -q 'if i == 160:' "$DASHBOARD_PY"; then
     echo "warning: Puffer dashboard still truncates Blood Bowl telemetry" >&2
 fi
 if [ -f "$DASHBOARD_PY" ] && ! grep -q 'PUFFER_ENV_JSON' "$DASHBOARD_PY"; then
@@ -217,6 +337,103 @@ if [ -f "$TORCH_PUFFERL_PY" ] && \
         echo "warning: trusted-checkpoint load patch did not apply" >&2
     fi
 fi
+
+# Exact semantic action identity. This extends the generic vec interface with
+# a transient ragged joint-support buffer; native and Torch rollout sampling
+# turn it into the same selected conditional masks already stored by PPO.
+# Apply after the dashboard/trusted-load patches because the saved patch is
+# based on that fully installed Puffer tree.
+EXACT_PATCH="$ROOT/training/puffer_exact_joint_actions.patch"
+if [ -f "$EXACT_PATCH" ] && \
+   ! grep -q 'sample_joint_logits' "$TORCH_PUFFERL_PY"; then
+    if git -C "$PUFFER" apply "$EXACT_PATCH"; then
+        echo "applied:   exact joint-action sampling -> Puffer native/Torch backends"
+    else
+        echo "error: exact joint-action patch did not apply" >&2
+        exit 1
+    fi
+fi
+if ! grep -q 'sample_joint_logits' "$TORCH_PUFFERL_PY" || \
+   ! grep -q 'joint_action_offsets' "$PUFFER/src/vecenv.h" || \
+   ! grep -q 'Exact sequential support' "$PUFFER/src/pufferlib.cu"; then
+    echo "error: exact joint-action backend support is incomplete" >&2
+    exit 1
+fi
+
+# Recurrent evaluation contract. Apply only after exact-action support because
+# both patches extend the same native and Torch rollout paths.
+RECURRENT_PATCH="$ROOT/training/puffer_recurrent_eval_state.patch"
+if [ -f "$RECURRENT_PATCH" ] && \
+   ! grep -q 'reset_recurrent_state_rows' "$TORCH_PUFFERL_PY"; then
+    if git -C "$PUFFER" apply "$RECURRENT_PATCH"; then
+        echo "applied:   recurrent evaluation-state boundaries -> Puffer native/Torch backends"
+    else
+        echo "error: recurrent evaluation-state patch did not apply" >&2
+        exit 1
+    fi
+fi
+if ! grep -q 'reset_recurrent_state_on_terminal' "$PUFFER/src/pufferlib.cu" || \
+   ! grep -q 'set_evaluation_mode' "$PUFFER/src/bindings.cu" || \
+   ! grep -q 'pending_terminals' "$TORCH_PUFFERL_PY"; then
+    echo "error: recurrent evaluation-state support is incomplete" >&2
+    exit 1
+fi
+
+# Frozen PPO rows must be mathematically ineligible for priority sampling;
+# zero advantages are insufficient when alpha=0 because pow(0, 0) is one.
+FROZEN_PRIO_PATCH="$ROOT/training/puffer_frozen_prio_mask.patch"
+if [ -f "$FROZEN_PRIO_PATCH" ] && \
+   ! grep -q 'eligible_agents' "$PUFFER/src/pufferlib.cu"; then
+    if git -C "$PUFFER" apply --no-index "$FROZEN_PRIO_PATCH"; then
+        echo "applied:   exact frozen-row exclusion -> prioritized PPO sampler"
+    else
+        echo "error: frozen-row priority-mask patch did not apply" >&2
+        exit 1
+    fi
+elif [ -f "$FROZEN_PRIO_PATCH" ] && \
+     ! git -C "$PUFFER" apply --reverse --check --no-index "$FROZEN_PRIO_PATCH"; then
+    echo "error: installed frozen-row priority-mask patch is stale" >&2
+    echo "  fix: recreate the pinned Puffer tree and reinstall the complete patch stack" >&2
+    exit 1
+fi
+if ! grep -q 'eligible_agents' "$PUFFER/src/pufferlib.cu"; then
+    echo "error: exact frozen-row exclusion is incomplete" >&2
+    exit 1
+fi
+
+# Read-only CUDA qualification evidence. Apply last: it inspects the exact
+# rollout, recurrent, and PPO tensors produced by the preceding semantic
+# patches, and therefore belongs to the same compiled backend identity.
+QUALIFICATION_PATCH="$ROOT/training/puffer_recurrent_cuda_qualification.patch"
+if [ -f "$QUALIFICATION_PATCH" ] && \
+   ! grep -q 'qualification_recurrent_state' "$PUFFER/src/bindings.cu"; then
+    if git -C "$PUFFER" apply --no-index "$QUALIFICATION_PATCH"; then
+        echo "applied:   bounded recurrent CUDA qualification evidence -> Puffer native backend"
+    else
+        echo "error: recurrent CUDA qualification patch did not apply" >&2
+        exit 1
+    fi
+elif [ -f "$QUALIFICATION_PATCH" ] && \
+     ! git -C "$PUFFER" apply --reverse --check --no-index "$QUALIFICATION_PATCH"; then
+    echo "error: installed recurrent CUDA qualification patch is stale" >&2
+    echo "  fix: recreate the pinned Puffer tree and reinstall the complete patch stack" >&2
+    exit 1
+fi
+if ! grep -q 'qualification_recurrent_state' "$PUFFER/src/bindings.cu" || \
+   ! grep -q 'qualification_snapshot' "$PUFFER/src/bindings.cu"; then
+    echo "error: recurrent CUDA qualification evidence is incomplete" >&2
+    exit 1
+fi
+
+EXACT_BACKEND_HASH="$(exact_backend_hash)" || {
+    echo "error: could not hash exact-action backend sources" >&2
+    exit 1
+}
+INSTALLED_SOURCE_HASH="$(cat "$DST/.content_hash")"
+printf '#pragma once\n#define PUFFER_EXACT_ACTION_SOURCE_HASH "%s"\n#define PUFFER_ENV_SOURCE_HASH "%s"\n#define PUFFER_OBSERVATION_ABI "obs-v5"\n#define PUFFER_OBSERVATION_VERSION 5\n#define PUFFER_ACTION_ABI "exact-joint-v1"\n' \
+    "$EXACT_BACKEND_HASH" "$INSTALLED_SOURCE_HASH" \
+    > "$PUFFER/src/exact_action_build_hash.h"
+echo "recorded:   exact-action backend digest $EXACT_BACKEND_HASH"
 
 echo "installed: $DST"
 echo "           $PUFFER/config/bloodbowl.ini"

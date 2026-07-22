@@ -35,6 +35,12 @@ typedef struct {
 // square; a GFI is counted once the path exceeds remaining normal movement.
 void bb_reach_field_compute(const bb_match* m, int mover, bb_reach_field* out);
 
+// Third Season Stalling predicate at activation start: can this standing ball
+// carrier reach their scoring end-zone without any Dodge, Rush, activation-
+// gate, or compulsory movement roll? This answers rules feasibility only; it
+// does not decide whether scoring now is strategically correct.
+bool bb_can_score_without_dice(const bb_match* m, int carrier);
+
 // Aggregate free / one-roll adjacent access to (tx, ty) for players of `team`.
 bb_reach_access bb_min_access_cost(const bb_match* m, int team, int tx, int ty);
 

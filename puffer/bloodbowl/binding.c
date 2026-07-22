@@ -5,11 +5,12 @@
 // defines as plain literals.
 #include "bloodbowl.h"
 
-#define OBS_SIZE 2782 // obs v4 (mirrors BBE_OBS_SIZE; static-assert below)
+#define OBS_SIZE 2782 // obs v5 semantic ABI; v4 shape retained (see header)
 #define NUM_ATNS 3
 #define ACT_SIZES {30, 33, 391}
 #define OBS_TENSOR_T ByteTensor
 #define MY_ACTION_MASK 454
+#define MY_JOINT_ACTION_MAX 4487 // BB_LEGAL_MAX + 391 virtual destinations
 
 #define MY_VEC_INIT
 #define MY_USES_PERM
@@ -20,6 +21,77 @@
 _Static_assert(OBS_SIZE == BBE_OBS_SIZE, "OBS_SIZE out of sync with bloodbowl.h");
 _Static_assert(MY_ACTION_MASK == BBE_MASK_SIZE,
                "MY_ACTION_MASK out of sync with bloodbowl.h");
+_Static_assert(MY_JOINT_ACTION_MAX >= BB_LEGAL_MAX + BBE_HEAD_SQ,
+               "joint support capacity cannot hold legal + virtual actions");
+
+static uint32_t bbe_pack_joint(int type, int arg, int square) {
+    return (uint32_t)type | ((uint32_t)arg << 10) |
+           ((uint32_t)square << 20);
+}
+
+// Compact the exact semantic support for one vec buffer. The native sampler
+// consumes these tuples sequentially (type -> arg|type -> square|type,arg)
+// and stores the three selected conditional masks in the ordinary rollout
+// mask, so PPO recomputation needs no ragged history buffer.
+void my_pack_joint_actions(StaticVec* vec, Env* envs, int env_start,
+                           int env_count, int buf) {
+    int agent_start = buf * vec->agents_per_buffer;
+    int agent_end = agent_start + vec->agents_per_buffer;
+    int joint_start = agent_start * MY_JOINT_ACTION_MAX;
+    int cursor = 0;
+    for (int ei = env_start; ei < env_start + env_count; ei++) {
+        Env* env = &envs[ei];
+        for (int slot = 0; slot < env->num_agents; slot++) {
+            ptrdiff_t action_off = env->action_ptr[slot] - vec->actions;
+            int phys = (int)(action_off / NUM_ATNS);
+            if (action_off < 0 || action_off % NUM_ATNS != 0 ||
+                phys < agent_start || phys >= agent_end) {
+                fprintf(stderr,
+                        "bloodbowl: joint-support row escaped vec buffer "
+                        "(buf=%d row=%d expected=[%d,%d))\n",
+                        buf, phys, agent_start, agent_end);
+                abort();
+            }
+            int off = joint_start + cursor;
+            int count = 0;
+            if (env->match.status != BB_STATUS_DECISION ||
+                env->match.decision_team != slot || env->n_legal <= 0) {
+                vec->joint_actions[off] =
+                    bbe_pack_joint(BB_A_NONE, 32, 390);
+                count = 1;
+            } else {
+                for (int i = 0; i < env->n_legal; i++) {
+                    vec->joint_actions[off + count++] = bbe_pack_joint(
+                        env->legal[i].type, env->legal_arg[i],
+                        env->legal_sq[i]);
+                }
+                if (env->macro_moves && env->reach_mover >= 0) {
+                    for (int d = 0; d < 390; d++) {
+                        if (env->reach_parent[d] < 0) continue;
+                        int x = d % BB_PITCH_LEN;
+                        int y = d / BB_PITCH_LEN;
+                        int sq = bbe_sq_index(slot, x, y);
+                        vec->joint_actions[off + count++] =
+                            bbe_pack_joint(BB_A_STEP, 32, sq);
+                    }
+                }
+            }
+            if (count <= 0 || count > MY_JOINT_ACTION_MAX ||
+                cursor + count > vec->agents_per_buffer * MY_JOINT_ACTION_MAX) {
+                fprintf(stderr,
+                        "bloodbowl: exact joint support overflow "
+                        "(row=%d count=%d cursor=%d cap=%d)\n",
+                        phys, count, cursor,
+                        vec->agents_per_buffer * MY_JOINT_ACTION_MAX);
+                abort();
+            }
+            vec->joint_action_offsets[phys] = off;
+            vec->joint_action_counts[phys] = count;
+            cursor += count;
+        }
+    }
+    vec->joint_buffer_counts[buf] = cursor;
+}
 
 // ACT_SIZES must stay a plain brace literal (see the header comment above),
 // so tie its PARTITION to the BBE_HEAD_* source of truth instead of deriving
@@ -228,7 +300,7 @@ void my_log(Log* log, Dict* out) {
     //
     // CAPACITY: vec_log (src/bindings_cpu.cpp / bindings.cu) must hand us a
     // dict large enough for these keys plus the vecenv-appended "n". We emit
-    // 88. Growing past the call-site capacity is SILENT HEAP CORRUPTION
+    // 123. Growing past the call-site capacity is SILENT HEAP CORRUPTION
     // upstream (assert compiles out under NDEBUG); our vendored dict_set
     // aborts loudly instead (training/puffer_dict_capacity.patch).
     // History: key count hit 37 vs capacity 32 when slot scores + demo
@@ -267,6 +339,75 @@ void my_log(Log* log, Dict* out) {
              log->reward_nonfinite_samples);
     dict_set(out, "reward_clip_episodes", log->reward_clip_episodes);
     dict_set(out, "reward_nonfinite_episodes", log->reward_nonfinite_episodes);
+    dict_set(out, "reward_component_setup_done",
+             log->reward_component[BBE_REWARD_SETUP_DONE]);
+    dict_set(out, "reward_component_setup_autofix",
+             log->reward_component[BBE_REWARD_SETUP_AUTOFIX]);
+    dict_set(out, "reward_component_ball_gain",
+             log->reward_component[BBE_REWARD_BALL_GAIN]);
+    dict_set(out, "reward_component_ball_loss",
+             log->reward_component[BBE_REWARD_BALL_LOSS]);
+    dict_set(out, "reward_component_distance_ball",
+             log->reward_component[BBE_REWARD_DISTANCE_BALL]);
+    dict_set(out, "reward_component_distance_endzone",
+             log->reward_component[BBE_REWARD_DISTANCE_ENDZONE]);
+    dict_set(out, "reward_component_injury_inflicted",
+             log->reward_component[BBE_REWARD_INJURY_INFLICTED]);
+    dict_set(out, "reward_component_injury_taken",
+             log->reward_component[BBE_REWARD_INJURY_TAKEN]);
+    dict_set(out, "reward_component_send_off",
+             log->reward_component[BBE_REWARD_SEND_OFF]);
+    dict_set(out, "reward_component_touchback",
+             log->reward_component[BBE_REWARD_TOUCHBACK]);
+    dict_set(out, "reward_component_surf_inflicted",
+             log->reward_component[BBE_REWARD_SURF_INFLICTED]);
+    dict_set(out, "reward_component_surf_taken",
+             log->reward_component[BBE_REWARD_SURF_TAKEN]);
+    dict_set(out, "reward_component_block_exposure",
+             log->reward_component[BBE_REWARD_BLOCK_EXPOSURE]);
+    dict_set(out, "reward_component_block_self_injury",
+             log->reward_component[BBE_REWARD_BLOCK_SELF_INJURY]);
+    dict_set(out, "reward_component_block_sequence",
+             log->reward_component[BBE_REWARD_BLOCK_SEQUENCE]);
+    dict_set(out, "reward_component_block_turnover",
+             log->reward_component[BBE_REWARD_BLOCK_TURNOVER]);
+    dict_set(out, "reward_component_possession",
+             log->reward_component[BBE_REWARD_POSSESSION]);
+    dict_set(out, "reward_component_block_assist",
+             log->reward_component[BBE_REWARD_BLOCK_ASSIST]);
+    dict_set(out, "reward_component_rush",
+             log->reward_component[BBE_REWARD_RUSH]);
+    dict_set(out, "reward_component_carrier_exposure",
+             log->reward_component[BBE_REWARD_CARRIER_EXPOSURE]);
+    dict_set(out, "reward_component_carrier_exposure_soft",
+             log->reward_component[BBE_REWARD_CARRIER_EXPOSURE_SOFT]);
+    dict_set(out, "reward_component_carrier_threat",
+             log->reward_component[BBE_REWARD_CARRIER_THREAT]);
+    dict_set(out, "reward_component_defensive_threat",
+             log->reward_component[BBE_REWARD_DEFENSIVE_THREAT]);
+    dict_set(out, "reward_component_defensive_threat_soft",
+             log->reward_component[BBE_REWARD_DEFENSIVE_THREAT_SOFT]);
+    dict_set(out, "reward_component_touchdown",
+             log->reward_component[BBE_REWARD_TOUCHDOWN]);
+    dict_set(out, "reward_component_result_winloss",
+             log->reward_component[BBE_REWARD_RESULT_WINLOSS]);
+    dict_set(out, "reward_component_result_draw",
+             log->reward_component[BBE_REWARD_RESULT_DRAW]);
+    dict_set(out, "reward_component_statmatch",
+             log->reward_component[BBE_REWARD_STATMATCH]);
+    dict_set(out, "reward_component_residual",
+             log->reward_component_residual);
+    dict_set(out, "reward_component_mismatch_samples_per_episode",
+             log->reward_component_mismatch_samples);
+    dict_set(out, "reward_component_nonfinite_samples_per_episode",
+             log->reward_component_nonfinite_samples);
+    dict_set(out, "reward_terminal_suppressed_signed",
+             log->reward_terminal_suppressed_signed);
+    dict_set(out, "reward_terminal_suppressed_abs",
+             log->reward_terminal_suppressed_abs);
+    dict_set(out, "reward_postclip_return", log->reward_postclip_return);
+    dict_set(out, "reward_clip_signed_delta",
+             log->reward_clip_signed_delta);
     dict_set(out, "illegal_frac", log->illegal_frac);
     dict_set(out, "blocks", log->blocks);
     dict_set(out, "blocks_thrown", log->blocks_thrown);

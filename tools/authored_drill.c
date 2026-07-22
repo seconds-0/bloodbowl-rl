@@ -1,0 +1,1099 @@
+// Deterministic authored-state discovery/replay primitives. This module owns
+// transcripts and serialization; only the engine owns mutable bb_match state.
+#include "authored_drill.h"
+#include "authored_identity_internal.h"
+
+#include "bb/bb_reachability.h"
+#include "bb/gen_teams.h"
+#include "bb/gen_skills.h"
+
+#include <stdarg.h>
+#include <stdlib.h>
+#include <string.h>
+
+typedef struct {
+    ad_recipe* recipe;
+    int overflow;
+} ad_record_sink;
+
+typedef struct {
+    const ad_recipe* recipe;
+    int seen;
+    int mismatch;
+} ad_check_sink;
+
+typedef struct {
+    int seen;
+} ad_count_sink;
+
+static int ad_fail(char error[AD_ERROR_CAP], const char* fmt, ...) {
+    if (error != NULL) {
+        va_list args;
+        va_start(args, fmt);
+        vsnprintf(error, AD_ERROR_CAP, fmt, args);
+        va_end(args);
+    }
+    return -1;
+}
+
+static void ad_record_die(void* user, int sides, int value) {
+    ad_record_sink* sink = user;
+    if (sink->recipe->dice_count >= AD_MAX_DICE || sides < 1 || sides > 255 ||
+        value < 1 || value > 255) {
+        sink->overflow = 1;
+        return;
+    }
+    int i = sink->recipe->dice_count++;
+    sink->recipe->dice_sides[i] = (uint8_t)sides;
+    sink->recipe->dice_values[i] = (uint8_t)value;
+}
+
+static void ad_check_die(void* user, int sides, int value) {
+    ad_check_sink* sink = user;
+    int i = sink->seen++;
+    if (i >= sink->recipe->dice_count ||
+        sink->recipe->dice_sides[i] != sides ||
+        sink->recipe->dice_values[i] != value) {
+        sink->mismatch = 1;
+    }
+}
+
+static void ad_count_die(void* user, int sides, int value) {
+    (void)sides;
+    (void)value;
+    ad_count_sink* sink = user;
+    sink->seen++;
+}
+
+static int ad_has_team_turn(const bb_match* match) {
+    return match != NULL && match->stack_top > 0 &&
+           match->stack_top <= BB_STACK_MAX &&
+           match->stack[match->stack_top - 1].proc == BB_PROC_TEAM_TURN;
+}
+
+static int ad_packed_less(bb_action left, bb_action right) {
+    return bb_action_pack(left) < bb_action_pack(right);
+}
+
+// Canonical pre-turn controller. Formation choices mirror the engine smoke
+// controller, but all tie-breaking is stable packed-action order.
+static int ad_pick_pre_turn(const bb_match* match, const bb_action* legal, int n) {
+    int best = -1;
+    for (int i = 0; i < n; i++) {
+        if (legal[i].type == BB_A_SETUP_DONE) return i;
+    }
+    for (int pass = 0; pass < 3; pass++) {
+        best = -1;
+        for (int i = 0; i < n; i++) {
+            if (legal[i].type != BB_A_SETUP_PLACE ||
+                match->players[legal[i].arg].location != BB_LOC_RESERVES) {
+                continue;
+            }
+            int is_los = (legal[i].x == 12 || legal[i].x == 13) &&
+                         legal[i].y >= 4 && legal[i].y <= 10;
+            int is_centre = legal[i].y >= 4 && legal[i].y <= 10;
+            if ((pass == 0 && !is_los) || (pass == 1 && (is_los || !is_centre)) ||
+                (pass == 2 && (is_los || is_centre))) {
+                continue;
+            }
+            if (best < 0 || ad_packed_less(legal[i], legal[best])) best = i;
+        }
+        if (best >= 0) return best;
+    }
+    for (int i = 0; i < n; i++) {
+        if (best < 0 || ad_packed_less(legal[i], legal[best])) best = i;
+    }
+    return best;
+}
+
+static int ad_pick_long_horizon(const bb_match* match,
+                                const bb_action* legal, int n,
+                                bb_rng* controller_rng) {
+    int in_setup = n > 0 &&
+        (legal[0].type == BB_A_SETUP_PLACE ||
+         legal[0].type == BB_A_SETUP_REMOVE);
+    if (in_setup) return ad_pick_pre_turn(match, legal, n);
+    for (int i = 0; i < n; i++) {
+        if (legal[i].type == BB_A_SETUP_DONE) return i;
+    }
+    return (int)(bb_rng_next(controller_rng) % (uint32_t)n);
+}
+
+static int ad_action_is_legal(const bb_match* match, uint32_t packed) {
+    bb_action legal[BB_LEGAL_MAX];
+    int n = bb_legal_actions(match, legal);
+    for (int i = 0; i < n; i++) {
+        if (bb_action_pack(legal[i]) == packed) return 1;
+    }
+    return 0;
+}
+
+static int ad_find_legal(const bb_match* match, bb_action_type type, int arg,
+                         bb_action* out) {
+    bb_action legal[BB_LEGAL_MAX];
+    int n = bb_legal_actions(match, legal);
+    for (int i = 0; i < n; i++) {
+        if (legal[i].type == type && (arg < 0 || legal[i].arg == arg)) {
+            if (out != NULL) *out = legal[i];
+            return 1;
+        }
+    }
+    return 0;
+}
+
+int ad_f1_pass_opportunity_valid(const bb_match* match) {
+    if (!bb_state_bank_boundary_valid(match) ||
+        match->ball.state != BB_BALL_HELD ||
+        match->ball.carrier >= BB_NUM_PLAYERS ||
+        BB_TEAM_OF(match->ball.carrier) != match->active_team) {
+        return 0;
+    }
+    int carrier = match->ball.carrier;
+    const bb_player* player = &match->players[carrier];
+    // proc_ball treats PA '-' as unable to pass. Keep the authored predicate
+    // rules-correct even while the broader activation mask is fixed separately.
+    if (player->stance != BB_STANCE_STANDING || player->pa <= 0 ||
+        bb_has_skill(&player->skills, BB_SK_NO_BALL)) {
+        return 0;
+    }
+
+    bb_action action;
+    if (!ad_find_legal(match, BB_A_ACTIVATE, carrier, &action)) return 0;
+    bb_match probe = *match;
+    uint8_t die = 6;
+    bb_rng rng;
+    bb_rng_script(&rng, &die, 1);
+    if (bb_apply(&probe, action, &rng) != BB_STATUS_DECISION ||
+        rng.script_pos != 0 || bb_rng_error(&rng) ||
+        !ad_find_legal(&probe, BB_A_DECLARE, BB_ACT_PASS, &action)) {
+        return 0;
+    }
+    if (bb_apply(&probe, action, &rng) != BB_STATUS_DECISION ||
+        rng.script_pos != 0 || bb_rng_error(&rng)) {
+        return 0;
+    }
+
+    bb_action legal[BB_LEGAL_MAX];
+    int n = bb_legal_actions(&probe, legal);
+    for (int i = 0; i < n; i++) {
+        if (legal[i].type != BB_A_PASS_TARGET) continue;
+        int target = bb_slot_at(&probe, legal[i].x, legal[i].y);
+        if (target >= 0 && target != carrier &&
+            BB_TEAM_OF(target) == match->active_team &&
+            bb_can_catch(&probe, target) &&
+            !bb_has_skill(&probe.players[target].skills, BB_SK_NO_BALL)) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+int ad_f2_handoff_target_count(const bb_match* match) {
+    if (!bb_state_bank_boundary_valid(match) ||
+        match->ball.state != BB_BALL_HELD ||
+        match->ball.carrier >= BB_NUM_PLAYERS ||
+        BB_TEAM_OF(match->ball.carrier) != match->active_team) {
+        return 0;
+    }
+    int carrier = match->ball.carrier;
+    const bb_player* player = &match->players[carrier];
+    if (player->stance != BB_STANCE_STANDING ||
+        bb_has_skill(&player->skills, BB_SK_NO_BALL)) {
+        return 0;
+    }
+
+    bb_action action;
+    if (!ad_find_legal(match, BB_A_ACTIVATE, carrier, &action)) return 0;
+    bb_match probe = *match;
+    uint8_t die = 6;
+    bb_rng rng;
+    bb_rng_script(&rng, &die, 1);
+    if (bb_apply(&probe, action, &rng) != BB_STATUS_DECISION ||
+        rng.script_pos != 0 || bb_rng_error(&rng) ||
+        !ad_find_legal(&probe, BB_A_DECLARE, BB_ACT_HANDOFF, &action)) {
+        return 0;
+    }
+    if (bb_apply(&probe, action, &rng) != BB_STATUS_DECISION ||
+        rng.script_pos != 0 || bb_rng_error(&rng)) {
+        return 0;
+    }
+
+    int target_count = 0;
+    bb_action legal[BB_LEGAL_MAX];
+    int n = bb_legal_actions(&probe, legal);
+    for (int i = 0; i < n; i++) {
+        if (legal[i].type != BB_A_HANDOFF_TARGET) continue;
+        int target = bb_slot_at(&probe, legal[i].x, legal[i].y);
+        if (target >= 0 && target != carrier &&
+            BB_TEAM_OF(target) == match->active_team &&
+            bb_can_catch(&probe, target)) {
+            target_count++;
+        }
+    }
+    return target_count;
+}
+
+int ad_f2_handoff_opportunity_valid(const bb_match* match) {
+    return ad_f2_handoff_target_count(match) > 0;
+}
+
+int ad_f5_score_or_wait_valid(const bb_match* match) {
+    if (!bb_state_bank_boundary_valid(match) ||
+        match->ball.state != BB_BALL_HELD ||
+        match->ball.carrier >= BB_NUM_PLAYERS ||
+        BB_TEAM_OF(match->ball.carrier) != match->active_team) {
+        return 0;
+    }
+    int carrier = match->ball.carrier;
+    if (bb_has_skill(&match->players[carrier].skills, BB_SK_NO_BALL) ||
+        !bb_can_score_without_dice(match, carrier)) {
+        return 0;
+    }
+
+    bb_action action;
+    if (!ad_find_legal(match, BB_A_ACTIVATE, carrier, &action)) return 0;
+    bb_match probe = *match;
+    uint8_t die = 6;
+    bb_rng rng;
+    bb_rng_script(&rng, &die, 1);
+    if (bb_apply(&probe, action, &rng) != BB_STATUS_DECISION ||
+        rng.script_pos != 0 || bb_rng_error(&rng) ||
+        !ad_find_legal(&probe, BB_A_DECLARE, BB_ACT_MOVE, &action)) {
+        return 0;
+    }
+    if (bb_apply(&probe, action, &rng) != BB_STATUS_DECISION ||
+        rng.script_pos != 0 || bb_rng_error(&rng) ||
+        !ad_find_legal(&probe, BB_A_END_ACTIVATION, -1, NULL)) {
+        return 0;
+    }
+    return 1;
+}
+
+int ad_f4_pending_dodge_reroll_valid(const bb_match* match) {
+    return bb_state_bank_dodge_reroll_valid(match);
+}
+
+static int ad_recipe_config_valid(const ad_recipe* recipe) {
+    int f3_axis = recipe->kind == AD_RECIPE_F3_EXACT_SECOND_HALF_TURN;
+    int f2_axis = recipe->kind == AD_RECIPE_F2_EXACT_HANDOFF_TARGET_COUNT;
+    int f1_axis = recipe->kind == AD_RECIPE_F1_EXACT_PASS_CARRIER_PRESSURE;
+    int capture_config_valid =
+        (f3_axis
+             ? recipe->capture_turn >= 1 &&
+                   recipe->capture_turn <= AD_F3_SECOND_HALF_TURN_COUNT
+             : recipe->capture_turn == 0) &&
+        (f3_axis || f2_axis || f1_axis
+             ? recipe->capture_active_team >= BB_HOME &&
+                   recipe->capture_active_team <= BB_AWAY
+             : recipe->capture_active_team == 0) &&
+        (f2_axis
+             ? recipe->capture_handoff_target_bucket >=
+                       AD_F2_TARGET_COUNT_EXACTLY_ONE &&
+                   recipe->capture_handoff_target_bucket <=
+                       AD_F2_TARGET_COUNT_TWO_OR_MORE
+             : recipe->capture_handoff_target_bucket ==
+                   AD_F2_TARGET_COUNT_NONE) &&
+        (f1_axis
+             ? recipe->capture_pass_carrier_pressure >=
+                       AD_F1_CARRIER_PRESSURE_OPEN &&
+                   recipe->capture_pass_carrier_pressure <=
+                       AD_F1_CARRIER_PRESSURE_MARKED
+             : recipe->capture_pass_carrier_pressure ==
+                   AD_F1_CARRIER_PRESSURE_NONE);
+    return recipe->kind >= AD_RECIPE_FIRST_TEAM_TURN &&
+           recipe->kind < AD_RECIPE_KIND_COUNT &&
+           capture_config_valid &&
+           recipe->home_team >= -1 && recipe->home_team < BB_TEAM_COUNT &&
+           recipe->away_team >= -1 && recipe->away_team < BB_TEAM_COUNT &&
+           recipe->exclude_team >= -1 && recipe->exclude_team < BB_TEAM_COUNT &&
+           recipe->procgen.skillup_max_players >= 0 &&
+           recipe->procgen.skillup_max_players <= BB_TEAM_SLOTS &&
+           recipe->procgen.skillup_max_each >= 0 &&
+           recipe->procgen.skillup_max_each <= 12 &&
+           recipe->procgen.skillup_secondary_pct >= 0.0f &&
+           recipe->procgen.skillup_secondary_pct <= 1.0f;
+}
+
+static int ad_f3_second_half_turn_capture_valid(
+    const bb_match* match, const ad_recipe* recipe) {
+    return bb_state_bank_boundary_valid(match) &&
+           match->half == 2 &&
+           match->active_team == recipe->capture_active_team &&
+           match->turn[match->active_team] == recipe->capture_turn;
+}
+
+static int ad_f2_handoff_target_count_capture_valid(
+    const bb_match* match, const ad_recipe* recipe) {
+    int target_count = ad_f2_handoff_target_count(match);
+    return target_count > 0 &&
+           match->active_team == recipe->capture_active_team &&
+           (recipe->capture_handoff_target_bucket ==
+                    AD_F2_TARGET_COUNT_EXACTLY_ONE
+                ? target_count == 1
+                : target_count >= 2);
+}
+
+static int ad_f1_pass_carrier_pressure_capture_valid(
+    const bb_match* match, const ad_recipe* recipe) {
+    if (!ad_f1_pass_opportunity_valid(match) ||
+        match->active_team != recipe->capture_active_team) {
+        return 0;
+    }
+    int marked = bb_is_marked(match, match->ball.carrier);
+    return recipe->capture_pass_carrier_pressure ==
+               AD_F1_CARRIER_PRESSURE_MARKED
+        ? marked
+        : !marked;
+}
+
+static int ad_capture_ready(const bb_match* match, const ad_recipe* recipe) {
+    ad_recipe_kind kind = recipe->kind;
+    // F4 is deliberately a nested TEST decision, so it must be tested before
+    // the fresh-team-turn gate shared by every earlier recipe family.
+    if (kind == AD_RECIPE_F4_PENDING_DODGE_REROLL) {
+        return ad_f4_pending_dodge_reroll_valid(match);
+    }
+    if (kind == AD_RECIPE_F3_EXACT_SECOND_HALF_TURN) {
+        return ad_f3_second_half_turn_capture_valid(match, recipe);
+    }
+    if (kind == AD_RECIPE_F2_EXACT_HANDOFF_TARGET_COUNT) {
+        return ad_f2_handoff_target_count_capture_valid(match, recipe);
+    }
+    if (kind == AD_RECIPE_F1_EXACT_PASS_CARRIER_PRESSURE) {
+        return ad_f1_pass_carrier_pressure_capture_valid(match, recipe);
+    }
+    if (!ad_has_team_turn(match)) return 0;
+    if (kind == AD_RECIPE_FIRST_TEAM_TURN) return 1;
+    if (kind == AD_RECIPE_F1_PASS_OPPORTUNITY) {
+        return ad_f1_pass_opportunity_valid(match);
+    }
+    if (kind == AD_RECIPE_F2_HANDOFF_OPPORTUNITY) {
+        return ad_f2_handoff_opportunity_valid(match);
+    }
+    if (kind == AD_RECIPE_F5_SCORE_OR_WAIT) {
+        return ad_f5_score_or_wait_valid(match);
+    }
+    return kind == AD_RECIPE_F3_LATE_SECOND_HALF && match->half == 2 &&
+           match->active_team <= BB_AWAY &&
+           match->turn[match->active_team] >= 5;
+}
+
+static void ad_clear_discovery(ad_recipe* recipe) {
+    memset(&recipe->initialized, 0, sizeof recipe->initialized);
+    memset(&recipe->captured, 0, sizeof recipe->captured);
+    memset(recipe->actions, 0, sizeof recipe->actions);
+    memset(recipe->decision_teams, 0, sizeof recipe->decision_teams);
+    memset(recipe->dice_sides, 0, sizeof recipe->dice_sides);
+    memset(recipe->dice_values, 0, sizeof recipe->dice_values);
+    recipe->action_count = 0;
+    recipe->dice_count = 0;
+}
+
+static int ad_discover(ad_recipe* recipe, ad_recipe_kind kind,
+                       char error[AD_ERROR_CAP]) {
+    if (recipe == NULL) return ad_fail(error, "null recipe");
+    recipe->kind = kind;
+    // The first-team-turn controller is a pure packed-action ordering and does
+    // not consume a controller RNG. Canonical zeroes prevent inert caller
+    // values from masquerading as seed provenance during full rediscovery.
+    if (kind == AD_RECIPE_FIRST_TEAM_TURN) {
+        recipe->controller_seed = 0;
+        recipe->controller_stream = 0;
+    }
+    if (!ad_recipe_config_valid(recipe)) return ad_fail(error, "invalid recipe configuration");
+    ad_clear_discovery(recipe);
+
+    bb_rng procgen_rng;
+    bb_rng_seed(&procgen_rng, recipe->procgen_seed, recipe->procgen_stream);
+    bb_match match;
+    bb_match_init_forced_p(&match, &procgen_rng, recipe->home_team,
+                           recipe->away_team, recipe->exclude_team,
+                           &recipe->procgen);
+    recipe->initialized = match;
+
+    bb_rng game_rng;
+    bb_rng_seed(&game_rng, recipe->game_seed, recipe->game_stream);
+    ad_record_sink sink = {recipe, 0};
+    bb_rng_set_sink(&game_rng, ad_record_die, &sink);
+    bb_rng controller_rng;
+    bb_rng_seed(&controller_rng, recipe->controller_seed,
+                recipe->controller_stream);
+    bb_status status = bb_advance(&match, &game_rng);
+
+    while (status == BB_STATUS_DECISION && recipe->action_count < AD_MAX_ACTIONS) {
+        if (sink.overflow) return ad_fail(error, "dice transcript exceeds %d", AD_MAX_DICE);
+        if (ad_capture_ready(&match, recipe)) {
+            bb_action legal[BB_LEGAL_MAX];
+            if (bb_legal_actions(&match, legal) <= 0) {
+                return ad_fail(error, "captured decision has no legal actions");
+            }
+            recipe->captured = match;
+            if (error != NULL) error[0] = '\0';
+            return 0;
+        }
+
+        bb_action legal[BB_LEGAL_MAX];
+        int n = bb_legal_actions(&match, legal);
+        if (n <= 0) return ad_fail(error, "decision %d has no legal action", recipe->action_count);
+        int picked = kind == AD_RECIPE_FIRST_TEAM_TURN
+            ? ad_pick_pre_turn(&match, legal, n)
+            : ad_pick_long_horizon(&match, legal, n, &controller_rng);
+        if (picked < 0 || picked >= n) return ad_fail(error, "controller failed at decision %d", recipe->action_count);
+        int i = recipe->action_count++;
+        recipe->actions[i] = bb_action_pack(legal[picked]);
+        recipe->decision_teams[i] = match.decision_team;
+        status = bb_apply(&match, legal[picked], &game_rng);
+    }
+
+    if (sink.overflow) return ad_fail(error, "dice transcript exceeds %d", AD_MAX_DICE);
+    if (recipe->action_count >= AD_MAX_ACTIONS) {
+        return ad_fail(error, "action transcript exceeds %d", AD_MAX_ACTIONS);
+    }
+    return ad_fail(error, "match ended with status %d before capture %d",
+                   status, kind);
+}
+
+int ad_discover_first_team_turn(ad_recipe* recipe, char error[AD_ERROR_CAP]) {
+    return ad_discover(recipe, AD_RECIPE_FIRST_TEAM_TURN, error);
+}
+
+int ad_discover_f3_late_second_half(ad_recipe* recipe,
+                                    char error[AD_ERROR_CAP]) {
+    return ad_discover(recipe, AD_RECIPE_F3_LATE_SECOND_HALF, error);
+}
+
+int ad_discover_f3_second_half_turn(ad_recipe* recipe, int turn,
+                                    int active_team,
+                                    char error[AD_ERROR_CAP]) {
+    if (recipe == NULL) return ad_fail(error, "null recipe");
+    recipe->capture_turn = turn;
+    recipe->capture_active_team = active_team;
+    return ad_discover(recipe, AD_RECIPE_F3_EXACT_SECOND_HALF_TURN, error);
+}
+
+int ad_validate_f3_second_half_turn_axis(const ad_recipe* recipes, size_t count,
+                                         char error[AD_ERROR_CAP]) {
+    if (recipes == NULL) return ad_fail(error, "null F3 axis recipes");
+    if (count != AD_F3_SECOND_HALF_AXIS_COUNT) {
+        return ad_fail(error, "F3 axis count %zu differs from %d",
+                       count, AD_F3_SECOND_HALF_AXIS_COUNT);
+    }
+
+    unsigned char seen[BB_AWAY + 1][AD_F3_SECOND_HALF_TURN_COUNT] = {{0}};
+    for (size_t i = 0; i < count; i++) {
+        const ad_recipe* recipe = &recipes[i];
+        if (!ad_recipe_config_valid(recipe) ||
+            recipe->kind != AD_RECIPE_F3_EXACT_SECOND_HALF_TURN ||
+            !ad_f3_second_half_turn_capture_valid(&recipe->captured, recipe)) {
+            return ad_fail(error, "F3 axis capture %zu is invalid", i);
+        }
+        int team = recipe->capture_active_team;
+        int turn_index = recipe->capture_turn - 1;
+        if (seen[team][turn_index]) {
+            return ad_fail(error,
+                           "duplicate F3 axis capture for team %d turn %d",
+                           team, recipe->capture_turn);
+        }
+        seen[team][turn_index] = 1;
+    }
+    for (int team = BB_HOME; team <= BB_AWAY; team++) {
+        for (int turn_index = 0;
+             turn_index < AD_F3_SECOND_HALF_TURN_COUNT; turn_index++) {
+            if (!seen[team][turn_index]) {
+                return ad_fail(error,
+                               "missing F3 axis capture for team %d turn %d",
+                               team, turn_index + 1);
+            }
+        }
+    }
+    if (error != NULL) error[0] = '\0';
+    return 0;
+}
+
+int ad_discover_f1_pass_opportunity(ad_recipe* recipe,
+                                    char error[AD_ERROR_CAP]) {
+    return ad_discover(recipe, AD_RECIPE_F1_PASS_OPPORTUNITY, error);
+}
+
+int ad_discover_f1_pass_carrier_pressure(
+    ad_recipe* recipe, int active_team,
+    ad_f1_carrier_pressure_bucket pressure, char error[AD_ERROR_CAP]) {
+    if (recipe == NULL) return ad_fail(error, "null recipe");
+    recipe->capture_active_team = active_team;
+    recipe->capture_pass_carrier_pressure = pressure;
+    return ad_discover(recipe, AD_RECIPE_F1_EXACT_PASS_CARRIER_PRESSURE, error);
+}
+
+int ad_validate_f1_pass_carrier_pressure_axis(
+    const ad_recipe* recipes, size_t count, char error[AD_ERROR_CAP]) {
+    if (recipes == NULL) return ad_fail(error, "null F1 axis recipes");
+    if (count != AD_F1_PASS_CARRIER_PRESSURE_AXIS_COUNT) {
+        return ad_fail(error, "F1 axis count %zu differs from %d",
+                       count, AD_F1_PASS_CARRIER_PRESSURE_AXIS_COUNT);
+    }
+
+    unsigned char
+        seen[BB_AWAY + 1][AD_F1_PASS_CARRIER_PRESSURE_BUCKET_COUNT] = {{0}};
+    for (size_t i = 0; i < count; i++) {
+        const ad_recipe* recipe = &recipes[i];
+        if (!ad_recipe_config_valid(recipe) ||
+            recipe->kind != AD_RECIPE_F1_EXACT_PASS_CARRIER_PRESSURE ||
+            !ad_f1_pass_carrier_pressure_capture_valid(
+                &recipe->captured, recipe)) {
+            return ad_fail(error, "F1 axis capture %zu is invalid", i);
+        }
+        int team = recipe->capture_active_team;
+        int pressure_index = recipe->capture_pass_carrier_pressure - 1;
+        if (seen[team][pressure_index]) {
+            return ad_fail(
+                error,
+                "duplicate F1 axis capture for team %d carrier pressure %d",
+                team, recipe->capture_pass_carrier_pressure);
+        }
+        seen[team][pressure_index] = 1;
+    }
+    for (int team = BB_HOME; team <= BB_AWAY; team++) {
+        for (int pressure_index = 0;
+             pressure_index < AD_F1_PASS_CARRIER_PRESSURE_BUCKET_COUNT;
+             pressure_index++) {
+            if (!seen[team][pressure_index]) {
+                return ad_fail(
+                    error,
+                    "missing F1 axis capture for team %d carrier pressure %d",
+                    team, pressure_index + 1);
+            }
+        }
+    }
+    if (error != NULL) error[0] = '\0';
+    return 0;
+}
+
+int ad_discover_f2_handoff_opportunity(ad_recipe* recipe,
+                                       char error[AD_ERROR_CAP]) {
+    return ad_discover(recipe, AD_RECIPE_F2_HANDOFF_OPPORTUNITY, error);
+}
+
+int ad_discover_f2_handoff_target_count(
+    ad_recipe* recipe, int active_team, ad_f2_target_count_bucket bucket,
+    char error[AD_ERROR_CAP]) {
+    if (recipe == NULL) return ad_fail(error, "null recipe");
+    recipe->capture_active_team = active_team;
+    recipe->capture_handoff_target_bucket = bucket;
+    return ad_discover(recipe, AD_RECIPE_F2_EXACT_HANDOFF_TARGET_COUNT, error);
+}
+
+int ad_validate_f2_handoff_target_count_axis(
+    const ad_recipe* recipes, size_t count, char error[AD_ERROR_CAP]) {
+    if (recipes == NULL) return ad_fail(error, "null F2 axis recipes");
+    if (count != AD_F2_HANDOFF_TARGET_AXIS_COUNT) {
+        return ad_fail(error, "F2 axis count %zu differs from %d",
+                       count, AD_F2_HANDOFF_TARGET_AXIS_COUNT);
+    }
+
+    unsigned char
+        seen[BB_AWAY + 1][AD_F2_HANDOFF_TARGET_BUCKET_COUNT] = {{0}};
+    for (size_t i = 0; i < count; i++) {
+        const ad_recipe* recipe = &recipes[i];
+        if (!ad_recipe_config_valid(recipe) ||
+            recipe->kind != AD_RECIPE_F2_EXACT_HANDOFF_TARGET_COUNT ||
+            !ad_f2_handoff_target_count_capture_valid(
+                &recipe->captured, recipe)) {
+            return ad_fail(error, "F2 axis capture %zu is invalid", i);
+        }
+        int team = recipe->capture_active_team;
+        int bucket_index = recipe->capture_handoff_target_bucket - 1;
+        if (seen[team][bucket_index]) {
+            return ad_fail(
+                error,
+                "duplicate F2 axis capture for team %d target bucket %d",
+                team, recipe->capture_handoff_target_bucket);
+        }
+        seen[team][bucket_index] = 1;
+    }
+    for (int team = BB_HOME; team <= BB_AWAY; team++) {
+        for (int bucket_index = 0;
+             bucket_index < AD_F2_HANDOFF_TARGET_BUCKET_COUNT;
+             bucket_index++) {
+            if (!seen[team][bucket_index]) {
+                return ad_fail(
+                    error,
+                    "missing F2 axis capture for team %d target bucket %d",
+                    team, bucket_index + 1);
+            }
+        }
+    }
+    if (error != NULL) error[0] = '\0';
+    return 0;
+}
+
+int ad_discover_f5_score_or_wait(ad_recipe* recipe,
+                                 char error[AD_ERROR_CAP]) {
+    return ad_discover(recipe, AD_RECIPE_F5_SCORE_OR_WAIT, error);
+}
+
+int ad_discover_f4_pending_dodge_reroll(ad_recipe* recipe,
+                                        char error[AD_ERROR_CAP]) {
+    return ad_discover(recipe, AD_RECIPE_F4_PENDING_DODGE_REROLL, error);
+}
+
+int ad_validate_authored_proof_bundle(
+    const ad_recipe* recipes, size_t count, char error[AD_ERROR_CAP]) {
+    if (recipes == NULL) return ad_fail(error, "null authored proof bundle");
+    if (count != AD_AUTHORED_PROOF_BUNDLE_COUNT) {
+        return ad_fail(error, "authored proof bundle count %zu differs from %d",
+                       count, AD_AUTHORED_PROOF_BUNDLE_COUNT);
+    }
+
+    const size_t axis_count = AD_F1_PASS_CARRIER_PRESSURE_AXIS_COUNT +
+        AD_F2_HANDOFF_TARGET_AXIS_COUNT + AD_F3_SECOND_HALF_AXIS_COUNT;
+    ad_recipe* axes = malloc(axis_count * sizeof(*axes));
+    if (axes == NULL) {
+        return ad_fail(error, "authored proof bundle allocation failed");
+    }
+    ad_recipe* f1 = axes;
+    ad_recipe* f2 = f1 + AD_F1_PASS_CARRIER_PRESSURE_AXIS_COUNT;
+    ad_recipe* f3 = f2 + AD_F2_HANDOFF_TARGET_AXIS_COUNT;
+    size_t f1_count = 0;
+    size_t f2_count = 0;
+    size_t f3_count = 0;
+    const ad_recipe* f4 = NULL;
+    const ad_recipe* f5 = NULL;
+
+    for (size_t i = 0; i < count; i++) {
+        const ad_recipe* recipe = &recipes[i];
+        if (!ad_recipe_config_valid(recipe)) {
+            free(axes);
+            return ad_fail(error,
+                           "authored proof recipe %zu has invalid configuration",
+                           i);
+        }
+        switch (recipe->kind) {
+            case AD_RECIPE_F1_EXACT_PASS_CARRIER_PRESSURE:
+                if (f1_count >= AD_F1_PASS_CARRIER_PRESSURE_AXIS_COUNT) {
+                    free(axes);
+                    return ad_fail(
+                        error, "authored proof bundle has excess F1 records");
+                }
+                f1[f1_count++] = *recipe;
+                break;
+            case AD_RECIPE_F2_EXACT_HANDOFF_TARGET_COUNT:
+                if (f2_count >= AD_F2_HANDOFF_TARGET_AXIS_COUNT) {
+                    free(axes);
+                    return ad_fail(
+                        error, "authored proof bundle has excess F2 records");
+                }
+                f2[f2_count++] = *recipe;
+                break;
+            case AD_RECIPE_F3_EXACT_SECOND_HALF_TURN:
+                if (f3_count >= AD_F3_SECOND_HALF_AXIS_COUNT) {
+                    free(axes);
+                    return ad_fail(
+                        error, "authored proof bundle has excess F3 records");
+                }
+                f3[f3_count++] = *recipe;
+                break;
+            case AD_RECIPE_F4_PENDING_DODGE_REROLL:
+                if (f4 != NULL) {
+                    free(axes);
+                    return ad_fail(
+                        error, "authored proof bundle has duplicate F4 record");
+                }
+                f4 = recipe;
+                break;
+            case AD_RECIPE_F5_SCORE_OR_WAIT:
+                if (f5 != NULL) {
+                    free(axes);
+                    return ad_fail(
+                        error, "authored proof bundle has duplicate F5 record");
+                }
+                f5 = recipe;
+                break;
+            default:
+                free(axes);
+                return ad_fail(error,
+                               "authored proof recipe %zu has unsupported kind %d",
+                               i, recipe->kind);
+        }
+    }
+
+    if (f1_count != AD_F1_PASS_CARRIER_PRESSURE_AXIS_COUNT ||
+        f2_count != AD_F2_HANDOFF_TARGET_AXIS_COUNT ||
+        f3_count != AD_F3_SECOND_HALF_AXIS_COUNT || f4 == NULL ||
+        f5 == NULL) {
+        free(axes);
+        return ad_fail(error,
+                       "authored proof bundle family counts are incomplete");
+    }
+    if (ad_validate_f1_pass_carrier_pressure_axis(f1, f1_count, error) != 0 ||
+        ad_validate_f2_handoff_target_count_axis(f2, f2_count, error) != 0 ||
+        ad_validate_f3_second_half_turn_axis(f3, f3_count, error) != 0) {
+        free(axes);
+        return -1;
+    }
+    free(axes);
+
+    if (!ad_f4_pending_dodge_reroll_valid(&f4->captured)) {
+        return ad_fail(error, "authored proof bundle F4 endpoint is invalid");
+    }
+    if (!ad_f5_score_or_wait_valid(&f5->captured)) {
+        return ad_fail(error, "authored proof bundle F5 endpoint is invalid");
+    }
+    if (error != NULL) error[0] = '\0';
+    return 0;
+}
+
+int ad_build_authored_proof_bundle(
+    ad_recipe* recipes, size_t recipe_capacity,
+    ad_bbs_record* records, size_t record_capacity,
+    char error[AD_ERROR_CAP]) {
+    if (error == NULL) return -1;
+    if (recipes == NULL || records == NULL) {
+        return ad_fail(error, "null authored proof builder output");
+    }
+    if (recipe_capacity != AD_AUTHORED_PROOF_BUNDLE_COUNT ||
+        record_capacity != AD_AUTHORED_PROOF_BUNDLE_COUNT) {
+        return ad_fail(error,
+                       "authored proof builder capacities %zu/%zu differ from %d",
+                       recipe_capacity, record_capacity,
+                       AD_AUTHORED_PROOF_BUNDLE_COUNT);
+    }
+
+    ad_recipe* staged = calloc(AD_AUTHORED_PROOF_BUNDLE_COUNT,
+                               sizeof(*staged));
+    if (staged == NULL) {
+        return ad_fail(error, "authored proof builder allocation failed");
+    }
+    size_t index = 0;
+    for (; index < AD_AUTHORED_PROOF_BUNDLE_COUNT; index++) {
+        const ad_authored_allocation* allocation =
+            ad_authored_legacy_allocation(index);
+        if (allocation == NULL) {
+            free(staged);
+            return ad_fail(error,
+                           "legacy authored allocation %zu is missing", index);
+        }
+        memset(&staged[index], 0, sizeof staged[index]);
+        ad_recipe_apply_projection(&staged[index], &allocation->projection);
+        int result;
+        switch (allocation->projection.kind) {
+            case AD_RECIPE_F1_EXACT_PASS_CARRIER_PRESSURE:
+                result = ad_discover_f1_pass_carrier_pressure(
+                    &staged[index], allocation->projection.capture_active_team,
+                    allocation->projection.capture_pass_carrier_pressure,
+                    error);
+                break;
+            case AD_RECIPE_F2_EXACT_HANDOFF_TARGET_COUNT:
+                result = ad_discover_f2_handoff_target_count(
+                    &staged[index], allocation->projection.capture_active_team,
+                    allocation->projection.capture_handoff_target_bucket,
+                    error);
+                break;
+            case AD_RECIPE_F3_EXACT_SECOND_HALF_TURN:
+                result = ad_discover_f3_second_half_turn(
+                    &staged[index], allocation->projection.capture_turn,
+                    allocation->projection.capture_active_team, error);
+                break;
+            case AD_RECIPE_F4_PENDING_DODGE_REROLL:
+                result = ad_discover_f4_pending_dodge_reroll(
+                    &staged[index], error);
+                break;
+            case AD_RECIPE_F5_SCORE_OR_WAIT:
+                result = ad_discover_f5_score_or_wait(&staged[index], error);
+                break;
+            default:
+                free(staged);
+                return ad_fail(error,
+                               "legacy authored allocation %zu has kind %d",
+                               index, allocation->projection.kind);
+        }
+        if (result != 0) {
+            free(staged);
+            return -1;
+        }
+    }
+
+    if (index != AD_AUTHORED_PROOF_BUNDLE_COUNT ||
+        ad_validate_authored_proof_bundle(staged, index, error) != 0) {
+        free(staged);
+        return -1;
+    }
+
+    memcpy(recipes, staged, index * sizeof(*recipes));
+    free(staged);
+    for (size_t i = 0; i < index; i++) {
+        records[i] = (ad_bbs_record){
+            0xA9000000u + (uint32_t)i,
+            (uint32_t)recipes[i].action_count,
+            &recipes[i],
+        };
+    }
+    error[0] = '\0';
+    return 0;
+}
+
+int ad_replay_exact(const ad_recipe* recipe, bb_match* out,
+                    char error[AD_ERROR_CAP]) {
+    if (recipe == NULL || out == NULL) return ad_fail(error, "null replay input");
+    if (!ad_recipe_config_valid(recipe)) return ad_fail(error, "invalid recipe configuration");
+    if (recipe->action_count < 0 || recipe->action_count > AD_MAX_ACTIONS ||
+        recipe->dice_count < 0 || recipe->dice_count > AD_MAX_DICE) {
+        return ad_fail(error, "invalid transcript length");
+    }
+
+    bb_rng procgen_rng;
+    bb_rng_seed(&procgen_rng, recipe->procgen_seed, recipe->procgen_stream);
+    bb_match match;
+    bb_match_init_forced_p(&match, &procgen_rng, recipe->home_team,
+                           recipe->away_team, recipe->exclude_team,
+                           &recipe->procgen);
+    if (memcmp(&match, &recipe->initialized, sizeof match) != 0) {
+        return ad_fail(error, "initialized match bytes differ");
+    }
+
+    bb_rng game_rng;
+    bb_rng_script(&game_rng, recipe->dice_values, recipe->dice_count);
+    ad_check_sink sink = {recipe, 0, 0};
+    bb_rng_set_sink(&game_rng, ad_check_die, &sink);
+    bb_status status = bb_advance(&match, &game_rng);
+
+    for (int i = 0; i < recipe->action_count; i++) {
+        if (status != BB_STATUS_DECISION) {
+            return ad_fail(error, "action %d reached status %d", i, status);
+        }
+        if (match.decision_team != recipe->decision_teams[i]) {
+            return ad_fail(error, "decision team differs at action %d", i);
+        }
+        if (!ad_action_is_legal(&match, recipe->actions[i])) {
+            return ad_fail(error, "recorded action %d is not legal", i);
+        }
+        status = bb_apply(&match, bb_action_unpack(recipe->actions[i]), &game_rng);
+    }
+
+    if (bb_rng_error(&game_rng)) return ad_fail(error, "dice script exhausted or invalid");
+    if (sink.mismatch || sink.seen != recipe->dice_count ||
+        game_rng.script_pos != recipe->dice_count) {
+        return ad_fail(error, "dice transcript was not consumed exactly");
+    }
+    if (status != BB_STATUS_DECISION ||
+        !ad_capture_ready(&match, recipe)) {
+        return ad_fail(error, "capture status/procedure differs");
+    }
+    if (memcmp(&match, &recipe->captured, sizeof match) != 0) {
+        return ad_fail(error, "captured match bytes differ");
+    }
+    *out = match;
+    if (error != NULL) error[0] = '\0';
+    return 0;
+}
+
+int ad_verify_one_action_continuation(const bb_match* loaded,
+                                      uint32_t* packed_action,
+                                      bb_status* result_status,
+                                      int* dice_used,
+                                      char error[AD_ERROR_CAP]) {
+    if (loaded == NULL) return ad_fail(error, "null continuation state");
+    if (!bb_state_bank_resumable_valid(loaded)) {
+        return ad_fail(error, "continuation state is not a safe BBS1 decision");
+    }
+
+    bb_action legal[BB_LEGAL_MAX];
+    int count = bb_legal_actions(loaded, legal);
+    if (count <= 0) return ad_fail(error, "continuation has no legal action");
+    int selected = 0;
+    for (int i = 1; i < count; i++) {
+        if (bb_action_pack(legal[i]) < bb_action_pack(legal[selected])) {
+            selected = i;
+        }
+    }
+
+    uint8_t dice[AD_CONTINUATION_DICE];
+    memset(dice, 1, sizeof dice);
+    bb_rng rng;
+    bb_rng_script(&rng, dice, AD_CONTINUATION_DICE);
+    ad_count_sink sink = {0};
+    bb_rng_set_sink(&rng, ad_count_die, &sink);
+
+    bb_match resumed = *loaded;
+    bb_status status = bb_apply(&resumed, legal[selected], &rng);
+    if (bb_rng_error(&rng)) {
+        return ad_fail(error, "continuation dice suffix exhausted or invalid");
+    }
+    if (status != BB_STATUS_DECISION && status != BB_STATUS_RUNNING &&
+        status != BB_STATUS_MATCH_OVER) {
+        return ad_fail(error, "continuation reached engine status %d", status);
+    }
+    if (sink.seen < 0 || sink.seen > AD_CONTINUATION_DICE) {
+        return ad_fail(error, "continuation dice count is out of bounds");
+    }
+
+    if (packed_action != NULL) {
+        *packed_action = bb_action_pack(legal[selected]);
+    }
+    if (result_status != NULL) *result_status = status;
+    if (dice_used != NULL) *dice_used = sink.seen;
+    if (error != NULL) error[0] = '\0';
+    return 0;
+}
+
+uint32_t ad_bbs_fingerprint(void) {
+    return (uint32_t)sizeof(bb_match) * 2654435761u
+         ^ ((uint32_t)BB_TEAM_COUNT << 20)
+         ^ ((uint32_t)BB_SKILL_COUNT << 10)
+         ^ (uint32_t)BB_A_TYPE_COUNT;
+}
+
+static int ad_write_bytes(FILE* file, const void* bytes, size_t size) {
+    return fwrite(bytes, 1, size, file) == size ? 0 : -1;
+}
+
+static int ad_write_u32(FILE* file, uint32_t value) {
+    uint8_t bytes[4] = {(uint8_t)value, (uint8_t)(value >> 8),
+                        (uint8_t)(value >> 16), (uint8_t)(value >> 24)};
+    return ad_write_bytes(file, bytes, sizeof bytes);
+}
+
+static int ad_rediscover_recipe(const ad_recipe* source, ad_recipe* out,
+                                char error[AD_ERROR_CAP]) {
+    *out = *source;
+    int rc;
+    switch (source->kind) {
+        case AD_RECIPE_FIRST_TEAM_TURN:
+            rc = ad_discover_first_team_turn(out, error);
+            break;
+        case AD_RECIPE_F3_LATE_SECOND_HALF:
+            rc = ad_discover_f3_late_second_half(out, error);
+            break;
+        case AD_RECIPE_F1_PASS_OPPORTUNITY:
+            rc = ad_discover_f1_pass_opportunity(out, error);
+            break;
+        case AD_RECIPE_F2_HANDOFF_OPPORTUNITY:
+            rc = ad_discover_f2_handoff_opportunity(out, error);
+            break;
+        case AD_RECIPE_F5_SCORE_OR_WAIT:
+            rc = ad_discover_f5_score_or_wait(out, error);
+            break;
+        case AD_RECIPE_F4_PENDING_DODGE_REROLL:
+            rc = ad_discover_f4_pending_dodge_reroll(out, error);
+            break;
+        case AD_RECIPE_F3_EXACT_SECOND_HALF_TURN:
+            rc = ad_discover_f3_second_half_turn(
+                out, source->capture_turn, source->capture_active_team, error);
+            break;
+        case AD_RECIPE_F2_EXACT_HANDOFF_TARGET_COUNT:
+            rc = ad_discover_f2_handoff_target_count(
+                out, source->capture_active_team,
+                source->capture_handoff_target_bucket, error);
+            break;
+        case AD_RECIPE_F1_EXACT_PASS_CARRIER_PRESSURE:
+            rc = ad_discover_f1_pass_carrier_pressure(
+                out, source->capture_active_team,
+                source->capture_pass_carrier_pressure, error);
+            break;
+        default:
+            return ad_fail(error, "unknown authored recipe kind %d",
+                           source->kind);
+    }
+    if (rc != 0) return rc;
+    if (memcmp(source, out, sizeof *out) != 0) {
+        return ad_fail(error, "rediscovered recipe provenance differs");
+    }
+    if (error != NULL) error[0] = '\0';
+    return 0;
+}
+
+int ad_bbs_write(FILE* file, const ad_bbs_record* records, size_t count,
+                 char error[AD_ERROR_CAP]) {
+    if (file == NULL || records == NULL || count == 0) {
+        return ad_fail(error, "BBS writer requires a file and records");
+    }
+    if (count > SIZE_MAX / sizeof(bb_match)) {
+        return ad_fail(error, "BBS record count overflows allocation");
+    }
+    bb_match* verified = calloc(count, sizeof(*verified));
+    if (verified == NULL) return ad_fail(error, "cannot allocate verified BBS records");
+    ad_recipe* rediscovered = malloc(sizeof(*rediscovered));
+    if (rediscovered == NULL) {
+        free(verified);
+        return ad_fail(error, "cannot allocate rediscovered BBS recipe");
+    }
+
+    // Independently rediscover, exact-replay, and validate the complete batch
+    // before emitting even the header. This binds declared seeds and controller
+    // provenance to transcripts, binds serialized bytes to exact replay, and
+    // keeps malformed later records from leaving a plausible prefix.
+    for (size_t i = 0; i < count; i++) {
+        const ad_bbs_record* record = &records[i];
+        if ((record->source_id & 0xF0000000u) != 0xA0000000u ||
+            record->recipe == NULL) {
+            free(rediscovered);
+            free(verified);
+            return ad_fail(error, "invalid authored BBS record %zu", i);
+        }
+        char provenance_error[AD_ERROR_CAP];
+        if (ad_rediscover_recipe(record->recipe, rediscovered,
+                                 provenance_error) != 0) {
+            free(rediscovered);
+            free(verified);
+            return ad_fail(error,
+                           "authored BBS record %zu provenance failed: %s",
+                           i, provenance_error);
+        }
+        char replay_error[AD_ERROR_CAP];
+        if (ad_replay_exact(rediscovered, &verified[i], replay_error) != 0) {
+            free(rediscovered);
+            free(verified);
+            return ad_fail(error, "authored BBS record %zu replay failed: %s",
+                           i, replay_error);
+        }
+        if (record->decision_index !=
+            (uint32_t)rediscovered->action_count) {
+            free(rediscovered);
+            free(verified);
+            return ad_fail(error,
+                           "authored BBS record %zu decision index differs",
+                           i);
+        }
+        int safe = rediscovered->kind == AD_RECIPE_F4_PENDING_DODGE_REROLL
+            ? ad_authored_resumable_admission_gate(&verified[i])
+            : ad_authored_fresh_admission_gate(&verified[i]);
+        if (!safe) {
+            free(rediscovered);
+            free(verified);
+            return ad_fail(error,
+                           "authored BBS record %zu is not a safe BBS1 decision",
+                           i);
+        }
+        char continuation_error[AD_ERROR_CAP];
+        if (ad_authored_continuation_gate(
+                &verified[i], continuation_error) != 0) {
+            free(rediscovered);
+            free(verified);
+            return ad_fail(error,
+                           "authored BBS record %zu cannot continue: %s",
+                           i, continuation_error);
+        }
+    }
+    free(rediscovered);
+    if (ad_write_bytes(file, "BBS1", 4) != 0 || ad_write_u32(file, 1) != 0 ||
+        ad_write_u32(file, (uint32_t)sizeof(bb_match)) != 0 ||
+        ad_write_u32(file, ad_bbs_fingerprint()) != 0) {
+        free(verified);
+        return ad_fail(error, "failed to write BBS header");
+    }
+    for (size_t i = 0; i < count; i++) {
+        const ad_bbs_record* record = &records[i];
+        const bb_match* match = &verified[i];
+        uint8_t meta[4] = {match->half, match->turn[match->active_team], 0, 0};
+        if (ad_write_u32(file, record->source_id) != 0 ||
+            ad_write_u32(file, record->decision_index) != 0 ||
+            ad_write_bytes(file, meta, sizeof meta) != 0 ||
+            ad_write_bytes(file, match, sizeof *match) != 0) {
+            free(verified);
+            return ad_fail(error, "failed to write BBS record %zu", i);
+        }
+    }
+    free(verified);
+    if (fflush(file) != 0 || ferror(file)) return ad_fail(error, "failed to flush BBS stream");
+    if (error != NULL) error[0] = '\0';
+    return 0;
+}

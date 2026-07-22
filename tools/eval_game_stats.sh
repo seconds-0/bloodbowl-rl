@@ -62,7 +62,7 @@ if ! "$ROOT/tools/install_puffer_env.sh" --check "$ROOT/vendor/PufferLib"; then
   echo "stale PufferLib Blood Bowl snapshot; reinstall and rebuild before eval" >&2
   exit 1
 fi
-grep -q 'if i == 96:' "$ROOT/vendor/PufferLib/pufferlib/pufferl.py" || {
+grep -q 'if i == 160:' "$ROOT/vendor/PufferLib/pufferlib/pufferl.py" || {
   echo "Puffer dashboard patch missing; later metrics and interval n would be hidden" >&2
   echo "run tools/install_puffer_env.sh and rerun the eval" >&2
   exit 1

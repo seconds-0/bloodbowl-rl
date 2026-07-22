@@ -8,7 +8,7 @@ corpus, observations, or masks into memory.
 
 Validated invariants:
 
-* the 16-byte ``BBP1`` header and supported v1/v2 format version;
+* the 16-byte ``BBP1`` header and supported v1/v2/v3/v4 format version;
 * body size is an exact multiple of the header-derived record size;
 * every record's replay ID matches its numeric shard filename;
 * agent and action targets are in range; and
@@ -23,9 +23,9 @@ partial audit.
 
 Examples:
 
-  python3 tools/bbp_behavior_audit.py --pairs-dir validation/pairs_v4
+  python3 tools/bbp_behavior_audit.py --pairs-dir /data/pairs_v5
   python3 tools/bbp_behavior_audit.py \
-      --pairs-dir /data/pairs_v4 --replay-ids /data/bb2025.ids
+      --pairs-dir /data/pairs_v5 --replay-ids /data/bb2025.ids
 """
 
 from __future__ import annotations
@@ -41,7 +41,7 @@ from typing import Any, Iterable
 
 BBP_HEADER = struct.Struct("<4sIII")
 BBP_MAGIC = b"BBP1"
-BBP_KNOWN_VERSIONS = (1, 2)
+BBP_KNOWN_VERSIONS = (1, 2, 3, 4)
 BBP_HEADER_SIZE = BBP_HEADER.size
 
 HEAD_TYPE = 30

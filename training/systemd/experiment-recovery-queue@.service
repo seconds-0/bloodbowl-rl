@@ -1,0 +1,18 @@
+[Unit]
+Description=Blood Bowl isolated recovery experiment queue (%i)
+After=network-online.target
+StartLimitIntervalSec=3600
+StartLimitBurst=10
+
+[Service]
+Type=simple
+WorkingDirectory=%h/bloodbowl-rl-recovery-20260719
+Environment=PYTHONUNBUFFERED=1
+ExecStart=%h/bloodbowl-rl-recovery-20260719/vendor/PufferLib/.venv/bin/python %h/bloodbowl-rl-recovery-20260719/tools/experiment_queue.py --plan %h/bloodbowl-rl-recovery-20260719/runs/%i/QUEUE_PLAN.json --state %h/bloodbowl-rl-recovery-20260719/runs/%i/QUEUE_STATE.json
+Restart=on-failure
+RestartSec=30
+KillMode=control-group
+TimeoutStopSec=45
+
+[Install]
+WantedBy=default.target

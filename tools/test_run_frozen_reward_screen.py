@@ -21,10 +21,14 @@ class FrozenRewardScreenTests(unittest.TestCase):
     def build_config(self, root: Path) -> Path:
         (root / "tools").mkdir()
         launcher = root / "tools/run_reward_screen.sh"
+        live_guard = root / "tools/live_integrity_guard.py"
+        status_wrapper = root / "tools/trainer_status_wrapper.sh"
         screen_analyzer = root / "tools/analyze_reward_screen.py"
         transfer_analyzer = root / "tools/analyze_reward_candidate_transfer.py"
         for path, body in (
             (launcher, "#!/bin/sh\n"),
+            (live_guard, "# guard\n"),
+            (status_wrapper, "#!/bin/sh\n"),
             (screen_analyzer, "# analyzer\n"),
             (transfer_analyzer, "# transfer\n"),
         ):
@@ -66,6 +70,8 @@ class FrozenRewardScreenTests(unittest.TestCase):
             "require_gate": True,
             "implementation": {
                 "launcher_sha256": frozen.sha256(launcher),
+                "live_integrity_guard_sha256": frozen.sha256(live_guard),
+                "status_wrapper_sha256": frozen.sha256(status_wrapper),
                 "screen_analyzer_sha256": frozen.sha256(screen_analyzer),
                 "transfer_analyzer_sha256": frozen.sha256(transfer_analyzer),
             },
@@ -101,6 +107,27 @@ class FrozenRewardScreenTests(unittest.TestCase):
                 self.assertRaisesRegex(frozen.FrozenScreenError, "pool tree drift"),
             ):
                 frozen.validate_config(config)
+
+    def test_live_guard_or_status_wrapper_drift_is_rejected_before_launch(self):
+        for relative in (
+            "tools/live_integrity_guard.py",
+            "tools/trainer_status_wrapper.sh",
+        ):
+            with self.subTest(relative=relative), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                config = self.build_config(root)
+                (root / relative).write_text("drift\n", encoding="utf-8")
+                with (
+                    mock.patch.object(
+                        frozen.analyze_reward_candidate_transfer,
+                        "validate_completion_evidence",
+                        return_value={},
+                    ),
+                    self.assertRaisesRegex(
+                        frozen.FrozenScreenError, "implementation drift"
+                    ),
+                ):
+                    frozen.validate_config(config)
 
     def test_gate_requirement_is_explicit_and_boolean(self):
         with tempfile.TemporaryDirectory() as tmp:

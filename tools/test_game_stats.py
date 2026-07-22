@@ -9,6 +9,12 @@ import contact_bot_stats
 
 
 class GameStatsTests(unittest.TestCase):
+    def test_completed_game_requirement_is_inclusive_at_the_exact_target(self):
+        self.assertFalse(game_stats.completed_game_requirement_met(9_999.0, 10_000))
+        self.assertTrue(game_stats.completed_game_requirement_met(10_000.0, 10_000))
+        self.assertTrue(game_stats.completed_game_requirement_met(10_001.0, 10_000))
+        self.assertFalse(game_stats.completed_game_requirement_met(float("nan"), 10_000))
+
     def test_scripted_bot_perspective_supports_either_team(self):
         values = {
             "slot_0_score": 0.7,

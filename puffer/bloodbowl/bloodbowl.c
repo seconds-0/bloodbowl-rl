@@ -1,24 +1,118 @@
 // bloodbowl.c — standalone driver for the PufferLib env (build.sh --local /
 // --fast, or direct clang on Mac). Plays random-policy matches end-to-end
 // through the exact c_reset/c_step path training uses, then reports
-// aggregate stats + steps/sec. Heads are sampled from the legality mask
-// (like the CUDA masked sampler); pass --unmasked to sample uniformly over
-// each head instead, stress-testing the decode snap-to-legal path the
-// maskless torch backend relies on.
+// aggregate stats + steps/sec. Heads are sampled sequentially from exact joint
+// support. `--unmasked` is a negative fail-closed diagnostic and is expected
+// to terminate as soon as a random tuple falls outside that support.
 #include "bloodbowl.h"
 #include <stdio.h>
 #include <time.h>
 
-// Sample a uniformly random set bit in mask[0..len); -1 if none.
-static int sample_masked(const unsigned char* mask, int len, bb_rng* rng) {
-    int n = 0;
-    for (int i = 0; i < len; i++) n += mask[i];
-    if (n == 0) return -1;
-    int k = (int)(bb_rng_next(rng) % (uint32_t)n);
-    for (int i = 0; i < len; i++) {
-        if (mask[i] && k-- == 0) return i;
+typedef struct {
+    uint64_t windows;
+    uint64_t legal_total;
+    uint64_t joint_unique_total;
+    uint64_t cartesian_total;
+    uint64_t duplicate_total;
+    uint64_t raw_duplicate_total;
+    uint64_t projected_collision_total;
+    uint64_t duplicate_by_type[BBE_HEAD_TYPE];
+    uint64_t dependent_windows;
+    int max_legal;
+    int max_joint_unique;
+    int max_cartesian;
+    int max_types;
+    int max_args_given_type;
+    int max_squares_given_type_arg;
+} bbe_action_stats;
+
+typedef struct {
+    uint32_t projected;
+    uint32_t raw;
+} bbe_action_key;
+
+static int bbe_action_key_cmp(const void* ap, const void* bp) {
+    const bbe_action_key* a = (const bbe_action_key*)ap;
+    const bbe_action_key* b = (const bbe_action_key*)bp;
+    if (a->projected != b->projected)
+        return (a->projected > b->projected) -
+               (a->projected < b->projected);
+    return (a->raw > b->raw) - (a->raw < b->raw);
+}
+
+// Characterize the projected joint support that policy sampling must retain.
+// This is deliberately a standalone diagnostic: it has no training hot-path
+// cost and makes representation/memory decisions reproducible.
+static void bbe_action_stats_add(const Bloodbowl* env, int agent,
+                                 bbe_action_stats* stats) {
+    static bbe_action_key keys[BB_LEGAL_MAX];
+    unsigned char types[BBE_HEAD_TYPE] = {0};
+    unsigned char args[BBE_HEAD_TYPE][BBE_HEAD_ARG] = {{0}};
+    uint16_t squares[BBE_HEAD_TYPE][BBE_HEAD_ARG] = {{0}};
+    int n = env->n_legal;
+    for (int i = 0; i < n; i++) {
+        int t = env->legal[i].type;
+        int a = env->legal_arg[i];
+        int s = env->legal_sq[i];
+        keys[i].projected =
+            (uint32_t)t | ((uint32_t)a << 5) | ((uint32_t)s << 11);
+        keys[i].raw = bb_action_pack(env->legal[i]);
+        types[t] = 1;
+        args[t][a] = 1;
+        squares[t][a]++;
     }
-    return -1;
+    qsort(keys, (size_t)n, sizeof keys[0], bbe_action_key_cmp);
+    int unique = 0;
+    for (int i = 0; i < n; i++) {
+        bool new_projection =
+            i == 0 || keys[i].projected != keys[i - 1].projected;
+        unique += new_projection;
+        if (!new_projection) {
+            int type = keys[i].projected & 31u;
+            stats->duplicate_by_type[type]++;
+            if (keys[i].raw == keys[i - 1].raw)
+                stats->raw_duplicate_total++;
+            else
+                stats->projected_collision_total++;
+        }
+    }
+    int nt = 0;
+    int max_args = 0;
+    int max_squares = 0;
+    for (int t = 0; t < BBE_HEAD_TYPE; t++) {
+        if (!types[t]) continue;
+        nt++;
+        int na = 0;
+        for (int a = 0; a < BBE_HEAD_ARG; a++) {
+            na += args[t][a] != 0;
+            if ((int)squares[t][a] > max_squares)
+                max_squares = squares[t][a];
+        }
+        if (na > max_args) max_args = na;
+    }
+    const unsigned char* mask = env->action_mask_ptr[agent];
+    int mt = 0, ma = 0, ms = 0;
+    for (int i = 0; i < BBE_HEAD_TYPE; i++) mt += mask[i] != 0;
+    for (int i = 0; i < BBE_HEAD_ARG; i++)
+        ma += mask[BBE_HEAD_TYPE + i] != 0;
+    for (int i = 0; i < BBE_HEAD_SQ; i++)
+        ms += mask[BBE_HEAD_TYPE + BBE_HEAD_ARG + i] != 0;
+    int cartesian = mt * ma * ms;
+
+    stats->windows++;
+    stats->legal_total += (uint64_t)n;
+    stats->joint_unique_total += (uint64_t)unique;
+    stats->cartesian_total += (uint64_t)cartesian;
+    stats->duplicate_total += (uint64_t)(n - unique);
+    stats->dependent_windows += cartesian != unique;
+    if (n > stats->max_legal) stats->max_legal = n;
+    if (unique > stats->max_joint_unique) stats->max_joint_unique = unique;
+    if (cartesian > stats->max_cartesian) stats->max_cartesian = cartesian;
+    if (nt > stats->max_types) stats->max_types = nt;
+    if (max_args > stats->max_args_given_type)
+        stats->max_args_given_type = max_args;
+    if (max_squares > stats->max_squares_given_type_arg)
+        stats->max_squares_given_type_arg = max_squares;
 }
 
 // --- Self-test (--selftest) --------------------------------------------------
@@ -96,6 +190,60 @@ static void st_check_obs(const Bloodbowl* env) {
         if (top->proc == BB_PROC_TEST) {
             ST_CHECK(b[8] >= 2 && b[8] <= 6, "TEST target %d outside 2..6", b[8]);
         }
+        // Obs-v5 decision truth. Re-derive directly from public frame/player
+        // fields rather than calling encoder helpers.
+        for (int i = 0; i < 3; i++) {
+            int exp_face = 0;
+            if (top->proc == BB_PROC_BLOCK &&
+                (top->phase == 1 || top->phase == 2)) {
+                int ndice = ((top->data >> 9) & 3) + 1;
+                if (i < ndice) {
+                    int face = (top->data >> (3 * i)) & 7;
+                    if (face == BB_BD_PUSH_2) face = BB_BD_PUSH_1;
+                    if (face >= BB_BD_ATTACKER_DOWN && face <= BB_BD_POW)
+                        exp_face = face;
+                }
+            }
+            ST_CHECK(b[13 + i] == exp_face,
+                     "proc %d phase %d agent %d: block face %d byte %d != %d",
+                     top->proc, top->phase, agent, i, b[13 + i], exp_face);
+        }
+        const unsigned char* scalar =
+            env->obs_ptr[agent] + BBE_SCALAR_OFF;
+        int move_slot = BB_NO_PLAYER;
+        for (int i = (int)m->stack_top - 1; i >= 0; i--) {
+            if (m->stack[i].proc == BB_PROC_MOVE) {
+                if (m->stack[i].a < BB_NUM_PLAYERS) move_slot = m->stack[i].a;
+                break;
+            }
+        }
+        int exp_moved = move_slot == BB_NO_PLAYER
+                            ? 0 : m->players[move_slot].moved + 1;
+        int exp_rushes = move_slot == BB_NO_PLAYER
+                             ? 0 : m->players[move_slot].rushes + 1;
+        int exp_kind = top->proc == BB_PROC_TEST &&
+                               top->b < BB_TEST_KIND_COUNT
+                           ? top->b + 1 : 0;
+        ST_CHECK(scalar[19] == exp_moved,
+                 "proc %d agent %d: moved byte %d != %d",
+                 top->proc, agent, scalar[19], exp_moved);
+        ST_CHECK(scalar[20] == exp_rushes,
+                 "proc %d agent %d: rushes byte %d != %d",
+                 top->proc, agent, scalar[20], exp_rushes);
+        ST_CHECK(scalar[21] == exp_kind,
+                 "proc %d agent %d: TEST-kind byte %d != %d",
+                 top->proc, agent, scalar[21], exp_kind);
+        int ball_xy_valid = m->ball.state != BB_BALL_OFF_PITCH &&
+                            bb_on_pitch_xy(m->ball.x, m->ball.y);
+        int exp_ball_x = ball_xy_valid
+                             ? 1 + (agent == BB_AWAY
+                                        ? BB_PITCH_LEN - 1 - m->ball.x
+                                        : m->ball.x)
+                             : 0;
+        int exp_ball_y = ball_xy_valid ? m->ball.y + 1 : 0;
+        ST_CHECK(b[1] == exp_ball_x && b[2] == exp_ball_y,
+                 "agent %d: ball bytes %d,%d != %d,%d",
+                 agent, b[1], b[2], exp_ball_x, exp_ball_y);
         // Review M14's exact repro: at every ACTIVATE decision (TEAM_TURN on
         // top, a = team id 0/1) BOTH agents must see "no slot" — the away
         // agent used to see "opponent row 17" for the home team's turn.
@@ -231,12 +379,7 @@ static int bbe_selftest(uint64_t seed, int episodes) {
         }
         st_check_obs(&env);
         for (int a = 0; a < BBE_AGENTS; a++) {
-            const unsigned char* mk = env.action_mask_ptr[a];
-            env.action_ptr[a][0] = (float)sample_masked(mk, BBE_HEAD_TYPE, &pol);
-            env.action_ptr[a][1] =
-                (float)sample_masked(mk + BBE_HEAD_TYPE, BBE_HEAD_ARG, &pol);
-            env.action_ptr[a][2] = (float)sample_masked(
-                mk + BBE_HEAD_TYPE + BBE_HEAD_ARG, BBE_HEAD_SQ, &pol);
+            bbe_sample_joint_uniform(&env, a, env.action_ptr[a], &pol);
         }
         // Behavioral micro-stat counters: monotone within an episode, zeroed
         // by the episode reset (each step applies ONE action, so a counter
@@ -437,12 +580,7 @@ static int bbe_r12_selftest(uint64_t seed, int episodes) {
         int pre_2t = env.ep_def_threats_2t;
         int pre_turns = env.ep_turns[0] + env.ep_turns[1];
         for (int a = 0; a < BBE_AGENTS; a++) {
-            const unsigned char* mk = env.action_mask_ptr[a];
-            env.action_ptr[a][0] = (float)sample_masked(mk, BBE_HEAD_TYPE, &pol);
-            env.action_ptr[a][1] =
-                (float)sample_masked(mk + BBE_HEAD_TYPE, BBE_HEAD_ARG, &pol);
-            env.action_ptr[a][2] = (float)sample_masked(
-                mk + BBE_HEAD_TYPE + BBE_HEAD_ARG, BBE_HEAD_SQ, &pol);
+            bbe_sample_joint_uniform(&env, a, env.action_ptr[a], &pol);
         }
         c_step(&env);
         // The episode reset zeroes the per-episode telemetry, so deltas are only
@@ -504,10 +642,12 @@ int main(int argc, char** argv) {
     int r12test = 0;
     int demo = 0;
     int fnv_mode = 0;
+    int action_stats_mode = 0;
     uint64_t seed = 42;
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--unmasked") == 0) unmasked = 1;
         else if (strcmp(argv[i], "--fnv") == 0) fnv_mode = 1;
+        else if (strcmp(argv[i], "--action-stats") == 0) action_stats_mode = 1;
         else if (strcmp(argv[i], "--selftest") == 0) selftest = 1;
         else if (strcmp(argv[i], "--r12test") == 0) r12test = 1;
         else if (strcmp(argv[i], "--demo") == 0) demo = 1;
@@ -550,6 +690,7 @@ int main(int argc, char** argv) {
     clock_gettime(CLOCK_MONOTONIC, &t0);
     long steps = 0;
     int done = 0;
+    bbe_action_stats action_stats = {0};
     uint64_t fnv = 1469598103934665603ULL;
 #define FNV_BYTES(ptr, len)                                                    \
     do {                                                                       \
@@ -560,17 +701,23 @@ int main(int argc, char** argv) {
         }                                                                      \
     } while (0)
     while (done < episodes) {
+        if (action_stats_mode && env.match.status == BB_STATUS_DECISION &&
+            env.n_legal > 0) {
+            bbe_action_stats_add(&env, env.match.decision_team, &action_stats);
+        }
         for (int a = 0; a < BBE_AGENTS; a++) {
-            const unsigned char* m = env.action_mask_ptr[a];
-            if (unmasked) {
+            if (action_stats_mode && a == env.match.decision_team &&
+                env.n_legal > 0) {
+                int i = (int)(bb_rng_next(&pol) % (uint32_t)env.n_legal);
+                env.action_ptr[a][0] = (float)env.legal[i].type;
+                env.action_ptr[a][1] = (float)env.legal_arg[i];
+                env.action_ptr[a][2] = (float)env.legal_sq[i];
+            } else if (!unmasked) {
+                bbe_sample_joint_uniform(&env, a, env.action_ptr[a], &pol);
+            } else {
                 env.action_ptr[a][0] = (float)(bb_rng_next(&pol) % BBE_HEAD_TYPE);
                 env.action_ptr[a][1] = (float)(bb_rng_next(&pol) % BBE_HEAD_ARG);
                 env.action_ptr[a][2] = (float)(bb_rng_next(&pol) % BBE_HEAD_SQ);
-            } else {
-                env.action_ptr[a][0] = (float)sample_masked(m, BBE_HEAD_TYPE, &pol);
-                env.action_ptr[a][1] = (float)sample_masked(m + BBE_HEAD_TYPE, BBE_HEAD_ARG, &pol);
-                env.action_ptr[a][2] = (float)sample_masked(
-                    m + BBE_HEAD_TYPE + BBE_HEAD_ARG, BBE_HEAD_SQ, &pol);
             }
         }
         if (fnv_mode) {
@@ -595,6 +742,41 @@ int main(int argc, char** argv) {
     }
     clock_gettime(CLOCK_MONOTONIC, &t1);
     if (fnv_mode) printf("  fnv              %016llx\n", (unsigned long long)fnv);
+    if (action_stats_mode && action_stats.windows > 0) {
+        double w = (double)action_stats.windows;
+        double valid_frac = action_stats.cartesian_total > 0
+            ? (double)action_stats.joint_unique_total /
+                  (double)action_stats.cartesian_total
+            : 1.0;
+        printf("  -- exact-action support (%llu windows) --\n",
+               (unsigned long long)action_stats.windows);
+        printf("  legal mean/max         %.2f / %d\n",
+               (double)action_stats.legal_total / w, action_stats.max_legal);
+        printf("  joint unique mean/max  %.2f / %d\n",
+               (double)action_stats.joint_unique_total / w,
+               action_stats.max_joint_unique);
+        printf("  Cartesian mean/max     %.2f / %d\n",
+               (double)action_stats.cartesian_total / w,
+               action_stats.max_cartesian);
+        printf("  Cartesian valid frac   %.6f\n", valid_frac);
+        printf("  dependent windows      %.2f%%\n",
+               100.0 * (double)action_stats.dependent_windows / w);
+        printf("  projected duplicates   %llu\n",
+               (unsigned long long)action_stats.duplicate_total);
+        printf("  raw dup / collisions   %llu / %llu\n",
+               (unsigned long long)action_stats.raw_duplicate_total,
+               (unsigned long long)action_stats.projected_collision_total);
+        printf("  duplicate types       ");
+        for (int t = 0; t < BBE_HEAD_TYPE; t++) {
+            if (action_stats.duplicate_by_type[t] == 0) continue;
+            printf(" %d:%llu", t,
+                   (unsigned long long)action_stats.duplicate_by_type[t]);
+        }
+        printf("\n");
+        printf("  max type/arg|type/sq|ta %d / %d / %d\n",
+               action_stats.max_types, action_stats.max_args_given_type,
+               action_stats.max_squares_given_type_arg);
+    }
     double secs = (double)(t1.tv_sec - t0.tv_sec) + (double)(t1.tv_nsec - t0.tv_nsec) / 1e9;
 
     Log* lg = &env.log;

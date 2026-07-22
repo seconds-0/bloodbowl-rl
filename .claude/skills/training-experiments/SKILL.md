@@ -71,8 +71,10 @@ For every causal arm:
    checkpoint, pool, backend, optimizer, seeds, execution order, and eval policy.
 2. Supply a complete reward JSON; omitted and explicit-zero fields are different.
 3. Record all hashes and persist immutable plan/status/result/completion records.
-4. Require explicit phase telemetry, enough complete kickoff games, a final
-   cumulative reprint, and zero clip/non-finite/engine-error/demo/fallback counts.
+4. Require explicit phase telemetry, the requested complete kickoff games, a
+   final cumulative reprint, and zero clip/non-finite/engine-error/demo/fallback
+   counts. Keep the acceptance floor equal to the explicit evaluation request;
+   exact completion is valid and must not rely on vectorized overshoot.
 5. Reject integrity failures rather than averaging them into the comparison.
 6. Report W/D/L, TD for/against, both sides, paired common-seed differences, and
    in-sample versus held-out results separately.
@@ -105,22 +107,76 @@ checkpoints, and remember that stopped instances can be reclaimed.
 
 ---
 
-## 2. Current era: v4
+## 2. Current era: v5
 
-- **obs-v4 = 2782 bytes** — probability planes A1/A2/B. Spec: `docs/obs-v4-spec.md`.
-- Anchor: **`training/bc_v4.bin`** (val exact 0.508, D53). **It lives ON THE BOXES
-  only** — it is not in the local repo and `fleet.sh setup` excludes `training/*.bin`;
-  copy it box-to-box for any new box. 2.09M pairs in `validation/pairs_v4`
-  (`validation/pairs` is a symlink to it on v4 boxes).
+- **obs-v5 = 2782 bytes** — the obs-v4 probability planes plus observable block
+  faces and decision-window movement, rush, TEST, ball-validity, and touchback
+  state. Spec: `docs/obs-v5-spec.md`. Obs-v4 is also 2782 bytes, so tensor shape
+  cannot identify or validate the semantic lineage.
+- There is **no accepted obs-v5 BC anchor yet**. Historical
+  **`training/bc_v4.bin`** (val exact 0.508, D53) and the 2.09M v4 pairs under
+  `validation/pairs_v4` remain valid only in an explicitly pinned obs-v4 runtime.
+  Never warm-start or evaluate them under the current v5 runtime merely because
+  the shape loads. New exact-action obs-v5 exports use BBP v4; current BC/action
+  training rejects BBP v1-v3 even though the tensor dimensions still match.
 - **OBS SIZE SYNC POINTS — all three must agree:**
   1. `BBE_OBS_SIZE` in `puffer/bloodbowl/bloodbowl.h` (~line 96)
   2. `#define OBS_SIZE` in `puffer/bloodbowl/binding.c` line 8
   3. `--obs-size` in `training/convert_checkpoint.py` (`DEFAULT_OBS_SIZE`, now 2782)
   A `_Static_assert` ties (1)↔(2) at build time; **(3) is the unguarded one** — a
   wrong `--obs-size` converts to silent garbage (this exact miss bit D54).
-- **Old obs-v3 lineage checkpoints are input-shape INCOMPATIBLE** with v4. Converting
-  a v3 checkpoint requires explicit `--obs-size 1612`. Never mix lineages in a run or
-  a tournament without converting deliberately.
+- **Old obs-v3 lineage checkpoints are input-shape INCOMPATIBLE** with v4/v5.
+  Converting a v3 checkpoint requires explicit `--obs-size 1612`. Obs-v4 and
+  obs-v5 are instead same-shape but semantically incompatible. Flat checkpoints
+  do not carry an observation-lineage header, so require a pinned source/module
+  identity and external manifest; never infer compatibility from dimensions.
+- Current checkpoints require the canonical adjacent `.lineage.json` produced
+  and validated by `tools/checkpoint_lineage.py`. It binds the checkpoint hash,
+  obs-v5/exact-joint-v1 ABI, policy shape, producer manifest, source/module/
+  Puffer patch identities, and ancestry eligibility. Missing, mismatched, or
+  qualification-only sidecars are not accepted warm starts or pool seeds.
+  `tools/build_league.py` requires and copies eligible lineage by default;
+  `--legacy-unlabeled` is for historical reconstruction only.
+- The `exact-action-canary` is a fixed fresh-initialization qualification run.
+  Launch it with both `WARM` and `POOL` absent (use `env -u WARM -u POOL` when
+  the shell may inherit them). It uses zero frozen banks, and its output is
+  permanently marked qualification-only; do not continue from it.
+- The recurrent runtime is part of the frozen implementation identity. Before
+  the exact-action canary, a fresh isolated build must prove zero primary and
+  frozen state after CUDA graph warmup, graph-on/off deterministic active-row output
+  parity, fresh train→eval game boundaries, primary/frozen post-terminal parity,
+  Torch/native parity, finite exact zero-update ratios, and target-GPU
+  throughput without material regression. Training requires
+  `reset_state=True`; direct training while evaluation mode is active fails.
+  Do not infer these guarantees from patch markers or CPU tests. Use the
+  post-boundary fp32 `tools/qualify_recurrent_cuda.py` gate with a predeclared
+  candidate source commit plus module/backend/environment hashes and an
+  immutable same-host/config/precision throughput artifact captured from the immediately
+  preceding exact-action runtime. That predecessor is a fresh isolated fp32
+  build at exact commit `afc8008933548438ca93c41341f5f08fdd294386`, created
+  only after atomic recovery completion and required to expose obs-v5,
+  exact-joint-v1, matching compiled hashes, and no qualification bindings. The
+  exact candidate is `a52fc6e2f4ece5a7ff16bb4791e3aca4dd72f2e3` in a
+  different isolated source checkout and Puffer tree. A third clean merged
+  control-runner checkout records and revalidates both full commits,
+  source-local Puffer paths, installer checks, and runtime hashes. The occupied
+  marginal-action recovery runtime is historical evidence, not the
+  predecessor; never modify or reuse the recovery Puffer tree. The gate must cover every
+  learner row through the reported sampled indices, prove byte-identical
+  weights at learning rate zero,
+  bind all 16 hard-integrity counters at literal zero in every
+  transition-executing cell (construction emits no episode telemetry), and
+  accept all mandatory gates before the 50M canary. The ratio gate must use
+  a real frozen bank and select zero frozen rows, including at `prio_alpha=0`.
+  BF16 is not accepted because stored behavior-log-probability quantization can
+  move an unchanged recomputation ratio beyond a strict near-unity budget.
+  The throughput predecessor must be its exact hashed wrapper and confined cell,
+  with module/backend/environment hashes declared both when captured and when
+  consumed, not a loose metrics dictionary or an unplanned old binary. Missing baseline,
+  coverage, bank/buffer, tensor, or hard-integrity evidence fails closed.
+  The clean merged control launcher must reject `exact-action-canary` before
+  creating output. Launch only through the exact immutable `a52fc6e2` checkout,
+  then independently analyze the stopped artifact from the merged control.
 
 ---
 
@@ -294,6 +350,47 @@ See §4. Check the invariants before every reward-config launch. No exceptions.
   had `illegal_frac 1.000` and a decode-fallback shadow policy — all its measured
   dynamics are invalid). CUDA-backend results (D26–D28, D34) are unaffected.
 
+### D218 — Exact sampled/executed action law
+
+- Per-head marginal masks are historical and insufficient for Blood Bowl.
+  Accepted native and Torch runs must consume packed joint support, sample
+  sequential conditional heads, store the selected conditional masks, and
+  require `illegal_frac == 0`.
+- `bbe_decode` is a fail-closed assertion boundary, not a repair policy. Any
+  decoder rejection, empty conditional head, missing exact-backend installer
+  marker, or non-unit zero-update PPO ratio invalidates the run.
+- BBP v4 is required for newly extracted action/BC pairs. v1-v3 pairs retain
+  historical marginal/inactive-head semantics and cannot enter an exact-action
+  training corpus by shape compatibility alone.
+
+### D219 — Zero-contamination fail-fast error budget
+
+- Zero accepted violations does not permit an unbounded late rejection. Current
+  reward screens must freeze and run `tools/live_integrity_guard.py`, include
+  `illegal_frac` in the same hard registry as reward/non-finite/error counters,
+  terminate the recorded trainer on the first bad complete panel, and fail after
+  180 seconds without an integrity-bearing machine panel. The same watchdog must
+  live beside a detached trainer so outer-screen loss cannot remove the bound;
+  the screen and watchdog use independent incremental state files, and metadata-only
+  startup panels do not reset liveness. The exact env/backend remains
+  first-transition fatal. Qualify a newly installed runtime through static
+  provenance, CUDA graph/zero-update/deterministic smokes, and a disposable
+  50M-step canary before launching the paired causal screen; never warm-start
+  from or analyze the canary as a result cell.
+- Apply the 180-second silence gate only while the trainer is live. Recovery and
+  final validation must use complete-log mode: rescan all remaining bytes and
+  enforce the same exact-zero registry without falsely aging a stopped log into
+  a liveness failure. Terminate the trainer before publishing failure status so
+  status I/O cannot delay containment.
+- Exact candidate `a52fc6e2` already freezes an 11-key live registry. Preserve
+  that clean source identity, but require the merged control qualification and
+  independent stopped canary validation to enforce five additional emitted
+  redundancy counters at exact zero: signed clamp delta, clipped samples,
+  terminal and non-terminal clipped samples, and non-finite samples per episode.
+  Primary zero ratios should imply them; a disagreement is still invalid
+  evidence. Freeze both registries rather than changing or relabeling the
+  candidate.
+
 ### D174/D176 — Current BC and opponent verdicts
 
 - D174 supersedes the old "sequence context first" ranking: frame-stacked
@@ -383,8 +480,10 @@ and apply conversions symmetrically.
 1. Ship both checkpoints to **box-1** (judge GPU). Box-to-box via `ssh -A`, never
    Mac→ssh4 for big files.
 2. Convert: `python training/convert_checkpoint.py --to-cuda <torch.bin> -o <out>`
-   — **mind `--obs-size`** (2782 default = v4; v3 ckpts need `--obs-size 1612`).
-   Wrong size = silent garbage; nothing checks it for you (§2).
+   — **mind `--obs-size`** (2782 default = current v5; v3 ckpts need explicit
+   `--obs-size 1612`). A 2782-byte v4 checkpoint is still semantically invalid in
+   v5 despite matching the default. Wrong size or lineage = silent garbage;
+   dimensions alone do not check it for you (§2).
 3. Run on box-1 from `/root/bloodbowl-rl/vendor/PufferLib`:
    ```bash
    puffer match bloodbowl --load-model-path A_cuda.bin \
@@ -560,6 +659,21 @@ pool's exact netblock ancestry, `12B x seeds 42/43/44`. The delayed timer also
 requires primary-service inactivity, unchanged pins, no existing overflow state,
 and no GPU compute PID. It cannot run after primary failure/halt/drift, relaunch
 an interrupted PPO screen, choose a reward, or change production.
+
+D215/D216 govern the terminal July overflow. Its seed-42 training and 10,000
+evaluation games are rejected historical evidence because that frozen screen
+required 10,001; do not relabel or splice them into a completed screen. Preserve
+the old root and queue unchanged. A human-authorized replacement must use
+`tools/freeze_vacation_overflow_recovery.py`, the separately named recovery
+root/queue, and the exact two-job shape: deterministic terminal-evidence
+preflight, then a fresh ordinary R0 `control-final` at 12B for seeds 42/43/44
+from netblock. The old checkpoint may be hashed as authorization context but is
+not a result, warm start, candidate input, or milestone-evaluation input. Keep
+the PPO job non-resume-safe and treat another interruption as terminal. The
+freezer and evidence validator must accept only the exact reviewed recovery
+root, pin every file in the seven-file Puffer patch bundle, and use the exact
+pinned `nvidia-smi` to require no compute PID when the preflight success is
+revalidated immediately before PPO starts.
 
 D187 freezes the interpretation of the first seed-42 6B curve. Improvement
 against the four static banks is in-pool and non-monotonic, not a newest-policy

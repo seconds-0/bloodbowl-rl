@@ -1,0 +1,885 @@
+diff --git a/pufferlib/torch_pufferl.py b/pufferlib/torch_pufferl.py
+index f4d45d9..fa9ab8e 100644
+--- a/pufferlib/torch_pufferl.py
++++ b/pufferlib/torch_pufferl.py
+@@ -46,6 +46,81 @@ def _entropy(logits):
+     p_log_p = logits * logits_to_probs(logits)
+     return -p_log_p.sum(-1)
+
++def apply_action_mask(logits, mask, act_sizes):
++    """Restrict each categorical head to the supplied support slice."""
++    out = []
++    off = 0
++    for h, n in enumerate(act_sizes):
++        mh = mask[:, off:off + n].bool()
++        off += n
++        if not bool(mh.any(dim=-1).all().item()):
++            raise RuntimeError('action mask row has empty head support')
++        out.append(logits[h].masked_fill(~mh, float('-inf')))
++    return out
++
++def compact_joint_actions(packed, offsets, counts):
++    """Gather ragged row segments into physical-row order on the host.
++
++    Native vec packing keeps each buffer in a fixed-capacity region and may
++    visit physical rows out of order after a self-play permutation. Offsets
++    are therefore authoritative; slicing a global prefix is not.
++    """
++    counts_long = counts.long()
++    offsets_long = offsets.long()
++    if counts_long.ndim != 1 or offsets_long.shape != counts_long.shape:
++        raise RuntimeError('joint action offsets/counts must be matching vectors')
++    if not bool((counts_long > 0).all().item()):
++        raise RuntimeError('every joint action row must have nonempty support')
++    compact_offsets = torch.cumsum(counts_long, dim=0) - counts_long
++    total = int(counts_long.sum().item())
++    rows = torch.repeat_interleave(
++        torch.arange(counts_long.numel(), device=counts.device), counts_long)
++    within = torch.arange(total, device=counts.device) - compact_offsets[rows]
++    source = offsets_long[rows] + within
++    if source.numel() != total or int(source.min().item()) < 0 or \
++            int(source.max().item()) >= packed.numel():
++        raise RuntimeError('joint action offset/count escapes packed capacity')
++    return packed[source], compact_offsets.int()
++
++def sample_joint_logits(logits, packed, offsets, counts, act_sizes):
++    """Sample semantic heads from ragged exact joint support.
++
++    Returns the selected conditional masks so ordinary masked PPO
++    recomputation scores the exact behavior distribution without retaining
++    ragged support across the rollout horizon.
++    """
++    batch = logits[0].shape[0]
++    device = logits[0].device
++    rows = torch.repeat_interleave(
++        torch.arange(batch, device=device), counts.long())
++    if rows.numel() != packed.numel():
++        raise RuntimeError('joint action offsets/counts do not match packed support')
++    expected = torch.cumsum(counts.long(), dim=0) - counts.long()
++    if not torch.equal(offsets.long(), expected):
++        raise RuntimeError('torch joint support must be globally compact')
++
++    prefix = torch.ones(packed.shape[0], dtype=torch.bool, device=device)
++    actions, logprobs, entropies, masks = [], [], [], []
++    for h, size in enumerate(act_sizes):
++        values = (packed.long() >> (10 * h)) & 1023
++        support = torch.zeros((batch, size), dtype=torch.bool, device=device)
++        support[rows[prefix], values[prefix]] = True
++        if not bool(support.any(dim=1).all().item()):
++            raise RuntimeError(f'empty exact joint support at action head {h}')
++        masked = logits[h].masked_fill(~support, float('-inf'))
++        action, logprob, entropy = sample_logits(masked)
++        selected = action.reshape(batch).long()
++        actions.append(selected)
++        logprobs.append(logprob)
++        entropies.append(entropy)
++        masks.append(support)
++        prefix &= values == selected[rows]
++
++    return (torch.stack(actions, dim=1).int(),
++            torch.stack(logprobs, dim=0).sum(dim=0),
++            torch.stack(entropies, dim=0).sum(dim=0),
++            torch.cat(masks, dim=1).to(torch.uint8))
++
+ def sample_logits(logits, action=None):
+     is_discrete = isinstance(logits, torch.Tensor)
+     if isinstance(logits, torch.distributions.Normal):
+@@ -97,6 +171,7 @@ class _CudaPtr:
+ _TORCH_TO_CTYPE = {
+     torch.uint8:   ctypes.c_uint8,
+     torch.float32: ctypes.c_float,
++    torch.int32:   ctypes.c_int32,
+ }
+
+ def _actions_for_vec_step(action):
+@@ -144,6 +219,27 @@ class PuffeRL:
+             self.vec_terminals = _cpu_tensor(vec.terminals_ptr,
+                 (total_agents,), torch.float32)
+
++        self.mask_size = int(getattr(vec, 'action_mask_size', 0) or 0)
++        self.act_sizes_list = list(vec.act_sizes)
++        mask_ptr = int(getattr(vec, 'action_mask_ptr', 0) or 0)
++        if self.mask_size > 0 and mask_ptr != 0:
++            self.vec_action_mask = _cpu_tensor(
++                mask_ptr, (total_agents, self.mask_size), torch.uint8)
++        else:
++            self.vec_action_mask = None
++        self.joint_action_capacity = int(
++            getattr(vec, 'joint_action_capacity', 0) or 0)
++        joint_ptr = int(getattr(vec, 'joint_actions_ptr', 0) or 0)
++        if self.joint_action_capacity > 0 and joint_ptr != 0:
++            self.vec_joint_actions = _cpu_tensor(
++                joint_ptr, (self.joint_action_capacity,), torch.int32)
++            self.vec_joint_offsets = _cpu_tensor(
++                vec.joint_action_offsets_ptr, (total_agents,), torch.int32)
++            self.vec_joint_counts = _cpu_tensor(
++                vec.joint_action_counts_ptr, (total_agents,), torch.int32)
++        else:
++            self.vec_joint_actions = None
++
+         vec.reset()
+         horizon = config['horizon']
+         num_atns = vec.num_atns
+@@ -155,6 +251,10 @@ class PuffeRL:
+         self.logprobs = torch.zeros(horizon, total_agents, device=device)
+         self.rewards = torch.zeros(horizon, total_agents, device=device)
+         self.terminals = torch.zeros(horizon, total_agents, device=device)
++        self.action_masks = (torch.zeros(
++            horizon, total_agents, self.mask_size,
++            dtype=torch.uint8, device=device)
++            if self.mask_size > 0 else None)
+         self.ratio = torch.ones(total_agents, horizon, device=device)
+         self.state = policy.initial_state(total_agents, device=device)
+
+@@ -219,7 +320,26 @@ class PuffeRL:
+             prof.mark(1)
+             with torch.no_grad():
+                 logits, value, state = self.policy.forward_eval(o_device, self.state)
+-                action, logprob, _ = sample_logits(logits)
++                if self.vec_joint_actions is not None:
++                    counts_cpu = self.vec_joint_counts.clone()
++                    source_offsets_cpu = self.vec_joint_offsets.clone()
++                    packed_cpu, offsets_cpu = compact_joint_actions(
++                        self.vec_joint_actions, source_offsets_cpu,
++                        counts_cpu)
++                    packed = packed_cpu.to(device=device)
++                    offsets = offsets_cpu.to(device=device)
++                    counts = counts_cpu.to(device=device)
++                    action, logprob, _, effective_mask = sample_joint_logits(
++                        logits, packed, offsets, counts, self.act_sizes_list)
++                elif self.vec_action_mask is not None:
++                    effective_mask = torch.as_tensor(
++                        self.vec_action_mask, device=device).clone()
++                    logits = apply_action_mask(
++                        logits, effective_mask, self.act_sizes_list)
++                    action, logprob, _ = sample_logits(logits)
++                else:
++                    effective_mask = None
++                    action, logprob, _ = sample_logits(logits)
+             prof.mark(2)
+
+             with torch.no_grad():
+@@ -230,6 +348,10 @@ class PuffeRL:
+                 self.rewards[t] = torch.as_tensor(r, device=device)
+                 self.terminals[t] = torch.as_tensor(d, device=device).float()
+                 self.values[t] = value.flatten()
++                if self.action_masks is not None:
++                    if effective_mask is None:
++                        raise RuntimeError('action-mask rollout buffer has no mask')
++                    self.action_masks[t] = effective_mask
+
+             prof.mark(2)
+             actions_flat = _actions_for_vec_step(action)
+@@ -277,6 +399,8 @@ class PuffeRL:
+         lp = self.logprobs.T.contiguous()
+         rew = self.rewards.T.contiguous().clamp(-1, 1)
+         ter = self.terminals.T.contiguous()
++        masks = (self.action_masks.transpose(0, 1).contiguous()
++                 if self.action_masks is not None else None)
+
+         P = Profile
+         prof.mark(0)
+@@ -301,9 +425,14 @@ class PuffeRL:
+             mb_values = val[idx]
+             mb_returns = advantages[idx] + mb_values
+             mb_advantages = advantages[idx]
++            mb_masks = masks[idx] if masks is not None else None
+
+             prof.mark(1)
+             logits, newvalue = self.policy(mb_obs)
++            if mb_masks is not None:
++                logits = apply_action_mask(
++                    logits, mb_masks.reshape(-1, self.mask_size),
++                    self.act_sizes_list)
+             actions, newlogprob, entropy = sample_logits(logits, action=mb_actions)
+             prof.mark(2)
+             prof.elapsed(P.TRAIN_FORWARD, 1, 2)
+@@ -516,4 +645,3 @@ def load_policy(args, vec):
+         policy.load_state_dict(state_dict)
+
+     return policy
+-
+diff --git a/src/bindings.cu b/src/bindings.cu
+index 0f64be1..566ca22 100644
+--- a/src/bindings.cu
++++ b/src/bindings.cu
+@@ -4,6 +4,7 @@
+ #include <pybind11/stl.h>
+ #include <pybind11/numpy.h>
+ #include "pufferlib.cu"
++#include "exact_action_build_hash.h"
+
+ #define _PUFFER_STRINGIFY(x) #x
+ #define PUFFER_STRINGIFY(x) _PUFFER_STRINGIFY(x)
+@@ -509,6 +510,11 @@ PYBIND11_MODULE(_C, m) {
+     m.attr("precision_bytes") = (int)sizeof(precision_t);
+     m.attr("env_name") = PUFFER_STRINGIFY(ENV_NAME);
+     m.attr("gpu") = 1;
++    m.attr("exact_action_source_hash") = PUFFER_EXACT_ACTION_SOURCE_HASH;
++    m.attr("environment_source_hash") = PUFFER_ENV_SOURCE_HASH;
++    m.attr("observation_abi") = PUFFER_OBSERVATION_ABI;
++    m.attr("observation_version") = PUFFER_OBSERVATION_VERSION;
++    m.attr("action_abi") = PUFFER_ACTION_ABI;
+
+     // Core functions
+     m.def("log", &puf_log);
+@@ -606,10 +612,25 @@ PYBIND11_MODULE(_C, m) {
+         .def_property_readonly("gpu_obs_ptr",       [](VecEnv& ve) { return (long long)ve.vec->gpu_observations; })
+         .def_property_readonly("gpu_rewards_ptr",   [](VecEnv& ve) { return (long long)ve.vec->gpu_rewards; })
+         .def_property_readonly("gpu_terminals_ptr", [](VecEnv& ve) { return (long long)ve.vec->gpu_terminals; })
++        .def_property_readonly("gpu_action_mask_ptr", [](VecEnv& ve) { return (long long)ve.vec->gpu_action_mask; })
+         // CPU buffer pointers (same as gpu_ in CPU mode since they alias)
+         .def_property_readonly("obs_ptr",       [](VecEnv& ve) { return (long long)ve.vec->observations; })
+         .def_property_readonly("rewards_ptr",   [](VecEnv& ve) { return (long long)ve.vec->rewards; })
+         .def_property_readonly("terminals_ptr", [](VecEnv& ve) { return (long long)ve.vec->terminals; })
++        .def_property_readonly("action_mask_ptr", [](VecEnv& ve) { return (long long)ve.vec->action_mask; })
++        .def_property_readonly("action_mask_size", [](VecEnv& ve) { return ve.vec->action_mask_size; })
++        .def_property_readonly("joint_actions_ptr", [](VecEnv& ve) { return (long long)ve.vec->joint_actions; })
++        .def_property_readonly("joint_action_offsets_ptr", [](VecEnv& ve) { return (long long)ve.vec->joint_action_offsets; })
++        .def_property_readonly("joint_action_counts_ptr", [](VecEnv& ve) { return (long long)ve.vec->joint_action_counts; })
++        .def_property_readonly("joint_action_capacity", [](VecEnv& ve) { return ve.vec->joint_action_capacity; })
++        .def_property_readonly("joint_action_count", [](VecEnv& ve) {
++            int total = 0;
++            for (int b = 0; b < ve.vec->buffers; b++) {
++                total += ve.vec->joint_buffer_counts
++                    ? ve.vec->joint_buffer_counts[b] : 0;
++            }
++            return total;
++        })
+         .def("reset", &vec_reset)
+         .def("gpu_step", &gpu_vec_step_py)
+         .def("cpu_step", &cpu_vec_step_py)
+diff --git a/src/bindings_cpu.cpp b/src/bindings_cpu.cpp
+index 30400be..f946354 100644
+--- a/src/bindings_cpu.cpp
++++ b/src/bindings_cpu.cpp
+@@ -9,6 +9,7 @@
+
+ // vecenv.h header section gives us StaticVec, Dict, cudaStream_t typedef
+ #include "vecenv.h"
++#include "exact_action_build_hash.h"
+
+ namespace py = pybind11;
+
+@@ -164,6 +165,11 @@ PYBIND11_MODULE(_C, m) {
+     m.attr("precision_bytes") = 4;
+     m.attr("env_name") = PUFFER_STRINGIFY(ENV_NAME);
+     m.attr("gpu") = 0;
++    m.attr("exact_action_source_hash") = PUFFER_EXACT_ACTION_SOURCE_HASH;
++    m.attr("environment_source_hash") = PUFFER_ENV_SOURCE_HASH;
++    m.attr("observation_abi") = PUFFER_OBSERVATION_ABI;
++    m.attr("observation_version") = PUFFER_OBSERVATION_VERSION;
++    m.attr("action_abi") = PUFFER_ACTION_ABI;
+
+     m.def("puff_advantage_cpu", &py_puff_advantage_cpu);
+     m.def("create_vec", &create_vec, py::arg("args"), py::arg("gpu") = 0);
+@@ -179,6 +185,20 @@ PYBIND11_MODULE(_C, m) {
+         .def_property_readonly("obs_ptr", [](VecEnv& ve) { return (long long)ve.vec->observations; })
+         .def_property_readonly("rewards_ptr", [](VecEnv& ve) { return (long long)ve.vec->rewards; })
+         .def_property_readonly("terminals_ptr", [](VecEnv& ve) { return (long long)ve.vec->terminals; })
++        .def_property_readonly("action_mask_ptr", [](VecEnv& ve) { return (long long)ve.vec->action_mask; })
++        .def_property_readonly("action_mask_size", [](VecEnv& ve) { return ve.vec->action_mask_size; })
++        .def_property_readonly("joint_actions_ptr", [](VecEnv& ve) { return (long long)ve.vec->joint_actions; })
++        .def_property_readonly("joint_action_offsets_ptr", [](VecEnv& ve) { return (long long)ve.vec->joint_action_offsets; })
++        .def_property_readonly("joint_action_counts_ptr", [](VecEnv& ve) { return (long long)ve.vec->joint_action_counts; })
++        .def_property_readonly("joint_action_capacity", [](VecEnv& ve) { return ve.vec->joint_action_capacity; })
++        .def_property_readonly("joint_action_count", [](VecEnv& ve) {
++            int total = 0;
++            for (int b = 0; b < ve.vec->buffers; b++) {
++                total += ve.vec->joint_buffer_counts
++                    ? ve.vec->joint_buffer_counts[b] : 0;
++            }
++            return total;
++        })
+         .def("reset", &vec_reset)
+         .def("cpu_step", &cpu_vec_step_py)
+         .def("render", [](VecEnv& ve, int env_id) { static_vec_render(ve.vec, env_id); })
+diff --git a/src/kernels.cu b/src/kernels.cu
+index 0d878f0..bb7858b 100644
+--- a/src/kernels.cu
++++ b/src/kernels.cu
+@@ -320,9 +320,13 @@ __global__ void cast(precision_t* __restrict__ dst,
+ inline void cast_dispatch(precision_t* dst, const precision_t* src, int n, cudaStream_t stream) {
+     cudaMemcpyAsync(dst, src, n * sizeof(precision_t), cudaMemcpyDeviceToDevice, stream);
+ }
++// Under PRECISION_FLOAT, precision_t == float and this overload would collide
++// with the device-to-device copy overload above.
++#ifndef PRECISION_FLOAT
+ inline void cast_dispatch(precision_t* dst, const float* src, int n, cudaStream_t stream) {
+     cast<<<grid_size(n), BLOCK_SIZE, 0, stream>>>(dst, src, n);
+ }
++#endif
+
+ #ifndef PRECISION_FLOAT
+ __global__ void cast(float* __restrict__ dst,
+diff --git a/src/pufferlib.cu b/src/pufferlib.cu
+index 7981b09..fdd68b6 100644
+--- a/src/pufferlib.cu
++++ b/src/pufferlib.cu
+@@ -236,11 +236,30 @@ struct EnvBuf {
+     FloatTensor rewards;   // (total_agents,)
+     FloatTensor terminals; // (total_agents,)
+     ByteTensor action_mask; // (total_agents, mask_size); .data=nullptr when env opts out
++    IntTensor joint_actions; // packed ragged support; empty for ordinary envs
++    IntTensor joint_action_offsets; // (total_agents,)
++    IntTensor joint_action_counts;  // (total_agents,)
+ };
+
+ StaticVec* create_environments(int num_buffers, int total_agents,
+         const std::string& env_name, Dict* vec_kwargs, Dict* env_kwargs, EnvBuf& env) {
+     StaticVec* vec = create_static_vec(total_agents, num_buffers, 1, vec_kwargs, env_kwargs);
++    if (vec->joint_action_max > 0) {
++        if (vec->action_mask_size <= 0 || get_num_act_sizes() > 3) {
++            fprintf(stderr,
++                "joint actions require an action mask and at most three heads\n");
++            abort();
++        }
++        int* sizes = get_act_sizes();
++        for (int h = 0; h < get_num_act_sizes(); h++) {
++            if (sizes[h] <= 0 || sizes[h] > 1023) {
++                fprintf(stderr,
++                    "joint action head %d size %d exceeds 10-bit packing\n",
++                    h, sizes[h]);
++                abort();
++            }
++        }
++    }
+     env.obs = {
+         .data = (decltype(env.obs.data))vec->gpu_observations,
+         .shape = {total_agents, get_obs_size()},
+@@ -254,6 +273,24 @@ StaticVec* create_environments(int num_buffers, int total_agents,
+     } else {
+         env.action_mask = { .data = nullptr, .shape = {0} };
+     }
++    if (vec->joint_action_max > 0) {
++        env.joint_actions = {
++            .data = (int*)vec->gpu_joint_actions,
++            .shape = {vec->joint_action_capacity},
++        };
++        env.joint_action_offsets = {
++            .data = vec->gpu_joint_action_offsets,
++            .shape = {total_agents},
++        };
++        env.joint_action_counts = {
++            .data = vec->gpu_joint_action_counts,
++            .shape = {total_agents},
++        };
++    } else {
++        env.joint_actions = {.data = nullptr, .shape = {0}};
++        env.joint_action_offsets = {.data = nullptr, .shape = {0}};
++        env.joint_action_counts = {.data = nullptr, .shape = {0}};
++    }
+     return vec;
+ }
+
+@@ -428,15 +465,11 @@ __device__ __forceinline__ float safe_logit(const precision_t* logits,
+     return l;
+ }
+
+-__device__ __forceinline__ float masked_logit(const precision_t* logits,
+-        int logits_base, int logits_offset, int offset,
+-        const precision_t* mask, int mask_base) {
+-    float l = safe_logit(logits, logits_base, logits_offset, offset);
+-    if (mask != nullptr) {
+-        float m = to_float(mask[mask_base + logits_offset + offset]);
+-        if (m == 0.0f) l = -1e4f;
+-    }
+-    return l;
++__device__ __forceinline__ bool action_enabled(
++        const precision_t* mask, int mask_base,
++        int logits_offset, int offset) {
++    return mask == nullptr ||
++        to_float(mask[mask_base + logits_offset + offset]) != 0.0f;
+ }
+
+ // Expects action logits and values to be in the same contiguous buffer. See default decoder
+@@ -448,8 +481,11 @@ __global__ void sample_logits(
+         precision_t* __restrict__ logprobs,   // (B,)
+         precision_t* __restrict__ value_out,  // (B,)
+         curandStatePhilox4_32_10_t* __restrict__ rng_states,
+-        const precision_t* __restrict__ action_mask, // (B, A_total) or nullptr
+-        int mask_stride) {                    // 0 when action_mask is nullptr
++        precision_t* __restrict__ action_mask, // (B, A_total) or nullptr
++        int mask_stride,                       // 0 when action_mask is nullptr
++        const int* __restrict__ joint_actions, // packed 10-bit head values
++        const int* __restrict__ joint_offsets, // (B,), global packed offsets
++        const int* __restrict__ joint_counts) { // (B,)
+     int B = dec_out.shape[0];
+     int fused_cols = dec_out.shape[1];
+     int num_atns = numel(act_sizes_puf.shape);
+@@ -502,16 +538,60 @@ __global__ void sample_logits(
+         for (int h = 0; h < num_atns; ++h) {
+             int A = act_sizes[h];  // size of this action head
+
++            // Exact sequential support. Rewrite the rollout mask row with the
++            // support conditioned on heads sampled earlier in this same
++            // transition. That mask is then both the behavior distribution
++            // and the complete artifact PPO needs for recomputation.
++            if (joint_actions != nullptr) {
++                for (int a = 0; a < A; ++a) {
++                    action_mask[mask_base + logits_offset + a] =
++                        from_float(0.0f);
++                }
++                int off = joint_offsets[idx];
++                int count = joint_counts[idx];
++                for (int j = 0; j < count; ++j) {
++                    unsigned int packed = (unsigned int)joint_actions[off + j];
++                    bool prefix = true;
++                    for (int p = 0; p < h; ++p) {
++                        int expected = (packed >> (10 * p)) & 1023;
++                        int selected = (int)to_float(
++                            actions[idx * num_atns + p]);
++                        if (expected != selected) {
++                            prefix = false;
++                            break;
++                        }
++                    }
++                    if (!prefix) continue;
++                    int value = (packed >> (10 * h)) & 1023;
++                    if (value >= 0 && value < A) {
++                        action_mask[mask_base + logits_offset + value] =
++                            from_float(1.0f);
++                    }
++                }
++            }
++
+             // Step 1: Find max and sum for numerical stability (with nan_to_num)
+             float max_val = -INFINITY;
+             float sum_exp = 0.0f;
++            int enabled_count = 0;
+             for (int a = 0; a < A; ++a) {
+-                float l = masked_logit(logits, logits_base, logits_offset, a, action_mask, mask_base);
++                if (!action_enabled(action_mask, mask_base, logits_offset, a)) {
++                    continue;
++                }
++                float l = safe_logit(logits, logits_base, logits_offset, a);
+                 if (l > max_val) {
+                     sum_exp *= expf(max_val - l);
+                     max_val = l;
+                 }
+                 sum_exp += expf(l - max_val);
++                enabled_count += 1;
++            }
++            assert(enabled_count > 0);
++            if (enabled_count == 0) {
++                actions[idx * num_atns + h] = from_float(0.0f);
++                total_log_prob = NAN;
++                logits_offset += A;
++                continue;
+             }
+             float logsumexp = max_val + logf(sum_exp);
+
+@@ -523,7 +603,10 @@ __global__ void sample_logits(
+             int sampled_action = -1;  // sentinel: no action chosen yet
+
+             for (int a = 0; a < A; ++a) {
+-                float l = masked_logit(logits, logits_base, logits_offset, a, action_mask, mask_base);
++                if (!action_enabled(action_mask, mask_base, logits_offset, a)) {
++                    continue;
++                }
++                float l = safe_logit(logits, logits_base, logits_offset, a);
+                 float prob = expf(l - logsumexp);
+                 cumsum += prob;
+                 if (rand_val < cumsum) {
+@@ -535,18 +618,18 @@ __global__ void sample_logits(
+             // Float rounding can leave cumsum < 1.0; fall back to the last legal action.
+             if (sampled_action < 0) {
+                 sampled_action = A - 1;
+-                if (action_mask != nullptr) {
+-                    for (int a = A - 1; a >= 0; --a) {
+-                        if (to_float(action_mask[mask_base + logits_offset + a]) != 0.0f) {
+-                            sampled_action = a;
+-                            break;
+-                        }
++                for (int a = A - 1; a >= 0; --a) {
++                    if (action_enabled(action_mask, mask_base, logits_offset, a)) {
++                        sampled_action = a;
++                        break;
+                     }
+                 }
+             }
+
+             // Step 5: Gather log probability of sampled action
+-            float sampled_logit = masked_logit(logits, logits_base, logits_offset, sampled_action, action_mask, mask_base);
++            assert(action_enabled(action_mask, mask_base, logits_offset, sampled_action));
++            float sampled_logit = safe_logit(
++                logits, logits_base, logits_offset, sampled_action);
+             float log_prob = sampled_logit - logsumexp;
+
+             // Write action for this head
+@@ -679,7 +762,12 @@ extern "C" void net_callback_wrapper(void* ctx, int buf, int t) {
+             dec_puf, p_logstd, pufferl->act_sizes_puf,
+             act_b.data, lp_b.data, val_b.data,
+             pufferl->rng_states[buf] + bank_off,
+-            mask_b.data, mask_stride_b);
++            mask_b.data, mask_stride_b,
++            env.joint_actions.data,
++            env.joint_action_offsets.data == nullptr
++                ? nullptr : env.joint_action_offsets.data + sub_start,
++            env.joint_action_counts.data == nullptr
++                ? nullptr : env.joint_action_counts.data + sub_start);
+
+         cast<<<grid_size(numel(act_b.shape)), BLOCK_SIZE, 0, stream>>>(
+                 env.actions.data + (long)sub_start * act_cols,
+@@ -699,19 +787,11 @@ extern "C" void net_callback_wrapper(void* ctx, int buf, int t) {
+ }
+
+
+-__device__ __forceinline__ float load_logit_masked(
++__device__ __forceinline__ float load_logit(
+         const precision_t* __restrict__ logits, int logits_base,
+-        int logits_stride_a, int logits_offset, int a,
+-        const precision_t* __restrict__ mask, int mask_base) {
+-    float l = to_float(logits[logits_base + (logits_offset + a) * logits_stride_a]);
+-    if (mask != nullptr) {
+-        float m = to_float(mask[mask_base + logits_offset + a]);
+-        if (m == 0.0f) {
+-            l = -1e4f;
+-            return l;
+-        }
+-    }
+-    return l;
++        int logits_stride_a, int logits_offset, int a) {
++    return to_float(
++        logits[logits_base + (logits_offset + a) * logits_stride_a]);
+ }
+
+ __device__ __forceinline__ void ppo_discrete_head(
+@@ -722,9 +802,14 @@ __device__ __forceinline__ void ppo_discrete_head(
+     float max_logit = -INFINITY;
+     float sum = 0.0f;
+     float act_logit = 0.0f;
++    int enabled_count = 0;
+
+     for (int a = 0; a < A; ++a) {
+-        float l = load_logit_masked(logits, logits_base, logits_stride_a, logits_offset, a, mask, mask_base);
++        if (!action_enabled(mask, mask_base, logits_offset, a)) {
++            continue;
++        }
++        float l = load_logit(
++            logits, logits_base, logits_stride_a, logits_offset, a);
+         if (a == act) {
+             act_logit = l;
+         }
+@@ -733,12 +818,27 @@ __device__ __forceinline__ void ppo_discrete_head(
+             max_logit = l;
+         }
+         sum += __expf(l - max_logit);
++        enabled_count += 1;
++    }
++    bool act_enabled = act >= 0 && act < A &&
++        action_enabled(mask, mask_base, logits_offset, act);
++    assert(enabled_count > 0);
++    assert(act_enabled);
++    if (enabled_count == 0 || !act_enabled) {
++        *out_logsumexp = 0.0f;
++        *out_entropy = 0.0f;
++        *out_logp = -INFINITY;
++        return;
+     }
+     float logsumexp = max_logit + __logf(sum);
+
+     float ent = 0.0f;
+     for (int a = 0; a < A; ++a) {
+-        float l = load_logit_masked(logits, logits_base, logits_stride_a, logits_offset, a, mask, mask_base);
++        if (!action_enabled(mask, mask_base, logits_offset, a)) {
++            continue;
++        }
++        float l = load_logit(
++            logits, logits_base, logits_stride_a, logits_offset, a);
+         float logp = l - logsumexp;
+         float p = __expf(logp);
+         ent -= p * logp;
+@@ -892,8 +992,13 @@ __global__ void ppo_loss_compute(
+             float ent = head_entropy[h];
+
+             for (int j = 0; j < A; ++j) {
+-                float l = load_logit_masked(a.logits, logits_base, a.logits_stride_a,
+-                                            logits_offset, j, a.action_mask, mask_base);
++                if (!action_enabled(
++                        a.action_mask, mask_base, logits_offset, j)) {
++                    a.grad_logits[grad_logits_base + logits_offset + j] = 0.0f;
++                    continue;
++                }
++                float l = load_logit(a.logits, logits_base, a.logits_stride_a,
++                                     logits_offset, j);
+                 float logp = l - logsumexp;
+                 float p = __expf(logp);
+                 float d_logit = (j == act) ? d_new_logp : 0.0f;
+@@ -1871,3 +1976,8 @@ extern "C" void pufferl_set_agent_perm(PuffeRL* pufferl, const int* perm) {
++    if (pufferl->global_step != 0 || pufferl->vec->agent_perm != NULL) {
++        fprintf(stderr,
++            "pufferl_set_agent_perm: permutation is a one-time pre-rollout operation\n");
++        abort();
++    }
+     int total = pufferl->vec->total_agents;
+     int num_buffers = pufferl->hypers.num_buffers;
+     int buf_size = total / num_buffers;
+@@ -2098,6 +2208,11 @@ std::unique_ptr<PuffeRL> create_pufferl_impl(HypersT& hypers,
+         }
+     }
+
++    // Exact-action environments allocate ragged joint metadata outside the
++    // activations allocator. Populate and upload it before graph warmup calls
++    // sample_logits; cudaMalloc storage is otherwise uninitialized here.
++    if (vec->joint_action_max > 0) static_vec_reset(vec);
++
+     // Cudagraph rolluts and entire training step
+     if (hypers.cudagraphs >= 0) {
+         pufferl->fused_rollout_cudagraphs = (cudaGraphExec_t*)calloc(horizon*num_buffers, sizeof(cudaGraphExec_t));
+@@ -2180,7 +2290,7 @@ std::unique_ptr<PuffeRL> create_pufferl_impl(HypersT& hypers,
+
+     create_static_threads(vec, hypers.num_threads, horizon, pufferl.get(),
+         net_callback_wrapper, thread_init_wrapper);
+-    static_vec_reset(vec);
++    if (vec->joint_action_max <= 0) static_vec_reset(vec);
+
+     if (hypers.profile) {
+         cudaDeviceSynchronize();
+diff --git a/src/vecenv.h b/src/vecenv.h
+index 42958d3..67cb6e9 100644
+--- a/src/vecenv.h
++++ b/src/vecenv.h
+@@ -8,6 +8,7 @@
+ #include <string.h>
+ #include <stdio.h>
+ #include <assert.h>
++#include <stdint.h>
+
+ #ifdef __cplusplus
+ extern "C" {
+@@ -88,6 +89,18 @@ typedef struct StaticVec {
+     float* gpu_rewards;
+     float* gpu_terminals;
+     unsigned char* gpu_action_mask;  // NULL unless env defines MY_ACTION_MASK
++    // Optional ragged joint action support. Each uint32 packs up to three
++    // 10-bit semantic head values. Offsets/counts are indexed by agent row;
++    // actions are compacted independently inside each environment buffer.
++    uint32_t* joint_actions;
++    uint32_t* gpu_joint_actions;
++    int* joint_action_offsets;
++    int* gpu_joint_action_offsets;
++    int* joint_action_counts;
++    int* gpu_joint_action_counts;
++    int* joint_buffer_counts;
++    int joint_action_capacity;
++    int joint_action_max;
+     cudaStream_t* streams;
+     StaticThreading* threading;
+     int obs_size;
+@@ -209,6 +222,11 @@ extern const char* cudaGetErrorString(cudaError_t);
+ void my_init(Env* env, Dict* kwargs);
+ void my_log(Log* log, Dict* out);
+
++#ifdef MY_JOINT_ACTION_MAX
++void my_pack_joint_actions(StaticVec* vec, Env* envs, int env_start,
++                           int env_count, int buf);
++#endif
++
+ #ifdef MY_USES_PERM
+ // Env-provided: populate per-slot pointer arrays on env, given the global slot
+ // base for slot 0. Reads vec->agent_perm (NULL = identity) to compute physical
+@@ -292,6 +310,9 @@ static void* static_omp_threadmanager(void* arg) {
+             for (int i = env_start; i < env_start + env_count; i++) {
+                 c_step(&envs[i]);
+             }
++#ifdef MY_JOINT_ACTION_MAX
++            my_pack_joint_actions(vec, envs, env_start, env_count, buf);
++#endif
+             clock_gettime(CLOCK_MONOTONIC, &t1);
+             my_accum[EVAL_ENV_STEP] += (t1.tv_sec - t0.tv_sec) * 1000.0f + (t1.tv_nsec - t0.tv_nsec) / 1e6f;
+
+@@ -316,6 +337,22 @@ static void* static_omp_threadmanager(void* arg) {
+                 vec->action_mask     + agent_start * MY_ACTION_MASK,
+                 agents_per_buffer * MY_ACTION_MASK * sizeof(unsigned char),
+                 cudaMemcpyHostToDevice, stream);
++#endif
++#ifdef MY_JOINT_ACTION_MAX
++            int joint_start = agent_start * MY_JOINT_ACTION_MAX;
++            cudaMemcpyAsync(
++                vec->gpu_joint_action_offsets + agent_start,
++                vec->joint_action_offsets + agent_start,
++                agents_per_buffer * sizeof(int), cudaMemcpyHostToDevice, stream);
++            cudaMemcpyAsync(
++                vec->gpu_joint_action_counts + agent_start,
++                vec->joint_action_counts + agent_start,
++                agents_per_buffer * sizeof(int), cudaMemcpyHostToDevice, stream);
++            cudaMemcpyAsync(
++                vec->gpu_joint_actions + joint_start,
++                vec->joint_actions + joint_start,
++                (size_t)vec->joint_buffer_counts[buf] * sizeof(uint32_t),
++                cudaMemcpyHostToDevice, stream);
+ #endif
+         }
+         cudaStreamSynchronize(stream);
+@@ -456,6 +493,34 @@ StaticVec* create_static_vec(int total_agents, int num_buffers, int gpu, Dict* v
+         vec->action_mask = (unsigned char*)calloc(total_agents * MY_ACTION_MASK, sizeof(unsigned char));
+         vec->gpu_action_mask = vec->action_mask;
+     }
++#endif
++#ifdef MY_JOINT_ACTION_MAX
++    vec->joint_action_max = MY_JOINT_ACTION_MAX;
++    vec->joint_action_capacity = total_agents * MY_JOINT_ACTION_MAX;
++    size_t joint_bytes =
++        (size_t)vec->joint_action_capacity * sizeof(uint32_t);
++    size_t joint_index_bytes = (size_t)total_agents * sizeof(int);
++    vec->joint_buffer_counts = (int*)calloc(num_buffers, sizeof(int));
++    if (gpu) {
++        cudaHostAlloc((void**)&vec->joint_actions, joint_bytes,
++                      cudaHostAllocPortable);
++        cudaHostAlloc((void**)&vec->joint_action_offsets, joint_index_bytes,
++                      cudaHostAllocPortable);
++        cudaHostAlloc((void**)&vec->joint_action_counts, joint_index_bytes,
++                      cudaHostAllocPortable);
++        cudaMalloc((void**)&vec->gpu_joint_actions, joint_bytes);
++        cudaMalloc((void**)&vec->gpu_joint_action_offsets, joint_index_bytes);
++        cudaMalloc((void**)&vec->gpu_joint_action_counts, joint_index_bytes);
++    } else {
++        vec->joint_actions =
++            (uint32_t*)calloc((size_t)vec->joint_action_capacity,
++                              sizeof(uint32_t));
++        vec->joint_action_offsets = (int*)calloc(total_agents, sizeof(int));
++        vec->joint_action_counts = (int*)calloc(total_agents, sizeof(int));
++        vec->gpu_joint_actions = vec->joint_actions;
++        vec->gpu_joint_action_offsets = vec->joint_action_offsets;
++        vec->gpu_joint_action_counts = vec->joint_action_counts;
++    }
+ #endif
+     // No #else: action_mask, gpu_action_mask, action_mask_size are already 0/NULL
+     // from calloc(1, sizeof(StaticVec)) above.
+@@ -517,6 +582,14 @@ void static_vec_set_perm(StaticVec* vec, const int* perm) {
+             buf_agent += env->num_agents;
+         }
+     }
++
++    // my_setup_perm changes every env's output/action destinations, but the
++    // rows currently stored there still describe the old identity layout.
++    // Re-emit and upload a coherent initial state before the first rollout.
++    // Permutations are configuration-time operations (self-play setup and
++    // policy-vs-policy evaluation), so resetting here is both deterministic
++    // and safer than allowing one stale rollout through the sampler.
++    static_vec_reset(vec);
+ #endif
+ }
+
+@@ -566,6 +639,12 @@ void static_vec_reset(StaticVec* vec) {
+     for (int i = 0; i < vec->size; i++) {
+         c_reset(&envs[i]);
+     }
++#ifdef MY_JOINT_ACTION_MAX
++    for (int buf = 0; buf < vec->buffers; buf++) {
++        my_pack_joint_actions(vec, envs, vec->buffer_env_starts[buf],
++                              vec->buffer_env_counts[buf], buf);
++    }
++#endif
+     if (vec->gpu) {
+         cudaMemcpy(vec->gpu_observations, vec->observations,
+             vec->total_agents * OBS_SIZE * obs_element_size(), cudaMemcpyHostToDevice);
+@@ -575,6 +654,22 @@ void static_vec_reset(StaticVec* vec) {
+         cudaMemcpy(vec->gpu_action_mask, vec->action_mask,
+             (size_t)vec->total_agents * MY_ACTION_MASK * sizeof(unsigned char),
+             cudaMemcpyHostToDevice);
++#endif
++#ifdef MY_JOINT_ACTION_MAX
++        cudaMemcpy(vec->gpu_joint_action_offsets, vec->joint_action_offsets,
++                   (size_t)vec->total_agents * sizeof(int),
++                   cudaMemcpyHostToDevice);
++        cudaMemcpy(vec->gpu_joint_action_counts, vec->joint_action_counts,
++                   (size_t)vec->total_agents * sizeof(int),
++                   cudaMemcpyHostToDevice);
++        for (int buf = 0; buf < vec->buffers; buf++) {
++            int joint_start =
++                buf * vec->agents_per_buffer * MY_JOINT_ACTION_MAX;
++            cudaMemcpy(vec->gpu_joint_actions + joint_start,
++                       vec->joint_actions + joint_start,
++                       (size_t)vec->joint_buffer_counts[buf] * sizeof(uint32_t),
++                       cudaMemcpyHostToDevice);
++        }
+ #endif
+         cudaDeviceSynchronize();
+     } else {
+@@ -646,6 +741,14 @@ void static_vec_close(StaticVec* vec) {
+ #ifdef MY_ACTION_MASK
+         cudaFree(vec->gpu_action_mask);
+         cudaFreeHost(vec->action_mask);
++#endif
++#ifdef MY_JOINT_ACTION_MAX
++        cudaFree(vec->gpu_joint_actions);
++        cudaFree(vec->gpu_joint_action_offsets);
++        cudaFree(vec->gpu_joint_action_counts);
++        cudaFreeHost(vec->joint_actions);
++        cudaFreeHost(vec->joint_action_offsets);
++        cudaFreeHost(vec->joint_action_counts);
+ #endif
+     } else {
+         free(vec->observations);
+@@ -654,10 +757,18 @@ void static_vec_close(StaticVec* vec) {
+         free(vec->terminals);
+ #ifdef MY_ACTION_MASK
+         free(vec->action_mask);
++#endif
++#ifdef MY_JOINT_ACTION_MAX
++        free(vec->joint_actions);
++        free(vec->joint_action_offsets);
++        free(vec->joint_action_counts);
+ #endif
+     }
+
+     free(vec->streams);
++#ifdef MY_JOINT_ACTION_MAX
++    free(vec->joint_buffer_counts);
++#endif
+     if (vec->agent_perm != NULL) free(vec->agent_perm);
+     free(vec);
+ }
+@@ -746,6 +857,12 @@ static inline void _static_vec_env_step(StaticVec* vec) {
+     for (int i = 0; i < vec->size; i++) {
+         c_step(&envs[i]);
+     }
++#ifdef MY_JOINT_ACTION_MAX
++    for (int buf = 0; buf < vec->buffers; buf++) {
++        my_pack_joint_actions(vec, envs, vec->buffer_env_starts[buf],
++                              vec->buffer_env_counts[buf], buf);
++    }
++#endif
+ }
+
+ void gpu_vec_step(StaticVec* vec) {
+@@ -752,18 +869,35 @@ void gpu_vec_step(StaticVec* vec) {
+-    assert(vec->buffers == 1);
++    if (vec->buffers != 1) {
++        fprintf(stderr, "gpu_vec_step: synchronous stepping requires one buffer\n");
++        abort();
++    }
+     cudaMemcpy(vec->actions, vec->gpu_actions,
+         (size_t)vec->total_agents * NUM_ATNS * sizeof(float),
+         cudaMemcpyDeviceToHost);
+     _static_vec_env_step(vec);
+     cudaMemcpy(vec->gpu_observations, vec->observations,
+         (size_t)vec->total_agents * OBS_SIZE * obs_element_size(),
+         cudaMemcpyHostToDevice);
+     cudaMemcpy(vec->gpu_rewards, vec->rewards,
+         vec->total_agents * sizeof(float), cudaMemcpyHostToDevice);
+     cudaMemcpy(vec->gpu_terminals, vec->terminals,
+         vec->total_agents * sizeof(float), cudaMemcpyHostToDevice);
++#ifdef MY_JOINT_ACTION_MAX
++    cudaMemcpy(vec->gpu_joint_action_offsets, vec->joint_action_offsets,
++               (size_t)vec->total_agents * sizeof(int),
++               cudaMemcpyHostToDevice);
++    cudaMemcpy(vec->gpu_joint_action_counts, vec->joint_action_counts,
++               (size_t)vec->total_agents * sizeof(int),
++               cudaMemcpyHostToDevice);
++    cudaMemcpy(vec->gpu_joint_actions, vec->joint_actions,
++               (size_t)vec->joint_buffer_counts[0] * sizeof(uint32_t),
++               cudaMemcpyHostToDevice);
++#endif
+ }
+
+ void cpu_vec_step(StaticVec* vec) {
+-    assert(vec->buffers == 1);
++    if (vec->buffers != 1) {
++        fprintf(stderr, "cpu_vec_step: synchronous stepping requires one buffer\n");
++        abort();
++    }
+     _static_vec_env_step(vec);
+ }

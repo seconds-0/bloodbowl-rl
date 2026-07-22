@@ -45,6 +45,8 @@ FILE_KEYS = {"path", "bytes", "sha256"}
 TREE_KEYS = {"path", "files", "bytes", "sha256"}
 IMPLEMENTATION_KEYS = {
     "launcher_sha256",
+    "live_integrity_guard_sha256",
+    "status_wrapper_sha256",
     "screen_analyzer_sha256",
     "transfer_analyzer_sha256",
 }
@@ -211,6 +213,8 @@ def validate_config(path: Path) -> dict[str, Any]:
         raise FrozenScreenError("implementation hash set is incomplete")
     source_files = {
         "launcher_sha256": root / "tools/run_reward_screen.sh",
+        "live_integrity_guard_sha256": root / "tools/live_integrity_guard.py",
+        "status_wrapper_sha256": root / "tools/trainer_status_wrapper.sh",
         "screen_analyzer_sha256": root / "tools/analyze_reward_screen.py",
         "transfer_analyzer_sha256":
             root / "tools/analyze_reward_candidate_transfer.py",

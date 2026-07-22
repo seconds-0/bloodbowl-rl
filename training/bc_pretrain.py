@@ -79,7 +79,8 @@ sys.path.insert(0, os.path.join(ROOT, "vendor", "PufferLib"))
 # header's mask_size below — the shards only pin the sum).
 ACT_SIZES = (30, 33, 391)
 MAGIC = b"BBP1"
-KNOWN_VERSIONS = (1, 2)  # Layout is header-driven; v2 spans obs-v3 and obs-v4.
+KNOWN_VERSIONS = (1, 2, 3, 4)  # v4: exact sequential action-mask semantics.
+                               # v3: obs-v5 with historical marginal masks.
 HEADER_LEN = 16
 REPLAY_ID_SCAN_BATCH = 65_536
 
@@ -87,9 +88,9 @@ REPLAY_ID_SCAN_BATCH = 65_536
 def rec_dtype(obs_size, mask_size):
     """Return the header-driven BBP record layout.
 
-    Legacy obs-v2/v3 and current obs-v4 shards remain readable, but an index
-    rejects mixed observation sizes because each size is a distinct policy
-    checkpoint lineage.
+    Legacy shards remain readable, but an index rejects mixed header versions
+    or shapes. Version is load-bearing because BBP v2/2782 is obs-v4 while
+    BBP v3/2782 is same-shape obs-v5.
     """
     return np.dtype([
         ("replay", "<u4"), ("cmd", "<u4"), ("agent", "u1"), ("pad", "u1", (3,)),
@@ -232,14 +233,14 @@ class ShardIndex:
         lineage = None
         for replay_id, path in _selected_shard_paths(pair_dir, replay_ids):
             info = _read_shard_info(path, replay_id)
-            current = (info.obs_size, info.mask_size)
+            current = (info.version, info.obs_size, info.mask_size)
             if lineage is None:
                 lineage = current
             elif current != lineage:
                 raise SystemExit(
                     f"{path}: header mismatch across shards — "
-                    f"{info.obs_size}/{info.mask_size} vs "
-                    f"{lineage[0]}/{lineage[1]}; never mix obs lineages "
+                    f"v{info.version}/{info.obs_size}/{info.mask_size} vs "
+                    f"v{lineage[0]}/{lineage[1]}/{lineage[2]}; never mix obs lineages "
                     "in one corpus")
             shards.append(info)
         return cls(shards, cache_size=cache_size)
@@ -306,6 +307,17 @@ class ShardIndex:
 
     def __exit__(self, _exc_type, _exc, _tb):
         self.close()
+
+
+def require_exact_action_lineage(index, allow_legacy=False):
+    """Reject historical marginal-mask corpora for current BC runs."""
+    version = index.shards[0].version
+    if version != 4 and not allow_legacy:
+        raise SystemExit(
+            f"BBP v{version} uses historical observation/action semantics; "
+            "current BC requires exact-action BBP v4. Pass "
+            "--allow-legacy-bbp only for an explicitly historical reproduction.")
+    return version
 
 
 def split_replay_ids(replay_ids, val_frac, seed):
@@ -609,6 +621,10 @@ def main():
         "--replay-ids", default=None,
         help="exact replay-ID allowlist; generate the BB2025 list with "
              "tools/replay_corpus_audit.py --write-bb2025-ids")
+    ap.add_argument(
+        "--allow-legacy-bbp", action="store_true",
+        help="permit v1-v3 only for an explicitly historical reproduction; "
+             "current exact-action BC requires v4")
     ap.add_argument("--config", default=os.path.join(ROOT, "puffer", "config",
                                                      "bloodbowl.ini"))
     ap.add_argument("--out", default=os.path.join(ROOT, "training", "checkpoints",
@@ -659,6 +675,7 @@ def main():
         cache_size=args.open_shard_cache,
     )
     try:
+        require_exact_action_lineage(index, args.allow_legacy_bbp)
         train_ids, val_ids = split_replay_ids(
             index.nonempty_replay_ids, args.val_frac, args.seed)
         train_data = LazyReplayDataset(index, train_ids)

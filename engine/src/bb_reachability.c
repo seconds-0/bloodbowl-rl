@@ -123,6 +123,47 @@ void bb_reach_field_compute(const bb_match* m, int mover, bb_reach_field* out) {
     reach_field_compute_ordered(m, mover, 0, out);
 }
 
+bool bb_can_score_without_dice(const bb_match* m, int carrier) {
+    if (!m || carrier < 0 || carrier >= BB_NUM_PLAYERS ||
+        m->ball.state != BB_BALL_HELD || m->ball.carrier != carrier) {
+        return false;
+    }
+    const bb_player* player = &m->players[carrier];
+    if (player->location != BB_LOC_ON_PITCH ||
+        player->stance != BB_STANCE_STANDING ||
+        (player->flags & BB_PF_ROOTED)) {
+        return false;
+    }
+
+    int endzone = bb_endzone_x(BB_TEAM_OF(carrier));
+    if (player->x == endzone) return false; // should already be a touchdown
+
+    // These compulsory activation/movement rolls mean the player cannot score
+    // without dice even if an otherwise free geometric path exists.
+    bool has_activation_gate = false;
+    for (int sk = bb_next_skill(&player->skills, 0); sk >= 0;
+         sk = bb_next_skill(&player->skills, sk + 1)) {
+        if (bb_hooks[sk].activate_gate) {
+            has_activation_gate = true;
+            break;
+        }
+    }
+    if (has_activation_gate || (player->p_bloodlust > 0 &&
+         bb_has_skill(&player->skills, BB_SK_BLOODLUST)) ||
+        bb_has_skill(&player->skills, BB_SK_ANIMAL_SAVAGERY) ||
+        bb_has_skill(&player->skills, BB_SK_BALL_AND_CHAIN)) {
+        return false;
+    }
+
+    bb_reach_field field;
+    bb_reach_field_compute(m, carrier, &field);
+    for (int y = 0; y < BB_PITCH_WID; y++) {
+        bb_reach_cost cost = field.cost[endzone][y];
+        if (cost.dodges == 0 && cost.gfis == 0) return true;
+    }
+    return false;
+}
+
 bb_reach_access bb_min_access_cost(const bb_match* m, int team, int tx, int ty) {
     bb_reach_access access = {false, false};
     if (!bb_on_pitch_xy(tx, ty)) return access;

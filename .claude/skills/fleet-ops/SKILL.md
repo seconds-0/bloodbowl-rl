@@ -162,6 +162,28 @@ Monitor all of:
 - engine error, demo, and fallback counters;
 - immutable result/checkpoint hashes.
 
+For repaired exact-action runs, zero tolerance is enforced live as well as at
+acceptance. The frozen `live_integrity_guard.py` must scan each new machine panel
+both from the screen poll loop and from the watchdog embedded beside the detached
+trainer, stop the recorded trainer/process group on any hard field failure, and
+emit `LIVE_INTEGRITY_FAILURE.json`; 180 seconds without an integrity-bearing
+panel is itself a failure. Metadata-only startup panels do not reset that clock.
+The screen and embedded watchdog must use independent incremental state files
+while sharing the failure artifact. Verify the wrapper's atomic nonzero status
+and absence of its trainer child before treating the GPU as idle. Do not relaunch
+under the same run ID or let a later arm advance. A fresh runtime receives only
+the staged provenance/CUDA/deterministic checks and a disposable 50M-step canary
+before any long paired screen.
+
+The staged CUDA checks must include recurrent boundaries: exact-zero primary
+and every frozen-bank state after graph warmup; deterministic graph-on/off first
+outputs; fresh train→eval games; primary/frozen first-post-terminal equivalence
+to zero state; Torch/native boundary parity; finite exact zero-update PPO ratios;
+and a target-GPU throughput comparison. Training requires `reset_state=True`
+with evaluation mode off. A row-sized captured reset gate is acceptable; a
+layers × rows × hidden no-op launch is not. Any mismatch consumes the entire
+error budget and blocks the canary.
+
 A final training Steps line is not completion. The audited evaluator may continue
 until the completed-game gate is satisfied. Do not kill it merely because the
 dashboard is no longer advancing training steps. Acceptance requires the explicit
@@ -227,6 +249,27 @@ or allow the timer to relaunch existing state.
 A persisted queue halt is terminal across restart and reboot. Do not edit its
 state to resume it. Preserve the evidence and deploy a new reviewed queue
 ID/plan/state after diagnosis if the user-authorized experiment should continue.
+
+For D215/D216 overflow recovery, never deploy into or write under
+`/home/rache/bloodbowl-rl-audit`. Use the exact merged source in the isolated
+`/home/rache/bloodbowl-rl-recovery-20260719` root and the queue ID
+`vacation-r0-overflow-recovery-20260719-v1`. Freeze and record a new plan hash;
+the first queue job must validate the old terminal evidence before the fresh
+three-seed trainer starts. Prove old hashes unchanged before and after setup,
+require the exact reviewed recovery root, and keep BBTV CPU-only and
+observational. The frozen preflight must use its exact pinned `nvidia-smi` and
+revalidate an empty compute-process list immediately before advancing to PPO;
+the complete seven-file Puffer patch bundle must be pinned too. Never copy old
+mutable state into the recovery root, reuse the old rejected checkpoint as
+output, or run old and new trainers concurrently.
+Install the separately rooted `experiment-recovery-queue@.service`; the existing
+`experiment-queue@.service` is audit-root-only. Configure the CPU BBTV follower
+to search both checkpoint roots while writing its state/cache under the recovery
+root. Execute the launcher and follower from the exact merged recovery checkout
+and set `BBTV_ROOT=/home/rache/bloodbowl-rl` only for unchanged production
+runtime assets. Verify the live command includes both checkpoint roots and the
+recovery state dir, and that it keeps the last complete old matchup until a
+newer complete recovery checkpoint is available.
 Use `docs/vacation-operator-runbook.md` for the exact read-only snapshot,
 state-to-action matrix, overflow watcher grace period, BBTV fault isolation,
 and return-day sequence. It is deliberately non-authorizing: do not improvise
@@ -241,9 +284,17 @@ for immutable experiment manifests, result files, or completion proofs.
 ## Checkpoints and transfer
 
 Select checkpoints by embedded step plus manifest/hash, not newest mtime. Verify
-observation size and architecture before loading. Current obs-v4 size is 2782;
-older lineages are incompatible unless deliberately converted with the correct
-`--obs-size`.
+observation lineage, source/module identity, size, and architecture before
+loading. Current source uses obs-v5 at 2782 bytes. Obs-v4 is also 2782 bytes but
+semantically incompatible. For current training, require the canonical adjacent
+checkpoint lineage sidecar and validate it with `tools/checkpoint_lineage.py`;
+never authorize by size or filename. Qualification-only checkpoints are not
+warm starts or pool seeds. The exact-action canary runs with `WARM` and `POOL`
+unset and zero frozen banks; inherited shell variables must be removed.
+Active historical/live v4 runs remain valid only in their deliberately pinned
+v4 runtime. Flat checkpoint shape cannot distinguish v4 from v5. Older obs-v3
+is shape-incompatible unless deliberately converted with the correct
+`--obs-size 1612`.
 
 Native↔Torch conversion is lossy with respect to biases: native-to-Torch
 zero-fills them and Torch-to-native drops them. Apply conversions symmetrically,

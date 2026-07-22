@@ -14,15 +14,23 @@ LDFLAGS ?=
 SAN_FLAGS = -fsanitize=address,undefined -fno-omit-frame-pointer -O1
 
 SRC      := $(wildcard engine/src/*.c)
+ENGINE_HDR := $(wildcard engine/include/bb/*.h)
 OBJ      := $(SRC:engine/src/%.c=$(BUILD)/obj/%.o)
 TEST_SRC := $(wildcard engine/tests/test_*.c)
+SCENARIO_SRC := tools/bank_scenario_predicates.c
+SCENARIO_TEST_SRC := $(SCENARIO_SRC) tools/bank_scenario_scan.c
+AUTHORED_DRILL_SRC := tools/authored_drill.c
+AUTHORED_IDENTITY_SRC := tools/authored_identity.c tools/authored_writer_gates.c
 LIB      := $(BUILD)/libbb.a
 TESTBIN  := $(BUILD)/bb_tests
 PUFFER_REWARD_TESTBIN := $(BUILD)/puffer_reward_tests
 PUFFER_CONTACT_TESTBIN := $(BUILD)/puffer_contact_bot_tests
-PUFFER_TESTBINS := $(PUFFER_REWARD_TESTBIN) $(PUFFER_CONTACT_TESTBIN)
+PUFFER_STATE_BANK_TESTBIN := $(BUILD)/puffer_state_bank_tests
+PUFFER_OBSERVATION_TESTBIN := $(BUILD)/puffer_observation_tests
+BBP_V4_WRITER_TESTBIN := $(BUILD)/bbp_v4_writer_tests
+PUFFER_TESTBINS := $(PUFFER_REWARD_TESTBIN) $(PUFFER_CONTACT_TESTBIN) $(PUFFER_STATE_BANK_TESTBIN) $(PUFFER_OBSERVATION_TESTBIN) $(BBP_V4_WRITER_TESTBIN)
 
-.PHONY: all test asan fuzz coverage coverage-run lockstep ballstats blockstats human-ball-advancement blockev-mc clean
+.PHONY: all test asan authored-identity-verify fuzz coverage coverage-run lockstep ballstats blockstats human-ball-advancement blockev-mc scenario-scan clean
 
 all: test
 
@@ -43,19 +51,31 @@ $(LIB): $(OBJ)
 # NOTE: tests link the object files directly (not libbb.a) — skill hook
 # registrations live in constructor-only objects that a static archive would
 # drop. External consumers of libbb.a must use -force_load / --whole-archive.
-$(TESTBIN): $(TEST_SRC) engine/tests/bb_test.h engine/tests/bb_fixtures.h engine/tests/bb_test_main.c $(OBJ)
-	$(CC) $(CFLAGS) -Iengine/tests engine/tests/bb_test_main.c $(TEST_SRC) $(OBJ) -o $@ $(LDFLAGS)
+$(TESTBIN): $(TEST_SRC) $(SCENARIO_TEST_SRC) $(AUTHORED_DRILL_SRC) $(AUTHORED_IDENTITY_SRC) tools/bank_scenario_scan.h tools/authored_drill.h tools/authored_identity_internal.h tools/authored_identity_ledger.def tools/authored_identity_legacy_proof.def engine/tests/bb_test.h engine/tests/bb_fixtures.h engine/tests/bb_test_main.c $(OBJ)
+	$(CC) $(CFLAGS) -DBBS_SCANNER_LIBRARY -Iengine/tests -Itools engine/tests/bb_test_main.c $(TEST_SRC) $(SCENARIO_TEST_SRC) $(AUTHORED_DRILL_SRC) $(AUTHORED_IDENTITY_SRC) $(OBJ) -o $@ $(LDFLAGS)
 
-$(PUFFER_REWARD_TESTBIN): puffer/bloodbowl/test_reward_send_off.c puffer/bloodbowl/bloodbowl.h puffer/bloodbowl/contact_bot.h engine/tests/bb_test.h engine/tests/bb_fixtures.h
+$(PUFFER_REWARD_TESTBIN): puffer/bloodbowl/test_reward_send_off.c puffer/bloodbowl/bloodbowl.h puffer/bloodbowl/contact_bot.h engine/tests/bb_test.h engine/tests/bb_fixtures.h $(SRC) $(ENGINE_HDR)
 	$(CC) $(CFLAGS) -Iengine/tests -Ipuffer/bloodbowl -Wno-unused-function $< -o $@ -lm $(LDFLAGS)
 
-$(PUFFER_CONTACT_TESTBIN): puffer/bloodbowl/test_contact_bot.c puffer/bloodbowl/bloodbowl.h puffer/bloodbowl/contact_bot.h engine/tests/bb_test.h
+$(PUFFER_CONTACT_TESTBIN): puffer/bloodbowl/test_contact_bot.c puffer/bloodbowl/bloodbowl.h puffer/bloodbowl/contact_bot.h engine/tests/bb_test.h $(SRC) $(ENGINE_HDR)
 	$(CC) $(CFLAGS) -Iengine/tests -Ipuffer/bloodbowl -Wno-unused-function $< -o $@ -lm $(LDFLAGS)
+
+$(PUFFER_STATE_BANK_TESTBIN): puffer/bloodbowl/test_state_bank.c puffer/bloodbowl/bloodbowl.h $(AUTHORED_DRILL_SRC) $(AUTHORED_IDENTITY_SRC) tools/authored_drill.h tools/authored_identity_internal.h engine/tests/bb_test.h engine/tests/bb_fixtures.h $(SRC) $(ENGINE_HDR)
+	$(CC) $(CFLAGS) -Iengine/tests -Ipuffer/bloodbowl -Itools -Wno-unused-function $< $(AUTHORED_DRILL_SRC) $(AUTHORED_IDENTITY_SRC) -o $@ -lm $(LDFLAGS)
+
+$(PUFFER_OBSERVATION_TESTBIN): puffer/bloodbowl/test_observation.c puffer/bloodbowl/bloodbowl.h engine/tests/bb_test.h $(SRC) $(ENGINE_HDR)
+	$(CC) $(CFLAGS) -Iengine/tests -Ipuffer/bloodbowl -Wno-unused-function $< -o $@ -lm $(LDFLAGS)
+
+$(BBP_V4_WRITER_TESTBIN): tools/test_bbp_v4_writer.c tools/bb_lockstep.c puffer/bloodbowl/bloodbowl.h $(SRC) $(ENGINE_HDR)
+	$(CC) $(CFLAGS) -Ipuffer/bloodbowl -Itools -Wno-unused-function $< -o $@ -lm $(LDFLAGS)
 
 test: $(TESTBIN) $(PUFFER_TESTBINS)
 	./$(TESTBIN) $(TEST)
 	./$(PUFFER_REWARD_TESTBIN) $(TEST)
 	./$(PUFFER_CONTACT_TESTBIN) $(TEST)
+	./$(PUFFER_STATE_BANK_TESTBIN) $(TEST)
+	./$(PUFFER_OBSERVATION_TESTBIN) $(TEST)
+	./$(BBP_V4_WRITER_TESTBIN)
 
 blockev-mc: $(OBJ)
 	$(CC) $(CFLAGS) -Iengine/tests tools/blockev_mc.c $(OBJ) -o $(BUILD)/blockev_mc -lm
@@ -63,6 +83,9 @@ blockev-mc: $(OBJ)
 
 asan:
 	$(MAKE) BUILD=build/asan CFLAGS="-std=c11 $(SAN_FLAGS) -Wall -Wextra -Werror -Iengine/include" test
+
+authored-identity-verify:
+	python3 tools/authored_identity_compat/verify_candidate.py .
 
 # libFuzzer harness. Apple clang has no libFuzzer: use Homebrew LLVM
 # (brew install llvm) on macOS, or any stock clang on Linux (CI nightly).
@@ -93,6 +116,11 @@ ballstats: $(OBJ)
 blockstats: $(OBJ)
 	$(CC) $(CFLAGS) tools/bb_blockstats.c $(OBJ) -o $(BUILD)/bb_blockstats -lm $(LDFLAGS)
 	@echo "run: ./$(BUILD)/bb_blockstats validation/normalized/*.jsonl"
+
+scenario-scan: $(OBJ) tools/bank_scenario_scan.c tools/bank_scenario_scan.h $(SCENARIO_SRC) tools/bank_scenario_predicates.h
+	$(CC) $(CFLAGS) tools/bank_scenario_scan.c $(SCENARIO_SRC) $(OBJ) \
+		-o $(BUILD)/bank_scenario_scan $(LDFLAGS)
+	@echo "run: ./$(BUILD)/bank_scenario_scan validation/states/bb2025-strict/bank.bbs"
 
 human-ball-advancement: ballstats
 	python3 tools/human_ball_advancement.py --runner ./$(BUILD)/bb_ballstats \
