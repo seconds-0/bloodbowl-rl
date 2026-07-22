@@ -20,6 +20,7 @@ from typing import Any, Iterable
 
 
 PREFIX = b"PUFFER_ENV_JSON "
+MARKER = b"PUFFER_ENV_JSON"
 HARD_INTEGRITY_KEYS = (
     "reward_clip_frac",
     "reward_clip_frac_nonzero",
@@ -108,6 +109,9 @@ def scan_log(path: str | Path, *, min_eval_games: int) -> dict[str, Any]:
     train_panels = 0
     eval_panels = 0
     final_reprints = 0
+    final_reprint_line: int | None = None
+    final_eval_games: int | None = None
+    last_machine_panel_line: int | None = None
     maximum_eval_games = 0
     previous_steps: int | None = None
     maximum_steps = 0
@@ -120,8 +124,14 @@ def scan_log(path: str | Path, *, min_eval_games: int) -> dict[str, Any]:
         for line_number, raw_line in enumerate(source, 1):
             digest.update(raw_line)
             if not raw_line.startswith(PREFIX):
+                if MARKER in raw_line:
+                    raise AuditError(
+                        f"{path}:{line_number}: displaced or malformed "
+                        "PUFFER_ENV_JSON marker"
+                    )
                 continue
             machine_panels += 1
+            last_machine_panel_line = line_number
             try:
                 text = raw_line[len(PREFIX):].decode("utf-8")
                 panel = json.loads(
@@ -231,6 +241,8 @@ def scan_log(path: str | Path, *, min_eval_games: int) -> dict[str, Any]:
                         "cumulative eval panel"
                     )
                 final_reprints += 1
+                final_reprint_line = line_number
+                final_eval_games = eval_completed
             elif n > 0 and phase_eval:
                 eval_panels += 1
             elif n > 0:
@@ -253,9 +265,14 @@ def scan_log(path: str | Path, *, min_eval_games: int) -> dict[str, Any]:
             f"completed log must have exactly one final reprint; "
             f"found {final_reprints}: {path}"
         )
-    if maximum_eval_games < min_eval_games:
+    if final_reprint_line != last_machine_panel_line:
         raise AuditError(
-            f"completed log evaluated only {maximum_eval_games} games; "
+            f"completed log final reprint is not its last machine panel: {path}"
+        )
+    assert final_eval_games is not None
+    if final_eval_games < min_eval_games:
+        raise AuditError(
+            f"completed log final reprint evaluated only {final_eval_games} games; "
             f"requires {min_eval_games}: {path}"
         )
 
@@ -269,8 +286,10 @@ def scan_log(path: str | Path, *, min_eval_games: int) -> dict[str, Any]:
         "train_panels": train_panels,
         "eval_panels": eval_panels,
         "final_reprints": final_reprints,
+        "final_reprint_line": final_reprint_line,
         "maximum_agent_steps": maximum_steps,
         "maximum_eval_games": maximum_eval_games,
+        "final_eval_games": final_eval_games,
         "historical_diagnostics": diagnostics,
     }
 
@@ -286,7 +305,14 @@ def audit_logs(
         raise AuditError(f"expected {expected_count} logs, received {len(paths)}")
     if len(set(paths)) != len(paths):
         raise AuditError("duplicate log path in recovery audit")
+    identities = [_file_identity(path) for path in paths]
+    inode_identities = [(identity[0], identity[1]) for identity in identities]
+    if len(set(inode_identities)) != len(inode_identities):
+        raise AuditError("duplicate log inode in recovery audit")
     reports = [scan_log(path, min_eval_games=min_eval_games) for path in paths]
+    digests = [report["sha256"] for report in reports]
+    if len(set(digests)) != len(digests):
+        raise AuditError("duplicate log content in recovery audit")
     return {
         "schema_version": 1,
         "accepted": True,
@@ -307,7 +333,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("logs", nargs="+", type=Path)
     parser.add_argument("--expected-count", type=int, default=3)
-    parser.add_argument("--min-eval-games", type=int, default=10000)
+    parser.add_argument("--min-eval-games", type=int, required=True)
     args = parser.parse_args(argv)
     try:
         report = audit_logs(

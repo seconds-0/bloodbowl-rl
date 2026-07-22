@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 
+import contextlib
 import importlib.util
+import io
 import json
 from pathlib import Path
 import tempfile
@@ -63,6 +65,7 @@ class RecoveryCompleteLogAuditTests(unittest.TestCase):
         self.assertEqual(report["train_panels"], 1)
         self.assertEqual(report["eval_panels"], 1)
         self.assertEqual(report["final_reprints"], 1)
+        self.assertEqual(report["final_eval_games"], 10000)
         self.assertEqual(report["historical_diagnostics"]["illegal_frac"]["max"], 0.2)
 
     def test_allows_only_a_truly_empty_startup_panel_without_n(self):
@@ -130,6 +133,15 @@ class RecoveryCompleteLogAuditTests(unittest.TestCase):
             with self.assertRaisesRegex(audit.AuditError, "duplicate JSON key"):
                 audit.scan_log(path, min_eval_games=10000)
 
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "bad.log"
+            write_log(path, complete_panels())
+            path.write_bytes(
+                b"progress PUFFER_ENV_JSON {}\n" + path.read_bytes()
+            )
+            with self.assertRaisesRegex(audit.AuditError, "displaced or malformed"):
+                audit.scan_log(path, min_eval_games=10000)
+
     def test_rejects_incomplete_or_invalid_phase_contracts(self):
         cases = []
         no_eval = complete_panels()[:1]
@@ -144,6 +156,13 @@ class RecoveryCompleteLogAuditTests(unittest.TestCase):
         cases.append(
             ("invalid_final", invalid_final, "populated cumulative eval panel")
         )
+        stale_final = complete_panels()
+        stale_final[-1]["_puffer_eval_episodes_completed"] = 9999
+        cases.append(("stale_final", stale_final, "final reprint evaluated only 9999"))
+        final_not_last = complete_panels()
+        final_not_last.append(dict(final_not_last[0]))
+        final_not_last[-1]["_puffer_agent_steps"] = 300
+        cases.append(("final_not_last", final_not_last, "not its last machine panel"))
         fractional_n = complete_panels()
         fractional_n[0]["n"] = 1.5
         cases.append(("fractional_n", fractional_n, "panel n must be an integer"))
@@ -190,6 +209,26 @@ class RecoveryCompleteLogAuditTests(unittest.TestCase):
                 audit.audit_logs([path], expected_count=3, min_eval_games=10000)
             with self.assertRaisesRegex(audit.AuditError, "duplicate log path"):
                 audit.audit_logs([path, path], expected_count=2, min_eval_games=10000)
+
+            hardlink = Path(temporary) / "seed43.log"
+            hardlink.hardlink_to(path)
+            with self.assertRaisesRegex(audit.AuditError, "duplicate log inode"):
+                audit.audit_logs(
+                    [path, hardlink], expected_count=2, min_eval_games=10000
+                )
+
+            copied = Path(temporary) / "seed44.log"
+            copied.write_bytes(path.read_bytes())
+            with self.assertRaisesRegex(audit.AuditError, "duplicate log content"):
+                audit.audit_logs(
+                    [path, copied], expected_count=2, min_eval_games=10000
+                )
+
+    def test_cli_requires_an_explicit_eval_floor(self):
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit) as raised:
+                audit.main([])
+        self.assertEqual(raised.exception.code, 2)
 
 
 if __name__ == "__main__":
