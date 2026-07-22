@@ -183,6 +183,9 @@ capture-throughput
 --expected-predecessor-module-sha256 <frozen predecessor module SHA-256>
 --expected-predecessor-backend-sha256 <frozen predecessor backend SHA-256>
 --expected-environment-sha256 <frozen installed environment SHA-256>
+--seed 271828
+--ratio-call-limit 64
+--cell-timeout-seconds 1800
 --throughput-agents 2048
 --throughput-buffers 2
 --throughput-threads 16
@@ -222,6 +225,9 @@ run
 --expected-predecessor-module-sha256 <same predecessor module SHA-256>
 --expected-predecessor-backend-sha256 <same predecessor backend SHA-256>
 --max-regression-fraction 0.10
+--seed 271828
+--ratio-call-limit 64
+--cell-timeout-seconds 1800
 --throughput-agents 2048
 --throughput-buffers 2
 --throughput-threads 16
