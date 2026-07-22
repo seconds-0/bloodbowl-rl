@@ -8001,3 +8001,64 @@ Next steps remain unchanged: continue read-only monitoring. At atomic recovery
 completion, independently establish queue/service/screen completion, run the
 frozen screen validator and stopped three-log audit, and preserve and verify
 the exact evidence off-box before creating any predecessor or candidate runtime.
+
+## 2026-07-21 22:03 PDT — seed 44 at 7.24B; exact-zero control hardening under final review
+
+Status:
+
+- The recovery queue remains exactly `state=running`,
+  `current_job=full-control-rerun`, and `message=running job
+  full-control-rerun`, with unchanged plan SHA-256
+  `822bb912dbf3992c5fa6f04ddcaa5354897db10d03f2e66934b846c198b6a111`.
+  The screen remains on arm `both`, seed 44, index 3, with two completed arms
+  and message `waiting for current trainer`; `SCREEN_COMPLETE.json` remains
+  absent. The atomic boundary is still closed.
+- Seed 44 reached exact step 7,238,975,488 of 12B at epoch 55,228. The latest
+  complete 86-game train panel reports 1.9419 TD/game, performance 0.5000,
+  possession 0.3692, carrier-target block share about 0.1406, and two-die-red
+  share 0.03705. All 15 recovery-valid reward clip, non-finite, component,
+  engine-error, and demo-fallback fields remain exactly zero. Historical
+  pre-exact-action `illegal_frac=0.18965` remains diagnostic only.
+- The interval since the 21:33 sample averaged approximately 180K steps/s.
+  About 4.761B steps remain, or roughly 7.3 training hours at that rate. This
+  estimate has no authority over queue completion, screen completion, pinned
+  validation, stopped log auditing, or off-box preservation.
+- Queue, trainer, BBTV follower, web server, and tunnel retain PIDs 610736,
+  653090, 610386, 127413, and 35307. The four user services are active/running
+  with zero restarts, and trainer 653090 remains the sole GPU compute process.
+  The RTX 2070 was 81 C and 73% utilized, with 5,554/8,192 MiB allocated and
+  148.49/175 W draw. The recovery filesystem has about 846 GiB free and about
+  8.8 GiB RAM is available.
+- BBTV atomically selected seed 44 step 7,141,326,848 at 21:57 PDT. The
+  selection SHA-256 is
+  `44af300ec29a08630ba47ff6833abfafbb40ee01e636d252f9fdfa6c484e3fee`,
+  and <https://bbtv.seconds0.com/> returns HTTP 200.
+
+Preparation completed without touching the 2070:
+
+- A test-first audit confirmed that five already-emitted redundant reward
+  counters were absent from the control qualification, complete-log, and
+  stopped-canary registries. The local D222 branch now requires the exact
+  ordered 16-key registry and preserves the immutable candidate's original
+  11-key live manifest for compatibility.
+- Independent review found that graph-parity and terminal-reset cells also
+  lacked bound integrity telemetry. The graph cell now preserves its original
+  first-rollout parity snapshot, crosses the bounded decision cap only after
+  that snapshot, and binds a completed-episode 16-key panel. Every
+  transition-executing cell is revalidated both during orchestration and by the
+  independent stopped validator; construction is explicitly exempt because it
+  executes no transition and emits no episode telemetry.
+- The merged control launcher now fails before output creation if asked to
+  launch `exact-action-canary`; only exact candidate `a52fc6e2` may create the
+  frozen canary artifact, while the later merged control analyzer applies the
+  wider stopped verdict. The focused qualification/launcher/guard/analyzer
+  suite passes 81 tests with two expected skips; compilation, Ruff, and
+  whitespace checks pass. Final full-suite and independent rereview remain
+  pending, so this branch is not committed, merged, or deployed.
+
+Next steps: finish the D222 full regression and independent review, then publish
+and merge it with updated runner/analyzer identities and frozen operator
+checklists. Continue read-only recovery and BBTV monitoring. At atomic
+completion, establish the stopped service/process gates, run the pinned screen
+validator and independent three-log audit, and preserve and verify the exact
+evidence off-box before creating any 2070 qualification root.
