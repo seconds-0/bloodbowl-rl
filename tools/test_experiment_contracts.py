@@ -213,12 +213,28 @@ class ExperimentContractTests(unittest.TestCase):
             "pufferl_metrics_keyerror.patch",
             "torch_pufferl_trusted_load.patch",
             "puffer_exact_joint_actions.patch",
+            "selfplay_league.patch",
         ):
             self.assertIn(patch, screen)
             self.assertIn(patch, arm)
         for source in ("src/bindings_cpu.cpp", "src/kernels.cu"):
             self.assertIn(source, screen)
             self.assertIn(source, arm)
+        screen_block = screen.split("patches = [", 1)[1].split(
+            "vendor_sources = [", 1
+        )[0]
+        arm_block = arm.split('PATCH_HASH="$({', 1)[1].split(
+            '} | sha256sum', 1
+        )[0]
+        screen_patches = re.findall(r'training/([^"/]+\.patch)', screen_block)
+        arm_patches = re.findall(r'training/([^"/]+\.patch)', arm_block)
+        self.assertEqual(screen_patches, arm_patches)
+        self.assertEqual(screen_patches.count("selfplay_league.patch"), 1)
+        self.assertIn(
+            'git -C "$ROOT/vendor/PufferLib" apply --reverse --check --no-index',
+            arm,
+        )
+        self.assertIn("Patch copy: training/selfplay_league.patch", arm)
 
     def test_reward_screen_has_exact_possession_gain_decomposition(self):
         source = (ROOT / "tools/run_reward_screen.sh").read_text(
@@ -399,10 +415,10 @@ class ExperimentContractTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertNotIn("WARM is required", result.stderr)
             self.assertNotIn("POOL is required", result.stderr)
-            self.assertIn(
-                "exact-action-canary launcher is frozen at candidate",
-                result.stderr,
-            )
+            self.assertIn("exact-action-canary is frozen", result.stderr)
+            self.assertIn("permanently rejected", result.stderr)
+            self.assertIn("no replacement is authorized", result.stderr)
+            self.assertNotIn("invoke that exact isolated checkout", result.stderr)
             self.assertIn(
                 "a52fc6e2f4ece5a7ff16bb4791e3aca4dd72f2e3",
                 result.stderr,

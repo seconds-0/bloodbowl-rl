@@ -8,6 +8,7 @@ import json
 import pathlib
 import subprocess
 import tempfile
+import textwrap
 import unittest
 from unittest import mock
 
@@ -17,6 +18,7 @@ import numpy as np
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 PATCH = ROOT / "training" / "puffer_recurrent_cuda_qualification.patch"
 PRIO_PATCH = ROOT / "training" / "puffer_frozen_prio_mask.patch"
+LEAGUE_PATCH = ROOT / "training" / "selfplay_league.patch"
 INSTALLER = ROOT / "tools" / "install_puffer_env.sh"
 RUNNER = ROOT / "tools" / "qualify_recurrent_cuda.py"
 SCREEN_LAUNCHER = ROOT / "tools" / "run_reward_screen.sh"
@@ -43,6 +45,204 @@ class QualificationValidatorTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.q = load_runner()
+
+    def test_candidate_commit_is_explicitly_bound_to_clean_runner(self):
+        commit = "f" * 40
+        self.q.validate_candidate_source_authority(
+            commit, {"source_commit": commit}
+        )
+        for supplied in ("e" * 40, "not-a-commit"):
+            with self.subTest(supplied=supplied), self.assertRaisesRegex(
+                self.q.QualificationError, "predeclared candidate"
+            ):
+                self.q.validate_candidate_source_authority(
+                    supplied, {"source_commit": commit}
+                )
+
+    def test_schema_two_qualification_is_explicitly_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            artifact = pathlib.Path(temporary) / "QUALIFICATION.json"
+            artifact.write_text(
+                json.dumps({"schema_version": 2}), encoding="utf-8"
+            )
+            with self.assertRaisesRegex(
+                self.q.QualificationError, "schema version mismatch"
+            ):
+                self.q.validate_qualification(artifact)
+
+    def test_real_installer_selfplay_state_machine_is_fail_closed(self):
+        upstream_selfplay = textwrap.dedent('''\
+            """Pool storage is disk-only (paths held in memory; weights only on GPU when
+            loaded as the frozen bank). Stride-eviction preserves temporal coverage when
+            the pool exceeds its cap.
+            """
+            import os
+
+            import numpy as np
+            ''') + ("# fixture padding\n" * 150) + textwrap.dedent('''\
+            def setup(pufferl, backend, args, run_id):
+                sp = args['selfplay']
+                num_banks = 2
+                perm = []
+                tags = []
+                backend.set_agent_perm(pufferl, perm)
+                backend.set_env_tags(pufferl, tags)
+
+                pool_dir = os.path.join(args['checkpoint_dir'], args['env_name'], run_id, 'pool')
+                os.makedirs(pool_dir, exist_ok=True)
+                bootstrap_path = os.path.join(pool_dir, f'{pufferl.global_step:016d}.bin')
+                backend.save_weights(pufferl, bootstrap_path)
+                # Load bootstrap into every bank — they'll diverge as each bank's swap fires.
+                for b in range(num_banks):
+                    backend.load_frozen_bank(pufferl, b, bootstrap_path)
+
+                elo_init = float(sp.get('elo_init', 0.0))
+                elo_k    = float(sp.get('elo_k',    16.0))
+                banks_state = []
+                for b in range(num_banks):
+                    banks_state.append({
+                        'cur_opp_path': bootstrap_path,
+                        'cur_opp_elo': elo_init,
+                        'hist_score': 0.0,
+                        'hist_n': 0.0,
+                    })
+
+                # state fixture padding 1
+                # state fixture padding 2
+                # state fixture padding 3
+                # state fixture padding 4
+                # state fixture padding 5
+                # state fixture padding 6
+                # state fixture padding 7
+                # state fixture padding 8
+                # state fixture padding 9
+
+                return {
+                    'pool_dir': pool_dir,
+                    'pool': [{'path': bootstrap_path, 'elo': elo_init}],
+                    'rng': rng,
+                    'max_size': int(sp['max_size']),
+                    'min_games': int(sp['min_games']),
+                }
+            ''')
+        dashboard_markers = "\n".join((
+            "if i == 160:",
+            "PUFFER_ENV_JSON",
+            "'_puffer_schema': 2",
+            "'_puffer_final_reprint'",
+            "'_puffer_eval_episodes_completed'",
+            "phase_eval=phase_eval, phase_epoch=epoch",
+            "metrics.setdefault",
+        ))
+        with tempfile.TemporaryDirectory() as temporary:
+            puffer = pathlib.Path(temporary) / "PufferLib"
+            (puffer / "pufferlib").mkdir(parents=True)
+            (puffer / "src").mkdir()
+            (puffer / "config").mkdir()
+            (puffer / "build.sh").write_text("fixture\n", encoding="utf-8")
+            (puffer / "pufferlib/pufferl.py").write_text(
+                dashboard_markers, encoding="utf-8"
+            )
+            (puffer / "pufferlib/torch_pufferl.py").write_text(
+                "historical full-pickle state dicts\nsample_joint_logits\n",
+                encoding="utf-8",
+            )
+            selfplay = puffer / "pufferlib/selfplay.py"
+            selfplay.write_text(upstream_selfplay, encoding="utf-8")
+            (puffer / "pufferlib/sweep.py").write_text(
+                "match_enemy_model_path\n", encoding="utf-8"
+            )
+            for relative, contents in {
+                "src/vecenv.h": "joint_action_offsets\n",
+                "src/pufferlib.cu": "fixture stops after selfplay\n",
+                "src/bindings.cu": "fixture\n",
+                "src/bindings_cpu.cpp": "fixture\n",
+                "src/kernels.cu": "fixture\n",
+            }.items():
+                (puffer / relative).write_text(contents, encoding="utf-8")
+
+            def install(*arguments: str) -> subprocess.CompletedProcess[str]:
+                return subprocess.run(
+                    [str(INSTALLER), *arguments, str(puffer)],
+                    cwd=ROOT,
+                    text=True,
+                    capture_output=True,
+                    timeout=60,
+                )
+
+            applicable = subprocess.run(
+                [
+                    "git", "-C", str(puffer), "apply", "--check",
+                    "--no-index", str(LEAGUE_PATCH),
+                ],
+                text=True,
+                capture_output=True,
+            )
+            self.assertEqual(applicable.returncode, 0, applicable.stderr)
+            first = install()
+            self.assertNotEqual(first.returncode, 0)
+            self.assertIn(
+                "applied:   training/selfplay_league.patch",
+                first.stdout,
+                first.stderr,
+            )
+            self.assertIn("exact joint-action backend support is incomplete", first.stderr)
+            patched = selfplay.read_bytes()
+            self.assertIn(b"Patch copy: training/selfplay_league.patch", patched)
+            subprocess.run(
+                [
+                    "git", "-C", str(puffer), "apply", "--reverse", "--check",
+                    "--no-index", str(LEAGUE_PATCH),
+                ],
+                check=True,
+                capture_output=True,
+            )
+
+            second = install()
+            self.assertNotEqual(second.returncode, 0)
+            self.assertNotIn("applied:   training/selfplay_league.patch", second.stdout)
+            self.assertNotIn("selfplay league patch", second.stderr)
+            self.assertEqual(selfplay.read_bytes(), patched)
+
+            checked = install("--check")
+            self.assertNotEqual(checked.returncode, 0)
+            self.assertNotIn("selfplay league patch", checked.stderr)
+            self.assertIn("exact-action backend marker missing", checked.stderr)
+
+            subprocess.run(
+                [
+                    "git", "-C", str(puffer), "apply", "--reverse",
+                    "--no-index", str(LEAGUE_PATCH),
+                ],
+                check=True,
+                capture_output=True,
+            )
+            self.assertEqual(selfplay.read_text(encoding="utf-8"), upstream_selfplay)
+            unapplied = install("--check")
+            self.assertNotEqual(unapplied.returncode, 0)
+            self.assertIn("installed selfplay league patch is missing or stale", unapplied.stderr)
+
+            subprocess.run(
+                [
+                    "git", "-C", str(puffer), "apply", "--no-index",
+                    str(LEAGUE_PATCH),
+                ],
+                check=True,
+                capture_output=True,
+            )
+            partial = selfplay.read_text(encoding="utf-8").replace(
+                "        seed_paths = [bootstrap_path] * num_banks\n", "", 1
+            )
+            self.assertIn("Patch copy: training/selfplay_league.patch", partial)
+            selfplay.write_text(partial, encoding="utf-8")
+            stale = install("--check")
+            self.assertNotEqual(stale.returncode, 0)
+            self.assertIn("installed selfplay league patch is missing or stale", stale.stderr)
+
+            selfplay.unlink()
+            missing = install("--check")
+            self.assertNotEqual(missing.returncode, 0)
+            self.assertIn("installed selfplay league patch is missing or stale", missing.stderr)
 
     def test_state_gate_requires_every_primary_and_frozen_buffer_exactly_zero(self):
         clean = {
@@ -211,6 +411,60 @@ class QualificationValidatorTests(unittest.TestCase):
             self.q.validate_throughput(
                 candidate, baseline, max_regression_fraction=0.10)
 
+    def test_qualification_source_identity_includes_selfplay_patch(self):
+        relative = {
+            path.relative_to(ROOT).as_posix()
+            for path in self.q.qualification_source_paths(ROOT)
+        }
+        self.assertIn("training/selfplay_league.patch", relative)
+        self.assertEqual(
+            hashlib.sha256(LEAGUE_PATCH.read_bytes()).hexdigest(),
+            self.q.sha256(LEAGUE_PATCH),
+        )
+        self.assertIn("pufferlib/selfplay.py", self.q.BACKEND_SOURCE_FILES)
+
+    def test_qualification_source_identity_rejects_selfplay_drift_and_deletion(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source = pathlib.Path(temporary)
+            for original in self.q.qualification_source_paths(ROOT):
+                relative = original.relative_to(ROOT)
+                copied = source / relative
+                copied.parent.mkdir(parents=True, exist_ok=True)
+                copied.write_bytes(original.read_bytes())
+            recorded = self.q.qualification_source_identity(source)
+            self.q.validate_qualification_source_identity(recorded, source)
+
+            league = source / "training/selfplay_league.patch"
+            pristine = league.read_bytes()
+            league.write_bytes(pristine + b"\n# drift\n")
+            with self.assertRaisesRegex(
+                self.q.QualificationError, "source-file identity drifted"
+            ):
+                self.q.validate_qualification_source_identity(recorded, source)
+
+            league.write_bytes(pristine)
+            league.unlink()
+            with self.assertRaisesRegex(
+                self.q.QualificationError, "source-file identity is incomplete"
+            ):
+                self.q.validate_qualification_source_identity(recorded, source)
+
+    def test_backend_identity_changes_with_selfplay_and_rejects_its_absence(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            puffer = pathlib.Path(temporary)
+            for index, relative in enumerate(self.q.BACKEND_SOURCE_FILES):
+                path = puffer / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(f"surface-{index}\n".encode())
+            before = self.q.backend_source_hash(puffer)
+            selfplay = puffer / "pufferlib/selfplay.py"
+            selfplay.write_bytes(b"changed-selfplay-semantics\n")
+            after = self.q.backend_source_hash(puffer)
+            self.assertNotEqual(before, after)
+            selfplay.unlink()
+            with self.assertRaises(self.q.QualificationError):
+                self.q.backend_source_hash(puffer)
+
     def test_hard_integrity_rejects_redundant_nonzero_reward_counters(self):
         self.assertEqual(self.q.HARD_INTEGRITY_KEYS, (
             "illegal_frac",
@@ -328,16 +582,29 @@ class QualificationValidatorTests(unittest.TestCase):
             "qualification_surface": True,
         }
         self.q.validate_module_identity(identity, qualification_surface=True)
+        candidate_commit = "f" * 40
         expected = {
-            "source_commit": self.q.CANDIDATE_SOURCE_COMMIT,
+            "source_commit": candidate_commit,
             "module_sha256": digest,
             "backend_sha256": digest,
             "environment_sha256": "b" * 64,
         }
-        self.q.validate_expected_candidate_identity(identity, expected)
+        self.q.validate_expected_candidate_identity(
+            identity, expected, authorized_source_commit=candidate_commit
+        )
         with self.assertRaises(self.q.QualificationError):
             self.q.validate_expected_candidate_identity(
-                identity, dict(expected, backend_sha256="c" * 64)
+                identity,
+                dict(expected, backend_sha256="c" * 64),
+                authorized_source_commit=candidate_commit,
+            )
+        with self.assertRaisesRegex(
+            self.q.QualificationError, "predeclared authority"
+        ):
+            self.q.validate_expected_candidate_identity(
+                identity,
+                expected,
+                authorized_source_commit="e" * 40,
             )
         predecessor_identity = dict(identity, qualification_surface=False)
         predecessor_expected = {
@@ -445,6 +712,15 @@ class QualificationValidatorTests(unittest.TestCase):
             self.assertEqual(parsed["throughput"], throughput)
             current.assert_called_once_with(identity)
 
+            wrapper["schema_version"] = 2
+            wrapper_path.write_text(json.dumps(wrapper), encoding="utf-8")
+            with self.assertRaisesRegex(
+                self.q.QualificationError, "baseline schema version mismatch"
+            ):
+                self.q.validate_baseline_artifact(wrapper_path)
+            wrapper["schema_version"] = self.q.SCHEMA_VERSION
+            wrapper_path.write_text(json.dumps(wrapper), encoding="utf-8")
+
             with mock.patch.object(
                 self.q, "validate_source_checkout_record", return_value=source
             ), mock.patch.object(
@@ -505,16 +781,13 @@ class QualificationValidatorTests(unittest.TestCase):
                     expected_commit=commit,
                     role="predecessor",
                 )
-            for role, wrong_commit in (
-                ("predecessor", self.q.CANDIDATE_SOURCE_COMMIT),
-                ("candidate", self.q.PREDECESSOR_SOURCE_COMMIT),
-            ):
-                with self.subTest(role=role), self.assertRaises(
-                    self.q.QualificationError
-                ):
-                    self.q.validate_source_checkout(
-                        source, puffer, expected_commit=wrong_commit, role=role
-                    )
+            with self.assertRaises(self.q.QualificationError):
+                self.q.validate_source_checkout(
+                    source,
+                    puffer,
+                    expected_commit="f" * 40,
+                    role="predecessor",
+                )
             with self.assertRaises(self.q.QualificationError):
                 self.q.validate_source_checkout(
                     self.q.PROTECTED_RECOVERY_ROOT,
@@ -865,7 +1138,7 @@ class QualificationValidatorTests(unittest.TestCase):
                         "--baseline-throughput", str(baseline),
                         "--candidate-source-root", str(candidate),
                         "--predecessor-source-root", str(predecessor),
-                        "--expected-source-commit", self.q.CANDIDATE_SOURCE_COMMIT,
+                        "--expected-source-commit", "f" * 40,
                         "--expected-candidate-module-sha256", "a" * 64,
                         "--expected-candidate-backend-sha256", "b" * 64,
                         "--expected-environment-sha256", "c" * 64,
@@ -900,7 +1173,7 @@ class QualificationValidatorTests(unittest.TestCase):
             "--baseline-throughput", "/external/THROUGHPUT_BASELINE.json",
             "--candidate-source-root", "/candidate",
             "--predecessor-source-root", "/predecessor",
-            "--expected-source-commit", self.q.CANDIDATE_SOURCE_COMMIT,
+            "--expected-source-commit", "f" * 40,
             "--expected-candidate-module-sha256", "a" * 64,
             "--expected-candidate-backend-sha256", "b" * 64,
             "--expected-environment-sha256", "c" * 64,
@@ -945,13 +1218,13 @@ class QualificationPatchContractTests(unittest.TestCase):
         launcher = SCREEN_LAUNCHER.read_text(encoding="utf-8")
         self.assertEqual(
             hashlib.sha256(SCREEN_LAUNCHER.read_bytes()).hexdigest(),
-            "8a08e846764a92306440d5e220e9d6ee894c4bc15a7ee1ee75e55c9c2b041df3",
+            "3845f6e79e5702f09f5620fa46ca3badfab5be658761e6295cd685a426aaec67",
         )
-        self.assertIn(
-            "exact-action-canary launcher is frozen at candidate "
-            "a52fc6e2f4ece5a7ff16bb4791e3aca4dd72f2e3",
-            launcher,
-        )
+        self.assertIn("exact-action-canary is frozen", launcher)
+        self.assertIn("a52fc6e2f4ece5a7ff16bb4791e3aca4dd72f2e3", launcher)
+        self.assertIn("permanently rejected", launcher)
+        self.assertIn("no replacement is authorized", launcher)
+        self.assertNotIn("invoke that exact isolated checkout", launcher)
 
         candidate = "a52fc6e2f4ece5a7ff16bb4791e3aca4dd72f2e3"
         candidate_launcher_bytes = subprocess.run(
@@ -1174,10 +1447,10 @@ class QualificationPatchContractTests(unittest.TestCase):
     def test_operator_contract_uses_isolated_exact_action_predecessor(self):
         q = load_runner()
         predecessor = "afc8008933548438ca93c41341f5f08fdd294386"
-        candidate = "a52fc6e2f4ece5a7ff16bb4791e3aca4dd72f2e3"
+        rejected_candidate = "a52fc6e2f4ece5a7ff16bb4791e3aca4dd72f2e3"
         plan = PLAN.read_text(encoding="utf-8")
         self.assertIn(predecessor, plan)
-        self.assertIn(candidate, plan)
+        self.assertIn(rejected_candidate, plan)
         self.assertIn("own pinned Puffer", plan)
         self.assertIn("different from the predecessor tree", plan)
         self.assertIn("--predecessor-source-root", plan)
@@ -1190,15 +1463,32 @@ class QualificationPatchContractTests(unittest.TestCase):
         for path in (AGENTS, CLAUDE, PUFFER_SKILL, TRAINING_SKILL):
             with self.subTest(path=path):
                 text = path.read_text(encoding="utf-8")
+                normalized = " ".join(text.split())
                 self.assertIn(predecessor, text)
-                self.assertIn(candidate, text)
+                self.assertIn(rejected_candidate, text)
                 self.assertIn("different isolated source", text)
                 self.assertIn("recovery Puffer tree", text)
                 self.assertIn("`cudagraphs=10`", text)
+                self.assertIn(
+                    "candidate and control runner use the same "
+                    "operator-predeclared merged commit",
+                    normalized,
+                )
+                self.assertIn("clean `HEAD`", normalized)
+                plain = normalized.replace("`", "")
+                for stale_directive in (
+                    "Keep exact candidate a52fc6e2",
+                    "exact candidate is a52fc6e2",
+                    "Launch the canary only from the exact immutable a52fc6e2",
+                    "Launch only through the exact immutable a52fc6e2",
+                    "Invoke that profile only from the exact isolated a52fc6e2",
+                    "only the immutable a52fc6e2 checkout may launch",
+                ):
+                    self.assertNotIn(stale_directive, plain)
 
         runner = RUNNER.read_text(encoding="utf-8")
         self.assertEqual(q.PREDECESSOR_SOURCE_COMMIT, predecessor)
-        self.assertEqual(q.CANDIDATE_SOURCE_COMMIT, candidate)
+        self.assertFalse(hasattr(q, "CANDIDATE_SOURCE_COMMIT"))
         self.assertEqual(
             q.PROTECTED_RECOVERY_ROOT,
             pathlib.Path("/home/rache/bloodbowl-rl-recovery-20260719"),
@@ -1207,6 +1497,7 @@ class QualificationPatchContractTests(unittest.TestCase):
             "--predecessor-source-root",
             "--expected-predecessor-source-commit",
             "--candidate-source-root",
+            "--expected-source-commit",
         ):
             self.assertIn(argument, runner)
 
@@ -1276,17 +1567,41 @@ class QualificationPatchContractTests(unittest.TestCase):
     def test_installer_applies_patch_last_and_hashes_compiled_surfaces(self):
         installer = INSTALLER.read_text(encoding="utf-8")
         self.assertIn("puffer_recurrent_cuda_qualification.patch", installer)
-        recurrent_at = installer.index('RECURRENT_PATCH=')
-        frozen_at = installer.index('FROZEN_PRIO_PATCH=')
-        qualification_at = installer.index('QUALIFICATION_PATCH=')
+        self.assertIn("training/selfplay_league.patch", installer)
+        recurrent_at = installer.index(
+            'echo "applied:   recurrent evaluation-state boundaries'
+        )
+        frozen_at = installer.index(
+            'echo "applied:   exact frozen-row exclusion'
+        )
+        qualification_at = installer.index(
+            'echo "applied:   bounded recurrent CUDA qualification evidence'
+        )
         digest_at = installer.index('EXACT_BACKEND_HASH="$(exact_backend_hash)"')
+        league_at = installer.index(
+            'echo "applied:   training/selfplay_league.patch ->'
+        )
         self.assertLess(recurrent_at, qualification_at)
         self.assertLess(recurrent_at, frozen_at)
         self.assertLess(frozen_at, qualification_at)
+        self.assertLess(league_at, digest_at)
         self.assertLess(qualification_at, digest_at)
+        backend_hash = installer[
+            installer.index("exact_backend_hash()"):
+            installer.index('if [ "$MODE" = "check" ]')
+        ]
+        self.assertIn("pufferlib/selfplay.py", backend_hash)
+        self.assertIn(
+            'git -C "$PUFFER" apply --reverse --check --no-index',
+            installer,
+        )
+        league_patch = LEAGUE_PATCH.read_text(encoding="utf-8")
+        self.assertIn("Patch copy: training/selfplay_league.patch", league_patch)
+        self.assertIn("league_preseed", league_patch)
         for marker in (
             "eligible_agents", "qualification_recurrent_state",
             "qualification_snapshot", "apply --reverse --check --no-index",
+            "Patch copy: training/selfplay_league.patch",
         ):
             self.assertIn(marker, installer)
 

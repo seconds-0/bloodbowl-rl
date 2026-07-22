@@ -171,9 +171,10 @@ checkpoints, and remember that stopped instances can be reclaimed.
   build at exact commit `afc8008933548438ca93c41341f5f08fdd294386`, created
   only after atomic recovery completion and required to expose obs-v5,
   exact-joint-v1, matching compiled hashes, and no qualification bindings. The
-  exact candidate is `a52fc6e2f4ece5a7ff16bb4791e3aca4dd72f2e3` in a
-  different isolated source checkout and Puffer tree. A third clean merged
-  control-runner checkout records and revalidates both full commits,
+  former exact candidate `a52fc6e2f4ece5a7ff16bb4791e3aca4dd72f2e3`
+  used a different isolated source checkout and Puffer tree but is permanently
+  rejected under D223. A clean merged schema-3 control-runner checkout records
+  and revalidates both full commits,
   source-local Puffer paths, installer checks, and runtime hashes. The occupied
   marginal-action recovery runtime is historical evidence, not the
   predecessor; never modify or reuse the recovery Puffer tree. The gate must cover every
@@ -190,8 +191,9 @@ checkpoints, and remember that stopped instances can be reclaimed.
   consumed, not a loose metrics dictionary or an unplanned old binary. Missing baseline,
   coverage, bank/buffer, tensor, or hard-integrity evidence fails closed.
   The clean merged control launcher must reject `exact-action-canary` before
-  creating output. Launch only through the exact immutable `a52fc6e2` checkout,
-  then independently analyze the stopped artifact from the merged control.
+  creating output. Never launch through the rejected `a52fc6e2` checkout;
+  independently analyze its stopped artifact from the merged control. Only a
+  separate reviewed post-qualification change may authorize a replacement.
 
 ---
 
@@ -397,14 +399,28 @@ See §4. Check the invariants before every reward-config launch. No exceptions.
   enforce the same exact-zero registry without falsely aging a stopped log into
   a liveness failure. Terminate the trainer before publishing failure status so
   status I/O cannot delay containment.
-- Exact candidate `a52fc6e2` already freezes an 11-key live registry. Preserve
-  that clean source identity, but require the merged control qualification and
+- The archived candidate `a52fc6e2` froze an 11-key live registry. Preserve it
+  only as rejected evidence; never launch, relabel, or reuse it. Require the
+  merged control qualification and
   independent stopped canary validation to enforce five additional emitted
   redundancy counters at exact zero: signed clamp delta, clipped samples,
   terminal and non-terminal clipped samples, and non-finite samples per episode.
   Primary zero ratios should imply them; a disagreement is still invalid
   evidence. Freeze both registries rather than changing or relabeling the
   candidate.
+- The sole `a52fc6e2` canary start is rejected, stopped, and non-retryable: its
+  final preflight caught the existing `training/selfplay_league.patch` missing
+  from vendored `selfplay.py` before GPU work. Qualification schema 3 makes the
+  replacement candidate and control runner use the same operator-predeclared
+  merged commit in different isolated source checkouts and rejects a value
+  unequal to the control runner's clean `HEAD`. It binds that patch file, hashes patched
+  `selfplay.py` into backend identity, and requires full reverse applicability.
+  Recapture the predecessor
+  at `afc8008933548438ca93c41341f5f08fdd294386` with the schema-3 runner, create
+  entirely fresh runtime/qualification/unit/output/authorization identities,
+  and never modify or reuse the recovery Puffer tree. Keep the replacement
+  canary frozen until qualification accepts, then authorize its exact commit in
+  a separate reviewed change.
 
 ### D174/D176 — Current BC and opponent verdicts
 

@@ -325,8 +325,12 @@ fi
 SOURCE_HASH="$(cat ocean/bloodbowl/.content_hash)"
 grep -q '^league_preseed' config/bloodbowl.ini || {
   echo "installed config lacks league_preseed" >&2; exit 1; }
-grep -q 'league_preseed' pufferlib/selfplay.py || {
-  echo "vendored selfplay.py lacks training/selfplay_league.patch" >&2; exit 1; }
+grep -Fq 'Patch copy: training/selfplay_league.patch' \
+  "$ROOT/vendor/PufferLib/pufferlib/selfplay.py" || {
+  echo "vendored selfplay.py lacks the selfplay league patch marker" >&2; exit 1; }
+git -C "$ROOT/vendor/PufferLib" apply --reverse --check --no-index \
+  "$ROOT/training/selfplay_league.patch" || {
+  echo "vendored selfplay.py lacks the complete training/selfplay_league.patch" >&2; exit 1; }
 grep -q 'Warm-started training from' pufferlib/pufferl.py || {
   echo "vendored pufferl.py lacks the warm-start patch" >&2; exit 1; }
 grep -q 'if i == 160:' pufferlib/pufferl.py || {
@@ -424,6 +428,7 @@ PATCH_HASH="$({
   sha256sum "$ROOT/training/pufferl_eval_episode_gate.patch"
   sha256sum "$ROOT/training/pufferl_metrics_keyerror.patch"
   sha256sum "$ROOT/training/torch_pufferl_trusted_load.patch"
+  sha256sum "$ROOT/training/selfplay_league.patch"
   sha256sum "$ROOT/training/puffer_exact_joint_actions.patch"
   sha256sum "$ROOT/training/puffer_recurrent_eval_state.patch"
   sha256sum "$ROOT/training/puffer_frozen_prio_mask.patch"

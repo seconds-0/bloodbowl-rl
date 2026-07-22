@@ -26,7 +26,7 @@ from typing import Any, Iterable, Mapping
 import numpy as np
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 QUALIFICATION_ONLY = True
 MANDATORY_GATES = (
     "construction_state",
@@ -92,6 +92,7 @@ DEFAULT_CUDAGRAPH_WARMUP_EPOCHS = 10
 DEFAULT_THROUGHPUT_MINIBATCH_SIZE = 16384
 BACKEND_SOURCE_FILES = (
     "pufferlib/pufferl.py",
+    "pufferlib/selfplay.py",
     "pufferlib/torch_pufferl.py",
     "src/bindings.cu",
     "src/bindings_cpu.cpp",
@@ -102,7 +103,6 @@ BACKEND_SOURCE_FILES = (
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 GIT_COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 PREDECESSOR_SOURCE_COMMIT = "afc8008933548438ca93c41341f5f08fdd294386"
-CANDIDATE_SOURCE_COMMIT = "a52fc6e2f4ece5a7ff16bb4791e3aca4dd72f2e3"
 PROTECTED_RECOVERY_ROOT = Path("/home/rache/bloodbowl-rl-recovery-20260719")
 
 
@@ -116,6 +116,42 @@ def sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def qualification_source_paths(source_root: Path) -> tuple[Path, ...]:
+    """Files whose exact bytes define qualification authority and validation."""
+    return (
+        source_root / "training/puffer_exact_joint_actions.patch",
+        source_root / "training/puffer_recurrent_eval_state.patch",
+        source_root / "training/puffer_frozen_prio_mask.patch",
+        source_root / "training/puffer_recurrent_cuda_qualification.patch",
+        source_root / "training/selfplay_league.patch",
+        source_root / "tools/install_puffer_env.sh",
+        source_root / "tools/qualify_recurrent_cuda.py",
+    )
+
+
+def qualification_source_identity(source_root: Path) -> dict[str, str]:
+    """Hash the complete schema-3 qualification authority closure."""
+    source_root = Path(source_root).resolve()
+    try:
+        return {
+            str(path.relative_to(source_root)): sha256(path)
+            for path in qualification_source_paths(source_root)
+        }
+    except (OSError, ValueError) as exc:
+        raise QualificationError(
+            f"qualification source-file identity is incomplete: {exc}"
+        ) from exc
+
+
+def validate_qualification_source_identity(
+    recorded: Any, source_root: Path
+) -> dict[str, str]:
+    expected = qualification_source_identity(source_root)
+    if not isinstance(recorded, Mapping) or dict(recorded) != expected:
+        raise QualificationError("qualification source-file identity drifted")
+    return expected
 
 
 def canonical_hash(value: Any) -> str:
@@ -1032,7 +1068,10 @@ def validate_current_identity_files(identity: Mapping[str, Any]) -> None:
 
 
 def validate_expected_candidate_identity(
-    identity: Mapping[str, Any], expected: Mapping[str, Any]
+    identity: Mapping[str, Any],
+    expected: Mapping[str, Any],
+    *,
+    authorized_source_commit: str,
 ) -> None:
     mapping = {
         "module_sha256": "module_sha256",
@@ -1048,8 +1087,10 @@ def validate_expected_candidate_identity(
         source_commit
     ) is None:
         raise QualificationError("frozen candidate source commit is malformed")
-    if source_commit != CANDIDATE_SOURCE_COMMIT:
-        raise QualificationError("frozen candidate source commit is not canonical")
+    if source_commit != authorized_source_commit:
+        raise QualificationError(
+            "frozen candidate source commit differs from predeclared authority"
+        )
     for identity_key, expected_key in mapping.items():
         if identity.get(identity_key) != expected.get(expected_key):
             raise QualificationError(
@@ -1479,6 +1520,20 @@ def current_runner_source_identity() -> dict[str, str]:
     }
 
 
+def validate_candidate_source_authority(
+    expected_commit: str, runner_source: Mapping[str, Any]
+) -> None:
+    """Require the operator's predeclared candidate to be this clean runner."""
+    if (
+        not isinstance(expected_commit, str)
+        or GIT_COMMIT_PATTERN.fullmatch(expected_commit) is None
+        or runner_source.get("source_commit") != expected_commit
+    ):
+        raise QualificationError(
+            "predeclared candidate commit differs from the clean control runner"
+        )
+
+
 def validate_source_checkout(
     source_root: Path,
     puffer_root: Path,
@@ -1493,11 +1548,7 @@ def validate_source_checkout(
         expected_commit
     ) is None:
         raise QualificationError(f"{role} source commit must be a full lowercase Git SHA")
-    canonical_commit = {
-        "candidate": CANDIDATE_SOURCE_COMMIT,
-        "predecessor": PREDECESSOR_SOURCE_COMMIT,
-    }[role]
-    if expected_commit != canonical_commit:
+    if role == "predecessor" and expected_commit != PREDECESSOR_SOURCE_COMMIT:
         raise QualificationError(f"{role} source commit is not the frozen canonical commit")
     source_root = Path(source_root).resolve()
     puffer_root = Path(puffer_root).resolve()
@@ -1691,6 +1742,7 @@ def run_qualification(args: argparse.Namespace) -> int:
     output = Path(args.output).resolve()
     runner_source_root = _require_clean_source_and_external_output(output)
     runner_source = current_runner_source_identity()
+    validate_candidate_source_authority(args.expected_source_commit, runner_source)
     expected_candidate = {
         "source_commit": args.expected_source_commit,
         "module_sha256": args.expected_candidate_module_sha256,
@@ -1751,7 +1803,11 @@ def run_qualification(args: argparse.Namespace) -> int:
     construction_identity = construction.get("identity")
     if not isinstance(construction_identity, Mapping):
         raise QualificationError("construction module identity is missing")
-    validate_expected_candidate_identity(construction_identity, expected_candidate)
+    validate_expected_candidate_identity(
+        construction_identity,
+        expected_candidate,
+        authorized_source_commit=runner_source["source_commit"],
+    )
     if construction_identity.get("puffer_root") != candidate_source["puffer_root"]:
         raise QualificationError("candidate module is outside its frozen source checkout")
     validate_zero_state(
@@ -1902,25 +1958,9 @@ def run_qualification(args: argparse.Namespace) -> int:
         "expected_candidate": expected_candidate,
         "expected_predecessor": expected_predecessor,
         "candidate_source": candidate_source,
-        "runner_source_commit": subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            cwd=runner_source_root,
-            text=True,
-            capture_output=True,
-            check=True,
-        ).stdout.strip(),
+        "runner_source_commit": runner_source["source_commit"],
         "runner_sha256": sha256(Path(__file__).resolve()),
-        "source_files": {
-            str(path.relative_to(runner_source_root)): sha256(path)
-            for path in (
-                runner_source_root / "training/puffer_exact_joint_actions.patch",
-                runner_source_root / "training/puffer_recurrent_eval_state.patch",
-                runner_source_root / "training/puffer_frozen_prio_mask.patch",
-                runner_source_root / "training/puffer_recurrent_cuda_qualification.patch",
-                runner_source_root / "tools/install_puffer_env.sh",
-                Path(__file__).resolve(),
-            )
-        },
+        "source_files": qualification_source_identity(runner_source_root),
         "max_regression_fraction": args.max_regression_fraction,
         "gates": gates,
         "cells": [
@@ -1967,19 +2007,7 @@ def validate_qualification(path: Path) -> dict[str, Any]:
     ).stdout
     if current_status or final.get("runner_source_commit") != current_commit:
         raise QualificationError("qualification runner checkout/commit drifted")
-    expected_source_files = {
-        str(path.relative_to(source_root)): sha256(path)
-        for path in (
-            source_root / "training/puffer_exact_joint_actions.patch",
-            source_root / "training/puffer_recurrent_eval_state.patch",
-            source_root / "training/puffer_frozen_prio_mask.patch",
-            source_root / "training/puffer_recurrent_cuda_qualification.patch",
-            source_root / "tools/install_puffer_env.sh",
-            Path(__file__).resolve(),
-        )
-    }
-    if final.get("source_files") != expected_source_files:
-        raise QualificationError("qualification source-file identity drifted")
+    validate_qualification_source_identity(final.get("source_files"), source_root)
     cells_raw = final.get("cells")
     if not isinstance(cells_raw, list):
         raise QualificationError("qualification cell manifest is missing")
@@ -2062,7 +2090,11 @@ def validate_qualification(path: Path) -> dict[str, Any]:
     expected_candidate = final.get("expected_candidate")
     if not isinstance(expected_candidate, Mapping):
         raise QualificationError("frozen candidate identity is missing")
-    validate_expected_candidate_identity(identity, expected_candidate)
+    validate_expected_candidate_identity(
+        identity,
+        expected_candidate,
+        authorized_source_commit=current_commit,
+    )
     candidate_source_raw = final.get("candidate_source")
     if not isinstance(candidate_source_raw, Mapping):
         raise QualificationError("frozen candidate source identity is missing")

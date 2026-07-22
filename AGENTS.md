@@ -577,9 +577,10 @@ changes a reward, active queue, production default, or promotion verdict.
   isolated fp32 build of `afc8008933548438ca93c41341f5f08fdd294386`, with
   obs-v5/exact-joint-v1 and no qualification surface—not the occupied recovery
   runtime, whose nonzero repaired-action telemetry makes it ineligible. Build
-  it only after atomic recovery completion. Keep exact candidate
-  `a52fc6e2f4ece5a7ff16bb4791e3aca4dd72f2e3` in a different isolated source
-  checkout and Puffer tree. Use a third clean merged control-runner checkout;
+  it only after atomic recovery completion. The former exact candidate
+  `a52fc6e2f4ece5a7ff16bb4791e3aca4dd72f2e3` used a different isolated source
+  checkout and Puffer tree, but D223 permanently rejects it as a launch input.
+  Use a clean merged schema-3 control-runner checkout;
   it must record and revalidate both source roots, full commits, source-local
   Puffer paths, installer checks, and runtime hashes. Never modify or reuse the
   recovery Puffer tree. The predecessor must also be represented by the exact
@@ -589,9 +590,24 @@ changes a reward, active queue, production default, or promotion verdict.
   A missing predecessor throughput
   artifact is a failure, not an ungated pass. Qualification artifacts are
   permanently ineligible as checkpoint ancestry. The merged control checkout
-  must reject `exact-action-canary` launch before creating output: only the
-  immutable `a52fc6e2` checkout may launch the frozen 11-key-live-registry
-  canary, which the later control analyzer rechecks against all 16 counters.
+  must reject `exact-action-canary` launch before creating output. No current
+  checkout is authorized to launch a replacement; only a separate reviewed
+  post-qualification change may name its exact commit and frozen registry.
+- The sole `a52fc6e2` canary start is permanently rejected: its final preflight
+  proved that `training/selfplay_league.patch` existed but was not applied to
+  vendored `pufferlib/selfplay.py`. It used no GPU and has zero restarts; never
+  retry or repair it in place. Qualification schema 3 makes the replacement
+  candidate and control runner use the same operator-predeclared merged commit
+  in different isolated source checkouts. The runner rejects a commit that does
+  not equal its clean `HEAD`; schema 3 also binds the league-patch file, includes
+  patched `selfplay.py` in backend identity, and requires full reverse patch
+  applicability. The exact
+  predecessor remains `afc8008933548438ca93c41341f5f08fdd294386` in its
+  different isolated source. Recapture its throughput with the schema-3 runner,
+  then create entirely new runtime, qualification, output, stopped-validation,
+  unit, authorization, and marker identities. Never modify or reuse the
+  recovery Puffer tree. Keep the merged launcher frozen against a replacement
+  canary until qualification accepts; authorize its exact commit separately.
 - BBP v4 is the first replay-pair lineage with exact conditional masks and
   canonical inactive-head sentinels (`arg=32`, `square=390`). Do not train a
   current BC/action experiment from v1-v3 pairs or mix those lineages merely
