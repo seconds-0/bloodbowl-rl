@@ -526,6 +526,51 @@ class QualificationValidatorTests(unittest.TestCase):
                     source, puffer, expected_commit=commit, role="predecessor"
                 )
 
+    def test_worker_preserves_explicit_venv_python_symlink(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            base_python = root / "managed-python"
+            base_python.write_text("binary placeholder\n", encoding="utf-8")
+            venv_python = root / "venv" / "bin" / "python"
+            venv_python.parent.mkdir(parents=True)
+            venv_python.symlink_to(base_python)
+            puffer = root / "puffer"
+            output = root / "output"
+            puffer.mkdir()
+            output.mkdir()
+            record_path = output / "construction.json"
+            record_path.write_text("{}\n", encoding="utf-8")
+            args = mock.Mock(
+                python=venv_python,
+                puffer_root=puffer,
+                seed=271828,
+                ratio_call_limit=64,
+                throughput_agents=2048,
+                throughput_buffers=2,
+                throughput_threads=16,
+                throughput_horizon=64,
+                throughput_hidden=512,
+                throughput_layers=3,
+                throughput_warmup_rollouts=2,
+                throughput_timed_rollouts=8,
+                cell_timeout_seconds=1800,
+            )
+            completed = mock.Mock(returncode=0, stdout="", stderr="")
+            record = {"accepted": True, "qualification_only": True}
+            with mock.patch.object(
+                self.q.subprocess, "run", return_value=completed
+            ) as run, mock.patch.object(self.q, "_read_json", return_value=record):
+                self.q._run_worker(
+                    args,
+                    kind="construction",
+                    name="construction",
+                    cudagraphs=0,
+                    output=output,
+                )
+            command = run.call_args.args[0]
+            self.assertEqual(command[0], str(venv_python.absolute()))
+            self.assertNotEqual(command[0], str(base_python.resolve()))
+
     def test_run_failure_record_never_writes_to_rejected_output(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
