@@ -184,6 +184,12 @@ with evaluation mode off. A row-sized captured reset gate is acceptable; a
 layers × rows × hidden no-op launch is not. Any mismatch consumes the entire
 error budget and blocks the canary.
 
+For canary plan-only closure, account for the launcher's persistent ownership
+inode. The output must contain exactly `SCREEN_MANIFEST.json` and a regular
+zero-byte `.screen.lock`; require the empty-file SHA-256, prove the lock is
+released with nonblocking `flock`, and bind both files' modes, sizes, and
+digests. Do not delete the lock or tolerate any third entry.
+
 A final training Steps line is not completion. The audited evaluator may continue
 until the completed-game gate is satisfied. Do not kill it merely because the
 dashboard is no longer advancing training steps. Acceptance requires the explicit

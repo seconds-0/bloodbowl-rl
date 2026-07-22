@@ -6,6 +6,7 @@ import hashlib
 import importlib.util
 import json
 import pathlib
+import subprocess
 import tempfile
 import unittest
 from unittest import mock
@@ -18,11 +19,15 @@ PATCH = ROOT / "training" / "puffer_recurrent_cuda_qualification.patch"
 PRIO_PATCH = ROOT / "training" / "puffer_frozen_prio_mask.patch"
 INSTALLER = ROOT / "tools" / "install_puffer_env.sh"
 RUNNER = ROOT / "tools" / "qualify_recurrent_cuda.py"
+SCREEN_LAUNCHER = ROOT / "tools" / "run_reward_screen.sh"
 PLAN = ROOT / "docs" / "plans" / "recurrent-cuda-qualification.md"
+QUALIFICATION_CHECKLIST = ROOT / "docs" / "qualification-2070-execution-checklist.md"
+CANARY_CHECKLIST = ROOT / "docs" / "exact-action-canary-2070-execution-checklist.md"
 AGENTS = ROOT / "AGENTS.md"
 CLAUDE = ROOT / "CLAUDE.md"
 PUFFER_SKILL = ROOT / ".claude" / "skills" / "puffer-env-dev" / "SKILL.md"
 TRAINING_SKILL = ROOT / ".claude" / "skills" / "training-experiments" / "SKILL.md"
+FLEET_SKILL = ROOT / ".claude" / "skills" / "fleet-ops" / "SKILL.md"
 
 
 def load_runner():
@@ -936,6 +941,147 @@ class QualificationValidatorTests(unittest.TestCase):
 
 
 class QualificationPatchContractTests(unittest.TestCase):
+    def test_canary_plan_contract_accounts_for_persistent_screen_lock(self):
+        launcher = SCREEN_LAUNCHER.read_text(encoding="utf-8")
+        self.assertEqual(
+            hashlib.sha256(SCREEN_LAUNCHER.read_bytes()).hexdigest(),
+            "8a08e846764a92306440d5e220e9d6ee894c4bc15a7ee1ee75e55c9c2b041df3",
+        )
+        self.assertIn(
+            "exact-action-canary launcher is frozen at candidate "
+            "a52fc6e2f4ece5a7ff16bb4791e3aca4dd72f2e3",
+            launcher,
+        )
+
+        candidate = "a52fc6e2f4ece5a7ff16bb4791e3aca4dd72f2e3"
+        candidate_launcher_bytes = subprocess.run(
+            ["git", "show", f"{candidate}:tools/run_reward_screen.sh"],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+        ).stdout
+        self.assertEqual(
+            hashlib.sha256(candidate_launcher_bytes).hexdigest(),
+            "b4ffe9cd6652a0b5f003956015797c458863a8152adcc278b323ba0a329adda8",
+        )
+        candidate_launcher = candidate_launcher_bytes.decode("utf-8")
+        self.assertIn('exec 8>"$OUT_DIR/.screen.lock"', candidate_launcher)
+        self.assertIn("flock -n 8", candidate_launcher)
+        self.assertIn("if destination.exists():", candidate_launcher)
+        self.assertIn(
+            'recorded.get("schema_version") != 1 or recorded.get("contract") != contract',
+            candidate_launcher,
+        )
+        self.assertIn(
+            "screen plan drift; changed top-level contract fields",
+            candidate_launcher,
+        )
+        exists_start = candidate_launcher.index("if destination.exists():")
+        create_else = candidate_launcher.index("\nelse:\n    payload =", exists_start)
+        manifest_print = candidate_launcher.index(
+            "\nprint(sha(destination))", create_else
+        )
+        existing_manifest_branch = candidate_launcher[exists_start:create_else]
+        create_manifest_branch = candidate_launcher[create_else:manifest_print]
+        self.assertIn('recorded.get("contract") != contract', existing_manifest_branch)
+        self.assertNotIn("write_text", existing_manifest_branch)
+        self.assertNotIn("replace(destination)", existing_manifest_branch)
+        self.assertIn("temporary.write_text", create_manifest_branch)
+        self.assertIn("temporary.replace(destination)", create_manifest_branch)
+
+        freeze_start = candidate_launcher.index("freeze_screen_manifest() {")
+        freeze_end = candidate_launcher.index(
+            'SCREEN_MANIFEST_SHA="$(freeze_screen_manifest)"', freeze_start
+        )
+        frozen_contract_builder = candidate_launcher[freeze_start:freeze_end]
+        self.assertNotIn("PLAN_ONLY", frozen_contract_builder)
+
+        checklist = CANARY_CHECKLIST.read_text(encoding="utf-8")
+        normalized_checklist = " ".join(checklist.split())
+        for fragment in (
+            "exact-action-canary-50m-s42-v2",
+            "| `tools/run_reward_screen.sh` | "
+            "`b4ffe9cd6652a0b5f003956015797c458863a8152adcc278b323ba0a329adda8` |",
+            "exactly two regular files",
+            "`SCREEN_MANIFEST.json` plus `.screen.lock`",
+            "zero bytes",
+            "( exec 9</home/rache/bloodbowl-rl-qualification-artifacts-20260722/"
+            "exact-action-canary-50m-s42-v2/.screen.lock; flock -n 9 )",
+            "closes FD 9 and releases the proof's",
+            "pathname-form `flock`",
+            "byte-identical to the pre-proof inventory",
+            "It leaves the manifest byte-identical",
+            "first live poll",
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "15271d946e404ddcd26e9fc075d44b9dbeaa268b6e5e9ffecf536abfd212a331",
+            "6d69a4deb85698279f100079ee6bb3b785af9b36d97cefeb7cc4f11389ce35f7",
+            "2756134a67dfc8010c13d16eb30533b82671580e6e5eb049f430f813ef7482e4",
+            "68d92db88481fb9aaa06b0e31e80429f5da9904b20ef39e6ed15dcad3f551618",
+            "exact-action-canary-50m-s42-v1-plan-rejected-files.tsv",
+            "exact-action-canary-50m-s42-v1-plan-rejected-inventory.sha256",
+            "exact-action-canary-50m-s42-v1-plan-rejection.txt",
+            "mode<TAB>bytes<TAB>relative-path",
+            "three octal permission",
+            "sha256<TWO-SPACES>relative-path",
+            "rejected, never-installed unit identity",
+            "pre-proof inventory",
+            "post-proof inventory",
+            "deep-compares the complete nested `contract` object",
+            "repeat the Gate 2",
+            "Do not delete, relabel, launch, or reuse the v1 output",
+        ):
+            with self.subTest(fragment=fragment):
+                self.assertIn(fragment, normalized_checklist)
+
+        self.assertIn(
+            "`bloodbowl-exact-action-canary-50m-s42-v1.service`; Gate 1 must prove",
+            checklist,
+        )
+        for line in checklist.splitlines():
+            with self.subTest(line=line):
+                if "exact-action-canary-50m-s42-v1" not in line:
+                    continue
+                self.assertNotIn("PREFIX=", line)
+                self.assertNotIn("OUT_DIR=", line)
+                self.assertNotIn("ExecStart=", line)
+                self.assertNotIn("Unit name:", line)
+        self.assertIn("PREFIX=exact-action-canary-50m-s42-v2", checklist)
+        self.assertIn("bloodbowl-exact-action-canary-50m-s42-v2.service", checklist)
+
+        qualification = QUALIFICATION_CHECKLIST.read_text(encoding="utf-8")
+        self.assertIn("zero-byte, released, hash-bound `.screen.lock`", qualification)
+        self.assertIn("exactly two regular files", qualification)
+        self.assertIn(
+            "leaves `SCREEN_MANIFEST.json` byte-identical",
+            " ".join(qualification.split()),
+        )
+
+        required_guidance = {
+            AGENTS: (
+                "run_reward_screen.sh creates $OUT_DIR/.screen.lock",
+                "hash its mode/size with the manifest",
+            ),
+            CLAUDE: (
+                "The frozen screen launcher intentionally creates and retains",
+                "with both modes, sizes, and hashes bound",
+            ),
+            TRAINING_SKILL: (
+                "The frozen screen launcher creates $OUT_DIR/.screen.lock",
+                "Hash both and their modes/sizes",
+            ),
+            FLEET_SKILL: (
+                "For canary plan-only closure, account for the launcher's persistent ownership inode",
+                "bind both files' modes, sizes, and digests",
+            ),
+        }
+        for path, fragments in required_guidance.items():
+            with self.subTest(path=path):
+                normalized = " ".join(
+                    path.read_text(encoding="utf-8").replace("`", "").split()
+                )
+                for fragment in fragments:
+                    self.assertIn(fragment, normalized)
+
     def test_operator_contract_uses_isolated_exact_action_predecessor(self):
         q = load_runner()
         predecessor = "afc8008933548438ca93c41341f5f08fdd294386"

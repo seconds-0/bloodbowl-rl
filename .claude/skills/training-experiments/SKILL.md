@@ -141,6 +141,13 @@ checkpoints, and remember that stopped instances can be reclaimed.
   Launch it with both `WARM` and `POOL` absent (use `env -u WARM -u POOL` when
   the shell may inherit them). It uses zero frozen banks, and its output is
   permanently marked qualification-only; do not continue from it.
+- The frozen screen launcher creates `$OUT_DIR/.screen.lock` before manifest
+  freezing and retains the inode as its one-screen ownership surface. A canary
+  plan-only output must contain exactly two regular files:
+  `SCREEN_MANIFEST.json` and a zero-byte `.screen.lock`. Hash both and their
+  modes/sizes, and require a successful nonblocking `flock` after the plan
+  process exits. Never remove the lock to force one-file closure; missing,
+  nonempty, held, or additional output rejects that canary identity.
 - The recurrent runtime is part of the frozen implementation identity. Before
   the exact-action canary, a fresh isolated build must prove zero primary and
   frozen state after CUDA graph warmup, graph-on/off deterministic active-row output
