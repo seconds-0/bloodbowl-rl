@@ -36,6 +36,11 @@ import sys
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
+if __package__:
+    from .live_integrity_guard import HARD_INTEGRITY_KEYS
+else:
+    from live_integrity_guard import HARD_INTEGRITY_KEYS
+
 
 EXPECTED_SCHEDULE = (
     ("r0", 42),
@@ -136,6 +141,17 @@ POSSESSION_GAIN_EFFECT_DEFINITIONS = {
 PAIRED_CANDIDATES = ("possession_only", "gain_only", "neither")
 PAIRED_FINAL_SEEDS = (42, 43, 44)
 CONTROL_FINAL_SCHEDULE = (("both", 42), ("both", 43), ("both", 44))
+EXACT_ACTION_CANARY_SCHEDULE = (("both", 42),)
+EXACT_ACTION_CANARY_REQUESTED_STEPS = 50_000_000
+EXACT_ACTION_CANARY_TOTAL_AGENTS = 2_048
+EXACT_ACTION_CANARY_HORIZON = 64
+EXACT_ACTION_CANARY_ROLLOUT_QUANTUM = (
+    EXACT_ACTION_CANARY_TOTAL_AGENTS * EXACT_ACTION_CANARY_HORIZON)
+EXACT_ACTION_CANARY_FINAL_STEPS = (
+    EXACT_ACTION_CANARY_REQUESTED_STEPS
+    // EXACT_ACTION_CANARY_ROLLOUT_QUANTUM
+    * EXACT_ACTION_CANARY_ROLLOUT_QUANTUM)
+EXACT_ACTION_CANARY_CHECKPOINT_BYTES = 16_066_560
 
 SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 
@@ -223,6 +239,18 @@ def _screen_spec(contract: dict[str, Any]) -> dict[str, Any]:
             "factors": {"both": {"control": True}},
             "effect_definitions": {},
         }
+    if profile == "exact-action-canary":
+        return {
+            "profile": profile,
+            "candidate_arm": "both",
+            "schedule": EXACT_ACTION_CANARY_SCHEDULE,
+            "seeds": (42,),
+            "reward_sha256": {
+                "both": POSSESSION_GAIN_REWARD_SHA256["both"],
+            },
+            "factors": {"both": {"qualification": True}},
+            "effect_definitions": {},
+        }
     if profile in ("paired-confirmation", "paired-final"):
         candidate = contract.get("candidate_arm")
         if candidate not in PAIRED_CANDIDATES:
@@ -265,6 +293,189 @@ def _screen_spec(contract: dict[str, Any]) -> dict[str, Any]:
             },
         }
     raise AnalysisError(f"unsupported reward-screen profile: {profile!r}")
+
+
+def _validate_exact_action_canary_contract(contract: dict[str, Any]) -> None:
+    if contract.get("qualification_only") is not True:
+        raise AnalysisError(
+            "exact-action-canary contract must be qualification_only")
+    if contract.get("warm") is not None or contract.get("pool") is not None:
+        raise AnalysisError("exact-action-canary contract must have null warm/pool")
+
+    requested_steps = _need_int(
+        contract.get("requested_steps"), "exact-action-canary requested_steps")
+    if requested_steps != EXACT_ACTION_CANARY_REQUESTED_STEPS:
+        raise AnalysisError(
+            "exact-action-canary requested_steps must equal 50000000")
+    rollout_quantum = _need_int(
+        contract.get("rollout_quantum"), "exact-action-canary rollout_quantum")
+    if rollout_quantum != EXACT_ACTION_CANARY_ROLLOUT_QUANTUM:
+        raise AnalysisError(
+            "exact-action-canary rollout_quantum mismatch: "
+            f"{rollout_quantum} != {EXACT_ACTION_CANARY_ROLLOUT_QUANTUM}")
+    final_steps = _need_int(
+        contract.get("final_steps"), "exact-action-canary final_steps")
+    if final_steps != EXACT_ACTION_CANARY_FINAL_STEPS:
+        raise AnalysisError(
+            "exact-action-canary final_steps do not match the frozen "
+            f"complete-rollout budget: {final_steps} != "
+            f"{EXACT_ACTION_CANARY_FINAL_STEPS}")
+
+    bootstrap = _need_mapping(
+        contract.get("bootstrap"), "exact-action-canary bootstrap")
+    expected_bootstrap = {
+        "mode": "fresh-v5-qualification",
+        "observation_abi": "obs-v5",
+        "observation_version": 5,
+        "action_abi": "exact-joint-v1",
+        "initialization": "fresh",
+        "warm_lineage_sha256": "",
+        "pool_lineage_bundle_sha256": "",
+    }
+    for field, expected in expected_bootstrap.items():
+        if bootstrap.get(field) != expected:
+            raise AnalysisError(
+                f"exact-action-canary bootstrap {field} mismatch: "
+                f"{bootstrap.get(field)!r} != {expected!r}")
+
+    settings = _need_mapping(
+        contract.get("settings"), "exact-action-canary settings")
+    for field, expected in (
+        ("total_agents", EXACT_ACTION_CANARY_TOTAL_AGENTS),
+        ("horizon", EXACT_ACTION_CANARY_HORIZON),
+        ("expected_checkpoint_bytes", EXACT_ACTION_CANARY_CHECKPOINT_BYTES),
+        ("num_frozen_banks", 0),
+        ("frozen_bank_pct", 0),
+        ("native_precision_bytes", 4),
+        ("policy_hidden_size", 512),
+        ("policy_num_layers", 3),
+        ("policy_expansion_factor", 1),
+        ("min_train_games", 1),
+        ("min_eval_games", 10_000),
+        ("eval_episodes", 10_000),
+    ):
+        observed = _need_int(
+            settings.get(field), f"exact-action-canary settings.{field}")
+        if observed != expected:
+            raise AnalysisError(
+                f"exact-action-canary settings.{field} mismatch: "
+                f"{observed} != {expected}")
+
+    error_budget = _need_mapping(
+        contract.get("error_budget"), "exact-action-canary error_budget")
+    if _need_int(
+            error_budget.get("contamination_budget"),
+            "exact-action-canary contamination_budget") != 0:
+        raise AnalysisError(
+            "exact-action-canary contamination_budget must be exactly zero")
+    hard_keys = error_budget.get("hard_integrity_keys")
+    if hard_keys != list(HARD_INTEGRITY_KEYS):
+        raise AnalysisError(
+            "exact-action-canary hard_integrity_keys do not match the frozen registry")
+    poll_seconds = _need_int(
+        error_budget.get("detection_poll_seconds"),
+        "exact-action-canary detection_poll_seconds",
+    )
+    if not 1 <= poll_seconds <= 60:
+        raise AnalysisError(
+            "exact-action-canary detection_poll_seconds must be in 1..60")
+    if _need_int(
+            error_budget.get("max_panel_silence_seconds"),
+            "exact-action-canary max_panel_silence_seconds") != 180:
+        raise AnalysisError(
+            "exact-action-canary max_panel_silence_seconds must equal 180")
+
+    implementation = _need_mapping(
+        contract.get("implementation"), "exact-action-canary implementation")
+    implementation_hashes = (
+        "screen_script_sha256",
+        "game_stats_sha256",
+        "live_integrity_guard_sha256",
+        "checkpoint_lineage_sha256",
+        "status_wrapper_sha256",
+        "launcher_sha256",
+        "source_sha256",
+        "compiled_module_sha256",
+        "puffer_patch_bundle_sha256",
+        "vendor_source_sha256",
+    )
+    for field in implementation_hashes:
+        _need_sha256(
+            implementation.get(field),
+            f"exact-action-canary implementation.{field}",
+        )
+    compiled = _need_mapping(
+        implementation.get("compiled_semantic_contract"),
+        "exact-action-canary compiled_semantic_contract",
+    )
+    expected_compiled = {
+        "env_name": "bloodbowl",
+        "gpu": 1,
+        "precision_bytes": 4,
+        "observation_abi": "obs-v5",
+        "observation_version": 5,
+        "action_abi": "exact-joint-v1",
+    }
+    for field, expected in expected_compiled.items():
+        observed = (
+            _need_int(compiled.get(field), f"exact-action-canary compiled {field}")
+            if isinstance(expected, int) else compiled.get(field)
+        )
+        if observed != expected:
+            raise AnalysisError(
+                f"exact-action-canary compiled {field} mismatch: "
+                f"{observed!r} != {expected!r}")
+    _need_sha256(
+        compiled.get("exact_action_source_sha256"),
+        "exact-action-canary compiled exact_action_source_sha256",
+    )
+    environment_source_sha = _need_sha256(
+        compiled.get("environment_source_sha256"),
+        "exact-action-canary compiled environment_source_sha256",
+    )
+    if environment_source_sha != implementation["source_sha256"]:
+        raise AnalysisError(
+            "exact-action-canary compiled environment source does not match "
+            "the installed source identity")
+
+
+def _validate_exact_action_canary_result(
+        result: dict[str, Any], label: str, contract: dict[str, Any]) -> str:
+    if result.get("qualification_only") is not True:
+        raise AnalysisError(f"{label} must be qualification_only")
+    if result.get("acceptance_failures") != []:
+        raise AnalysisError(
+            f"{label} must record an exactly empty acceptance_failures array")
+
+    settings = _need_mapping(contract.get("settings"), "screen settings")
+    for phase, minimum_field in (
+        ("train", "min_train_games"), ("eval", "min_eval_games")):
+        metrics = _need_mapping(
+            result.get(f"{phase}_metrics"), f"{label} {phase}_metrics")
+        observed_n = _finite_number(
+            metrics.get("n"), f"{label} {phase}_metrics.n")
+        minimum_n = _need_int(
+            settings.get(minimum_field),
+            f"screen settings {minimum_field}",
+        )
+        if observed_n < minimum_n:
+            raise AnalysisError(
+                f"{label} {phase}_metrics.n is below the frozen minimum: "
+                f"{observed_n} < {minimum_n}")
+        for key in HARD_INTEGRITY_KEYS:
+            observed = _finite_number(
+                metrics.get(key), f"{label} {phase}_metrics.{key}")
+            if observed != 0.0:
+                raise AnalysisError(
+                    f"{label} {phase}_metrics.{key} must be exactly zero")
+
+    lineage_path = result.get("checkpoint_lineage")
+    if not isinstance(lineage_path, str) or not lineage_path:
+        raise AnalysisError(f"{label} checkpoint_lineage must be a non-empty path")
+    return _need_sha256(
+        result.get("checkpoint_lineage_sha256"),
+        f"{label} checkpoint_lineage_sha256",
+    )
 
 
 def _validate_schedule(
@@ -386,6 +597,10 @@ def _validate_result(
     checkpoint_sha = _need_sha256(
         result.get("checkpoint_sha256"), f"{label} checkpoint_sha256"
     )
+    checkpoint_lineage_sha = None
+    if contract.get("screen_profile") == "exact-action-canary":
+        checkpoint_lineage_sha = _validate_exact_action_canary_result(
+            result, label, contract)
     provenance_sha = {
         field.removesuffix("_sha256"): _need_sha256(
             result.get(field), f"{label} {field}"
@@ -411,6 +626,8 @@ def _validate_result(
         "provenance_sha256": provenance_sha,
         "eval": selected,
     }
+    if checkpoint_lineage_sha is not None:
+        summary["checkpoint_lineage_sha256"] = checkpoint_lineage_sha
     return result, summary
 
 
@@ -468,6 +685,16 @@ def _validate_completion(
             raise AnalysisError(
                 f"completion checkpoint hash mismatch for {arm}/seed {seed}"
             )
+        if results[key].get("qualification_only") is True:
+            recorded_lineage_sha = _need_sha256(
+                recorded.get("checkpoint_lineage_sha256"),
+                f"completion checkpoint_lineage_sha256 for {arm}/seed {seed}",
+            )
+            if recorded_lineage_sha != results[key].get(
+                    "checkpoint_lineage_sha256"):
+                raise AnalysisError(
+                    "completion checkpoint lineage hash mismatch for "
+                    f"{arm}/seed {seed}")
 
     return {
         "present": True,
@@ -480,7 +707,7 @@ def _validate_completion(
 def _factorial_effects(
     cells: dict[str, float], profile: str,
 ) -> dict[str, float]:
-    if profile == "control-final":
+    if profile in ("control-final", "exact-action-canary"):
         return {}
     if profile == "distance-possession":
         r0, r1, r2, r3 = (cells[arm] for arm in ("r0", "r1", "r2", "r3"))
@@ -546,6 +773,8 @@ def analyze_screen(
         raise AnalysisError("unsupported SCREEN_MANIFEST.json schema")
     contract = _need_mapping(manifest.get("contract"), "screen contract")
     spec = _screen_spec(contract)
+    if spec["profile"] == "exact-action-canary":
+        _validate_exact_action_canary_contract(contract)
     prefix = contract.get("prefix")
     if not isinstance(prefix, str) or not prefix:
         raise AnalysisError("screen contract has no prefix")
@@ -590,23 +819,35 @@ def analyze_screen(
         runs.append(summary)
 
     seeds = tuple(spec.get("seeds", (42, 43)))
-    warnings = [
-        (
-            f"Only n={len(seeds)} seeds are available. Across-seed means and sample SDs "
-            "are descriptive; they are not confidence intervals, hypothesis "
-            "tests, or a strength claim."
-        ),
-        (
-            "These contrasts summarize final-policy self-play evaluation "
-            "metrics. Promotion still requires paired held-out match-strength "
-            "and behavioral checks."
-        ),
-    ]
+    if spec["profile"] == "exact-action-canary":
+        warnings = [
+            (
+                "This is a qualification-only runtime canary. Its checkpoint is "
+                "permanently ineligible as training ancestry, and its metrics are "
+                "not causal reward or policy-strength evidence."
+            ),
+        ]
+    else:
+        warnings = [
+            (
+                f"Only n={len(seeds)} seeds are available. Across-seed means and "
+                "sample SDs are descriptive; they are not confidence intervals, "
+                "hypothesis tests, or a strength claim."
+            ),
+            (
+                "These contrasts summarize final-policy self-play evaluation "
+                "metrics. Promotion still requires paired held-out match-strength "
+                "and behavioral checks."
+            ),
+        ]
     completion_path = directory / "SCREEN_COMPLETE.json"
     if completion_path.exists():
         completion = _validate_completion(
             completion_path, manifest_sha, schedule, result_paths, raw_results
         )
+    elif spec["profile"] == "exact-action-canary":
+        raise AnalysisError(
+            "exact-action-canary requires the atomic SCREEN_COMPLETE.json proof")
     else:
         completion = {"present": False}
         warnings.append(
@@ -655,12 +896,16 @@ def analyze_screen(
     return {
         "schema_version": 1,
         "analysis": (
-            "control_reward_replication"
-            if spec["profile"] == "control-final"
+            "exact_action_canary_qualification"
+            if spec["profile"] == "exact-action-canary"
             else (
-                "paired_reward_confirmation"
-                if spec["profile"] in ("paired-confirmation", "paired-final")
-                else "paired_reward_screen_2x2"
+                "control_reward_replication"
+                if spec["profile"] == "control-final"
+                else (
+                    "paired_reward_confirmation"
+                    if spec["profile"] in ("paired-confirmation", "paired-final")
+                    else "paired_reward_screen_2x2"
+                )
             )
         ),
         "screen": {
@@ -719,35 +964,40 @@ def render_text(report: dict[str, Any]) -> str:
         )
 
     lines.append("")
-    lines.append(
-        "Per-seed paired contrasts"
-        if screen["profile"] in ("paired-confirmation", "paired-final")
-        else (
-            "Per-seed control summaries"
-            if screen["profile"] == "control-final"
-            else "Per-seed 2x2 effects"
-        )
-    )
-    for seed in report["per_seed"]:
-        lines.append(f"  seed {seed}")
-        for metric in report["metrics"]:
-            effects = report["per_seed"][seed]["effects"][metric]
-            lines.append(f"    {metric}: " + " ".join(
-                f"{effect}={_format_number(effects[effect])}"
-                for effect in report["effect_definitions"]
-            ))
-
-    lines.append("")
-    seed_count = len(report["per_seed"])
-    lines.append(f"Across {seed_count} seeds (descriptive means)")
-    for metric in report["metrics"]:
-        summaries = report["across_seeds"]["effects"][metric]
+    if screen["profile"] == "exact-action-canary":
+        lines.append("Qualification verdict")
         lines.append(
-            f"  {metric}: " + " ".join(
-                f"{effect}={_format_number(summaries[effect]['mean'])}"
-                for effect in report["effect_definitions"]
+            "  accepted fixed one-arm runtime canary; no reward contrasts computed")
+    else:
+        lines.append(
+            "Per-seed paired contrasts"
+            if screen["profile"] in ("paired-confirmation", "paired-final")
+            else (
+                "Per-seed control summaries"
+                if screen["profile"] == "control-final"
+                else "Per-seed 2x2 effects"
             )
         )
+        for seed in report["per_seed"]:
+            lines.append(f"  seed {seed}")
+            for metric in report["metrics"]:
+                effects = report["per_seed"][seed]["effects"][metric]
+                lines.append(f"    {metric}: " + " ".join(
+                    f"{effect}={_format_number(effects[effect])}"
+                    for effect in report["effect_definitions"]
+                ))
+
+        lines.append("")
+        seed_count = len(report["per_seed"])
+        lines.append(f"Across {seed_count} seeds (descriptive means)")
+        for metric in report["metrics"]:
+            summaries = report["across_seeds"]["effects"][metric]
+            lines.append(
+                f"  {metric}: " + " ".join(
+                    f"{effect}={_format_number(summaries[effect]['mean'])}"
+                    for effect in report["effect_definitions"]
+                )
+            )
     lines.append("")
     lines.append("Warnings")
     lines.extend(f"  - {warning}" for warning in report["warnings"])
