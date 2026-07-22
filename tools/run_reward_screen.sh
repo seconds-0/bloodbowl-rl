@@ -131,6 +131,15 @@ else
   BOOTSTRAP_MODE=lineage-v5
 fi
 
+# D222: this merged control launcher imports the widened 16-key registry, but
+# the only authorized canary is the immutable a52 candidate whose manifest
+# freezes the original 11-key live registry. Fail before creating an output
+# directory; launch that canary only from its exact isolated candidate checkout.
+if [ "$SCREEN_PROFILE" = "exact-action-canary" ]; then
+  echo "exact-action-canary launcher is frozen at candidate a52fc6e2f4ece5a7ff16bb4791e3aca4dd72f2e3; invoke that exact isolated checkout" >&2
+  exit 1
+fi
+
 abspath() {
   case "$1" in
     /*) printf '%s\n' "$1" ;;

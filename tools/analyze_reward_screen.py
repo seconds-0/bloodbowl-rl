@@ -152,6 +152,22 @@ EXACT_ACTION_CANARY_FINAL_STEPS = (
     // EXACT_ACTION_CANARY_ROLLOUT_QUANTUM
     * EXACT_ACTION_CANARY_ROLLOUT_QUANTUM)
 EXACT_ACTION_CANARY_CHECKPOINT_BYTES = 16_066_560
+# Exact candidate a52fc6e2 freezes this live fail-fast registry into its screen
+# manifest. The merged control runner's independent stopped-log registry is
+# deliberately wider; see HARD_INTEGRITY_KEYS imported above.
+EXACT_ACTION_CANARY_MANIFEST_HARD_INTEGRITY_KEYS = (
+    "illegal_frac",
+    "reward_clip_frac",
+    "reward_clip_frac_nonzero",
+    "reward_clip_excess",
+    "reward_nonfinite_frac",
+    "reward_clip_episodes",
+    "reward_nonfinite_episodes",
+    "reward_component_mismatch_samples_per_episode",
+    "reward_component_nonfinite_samples_per_episode",
+    "error_episodes",
+    "demo_fallbacks",
+)
 
 SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 
@@ -369,9 +385,10 @@ def _validate_exact_action_canary_contract(contract: dict[str, Any]) -> None:
         raise AnalysisError(
             "exact-action-canary contamination_budget must be exactly zero")
     hard_keys = error_budget.get("hard_integrity_keys")
-    if hard_keys != list(HARD_INTEGRITY_KEYS):
+    if hard_keys != list(EXACT_ACTION_CANARY_MANIFEST_HARD_INTEGRITY_KEYS):
         raise AnalysisError(
-            "exact-action-canary hard_integrity_keys do not match the frozen registry")
+            "exact-action-canary hard_integrity_keys do not match the frozen "
+            "a52fc6e2 live registry")
     poll_seconds = _need_int(
         error_budget.get("detection_poll_seconds"),
         "exact-action-canary detection_poll_seconds",

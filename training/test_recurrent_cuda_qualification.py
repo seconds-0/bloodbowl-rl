@@ -197,6 +197,105 @@ class QualificationValidatorTests(unittest.TestCase):
             self.q.validate_throughput(
                 candidate, baseline, max_regression_fraction=0.10)
 
+    def test_hard_integrity_rejects_redundant_nonzero_reward_counters(self):
+        self.assertEqual(self.q.HARD_INTEGRITY_KEYS, (
+            "illegal_frac",
+            "reward_clip_frac",
+            "reward_clip_frac_nonzero",
+            "reward_clip_excess",
+            "reward_clip_signed_delta",
+            "reward_clipped_samples_per_episode",
+            "reward_clip_terminal_samples_per_episode",
+            "reward_clip_nonterminal_samples_per_episode",
+            "reward_nonfinite_frac",
+            "reward_nonfinite_samples_per_episode",
+            "reward_clip_episodes",
+            "reward_nonfinite_episodes",
+            "reward_component_mismatch_samples_per_episode",
+            "reward_component_nonfinite_samples_per_episode",
+            "error_episodes",
+            "demo_fallbacks",
+        ))
+        counters = (
+            "reward_clip_signed_delta",
+            "reward_clipped_samples_per_episode",
+            "reward_clip_terminal_samples_per_episode",
+            "reward_clip_nonterminal_samples_per_episode",
+            "reward_nonfinite_samples_per_episode",
+        )
+        for key in counters:
+            integrity = {
+                field: 0.0 for field in self.q.HARD_INTEGRITY_KEYS
+            }
+            integrity[key] = 1e-12
+            with self.subTest(key=key), self.assertRaisesRegex(
+                    self.q.QualificationError, key):
+                self.q.validate_hard_integrity(integrity)
+        missing = {
+            field: 0.0 for field in self.q.HARD_INTEGRITY_KEYS
+            if field != "reward_clip_signed_delta"
+        }
+        with self.assertRaisesRegex(
+                self.q.QualificationError, "reward_clip_signed_delta"):
+            self.q.validate_hard_integrity(missing)
+
+    def test_every_transition_cell_requires_bound_exact_zero_integrity(self):
+        self.assertEqual(
+            self.q.TRANSITION_CELL_KINDS,
+            frozenset({
+                "rollout", "terminal_auto", "terminal_control", "ratio",
+                "throughput",
+            }),
+        )
+        integrity = {key: 0.0 for key in self.q.HARD_INTEGRITY_KEYS}
+        for kind in sorted(self.q.TRANSITION_CELL_KINDS):
+            payload = {
+                "hard_integrity": dict(integrity),
+                "hard_integrity_zero": True,
+            }
+            record = {
+                "kind": kind,
+                **({"throughput": payload} if kind == "throughput" else payload),
+            }
+            with self.subTest(kind=kind):
+                self.q.validate_transition_cell_integrity(record, kind)
+
+            bad = json.loads(json.dumps(record))
+            target = bad["throughput"] if kind == "throughput" else bad
+            target["hard_integrity"]["reward_clip_signed_delta"] = 1e-12
+            with self.subTest(kind=kind, mutation="nonzero"), self.assertRaisesRegex(
+                    self.q.QualificationError, "reward_clip_signed_delta"):
+                self.q.validate_transition_cell_integrity(bad, kind)
+
+            missing = json.loads(json.dumps(record))
+            target = missing["throughput"] if kind == "throughput" else missing
+            del target["hard_integrity"]
+            with self.subTest(kind=kind, mutation="missing"), self.assertRaises(
+                    self.q.QualificationError):
+                self.q.validate_transition_cell_integrity(missing, kind)
+
+        with self.assertRaisesRegex(
+                self.q.QualificationError, "does not execute transitions"):
+            self.q.validate_transition_cell_integrity(
+                {"kind": "construction"}, "construction"
+            )
+
+    def test_integrity_probe_runs_bounded_rollouts_and_binds_record(self):
+        integrity = {key: 0.0 for key in self.q.HARD_INTEGRITY_KEYS}
+        backend = mock.Mock()
+        backend.log.return_value = {"env": integrity}
+        pufferl = object()
+        record = {}
+
+        self.q.bind_transition_integrity(
+            backend, pufferl, record, additional_rollouts=16
+        )
+
+        self.assertEqual(backend.rollouts.call_count, 16)
+        backend.log.assert_called_once_with(pufferl)
+        self.assertEqual(record["hard_integrity"], integrity)
+        self.assertIs(record["hard_integrity_zero"], True)
+
     def test_module_identity_requires_exact_bloodbowl_lineage_and_source_hashes(self):
         digest = "a" * 64
         identity = {

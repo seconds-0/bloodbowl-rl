@@ -7,6 +7,26 @@ from pathlib import Path
 from tools import live_integrity_guard as guard
 
 
+EXPECTED_CONTROL_HARD_INTEGRITY_KEYS = (
+    "illegal_frac",
+    "reward_clip_frac",
+    "reward_clip_frac_nonzero",
+    "reward_clip_excess",
+    "reward_clip_signed_delta",
+    "reward_clipped_samples_per_episode",
+    "reward_clip_terminal_samples_per_episode",
+    "reward_clip_nonterminal_samples_per_episode",
+    "reward_nonfinite_frac",
+    "reward_nonfinite_samples_per_episode",
+    "reward_clip_episodes",
+    "reward_nonfinite_episodes",
+    "reward_component_mismatch_samples_per_episode",
+    "reward_component_nonfinite_samples_per_episode",
+    "error_episodes",
+    "demo_fallbacks",
+)
+
+
 def panel(**overrides):
     values = {key: 0.0 for key in guard.HARD_INTEGRITY_KEYS}
     values.update({
@@ -25,6 +45,12 @@ class LiveIntegrityGuardTests(unittest.TestCase):
         with log.open("a" if append else "w", encoding="utf-8") as stream:
             stream.write(text)
         return guard.check_log(log, state, failure), state, failure
+
+    def test_control_registry_is_the_complete_frozen_16_key_contract(self):
+        self.assertEqual(
+            guard.HARD_INTEGRITY_KEYS,
+            EXPECTED_CONTROL_HARD_INTEGRITY_KEYS,
+        )
 
     def test_clean_panels_advance_incrementally_without_reparsing(self):
         with tempfile.TemporaryDirectory() as root:
@@ -60,6 +86,28 @@ class LiveIntegrityGuardTests(unittest.TestCase):
                 (Path(root) / "guard-failure.json").read_text(encoding="utf-8"))
             self.assertEqual(failure["kind"], "hard_integrity_nonzero")
             self.assertEqual(failure["metrics"], {"illegal_frac": 1e-12})
+
+    def test_nonzero_redundant_reward_counters_also_fail_closed(self):
+        counters = (
+            "reward_clip_signed_delta",
+            "reward_clipped_samples_per_episode",
+            "reward_clip_terminal_samples_per_episode",
+            "reward_clip_nonterminal_samples_per_episode",
+            "reward_nonfinite_samples_per_episode",
+        )
+        for key in counters:
+            with self.subTest(key=key), tempfile.TemporaryDirectory() as root:
+                with self.assertRaisesRegex(guard.IntegrityFailure, key):
+                    self.run_guard(root, panel(**{key: 1e-12}))
+
+    def test_missing_redundant_reward_counter_fails_closed(self):
+        with tempfile.TemporaryDirectory() as root:
+            values = json.loads(panel().split(" ", 1)[1])
+            del values["reward_clip_signed_delta"]
+            text = "PUFFER_ENV_JSON " + json.dumps(values) + "\n"
+            with self.assertRaisesRegex(
+                    guard.IntegrityFailure, "reward_clip_signed_delta"):
+                self.run_guard(root, text)
 
     def test_missing_nonfinite_and_malformed_panels_fail_closed(self):
         cases = []

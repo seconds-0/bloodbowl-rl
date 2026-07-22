@@ -287,7 +287,9 @@ newer evidence wins.
   graph parity,
   primary/frozen post-terminal automatic/manual-zero parity, full observed
   learner-row ratio coverage with unchanged weight bytes and zero frozen-row
-  selections even at `prio_alpha=0`, zero hard counters, and a strictly wrapped,
+  selections even at `prio_alpha=0`, all 16 control hard counters at literal
+  zero in every transition-executing cell (construction emits no episode
+  telemetry), and a strictly wrapped,
   hashed same-host/config/precision predecessor throughput control whose
   module/backend/environment hashes were declared at capture and consumption.
   The predecessor is a fresh isolated fp32 build of exact commit
@@ -300,7 +302,10 @@ newer evidence wins.
   historical evidence only.
   No baseline,
   incomplete coverage, malformed/non-finite data, or failed gate means no 50M
-  canary. All outputs are qualification-only and ancestry-ineligible.
+  canary. All outputs are qualification-only and ancestry-ineligible. Launch
+  the canary only from the exact immutable `a52fc6e2` checkout. The merged
+  control launcher rejects that profile before creating output because its
+  widened registry is intentionally not the frozen candidate manifest.
 - **`puffer/bloodbowl/` is the SOURCE OF TRUTH; `vendor/PufferLib/ocean/bloodbowl/` is an installed snapshot** written by `tools/install_puffer_env.sh` — the build compiles the snapshot, NOT your edit. The snapshot can lag (the Mac checkout's may still say 1612). Drift guard: `tools/install_puffer_env.sh --check` (exit 1 = re-install). Run it before any build on a training box.
 - After ANY env code change, ON THE TARGET: `bash tools/install_puffer_env.sh`,
   `bash tools/install_puffer_env.sh --check`, then
@@ -337,6 +342,12 @@ newer evidence wins.
   independent incremental state files. Before a long post-v5 run, require
   provenance, CUDA graph/zero-update checks, deterministic full games, then a
   disposable 50M-step reward-frozen canary. Never continue from its checkpoint.
+  Exact candidate `a52fc6e2` freezes the original 11-key live registry into its
+  manifest. The merged control qualification and independent stopped checks
+  also require exact zero for signed clamp delta, clipped samples, terminal and
+  non-terminal clipped samples, and non-finite samples per episode. Those five
+  are redundant under coherent telemetry, but any disagreement invalidates the
+  evidence; preserve the exact candidate identity and bind both registries.
 
 ### Reward economy (July-audited interpretation)
 - **Reward objective outcomes or decision quality, not lucky dice.** Realized

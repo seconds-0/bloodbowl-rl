@@ -78,7 +78,8 @@ class RewardScreenAnalysisTests(unittest.TestCase):
                     "detection_poll_seconds": 30,
                     "max_panel_silence_seconds": 180,
                     "hard_integrity_keys": list(
-                        HARD_INTEGRITY_KEYS
+                        analyze_reward_screen
+                        .EXACT_ACTION_CANARY_MANIFEST_HARD_INTEGRITY_KEYS
                     ),
                 },
                 "implementation": {
@@ -291,6 +292,28 @@ class RewardScreenAnalysisTests(unittest.TestCase):
         self.assertIn("n=2", " ".join(report["warnings"]))
 
     def test_exact_action_canary_is_independently_qualified(self):
+        self.assertEqual(
+            analyze_reward_screen.EXACT_ACTION_CANARY_MANIFEST_HARD_INTEGRITY_KEYS,
+            (
+                "illegal_frac",
+                "reward_clip_frac",
+                "reward_clip_frac_nonzero",
+                "reward_clip_excess",
+                "reward_nonfinite_frac",
+                "reward_clip_episodes",
+                "reward_nonfinite_episodes",
+                "reward_component_mismatch_samples_per_episode",
+                "reward_component_nonfinite_samples_per_episode",
+                "error_episodes",
+                "demo_fallbacks",
+            ),
+        )
+        self.assertTrue(
+            set(
+                analyze_reward_screen
+                .EXACT_ACTION_CANARY_MANIFEST_HARD_INTEGRITY_KEYS
+            ) < set(HARD_INTEGRITY_KEYS)
+        )
         with tempfile.TemporaryDirectory() as tmp:
             self.build_exact_action_canary(tmp)
             report = analyze_reward_screen.analyze_screen(tmp, ("tds",))
@@ -398,6 +421,18 @@ class RewardScreenAnalysisTests(unittest.TestCase):
                     "reward_nonfinite_episodes"),
                 "eval_metrics.reward_nonfinite_episodes must be numeric",
             ),
+            (
+                "redundant_nonzero",
+                lambda result: result["train_metrics"].__setitem__(
+                    "reward_clip_signed_delta", 1e-12),
+                "train_metrics.reward_clip_signed_delta must be exactly zero",
+            ),
+            (
+                "redundant_missing",
+                lambda result: result["eval_metrics"].pop(
+                    "reward_nonfinite_samples_per_episode"),
+                "eval_metrics.reward_nonfinite_samples_per_episode must be numeric",
+            ),
         )
         for label, mutate, message in mutations:
             with self.subTest(label=label), tempfile.TemporaryDirectory() as tmp:
@@ -407,6 +442,7 @@ class RewardScreenAnalysisTests(unittest.TestCase):
                 result = json.loads(result_path.read_text(encoding="utf-8"))
                 mutate(result)
                 write_json(result_path, result)
+                self.rebind_exact_action_canary(tmp)
                 with self.assertRaisesRegex(
                         analyze_reward_screen.AnalysisError, message):
                     analyze_reward_screen.analyze_screen(tmp, ("tds",))
