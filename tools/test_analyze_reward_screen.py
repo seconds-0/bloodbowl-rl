@@ -9,6 +9,7 @@ import unittest
 from pathlib import Path
 
 import analyze_reward_screen
+from live_integrity_guard import HARD_INTEGRITY_KEYS
 
 
 def write_json(path, value):
@@ -27,6 +28,131 @@ def digest(value):
 
 
 class RewardScreenAnalysisTests(unittest.TestCase):
+    def build_exact_action_canary(self, root):
+        root = Path(root)
+        prefix = "exact-action-canary-test"
+        manifest = {
+            "schema_version": 1,
+            "contract": {
+                "prefix": prefix,
+                "screen_profile": "exact-action-canary",
+                "qualification_only": True,
+                "bootstrap": {
+                    "mode": "fresh-v5-qualification",
+                    "observation_abi": "obs-v5",
+                    "observation_version": 5,
+                    "action_abi": "exact-joint-v1",
+                    "initialization": "fresh",
+                    "warm_lineage_sha256": "",
+                    "pool_lineage_bundle_sha256": "",
+                },
+                "requested_steps": 50_000_000,
+                "final_steps": 49_938_432,
+                "rollout_quantum": 131_072,
+                "schedule": [{"index": 1, "arm": "both", "seed": 42}],
+                "settings": {
+                    "expected_checkpoint_bytes": "16",
+                    "frozen_bank_pct": "0",
+                    "num_frozen_banks": "0",
+                    "native_precision_bytes": "4",
+                    "min_train_games": "1",
+                    "min_eval_games": "10000",
+                    "eval_episodes": "10000",
+                },
+                "warm": None,
+                "pool": None,
+                "rewards": {
+                    "both": {
+                        "reward_sha256": analyze_reward_screen
+                        .POSSESSION_GAIN_REWARD_SHA256["both"]
+                    }
+                },
+                "error_budget": {
+                    "contamination_budget": 0,
+                    "detection_poll_seconds": 30,
+                    "max_panel_silence_seconds": 180,
+                    "hard_integrity_keys": list(
+                        HARD_INTEGRITY_KEYS
+                    ),
+                },
+                "implementation": {
+                    **{
+                        field: digest(field)
+                        for field in (
+                            "screen_script_sha256",
+                            "game_stats_sha256",
+                            "live_integrity_guard_sha256",
+                            "checkpoint_lineage_sha256",
+                            "status_wrapper_sha256",
+                            "launcher_sha256",
+                            "source_sha256",
+                            "compiled_module_sha256",
+                            "puffer_patch_bundle_sha256",
+                            "vendor_source_sha256",
+                        )
+                    },
+                    "compiled_semantic_contract": {
+                        "env_name": "bloodbowl",
+                        "gpu": 1,
+                        "precision_bytes": 4,
+                        "observation_abi": "obs-v5",
+                        "observation_version": 5,
+                        "action_abi": "exact-joint-v1",
+                        "exact_action_source_sha256": digest(
+                            "exact-action-source"),
+                        "environment_source_sha256": digest("source_sha256"),
+                    }
+                },
+            },
+        }
+        manifest_path = root / "SCREEN_MANIFEST.json"
+        write_json(manifest_path, manifest)
+        manifest_sha = sha256(manifest_path)
+        checkpoint_lineage_sha = digest("checkpoint-lineage")
+        zero_metrics = {
+            key: 0.0 for key in HARD_INTEGRITY_KEYS
+        }
+        result_path = root / f"{prefix}-both-s42.result.json"
+        result = {
+            "schema_version": 2,
+            "trainer_complete": True,
+            "acceptance_pass": True,
+            "acceptance_failures": [],
+            "qualification_only": True,
+            "arm": "both",
+            "seed": 42,
+            "tag": f"{prefix}-both-s42",
+            "screen_manifest_sha256": manifest_sha,
+            "reward_sha256": analyze_reward_screen
+            .POSSESSION_GAIN_REWARD_SHA256["both"],
+            "checkpoint_bytes": 16,
+            "checkpoint_sha256": digest("checkpoint-both-42"),
+            "checkpoint_lineage": "/remote/run/0000000049938432.bin.lineage.json",
+            "checkpoint_lineage_sha256": checkpoint_lineage_sha,
+            "log_sha256": digest("log-both-42"),
+            "status_sha256": digest("status-both-42"),
+            "process_sha256": digest("process-both-42"),
+            "run_manifest_sha256": digest("manifest-both-42"),
+            "train_metrics": {"n": 20_000, **zero_metrics},
+            "eval_metrics": {"n": 10_000, "tds": 1.0, **zero_metrics},
+        }
+        write_json(result_path, result)
+        write_json(root / "SCREEN_COMPLETE.json", {
+            "schema_version": 1,
+            "screen_manifest_sha256": manifest_sha,
+            "completed_utc": "2026-07-21T00:00:00+00:00",
+            "results": [{
+                "index": 1,
+                "arm": "both",
+                "seed": 42,
+                "path": f"/remote/screen/{result_path.name}",
+                "sha256": sha256(result_path),
+                "checkpoint_sha256": result["checkpoint_sha256"],
+                "checkpoint_lineage_sha256": checkpoint_lineage_sha,
+            }],
+        })
+        return manifest_sha
+
     def build_screen(self, root, *, completion=True):
         root = Path(root)
         prefix = "screen-test"
@@ -142,6 +268,108 @@ class RewardScreenAnalysisTests(unittest.TestCase):
         self.assertEqual(across["distance_main"]["mean"], 6.5)
         self.assertEqual(across["interaction"]["mean"], 4.0)
         self.assertIn("n=2", " ".join(report["warnings"]))
+
+    def test_exact_action_canary_is_independently_qualified(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.build_exact_action_canary(tmp)
+            report = analyze_reward_screen.analyze_screen(tmp, ("tds",))
+
+        self.assertEqual(report["analysis"], "exact_action_canary_qualification")
+        self.assertEqual(report["screen"]["profile"], "exact-action-canary")
+        self.assertEqual(list(report["per_seed"]), ["42"])
+        self.assertEqual(report["per_seed"]["42"]["effects"]["tds"], {})
+        self.assertIn("qualification-only", " ".join(report["warnings"]))
+
+    def test_exact_action_canary_rejects_nonfresh_or_misaligned_contract(self):
+        mutations = (
+            (
+                "warm",
+                lambda contract: contract.__setitem__(
+                    "warm", {"path": "/remote/forbidden.bin"}),
+                "null warm/pool",
+            ),
+            (
+                "final_steps",
+                lambda contract: contract.__setitem__(
+                    "final_steps", contract["final_steps"] + 1),
+                "complete-rollout budget",
+            ),
+            (
+                "action_abi",
+                lambda contract: contract["bootstrap"].__setitem__(
+                    "action_abi", "marginal-heads"),
+                "bootstrap action_abi mismatch",
+            ),
+        )
+        for label, mutate, message in mutations:
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as tmp:
+                self.build_exact_action_canary(tmp)
+                manifest_path = Path(tmp) / "SCREEN_MANIFEST.json"
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                mutate(manifest["contract"])
+                write_json(manifest_path, manifest)
+                with self.assertRaisesRegex(
+                        analyze_reward_screen.AnalysisError, message):
+                    analyze_reward_screen.analyze_screen(tmp, ("tds",))
+
+    def test_exact_action_canary_rejects_nonzero_or_missing_hard_metrics(self):
+        mutations = (
+            (
+                "nonzero",
+                lambda result: result["train_metrics"].__setitem__(
+                    "illegal_frac", 1.0),
+                "train_metrics.illegal_frac must be exactly zero",
+            ),
+            (
+                "missing",
+                lambda result: result["eval_metrics"].pop(
+                    "reward_nonfinite_episodes"),
+                "eval_metrics.reward_nonfinite_episodes must be numeric",
+            ),
+        )
+        for label, mutate, message in mutations:
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as tmp:
+                self.build_exact_action_canary(tmp)
+                result_path = (
+                    Path(tmp) / "exact-action-canary-test-both-s42.result.json")
+                result = json.loads(result_path.read_text(encoding="utf-8"))
+                mutate(result)
+                write_json(result_path, result)
+                with self.assertRaisesRegex(
+                        analyze_reward_screen.AnalysisError, message):
+                    analyze_reward_screen.analyze_screen(tmp, ("tds",))
+
+    def test_exact_action_canary_requires_empty_failures_and_lineage_binding(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.build_exact_action_canary(tmp)
+            result_path = (
+                Path(tmp) / "exact-action-canary-test-both-s42.result.json")
+            result = json.loads(result_path.read_text(encoding="utf-8"))
+            result["acceptance_failures"] = None
+            write_json(result_path, result)
+            with self.assertRaisesRegex(
+                    analyze_reward_screen.AnalysisError,
+                    "exactly empty acceptance_failures"):
+                analyze_reward_screen.analyze_screen(tmp, ("tds",))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            self.build_exact_action_canary(tmp)
+            (Path(tmp) / "SCREEN_COMPLETE.json").unlink()
+            with self.assertRaisesRegex(
+                    analyze_reward_screen.AnalysisError,
+                    "requires the atomic SCREEN_COMPLETE"):
+                analyze_reward_screen.analyze_screen(tmp, ("tds",))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            self.build_exact_action_canary(tmp)
+            completion_path = Path(tmp) / "SCREEN_COMPLETE.json"
+            completion = json.loads(completion_path.read_text(encoding="utf-8"))
+            completion["results"][0]["checkpoint_lineage_sha256"] = "0" * 64
+            write_json(completion_path, completion)
+            with self.assertRaisesRegex(
+                    analyze_reward_screen.AnalysisError,
+                    "checkpoint lineage hash mismatch"):
+                analyze_reward_screen.analyze_screen(tmp, ("tds",))
 
     def test_possession_gain_profile_computes_separate_main_effects(self):
         with tempfile.TemporaryDirectory() as tmp:
