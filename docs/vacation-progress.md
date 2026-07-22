@@ -7648,3 +7648,23 @@ Blocker and next steps:
   the second job is still running and has no success digest yet. Preservation
   will derive result-bound checkpoints from accepted result artifacts rather
   than a newest-filename heuristic.
+
+19:39 PDT environment-digest correction:
+
+- Independently reproduced the earlier
+  `5e1e9056c0d67379c6332ac1d46e4098cc12ba2bcda0fd1b1de6f3db2f9f124c`
+  digest and identified its exact meaning: it is the sorted full 64-line
+  recovery freeze, including the path-bound editable line
+  `-e file:///home/rache/bloodbowl-rl-recovery-20260719/vendor/PufferLib`.
+  It is valid recovery evidence but cannot be the cross-checkout equality
+  digest because predecessor and candidate necessarily have different source
+  roots.
+- The portable sorted 63-package inventory, excluding only that editable
+  Puffer line, is now preserved as
+  `docs/qualification-runtime-requirements-20260721.txt`; its SHA-256 is
+  `7914e9637f419c1b3ff32cd9331c19b2e7ce30ab123db816fe48d50c4c3f2d7b`.
+  Each fresh runtime will sync exactly this file, install only its own pinned
+  Puffer checkout as editable with `--no-deps`, and then require both portable
+  freeze equality and equality after replacing the one editable path with a
+  common sentinel. This corrects the comparison method without changing any
+  live package or process.
