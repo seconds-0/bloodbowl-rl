@@ -84,6 +84,9 @@ GRAPH_ATOL_BY_PRECISION = {4: 1.0e-6}
 RATIO_ATOL_BY_PRECISION = {4: 2.0e-5}
 DEFAULT_RATIO_CALL_LIMIT = 64
 DEFAULT_MAX_REGRESSION_FRACTION = 0.10
+# Match the frozen exact-action canary rather than allocating train activations
+# for its entire 2,048 x 64 rollout quantum at once.
+DEFAULT_THROUGHPUT_MINIBATCH_SIZE = 16384
 BACKEND_SOURCE_FILES = (
     "pufferlib/pufferl.py",
     "pufferlib/torch_pufferl.py",
@@ -797,12 +800,26 @@ def qualification_args(
     frozen_bank_pct: float,
     learning_rate: float,
     replay_ratio: int = 1,
+    minibatch_size: int | None = None,
 ) -> dict[str, Any]:
-    if total_agents <= 0 or total_agents % num_buffers:
+    if num_buffers <= 0 or total_agents <= 0 or total_agents % num_buffers:
         raise QualificationError("total_agents must be positive and buffer-divisible")
     if total_agents % 2:
         raise QualificationError("Blood Bowl qualification requires paired agents")
-    minibatch_size = total_agents * horizon
+    if horizon <= 0:
+        raise QualificationError("qualification horizon must be positive")
+    rollout_quantum = total_agents * horizon
+    if minibatch_size is None:
+        minibatch_size = rollout_quantum
+    if (
+        minibatch_size <= 0
+        or minibatch_size % horizon
+        or minibatch_size > rollout_quantum
+    ):
+        raise QualificationError(
+            "minibatch_size must be positive, horizon-divisible, and no larger "
+            "than the rollout quantum"
+        )
     return {
         "env_name": "bloodbowl",
         "reset_state": True,
@@ -1063,6 +1080,7 @@ def _cell_config(kind: str, cudagraphs: int, args: argparse.Namespace) -> dict[s
             frozen_banks=1,
             frozen_bank_pct=0.1,
             learning_rate=0.0,
+            minibatch_size=args.throughput_minibatch_size,
         )
     raise QualificationError(f"unknown qualification cell: {kind}")
 
@@ -1303,6 +1321,7 @@ def _run_worker(
         "--throughput-horizon", str(args.throughput_horizon),
         "--throughput-hidden", str(args.throughput_hidden),
         "--throughput-layers", str(args.throughput_layers),
+        "--throughput-minibatch-size", str(args.throughput_minibatch_size),
         "--throughput-warmup-rollouts", str(args.throughput_warmup_rollouts),
         "--throughput-timed-rollouts", str(args.throughput_timed_rollouts),
     ]
@@ -2222,6 +2241,11 @@ def add_common_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--throughput-horizon", type=int, default=64)
     parser.add_argument("--throughput-hidden", type=int, default=512)
     parser.add_argument("--throughput-layers", type=int, default=1)
+    parser.add_argument(
+        "--throughput-minibatch-size",
+        type=int,
+        default=DEFAULT_THROUGHPUT_MINIBATCH_SIZE,
+    )
     parser.add_argument("--throughput-warmup-rollouts", type=int, default=2)
     parser.add_argument("--throughput-timed-rollouts", type=int, default=8)
 

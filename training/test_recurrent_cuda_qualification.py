@@ -551,6 +551,7 @@ class QualificationValidatorTests(unittest.TestCase):
                 throughput_horizon=64,
                 throughput_hidden=512,
                 throughput_layers=3,
+                throughput_minibatch_size=16384,
                 throughput_warmup_rollouts=2,
                 throughput_timed_rollouts=8,
                 cell_timeout_seconds=1800,
@@ -570,6 +571,47 @@ class QualificationValidatorTests(unittest.TestCase):
             command = run.call_args.args[0]
             self.assertEqual(command[0], str(venv_python.absolute()))
             self.assertNotEqual(command[0], str(base_python.resolve()))
+            minibatch_flag = command.index("--throughput-minibatch-size")
+            self.assertEqual(command[minibatch_flag + 1], "16384")
+
+    def test_throughput_minibatch_matches_exact_canary_contract(self):
+        args = mock.Mock(
+            seed=271828,
+            throughput_agents=2048,
+            throughput_buffers=2,
+            throughput_threads=16,
+            throughput_horizon=64,
+            throughput_hidden=512,
+            throughput_layers=3,
+            throughput_minibatch_size=16384,
+        )
+        config = self.q._cell_config("throughput", 0, args)
+        rollout_quantum = (
+            config["vec"]["total_agents"] * config["train"]["horizon"]
+        )
+        self.assertEqual(rollout_quantum, 131072)
+        self.assertEqual(config["train"]["minibatch_size"], 16384)
+
+    def test_qualification_minibatch_must_fit_rollout_contract(self):
+        base = {
+            "cudagraphs": 0,
+            "seed": 271828,
+            "total_agents": 2048,
+            "num_buffers": 2,
+            "num_threads": 16,
+            "horizon": 64,
+            "max_decisions": 64,
+            "hidden_size": 512,
+            "num_layers": 3,
+            "frozen_banks": 1,
+            "frozen_bank_pct": 0.1,
+            "learning_rate": 0.0,
+        }
+        for invalid in (0, 16383, 131136):
+            with self.subTest(minibatch_size=invalid), self.assertRaises(
+                self.q.QualificationError
+            ):
+                self.q.qualification_args(**base, minibatch_size=invalid)
 
     def test_run_failure_record_never_writes_to_rejected_output(self):
         with tempfile.TemporaryDirectory() as temporary:
