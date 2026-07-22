@@ -8149,3 +8149,61 @@ replacement handoff only after hosted checks pass, then continue monitoring.
 At atomic completion, establish the stopped queue/service/process predicates,
 run the pinned screen validator and independent three-log auditor, and preserve
 and verify the exact evidence off-box before creating any qualification root.
+
+## 2026-07-21 23:01 PDT — seed 44 at 7.89B; post-merge handoff ready
+
+Status:
+
+- The recovery queue remains exactly `state=running`,
+  `current_job=full-control-rerun`, and `message=running job
+  full-control-rerun`, with unchanged plan SHA-256
+  `822bb912dbf3992c5fa6f04ddcaa5354897db10d03f2e66934b846c198b6a111`.
+  The screen remains on arm `both`, seed 44, index 3, with two completed arms
+  and message `waiting for current trainer`. The seed-44 terminal status and
+  `SCREEN_COMPLETE.json` are both absent, so the atomic boundary remains
+  closed.
+- Seed 44 reached exact step 7,887,257,600 of 12B at epoch 60,174. The latest
+  complete 99-game train panel reports 1.8687 TD/game, performance 0.4747,
+  possession 0.3764, carrier-target block share about 0.1398, and two-die-red
+  share 0.04498. All 15 recovery-valid reward clip, non-finite, component,
+  engine-error, and demo-fallback fields remain exactly zero. Historical
+  pre-exact-action `illegal_frac=0.19256` remains diagnostic only.
+- The interval since the 22:44 exact sample averaged approximately 181K
+  steps/s. About 4.113B steps remain, or roughly 6.3 training hours at that
+  rate. This estimate does not supersede queue completion, screen completion,
+  pinned validation, stopped log auditing, or off-box preservation.
+- The recovery queue, BBTV follower, web server, and tunnel units remain
+  active/running with zero restarts. Queue PID 610736 and trainer PID 653090
+  retain their original process lineage, and trainer 653090 remains the sole
+  GPU compute process. The RTX 2070 was 83 C and 71% utilized, with
+  5,554/8,192 MiB allocated and 171.79/175 W draw. The recovery filesystem has
+  about 846 GiB free and about 9.1 GiB RAM is available.
+- BBTV atomically selected seed 44 step 7,840,464,896 at 23:01 PDT. The
+  selection SHA-256 is
+  `02e201bc06fba6ddc44d59e2807990c4c104adc6fd71ac71e9797e0455d3b59c`,
+  and <https://bbtv.seconds0.com/> returned HTTP 200 in 0.21 seconds.
+
+Handoff status:
+
+- PR #58 passed full CI and immutable-history on exact head
+  `793ac53be61ed06598efe9033ad16db1c10d23bd` and merged as
+  `ce8cf4144fd20a2387309a0cd017e88746f895b5`, tree
+  `e3dae182b019a338238e12bbe055c1deb7038b3e`. Superseded draft PR #13 is
+  closed; both superseded remote branches are deleted without history
+  rewriting.
+- The exact detached `c1600ada` preservation checkout is clean, both tool
+  hashes match, and all 19 preservation/auditor tests pass. The exact detached
+  `9274f45` control checkout is clean, its runner/analyzer/complete-log hashes
+  match, and all 24 recurrent-CUDA qualification tests pass. Candidate launch,
+  installer, CPU-cap, ten common patch, and two candidate-only patch identities
+  were independently rederived from the exact Git objects and all match the
+  published checklist.
+- The local evidence destination and every remote post-stop, qualification,
+  and canary root remain absent. A read-only one-minute boundary watcher is
+  armed; it performs no writes or process control and reports only atomic
+  completion or an anomalous queue-service exit.
+
+Next steps remain read-only until the boundary. At atomic completion, establish
+the stopped queue/service/process predicates, run the frozen screen validator
+and independent three-log auditor, and preserve and verify the exact evidence
+off-box before creating any qualification root.
