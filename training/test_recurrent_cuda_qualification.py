@@ -18,6 +18,11 @@ PATCH = ROOT / "training" / "puffer_recurrent_cuda_qualification.patch"
 PRIO_PATCH = ROOT / "training" / "puffer_frozen_prio_mask.patch"
 INSTALLER = ROOT / "tools" / "install_puffer_env.sh"
 RUNNER = ROOT / "tools" / "qualify_recurrent_cuda.py"
+PLAN = ROOT / "docs" / "plans" / "recurrent-cuda-qualification.md"
+AGENTS = ROOT / "AGENTS.md"
+CLAUDE = ROOT / "CLAUDE.md"
+PUFFER_SKILL = ROOT / ".claude" / "skills" / "puffer-env-dev" / "SKILL.md"
+TRAINING_SKILL = ROOT / ".claude" / "skills" / "training-experiments" / "SKILL.md"
 
 
 def load_runner():
@@ -211,7 +216,7 @@ class QualificationValidatorTests(unittest.TestCase):
         }
         self.q.validate_module_identity(identity, qualification_surface=True)
         expected = {
-            "source_commit": "d" * 40,
+            "source_commit": self.q.CANDIDATE_SOURCE_COMMIT,
             "module_sha256": digest,
             "backend_sha256": digest,
             "environment_sha256": "b" * 64,
@@ -223,8 +228,10 @@ class QualificationValidatorTests(unittest.TestCase):
             )
         predecessor_identity = dict(identity, qualification_surface=False)
         predecessor_expected = {
-            key: expected[key]
-            for key in ("module_sha256", "backend_sha256", "environment_sha256")
+            "source_commit": self.q.PREDECESSOR_SOURCE_COMMIT,
+            "module_sha256": expected["module_sha256"],
+            "backend_sha256": expected["backend_sha256"],
+            "environment_sha256": expected["environment_sha256"],
         }
         self.q.validate_expected_predecessor_identity(
             predecessor_identity, predecessor_expected
@@ -267,6 +274,22 @@ class QualificationValidatorTests(unittest.TestCase):
         }
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
+            source_root = root / "source"
+            puffer_root = source_root / "vendor" / "PufferLib"
+            identity["puffer_root"] = str(puffer_root)
+            identity["module"] = str(puffer_root / "pufferlib" / "_C.so")
+            source = {
+                "role": "predecessor",
+                "source_root": str(source_root),
+                "source_commit": self.q.PREDECESSOR_SOURCE_COMMIT,
+                "puffer_root": str(puffer_root),
+                "installer_check_sha256": "e" * 64,
+            }
+            runner_source = {
+                "source_root": str(ROOT),
+                "source_commit": "f" * 40,
+                "runner_sha256": self.q.sha256(RUNNER),
+            }
             cell = {
                 "schema_version": self.q.SCHEMA_VERSION,
                 "qualification_only": True, "accepted": True,
@@ -274,6 +297,8 @@ class QualificationValidatorTests(unittest.TestCase):
                 "runner_sha256": self.q.sha256(RUNNER),
                 "identity": identity, "throughput": throughput,
                 "config_sha256": "c" * 64,
+                "predecessor_source": source,
+                "runner_source": runner_source,
             }
             cell_path = root / "throughput-baseline.json"
             cell_path.write_text(json.dumps(cell), encoding="utf-8")
@@ -284,27 +309,131 @@ class QualificationValidatorTests(unittest.TestCase):
                 "runner_sha256": self.q.sha256(RUNNER),
                 "identity": identity, "throughput": throughput,
                 "expected_predecessor": {
+                    "source_commit": self.q.PREDECESSOR_SOURCE_COMMIT,
                     "module_sha256": digest,
                     "backend_sha256": digest,
                     "environment_sha256": "b" * 64,
                 },
+                "predecessor_source": source,
+                "runner_source": runner_source,
                 "cell_record": str(cell_path),
                 "cell_record_sha256": self.q.sha256(cell_path),
             }
             wrapper_path = root / "THROUGHPUT_BASELINE.json"
             wrapper_path.write_text(json.dumps(wrapper), encoding="utf-8")
-            parsed = self.q.validate_baseline_artifact(wrapper_path)
+            with mock.patch.object(
+                self.q, "validate_source_checkout_record", return_value=source
+            ), mock.patch.object(
+                self.q, "current_runner_source_identity", return_value=runner_source
+            ), mock.patch.object(self.q, "validate_current_identity_files") as current:
+                parsed = self.q.validate_baseline_artifact(wrapper_path)
             self.assertEqual(parsed["throughput"], throughput)
+            current.assert_called_once_with(identity)
+
+            with mock.patch.object(
+                self.q, "validate_source_checkout_record", return_value=source
+            ), mock.patch.object(
+                self.q, "current_runner_source_identity", return_value=runner_source
+            ), mock.patch.object(
+                self.q,
+                "validate_current_identity_files",
+                side_effect=self.q.QualificationError("module binary drifted"),
+            ), self.assertRaises(self.q.QualificationError):
+                self.q.validate_baseline_artifact(wrapper_path)
             wrapper["role"] = "handwritten"
             wrapper_path.write_text(json.dumps(wrapper), encoding="utf-8")
-            with self.assertRaises(self.q.QualificationError):
+            with mock.patch.object(
+                self.q, "validate_source_checkout_record", return_value=source
+            ), mock.patch.object(
+                self.q, "current_runner_source_identity", return_value=runner_source
+            ), self.assertRaises(self.q.QualificationError):
                 self.q.validate_baseline_artifact(wrapper_path)
+
+    def test_source_checkout_binding_requires_exact_clean_role_local_tree(self):
+        commit = self.q.PREDECESSOR_SOURCE_COMMIT
+        with tempfile.TemporaryDirectory() as temporary:
+            source = pathlib.Path(temporary) / "source"
+            puffer = source / "vendor" / "PufferLib"
+            installer = source / "tools" / "install_puffer_env.sh"
+            puffer.mkdir(parents=True)
+            installer.parent.mkdir(parents=True)
+            installer.write_text("#!/bin/sh\n", encoding="utf-8")
+            completed = [
+                mock.Mock(returncode=0, stdout=f"{source}\n", stderr=""),
+                mock.Mock(returncode=0, stdout=f"{commit}\n", stderr=""),
+                mock.Mock(returncode=0, stdout="", stderr=""),
+                mock.Mock(returncode=0, stdout="drift check: OK\n", stderr=""),
+            ]
+            with mock.patch.object(
+                self.q.subprocess, "run", side_effect=completed
+            ) as run:
+                identity = self.q.validate_source_checkout(
+                    source, puffer, expected_commit=commit, role="predecessor"
+                )
+            self.assertEqual(identity["source_commit"], commit)
+            self.assertEqual(identity["puffer_root"], str(puffer.resolve()))
+            self.assertEqual(run.call_count, 4)
+            self.q.require_output_outside_source(
+                pathlib.Path(temporary) / "external", source, role="predecessor source"
+            )
+            with self.assertRaises(self.q.QualificationError):
+                self.q.require_output_outside_source(
+                    source / "runs" / "qualification",
+                    source,
+                    role="predecessor source",
+                )
+
+            with self.assertRaises(self.q.QualificationError):
+                self.q.validate_source_checkout(
+                    source,
+                    pathlib.Path(temporary) / "shared-puffer",
+                    expected_commit=commit,
+                    role="predecessor",
+                )
+            for role, wrong_commit in (
+                ("predecessor", self.q.CANDIDATE_SOURCE_COMMIT),
+                ("candidate", self.q.PREDECESSOR_SOURCE_COMMIT),
+            ):
+                with self.subTest(role=role), self.assertRaises(
+                    self.q.QualificationError
+                ):
+                    self.q.validate_source_checkout(
+                        source, puffer, expected_commit=wrong_commit, role=role
+                    )
+            with self.assertRaises(self.q.QualificationError):
+                self.q.validate_source_checkout(
+                    self.q.PROTECTED_RECOVERY_ROOT,
+                    self.q.PROTECTED_RECOVERY_ROOT / "vendor" / "PufferLib",
+                    expected_commit=self.q.PREDECESSOR_SOURCE_COMMIT,
+                    role="predecessor",
+                )
+            for roots in (
+                (ROOT, ROOT, source),  # candidate equals control runner
+                (ROOT, source, ROOT),  # predecessor equals control runner
+                (source, ROOT, ROOT),  # predecessor equals candidate
+            ):
+                with self.subTest(roots=roots), self.assertRaises(
+                    self.q.QualificationError
+                ):
+                    self.q.require_distinct_source_roots(*roots)
+            dirty = [
+                mock.Mock(returncode=0, stdout=f"{source}\n", stderr=""),
+                mock.Mock(returncode=0, stdout=f"{commit}\n", stderr=""),
+                mock.Mock(returncode=0, stdout="M puffer/bloodbowl/binding.c\n", stderr=""),
+            ]
+            with mock.patch.object(self.q.subprocess, "run", side_effect=dirty), \
+                    self.assertRaises(self.q.QualificationError):
+                self.q.validate_source_checkout(
+                    source, puffer, expected_commit=commit, role="predecessor"
+                )
 
     def test_run_failure_record_never_writes_to_rejected_output(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
             safe_output = root / "new-output"
             args = mock.Mock(command="run", output=safe_output)
+            args.candidate_source_root = root / "candidate-source"
+            args.predecessor_source_root = root / "predecessor-source"
             args.ratio_call_limit = 1
             args.throughput_warmup_rollouts = 0
             args.throughput_timed_rollouts = 1
@@ -343,6 +472,120 @@ class QualificationValidatorTests(unittest.TestCase):
                 self.q.main([])
             self.assertFalse(inside_checkout.exists())
 
+            for forbidden in (
+                args.candidate_source_root,
+                args.predecessor_source_root,
+                self.q.PROTECTED_RECOVERY_ROOT,
+            ):
+                args.output = forbidden / "qualification-output"
+                with mock.patch.object(self.q, "parse_args", return_value=args), \
+                        mock.patch.object(
+                            self.q, "run_qualification",
+                            side_effect=self.q.QualificationError("expected failure"),
+                        ), self.assertRaises(self.q.QualificationError):
+                    self.q.main([])
+                self.assertFalse(args.output.exists())
+
+    def test_run_failure_record_refuses_untrusted_baseline_source_metadata(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            candidate = root / "candidate-source"
+            predecessor = root / "predecessor-source"
+            baseline = root / "THROUGHPUT_BASELINE.json"
+            candidate.mkdir()
+            predecessor.mkdir()
+
+            stale_source = root / "stale-predecessor-source"
+            cases = (
+                None,
+                {},
+                {"source_root": 7},
+                {
+                    "role": "predecessor",
+                    "source_root": str(stale_source),
+                    "source_commit": self.q.PREDECESSOR_SOURCE_COMMIT,
+                    "puffer_root": str(stale_source / "vendor" / "PufferLib"),
+                    "installer_check_sha256": "f" * 64,
+                },
+            )
+            for index, predecessor_source in enumerate(cases):
+                with self.subTest(predecessor_source=predecessor_source):
+                    output_root = stale_source if index == len(cases) - 1 else predecessor
+                    output = output_root / f"qualification-output-{index}"
+                    wrapper = {"schema_version": self.q.SCHEMA_VERSION}
+                    if predecessor_source is not None:
+                        wrapper["predecessor_source"] = predecessor_source
+                    baseline.write_text(json.dumps(wrapper), encoding="utf-8")
+                    args = self.q.parse_args([
+                        "run",
+                        "--puffer-root", str(candidate / "vendor" / "PufferLib"),
+                        "--output", str(output),
+                        "--baseline-throughput", str(baseline),
+                        "--candidate-source-root", str(candidate),
+                        "--predecessor-source-root", str(predecessor),
+                        "--expected-source-commit", self.q.CANDIDATE_SOURCE_COMMIT,
+                        "--expected-candidate-module-sha256", "a" * 64,
+                        "--expected-candidate-backend-sha256", "b" * 64,
+                        "--expected-environment-sha256", "c" * 64,
+                        "--expected-predecessor-source-commit",
+                        self.q.PREDECESSOR_SOURCE_COMMIT,
+                        "--expected-predecessor-module-sha256", "d" * 64,
+                        "--expected-predecessor-backend-sha256", "e" * 64,
+                    ])
+                    with mock.patch.object(self.q, "parse_args", return_value=args), \
+                            mock.patch.object(
+                                self.q, "run_qualification",
+                                side_effect=self.q.QualificationError(
+                                    "expected malformed baseline failure"
+                                ),
+                            ), self.assertRaises(self.q.QualificationError):
+                        self.q.main([])
+                    self.assertFalse(output.exists())
+
+            recorded = {"source_root": str(predecessor)}
+            self.assertEqual(
+                self.q.require_predecessor_source_root(predecessor, recorded),
+                predecessor.resolve(),
+            )
+            with self.assertRaises(self.q.QualificationError):
+                self.q.require_predecessor_source_root(stale_source, recorded)
+
+    def test_predecessor_source_root_is_required_by_both_operator_commands(self):
+        run_args = [
+            "run",
+            "--puffer-root", "/candidate/vendor/PufferLib",
+            "--output", "/external/qualification",
+            "--baseline-throughput", "/external/THROUGHPUT_BASELINE.json",
+            "--candidate-source-root", "/candidate",
+            "--predecessor-source-root", "/predecessor",
+            "--expected-source-commit", self.q.CANDIDATE_SOURCE_COMMIT,
+            "--expected-candidate-module-sha256", "a" * 64,
+            "--expected-candidate-backend-sha256", "b" * 64,
+            "--expected-environment-sha256", "c" * 64,
+            "--expected-predecessor-source-commit",
+            self.q.PREDECESSOR_SOURCE_COMMIT,
+            "--expected-predecessor-module-sha256", "d" * 64,
+            "--expected-predecessor-backend-sha256", "e" * 64,
+        ]
+        capture_args = [
+            "capture-throughput",
+            "--puffer-root", "/predecessor/vendor/PufferLib",
+            "--output", "/external/baseline",
+            "--predecessor-source-root", "/predecessor",
+            "--expected-predecessor-source-commit",
+            self.q.PREDECESSOR_SOURCE_COMMIT,
+            "--expected-predecessor-module-sha256", "a" * 64,
+            "--expected-predecessor-backend-sha256", "b" * 64,
+            "--expected-environment-sha256", "c" * 64,
+        ]
+        for command_args in (run_args, capture_args):
+            root_index = command_args.index("--predecessor-source-root")
+            omitted = command_args[:root_index] + command_args[root_index + 2:]
+            with self.subTest(command=command_args[0]), mock.patch("sys.stderr"), \
+                    self.assertRaises(SystemExit) as raised:
+                self.q.parse_args(omitted)
+            self.assertEqual(raised.exception.code, 2)
+
     def test_top_level_acceptance_is_and_of_all_named_mandatory_gates(self):
         gates = {name: {"accepted": True} for name in self.q.MANDATORY_GATES}
         verdict = self.q.combine_gate_verdicts(gates)
@@ -356,6 +599,43 @@ class QualificationValidatorTests(unittest.TestCase):
 
 
 class QualificationPatchContractTests(unittest.TestCase):
+    def test_operator_contract_uses_isolated_exact_action_predecessor(self):
+        q = load_runner()
+        predecessor = "afc8008933548438ca93c41341f5f08fdd294386"
+        candidate = "a52fc6e2f4ece5a7ff16bb4791e3aca4dd72f2e3"
+        plan = PLAN.read_text(encoding="utf-8")
+        self.assertIn(predecessor, plan)
+        self.assertIn(candidate, plan)
+        self.assertIn("own pinned Puffer", plan)
+        self.assertIn("different from the predecessor tree", plan)
+        self.assertIn("--predecessor-source-root", plan)
+        self.assertIn("--expected-predecessor-source-commit", plan)
+        self.assertIn("--candidate-source-root", plan)
+        self.assertIn("Independently pass `--predecessor-source-root`", plan)
+        self.assertIn("Do not modify or reuse the recovery Puffer tree", plan)
+        self.assertNotIn("On the still-installed predecessor", plan)
+        for path in (AGENTS, CLAUDE, PUFFER_SKILL, TRAINING_SKILL):
+            with self.subTest(path=path):
+                text = path.read_text(encoding="utf-8")
+                self.assertIn(predecessor, text)
+                self.assertIn(candidate, text)
+                self.assertIn("different isolated source", text)
+                self.assertIn("recovery Puffer tree", text)
+
+        runner = RUNNER.read_text(encoding="utf-8")
+        self.assertEqual(q.PREDECESSOR_SOURCE_COMMIT, predecessor)
+        self.assertEqual(q.CANDIDATE_SOURCE_COMMIT, candidate)
+        self.assertEqual(
+            q.PROTECTED_RECOVERY_ROOT,
+            pathlib.Path("/home/rache/bloodbowl-rl-recovery-20260719"),
+        )
+        for argument in (
+            "--predecessor-source-root",
+            "--expected-predecessor-source-commit",
+            "--candidate-source-root",
+        ):
+            self.assertIn(argument, runner)
+
     def test_native_patch_exposes_only_bounded_evidence_surfaces(self):
         patch = PATCH.read_text(encoding="utf-8")
         for fragment in (

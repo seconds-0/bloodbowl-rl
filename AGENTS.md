@@ -547,6 +547,15 @@ changes a reward, active queue, production default, or promotion verdict.
   literal zero selected frozen rows derived from the recorded bank layout,
   byte-identical weights, zero hard-integrity counters, and throughput within
   the frozen same-host predecessor budget. The predecessor must be the exact
+  isolated fp32 build of `afc8008933548438ca93c41341f5f08fdd294386`, with
+  obs-v5/exact-joint-v1 and no qualification surface—not the occupied recovery
+  runtime, whose nonzero repaired-action telemetry makes it ineligible. Build
+  it only after atomic recovery completion. Keep exact candidate
+  `a52fc6e2f4ece5a7ff16bb4791e3aca4dd72f2e3` in a different isolated source
+  checkout and Puffer tree. Use a third clean merged control-runner checkout;
+  it must record and revalidate both source roots, full commits, source-local
+  Puffer paths, installer checks, and runtime hashes. Never modify or reuse the
+  recovery Puffer tree. The predecessor must also be represented by the exact
   hashed wrapper plus its confined hashed cell record, and its module/backend/
   environment hashes must be declared at capture and consumption; arbitrary
   JSON or an unplanned old binary is invalid.

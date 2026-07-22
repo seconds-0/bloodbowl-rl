@@ -152,8 +152,18 @@ checkpoints, and remember that stopped instances can be reclaimed.
   post-boundary fp32 `tools/qualify_recurrent_cuda.py` gate with a predeclared
   candidate source commit plus module/backend/environment hashes and an
   immutable same-host/config/precision throughput artifact captured from the immediately
-  preceding exact-action runtime. It must cover every learner row through the
-  reported sampled indices, prove byte-identical weights at learning rate zero,
+  preceding exact-action runtime. That predecessor is a fresh isolated fp32
+  build at exact commit `afc8008933548438ca93c41341f5f08fdd294386`, created
+  only after atomic recovery completion and required to expose obs-v5,
+  exact-joint-v1, matching compiled hashes, and no qualification bindings. The
+  exact candidate is `a52fc6e2f4ece5a7ff16bb4791e3aca4dd72f2e3` in a
+  different isolated source checkout and Puffer tree. A third clean merged
+  control-runner checkout records and revalidates both full commits,
+  source-local Puffer paths, installer checks, and runtime hashes. The occupied
+  marginal-action recovery runtime is historical evidence, not the
+  predecessor; never modify or reuse the recovery Puffer tree. The gate must cover every
+  learner row through the reported sampled indices, prove byte-identical
+  weights at learning rate zero,
   and accept all mandatory gates before the 50M canary. The ratio gate must use
   a real frozen bank and select zero frozen rows, including at `prio_alpha=0`.
   BF16 is not accepted because stored behavior-log-probability quantization can
