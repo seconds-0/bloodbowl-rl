@@ -7940,3 +7940,64 @@ Next steps:
   external stopped-validation directory.
 - No file, process, service, package, checkout, or artifact on the RTX 2070 was
   changed. Recovery and BBTV remain under the 21:02 read-only snapshot.
+
+## 2026-07-21 21:33 PDT — seed 44 at 6.93B; boundary closed and handoff reverified
+
+Status:
+
+- The recovery queue remains exactly `state=running`,
+  `current_job=full-control-rerun`, and `message=running job
+  full-control-rerun`, with plan SHA-256
+  `822bb912dbf3992c5fa6f04ddcaa5354897db10d03f2e66934b846c198b6a111`.
+  The screen remains on arm `both`, seed 44, index 3, with two completed arms
+  and message `waiting for current trainer`; `SCREEN_COMPLETE.json` is absent.
+  The atomic recovery boundary is therefore still closed.
+- Seed 44 reached exact step 6,925,844,480 of 12B at epoch 52,839. The latest
+  complete 103-game train panel reports 1.7282 TD/game, performance 0.5146,
+  possession 0.3658, carrier-target block share about 0.1437, and two-die-red
+  share 0.04733. All 15 recovery-valid reward clip, non-finite, component,
+  engine-error, and demo-fallback fields are exactly zero. Historical
+  pre-exact-action `illegal_frac=0.19566` remains diagnostic only.
+- The interval since the 21:02 sample averaged approximately 183K steps/s.
+  About 5.074B steps remain, or roughly 7.7 training hours at that observed
+  rate. The five-part atomic completion predicate remains authoritative over
+  this estimate.
+- Queue, trainer, BBTV follower, web server, and tunnel retain PIDs 610736,
+  653090, 610386, 127413, and 35307. All four user services remain
+  active/running with zero restarts, and trainer 653090 is still the sole GPU
+  compute process. The RTX 2070 was 82 C and 78% utilized, with 5,554/8,192
+  MiB allocated and 153.74/175 W draw. The recovery filesystem has about 846
+  GiB free and about 8.7 GiB RAM is available.
+- BBTV atomically selected seed 44 step 6,741,819,392 at 21:19 PDT. The
+  selection SHA-256 is
+  `4786545868fe3ef8c98f6aa5f148d3029a9286444680bfcfc0d4dd6716fae098`,
+  and <https://bbtv.seconds0.com/> returns HTTP 200.
+
+Preparation completed without touching the 2070:
+
+- Rechecked the merged recurrent-CUDA runner against the execution checklist.
+  The predecessor capture binds its environment digest into the immutable
+  baseline wrapper and cell; qualification revalidates that artifact, requires
+  the exact frozen predecessor identity, independently hashes the candidate
+  environment, and requires predecessor/candidate environment equality. The
+  documented capture, run, independent-validation, stopped-canary analyzer,
+  complete-log guard, and lineage flags match the shipped parsers.
+- The clean detached control worktree still hashes the qualification runner as
+  `57725ba7e9f8eade910bd201a3240749c03fb0af04f0b07db04e6acaa76da46f`
+  and the stopped analyzer as
+  `37665a14f05aaba7df15abe1d47ae9ad4d56774ae7c99d04c69e0e9da5996323`.
+  All 40 focused qualification/analyzer tests pass under the documented
+  `PYTHONPATH=tools`; package import without `PYTHONPATH` also passes. An
+  earlier combined invocation omitted that test-only import path and produced
+  only the expected sibling-module import error before the exact command was
+  rerun successfully.
+- Local evidence capacity remains 56 GiB versus an expected 3--4 GiB copy.
+  Local `/usr/bin/rsync` is the expected OpenRSYNC protocol-29 implementation,
+  remote rsync is 3.4.1, and the frozen newline-list compatibility path remains
+  applicable. No preservation destination, qualification root, package,
+  service, or artifact was created or changed on the RTX 2070.
+
+Next steps remain unchanged: continue read-only monitoring. At atomic recovery
+completion, independently establish queue/service/screen completion, run the
+frozen screen validator and stopped three-log audit, and preserve and verify
+the exact evidence off-box before creating any predecessor or candidate runtime.
