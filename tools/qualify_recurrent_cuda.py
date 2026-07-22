@@ -1281,7 +1281,7 @@ def _run_worker(
     output: Path,
     preceding_runtime: bool = False,
 ) -> dict[str, Any]:
-    python = Path(args.python).resolve() if args.python else (
+    python = Path(args.python).expanduser().absolute() if args.python else (
         Path(args.puffer_root).resolve() / ".venv" / "bin" / "python"
     )
     if not python.is_file():
