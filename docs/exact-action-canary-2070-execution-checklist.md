@@ -165,7 +165,7 @@ After=default.target
 Type=oneshot
 WorkingDirectory=/home/rache/bloodbowl-rl-qualification-candidate-a52fc6e
 ExecStartPre=/home/rache/bloodbowl-rl-qualification-candidate-a52fc6e/vendor/PufferLib/.venv/bin/python /home/rache/bloodbowl-rl-qualification-control-20260722/tools/qualify_recurrent_cuda.py validate /home/rache/bloodbowl-rl-qualification-artifacts-20260722/candidate-qualification/QUALIFICATION.json
-ExecStartPre=/usr/bin/bash -c 'set -euo pipefail; out="$(/usr/local/bin/nvidia-smi --query-compute-apps=pid --format=csv,noheader,nounits)"; stripped="$(/usr/bin/printf "%s" "$out" | /usr/bin/tr -d "[:space:]")"; test -z "$stripped"'
+ExecStartPre=/usr/bin/bash -c 'set -euo pipefail; out="$$(/usr/local/bin/nvidia-smi --query-compute-apps=pid --format=csv,noheader,nounits)"; stripped="$$(/usr/bin/printf "%s" "$${out}" | /usr/bin/tr -d "[:space:]")"; test -z "$${stripped}"'
 ExecStart=/usr/bin/env -u WARM -u POOL PATH=/home/rache/bloodbowl-rl-qualification-candidate-a52fc6e/vendor/PufferLib/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin CUDA_VISIBLE_DEVICES=0 OMP_NUM_THREADS=16 OPENBLAS_NUM_THREADS=16 MKL_NUM_THREADS=16 NUMEXPR_NUM_THREADS=16 STEPS=50000000 SCREEN_PROFILE=exact-action-canary PREFIX=exact-action-canary-50m-s42-v1 OUT_DIR=/home/rache/bloodbowl-rl-qualification-artifacts-20260722/exact-action-canary-50m-s42-v1 POLL_SECONDS=30 PLAN_ONLY=0 ARM_DETACH=0 /usr/bin/bash /home/rache/bloodbowl-rl-qualification-candidate-a52fc6e/tools/run_reward_screen.sh
 Restart=no
 KillMode=control-group
@@ -178,9 +178,24 @@ UMask=0022
 WantedBy=default.target
 ```
 
-Before start, require `systemd-analyze --user verify` success, exact installed
-unit-byte equality with Gate 3, `systemctl --user is-enabled` reporting disabled,
-and `NRestarts=0`. Do not enable the unit and do not use a restart policy.
+The doubled dollars above are mandatory systemd escaping: each `$$` becomes one
+literal `$` in the Bash command. A single `$out` or `$stripped` would be expanded
+by systemd before Bash assigns it and can turn a real compute PID into an empty
+string.
+
+Before installing the real unit, construct two disposable, non-training user
+units outside every source/output root using the same `$$` command-substitution
+and `$${name}` shell-local syntax. Replace only the probe body: the empty-output
+unit must exit zero; the fixed `123` output unit and a command that exits nonzero
+must both fail. Require `systemd-analyze --user verify` on those unit files,
+capture their exact bytes/status/journal, then remove them and require their unit
+names absent. This synthetic proof must run only after the recovery boundary and
+off-box preservation; it launches no GPU process.
+
+Then require `systemd-analyze --user verify` success for the exact real unit,
+exact installed unit-byte equality with Gate 3, `systemctl --user is-enabled`
+reporting disabled, and `NRestarts=0`. Do not enable the unit and do not use a
+restart policy.
 
 ## Gate 5: launch and live monitoring
 

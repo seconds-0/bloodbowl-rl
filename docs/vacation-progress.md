@@ -8083,10 +8083,13 @@ evidence off-box before creating any 2070 qualification root.
   candidate-launch, installer, outer-tree, and requirements digest.
 - Final checklist review caught and corrected three operator defects before
   publication: the canary unit's GPU precheck now fails if `nvidia-smi` or its
-  whitespace-normalization pipeline fails; lineage validation uses the frozen
-  CLI's real `--checkpoint`, `--lineage`, and repeated `--expect` interface;
-  and authorization correctly describes the already materialized plan-only
-  manifest rather than calling its canary directory empty.
+  whitespace-normalization pipeline fails and uses doubled dollars so systemd
+  cannot erase Bash-local values; lineage validation uses the frozen CLI's real
+  `--checkpoint`, `--lineage`, and repeated `--expect` interface; and
+  authorization correctly describes the already materialized plan-only
+  manifest rather than calling its canary directory empty. The post-boundary
+  unit gate now also requires synthetic systemd execution proofs for empty,
+  nonempty, and probe-failure cases before the real unit is installed.
 - Long-running draft PR #13 exceeded the authored-history workflow's 64-commit
   cap. Its exact five-file state was preserved without force-pushing and
   squash-applied as one commit on current main in replacement PR #58. The
