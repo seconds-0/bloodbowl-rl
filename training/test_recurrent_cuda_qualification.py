@@ -196,6 +196,15 @@ class QualificationValidatorTests(unittest.TestCase):
         with self.assertRaises(self.q.QualificationError):
             self.q.validate_throughput(
                 candidate, baseline, max_regression_fraction=0.10)
+        candidate = dict(
+            baseline,
+            config_sha256="b" * 64,
+            steps=2000,
+            steps_per_second=2000.0,
+        )
+        with self.assertRaises(self.q.QualificationError):
+            self.q.validate_throughput(
+                candidate, baseline, max_regression_fraction=0.10)
 
     def test_hard_integrity_rejects_redundant_nonzero_reward_counters(self):
         self.assertEqual(self.q.HARD_INTEGRITY_KEYS, (
@@ -592,6 +601,34 @@ class QualificationValidatorTests(unittest.TestCase):
         self.assertEqual(rollout_quantum, 131072)
         self.assertEqual(config["train"]["minibatch_size"], 16384)
 
+    def test_throughput_minibatch_parser_default_is_frozen(self):
+        args = self.q.parse_args([
+            "cell",
+            "--puffer-root", "/tmp/puffer",
+            "--kind", "throughput",
+            "--cudagraphs", "0",
+            "--output-json", "/tmp/throughput.json",
+        ])
+        self.assertEqual(self.q.DEFAULT_THROUGHPUT_MINIBATCH_SIZE, 16384)
+        self.assertEqual(args.throughput_minibatch_size, 16384)
+
+    def test_invalid_throughput_minibatch_fails_before_worker_dispatch(self):
+        argv = [
+            "cell",
+            "--puffer-root", "/tmp/puffer",
+            "--kind", "throughput",
+            "--cudagraphs", "0",
+            "--output-json", "/tmp/throughput.json",
+            "--throughput-agents", "2048",
+            "--throughput-horizon", "64",
+            "--throughput-minibatch-size", "6144",
+        ]
+        with mock.patch.object(self.q, "run_cell") as run_cell, self.assertRaises(
+            self.q.QualificationError
+        ):
+            self.q.main(argv)
+        run_cell.assert_not_called()
+
     def test_qualification_minibatch_must_fit_rollout_contract(self):
         base = {
             "cudagraphs": 0,
@@ -607,7 +644,7 @@ class QualificationValidatorTests(unittest.TestCase):
             "frozen_bank_pct": 0.1,
             "learning_rate": 0.0,
         }
-        for invalid in (0, 16383, 131136):
+        for invalid in (0, 6144, 16383, 24576, 131136):
             with self.subTest(minibatch_size=invalid), self.assertRaises(
                 self.q.QualificationError
             ):
@@ -623,6 +660,9 @@ class QualificationValidatorTests(unittest.TestCase):
             args.ratio_call_limit = 1
             args.throughput_warmup_rollouts = 0
             args.throughput_timed_rollouts = 1
+            args.throughput_agents = 2048
+            args.throughput_horizon = 64
+            args.throughput_minibatch_size = 16384
             args.max_regression_fraction = self.q.DEFAULT_MAX_REGRESSION_FRACTION
             with mock.patch.object(self.q, "parse_args", return_value=args), \
                     mock.patch.object(

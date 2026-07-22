@@ -811,15 +811,9 @@ def qualification_args(
     rollout_quantum = total_agents * horizon
     if minibatch_size is None:
         minibatch_size = rollout_quantum
-    if (
-        minibatch_size <= 0
-        or minibatch_size % horizon
-        or minibatch_size > rollout_quantum
-    ):
-        raise QualificationError(
-            "minibatch_size must be positive, horizon-divisible, and no larger "
-            "than the rollout quantum"
-        )
+    minibatch_size = validate_throughput_minibatch(
+        total_agents, horizon, minibatch_size
+    )
     return {
         "env_name": "bloodbowl",
         "reset_state": True,
@@ -867,6 +861,25 @@ def qualification_args(
             "prio_beta0": 1.0,
         },
     }
+
+
+def validate_throughput_minibatch(
+    total_agents: int, horizon: int, minibatch_size: int
+) -> int:
+    rollout_quantum = total_agents * horizon
+    if (
+        total_agents <= 0
+        or horizon <= 0
+        or minibatch_size <= 0
+        or minibatch_size % horizon
+        or minibatch_size > rollout_quantum
+        or rollout_quantum % minibatch_size
+    ):
+        raise QualificationError(
+            "minibatch_size must be positive, horizon-divisible, no larger than "
+            "the rollout quantum, and divide it exactly"
+        )
+    return minibatch_size
 
 
 def _load_backend(puffer_root: Path, *, require_qualification: bool = True):
@@ -2314,6 +2327,11 @@ def main(argv: list[str] | None = None) -> int:
         raise QualificationError("ratio call limit must be positive")
     if args.throughput_warmup_rollouts < 0 or args.throughput_timed_rollouts <= 0:
         raise QualificationError("throughput rollout counts are invalid")
+    validate_throughput_minibatch(
+        args.throughput_agents,
+        args.throughput_horizon,
+        args.throughput_minibatch_size,
+    )
     if args.command == "cell":
         return run_cell(args)
     if args.command == "capture-throughput":
