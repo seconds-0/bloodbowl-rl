@@ -7409,3 +7409,67 @@ Next steps:
   three immutable training logs; critical off-box preservation will include
   that directory, the frozen plan/state/config and authorization proof, and the
   three result-bound final checkpoints before any isolated qualification build.
+
+## 2026-07-21 18:36 PDT — seed 44 at 4.98B; BBTV current; boundary remains closed
+
+Status:
+
+- The authoritative recovery queue remains `state=running` on
+  `full-control-rerun`, with `current_job=full-control-rerun`; the final screen
+  completion artifact is absent. The exact plan SHA-256 remains
+  `822bb912dbf3992c5fa6f04ddcaa5354897db10d03f2e66934b846c198b6a111`.
+  The queue service is active/running with PID 610736, zero restarts, and the
+  original process tree. Nothing on the recovery runtime was modified,
+  rebuilt, restarted, or deployed.
+- Seed 44 reached 4,984,274,944 of 12B requested steps at epoch 38,026. The
+  latest complete 88-game panel reported 1.8523 touchdowns/game, 0.3278
+  possession, 0.1280 carrier-target block share, and 0.04314 two-die-red block
+  share. Every reward clip/non-finite/component-mismatch, engine-error, and
+  demo-fallback integrity field remains exactly zero. The historical
+  `illegal_frac=0.20128` belongs to this frozen pre-repair marginal-action run;
+  any nonzero invalid-action or action-snap count in the repaired exact-action
+  qualification/canary remains disqualifying.
+- At the current roughly 173--176K steps/s, about 7.02B training steps or 11
+  hours remain before final evaluation. This is an estimate only; queue state,
+  the accepted screen artifact, the frozen validator, and successful service
+  exit remain the completion authority.
+- Trainer PID 653090 remains the sole GPU compute process. The GPU was 84 C,
+  73% utilized, using 5,554/8,192 MiB and 171.3/175 W. The filesystem remains
+  12% used with 847 GiB free, and about 9.0 GiB RAM is available.
+- `bbstream`, `bbweb`, and `bbtv-tunnel` remain active/running with their
+  original PIDs and zero restarts. BBTV atomically selected seed 44's complete
+  4,844,158,976-step checkpoint against the frozen baseline at 18:25 PDT; the
+  selection SHA-256 is
+  `d20ad813fd09002500b54882bf5b4f5606dff8c51a5059b86a9c637aae5e5b2d`.
+  The public viewer returns HTTP 200. Direct ordinary HTTP to the private
+  backend returns the expected 426 because port 8787 is the WebSocket service,
+  not a failed web-page probe.
+
+Completed this interval:
+
+- Reconfirmed the post-boundary lineage contract from merged main
+  `286fec05d8793e9ee06228390d1fc972e81d8624`: exact predecessor
+  `afc8008933548438ca93c41341f5f08fdd294386`, exact candidate
+  `a52fc6e2f4ece5a7ff16bb4791e3aca4dd72f2e3`, and a separate clean control
+  runner. The protected recovery root cannot serve any of those roles.
+- Re-read the frozen screen validator and completion writer. Atomic handoff
+  requires top-level queue completion with both recorded success hashes,
+  successful queue-service exit, `SCREEN_COMPLETE.json`, exact pinned
+  `validate_vacation_artifact.py --screen` acceptance, and an independent
+  complete-log exact-zero scan. No dashboard sample can substitute for these
+  predicates.
+- Reconfirmed the preservation scope and target capacity. The complete
+  full-control directory plus queue/config/authorization/BBTV/journal evidence
+  and only the three result-bound checkpoints will be copied off-box and
+  verified by SHA-256 before any fresh qualification checkout or Puffer build.
+
+Next steps:
+
+1. Continue read-only queue, seed-44, exact-zero integrity, process containment,
+   thermal/capacity, and BBTV monitoring through atomic completion.
+2. At the boundary, independently validate and preserve the exact recovery
+   evidence off-box before creating any qualification source or runtime path.
+3. Capture the untouched predecessor throughput in its own fp32 Puffer tree;
+   only afterward build candidate `a52fc6e2`, execute and independently validate
+   every CUDA qualification cell, and admit the disposable fresh 50M canary
+   only if the entire exact-zero verdict is accepted.
