@@ -7389,3 +7389,23 @@ Next steps:
   commit. The clarification is now shipped, but it grants no deployment or GPU
   mutation authority. The next active step remains read-only seed-44/BBTV
   monitoring until atomic recovery completion.
+
+18:28 PDT boundary-authority correction:
+
+- The frozen recovery queue does not create `QUEUE_COMPLETE.json`; earlier
+  absence checks were harmless but are not a completion predicate. Its
+  authoritative atomic boundary is `QUEUE_STATE.json` with top-level
+  `state=complete`, `current_job=null`, the exact message `all queued jobs
+  completed and validated`, and both job records complete with their recorded
+  success SHA-256 values. The user service must then exit successfully, and
+  `work/full-control/SCREEN_COMPLETE.json` must independently pass the exact
+  pinned `validate_vacation_artifact.py --screen` command from `QUEUE_PLAN.json`.
+  Future monitoring and handoff use those predicates rather than waiting for a
+  nonexistent marker.
+- Read-only preparation confirmed the recovery plan has exactly two jobs:
+  completed `terminal-evidence-preflight` and running `full-control-rerun`.
+  The latter's sole success artifact is the screen completion JSON above. The
+  current full-control evidence directory is about 2.6 GiB, principally the
+  three immutable training logs; critical off-box preservation will include
+  that directory, the frozen plan/state/config and authorization proof, and the
+  three result-bound final checkpoints before any isolated qualification build.
