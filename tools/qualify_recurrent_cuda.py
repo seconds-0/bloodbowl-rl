@@ -100,6 +100,22 @@ BACKEND_SOURCE_FILES = (
     "src/pufferlib.cu",
     "src/vecenv.h",
 )
+# The immutable predecessor was compiled before selfplay.py joined the generated
+# native digest. Preserve that historical compiler contract while binding the
+# full current runtime source closure independently below.
+PREDECESSOR_BACKEND_SOURCE_FILES = (
+    "pufferlib/pufferl.py",
+    "pufferlib/torch_pufferl.py",
+    "src/bindings.cu",
+    "src/bindings_cpu.cpp",
+    "src/kernels.cu",
+    "src/pufferlib.cu",
+    "src/vecenv.h",
+)
+QUALIFICATION_SURFACE_BINDINGS = (
+    "qualification_recurrent_state",
+    "qualification_snapshot",
+)
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 GIT_COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 PREDECESSOR_SOURCE_COMMIT = "afc8008933548438ca93c41341f5f08fdd294386"
@@ -108,6 +124,16 @@ PROTECTED_RECOVERY_ROOT = Path("/home/rache/bloodbowl-rl-recovery-20260719")
 
 class QualificationError(RuntimeError):
     """A missing, malformed, drifted, or failed qualification predicate."""
+
+
+def qualification_surface_state(module: Any) -> bool:
+    """Accept only a completely absent or completely present evidence surface."""
+    present = tuple(
+        hasattr(module, name) for name in QUALIFICATION_SURFACE_BINDINGS
+    )
+    if any(present) and not all(present):
+        raise QualificationError("compiled qualification surface is partial")
+    return all(present)
 
 
 def sha256(path: Path) -> str:
@@ -167,11 +193,13 @@ def _require_sha256(value: Any, label: str) -> str:
     return value
 
 
-def backend_source_hash(puffer_root: Path) -> str:
+def backend_source_hash(
+    puffer_root: Path, *, source_files: Iterable[str] = BACKEND_SOURCE_FILES
+) -> str:
     """Reproduce install_puffer_env.sh's path-bound backend source digest."""
     root = Path(puffer_root).resolve()
     manifest = bytearray()
-    for relative in BACKEND_SOURCE_FILES:
+    for relative in source_files:
         path = root / relative
         if not path.is_file():
             raise QualificationError(f"backend source is missing: {path}")
@@ -1000,12 +1028,21 @@ def _load_backend(puffer_root: Path, *, require_qualification: bool = True):
 
 def _module_identity(_C, module: Path, puffer_root: Path) -> dict[str, Any]:
     root = Path(puffer_root).resolve()
+    qualification_surface = qualification_surface_state(_C)
+    compiled_source_files = (
+        BACKEND_SOURCE_FILES
+        if qualification_surface
+        else PREDECESSOR_BACKEND_SOURCE_FILES
+    )
     return {
         "module": str(module),
         "puffer_root": str(root),
         "module_sha256": sha256(module),
         "compiled_backend_sha256": str(_C.exact_action_source_hash),
-        "backend_sources_sha256": backend_source_hash(root),
+        "backend_sources_sha256": backend_source_hash(
+            root, source_files=compiled_source_files
+        ),
+        "runtime_sources_sha256": backend_source_hash(root),
         "environment_sha256": str(_C.environment_source_hash),
         "installed_snapshot_sha256": installed_snapshot_hash(root),
         "observation_abi": str(_C.observation_abi),
@@ -1013,9 +1050,7 @@ def _module_identity(_C, module: Path, puffer_root: Path) -> dict[str, Any]:
         "action_abi": str(_C.action_abi),
         "precision_bytes": int(_C.precision_bytes),
         "compiled_env": str(_C.env_name),
-        "qualification_surface": all(hasattr(_C, name) for name in (
-            "qualification_recurrent_state", "qualification_snapshot",
-        )),
+        "qualification_surface": qualification_surface,
     }
 
 
@@ -1036,7 +1071,8 @@ def validate_module_identity(
         raise QualificationError("compiled qualification-surface role is wrong")
     for key in (
         "module_sha256", "compiled_backend_sha256", "backend_sources_sha256",
-        "environment_sha256", "installed_snapshot_sha256",
+        "runtime_sources_sha256", "environment_sha256",
+        "installed_snapshot_sha256",
     ):
         _require_sha256(identity.get(key), f"module identity {key}")
     if identity.get("compiled_backend_sha256") != identity.get(
@@ -1061,8 +1097,20 @@ def validate_current_identity_files(identity: Mapping[str, Any]) -> None:
     module = Path(str(identity.get("module", ""))).resolve()
     if not module.is_file() or sha256(module) != identity.get("module_sha256"):
         raise QualificationError("compiled module binary drifted after qualification")
-    if backend_source_hash(root) != identity.get("backend_sources_sha256"):
+    qualification_surface = identity.get("qualification_surface")
+    if not isinstance(qualification_surface, bool):
+        raise QualificationError("compiled qualification-surface role is malformed")
+    compiled_source_files = (
+        BACKEND_SOURCE_FILES
+        if qualification_surface
+        else PREDECESSOR_BACKEND_SOURCE_FILES
+    )
+    if backend_source_hash(
+        root, source_files=compiled_source_files
+    ) != identity.get("backend_sources_sha256"):
         raise QualificationError("Puffer backend sources drifted after qualification")
+    if backend_source_hash(root) != identity.get("runtime_sources_sha256"):
+        raise QualificationError("Puffer runtime sources drifted after qualification")
     if installed_snapshot_hash(root) != identity.get("installed_snapshot_sha256"):
         raise QualificationError("installed environment snapshot drifted after qualification")
 
@@ -1104,6 +1152,7 @@ def validate_expected_predecessor_identity(
     mapping = {
         "module_sha256": "module_sha256",
         "compiled_backend_sha256": "backend_sha256",
+        "runtime_sources_sha256": "runtime_sha256",
         "environment_sha256": "environment_sha256",
     }
     if set(expected) != {"source_commit", *mapping.values()}:
@@ -1195,9 +1244,7 @@ def run_cell(args: argparse.Namespace) -> int:
     _C, module = _load_backend(
         Path(args.puffer_root), require_qualification=not args.preceding_runtime
     )
-    qualification_surface = all(hasattr(_C, name) for name in (
-        "qualification_recurrent_state", "qualification_snapshot",
-    ))
+    qualification_surface = qualification_surface_state(_C)
     if args.preceding_runtime and qualification_surface:
         raise QualificationError(
             "throughput predecessor unexpectedly exposes qualification bindings"
@@ -1753,6 +1800,7 @@ def run_qualification(args: argparse.Namespace) -> int:
         "source_commit": args.expected_predecessor_source_commit,
         "module_sha256": args.expected_predecessor_module_sha256,
         "backend_sha256": args.expected_predecessor_backend_sha256,
+        "runtime_sha256": args.expected_predecessor_runtime_sha256,
         "environment_sha256": args.expected_environment_sha256,
     }
     candidate_source = validate_source_checkout(
@@ -2305,6 +2353,7 @@ def capture_throughput(args: argparse.Namespace) -> int:
         "source_commit": args.expected_predecessor_source_commit,
         "module_sha256": args.expected_predecessor_module_sha256,
         "backend_sha256": args.expected_predecessor_backend_sha256,
+        "runtime_sha256": args.expected_predecessor_runtime_sha256,
         "environment_sha256": args.expected_environment_sha256,
     }
     validate_expected_predecessor_identity(record["identity"], expected_predecessor)
@@ -2372,6 +2421,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     run.add_argument("--expected-predecessor-source-commit", required=True)
     run.add_argument("--expected-predecessor-module-sha256", required=True)
     run.add_argument("--expected-predecessor-backend-sha256", required=True)
+    run.add_argument("--expected-predecessor-runtime-sha256", required=True)
     run.add_argument(
         "--max-regression-fraction",
         type=float,
@@ -2387,6 +2437,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     capture.add_argument("--expected-predecessor-source-commit", required=True)
     capture.add_argument("--expected-predecessor-module-sha256", required=True)
     capture.add_argument("--expected-predecessor-backend-sha256", required=True)
+    capture.add_argument("--expected-predecessor-runtime-sha256", required=True)
     capture.add_argument("--expected-environment-sha256", required=True)
 
     validate = subparsers.add_parser(

@@ -426,7 +426,8 @@ in every transition-executing cell (the construction-only cell emits no episode
 telemetry), any selected frozen row, and an
 absent, loosely shaped, unhashed, or identity-mismatched
 same-host predecessor throughput report. The predecessor module/backend/
-environment hashes must be declared both when captured and when consumed. Its
+runtime/environment hashes must be declared both when captured and when
+consumed. Its
 runtime must be built after the immutable recovery boundary in a fresh isolated
 fp32 checkout at exact commit `afc8008933548438ca93c41341f5f08fdd294386`.
 Require obs-v5, exact-joint-v1, matching compiled hashes, and no qualification
@@ -437,6 +438,15 @@ merged schema-3 control-runner checkout must record and revalidate both full com
 source-local Puffer paths, installer checks, and runtime hashes. The occupied
 recovery runtime is marginal-action historical evidence, not a predecessor;
 never modify or reuse the recovery Puffer tree.
+The first schema-3 predecessor capture is rejected and must not be retried in
+place: its runner compared the immutable predecessor's historical compiled
+digest with the expanded registry. D224 requires a role-correct
+compiled-source digest plus a separate complete runtime-source digest. Always
+include `pufferlib/selfplay.py` in the latter for both roles and revalidate both
+digests from disk; separately predeclare the predecessor runtime digest. Keep
+its historical upstream/unpatched self-play file, and apply the league patch
+only to the current candidate. Do not rebuild the predecessor to change its compiled
+identity; use a fresh capture output and newly merged control/candidate root.
 The archived `a52fc6e2` canary manifest keeps its original 11-key live fail-fast
 registry. Control qualification and independent stopped validation additionally
 gate signed clamp delta, clipped samples, terminal/non-terminal clipped samples,

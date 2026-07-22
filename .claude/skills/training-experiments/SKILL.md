@@ -186,9 +186,18 @@ checkpoints, and remember that stopped instances can be reclaimed.
   a real frozen bank and select zero frozen rows, including at `prio_alpha=0`.
   BF16 is not accepted because stored behavior-log-probability quantization can
   move an unchanged recomputation ratio beyond a strict near-unity budget.
+  The first schema-3 predecessor capture is rejected and non-retryable because
+  its immutable native digest used the historical backend registry while the
+  runner recomputed the expanded registry. D224 records the role-correct
+  compiled-source digest separately from a complete runtime-source digest.
+  The latter always includes `pufferlib/selfplay.py` for both roles and must be
+  predeclared for the predecessor and revalidated from disk. Preserve the
+  predecessor's upstream/unpatched self-play file; only the candidate receives
+  the league patch. Never rebuild the predecessor to retrofit a newer
+  digest and never reuse the rejected output directory.
   The throughput predecessor must be its exact hashed wrapper and confined cell,
-  with module/backend/environment hashes declared both when captured and when
-  consumed, not a loose metrics dictionary or an unplanned old binary. Missing baseline,
+  with module/backend/runtime/environment hashes declared both when captured
+  and when consumed, not a loose metrics dictionary or an unplanned old binary. Missing baseline,
   coverage, bank/buffer, tensor, or hard-integrity evidence fails closed.
   The clean merged control launcher must reject `exact-action-canary` before
   creating output. Never launch through the rejected `a52fc6e2` checkout;

@@ -585,7 +585,7 @@ changes a reward, active queue, production default, or promotion verdict.
   Puffer paths, installer checks, and runtime hashes. Never modify or reuse the
   recovery Puffer tree. The predecessor must also be represented by the exact
   hashed wrapper plus its confined hashed cell record, and its module/backend/
-  environment hashes must be declared at capture and consumption; arbitrary
+  runtime/environment hashes must be declared at capture and consumption; arbitrary
   JSON or an unplanned old binary is invalid.
   A missing predecessor throughput
   artifact is a failure, not an ungated pass. Qualification artifacts are
@@ -608,6 +608,19 @@ changes a reward, active queue, production default, or promotion verdict.
   unit, authorization, and marker identities. Never modify or reuse the
   recovery Puffer tree. Keep the merged launcher frozen against a replacement
   canary until qualification accepts; authorize its exact commit separately.
+- The first schema-3 predecessor capture is rejected and non-retryable. It
+  failed before timing or GPU work because the immutable predecessor's native
+  digest used its historical backend registry, while the new runner compared
+  it with the expanded registry containing `pufferlib/selfplay.py`. D224 keeps
+  two mandatory identities: a role-correct compiled-source digest and a full
+  runtime-source digest. The runtime digest always includes `selfplay.py` for
+  both roles, is predeclared for the predecessor, and is revalidated from disk,
+  so this compatibility correction is not a drift exemption. Keep the
+  predecessor's historical upstream/unpatched self-play file; apply the league
+  patch only to the current candidate. Never rebuild the predecessor merely to
+  retrofit a newer compiled identity, and never
+  reuse the rejected output path; use a fresh output and newly merged clean
+  control/candidate commit.
 - BBP v4 is the first replay-pair lineage with exact conditional masks and
   canonical inactive-head sentinels (`arg=32`, `square=390`). Do not train a
   current BC/action experiment from v1-v3 pairs or mix those lineages merely

@@ -295,7 +295,8 @@ newer evidence wins.
   zero in every transition-executing cell (construction emits no episode
   telemetry), and a strictly wrapped,
   hashed same-host/config/precision predecessor throughput control whose
-  module/backend/environment hashes were declared at capture and consumption.
+  module/backend/runtime/environment hashes were declared at capture and
+  consumption.
   The predecessor is a fresh isolated fp32 build of exact commit
   `afc8008933548438ca93c41341f5f08fdd294386` (obs-v5/exact-joint-v1, no
   qualification surface) after the recovery boundary. The former exact
@@ -333,6 +334,17 @@ newer evidence wins.
   all-new qualification/canary authority identities. Never modify or reuse the
   recovery Puffer tree, and do not relax the replacement-canary launcher freeze
   until the new qualification accepts.
+  The first schema-3 predecessor capture is also rejected and non-retryable: it
+  compared the immutable predecessor's historical compiled digest against the
+  newer expanded source registry and failed before timing or GPU work. Under
+  D224, preserve the role-correct historical compiled-source digest separately
+  from a mandatory complete runtime-source digest. The latter always includes
+  the exact on-disk `pufferlib/selfplay.py` and is separately predeclared for
+  the predecessor, so runtime drift still fails closed. Preserve the
+  predecessor's historical upstream/unpatched self-play file; only the current
+  candidate receives the league patch. Use
+  a fresh output directory and a newly merged clean control/candidate commit;
+  never rebuild the predecessor to manufacture a modern compiled identity.
 - **`puffer/bloodbowl/` is the SOURCE OF TRUTH; `vendor/PufferLib/ocean/bloodbowl/` is an installed snapshot** written by `tools/install_puffer_env.sh` — the build compiles the snapshot, NOT your edit. The snapshot can lag (the Mac checkout's may still say 1612). Drift guard: `tools/install_puffer_env.sh --check` (exit 1 = re-install). Run it before any build on a training box.
 - After ANY env code change, ON THE TARGET: `bash tools/install_puffer_env.sh`,
   `bash tools/install_puffer_env.sh --check`, then
