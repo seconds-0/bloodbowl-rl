@@ -165,7 +165,7 @@ After=default.target
 Type=oneshot
 WorkingDirectory=/home/rache/bloodbowl-rl-qualification-candidate-a52fc6e
 ExecStartPre=/home/rache/bloodbowl-rl-qualification-candidate-a52fc6e/vendor/PufferLib/.venv/bin/python /home/rache/bloodbowl-rl-qualification-control-20260722/tools/qualify_recurrent_cuda.py validate /home/rache/bloodbowl-rl-qualification-artifacts-20260722/candidate-qualification/QUALIFICATION.json
-ExecStartPre=/usr/bin/bash -c 'test -z "$(/usr/local/bin/nvidia-smi --query-compute-apps=pid --format=csv,noheader,nounits | /usr/bin/tr -d "[:space:]")"'
+ExecStartPre=/usr/bin/bash -c 'set -euo pipefail; out="$(/usr/local/bin/nvidia-smi --query-compute-apps=pid --format=csv,noheader,nounits)"; stripped="$(/usr/bin/printf "%s" "$out" | /usr/bin/tr -d "[:space:]")"; test -z "$stripped"'
 ExecStart=/usr/bin/env -u WARM -u POOL PATH=/home/rache/bloodbowl-rl-qualification-candidate-a52fc6e/vendor/PufferLib/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin CUDA_VISIBLE_DEVICES=0 OMP_NUM_THREADS=16 OPENBLAS_NUM_THREADS=16 MKL_NUM_THREADS=16 NUMEXPR_NUM_THREADS=16 STEPS=50000000 SCREEN_PROFILE=exact-action-canary PREFIX=exact-action-canary-50m-s42-v1 OUT_DIR=/home/rache/bloodbowl-rl-qualification-artifacts-20260722/exact-action-canary-50m-s42-v1 POLL_SECONDS=30 PLAN_ONLY=0 ARM_DETACH=0 /usr/bin/bash /home/rache/bloodbowl-rl-qualification-candidate-a52fc6e/tools/run_reward_screen.sh
 Restart=no
 KillMode=control-group
@@ -229,9 +229,21 @@ stopped-validation output directory:
    train/eval game floors, all 16 control hard fields at zero despite the
    immutable manifest's narrower 11-key live registry, lineage digest binding,
    and atomic completion.
-3. Independently validate the final checkpoint and adjacent lineage with
-   `checkpoint_lineage.py validate --allow-qualification` against an atomic
-   expected-identity JSON derived from the already authorized manifest. Require
+3. Independently validate the final checkpoint and adjacent lineage with the
+   frozen candidate CLI's actual interface:
+
+   ```text
+   checkpoint_lineage.py validate
+   --checkpoint <final-checkpoint>
+   --lineage <adjacent-lineage-json>
+   --allow-qualification
+   --expect source_sha256=<authorized-source-sha256>
+   --expect compiled_module_sha256=<authorized-module-sha256>
+   --expect puffer_patch_bundle_sha256=<authorized-patch-bundle-sha256>
+   ```
+
+   The three repeated `--expect` values come from the already authorized
+   manifest; the frozen CLI has no expected-identity-JSON option. Require
    `qualification_only=true`, `eligible=false`, fresh initialization, and empty
    warm/pool ancestry.
 

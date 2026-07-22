@@ -8062,3 +8062,34 @@ checklists. Continue read-only recovery and BBTV monitoring. At atomic
 completion, establish the stopped service/process gates, run the pinned screen
 validator and independent three-log audit, and preserve and verify the exact
 evidence off-box before creating any 2070 qualification root.
+
+22:22 PDT D222 merge and checklist correction addendum:
+
+- D222 is no longer pending. Full local verification passed 260 tool tests with
+  two expected skips and 62 training tests with one expected skip. Independent
+  rereview found no remaining P0--P3 after rejecting all 75 transition-cell
+  mutations. Fable's later diff-only concerns were checked against the complete
+  source: the throughput writer already binds integrity, both frozen runtimes
+  emit all five added fields, and the ratio cell's horizon exceeds its forced
+  episode cap. Hosted CI and immutable history passed; PR #57 squash-merged as
+  `9274f45480d5bfff7943d3ce80fbc15c96760665`, tree
+  `30cf4d146be5e31ce450adec47e693a40c732b82`.
+- The qualification runner, stopped analyzer, and stopped complete-log guard
+  are now frozen at SHA-256
+  `c1d9ad45884754f307e58272a8d43a399ab4320a3906972f001edfc75839b740`,
+  `6e8fc25fe954da206a90e0cb0d1a2cff0db268f5c29b16bbad28db3c37445fb6`,
+  and `e9c957ae37671bc6bfd6d09c7ef2d956736a5ead7242395f2357006bfc571ff1`.
+  Exact Git-object rederivation matches all three plus every unchanged
+  candidate-launch, installer, outer-tree, and requirements digest.
+- Final checklist review caught and corrected three operator defects before
+  publication: the canary unit's GPU precheck now fails if `nvidia-smi` or its
+  whitespace-normalization pipeline fails; lineage validation uses the frozen
+  CLI's real `--checkpoint`, `--lineage`, and repeated `--expect` interface;
+  and authorization correctly describes the already materialized plan-only
+  manifest rather than calling its canary directory empty.
+- Long-running draft PR #13 exceeded the authored-history workflow's 64-commit
+  cap. Its exact five-file state was preserved without force-pushing and
+  squash-applied as one commit on current main in replacement PR #58. The
+  replacement's immutable-history gate passes; full hosted CI and final
+  checklist rereview are still pending. No remote runtime, service, process,
+  BBTV state, or experiment artifact was changed.

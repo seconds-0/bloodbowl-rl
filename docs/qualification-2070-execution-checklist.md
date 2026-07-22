@@ -262,7 +262,10 @@ of a separate canary authorization record. That record must bind:
 - the accepted qualification path and SHA-256;
 - runner, predecessor, candidate, Puffer, module, backend, environment,
   package, host, and library identities;
-- the new empty canary output directory;
+- the exact plan-only canary output path, whose already authorized contents are
+  limited to `SCREEN_MANIFEST.json` plus captured plan-only command/stdout/
+  stderr evidence and contain no trainer log, result, checkpoint, or completion
+  artifact;
 - exact systemd unit bytes/hash and command;
 - `Restart=no`, `KillMode=control-group`, no reboot enablement;
 - an `ExecStartPre` qualification revalidation and empty-GPU-process check;
