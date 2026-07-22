@@ -8208,6 +8208,49 @@ the stopped queue/service/process predicates, run the frozen screen validator
 and independent three-log auditor, and preserve and verify the exact evidence
 off-box before creating any qualification root.
 
+## 2026-07-22 13:46 PDT — schema-3 provenance repair merged; predecessor recapture rejected safely
+
+Status:
+
+- PR #68 passed local regression, two independent read-only reviews, Fable
+  review, immutable-history, and full hosted CI, then merged as
+  `30701e1588b0ddf48630f2763b51147fc3faadb3`, tree
+  `f382d37eee4bcbc59ab74f939f84ae75d5a9511a`. The merge makes the canonical
+  installer apply and fully reverse-check the self-play league patch, includes
+  patched `pufferlib/selfplay.py` in current backend identity, and advances
+  qualification to schema 3 with explicit clean control/candidate commit
+  authority. The rejected `a52fc6e2` canary remains permanently ineligible.
+- Fresh clean schema-3 control and candidate roots at merged `30701e1` and the
+  exact untouched predecessor root at `afc8008` were constructed with separate
+  pinned Puffer trees and identical normalized 63-package environments. Both
+  installer checks and fresh fp32 builds passed. Candidate exposes the bounded
+  qualification surface; predecessor correctly does not. The recovery tree was
+  not touched.
+- The first new predecessor throughput capture failed closed before timing,
+  transitions, or GPU work. Its immutable native module was compiled under the
+  historical backend registry, which omitted `pufferlib/selfplay.py`; the new
+  runner incorrectly recomputed its compiled digest with the expanded schema-3
+  registry. This is a provenance-validator mismatch, not a runtime or learning
+  failure. No baseline or usable evidence was created, and the empty attempt
+  directory is permanently non-retryable.
+- The rejected attempt is recorded with empty stdout SHA-256
+  `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`,
+  stderr SHA-256
+  `f0d2dbb62c8307a896e676a7ac747a2d516810d14b7838ae18277779cc2c6a50`,
+  and rejection-record SHA-256
+  `efc013889b4e2eab008210f9b0b7387728bab82349515bce7d93b4e33238d26f`.
+  `retry_same_output=false` is explicit.
+- BBTV was restored immediately after the bounded host-state window.
+  `bbstream.service` is active with zero restarts, the public viewer returns
+  HTTP 200, and no trainer or qualification process remains on the GPU.
+
+Next steps: merge a narrow test-first D224 correction that preserves the
+predecessor's role-correct historical compiled-source digest while separately
+requiring a complete runtime-source digest—including `selfplay.py`—for both
+roles. Then create entirely new clean control/candidate roots and a new
+`predecessor-throughput-v2` output, repeat the empty/idle/cool GPU gate, and
+resume qualification only if every identity and exact-zero predicate accepts.
+
 ## 2026-07-22 12:57 PDT — one-shot canary rejected pre-GPU; evidence sealed off-box
 
 Status:
