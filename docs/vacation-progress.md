@@ -7733,3 +7733,64 @@ Blocker and next steps:
   `tools/cpu_cap.sh` are byte-identical (SHA-256
   `75ec32025777510523dc1e0d160d7a011fb4275792d15f20564afe99fe5e1907`),
   so both qualification phases will reproduce that exact CPU contract.
+
+## 2026-07-21 20:06 PDT — seed 44 at 5.97B; preservation verifier under review
+
+Status:
+
+- The authoritative recovery queue remains `state=running` with
+  `current_job=full-control-rerun`, its exact running message, plan SHA-256
+  `822bb912dbf3992c5fa6f04ddcaa5354897db10d03f2e66934b846c198b6a111`,
+  and no `SCREEN_COMPLETE.json`. The queue therefore remains before its atomic
+  boundary. The queue, trainer, BBTV follower, web server, and tunnel retain
+  their original PIDs 610736, 653090, 610386, 127413, and 35307. All four user
+  services are active/running with zero restarts. No live file, process,
+  service, package, or checkout was modified.
+- Seed 44 reached exact step 5,972,819,968 of 12B at epoch 45,568. The latest
+  complete 96-game train panel reports about 182.3K steps/s, 1.875 TD/game,
+  0.3664 possession, 0.1275 carrier-target block share, and 0.05006 two-die-red
+  share. Every one of the 15 recovery-valid clip, non-finite, component-ledger,
+  engine-error, and demo-fallback fields is exactly zero. The historical
+  pre-exact-action `illegal_frac=0.19696` remains diagnostic only.
+- The observed interval rate is about 184K steps/s. Roughly 6.03B steps remain,
+  or about 9.2 training hours at the current display rate. This is only an
+  estimate; queue completion, stopped service success, the exact completion
+  artifact, pinned screen validation, and independent stopped-log validation
+  remain the only completion authority.
+- Trainer PID 653090 remains the sole GPU compute process. The RTX 2070 was
+  81 C and 77% utilized, with 5,554/8,192 MiB allocated and 118.76/175 W draw.
+  The recovery filesystem remains 12% used with 847 GiB free, and about 8.9
+  GiB RAM is available.
+- BBTV atomically selected seed 44 step 5,842,927,616 at 19:56 PDT. The
+  selection SHA-256 is
+  `d9227f1d866be7c2e562c498da6ccf2618d826aa238c166b788eda128981d318`,
+  and <https://bbtv.seconds0.com/> returns HTTP 200.
+
+Completed this interval:
+
+- Implemented a read-only recovery-preservation planner/verifier on a clean
+  branch from merged main. It opens only after the exact two-job queue boundary,
+  binds the accepted seed-42/43/44 results to their logs, checkpoints, and run
+  manifests, inventories the complete queue tree plus final BBTV selection,
+  rejects symlinks and path escapes, and emits a NUL-delimited exact transfer
+  list. The destination verifier requires the exact file set, modes, byte
+  counts, and SHA-256 values.
+- Inline review closed two time-of-check/time-of-use windows: the planner now
+  repeats its queue/result semantic validation and then rechecks every scanned
+  file identity; the destination verifier repeats the file-set walk and
+  rechecks every identity after hashing. Eleven focused tests force boundary,
+  result, symlink/path, strict-schema, mid-scan mutation, copied mutation,
+  missing/extra/mode, and CLI transfer-list failures. All 11 pass, as do the 18
+  focused/adjacent tests and all 250 tool tests with two expected skips; Python
+  compilation, Ruff, and whitespace checks are green.
+
+Next steps:
+
+- Commit and publish the preservation verifier, run the required independent
+  Codex/Gemini and inline reviews in parallel, fix every valid high/medium and
+  quick low finding, require green hosted CI, and merge. Do not deploy it into
+  or run it against the live writing recovery tree.
+- Continue interval monitoring only. At the atomic boundary, run the pinned
+  screen validator and independent complete-log audit first; then use the
+  merged preservation verifier to make and locally verify the exact off-box
+  copy before any predecessor/candidate runtime build or BBTV interruption.
