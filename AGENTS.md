@@ -119,6 +119,11 @@ For any causal comparison:
   and hash its mode/size with the manifest. Never delete the lock to make a
   one-file checklist pass; a missing, nonempty, held, or extra entry rejects the
   canary identity.
+- In systemd unit commands, escape for systemd before Bash: `$$` delivers a
+  literal `$`, and `%%` delivers a literal `%`. A `printf` format intended as
+  `%s` must therefore be written `%%s` in unit bytes. Bare `%s` expands to the
+  user shell and rejects the unit authority; prove empty/fixed/command-failure
+  cases with disposable units before installing a real training unit.
 - On an episode-ending step, preserve explicit objective reward (TD) and result
   utility, but do not let incidental action/board shaping co-stack with the
   terminal result. Keep deliberately episode-terminal terms separately visible

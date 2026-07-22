@@ -148,6 +148,11 @@ checkpoints, and remember that stopped instances can be reclaimed.
   modes/sizes, and require a successful nonblocking `flock` after the plan
   process exits. Never remove the lock to force one-file closure; missing,
   nonempty, held, or additional output rejects that canary identity.
+- For a systemd-wrapped experiment, freeze the systemd-to-Bash escape boundary:
+  `$$` in unit bytes delivers literal `$`, and `%%` delivers literal `%`.
+  Therefore `printf "%s"` must be authored as `printf "%%s"` in the unit.
+  Bare `%s` expands to the user shell. Run disposable empty-output,
+  fixed-output, and command-failure units before installing the real unit.
 - The recurrent runtime is part of the frozen implementation identity. Before
   the exact-action canary, a fresh isolated build must prove zero primary and
   frozen state after CUDA graph warmup, graph-on/off deterministic active-row output

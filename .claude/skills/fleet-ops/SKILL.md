@@ -190,6 +190,12 @@ zero-byte `.screen.lock`; require the empty-file SHA-256, prove the lock is
 released with nonblocking `flock`, and bind both files' modes, sizes, and
 digests. Do not delete the lock or tolerate any third entry.
 
+When Bash is embedded in a systemd unit, bind both escaping layers: `$$`
+delivers one literal `$` to Bash and `%%` delivers one literal `%`. Author an
+intended `printf "%s"` as `printf "%%s"` in unit bytes; bare `%s` is systemd's
+user-shell specifier. Prove empty-output success plus fixed-output and command-
+failure rejection with disposable units before any real trainer unit install.
+
 A final training Steps line is not completion. The audited evaluator may continue
 until the completed-game gate is satisfied. Do not kill it merely because the
 dashboard is no longer advancing training steps. Acceptance requires the explicit

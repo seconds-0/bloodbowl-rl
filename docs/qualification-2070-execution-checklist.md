@@ -314,6 +314,13 @@ of a separate canary authorization record. That record must bind:
 - an `ExecStartPre` qualification revalidation and empty-GPU-process check;
 - `env -u WARM -u POOL` around the exact one-seed 50M canary launcher.
 
+Any Bash command embedded in a systemd unit must escape both parsers: use `$$`
+where Bash must receive literal `$`, and use `%%` where Bash must receive
+literal `%`. In particular, an empty-GPU `printf` format is `"%%s"` in unit
+bytes; bare `"%s"` is invalid because systemd expands `%s` to the user shell.
+Require the synthetic empty/fixed/command-failure probes to prove these exact
+bytes before installing the real unit.
+
 The real launch must reuse the plan-only output without rewriting its manifest:
 the frozen launcher checks schema version 1, recomputes and deep-compares the
 complete nested stored `contract` object, rejects any drift, and leaves
