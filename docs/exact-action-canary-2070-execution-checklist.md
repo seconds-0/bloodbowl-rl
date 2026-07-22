@@ -9,10 +9,10 @@ qualification.
 
 - Candidate source: `a52fc6e2f4ece5a7ff16bb4791e3aca4dd72f2e3`
 - Candidate Git tree: `57731b2af496a4e382d263bbfe123bc219f6bd51`
-- Control runner: `2261cd4c707733679b9482d2ab52eca3088afd54`
-- Runner Git tree: `939b882ba74f51e8e7b31d6bd1d6e8d2c6f1af7d`
+- Control runner: `cf13fe5e22b95da0afac033188dcea96432d6909`
+- Runner Git tree: `82c184a5983a4add2278237d121604ac3833c263`
 - Runner file SHA-256:
-  `65dd97f2abffdd243655caa0d5bbf34e5e2eab164e8a567b9eaae305c178e7a8`
+  `916fa6efa851c3d966658de8635dade2da61646945dabbf930774389659c140e`
 - Stopped analyzer SHA-256:
   `3ea835d5f7c893571e3a885c4d5ad8a7cd61e16fdd372e968b5d11b955b5d3fd`
 - Stopped complete-log guard SHA-256:
@@ -21,7 +21,7 @@ qualification.
 - Candidate root:
   `/home/rache/bloodbowl-rl-qualification-candidate-a52fc6e`
 - Control root:
-  `/home/rache/bloodbowl-rl-qualification-control-20260722-v3`
+  `/home/rache/bloodbowl-rl-qualification-control-20260722-v4`
 - Qualification root:
   `/home/rache/bloodbowl-rl-qualification-artifacts-20260722/candidate-qualification`
 - Canary output:
@@ -32,6 +32,7 @@ qualification.
 - Requested agent steps: exactly `50000000`
 - Rollout quantum: exactly `131072` (`2048 * 64`)
 - Minibatch size: exactly `16384`
+- CUDA graph capture epoch: exactly `10`
 - Executed/final agent steps: exactly `49938432` (381 complete rollouts)
 - Learner/environment/self-play seed: exactly `42`
 - Reward profile: frozen R0 `both`
@@ -77,7 +78,7 @@ materialization:
 3. Candidate `QUALIFICATION.json` exists in the fixed qualification root,
    states `qualification_only=true` and `accepted=true`, and is independently
    accepted twice from fresh candidate-interpreter processes using exact runner
-   commit `2261cd4`.
+   commit `cf13fe5`.
 4. The qualification directory is closed and its exact relative file set,
    modes, sizes, and SHA-256 inventory are fixed.
 5. Candidate source, Puffer source, venv package inventory, installed Blood Bowl
@@ -119,6 +120,7 @@ contract:
 - exact candidate module/backend/environment and complete patch bundle;
 - exact fp32 policy shape 512 x 3 with expansion factor 1;
 - exact 2,048 x 64 rollout contract and minibatch size 16,384;
+- no cudagraph override and exact pinned Puffer default capture epoch 10;
 - the exact immutable candidate manifest's original ordered 11-key live
   registry including `illegal_frac`, contamination budget zero, poll interval
   30 seconds, and maximum silence 180 seconds; the later stopped control
@@ -166,7 +168,7 @@ After=default.target
 [Service]
 Type=oneshot
 WorkingDirectory=/home/rache/bloodbowl-rl-qualification-candidate-a52fc6e
-ExecStartPre=/home/rache/bloodbowl-rl-qualification-candidate-a52fc6e/vendor/PufferLib/.venv/bin/python /home/rache/bloodbowl-rl-qualification-control-20260722-v3/tools/qualify_recurrent_cuda.py validate /home/rache/bloodbowl-rl-qualification-artifacts-20260722/candidate-qualification/QUALIFICATION.json
+ExecStartPre=/home/rache/bloodbowl-rl-qualification-candidate-a52fc6e/vendor/PufferLib/.venv/bin/python /home/rache/bloodbowl-rl-qualification-control-20260722-v4/tools/qualify_recurrent_cuda.py validate /home/rache/bloodbowl-rl-qualification-artifacts-20260722/candidate-qualification/QUALIFICATION.json
 ExecStartPre=/usr/bin/bash -c 'set -euo pipefail; out="$$(/usr/local/bin/nvidia-smi --query-compute-apps=pid --format=csv,noheader,nounits)"; stripped="$$(/usr/bin/printf "%s" "$${out}" | /usr/bin/tr -d "[:space:]")"; test -z "$${stripped}"'
 ExecStart=/usr/bin/env -u WARM -u POOL PATH=/home/rache/bloodbowl-rl-qualification-candidate-a52fc6e/vendor/PufferLib/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin CUDA_VISIBLE_DEVICES=0 OMP_NUM_THREADS=16 OPENBLAS_NUM_THREADS=16 MKL_NUM_THREADS=16 NUMEXPR_NUM_THREADS=16 STEPS=50000000 SCREEN_PROFILE=exact-action-canary PREFIX=exact-action-canary-50m-s42-v1 OUT_DIR=/home/rache/bloodbowl-rl-qualification-artifacts-20260722/exact-action-canary-50m-s42-v1 POLL_SECONDS=30 PLAN_ONLY=0 ARM_DETACH=0 /usr/bin/bash /home/rache/bloodbowl-rl-qualification-candidate-a52fc6e/tools/run_reward_screen.sh
 Restart=no
@@ -229,7 +231,7 @@ reuse partial checkpoints.
 After the unit exits, require inactive `Result=success`, `ExecMainStatus=0`,
 `NRestarts=0`, no compute PID, and exact source/unit/authorization identity.
 Require the screen's own complete validation plus all three fresh independent
-stopped checks below. Run them from exact control commit `2261cd4` with the
+stopped checks below. Run them from exact control commit `cf13fe5` with the
 candidate interpreter, writing only under the separately new/empty
 stopped-validation output directory:
 

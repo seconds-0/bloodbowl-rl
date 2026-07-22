@@ -9,7 +9,7 @@ qualification/canary output as training ancestry.
 
 | Role | Exact identity |
 |---|---|
-| Control runner | `2261cd4c707733679b9482d2ab52eca3088afd54` |
+| Control runner | `cf13fe5e22b95da0afac033188dcea96432d6909` |
 | Predecessor | `afc8008933548438ca93c41341f5f08fdd294386` |
 | Candidate | `a52fc6e2f4ece5a7ff16bb4791e3aca4dd72f2e3` |
 | PufferLib base | `9836f0d2e78889c1aaf189c04d161b6fc61a9386` |
@@ -17,13 +17,14 @@ qualification/canary output as training ancestry.
 | Portable requirements | `7914e9637f419c1b3ff32cd9331c19b2e7ce30ab123db816fe48d50c4c3f2d7b` |
 | Precision | fp32 (`precision_bytes == 4`) |
 | Observation/action ABI | `obs-v5` / `exact-joint-v1` |
+| CUDA graph warmup | exactly 10 epochs before capture |
 
 The corresponding outer Git tree identities are runner
-`939b882ba74f51e8e7b31d6bd1d6e8d2c6f1af7d`, predecessor
+`82c184a5983a4add2278237d121604ac3833c263`, predecessor
 `f89318a58c9038a888419f9a0720478c1cf1a325`, and candidate
 `57731b2af496a4e382d263bbfe123bc219f6bd51`. The frozen control-runner
 `tools/qualify_recurrent_cuda.py` SHA-256 is
-`65dd97f2abffdd243655caa0d5bbf34e5e2eab164e8a567b9eaae305c178e7a8`.
+`916fa6efa851c3d966658de8635dade2da61646945dabbf930774389659c140e`.
 
 The earlier control roots are retained as immutable rejection evidence. The
 first root, at commit `9274f45480d5bfff7943d3ce80fbc15c96760665`, proved
@@ -36,11 +37,17 @@ that interpreter defect but attempted the complete 131,072-transition rollout
 as one learner minibatch, rather than matching the canary's fixed 16,384
 minibatch, and failed before any transition with a CUDA allocation error. Its
 rejected output is preserved only at
-`<artifacts>/predecessor-throughput-attempt2-rejected-cuda-oom`. The authorized
-`<artifacts>/predecessor-throughput` target must remain absent before the
-corrected capture. Neither old runner is an executable qualification authority.
-Only the merged runner identity above may create new throughput or
-qualification evidence.
+`<artifacts>/predecessor-throughput-attempt2-rejected-cuda-oom`. A third root,
+at commit `2261cd4c707733679b9482d2ab52eca3088afd54`, fixed the
+allocation mismatch but treated Puffer's `cudagraphs` warmup-epoch count as a
+boolean and requested capture at epoch zero. First-use CUDA library allocation
+therefore invalidated the capture before any timing evidence; its rejected
+output is preserved only at
+`<artifacts>/predecessor-throughput-attempt3-rejected-cuda-graph-capture`.
+The authorized `<artifacts>/predecessor-throughput` target must remain absent
+before the corrected capture. None of the old runners is an executable
+qualification authority. Only the merged runner identity above may create new
+throughput or qualification evidence.
 
 The predecessor installer SHA-256 is
 `577434b35c785cdb271647434ad974f1cb57f3a6dde3620d8f176d3aaa5be119`.
@@ -79,7 +86,7 @@ Any absence, addition, reordering, or digest mismatch rejects that runtime.
 Target roots are pairwise distinct and outside the protected recovery tree:
 
 ```text
-/home/rache/bloodbowl-rl-qualification-control-20260722-v3
+/home/rache/bloodbowl-rl-qualification-control-20260722-v4
 /home/rache/bloodbowl-rl-qualification-predecessor-afc8008
 /home/rache/bloodbowl-rl-qualification-candidate-a52fc6e
 /home/rache/bloodbowl-rl-qualification-artifacts-20260722
@@ -226,9 +233,11 @@ identity, expected predecessor identity, literal zero for the exact ordered
 16-key control hard-integrity registry, and positive internally consistent
 timing. The runner itself rejects any operator-supplied throughput minibatch
 other than 16,384. Require the emitted configuration to bind that exact value,
-and preserve its configuration hash for equality with the candidate throughput
-cell. Preserve the complete output and hashes before constructing the candidate
-runtime.
+exactly 10 uncaptured graph-warmup epochs before capture, and a canonical
+configuration hash for equality with the candidate throughput cell. A zero
+warmup or graph-disabled timing record is invalid even if internally
+self-consistent. Preserve the complete output and hashes before constructing
+the candidate runtime.
 
 ## Candidate qualification
 
@@ -271,7 +280,8 @@ run
 The runner itself rejects any regression-budget value other than 0.10 and any
 operator-supplied throughput minibatch other than 16,384. The predecessor and
 candidate throughput configurations and configuration hashes must be exactly
-equal. Every
+equal and must bind `cudagraphs=10`. Only the explicit graph-off correctness
+cell may bind `-1`; zero is rejected before backend load. Every
 transition-executing cell—graph off/on, terminal automatic/control, ratio, and
 throughput—must bind the exact ordered 16-key control registry at literal zero;
 construction is the sole exemption because it performs no transition and emits
