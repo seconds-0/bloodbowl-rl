@@ -7681,8 +7681,7 @@ Blocker and next steps:
   no competing evaluator, an unchanged CPU quota/affinity and thread-cap
   environment, and a common cooled GPU precondition. Record driver, CUDA,
   compiler, clocks, temperature, power, CPU model/quota, and free capacity.
-  BBTV is currently CPU-only and need not be disrupted merely because it is
-  active; the GPU process list, not a service-name heuristic, is authoritative.
+  The GPU process list, not a service-name heuristic, is authoritative.
 - Invoke the control runner with the predecessor venv for
   `capture-throughput`, the candidate venv for `run`, and the candidate venv
   for independent `validate`; also pass the corresponding worker `--python`
@@ -7711,3 +7710,26 @@ Blocker and next steps:
   runner. Qualification and all timing outputs, commands, stdout/stderr, and
   environment evidence will be preserved off-box even though they remain
   permanently ineligible as training ancestry.
+
+19:49 PDT BBTV throughput-isolation correction:
+
+- A direct read-only process snapshot confirmed that BBTV owns no GPU process,
+  but its current two-game match-server child uses about 41% of one logical CPU
+  while the follower is otherwise near-idle. That is harmless for training and
+  viewing, but it is avoidable asynchronous noise in a short 16-thread
+  predecessor/candidate throughput comparison.
+- Therefore, only after atomic recovery completion and off-box evidence
+  preservation, preserve the final selection and service evidence, then
+  briefly stop the `bbstream` follower for both timed phases. Keep the web and
+  tunnel services intact, run both phases under the same empty-GPU/cooled-host/
+  16-thread conditions, and restart and verify the follower and public viewer
+  immediately after independent qualification validation. This is a bounded
+  post-boundary viewer interruption, not a mutation of the recovery experiment;
+  no BBTV service changes before that boundary are authorized.
+- The host exposes exactly 16 logical CPUs on an AMD Ryzen 7 2700X, affinity
+  `0-15`, and an infinite systemd CPU quota. The active trainer has
+  `OMP_NUM_THREADS`, `OPENBLAS_NUM_THREADS`, `MKL_NUM_THREADS`, and
+  `NUMEXPR_NUM_THREADS` all set to 16. Predecessor and candidate
+  `tools/cpu_cap.sh` are byte-identical (SHA-256
+  `75ec32025777510523dc1e0d160d7a011fb4275792d15f20564afe99fe5e1907`),
+  so both qualification phases will reproduce that exact CPU contract.
