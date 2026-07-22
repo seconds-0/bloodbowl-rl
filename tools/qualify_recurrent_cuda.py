@@ -2327,6 +2327,15 @@ def main(argv: list[str] | None = None) -> int:
         raise QualificationError("ratio call limit must be positive")
     if args.throughput_warmup_rollouts < 0 or args.throughput_timed_rollouts <= 0:
         raise QualificationError("throughput rollout counts are invalid")
+    if (
+        args.command in {"run", "capture-throughput"}
+        and args.throughput_minibatch_size
+        != DEFAULT_THROUGHPUT_MINIBATCH_SIZE
+    ):
+        raise QualificationError(
+            "operator throughput minibatch is frozen at the exact-action "
+            f"canary value {DEFAULT_THROUGHPUT_MINIBATCH_SIZE}"
+        )
     validate_throughput_minibatch(
         args.throughput_agents,
         args.throughput_horizon,

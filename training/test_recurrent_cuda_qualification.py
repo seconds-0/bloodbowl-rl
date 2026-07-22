@@ -629,6 +629,24 @@ class QualificationValidatorTests(unittest.TestCase):
             self.q.main(argv)
         run_cell.assert_not_called()
 
+    def test_operator_commands_freeze_canary_throughput_minibatch(self):
+        args = mock.Mock(
+            command="capture-throughput",
+            ratio_call_limit=64,
+            throughput_warmup_rollouts=2,
+            throughput_timed_rollouts=8,
+            throughput_agents=2048,
+            throughput_horizon=64,
+            throughput_minibatch_size=8192,
+        )
+        with mock.patch.object(
+            self.q, "parse_args", return_value=args
+        ), mock.patch.object(self.q, "capture_throughput") as capture, self.assertRaises(
+            self.q.QualificationError
+        ):
+            self.q.main([])
+        capture.assert_not_called()
+
     def test_qualification_minibatch_must_fit_rollout_contract(self):
         base = {
             "cudagraphs": 0,
