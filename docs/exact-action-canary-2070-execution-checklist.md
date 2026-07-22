@@ -178,10 +178,10 @@ UMask=0022
 WantedBy=default.target
 ```
 
-The doubled dollars above are mandatory systemd escaping: each `$$` becomes one
-literal `$` in the Bash command. A single `$out` or `$stripped` would be expanded
-by systemd before Bash assigns it and can turn a real compute PID into an empty
-string.
+The doubled dollars above are mandatory for this frozen contract: each `$$`
+becomes one literal `$` in the Bash command. This unambiguously passes every
+dollar to Bash and does not depend on systemd's positional environment-variable
+expansion rules.
 
 Before installing the real unit, construct three separately named disposable,
 non-training user units outside every source/output root using the same `$$`
