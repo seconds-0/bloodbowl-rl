@@ -7920,3 +7920,23 @@ Next steps:
   screen validator and independent stopped-log auditor, then create and locally
   verify the exact off-box preservation copy before any new build or BBTV
   interruption.
+
+21:09 PDT canary-gate merge addendum:
+
+- Hosted immutable-history passed in 4m39s and full CI including the repository
+  sanitizer jobs passed in 5m40s. PR #56 squash-merged to main as
+  `2b301115cd6342444f0d195cab6798e187599cd9`; the remote topic branch was
+  explicitly deleted after the merge helper could not check out a `main` branch
+  owned by another worktree. The merge itself and remote deletion were
+  independently verified.
+- Updated and pushed both post-boundary operator checklists as `00c20c3`. The
+  control runner is now exact merge `2b30111`, tree
+  `70c735537ad44fa1ebd4eca6ebbf3929cdf90834`; the qualification runner SHA is
+  unchanged and the stopped analyzer is frozen at SHA-256
+  `37665a14f05aaba7df15abe1d47ae9ad4d56774ae7c99d04c69e0e9da5996323`.
+  Canary acceptance now explicitly requires a separate complete-log guard
+  rescan, the fixed-contract analyzer with the authorized manifest SHA, and an
+  independent qualification-lineage validation, all writing only to a new
+  external stopped-validation directory.
+- No file, process, service, package, checkout, or artifact on the RTX 2070 was
+  changed. Recovery and BBTV remain under the 21:02 read-only snapshot.
