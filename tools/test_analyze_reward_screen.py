@@ -54,6 +54,7 @@ class RewardScreenAnalysisTests(unittest.TestCase):
                 "settings": {
                     "total_agents": "2048",
                     "horizon": "64",
+                    "minibatch_size": "16384",
                     "expected_checkpoint_bytes": "16066560",
                     "frozen_bank_pct": "0",
                     "num_frozen_banks": "0",
@@ -378,6 +379,13 @@ class RewardScreenAnalysisTests(unittest.TestCase):
                     result.__setitem__("checkpoint_bytes", 8),
                 ),
                 "settings.expected_checkpoint_bytes mismatch",
+            ),
+            (
+                "minibatch_size",
+                lambda contract, result: contract["settings"].__setitem__(
+                    "minibatch_size", "8192"
+                ),
+                "settings.minibatch_size mismatch",
             ),
             (
                 "policy_shape",

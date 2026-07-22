@@ -145,6 +145,7 @@ EXACT_ACTION_CANARY_SCHEDULE = (("both", 42),)
 EXACT_ACTION_CANARY_REQUESTED_STEPS = 50_000_000
 EXACT_ACTION_CANARY_TOTAL_AGENTS = 2_048
 EXACT_ACTION_CANARY_HORIZON = 64
+EXACT_ACTION_CANARY_MINIBATCH_SIZE = 16_384
 EXACT_ACTION_CANARY_ROLLOUT_QUANTUM = (
     EXACT_ACTION_CANARY_TOTAL_AGENTS * EXACT_ACTION_CANARY_HORIZON)
 EXACT_ACTION_CANARY_FINAL_STEPS = (
@@ -359,6 +360,7 @@ def _validate_exact_action_canary_contract(contract: dict[str, Any]) -> None:
     for field, expected in (
         ("total_agents", EXACT_ACTION_CANARY_TOTAL_AGENTS),
         ("horizon", EXACT_ACTION_CANARY_HORIZON),
+        ("minibatch_size", EXACT_ACTION_CANARY_MINIBATCH_SIZE),
         ("expected_checkpoint_bytes", EXACT_ACTION_CANARY_CHECKPOINT_BYTES),
         ("num_frozen_banks", 0),
         ("frozen_bank_pct", 0),

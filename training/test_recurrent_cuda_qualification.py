@@ -196,6 +196,15 @@ class QualificationValidatorTests(unittest.TestCase):
         with self.assertRaises(self.q.QualificationError):
             self.q.validate_throughput(
                 candidate, baseline, max_regression_fraction=0.10)
+        candidate = dict(
+            baseline,
+            config_sha256="b" * 64,
+            steps=2000,
+            steps_per_second=2000.0,
+        )
+        with self.assertRaises(self.q.QualificationError):
+            self.q.validate_throughput(
+                candidate, baseline, max_regression_fraction=0.10)
 
     def test_hard_integrity_rejects_redundant_nonzero_reward_counters(self):
         self.assertEqual(self.q.HARD_INTEGRITY_KEYS, (
@@ -551,6 +560,7 @@ class QualificationValidatorTests(unittest.TestCase):
                 throughput_horizon=64,
                 throughput_hidden=512,
                 throughput_layers=3,
+                throughput_minibatch_size=16384,
                 throughput_warmup_rollouts=2,
                 throughput_timed_rollouts=8,
                 cell_timeout_seconds=1800,
@@ -570,6 +580,97 @@ class QualificationValidatorTests(unittest.TestCase):
             command = run.call_args.args[0]
             self.assertEqual(command[0], str(venv_python.absolute()))
             self.assertNotEqual(command[0], str(base_python.resolve()))
+            minibatch_flag = command.index("--throughput-minibatch-size")
+            self.assertEqual(command[minibatch_flag + 1], "16384")
+
+    def test_throughput_minibatch_matches_exact_canary_contract(self):
+        args = mock.Mock(
+            seed=271828,
+            throughput_agents=2048,
+            throughput_buffers=2,
+            throughput_threads=16,
+            throughput_horizon=64,
+            throughput_hidden=512,
+            throughput_layers=3,
+            throughput_minibatch_size=16384,
+        )
+        config = self.q._cell_config("throughput", 0, args)
+        rollout_quantum = (
+            config["vec"]["total_agents"] * config["train"]["horizon"]
+        )
+        self.assertEqual(rollout_quantum, 131072)
+        self.assertEqual(config["train"]["minibatch_size"], 16384)
+
+    def test_throughput_minibatch_parser_default_is_frozen(self):
+        args = self.q.parse_args([
+            "cell",
+            "--puffer-root", "/tmp/puffer",
+            "--kind", "throughput",
+            "--cudagraphs", "0",
+            "--output-json", "/tmp/throughput.json",
+        ])
+        self.assertEqual(self.q.DEFAULT_THROUGHPUT_MINIBATCH_SIZE, 16384)
+        self.assertEqual(args.throughput_minibatch_size, 16384)
+
+    def test_invalid_throughput_minibatch_fails_before_worker_dispatch(self):
+        argv = [
+            "cell",
+            "--puffer-root", "/tmp/puffer",
+            "--kind", "throughput",
+            "--cudagraphs", "0",
+            "--output-json", "/tmp/throughput.json",
+            "--throughput-agents", "2048",
+            "--throughput-horizon", "64",
+            "--throughput-minibatch-size", "6144",
+        ]
+        with mock.patch.object(self.q, "run_cell") as run_cell, self.assertRaises(
+            self.q.QualificationError
+        ):
+            self.q.main(argv)
+        run_cell.assert_not_called()
+
+    def test_operator_commands_freeze_canary_throughput_minibatch(self):
+        for command, dispatch_name in (
+            ("capture-throughput", "capture_throughput"),
+            ("run", "run_qualification"),
+        ):
+            args = mock.Mock(
+                command=command,
+                ratio_call_limit=64,
+                throughput_warmup_rollouts=2,
+                throughput_timed_rollouts=8,
+                throughput_agents=2048,
+                throughput_horizon=64,
+                throughput_minibatch_size=8192,
+            )
+            with self.subTest(command=command), mock.patch.object(
+                self.q, "parse_args", return_value=args
+            ), mock.patch.object(self.q, dispatch_name) as dispatch, self.assertRaises(
+                self.q.QualificationError
+            ):
+                self.q.main([])
+            dispatch.assert_not_called()
+
+    def test_qualification_minibatch_must_fit_rollout_contract(self):
+        base = {
+            "cudagraphs": 0,
+            "seed": 271828,
+            "total_agents": 2048,
+            "num_buffers": 2,
+            "num_threads": 16,
+            "horizon": 64,
+            "max_decisions": 64,
+            "hidden_size": 512,
+            "num_layers": 3,
+            "frozen_banks": 1,
+            "frozen_bank_pct": 0.1,
+            "learning_rate": 0.0,
+        }
+        for invalid in (0, 6144, 16383, 24576, 131136):
+            with self.subTest(minibatch_size=invalid), self.assertRaises(
+                self.q.QualificationError
+            ):
+                self.q.qualification_args(**base, minibatch_size=invalid)
 
     def test_run_failure_record_never_writes_to_rejected_output(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -581,6 +682,9 @@ class QualificationValidatorTests(unittest.TestCase):
             args.ratio_call_limit = 1
             args.throughput_warmup_rollouts = 0
             args.throughput_timed_rollouts = 1
+            args.throughput_agents = 2048
+            args.throughput_horizon = 64
+            args.throughput_minibatch_size = 16384
             args.max_regression_fraction = self.q.DEFAULT_MAX_REGRESSION_FRACTION
             with mock.patch.object(self.q, "parse_args", return_value=args), \
                     mock.patch.object(
