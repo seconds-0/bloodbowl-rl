@@ -9,7 +9,7 @@ qualification/canary output as training ancestry.
 
 | Role | Exact identity |
 |---|---|
-| Control runner | `ffa49adfd71644fe3ffa10106df1fcdc7421b0c7` |
+| Control runner | `2261cd4c707733679b9482d2ab52eca3088afd54` |
 | Predecessor | `afc8008933548438ca93c41341f5f08fdd294386` |
 | Candidate | `a52fc6e2f4ece5a7ff16bb4791e3aca4dd72f2e3` |
 | PufferLib base | `9836f0d2e78889c1aaf189c04d161b6fc61a9386` |
@@ -19,21 +19,27 @@ qualification/canary output as training ancestry.
 | Observation/action ABI | `obs-v5` / `exact-joint-v1` |
 
 The corresponding outer Git tree identities are runner
-`dd06117b77a4d15b5deb1770f86a465dc04338d0`, predecessor
+`939b882ba74f51e8e7b31d6bd1d6e8d2c6f1af7d`, predecessor
 `f89318a58c9038a888419f9a0720478c1cf1a325`, and candidate
 `57731b2af496a4e382d263bbfe123bc219f6bd51`. The frozen control-runner
 `tools/qualify_recurrent_cuda.py` SHA-256 is
-`4b8519da01edcff7ee203e8114b3ef4aa8fb673df63cb9ce0b83e34baa6ba646`.
+`65dd97f2abffdd243655caa0d5bbf34e5e2eab164e8a567b9eaae305c178e7a8`.
 
-The earlier control root at commit `9274f45480d5bfff7943d3ce80fbc15c96760665`
-is retained as immutable rejection evidence. Its first predecessor capture
-proved that the old runner dereferenced the explicitly supplied venv Python
-symlink and therefore launched the managed base interpreter without the venv's
-packages. The rejected empty output is preserved only at
-`<artifacts>/predecessor-throughput-attempt1-rejected-python-resolve`; the
-authorized `<artifacts>/predecessor-throughput` target must remain absent before
-the corrected capture. The old runner is not an executable qualification
-authority. Only the merged runner identity above may create new throughput or
+The earlier control roots are retained as immutable rejection evidence. The
+first root, at commit `9274f45480d5bfff7943d3ce80fbc15c96760665`, proved
+that the old runner dereferenced the explicitly supplied venv Python symlink
+and therefore launched the managed base interpreter without the venv's
+packages. Its rejected empty output is preserved only at
+`<artifacts>/predecessor-throughput-attempt1-rejected-python-resolve`. The
+second root, at commit `ffa49adfd71644fe3ffa10106df1fcdc7421b0c7`, fixed
+that interpreter defect but attempted the complete 131,072-transition rollout
+as one learner minibatch, rather than matching the canary's fixed 16,384
+minibatch, and failed before any transition with a CUDA allocation error. Its
+rejected output is preserved only at
+`<artifacts>/predecessor-throughput-attempt2-rejected-cuda-oom`. The authorized
+`<artifacts>/predecessor-throughput` target must remain absent before the
+corrected capture. Neither old runner is an executable qualification authority.
+Only the merged runner identity above may create new throughput or
 qualification evidence.
 
 The predecessor installer SHA-256 is
@@ -73,7 +79,7 @@ Any absence, addition, reordering, or digest mismatch rejects that runtime.
 Target roots are pairwise distinct and outside the protected recovery tree:
 
 ```text
-/home/rache/bloodbowl-rl-qualification-control-20260722-v2
+/home/rache/bloodbowl-rl-qualification-control-20260722-v3
 /home/rache/bloodbowl-rl-qualification-predecessor-afc8008
 /home/rache/bloodbowl-rl-qualification-candidate-a52fc6e
 /home/rache/bloodbowl-rl-qualification-artifacts-20260722
@@ -210,6 +216,7 @@ capture-throughput
 --throughput-horizon 64
 --throughput-hidden 512
 --throughput-layers 3
+--throughput-minibatch-size 16384
 --throughput-warmup-rollouts 2
 --throughput-timed-rollouts 8
 ```
@@ -217,8 +224,11 @@ capture-throughput
 Require `THROUGHPUT_BASELINE.json`, its confined cell record, exact runner
 identity, expected predecessor identity, literal zero for the exact ordered
 16-key control hard-integrity registry, and positive internally consistent
-timing. Preserve the complete output and hashes before constructing the
-candidate runtime.
+timing. The runner itself rejects any operator-supplied throughput minibatch
+other than 16,384. Require the emitted configuration to bind that exact value,
+and preserve its configuration hash for equality with the candidate throughput
+cell. Preserve the complete output and hashes before constructing the candidate
+runtime.
 
 ## Candidate qualification
 
@@ -253,11 +263,15 @@ run
 --throughput-horizon 64
 --throughput-hidden 512
 --throughput-layers 3
+--throughput-minibatch-size 16384
 --throughput-warmup-rollouts 2
 --throughput-timed-rollouts 8
 ```
 
-The runner itself rejects any regression-budget value other than 0.10. Every
+The runner itself rejects any regression-budget value other than 0.10 and any
+operator-supplied throughput minibatch other than 16,384. The predecessor and
+candidate throughput configurations and configuration hashes must be exactly
+equal. Every
 transition-executing cell—graph off/on, terminal automatic/control, ratio, and
 throughput—must bind the exact ordered 16-key control registry at literal zero;
 construction is the sole exemption because it performs no transition and emits

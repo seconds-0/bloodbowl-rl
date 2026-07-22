@@ -9,19 +9,19 @@ qualification.
 
 - Candidate source: `a52fc6e2f4ece5a7ff16bb4791e3aca4dd72f2e3`
 - Candidate Git tree: `57731b2af496a4e382d263bbfe123bc219f6bd51`
-- Control runner: `ffa49adfd71644fe3ffa10106df1fcdc7421b0c7`
-- Runner Git tree: `dd06117b77a4d15b5deb1770f86a465dc04338d0`
+- Control runner: `2261cd4c707733679b9482d2ab52eca3088afd54`
+- Runner Git tree: `939b882ba74f51e8e7b31d6bd1d6e8d2c6f1af7d`
 - Runner file SHA-256:
-  `4b8519da01edcff7ee203e8114b3ef4aa8fb673df63cb9ce0b83e34baa6ba646`
+  `65dd97f2abffdd243655caa0d5bbf34e5e2eab164e8a567b9eaae305c178e7a8`
 - Stopped analyzer SHA-256:
-  `6e8fc25fe954da206a90e0cb0d1a2cff0db268f5c29b16bbad28db3c37445fb6`
+  `3ea835d5f7c893571e3a885c4d5ad8a7cd61e16fdd372e968b5d11b955b5d3fd`
 - Stopped complete-log guard SHA-256:
   `e9c957ae37671bc6bfd6d09c7ef2d956736a5ead7242395f2357006bfc571ff1`
 - PufferLib base: `9836f0d2e78889c1aaf189c04d161b6fc61a9386`
 - Candidate root:
   `/home/rache/bloodbowl-rl-qualification-candidate-a52fc6e`
 - Control root:
-  `/home/rache/bloodbowl-rl-qualification-control-20260722-v2`
+  `/home/rache/bloodbowl-rl-qualification-control-20260722-v3`
 - Qualification root:
   `/home/rache/bloodbowl-rl-qualification-artifacts-20260722/candidate-qualification`
 - Canary output:
@@ -31,6 +31,7 @@ qualification.
 - Unit name: `bloodbowl-exact-action-canary-50m-s42-v1.service`
 - Requested agent steps: exactly `50000000`
 - Rollout quantum: exactly `131072` (`2048 * 64`)
+- Minibatch size: exactly `16384`
 - Executed/final agent steps: exactly `49938432` (381 complete rollouts)
 - Learner/environment/self-play seed: exactly `42`
 - Reward profile: frozen R0 `both`
@@ -56,7 +57,7 @@ Candidate launch-source SHA-256 identities are:
 The independent stopped analyzer is executed only from the exact control
 runner, not from candidate `a52fc6e`. Re-hash
 `tools/analyze_reward_screen.py` in that control root and require exact SHA-256
-`6e8fc25fe954da206a90e0cb0d1a2cff0db268f5c29b16bbad28db3c37445fb6`.
+`3ea835d5f7c893571e3a885c4d5ad8a7cd61e16fdd372e968b5d11b955b5d3fd`.
 Re-hash `tools/live_integrity_guard.py` in the same control root and require
 exact SHA-256
 `e9c957ae37671bc6bfd6d09c7ef2d956736a5ead7242395f2357006bfc571ff1`.
@@ -76,7 +77,7 @@ materialization:
 3. Candidate `QUALIFICATION.json` exists in the fixed qualification root,
    states `qualification_only=true` and `accepted=true`, and is independently
    accepted twice from fresh candidate-interpreter processes using exact runner
-   commit `ffa49ad`.
+   commit `2261cd4`.
 4. The qualification directory is closed and its exact relative file set,
    modes, sizes, and SHA-256 inventory are fixed.
 5. Candidate source, Puffer source, venv package inventory, installed Blood Bowl
@@ -117,6 +118,7 @@ contract:
 - no warm path, pool path, pool identity, or frozen bank;
 - exact candidate module/backend/environment and complete patch bundle;
 - exact fp32 policy shape 512 x 3 with expansion factor 1;
+- exact 2,048 x 64 rollout contract and minibatch size 16,384;
 - the exact immutable candidate manifest's original ordered 11-key live
   registry including `illegal_frac`, contamination budget zero, poll interval
   30 seconds, and maximum silence 180 seconds; the later stopped control
@@ -164,7 +166,7 @@ After=default.target
 [Service]
 Type=oneshot
 WorkingDirectory=/home/rache/bloodbowl-rl-qualification-candidate-a52fc6e
-ExecStartPre=/home/rache/bloodbowl-rl-qualification-candidate-a52fc6e/vendor/PufferLib/.venv/bin/python /home/rache/bloodbowl-rl-qualification-control-20260722-v2/tools/qualify_recurrent_cuda.py validate /home/rache/bloodbowl-rl-qualification-artifacts-20260722/candidate-qualification/QUALIFICATION.json
+ExecStartPre=/home/rache/bloodbowl-rl-qualification-candidate-a52fc6e/vendor/PufferLib/.venv/bin/python /home/rache/bloodbowl-rl-qualification-control-20260722-v3/tools/qualify_recurrent_cuda.py validate /home/rache/bloodbowl-rl-qualification-artifacts-20260722/candidate-qualification/QUALIFICATION.json
 ExecStartPre=/usr/bin/bash -c 'set -euo pipefail; out="$$(/usr/local/bin/nvidia-smi --query-compute-apps=pid --format=csv,noheader,nounits)"; stripped="$$(/usr/bin/printf "%s" "$${out}" | /usr/bin/tr -d "[:space:]")"; test -z "$${stripped}"'
 ExecStart=/usr/bin/env -u WARM -u POOL PATH=/home/rache/bloodbowl-rl-qualification-candidate-a52fc6e/vendor/PufferLib/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin CUDA_VISIBLE_DEVICES=0 OMP_NUM_THREADS=16 OPENBLAS_NUM_THREADS=16 MKL_NUM_THREADS=16 NUMEXPR_NUM_THREADS=16 STEPS=50000000 SCREEN_PROFILE=exact-action-canary PREFIX=exact-action-canary-50m-s42-v1 OUT_DIR=/home/rache/bloodbowl-rl-qualification-artifacts-20260722/exact-action-canary-50m-s42-v1 POLL_SECONDS=30 PLAN_ONLY=0 ARM_DETACH=0 /usr/bin/bash /home/rache/bloodbowl-rl-qualification-candidate-a52fc6e/tools/run_reward_screen.sh
 Restart=no
@@ -227,7 +229,7 @@ reuse partial checkpoints.
 After the unit exits, require inactive `Result=success`, `ExecMainStatus=0`,
 `NRestarts=0`, no compute PID, and exact source/unit/authorization identity.
 Require the screen's own complete validation plus all three fresh independent
-stopped checks below. Run them from exact control commit `ffa49ad` with the
+stopped checks below. Run them from exact control commit `2261cd4` with the
 candidate interpreter, writing only under the separately new/empty
 stopped-validation output directory:
 
@@ -239,8 +241,9 @@ stopped-validation output directory:
    --expected-screen-sha <Gate-2-manifest-sha>` and atomically preserve stdout,
    stderr, and exit status. Require analysis
    `exact_action_canary_qualification`, exact one-arm seed-42 schedule, the
-   fixed 2,048 x 64 rollout contract, final step 49,938,432, checkpoint bytes
-   16,066,560, policy shape 512 x 3 x 1, fresh null warm/pool/banks, exact
+   fixed 2,048 x 64 rollout contract and 16,384 minibatch, final step
+   49,938,432, checkpoint bytes 16,066,560, policy shape 512 x 3 x 1, fresh
+   null warm/pool/banks, exact
    fp32 obs-v5/exact-joint provenance, an exactly empty failure list, both
    train/eval game floors, all 16 control hard fields at zero despite the
    immutable manifest's narrower 11-key live registry, lineage digest binding,
