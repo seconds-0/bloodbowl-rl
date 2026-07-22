@@ -8208,6 +8208,44 @@ the stopped queue/service/process predicates, run the frozen screen validator
 and independent three-log auditor, and preserve and verify the exact evidence
 off-box before creating any qualification root.
 
+## 2026-07-22 16:08 PDT — D225 merged; 2070 access is the next closed gate
+
+Status:
+
+- PR #70 merged to `main` as
+  `ee7ace47306b122f48439185e24e9a2cf00be42d`. Its merged tree
+  `20d31ade2da46c75ec5a85ebd5464362e26102e7` exactly matches the final
+  reviewed head `c9ad23a843e143d9ac5136e81040d01039e844a1`. Both hosted checks
+  passed on that exact head: immutable history in 3m12 and the full CI job,
+  including ASan/UBSan, in 5m03.
+- A final committed-head review found one P2 before merge: successful
+  construction, predecessor-capture, and qualification commands could place
+  output below the separately protected recovery root. The correction now
+  rejects the canonical protected root and every descendant in the common
+  pre-write gate. Its red-before-green regression invokes all three public
+  writing commands and proves that no output is created.
+- The corrected focused suite passes 84 tests with two expected skips; full
+  tools discovery passes 260 with two skips; full training discovery passes
+  96 with one skip; Ruff, byte compilation, and diff checks are green. Two
+  independent delta reviewers approved exact head `c9ad23a` with no remaining
+  P0-P3 finding.
+- The earlier Codex CLI review did not run because its requested model was not
+  available to that account, and Gemini stopped at an interactive login prompt.
+  Neither result was counted as a review or retried. Fable and the two existing
+  audit agents supplied the completed read-only reviews instead.
+- No remote root, GPU process, BBTV service, qualification, canary, or training
+  state was changed. Tailscale previously showed the target online, but the
+  single bounded SSH attempt failed authentication because the local agent had
+  no loaded identity. Current remote GPU/process/service state therefore
+  remains unverified and is not inferred from the last historical snapshot.
+
+Next steps: restore deliberate SSH authority without retrying the rejected
+authentication path, verify the target read-only, then create entirely fresh
+source and artifact roots from merged `ee7ace4`. Run construction only and
+preserve its exact evidence before authorizing predecessor timing or recurrent
+CUDA qualification. A canary remains prohibited unless every exact-zero gate
+accepts.
+
 ## 2026-07-22 15:28 PDT — CUDA gate hardened locally; remote mutation remains stopped
 
 Status:
