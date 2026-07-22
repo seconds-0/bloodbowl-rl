@@ -7473,3 +7473,53 @@ Next steps:
    only afterward build candidate `a52fc6e2`, execute and independently validate
    every CUDA qualification cell, and admit the disposable fresh 50M canary
    only if the entire exact-zero verdict is accepted.
+
+18:50 PDT qualification-handoff addendum:
+
+- The exact predecessor/candidate comparison was re-proved from Git objects.
+  `engine/`, `puffer/`, `puffer/config/`, and `vendor/PINS.md` are byte-identical
+  between `afc8008933548438ca93c41341f5f08fdd294386` and
+  `a52fc6e2f4ece5a7ff16bb4791e3aca4dd72f2e3`; both pin PufferLib
+  `9836f0d2e78889c1aaf189c04d161b6fc61a9386`. Candidate differences are
+  confined to the reviewed priority-mask/qualification patches, bindings,
+  validators, tests, launcher provenance, and guidance.
+- Fresh isolated Puffer builds must run in this order: create the source-local
+  Python 3.11.15 environment, install the exact source snapshot and patch
+  stack, clean-build `bloodbowl --float`, and only then run that source
+  checkout's installer `--check`. The check requires the compiled module to
+  exist and postdate the installed snapshot; generic check-before-build wording
+  applies only to an already-built tree. The recovery environment currently
+  resolves Torch 2.10.0/CUDA 12.8, NumPy 2.4.6, and pybind11 3.0.4; its
+  normalized `uv pip freeze` digest is
+  `5e1e9056c0d67379c6332ac1d46e4098cc12ba2bcda0fd1b1de6f3db2f9f124c`.
+  Fresh predecessor and candidate inventories must be normalized and equal.
+- The runner's generic throughput defaults are not the target workload. Both
+  `capture-throughput` and `run` will explicitly pass 2,048 agents, two
+  buffers, 16 threads, horizon 64, hidden size 512, and three recurrent layers.
+  This matches the fp32 RTX 2070 canary and the host's 16 logical CPUs; the
+  immutable config hashes must match across predecessor and candidate. The
+  candidate throughput cell therefore also constructs and executes the full
+  three-layer graph-enabled topology with a frozen bank, while the bounded
+  small cells retain complete graph/reset/ratio evidence.
+- Post-boundary preservation will copy the complete queue directory plus only
+  the three accepted result-bound final checkpoints and their run manifests.
+  A relative-path target inventory, local recomputation, exact file-set check,
+  pinned screen validation, complete-log zero scan, final BBTV selection, and
+  monitoring journal must all be preserved before any qualification path is
+  created. The completed archive is expected to remain well below the Mac's
+  current 59 GiB free capacity.
+- The 50M canary requires a pre-launch authorization artifact binding the
+  preserved-recovery inventory, independently accepted qualification digest,
+  exact source/module/backend/environment identities, output directory, and
+  service-unit bytes. Its non-restarting systemd unit will rerun qualification
+  validation and require an empty GPU compute-PID list in `ExecStartPre`; the
+  ordinary launcher then retains its global trainer lock and exact-zero live
+  and complete-log guards.
+- Correction: merely adding the candidate checkpoint root cannot make the
+  canary visible in the deployed BBTV follower. That follower deliberately
+  accepts only `native_static_pool_reward_ablation` manifests with a real
+  frozen warm checkpoint; a fresh `native_fresh_v5_qualification` canary has no
+  warm or pool and is rejected. BBTV will remain unchanged and healthy during
+  this goal. Honest canary viewing requires a separate reviewed obs-v5/exact-
+  action CPU viewer and qualification-only follower contract, not a root-only
+  service edit.
