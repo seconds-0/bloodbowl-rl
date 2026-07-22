@@ -1729,12 +1729,16 @@ def _require_same_cuda_runtime(
 def _require_clean_source_and_external_output(output: Path) -> Path:
     output = Path(output).resolve()
     source_root = Path(__file__).resolve().parents[1]
-    try:
-        output.relative_to(source_root)
-    except ValueError:
-        pass
-    else:
-        raise QualificationError("qualification output must be outside the source checkout")
+    forbidden_roots = (
+        (source_root, "source checkout"),
+        (PROTECTED_RECOVERY_ROOT.resolve(), "protected recovery root"),
+    )
+    for forbidden_root, label in forbidden_roots:
+        try:
+            output.relative_to(forbidden_root)
+        except ValueError:
+            continue
+        raise QualificationError(f"qualification output must be outside the {label}")
     source_status = subprocess.run(
         ["git", "status", "--porcelain"],
         cwd=source_root,

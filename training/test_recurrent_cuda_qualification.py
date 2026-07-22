@@ -1620,6 +1620,24 @@ class QualificationValidatorTests(unittest.TestCase):
                 self.q.main([])
             dispatch.assert_not_called()
 
+    def test_public_writing_commands_reject_output_under_protected_recovery_root(self):
+        output = self.q.PROTECTED_RECOVERY_ROOT / "qualification-output"
+        for command in (
+            self.q.run_construction_gate,
+            self.q.capture_throughput,
+            self.q.run_qualification,
+        ):
+            args = mock.Mock(output=output)
+            with self.subTest(command=command.__name__), mock.patch.object(
+                self.q.subprocess,
+                "run",
+                return_value=mock.Mock(stdout=""),
+            ), self.assertRaisesRegex(
+                self.q.QualificationError, "protected recovery root"
+            ):
+                command(args)
+            self.assertFalse(output.exists())
+
     def test_construction_gate_is_a_public_pre_timing_boundary(self):
         argv = [
             "construct",
