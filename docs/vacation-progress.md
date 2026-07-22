@@ -8208,6 +8208,45 @@ the stopped queue/service/process predicates, run the frozen screen validator
 and independent three-log auditor, and preserve and verify the exact evidence
 off-box before creating any qualification root.
 
+## 2026-07-22 14:50 PDT — CUDA import-order defect isolated; capture retries stopped
+
+Status:
+
+- D224 passed focused and full regression, Fable review, two independent
+  read-only reviews, immutable-history, and hosted CI. PR #69 merged as exact
+  commit `10619e2300505d0b28251291946f7302fe4eb9cf`, tree
+  `e55934ab0e3edf1bd7d47b85c24774669e91d419`. Fresh control and candidate
+  roots at that commit and the untouched `afc8008` predecessor all passed
+  their source, installer, module, and dual compiled/runtime identity checks.
+- Two fresh predecessor throughput outputs (`predecessor-throughput-v2` and
+  `predecessor-throughput-v3`) rejected before their first transition or timed
+  rollout at the same native assertion: `cudaGetDeviceCount` reported no
+  usable device inside `pufferlib._C`. Neither output contains a result or
+  timing artifact, and both are permanently ineligible/non-retryable. The v3
+  rejection record is now sealed at SHA-256
+  `192e32d9b820b3c92dae06b77a931b820d3ea8c4b27ed6978b0120f7c9900a5c`.
+- No third capture was attempted. A bounded fresh-process matrix isolated the
+  causal boundary: the exact system CUDART reports one device before `_C` is
+  loaded; loading `_C` first makes the same call return
+  `cudaErrorNoDevice`; initializing CUDART first and then loading `_C`
+  preserves the valid device. Loading NVML or NCCL alone does not reproduce.
+  The ordinary Puffer CLI imports Torch before `_C`, explaining why the
+  historical trainer path did not use the failing import order.
+- A new test-first branch is implementing one explicit, hash-bound pre/post
+  import CUDA runtime gate shared by the qualification worker and real Puffer
+  trainer entrypoint. It also replaces the candidate binding's ignored return
+  code plus assertion with a Python-visible fail-closed CUDA error. The frozen
+  exact-action canary screen launcher remains byte-unchanged and unauthorized.
+- BBTV follower and tunnel remain active, the RTX 2070 is 48 C and idle with
+  no compute PID, and no qualification or training process is live.
+
+Next steps: validate the new patch stack in a disposable Puffer checkout, run
+the complete local regression suite, obtain independent/Fable review, and
+merge before constructing fresh control/candidate identities. Only then run
+one construction-only target integration; no throughput recapture is permitted
+until the canonical trainer and qualification entrypaths both prove identical
+pre/post-import CUDA runtime evidence.
+
 ## 2026-07-22 13:46 PDT — schema-3 provenance repair merged; predecessor recapture rejected safely
 
 Status:
