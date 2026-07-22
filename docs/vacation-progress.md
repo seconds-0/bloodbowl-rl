@@ -8208,6 +8208,43 @@ the stopped queue/service/process predicates, run the frozen screen validator
 and independent three-log auditor, and preserve and verify the exact evidence
 off-box before creating any qualification root.
 
+## 2026-07-22 15:28 PDT — CUDA gate hardened locally; remote mutation remains stopped
+
+Status:
+
+- No third predecessor capture, qualification, canary, or training launch has
+  been attempted. The two rejected CUDA captures remain permanently closed and
+  ineligible; there is no retry loop against either failed identity.
+- The D225 working tree now uses one shared same-process CUDART boundary for
+  construction, qualification, and the actual trainer entrypoint. It requires
+  a successful positive device count before `_C`, the same successful count
+  after `_C`, an exact resolved-and-hashed `libcudart.so.12`, and explicit
+  `CUDA_VISIBLE_DEVICES=0`. The trainer publishes its own evidence before
+  optimization rather than inheriting a launcher subprocess's claim.
+- The public construction artifact is now a machine-enforced prerequisite for
+  both predecessor timing and full qualification. Consumers independently
+  rehash the live native module, sources, environment, CUDART file, gate, and
+  cell before creating output or dispatching a worker.
+- Independent and Fable read-only reviews found two P1 and several P2/P3
+  hardening gaps. The working tree closes each reported gap. The current
+  focused regression is 80 tests passing with two expected vendor-checkout
+  skips; Python compilation, shell syntax, diff checks, and the frozen screen
+  immutability check are green. The complete broad suite and final re-review
+  remain pending before commit or merge.
+- Tailscale reports `wsl-ubuntu` online and active, and
+  <https://bbtv.seconds0.com/> returned HTTP 200 in 1.16 seconds. The first
+  bounded SSH status check was rejected by public-key authentication, so it
+  was not retried. Current GPU utilization, process state, and the internal
+  BBTV services are therefore unverified in this checkpoint; the last verified
+  remote snapshot must not be presented as current.
+
+Next steps: rerun the broad local suite and disposable patch-stack validation,
+obtain final read-only review, then commit, open, review, and merge the D225
+change only if all zero-error gates remain green. After SSH authority is
+restored, create entirely fresh post-merge control/candidate roots and run only
+the construction gate first. Timing remains unauthorized until that artifact
+is preserved off-box and independently accepted.
+
 ## 2026-07-22 14:50 PDT — CUDA import-order defect isolated; capture retries stopped
 
 Status:
