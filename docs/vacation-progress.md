@@ -8208,6 +8208,67 @@ the stopped queue/service/process predicates, run the frozen screen validator
 and independent three-log auditor, and preserve and verify the exact evidence
 off-box before creating any qualification root.
 
+## 2026-07-22 16:31 PDT — D225 target qualification accepted; independent audit pending
+
+Status:
+
+- The earlier SSH failure used the local default user `alexanderhuth`. The
+  fleet record names remote user `rache`; one bounded batch connection to
+  `rache@wsl-ubuntu` succeeded. The current read-only host snapshot found the
+  RTX 2070 at 48 C and 0% utilization with no compute PID, 838 GiB disk free,
+  about 9.2 GiB RAM available, the completed recovery queue inactive/successful
+  with zero restarts, and BBTV active. The immutable predecessor root remains
+  clean at exact `afc8008933548438ca93c41341f5f08fdd294386`.
+- Revalidated the recovery boundary from live immutable files: terminal queue
+  SHA-256 `83d7f9fa...`, screen-completion SHA-256 `9bbf4c74...`, exact two-job
+  successful terminal state, and three final result-bound checkpoints. The
+  complete 79-file, 3.49 GiB off-box recovery envelope rehashed locally with
+  zero mismatch before any new remote root was created.
+- Created fresh clean control and candidate checkouts at merged
+  `ee7ace47306b122f48439185e24e9a2cf00be42d`, tree
+  `20d31ade2da46c75ec5a85ebd5464362e26102e7`, plus a new external D225
+  artifact root. The candidate Puffer tree is exact `9836f0d2...`; Python
+  3.11.15, uv 0.11.19, the 63-line normalized requirements, sentinel-normalized
+  full freeze, cuDNN/NCCL links, installer check, fp32 build, and outer source
+  status all match the frozen contract. Module/backend/environment hashes are
+  `56827ab7...`, `5f1f8f14...`, and `4cf8d446...`.
+- Two operator assertions stopped before experimental work: the first candidate
+  setup expected tracked `vendor/` to be absent, and the first construction
+  preflight used a `pgrep -f` pattern that matched its own remote shell. A later
+  package-evidence normalization command also stopped after venv construction
+  because Bash expanded a `$#` sequence. Each stop was recorded and inspected;
+  no installer/build/CUDA cell ran in the first case, no construction output or
+  attempt record existed in the second, and the third was resolved only after
+  proving the live 63/64-line freezes and exact editable line. No root was
+  deleted or recreated, and no rejected CUDA/output identity was retried.
+- The first actual construction cell accepted with zero transitions. Its gate
+  SHA-256 is `fc5a31ad...`, its cell is `c4bfa91c...`, all primary/frozen state
+  is exact zero, and the same retained `libcudart.so.12` reported one device
+  before and after `_C`. Two fresh validators accepted with empty stderr. Its
+  91-file evidence snapshot is preserved and verified off-box.
+- The one fresh predecessor timing capture accepted at 193,474 steps/s with all
+  16 hard-integrity counters exactly zero. Wrapper/cell hashes are
+  `89a47923...` / `5da710d8...`; two fresh validations agreed byte-for-byte. Its
+  124-file evidence snapshot is preserved and verified off-box.
+- The one fresh candidate qualification accepted every mandatory gate. Candidate
+  throughput is 192,750 steps/s, a 0.374% regression versus the frozen control;
+  graph and terminal snapshots are exact, ratio coverage includes every primary
+  row and zero frozen rows, max ratio deviation is `2.62e-6`, weights are
+  unchanged, and every transition cell has all 16 hard counters at literal
+  zero. Qualification SHA-256 is `d1c162d8...`; two fresh validators accepted
+  with empty stdout/stderr and no artifact change. The complete 158-file
+  snapshot is preserved locally under
+  `BloodBowlRLArtifacts/d225-qualification-ee7ace4-20260722` with manifest
+  SHA-256 `7fb63b42...` and zero mismatch. BBTV was restored after every bounded
+  GPU cell and the compute list is empty.
+
+Next steps: wait for the already dispatched independent read-only audit of the
+exact remote qualification and local envelope. A canary authorization/plan may
+be prepared only if that audit reports no P0-P3 finding and the current source,
+service, GPU, qualification, and two-file plan-only predicates are independently
+revalidated. Qualification and any eventual 50M canary remain permanently
+ineligible as warm starts, pools, reward evidence, or promotion evidence.
+
 ## 2026-07-22 16:08 PDT — D225 merged; 2070 access is the next closed gate
 
 Status:
