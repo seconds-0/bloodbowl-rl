@@ -7860,3 +7860,63 @@ boundary, establish the external service/process gates, run the frozen screen
 validator and independent stopped-log audit, and require the exact verified
 off-box preservation copy before creating any 2070 qualification root or
 interrupting BBTV.
+
+## 2026-07-21 21:02 PDT — seed 44 at 6.59B; independent canary gate under CI
+
+Status:
+
+- The recovery queue remains `state=running`,
+  `current_job=full-control-rerun`, with the exact running message, plan SHA-256
+  `822bb912dbf3992c5fa6f04ddcaa5354897db10d03f2e66934b846c198b6a111`,
+  and no `SCREEN_COMPLETE.json`. The queue, trainer, BBTV follower, web server,
+  and tunnel retain original PIDs 610736, 653090, 610386, 127413, and 35307;
+  all four user services are active/running with zero restarts.
+- Seed 44 reached exact step 6,586,105,856 of 12B at epoch 50,247. The latest
+  complete 96-game train panel reports 1.8542 TD/game, performance 0.4896,
+  possession 0.3869, carrier-target block share about 0.1252, and two-die-red
+  share 0.06202. All 15 recovery-valid clip, non-finite, component,
+  engine-error, and demo-fallback fields remain exactly zero. Historical
+  pre-exact-action `illegal_frac=0.19567` remains diagnostic only.
+- The interval since the 20:34 sample averaged roughly 178K steps/s. About
+  5.414B steps remain, or approximately 8.5 training hours at that rate. This
+  estimate has no authority over the five-part atomic completion predicate.
+- Trainer PID 653090 remains the sole GPU compute process. The RTX 2070 was
+  83 C and 75% utilized, with 5,554/8,192 MiB allocated and 136.54/175 W draw.
+  The recovery filesystem remains 12% used with 847 GiB free, and about 8.7
+  GiB RAM is available.
+- BBTV selected seed 44 step 6,442,188,800 at 20:52 PDT. Selection SHA-256 is
+  `3587b20f4389cbf4bffc242c3bdfcfc32c10f806f5930e90b23049a7bb8b8535`,
+  and the public viewer returns HTTP 200.
+
+Completed this interval:
+
+- Confirmed a pre-canary gate defect: the screen launcher supported
+  `exact-action-canary`, but the stopped analyzer rejected that profile. PR
+  #56 adds a qualification-only analysis path that independently requires the
+  one-arm seed-42 R0 schedule, fresh/pool-free/warm-free fp32
+  obs-v5/exact-joint-v1 provenance, atomic completion and lineage binding,
+  exact train/eval game floors, and literal zero for every hard-integrity key.
+- Independent review found one P1 in the first implementation: a coherently
+  rehashed manifest could substitute a 30M rollout quantum or wrong model
+  shape. Head `37030b1` now freezes 2,048 agents, horizon 64, quantum 131,072,
+  final step 49,938,432, checkpoint bytes 16,066,560, and policy shape
+  512 x 3 x 1. Coherent 30M, 8-byte, and 999 x 1 x 99 mutations are rejected.
+  The same review's P2 package-import regression and P3 misleading text report
+  are also fixed; rereview reports no remaining P0-P3.
+- Focused analyzer tests pass 19/19, all tool tests pass 257 with two expected
+  skips, and Python compilation, Ruff, package import without `PYTHONPATH`, and
+  whitespace checks pass. The required Codex review model remains unsupported
+  for this account and Gemini remains unauthenticated; those are transport
+  failures, not approvals. PR #56 hosted CI and immutable-history checks are
+  still pending, so nothing is merged or deployed yet.
+
+Next steps:
+
+- Require both hosted checks to pass, record the review evidence, and merge PR
+  #56. Then update the qualification/canary checklists to the new merged control
+  runner identity and freeze the analyzer hash plus exact stopped-validation
+  command. Do not deploy or materialize a canary while recovery is active.
+- Continue read-only monitoring. At atomic recovery completion, run the pinned
+  screen validator and independent stopped-log auditor, then create and locally
+  verify the exact off-box preservation copy before any new build or BBTV
+  interruption.
