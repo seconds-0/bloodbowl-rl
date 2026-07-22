@@ -29,8 +29,12 @@ The earlier control root at commit `9274f45480d5bfff7943d3ce80fbc15c96760665`
 is retained as immutable rejection evidence. Its first predecessor capture
 proved that the old runner dereferenced the explicitly supplied venv Python
 symlink and therefore launched the managed base interpreter without the venv's
-packages. It is not an executable qualification authority. Only the merged
-runner identity above may create new throughput or qualification evidence.
+packages. The rejected empty output is preserved only at
+`<artifacts>/predecessor-throughput-attempt1-rejected-python-resolve`; the
+authorized `<artifacts>/predecessor-throughput` target must remain absent before
+the corrected capture. The old runner is not an executable qualification
+authority. Only the merged runner identity above may create new throughput or
+qualification evidence.
 
 The predecessor installer SHA-256 is
 `577434b35c785cdb271647434ad974f1cb57f3a6dde3620d8f176d3aaa5be119`.
