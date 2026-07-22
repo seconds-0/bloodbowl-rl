@@ -190,7 +190,23 @@ class RecoveryPreservationTests(unittest.TestCase):
             target = selection.with_name("selection-target.json")
             selection.replace(target)
             selection.symlink_to(target)
-            with self.assertRaisesRegex(rp.PreservationError, "non-symlink"):
+            with self.assertRaisesRegex(rp.PreservationError, "symlink"):
+                self.make_inventory(paths)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            paths = self.fixture(temporary)
+            run_dir = (
+                paths["root"]
+                / "vendor"
+                / "PufferLib"
+                / "checkpoints"
+                / "bloodbowl"
+                / "44"
+            )
+            target = run_dir.with_name("44-target")
+            run_dir.replace(target)
+            run_dir.symlink_to(target, target_is_directory=True)
+            with self.assertRaisesRegex(rp.PreservationError, "symlink path component"):
                 self.make_inventory(paths)
 
     def test_result_digest_escape_and_seed_set_are_rejected(self):
@@ -356,6 +372,17 @@ class RecoveryPreservationTests(unittest.TestCase):
             result["schema_version"] = 1
             write_json(result_path, result)
             with self.assertRaisesRegex(rp.PreservationError, "schema version"):
+                self.make_inventory(paths)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            paths = self.fixture(temporary)
+            result_path = next(
+                (paths["queue"] / "work" / "full-control").glob("*.result.json")
+            )
+            result = json.loads(result_path.read_text())
+            result.pop("acceptance_failures")
+            write_json(result_path, result)
+            with self.assertRaisesRegex(rp.PreservationError, "records failures"):
                 self.make_inventory(paths)
 
         with tempfile.TemporaryDirectory() as temporary:

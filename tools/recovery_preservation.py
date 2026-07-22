@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Build and verify an exact recovery-evidence preservation inventory.
 
-The planner reads a stopped, atomically completed recovery queue. It writes only
-one caller-selected inventory outside the recovery root. The verifier then
-checks an independently copied tree against every recorded relative path, byte
-count, mode, and SHA-256 value.
+The planner reads a stopped recovery queue after the caller has established the
+external service, screen-validation, and complete-log gates. It independently
+requires the queue's exact completed artifact boundary and writes only one
+caller-selected inventory outside the recovery root. The verifier then checks
+an independently copied tree against every recorded relative path, byte count,
+mode, and SHA-256 value.
 """
 
 from __future__ import annotations
@@ -96,9 +98,41 @@ def _require_regular(path: Path, label: str) -> Path:
 
 
 def _relative_file(path: Path, root: Path, label: str) -> str:
-    path = _require_regular(Path(path), label).resolve()
+    root = Path(root).resolve()
+    path = Path(os.path.abspath(path))
+    logical_root: Path | None = None
+    for ancestor in (path, *path.parents):
+        try:
+            if ancestor.resolve() == root:
+                logical_root = ancestor
+                break
+        except OSError as exc:
+            raise PreservationError(f"cannot resolve {label} parent {ancestor}: {exc}") from exc
+    if logical_root is None:
+        raise PreservationError(f"{label} escapes the recovery root: {path}")
     try:
-        relative = path.relative_to(root)
+        logical_relative = path.relative_to(logical_root)
+    except ValueError as exc:
+        raise PreservationError(f"{label} escapes the recovery root: {path}") from exc
+    if not logical_relative.parts:
+        raise PreservationError(f"{label} is not a regular file: {path}")
+    current = logical_root
+    for index, part in enumerate(logical_relative.parts):
+        current /= part
+        try:
+            info = current.lstat()
+        except OSError as exc:
+            raise PreservationError(f"cannot inspect {label} {current}: {exc}") from exc
+        if stat.S_ISLNK(info.st_mode):
+            raise PreservationError(f"{label} has a symlink path component: {current}")
+        final = index == len(logical_relative.parts) - 1
+        if not final and not stat.S_ISDIR(info.st_mode):
+            raise PreservationError(f"{label} has a non-directory parent: {current}")
+        if final and not stat.S_ISREG(info.st_mode):
+            raise PreservationError(f"{label} is not a regular file: {current}")
+    resolved = path.resolve()
+    try:
+        relative = resolved.relative_to(root)
     except ValueError as exc:
         raise PreservationError(f"{label} escapes the recovery root: {path}") from exc
     value = relative.as_posix()
@@ -261,7 +295,7 @@ def _result_bindings(queue_dir: Path, recovery_root: Path) -> tuple[list[dict[st
         seeds.add(seed)
         if result.get("trainer_complete") is not True or result.get("acceptance_pass") is not True:
             raise PreservationError(f"result is not accepted and complete: {result_path}")
-        if result.get("acceptance_failures") not in ([], None):
+        if result.get("acceptance_failures") != []:
             raise PreservationError(f"accepted result records failures: {result_path}")
         checkpoint_raw = result.get("checkpoint")
         log_raw = result.get("log")
@@ -269,12 +303,12 @@ def _result_bindings(queue_dir: Path, recovery_root: Path) -> tuple[list[dict[st
             raise PreservationError(f"result paths are missing: {result_path}")
         if not Path(checkpoint_raw).is_absolute() or not Path(log_raw).is_absolute():
             raise PreservationError(f"result paths are not absolute: {result_path}")
-        checkpoint = _require_regular(Path(checkpoint_raw), "result checkpoint").resolve()
-        log = _require_regular(Path(log_raw), "result log").resolve()
+        checkpoint = Path(os.path.abspath(checkpoint_raw))
+        log = Path(os.path.abspath(log_raw))
         checkpoint_rel = _relative_file(checkpoint, recovery_root, "result checkpoint")
         log_rel = _relative_file(log, recovery_root, "result log")
         try:
-            log.relative_to(work.resolve())
+            log.resolve().relative_to(work.resolve())
         except ValueError as exc:
             raise PreservationError(f"result log is outside full-control work: {log}") from exc
         if checkpoint_rel in checkpoints:
