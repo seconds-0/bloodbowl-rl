@@ -18,6 +18,13 @@ qualification/canary output as training ancestry.
 | Precision | fp32 (`precision_bytes == 4`) |
 | Observation/action ABI | `obs-v5` / `exact-joint-v1` |
 
+The corresponding outer Git tree identities are runner
+`e0884815b2a539ce6bc26df4857ac6944fdf5f3d`, predecessor
+`f89318a58c9038a888419f9a0720478c1cf1a325`, and candidate
+`57731b2af496a4e382d263bbfe123bc219f6bd51`. The frozen control-runner
+`tools/qualify_recurrent_cuda.py` SHA-256 is
+`57725ba7e9f8eade910bd201a3240749c03fb0af04f0b07db04e6acaa76da46f`.
+
 The predecessor installer SHA-256 is
 `577434b35c785cdb271647434ad974f1cb57f3a6dde3620d8f176d3aaa5be119`.
 The candidate installer SHA-256 is
