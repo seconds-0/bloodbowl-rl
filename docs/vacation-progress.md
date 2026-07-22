@@ -8208,6 +8208,55 @@ the stopped queue/service/process predicates, run the frozen screen validator
 and independent three-log auditor, and preserve and verify the exact evidence
 off-box before creating any qualification root.
 
+## 2026-07-22 08:22 PDT — zero-warmup CUDA capture defect isolated
+
+V3 authority and rejected attempt:
+
+- PR #63 passed independent exact-head review, CI, and immutable-history and
+  merged as `634d9c3ef745ce8b2fa9b740dd8be523b263524f`. Its checklists and a canonical
+  v3 authority record were preserved byte-identically on and off the 2070. A
+  fresh clean control root at exact runner commit `2261cd4`, tree `939b882...`,
+  passed all 30 runner and 19 analyzer tests with no GPU process. The authorized
+  predecessor output remained absent.
+- The v3 idle precondition accepted three samples at 48–49 C, 0% utilization,
+  69 MiB, and no compute PID. A bookkeeping-only first evidence file appended
+  its own pre-append digest and was preserved as a rejected attempt; the clean
+  repeated precondition SHA-256 is `6950ddca...`. The one-shot predecessor
+  service then rejected with zero restarts before producing a timing record:
+  Puffer asserted at `cudaStreamEndCapture`. The empty output was moved to
+  `predecessor-throughput-attempt3-rejected-cuda-graph-capture`; unit, journal,
+  stdout, stderr, selection, service, and host evidence are preserved. The
+  authorized target is again absent and no candidate cell has run.
+
+Root cause and correction:
+
+- Puffer's `cudagraphs` setting is a capture-epoch count, not a boolean. The
+  runner used zero, so the very first policy forward was captured before lazy
+  cuBLAS handle/workspace initialization; that initialization invalidated the
+  global capture. Puffer and the frozen canary both use ten warmup epochs. The
+  earlier 16,384-minibatch correction worked: this attempt did not OOM.
+- PR #64 at exact head `c491d38` freezes every graph-enabled qualification cell
+  to `cudagraphs=10`, preserves `-1` only for graph-off parity, rejects zero
+  before backend load, stops ratio/throughput from overwriting the requested
+  value, and independently validates each persisted config and digest. It also
+  updates the plan, AGENTS.md, CLAUDE.md, and both relevant repository skills.
+  Fail-first tests exposed the missing constant, pre-dispatch acceptance of
+  zero, silent throughput overwrite, and coherent-hash mutation gap. Final
+  local verification is 33 runner plus 19 analyzer tests, Ruff, byte
+  compilation, and diff-check; independent review found no P0-P3 issue. Hosted
+  CI and immutable-history are running, so the fix is not yet executable
+  authority.
+
+Live state and next steps:
+
+- BBTV follower, page, and tunnel are restored with zero restarts; public HTTP
+  is 200 and GPU compute is empty.
+- Require exact-green PR #64, merge it, update both checklists to the new runner
+  identity and a fresh v4 control root, and preserve that authority before
+  repeating the predecessor precondition. Do not retry from unmerged code and
+  do not begin candidate qualification unless the predecessor baseline is
+  atomic, identity-exact, and literal-zero across all 16 integrity fields.
+
 ## 2026-07-22 07:05 PDT — throughput allocation mismatch closed in code
 
 Rejected second control attempt:
