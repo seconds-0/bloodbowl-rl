@@ -1,10 +1,33 @@
 # RTX 2070 recurrent-CUDA qualification execution checklist
 
-Status: recovery boundary complete and preserved; schema-3 recapture pending a
-merged D224 control/candidate commit. This checklist does not authorize a
-trainer launch, checkpoint promotion, or use of qualification/canary output as
+Status: recovery boundary complete and preserved; D225 implementation/review
+pending. This checklist does not currently authorize any capture,
+qualification, trainer launch, checkpoint promotion, or use of
+qualification/canary output as
 training ancestry. Any older literal runner/candidate identity below is a
 historical rejection record, not current execution authority.
+
+The later D224-era outputs `predecessor-throughput-v2` and
+`predecessor-throughput-v3` also rejected at native construction before their
+first transition or timed rollout. Both emitted stderr SHA-256
+`5e9fffb3200ea7188b7a2d99eaba6110ac216019f433e5aad6bc6ad6c06444a4`;
+their sealed rejection records are respectively
+`0d275b98ca30f2e3a4f912826b68510b52694ff548856f0f4d3bd1fae7e8415c`
+and `192e32d9b820b3c92dae06b77a931b820d3ea8c4b27ed6978b0120f7c9900a5c`.
+They are empty, non-retryable, and contain no qualification, timing, or
+scientific evidence. Do not reuse either path, and do not attempt a third
+capture under the same initialization contract.
+
+The cause is a same-process CUDA initialization boundary: importing the exact
+nvcc-built `_C` before that process's first CUDART call made
+`cudaGetDeviceCount` return `cudaErrorNoDevice`; initializing the exact shared
+CUDART first and retaining its handle preserved success before and after the
+import. `nvidia-smi`, Torch, or CUDART in a different process cannot establish
+this worker state. D225 requires `tools/puffer_cuda_runtime.py` in every
+qualification worker and the actual trainer, records the resolved
+`libcudart.so.12` path/hash and both positive probes, and makes predecessor and
+candidate timing agree on the same runtime hash/count. A failed process is
+closed, never repaired in place.
 
 The first schema-3 predecessor capture failed before timing or GPU work because
 the immutable predecessor's compiled attribute used its historical backend
@@ -25,7 +48,7 @@ Neither path is an input or retry target.
 
 | Role | Exact identity |
 |---|---|
-| Control runner | `<newly merged clean D224 commit>` |
+| Control runner | `<newly merged clean D225 commit>` |
 | Predecessor | `afc8008933548438ca93c41341f5f08fdd294386` |
 | Candidate | same full commit as control runner, in a separate clean checkout |
 | PufferLib base | `9836f0d2e78889c1aaf189c04d161b6fc61a9386` |
@@ -60,8 +83,9 @@ boolean and requested capture at epoch zero. First-use CUDA library allocation
 therefore invalidated the capture before any timing evidence; its rejected
 output is preserved only at
 `/home/rache/bloodbowl-rl-qualification-artifacts-20260722/predecessor-throughput-attempt3-rejected-cuda-graph-capture`.
-The authorized `<artifacts>/predecessor-throughput-v2` target must remain absent
-before the corrected capture. None of the old runners is an executable
+The v2 and v3 targets are now rejected evidence. A later corrected target must
+use a new D225-specific identity declared only after merge and the
+construction-only check. None of the old runners is an executable
 qualification authority. Only the merged runner identity above may create new
 throughput or qualification evidence.
 
@@ -100,7 +124,7 @@ emitted manifest:
 |---:|---|---|
 | current | `training/selfplay_league.patch` | `ffaad9b6ea7f5d1dd9436783ad1b6b0d958482c5c108bd662c028a17ff2a39a5` |
 | current | `training/puffer_frozen_prio_mask.patch` | `602b719cbfbb76c4ac27d2f5227ff00ee22c8b5d9ab4ea9b90767b29ea87ee67` |
-| current | `training/puffer_recurrent_cuda_qualification.patch` | `5bc310ce914d5167eb69d6b62e772d9bfbedf95cbf1cf283bd3f1be2b989976f` |
+| current | `training/puffer_recurrent_cuda_qualification.patch` | `2013ff41cc28a6b3d7af787470403fded52723ae705da801fc1802bacb7ca9be` |
 
 Re-hash these files from each detached outer checkout before installation and
 record the exact ordered inventory in each external build-identity record.
@@ -111,8 +135,8 @@ Target roots are pairwise distinct and outside the protected recovery tree:
 ```text
 /home/rache/bloodbowl-rl-qualification-control-20260722-v6
 /home/rache/bloodbowl-rl-qualification-predecessor-afc8008-schema3
-/home/rache/bloodbowl-rl-qualification-candidate-<merged-D224-short-sha>
-/home/rache/bloodbowl-rl-qualification-artifacts-20260722-schema3-v2
+/home/rache/bloodbowl-rl-qualification-candidate-<merged-D225-short-sha>
+/home/rache/bloodbowl-rl-qualification-artifacts-<fresh-D225-identity>
 ```
 
 The control runner remains clean and unchanged. Predecessor and candidate each
@@ -120,10 +144,10 @@ own a separate ignored `vendor/PufferLib` checkout and `.venv`. Output
 directories are external, new, and empty.
 The listed predecessor root is the existing already-built, exact, clean-checked
 schema-3 predecessor and is reused read-only for the corrected capture. Do not
-recreate, reinstall, or rebuild it under D224. If it is absent or any identity
-or installer check drifts, stop for separate review. Only the v6 control root,
-new merged-commit candidate root, and schema3-v2 artifact root are newly
-created.
+recreate, reinstall, or rebuild it under D225. If it is absent or any identity
+or installer check drifts, stop for separate review. The old v6 control,
+candidate, and schema3-v2 artifact roots remain preserved evidence. Create new
+clean D225 control/candidate and artifact roots only after merge.
 
 ## Boundary gate
 
@@ -200,6 +224,13 @@ For each outer source checkout:
     containment in the role's Puffer root, `precision_bytes == 4`, `env_name ==
     bloodbowl`, `obs-v5`, observation version 5, and `exact-joint-v1`.
     Predecessor must lack both qualification calls; candidate must expose both.
+11. Do not import `_C` directly for the candidate proof. The canonical runner
+    must load `tools/puffer_cuda_runtime.py` in the worker, require
+    `cudaSuccess` and a positive device count through the exact resolved
+    `libcudart.so.12`, import `_C`, and require the unchanged positive count
+    through the retained handle. Record both calls, the resolved path/hash, and
+    `CUDA_VISIBLE_DEVICES`. A host-level or different-process probe is not a
+    substitute.
 
 Before any behavioral cell, atomically write an external build-identity record
 containing outer commit/tree, Puffer pin, ordered patch hashes, normalized
@@ -229,7 +260,56 @@ Restore and verify the BBTV follower and public viewer after each bounded timed
 phase unless the next phase is beginning immediately under the same recorded
 host condition.
 
+## Mandatory construction-only boundary
+
+No throughput capture is authorized immediately after merge. First run the
+public `construct` command from the new clean D225 control checkout against the
+new clean candidate runtime, using a new external empty output and the frozen
+candidate commit/module/backend/environment digests:
+
+```text
+construct
+--puffer-root <candidate>/vendor/PufferLib
+--python <candidate>/vendor/PufferLib/.venv/bin/python
+--output <artifacts>/<fresh-D225-construction-gate>
+--candidate-source-root <candidate>
+--expected-source-commit <newly merged clean D225 control/candidate commit>
+--expected-candidate-module-sha256 <frozen candidate module SHA-256>
+--expected-candidate-backend-sha256 <frozen candidate backend SHA-256>
+--expected-environment-sha256 <frozen installed environment SHA-256>
+--seed 271828
+--cell-timeout-seconds 1800
+```
+
+This cell may initialize CUDA and construct/close the bounded backend, but it
+must execute zero transitions and publish exactly `construction.json` and
+`CONSTRUCTION_GATE.json`. Require all-bank exact-zero recurrent state, accepted
+pre/post-import CUDA probes with the same positive count, exact candidate and
+runner identities, and a confined hash-bound cell. Restore BBTV, hash and copy
+the closed output off-box, then run
+`validate-construction <artifacts>/<fresh-D225-construction-gate>/CONSTRUCTION_GATE.json`
+twice from fresh processes in the unchanged clean control checkout. Any
+failure closes that output and candidate identity. Never repair or reuse its
+process or directory, and do not proceed to timing.
+
+This ordering is machine-enforced as well as procedural. The successful
+`construct` command revalidates its own closed output before returning zero.
+Both `capture-throughput` and full `run` require `--construction-gate`, rehash
+the candidate module, backend, environment, runner, CUDART file, and gate/cell
+records before creating output or starting a worker, and require the same gate
+path/hash in the baseline and final qualification.
+`capture-throughput` also passes all five frozen predecessor identity fields to
+the same process that will perform timing. That worker validates the imported
+module, compiled backend, complete runtime sources, environment, ABI,
+precision, predecessor role, and exact Puffer root before `create_pufferl`,
+warmup, or any rollout. A parent-only post-timing identity check is not a valid
+zero-error gate; the parent check remains only as an independent repetition.
+
 ## Predecessor throughput capture
+
+The command shape below is a template only until the construction gate accepts
+and the new output name and D225 hashes are frozen. Neither v2 nor v3 is a
+valid target or baseline.
 
 Run the frozen control-runner script under the predecessor interpreter and pass
 the predecessor interpreter again through `--python`. The output directory must
@@ -239,7 +319,8 @@ not already exist. Pass:
 capture-throughput
 --puffer-root <predecessor>/vendor/PufferLib
 --python <predecessor>/vendor/PufferLib/.venv/bin/python
---output <artifacts>/predecessor-throughput-v2
+--output <artifacts>/<fresh-D225-predecessor-throughput>
+--construction-gate <artifacts>/<fresh-D225-construction-gate>/CONSTRUCTION_GATE.json
 --predecessor-source-root <predecessor>
 --expected-predecessor-source-commit afc8008933548438ca93c41341f5f08fdd294386
 --expected-predecessor-module-sha256 <frozen predecessor module SHA-256>
@@ -284,10 +365,11 @@ run
 --puffer-root <candidate>/vendor/PufferLib
 --python <candidate>/vendor/PufferLib/.venv/bin/python
 --output <artifacts>/candidate-qualification
---baseline-throughput <artifacts>/predecessor-throughput-v2/THROUGHPUT_BASELINE.json
+--construction-gate <artifacts>/<fresh-D225-construction-gate>/CONSTRUCTION_GATE.json
+--baseline-throughput <artifacts>/<fresh-D225-predecessor-throughput>/THROUGHPUT_BASELINE.json
 --candidate-source-root <candidate>
 --predecessor-source-root <predecessor>
---expected-source-commit <newly merged clean D224 control/candidate commit>
+--expected-source-commit <newly merged clean D225 control/candidate commit>
 --expected-candidate-module-sha256 <frozen candidate module SHA-256>
 --expected-candidate-backend-sha256 <frozen candidate backend SHA-256>
 --expected-environment-sha256 <same frozen installed environment SHA-256>

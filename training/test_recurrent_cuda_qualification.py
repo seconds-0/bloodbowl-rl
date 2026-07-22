@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import os
 import pathlib
 import subprocess
 import tempfile
@@ -14,6 +15,8 @@ from types import SimpleNamespace
 from unittest import mock
 
 import numpy as np
+
+from tools import puffer_cuda_runtime as cuda_runtime
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -31,6 +34,33 @@ CLAUDE = ROOT / "CLAUDE.md"
 PUFFER_SKILL = ROOT / ".claude" / "skills" / "puffer-env-dev" / "SKILL.md"
 TRAINING_SKILL = ROOT / ".claude" / "skills" / "training-experiments" / "SKILL.md"
 FLEET_SKILL = ROOT / ".claude" / "skills" / "fleet-ops" / "SKILL.md"
+CUDA_RUNTIME_WRAPPER = ROOT / "tools" / "puffer_cuda_runtime.py"
+
+
+def cuda_runtime_evidence() -> dict:
+    return {
+        "schema_version": 1,
+        "library": {
+            "requested_soname": "libcudart.so.12",
+            "resolved_path": "/usr/lib/x86_64-linux-gnu/libcudart.so.12.4.127",
+            "sha256": "d" * 64,
+        },
+        "cuda_visible_devices": "0",
+        "before_extension_import": {
+            "stage": "before_extension_import",
+            "return_code": 0,
+            "device_count": 1,
+            "error_name": "cudaSuccess",
+            "error_string": "no error",
+        },
+        "after_extension_import": {
+            "stage": "after_extension_import",
+            "return_code": 0,
+            "device_count": 1,
+            "error_name": "cudaSuccess",
+            "error_string": "no error",
+        },
+    }
 
 
 def load_runner():
@@ -380,6 +410,9 @@ class QualificationValidatorTests(unittest.TestCase):
         baseline = {
             "host": "rtx2070", "gpu": "RTX 2070", "precision_bytes": 4,
             "config_sha256": "a" * 64, "steps_per_second": 1000.0,
+            "cuda_runtime_library_sha256": "d" * 64,
+            "cuda_runtime_device_count": 1,
+            "cuda_visible_devices": "0",
             "hard_integrity_zero": True,
             "steps": 1000, "elapsed_seconds": 1.0,
             "median_rollout_seconds": 0.1, "p95_rollout_seconds": 0.2,
@@ -411,6 +444,318 @@ class QualificationValidatorTests(unittest.TestCase):
         with self.assertRaises(self.q.QualificationError):
             self.q.validate_throughput(
                 candidate, baseline, max_regression_fraction=0.10)
+
+        candidate = dict(
+            baseline,
+            cuda_runtime_library_sha256="e" * 64,
+            steps=2000,
+            steps_per_second=2000.0,
+        )
+        with self.assertRaisesRegex(
+            self.q.QualificationError, "cuda_runtime_library_sha256"
+        ):
+            self.q.validate_throughput(
+                candidate, baseline, max_regression_fraction=0.10)
+
+    def test_cuda_runtime_preflight_is_bound_and_fail_closed(self):
+        self.assertIn(
+            "tools/puffer_cuda_runtime.py",
+            {
+                path.relative_to(ROOT).as_posix()
+                for path in self.q.qualification_source_paths(ROOT)
+            },
+        )
+        evidence = cuda_runtime_evidence()
+        self.q.validate_cuda_runtime_evidence(evidence)
+        mutations = (
+            ("before_extension_import", "return_code", 100),
+            ("before_extension_import", "device_count", 0),
+            ("after_extension_import", "return_code", 100),
+            ("after_extension_import", "device_count", 2),
+            ("library", "sha256", "bad"),
+        )
+        for section, key, value in mutations:
+            mutated = json.loads(json.dumps(evidence))
+            mutated[section][key] = value
+            with self.subTest(section=section, key=key), self.assertRaises(
+                self.q.CudaRuntimePreflightError
+            ):
+                self.q.validate_cuda_runtime_evidence(mutated)
+        for value in (None, "", "1", 0):
+            mutated = json.loads(json.dumps(evidence))
+            mutated["cuda_visible_devices"] = value
+            with self.subTest(cuda_visible_devices=value), self.assertRaises(
+                self.q.QualificationError
+            ):
+                record = {
+                    "config": {"cudagraphs": 10},
+                    "cuda_runtime_preflight": mutated,
+                }
+                record["config_sha256"] = self.q.canonical_hash(record["config"])
+                self.q.validate_cell_cudagraph_record(record, expected=10)
+        malformed = json.loads(json.dumps(evidence))
+        malformed["unexpected"] = True
+        with self.assertRaises(cuda_runtime.CudaRuntimePreflightError):
+            cuda_runtime.validate_cuda_runtime_evidence(malformed)
+        malformed = json.loads(json.dumps(evidence))
+        del malformed["cuda_visible_devices"]
+        with self.assertRaises(cuda_runtime.CudaRuntimePreflightError):
+            cuda_runtime.validate_cuda_runtime_evidence(malformed)
+        malformed = json.loads(json.dumps(evidence))
+        malformed["before_extension_import"]["error_name"] = "cudaErrorNoDevice"
+        with self.assertRaises(cuda_runtime.CudaRuntimePreflightError):
+            cuda_runtime.validate_cuda_runtime_evidence(malformed)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            library = pathlib.Path(temporary) / "libcudart.so.12.4.127"
+            library.write_bytes(b"frozen CUDA runtime")
+            current = cuda_runtime_evidence()
+            current["library"]["resolved_path"] = str(library.resolve())
+            current["library"]["sha256"] = hashlib.sha256(
+                library.read_bytes()
+            ).hexdigest()
+            cuda_runtime.validate_cuda_runtime_library_file(current)
+            library.write_bytes(b"drifted CUDA runtime")
+            with self.assertRaisesRegex(
+                cuda_runtime.CudaRuntimePreflightError, "digest drifted"
+            ):
+                cuda_runtime.validate_cuda_runtime_library_file(current)
+
+    def test_cuda_runtime_native_probe_checks_return_code_and_count(self):
+        runtime = SimpleNamespace()
+
+        def device_count(pointer):
+            pointer._obj.value = 1
+            return 0
+
+        runtime.cudaGetDeviceCount = mock.Mock(side_effect=device_count)
+        runtime.cudaGetErrorName = mock.Mock(return_value=b"cudaSuccess")
+        runtime.cudaGetErrorString = mock.Mock(return_value=b"no error")
+        with mock.patch.object(
+            cuda_runtime.ctypes, "CDLL", return_value=runtime
+        ), mock.patch.object(
+            cuda_runtime, "_resolved_cuda_runtime_path",
+            return_value=pathlib.Path(__file__),
+        ):
+            handle, evidence = cuda_runtime.begin_cuda_runtime_preflight()
+            completed = cuda_runtime.finish_cuda_runtime_preflight(handle, evidence)
+        self.assertEqual(completed["before_extension_import"]["device_count"], 1)
+        self.assertEqual(completed["after_extension_import"]["device_count"], 1)
+        self.assertEqual(runtime.cudaGetDeviceCount.call_count, 2)
+
+        def no_device(pointer):
+            pointer._obj.value = 1
+            return 100
+
+        runtime.cudaGetDeviceCount = mock.Mock(side_effect=no_device)
+        runtime.cudaGetErrorName = mock.Mock(return_value=b"cudaErrorNoDevice")
+        runtime.cudaGetErrorString = mock.Mock(return_value=b"no device")
+        with mock.patch.object(
+            cuda_runtime.ctypes, "CDLL", return_value=runtime
+        ), mock.patch.object(
+            cuda_runtime, "_resolved_cuda_runtime_path",
+            return_value=pathlib.Path(__file__),
+        ), self.assertRaisesRegex(
+            cuda_runtime.CudaRuntimePreflightError, "return_code=100"
+        ):
+            cuda_runtime.begin_cuda_runtime_preflight()
+
+    def test_qualification_cells_require_one_cuda_runtime_identity(self):
+        evidence = cuda_runtime_evidence()
+        records = [
+            {"cuda_runtime_preflight": evidence},
+            {"cuda_runtime_preflight": json.loads(json.dumps(evidence))},
+        ]
+        self.assertEqual(self.q._require_same_cuda_runtime(records), evidence)
+        records[1]["cuda_runtime_preflight"]["library"]["sha256"] = "e" * 64
+        with self.assertRaisesRegex(
+            self.q.QualificationError, "CUDA runtime drifted"
+        ):
+            self.q._require_same_cuda_runtime(records)
+
+    def test_puffer_entrypoint_preflights_before_import_and_rechecks_after(self):
+        events = []
+        handle = object()
+        evidence = cuda_runtime_evidence()
+
+        def begin():
+            events.append("begin")
+            return handle, evidence
+
+        def import_main():
+            events.append("import")
+
+            def puffer_main():
+                events.append("main")
+                return 0
+
+            return puffer_main
+
+        def finish(observed_handle, observed_evidence):
+            self.assertIs(observed_handle, handle)
+            self.assertIs(observed_evidence, evidence)
+            events.append("finish")
+            return evidence
+
+        def publish(observed_evidence):
+            self.assertIs(observed_evidence, evidence)
+            events.append("publish")
+            return {"schema_version": 1}
+
+        with mock.patch.object(
+            cuda_runtime, "begin_cuda_runtime_preflight", side_effect=begin
+        ), mock.patch.object(
+            cuda_runtime, "_import_puffer_main", side_effect=import_main
+        ), mock.patch.object(
+            cuda_runtime, "finish_cuda_runtime_preflight", side_effect=finish
+        ), mock.patch.object(
+            cuda_runtime, "validate_cuda_runtime_evidence"
+        ), mock.patch.object(
+            cuda_runtime, "_publish_runtime_evidence", side_effect=publish
+        ), mock.patch("builtins.print"):
+            self.assertEqual(cuda_runtime.main(), 0)
+        self.assertEqual(
+            events, ["begin", "import", "finish", "publish", "main"]
+        )
+
+        with mock.patch.object(
+            cuda_runtime,
+            "begin_cuda_runtime_preflight",
+            side_effect=cuda_runtime.CudaRuntimePreflightError("no device"),
+        ), mock.patch.object(cuda_runtime, "_import_puffer_main") as imported, \
+                self.assertRaises(cuda_runtime.CudaRuntimePreflightError):
+            cuda_runtime.main()
+        imported.assert_not_called()
+
+        puffer_main = mock.Mock(return_value=0)
+        with mock.patch.object(
+            cuda_runtime,
+            "begin_cuda_runtime_preflight",
+            return_value=(handle, evidence),
+        ), mock.patch.object(
+            cuda_runtime, "_import_puffer_main", return_value=puffer_main
+        ), mock.patch.object(
+            cuda_runtime,
+            "finish_cuda_runtime_preflight",
+            side_effect=cuda_runtime.CudaRuntimePreflightError("poisoned"),
+        ), self.assertRaises(cuda_runtime.CudaRuntimePreflightError):
+            cuda_runtime.main()
+        puffer_main.assert_not_called()
+        wrapper_source = CUDA_RUNTIME_WRAPPER.read_text(encoding="utf-8")
+        self.assertIn("from pufferlib import _C", wrapper_source)
+        self.assertIn("_remove_script_directory_from_import_path()", wrapper_source)
+
+        puffer_main = mock.Mock(return_value=0)
+        with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(
+            cuda_runtime,
+            "begin_cuda_runtime_preflight",
+            return_value=(handle, evidence),
+        ), mock.patch.object(
+            cuda_runtime, "_import_puffer_main", return_value=puffer_main
+        ), mock.patch.object(
+            cuda_runtime,
+            "finish_cuda_runtime_preflight",
+            return_value=evidence,
+        ), mock.patch.object(
+            cuda_runtime, "validate_cuda_runtime_evidence"
+        ), self.assertRaisesRegex(
+            cuda_runtime.CudaRuntimePreflightError, "paths are mandatory"
+        ):
+            cuda_runtime.main()
+        puffer_main.assert_not_called()
+
+    def test_trainer_wrapper_publishes_its_own_runtime_evidence_before_main(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary).resolve()
+            manifest_path = root / "run.manifest.json"
+            evidence_path = root / "run.cuda-runtime.json"
+            evidence = cuda_runtime_evidence()
+            manifest = {
+                "schema_version": 1,
+                "cuda_runtime_wrapper_sha256": hashlib.sha256(
+                    CUDA_RUNTIME_WRAPPER.read_bytes()
+                ).hexdigest(),
+                "cuda_runtime_evidence_status": "pending",
+                "cuda_runtime_evidence_path": str(evidence_path),
+                "cuda_launcher_probe_library_path": evidence["library"][
+                    "resolved_path"
+                ],
+                "cuda_launcher_probe_library_sha256": evidence["library"][
+                    "sha256"
+                ],
+                "cuda_launcher_probe_device_count": "1",
+                "cuda_launcher_probe_visible_devices": "0",
+            }
+            manifest_path.write_text(
+                json.dumps(manifest, sort_keys=True) + "\n", encoding="utf-8"
+            )
+            events = []
+            puffer_main = mock.Mock(side_effect=lambda: events.append("main"))
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "PUFFER_CUDA_RUNTIME_MANIFEST": str(manifest_path),
+                    "PUFFER_CUDA_RUNTIME_EVIDENCE": str(evidence_path),
+                },
+                clear=False,
+            ), mock.patch.object(
+                cuda_runtime,
+                "begin_cuda_runtime_preflight",
+                return_value=(object(), evidence),
+            ), mock.patch.object(
+                cuda_runtime, "_import_puffer_main", return_value=puffer_main
+            ), mock.patch.object(
+                cuda_runtime,
+                "finish_cuda_runtime_preflight",
+                return_value=evidence,
+            ), mock.patch.object(
+                cuda_runtime, "validate_cuda_runtime_evidence"
+            ), mock.patch("builtins.print"):
+                self.assertEqual(cuda_runtime.main(), 0)
+            self.assertEqual(events, ["main"])
+            finalized = json.loads(manifest_path.read_text(encoding="utf-8"))
+            sidecar = json.loads(evidence_path.read_text(encoding="utf-8"))
+            self.assertEqual(finalized["cuda_runtime_evidence_status"], "accepted")
+            self.assertEqual(finalized["cuda_runtime_evidence"], evidence)
+            self.assertEqual(sidecar["runtime_evidence"], evidence)
+            self.assertEqual(
+                finalized["cuda_runtime_evidence_sha256"],
+                hashlib.sha256(evidence_path.read_bytes()).hexdigest(),
+            )
+
+            puffer_main.reset_mock()
+            finalized["cuda_runtime_evidence_status"] = "pending"
+            finalized["cuda_launcher_probe_device_count"] = "2"
+            finalized.pop("cuda_runtime_evidence")
+            finalized.pop("cuda_runtime_evidence_sha256")
+            manifest_path.write_text(
+                json.dumps(finalized, sort_keys=True) + "\n", encoding="utf-8"
+            )
+            evidence_path.unlink()
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "PUFFER_CUDA_RUNTIME_MANIFEST": str(manifest_path),
+                    "PUFFER_CUDA_RUNTIME_EVIDENCE": str(evidence_path),
+                },
+                clear=False,
+            ), mock.patch.object(
+                cuda_runtime,
+                "begin_cuda_runtime_preflight",
+                return_value=(object(), evidence),
+            ), mock.patch.object(
+                cuda_runtime, "_import_puffer_main", return_value=puffer_main
+            ), mock.patch.object(
+                cuda_runtime,
+                "finish_cuda_runtime_preflight",
+                return_value=evidence,
+            ), mock.patch.object(
+                cuda_runtime, "validate_cuda_runtime_evidence"
+            ), mock.patch("builtins.print"), self.assertRaises(
+                cuda_runtime.CudaRuntimePreflightError
+            ):
+                cuda_runtime.main()
+            puffer_main.assert_not_called()
 
     def test_qualification_source_identity_includes_selfplay_patch(self):
         relative = {
@@ -778,6 +1123,9 @@ class QualificationValidatorTests(unittest.TestCase):
         throughput = {
             "host": "rtx2070", "gpu": "RTX 2070", "precision_bytes": 4,
             "config_sha256": config_digest, "steps_per_second": 1000.0,
+            "cuda_runtime_library_sha256": "d" * 64,
+            "cuda_runtime_device_count": 1,
+            "cuda_visible_devices": "0",
             "hard_integrity_zero": True, "hard_integrity": integrity,
             "steps": 1000, "elapsed_seconds": 1.0,
             "median_rollout_seconds": 0.1, "p95_rollout_seconds": 0.2,
@@ -785,6 +1133,18 @@ class QualificationValidatorTests(unittest.TestCase):
         }
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
+            cuda_library = root / "libcudart.so.12.4.127"
+            cuda_library.write_bytes(b"frozen CUDA runtime")
+            cuda_evidence = cuda_runtime_evidence()
+            cuda_evidence["library"]["resolved_path"] = str(
+                cuda_library.resolve()
+            )
+            cuda_evidence["library"]["sha256"] = hashlib.sha256(
+                cuda_library.read_bytes()
+            ).hexdigest()
+            throughput["cuda_runtime_library_sha256"] = cuda_evidence[
+                "library"
+            ]["sha256"]
             source_root = root / "source"
             puffer_root = source_root / "vendor" / "PufferLib"
             identity["puffer_root"] = str(puffer_root)
@@ -808,11 +1168,22 @@ class QualificationValidatorTests(unittest.TestCase):
                 "runner_sha256": self.q.sha256(RUNNER),
                 "identity": identity, "throughput": throughput,
                 "config": config, "config_sha256": config_digest,
+                "cuda_runtime_preflight": cuda_evidence,
                 "predecessor_source": source,
                 "runner_source": runner_source,
             }
             cell_path = root / "throughput-baseline.json"
             cell_path.write_text(json.dumps(cell), encoding="utf-8")
+            construction_path = root / "CONSTRUCTION_GATE.json"
+            construction_path.write_text("{}\n", encoding="utf-8")
+            construction_record = {"accepted": True}
+            construction_patcher = mock.patch.object(
+                self.q,
+                "validate_construction_gate",
+                return_value=construction_record,
+            )
+            construction_patcher.start()
+            self.addCleanup(construction_patcher.stop)
             wrapper = {
                 "schema_version": self.q.SCHEMA_VERSION,
                 "qualification_only": True,
@@ -828,6 +1199,10 @@ class QualificationValidatorTests(unittest.TestCase):
                 },
                 "predecessor_source": source,
                 "runner_source": runner_source,
+                "construction_gate": {
+                    "path": str(construction_path),
+                    "sha256": self.q.sha256(construction_path),
+                },
                 "cell_record": str(cell_path),
                 "cell_record_sha256": self.q.sha256(cell_path),
             }
@@ -982,6 +1357,7 @@ class QualificationValidatorTests(unittest.TestCase):
                 "qualification_only": True,
                 "config": config,
                 "config_sha256": self.q.canonical_hash(config),
+                "cuda_runtime_preflight": cuda_runtime_evidence(),
             }
             with mock.patch.object(
                 self.q.subprocess, "run", return_value=completed
@@ -1000,6 +1376,77 @@ class QualificationValidatorTests(unittest.TestCase):
             self.assertEqual(command[cudagraph_flag + 1], "10")
             minibatch_flag = command.index("--throughput-minibatch-size")
             self.assertEqual(command[minibatch_flag + 1], "16384")
+
+    def test_predecessor_worker_receives_complete_frozen_identity(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            python = root / "python"
+            python.write_text("binary placeholder\n", encoding="utf-8")
+            puffer = root / "puffer"
+            output = root / "output"
+            puffer.mkdir()
+            output.mkdir()
+            record_path = output / "throughput-baseline.json"
+            record_path.write_text("{}\n", encoding="utf-8")
+            args = mock.Mock(
+                python=python,
+                puffer_root=puffer,
+                seed=271828,
+                ratio_call_limit=64,
+                throughput_agents=2048,
+                throughput_buffers=2,
+                throughput_threads=16,
+                throughput_horizon=64,
+                throughput_hidden=512,
+                throughput_layers=3,
+                throughput_minibatch_size=16384,
+                throughput_warmup_rollouts=2,
+                throughput_timed_rollouts=8,
+                cell_timeout_seconds=1800,
+                expected_predecessor_source_commit=self.q.PREDECESSOR_SOURCE_COMMIT,
+                expected_predecessor_module_sha256="a" * 64,
+                expected_predecessor_backend_sha256="b" * 64,
+                expected_predecessor_runtime_sha256="c" * 64,
+                expected_environment_sha256="d" * 64,
+            )
+            completed = mock.Mock(returncode=0, stdout="", stderr="")
+            config = {"cudagraphs": 10}
+            record = {
+                "accepted": True,
+                "qualification_only": True,
+                "config": config,
+                "config_sha256": self.q.canonical_hash(config),
+                "cuda_runtime_preflight": cuda_runtime_evidence(),
+            }
+            with mock.patch.object(
+                self.q.subprocess, "run", return_value=completed
+            ) as run, mock.patch.object(
+                self.q, "_read_json", return_value=record
+            ), mock.patch.object(
+                self.q, "validate_transition_cell_integrity"
+            ):
+                self.q._run_worker(
+                    args,
+                    kind="throughput",
+                    name="throughput-baseline",
+                    cudagraphs=10,
+                    output=output,
+                    preceding_runtime=True,
+                )
+            command = run.call_args.args[0]
+            expected_flags = {
+                "--expected-predecessor-source-commit": (
+                    self.q.PREDECESSOR_SOURCE_COMMIT
+                ),
+                "--expected-predecessor-module-sha256": "a" * 64,
+                "--expected-predecessor-backend-sha256": "b" * 64,
+                "--expected-predecessor-runtime-sha256": "c" * 64,
+                "--expected-environment-sha256": "d" * 64,
+            }
+            for flag, expected in expected_flags.items():
+                with self.subTest(flag=flag):
+                    position = command.index(flag)
+                    self.assertEqual(command[position + 1], expected)
 
     def test_graph_capture_requires_production_warmup_boundary(self):
         args = mock.Mock(
@@ -1038,7 +1485,7 @@ class QualificationValidatorTests(unittest.TestCase):
         runner = RUNNER.read_text(encoding="utf-8")
         self.assertNotIn("cudagraphs=0", runner)
         self.assertEqual(
-            runner.count("cudagraphs=DEFAULT_CUDAGRAPH_WARMUP_EPOCHS"), 7
+            runner.count("cudagraphs=DEFAULT_CUDAGRAPH_WARMUP_EPOCHS"), 8
         )
 
     def test_cell_rejects_zero_warmup_before_runtime_dispatch(self):
@@ -1056,13 +1503,37 @@ class QualificationValidatorTests(unittest.TestCase):
         run_cell.assert_not_called()
 
     def test_cudagraph_record_rejects_coherent_zero_warmup_mutation(self):
-        record = {"config": {"cudagraphs": 10}}
+        record = {
+            "config": {"cudagraphs": 10},
+            "cuda_runtime_preflight": cuda_runtime_evidence(),
+        }
         record["config_sha256"] = self.q.canonical_hash(record["config"])
         self.q.validate_cell_cudagraph_record(record, expected=10)
 
         record["config"]["cudagraphs"] = 0
         record["config_sha256"] = self.q.canonical_hash(record["config"])
         with self.assertRaises(self.q.QualificationError):
+            self.q.validate_cell_cudagraph_record(record, expected=10)
+
+    def test_throughput_cell_redundant_cuda_fields_must_reconcile(self):
+        evidence = cuda_runtime_evidence()
+        config = {"cudagraphs": 10}
+        record = {
+            "config": config,
+            "config_sha256": self.q.canonical_hash(config),
+            "cuda_runtime_preflight": evidence,
+            "throughput": {
+                "config_sha256": self.q.canonical_hash(config),
+                "cuda_runtime_library_sha256": evidence["library"]["sha256"],
+                "cuda_runtime_device_count": 1,
+                "cuda_visible_devices": "0",
+            },
+        }
+        self.q.validate_cell_cudagraph_record(record, expected=10)
+        record["throughput"]["cuda_runtime_device_count"] = 2
+        with self.assertRaisesRegex(
+            self.q.QualificationError, "internally inconsistent"
+        ):
             self.q.validate_cell_cudagraph_record(record, expected=10)
 
         record["config"]["cudagraphs"] = 10.0
@@ -1128,6 +1599,7 @@ class QualificationValidatorTests(unittest.TestCase):
 
     def test_operator_commands_freeze_canary_throughput_minibatch(self):
         for command, dispatch_name in (
+            ("construct", "run_construction_gate"),
             ("capture-throughput", "capture_throughput"),
             ("run", "run_qualification"),
         ):
@@ -1147,6 +1619,385 @@ class QualificationValidatorTests(unittest.TestCase):
             ):
                 self.q.main([])
             dispatch.assert_not_called()
+
+    def test_public_writing_commands_reject_output_under_protected_recovery_root(self):
+        output = self.q.PROTECTED_RECOVERY_ROOT / "qualification-output"
+        for command in (
+            self.q.run_construction_gate,
+            self.q.capture_throughput,
+            self.q.run_qualification,
+        ):
+            args = mock.Mock(output=output)
+            with self.subTest(command=command.__name__), mock.patch.object(
+                self.q.subprocess,
+                "run",
+                return_value=mock.Mock(stdout=""),
+            ), self.assertRaisesRegex(
+                self.q.QualificationError, "protected recovery root"
+            ):
+                command(args)
+            self.assertFalse(output.exists())
+
+    def test_construction_gate_is_a_public_pre_timing_boundary(self):
+        argv = [
+            "construct",
+            "--puffer-root", "/tmp/candidate/vendor/PufferLib",
+            "--output", "/tmp/construction-gate",
+            "--candidate-source-root", "/tmp/candidate",
+            "--expected-source-commit", "a" * 40,
+            "--expected-candidate-module-sha256", "b" * 64,
+            "--expected-candidate-backend-sha256", "c" * 64,
+            "--expected-environment-sha256", "d" * 64,
+        ]
+        args = self.q.parse_args(argv)
+        self.assertEqual(args.command, "construct")
+        with mock.patch.object(
+            self.q, "parse_args", return_value=args
+        ), mock.patch.object(
+            self.q, "run_construction_gate", return_value=0
+        ) as construct:
+            self.assertEqual(self.q.main([]), 0)
+        construct.assert_called_once_with(args)
+
+    def test_timing_commands_cannot_dispatch_without_an_accepted_construction_gate(self):
+        gate_error = self.q.QualificationError("construction rejected")
+        capture_args = mock.Mock(
+            output=pathlib.Path("/tmp/baseline"),
+            construction_gate=pathlib.Path("/tmp/construction.json"),
+            expected_predecessor_source_commit=self.q.PREDECESSOR_SOURCE_COMMIT,
+            expected_predecessor_module_sha256="a" * 64,
+            expected_predecessor_backend_sha256="b" * 64,
+            expected_predecessor_runtime_sha256="c" * 64,
+            expected_environment_sha256="d" * 64,
+        )
+        with mock.patch.object(
+            self.q, "_require_clean_source_and_external_output", return_value=ROOT
+        ), mock.patch.object(
+            self.q, "current_runner_source_identity", return_value={}
+        ), mock.patch.object(
+            self.q, "validate_construction_gate", side_effect=gate_error
+        ) as construction, mock.patch.object(
+            self.q, "validate_source_checkout"
+        ) as source, mock.patch.object(self.q, "_run_worker") as worker, \
+                self.assertRaises(self.q.QualificationError):
+            self.q.capture_throughput(capture_args)
+        construction.assert_called_once()
+        source.assert_not_called()
+        worker.assert_not_called()
+
+        candidate_source = {
+            "role": "candidate",
+            "source_root": "/tmp/candidate",
+            "source_commit": "a" * 40,
+            "puffer_root": "/tmp/candidate/vendor/PufferLib",
+            "installer_check_sha256": "b" * 64,
+        }
+        run_args = mock.Mock(
+            output=pathlib.Path("/tmp/qualification"),
+            construction_gate=pathlib.Path("/tmp/construction.json"),
+            candidate_source_root=pathlib.Path("/tmp/candidate"),
+            puffer_root=pathlib.Path(candidate_source["puffer_root"]),
+            expected_source_commit="a" * 40,
+            expected_candidate_module_sha256="c" * 64,
+            expected_candidate_backend_sha256="d" * 64,
+            expected_environment_sha256="e" * 64,
+            expected_predecessor_source_commit=self.q.PREDECESSOR_SOURCE_COMMIT,
+            expected_predecessor_module_sha256="f" * 64,
+            expected_predecessor_backend_sha256="1" * 64,
+            expected_predecessor_runtime_sha256="2" * 64,
+        )
+        with mock.patch.object(
+            self.q, "_require_clean_source_and_external_output", return_value=ROOT
+        ), mock.patch.object(
+            self.q,
+            "current_runner_source_identity",
+            return_value={"source_commit": "a" * 40},
+        ), mock.patch.object(
+            self.q, "validate_candidate_source_authority"
+        ), mock.patch.object(
+            self.q, "validate_source_checkout", return_value=candidate_source
+        ), mock.patch.object(
+            self.q, "require_output_outside_source"
+        ), mock.patch.object(
+            self.q, "validate_construction_gate", side_effect=gate_error
+        ) as construction, mock.patch.object(
+            self.q, "validate_baseline_artifact"
+        ) as baseline, mock.patch.object(self.q, "_run_worker") as worker, \
+                self.assertRaises(self.q.QualificationError):
+            self.q.run_qualification(run_args)
+        construction.assert_called_once()
+        baseline.assert_not_called()
+        worker.assert_not_called()
+
+    def test_predecessor_identity_rejects_before_backend_construction(self):
+        identity = {
+            "module": "/tmp/predecessor/pufferlib/_C.so",
+            "puffer_root": "/tmp/predecessor",
+            "module_sha256": "a" * 64,
+            "compiled_backend_sha256": "b" * 64,
+            "backend_sources_sha256": "b" * 64,
+            "runtime_sources_sha256": "c" * 64,
+            "environment_sha256": "d" * 64,
+            "installed_snapshot_sha256": "d" * 64,
+            "observation_abi": "obs-v5",
+            "observation_version": 5,
+            "action_abi": "exact-joint-v1",
+            "precision_bytes": 4,
+            "compiled_env": "bloodbowl",
+            "qualification_surface": False,
+        }
+        create_pufferl = mock.Mock(
+            side_effect=RuntimeError("backend construction must not run")
+        )
+        backend = SimpleNamespace(create_pufferl=create_pufferl)
+        args = mock.Mock(
+            puffer_root=pathlib.Path(identity["puffer_root"]),
+            output_json=pathlib.Path("/tmp/predecessor-throughput.json"),
+            output_npz=None,
+            preceding_runtime=True,
+            kind="throughput",
+            cudagraphs=10,
+            seed=271828,
+            throughput_agents=2048,
+            throughput_buffers=2,
+            throughput_threads=16,
+            throughput_horizon=64,
+            throughput_hidden=512,
+            throughput_layers=3,
+            throughput_minibatch_size=16384,
+            throughput_warmup_rollouts=2,
+            throughput_timed_rollouts=8,
+            ratio_call_limit=64,
+            expected_predecessor_source_commit=self.q.PREDECESSOR_SOURCE_COMMIT,
+            expected_predecessor_module_sha256="f" * 64,
+            expected_predecessor_backend_sha256=identity[
+                "compiled_backend_sha256"
+            ],
+            expected_predecessor_runtime_sha256=identity[
+                "runtime_sources_sha256"
+            ],
+            expected_environment_sha256=identity["environment_sha256"],
+        )
+        with mock.patch.object(
+            self.q,
+            "_load_backend",
+            return_value=(
+                backend,
+                pathlib.Path(identity["module"]),
+                cuda_runtime_evidence(),
+            ),
+        ), mock.patch.object(
+            self.q, "_module_identity", return_value=identity
+        ), self.assertRaises(self.q.QualificationError):
+            self.q.run_cell(args)
+        create_pufferl.assert_not_called()
+
+    def test_construction_gate_freezes_candidate_and_cell_evidence(self):
+        expected = {
+            "source_commit": "a" * 40,
+            "module_sha256": "b" * 64,
+            "backend_sha256": "c" * 64,
+            "environment_sha256": "d" * 64,
+        }
+        runner_source = {
+            "source_root": str(ROOT),
+            "source_commit": expected["source_commit"],
+            "runner_sha256": self.q.sha256(RUNNER),
+        }
+        candidate_source = {
+            "role": "candidate",
+            "source_root": "/tmp/candidate",
+            "source_commit": expected["source_commit"],
+            "puffer_root": "/tmp/candidate/vendor/PufferLib",
+            "installer_check_sha256": "e" * 64,
+        }
+        identity = {
+            "puffer_root": candidate_source["puffer_root"],
+        }
+        state = {"primary": [], "frozen": []}
+        record = {
+            "identity": identity,
+            "state": state,
+            "cuda_runtime_preflight": cuda_runtime_evidence(),
+            "record_path": "/tmp/output/construction.json",
+            "record_sha256": "f" * 64,
+        }
+        args = mock.Mock(
+            output=pathlib.Path("/tmp/output"),
+            expected_source_commit=expected["source_commit"],
+            expected_candidate_module_sha256=expected["module_sha256"],
+            expected_candidate_backend_sha256=expected["backend_sha256"],
+            expected_environment_sha256=expected["environment_sha256"],
+            candidate_source_root=pathlib.Path(candidate_source["source_root"]),
+            puffer_root=pathlib.Path(candidate_source["puffer_root"]),
+        )
+        with mock.patch.object(
+            self.q, "_require_clean_source_and_external_output", return_value=ROOT
+        ), mock.patch.object(
+            self.q, "current_runner_source_identity", return_value=runner_source
+        ), mock.patch.object(
+            self.q, "validate_candidate_source_authority"
+        ), mock.patch.object(
+            self.q, "validate_source_checkout", return_value=candidate_source
+        ), mock.patch.object(
+            self.q, "require_distinct_source_roots"
+        ), mock.patch.object(
+            self.q, "require_output_outside_source"
+        ), mock.patch.object(
+            self.q, "backend_source_hash", return_value=expected["backend_sha256"]
+        ), mock.patch.object(
+            self.q, "installed_snapshot_hash",
+            return_value=expected["environment_sha256"],
+        ), mock.patch.object(
+            self.q, "_run_worker", return_value=record
+        ), mock.patch.object(
+            self.q, "validate_expected_candidate_identity"
+        ), mock.patch.object(
+            self.q, "validate_zero_state"
+        ), mock.patch.object(
+            self.q, "write_json_atomic"
+        ) as write, mock.patch.object(
+            self.q, "validate_construction_gate", return_value={"accepted": True}
+        ), mock.patch.object(
+            pathlib.Path, "mkdir"
+        ):
+            self.assertEqual(self.q.run_construction_gate(args), 0)
+        payload = write.call_args.args[1]
+        self.assertTrue(payload["accepted"])
+        self.assertEqual(payload["role"], "candidate_construction_gate")
+        self.assertEqual(payload["expected_candidate"], expected)
+        self.assertEqual(payload["candidate_source"], candidate_source)
+        self.assertEqual(payload["runner_source"], runner_source)
+        self.assertEqual(
+            payload["cuda_runtime_preflight"],
+            record["cuda_runtime_preflight"],
+        )
+
+    def test_construction_gate_validator_rehashes_the_closed_cell(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = pathlib.Path(temporary)
+            cell_path = output / "construction.json"
+            gate_path = output / "CONSTRUCTION_GATE.json"
+            expected = {
+                "source_commit": "a" * 40,
+                "module_sha256": "b" * 64,
+                "backend_sha256": "c" * 64,
+                "environment_sha256": "d" * 64,
+            }
+            runner_source = {
+                "source_root": str(ROOT),
+                "source_commit": expected["source_commit"],
+                "runner_sha256": self.q.sha256(RUNNER),
+            }
+            candidate_source = {
+                "role": "candidate",
+                "source_root": "/tmp/candidate",
+                "source_commit": expected["source_commit"],
+                "puffer_root": "/tmp/candidate/vendor/PufferLib",
+                "installer_check_sha256": "e" * 64,
+            }
+            identity = {"puffer_root": candidate_source["puffer_root"]}
+            state = {"primary": [], "frozen": []}
+            evidence = cuda_runtime_evidence()
+            config = {"cudagraphs": 10}
+            cell = {
+                "schema_version": self.q.SCHEMA_VERSION,
+                "qualification_only": True,
+                "runner_sha256": self.q.sha256(RUNNER),
+                "accepted": True,
+                "kind": "construction",
+                "identity": identity,
+                "cuda_runtime_preflight": evidence,
+                "config": config,
+                "config_sha256": self.q.canonical_hash(config),
+                "host": "rtx2070",
+                "platform": "linux",
+                "seed": 271828,
+                "preceding_runtime": False,
+                "state": state,
+            }
+            cell_path.write_text(
+                json.dumps(cell, sort_keys=True) + "\n", encoding="utf-8"
+            )
+            gate = {
+                "schema_version": self.q.SCHEMA_VERSION,
+                "qualification_only": True,
+                "role": "candidate_construction_gate",
+                "accepted": True,
+                "runner_sha256": self.q.sha256(RUNNER),
+                "runner_source": runner_source,
+                "candidate_source": candidate_source,
+                "expected_candidate": expected,
+                "identity": identity,
+                "cuda_runtime_preflight": evidence,
+                "state": state,
+                "cell_record": str(cell_path),
+                "cell_record_sha256": self.q.sha256(cell_path),
+            }
+            gate_path.write_text(
+                json.dumps(gate, sort_keys=True) + "\n", encoding="utf-8"
+            )
+            with mock.patch.object(
+                self.q, "current_runner_source_identity", return_value=runner_source
+            ), mock.patch.object(
+                self.q, "validate_candidate_source_authority"
+            ), mock.patch.object(
+                self.q, "validate_source_checkout", return_value=candidate_source
+            ), mock.patch.object(
+                self.q, "backend_source_hash", return_value=expected["backend_sha256"]
+            ), mock.patch.object(
+                self.q, "installed_snapshot_hash",
+                return_value=expected["environment_sha256"],
+            ), mock.patch.object(
+                self.q, "validate_module_identity"
+            ), mock.patch.object(
+                self.q, "validate_current_identity_files"
+            ) as current_files, mock.patch.object(
+                self.q, "validate_expected_candidate_identity"
+            ), mock.patch.object(
+                self.q, "validate_cuda_runtime_library_file"
+            ), mock.patch.object(
+                self.q, "validate_zero_state"
+            ):
+                accepted = self.q.validate_construction_gate(gate_path)
+                self.assertTrue(accepted["accepted"])
+                current_files.assert_called_once_with(identity)
+                cell_path.write_text("{}\n", encoding="utf-8")
+                with self.assertRaisesRegex(
+                    self.q.QualificationError, "digest mismatch"
+                ):
+                    self.q.validate_construction_gate(gate_path)
+
+    def test_construction_cell_schema_is_exact_and_role_correct(self):
+        config = {"cudagraphs": 10}
+        cell = {
+            "schema_version": self.q.SCHEMA_VERSION,
+            "qualification_only": True,
+            "runner_sha256": self.q.sha256(RUNNER),
+            "kind": "construction",
+            "identity": {},
+            "cuda_runtime_preflight": cuda_runtime_evidence(),
+            "config": config,
+            "config_sha256": self.q.canonical_hash(config),
+            "host": "rtx2070",
+            "platform": "linux",
+            "seed": 271828,
+            "preceding_runtime": False,
+            "accepted": True,
+            "state": {},
+        }
+        self.q.validate_construction_cell(cell)
+        for label, mutate in (
+            ("missing runner", lambda value: value.pop("runner_sha256")),
+            ("preceding runtime", lambda value: value.__setitem__("preceding_runtime", True)),
+            ("extra key", lambda value: value.__setitem__("unexpected", True)),
+        ):
+            mutated = json.loads(json.dumps(cell))
+            mutate(mutated)
+            with self.subTest(label=label), self.assertRaises(
+                self.q.QualificationError
+            ):
+                self.q.validate_construction_cell(mutated)
 
     def test_qualification_minibatch_must_fit_rollout_contract(self):
         base = {
@@ -1266,6 +2117,7 @@ class QualificationValidatorTests(unittest.TestCase):
                         "--puffer-root", str(candidate / "vendor" / "PufferLib"),
                         "--output", str(output),
                         "--baseline-throughput", str(baseline),
+                        "--construction-gate", str(root / "construction.json"),
                         "--candidate-source-root", str(candidate),
                         "--predecessor-source-root", str(predecessor),
                         "--expected-source-commit", "f" * 40,
@@ -1302,6 +2154,7 @@ class QualificationValidatorTests(unittest.TestCase):
             "--puffer-root", "/candidate/vendor/PufferLib",
             "--output", "/external/qualification",
             "--baseline-throughput", "/external/THROUGHPUT_BASELINE.json",
+            "--construction-gate", "/external/CONSTRUCTION_GATE.json",
             "--candidate-source-root", "/candidate",
             "--predecessor-source-root", "/predecessor",
             "--expected-source-commit", "f" * 40,
@@ -1318,6 +2171,7 @@ class QualificationValidatorTests(unittest.TestCase):
             "capture-throughput",
             "--puffer-root", "/predecessor/vendor/PufferLib",
             "--output", "/external/baseline",
+            "--construction-gate", "/external/CONSTRUCTION_GATE.json",
             "--predecessor-source-root", "/predecessor",
             "--expected-predecessor-source-commit",
             self.q.PREDECESSOR_SOURCE_COMMIT,
@@ -1673,8 +2527,14 @@ class QualificationPatchContractTests(unittest.TestCase):
             "snapshot exceeds qualification byte limit",
             'm.def("qualification_recurrent_state"',
             'm.def("qualification_snapshot"',
+            "cudaError_t device_status = cudaGetDeviceCount(&device_count)",
+            "device_status != cudaSuccess || device_count <= 0",
+            "CUDA device discovery failed:",
         ):
             self.assertIn(fragment, patch)
+        self.assertIn(
+            '-    assert(device_count > 0 && "CUDA is not available");', patch
+        )
         for forbidden in (
             "set_weights_ptr", "set_observations", "set_terminals",
             "set_rng_state", "set_actions",
@@ -1767,6 +2627,15 @@ class QualificationPatchContractTests(unittest.TestCase):
             "Patch copy: training/selfplay_league.patch",
         ):
             self.assertIn(marker, installer)
+
+    def test_execution_checklist_binds_current_candidate_patch_bytes(self):
+        checklist = QUALIFICATION_CHECKLIST.read_text(encoding="utf-8")
+        digest = hashlib.sha256(PATCH.read_bytes()).hexdigest()
+        self.assertIn(
+            "| current | `training/puffer_recurrent_cuda_qualification.patch` "
+            f"| `{digest}` |",
+            checklist,
+        )
 
 
 if __name__ == "__main__":

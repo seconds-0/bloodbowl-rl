@@ -118,6 +118,32 @@ PY
 
 Do not accept a source hash as proof that Python imported the intended extension.
 
+On the RTX 2070 WSL host, CUDA availability is also a same-process contract.
+The D224-era `predecessor-throughput-v2` and `predecessor-throughput-v3`
+captures are rejected and permanently non-retryable because loading `_C`
+before the worker's first CUDART call left that process reporting
+`cudaErrorNoDevice`. Do not restart WSL or attempt another unchanged capture.
+For qualification and training, use `tools/puffer_cuda_runtime.py` in the exact
+worker/trainer process before any native import, require successful positive
+device counts before and after import through one retained resolved CUDART
+handle, and record its path/hash plus `CUDA_VISIBLE_DEVICES`. Host-level
+`nvidia-smi` and out-of-process Python probes are useful diagnostics but cannot
+substitute for this evidence. A failed pre/post probe terminates that fresh
+process and is never repaired in place. Before any timed recapture, use fresh
+clean control/candidate roots and run only a construction-only integration;
+stop and restore BBTV around that bounded GPU cell under the usual host-state
+contract. The frozen screen launcher remains unauthorized.
+The construction gate must be passed explicitly to `capture-throughput` and
+full qualification; both revalidate it before output or GPU worker dispatch.
+The predecessor timing worker must also receive the complete frozen
+predecessor declaration and validate its own imported module/backend/runtime/
+environment identity before backend construction, warmup, or rollout. Never
+spend timing compute and defer this comparison to the parent process.
+For training, the early launcher probe is only an expectation. The trainer
+wrapper explicitly imports `_C`, writes its own pre/post runtime evidence and
+finalizes the pending manifest before optimization, and the checkpoint
+directory must contain the matching `CUDA_RUNTIME_EVIDENCE.json` sidecar.
+
 ## Reward-screen launch contract
 
 Use `.claude/skills/training-experiments/SKILL.md`. New reward experiments use:

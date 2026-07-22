@@ -160,8 +160,13 @@ OPP_TIMEOUT=$(( STEPS * 10 ))
 
 PYBIN="$ROOT/vendor/PufferLib/.venv/bin/python"
 PUFFER_BIN="$ROOT/vendor/PufferLib/.venv/bin/puffer"
+CUDA_RUNTIME_WRAPPER="$ROOT/tools/puffer_cuda_runtime.py"
 [ -x "$PYBIN" ] || { echo "vendored Python missing: $PYBIN" >&2; exit 1; }
 [ -x "$PUFFER_BIN" ] || { echo "vendored puffer entrypoint missing: $PUFFER_BIN" >&2; exit 1; }
+[ -f "$CUDA_RUNTIME_WRAPPER" ] || {
+  echo "CUDA runtime wrapper missing: $CUDA_RUNTIME_WRAPPER" >&2; exit 1; }
+[ "${CUDA_VISIBLE_DEVICES:-}" = "0" ] || {
+  echo "CUDA_VISIBLE_DEVICES must be exactly 0" >&2; exit 1; }
 if [ "$BOOTSTRAP_MODE" = "fresh-v5-qualification" ]; then
   FROZEN_BANK_PCT=0
   NUM_FROZEN_BANKS=0
@@ -207,8 +212,9 @@ STATUS_FILE="${LOG}.status.json"
 RUN_DIR_FILE="${LOG}.run_dir"
 PROCESS_FILE="${LOG}.process.json"
 GUARD_MARKER="${LOG}.guard-failed"
+CUDA_RUNTIME_EVIDENCE="${LOG}.cuda-runtime.json"
 for artifact in "$LOG" "$RUN_MANIFEST" "$STATUS_FILE" "$RUN_DIR_FILE" \
-                "$PROCESS_FILE" "$GUARD_MARKER"; do
+                "$PROCESS_FILE" "$GUARD_MARKER" "$CUDA_RUNTIME_EVIDENCE"; do
   [ ! -e "$artifact" ] || {
     echo "refusing to overwrite existing run artifact: $artifact" >&2
     exit 1
@@ -342,20 +348,36 @@ grep -q "'_puffer_final_reprint'" pufferlib/pufferl.py || {
 grep -q "'_puffer_schema': 2" pufferlib/pufferl.py || {
   echo "vendored pufferl.py lacks explicit loop-phase/panel metadata" >&2; exit 1; }
 
-probe="$($PYBIN - <<'PY'
+probe="$($PYBIN - "$ROOT" <<'PY'
+import pathlib, sys
+sys.path.insert(0, str(pathlib.Path(sys.argv[1]).resolve() / "tools"))
+from puffer_cuda_runtime import (
+    begin_cuda_runtime_preflight,
+    finish_cuda_runtime_preflight,
+    validate_cuda_runtime_evidence,
+)
+runtime, evidence = begin_cuda_runtime_preflight()
 from pufferlib import _C
+evidence = finish_cuda_runtime_preflight(runtime, evidence)
+validate_cuda_runtime_evidence(evidence)
 print(getattr(_C, "env_name", None), int(bool(getattr(_C, "gpu", False))),
       int(_C.precision_bytes),
       getattr(_C, "exact_action_source_hash", "<missing>"),
       getattr(_C, "environment_source_hash", "<missing>"),
       getattr(_C, "observation_abi", "<missing>"),
       getattr(_C, "observation_version", "<missing>"),
-      getattr(_C, "action_abi", "<missing>"))
+      getattr(_C, "action_abi", "<missing>"),
+      pathlib.Path(_C.__file__).resolve(),
+      evidence["library"]["resolved_path"],
+      evidence["library"]["sha256"],
+      evidence["after_extension_import"]["device_count"])
 PY
 )"
 read -r cenv cgpu precision COMPILED_EXACT_ACTION_SOURCE_HASH \
   COMPILED_ENVIRONMENT_SOURCE_HASH COMPILED_OBSERVATION_ABI \
-  COMPILED_OBSERVATION_VERSION COMPILED_ACTION_ABI <<< "$probe"
+  COMPILED_OBSERVATION_VERSION COMPILED_ACTION_ABI MODULE_PATH \
+  CUDA_RUNTIME_LIBRARY_PATH CUDA_RUNTIME_LIBRARY_SHA256 \
+  CUDA_RUNTIME_DEVICE_COUNT <<< "$probe"
 if [ "$cenv" != "bloodbowl" ] || [ "$cgpu" != "1" ]; then
   echo "invalid native build: env=$cenv gpu=$cgpu" >&2; exit 1
 fi
@@ -411,10 +433,10 @@ for child in sorted(root.rglob("*")):
 print(digest.hexdigest())
 PY
 )"
-MODULE_PATH="$("$PYBIN" -c 'from pufferlib import _C; print(_C.__file__)')"
 [ -f "$MODULE_PATH" ] || { echo "imported pufferlib module missing: $MODULE_PATH" >&2; exit 1; }
 MODULE_HASH="$(sha256sum "$MODULE_PATH" | awk '{print $1}')"
 LAUNCHER_HASH="$(sha256sum "$ROOT/tools/run_reward_ablation.sh" | awk '{print $1}')"
+CUDA_RUNTIME_WRAPPER_HASH="$(sha256sum "$CUDA_RUNTIME_WRAPPER" | awk '{print $1}')"
 STATUS_WRAPPER="$ROOT/tools/trainer_status_wrapper.sh"
 STATUS_WRAPPER_HASH="$(sha256sum "$STATUS_WRAPPER" | awk '{print $1}')"
 LIVE_GUARD="$ROOT/tools/live_integrity_guard.py"
@@ -498,7 +520,9 @@ echo "compiled_exact_action_source_sha256=$COMPILED_EXACT_ACTION_SOURCE_HASH com
 echo "native_precision_bytes=$precision total_agents=$TOTAL_AGENTS buffers=$NUM_BUFFERS threads=$NUM_THREADS horizon=$HORIZON minibatch=$MINIBATCH_SIZE"
 echo "lr=$LR ent_coef=$ENT_COEF gamma=$GAMMA gae_lambda=$GAE_LAMBDA replay_ratio=$REPLAY_RATIO log=$LOG"
 
-CMD=("$PUFFER_BIN" train bloodbowl --tag "$TAG" \
+CMD=(env PUFFER_CUDA_RUNTIME_MANIFEST="$RUN_MANIFEST" \
+  PUFFER_CUDA_RUNTIME_EVIDENCE="$CUDA_RUNTIME_EVIDENCE" \
+  "$PYBIN" "$CUDA_RUNTIME_WRAPPER" train bloodbowl --tag "$TAG" \
   --seed "$SEED" --train.seed "$SEED" --selfplay.seed "$SEED" --env.seed "$SEED" \
   --train.gpus 1 --eval-episodes 10000 \
   --checkpoint-interval "$CHECKPOINT_INTERVAL" \
@@ -566,6 +590,13 @@ META_ARGS=(
   default_config_sha256 "$DEFAULT_CONFIG_HASH"
   compiled_module "$MODULE_PATH" compiled_module_sha256 "$MODULE_HASH"
   launcher_sha256 "$LAUNCHER_HASH" puffer_patch_bundle_sha256 "$PATCH_HASH"
+  cuda_runtime_wrapper_sha256 "$CUDA_RUNTIME_WRAPPER_HASH"
+  cuda_runtime_evidence_status pending
+  cuda_runtime_evidence_path "$CUDA_RUNTIME_EVIDENCE"
+  cuda_launcher_probe_library_path "$CUDA_RUNTIME_LIBRARY_PATH"
+  cuda_launcher_probe_library_sha256 "$CUDA_RUNTIME_LIBRARY_SHA256"
+  cuda_launcher_probe_device_count "$CUDA_RUNTIME_DEVICE_COUNT"
+  cuda_launcher_probe_visible_devices "$CUDA_VISIBLE_DEVICES"
   status_wrapper_sha256 "$STATUS_WRAPPER_HASH"
   live_integrity_guard_sha256 "$LIVE_GUARD_HASH"
   checkpoint_lineage_sha256 "$CHECKPOINT_LINEAGE_HASH"
@@ -604,7 +635,7 @@ PY
 "$PYBIN" - "$RUN_MANIFEST" <<'PY' > "$LOG"
 import json, pathlib, sys
 manifest = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
-print("BB_RUN_MANIFEST " + json.dumps(
+print("BB_RUN_MANIFEST_PENDING " + json.dumps(
     manifest, sort_keys=True, separators=(",", ":"), allow_nan=False))
 PY
 
@@ -652,6 +683,25 @@ echo "LAUNCHED pid=$PID"
       [ -d "$directory" ] || continue
       base=$(basename "$directory")
       grep -Fxq "$base" "$BEFORE_RUNS" && continue
+      if ! "$PYBIN" - "$RUN_MANIFEST" "$CUDA_RUNTIME_EVIDENCE" <<'PY'
+import hashlib, json, pathlib, sys
+manifest_path = pathlib.Path(sys.argv[1])
+evidence_path = pathlib.Path(sys.argv[2])
+if not evidence_path.is_file():
+    raise SystemExit(1)
+manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+if (
+    manifest.get("cuda_runtime_evidence_status") != "accepted"
+    or manifest.get("cuda_runtime_evidence_path") != str(evidence_path)
+    or manifest.get("cuda_runtime_evidence_sha256")
+    != hashlib.sha256(evidence_path.read_bytes()).hexdigest()
+    or not isinstance(manifest.get("cuda_runtime_evidence"), dict)
+):
+    raise SystemExit(1)
+PY
+      then
+        continue
+      fi
       {
         echo "reward-ablation tag=$TAG"
         echo "reward=$REWARD_NAME sha256=$REWARD_HASH"
@@ -661,6 +711,7 @@ echo "LAUNCHED pid=$PID"
         echo "run_manifest_sha256=$(sha256sum "$RUN_MANIFEST" | awk '{print $1}')"
       } > "${directory}PROFILE"
       cp "$RUN_MANIFEST" "${directory}RUN_MANIFEST.json"
+      cp "$CUDA_RUNTIME_EVIDENCE" "${directory}CUDA_RUNTIME_EVIDENCE.json"
       run_dir="$(pwd)/${directory%/}"
       tmp="${RUN_DIR_FILE}.tmp.$$"
       printf '%s\n' "$run_dir" > "$tmp"

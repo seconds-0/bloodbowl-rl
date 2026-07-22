@@ -195,6 +195,36 @@ checkpoints, and remember that stopped instances can be reclaimed.
   predecessor's upstream/unpatched self-play file; only the candidate receives
   the league patch. Never rebuild the predecessor to retrofit a newer
   digest and never reuse the rejected output directory.
+  The later `predecessor-throughput-v2` and `predecessor-throughput-v3`
+  captures are likewise rejected before a transition and non-retryable. Their
+  common failure is process-local CUDA initialization order, not an absent
+  host GPU: importing `_C` first made that fresh WSL process report
+  `cudaErrorNoDevice`, while initializing CUDART before `_C` preserved the
+  device. Never use a different process's `nvidia-smi`, Torch, or CUDART result
+  as worker evidence, and do not attempt a third unchanged capture. Both the
+  qualification worker and actual Puffer trainer must enter through
+  `tools/puffer_cuda_runtime.py`, require a successful positive device count
+  before native import and the same result afterward through the retained
+  resolved CUDART handle, and bind the wrapper, runtime path/hash, both probes,
+  and `CUDA_VISIBLE_DEVICES` into provenance. Throughput roles must match the
+  runtime hash/count. A failure exits the fresh process without repair. Before
+  recapturing throughput, merge/review the contract, create fresh clean
+  control/candidate roots, and pass one construction-only target check. The
+  screen launcher remains frozen and cannot launch a replacement until a
+  separate post-qualification authorization binds the wrapper and evidence.
+  Both predecessor timing and full qualification require the same
+  `--construction-gate` and revalidate/bind its current path, hash, candidate
+  module/backend/environment, runner, and CUDART identity before output or
+  worker dispatch.
+  The timed predecessor worker must also receive every frozen predecessor
+  identity field and reject a mismatch in its own process after native import
+  but before backend construction, warmup, or rollout. Do not rely on a
+  parent-only comparison after timing has already spent the capture identity.
+  For an actual trainer, distinguish the launcher probe from
+  runtime proof: the wrapper must explicitly import `_C`, publish its complete
+  same-process pre/post evidence before optimization, require it to match the
+  pending manifest expectation, and preserve the finalized manifest plus
+  hash-bound evidence with checkpoints.
   The throughput predecessor must be its exact hashed wrapper and confined cell,
   with module/backend/runtime/environment hashes declared both when captured
   and when consumed, not a loose metrics dictionary or an unplanned old binary. Missing baseline,

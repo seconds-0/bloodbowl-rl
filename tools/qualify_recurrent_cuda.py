@@ -25,6 +25,23 @@ from typing import Any, Iterable, Mapping
 
 import numpy as np
 
+try:
+    from puffer_cuda_runtime import (
+        CudaRuntimePreflightError,
+        begin_cuda_runtime_preflight,
+        finish_cuda_runtime_preflight,
+        validate_cuda_runtime_evidence,
+        validate_cuda_runtime_library_file,
+    )
+except ModuleNotFoundError:  # Imported as tools.qualify_recurrent_cuda in tests.
+    from tools.puffer_cuda_runtime import (
+        CudaRuntimePreflightError,
+        begin_cuda_runtime_preflight,
+        finish_cuda_runtime_preflight,
+        validate_cuda_runtime_evidence,
+        validate_cuda_runtime_library_file,
+    )
+
 
 SCHEMA_VERSION = 3
 QUALIFICATION_ONLY = True
@@ -153,6 +170,7 @@ def qualification_source_paths(source_root: Path) -> tuple[Path, ...]:
         source_root / "training/puffer_recurrent_cuda_qualification.patch",
         source_root / "training/selfplay_league.patch",
         source_root / "tools/install_puffer_env.sh",
+        source_root / "tools/puffer_cuda_runtime.py",
         source_root / "tools/qualify_recurrent_cuda.py",
     )
 
@@ -596,7 +614,15 @@ def validate_throughput(
     )
     if regression_limit < 0 or regression_limit >= 1:
         raise QualificationError("throughput regression fraction must be in [0, 1)")
-    for key in ("host", "gpu", "precision_bytes", "config_sha256"):
+    for key in (
+        "host",
+        "gpu",
+        "precision_bytes",
+        "config_sha256",
+        "cuda_runtime_library_sha256",
+        "cuda_runtime_device_count",
+        "cuda_visible_devices",
+    ):
         if candidate.get(key) != baseline.get(key):
             raise QualificationError(f"throughput identity mismatch for {key}")
     if candidate.get("hard_integrity_zero") is not True:
@@ -632,6 +658,23 @@ def _validate_throughput_record(record: Mapping[str, Any], label: str) -> None:
         raise QualificationError(f"{label} throughput GPU is missing")
     if record.get("precision_bytes") not in GRAPH_ATOL_BY_PRECISION:
         raise QualificationError(f"{label} throughput precision is unsupported")
+    _require_sha256(
+        record.get("cuda_runtime_library_sha256"),
+        f"{label} CUDA runtime library",
+    )
+    device_count = record.get("cuda_runtime_device_count")
+    if (
+        isinstance(device_count, bool)
+        or not isinstance(device_count, int)
+        or device_count <= 0
+    ):
+        raise QualificationError(
+            f"{label} CUDA runtime device count is invalid"
+        )
+    if record.get("cuda_visible_devices") != "0":
+        raise QualificationError(
+            f"{label} CUDA_VISIBLE_DEVICES is not the frozen target value"
+        )
     _require_sha256(record.get("config_sha256"), f"{label} throughput config")
     steps = record.get("steps")
     if isinstance(steps, bool) or not isinstance(steps, int) or steps <= 0:
@@ -666,6 +709,7 @@ def validate_baseline_artifact(path: Path) -> dict[str, Any]:
         "schema_version", "qualification_only", "role", "identity",
         "expected_predecessor", "predecessor_source", "runner_source",
         "throughput", "cell_record", "cell_record_sha256", "runner_sha256",
+        "construction_gate",
     }
     if set(wrapper) != required_wrapper_keys:
         raise QualificationError("throughput baseline wrapper schema is not exact")
@@ -681,6 +725,20 @@ def validate_baseline_artifact(path: Path) -> dict[str, Any]:
     runner_source = current_runner_source_identity()
     if wrapper.get("runner_source") != runner_source:
         raise QualificationError("throughput baseline runner checkout drifted")
+    construction_reference = wrapper.get("construction_gate")
+    if not isinstance(construction_reference, Mapping) or set(
+        construction_reference
+    ) != {"path", "sha256"}:
+        raise QualificationError("throughput baseline construction gate is malformed")
+    construction_path = Path(str(construction_reference.get("path", ""))).resolve()
+    construction_sha256 = _require_sha256(
+        construction_reference.get("sha256"), "throughput construction gate"
+    )
+    if not construction_path.is_file() or sha256(construction_path) != (
+        construction_sha256
+    ):
+        raise QualificationError("throughput construction gate drifted")
+    construction_gate = validate_construction_gate(construction_path)
     cell_path = Path(str(wrapper.get("cell_record", ""))).resolve()
     try:
         cell_path.relative_to(wrapper_path.parent)
@@ -700,7 +758,9 @@ def validate_baseline_artifact(path: Path) -> dict[str, Any]:
             or cell.get("runner_sha256") != current_runner_hash):
         raise QualificationError("throughput predecessor cell role is invalid")
     validate_cell_cudagraph_record(
-        cell, expected=DEFAULT_CUDAGRAPH_WARMUP_EPOCHS
+        cell,
+        expected=DEFAULT_CUDAGRAPH_WARMUP_EPOCHS,
+        rehash_cuda_runtime=True,
     )
     identity = cell.get("identity")
     if not isinstance(identity, Mapping):
@@ -740,6 +800,11 @@ def validate_baseline_artifact(path: Path) -> dict[str, Any]:
         "expected_predecessor": dict(expected_predecessor),
         "predecessor_source": predecessor_source,
         "runner_source": runner_source,
+        "construction_gate": {
+            "path": str(construction_path),
+            "sha256": construction_sha256,
+        },
+        "construction_gate_record": construction_gate,
         "throughput": dict(throughput),
         "cell": cell,
         "cell_path": str(cell_path),
@@ -968,7 +1033,7 @@ def validate_cell_cudagraphs(kind: str, cudagraphs: int) -> int:
 
 
 def validate_cell_cudagraph_record(
-    record: Mapping[str, Any], *, expected: int
+    record: Mapping[str, Any], *, expected: int, rehash_cuda_runtime: bool = False
 ) -> dict[str, Any]:
     config = record.get("config")
     if not isinstance(config, Mapping):
@@ -985,18 +1050,89 @@ def validate_cell_cudagraph_record(
         )
     if record.get("config_sha256") != canonical_hash(config):
         raise QualificationError("qualification cell config digest mismatch")
+    try:
+        cuda_evidence = record.get("cuda_runtime_preflight")
+        validate_cuda_runtime_evidence(cuda_evidence)
+        if cuda_evidence.get("cuda_visible_devices") != "0":
+            raise QualificationError(
+                "qualification CUDA_VISIBLE_DEVICES must be exactly 0"
+            )
+        if rehash_cuda_runtime:
+            validate_cuda_runtime_library_file(cuda_evidence)
+    except CudaRuntimePreflightError as exc:
+        raise QualificationError(f"qualification CUDA runtime evidence failed: {exc}") from exc
     throughput = record.get("throughput")
     if isinstance(throughput, Mapping) and throughput.get(
         "config_sha256"
     ) != record.get("config_sha256"):
         raise QualificationError("qualification throughput config digest mismatch")
+    if isinstance(throughput, Mapping) and (
+        throughput.get("cuda_runtime_library_sha256")
+        != cuda_evidence["library"]["sha256"]
+        or throughput.get("cuda_runtime_device_count")
+        != cuda_evidence["after_extension_import"]["device_count"]
+        or throughput.get("cuda_visible_devices")
+        != cuda_evidence["cuda_visible_devices"]
+    ):
+        raise QualificationError(
+            "qualification throughput CUDA evidence is internally inconsistent"
+        )
     return config
+
+
+def validate_construction_cell(
+    cell: Mapping[str, Any], *, rehash_cuda_runtime: bool = False
+) -> None:
+    required = {
+        "schema_version",
+        "qualification_only",
+        "runner_sha256",
+        "kind",
+        "identity",
+        "cuda_runtime_preflight",
+        "config",
+        "config_sha256",
+        "host",
+        "platform",
+        "seed",
+        "preceding_runtime",
+        "accepted",
+        "state",
+    }
+    if set(cell) != required:
+        raise QualificationError("construction cell schema is not exact")
+    if (
+        cell.get("schema_version") != SCHEMA_VERSION
+        or cell.get("qualification_only") is not True
+        or cell.get("runner_sha256") != sha256(Path(__file__).resolve())
+        or cell.get("accepted") is not True
+        or cell.get("kind") != "construction"
+        or cell.get("preceding_runtime") is not False
+    ):
+        raise QualificationError("construction cell is not accepted/isolated")
+    validate_cell_cudagraph_record(
+        cell,
+        expected=DEFAULT_CUDAGRAPH_WARMUP_EPOCHS,
+        rehash_cuda_runtime=rehash_cuda_runtime,
+    )
 
 
 def _load_backend(puffer_root: Path, *, require_qualification: bool = True):
     root = Path(puffer_root).resolve()
+    try:
+        cuda_runtime, cuda_evidence = begin_cuda_runtime_preflight()
+    except CudaRuntimePreflightError as exc:
+        raise QualificationError(f"CUDA runtime pre-import gate failed: {exc}") from exc
     sys.path.insert(0, str(root))
     from pufferlib import _C  # type: ignore
+
+    try:
+        cuda_evidence = finish_cuda_runtime_preflight(
+            cuda_runtime, cuda_evidence
+        )
+        validate_cuda_runtime_evidence(cuda_evidence)
+    except CudaRuntimePreflightError as exc:
+        raise QualificationError(f"CUDA runtime post-import gate failed: {exc}") from exc
 
     module = Path(_C.__file__).resolve()
     try:
@@ -1023,7 +1159,7 @@ def _load_backend(puffer_root: Path, *, require_qualification: bool = True):
     missing = [name for name in required if not hasattr(_C, name)]
     if missing:
         raise QualificationError(f"compiled qualification surface is missing: {missing}")
-    return _C, module
+    return _C, module, cuda_evidence
 
 
 def _module_identity(_C, module: Path, puffer_root: Path) -> dict[str, Any]:
@@ -1173,6 +1309,31 @@ def validate_expected_predecessor_identity(
             )
 
 
+def expected_predecessor_identity_from_args(
+    args: argparse.Namespace,
+) -> dict[str, str]:
+    """Freeze the operator declaration before a predecessor worker is started."""
+    expected = {
+        "source_commit": args.expected_predecessor_source_commit,
+        "module_sha256": args.expected_predecessor_module_sha256,
+        "backend_sha256": args.expected_predecessor_backend_sha256,
+        "runtime_sha256": args.expected_predecessor_runtime_sha256,
+        "environment_sha256": args.expected_environment_sha256,
+    }
+    if expected["source_commit"] != PREDECESSOR_SOURCE_COMMIT:
+        raise QualificationError(
+            "frozen predecessor source commit is not canonical"
+        )
+    for key in (
+        "module_sha256",
+        "backend_sha256",
+        "runtime_sha256",
+        "environment_sha256",
+    ):
+        _require_sha256(expected[key], f"frozen predecessor {key}")
+    return expected
+
+
 def _load_frozen_from_primary(_C, pufferl, directory: Path, banks: int) -> None:
     if not banks:
         return
@@ -1241,7 +1402,12 @@ def run_cell(args: argparse.Namespace) -> int:
     output_npz = Path(args.output_npz).resolve() if args.output_npz else None
     if args.preceding_runtime and args.kind != "throughput":
         raise QualificationError("preceding-runtime mode is throughput-only")
-    _C, module = _load_backend(
+    expected_predecessor = (
+        expected_predecessor_identity_from_args(args)
+        if args.preceding_runtime
+        else None
+    )
+    _C, module, cuda_evidence = _load_backend(
         Path(args.puffer_root), require_qualification=not args.preceding_runtime
     )
     qualification_surface = qualification_surface_state(_C)
@@ -1258,6 +1424,7 @@ def run_cell(args: argparse.Namespace) -> int:
         "runner_sha256": sha256(Path(__file__).resolve()),
         "kind": args.kind,
         "identity": _module_identity(_C, module, Path(args.puffer_root)),
+        "cuda_runtime_preflight": cuda_evidence,
         "config": config,
         "config_sha256": canonical_hash(config),
         "host": socket.gethostname(),
@@ -1269,6 +1436,16 @@ def run_cell(args: argparse.Namespace) -> int:
     validate_module_identity(
         result["identity"], qualification_surface=not args.preceding_runtime
     )
+    if expected_predecessor is not None:
+        validate_expected_predecessor_identity(
+            result["identity"], expected_predecessor
+        )
+        if result["identity"].get("puffer_root") != str(
+            Path(args.puffer_root).resolve()
+        ):
+            raise QualificationError(
+                "predecessor module is outside its frozen Puffer root"
+            )
     try:
         pufferl = _C.create_pufferl(config)
         frozen = int(config["vec"]["num_frozen_banks"])
@@ -1383,6 +1560,13 @@ def run_cell(args: argparse.Namespace) -> int:
                 "host": socket.gethostname(),
                 "gpu": gpu,
                 "precision_bytes": int(_C.precision_bytes),
+                "cuda_runtime_library_sha256": cuda_evidence["library"]["sha256"],
+                "cuda_runtime_device_count": cuda_evidence[
+                    "after_extension_import"
+                ]["device_count"],
+                "cuda_visible_devices": cuda_evidence[
+                    "cuda_visible_devices"
+                ],
                 "config_sha256": canonical_hash(config),
                 "steps": steps,
                 "elapsed_seconds": elapsed,
@@ -1476,6 +1660,19 @@ def _run_worker(
     ]
     if preceding_runtime:
         command.append("--preceding-runtime")
+        expected_predecessor = expected_predecessor_identity_from_args(args)
+        command.extend((
+            "--expected-predecessor-source-commit",
+            expected_predecessor["source_commit"],
+            "--expected-predecessor-module-sha256",
+            expected_predecessor["module_sha256"],
+            "--expected-predecessor-backend-sha256",
+            expected_predecessor["backend_sha256"],
+            "--expected-predecessor-runtime-sha256",
+            expected_predecessor["runtime_sha256"],
+            "--expected-environment-sha256",
+            expected_predecessor["environment_sha256"],
+        ))
     completed = subprocess.run(
         command,
         cwd=Path(args.puffer_root).resolve(),
@@ -1510,15 +1707,38 @@ def _require_same_identity(records: Iterable[Mapping[str, Any]]) -> dict[str, An
     return validate_module_identity(reference, qualification_surface=True)
 
 
+def _require_same_cuda_runtime(
+    records: Iterable[Mapping[str, Any]],
+) -> dict[str, Any]:
+    records = list(records)
+    if not records:
+        raise QualificationError("no cell CUDA runtime evidence was supplied")
+    reference = records[0].get("cuda_runtime_preflight")
+    try:
+        reference = validate_cuda_runtime_evidence(reference)
+    except CudaRuntimePreflightError as exc:
+        raise QualificationError(
+            f"qualification CUDA runtime evidence failed: {exc}"
+        ) from exc
+    for record in records[1:]:
+        if record.get("cuda_runtime_preflight") != reference:
+            raise QualificationError("qualification cell CUDA runtime drifted")
+    return reference
+
+
 def _require_clean_source_and_external_output(output: Path) -> Path:
     output = Path(output).resolve()
     source_root = Path(__file__).resolve().parents[1]
-    try:
-        output.relative_to(source_root)
-    except ValueError:
-        pass
-    else:
-        raise QualificationError("qualification output must be outside the source checkout")
+    forbidden_roots = (
+        (source_root, "source checkout"),
+        (PROTECTED_RECOVERY_ROOT.resolve(), "protected recovery root"),
+    )
+    for forbidden_root, label in forbidden_roots:
+        try:
+            output.relative_to(forbidden_root)
+        except ValueError:
+            continue
+        raise QualificationError(f"qualification output must be outside the {label}")
     source_status = subprocess.run(
         ["git", "status", "--porcelain"],
         cwd=source_root,
@@ -1719,6 +1939,174 @@ def require_predecessor_source_root(
     return supplied_root
 
 
+def run_construction_gate(args: argparse.Namespace) -> int:
+    """Run only the source-bound, pre-transition candidate construction gate."""
+    output = Path(args.output).resolve()
+    runner_source_root = _require_clean_source_and_external_output(output)
+    runner_source = current_runner_source_identity()
+    validate_candidate_source_authority(args.expected_source_commit, runner_source)
+    expected_candidate = {
+        "source_commit": args.expected_source_commit,
+        "module_sha256": args.expected_candidate_module_sha256,
+        "backend_sha256": args.expected_candidate_backend_sha256,
+        "environment_sha256": args.expected_environment_sha256,
+    }
+    for key in ("module_sha256", "backend_sha256", "environment_sha256"):
+        _require_sha256(expected_candidate[key], f"frozen candidate {key}")
+    candidate_source = validate_source_checkout(
+        args.candidate_source_root,
+        args.puffer_root,
+        expected_commit=expected_candidate["source_commit"],
+        role="candidate",
+    )
+    candidate_source_root = Path(candidate_source["source_root"])
+    require_distinct_source_roots(runner_source_root, candidate_source_root)
+    require_output_outside_source(
+        output, candidate_source_root, role="candidate source"
+    )
+    if expected_candidate["backend_sha256"] != backend_source_hash(
+        args.puffer_root
+    ):
+        raise QualificationError(
+            "current backend sources differ from frozen candidate"
+        )
+    if expected_candidate["environment_sha256"] != installed_snapshot_hash(
+        args.puffer_root
+    ):
+        raise QualificationError(
+            "installed environment differs from frozen candidate"
+        )
+
+    output.mkdir(parents=True, exist_ok=True)
+    construction = _run_worker(
+        args,
+        kind="construction",
+        name="construction",
+        cudagraphs=DEFAULT_CUDAGRAPH_WARMUP_EPOCHS,
+        output=output,
+    )
+    identity = construction.get("identity")
+    if not isinstance(identity, Mapping):
+        raise QualificationError("construction module identity is missing")
+    validate_expected_candidate_identity(
+        identity,
+        expected_candidate,
+        authorized_source_commit=runner_source["source_commit"],
+    )
+    if identity.get("puffer_root") != candidate_source["puffer_root"]:
+        raise QualificationError(
+            "candidate module is outside its frozen source checkout"
+        )
+    validate_zero_state(
+        construction.get("state"), expected_banks=2, expected_buffers=1
+    )
+    payload = {
+        "schema_version": SCHEMA_VERSION,
+        "qualification_only": QUALIFICATION_ONLY,
+        "role": "candidate_construction_gate",
+        "accepted": True,
+        "runner_sha256": sha256(Path(__file__).resolve()),
+        "runner_source": runner_source,
+        "candidate_source": candidate_source,
+        "expected_candidate": expected_candidate,
+        "identity": identity,
+        "cuda_runtime_preflight": construction["cuda_runtime_preflight"],
+        "state": construction["state"],
+        "cell_record": construction["record_path"],
+        "cell_record_sha256": construction["record_sha256"],
+    }
+    write_json_atomic(output / "CONSTRUCTION_GATE.json", payload)
+    validate_construction_gate(output / "CONSTRUCTION_GATE.json")
+    return 0
+
+
+def validate_construction_gate(path: Path) -> dict[str, Any]:
+    """Independently revalidate a closed, pre-transition construction gate."""
+    gate_path = Path(path).resolve()
+    gate = _read_json(gate_path)
+    required = {
+        "schema_version",
+        "qualification_only",
+        "role",
+        "accepted",
+        "runner_sha256",
+        "runner_source",
+        "candidate_source",
+        "expected_candidate",
+        "identity",
+        "cuda_runtime_preflight",
+        "state",
+        "cell_record",
+        "cell_record_sha256",
+    }
+    if set(gate) != required:
+        raise QualificationError("construction gate schema is not exact")
+    if (
+        gate.get("schema_version") != SCHEMA_VERSION
+        or gate.get("qualification_only") is not True
+        or gate.get("role") != "candidate_construction_gate"
+        or gate.get("accepted") is not True
+    ):
+        raise QualificationError("construction gate is not accepted/isolated")
+    if gate.get("runner_sha256") != sha256(Path(__file__).resolve()):
+        raise QualificationError("construction gate runner digest drifted")
+    runner_source = current_runner_source_identity()
+    if gate.get("runner_source") != runner_source:
+        raise QualificationError("construction gate runner source drifted")
+
+    expected = gate.get("expected_candidate")
+    if not isinstance(expected, Mapping):
+        raise QualificationError("construction gate candidate authority is missing")
+    validate_candidate_source_authority(expected.get("source_commit"), runner_source)
+    recorded_source = gate.get("candidate_source")
+    if not isinstance(recorded_source, Mapping):
+        raise QualificationError("construction gate candidate source is missing")
+    live_source = validate_source_checkout(
+        Path(str(recorded_source.get("source_root", ""))),
+        Path(str(recorded_source.get("puffer_root", ""))),
+        expected_commit=str(expected.get("source_commit", "")),
+        role="candidate",
+    )
+    if live_source != recorded_source:
+        raise QualificationError("construction gate candidate source drifted")
+    puffer_root = Path(live_source["puffer_root"])
+    if backend_source_hash(puffer_root) != expected.get("backend_sha256"):
+        raise QualificationError("construction gate backend sources drifted")
+    if installed_snapshot_hash(puffer_root) != expected.get("environment_sha256"):
+        raise QualificationError("construction gate environment drifted")
+
+    cell_path = Path(str(gate.get("cell_record", ""))).resolve()
+    if cell_path != gate_path.parent / "construction.json":
+        raise QualificationError("construction cell path is not confined")
+    _require_sha256(gate.get("cell_record_sha256"), "construction cell")
+    if sha256(cell_path) != gate.get("cell_record_sha256"):
+        raise QualificationError("construction cell digest mismatch")
+    if {entry.name for entry in gate_path.parent.iterdir()} != {
+        "CONSTRUCTION_GATE.json",
+        "construction.json",
+    }:
+        raise QualificationError("construction gate directory is not closed")
+    cell = _read_json(cell_path)
+    validate_construction_cell(cell, rehash_cuda_runtime=True)
+    identity = cell.get("identity")
+    if not isinstance(identity, Mapping):
+        raise QualificationError("construction cell identity is missing")
+    validate_module_identity(identity, qualification_surface=True)
+    validate_current_identity_files(identity)
+    validate_expected_candidate_identity(
+        identity,
+        expected,
+        authorized_source_commit=runner_source["source_commit"],
+    )
+    if identity.get("puffer_root") != live_source["puffer_root"]:
+        raise QualificationError("construction cell module escaped candidate source")
+    validate_zero_state(cell.get("state"), expected_banks=2, expected_buffers=1)
+    for key in ("identity", "cuda_runtime_preflight", "state"):
+        if gate.get(key) != cell.get(key):
+            raise QualificationError(f"construction gate {key} differs from cell")
+    return gate
+
+
 def _failure_record_output(
     output: Path, args: argparse.Namespace | None = None
 ) -> Path | None:
@@ -1796,13 +2184,7 @@ def run_qualification(args: argparse.Namespace) -> int:
         "backend_sha256": args.expected_candidate_backend_sha256,
         "environment_sha256": args.expected_environment_sha256,
     }
-    expected_predecessor = {
-        "source_commit": args.expected_predecessor_source_commit,
-        "module_sha256": args.expected_predecessor_module_sha256,
-        "backend_sha256": args.expected_predecessor_backend_sha256,
-        "runtime_sha256": args.expected_predecessor_runtime_sha256,
-        "environment_sha256": args.expected_environment_sha256,
-    }
+    expected_predecessor = expected_predecessor_identity_from_args(args)
     candidate_source = validate_source_checkout(
         args.candidate_source_root,
         args.puffer_root,
@@ -1812,9 +2194,26 @@ def run_qualification(args: argparse.Namespace) -> int:
     require_output_outside_source(
         output, Path(candidate_source["source_root"]), role="candidate source"
     )
+    construction_path = Path(args.construction_gate).resolve()
+    construction_gate = validate_construction_gate(construction_path)
+    construction_reference = {
+        "path": str(construction_path),
+        "sha256": sha256(construction_path),
+    }
+    if (
+        construction_gate.get("expected_candidate") != expected_candidate
+        or construction_gate.get("candidate_source") != candidate_source
+    ):
+        raise QualificationError(
+            "construction gate differs from the frozen candidate"
+        )
     baseline_record = validate_baseline_artifact(
         Path(args.baseline_throughput).resolve()
     )
+    if baseline_record.get("construction_gate") != construction_reference:
+        raise QualificationError(
+            "throughput baseline used a different construction gate"
+        )
     predecessor_source_root = require_predecessor_source_root(
         args.predecessor_source_root,
         baseline_record["predecessor_source"],
@@ -1985,6 +2384,7 @@ def run_qualification(args: argparse.Namespace) -> int:
     )
     records.append(throughput)
     _require_same_identity(records)
+    _require_same_cuda_runtime(records)
     validate_predecessor_transition(baseline_record["identity"], identity)
     baseline = baseline_record["throughput"]
     throughput_metrics = validate_throughput(
@@ -2009,6 +2409,7 @@ def run_qualification(args: argparse.Namespace) -> int:
         "runner_source_commit": runner_source["source_commit"],
         "runner_sha256": sha256(Path(__file__).resolve()),
         "source_files": qualification_source_identity(runner_source_root),
+        "construction_gate": construction_reference,
         "max_regression_fraction": args.max_regression_fraction,
         "gates": gates,
         "cells": [
@@ -2099,7 +2500,9 @@ def validate_qualification(path: Path) -> dict[str, Any]:
             -1 if name == "graph-off" else DEFAULT_CUDAGRAPH_WARMUP_EPOCHS
         )
         validate_cell_cudagraph_record(
-            record, expected=expected_cudagraphs
+            record,
+            expected=expected_cudagraphs,
+            rehash_cuda_runtime=True,
         )
         if record["kind"] in TRANSITION_CELL_KINDS:
             validate_transition_cell_integrity(record, record["kind"])
@@ -2132,6 +2535,7 @@ def validate_qualification(path: Path) -> dict[str, Any]:
         )
 
     identity = _require_same_identity(cells.values())
+    _require_same_cuda_runtime(cells.values())
     if final.get("identity") != identity:
         raise QualificationError("qualification final identity differs from its cells")
     validate_current_identity_files(identity)
@@ -2153,6 +2557,26 @@ def validate_qualification(path: Path) -> dict[str, Any]:
     )
     if identity.get("puffer_root") != candidate_source["puffer_root"]:
         raise QualificationError("candidate module/source checkout binding drifted")
+    construction_reference = final.get("construction_gate")
+    if not isinstance(construction_reference, Mapping) or set(
+        construction_reference
+    ) != {"path", "sha256"}:
+        raise QualificationError("qualification construction gate is malformed")
+    construction_path = Path(str(construction_reference.get("path", ""))).resolve()
+    if (
+        not construction_path.is_file()
+        or sha256(construction_path) != construction_reference.get("sha256")
+    ):
+        raise QualificationError("qualification construction gate drifted")
+    construction_gate = validate_construction_gate(construction_path)
+    if (
+        construction_gate.get("expected_candidate") != expected_candidate
+        or construction_gate.get("candidate_source") != candidate_source
+        or construction_gate.get("identity") != identity
+    ):
+        raise QualificationError(
+            "qualification construction gate differs from candidate"
+        )
     _require_sha256(
         final.get("installer_check_sha256"), "qualification installer-check digest"
     )
@@ -2281,6 +2705,10 @@ def validate_qualification(path: Path) -> dict[str, Any]:
     if sha256(baseline_path) != baseline_entry.get("sha256"):
         raise QualificationError("throughput baseline artifact drifted")
     baseline_record = validate_baseline_artifact(baseline_path)
+    if baseline_record.get("construction_gate") != dict(construction_reference):
+        raise QualificationError(
+            "qualification baseline construction gate drifted"
+        )
     require_distinct_source_roots(
         source_root,
         Path(candidate_source["source_root"]),
@@ -2331,6 +2759,10 @@ def capture_throughput(args: argparse.Namespace) -> int:
     output = Path(args.output).resolve()
     runner_source_root = _require_clean_source_and_external_output(output)
     runner_source = current_runner_source_identity()
+    expected_predecessor = expected_predecessor_identity_from_args(args)
+    construction_path = Path(args.construction_gate).resolve()
+    construction_gate = validate_construction_gate(construction_path)
+    construction_candidate_source = construction_gate["candidate_source"]
     predecessor_source = validate_source_checkout(
         args.predecessor_source_root,
         args.puffer_root,
@@ -2340,8 +2772,15 @@ def capture_throughput(args: argparse.Namespace) -> int:
     require_output_outside_source(
         output, Path(predecessor_source["source_root"]), role="predecessor source"
     )
+    require_output_outside_source(
+        output,
+        Path(construction_candidate_source["source_root"]),
+        role="candidate source",
+    )
     require_distinct_source_roots(
-        runner_source_root, Path(predecessor_source["source_root"])
+        runner_source_root,
+        Path(predecessor_source["source_root"]),
+        Path(construction_candidate_source["source_root"]),
     )
     output.mkdir(parents=True, exist_ok=True)
     record = _run_worker(
@@ -2349,13 +2788,6 @@ def capture_throughput(args: argparse.Namespace) -> int:
         cudagraphs=DEFAULT_CUDAGRAPH_WARMUP_EPOCHS,
         output=output, preceding_runtime=True,
     )
-    expected_predecessor = {
-        "source_commit": args.expected_predecessor_source_commit,
-        "module_sha256": args.expected_predecessor_module_sha256,
-        "backend_sha256": args.expected_predecessor_backend_sha256,
-        "runtime_sha256": args.expected_predecessor_runtime_sha256,
-        "environment_sha256": args.expected_environment_sha256,
-    }
     validate_expected_predecessor_identity(record["identity"], expected_predecessor)
     if record["identity"].get("puffer_root") != predecessor_source["puffer_root"]:
         raise QualificationError("predecessor module is outside its frozen source checkout")
@@ -2374,6 +2806,10 @@ def capture_throughput(args: argparse.Namespace) -> int:
         "expected_predecessor": expected_predecessor,
         "predecessor_source": predecessor_source,
         "runner_source": runner_source,
+        "construction_gate": {
+            "path": str(construction_path),
+            "sha256": sha256(construction_path),
+        },
         "throughput": record["throughput"],
         "cell_record": record["record_path"],
         "cell_record_sha256": record["record_sha256"],
@@ -2412,6 +2848,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     add_common_arguments(run)
     run.add_argument("--output", required=True, type=Path)
     run.add_argument("--baseline-throughput", required=True, type=Path)
+    run.add_argument("--construction-gate", required=True, type=Path)
     run.add_argument("--candidate-source-root", required=True, type=Path)
     run.add_argument("--predecessor-source-root", required=True, type=Path)
     run.add_argument("--expected-source-commit", required=True)
@@ -2428,11 +2865,23 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=DEFAULT_MAX_REGRESSION_FRACTION,
     )
 
+    construct = subparsers.add_parser(
+        "construct", help="run only the pre-transition candidate construction gate"
+    )
+    add_common_arguments(construct)
+    construct.add_argument("--output", required=True, type=Path)
+    construct.add_argument("--candidate-source-root", required=True, type=Path)
+    construct.add_argument("--expected-source-commit", required=True)
+    construct.add_argument("--expected-candidate-module-sha256", required=True)
+    construct.add_argument("--expected-candidate-backend-sha256", required=True)
+    construct.add_argument("--expected-environment-sha256", required=True)
+
     capture = subparsers.add_parser(
         "capture-throughput", help="capture the preceding-runtime control"
     )
     add_common_arguments(capture)
     capture.add_argument("--output", required=True, type=Path)
+    capture.add_argument("--construction-gate", required=True, type=Path)
     capture.add_argument("--predecessor-source-root", required=True, type=Path)
     capture.add_argument("--expected-predecessor-source-commit", required=True)
     capture.add_argument("--expected-predecessor-module-sha256", required=True)
@@ -2444,6 +2893,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "validate", help="independently recompute an existing qualification"
     )
     validate.add_argument("qualification", type=Path)
+
+    validate_construction = subparsers.add_parser(
+        "validate-construction",
+        help="independently recompute a pre-transition construction gate",
+    )
+    validate_construction.add_argument("construction_gate", type=Path)
 
     cell = subparsers.add_parser("cell", help=argparse.SUPPRESS)
     add_common_arguments(cell)
@@ -2459,6 +2914,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     cell.add_argument("--output-json", required=True, type=Path)
     cell.add_argument("--output-npz", type=Path)
     cell.add_argument("--preceding-runtime", action="store_true")
+    cell.add_argument("--expected-predecessor-source-commit")
+    cell.add_argument("--expected-predecessor-module-sha256")
+    cell.add_argument("--expected-predecessor-backend-sha256")
+    cell.add_argument("--expected-predecessor-runtime-sha256")
+    cell.add_argument("--expected-environment-sha256")
     return parser.parse_args(argv)
 
 
@@ -2467,12 +2927,15 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "validate":
         validate_qualification(args.qualification)
         return 0
+    if args.command == "validate-construction":
+        validate_construction_gate(args.construction_gate)
+        return 0
     if args.ratio_call_limit <= 0:
         raise QualificationError("ratio call limit must be positive")
     if args.throughput_warmup_rollouts < 0 or args.throughput_timed_rollouts <= 0:
         raise QualificationError("throughput rollout counts are invalid")
     if (
-        args.command in {"run", "capture-throughput"}
+        args.command in {"construct", "run", "capture-throughput"}
         and args.throughput_minibatch_size
         != DEFAULT_THROUGHPUT_MINIBATCH_SIZE
     ):
@@ -2488,6 +2951,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "cell":
         validate_cell_cudagraphs(args.kind, args.cudagraphs)
         return run_cell(args)
+    if args.command == "construct":
+        return run_construction_gate(args)
     if args.command == "capture-throughput":
         return capture_throughput(args)
     if args.command == "run":
