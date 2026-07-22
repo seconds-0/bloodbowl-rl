@@ -316,6 +316,11 @@ newer evidence wins.
   nonblocking-`flock`-verified released `.screen.lock`, with both modes, sizes,
   and hashes bound. Do not delete the lock to satisfy a stale one-file
   checklist; any missing, held, nonempty, or extra entry rejects the canary.
+  Systemd unit commands have a second escape boundary: use `$$` for a literal
+  Bash dollar and `%%` for a literal Bash percent. The intended `printf "%s"`
+  must appear as `printf "%%s"` in unit bytes; bare `%s` is systemd's user-shell
+  specifier. Require disposable empty/fixed/command-failure probes before real
+  unit installation.
 - **`puffer/bloodbowl/` is the SOURCE OF TRUTH; `vendor/PufferLib/ocean/bloodbowl/` is an installed snapshot** written by `tools/install_puffer_env.sh` — the build compiles the snapshot, NOT your edit. The snapshot can lag (the Mac checkout's may still say 1612). Drift guard: `tools/install_puffer_env.sh --check` (exit 1 = re-install). Run it before any build on a training box.
 - After ANY env code change, ON THE TARGET: `bash tools/install_puffer_env.sh`,
   `bash tools/install_puffer_env.sh --check`, then

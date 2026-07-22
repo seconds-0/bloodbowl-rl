@@ -1029,6 +1029,24 @@ class QualificationPatchContractTests(unittest.TestCase):
             "deep-compares the complete nested `contract` object",
             "repeat the Gate 2",
             "Do not delete, relabel, launch, or reuse the v1 output",
+            "3af34715cfa0cc848c0c8ba2effa48a2916f0c1059d0760dcef3a97fb1030d91",
+            "00e9c32cde253d8f3639c13985d3e30d181e40735cd027678afd9399e46e274a",
+            "134f4cb066d43dd6e30e910b07e2da30308ffd89a8dbf8fd6939ecd1d1b2e5c9",
+            "20f306a4c042e7fea8ed1fec3107eeb048ecf6ace212a1c82172f42cd32de9ed",
+            "9f019876e51a9810c2ddcafa72afbbe96b623c9fc9c970c46a0c73f192f8bf42",
+            "0592a95210e094c7942ffaa9af53a10d8e274991553e47e2366a5fa714902b0e",
+            "Only a newly hash-bound authorization and the fresh v3 unit identity",
+            "exact-action-canary-v3-execution/CANARY_AUTHORIZATION.json",
+            "Every newly created prelaunch v3 validator capture, canonical unit/probe copy, authorization, inventory, status, and journal",
+            "Do not rerun the launcher and do not rematerialize its output",
+            "Run the independent manifest validator twice again",
+            "fixed stopped-validation output to exist as an empty directory",
+            "exact unit name `bloodbowl-exact-action-canary-50m-s42-v3.service`",
+            "gate2-validator-{1,2}.{stdout,stderr,status}",
+            "closed six-file validator set",
+            "Canonical v3 unit source",
+            "Install only the already hash-bound canonical unit bytes",
+            "Gate 6 artifacts must be written only to the separately authorized stopped-validation output",
         ):
             with self.subTest(fragment=fragment):
                 self.assertIn(fragment, normalized_checklist)
@@ -1046,7 +1064,72 @@ class QualificationPatchContractTests(unittest.TestCase):
                 self.assertNotIn("ExecStart=", line)
                 self.assertNotIn("Unit name:", line)
         self.assertIn("PREFIX=exact-action-canary-50m-s42-v2", checklist)
-        self.assertIn("bloodbowl-exact-action-canary-50m-s42-v2.service", checklist)
+        self.assertIn(
+            "- Unit name: `bloodbowl-exact-action-canary-50m-s42-v3.service`",
+            checklist,
+        )
+        self.assertNotIn(
+            "- Unit name: `bloodbowl-exact-action-canary-50m-s42-v2.service`",
+            checklist,
+        )
+        self.assertNotIn(
+            "The canary output path and unit name do not exist",
+            checklist,
+        )
+        self.assertIn(
+            "The accepted v2 canary output exists as exactly the unchanged regular",
+            checklist,
+        )
+        self.assertIn(
+            "Install only the already hash-bound canonical unit bytes below as\n"
+            "`bloodbowl-exact-action-canary-50m-s42-v3.service`",
+            checklist,
+        )
+        rejection_rows = {
+            "Gate 3 authorization": (
+                "exact-action-canary-v2-execution/CANARY_AUTHORIZATION.json",
+                "3af34715cfa0cc848c0c8ba2effa48a2916f0c1059d0760dcef3a97fb1030d91",
+            ),
+            "v2 unit bytes": (
+                "exact-action-canary-v2-execution/"
+                "bloodbowl-exact-action-canary-50m-s42-v2.service",
+                "00e9c32cde253d8f3639c13985d3e30d181e40735cd027678afd9399e46e274a",
+            ),
+            "Probe runner": (
+                "exact-action-canary-v2-execution/gate4-synthetic-probes.sh",
+                "134f4cb066d43dd6e30e910b07e2da30308ffd89a8dbf8fd6939ecd1d1b2e5c9",
+            ),
+            "Empty-probe journal": (
+                "exact-action-canary-v2-execution/gate4-attempt1-empty-journal.txt",
+                "20f306a4c042e7fea8ed1fec3107eeb048ecf6ace212a1c82172f42cd32de9ed",
+            ),
+            "Post-cleanup proof": (
+                "exact-action-canary-v2-execution/gate4-attempt1-post-cleanup.txt",
+                "9f019876e51a9810c2ddcafa72afbbe96b623c9fc9c970c46a0c73f192f8bf42",
+            ),
+            "Rejection record": (
+                "exact-action-canary-v2-execution/gate4-attempt1-rejection.txt",
+                "0592a95210e094c7942ffaa9af53a10d8e274991553e47e2366a5fa714902b0e",
+            ),
+        }
+        rejection_root = (
+            "/home/rache/bloodbowl-rl-qualification-artifacts-20260722/"
+        )
+        for label, (relative_path, digest) in rejection_rows.items():
+            with self.subTest(rejected_artifact=label):
+                self.assertIn(
+                    f"| {label} | `{rejection_root}{relative_path}` | "
+                    f"`{digest}` |",
+                    checklist,
+                )
+
+        unit_block = checklist.split("```ini\n", 1)[1].split("\n```", 1)[0]
+        self.assertIn('/usr/bin/printf "%%s" "$${out}"', unit_block)
+        self.assertNotIn('/usr/bin/printf "%s" "$${out}"', unit_block)
+        self.assertIn("$$(/usr/local/bin/nvidia-smi", unit_block)
+        self.assertIn('test -z "$${stripped}"', unit_block)
+        self.assertIn("bare `%s` is its user-shell", checklist)
+        self.assertIn("`%%s` format escape", normalized_checklist)
 
         qualification = QUALIFICATION_CHECKLIST.read_text(encoding="utf-8")
         self.assertIn("zero-byte, released, hash-bound `.screen.lock`", qualification)
@@ -1055,23 +1138,29 @@ class QualificationPatchContractTests(unittest.TestCase):
             "leaves `SCREEN_MANIFEST.json` byte-identical",
             " ".join(qualification.split()),
         )
+        self.assertIn('`"%%s"` in unit', qualification)
+        self.assertIn('bare `"%s"` is invalid', qualification)
 
         required_guidance = {
             AGENTS: (
                 "run_reward_screen.sh creates $OUT_DIR/.screen.lock",
                 "hash its mode/size with the manifest",
+                "written %%s in unit bytes",
             ),
             CLAUDE: (
                 "The frozen screen launcher intentionally creates and retains",
                 "with both modes, sizes, and hashes bound",
+                'printf "%%s" in unit bytes',
             ),
             TRAINING_SKILL: (
                 "The frozen screen launcher creates $OUT_DIR/.screen.lock",
                 "Hash both and their modes/sizes",
+                'printf "%s" must be authored as printf "%%s"',
             ),
             FLEET_SKILL: (
                 "For canary plan-only closure, account for the launcher's persistent ownership inode",
                 "bind both files' modes, sizes, and digests",
+                'Author an intended printf "%s" as printf "%%s"',
             ),
         }
         for path, fragments in required_guidance.items():

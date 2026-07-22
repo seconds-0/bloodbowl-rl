@@ -28,7 +28,13 @@ qualification.
   `/home/rache/bloodbowl-rl-qualification-artifacts-20260722/exact-action-canary-50m-s42-v2`
 - Stopped-validation output:
   `/home/rache/bloodbowl-rl-qualification-artifacts-20260722/exact-action-canary-50m-s42-v2-validation`
-- Unit name: `bloodbowl-exact-action-canary-50m-s42-v2.service`
+- Fresh v3 execution-evidence root:
+  `/home/rache/bloodbowl-rl-qualification-artifacts-20260722/exact-action-canary-v3-execution`
+- Fresh v3 authorization destination:
+  `/home/rache/bloodbowl-rl-qualification-artifacts-20260722/exact-action-canary-v3-execution/CANARY_AUTHORIZATION.json`
+- Canonical v3 unit source:
+  `/home/rache/bloodbowl-rl-qualification-artifacts-20260722/exact-action-canary-v3-execution/bloodbowl-exact-action-canary-50m-s42-v3.service`
+- Unit name: `bloodbowl-exact-action-canary-50m-s42-v3.service`
 - Requested agent steps: exactly `50000000`
 - Rollout quantum: exactly `131072` (`2048 * 64`)
 - Minibatch size: exactly `16384`
@@ -73,6 +79,37 @@ process was created. Do not delete, relabel, launch, or reuse the v1 output or
 unit identity. Only the fresh v2 paths above may proceed under this corrected
 authority.
 
+The first v2 Gate 3 authorization and unit bytes are also immutable rejection
+evidence. The plan-only output itself remains accepted and unchanged, but the
+first synthetic empty-output unit exposed that systemd expands `%s` to the user
+shell before Bash. Its journal recorded a `printf` excess-argument warning and
+status 1. The cleanup trap removed all three disposable probe units; the real
+v2 unit was never installed or started, GPU compute remained empty, and BBTV
+remained active. Preserve but never install/reuse:
+
+| Rejected artifact | Absolute path | SHA-256 |
+|---|---|---|
+| Gate 3 authorization | `/home/rache/bloodbowl-rl-qualification-artifacts-20260722/exact-action-canary-v2-execution/CANARY_AUTHORIZATION.json` | `3af34715cfa0cc848c0c8ba2effa48a2916f0c1059d0760dcef3a97fb1030d91` |
+| v2 unit bytes | `/home/rache/bloodbowl-rl-qualification-artifacts-20260722/exact-action-canary-v2-execution/bloodbowl-exact-action-canary-50m-s42-v2.service` | `00e9c32cde253d8f3639c13985d3e30d181e40735cd027678afd9399e46e274a` |
+| Probe runner | `/home/rache/bloodbowl-rl-qualification-artifacts-20260722/exact-action-canary-v2-execution/gate4-synthetic-probes.sh` | `134f4cb066d43dd6e30e910b07e2da30308ffd89a8dbf8fd6939ecd1d1b2e5c9` |
+| Empty-probe journal | `/home/rache/bloodbowl-rl-qualification-artifacts-20260722/exact-action-canary-v2-execution/gate4-attempt1-empty-journal.txt` | `20f306a4c042e7fea8ed1fec3107eeb048ecf6ace212a1c82172f42cd32de9ed` |
+| Post-cleanup proof | `/home/rache/bloodbowl-rl-qualification-artifacts-20260722/exact-action-canary-v2-execution/gate4-attempt1-post-cleanup.txt` | `9f019876e51a9810c2ddcafa72afbbe96b623c9fc9c970c46a0c73f192f8bf42` |
+| Rejection record | `/home/rache/bloodbowl-rl-qualification-artifacts-20260722/exact-action-canary-v2-execution/gate4-attempt1-rejection.txt` | `0592a95210e094c7942ffaa9af53a10d8e274991553e47e2366a5fa714902b0e` |
+
+Only a newly hash-bound authorization and the fresh v3 unit identity above may
+proceed. The corrected unit writes `%%s`, which systemd reduces to literal `%s`
+for Bash. This changes only external unit authority; it does not alter or
+rematerialize the accepted v2 plan manifest, candidate runtime, or launcher.
+The entire rejected v2 execution root is immutable. Every newly created
+prelaunch v3 validator capture, canonical unit/probe copy, authorization,
+inventory, status, and journal must be preserved under the fixed, initially
+absent v3 execution-evidence root. Transient systemd-manager unit files must
+live in the manager's required unit-file directory and be removed when the
+checklist requires; Gate 6 artifacts must be written only to the separately
+authorized stopped-validation output; launcher-owned live artifacts remain in
+the accepted canary output. No new evidence may be appended to the v2 execution
+root.
+
 Candidate launch-source SHA-256 identities are:
 
 | File | SHA-256 |
@@ -92,13 +129,13 @@ Re-hash `tools/live_integrity_guard.py` in the same control root and require
 exact SHA-256
 `e9c957ae37671bc6bfd6d09c7ef2d956736a5ead7242395f2357006bfc571ff1`.
 
-Re-hash all six before plan-only materialization and again immediately before
-unit installation. Any mismatch rejects the canary.
+Re-hash all six before Gate 2 revalidation and again immediately before unit
+installation. Any mismatch rejects the canary.
 
 ## Gate 1: accepted prerequisites
 
-All of the following must be captured and hash-bound before plan-only canary
-materialization:
+All of the following must be captured and hash-bound before Gate 2
+revalidation:
 
 1. The recovery preservation verifier accepted the off-box copy, and the local
    recovery manifest file SHA-256 and inventory SHA-256 are fixed.
@@ -115,22 +152,32 @@ materialization:
    still match the accepted qualification.
 6. No recovery trainer, qualification cell, evaluator, or other GPU compute
    process remains. BBTV follower state and public HTTP health are recorded.
-7. The canary output path and unit name do not exist. The exact superseded v1
-   unit identity named above is also absent from the user systemd manager and
-   its unit-file directory, and the original pre-rejection v1 output path
+7. The accepted v2 canary output exists as exactly the unchanged regular
+   `SCREEN_MANIFEST.json` and zero-byte released `.screen.lock` described in
+   Gate 2. The fresh v3 execution-evidence root and exact v3 unit name do not
+   exist. The exact superseded v1 unit identity named above is also absent from
+   the user systemd manager and its unit-file directory, and the original
+   pre-rejection v1 output path
    `/home/rache/bloodbowl-rl-qualification-artifacts-20260722/exact-action-canary-50m-s42-v1`
    is absent rather than copied alongside its renamed rejection directory.
 8. Recompute the five rejection-only evidence hashes and both canonical
    inventories above from their exact paths; every value must still match.
+9. Recompute the rejected Gate 3/unit/probe hashes in the second table. Require
+   the superseded v2 unit identity absent from the manager and unit-file
+   directory, and require the accepted v2 plan-only manifest, lock, and exact
+   two-file inventories unchanged. Require the fixed stopped-validation output
+   to exist as an empty directory and bind that empty state before launch; do
+   not delete or recreate it merely to satisfy this check.
 
 Any mismatch stops deployment. Do not delete or overwrite an existing output
 to make the precondition true.
 
-## Gate 2: plan-only positive launch proof
+## Gate 2: revalidate the accepted plan-only positive launch proof
 
-From the exact candidate root, with its venv first on `PATH`, run the launcher
-once with `PLAN_ONLY=1`, `ARM_DETACH=0`, and an explicitly empty inherited warm
-and pool environment:
+Do not rerun the launcher and do not rematerialize its output. The accepted
+plan-only invocation was run once from the exact candidate root with its venv
+first on `PATH`, `PLAN_ONLY=1`, `ARM_DETACH=0`, and an explicitly empty inherited
+warm and pool environment. Its frozen command was:
 
 ```text
 /usr/bin/env -u WARM -u POOL \
@@ -145,7 +192,9 @@ and pool environment:
   /usr/bin/bash /home/rache/bloodbowl-rl-qualification-candidate-a52fc6e/tools/run_reward_screen.sh
 ```
 
-Require exit zero and exactly two regular files directly under the new output:
+Recompute the preserved command/stdout/stderr/status hashes and require the
+recorded exit zero. Require exactly two regular files directly under the
+accepted output:
 `SCREEN_MANIFEST.json` plus `.screen.lock`, with no directory or other entry.
 Complete and accept this regular-file/type inventory before opening the lock;
 never run the probe against a symlink, FIFO, device, directory, or an
@@ -185,14 +234,28 @@ completion artifact. Independently validate the manifest contract:
 - `arm_detach=0` and exact external output path.
 
 Hash the manifest, the zero-byte released lock, the exact two-file mode/size
-inventory, and every plan-only stdout/stderr/command artifact. A plan-only
-rejection, missing/held/nonempty lock, unexpected file or directory, or
-manifest mismatch blocks the canary.
+inventory, and every preserved plan-only stdout/stderr/command artifact. Run
+the independent manifest validator twice again from fresh candidate-interpreter
+processes and require byte-identical accepted output. Only after all preceding
+read-only checks accept, atomically create the exact previously absent v3
+execution-evidence root. Persist each fresh validator's stdout, stderr, and
+status separately under that root as
+`gate2-validator-{1,2}.{stdout,stderr,status}`; require both status files encode
+zero, both stderr files are empty, and both stdout files are byte-identical.
+Close and hash the resulting six-file relative-name/type/mode/size/digest set
+before Gate 3. A changed plan-only artifact, missing/held/nonempty lock,
+unexpected file or directory, validator disagreement, or manifest mismatch
+blocks the canary. Rerunning the launcher,
+deleting the lock, or rewriting the manifest is forbidden.
 
 ## Gate 3: hash-bound authorization record
 
-Create one canonical JSON authorization outside the source checkout. It must
-bind, by absolute path plus SHA-256 where applicable:
+First require the exact v3 execution-evidence root to contain only Gate 2's
+closed six-file validator set, and require both the canonical v3 unit source and
+authorization destination from Fixed scope absent. Atomically write the exact
+unit bytes shown in Gate 4 to the canonical v3 unit source, then create one
+canonical JSON authorization at the exact fixed v3 destination outside the
+source checkout. It must bind, by absolute path plus SHA-256 where applicable:
 
 - accepted off-box recovery preservation manifest and inventory identity;
 - predecessor throughput baseline and its complete artifact inventory;
@@ -204,21 +267,27 @@ bind, by absolute path plus SHA-256 where applicable:
   output directory;
 - canary `SCREEN_MANIFEST.json`, zero-byte released `.screen.lock`, exact
   two-file plan-only inventory, and output path;
-- exact unit bytes and unit SHA-256;
+- exact unit name `bloodbowl-exact-action-canary-50m-s42-v3.service`, exact unit
+  bytes, and unit SHA-256;
 - exact canary command and environment;
 - `Restart=no`, `KillMode=control-group`, `ARM_DETACH=0`, and the two-hour
   service ceiling;
 - an explicit statement that qualification and canary outputs are
   qualification-only, ancestry-ineligible, and reward-evidence-ineligible.
 
-Write the authorization atomically, hash it, copy it off-box, and independently
-recompute it before installing the unit. Presence without exact content does
-not authorize launch.
+Write the unit and authorization atomically at their fixed v3 destinations,
+hash them, copy the authorization off-box, and independently recompute it before
+installing the unit. Bind the
+v3 execution-evidence root's exact relative file set, modes, sizes, and
+digests after each gate. Presence without exact content, a different unit name,
+or any new artifact under the rejected v2 execution root does not authorize
+launch.
 
 ## Gate 4: exact one-shot user unit
 
-Materialize these semantics only after Gate 3 accepts. Substitute no path and
-add no environment variable after hashing:
+Install only the already hash-bound canonical unit bytes below as
+`bloodbowl-exact-action-canary-50m-s42-v3.service` after Gate 3 accepts.
+Substitute no path or unit name and add no environment variable after hashing:
 
 ```ini
 [Unit]
@@ -229,7 +298,7 @@ After=default.target
 Type=oneshot
 WorkingDirectory=/home/rache/bloodbowl-rl-qualification-candidate-a52fc6e
 ExecStartPre=/home/rache/bloodbowl-rl-qualification-candidate-a52fc6e/vendor/PufferLib/.venv/bin/python /home/rache/bloodbowl-rl-qualification-control-20260722-v4/tools/qualify_recurrent_cuda.py validate /home/rache/bloodbowl-rl-qualification-artifacts-20260722/candidate-qualification/QUALIFICATION.json
-ExecStartPre=/usr/bin/bash -c 'set -euo pipefail; out="$$(/usr/local/bin/nvidia-smi --query-compute-apps=pid --format=csv,noheader,nounits)"; stripped="$$(/usr/bin/printf "%s" "$${out}" | /usr/bin/tr -d "[:space:]")"; test -z "$${stripped}"'
+ExecStartPre=/usr/bin/bash -c 'set -euo pipefail; out="$$(/usr/local/bin/nvidia-smi --query-compute-apps=pid --format=csv,noheader,nounits)"; stripped="$$(/usr/bin/printf "%%s" "$${out}" | /usr/bin/tr -d "[:space:]")"; test -z "$${stripped}"'
 ExecStart=/usr/bin/env -u WARM -u POOL PATH=/home/rache/bloodbowl-rl-qualification-candidate-a52fc6e/vendor/PufferLib/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin CUDA_VISIBLE_DEVICES=0 OMP_NUM_THREADS=16 OPENBLAS_NUM_THREADS=16 MKL_NUM_THREADS=16 NUMEXPR_NUM_THREADS=16 STEPS=50000000 SCREEN_PROFILE=exact-action-canary PREFIX=exact-action-canary-50m-s42-v2 OUT_DIR=/home/rache/bloodbowl-rl-qualification-artifacts-20260722/exact-action-canary-50m-s42-v2 POLL_SECONDS=30 PLAN_ONLY=0 ARM_DETACH=0 /usr/bin/bash /home/rache/bloodbowl-rl-qualification-candidate-a52fc6e/tools/run_reward_screen.sh
 Restart=no
 KillMode=control-group
@@ -245,11 +314,17 @@ WantedBy=default.target
 The doubled dollars above are mandatory for this frozen contract: each `$$`
 becomes one literal `$` in the Bash command. This unambiguously passes every
 dollar to Bash and does not depend on systemd's positional environment-variable
-expansion rules.
+expansion rules. The doubled percent in `%%s` is independently mandatory:
+systemd reduces `%%` to one literal `%`, while bare `%s` is its user-shell
+specifier and must never appear in an operative `ExecStartPre` format string.
 
 Before installing the real unit, construct three separately named disposable,
-non-training user units outside every source/output root using the same `$$`
-command-substitution and `$${name}` shell-local syntax. Replace only the probe
+non-training canonical probe units under the v3 execution-evidence root using
+the same `$$` command-substitution, `$${name}` shell-local syntax, and `%%s`
+format escape. Install transient copies only in the systemd user manager's
+required unit-file directory; never place them in a source, canary-output, or
+stopped-validation root.
+Reject any probe bytes containing bare `printf "%s"`. Replace only the probe
 body: the empty-output unit must exit zero; the fixed `123` output unit must
 fail; and the probe-command-nonzero unit must independently fail. Require
 `systemd-analyze --user verify` on all three unit files, capture each unit's
@@ -257,7 +332,8 @@ exact bytes/status/journal separately, then remove all three and require every
 unit name absent. This synthetic proof must run only after the recovery boundary
 and off-box preservation; it launches no GPU process.
 
-Then require `systemd-analyze --user verify` success for the exact real unit,
+Then require `systemd-analyze --user verify` success for the exact canonical
+real unit, copy it to the manager without changing a byte,
 exact installed unit-byte equality with Gate 3, `systemctl --user is-enabled`
 reporting disabled, and `NRestarts=0`. Do not enable the unit and do not use a
 restart policy. Immediately before the one allowed start, repeat the Gate 2
