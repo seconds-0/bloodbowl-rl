@@ -7794,3 +7794,31 @@ Next steps:
   screen validator and independent complete-log audit first; then use the
   merged preservation verifier to make and locally verify the exact off-box
   copy before any predecessor/candidate runtime build or BBTV interruption.
+
+20:25 PDT preservation-review and merge addendum:
+
+- Published the preservation planner/verifier as PR #55. The required Codex
+  CLI rejected the workflow-mandated `gpt-5.3-codex` model before analysis,
+  Gemini required unavailable interactive authentication, and a tool-disabled
+  Fable substitute returned no verdict. These are recorded as three reviewer
+  transport/classifier failures, never as approvals. The workflow therefore
+  proceeded under its explicit inline-review fallback, with all evidence and
+  reviewer provenance recorded on the PR.
+- Inline review found no P0/P1 and fixed three P2 items in `ea414a6`: selected
+  evidence now rejects symlinks in every path component below the recovery root;
+  accepted results must carry an explicitly empty failure list; and the module
+  contract now states that the caller must first establish the stopped-service,
+  pinned-screen-validator, and independent complete-log gates. Earlier inline
+  review also added repeated semantic and identity passes around both source
+  planning and destination verification. Nothing was deferred.
+- Post-fix tests pass under both local Python 3.14 and target-compatible Python
+  3.11: 11/11 focused, 19/19 focused plus adjacent, and all 251 tool tests with
+  two expected skips. Python compilation, Ruff, and whitespace checks pass.
+  Hosted immutable-history passed in 3m11s and full CI including ASan/UBSan
+  passed in 10m06s.
+- PR #55 squash-merged to main as
+  `c1600adadf416063020bff0e35e3633835f2b8a5`; the remote topic branch was
+  deleted. The merge helper's local branch-cleanup step could not check out
+  `main` because another registered worktree owns it, but the merge itself and
+  remote deletion were independently verified. The merged tool remains
+  undeployed and has not read the live writing recovery tree.
