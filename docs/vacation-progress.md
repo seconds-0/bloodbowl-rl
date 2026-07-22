@@ -8096,3 +8096,56 @@ evidence off-box before creating any 2070 qualification root.
   replacement's immutable-history gate passes; full hosted CI and final
   checklist rereview are still pending. No remote runtime, service, process,
   BBTV state, or experiment artifact was changed.
+
+## 2026-07-21 22:31 PDT — seed 44 at 7.56B; BBTV current; handoff rereview clean
+
+Status:
+
+- The recovery queue remains exactly `state=running`,
+  `current_job=full-control-rerun`, and `message=running job
+  full-control-rerun`, with unchanged plan SHA-256
+  `822bb912dbf3992c5fa6f04ddcaa5354897db10d03f2e66934b846c198b6a111`.
+  The screen remains on arm `both`, seed 44, index 3, with two completed arms
+  and message `waiting for current trainer`; `SCREEN_COMPLETE.json` is absent.
+  The atomic boundary therefore remains closed.
+- Seed 44 reached exact step 7,559,708,672 of 12B at epoch 57,675. The latest
+  complete 93-game train panel reports 1.9570 TD/game, performance 0.5108,
+  possession 0.3846, carrier-target block share about 0.1275, and two-die-red
+  share 0.04658. All 15 recovery-valid reward clip, non-finite, component,
+  engine-error, and demo-fallback fields remain exactly zero. Historical
+  pre-exact-action `illegal_frac=0.19650` remains diagnostic only.
+- The interval since the 22:03 sample averaged approximately 189K steps/s.
+  About 4.440B steps remain, or roughly 6.5 training hours at that rate. This
+  estimate does not supersede queue completion, screen completion, pinned
+  validation, stopped log auditing, or off-box preservation.
+- Queue, trainer, BBTV follower, web server, and tunnel retain PIDs 610736,
+  653090, 610386, 127413, and 35307. All four user services are active/running
+  with zero restarts, and trainer 653090 remains the sole GPU compute process.
+  The RTX 2070 was 82 C and 76% utilized, with 5,554/8,192 MiB allocated and
+  120.41/175 W draw. The recovery filesystem has about 846 GiB free and about
+  8.8 GiB RAM is available.
+- BBTV atomically selected seed 44 step 7,440,957,440 at 22:23 PDT. The
+  selection SHA-256 is
+  `aac20096050ee5e0cb9db1f0d233423e147dea54b0be75d61b3ed61f2881caeb`,
+  and <https://bbtv.seconds0.com/> returns HTTP 200.
+
+Handoff status:
+
+- Exact-head independent rereview of PR #58 reports no remaining P0--P3. It
+  rederived every pinned hash, confirmed the recovery/off-box boundary order,
+  verified the immutable 11-key live versus 16-key stopped registry split, and
+  exercised the post-systemd GPU-check semantics: empty output succeeds while
+  nonempty output, probe failure, and normalization failure independently
+  reject. The checklist requires three separately named synthetic user units
+  plus `systemd-analyze`, byte equality, disabled status, and zero restarts
+  before the real canary unit may start.
+- PR #58 head is `4b181bc3dca31a78c1085bf32031cf0e87691ceb`
+  before this journal-only update. Its hosted checks restarted after the final
+  wording correction and remain mandatory before merge. No checkout, package,
+  runtime, output root, unit, service, or artifact on the 2070 was changed.
+
+Next steps remain read-only until the boundary: finish and merge the exact
+replacement handoff only after hosted checks pass, then continue monitoring.
+At atomic completion, establish the stopped queue/service/process predicates,
+run the pinned screen validator and independent three-log auditor, and preserve
+and verify the exact evidence off-box before creating any qualification root.
