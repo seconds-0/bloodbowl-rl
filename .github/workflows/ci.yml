@@ -8,6 +8,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Contract tests inspect the exact immutable launcher blob that will
+          # execute the qualification canary, not only today's control copy.
+          fetch-depth: 0
       - name: Install deps
         run: |
           pip install pyyaml numpy
@@ -46,11 +50,12 @@ jobs:
             tools/install_puffer_env.sh \
             tools/run_reward_ablation.sh \
             tools/run_reward_screen.sh
-      - name: BC corpus filtering and bounded streaming
+      - name: BC corpus filtering, bounded streaming, and qualification contracts
         run: |
           PYTHONPATH=training python3 -m unittest \
             training.test_bc_pretrain_filter \
-            training.test_bc_pretrain_streaming
+            training.test_bc_pretrain_streaming \
+            training.test_recurrent_cuda_qualification
       - name: Build + unit tests
         run: make test
       - name: ASan/UBSan tests

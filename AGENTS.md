@@ -111,6 +111,14 @@ For any causal comparison:
   invalid evidence. Do not dirty or relabel the exact candidate to widen its
   manifest; freeze both registries and use the stricter 16-key control verdict
   for qualification and final canary acceptance.
+- `run_reward_screen.sh` creates `$OUT_DIR/.screen.lock` before freezing a
+  screen manifest and intentionally leaves that ownership inode in place. A
+  canary plan-only output is therefore closed only when it contains exactly two
+  regular files: `SCREEN_MANIFEST.json` and a zero-byte `.screen.lock`. Require
+  the empty-file digest, prove the lock is released with nonblocking `flock`,
+  and hash its mode/size with the manifest. Never delete the lock to make a
+  one-file checklist pass; a missing, nonempty, held, or extra entry rejects the
+  canary identity.
 - On an episode-ending step, preserve explicit objective reward (TD) and result
   utility, but do not let incidental action/board shaping co-stack with the
   terminal result. Keep deliberately episode-terminal terms separately visible

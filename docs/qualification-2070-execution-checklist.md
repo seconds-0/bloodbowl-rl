@@ -305,13 +305,22 @@ of a separate canary authorization record. That record must bind:
 - runner, predecessor, candidate, Puffer, module, backend, environment,
   package, host, and library identities;
 - the exact plan-only canary output path, whose already authorized contents are
-  limited to `SCREEN_MANIFEST.json` plus captured plan-only command/stdout/
-  stderr evidence and contain no trainer log, result, checkpoint, or completion
-  artifact;
+  limited to exactly two regular files: `SCREEN_MANIFEST.json` and the
+  launcher's zero-byte, released, hash-bound `.screen.lock`; captured plan-only
+  command/stdout/stderr evidence is external, and no trainer log, result,
+  checkpoint, run directory, or completion artifact exists;
 - exact systemd unit bytes/hash and command;
 - `Restart=no`, `KillMode=control-group`, no reboot enablement;
 - an `ExecStartPre` qualification revalidation and empty-GPU-process check;
 - `env -u WARM -u POOL` around the exact one-seed 50M canary launcher.
+
+The real launch must reuse the plan-only output without rewriting its manifest:
+the frozen launcher checks schema version 1, recomputes and deep-compares the
+complete nested stored `contract` object, rejects any drift, and leaves
+`SCREEN_MANIFEST.json` byte-identical. Immediately before unit start, repeat
+the exact two-regular-file inventory and released-lock proof and require it to
+match the authorization. Require the manifest hash to match immediately before
+unit start and at the first live poll.
 
 The canary is fresh obs-v5, fp32, exact-joint, pool-free, warm-free, has zero
 frozen banks, and has a literal zero hard-integrity budget. Qualification

@@ -310,6 +310,12 @@ newer evidence wins.
   the canary only from the exact immutable `a52fc6e2` checkout. The merged
   control launcher rejects that profile before creating output because its
   widened registry is intentionally not the frozen candidate manifest.
+  The frozen screen launcher intentionally creates and retains
+  `$OUT_DIR/.screen.lock` before plan freezing. Plan-only closure is exactly two
+  regular files: `SCREEN_MANIFEST.json` plus a zero-byte, empty-digest,
+  nonblocking-`flock`-verified released `.screen.lock`, with both modes, sizes,
+  and hashes bound. Do not delete the lock to satisfy a stale one-file
+  checklist; any missing, held, nonempty, or extra entry rejects the canary.
 - **`puffer/bloodbowl/` is the SOURCE OF TRUTH; `vendor/PufferLib/ocean/bloodbowl/` is an installed snapshot** written by `tools/install_puffer_env.sh` — the build compiles the snapshot, NOT your edit. The snapshot can lag (the Mac checkout's may still say 1612). Drift guard: `tools/install_puffer_env.sh --check` (exit 1 = re-install). Run it before any build on a training box.
 - After ANY env code change, ON THE TARGET: `bash tools/install_puffer_env.sh`,
   `bash tools/install_puffer_env.sh --check`, then

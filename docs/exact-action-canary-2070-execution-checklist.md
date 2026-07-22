@@ -25,10 +25,10 @@ qualification.
 - Qualification root:
   `/home/rache/bloodbowl-rl-qualification-artifacts-20260722/candidate-qualification`
 - Canary output:
-  `/home/rache/bloodbowl-rl-qualification-artifacts-20260722/exact-action-canary-50m-s42-v1`
+  `/home/rache/bloodbowl-rl-qualification-artifacts-20260722/exact-action-canary-50m-s42-v2`
 - Stopped-validation output:
-  `/home/rache/bloodbowl-rl-qualification-artifacts-20260722/exact-action-canary-50m-s42-v1-validation`
-- Unit name: `bloodbowl-exact-action-canary-50m-s42-v1.service`
+  `/home/rache/bloodbowl-rl-qualification-artifacts-20260722/exact-action-canary-50m-s42-v2-validation`
+- Unit name: `bloodbowl-exact-action-canary-50m-s42-v2.service`
 - Requested agent steps: exactly `50000000`
 - Rollout quantum: exactly `131072` (`2048 * 64`)
 - Minibatch size: exactly `16384`
@@ -43,6 +43,35 @@ qualification.
 - Qualification and canary ancestry eligibility: permanently false
 - Hard-integrity contamination budget: literal zero
 - Live detection interval: at most 30 seconds plus one dashboard emission
+
+The superseded v1 plan-only attempt is immutable rejection evidence, not launch
+authority. The frozen launcher exited zero and wrote its valid manifest, but it
+also intentionally created the persistent zero-byte `.screen.lock` used by the
+one-screen ownership contract. The earlier checklist allowed only the manifest,
+so v1 was rejected before training. Its final preserved location is
+`/home/rache/bloodbowl-rl-qualification-artifacts-20260722/exact-action-canary-50m-s42-v1-plan-rejected-unaccounted-lock`.
+The exact rejection-only evidence is:
+
+| Artifact | Absolute path | SHA-256 |
+|---|---|---|
+| Manifest | `/home/rache/bloodbowl-rl-qualification-artifacts-20260722/exact-action-canary-50m-s42-v1-plan-rejected-unaccounted-lock/SCREEN_MANIFEST.json` | `15271d946e404ddcd26e9fc075d44b9dbeaa268b6e5e9ffecf536abfd212a331` |
+| Zero-byte lock | `/home/rache/bloodbowl-rl-qualification-artifacts-20260722/exact-action-canary-50m-s42-v1-plan-rejected-unaccounted-lock/.screen.lock` | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
+| Mode/size inventory | `/home/rache/bloodbowl-rl-qualification-artifacts-20260722/exact-action-canary-50m-s42-v1-plan-rejected-files.tsv` | `6d69a4deb85698279f100079ee6bb3b785af9b36d97cefeb7cc4f11389ce35f7` |
+| Closed content inventory | `/home/rache/bloodbowl-rl-qualification-artifacts-20260722/exact-action-canary-50m-s42-v1-plan-rejected-inventory.sha256` | `2756134a67dfc8010c13d16eb30533b82671580e6e5eb049f430f813ef7482e4` |
+| Rejection record | `/home/rache/bloodbowl-rl-qualification-artifacts-20260722/exact-action-canary-50m-s42-v1-plan-rejection.txt` | `68d92db88481fb9aaa06b0e31e80429f5da9904b20ef39e6ed15dcad3f551618` |
+
+The mode/size inventory is the two headerless, bytewise-sorted TSV rows
+`mode<TAB>bytes<TAB>relative-path`, where mode is exactly three octal permission
+digits from GNU `find -printf '%m'` with no prefix. The closed content inventory
+is the two bytewise-sorted `sha256<TWO-SPACES>relative-path` rows. Recompute both
+from the preserved output while excluding the external evidence files
+themselves. The rejected, never-installed unit identity was
+`bloodbowl-exact-action-canary-50m-s42-v1.service`; Gate 1 must prove both that
+unit and its unit file absent.
+No trainer, log, checkpoint, run directory, completion artifact, or GPU compute
+process was created. Do not delete, relabel, launch, or reuse the v1 output or
+unit identity. Only the fresh v2 paths above may proceed under this corrected
+authority.
 
 Candidate launch-source SHA-256 identities are:
 
@@ -86,7 +115,13 @@ materialization:
    still match the accepted qualification.
 6. No recovery trainer, qualification cell, evaluator, or other GPU compute
    process remains. BBTV follower state and public HTTP health are recorded.
-7. The canary output path and unit name do not exist.
+7. The canary output path and unit name do not exist. The exact superseded v1
+   unit identity named above is also absent from the user systemd manager and
+   its unit-file directory, and the original pre-rejection v1 output path
+   `/home/rache/bloodbowl-rl-qualification-artifacts-20260722/exact-action-canary-50m-s42-v1`
+   is absent rather than copied alongside its renamed rejection directory.
+8. Recompute the five rejection-only evidence hashes and both canonical
+   inventories above from their exact paths; every value must still match.
 
 Any mismatch stops deployment. Do not delete or overwrite an existing output
 to make the precondition true.
@@ -104,15 +139,37 @@ and pool environment:
   OMP_NUM_THREADS=16 OPENBLAS_NUM_THREADS=16 MKL_NUM_THREADS=16 NUMEXPR_NUM_THREADS=16 \
   STEPS=50000000 \
   SCREEN_PROFILE=exact-action-canary \
-  PREFIX=exact-action-canary-50m-s42-v1 \
-  OUT_DIR=/home/rache/bloodbowl-rl-qualification-artifacts-20260722/exact-action-canary-50m-s42-v1 \
+  PREFIX=exact-action-canary-50m-s42-v2 \
+  OUT_DIR=/home/rache/bloodbowl-rl-qualification-artifacts-20260722/exact-action-canary-50m-s42-v2 \
   POLL_SECONDS=30 PLAN_ONLY=1 ARM_DETACH=0 \
   /usr/bin/bash /home/rache/bloodbowl-rl-qualification-candidate-a52fc6e/tools/run_reward_screen.sh
 ```
 
-Require exit zero and a new `SCREEN_MANIFEST.json`, but no trainer, log, run
-directory, result, or completion artifact. Independently validate the manifest
-contract:
+Require exit zero and exactly two regular files directly under the new output:
+`SCREEN_MANIFEST.json` plus `.screen.lock`, with no directory or other entry.
+Complete and accept this regular-file/type inventory before opening the lock;
+never run the probe against a symlink, FIFO, device, directory, or an
+uninventoried path.
+The lock must have zero bytes, the empty-file SHA-256, and a successful
+post-process, non-creating proof that no process retains it:
+
+```text
+( exec 9</home/rache/bloodbowl-rl-qualification-artifacts-20260722/exact-action-canary-50m-s42-v2/.screen.lock; flock -n 9 )
+```
+
+The empty-file SHA-256 must be exactly
+`e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`.
+Open the already inventoried absolute path read-only as shown; a pathname-form `flock`
+probe is forbidden because it could create a missing lock and conceal a failed
+inventory. The subshell is mandatory: it closes FD 9 and releases the proof's
+lock before the command returns. Name the first capture the pre-proof inventory.
+Recompute the exact two-file names, regular-file types, modes, sizes, and
+digests as the post-proof inventory and require it to be byte-identical to the
+pre-proof inventory. This
+file is an intentional ownership-control artifact created before manifest
+freezing; deleting it would weaken the launcher's one-screen contract and is
+forbidden. Require no trainer, log, run directory, result, checkpoint, or
+completion artifact. Independently validate the manifest contract:
 
 - one arm `both`, one seed `42`, exact 50M steps;
 - fresh-v5 qualification, `qualification_only=true`;
@@ -127,8 +184,10 @@ contract:
   verdict separately requires all 16 emitted counters;
 - `arm_detach=0` and exact external output path.
 
-Hash the manifest and every plan-only stdout/stderr/command artifact. A
-plan-only rejection, unexpected file, or manifest mismatch blocks the canary.
+Hash the manifest, the zero-byte released lock, the exact two-file mode/size
+inventory, and every plan-only stdout/stderr/command artifact. A plan-only
+rejection, missing/held/nonempty lock, unexpected file or directory, or
+manifest mismatch blocks the canary.
 
 ## Gate 3: hash-bound authorization record
 
@@ -143,7 +202,8 @@ bind, by absolute path plus SHA-256 where applicable:
   environment, patch, CUDA-library, driver, compiler, CPU, and GPU identities;
 - exact stopped-analyzer path/hash and the separate new/empty stopped-validation
   output directory;
-- canary `SCREEN_MANIFEST.json` and output path;
+- canary `SCREEN_MANIFEST.json`, zero-byte released `.screen.lock`, exact
+  two-file plan-only inventory, and output path;
 - exact unit bytes and unit SHA-256;
 - exact canary command and environment;
 - `Restart=no`, `KillMode=control-group`, `ARM_DETACH=0`, and the two-hour
@@ -170,7 +230,7 @@ Type=oneshot
 WorkingDirectory=/home/rache/bloodbowl-rl-qualification-candidate-a52fc6e
 ExecStartPre=/home/rache/bloodbowl-rl-qualification-candidate-a52fc6e/vendor/PufferLib/.venv/bin/python /home/rache/bloodbowl-rl-qualification-control-20260722-v4/tools/qualify_recurrent_cuda.py validate /home/rache/bloodbowl-rl-qualification-artifacts-20260722/candidate-qualification/QUALIFICATION.json
 ExecStartPre=/usr/bin/bash -c 'set -euo pipefail; out="$$(/usr/local/bin/nvidia-smi --query-compute-apps=pid --format=csv,noheader,nounits)"; stripped="$$(/usr/bin/printf "%s" "$${out}" | /usr/bin/tr -d "[:space:]")"; test -z "$${stripped}"'
-ExecStart=/usr/bin/env -u WARM -u POOL PATH=/home/rache/bloodbowl-rl-qualification-candidate-a52fc6e/vendor/PufferLib/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin CUDA_VISIBLE_DEVICES=0 OMP_NUM_THREADS=16 OPENBLAS_NUM_THREADS=16 MKL_NUM_THREADS=16 NUMEXPR_NUM_THREADS=16 STEPS=50000000 SCREEN_PROFILE=exact-action-canary PREFIX=exact-action-canary-50m-s42-v1 OUT_DIR=/home/rache/bloodbowl-rl-qualification-artifacts-20260722/exact-action-canary-50m-s42-v1 POLL_SECONDS=30 PLAN_ONLY=0 ARM_DETACH=0 /usr/bin/bash /home/rache/bloodbowl-rl-qualification-candidate-a52fc6e/tools/run_reward_screen.sh
+ExecStart=/usr/bin/env -u WARM -u POOL PATH=/home/rache/bloodbowl-rl-qualification-candidate-a52fc6e/vendor/PufferLib/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin CUDA_VISIBLE_DEVICES=0 OMP_NUM_THREADS=16 OPENBLAS_NUM_THREADS=16 MKL_NUM_THREADS=16 NUMEXPR_NUM_THREADS=16 STEPS=50000000 SCREEN_PROFILE=exact-action-canary PREFIX=exact-action-canary-50m-s42-v2 OUT_DIR=/home/rache/bloodbowl-rl-qualification-artifacts-20260722/exact-action-canary-50m-s42-v2 POLL_SECONDS=30 PLAN_ONLY=0 ARM_DETACH=0 /usr/bin/bash /home/rache/bloodbowl-rl-qualification-candidate-a52fc6e/tools/run_reward_screen.sh
 Restart=no
 KillMode=control-group
 TimeoutStartSec=7200
@@ -200,7 +260,17 @@ and off-box preservation; it launches no GPU process.
 Then require `systemd-analyze --user verify` success for the exact real unit,
 exact installed unit-byte equality with Gate 3, `systemctl --user is-enabled`
 reporting disabled, and `NRestarts=0`. Do not enable the unit and do not use a
-restart policy.
+restart policy. Immediately before the one allowed start, repeat the Gate 2
+exact two-regular-file inventory, size/digest checks, subshell-scoped released-
+lock proof, and post-proof re-inventory; require exact equality with Gate 3 and
+no third entry. Require the current manifest SHA-256 to equal the Gate 3
+identity. The real launcher intentionally reuses the plan-only output: when
+`SCREEN_MANIFEST.json` already exists it checks schema version 1, recomputes and
+deep-compares the complete nested `contract` object, rejects any drift, and
+does not rewrite it. It leaves the manifest byte-identical. Capture the
+manifest SHA-256 again at the first live poll
+and require exact equality with Gate 3. Any byte change or contract mismatch
+rejects the canary and requires stopping the unit.
 
 ## Gate 5: launch and live monitoring
 
