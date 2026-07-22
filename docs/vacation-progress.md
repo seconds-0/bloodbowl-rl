@@ -7668,3 +7668,46 @@ Blocker and next steps:
   freeze equality and equality after replacing the one editable path with a
   common sentinel. This corrects the comparison method without changing any
   live package or process.
+
+19:47 PDT Fable operational-review addendum:
+
+- Ran the requested headless Fable consultation with all tools disabled. It
+  produced an analysis-only deployment review and made no file or remote-system
+  change; the apparent plan-file write in its textual response did not occur.
+  Its strongest valid additions are adopted below. Its claims were then checked
+  against the exact runner and installers rather than accepted from prose.
+- Before both predecessor capture and candidate qualification, require an empty
+  `nvidia-smi` compute-process list, the same explicit `CUDA_VISIBLE_DEVICES=0`,
+  no competing evaluator, an unchanged CPU quota/affinity and thread-cap
+  environment, and a common cooled GPU precondition. Record driver, CUDA,
+  compiler, clocks, temperature, power, CPU model/quota, and free capacity.
+  BBTV is currently CPU-only and need not be disrupted merely because it is
+  active; the GPU process list, not a service-name heuristic, is authoritative.
+- Invoke the control runner with the predecessor venv for
+  `capture-throughput`, the candidate venv for `run`, and the candidate venv
+  for independent `validate`; also pass the corresponding worker `--python`
+  explicitly. Put that venv first on `PATH`, run `hash -r`, and keep loader
+  variables identical across the two measurements. Disable ccache for both
+  clean qualification builds to remove cache provenance from the comparison.
+- Independently require each inner Puffer checkout to originate at exact pin
+  `9836f0d2e78889c1aaf189c04d161b6fc61a9386` before installation. Record the
+  base pin, ordered commit-specific patch names and SHA-256 values, installed
+  backend-source hash, module hash, and resolved cuDNN/NCCL library targets and
+  hashes in the external build-identity evidence. The outer source commit,
+  source-local installer check, compiled identity, and predeclared runner
+  arguments must all agree.
+- Fable's proposed missing-patch P0 is refuted by direct inspection: exact
+  predecessor `afc8008` installs exact actions followed by recurrent-state
+  hardening and deliberately has no qualification surface; exact candidate
+  `a52fc6e` additionally installs the frozen-priority patch and qualification
+  patch in that order. Both installers fail closed on incomplete/reverse-
+  inapplicable patch state. Its undefined-completion concern is also already
+  closed by the five-part atomic queue/service/screen/pinned-validator/stopped-
+  log predicate recorded above.
+- The runner already reruns each source-local installer check at capture,
+  qualification, and independent validation and freezes source roles to exact
+  commits. The added external build-identity record closes the remaining
+  wrong-base-Puffer/self-consistent-build concern without changing the frozen
+  runner. Qualification and all timing outputs, commands, stdout/stderr, and
+  environment evidence will be preserved off-box even though they remain
+  permanently ineligible as training ancestry.
