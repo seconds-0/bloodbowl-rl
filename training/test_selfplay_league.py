@@ -101,13 +101,13 @@ def load_patched_selfplay(puffer_dir, backend):
     dst = os.path.join(tmp, 'pufferlib', 'selfplay.py')
     shutil.copyfile(src, dst)
     applicable = subprocess.run(
-        ['git', 'apply', '--check', PATCH], cwd=tmp,
+        ['git', 'apply', '--check', '--no-index', PATCH], cwd=tmp,
         stdout=subprocess.PIPE, stderr=subprocess.PIPE).returncode == 0
     applied = subprocess.run(
-        ['git', 'apply', '--reverse', '--check', PATCH], cwd=tmp,
+        ['git', 'apply', '--reverse', '--check', '--no-index', PATCH], cwd=tmp,
         stdout=subprocess.PIPE, stderr=subprocess.PIPE).returncode == 0
     if applicable:
-        subprocess.run(['git', 'apply', PATCH], cwd=tmp, check=True)
+        subprocess.run(['git', 'apply', '--no-index', PATCH], cwd=tmp, check=True)
     elif not applied:
         raise RuntimeError(
             'selfplay_league.patch is neither applicable nor already applied')
@@ -330,10 +330,11 @@ class PatchedSetupTest(unittest.TestCase):
 
     def test_patch_is_applicable_or_already_applied_to_vendor(self):
         applicable = subprocess.run(
-            ['git', 'apply', '--check', PATCH], cwd=self.puffer,
+            ['git', 'apply', '--check', '--no-index', PATCH], cwd=self.puffer,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE).returncode == 0
         applied = subprocess.run(
-            ['git', 'apply', '--reverse', '--check', PATCH], cwd=self.puffer,
+            ['git', 'apply', '--reverse', '--check', '--no-index', PATCH],
+            cwd=self.puffer,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE).returncode == 0
         self.assertNotEqual(applicable, applied)
 

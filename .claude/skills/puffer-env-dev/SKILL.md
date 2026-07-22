@@ -430,22 +430,36 @@ environment hashes must be declared both when captured and when consumed. Its
 runtime must be built after the immutable recovery boundary in a fresh isolated
 fp32 checkout at exact commit `afc8008933548438ca93c41341f5f08fdd294386`.
 Require obs-v5, exact-joint-v1, matching compiled hashes, and no qualification
-surface. Keep exact candidate `a52fc6e2f4ece5a7ff16bb4791e3aca4dd72f2e3`
-in a different isolated source checkout and Puffer tree. A third clean merged
-control-runner checkout must record and revalidate both full commits,
+surface. The former exact candidate
+`a52fc6e2f4ece5a7ff16bb4791e3aca4dd72f2e3` used a different isolated source
+checkout and Puffer tree but is permanently rejected under D223. A clean
+merged schema-3 control-runner checkout must record and revalidate both full commits,
 source-local Puffer paths, installer checks, and runtime hashes. The occupied
 recovery runtime is marginal-action historical evidence, not a predecessor;
 never modify or reuse the recovery Puffer tree.
-The exact `a52fc6e2` canary manifest keeps its original 11-key live fail-fast
+The archived `a52fc6e2` canary manifest keeps its original 11-key live fail-fast
 registry. Control qualification and independent stopped validation additionally
 gate signed clamp delta, clipped samples, terminal/non-terminal clipped samples,
 and non-finite samples per episode. These five should be redundant with the
 primary ratios, but any nonzero or disagreement invalidates evidence; do not
-dirty the candidate checkout to widen its manifest. The merged control
+dirty or relabel that rejected checkout to widen its manifest. The merged control
 `run_reward_screen.sh` therefore rejects the `exact-action-canary` profile
-before output creation. Invoke that profile only from the exact isolated
-`a52fc6e2` candidate checkout; analyze the stopped artifact from the clean
-merged control checkout.
+before output creation. Do not invoke that profile from any current checkout;
+analyze the rejected stopped artifact only from the clean merged control
+checkout. A later reviewed change may authorize one replacement only after
+schema-3 qualification accepts.
+The sole `a52fc6e2` canary start is rejected and permanently non-retryable: its
+last preflight found `training/selfplay_league.patch` unapplied before GPU use.
+Qualification schema 3 requires that the replacement candidate and control
+runner use the same operator-predeclared merged commit in different isolated
+source checkouts and rejects a value unequal to the control runner's clean `HEAD`. The
+installer applies or fully
+reverse-verifies that patch, `pufferlib/selfplay.py` participates in backend
+identity, and qualification provenance binds the patch file. Recapture the
+fixed predecessor from `afc8008933548438ca93c41341f5f08fdd294386` with the
+schema-3 runner, use fresh runtime/qualification/canary identities, and never
+modify or reuse the recovery Puffer tree. Keep the replacement-canary launcher
+frozen until qualification accepts, then authorize its exact commit separately.
 The explicit recurrent-state clear is
 only the paired post-terminal control and must never be used to alter ordinary
 training/evaluation behavior. Qualification outputs and checkpoints are never

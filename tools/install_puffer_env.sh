@@ -28,6 +28,7 @@ PUFFER="${1:-$ROOT/vendor/PufferLib}"
 PUFFER="$(cd "$PUFFER" && pwd)"
 
 DST="$PUFFER/ocean/bloodbowl"
+SELFPLAY_LEAGUE_PATCH="$ROOT/training/selfplay_league.patch"
 
 # Content hash of a tree with symlinks dereferenced (the puffer/bloodbowl
 # engine/ and bb/ links reach into engine/src and engine/include/bb, so any
@@ -48,6 +49,7 @@ exact_backend_hash() {
         cd "$PUFFER"
         for rel in \
             pufferlib/pufferl.py \
+            pufferlib/selfplay.py \
             pufferlib/torch_pufferl.py \
             src/bindings.cu \
             src/bindings_cpu.cpp \
@@ -90,6 +92,15 @@ if [ "$MODE" = "check" ]; then
         "$PUFFER/pufferlib/torch_pufferl.py"; then
         echo "drift check: trusted historical checkpoint-load patch is missing" >&2
         echo "  fix: tools/install_puffer_env.sh $PUFFER" >&2
+        exit 1
+    fi
+    if [ ! -f "$SELFPLAY_LEAGUE_PATCH" ] || \
+       ! grep -Fq 'Patch copy: training/selfplay_league.patch' \
+           "$PUFFER/pufferlib/selfplay.py" || \
+       ! git -C "$PUFFER" apply --reverse --check --no-index \
+           "$SELFPLAY_LEAGUE_PATCH"; then
+        echo "drift check: installed selfplay league patch is missing or stale" >&2
+        echo "  fix: recreate the pinned Puffer tree and reinstall the complete patch stack" >&2
         exit 1
     fi
     for exact_marker in \
@@ -336,6 +347,35 @@ if [ -f "$TORCH_PUFFERL_PY" ] && \
     else
         echo "warning: trusted-checkpoint load patch did not apply" >&2
     fi
+fi
+
+# Selfplay bank initialization is a training-semantic runtime surface. Install
+# its optional league-preseed branch centrally even for fresh runs: the empty
+# league_preseed path remains upstream-equivalent, while every runner and
+# provenance bundle can now require one exact Puffer runtime. A marker is only
+# diagnostic; full reverse applicability proves the complete patch is present.
+if [ ! -f "$SELFPLAY_LEAGUE_PATCH" ]; then
+    echo "error: missing training/selfplay_league.patch" >&2
+    exit 1
+fi
+if git -C "$PUFFER" apply --reverse --check --no-index \
+        "$SELFPLAY_LEAGUE_PATCH" \
+        2>/dev/null; then
+    : # Exact patch is already installed.
+elif git -C "$PUFFER" apply --check --no-index \
+        "$SELFPLAY_LEAGUE_PATCH" 2>/dev/null; then
+    git -C "$PUFFER" apply --no-index "$SELFPLAY_LEAGUE_PATCH"
+    echo "applied:   training/selfplay_league.patch -> pufferlib/selfplay.py"
+else
+    echo "error: selfplay league patch is neither applicable nor already applied" >&2
+    exit 1
+fi
+if ! grep -Fq 'Patch copy: training/selfplay_league.patch' \
+        "$PUFFER/pufferlib/selfplay.py" || \
+   ! git -C "$PUFFER" apply --reverse --check --no-index \
+       "$SELFPLAY_LEAGUE_PATCH"; then
+    echo "error: installed selfplay league patch is incomplete" >&2
+    exit 1
 fi
 
 # Exact semantic action identity. This extends the generic vec interface with

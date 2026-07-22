@@ -298,18 +298,19 @@ newer evidence wins.
   module/backend/environment hashes were declared at capture and consumption.
   The predecessor is a fresh isolated fp32 build of exact commit
   `afc8008933548438ca93c41341f5f08fdd294386` (obs-v5/exact-joint-v1, no
-  qualification surface) after the recovery boundary. Keep exact candidate
-  `a52fc6e2f4ece5a7ff16bb4791e3aca4dd72f2e3` in a different isolated source
-  checkout and Puffer tree; use a third clean merged control-runner checkout
+  qualification surface) after the recovery boundary. The former exact
+  candidate `a52fc6e2f4ece5a7ff16bb4791e3aca4dd72f2e3` used a different isolated
+  source checkout and Puffer tree but is now permanently rejected. Use a clean
+  merged schema-3 control-runner checkout
   that records and revalidates both source commits and installer checks. Never
   modify or reuse the recovery Puffer tree; the live marginal-action module is
   historical evidence only.
   No baseline,
   incomplete coverage, malformed/non-finite data, or failed gate means no 50M
-  canary. All outputs are qualification-only and ancestry-ineligible. Launch
-  the canary only from the exact immutable `a52fc6e2` checkout. The merged
-  control launcher rejects that profile before creating output because its
-  widened registry is intentionally not the frozen candidate manifest.
+  canary. All outputs are qualification-only and ancestry-ineligible. Never
+  launch from the rejected `a52fc6e2` checkout. The merged control launcher
+  rejects that profile before creating output; after qualification accepts, a
+  separate reviewed change must authorize the replacement's exact commit.
   The frozen screen launcher intentionally creates and retains
   `$OUT_DIR/.screen.lock` before plan freezing. Plan-only closure is exactly two
   regular files: `SCREEN_MANIFEST.json` plus a zero-byte, empty-digest,
@@ -321,6 +322,17 @@ newer evidence wins.
   must appear as `printf "%%s"` in unit bytes; bare `%s` is systemd's user-shell
   specifier. Require disposable empty/fixed/command-failure probes before real
   unit installation.
+  The sole `a52fc6e2` canary start is rejected and non-retryable: its last
+  preflight found `training/selfplay_league.patch` unapplied in vendored
+  `selfplay.py`, before GPU use. Qualification schema 3 makes the replacement
+  candidate and control runner use the same operator-predeclared merged commit
+  in different isolated source checkouts and rejects a value unequal to the
+  control runner's clean `HEAD`. It binds the patch file, hashes patched `selfplay.py`
+  into backend identity, and requires full reverse applicability. Recapture predecessor
+  `afc8008933548438ca93c41341f5f08fdd294386` with the schema-3 runner and use
+  all-new qualification/canary authority identities. Never modify or reuse the
+  recovery Puffer tree, and do not relax the replacement-canary launcher freeze
+  until the new qualification accepts.
 - **`puffer/bloodbowl/` is the SOURCE OF TRUTH; `vendor/PufferLib/ocean/bloodbowl/` is an installed snapshot** written by `tools/install_puffer_env.sh` — the build compiles the snapshot, NOT your edit. The snapshot can lag (the Mac checkout's may still say 1612). Drift guard: `tools/install_puffer_env.sh --check` (exit 1 = re-install). Run it before any build on a training box.
 - After ANY env code change, ON THE TARGET: `bash tools/install_puffer_env.sh`,
   `bash tools/install_puffer_env.sh --check`, then

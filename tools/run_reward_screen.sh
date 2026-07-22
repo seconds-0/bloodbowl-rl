@@ -131,12 +131,11 @@ else
   BOOTSTRAP_MODE=lineage-v5
 fi
 
-# D222: this merged control launcher imports the widened 16-key registry, but
-# the only authorized canary is the immutable a52 candidate whose manifest
-# freezes the original 11-key live registry. Fail before creating an output
-# directory; launch that canary only from its exact isolated candidate checkout.
+# D223: the sole a52 canary attempt is permanently rejected and non-retryable.
+# Fail before creating an output directory. A replacement remains unauthorized
+# until schema-3 qualification accepts and a separate reviewed change names it.
 if [ "$SCREEN_PROFILE" = "exact-action-canary" ]; then
-  echo "exact-action-canary launcher is frozen at candidate a52fc6e2f4ece5a7ff16bb4791e3aca4dd72f2e3; invoke that exact isolated checkout" >&2
+  echo "exact-action-canary is frozen: a52fc6e2f4ece5a7ff16bb4791e3aca4dd72f2e3 is permanently rejected; no replacement is authorized" >&2
   exit 1
 fi
 
@@ -519,6 +518,7 @@ patches = [
     root / "training/pufferl_eval_episode_gate.patch",
     root / "training/pufferl_metrics_keyerror.patch",
     root / "training/torch_pufferl_trusted_load.patch",
+    root / "training/selfplay_league.patch",
     root / "training/puffer_exact_joint_actions.patch",
     root / "training/puffer_recurrent_eval_state.patch",
     root / "training/puffer_frozen_prio_mask.patch",
