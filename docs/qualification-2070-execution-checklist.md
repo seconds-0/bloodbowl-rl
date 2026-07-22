@@ -9,7 +9,7 @@ qualification/canary output as training ancestry.
 
 | Role | Exact identity |
 |---|---|
-| Control runner | `2b301115cd6342444f0d195cab6798e187599cd9` |
+| Control runner | `9274f45480d5bfff7943d3ce80fbc15c96760665` |
 | Predecessor | `afc8008933548438ca93c41341f5f08fdd294386` |
 | Candidate | `a52fc6e2f4ece5a7ff16bb4791e3aca4dd72f2e3` |
 | PufferLib base | `9836f0d2e78889c1aaf189c04d161b6fc61a9386` |
@@ -19,11 +19,11 @@ qualification/canary output as training ancestry.
 | Observation/action ABI | `obs-v5` / `exact-joint-v1` |
 
 The corresponding outer Git tree identities are runner
-`70c735537ad44fa1ebd4eca6ebbf3929cdf90834`, predecessor
+`30cf4d146be5e31ce450adec47e693a40c732b82`, predecessor
 `f89318a58c9038a888419f9a0720478c1cf1a325`, and candidate
 `57731b2af496a4e382d263bbfe123bc219f6bd51`. The frozen control-runner
 `tools/qualify_recurrent_cuda.py` SHA-256 is
-`57725ba7e9f8eade910bd201a3240749c03fb0af04f0b07db04e6acaa76da46f`.
+`c1d9ad45884754f307e58272a8d43a399ab4320a3906972f001edfc75839b740`.
 
 The predecessor installer SHA-256 is
 `577434b35c785cdb271647434ad974f1cb57f3a6dde3620d8f176d3aaa5be119`.
@@ -197,9 +197,10 @@ capture-throughput
 ```
 
 Require `THROUGHPUT_BASELINE.json`, its confined cell record, exact runner
-identity, expected predecessor identity, zero hard-integrity counters, and
-positive internally consistent timing. Preserve the complete output and hashes
-before constructing the candidate runtime.
+identity, expected predecessor identity, literal zero for the exact ordered
+16-key control hard-integrity registry, and positive internally consistent
+timing. Preserve the complete output and hashes before constructing the
+candidate runtime.
 
 ## Candidate qualification
 
@@ -238,10 +239,14 @@ run
 --throughput-timed-rollouts 8
 ```
 
-The runner itself rejects any regression-budget value other than 0.10. A
-missing, malformed, non-finite, incomplete, nonzero-integrity, identity-drifted,
-parity-failed, ratio-coverage-failed, frozen-row-selected, weight-mutated, or
-throughput-regressed gate rejects qualification.
+The runner itself rejects any regression-budget value other than 0.10. Every
+transition-executing cell—graph off/on, terminal automatic/control, ratio, and
+throughput—must bind the exact ordered 16-key control registry at literal zero;
+construction is the sole exemption because it performs no transition and emits
+no episode telemetry. A missing, malformed, non-finite, incomplete,
+nonzero-integrity, identity-drifted, parity-failed, ratio-coverage-failed,
+frozen-row-selected, weight-mutated, or throughput-regressed gate rejects
+qualification.
 
 ## Independent validation and canary boundary
 

@@ -9,12 +9,14 @@ qualification.
 
 - Candidate source: `a52fc6e2f4ece5a7ff16bb4791e3aca4dd72f2e3`
 - Candidate Git tree: `57731b2af496a4e382d263bbfe123bc219f6bd51`
-- Control runner: `2b301115cd6342444f0d195cab6798e187599cd9`
-- Runner Git tree: `70c735537ad44fa1ebd4eca6ebbf3929cdf90834`
+- Control runner: `9274f45480d5bfff7943d3ce80fbc15c96760665`
+- Runner Git tree: `30cf4d146be5e31ce450adec47e693a40c732b82`
 - Runner file SHA-256:
-  `57725ba7e9f8eade910bd201a3240749c03fb0af04f0b07db04e6acaa76da46f`
+  `c1d9ad45884754f307e58272a8d43a399ab4320a3906972f001edfc75839b740`
 - Stopped analyzer SHA-256:
-  `37665a14f05aaba7df15abe1d47ae9ad4d56774ae7c99d04c69e0e9da5996323`
+  `6e8fc25fe954da206a90e0cb0d1a2cff0db268f5c29b16bbad28db3c37445fb6`
+- Stopped complete-log guard SHA-256:
+  `e9c957ae37671bc6bfd6d09c7ef2d956736a5ead7242395f2357006bfc571ff1`
 - PufferLib base: `9836f0d2e78889c1aaf189c04d161b6fc61a9386`
 - Candidate root:
   `/home/rache/bloodbowl-rl-qualification-candidate-a52fc6e`
@@ -54,7 +56,10 @@ Candidate launch-source SHA-256 identities are:
 The independent stopped analyzer is executed only from the exact control
 runner, not from candidate `a52fc6e`. Re-hash
 `tools/analyze_reward_screen.py` in that control root and require exact SHA-256
-`37665a14f05aaba7df15abe1d47ae9ad4d56774ae7c99d04c69e0e9da5996323`.
+`6e8fc25fe954da206a90e0cb0d1a2cff0db268f5c29b16bbad28db3c37445fb6`.
+Re-hash `tools/live_integrity_guard.py` in the same control root and require
+exact SHA-256
+`e9c957ae37671bc6bfd6d09c7ef2d956736a5ead7242395f2357006bfc571ff1`.
 
 Re-hash all six before plan-only materialization and again immediately before
 unit installation. Any mismatch rejects the canary.
@@ -71,7 +76,7 @@ materialization:
 3. Candidate `QUALIFICATION.json` exists in the fixed qualification root,
    states `qualification_only=true` and `accepted=true`, and is independently
    accepted twice from fresh candidate-interpreter processes using exact runner
-   commit `2b30111`.
+   commit `9274f45`.
 4. The qualification directory is closed and its exact relative file set,
    modes, sizes, and SHA-256 inventory are fixed.
 5. Candidate source, Puffer source, venv package inventory, installed Blood Bowl
@@ -112,8 +117,10 @@ contract:
 - no warm path, pool path, pool identity, or frozen bank;
 - exact candidate module/backend/environment and complete patch bundle;
 - exact fp32 policy shape 512 x 3 with expansion factor 1;
-- all hard-integrity keys including `illegal_frac`, contamination budget zero,
-  poll interval 30 seconds, and maximum silence 180 seconds;
+- the exact immutable candidate manifest's original ordered 11-key live
+  registry including `illegal_frac`, contamination budget zero, poll interval
+  30 seconds, and maximum silence 180 seconds; the later stopped control
+  verdict separately requires all 16 emitted counters;
 - `arm_detach=0` and exact external output path.
 
 Hash the manifest and every plan-only stdout/stderr/command artifact. A
@@ -204,14 +211,14 @@ reuse partial checkpoints.
 After the unit exits, require inactive `Result=success`, `ExecMainStatus=0`,
 `NRestarts=0`, no compute PID, and exact source/unit/authorization identity.
 Require the screen's own complete validation plus all three fresh independent
-stopped checks below. Run them from exact control commit `2b30111` with the
+stopped checks below. Run them from exact control commit `9274f45` with the
 candidate interpreter, writing only under the separately new/empty
 stopped-validation output directory:
 
 1. Run `live_integrity_guard.py --complete-log` on the sole canary trainer log
    with new external state/failure paths. This independently rescans every
-   complete schema-2 panel and requires the full frozen hard registry at
-   literal zero without applying a stopped-log liveness deadline.
+   complete schema-2 panel and requires the exact ordered 16-key control hard
+   registry at literal zero without applying a stopped-log liveness deadline.
 2. Run `analyze_reward_screen.py <canary-output> --json
    --expected-screen-sha <Gate-2-manifest-sha>` and atomically preserve stdout,
    stderr, and exit status. Require analysis
@@ -219,7 +226,8 @@ stopped-validation output directory:
    fixed 2,048 x 64 rollout contract, final step 49,938,432, checkpoint bytes
    16,066,560, policy shape 512 x 3 x 1, fresh null warm/pool/banks, exact
    fp32 obs-v5/exact-joint provenance, an exactly empty failure list, both
-   train/eval game floors, every hard field at zero, lineage digest binding,
+   train/eval game floors, all 16 control hard fields at zero despite the
+   immutable manifest's narrower 11-key live registry, lineage digest binding,
    and atomic completion.
 3. Independently validate the final checkpoint and adjacent lineage with
    `checkpoint_lineage.py validate --allow-qualification` against an atomic
