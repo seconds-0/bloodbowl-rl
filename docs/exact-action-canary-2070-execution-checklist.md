@@ -9,10 +9,10 @@ qualification.
 
 - Candidate source: `a52fc6e2f4ece5a7ff16bb4791e3aca4dd72f2e3`
 - Candidate Git tree: `57731b2af496a4e382d263bbfe123bc219f6bd51`
-- Control runner: `9274f45480d5bfff7943d3ce80fbc15c96760665`
-- Runner Git tree: `30cf4d146be5e31ce450adec47e693a40c732b82`
+- Control runner: `ffa49adfd71644fe3ffa10106df1fcdc7421b0c7`
+- Runner Git tree: `dd06117b77a4d15b5deb1770f86a465dc04338d0`
 - Runner file SHA-256:
-  `c1d9ad45884754f307e58272a8d43a399ab4320a3906972f001edfc75839b740`
+  `4b8519da01edcff7ee203e8114b3ef4aa8fb673df63cb9ce0b83e34baa6ba646`
 - Stopped analyzer SHA-256:
   `6e8fc25fe954da206a90e0cb0d1a2cff0db268f5c29b16bbad28db3c37445fb6`
 - Stopped complete-log guard SHA-256:
@@ -21,7 +21,7 @@ qualification.
 - Candidate root:
   `/home/rache/bloodbowl-rl-qualification-candidate-a52fc6e`
 - Control root:
-  `/home/rache/bloodbowl-rl-qualification-control-20260722`
+  `/home/rache/bloodbowl-rl-qualification-control-20260722-v2`
 - Qualification root:
   `/home/rache/bloodbowl-rl-qualification-artifacts-20260722/candidate-qualification`
 - Canary output:
@@ -76,7 +76,7 @@ materialization:
 3. Candidate `QUALIFICATION.json` exists in the fixed qualification root,
    states `qualification_only=true` and `accepted=true`, and is independently
    accepted twice from fresh candidate-interpreter processes using exact runner
-   commit `9274f45`.
+   commit `ffa49ad`.
 4. The qualification directory is closed and its exact relative file set,
    modes, sizes, and SHA-256 inventory are fixed.
 5. Candidate source, Puffer source, venv package inventory, installed Blood Bowl
@@ -164,7 +164,7 @@ After=default.target
 [Service]
 Type=oneshot
 WorkingDirectory=/home/rache/bloodbowl-rl-qualification-candidate-a52fc6e
-ExecStartPre=/home/rache/bloodbowl-rl-qualification-candidate-a52fc6e/vendor/PufferLib/.venv/bin/python /home/rache/bloodbowl-rl-qualification-control-20260722/tools/qualify_recurrent_cuda.py validate /home/rache/bloodbowl-rl-qualification-artifacts-20260722/candidate-qualification/QUALIFICATION.json
+ExecStartPre=/home/rache/bloodbowl-rl-qualification-candidate-a52fc6e/vendor/PufferLib/.venv/bin/python /home/rache/bloodbowl-rl-qualification-control-20260722-v2/tools/qualify_recurrent_cuda.py validate /home/rache/bloodbowl-rl-qualification-artifacts-20260722/candidate-qualification/QUALIFICATION.json
 ExecStartPre=/usr/bin/bash -c 'set -euo pipefail; out="$$(/usr/local/bin/nvidia-smi --query-compute-apps=pid --format=csv,noheader,nounits)"; stripped="$$(/usr/bin/printf "%s" "$${out}" | /usr/bin/tr -d "[:space:]")"; test -z "$${stripped}"'
 ExecStart=/usr/bin/env -u WARM -u POOL PATH=/home/rache/bloodbowl-rl-qualification-candidate-a52fc6e/vendor/PufferLib/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin CUDA_VISIBLE_DEVICES=0 OMP_NUM_THREADS=16 OPENBLAS_NUM_THREADS=16 MKL_NUM_THREADS=16 NUMEXPR_NUM_THREADS=16 STEPS=50000000 SCREEN_PROFILE=exact-action-canary PREFIX=exact-action-canary-50m-s42-v1 OUT_DIR=/home/rache/bloodbowl-rl-qualification-artifacts-20260722/exact-action-canary-50m-s42-v1 POLL_SECONDS=30 PLAN_ONLY=0 ARM_DETACH=0 /usr/bin/bash /home/rache/bloodbowl-rl-qualification-candidate-a52fc6e/tools/run_reward_screen.sh
 Restart=no
@@ -227,7 +227,7 @@ reuse partial checkpoints.
 After the unit exits, require inactive `Result=success`, `ExecMainStatus=0`,
 `NRestarts=0`, no compute PID, and exact source/unit/authorization identity.
 Require the screen's own complete validation plus all three fresh independent
-stopped checks below. Run them from exact control commit `9274f45` with the
+stopped checks below. Run them from exact control commit `ffa49ad` with the
 candidate interpreter, writing only under the separately new/empty
 stopped-validation output directory:
 
