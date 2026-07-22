@@ -7612,3 +7612,39 @@ Blocker and next steps:
   host. It remains a post-stop independent validator only. The monitoring branch
   now carries the same hardening commit as `63d1520`; live seed 44 and BBTV were
   untouched throughout review and merge.
+
+19:34 PDT qualification-execution preparation addendum:
+
+- Created a clean detached local inspection worktree at the exact frozen
+  control-runner commit
+  `286fec05d8793e9ee06228390d1fc972e81d8624`. The earlier missing-runner
+  message was only a working-directory mistake: the long-lived monitoring
+  branch intentionally predates `tools/qualify_recurrent_cuda.py`. No merge or
+  rebase was attempted, and the recovery host was not modified.
+- Re-read the exact `capture-throughput`, `run`, and `validate` command
+  contracts from that frozen runner. Both measurements will explicitly use
+  2,048 agents, two buffers, 16 threads, horizon 64, hidden size 512, and three
+  recurrent layers, with the frozen two-warmup/eight-timed-rollout counts. The
+  runner's generic defaults are materially different and therefore may not be
+  inherited. Its candidate regression ceiling is code-frozen at 10%.
+- The exact runner's 21 focused qualification tests pass. The 36 focused
+  canary/lineage contract tests also pass, with only the two expected skips for
+  this local worktree's absent ignored Puffer checkout; both launch scripts pass
+  shell syntax and the worktree remains clean. The final canary remains exactly
+  one fresh seed-42 50M arm, with `WARM` and `POOL` absent, no frozen banks,
+  fp32, exact-joint actions, and a literal zero hard-integrity budget.
+- Captured the occupied recovery environment's full read-only package inventory:
+  Python 3.11.15, Torch 2.10.0 with CUDA 12.8 packages, NumPy 2.4.6, and
+  pybind11 3.0.4. After the boundary, predecessor and candidate will each use
+  the same exact non-editable inventory plus their own editable pinned Puffer
+  root; normalized inventories must be identical before measurement. The
+  package query did not import the CUDA module or contact the trainer.
+- Reconfirmed from the frozen queue plan that the atomic success path is
+  `work/full-control/SCREEN_COMPLETE.json` and that its validator is the pinned
+  Python 3.11.15 plus the recovery checkout's exact
+  `validate_vacation_artifact.py --screen` command. The first job's recorded
+  success digest remains
+  `9a22d43c125978ecb9790efa9497ba6fa50875144e641cc51cefecbc96867654`;
+  the second job is still running and has no success digest yet. Preservation
+  will derive result-bound checkpoints from accepted result artifacts rather
+  than a newest-filename heuristic.
