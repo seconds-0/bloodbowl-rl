@@ -8208,6 +8208,77 @@ the stopped queue/service/process predicates, run the frozen screen validator
 and independent three-log auditor, and preserve and verify the exact evidence
 off-box before creating any qualification root.
 
+## 2026-07-22 12:57 PDT — one-shot canary rejected pre-GPU; evidence sealed off-box
+
+Status:
+
+- The exact v3 launcher submitted its one permitted start at 12:19 PDT. The
+  unit failed closed after one second with `Result=exit-code`,
+  `ExecMainStatus=1`, `NRestarts=0`, and invocation
+  `7cc00e4465ee4638b8b224568b99899d`. Its final preflight reported
+  `vendored selfplay.py lacks training/selfplay_league.patch`. No trainer log,
+  checkpoint, run directory, or GPU process was created. The durable attempt
+  marker says `retry_allowed=false`; this unit/output may never be retried,
+  repaired, reset, or reused.
+- Two independent static reviews accepted the final stopped-evidence collector
+  at SHA-256
+  `e6268214f14e1a8c98abea1f7a779c24ba6e0d2acfebf3263b43f47874dcbe46`
+  with no P0-P3 finding. Its single invocation sealed 76 files under the fixed
+  stopped-validation root. The 73-entry evidence ledger SHA-256 is
+  `fc6e0aea1d12515371bab9d3e5f3b6a81ed40a0ef7b4fa5af9c21dd0f49306ac`;
+  the inventory-file SHA-256 is
+  `e94fb684054dee812b8b9912104ad4883922039eb6bdb99e8f32d6407c095c6a`;
+  and the completion-record SHA-256 is
+  `3d53cbaa8699498b5a3610dee2dff03c969ff6acb2e1f056aff1ce777adab662`.
+- The stopped bundle, untouched three-file canary output, and complete 71-file
+  v3 execution authority were copied to
+  `/Users/alexanderhuth/BloodBowlRLArtifacts/exact-action-canary-v3-stopped-rejected-20260722`.
+  Independent local verification accepted every recorded mode, byte count,
+  hash, direct source copy, and exact closure. The output inventory SHA-256 is
+  `6e28225e8816c5a077a42563bd6149abe8586b53daa435dedf7e3c5eb9e23a77`;
+  the v3 inventory SHA-256 is
+  `f92722231742ee63afc0e6e32835954320709f4fdd0cdea9e2375d83f2763c9b`.
+- Post-preservation health remains safe: the failed unit has zero restarts and
+  no queued job, the exact GPU compute-process query is empty, and
+  <https://bbtv.seconds0.com/> returns HTTP 200.
+
+Root cause and repair tranche:
+
+- The fresh candidate contains `training/selfplay_league.patch`, the patch
+  applies forward cleanly to its pinned Puffer tree, reverse applicability
+  fails, and both league markers are absent from vendored `selfplay.py`. The
+  accepted schema-2 CUDA qualification bound four exact-action/recurrent
+  patches but omitted this runner-required patch and omitted `selfplay.py` from
+  compiled backend identity.
+- A fresh worktree at
+  `/Users/alexanderhuth/Code/bloodbowl-rl-bind-selfplay-runtime-identity`, branch
+  `tranche/bind-selfplay-runtime-identity`, is exactly based on merged main
+  `6d3aedc`. The written test-first plan requires a new runtime, qualification,
+  unit, output, stopped root, authorization, and marker; the rejected v3
+  artifacts remain immutable.
+- Fail-first tests reproduced the missing installer, qualification, and
+  manifest bindings. The current fix applies or full-reverse-verifies the
+  league patch, includes patched `selfplay.py` in backend identity, advances
+  qualification to schema 3, binds the patch in qualification and screen/arm
+  manifests, and requires the replacement candidate and control runner to use
+  the same clean merged commit in different checkouts. A disposable clone of
+  pinned Puffer `9836f0d2` passed first install, idempotent second install, all
+  selfplay behavior tests, and removed-patch rejection. The focused 36
+  qualification tests and 26 experiment-contract tests pass.
+- Headless Fable is running a bounded, tools-disabled design review. No Fable
+  verdict is claimed yet.
+
+Handoff status and next steps:
+
+- Draft PR #59 remains open. Its test job is green; the latest
+  immutable-history job failed in hosted Docker verification after the previous
+  journal push and will be handled without rewriting history.
+- Finish the Fable review, address concrete findings, append the decision
+  amendment, run complete local/hosted verification, and ship the repair PR.
+  Only after merge may a new isolated 2070 runtime recapture the fixed
+  predecessor control and run schema-3 CUDA qualification. No new canary start
+  is authorized yet.
+
 ## 2026-07-22 11:55 PDT — v3 unit installed disabled; pre-start gate still closed
 
 Accepted authority and probe progress:
