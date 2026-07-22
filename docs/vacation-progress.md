@@ -8208,6 +8208,73 @@ the stopped queue/service/process predicates, run the frozen screen validator
 and independent three-log auditor, and preserve and verify the exact evidence
 off-box before creating any qualification root.
 
+## 2026-07-22 05:36 PDT — recovery complete and preserved off-box
+
+Atomic boundary:
+
+- Seed 44 exited zero at 05:19:55 PDT after the final cumulative evaluation.
+  `SCREEN_COMPLETE.json` appeared at 05:23:34 PDT, and the queue reached its
+  exact terminal state at 05:26:18 PDT: schema 1, `state=complete`,
+  `current_job=null`, message `all queued jobs completed and validated`, and
+  exactly the two expected jobs complete with exit code zero and success
+  digests. The queue service is inactive/dead with `Result=success`,
+  `ExecMainStatus=0`, and `NRestarts=0`.
+- Queue, wrapper, and trainer PIDs 610736, 653086, and 653090 are absent, and
+  `nvidia-smi` reports no compute process. Before any post-stop service action,
+  the original BBTV follower, web, and tunnel PIDs 610386, 127413, and 35307
+  were captured active/running with zero restarts. The screen-completion
+  SHA-256 is
+  `9bbf4c74f916f6b6027ce70510c9f315aa9456a55899dce31294c50ac8e50ae7`;
+  the terminal queue-state SHA-256 is
+  `83d7f9fabb14584005d04b9a0868a9752a6e1669897fbf3b43c3c915d8c86c5f`.
+
+Stopped validation:
+
+- The pinned Python, frozen validator, screen config, and queue-plan hashes all
+  matched their published identities. The frozen screen validator exited zero
+  over seeds 42, 43, and 44 at exact horizon-aligned step 11,999,903,744.
+  Final evaluation counts were 10,051, 10,002, and 10,044 games. Their
+  descriptive mean panel reports 1.6871 TD/game, performance 0.5230,
+  possession 0.3840, 14.8882 blocks thrown, and two-die-red share 0.03673.
+  These control-replication summaries are not reward-promotion evidence.
+- Exact `c1600ada` post-stop tool hashes matched locally and remotely. The
+  independent complete-log auditor accepted exactly the three stopped logs,
+  one final reprint each, the same evaluation counts, and exact zero across all
+  15 hard integrity fields. Log SHA-256 values are `30e95860...` for seed 42,
+  `43d2bae6...` for seed 43, and `33b89837...` for seed 44. Historical
+  marginal-action `illegal_frac` remains diagnostic only. The first local
+  wrapper invocation was interrupted before writing an exit code and left no
+  auditor process; that empty attempt is preserved. The identical command was
+  rerun in a persistent session and exited zero with empty stderr.
+
+Off-box preservation:
+
+- The frozen planner accepted an exact 37-file, 3,493,832,521-byte inventory.
+  Inventory identity is
+  `d0102a612b4b295923bb875e604bd7d7863160a549d708aeb25c405b31c069d8`;
+  manifest-file SHA-256 is
+  `1f0a11977c284483e2d36380b2a2a46c1734ae6b9318ea44c8d24195ff291d40`.
+- Exact single-root rsync exited zero with empty stdout/stderr and copied
+  exactly 37 files. The frozen local verifier then exited zero with empty
+  stderr and exact equality on file count, total bytes, and inventory identity,
+  including its second file-set stability check.
+- The complete local evidence envelope is
+  `/Users/alexanderhuth/BloodBowlRLArtifacts/recovery-preservation-20260719-c1600`.
+  Its deterministic 79-file SHA-256 index has identity
+  `e193a1fc7aa8fe9f72c908515e45a8cc1e6938f417c6269fc8810ce415d6fd02`.
+  The source recovery tree remains retained and read-only; copied checkpoints
+  remain evidence only and are ineligible as qualification input, canary
+  ancestry, or reward-promotion authority.
+
+Handoff status:
+
+- Draft PR #59 exact head `2b3c12804b4214fcb06dc15d61954c3e4439b3fa`
+  passed full hosted CI and immutable-history before this journal-only append.
+- No post-stop service action or qualification-root creation occurred before
+  preservation completed. The next gated step is the untouched predecessor
+  fp32 throughput capture, followed by the fresh candidate qualification under
+  the exact-zero integrity budget.
+
 ## 2026-07-22 04:31 PDT — seed 44 at 11.49B; final estimated hour
 
 Status:
