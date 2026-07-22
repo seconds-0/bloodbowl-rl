@@ -18,6 +18,40 @@ qualification/canary output as training ancestry.
 | Precision | fp32 (`precision_bytes == 4`) |
 | Observation/action ABI | `obs-v5` / `exact-joint-v1` |
 
+The predecessor installer SHA-256 is
+`577434b35c785cdb271647434ad974f1cb57f3a6dde3620d8f176d3aaa5be119`.
+The candidate installer SHA-256 is
+`de7bf4769cba18c127cb2278d8bbf9cb2f62508bcdde876341c6fe0f6a20d08f`.
+Both commits carry identical `tools/cpu_cap.sh` bytes with SHA-256
+`75ec32025777510523dc1e0d160d7a011fb4275792d15f20564afe99fe5e1907`.
+
+The common ordered patch inventory is byte-identical in both roles:
+
+| Order | Patch | SHA-256 |
+|---:|---|---|
+| 1 | `training/sweep_match_mode_exclusion.patch` | `b1e181201ea4046f60225e8bfcdec9f11b3b86ff4b80d5413cc749e931a15945` |
+| 2 | `training/pufferl_env_dashboard_limit.patch` | `02d4d057072c89ad4787d70e875211146ce8994204d29840310000b0d7dfea2f` |
+| 3 | `training/pufferl_env_json.patch` | `a739d6e5c4bd44112d1510dc81f8fffd6cddb9ccfdba12811d9e9993653ad936` |
+| 4 | `training/pufferl_env_json_metadata_upgrade.patch` | `41aca69045d0105ce4f7f710b6e0934bd2981866cdfa76c60c3a7a60de9faade` |
+| 5 | `training/pufferl_env_phase_contract.patch` | `65706562c1c52febac07220fe41860ab4a8669a53e0aeaf87850022c0bc0b674` |
+| 6 | `training/pufferl_eval_episode_gate.patch` | `bfadd8623635daad604bc33a4a20c8cb41739b5b062b58dc92745485bf512904` |
+| 7 | `training/pufferl_metrics_keyerror.patch` | `05c4b67e7f82618c4ce1acb8a0daefe907e6f55f6dbf017e3cf823ae43d8b57a` |
+| 8 | `training/torch_pufferl_trusted_load.patch` | `75a8aa7fad40d91336646e2b71e0bb51fa93251cec3c7683fb6e414cadc17f1e` |
+| 9 | `training/puffer_exact_joint_actions.patch` | `d6c32180ee89f75d6cb885fd6aaa4d98c0d5a57e0722637636775565e924e0eb` |
+| 10 | `training/puffer_recurrent_eval_state.patch` | `b24ec966dd8d6058067080ff37c3057198bfe8ac1e778999fcd91394fc253b61` |
+
+The predecessor commit contains neither candidate-only patch. The candidate
+must then apply, in order:
+
+| Order | Patch | SHA-256 |
+|---:|---|---|
+| 11 | `training/puffer_frozen_prio_mask.patch` | `602b719cbfbb76c4ac27d2f5227ff00ee22c8b5d9ab4ea9b90767b29ea87ee67` |
+| 12 | `training/puffer_recurrent_cuda_qualification.patch` | `5bc310ce914d5167eb69d6b62e772d9bfbedf95cbf1cf283bd3f1be2b989976f` |
+
+Re-hash these files from each detached outer checkout before installation and
+record the exact ordered inventory in each external build-identity record.
+Any absence, addition, reordering, or digest mismatch rejects that runtime.
+
 Target roots are pairwise distinct and outside the protected recovery tree:
 
 ```text
