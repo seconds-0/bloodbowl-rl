@@ -8208,6 +8208,68 @@ the stopped queue/service/process predicates, run the frozen screen validator
 and independent three-log auditor, and preserve and verify the exact evidence
 off-box before creating any qualification root.
 
+## 2026-07-22 06:18 PDT — isolated runtimes frozen; runner defect fixed
+
+Qualification construction:
+
+- Created pairwise-distinct detached control, predecessor, candidate, and
+  external-artifact roots only after the accepted recovery boundary. The
+  predecessor remains exact `afc8008933548438ca93c41341f5f08fdd294386`,
+  candidate exact `a52fc6e2f4ece5a7ff16bb4791e3aca4dd72f2e3`, and both private Puffer trees
+  exact `9836f0d2e78889c1aaf189c04d161b6fc61a9386` under separate fp32 venvs.
+- Both roles have identical normalized package environments, authorized cuDNN
+  and NCCL links, clean source-local builds, and passing installer checks. The
+  shared installed-environment SHA-256 is
+  `4cf8d446c8794cb38f28d08c7fbe76e6919e8677fd96ac8e255cafd9986dbc2e`.
+  Predecessor module/backend hashes are `6ca1ab04...` / `d69e077d...`;
+  candidate hashes are `5a9ac536...` / `8e21d4b3...`. Atomic build-identity
+  records and an independent crosscheck bind source, packages, patches,
+  libraries, ABI, host, affinity, and process cgroup. No behavioral candidate
+  cell has run.
+
+Rejected control attempt and correction:
+
+- After preserving the live BBTV selection and stopping only its follower, the
+  2070 passed the three-sample idle/thermal precondition. The first predecessor
+  capture rejected before any transition because the frozen runner converted
+  the explicit venv `python` symlink to its managed base interpreter; that
+  interpreter correctly failed closed for missing NumPy. The empty output and
+  command evidence are preserved as
+  `predecessor-throughput-attempt1-rejected-python-resolve`; the authorized
+  `predecessor-throughput` path remains absent.
+- Added a fail-first regression proving the worker subprocess must receive the
+  explicit venv interpreter path without final-symlink dereference. The old
+  implementation failed that test; the corrected implementation, all 25
+  focused qualification tests, Ruff, byte compilation, and whitespace checks
+  pass. Inline and bounded Fable review found no actionable P0-P3 defect.
+  Hosted CI and immutable-history both passed exact PR #60 head `c32ef4a`, and
+  it merged as `ffa49adfd71644fe3ffa10106df1fcdc7421b0c7`, tree
+  `dd06117b77a4d15b5deb1770f86a465dc04338d0`; merged runner SHA-256 is
+  `4b8519da01edcff7ee203e8114b3ef4aa8fb673df63cb9ce0b83e34baa6ba646`.
+- PR #61 now binds both execution checklists to that merged runner and a fresh
+  `qualification-control-20260722-v2` root, names the preserved rejected
+  attempt, and documents the observed single-line Torch `+cu128` freeze
+  representation without weakening byte-equality or exact-zero gates. Its
+  immutable-history check is green; full CI is still running on the latest
+  documentation head. The required Codex review model is unsupported on this
+  account and Gemini remains unauthenticated, so neither produced a verdict;
+  the complete inline identity/path audit is clean. A separate Fable checklist
+  pass declined to verdict after distrusting its own auxiliary inspection, and
+  its sole provisional output-path concern was independently refuted on-box.
+
+Live state and next steps:
+
+- BBTV follower, web, and tunnel are active with zero follower restarts; follower
+  PID is 699636, the public service remains available, and the GPU compute list
+  is empty. BBTV stays live until the next timed precondition window.
+- Wait for exact-green PR #61 CI, merge it, clone only the merged runner into
+  the fresh v2 control root, and freeze its commit/tree/file identity. Then stop
+  only BBTV's follower, repeat the identical cool/idle precondition, capture the
+  untouched predecessor throughput baseline, restore BBTV, and proceed to the
+  candidate recurrent-CUDA qualification only if every control hard-integrity
+  field is literally zero. Qualification and canary artifacts remain ineligible
+  as training ancestry or reward evidence.
+
 ## 2026-07-22 05:36 PDT — recovery complete and preserved off-box
 
 Atomic boundary:
