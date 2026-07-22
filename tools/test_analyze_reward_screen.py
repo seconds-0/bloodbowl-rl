@@ -253,6 +253,7 @@ class RewardScreenAnalysisTests(unittest.TestCase):
 
         self.assertTrue(report["screen"]["completion"]["present"])
         self.assertEqual(len(report["runs"]), 8)
+        self.assertNotIn("checkpoint_lineage_sha256", report["runs"][0])
         self.assertEqual(report["per_seed"]["42"]["effects"]["tds"], {
             "possession_main": 3.5,
             "distance_main": 4.5,

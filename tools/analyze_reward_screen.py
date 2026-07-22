@@ -601,11 +601,12 @@ def _validate_result(
         "result_file": path.name,
         "result_sha256": _sha256(path),
         "checkpoint_sha256": checkpoint_sha,
-        "checkpoint_lineage_sha256": checkpoint_lineage_sha,
         "reward_sha256": expected_reward_sha,
         "provenance_sha256": provenance_sha,
         "eval": selected,
     }
+    if checkpoint_lineage_sha is not None:
+        summary["checkpoint_lineage_sha256"] = checkpoint_lineage_sha
     return result, summary
 
 
