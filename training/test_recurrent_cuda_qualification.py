@@ -372,9 +372,11 @@ class QualificationValidatorTests(unittest.TestCase):
             "compiled_env": "bloodbowl", "qualification_surface": False,
         }
         integrity = {key: 0.0 for key in self.q.HARD_INTEGRITY_KEYS}
+        config = {"cudagraphs": self.q.DEFAULT_CUDAGRAPH_WARMUP_EPOCHS}
+        config_digest = self.q.canonical_hash(config)
         throughput = {
             "host": "rtx2070", "gpu": "RTX 2070", "precision_bytes": 4,
-            "config_sha256": "c" * 64, "steps_per_second": 1000.0,
+            "config_sha256": config_digest, "steps_per_second": 1000.0,
             "hard_integrity_zero": True, "hard_integrity": integrity,
             "steps": 1000, "elapsed_seconds": 1.0,
             "median_rollout_seconds": 0.1, "p95_rollout_seconds": 0.2,
@@ -404,7 +406,7 @@ class QualificationValidatorTests(unittest.TestCase):
                 "kind": "throughput", "preceding_runtime": True,
                 "runner_sha256": self.q.sha256(RUNNER),
                 "identity": identity, "throughput": throughput,
-                "config_sha256": "c" * 64,
+                "config": config, "config_sha256": config_digest,
                 "predecessor_source": source,
                 "runner_source": runner_source,
             }
@@ -566,7 +568,13 @@ class QualificationValidatorTests(unittest.TestCase):
                 cell_timeout_seconds=1800,
             )
             completed = mock.Mock(returncode=0, stdout="", stderr="")
-            record = {"accepted": True, "qualification_only": True}
+            config = {"cudagraphs": 10}
+            record = {
+                "accepted": True,
+                "qualification_only": True,
+                "config": config,
+                "config_sha256": self.q.canonical_hash(config),
+            }
             with mock.patch.object(
                 self.q.subprocess, "run", return_value=completed
             ) as run, mock.patch.object(self.q, "_read_json", return_value=record):
@@ -574,14 +582,94 @@ class QualificationValidatorTests(unittest.TestCase):
                     args,
                     kind="construction",
                     name="construction",
-                    cudagraphs=0,
+                    cudagraphs=10,
                     output=output,
                 )
             command = run.call_args.args[0]
             self.assertEqual(command[0], str(venv_python.absolute()))
             self.assertNotEqual(command[0], str(base_python.resolve()))
+            cudagraph_flag = command.index("--cudagraphs")
+            self.assertEqual(command[cudagraph_flag + 1], "10")
             minibatch_flag = command.index("--throughput-minibatch-size")
             self.assertEqual(command[minibatch_flag + 1], "16384")
+
+    def test_graph_capture_requires_production_warmup_boundary(self):
+        args = mock.Mock(
+            seed=271828,
+            throughput_agents=2048,
+            throughput_buffers=2,
+            throughput_threads=16,
+            throughput_horizon=64,
+            throughput_hidden=512,
+            throughput_layers=3,
+            throughput_minibatch_size=16384,
+        )
+        self.assertEqual(self.q.DEFAULT_CUDAGRAPH_WARMUP_EPOCHS, 10)
+        for kind in (
+            "construction", "rollout", "terminal_auto", "terminal_control",
+            "ratio", "throughput",
+        ):
+            with self.subTest(kind=kind):
+                self.assertEqual(
+                    self.q.validate_cell_cudagraphs(kind, 10), 10
+                )
+                self.assertEqual(
+                    self.q._cell_config(kind, 10, args)["cudagraphs"], 10
+                )
+                with self.assertRaises(self.q.QualificationError):
+                    self.q.validate_cell_cudagraphs(kind, 0)
+        self.assertEqual(self.q.validate_cell_cudagraphs("rollout", -1), -1)
+        for kind in (
+            "construction", "terminal_auto", "terminal_control", "ratio",
+            "throughput",
+        ):
+            with self.subTest(graph_off_kind=kind), self.assertRaises(
+                self.q.QualificationError
+            ):
+                self.q.validate_cell_cudagraphs(kind, -1)
+        runner = RUNNER.read_text(encoding="utf-8")
+        self.assertNotIn("cudagraphs=0", runner)
+        self.assertEqual(
+            runner.count("cudagraphs=DEFAULT_CUDAGRAPH_WARMUP_EPOCHS"), 7
+        )
+
+    def test_cell_rejects_zero_warmup_before_runtime_dispatch(self):
+        argv = [
+            "cell",
+            "--puffer-root", "/tmp/puffer",
+            "--kind", "throughput",
+            "--cudagraphs", "0",
+            "--output-json", "/tmp/throughput.json",
+        ]
+        with mock.patch.object(self.q, "run_cell") as run_cell, self.assertRaises(
+            self.q.QualificationError
+        ):
+            self.q.main(argv)
+        run_cell.assert_not_called()
+
+    def test_cudagraph_record_rejects_coherent_zero_warmup_mutation(self):
+        record = {"config": {"cudagraphs": 10}}
+        record["config_sha256"] = self.q.canonical_hash(record["config"])
+        self.q.validate_cell_cudagraph_record(record, expected=10)
+
+        record["config"]["cudagraphs"] = 0
+        record["config_sha256"] = self.q.canonical_hash(record["config"])
+        with self.assertRaises(self.q.QualificationError):
+            self.q.validate_cell_cudagraph_record(record, expected=10)
+
+        record["config"]["cudagraphs"] = 10.0
+        record["config_sha256"] = self.q.canonical_hash(record["config"])
+        with self.assertRaises(self.q.QualificationError):
+            self.q.validate_cell_cudagraph_record(record, expected=10)
+
+        record["config"]["cudagraphs"] = 10
+        with self.assertRaises(self.q.QualificationError):
+            self.q.validate_cell_cudagraph_record(record, expected=10)
+
+        record["config_sha256"] = self.q.canonical_hash(record["config"])
+        record["throughput"] = {"config_sha256": "a" * 64}
+        with self.assertRaises(self.q.QualificationError):
+            self.q.validate_cell_cudagraph_record(record, expected=10)
 
     def test_throughput_minibatch_matches_exact_canary_contract(self):
         args = mock.Mock(
@@ -594,19 +682,20 @@ class QualificationValidatorTests(unittest.TestCase):
             throughput_layers=3,
             throughput_minibatch_size=16384,
         )
-        config = self.q._cell_config("throughput", 0, args)
+        config = self.q._cell_config("throughput", 10, args)
         rollout_quantum = (
             config["vec"]["total_agents"] * config["train"]["horizon"]
         )
         self.assertEqual(rollout_quantum, 131072)
         self.assertEqual(config["train"]["minibatch_size"], 16384)
+        self.assertEqual(config["cudagraphs"], 10)
 
     def test_throughput_minibatch_parser_default_is_frozen(self):
         args = self.q.parse_args([
             "cell",
             "--puffer-root", "/tmp/puffer",
             "--kind", "throughput",
-            "--cudagraphs", "0",
+            "--cudagraphs", "10",
             "--output-json", "/tmp/throughput.json",
         ])
         self.assertEqual(self.q.DEFAULT_THROUGHPUT_MINIBATCH_SIZE, 16384)
@@ -653,7 +742,7 @@ class QualificationValidatorTests(unittest.TestCase):
 
     def test_qualification_minibatch_must_fit_rollout_contract(self):
         base = {
-            "cudagraphs": 0,
+            "cudagraphs": 10,
             "seed": 271828,
             "total_agents": 2048,
             "num_buffers": 2,
@@ -861,6 +950,7 @@ class QualificationPatchContractTests(unittest.TestCase):
         self.assertIn("--candidate-source-root", plan)
         self.assertIn("Independently pass `--predecessor-source-root`", plan)
         self.assertIn("Do not modify or reuse the recovery Puffer tree", plan)
+        self.assertIn("`cudagraphs=10`", plan)
         self.assertNotIn("On the still-installed predecessor", plan)
         for path in (AGENTS, CLAUDE, PUFFER_SKILL, TRAINING_SKILL):
             with self.subTest(path=path):
@@ -869,6 +959,7 @@ class QualificationPatchContractTests(unittest.TestCase):
                 self.assertIn(candidate, text)
                 self.assertIn("different isolated source", text)
                 self.assertIn("recovery Puffer tree", text)
+                self.assertIn("`cudagraphs=10`", text)
 
         runner = RUNNER.read_text(encoding="utf-8")
         self.assertEqual(q.PREDECESSOR_SOURCE_COMMIT, predecessor)

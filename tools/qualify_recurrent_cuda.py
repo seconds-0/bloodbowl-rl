@@ -84,6 +84,9 @@ GRAPH_ATOL_BY_PRECISION = {4: 1.0e-6}
 RATIO_ATOL_BY_PRECISION = {4: 2.0e-5}
 DEFAULT_RATIO_CALL_LIMIT = 64
 DEFAULT_MAX_REGRESSION_FRACTION = 0.10
+# Puffer's cudagraph setting is a warmup-epoch count, not a boolean. Match the
+# frozen canary/default so CUDA libraries initialize before capture begins.
+DEFAULT_CUDAGRAPH_WARMUP_EPOCHS = 10
 # Match the frozen exact-action canary rather than allocating train activations
 # for its entire 2,048 x 64 rollout quantum at once.
 DEFAULT_THROUGHPUT_MINIBATCH_SIZE = 16384
@@ -632,6 +635,9 @@ def validate_baseline_artifact(path: Path) -> dict[str, Any]:
             or cell.get("preceding_runtime") is not True
             or cell.get("runner_sha256") != current_runner_hash):
         raise QualificationError("throughput predecessor cell role is invalid")
+    validate_cell_cudagraph_record(
+        cell, expected=DEFAULT_CUDAGRAPH_WARMUP_EPOCHS
+    )
     identity = cell.get("identity")
     if not isinstance(identity, Mapping):
         raise QualificationError("throughput predecessor identity is missing")
@@ -882,6 +888,47 @@ def validate_throughput_minibatch(
     return minibatch_size
 
 
+def validate_cell_cudagraphs(kind: str, cudagraphs: int) -> int:
+    if cudagraphs == -1:
+        if kind == "rollout":
+            return cudagraphs
+        raise QualificationError(
+            "cudagraphs=-1 is reserved for the explicit graph-off rollout cell"
+        )
+    if cudagraphs != DEFAULT_CUDAGRAPH_WARMUP_EPOCHS:
+        raise QualificationError(
+            "graph-enabled qualification cells require the exact-action "
+            f"canary warmup boundary {DEFAULT_CUDAGRAPH_WARMUP_EPOCHS}"
+        )
+    return cudagraphs
+
+
+def validate_cell_cudagraph_record(
+    record: Mapping[str, Any], *, expected: int
+) -> dict[str, Any]:
+    config = record.get("config")
+    if not isinstance(config, Mapping):
+        raise QualificationError("qualification cell config is missing")
+    config = dict(config)
+    observed = config.get("cudagraphs")
+    if (
+        not isinstance(observed, int)
+        or isinstance(observed, bool)
+        or observed != expected
+    ):
+        raise QualificationError(
+            "qualification cell cudagraph warmup differs from its frozen role"
+        )
+    if record.get("config_sha256") != canonical_hash(config):
+        raise QualificationError("qualification cell config digest mismatch")
+    throughput = record.get("throughput")
+    if isinstance(throughput, Mapping) and throughput.get(
+        "config_sha256"
+    ) != record.get("config_sha256"):
+        raise QualificationError("qualification throughput config digest mismatch")
+    return config
+
+
 def _load_backend(puffer_root: Path, *, require_qualification: bool = True):
     root = Path(puffer_root).resolve()
     sys.path.insert(0, str(root))
@@ -1049,6 +1096,7 @@ def _load_frozen_from_primary(_C, pufferl, directory: Path, banks: int) -> None:
 
 
 def _cell_config(kind: str, cudagraphs: int, args: argparse.Namespace) -> dict[str, Any]:
+    cudagraphs = validate_cell_cudagraphs(kind, cudagraphs)
     if kind in {"construction", "rollout", "terminal_auto", "terminal_control"}:
         return qualification_args(
             cudagraphs=cudagraphs,
@@ -1066,7 +1114,7 @@ def _cell_config(kind: str, cudagraphs: int, args: argparse.Namespace) -> dict[s
         )
     if kind == "ratio":
         return qualification_args(
-            cudagraphs=0,
+            cudagraphs=cudagraphs,
             seed=args.seed,
             total_agents=8,
             num_buffers=2,
@@ -1081,7 +1129,7 @@ def _cell_config(kind: str, cudagraphs: int, args: argparse.Namespace) -> dict[s
         )
     if kind == "throughput":
         return qualification_args(
-            cudagraphs=0,
+            cudagraphs=cudagraphs,
             seed=args.seed,
             total_agents=args.throughput_agents,
             num_buffers=args.throughput_buffers,
@@ -1353,6 +1401,7 @@ def _run_worker(
     record = _read_json(json_path)
     if record.get("accepted") is not True or record.get("qualification_only") is not True:
         raise QualificationError(f"qualification cell {name} is not accepted/isolated")
+    validate_cell_cudagraph_record(record, expected=cudagraphs)
     if kind in TRANSITION_CELL_KINDS:
         validate_transition_cell_integrity(record, kind)
     record["record_path"] = str(json_path)
@@ -1695,7 +1744,8 @@ def run_qualification(args: argparse.Namespace) -> int:
     records: list[dict[str, Any]] = []
 
     construction = _run_worker(
-        args, kind="construction", name="construction", cudagraphs=0, output=output
+        args, kind="construction", name="construction",
+        cudagraphs=DEFAULT_CUDAGRAPH_WARMUP_EPOCHS, output=output
     )
     records.append(construction)
     construction_identity = construction.get("identity")
@@ -1713,7 +1763,8 @@ def run_qualification(args: argparse.Namespace) -> int:
         args, kind="rollout", name="graph-off", cudagraphs=-1, output=output
     )
     graph_on = _run_worker(
-        args, kind="rollout", name="graph-on", cudagraphs=0, output=output
+        args, kind="rollout", name="graph-on",
+        cudagraphs=DEFAULT_CUDAGRAPH_WARMUP_EPOCHS, output=output
     )
     records.extend((graph_off, graph_on))
     identity = _require_same_identity(records)
@@ -1743,13 +1794,14 @@ def run_qualification(args: argparse.Namespace) -> int:
     }
 
     terminal_auto = _run_worker(
-        args, kind="terminal_auto", name="terminal-auto", cudagraphs=0, output=output
+        args, kind="terminal_auto", name="terminal-auto",
+        cudagraphs=DEFAULT_CUDAGRAPH_WARMUP_EPOCHS, output=output
     )
     terminal_control = _run_worker(
         args,
         kind="terminal_control",
         name="terminal-control",
-        cudagraphs=0,
+        cudagraphs=DEFAULT_CUDAGRAPH_WARMUP_EPOCHS,
         output=output,
     )
     records.extend((terminal_auto, terminal_control))
@@ -1778,7 +1830,8 @@ def run_qualification(args: argparse.Namespace) -> int:
     }
 
     ratio = _run_worker(
-        args, kind="ratio", name="ratio", cudagraphs=0, output=output
+        args, kind="ratio", name="ratio",
+        cudagraphs=DEFAULT_CUDAGRAPH_WARMUP_EPOCHS, output=output
     )
     records.append(ratio)
     _require_same_identity(records)
@@ -1823,7 +1876,8 @@ def run_qualification(args: argparse.Namespace) -> int:
     }
 
     throughput = _run_worker(
-        args, kind="throughput", name="throughput", cudagraphs=0, output=output
+        args, kind="throughput", name="throughput",
+        cudagraphs=DEFAULT_CUDAGRAPH_WARMUP_EPOCHS, output=output
     )
     records.append(throughput)
     _require_same_identity(records)
@@ -1965,6 +2019,12 @@ def validate_qualification(path: Path) -> dict[str, Any]:
         if (record.get("kind") != entry.get("kind")
                 or expected_kinds.get(name) != record.get("kind")):
             raise QualificationError(f"qualification cell kind drifted: {name}")
+        expected_cudagraphs = (
+            -1 if name == "graph-off" else DEFAULT_CUDAGRAPH_WARMUP_EPOCHS
+        )
+        validate_cell_cudagraph_record(
+            record, expected=expected_cudagraphs
+        )
         if record["kind"] in TRANSITION_CELL_KINDS:
             validate_transition_cell_integrity(record, record["kind"])
         artifact = entry.get("artifact")
@@ -2205,7 +2265,8 @@ def capture_throughput(args: argparse.Namespace) -> int:
     )
     output.mkdir(parents=True, exist_ok=True)
     record = _run_worker(
-        args, kind="throughput", name="throughput-baseline", cudagraphs=0,
+        args, kind="throughput", name="throughput-baseline",
+        cudagraphs=DEFAULT_CUDAGRAPH_WARMUP_EPOCHS,
         output=output, preceding_runtime=True,
     )
     expected_predecessor = {
@@ -2342,6 +2403,7 @@ def main(argv: list[str] | None = None) -> int:
         args.throughput_minibatch_size,
     )
     if args.command == "cell":
+        validate_cell_cudagraphs(args.kind, args.cudagraphs)
         return run_cell(args)
     if args.command == "capture-throughput":
         return capture_throughput(args)

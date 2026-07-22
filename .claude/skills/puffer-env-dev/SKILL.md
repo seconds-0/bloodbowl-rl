@@ -400,7 +400,11 @@ off because PPO does not retain each segment's initial recurrent state.
 Evaluation starts from fresh games, preserves state across nonterminal rollout
 calls, and clears a terminal row before forwarding the next game's observation.
 Keep the captured device-gated reset launch proportional to active rows, not
-layers × rows × hidden size. Source tests are not CUDA acceptance: before a run,
+layers × rows × hidden size. Graph-enabled qualification cells must use
+`cudagraphs=10`, matching the frozen Puffer/canary warmup boundary. Reject `0`
+because it captures the first execution before CUDA lazy initialization, and
+reserve `-1` for the explicit graph-off parity cell. Source tests are not CUDA
+acceptance: before a run,
 measure graph-on/off deterministic parity and throughput, primary/frozen
 post-terminal parity, construction checksums, and zero-update ratios on the
 target GPU.

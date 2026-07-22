@@ -146,7 +146,10 @@ checkpoints, and remember that stopped instances can be reclaimed.
   frozen state after CUDA graph warmup, graph-on/off deterministic active-row output
   parity, fresh train→eval game boundaries, primary/frozen post-terminal parity,
   Torch/native parity, finite exact zero-update ratios, and target-GPU
-  throughput without material regression. Training requires
+  throughput without material regression. Every graph-enabled qualification
+  cell uses `cudagraphs=10`, matching the frozen Puffer/canary warmup boundary;
+  `0` is rejected because it captures the first execution, and `-1` is reserved
+  for the explicit graph-off parity cell. Training requires
   `reset_state=True`; direct training while evaluation mode is active fails.
   Do not infer these guarantees from patch markers or CPU tests. Use the
   post-boundary fp32 `tools/qualify_recurrent_cuda.py` gate with a predeclared
