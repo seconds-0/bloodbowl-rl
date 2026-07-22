@@ -7251,3 +7251,66 @@ Next steps:
   action remains read-only monitoring until full queue completion; do not
   capture the predecessor control, rebuild Puffer, deploy merged main, or run
   qualification early.
+
+## 2026-07-21 17:11 PDT — new boundary goal active; seed 44 trend preserved
+
+Status:
+
+- The recovery queue, BBTV follower/server, web service, and tunnel remain
+  active with zero restarts and unchanged PIDs. The public BBTV page returns
+  HTTP 200. Nothing on the RTX 2070 was modified, rebuilt, restarted, or
+  deployed.
+- Seed 44 reached 4,081,582,080 of 12B requested steps at epoch 31,139. The
+  latest 91-game panel reported 1.835 touchdowns/game and every reward/error
+  integrity counter at exactly zero. Its `illegal_frac=0.21652` remains an
+  immutable pre-repair marginal-action diagnostic, not an acceptable repaired
+  runtime value.
+- GPU state was 82 C, 73% utilization, 5,554/8,192 MiB, and about 136 W, with
+  the seed-44 trainer still the sole GPU compute process. Root storage remains
+  12% used with 848 GiB free and about 9.2 GiB RAM available.
+- BBTV selected seed 44's atomically complete 3,945,267,200-step checkpoint
+  against the frozen baseline at 17:01 PDT and continues to advance only at
+  safe matchup boundaries.
+
+Completed this hour:
+
+- Closed the original six-day-autonomy goal after its queue, guardrails,
+  monitoring, journaling, provenance, and BBTV plan had been implemented and
+  deployed. Started a fresh active goal covering the remaining immutable
+  boundary, predecessor capture, isolated fp32 deployment, CUDA qualification,
+  and conditional 50M canary. The goal explicitly keeps qualification/canary
+  artifacts ineligible as ancestry or reward evidence.
+- Ran the checked-in learning-curve analyzer read-only over the complete current
+  seed-44 log. It validated 31,081 independent schema-2 train panels and
+  2,652,486 completed games through 4,074,504,192 steps; all accumulated
+  integrity totals are exactly zero. The source log was 389,420,613 bytes with
+  SHA-256 `b8c3a4942f9b3a77b9ac3f6f359f7dfcd8e4f6f7cd1868a8e571ee9a0f0b0f8b`
+  at analysis time.
+- First-versus-latest 500M-step episode-weighted diagnostics show touchdowns
+  1.128 -> 1.891, possession 0.317 -> 0.367, carrier-target block share
+  0.087 -> 0.147, and two-die-red block share 0.0492 -> 0.0403. These are useful
+  training trends but remain in-pool/pre-repair descriptive evidence; they do
+  not select a checkpoint or validate the repaired harness.
+
+Current blockers / risks:
+
+- About 7.92B requested training steps plus final evaluation remain. The exact
+  predecessor runtime must stay installed and untouched until atomic queue
+  completion and throughput capture.
+- Historical `illegal_frac` remains around 0.216 because this is the frozen
+  marginal-action baseline. The repaired exact-action canary has a literal
+  zero budget.
+- Merged source success is not CUDA-runtime evidence. Do not build or deploy
+  `a52fc6e2` on the occupied target before the preserved predecessor control is
+  captured.
+
+Next steps:
+
+1. Continue hourly read-only service, integrity, GPU, storage, memory, progress,
+   and BBTV monitoring through atomic completion.
+2. At completion, preserve and validate the final queue evidence before any
+   source/runtime mutation, then capture the exact predeclared predecessor
+   throughput artifact.
+3. Only afterward build merged main in a fresh isolated fp32 Puffer tree, run
+   and independently validate every CUDA qualification cell, and admit the
+   fresh 50M canary only on a complete accepted verdict.
