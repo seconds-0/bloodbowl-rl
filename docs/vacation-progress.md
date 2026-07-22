@@ -8208,6 +8208,61 @@ the stopped queue/service/process predicates, run the frozen screen validator
 and independent three-log auditor, and preserve and verify the exact evidence
 off-box before creating any qualification root.
 
+## 2026-07-22 11:55 PDT — v3 unit installed disabled; pre-start gate still closed
+
+Accepted authority and probe progress:
+
+- The exact v3 authorization was generated and independently validated: 55
+  artifact records over 48 unique paths all match, authorization SHA-256 is
+  `e46efcd...`, the canonical unit SHA-256 is `3d2714da...`, the accepted v2
+  manifest remains `94621ddb...`, and the candidate qualification revalidated
+  with the GPU empty. Independent review found no P0-P3.
+- All three corrected systemd probes completed under the exact-zero boundary.
+  The empty-output unit succeeded; the fixed nonempty and command-failure units
+  failed closed with `ExecMainStatus=1`; every probe had `NRestarts=0`; cleanup
+  returned all three to `not-found`; and the real unit remained absent. The
+  complete 38-file payload plus inventories is preserved locally and remotely.
+- The real-unit installer then went through four test/review revisions before
+  execution. The accepted SHA-256 is `0b5d23b...`; it binds the executing bytes,
+  accepted probe evidence, effective systemd fragment and activation edges,
+  frozen output modes/sizes/hashes under lock, GPU emptiness, and BBTV health.
+  It publishes without replacement and rolls back only its own inode on any
+  rejected path. Final independent review found no P0-P3.
+
+Installed state and honest capture exception:
+
+- The canonical v3 unit is now installed byte-identically at mode `0644`, but
+  remains exactly disabled, inactive/dead, `Restart=no`, `NRestarts=0`, with no
+  PID, invocation ID, state-change timestamp, execution timestamp, alias,
+  drop-in, enablement, reverse dependency, or trigger. It has never been
+  started. GPU compute remains empty; `bbstream`, `bbweb`, and `bbtv-tunnel`
+  remain active/running with zero restarts.
+- The installer printed its exact accepted verdict and empty stderr, but the
+  local wrapper then used zsh's reserved read-only variable `status` and failed
+  before recording the already-returned SSH exit code. That outer capture is
+  explicitly rejected and frozen; no exit status was inferred or fabricated,
+  and the installer will not be rerun. The accepted stdout SHA-256 is
+  `dee0c223...`; the rejection record is `8059fa59...`.
+- A fresh installed-state ledger now freezes 57 exact files; its mode/size and
+  digest inventories are `a55ebc5f...` and `fd58ec36...`. A separate read-only
+  Gate 5 validator is under two independent reviews to replace the lost outer
+  status with a full independent pre-start proof. Its first review found only
+  pre-execution hardening work—hold the plan lock through flushed verdict,
+  bind directory descriptors, and reject a pending systemd job. No training
+  output, checkpoint, log, run directory, or completion artifact exists.
+
+Handoff and next steps:
+
+- PR #59 remains the journal branch. Full hosted tests are green. Two
+  immutable-history attempts reached the same containerized commit verifier
+  and timed out around 60 seconds; neither reported a semantic identity
+  mismatch. This journal append will receive fresh checks without rewriting
+  prior evidence.
+- Finish both Gate 5 reviews, correct every P0-P3, run the final validator twice
+  from its externally pinned SHA-256, and preserve both results off-box. Start
+  the disabled one-shot unit exactly once only if both validations accept with
+  the output lock released afterward, GPU still empty, and BBTV still healthy.
+
 ## 2026-07-22 10:55 PDT — corrected v3 canary authority through Gate 2
 
 Authority correction and merge:
