@@ -8208,6 +8208,72 @@ the stopped queue/service/process predicates, run the frozen screen validator
 and independent three-log auditor, and preserve and verify the exact evidence
 off-box before creating any qualification root.
 
+## 2026-07-22 09:47 PDT — candidate CUDA qualification accepted; v2 canary gate in review
+
+Accepted candidate qualification:
+
+- Fresh isolated candidate `a52fc6e2f4ece5a7ff16bb4791e3aca4dd72f2e3`
+  completed the unchanged `cf13fe5` recurrent-CUDA qualification under its
+  source-local fp32 Puffer runtime. The one-shot v4 unit exited successfully
+  with zero restarts and was retired only after its terminal properties and
+  journal were preserved.
+- Exact graph-off/on rollout tensors were byte-identical; automatic and manual
+  post-terminal recurrent states were byte-identical; all primary learner rows
+  were covered; no frozen row was selected; policy weights were byte-identical
+  across the zero-update ratio proof; and maximum PPO ratio deviation was
+  `2.6226043701171875e-06`, below the frozen `2e-05` tolerance.
+- Every transition-executing cell carried the exact ordered 16-key integrity
+  registry at literal zero. Candidate throughput was approximately 186,250
+  steps/s versus 190,801 for the untouched predecessor, a 2.385% regression
+  inside the exact 10% budget.
+- `QUALIFICATION.json` states `accepted=true` and `qualification_only=true`;
+  SHA-256 is `33966e91...`. Two fresh exact-validator invocations plus a
+  separate NumPy/standard-library audit accepted. An independent artifact and
+  backend review recomputed the identities, cell/NPZ hashes, tensor relations,
+  ratios, configuration equality, throughput gate, and every integrity value
+  with no P0-P3 finding.
+- The sealed candidate evidence is preserved off-box at
+  `/Users/alexanderhuth/BloodBowlRLArtifacts/qualification-v4-candidate-20260722`.
+  Its 97-entry mode/size and 98-entry hash inventories match; preservation-
+  manifest SHA-256 is `b173abad...`. It remains permanently ineligible as
+  checkpoint ancestry, reward evidence, or promotion evidence.
+
+Rejected v1 plan-only identity and corrected authority:
+
+- The first exact canary plan-only invocation exited zero without starting a
+  trainer, creating a log/checkpoint/run directory, or using the GPU, but the
+  frozen launcher correctly retained a zero-byte `.screen.lock` beside
+  `SCREEN_MANIFEST.json`. Because merged Gate 2 had authorized only the
+  manifest, v1 was rejected before unit installation or launch and moved to
+  immutable rejection-only storage. The released lock, manifest, command,
+  status, stdout/stderr, inventories, and rejection record are hash-bound.
+- A corrected fresh-v2 authority now requires exactly those two regular files,
+  a non-creating read-only-FD lock proof scoped to a subshell, byte-identical
+  pre/post inventories, full nested-contract equality, manifest byte
+  invariance, and a repeat of the entire file/lock gate immediately before the
+  one allowed start. It also binds and recomputes all v1 rejection artifacts,
+  requires the old unit and original path absent, and proves behavior directly
+  from the immutable candidate launcher blob rather than the different merged
+  fail-closed control launcher.
+- PR #66 exact head `6db8107218b32d03330d2fd9a55519f5d1dc5d5b`
+  contains only the corrected checklist, operator guidance, CI enforcement,
+  and regression tests. Thirty-four recurrent-CUDA contract tests, 19 stopped
+  analyzer tests, 442 engine tests, and all reward/state-bank/observation/
+  contact-bot/BBP v4 suites pass. Fable and an independent repeated read-only
+  review found no remaining P0-P3 after the final candidate-blob proofs. Hosted
+  CI and immutable-history are pending; no canary launch is authorized until
+  that exact head merges and the merged authority is frozen.
+
+Current host state and next step:
+
+- BBTV follower, web, and tunnel are active/running with zero restarts;
+  <https://bbtv.seconds0.com/> returned HTTP 200 in 0.365 seconds. GPU compute
+  is empty. No candidate, recovery, qualification, or v1 trainer remains.
+- Wait for PR #66's exact-head checks, merge only if green, freeze and
+  independently verify the merged v2 authority, then execute its fresh
+  plan-only, authorization, synthetic-unit, and prestart gates. Launch the
+  disposable 50M seed-42 canary only if every check accepts at literal zero.
+
 ## 2026-07-22 08:57 PDT — predecessor CUDA control accepted and preserved
 
 Authority and preflight:
