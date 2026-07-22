@@ -9,10 +9,12 @@ qualification.
 
 - Candidate source: `a52fc6e2f4ece5a7ff16bb4791e3aca4dd72f2e3`
 - Candidate Git tree: `57731b2af496a4e382d263bbfe123bc219f6bd51`
-- Control runner: `286fec05d8793e9ee06228390d1fc972e81d8624`
-- Runner Git tree: `e0884815b2a539ce6bc26df4857ac6944fdf5f3d`
+- Control runner: `2b301115cd6342444f0d195cab6798e187599cd9`
+- Runner Git tree: `70c735537ad44fa1ebd4eca6ebbf3929cdf90834`
 - Runner file SHA-256:
   `57725ba7e9f8eade910bd201a3240749c03fb0af04f0b07db04e6acaa76da46f`
+- Stopped analyzer SHA-256:
+  `37665a14f05aaba7df15abe1d47ae9ad4d56774ae7c99d04c69e0e9da5996323`
 - PufferLib base: `9836f0d2e78889c1aaf189c04d161b6fc61a9386`
 - Candidate root:
   `/home/rache/bloodbowl-rl-qualification-candidate-a52fc6e`
@@ -22,6 +24,8 @@ qualification.
   `/home/rache/bloodbowl-rl-qualification-artifacts-20260722/candidate-qualification`
 - Canary output:
   `/home/rache/bloodbowl-rl-qualification-artifacts-20260722/exact-action-canary-50m-s42-v1`
+- Stopped-validation output:
+  `/home/rache/bloodbowl-rl-qualification-artifacts-20260722/exact-action-canary-50m-s42-v1-validation`
 - Unit name: `bloodbowl-exact-action-canary-50m-s42-v1.service`
 - Requested agent steps: exactly `50000000`
 - Rollout quantum: exactly `131072` (`2048 * 64`)
@@ -47,6 +51,11 @@ Candidate launch-source SHA-256 identities are:
 | `tools/game_stats.py` | `fb8c1f4a2de137b8102aaff5871fdfa32dafc77ebdf3c506e7aed3ceb001b957` |
 | `puffer/config/rewards/r0_full.json` | `eb9ddfe506c6222df4439150b3f4009577aa117a1afa1e792ed6ee380372b88b` |
 
+The independent stopped analyzer is executed only from the exact control
+runner, not from candidate `a52fc6e`. Re-hash
+`tools/analyze_reward_screen.py` in that control root and require exact SHA-256
+`37665a14f05aaba7df15abe1d47ae9ad4d56774ae7c99d04c69e0e9da5996323`.
+
 Re-hash all six before plan-only materialization and again immediately before
 unit installation. Any mismatch rejects the canary.
 
@@ -62,7 +71,7 @@ materialization:
 3. Candidate `QUALIFICATION.json` exists in the fixed qualification root,
    states `qualification_only=true` and `accepted=true`, and is independently
    accepted twice from fresh candidate-interpreter processes using exact runner
-   commit `286fec0`.
+   commit `2b30111`.
 4. The qualification directory is closed and its exact relative file set,
    modes, sizes, and SHA-256 inventory are fixed.
 5. Candidate source, Puffer source, venv package inventory, installed Blood Bowl
@@ -121,6 +130,8 @@ bind, by absolute path plus SHA-256 where applicable:
 - both independent validation outputs;
 - runner, predecessor, candidate, Puffer, Python, package, module, backend,
   environment, patch, CUDA-library, driver, compiler, CPU, and GPU identities;
+- exact stopped-analyzer path/hash and the separate new/empty stopped-validation
+  output directory;
 - canary `SCREEN_MANIFEST.json` and output path;
 - exact unit bytes and unit SHA-256;
 - exact canary command and environment;
@@ -192,8 +203,31 @@ reuse partial checkpoints.
 
 After the unit exits, require inactive `Result=success`, `ExecMainStatus=0`,
 `NRestarts=0`, no compute PID, and exact source/unit/authorization identity.
-Require the screen's own complete validation plus a fresh independent stopped
-validation to establish:
+Require the screen's own complete validation plus all three fresh independent
+stopped checks below. Run them from exact control commit `2b30111` with the
+candidate interpreter, writing only under the separately new/empty
+stopped-validation output directory:
+
+1. Run `live_integrity_guard.py --complete-log` on the sole canary trainer log
+   with new external state/failure paths. This independently rescans every
+   complete schema-2 panel and requires the full frozen hard registry at
+   literal zero without applying a stopped-log liveness deadline.
+2. Run `analyze_reward_screen.py <canary-output> --json
+   --expected-screen-sha <Gate-2-manifest-sha>` and atomically preserve stdout,
+   stderr, and exit status. Require analysis
+   `exact_action_canary_qualification`, exact one-arm seed-42 schedule, the
+   fixed 2,048 x 64 rollout contract, final step 49,938,432, checkpoint bytes
+   16,066,560, policy shape 512 x 3 x 1, fresh null warm/pool/banks, exact
+   fp32 obs-v5/exact-joint provenance, an exactly empty failure list, both
+   train/eval game floors, every hard field at zero, lineage digest binding,
+   and atomic completion.
+3. Independently validate the final checkpoint and adjacent lineage with
+   `checkpoint_lineage.py validate --allow-qualification` against an atomic
+   expected-identity JSON derived from the already authorized manifest. Require
+   `qualification_only=true`, `eligible=false`, fresh initialization, and empty
+   warm/pool ancestry.
+
+Together these stopped checks must establish:
 
 - exactly one accepted seed-42 `both` result;
 - requested steps exactly 50M and executed/final steps exactly 49,938,432;

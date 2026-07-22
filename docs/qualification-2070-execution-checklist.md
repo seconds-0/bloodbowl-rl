@@ -9,7 +9,7 @@ qualification/canary output as training ancestry.
 
 | Role | Exact identity |
 |---|---|
-| Control runner | `286fec05d8793e9ee06228390d1fc972e81d8624` |
+| Control runner | `2b301115cd6342444f0d195cab6798e187599cd9` |
 | Predecessor | `afc8008933548438ca93c41341f5f08fdd294386` |
 | Candidate | `a52fc6e2f4ece5a7ff16bb4791e3aca4dd72f2e3` |
 | PufferLib base | `9836f0d2e78889c1aaf189c04d161b6fc61a9386` |
@@ -19,7 +19,7 @@ qualification/canary output as training ancestry.
 | Observation/action ABI | `obs-v5` / `exact-joint-v1` |
 
 The corresponding outer Git tree identities are runner
-`e0884815b2a539ce6bc26df4857ac6944fdf5f3d`, predecessor
+`70c735537ad44fa1ebd4eca6ebbf3929cdf90834`, predecessor
 `f89318a58c9038a888419f9a0720478c1cf1a325`, and candidate
 `57731b2af496a4e382d263bbfe123bc219f6bd51`. The frozen control-runner
 `tools/qualify_recurrent_cuda.py` SHA-256 is
