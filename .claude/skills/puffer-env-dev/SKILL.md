@@ -417,7 +417,9 @@ The runner uses fresh subprocesses and a bounded raw snapshot; it rejects
 an observed candidate that differs from its predeclared clean source commit or
 candidate module/backend/environment hashes,
 missing banks/buffers, incomplete sampled ratio-row coverage, changed weights,
-non-finite or nonzero hard-integrity values, any selected frozen row, and an
+non-finite or nonzero values across the 16-key control hard-integrity registry
+in every transition-executing cell (the construction-only cell emits no episode
+telemetry), any selected frozen row, and an
 absent, loosely shaped, unhashed, or identity-mismatched
 same-host predecessor throughput report. The predecessor module/backend/
 environment hashes must be declared both when captured and when consumed. Its
@@ -430,6 +432,16 @@ control-runner checkout must record and revalidate both full commits,
 source-local Puffer paths, installer checks, and runtime hashes. The occupied
 recovery runtime is marginal-action historical evidence, not a predecessor;
 never modify or reuse the recovery Puffer tree.
+The exact `a52fc6e2` canary manifest keeps its original 11-key live fail-fast
+registry. Control qualification and independent stopped validation additionally
+gate signed clamp delta, clipped samples, terminal/non-terminal clipped samples,
+and non-finite samples per episode. These five should be redundant with the
+primary ratios, but any nonzero or disagreement invalidates evidence; do not
+dirty the candidate checkout to widen its manifest. The merged control
+`run_reward_screen.sh` therefore rejects the `exact-action-canary` profile
+before output creation. Invoke that profile only from the exact isolated
+`a52fc6e2` candidate checkout; analyze the stopped artifact from the clean
+merged control checkout.
 The explicit recurrent-state clear is
 only the paired post-terminal control and must never be used to alter ordinary
 training/evaluation behavior. Qualification outputs and checkpoints are never

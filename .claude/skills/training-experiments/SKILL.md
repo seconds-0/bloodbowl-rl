@@ -164,7 +164,9 @@ checkpoints, and remember that stopped instances can be reclaimed.
   predecessor; never modify or reuse the recovery Puffer tree. The gate must cover every
   learner row through the reported sampled indices, prove byte-identical
   weights at learning rate zero,
-  and accept all mandatory gates before the 50M canary. The ratio gate must use
+  bind all 16 hard-integrity counters at literal zero in every
+  transition-executing cell (construction emits no episode telemetry), and
+  accept all mandatory gates before the 50M canary. The ratio gate must use
   a real frozen bank and select zero frozen rows, including at `prio_alpha=0`.
   BF16 is not accepted because stored behavior-log-probability quantization can
   move an unchanged recomputation ratio beyond a strict near-unity budget.
@@ -172,6 +174,9 @@ checkpoints, and remember that stopped instances can be reclaimed.
   with module/backend/environment hashes declared both when captured and when
   consumed, not a loose metrics dictionary or an unplanned old binary. Missing baseline,
   coverage, bank/buffer, tensor, or hard-integrity evidence fails closed.
+  The clean merged control launcher must reject `exact-action-canary` before
+  creating output. Launch only through the exact immutable `a52fc6e2` checkout,
+  then independently analyze the stopped artifact from the merged control.
 
 ---
 
@@ -377,6 +382,14 @@ See §4. Check the invariants before every reward-config launch. No exceptions.
   enforce the same exact-zero registry without falsely aging a stopped log into
   a liveness failure. Terminate the trainer before publishing failure status so
   status I/O cannot delay containment.
+- Exact candidate `a52fc6e2` already freezes an 11-key live registry. Preserve
+  that clean source identity, but require the merged control qualification and
+  independent stopped canary validation to enforce five additional emitted
+  redundancy counters at exact zero: signed clamp delta, clipped samples,
+  terminal and non-terminal clipped samples, and non-finite samples per episode.
+  Primary zero ratios should imply them; a disagreement is still invalid
+  evidence. Freeze both registries rather than changing or relabeling the
+  candidate.
 
 ### D174/D176 — Current BC and opponent verdicts
 

@@ -399,12 +399,15 @@ class ExperimentContractTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertNotIn("WARM is required", result.stderr)
             self.assertNotIn("POOL is required", result.stderr)
-            self.assertTrue(
-                "vendored Python missing" in result.stderr or
-                "flock is required" in result.stderr,
+            self.assertIn(
+                "exact-action-canary launcher is frozen at candidate",
                 result.stderr,
             )
-            self.assertTrue(out.exists())
+            self.assertIn(
+                "a52fc6e2f4ece5a7ff16bb4791e3aca4dd72f2e3",
+                result.stderr,
+            )
+            self.assertFalse(out.exists())
 
         screen = (ROOT / "tools/run_reward_screen.sh").read_text(
             encoding="utf-8")

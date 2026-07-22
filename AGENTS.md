@@ -102,6 +102,15 @@ For any causal comparison:
   repaired runtime must also pass the staged preflight and a disposable 50M-step
   canary before receiving a long causal budget; never use that canary as a warm
   start or accepted result.
+- The exact frozen `a52fc6e2` canary manifest retains its original 11-key live
+  fail-fast registry. The later merged control qualification and independent
+  stopped validation must additionally require exact zero for the five emitted
+  redundancy counters: signed clamp delta, clipped samples, terminal clipped
+  samples, non-terminal clipped samples, and non-finite samples per episode.
+  These should be implied by the primary ratios, but a disagreement is itself
+  invalid evidence. Do not dirty or relabel the exact candidate to widen its
+  manifest; freeze both registries and use the stricter 16-key control verdict
+  for qualification and final canary acceptance.
 - On an episode-ending step, preserve explicit objective reward (TD) and result
   utility, but do not let incidental action/board shaping co-stack with the
   terminal result. Keep deliberately episode-terminal terms separately visible
@@ -545,7 +554,9 @@ changes a reward, active queue, production default, or promotion verdict.
   first-post-terminal parity across primary and frozen banks, complete sampled
   learner-row coverage with finite near-unity zero-weight-update PPO ratios and
   literal zero selected frozen rows derived from the recorded bank layout,
-  byte-identical weights, zero hard-integrity counters, and throughput within
+  byte-identical weights, all 16 control hard-integrity counters at literal
+  zero in every transition-executing cell (graph-off/on, terminal auto/control,
+  ratio, and throughput), and throughput within
   the frozen same-host predecessor budget. The predecessor must be the exact
   isolated fp32 build of `afc8008933548438ca93c41341f5f08fdd294386`, with
   obs-v5/exact-joint-v1 and no qualification surface—not the occupied recovery
@@ -561,7 +572,10 @@ changes a reward, active queue, production default, or promotion verdict.
   JSON or an unplanned old binary is invalid.
   A missing predecessor throughput
   artifact is a failure, not an ungated pass. Qualification artifacts are
-  permanently ineligible as checkpoint ancestry.
+  permanently ineligible as checkpoint ancestry. The merged control checkout
+  must reject `exact-action-canary` launch before creating output: only the
+  immutable `a52fc6e2` checkout may launch the frozen 11-key-live-registry
+  canary, which the later control analyzer rechecks against all 16 counters.
 - BBP v4 is the first replay-pair lineage with exact conditional masks and
   canonical inactive-head sentinels (`arg=32`, `square=390`). Do not train a
   current BC/action experiment from v1-v3 pairs or mix those lineages merely

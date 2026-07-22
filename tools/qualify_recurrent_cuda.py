@@ -57,7 +57,12 @@ HARD_INTEGRITY_KEYS = (
     "reward_clip_frac",
     "reward_clip_frac_nonzero",
     "reward_clip_excess",
+    "reward_clip_signed_delta",
+    "reward_clipped_samples_per_episode",
+    "reward_clip_terminal_samples_per_episode",
+    "reward_clip_nonterminal_samples_per_episode",
     "reward_nonfinite_frac",
+    "reward_nonfinite_samples_per_episode",
     "reward_clip_episodes",
     "reward_nonfinite_episodes",
     "reward_component_mismatch_samples_per_episode",
@@ -65,6 +70,13 @@ HARD_INTEGRITY_KEYS = (
     "error_episodes",
     "demo_fallbacks",
 )
+TRANSITION_CELL_KINDS = frozenset({
+    "rollout",
+    "terminal_auto",
+    "terminal_control",
+    "ratio",
+    "throughput",
+})
 # Qualification is deliberately fp32-only. In BF16, the behavior log
 # probability is rounded before PPO recomputation, so a correct unchanged
 # policy can exceed a tolerance derived from one BF16 ULP around ratio one.
@@ -457,6 +469,48 @@ def validate_hard_integrity(env: Mapping[str, Any]) -> dict[str, float]:
             raise QualificationError(f"hard-integrity field is nonzero: {key}={value}")
         result[key] = value
     return result
+
+
+def bind_transition_integrity(
+    backend: Any,
+    pufferl: Any,
+    record: dict[str, Any],
+    *,
+    additional_rollouts: int = 0,
+) -> dict[str, float]:
+    """Finish a bounded telemetry interval and bind its exact-zero verdict."""
+    if (isinstance(additional_rollouts, bool)
+            or not isinstance(additional_rollouts, int)
+            or additional_rollouts < 0):
+        raise QualificationError("additional integrity rollouts are invalid")
+    for _ in range(additional_rollouts):
+        backend.rollouts(pufferl)
+    log = backend.log(pufferl)
+    if not isinstance(log, Mapping) or not isinstance(log.get("env"), Mapping):
+        raise QualificationError("transition integrity log/env telemetry is missing")
+    integrity = validate_hard_integrity(log["env"])
+    record["hard_integrity"] = integrity
+    record["hard_integrity_zero"] = True
+    return integrity
+
+
+def validate_transition_cell_integrity(
+    record: Mapping[str, Any], kind: str
+) -> dict[str, float]:
+    """Revalidate integrity evidence for one transition-executing cell."""
+    if kind not in TRANSITION_CELL_KINDS:
+        raise QualificationError(f"qualification cell {kind} does not execute transitions")
+    if record.get("kind") != kind:
+        raise QualificationError(f"qualification cell kind mismatch for {kind}")
+    payload = record.get("throughput") if kind == "throughput" else record
+    if not isinstance(payload, Mapping):
+        raise QualificationError(f"qualification cell integrity payload is missing: {kind}")
+    integrity = validate_hard_integrity(payload.get("hard_integrity", {}))
+    if payload.get("hard_integrity_zero") is not True:
+        raise QualificationError(
+            f"qualification cell hard-integrity verdict is not zero: {kind}"
+        )
+    return integrity
 
 
 def validate_throughput(
@@ -1063,6 +1117,15 @@ def run_cell(args: argparse.Namespace) -> int:
             _C.rollouts(pufferl)
             arrays = decode_snapshot(_C.qualification_snapshot(pufferl))
             result["state_before"] = state
+            # Preserve the first-rollout parity snapshot, then deterministically
+            # cross max_decisions so at least one complete episode contributes
+            # integrity telemetry to this isolated cell.
+            bind_transition_integrity(
+                _C,
+                pufferl,
+                result,
+                additional_rollouts=int(config["env"]["max_decisions"]),
+            )
         elif args.kind in {"terminal_auto", "terminal_control"}:
             _C.set_evaluation_mode(pufferl, True)
             _C.rollouts(pufferl)
@@ -1080,6 +1143,7 @@ def run_cell(args: argparse.Namespace) -> int:
                 terminals, np.ones_like(terminals)
             ):
                 raise QualificationError("terminal cell did not exercise every row")
+            bind_transition_integrity(_C, pufferl, result)
         elif args.kind == "ratio":
             layout_report = _C.qualification_recurrent_state(pufferl, False)
             primary_rows, frozen_rows = derive_row_partition(
@@ -1091,9 +1155,7 @@ def run_cell(args: argparse.Namespace) -> int:
                 "state_layout": layout_report,
             }
             _C.rollouts(pufferl)
-            log = _C.log(pufferl)
-            integrity = validate_hard_integrity(dict(log["env"]))
-            result["hard_integrity"] = integrity
+            bind_transition_integrity(_C, pufferl, result)
             before_path = output_json.parent / f"ratio-before-{os.getpid()}.bin"
             after_path = output_json.parent / f"ratio-after-{os.getpid()}.bin"
             try:
@@ -1259,6 +1321,8 @@ def _run_worker(
     record = _read_json(json_path)
     if record.get("accepted") is not True or record.get("qualification_only") is not True:
         raise QualificationError(f"qualification cell {name} is not accepted/isolated")
+    if kind in TRANSITION_CELL_KINDS:
+        validate_transition_cell_integrity(record, kind)
     record["record_path"] = str(json_path)
     record["record_sha256"] = sha256(json_path)
     return record
@@ -1640,6 +1704,7 @@ def run_qualification(args: argparse.Namespace) -> int:
     )
     gates["graph_parity"] = {
         "accepted": True,
+        "hard_integrity_zero": True,
         "atol": graph_atol,
         "snapshot_max_abs": graph_metrics,
         "decoder_max_abs": decoder_metrics,
@@ -1674,6 +1739,7 @@ def run_qualification(args: argparse.Namespace) -> int:
     )
     gates["terminal_reset"] = {
         "accepted": True,
+        "hard_integrity_zero": True,
         "atol": graph_atol,
         "snapshot_max_abs": terminal_metrics,
         "decoder_max_abs": terminal_decoder,
@@ -1719,6 +1785,7 @@ def run_qualification(args: argparse.Namespace) -> int:
     )
     gates["ratio"] = {
         "accepted": True,
+        "hard_integrity_zero": True,
         **ratio_metrics,
         "weights_sha256": ratio["weights_before_sha256"],
     }
@@ -1735,7 +1802,11 @@ def run_qualification(args: argparse.Namespace) -> int:
         baseline,
         max_regression_fraction=args.max_regression_fraction,
     )
-    gates["throughput"] = {"accepted": True, **throughput_metrics}
+    gates["throughput"] = {
+        "accepted": True,
+        "hard_integrity_zero": True,
+        **throughput_metrics,
+    }
 
     combined = combine_gate_verdicts(gates)
     final = {
@@ -1862,6 +1933,8 @@ def validate_qualification(path: Path) -> dict[str, Any]:
         if (record.get("kind") != entry.get("kind")
                 or expected_kinds.get(name) != record.get("kind")):
             raise QualificationError(f"qualification cell kind drifted: {name}")
+        if record["kind"] in TRANSITION_CELL_KINDS:
+            validate_transition_cell_integrity(record, record["kind"])
         artifact = entry.get("artifact")
         artifact_hash = entry.get("artifact_sha256")
         expects_artifact = name not in {"construction", "throughput"}
@@ -1936,6 +2009,7 @@ def validate_qualification(path: Path) -> dict[str, Any]:
     graph_atol = GRAPH_ATOL_BY_PRECISION[precision]
     gates["graph_parity"] = {
         "accepted": True,
+        "hard_integrity_zero": True,
         "atol": graph_atol,
         "snapshot_max_abs": compare_snapshots(
             graph_off, graph_on, atol=graph_atol
@@ -1970,6 +2044,7 @@ def validate_qualification(path: Path) -> dict[str, Any]:
     )
     gates["terminal_reset"] = {
         "accepted": True,
+        "hard_integrity_zero": True,
         "atol": graph_atol,
         "snapshot_max_abs": compare_snapshots(
             terminal_auto,
@@ -2017,6 +2092,7 @@ def validate_qualification(path: Path) -> dict[str, Any]:
         raise QualificationError("ratio row partition record differs from bank layout")
     gates["ratio"] = {
         "accepted": True,
+        "hard_integrity_zero": True,
         **validate_ratio_calls(
             ratio_calls,
             primary_rows=primary_rows,
@@ -2062,6 +2138,7 @@ def validate_qualification(path: Path) -> dict[str, Any]:
         raise QualificationError("throughput regression budget is not the frozen value")
     gates["throughput"] = {
         "accepted": True,
+        "hard_integrity_zero": True,
         **validate_throughput(
             candidate,
             baseline,

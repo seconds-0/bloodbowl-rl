@@ -143,7 +143,9 @@ the control-runner commit/hash and rehash the predecessor module binary on every
 consumption/validation, in addition to rerunning its source-local installer
 check. Also require matching
 host/GPU/config/precision and obs-v5/exact-joint/environment identity, zero
-hard-integrity counters, and no more than the predeclared material
+values across the complete 16-key control hard-integrity registry in every
+transition-executing cell. The construction cell performs no transition and is
+therefore the sole telemetry exemption. Require no more than the predeclared material
 regression fraction. Graph-disabled execution is already exercised by the
 mandatory correctness-parity cell; it is not a substitute for the
 preceding-backend throughput control.
@@ -160,6 +162,12 @@ write a nonzero failure record if possible and exit nonzero.
 Qualification checkpoints and mutated optimizer state are disposable. The
 qualification directory must contain a literal `qualification_only: true` and
 must be rejected by checkpoint-lineage admission.
+
+The merged control checkout must fail closed if asked to launch the
+`exact-action-canary`; it owns the widened 16-key registry, whereas the frozen
+candidate manifest owns the original 11-key live registry. Launch only from the
+exact isolated `a52fc6e2f4ece5a7ff16bb4791e3aca4dd72f2e3` checkout, then run
+stopped validation from the clean merged control checkout.
 
 ## Target execution order
 
