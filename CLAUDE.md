@@ -345,6 +345,37 @@ newer evidence wins.
   candidate receives the league patch. Use
   a fresh output directory and a newly merged clean control/candidate commit;
   never rebuild the predecessor to manufacture a modern compiled identity.
+  D225 also rejects both `predecessor-throughput-v2` and
+  `predecessor-throughput-v3` before a transition. The shared cause is a
+  process-local CUDA initialization order: importing `_C` before the first
+  CUDART call leaves that fresh WSL process at `cudaErrorNoDevice`, while a
+  successful CUDART probe before import preserves the device. Do not retry an
+  unchanged capture or treat `nvidia-smi`, Torch, or a different probe process
+  as proof for the worker. Every qualification worker and the actual Puffer
+  trainer must use `tools/puffer_cuda_runtime.py` in the same process: require
+  `cudaSuccess` and a positive count before `_C`, retain the exact resolved
+  CUDART handle, import `_C` or the CLI, then require the same count afterward.
+  Bind the wrapper, CUDART path/hash, both probe records, and
+  `CUDA_VISIBLE_DEVICES` into provenance; compare the same runtime hash/count
+  across predecessor and candidate throughput. A failure terminates the fresh
+  process without repair. Replace the candidate binding's ignored return plus
+  assertion with a Python-visible CUDA name/string error. Before a new timed
+  capture, merge/review the contract, create fresh control/candidate roots,
+  and pass one construction-only target check. The current screen launcher is
+  still frozen and unauthorized; only a later post-qualification change may
+  bind this wrapper into a new canary authority.
+  The construction gate is a required executable input to both predecessor
+  timing and full qualification, not a checklist-only dependency. Each command
+  revalidates and binds the same path/hash before output or worker dispatch.
+  The predecessor worker must receive the full frozen module/backend/runtime/
+  environment declaration and validate its own imported identity before
+  `create_pufferl`, warmup, or rollout; a comparison performed only after
+  timing is too late for the exact-zero compute budget.
+  For training, label the early launcher probe only as an expectation: the
+  wrapper explicitly imports `_C`, publishes the actual trainer process's full
+  pre/post evidence before optimization, requires it to match the expectation,
+  and atomically embeds it in the run manifest plus a hash-bound checkpoint
+  sidecar.
 - **`puffer/bloodbowl/` is the SOURCE OF TRUTH; `vendor/PufferLib/ocean/bloodbowl/` is an installed snapshot** written by `tools/install_puffer_env.sh` — the build compiles the snapshot, NOT your edit. The snapshot can lag (the Mac checkout's may still say 1612). Drift guard: `tools/install_puffer_env.sh --check` (exit 1 = re-install). Run it before any build on a training box.
 - After ANY env code change, ON THE TARGET: `bash tools/install_puffer_env.sh`,
   `bash tools/install_puffer_env.sh --check`, then

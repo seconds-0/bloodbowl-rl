@@ -621,6 +621,41 @@ changes a reward, active queue, production default, or promotion verdict.
   retrofit a newer compiled identity, and never
   reuse the rejected output path; use a fresh output and newly merged clean
   control/candidate commit.
+- The two D224-era predecessor captures named `predecessor-throughput-v2` and
+  `predecessor-throughput-v3` are rejected pre-transition and permanently
+  non-retryable. Both reached the same `_C` construction assertion because
+  importing the nvcc-built extension before the process's first CUDART call
+  left that fresh WSL process reporting `cudaErrorNoDevice`; an independent
+  process probe cannot repair or prove the worker's CUDA state. Do not attempt
+  a third capture under that initialization contract. All CUDA qualification
+  cells must call `tools/puffer_cuda_runtime.py` in the worker process before
+  importing `_C`, require `cudaSuccess` and a positive device count, import the
+  extension, then repeat the call through the retained CUDART handle and
+  require the unchanged positive count. Record the resolved CUDART path/hash,
+  both probes, and `CUDA_VISIBLE_DEVICES`; require predecessor and candidate
+  throughput to use the same library hash and device count. The real Puffer
+  trainer must enter through the same wrapper so qualification cannot pass an
+  initialization path the canary does not use. A failed probe exits that fresh
+  process; never repair it in place. The candidate native binding must report
+  the `cudaGetDeviceCount` status/name/string through a Python-visible error,
+  not ignore the return code or assert only on the count. Before recapturing
+  throughput, merge and review this contract, build fresh control/candidate
+  roots, and pass a construction-only target integration. The frozen screen
+  launcher remains unauthorized and byte-unchanged; a later post-qualification
+  authorization must bind the wrapper and runtime evidence into a new canary
+  manifest.
+  This construction dependency is machine-enforced: `capture-throughput` and
+  full `run` require the same `--construction-gate`, revalidate its current
+  module/backend/environment/CUDART identity before output or worker dispatch,
+  and bind its path/hash into baseline and qualification artifacts. The real
+  predecessor timing worker must also receive the complete frozen predecessor
+  declaration and validate its own imported module/backend/runtime/environment
+  identity before backend construction, warmup, or rollout; a parent-only
+  post-timing comparison violates the zero-error compute budget. The real
+  trainer wrapper explicitly imports `_C`, publishes its own complete pre/post
+  evidence before optimization, and atomically upgrades the pending run
+  manifest only when that evidence agrees with the separately labeled launcher
+  probe; copy the hash-bound evidence beside checkpoint provenance.
 - BBP v4 is the first replay-pair lineage with exact conditional masks and
   canonical inactive-head sentinels (`arg=32`, `square=390`). Do not train a
   current BC/action experiment from v1-v3 pairs or mix those lineages merely

@@ -447,6 +447,36 @@ digests from disk; separately predeclare the predecessor runtime digest. Keep
 its historical upstream/unpatched self-play file, and apply the league patch
 only to the current candidate. Do not rebuild the predecessor to change its compiled
 identity; use a fresh capture output and newly merged control/candidate root.
+The D224-era `predecessor-throughput-v2` and `predecessor-throughput-v3`
+captures are also rejected and non-retryable: loading `_C` before the process's
+first CUDART call left the WSL worker reporting `cudaErrorNoDevice`. An
+out-of-process `nvidia-smi`, Torch, or CUDART probe is not evidence for that
+worker. Use the source-bound `tools/puffer_cuda_runtime.py` boundary in every
+qualification worker and the real trainer process. It must load and retain the
+exact resolved `libcudart.so.12`, require `cudaSuccess` with a positive device
+count before `_C` import, repeat the call after import, require the unchanged
+positive count, and record the CUDART path/hash plus `CUDA_VISIBLE_DEVICES`.
+Predecessor and candidate throughput must agree on the runtime hash and count.
+Never repair a failed process or run a third unchanged capture. The candidate
+native binding must check the `cudaGetDeviceCount` return code and raise a
+Python-visible error containing CUDA name/string rather than assert only on the
+count. Before any new timed capture, merge/review this contract, use fresh clean
+control/candidate roots, and pass one construction-only target integration.
+The frozen screen launcher remains unchanged and unauthorized until a separate
+post-qualification change binds the wrapper into a new canary manifest.
+Treat the construction artifact as a required executable input: both
+`capture-throughput` and full `run` must receive the same
+`--construction-gate`, revalidate its current module/backend/environment/CUDART
+identity before output or worker dispatch, and bind its path/hash in their
+artifacts.
+For predecessor timing, pass the complete frozen predecessor identity into the
+same worker process. Validate it immediately after `_C` import and before
+`create_pufferl`, warmup, or rollout; a parent-only post-timing rejection is a
+wasted, non-retryable capture under the exact-zero budget.
+The trainer wrapper explicitly imports `_C` and atomically publishes
+its own complete pre/post evidence into the pending run manifest before
+optimization; the earlier launcher probe is only a separately labeled
+expectation and must match. Preserve the hash-bound evidence with checkpoints.
 The archived `a52fc6e2` canary manifest keeps its original 11-key live fail-fast
 registry. Control qualification and independent stopped validation additionally
 gate signed clamp delta, clipped samples, terminal/non-terminal clipped samples,

@@ -274,7 +274,29 @@ index 3b28c8c..ec09dbf 100644
  pybind11::dict train(pybind11::object pufferl_obj) {
      PuffeRL& pufferl = pufferl_obj.cast<PuffeRL&>();
      if (!pufferl.hypers.reset_state || pufferl.evaluation_mode) {
-@@ -548,6 +806,10 @@ PYBIND11_MODULE(_C, m) {
+@@ -470,9 +728,18 @@ std::unique_ptr<PuffeRL> create_pufferl(py::dict args) {
+     hypers.seed = get_config(args, "seed");
+ 
+-    int device_count = 0;
+-    cudaGetDeviceCount(&device_count);
+-    assert(device_count > 0 && "CUDA is not available");
++    int device_count = -1;
++    cudaError_t device_status = cudaGetDeviceCount(&device_count);
++    if (device_status != cudaSuccess || device_count <= 0) {
++        throw std::runtime_error(
++            std::string("CUDA device discovery failed: ") +
++            cudaGetErrorName(device_status) + ": " +
++            cudaGetErrorString(device_status));
++    }
++    if (hypers.gpu_id < 0 || hypers.gpu_id >= device_count) {
++        throw std::runtime_error(
++            "configured CUDA device index is outside the discovered range");
++    }
+ 
+     std::string env_name = args["env_name"].cast<std::string>();
+     Dict* vec_dict = py_dict_to_c_dict(vec_kwargs.cast<py::dict>());
+     Dict* env_dict = py_dict_to_c_dict(env_kwargs.cast<py::dict>());
+@@ -548,6 +815,10 @@ PYBIND11_MODULE(_C, m) {
      m.def("render", &render);
      m.def("rollouts", &rollouts);
      m.def("set_evaluation_mode", &set_evaluation_mode);

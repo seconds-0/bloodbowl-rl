@@ -1,12 +1,19 @@
 # Recurrent CUDA qualification
 
-Status: D224 schema-3 recapture correction, 2026-07-22. This plan does not
+Status: D225 same-process CUDA initialization correction, 2026-07-22. This plan does not
 authorize a trainer launch, checkpoint promotion, or reuse of any qualification
 output as training ancestry.
 
 The throughput predecessor remains exact commit
 `afc8008933548438ca93c41341f5f08fdd294386`. The control runner and candidate
-must use the same newly merged D224 commit in separate clean checkouts.
+must use the same newly merged D225 commit in separate clean checkouts.
+
+The D224-era `predecessor-throughput-v2` and
+`predecessor-throughput-v3` identities both rejected at native construction
+before a transition or timed rollout. They are closed evidence, not retry
+targets, and no third capture is permitted under their process initialization
+contract. A new timed identity is allowed only after D225 is merged and a
+construction-only target integration accepts in a fresh process.
 
 ## Purpose
 
@@ -59,7 +66,19 @@ registry omits `pufferlib/selfplay.py`, while the candidate's current registry
 includes it. Independently, `runtime_sources_sha256` always hashes the complete
 current runtime closure, including `selfplay.py`, for both roles. Both are
 mandatory and recomputed from disk on every validation. This authenticates the
-historical module without creating a runtime drift exemption.
+historical module without creating a runtime drift exemption. Each cell also
+uses `tools/puffer_cuda_runtime.py` as a mandatory same-process boundary before
+importing `pufferlib._C`. The boundary loads and retains the exact resolved
+`libcudart.so.12`, requires `cudaGetDeviceCount` to return `cudaSuccess` with
+a positive count before import, repeats the call after import, and requires the
+unchanged positive count. It records the resolved library path and SHA-256,
+both calls, and `CUDA_VISIBLE_DEVICES`. Validation requires this evidence in
+every cell; predecessor and candidate throughput must use the same library hash
+and device count. A probe in another process is not initialization evidence for
+the worker. The actual Puffer trainer enters through the same source-controlled
+wrapper before importing the ordinary CLI, so qualification and training
+cannot silently use different CUDA bring-up semantics. Failed processes
+terminate and are not repaired or reused.
 Before any behavioral cell, the operator must freeze and pass the clean control-
 runner commit; the clean candidate source root and commit; and the candidate
 module, backend-source, and environment SHA-256 values. The candidate Puffer
@@ -197,15 +216,32 @@ as historical experiment evidence, but never pass its module hash to
    `afc8008933548438ca93c41341f5f08fdd294386`. Revalidate that existing fp32
    build and use it read-only: it must report obs-v5,
    exact-joint-v1, matching compiled backend/environment hashes, the frozen
-   complete runtime digest, and no qualification surface. D224 does not
+   complete runtime digest, and no qualification surface. D225 does not
    authorize reinstalling or rebuilding it. If the existing tree is absent or
    drifted, stop for a separate reviewed reconstruction plan.
-2. In a separate clean candidate checkout at the same newly merged D224 commit
+2. In a separate clean candidate checkout at the same newly merged D225 commit
    as the clean control runner, install the full candidate patch stack into
    that checkout's own `vendor/PufferLib`, rebuild in fp32, and run that
    commit's installer drift check. The candidate Puffer tree is explicitly
    different from the predecessor tree and the control-runner tree.
-3. Use a third clean control-runner checkout at the merged commit containing
+3. Before any throughput timing, run one bounded construction-only integration
+   against the fresh candidate entry path on the target. It must record an
+   accepted pre-import probe, successful native import, accepted post-import
+   probe, exact CUDART path/hash, positive unchanged device count, and
+   successful backend construction. It executes no transition and creates no
+   throughput or scientific result. Close and hash the two-file output, then
+   run `validate-construction` twice from fresh processes in the unchanged
+   control checkout. Failure closes that identity; do not repair the process
+   or proceed to timing.
+   The executable contract also requires this exact gate path/hash in both
+   `capture-throughput` and full `run`; each revalidates it before output or
+   worker dispatch, and the baseline/final artifacts bind the same reference.
+   The predecessor capture also passes the complete frozen predecessor
+   declaration into the timed worker. That same process validates its imported
+   module, compiled backend, complete runtime sources, environment, ABI,
+   precision, role, and Puffer root before backend construction, warmup, or a
+   rollout; the parent repeats the identity check after the worker returns.
+4. Use a third clean control-runner checkout at the merged commit containing
    this lineage contract. Freeze its commit and runner hash. From that checkout,
    run `capture-throughput` against only the isolated predecessor tree, passing
    `--predecessor-source-root`, full
@@ -216,8 +252,8 @@ as historical experiment evidence, but never pass its module hash to
    The first schema-3 attempt failed before timing because its runner compared
    the historical compiled attribute to the expanded runtime registry. Preserve
    that rejected empty output and use an entirely new output directory after
-   the D224 correction; never retry or overwrite it.
-4. From the same unchanged control-runner checkout, run
+   the D225 correction; never retry or overwrite v2 or v3.
+5. From the same unchanged control-runner checkout, run
    `qualify_recurrent_cuda.py run` against only the candidate Puffer tree. Pass
    `--candidate-source-root`, full `--expected-source-commit`, the baseline,
    all candidate hashes, and the full predecessor source/module/backend/runtime
@@ -225,7 +261,7 @@ as historical experiment evidence, but never pass its module hash to
    the exact same root revalidated from the baseline artifact and is protected
    from success and failure output before baseline validation begins. Output
    must be a new external directory.
-5. Run `qualify_recurrent_cuda.py validate <QUALIFICATION.json>` from that same
+6. Run `qualify_recurrent_cuda.py validate <QUALIFICATION.json>` from that same
    unchanged control-runner checkout. The validator rechecks both source roots,
    both commits, both source-local Puffer paths, both installer checks, every
    runtime hash, and the runner commit/hash.
