@@ -9,7 +9,7 @@ qualification/canary output as training ancestry.
 
 | Role | Exact identity |
 |---|---|
-| Control runner | `9274f45480d5bfff7943d3ce80fbc15c96760665` |
+| Control runner | `ffa49adfd71644fe3ffa10106df1fcdc7421b0c7` |
 | Predecessor | `afc8008933548438ca93c41341f5f08fdd294386` |
 | Candidate | `a52fc6e2f4ece5a7ff16bb4791e3aca4dd72f2e3` |
 | PufferLib base | `9836f0d2e78889c1aaf189c04d161b6fc61a9386` |
@@ -19,11 +19,18 @@ qualification/canary output as training ancestry.
 | Observation/action ABI | `obs-v5` / `exact-joint-v1` |
 
 The corresponding outer Git tree identities are runner
-`30cf4d146be5e31ce450adec47e693a40c732b82`, predecessor
+`dd06117b77a4d15b5deb1770f86a465dc04338d0`, predecessor
 `f89318a58c9038a888419f9a0720478c1cf1a325`, and candidate
 `57731b2af496a4e382d263bbfe123bc219f6bd51`. The frozen control-runner
 `tools/qualify_recurrent_cuda.py` SHA-256 is
-`c1d9ad45884754f307e58272a8d43a399ab4320a3906972f001edfc75839b740`.
+`4b8519da01edcff7ee203e8114b3ef4aa8fb673df63cb9ce0b83e34baa6ba646`.
+
+The earlier control root at commit `9274f45480d5bfff7943d3ce80fbc15c96760665`
+is retained as immutable rejection evidence. Its first predecessor capture
+proved that the old runner dereferenced the explicitly supplied venv Python
+symlink and therefore launched the managed base interpreter without the venv's
+packages. It is not an executable qualification authority. Only the merged
+runner identity above may create new throughput or qualification evidence.
 
 The predecessor installer SHA-256 is
 `577434b35c785cdb271647434ad974f1cb57f3a6dde3620d8f176d3aaa5be119`.
@@ -62,7 +69,7 @@ Any absence, addition, reordering, or digest mismatch rejects that runtime.
 Target roots are pairwise distinct and outside the protected recovery tree:
 
 ```text
-/home/rache/bloodbowl-rl-qualification-control-20260722
+/home/rache/bloodbowl-rl-qualification-control-20260722-v2
 /home/rache/bloodbowl-rl-qualification-predecessor-afc8008
 /home/rache/bloodbowl-rl-qualification-candidate-a52fc6e
 /home/rache/bloodbowl-rl-qualification-artifacts-20260722
@@ -111,11 +118,18 @@ For each outer source checkout:
    cu128`, then install only the source-local Puffer tree editable with
    `--no-deps --no-build-isolation` so the already pinned setuptools performs
    the editable install.
-5. Require the portable sorted freeze with the one editable line excluded to
-   equal the requirements file byte-for-byte. Also record a full sorted freeze
-   after replacing the one checkout-specific editable path with a common
-   `<PUFFER_ROOT>` sentinel. Predecessor and candidate normalized freezes must
-   be byte-identical.
+5. Preserve the raw sorted freeze first. The cu128 index reports the installed
+   Torch build as `torch==2.10.0+cu128`, while the portable input requirements
+   intentionally pin `torch==2.10.0`; this single deterministic local-version
+   suffix is the only permitted raw difference after excluding the editable
+   line. Create and preserve a separate requirements-normalized freeze by
+   changing exactly that line to `torch==2.10.0`, then require byte equality
+   with the requirements file. Also record a full sorted freeze after replacing
+   the one checkout-specific editable path with a common `<PUFFER_ROOT>`
+   sentinel. Predecessor and candidate raw-portable hashes,
+   requirements-normalized hashes, and full sentinel-normalized hashes must be
+   pairwise identical by representation. Any other difference rejects the
+   runtime.
 6. If wheel libraries lack development links, create only these exact local
    links inside the venv after verifying their targets exist:
 
