@@ -8149,3 +8149,1116 @@ replacement handoff only after hosted checks pass, then continue monitoring.
 At atomic completion, establish the stopped queue/service/process predicates,
 run the pinned screen validator and independent three-log auditor, and preserve
 and verify the exact evidence off-box before creating any qualification root.
+
+## 2026-07-21 23:01 PDT — seed 44 at 7.89B; post-merge handoff ready
+
+Status:
+
+- The recovery queue remains exactly `state=running`,
+  `current_job=full-control-rerun`, and `message=running job
+  full-control-rerun`, with unchanged plan SHA-256
+  `822bb912dbf3992c5fa6f04ddcaa5354897db10d03f2e66934b846c198b6a111`.
+  The screen remains on arm `both`, seed 44, index 3, with two completed arms
+  and message `waiting for current trainer`. The seed-44 terminal status and
+  `SCREEN_COMPLETE.json` are both absent, so the atomic boundary remains
+  closed.
+- Seed 44 reached exact step 7,887,257,600 of 12B at epoch 60,174. The latest
+  complete 99-game train panel reports 1.8687 TD/game, performance 0.4747,
+  possession 0.3764, carrier-target block share about 0.1398, and two-die-red
+  share 0.04498. All 15 recovery-valid reward clip, non-finite, component,
+  engine-error, and demo-fallback fields remain exactly zero. Historical
+  pre-exact-action `illegal_frac=0.19256` remains diagnostic only.
+- The interval since the 22:44 exact sample averaged approximately 181K
+  steps/s. About 4.113B steps remain, or roughly 6.3 training hours at that
+  rate. This estimate does not supersede queue completion, screen completion,
+  pinned validation, stopped log auditing, or off-box preservation.
+- The recovery queue, BBTV follower, web server, and tunnel units remain
+  active/running with zero restarts. Queue PID 610736 and trainer PID 653090
+  retain their original process lineage, and trainer 653090 remains the sole
+  GPU compute process. The RTX 2070 was 83 C and 71% utilized, with
+  5,554/8,192 MiB allocated and 171.79/175 W draw. The recovery filesystem has
+  about 846 GiB free and about 9.1 GiB RAM is available.
+- BBTV atomically selected seed 44 step 7,840,464,896 at 23:01 PDT. The
+  selection SHA-256 is
+  `02e201bc06fba6ddc44d59e2807990c4c104adc6fd71ac71e9797e0455d3b59c`,
+  and <https://bbtv.seconds0.com/> returned HTTP 200 in 0.21 seconds.
+
+Handoff status:
+
+- PR #58 passed full CI and immutable-history on exact head
+  `793ac53be61ed06598efe9033ad16db1c10d23bd` and merged as
+  `ce8cf4144fd20a2387309a0cd017e88746f895b5`, tree
+  `e3dae182b019a338238e12bbe055c1deb7038b3e`. Superseded draft PR #13 is
+  closed; both superseded remote branches are deleted without history
+  rewriting.
+- The exact detached `c1600ada` preservation checkout is clean, both tool
+  hashes match, and all 19 preservation/auditor tests pass. The exact detached
+  `9274f45` control checkout is clean, its runner/analyzer/complete-log hashes
+  match, and all 24 recurrent-CUDA qualification tests pass. Candidate launch,
+  installer, CPU-cap, ten common patch, and two candidate-only patch identities
+  were independently rederived from the exact Git objects and all match the
+  published checklist.
+- The local evidence destination and every remote post-stop, qualification,
+  and canary root remain absent. A read-only one-minute boundary watcher is
+  armed; it performs no writes or process control and reports only atomic
+  completion or an anomalous queue-service exit.
+
+Next steps remain read-only until the boundary. At atomic completion, establish
+the stopped queue/service/process predicates, run the frozen screen validator
+and independent three-log auditor, and preserve and verify the exact evidence
+off-box before creating any qualification root.
+
+## 2026-07-22 16:31 PDT — D225 target qualification accepted; independent audit pending
+
+Status:
+
+- The earlier SSH failure used the local default user `alexanderhuth`. The
+  fleet record names remote user `rache`; one bounded batch connection to
+  `rache@wsl-ubuntu` succeeded. The current read-only host snapshot found the
+  RTX 2070 at 48 C and 0% utilization with no compute PID, 838 GiB disk free,
+  about 9.2 GiB RAM available, the completed recovery queue inactive/successful
+  with zero restarts, and BBTV active. The immutable predecessor root remains
+  clean at exact `afc8008933548438ca93c41341f5f08fdd294386`.
+- Revalidated the recovery boundary from live immutable files: terminal queue
+  SHA-256 `83d7f9fa...`, screen-completion SHA-256 `9bbf4c74...`, exact two-job
+  successful terminal state, and three final result-bound checkpoints. The
+  complete 79-file, 3.49 GiB off-box recovery envelope rehashed locally with
+  zero mismatch before any new remote root was created.
+- Created fresh clean control and candidate checkouts at merged
+  `ee7ace47306b122f48439185e24e9a2cf00be42d`, tree
+  `20d31ade2da46c75ec5a85ebd5464362e26102e7`, plus a new external D225
+  artifact root. The candidate Puffer tree is exact `9836f0d2...`; Python
+  3.11.15, uv 0.11.19, the 63-line normalized requirements, sentinel-normalized
+  full freeze, cuDNN/NCCL links, installer check, fp32 build, and outer source
+  status all match the frozen contract. Module/backend/environment hashes are
+  `56827ab7...`, `5f1f8f14...`, and `4cf8d446...`.
+- Two operator assertions stopped before experimental work: the first candidate
+  setup expected tracked `vendor/` to be absent, and the first construction
+  preflight used a `pgrep -f` pattern that matched its own remote shell. A later
+  package-evidence normalization command also stopped after venv construction
+  because Bash expanded a `$#` sequence. Each stop was recorded and inspected;
+  no installer/build/CUDA cell ran in the first case, no construction output or
+  attempt record existed in the second, and the third was resolved only after
+  proving the live 63/64-line freezes and exact editable line. No root was
+  deleted or recreated, and no rejected CUDA/output identity was retried.
+- The first actual construction cell accepted with zero transitions. Its gate
+  SHA-256 is `fc5a31ad...`, its cell is `c4bfa91c...`, all primary/frozen state
+  is exact zero, and the same retained `libcudart.so.12` reported one device
+  before and after `_C`. Two fresh validators accepted with empty stderr. Its
+  91-file evidence snapshot is preserved and verified off-box.
+- The one fresh predecessor timing capture accepted at 193,474 steps/s with all
+  16 hard-integrity counters exactly zero. Wrapper/cell hashes are
+  `89a47923...` / `5da710d8...`; two fresh validations agreed byte-for-byte. Its
+  124-file evidence snapshot is preserved and verified off-box.
+- The one fresh candidate qualification accepted every mandatory gate. Candidate
+  throughput is 192,750 steps/s, a 0.374% regression versus the frozen control;
+  graph and terminal snapshots are exact, ratio coverage includes every primary
+  row and zero frozen rows, max ratio deviation is `2.62e-6`, weights are
+  unchanged, and every transition cell has all 16 hard counters at literal
+  zero. Qualification SHA-256 is `d1c162d8...`; two fresh validators accepted
+  with empty stdout/stderr and no artifact change. The complete 158-file
+  snapshot is preserved locally under
+  `BloodBowlRLArtifacts/d225-qualification-ee7ace4-20260722` with manifest
+  SHA-256 `7fb63b42...` and zero mismatch. BBTV was restored after every bounded
+  GPU cell and the compute list is empty.
+
+Next steps: wait for the already dispatched independent read-only audit of the
+exact remote qualification and local envelope. A canary authorization/plan may
+be prepared only if that audit reports no P0-P3 finding and the current source,
+service, GPU, qualification, and two-file plan-only predicates are independently
+revalidated. Qualification and any eventual 50M canary remain permanently
+ineligible as warm starts, pools, reward evidence, or promotion evidence.
+
+## 2026-07-22 16:08 PDT — D225 merged; 2070 access is the next closed gate
+
+Status:
+
+- PR #70 merged to `main` as
+  `ee7ace47306b122f48439185e24e9a2cf00be42d`. Its merged tree
+  `20d31ade2da46c75ec5a85ebd5464362e26102e7` exactly matches the final
+  reviewed head `c9ad23a843e143d9ac5136e81040d01039e844a1`. Both hosted checks
+  passed on that exact head: immutable history in 3m12 and the full CI job,
+  including ASan/UBSan, in 5m03.
+- A final committed-head review found one P2 before merge: successful
+  construction, predecessor-capture, and qualification commands could place
+  output below the separately protected recovery root. The correction now
+  rejects the canonical protected root and every descendant in the common
+  pre-write gate. Its red-before-green regression invokes all three public
+  writing commands and proves that no output is created.
+- The corrected focused suite passes 84 tests with two expected skips; full
+  tools discovery passes 260 with two skips; full training discovery passes
+  96 with one skip; Ruff, byte compilation, and diff checks are green. Two
+  independent delta reviewers approved exact head `c9ad23a` with no remaining
+  P0-P3 finding.
+- The earlier Codex CLI review did not run because its requested model was not
+  available to that account, and Gemini stopped at an interactive login prompt.
+  Neither result was counted as a review or retried. Fable and the two existing
+  audit agents supplied the completed read-only reviews instead.
+- No remote root, GPU process, BBTV service, qualification, canary, or training
+  state was changed. Tailscale previously showed the target online, but the
+  single bounded SSH attempt failed authentication because the local agent had
+  no loaded identity. Current remote GPU/process/service state therefore
+  remains unverified and is not inferred from the last historical snapshot.
+
+Next steps: restore deliberate SSH authority without retrying the rejected
+authentication path, verify the target read-only, then create entirely fresh
+source and artifact roots from merged `ee7ace4`. Run construction only and
+preserve its exact evidence before authorizing predecessor timing or recurrent
+CUDA qualification. A canary remains prohibited unless every exact-zero gate
+accepts.
+
+## 2026-07-22 15:28 PDT — CUDA gate hardened locally; remote mutation remains stopped
+
+Status:
+
+- No third predecessor capture, qualification, canary, or training launch has
+  been attempted. The two rejected CUDA captures remain permanently closed and
+  ineligible; there is no retry loop against either failed identity.
+- The D225 working tree now uses one shared same-process CUDART boundary for
+  construction, qualification, and the actual trainer entrypoint. It requires
+  a successful positive device count before `_C`, the same successful count
+  after `_C`, an exact resolved-and-hashed `libcudart.so.12`, and explicit
+  `CUDA_VISIBLE_DEVICES=0`. The trainer publishes its own evidence before
+  optimization rather than inheriting a launcher subprocess's claim.
+- The public construction artifact is now a machine-enforced prerequisite for
+  both predecessor timing and full qualification. Consumers independently
+  rehash the live native module, sources, environment, CUDART file, gate, and
+  cell before creating output or dispatching a worker.
+- Independent and Fable read-only reviews found two P1 and several P2/P3
+  hardening gaps. The working tree closes each reported gap. The current
+  focused regression is 80 tests passing with two expected vendor-checkout
+  skips; Python compilation, shell syntax, diff checks, and the frozen screen
+  immutability check are green. The complete broad suite and final re-review
+  remain pending before commit or merge.
+- Tailscale reports `wsl-ubuntu` online and active, and
+  <https://bbtv.seconds0.com/> returned HTTP 200 in 1.16 seconds. The first
+  bounded SSH status check was rejected by public-key authentication, so it
+  was not retried. Current GPU utilization, process state, and the internal
+  BBTV services are therefore unverified in this checkpoint; the last verified
+  remote snapshot must not be presented as current.
+
+Next steps: rerun the broad local suite and disposable patch-stack validation,
+obtain final read-only review, then commit, open, review, and merge the D225
+change only if all zero-error gates remain green. After SSH authority is
+restored, create entirely fresh post-merge control/candidate roots and run only
+the construction gate first. Timing remains unauthorized until that artifact
+is preserved off-box and independently accepted.
+
+## 2026-07-22 14:50 PDT — CUDA import-order defect isolated; capture retries stopped
+
+Status:
+
+- D224 passed focused and full regression, Fable review, two independent
+  read-only reviews, immutable-history, and hosted CI. PR #69 merged as exact
+  commit `10619e2300505d0b28251291946f7302fe4eb9cf`, tree
+  `e55934ab0e3edf1bd7d47b85c24774669e91d419`. Fresh control and candidate
+  roots at that commit and the untouched `afc8008` predecessor all passed
+  their source, installer, module, and dual compiled/runtime identity checks.
+- Two fresh predecessor throughput outputs (`predecessor-throughput-v2` and
+  `predecessor-throughput-v3`) rejected before their first transition or timed
+  rollout at the same native assertion: `cudaGetDeviceCount` reported no
+  usable device inside `pufferlib._C`. Neither output contains a result or
+  timing artifact, and both are permanently ineligible/non-retryable. The v3
+  rejection record is now sealed at SHA-256
+  `192e32d9b820b3c92dae06b77a931b820d3ea8c4b27ed6978b0120f7c9900a5c`.
+- No third capture was attempted. A bounded fresh-process matrix isolated the
+  causal boundary: the exact system CUDART reports one device before `_C` is
+  loaded; loading `_C` first makes the same call return
+  `cudaErrorNoDevice`; initializing CUDART first and then loading `_C`
+  preserves the valid device. Loading NVML or NCCL alone does not reproduce.
+  The ordinary Puffer CLI imports Torch before `_C`, explaining why the
+  historical trainer path did not use the failing import order.
+- A new test-first branch is implementing one explicit, hash-bound pre/post
+  import CUDA runtime gate shared by the qualification worker and real Puffer
+  trainer entrypoint. It also replaces the candidate binding's ignored return
+  code plus assertion with a Python-visible fail-closed CUDA error. The frozen
+  exact-action canary screen launcher remains byte-unchanged and unauthorized.
+- BBTV follower and tunnel remain active, the RTX 2070 is 48 C and idle with
+  no compute PID, and no qualification or training process is live.
+
+Next steps: validate the new patch stack in a disposable Puffer checkout, run
+the complete local regression suite, obtain independent/Fable review, and
+merge before constructing fresh control/candidate identities. Only then run
+one construction-only target integration; no throughput recapture is permitted
+until the canonical trainer and qualification entrypaths both prove identical
+pre/post-import CUDA runtime evidence.
+
+## 2026-07-22 13:46 PDT — schema-3 provenance repair merged; predecessor recapture rejected safely
+
+Status:
+
+- PR #68 passed local regression, two independent read-only reviews, Fable
+  review, immutable-history, and full hosted CI, then merged as
+  `30701e1588b0ddf48630f2763b51147fc3faadb3`, tree
+  `f382d37eee4bcbc59ab74f939f84ae75d5a9511a`. The merge makes the canonical
+  installer apply and fully reverse-check the self-play league patch, includes
+  patched `pufferlib/selfplay.py` in current backend identity, and advances
+  qualification to schema 3 with explicit clean control/candidate commit
+  authority. The rejected `a52fc6e2` canary remains permanently ineligible.
+- Fresh clean schema-3 control and candidate roots at merged `30701e1` and the
+  exact untouched predecessor root at `afc8008` were constructed with separate
+  pinned Puffer trees and identical normalized 63-package environments. Both
+  installer checks and fresh fp32 builds passed. Candidate exposes the bounded
+  qualification surface; predecessor correctly does not. The recovery tree was
+  not touched.
+- The first new predecessor throughput capture failed closed before timing,
+  transitions, or GPU work. Its immutable native module was compiled under the
+  historical backend registry, which omitted `pufferlib/selfplay.py`; the new
+  runner incorrectly recomputed its compiled digest with the expanded schema-3
+  registry. This is a provenance-validator mismatch, not a runtime or learning
+  failure. No baseline or usable evidence was created, and the empty attempt
+  directory is permanently non-retryable.
+- The rejected attempt is recorded with empty stdout SHA-256
+  `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`,
+  stderr SHA-256
+  `f0d2dbb62c8307a896e676a7ac747a2d516810d14b7838ae18277779cc2c6a50`,
+  and rejection-record SHA-256
+  `efc013889b4e2eab008210f9b0b7387728bab82349515bce7d93b4e33238d26f`.
+  `retry_same_output=false` is explicit.
+- BBTV was restored immediately after the bounded host-state window.
+  `bbstream.service` is active with zero restarts, the public viewer returns
+  HTTP 200, and no trainer or qualification process remains on the GPU.
+
+Next steps: merge a narrow test-first D224 correction that preserves the
+predecessor's role-correct historical compiled-source digest while separately
+requiring a complete runtime-source digest—including `selfplay.py`—for both
+roles. Then create entirely new clean control/candidate roots and a new
+`predecessor-throughput-v2` output, repeat the empty/idle/cool GPU gate, and
+resume qualification only if every identity and exact-zero predicate accepts.
+
+## 2026-07-22 12:57 PDT — one-shot canary rejected pre-GPU; evidence sealed off-box
+
+Status:
+
+- The exact v3 launcher submitted its one permitted start at 12:19 PDT. The
+  unit failed closed after one second with `Result=exit-code`,
+  `ExecMainStatus=1`, `NRestarts=0`, and invocation
+  `7cc00e4465ee4638b8b224568b99899d`. Its final preflight reported
+  `vendored selfplay.py lacks training/selfplay_league.patch`. No trainer log,
+  checkpoint, run directory, or GPU process was created. The durable attempt
+  marker says `retry_allowed=false`; this unit/output may never be retried,
+  repaired, reset, or reused.
+- Two independent static reviews accepted the final stopped-evidence collector
+  at SHA-256
+  `e6268214f14e1a8c98abea1f7a779c24ba6e0d2acfebf3263b43f47874dcbe46`
+  with no P0-P3 finding. Its single invocation sealed 76 files under the fixed
+  stopped-validation root. The 73-entry evidence ledger SHA-256 is
+  `fc6e0aea1d12515371bab9d3e5f3b6a81ed40a0ef7b4fa5af9c21dd0f49306ac`;
+  the inventory-file SHA-256 is
+  `e94fb684054dee812b8b9912104ad4883922039eb6bdb99e8f32d6407c095c6a`;
+  and the completion-record SHA-256 is
+  `3d53cbaa8699498b5a3610dee2dff03c969ff6acb2e1f056aff1ce777adab662`.
+- The stopped bundle, untouched three-file canary output, and complete 71-file
+  v3 execution authority were copied to
+  `/Users/alexanderhuth/BloodBowlRLArtifacts/exact-action-canary-v3-stopped-rejected-20260722`.
+  Independent local verification accepted every recorded mode, byte count,
+  hash, direct source copy, and exact closure. The output inventory SHA-256 is
+  `6e28225e8816c5a077a42563bd6149abe8586b53daa435dedf7e3c5eb9e23a77`;
+  the v3 inventory SHA-256 is
+  `f92722231742ee63afc0e6e32835954320709f4fdd0cdea9e2375d83f2763c9b`.
+- Post-preservation health remains safe: the failed unit has zero restarts and
+  no queued job, the exact GPU compute-process query is empty, and
+  <https://bbtv.seconds0.com/> returns HTTP 200.
+
+Root cause and repair tranche:
+
+- The fresh candidate contains `training/selfplay_league.patch`, the patch
+  applies forward cleanly to its pinned Puffer tree, reverse applicability
+  fails, and both league markers are absent from vendored `selfplay.py`. The
+  accepted schema-2 CUDA qualification bound four exact-action/recurrent
+  patches but omitted this runner-required patch and omitted `selfplay.py` from
+  compiled backend identity.
+- A fresh worktree at
+  `/Users/alexanderhuth/Code/bloodbowl-rl-bind-selfplay-runtime-identity`, branch
+  `tranche/bind-selfplay-runtime-identity`, is exactly based on merged main
+  `6d3aedc`. The written test-first plan requires a new runtime, qualification,
+  unit, output, stopped root, authorization, and marker; the rejected v3
+  artifacts remain immutable.
+- Fail-first tests reproduced the missing installer, qualification, and
+  manifest bindings. The current fix applies or full-reverse-verifies the
+  league patch, includes patched `selfplay.py` in backend identity, advances
+  qualification to schema 3, binds the patch in qualification and screen/arm
+  manifests, and requires the replacement candidate and control runner to use
+  the same clean merged commit in different checkouts. A disposable clone of
+  pinned Puffer `9836f0d2` passed first install, idempotent second install, all
+  selfplay behavior tests, and removed-patch rejection. The focused 36
+  qualification tests and 26 experiment-contract tests pass.
+- Headless Fable is running a bounded, tools-disabled design review. No Fable
+  verdict is claimed yet.
+
+Handoff status and next steps:
+
+- Draft PR #59 remains open. Its test job is green; the latest
+  immutable-history job failed in hosted Docker verification after the previous
+  journal push and will be handled without rewriting history.
+- Finish the Fable review, address concrete findings, append the decision
+  amendment, run complete local/hosted verification, and ship the repair PR.
+  Only after merge may a new isolated 2070 runtime recapture the fixed
+  predecessor control and run schema-3 CUDA qualification. No new canary start
+  is authorized yet.
+
+## 2026-07-22 11:55 PDT — v3 unit installed disabled; pre-start gate still closed
+
+Accepted authority and probe progress:
+
+- The exact v3 authorization was generated and independently validated: 55
+  artifact records over 48 unique paths all match, authorization SHA-256 is
+  `e46efcd...`, the canonical unit SHA-256 is `3d2714da...`, the accepted v2
+  manifest remains `94621ddb...`, and the candidate qualification revalidated
+  with the GPU empty. Independent review found no P0-P3.
+- All three corrected systemd probes completed under the exact-zero boundary.
+  The empty-output unit succeeded; the fixed nonempty and command-failure units
+  failed closed with `ExecMainStatus=1`; every probe had `NRestarts=0`; cleanup
+  returned all three to `not-found`; and the real unit remained absent. The
+  complete 38-file payload plus inventories is preserved locally and remotely.
+- The real-unit installer then went through four test/review revisions before
+  execution. The accepted SHA-256 is `0b5d23b...`; it binds the executing bytes,
+  accepted probe evidence, effective systemd fragment and activation edges,
+  frozen output modes/sizes/hashes under lock, GPU emptiness, and BBTV health.
+  It publishes without replacement and rolls back only its own inode on any
+  rejected path. Final independent review found no P0-P3.
+
+Installed state and honest capture exception:
+
+- The canonical v3 unit is now installed byte-identically at mode `0644`, but
+  remains exactly disabled, inactive/dead, `Restart=no`, `NRestarts=0`, with no
+  PID, invocation ID, state-change timestamp, execution timestamp, alias,
+  drop-in, enablement, reverse dependency, or trigger. It has never been
+  started. GPU compute remains empty; `bbstream`, `bbweb`, and `bbtv-tunnel`
+  remain active/running with zero restarts.
+- The installer printed its exact accepted verdict and empty stderr, but the
+  local wrapper then used zsh's reserved read-only variable `status` and failed
+  before recording the already-returned SSH exit code. That outer capture is
+  explicitly rejected and frozen; no exit status was inferred or fabricated,
+  and the installer will not be rerun. The accepted stdout SHA-256 is
+  `dee0c223...`; the rejection record is `8059fa59...`.
+- A fresh installed-state ledger now freezes 57 exact files; its mode/size and
+  digest inventories are `a55ebc5f...` and `fd58ec36...`. A separate read-only
+  Gate 5 validator is under two independent reviews to replace the lost outer
+  status with a full independent pre-start proof. Its first review found only
+  pre-execution hardening work—hold the plan lock through flushed verdict,
+  bind directory descriptors, and reject a pending systemd job. No training
+  output, checkpoint, log, run directory, or completion artifact exists.
+
+Handoff and next steps:
+
+- PR #59 remains the journal branch. Full hosted tests are green. Two
+  immutable-history attempts reached the same containerized commit verifier
+  and timed out around 60 seconds; neither reported a semantic identity
+  mismatch. This journal append will receive fresh checks without rewriting
+  prior evidence.
+- Finish both Gate 5 reviews, correct every P0-P3, run the final validator twice
+  from its externally pinned SHA-256, and preserve both results off-box. Start
+  the disabled one-shot unit exactly once only if both validations accept with
+  the output lock released afterward, GPU still empty, and BBTV still healthy.
+
+## 2026-07-22 10:55 PDT — corrected v3 canary authority through Gate 2
+
+Authority correction and merge:
+
+- PR #66 merged as `2d540a351e12fe41610231bd5878a0ca2e448551`,
+  and both post-merge `main` checks accepted. The merged v2 authority and
+  recurrent-CUDA qualification remained internally exact.
+- The first v2 synthetic empty-GPU unit then failed before real-unit install
+  for a useful fail-closed reason: systemd expanded the bare `printf "%s"`
+  format as its user-shell specifier before Bash. The real v2 unit was never
+  installed or started, all disposable probes were removed, the GPU remained
+  empty, and the six rejected authorization/unit/probe artifacts were frozen
+  by exact path and SHA-256 under the immutable v2 execution root.
+- PR #67 corrected the unit to authored `printf "%%s"`, separated accepted v2
+  plan output from fresh v3 service/authorization evidence, and closed the
+  Gate 1-6 chronology. Two independent correction reviews found no remaining
+  P0-P3; focused 34/34 qualification and 19/19 analyzer tests, Ruff,
+  compilation, and diff hygiene passed. PR and post-merge checks all accepted;
+  it merged as `6d3aedcdb6191a365c705f73823d6d98bf8fa217`, tree
+  `4edf7c355b2b505dc4548bcdc7f96a774e933b0a`.
+- The exact merged v3 authority is preserved locally and on the 2070. Its
+  authority, mode/size, and inventory SHA-256 values are respectively
+  `5980d2bb...`, `418ba9a0...`, and `4f06d522...`; all 10 remote files and the
+  complete index independently verify.
+
+Accepted execution gates:
+
+- Gate 1 accepted twice from fresh read-only invocations. Candidate `a52fc6e2`
+  and control `cf13fe5` remain clean at exact trees; the qualification's 13-file
+  closure and both preservation inventories accept; every launch-source hash,
+  the accepted v2 manifest/zero-byte released lock, all v1/v2 rejection hashes,
+  and the empty stopped-validation directory match. The v1, v2, and v3 real
+  unit identities and all rejected v2 probe units are absent.
+- Gate 2 did not rerun the launcher or rewrite its manifest. It created the
+  previously absent v3 execution root only after revalidation and wrote exactly
+  six files: two fresh validator stdout/stderr/status triplets. Both statuses
+  are zero, both stderr files are empty, and the accepted stdout files are
+  byte-identical with SHA-256 `025b40e1...`.
+- The canonical v3 real-unit source now exists under the v3 execution root and
+  is byte-identical to merged checklist commit `6d3aedc`; SHA-256 is
+  `3d2714da...`. It has not been installed. The Gate 3 authorization generator
+  is under independent read-only review before execution.
+
+Current host state and next step:
+
+- GPU compute is empty. `bbstream`, `bbweb`, and `bbtv-tunnel` remain
+  active/running with `NRestarts=0`, and <https://bbtv.seconds0.com/> returns
+  HTTP 200. No training process, checkpoint, log, run directory, or completion
+  artifact has been created by the canary.
+- Next, independently review and execute the canonical Gate 3 authorization,
+  copy and verify it off-box, then run corrected disposable empty/fixed/
+  command-failure units. Install/start the real one-shot v3 unit only if every
+  exact identity and positive/negative probe accepts with the GPU still empty.
+- PR #59's journal CI test is green. Its immutable-history check hit a single
+  container timeout rather than a semantic failure and has been rerun.
+
+## 2026-07-22 09:47 PDT — candidate CUDA qualification accepted; v2 canary gate in review
+
+Accepted candidate qualification:
+
+- Fresh isolated candidate `a52fc6e2f4ece5a7ff16bb4791e3aca4dd72f2e3`
+  completed the unchanged `cf13fe5` recurrent-CUDA qualification under its
+  source-local fp32 Puffer runtime. The one-shot v4 unit exited successfully
+  with zero restarts and was retired only after its terminal properties and
+  journal were preserved.
+- Exact graph-off/on rollout tensors were byte-identical; automatic and manual
+  post-terminal recurrent states were byte-identical; all primary learner rows
+  were covered; no frozen row was selected; policy weights were byte-identical
+  across the zero-update ratio proof; and maximum PPO ratio deviation was
+  `2.6226043701171875e-06`, below the frozen `2e-05` tolerance.
+- Every transition-executing cell carried the exact ordered 16-key integrity
+  registry at literal zero. Candidate throughput was approximately 186,250
+  steps/s versus 190,801 for the untouched predecessor, a 2.385% regression
+  inside the exact 10% budget.
+- `QUALIFICATION.json` states `accepted=true` and `qualification_only=true`;
+  SHA-256 is `33966e91...`. Two fresh exact-validator invocations plus a
+  separate NumPy/standard-library audit accepted. An independent artifact and
+  backend review recomputed the identities, cell/NPZ hashes, tensor relations,
+  ratios, configuration equality, throughput gate, and every integrity value
+  with no P0-P3 finding.
+- The sealed candidate evidence is preserved off-box at
+  `/Users/alexanderhuth/BloodBowlRLArtifacts/qualification-v4-candidate-20260722`.
+  Its 97-entry mode/size and 98-entry hash inventories match; preservation-
+  manifest SHA-256 is `b173abad...`. It remains permanently ineligible as
+  checkpoint ancestry, reward evidence, or promotion evidence.
+
+Rejected v1 plan-only identity and corrected authority:
+
+- The first exact canary plan-only invocation exited zero without starting a
+  trainer, creating a log/checkpoint/run directory, or using the GPU, but the
+  frozen launcher correctly retained a zero-byte `.screen.lock` beside
+  `SCREEN_MANIFEST.json`. Because merged Gate 2 had authorized only the
+  manifest, v1 was rejected before unit installation or launch and moved to
+  immutable rejection-only storage. The released lock, manifest, command,
+  status, stdout/stderr, inventories, and rejection record are hash-bound.
+- A corrected fresh-v2 authority now requires exactly those two regular files,
+  a non-creating read-only-FD lock proof scoped to a subshell, byte-identical
+  pre/post inventories, full nested-contract equality, manifest byte
+  invariance, and a repeat of the entire file/lock gate immediately before the
+  one allowed start. It also binds and recomputes all v1 rejection artifacts,
+  requires the old unit and original path absent, and proves behavior directly
+  from the immutable candidate launcher blob rather than the different merged
+  fail-closed control launcher.
+- PR #66 exact head `6db8107218b32d03330d2fd9a55519f5d1dc5d5b`
+  contains only the corrected checklist, operator guidance, CI enforcement,
+  and regression tests. Thirty-four recurrent-CUDA contract tests, 19 stopped
+  analyzer tests, 442 engine tests, and all reward/state-bank/observation/
+  contact-bot/BBP v4 suites pass. Fable and an independent repeated read-only
+  review found no remaining P0-P3 after the final candidate-blob proofs. Hosted
+  CI and immutable-history are pending; no canary launch is authorized until
+  that exact head merges and the merged authority is frozen.
+
+Current host state and next step:
+
+- BBTV follower, web, and tunnel are active/running with zero restarts;
+  <https://bbtv.seconds0.com/> returned HTTP 200 in 0.365 seconds. GPU compute
+  is empty. No candidate, recovery, qualification, or v1 trainer remains.
+- Wait for PR #66's exact-head checks, merge only if green, freeze and
+  independently verify the merged v2 authority, then execute its fresh
+  plan-only, authorization, synthetic-unit, and prestart gates. Launch the
+  disposable 50M seed-42 canary only if every check accepts at literal zero.
+
+## 2026-07-22 08:57 PDT — predecessor CUDA control accepted and preserved
+
+Authority and preflight:
+
+- PR #64 passed full hosted CI, immutable-history, Fable review, and an
+  independent exact-head CUDA review with no P0-P3 finding, then merged as
+  `cf13fe5e22b95da0afac033188dcea96432d6909`, tree
+  `82c184a5983a4add2278237d121604ac3833c263`. It freezes every graph-enabled
+  qualification cell to the production `cudagraphs=10` warmup boundary,
+  reserves `-1` for the explicit graph-off parity cell, and rejects zero before
+  loading the backend.
+- PR #65 bound both execution checklists to that exact runner and fresh control
+  root, passed independent exact-head review with no P0-P3 finding plus full
+  CI and immutable-history, and merged as
+  `4d6686e4c2c7478f125abf98649ab9c6961b2bfc`, tree
+  `077a86af6c19f59f6e8c9d99cf68254f284595eb`. The exact checklist hashes and
+  v4 authority record are preserved both locally and on the 2070.
+- Fresh control root
+  `/home/rache/bloodbowl-rl-qualification-control-20260722-v4` is detached at
+  exact runner `cf13fe5`, runner SHA-256 `916fa6ef...`, and a clean tree. Under
+  the exact predecessor interpreter it passed all 33 runner and 19 independent
+  analyzer tests. The first analyzer command used the repository root even
+  though that suite requires `tools/` on its import path; it emitted no
+  accepted artifact. The corrected intended-directory invocation passed and is
+  preserved as `control-v4-preflight-tests.txt`.
+
+Accepted untouched predecessor control:
+
+- BBTV selection and service state were preserved, only `bbstream.service` was
+  stopped, and web plus tunnel remained active. The v4 host precondition bound
+  the exact control, predecessor, Puffer, module, backend, environment, CPU,
+  and thread identities and accepted three samples at 48 C, 0% utilization,
+  69 MiB, and no compute PID. Its SHA-256 is `1b44df02...`.
+- Fresh one-shot unit
+  `bloodbowl-qualification-predecessor-throughput-v4.service` ran with
+  `Restart=no`, the frozen 16,384 minibatch, and production graph warmup 10.
+  It completed with `Result=success`, exit status zero, zero restarts, empty
+  stdout/stderr, and exactly two output records. The accepted wrapper SHA-256
+  is `76601cea...`; the confined cell SHA-256 is `7cbee4ec...`; canonical
+  configuration SHA-256 is `99ed1302...`.
+- The exact control validator and a separate standard-library validator both
+  accepted from fresh processes. They independently confirmed runner/source/
+  module/backend/environment identity, fp32 `obs-v5` / `exact-joint-v1`,
+  `cudagraphs=10`, minibatch 16,384, positive internally consistent timing,
+  and the exact ordered 16-key integrity registry at literal zero. Eight timed
+  rollouts produced 1,048,576 steps in 5.495645952 seconds, approximately
+  190,801 steps/s; median rollout time was 0.6832 seconds and p95 was 0.7217.
+- BBTV was restored immediately after validation. Follower, page, and tunnel
+  are active/running with zero restarts; the public page returned HTTP 200 and
+  GPU compute is empty. The completed transient control unit was retired after
+  its terminal properties and journal were preserved.
+
+Preservation and next gate:
+
+- The accepted baseline and all v4 authority, precondition, service, unit,
+  journal, test, validator, stdout, and stderr evidence are preserved off-box
+  at
+  `/Users/alexanderhuth/BloodBowlRLArtifacts/qualification-v4-predecessor-throughput-20260722`.
+  The local/remote relative file set, modes, sizes, and all 23 hashed entries
+  match; preservation-manifest SHA-256 is `fe9dd81e...`. Qualification and
+  canary eligibility remain false for these artifacts, and all three rejected
+  predecessor attempts remain historical diagnostics only.
+- Next, record a fresh candidate timing precondition, run the unchanged exact
+  `cf13fe5` recurrent-CUDA qualification under candidate interpreter and
+  runtime `a52fc6e2`, preserve its closed output, and independently validate it
+  twice. Do not materialize or launch the 50M canary unless every mandatory
+  candidate gate accepts and every transition cell remains literal-zero across
+  all 16 integrity fields.
+
+## 2026-07-22 08:22 PDT — zero-warmup CUDA capture defect isolated
+
+V3 authority and rejected attempt:
+
+- PR #63 passed independent exact-head review, CI, and immutable-history and
+  merged as `634d9c3ef745ce8b2fa9b740dd8be523b263524f`. Its checklists and a canonical
+  v3 authority record were preserved byte-identically on and off the 2070. A
+  fresh clean control root at exact runner commit `2261cd4`, tree `939b882...`,
+  passed all 30 runner and 19 analyzer tests with no GPU process. The authorized
+  predecessor output remained absent.
+- The v3 idle precondition accepted three samples at 48–49 C, 0% utilization,
+  69 MiB, and no compute PID. A bookkeeping-only first evidence file appended
+  its own pre-append digest and was preserved as a rejected attempt; the clean
+  repeated precondition SHA-256 is `6950ddca...`. The one-shot predecessor
+  service then rejected with zero restarts before producing a timing record:
+  Puffer asserted at `cudaStreamEndCapture`. The empty output was moved to
+  `predecessor-throughput-attempt3-rejected-cuda-graph-capture`; unit, journal,
+  stdout, stderr, selection, service, and host evidence are preserved. The
+  authorized target is again absent and no candidate cell has run.
+
+Root cause and correction:
+
+- Puffer's `cudagraphs` setting is a capture-epoch count, not a boolean. The
+  runner used zero, so the very first policy forward was captured before lazy
+  cuBLAS handle/workspace initialization; that initialization invalidated the
+  global capture. Puffer and the frozen canary both use ten warmup epochs. The
+  earlier 16,384-minibatch correction worked: this attempt did not OOM.
+- PR #64 at exact head `c491d38` freezes every graph-enabled qualification cell
+  to `cudagraphs=10`, preserves `-1` only for graph-off parity, rejects zero
+  before backend load, stops ratio/throughput from overwriting the requested
+  value, and independently validates each persisted config and digest. It also
+  updates the plan, AGENTS.md, CLAUDE.md, and both relevant repository skills.
+  Fail-first tests exposed the missing constant, pre-dispatch acceptance of
+  zero, silent throughput overwrite, and coherent-hash mutation gap. Final
+  local verification is 33 runner plus 19 analyzer tests, Ruff, byte
+  compilation, and diff-check; independent review found no P0-P3 issue. Hosted
+  CI and immutable-history are running, so the fix is not yet executable
+  authority.
+
+Live state and next steps:
+
+- BBTV follower, page, and tunnel are restored with zero restarts; public HTTP
+  is 200 and GPU compute is empty.
+- Require exact-green PR #64, merge it, update both checklists to the new runner
+  identity and a fresh v4 control root, and preserve that authority before
+  repeating the predecessor precondition. Do not retry from unmerged code and
+  do not begin candidate qualification unless the predecessor baseline is
+  atomic, identity-exact, and literal-zero across all 16 integrity fields.
+
+## 2026-07-22 07:05 PDT — throughput allocation mismatch closed in code
+
+Rejected second control attempt:
+
+- Merged runner `ffa49ad` correctly preserved the explicit venv interpreter,
+  and the fresh v2 control checkout, identities, and focused tests all accepted.
+  Under a newly recorded idle/cool host precondition, the untouched predecessor
+  capture then rejected during learner construction before any transition. Its
+  timing output, stderr, unit properties, journal, command, and host evidence
+  are preserved under
+  `predecessor-throughput-attempt2-rejected-cuda-oom`; the authorized
+  `predecessor-throughput` path remains absent and no candidate cell has run.
+- The exact cause was a scope mismatch: the timing runner used the complete
+  2,048 x 64 rollout quantum, 131,072 transitions, as one learner minibatch,
+  while the already frozen 50M canary contract uses minibatches of 16,384.
+  Independent tensor-shape accounting estimates about 16.93 GiB for the former
+  allocation and about 4.96 GiB for the latter. The exact-action backend and
+  observation repair account for only tens of MiB and did not cause this
+  failure. A larger GPU would merely conceal the 2070-parity error.
+
+Correction and evidence:
+
+- Added fail-first coverage and made 16,384 an explicit, immutable throughput
+  parameter for both predecessor and candidate cells. The runner rejects any
+  operator override, requires divisibility/parity with the fixed rollout, and
+  binds the value into the compared configuration hash. The stopped canary
+  analyzer now independently rejects a manifest with any other minibatch.
+- All 30 focused qualification tests and 19 analyzer tests pass, with clean
+  Ruff, byte-compilation, and diff checks. Fable approved the complete change;
+  an independent CUDA allocation and exact-head review reported no P0-P3
+  issue. Hosted CI and immutable-history both passed exact PR #62 head
+  `8b25924`, which merged as
+  `2261cd4c707733679b9482d2ab52eca3088afd54`, tree
+  `939b882ba74f51e8e7b31d6bd1d6e8d2c6f1af7d`. The merged runner SHA-256 is
+  `65dd97f2abffdd243655caa0d5bbf34e5e2eab164e8a567b9eaae305c178e7a8`;
+  the merged stopped analyzer SHA-256 is
+  `3ea835d5f7c893571e3a885c4d5ad8a7cd61e16fdd372e968b5d11b955b5d3fd`.
+
+Live state and next steps:
+
+- BBTV follower, web, and tunnel are restored; the public viewer is healthy and
+  the GPU compute list is empty. Both rejected attempts and both obsolete
+  control roots remain immutable evidence.
+- Update and merge the two operator checklists so only merged runner `2261cd4`,
+  a fresh `qualification-control-20260722-v3` root, and the exact 16,384
+  minibatch are executable authority. Then reproduce the predecessor timing
+  precondition and retry into the still-absent authorized output. Any restart,
+  nonzero hard-integrity field, identity drift, configuration mismatch, or
+  malformed evidence rejects the run before candidate qualification.
+
+## 2026-07-22 06:18 PDT — isolated runtimes frozen; runner defect fixed
+
+Qualification construction:
+
+- Created pairwise-distinct detached control, predecessor, candidate, and
+  external-artifact roots only after the accepted recovery boundary. The
+  predecessor remains exact `afc8008933548438ca93c41341f5f08fdd294386`,
+  candidate exact `a52fc6e2f4ece5a7ff16bb4791e3aca4dd72f2e3`, and both private Puffer trees
+  exact `9836f0d2e78889c1aaf189c04d161b6fc61a9386` under separate fp32 venvs.
+- Both roles have identical normalized package environments, authorized cuDNN
+  and NCCL links, clean source-local builds, and passing installer checks. The
+  shared installed-environment SHA-256 is
+  `4cf8d446c8794cb38f28d08c7fbe76e6919e8677fd96ac8e255cafd9986dbc2e`.
+  Predecessor module/backend hashes are `6ca1ab04...` / `d69e077d...`;
+  candidate hashes are `5a9ac536...` / `8e21d4b3...`. Atomic build-identity
+  records and an independent crosscheck bind source, packages, patches,
+  libraries, ABI, host, affinity, and process cgroup. No behavioral candidate
+  cell has run.
+
+Rejected control attempt and correction:
+
+- After preserving the live BBTV selection and stopping only its follower, the
+  2070 passed the three-sample idle/thermal precondition. The first predecessor
+  capture rejected before any transition because the frozen runner converted
+  the explicit venv `python` symlink to its managed base interpreter; that
+  interpreter correctly failed closed for missing NumPy. The empty output and
+  command evidence are preserved as
+  `predecessor-throughput-attempt1-rejected-python-resolve`; the authorized
+  `predecessor-throughput` path remains absent.
+- Added a fail-first regression proving the worker subprocess must receive the
+  explicit venv interpreter path without final-symlink dereference. The old
+  implementation failed that test; the corrected implementation, all 25
+  focused qualification tests, Ruff, byte compilation, and whitespace checks
+  pass. Inline and bounded Fable review found no actionable P0-P3 defect.
+  Hosted CI and immutable-history both passed exact PR #60 head `c32ef4a`, and
+  it merged as `ffa49adfd71644fe3ffa10106df1fcdc7421b0c7`, tree
+  `dd06117b77a4d15b5deb1770f86a465dc04338d0`; merged runner SHA-256 is
+  `4b8519da01edcff7ee203e8114b3ef4aa8fb673df63cb9ce0b83e34baa6ba646`.
+- PR #61 now binds both execution checklists to that merged runner and a fresh
+  `qualification-control-20260722-v2` root, names the preserved rejected
+  attempt, and documents the observed single-line Torch `+cu128` freeze
+  representation without weakening byte-equality or exact-zero gates. Its
+  immutable-history check is green; full CI is still running on the latest
+  documentation head. The required Codex review model is unsupported on this
+  account and Gemini remains unauthenticated, so neither produced a verdict;
+  the complete inline identity/path audit is clean. A separate Fable checklist
+  pass declined to verdict after distrusting its own auxiliary inspection, and
+  its sole provisional output-path concern was independently refuted on-box.
+
+Live state and next steps:
+
+- BBTV follower, web, and tunnel are active with zero follower restarts; follower
+  PID is 699636, the public service remains available, and the GPU compute list
+  is empty. BBTV stays live until the next timed precondition window.
+- Wait for exact-green PR #61 CI, merge it, clone only the merged runner into
+  the fresh v2 control root, and freeze its commit/tree/file identity. Then stop
+  only BBTV's follower, repeat the identical cool/idle precondition, capture the
+  untouched predecessor throughput baseline, restore BBTV, and proceed to the
+  candidate recurrent-CUDA qualification only if every control hard-integrity
+  field is literally zero. Qualification and canary artifacts remain ineligible
+  as training ancestry or reward evidence.
+
+## 2026-07-22 05:36 PDT — recovery complete and preserved off-box
+
+Atomic boundary:
+
+- Seed 44 exited zero at 05:19:55 PDT after the final cumulative evaluation.
+  `SCREEN_COMPLETE.json` appeared at 05:23:34 PDT, and the queue reached its
+  exact terminal state at 05:26:18 PDT: schema 1, `state=complete`,
+  `current_job=null`, message `all queued jobs completed and validated`, and
+  exactly the two expected jobs complete with exit code zero and success
+  digests. The queue service is inactive/dead with `Result=success`,
+  `ExecMainStatus=0`, and `NRestarts=0`.
+- Queue, wrapper, and trainer PIDs 610736, 653086, and 653090 are absent, and
+  `nvidia-smi` reports no compute process. Before any post-stop service action,
+  the original BBTV follower, web, and tunnel PIDs 610386, 127413, and 35307
+  were captured active/running with zero restarts. The screen-completion
+  SHA-256 is
+  `9bbf4c74f916f6b6027ce70510c9f315aa9456a55899dce31294c50ac8e50ae7`;
+  the terminal queue-state SHA-256 is
+  `83d7f9fabb14584005d04b9a0868a9752a6e1669897fbf3b43c3c915d8c86c5f`.
+
+Stopped validation:
+
+- The pinned Python, frozen validator, screen config, and queue-plan hashes all
+  matched their published identities. The frozen screen validator exited zero
+  over seeds 42, 43, and 44 at exact horizon-aligned step 11,999,903,744.
+  Final evaluation counts were 10,051, 10,002, and 10,044 games. Their
+  descriptive mean panel reports 1.6871 TD/game, performance 0.5230,
+  possession 0.3840, 14.8882 blocks thrown, and two-die-red share 0.03673.
+  These control-replication summaries are not reward-promotion evidence.
+- Exact `c1600ada` post-stop tool hashes matched locally and remotely. The
+  independent complete-log auditor accepted exactly the three stopped logs,
+  one final reprint each, the same evaluation counts, and exact zero across all
+  15 hard integrity fields. Log SHA-256 values are `30e95860...` for seed 42,
+  `43d2bae6...` for seed 43, and `33b89837...` for seed 44. Historical
+  marginal-action `illegal_frac` remains diagnostic only. The first local
+  wrapper invocation was interrupted before writing an exit code and left no
+  auditor process; that empty attempt is preserved. The identical command was
+  rerun in a persistent session and exited zero with empty stderr.
+
+Off-box preservation:
+
+- The frozen planner accepted an exact 37-file, 3,493,832,521-byte inventory.
+  Inventory identity is
+  `d0102a612b4b295923bb875e604bd7d7863160a549d708aeb25c405b31c069d8`;
+  manifest-file SHA-256 is
+  `1f0a11977c284483e2d36380b2a2a46c1734ae6b9318ea44c8d24195ff291d40`.
+- Exact single-root rsync exited zero with empty stdout/stderr and copied
+  exactly 37 files. The frozen local verifier then exited zero with empty
+  stderr and exact equality on file count, total bytes, and inventory identity,
+  including its second file-set stability check.
+- The complete local evidence envelope is
+  `/Users/alexanderhuth/BloodBowlRLArtifacts/recovery-preservation-20260719-c1600`.
+  Its deterministic 79-file SHA-256 index has identity
+  `e193a1fc7aa8fe9f72c908515e45a8cc1e6938f417c6269fc8810ce415d6fd02`.
+  The source recovery tree remains retained and read-only; copied checkpoints
+  remain evidence only and are ineligible as qualification input, canary
+  ancestry, or reward-promotion authority.
+
+Handoff status:
+
+- Draft PR #59 exact head `2b3c12804b4214fcb06dc15d61954c3e4439b3fa`
+  passed full hosted CI and immutable-history before this journal-only append.
+- No post-stop service action or qualification-root creation occurred before
+  preservation completed. The next gated step is the untouched predecessor
+  fp32 throughput capture, followed by the fresh candidate qualification under
+  the exact-zero integrity budget.
+
+## 2026-07-22 04:31 PDT — seed 44 at 11.49B; final estimated hour
+
+Status:
+
+- The recovery queue remains exactly `state=running`,
+  `current_job=full-control-rerun`, and `message=running job
+  full-control-rerun`, with unchanged plan SHA-256
+  `822bb912dbf3992c5fa6f04ddcaa5354897db10d03f2e66934b846c198b6a111`.
+  The screen remains on arm `both`, seed 44, index 3, with two completed arms
+  and message `waiting for current trainer`. The seed-44 terminal status and
+  `SCREEN_COMPLETE.json` remain absent, so the atomic boundary remains closed.
+- Seed 44 reached exact step 11,488,722,944 of 12B at epoch 87,651. The latest
+  complete 92-game train panel reports 2.0435 TD/game, performance 0.5217,
+  possession 0.3913, carrier-target block share about 0.1656, and two-die-red
+  share 0.04722. All 15 recovery-valid reward clip, non-finite, component,
+  engine-error, and demo-fallback fields remain exactly zero. Historical
+  pre-exact-action `illegal_frac=0.19310` remains diagnostic only.
+- The interval since the 03:32 sample averaged approximately 182K steps/s.
+  About 511.3M steps remain, or roughly 47 training minutes at that rate. This
+  estimate does not supersede queue completion, screen completion, pinned
+  validation, stopped log auditing, or off-box preservation.
+- The recovery queue, BBTV follower, web server, and tunnel units remain
+  active/running with zero restarts and their original PIDs. Queue PID 610736
+  and trainer PID 653090 retain their original process lineage, and trainer
+  653090 remains the sole GPU compute process. The RTX 2070 was 81 C and 75%
+  utilized, with 5,554/8,192 MiB allocated and 119.93/175 W draw. The recovery
+  filesystem has about 845 GiB free and about 7.8 GiB RAM is available.
+- BBTV atomically selected seed 44 step 11,386,093,568 at 04:25 PDT. The
+  selection SHA-256 is
+  `1c5a89cf3fa294bd43ca96b6dd17c700c0e317004340bbf3bca2761ecb038329`,
+  and <https://bbtv.seconds0.com/> returned HTTP 200 in 0.29 seconds.
+
+Handoff status:
+
+- Draft PR #59 exact head `3e6711490d8a2256783644df0a4a102a1e56f017`
+  passed full hosted CI in 4m43 and immutable-history in 7m03 before this
+  journal-only append. It remains the bounded post-merge monitoring branch.
+- The read-only one-minute boundary watcher remained quiet throughout the
+  interval. It performed no writes or process control.
+- The local evidence destination and every remote post-stop, qualification,
+  and canary root remain absent. No checkout, package, runtime, output root,
+  service, process, BBTV state, or experiment artifact was changed.
+
+Next steps remain read-only until the boundary. At atomic completion, establish
+the stopped queue/service/process predicates, run the frozen screen validator
+and independent three-log auditor, and preserve and verify the exact evidence
+off-box before creating any qualification root.
+
+## 2026-07-22 03:32 PDT — seed 44 at 10.84B; zero budget intact
+
+Status:
+
+- The recovery queue remains exactly `state=running`,
+  `current_job=full-control-rerun`, and `message=running job
+  full-control-rerun`, with unchanged plan SHA-256
+  `822bb912dbf3992c5fa6f04ddcaa5354897db10d03f2e66934b846c198b6a111`.
+  The screen remains on arm `both`, seed 44, index 3, with two completed arms
+  and message `waiting for current trainer`. The seed-44 terminal status and
+  `SCREEN_COMPLETE.json` remain absent, so the atomic boundary remains closed.
+- Seed 44 reached exact step 10,839,523,328 of 12B at epoch 82,698. The latest
+  complete 95-game train panel reports 2.0947 TD/game, performance 0.4895,
+  possession 0.3916, carrier-target block share about 0.1661, and two-die-red
+  share 0.04612. All 15 recovery-valid reward clip, non-finite, component,
+  engine-error, and demo-fallback fields remain exactly zero. Historical
+  pre-exact-action `illegal_frac=0.19034` remains diagnostic only.
+- The interval since the 02:31 sample averaged approximately 182K steps/s.
+  About 1.160B steps remain, or roughly 1.8 training hours at that rate. This
+  estimate does not supersede queue completion, screen completion, pinned
+  validation, stopped log auditing, or off-box preservation.
+- The recovery queue, BBTV follower, web server, and tunnel units remain
+  active/running with zero restarts and their original PIDs. Queue PID 610736
+  and trainer PID 653090 retain their original process lineage, and trainer
+  653090 remains the sole GPU compute process. The RTX 2070 was 81 C and 76%
+  utilized, with 5,554/8,192 MiB allocated and 117.64/175 W draw. The recovery
+  filesystem has about 845 GiB free and about 7.9 GiB RAM is available.
+- BBTV atomically selected seed 44 step 10,736,893,952 at 03:26 PDT. The
+  selection SHA-256 is
+  `84e02144ae91ed08e470325600b444d263f8ecbbf1bb340233b24ded74e1945f`,
+  and <https://bbtv.seconds0.com/> returned HTTP 200 in 0.30 seconds.
+
+Handoff status:
+
+- Draft PR #59 exact head `1e90ec0` passed full hosted CI in 5m00 and
+  immutable-history in 7m24 before this journal-only append. It remains the
+  bounded post-merge monitoring branch.
+- The read-only one-minute boundary watcher remained quiet throughout the
+  interval. It performed no writes or process control.
+- The local evidence destination and every remote post-stop, qualification,
+  and canary root remain absent. No checkout, package, runtime, output root,
+  service, process, BBTV state, or experiment artifact was changed.
+
+Next steps remain read-only until the boundary. At atomic completion, establish
+the stopped queue/service/process predicates, run the frozen screen validator
+and independent three-log auditor, and preserve and verify the exact evidence
+off-box before creating any qualification root.
+
+## 2026-07-22 02:31 PDT — seed 44 at 10.18B; BBTV current
+
+Status:
+
+- The recovery queue remains exactly `state=running`,
+  `current_job=full-control-rerun`, and `message=running job
+  full-control-rerun`, with unchanged plan SHA-256
+  `822bb912dbf3992c5fa6f04ddcaa5354897db10d03f2e66934b846c198b6a111`.
+  The screen remains on arm `both`, seed 44, index 3, with two completed arms
+  and message `waiting for current trainer`. The seed-44 terminal status and
+  `SCREEN_COMPLETE.json` remain absent, so the atomic boundary remains closed.
+- Seed 44 reached exact step 10,183,507,968 of 12B at epoch 77,693. The latest
+  complete 89-game train panel reports 1.9213 TD/game, performance 0.5169,
+  possession 0.3884, carrier-target block share about 0.1411, and two-die-red
+  share 0.03409. All 15 recovery-valid reward clip, non-finite, component,
+  engine-error, and demo-fallback fields remain exactly zero. Historical
+  pre-exact-action `illegal_frac=0.19608` remains diagnostic only.
+- The interval since the 01:31 sample averaged approximately 182K steps/s.
+  About 1.816B steps remain, or roughly 2.8 training hours at that rate. This
+  estimate does not supersede queue completion, screen completion, pinned
+  validation, stopped log auditing, or off-box preservation.
+- The recovery queue, BBTV follower, web server, and tunnel units remain
+  active/running with zero restarts. Queue PID 610736 is unchanged and trainer
+  PID 653090 remains the sole GPU compute process. The RTX 2070 was 81 C and
+  79% utilized, with 5,554/8,192 MiB allocated and 122.24/175 W draw. The
+  recovery filesystem has about 845 GiB free and about 8.7 GiB RAM is
+  available.
+- BBTV atomically selected seed 44 step 10,137,632,768 at 02:30 PDT. The
+  selection SHA-256 is
+  `95591be62d24ff3d7c11009b44fa6be7198e973d3f7b904f7f210d3f94fd881f`,
+  and <https://bbtv.seconds0.com/> returned HTTP 200 in 0.26 seconds.
+
+Handoff status:
+
+- Draft PR #59 exact head `d27a49f` passed immutable-history in 4m58 and full
+  hosted CI in 5m35 before this journal-only append. It remains the bounded
+  post-merge monitoring branch.
+- The read-only one-minute boundary watcher remained quiet throughout the
+  interval: the atomic file stayed absent and the exact queue service stayed
+  active. It performed no writes or process control.
+- The local evidence destination and every remote post-stop, qualification,
+  and canary root remain absent. No checkout, package, runtime, output root,
+  service, process, BBTV state, or experiment artifact was changed.
+
+Next steps remain read-only until the boundary. At atomic completion, establish
+the stopped queue/service/process predicates, run the frozen screen validator
+and independent three-log auditor, and preserve and verify the exact evidence
+off-box before creating any qualification root.
+
+## 2026-07-22 01:31 PDT — seed 44 at 9.52B; zero budget intact
+
+Status:
+
+- The recovery queue remains exactly `state=running`,
+  `current_job=full-control-rerun`, and `message=running job
+  full-control-rerun`, with unchanged plan SHA-256
+  `822bb912dbf3992c5fa6f04ddcaa5354897db10d03f2e66934b846c198b6a111`.
+  The screen remains on arm `both`, seed 44, index 3, with two completed arms
+  and message `waiting for current trainer`. The seed-44 terminal status and
+  `SCREEN_COMPLETE.json` remain absent, so the atomic boundary remains closed.
+- Seed 44 reached exact step 9,520,807,936 of 12B at epoch 72,637. The latest
+  complete 104-game train panel reports 1.8077 TD/game, performance 0.5192,
+  possession 0.3756, carrier-target block share about 0.1358, and two-die-red
+  share 0.04819. All 15 recovery-valid reward clip, non-finite, component,
+  engine-error, and demo-fallback fields remain exactly zero. Historical
+  pre-exact-action `illegal_frac=0.19831` remains diagnostic only.
+- The interval since the 00:31 sample averaged approximately 182K steps/s.
+  About 2.479B steps remain, or roughly 3.8 training hours at that rate. This
+  estimate does not supersede queue completion, screen completion, pinned
+  validation, stopped log auditing, or off-box preservation.
+- The recovery queue, BBTV follower, web server, and tunnel units remain
+  active/running with zero restarts. Queue PID 610736 is unchanged and trainer
+  PID 653090 remains the sole GPU compute process. The RTX 2070 was 80 C and
+  77% utilized, with 5,554/8,192 MiB allocated and 113.81/175 W draw. The
+  recovery filesystem has about 845 GiB free and about 8.8 GiB RAM is
+  available.
+- BBTV atomically selected seed 44 step 9,388,556,288 at 01:20 PDT. The
+  selection SHA-256 is
+  `e27d4df2bcd3f6da2c6e5aa398091ec185cd6ef6b569aa1c3c3d729806e26bff`,
+  and <https://bbtv.seconds0.com/> returned HTTP 200 in 0.25 seconds.
+
+Handoff status:
+
+- Draft PR #59 exact head `337829d` passed immutable-history in 4m34 and full
+  hosted CI in 5m02 before this journal-only append. It remains the bounded
+  post-merge monitoring branch.
+- The read-only one-minute boundary watcher remained quiet throughout the
+  interval: the atomic file stayed absent and the exact queue service stayed
+  active. It performed no writes or process control.
+- The local evidence destination and every remote post-stop, qualification,
+  and canary root remain absent. No checkout, package, runtime, output root,
+  service, process, BBTV state, or experiment artifact was changed.
+
+Next steps remain read-only until the boundary. At atomic completion, establish
+the stopped queue/service/process predicates, run the frozen screen validator
+and independent three-log auditor, and preserve and verify the exact evidence
+off-box before creating any qualification root.
+
+## 2026-07-22 00:31 PDT — seed 44 at 8.87B; BBTV current
+
+Status:
+
+- The recovery queue remains exactly `state=running`,
+  `current_job=full-control-rerun`, and `message=running job
+  full-control-rerun`, with unchanged plan SHA-256
+  `822bb912dbf3992c5fa6f04ddcaa5354897db10d03f2e66934b846c198b6a111`.
+  The screen remains on arm `both`, seed 44, index 3, with two completed arms
+  and message `waiting for current trainer`. The seed-44 terminal status and
+  `SCREEN_COMPLETE.json` remain absent, so the atomic boundary remains closed.
+- Seed 44 reached exact step 8,867,282,944 of 12B at epoch 67,651. The latest
+  complete 90-game train panel reports 1.8556 TD/game, performance 0.5667,
+  possession 0.3785, carrier-target block share about 0.1224, and two-die-red
+  share 0.04685. All 15 recovery-valid reward clip, non-finite, component,
+  engine-error, and demo-fallback fields remain exactly zero. Historical
+  pre-exact-action `illegal_frac=0.19209` remains diagnostic only.
+- The interval since the 23:31 sample averaged approximately 182K steps/s.
+  About 3.133B steps remain, or roughly 4.8 training hours at that rate. This
+  estimate does not supersede queue completion, screen completion, pinned
+  validation, stopped log auditing, or off-box preservation.
+- The recovery queue, BBTV follower, web server, and tunnel units remain
+  active/running with zero restarts. Queue PID 610736 is unchanged and trainer
+  PID 653090 remains the sole GPU compute process. The RTX 2070 was 81 C and
+  78% utilized, with 5,554/8,192 MiB allocated and 150.40/175 W draw. The
+  recovery filesystem has about 845 GiB free and about 8.9 GiB RAM is
+  available.
+- BBTV atomically selected seed 44 step 8,839,233,536 at 00:29 PDT. The
+  selection SHA-256 is
+  `5e0d3cb3fba2956a3c08a2662198287d9f6ebb86e23cc2931ffeb1c87374a6c6`,
+  and <https://bbtv.seconds0.com/> returned HTTP 200 in 0.18 seconds.
+
+Handoff status:
+
+- Draft PR #59 exact head `5d068cd` passed immutable-history in 3m08 and full
+  hosted CI in 5m00 before this journal-only append. It remains the bounded
+  post-merge monitoring branch.
+- The read-only one-minute boundary watcher remained quiet throughout the
+  interval: the atomic file stayed absent and the exact queue service stayed
+  active. It performed no writes or process control.
+- The local evidence destination and every remote post-stop, qualification,
+  and canary root remain absent. No checkout, package, runtime, output root,
+  service, process, BBTV state, or experiment artifact was changed.
+
+Next steps remain read-only until the boundary. At atomic completion, establish
+the stopped queue/service/process predicates, run the frozen screen validator
+and independent three-log auditor, and preserve and verify the exact evidence
+off-box before creating any qualification root.
+
+## 2026-07-21 23:31 PDT — seed 44 at 8.21B; zero budget intact
+
+Status:
+
+- The recovery queue remains exactly `state=running`,
+  `current_job=full-control-rerun`, and `message=running job
+  full-control-rerun`, with unchanged plan SHA-256
+  `822bb912dbf3992c5fa6f04ddcaa5354897db10d03f2e66934b846c198b6a111`.
+  The screen remains on arm `both`, seed 44, index 3, with two completed arms
+  and message `waiting for current trainer`. The seed-44 terminal status and
+  `SCREEN_COMPLETE.json` remain absent, so the atomic boundary remains closed.
+- Seed 44 reached exact step 8,213,233,664 of 12B at epoch 62,661. The latest
+  complete 103-game train panel reports 1.7087 TD/game, performance 0.4709,
+  possession 0.3721, carrier-target block share about 0.1379, and two-die-red
+  share 0.03857. All 15 recovery-valid reward clip, non-finite, component,
+  engine-error, and demo-fallback fields remain exactly zero. Historical
+  pre-exact-action `illegal_frac=0.19100` remains diagnostic only.
+- The interval since the 23:01 sample averaged approximately 182K steps/s.
+  About 3.787B steps remain, or roughly 5.8 training hours at that rate. This
+  estimate does not supersede queue completion, screen completion, pinned
+  validation, stopped log auditing, or off-box preservation.
+- The recovery queue, BBTV follower, web server, and tunnel units remain
+  active/running with zero restarts. Queue PID 610736 is unchanged and trainer
+  PID 653090 remains the sole GPU compute process. The RTX 2070 was 81 C and
+  77% utilized, with 5,554/8,192 MiB allocated and 124.02/175 W draw. The
+  recovery filesystem has about 846 GiB free and about 9.0 GiB RAM is
+  available.
+- BBTV atomically selected seed 44 step 8,140,095,488 at 23:27 PDT. The
+  selection SHA-256 is
+  `3974956d3d00882c4d2ca941306b278c61c2f8dbc06226ae58ecc074f9263de1`,
+  and <https://bbtv.seconds0.com/> returned HTTP 200 in 0.22 seconds.
+
+Handoff status:
+
+- Draft PR #59 exact head `4cdc1d38b578d9e3bc708628987128c3f509c173`
+  passed immutable-history in 1m49 and full hosted CI in 5m36 before this
+  journal-only append. It remains the bounded post-merge monitoring branch.
+- The read-only one-minute boundary watcher remained quiet throughout the
+  interval: the atomic file stayed absent and the exact queue service stayed
+  active. It performed no writes or process control.
+- The local evidence destination and every remote post-stop, qualification,
+  and canary root remain absent. No checkout, package, runtime, output root,
+  service, process, BBTV state, or experiment artifact was changed.
+
+Next steps remain read-only until the boundary. At atomic completion, establish
+the stopped queue/service/process predicates, run the frozen screen validator
+and independent three-log auditor, and preserve and verify the exact evidence
+off-box before creating any qualification root.
