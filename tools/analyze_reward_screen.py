@@ -36,7 +36,10 @@ import sys
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
-from live_integrity_guard import HARD_INTEGRITY_KEYS
+if __package__:
+    from .live_integrity_guard import HARD_INTEGRITY_KEYS
+else:
+    from live_integrity_guard import HARD_INTEGRITY_KEYS
 
 
 EXPECTED_SCHEDULE = (
@@ -139,6 +142,16 @@ PAIRED_CANDIDATES = ("possession_only", "gain_only", "neither")
 PAIRED_FINAL_SEEDS = (42, 43, 44)
 CONTROL_FINAL_SCHEDULE = (("both", 42), ("both", 43), ("both", 44))
 EXACT_ACTION_CANARY_SCHEDULE = (("both", 42),)
+EXACT_ACTION_CANARY_REQUESTED_STEPS = 50_000_000
+EXACT_ACTION_CANARY_TOTAL_AGENTS = 2_048
+EXACT_ACTION_CANARY_HORIZON = 64
+EXACT_ACTION_CANARY_ROLLOUT_QUANTUM = (
+    EXACT_ACTION_CANARY_TOTAL_AGENTS * EXACT_ACTION_CANARY_HORIZON)
+EXACT_ACTION_CANARY_FINAL_STEPS = (
+    EXACT_ACTION_CANARY_REQUESTED_STEPS
+    // EXACT_ACTION_CANARY_ROLLOUT_QUANTUM
+    * EXACT_ACTION_CANARY_ROLLOUT_QUANTUM)
+EXACT_ACTION_CANARY_CHECKPOINT_BYTES = 16_066_560
 
 SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 
@@ -291,20 +304,22 @@ def _validate_exact_action_canary_contract(contract: dict[str, Any]) -> None:
 
     requested_steps = _need_int(
         contract.get("requested_steps"), "exact-action-canary requested_steps")
-    if requested_steps != 50_000_000:
+    if requested_steps != EXACT_ACTION_CANARY_REQUESTED_STEPS:
         raise AnalysisError(
             "exact-action-canary requested_steps must equal 50000000")
     rollout_quantum = _need_int(
         contract.get("rollout_quantum"), "exact-action-canary rollout_quantum")
-    if rollout_quantum <= 0:
-        raise AnalysisError("exact-action-canary rollout_quantum must be positive")
+    if rollout_quantum != EXACT_ACTION_CANARY_ROLLOUT_QUANTUM:
+        raise AnalysisError(
+            "exact-action-canary rollout_quantum mismatch: "
+            f"{rollout_quantum} != {EXACT_ACTION_CANARY_ROLLOUT_QUANTUM}")
     final_steps = _need_int(
         contract.get("final_steps"), "exact-action-canary final_steps")
-    expected_final_steps = requested_steps // rollout_quantum * rollout_quantum
-    if final_steps != expected_final_steps or final_steps <= 0:
+    if final_steps != EXACT_ACTION_CANARY_FINAL_STEPS:
         raise AnalysisError(
-            "exact-action-canary final_steps do not match the complete-rollout "
-            f"budget: {final_steps} != {expected_final_steps}")
+            "exact-action-canary final_steps do not match the frozen "
+            f"complete-rollout budget: {final_steps} != "
+            f"{EXACT_ACTION_CANARY_FINAL_STEPS}")
 
     bootstrap = _need_mapping(
         contract.get("bootstrap"), "exact-action-canary bootstrap")
@@ -326,9 +341,15 @@ def _validate_exact_action_canary_contract(contract: dict[str, Any]) -> None:
     settings = _need_mapping(
         contract.get("settings"), "exact-action-canary settings")
     for field, expected in (
+        ("total_agents", EXACT_ACTION_CANARY_TOTAL_AGENTS),
+        ("horizon", EXACT_ACTION_CANARY_HORIZON),
+        ("expected_checkpoint_bytes", EXACT_ACTION_CANARY_CHECKPOINT_BYTES),
         ("num_frozen_banks", 0),
         ("frozen_bank_pct", 0),
         ("native_precision_bytes", 4),
+        ("policy_hidden_size", 512),
+        ("policy_num_layers", 3),
+        ("policy_expansion_factor", 1),
         ("min_train_games", 1),
         ("min_eval_games", 10_000),
         ("eval_episodes", 10_000),
@@ -943,35 +964,40 @@ def render_text(report: dict[str, Any]) -> str:
         )
 
     lines.append("")
-    lines.append(
-        "Per-seed paired contrasts"
-        if screen["profile"] in ("paired-confirmation", "paired-final")
-        else (
-            "Per-seed control summaries"
-            if screen["profile"] == "control-final"
-            else "Per-seed 2x2 effects"
-        )
-    )
-    for seed in report["per_seed"]:
-        lines.append(f"  seed {seed}")
-        for metric in report["metrics"]:
-            effects = report["per_seed"][seed]["effects"][metric]
-            lines.append(f"    {metric}: " + " ".join(
-                f"{effect}={_format_number(effects[effect])}"
-                for effect in report["effect_definitions"]
-            ))
-
-    lines.append("")
-    seed_count = len(report["per_seed"])
-    lines.append(f"Across {seed_count} seeds (descriptive means)")
-    for metric in report["metrics"]:
-        summaries = report["across_seeds"]["effects"][metric]
+    if screen["profile"] == "exact-action-canary":
+        lines.append("Qualification verdict")
         lines.append(
-            f"  {metric}: " + " ".join(
-                f"{effect}={_format_number(summaries[effect]['mean'])}"
-                for effect in report["effect_definitions"]
+            "  accepted fixed one-arm runtime canary; no reward contrasts computed")
+    else:
+        lines.append(
+            "Per-seed paired contrasts"
+            if screen["profile"] in ("paired-confirmation", "paired-final")
+            else (
+                "Per-seed control summaries"
+                if screen["profile"] == "control-final"
+                else "Per-seed 2x2 effects"
             )
         )
+        for seed in report["per_seed"]:
+            lines.append(f"  seed {seed}")
+            for metric in report["metrics"]:
+                effects = report["per_seed"][seed]["effects"][metric]
+                lines.append(f"    {metric}: " + " ".join(
+                    f"{effect}={_format_number(effects[effect])}"
+                    for effect in report["effect_definitions"]
+                ))
+
+        lines.append("")
+        seed_count = len(report["per_seed"])
+        lines.append(f"Across {seed_count} seeds (descriptive means)")
+        for metric in report["metrics"]:
+            summaries = report["across_seeds"]["effects"][metric]
+            lines.append(
+                f"  {metric}: " + " ".join(
+                    f"{effect}={_format_number(summaries[effect]['mean'])}"
+                    for effect in report["effect_definitions"]
+                )
+            )
     lines.append("")
     lines.append("Warnings")
     lines.extend(f"  - {warning}" for warning in report["warnings"])

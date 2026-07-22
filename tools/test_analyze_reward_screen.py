@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -51,10 +52,15 @@ class RewardScreenAnalysisTests(unittest.TestCase):
                 "rollout_quantum": 131_072,
                 "schedule": [{"index": 1, "arm": "both", "seed": 42}],
                 "settings": {
-                    "expected_checkpoint_bytes": "16",
+                    "total_agents": "2048",
+                    "horizon": "64",
+                    "expected_checkpoint_bytes": "16066560",
                     "frozen_bank_pct": "0",
                     "num_frozen_banks": "0",
                     "native_precision_bytes": "4",
+                    "policy_hidden_size": "512",
+                    "policy_num_layers": "3",
+                    "policy_expansion_factor": "1",
                     "min_train_games": "1",
                     "min_eval_games": "10000",
                     "eval_episodes": "10000",
@@ -125,7 +131,7 @@ class RewardScreenAnalysisTests(unittest.TestCase):
             "screen_manifest_sha256": manifest_sha,
             "reward_sha256": analyze_reward_screen
             .POSSESSION_GAIN_REWARD_SHA256["both"],
-            "checkpoint_bytes": 16,
+            "checkpoint_bytes": 16_066_560,
             "checkpoint_sha256": digest("checkpoint-both-42"),
             "checkpoint_lineage": "/remote/run/0000000049938432.bin.lineage.json",
             "checkpoint_lineage_sha256": checkpoint_lineage_sha,
@@ -152,6 +158,20 @@ class RewardScreenAnalysisTests(unittest.TestCase):
             }],
         })
         return manifest_sha
+
+    def rebind_exact_action_canary(self, root):
+        root = Path(root)
+        manifest_path = root / "SCREEN_MANIFEST.json"
+        manifest_sha = sha256(manifest_path)
+        result_path = root / "exact-action-canary-test-both-s42.result.json"
+        result = json.loads(result_path.read_text(encoding="utf-8"))
+        result["screen_manifest_sha256"] = manifest_sha
+        write_json(result_path, result)
+        completion_path = root / "SCREEN_COMPLETE.json"
+        completion = json.loads(completion_path.read_text(encoding="utf-8"))
+        completion["screen_manifest_sha256"] = manifest_sha
+        completion["results"][0]["sha256"] = sha256(result_path)
+        write_json(completion_path, completion)
 
     def build_screen(self, root, *, completion=True):
         root = Path(root)
@@ -280,6 +300,10 @@ class RewardScreenAnalysisTests(unittest.TestCase):
         self.assertEqual(list(report["per_seed"]), ["42"])
         self.assertEqual(report["per_seed"]["42"]["effects"]["tds"], {})
         self.assertIn("qualification-only", " ".join(report["warnings"]))
+        rendered = analyze_reward_screen.render_text(report)
+        self.assertIn("Qualification verdict", rendered)
+        self.assertNotIn("2x2 effects", rendered)
+        self.assertNotIn("Across 1 seeds", rendered)
 
     def test_exact_action_canary_rejects_nonfresh_or_misaligned_contract(self):
         mutations = (
@@ -312,6 +336,53 @@ class RewardScreenAnalysisTests(unittest.TestCase):
                 with self.assertRaisesRegex(
                         analyze_reward_screen.AnalysisError, message):
                     analyze_reward_screen.analyze_screen(tmp, ("tds",))
+
+    def test_exact_action_canary_rejects_coherent_budget_and_shape_drift(self):
+        mutations = (
+            (
+                "rollout_budget",
+                lambda contract, result: (
+                    contract.__setitem__("rollout_quantum", 30_000_000),
+                    contract.__setitem__("final_steps", 30_000_000),
+                ),
+                "rollout_quantum mismatch",
+            ),
+            (
+                "checkpoint_bytes",
+                lambda contract, result: (
+                    contract["settings"].__setitem__(
+                        "expected_checkpoint_bytes", "8"),
+                    result.__setitem__("checkpoint_bytes", 8),
+                ),
+                "settings.expected_checkpoint_bytes mismatch",
+            ),
+            (
+                "policy_shape",
+                lambda contract, result: (
+                    contract["settings"].__setitem__("policy_hidden_size", "999"),
+                    contract["settings"].__setitem__("policy_num_layers", "1"),
+                    contract["settings"].__setitem__(
+                        "policy_expansion_factor", "99"),
+                ),
+                "settings.policy_hidden_size mismatch",
+            ),
+        )
+        for label, mutate, message in mutations:
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as tmp:
+                self.build_exact_action_canary(tmp)
+                root = Path(tmp)
+                manifest_path = root / "SCREEN_MANIFEST.json"
+                result_path = (
+                    root / "exact-action-canary-test-both-s42.result.json")
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                result = json.loads(result_path.read_text(encoding="utf-8"))
+                mutate(manifest["contract"], result)
+                write_json(manifest_path, manifest)
+                write_json(result_path, result)
+                self.rebind_exact_action_canary(root)
+                with self.assertRaisesRegex(
+                        analyze_reward_screen.AnalysisError, message):
+                    analyze_reward_screen.analyze_screen(root, ("tds",))
 
     def test_exact_action_canary_rejects_nonzero_or_missing_hard_metrics(self):
         mutations = (
@@ -759,6 +830,19 @@ class RewardScreenAnalysisTests(unittest.TestCase):
         self.assertEqual(payload["metrics"], ["tds"])
         self.assertEqual(payload["across_seeds"]["effects"]["tds"]
                          ["interaction"]["mean"], 4.0)
+
+    def test_module_supports_repository_package_import(self):
+        result = subprocess.run(
+            [sys.executable, "-c", "import tools.analyze_reward_screen"],
+            cwd=Path(__file__).resolve().parent.parent,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env={key: value for key, value in os.environ.items()
+                 if key != "PYTHONPATH"},
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
 
 
 if __name__ == "__main__":
