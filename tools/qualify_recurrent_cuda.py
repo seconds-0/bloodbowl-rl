@@ -1,8 +1,32 @@
 #!/usr/bin/env python3
-"""Fail-closed recurrent CUDA qualification for the native Blood Bowl backend.
+"""Recurrent CUDA smoke test for the native Blood Bowl backend.
 
-Correctness cells run in fresh subprocesses. Qualification artifacts are
-diagnostic-only and may never be admitted as checkpoint ancestry.
+Every measurement runs in a fresh subprocess, because CUDA runtime
+initialization order, graph capture, and recurrent state all have to start
+clean. Re-run it whenever you rebuild; it overwrites its own output directory.
+
+    tools/qualify_recurrent_cuda.py run --puffer-root <tree> --output <dir>
+        [--baseline-throughput <previous QUALIFICATION.json>]
+
+Gates, and the bug each one caught:
+
+  construction_state  recurrent state exactly zero in every primary and frozen
+                      bank/buffer at construction.
+  graph_parity        cudagraph-on and cudagraph-off first rollouts agree:
+                      bitwise on discrete fields, within fp32 tolerance on
+                      values/logprobs and decoder outputs.
+  terminal_reset      state nonzero after a rollout, and the automatic terminal
+                      reset matches an explicit all-bank zero control.
+  ratio               real PPO calls at learning_rate=0 recompute ratio == 1
+                      over every learner row, never select a frozen row (even
+                      at prio_alpha=0), and leave the weight bytes unchanged.
+  throughput          steps/second on the target GPU, optionally compared
+                      against a previous run's number.
+
+Every transition-executing cell must also report all 16 hard-integrity
+counters at exactly zero. Qualification is fp32-only: BF16 rounds the stored
+behavior log probability before recomputation, so the near-unity ratio contract
+does not hold there. These artifacts are diagnostic, never checkpoint ancestry.
 """
 
 from __future__ import annotations
@@ -43,30 +67,16 @@ except ModuleNotFoundError:  # Imported as tools.qualify_recurrent_cuda in tests
     )
 
 
-SCHEMA_VERSION = 3
-QUALIFICATION_ONLY = True
+SCHEMA_VERSION = 4
 MANDATORY_GATES = (
-    "construction_state",
-    "graph_parity",
-    "terminal_reset",
-    "ratio",
-    "throughput",
+    "construction_state", "graph_parity", "terminal_reset", "ratio", "throughput",
 )
 SNAPSHOT_FIELDS = (
-    "observations",
-    "actions",
-    "values",
-    "logprobs",
-    "rewards",
-    "terminals",
+    "observations", "actions", "values", "logprobs", "rewards", "terminals",
     "action_mask",
 )
 EXACT_SNAPSHOT_FIELDS = (
-    "observations",
-    "actions",
-    "rewards",
-    "terminals",
-    "action_mask",
+    "observations", "actions", "rewards", "terminals", "action_mask",
 )
 FLOAT_SNAPSHOT_FIELDS = ("values", "logprobs")
 HARD_INTEGRITY_KEYS = (
@@ -87,122 +97,47 @@ HARD_INTEGRITY_KEYS = (
     "error_episodes",
     "demo_fallbacks",
 )
-TRANSITION_CELL_KINDS = frozenset({
-    "rollout",
-    "terminal_auto",
-    "terminal_control",
-    "ratio",
-    "throughput",
-})
-# Qualification is deliberately fp32-only. In BF16, the behavior log
-# probability is rounded before PPO recomputation, so a correct unchanged
-# policy can exceed a tolerance derived from one BF16 ULP around ratio one.
+TRANSITION_CELL_KINDS = frozenset(
+    {"rollout", "terminal_auto", "terminal_control", "ratio", "throughput"}
+)
+CELL_KINDS = ("construction", *sorted(TRANSITION_CELL_KINDS))
 GRAPH_ATOL_BY_PRECISION = {4: 1.0e-6}
 RATIO_ATOL_BY_PRECISION = {4: 2.0e-5}
 DEFAULT_RATIO_CALL_LIMIT = 64
 DEFAULT_MAX_REGRESSION_FRACTION = 0.10
-# Puffer's cudagraph setting is a warmup-epoch count, not a boolean. Match the
-# frozen canary/default so CUDA libraries initialize before capture begins.
+# Puffer's cudagraph setting is a warmup-epoch count, not a boolean. 0 captures
+# the first execution before CUDA lazy initialization; -1 means graphs off.
 DEFAULT_CUDAGRAPH_WARMUP_EPOCHS = 10
-# Match the frozen exact-action canary rather than allocating train activations
-# for its entire 2,048 x 64 rollout quantum at once.
 DEFAULT_THROUGHPUT_MINIBATCH_SIZE = 16384
 BACKEND_SOURCE_FILES = (
-    "pufferlib/pufferl.py",
-    "pufferlib/selfplay.py",
-    "pufferlib/torch_pufferl.py",
-    "src/bindings.cu",
-    "src/bindings_cpu.cpp",
-    "src/kernels.cu",
-    "src/pufferlib.cu",
-    "src/vecenv.h",
-)
-# The immutable predecessor was compiled before selfplay.py joined the generated
-# native digest. Preserve that historical compiler contract while binding the
-# full current runtime source closure independently below.
-PREDECESSOR_BACKEND_SOURCE_FILES = (
-    "pufferlib/pufferl.py",
-    "pufferlib/torch_pufferl.py",
-    "src/bindings.cu",
-    "src/bindings_cpu.cpp",
-    "src/kernels.cu",
-    "src/pufferlib.cu",
-    "src/vecenv.h",
+    "pufferlib/pufferl.py", "pufferlib/selfplay.py", "pufferlib/torch_pufferl.py",
+    "src/bindings.cu", "src/bindings_cpu.cpp", "src/kernels.cu",
+    "src/pufferlib.cu", "src/vecenv.h",
 )
 QUALIFICATION_SURFACE_BINDINGS = (
-    "qualification_recurrent_state",
-    "qualification_snapshot",
+    "qualification_recurrent_state", "qualification_snapshot",
 )
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
-GIT_COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
-PREDECESSOR_SOURCE_COMMIT = "afc8008933548438ca93c41341f5f08fdd294386"
-PROTECTED_RECOVERY_ROOT = Path("/home/rache/bloodbowl-rl-recovery-20260719")
 
 
 class QualificationError(RuntimeError):
     """A missing, malformed, drifted, or failed qualification predicate."""
 
 
-def qualification_surface_state(module: Any) -> bool:
-    """Accept only a completely absent or completely present evidence surface."""
-    present = tuple(
-        hasattr(module, name) for name in QUALIFICATION_SURFACE_BINDINGS
-    )
-    if any(present) and not all(present):
-        raise QualificationError("compiled qualification surface is partial")
-    return all(present)
+def _num(value: Any, label: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise QualificationError(f"{label} must be numeric")
+    if not math.isfinite(float(value)):
+        raise QualificationError(f"{label} must be finite")
+    return float(value)
 
 
-def sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with Path(path).open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def qualification_source_paths(source_root: Path) -> tuple[Path, ...]:
-    """Files whose exact bytes define qualification authority and validation."""
-    return (
-        source_root / "training/puffer_exact_joint_actions.patch",
-        source_root / "training/puffer_recurrent_eval_state.patch",
-        source_root / "training/puffer_frozen_prio_mask.patch",
-        source_root / "training/puffer_recurrent_cuda_qualification.patch",
-        source_root / "training/selfplay_league.patch",
-        source_root / "tools/install_puffer_env.sh",
-        source_root / "tools/puffer_cuda_runtime.py",
-        source_root / "tools/qualify_recurrent_cuda.py",
-    )
-
-
-def qualification_source_identity(source_root: Path) -> dict[str, str]:
-    """Hash the complete schema-3 qualification authority closure."""
-    source_root = Path(source_root).resolve()
-    try:
-        return {
-            str(path.relative_to(source_root)): sha256(path)
-            for path in qualification_source_paths(source_root)
-        }
-    except (OSError, ValueError) as exc:
-        raise QualificationError(
-            f"qualification source-file identity is incomplete: {exc}"
-        ) from exc
-
-
-def validate_qualification_source_identity(
-    recorded: Any, source_root: Path
-) -> dict[str, str]:
-    expected = qualification_source_identity(source_root)
-    if not isinstance(recorded, Mapping) or dict(recorded) != expected:
-        raise QualificationError("qualification source-file identity drifted")
-    return expected
-
-
-def canonical_hash(value: Any) -> str:
-    payload = json.dumps(
-        value, sort_keys=True, separators=(",", ":"), allow_nan=False
-    ).encode("utf-8")
-    return hashlib.sha256(payload).hexdigest()
+def _int(value: Any, label: str, *, minimum: int | None = None) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise QualificationError(f"{label} must be an integer")
+    if minimum is not None and value < minimum:
+        raise QualificationError(f"{label} must be at least {minimum}")
+    return value
 
 
 def _require_sha256(value: Any, label: str) -> str:
@@ -211,27 +146,12 @@ def _require_sha256(value: Any, label: str) -> str:
     return value
 
 
-def backend_source_hash(
-    puffer_root: Path, *, source_files: Iterable[str] = BACKEND_SOURCE_FILES
-) -> str:
-    """Reproduce install_puffer_env.sh's path-bound backend source digest."""
-    root = Path(puffer_root).resolve()
-    manifest = bytearray()
-    for relative in source_files:
-        path = root / relative
-        if not path.is_file():
-            raise QualificationError(f"backend source is missing: {path}")
-        manifest.extend(f"{sha256(path)}  {relative}\n".encode("utf-8"))
-    return hashlib.sha256(manifest).hexdigest()
-
-
-def installed_snapshot_hash(puffer_root: Path) -> str:
-    path = Path(puffer_root).resolve() / "ocean" / "bloodbowl" / ".content_hash"
-    try:
-        value = path.read_text(encoding="ascii").strip()
-    except (OSError, UnicodeError) as exc:
-        raise QualificationError(f"installed snapshot digest is unavailable: {exc}") from exc
-    return _require_sha256(value, "installed snapshot digest")
+def sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def write_json_atomic(path: Path, payload: Mapping[str, Any]) -> None:
@@ -251,7 +171,7 @@ def write_json_atomic(path: Path, payload: Mapping[str, Any]) -> None:
 def write_npz_atomic(path: Path, arrays: Mapping[str, np.ndarray]) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temporary_name = tempfile.mkstemp(
+    fd, temporary = tempfile.mkstemp(
         prefix=f".{path.name}.tmp.", suffix=".npz", dir=path.parent
     )
     try:
@@ -259,109 +179,127 @@ def write_npz_atomic(path: Path, arrays: Mapping[str, np.ndarray]) -> None:
             np.savez(handle, **arrays)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(temporary_name, path)
+        os.replace(temporary, path)
     finally:
-        Path(temporary_name).unlink(missing_ok=True)
+        Path(temporary).unlink(missing_ok=True)
 
 
-def _finite_number(value: Any, label: str) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise QualificationError(f"{label} must be numeric")
-    result = float(value)
-    if not math.isfinite(result):
-        raise QualificationError(f"{label} must be finite")
-    return result
+def _read_json(path: Path) -> dict[str, Any]:
+    try:
+        value = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise QualificationError(f"cannot read JSON artifact {path}: {exc}") from exc
+    if not isinstance(value, dict):
+        raise QualificationError(f"JSON artifact is not an object: {path}")
+    return value
+
+
+def _read_npz(path: Path) -> dict[str, np.ndarray]:
+    try:
+        with np.load(path, allow_pickle=False) as payload:
+            return {key: payload[key].copy() for key in payload.files}
+    except (OSError, ValueError) as exc:
+        raise QualificationError(f"cannot read NPZ artifact {path}: {exc}") from exc
+
+
+# ---------------------------------------------------------------- state evidence
 
 
 def _state_entries(
-    report: Mapping[str, Any], expected_banks: int, expected_buffers: int
+    report: Mapping[str, Any], banks: int, buffers: int
 ) -> list[Mapping[str, Any]]:
-    if report.get("num_banks") != expected_banks or report.get(
-        "num_buffers"
-    ) != expected_buffers:
+    """Every (bank, buffer) appears exactly once with a self-coherent shape."""
+    if report.get("num_banks") != banks or report.get("num_buffers") != buffers:
         raise QualificationError("state report bank/buffer dimensions mismatch")
     entries = report.get("entries")
     if not isinstance(entries, list):
         raise QualificationError("state report entries must be a list")
-    expected = {
-        (bank, buffer)
-        for bank in range(expected_banks)
-        for buffer in range(expected_buffers)
-    }
     observed: set[tuple[int, int]] = set()
     for entry in entries:
         if not isinstance(entry, Mapping):
             raise QualificationError("state entry must be an object")
-        bank = entry.get("bank")
-        buffer = entry.get("buffer")
-        if isinstance(bank, bool) or not isinstance(bank, int):
-            raise QualificationError("state bank must be an integer")
-        if isinstance(buffer, bool) or not isinstance(buffer, int):
-            raise QualificationError("state buffer must be an integer")
-        key = (bank, buffer)
+        key = (
+            _int(entry.get("bank"), "state bank"),
+            _int(entry.get("buffer"), "state buffer"),
+        )
         if key in observed:
             raise QualificationError(f"duplicate state entry {key}")
         observed.add(key)
-    if observed != expected:
-        raise QualificationError(
-            f"state coverage mismatch: expected {sorted(expected)}, "
-            f"observed {sorted(observed)}"
-        )
+        shape = entry.get("shape")
+        if not isinstance(shape, list) or len(shape) < 3:
+            raise QualificationError("state tensor shape is malformed")
+        for value in shape:
+            _int(value, "state tensor dimension", minimum=1)
+        rows = _int(entry.get("active_rows"), "state active-row count", minimum=1)
+        elements = math.prod(shape)
+        if (rows > shape[1] or entry.get("elements") != elements
+                or entry.get("active_elements") != elements // shape[1] * rows):
+            raise QualificationError("state element counts differ from shape")
+    if observed != {(b, f) for b in range(banks) for f in range(buffers)}:
+        raise QualificationError(f"state coverage mismatch: {sorted(observed)}")
     return entries
 
 
-def _validate_state_shape(entry: Mapping[str, Any]) -> None:
-    shape = entry.get("shape")
-    if not isinstance(shape, list) or len(shape) < 3 or not all(
-        isinstance(value, int) and not isinstance(value, bool) and value > 0
-        for value in shape
-    ):
-        raise QualificationError("state tensor shape is malformed")
-    elements = entry.get("elements")
-    if elements != math.prod(shape):
-        raise QualificationError("state tensor element count differs from shape")
-    active_rows = entry.get("active_rows")
-    if (isinstance(active_rows, bool) or not isinstance(active_rows, int)
-            or active_rows <= 0 or active_rows > shape[1]):
-        raise QualificationError("state active-row count is invalid")
-    active_elements = entry.get("active_elements")
-    expected_active = math.prod(shape) // shape[1] * active_rows
-    if active_elements != expected_active:
-        raise QualificationError("state active element count differs from shape")
+def validate_zero_state(
+    report: Mapping[str, Any], *, expected_banks: int, expected_buffers: int
+) -> None:
+    """Exact zero, not near zero, in every bank/buffer and every active row."""
+    for entry in _state_entries(report, expected_banks, expected_buffers):
+        for key in ("nonzero", "nonfinite", "active_nonzero", "active_nonfinite"):
+            if entry.get(key) != 0:
+                raise QualificationError(
+                    f"state {key}={entry.get(key)} is not zero at "
+                    f"bank={entry['bank']} buffer={entry['buffer']}"
+                )
+        for key in ("max_abs", "active_max_abs"):
+            if _num(entry.get(key), f"state {key}") != 0.0:
+                raise QualificationError(f"state {key} is not exactly zero")
+
+
+def validate_nonzero_state(
+    report: Mapping[str, Any], *, expected_banks: int, expected_buffers: int
+) -> None:
+    """The recurrent path really ran in every bank/buffer, and stayed finite."""
+    for entry in _state_entries(report, expected_banks, expected_buffers):
+        if _int(entry.get("active_nonzero"), "active nonzero count") <= 0:
+            raise QualificationError(
+                f"state path was not exercised at bank={entry['bank']} "
+                f"buffer={entry['buffer']}"
+            )
+        if entry.get("nonfinite") != 0 or entry.get("active_nonfinite") != 0:
+            raise QualificationError("exercised recurrent state contains non-finite values")
+        if _num(entry.get("active_max_abs"), "active state max_abs") <= 0.0:
+            raise QualificationError("nonzero state has non-positive max_abs")
 
 
 def derive_row_partition(
     report: Mapping[str, Any], *, total_agents: int
 ) -> tuple[set[int], set[int]]:
-    num_banks = report.get("num_banks")
-    num_buffers = report.get("num_buffers")
-    agents_per_buffer = report.get("agents_per_buffer")
+    """Split rows into learner-owned and frozen-bank from the native layout."""
+    banks = _int(report.get("num_banks"), "row partition num_banks", minimum=1)
+    buffers = _int(report.get("num_buffers"), "row partition num_buffers", minimum=1)
+    per_buffer = _int(
+        report.get("agents_per_buffer"), "row partition agents_per_buffer", minimum=1
+    )
     layout = report.get("bank_layout")
-    for label, value in (
-        ("num_banks", num_banks),
-        ("num_buffers", num_buffers),
-        ("agents_per_buffer", agents_per_buffer),
-    ):
-        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
-            raise QualificationError(f"row partition {label} is invalid")
-    if total_agents != num_buffers * agents_per_buffer:
+    if total_agents != buffers * per_buffer:
         raise QualificationError("row partition total-agent count is inconsistent")
-    if not isinstance(layout, list) or len(layout) != num_banks + 1 or not all(
-        isinstance(value, int) and not isinstance(value, bool) for value in layout
-    ):
+    if not isinstance(layout, list) or len(layout) != banks + 1:
         raise QualificationError("row partition bank layout is malformed")
-    if layout[0] != 0 or layout[-1] != agents_per_buffer or any(
+    for value in layout:
+        _int(value, "row partition bank boundary")
+    if layout[0] != 0 or layout[-1] != per_buffer or any(
         left >= right for left, right in zip(layout, layout[1:])
     ):
         raise QualificationError("row partition bank layout is not a strict partition")
-    if num_banks < 2:
+    if banks < 2:
         raise QualificationError("ratio qualification requires a real frozen bank")
     primary: set[int] = set()
     frozen: set[int] = set()
-    for buffer in range(num_buffers):
-        offset = buffer * agents_per_buffer
-        primary.update(range(offset + layout[0], offset + layout[1]))
-        frozen.update(range(offset + layout[1], offset + layout[-1]))
+    for buffer in range(buffers):
+        offset = buffer * per_buffer
+        primary.update(range(offset, offset + layout[1]))
+        frozen.update(range(offset + layout[1], offset + per_buffer))
     if not primary or not frozen or primary & frozen or primary | frozen != set(
         range(total_agents)
     ):
@@ -369,50 +307,10 @@ def derive_row_partition(
     return primary, frozen
 
 
-def validate_zero_state(
-    report: Mapping[str, Any], *, expected_banks: int, expected_buffers: int
-) -> None:
-    for entry in _state_entries(report, expected_banks, expected_buffers):
-        _validate_state_shape(entry)
-        nonzero = entry.get("nonzero")
-        nonfinite = entry.get("nonfinite")
-        if nonzero != 0 or nonfinite != 0:
-            raise QualificationError(
-                f"state is not exactly zero/finite at bank={entry['bank']} "
-                f"buffer={entry['buffer']}: nonzero={nonzero}, "
-                f"nonfinite={nonfinite}"
-            )
-        if _finite_number(entry.get("max_abs"), "state max_abs") != 0.0:
-            raise QualificationError("state max_abs is not exactly zero")
-        if entry.get("active_nonzero") != 0 or entry.get("active_nonfinite") != 0:
-            raise QualificationError("active recurrent state is not exactly zero/finite")
-        if _finite_number(
-            entry.get("active_max_abs"), "active state max_abs"
-        ) != 0.0:
-            raise QualificationError("active state max_abs is not exactly zero")
+# ------------------------------------------------------- rollout / PPO evidence
 
 
-def validate_nonzero_state(
-    report: Mapping[str, Any], *, expected_banks: int, expected_buffers: int
-) -> None:
-    for entry in _state_entries(report, expected_banks, expected_buffers):
-        _validate_state_shape(entry)
-        nonzero = entry.get("active_nonzero")
-        nonfinite = entry.get("nonfinite")
-        if isinstance(nonzero, bool) or not isinstance(nonzero, int) or nonzero <= 0:
-            raise QualificationError(
-                f"state path was not exercised at bank={entry['bank']} "
-                f"buffer={entry['buffer']}"
-            )
-        if nonfinite != 0 or entry.get("active_nonfinite") != 0:
-            raise QualificationError("exercised recurrent state contains non-finite values")
-        if _finite_number(entry.get("active_max_abs"), "active state max_abs") <= 0.0:
-            raise QualificationError("nonzero state has non-positive max_abs")
-
-
-def _validate_array_pair(
-    key: str, left: Any, right: Any
-) -> tuple[np.ndarray, np.ndarray]:
+def _validate_array_pair(key: str, left: Any, right: Any) -> tuple[np.ndarray, np.ndarray]:
     if not isinstance(left, np.ndarray) or not isinstance(right, np.ndarray):
         raise QualificationError(f"snapshot field {key} is not an ndarray")
     if left.dtype != np.dtype(np.float32) or right.dtype != np.dtype(np.float32):
@@ -433,12 +331,13 @@ def compare_snapshots(
     atol: float,
     require_all_terminal: bool = False,
 ) -> dict[str, float]:
-    atol_value = _finite_number(atol, "snapshot atol")
-    if atol_value < 0:
+    """Discrete fields must be bitwise equal; floats within one fp32 tolerance."""
+    tolerance = _num(atol, "snapshot atol")
+    if tolerance < 0:
         raise QualificationError("snapshot atol must be nonnegative")
-    for key in SNAPSHOT_FIELDS:
-        if key not in left or key not in right:
-            raise QualificationError(f"snapshot field {key} is missing")
+    missing = [key for key in SNAPSHOT_FIELDS if key not in left or key not in right]
+    if missing:
+        raise QualificationError(f"snapshot fields are missing: {missing}")
     maxima: dict[str, float] = {}
     for key in EXACT_SNAPSHOT_FIELDS:
         a, b = _validate_array_pair(key, left[key], right[key])
@@ -446,39 +345,31 @@ def compare_snapshots(
             raise QualificationError(f"exact snapshot field {key} differs")
         maxima[key] = 0.0
     for key in FLOAT_SNAPSHOT_FIELDS:
-        a, b = _validate_array_pair(key, left[key], right[key])
-        maximum = float(np.max(np.abs(a - b))) if a.size else 0.0
-        if maximum > atol_value:
-            raise QualificationError(
-                f"snapshot field {key} max abs error {maximum} exceeds {atol_value}"
-            )
-        maxima[key] = maximum
+        maxima[key] = _max_abs_error(key, left[key], right[key], tolerance)
     if require_all_terminal:
         terminals = left["terminals"]
-        if terminals.size == 0 or not np.array_equal(
-            terminals, np.ones_like(terminals)
-        ):
+        if terminals.size == 0 or not np.array_equal(terminals, np.ones_like(terminals)):
             raise QualificationError("post-terminal snapshot does not mark every row terminal")
     return maxima
+
+
+def _max_abs_error(key: str, left: Any, right: Any, tolerance: float) -> float:
+    a, b = _validate_array_pair(key, left, right)
+    maximum = float(np.max(np.abs(a - b))) if a.size else 0.0
+    if maximum > tolerance:
+        raise QualificationError(
+            f"field {key} max abs error {maximum} exceeds {tolerance}"
+        )
+    return maximum
 
 
 def compare_decoder_outputs(
     left: Mapping[str, np.ndarray], right: Mapping[str, np.ndarray], *, atol: float
 ) -> dict[str, float]:
-    keys_left = {key for key in left if key.startswith("decoder_bank_")}
-    keys_right = {key for key in right if key.startswith("decoder_bank_")}
-    if not keys_left or keys_left != keys_right:
+    keys = {key for key in left if key.startswith("decoder_bank_")}
+    if not keys or keys != {key for key in right if key.startswith("decoder_bank_")}:
         raise QualificationError("decoder bank/buffer coverage mismatch")
-    maxima: dict[str, float] = {}
-    for key in sorted(keys_left):
-        a, b = _validate_array_pair(key, left[key], right[key])
-        maximum = float(np.max(np.abs(a - b))) if a.size else 0.0
-        if maximum > atol:
-            raise QualificationError(
-                f"decoder field {key} max abs error {maximum} exceeds {atol}"
-            )
-        maxima[key] = maximum
-    return maxima
+    return {key: _max_abs_error(key, left[key], right[key], atol) for key in sorted(keys)}
 
 
 def validate_ratio_calls(
@@ -488,19 +379,17 @@ def validate_ratio_calls(
     frozen_rows: set[int],
     atol: float,
 ) -> dict[str, Any]:
+    """Ratio == 1 at lr=0, every learner row covered, no frozen row selected."""
     if not primary_rows or primary_rows & frozen_rows:
         raise QualificationError("ratio row partition is invalid")
-    tolerance = _finite_number(atol, "ratio atol")
+    tolerance = _num(atol, "ratio atol")
     if tolerance < 0:
         raise QualificationError("ratio atol must be nonnegative")
     covered: set[int] = set()
-    maximum = 0.0
-    count = 0
-    attempts = 0
+    maximum, elements, attempts = 0.0, 0, 0
     for call in calls:
         attempts += 1
-        selected = call.get("selected_rows")
-        ratios = call.get("ratios")
+        selected, ratios = call.get("selected_rows"), call.get("ratios")
         if not isinstance(selected, np.ndarray) or selected.dtype != np.dtype(np.int32):
             raise QualificationError("selected ratio rows must be int32")
         if not isinstance(ratios, np.ndarray) or ratios.dtype != np.dtype(np.float32):
@@ -511,20 +400,18 @@ def validate_ratio_calls(
         if not np.isfinite(ratios).all():
             raise QualificationError("recomputed ratios contain non-finite values")
         delta = np.abs(ratios - np.float32(1.0))
-        observed_max = float(np.max(delta)) if delta.size else 0.0
-        maximum = max(maximum, observed_max)
-        if observed_max > tolerance:
-            raise QualificationError(
-                f"recomputed ratio error {observed_max} exceeds {tolerance}"
-            )
-        for raw_row in selected.tolist():
-            row = int(raw_row)
+        observed = float(np.max(delta)) if delta.size else 0.0
+        maximum = max(maximum, observed)
+        if observed > tolerance:
+            raise QualificationError(f"recomputed ratio error {observed} exceeds {tolerance}")
+        for raw in selected.tolist():
+            row = int(raw)
             if row in frozen_rows:
                 raise QualificationError(f"PPO selected frozen row {row}")
             if row not in primary_rows:
                 raise QualificationError(f"PPO selected unknown row {row}")
             covered.add(row)
-        count += int(ratios.size)
+        elements += int(ratios.size)
     if covered != primary_rows:
         raise QualificationError(
             f"ratio coverage incomplete: covered={sorted(covered)}, "
@@ -532,7 +419,7 @@ def validate_ratio_calls(
         )
     return {
         "attempts": attempts,
-        "ratio_elements": count,
+        "ratio_elements": elements,
         "covered_primary_rows": sorted(covered),
         "max_abs_ratio_minus_one": maximum,
         "atol": tolerance,
@@ -547,12 +434,16 @@ def validate_weight_identity(before: str, after: str) -> None:
         raise QualificationError("learning_rate=0 changed primary weight bytes")
 
 
+# ------------------------------------------------------ hard-integrity counters
+
+
 def validate_hard_integrity(env: Mapping[str, Any]) -> dict[str, float]:
+    """All 16 counters present and at literal zero. Missing != explicit zero."""
     result: dict[str, float] = {}
     for key in HARD_INTEGRITY_KEYS:
         if key not in env:
             raise QualificationError(f"hard-integrity field is missing: {key}")
-        value = _finite_number(env[key], f"hard-integrity field {key}")
+        value = _num(env[key], f"hard-integrity field {key}")
         if value != 0.0:
             raise QualificationError(f"hard-integrity field is nonzero: {key}={value}")
         result[key] = value
@@ -560,32 +451,22 @@ def validate_hard_integrity(env: Mapping[str, Any]) -> dict[str, float]:
 
 
 def bind_transition_integrity(
-    backend: Any,
-    pufferl: Any,
-    record: dict[str, Any],
-    *,
-    additional_rollouts: int = 0,
+    backend: Any, pufferl: Any, record: dict[str, Any], *, additional_rollouts: int = 0
 ) -> dict[str, float]:
     """Finish a bounded telemetry interval and bind its exact-zero verdict."""
-    if (isinstance(additional_rollouts, bool)
-            or not isinstance(additional_rollouts, int)
-            or additional_rollouts < 0):
-        raise QualificationError("additional integrity rollouts are invalid")
-    for _ in range(additional_rollouts):
+    for _ in range(_int(additional_rollouts, "additional integrity rollouts", minimum=0)):
         backend.rollouts(pufferl)
     log = backend.log(pufferl)
     if not isinstance(log, Mapping) or not isinstance(log.get("env"), Mapping):
         raise QualificationError("transition integrity log/env telemetry is missing")
-    integrity = validate_hard_integrity(log["env"])
-    record["hard_integrity"] = integrity
+    record["hard_integrity"] = validate_hard_integrity(log["env"])
     record["hard_integrity_zero"] = True
-    return integrity
+    return record["hard_integrity"]
 
 
 def validate_transition_cell_integrity(
     record: Mapping[str, Any], kind: str
 ) -> dict[str, float]:
-    """Revalidate integrity evidence for one transition-executing cell."""
     if kind not in TRANSITION_CELL_KINDS:
         raise QualificationError(f"qualification cell {kind} does not execute transitions")
     if record.get("kind") != kind:
@@ -601,43 +482,49 @@ def validate_transition_cell_integrity(
     return integrity
 
 
+# ------------------------------------------------------------------- throughput
+
+
+def _validate_throughput_record(record: Mapping[str, Any], label: str) -> None:
+    for key in ("host", "gpu"):
+        if not isinstance(record.get(key), str) or not record.get(key):
+            raise QualificationError(f"{label} throughput {key} is missing")
+    if record.get("precision_bytes") not in GRAPH_ATOL_BY_PRECISION:
+        raise QualificationError(f"{label} throughput precision is unsupported")
+    steps = _int(record.get("steps"), f"{label} throughput step count", minimum=1)
+    elapsed = _num(record.get("elapsed_seconds"), f"{label} throughput elapsed time")
+    sps = _num(record.get("steps_per_second"), f"{label} throughput rate")
+    if elapsed <= 0 or sps <= 0 or not math.isclose(
+        sps, steps / elapsed, rel_tol=1.0e-12, abs_tol=0.0
+    ):
+        raise QualificationError(f"{label} throughput rate is internally inconsistent")
+    median = _num(record.get("median_rollout_seconds"), f"{label} median rollout")
+    p95 = _num(record.get("p95_rollout_seconds"), f"{label} p95 rollout")
+    if median <= 0 or p95 < median:
+        raise QualificationError(f"{label} throughput rollout timing is invalid")
+    validate_hard_integrity(record.get("hard_integrity", {}))
+    if record.get("hard_integrity_zero") is not True:
+        raise QualificationError(f"{label} throughput hard-integrity gate is not zero")
+
+
 def validate_throughput(
     candidate: Mapping[str, Any],
     baseline: Mapping[str, Any],
     *,
     max_regression_fraction: float,
 ) -> dict[str, float]:
+    """Compare two throughput records measured on the same host/GPU/config."""
     _validate_throughput_record(candidate, "candidate")
     _validate_throughput_record(baseline, "baseline")
-    regression_limit = _finite_number(
-        max_regression_fraction, "throughput regression fraction"
-    )
-    if regression_limit < 0 or regression_limit >= 1:
+    limit = _num(max_regression_fraction, "throughput regression fraction")
+    if limit < 0 or limit >= 1:
         raise QualificationError("throughput regression fraction must be in [0, 1)")
-    for key in (
-        "host",
-        "gpu",
-        "precision_bytes",
-        "config_sha256",
-        "cuda_runtime_library_sha256",
-        "cuda_runtime_device_count",
-        "cuda_visible_devices",
-    ):
+    for key in ("host", "gpu", "precision_bytes", "config"):
         if candidate.get(key) != baseline.get(key):
             raise QualificationError(f"throughput identity mismatch for {key}")
-    if candidate.get("hard_integrity_zero") is not True:
-        raise QualificationError("candidate throughput hard-integrity gate is not zero")
-    if baseline.get("hard_integrity_zero") is not True:
-        raise QualificationError("baseline throughput hard-integrity gate is not zero")
-    candidate_sps = _finite_number(
-        candidate.get("steps_per_second"), "candidate throughput"
-    )
-    baseline_sps = _finite_number(
-        baseline.get("steps_per_second"), "baseline throughput"
-    )
-    if candidate_sps <= 0 or baseline_sps <= 0:
-        raise QualificationError("throughput must be positive")
-    floor = baseline_sps * (1.0 - regression_limit)
+    candidate_sps = float(candidate["steps_per_second"])
+    baseline_sps = float(baseline["steps_per_second"])
+    floor = baseline_sps * (1.0 - limit)
     if candidate_sps < floor:
         raise QualificationError(
             f"candidate throughput {candidate_sps} is below floor {floor}"
@@ -651,197 +538,13 @@ def validate_throughput(
     }
 
 
-def _validate_throughput_record(record: Mapping[str, Any], label: str) -> None:
-    if not isinstance(record.get("host"), str) or not record.get("host"):
-        raise QualificationError(f"{label} throughput host is missing")
-    if not isinstance(record.get("gpu"), str) or not record.get("gpu"):
-        raise QualificationError(f"{label} throughput GPU is missing")
-    if record.get("precision_bytes") not in GRAPH_ATOL_BY_PRECISION:
-        raise QualificationError(f"{label} throughput precision is unsupported")
-    _require_sha256(
-        record.get("cuda_runtime_library_sha256"),
-        f"{label} CUDA runtime library",
-    )
-    device_count = record.get("cuda_runtime_device_count")
-    if (
-        isinstance(device_count, bool)
-        or not isinstance(device_count, int)
-        or device_count <= 0
-    ):
-        raise QualificationError(
-            f"{label} CUDA runtime device count is invalid"
-        )
-    if record.get("cuda_visible_devices") != "0":
-        raise QualificationError(
-            f"{label} CUDA_VISIBLE_DEVICES is not the frozen target value"
-        )
-    _require_sha256(record.get("config_sha256"), f"{label} throughput config")
-    steps = record.get("steps")
-    if isinstance(steps, bool) or not isinstance(steps, int) or steps <= 0:
-        raise QualificationError(f"{label} throughput step count is invalid")
-    elapsed = _finite_number(
-        record.get("elapsed_seconds"), f"{label} throughput elapsed time"
-    )
-    sps = _finite_number(
-        record.get("steps_per_second"), f"{label} throughput rate"
-    )
-    if elapsed <= 0 or sps <= 0 or not math.isclose(
-        sps, steps / elapsed, rel_tol=1.0e-12, abs_tol=0.0
-    ):
-        raise QualificationError(f"{label} throughput rate is internally inconsistent")
-    median = _finite_number(
-        record.get("median_rollout_seconds"), f"{label} median rollout"
-    )
-    p95 = _finite_number(record.get("p95_rollout_seconds"), f"{label} p95 rollout")
-    if median <= 0 or p95 <= 0 or p95 < median:
-        raise QualificationError(f"{label} throughput rollout timing is invalid")
-    if not isinstance(record.get("utilization"), Mapping):
-        raise QualificationError(f"{label} throughput utilization is missing")
-    validate_hard_integrity(record.get("hard_integrity", {}))
-    if record.get("hard_integrity_zero") is not True:
-        raise QualificationError(f"{label} throughput hard-integrity gate is not zero")
-
-
-def validate_baseline_artifact(path: Path) -> dict[str, Any]:
-    wrapper_path = Path(path).resolve()
-    wrapper = _read_json(wrapper_path)
-    required_wrapper_keys = {
-        "schema_version", "qualification_only", "role", "identity",
-        "expected_predecessor", "predecessor_source", "runner_source",
-        "throughput", "cell_record", "cell_record_sha256", "runner_sha256",
-        "construction_gate",
-    }
-    if set(wrapper) != required_wrapper_keys:
-        raise QualificationError("throughput baseline wrapper schema is not exact")
-    if wrapper.get("schema_version") != SCHEMA_VERSION:
-        raise QualificationError("throughput baseline schema version mismatch")
-    if wrapper.get("qualification_only") is not True or wrapper.get("role") != (
-        "preceding_exact_action_throughput_baseline"
-    ):
-        raise QualificationError("throughput baseline role is invalid")
-    current_runner_hash = sha256(Path(__file__).resolve())
-    if wrapper.get("runner_sha256") != current_runner_hash:
-        raise QualificationError("throughput baseline runner identity drifted")
-    runner_source = current_runner_source_identity()
-    if wrapper.get("runner_source") != runner_source:
-        raise QualificationError("throughput baseline runner checkout drifted")
-    construction_reference = wrapper.get("construction_gate")
-    if not isinstance(construction_reference, Mapping) or set(
-        construction_reference
-    ) != {"path", "sha256"}:
-        raise QualificationError("throughput baseline construction gate is malformed")
-    construction_path = Path(str(construction_reference.get("path", ""))).resolve()
-    construction_sha256 = _require_sha256(
-        construction_reference.get("sha256"), "throughput construction gate"
-    )
-    if not construction_path.is_file() or sha256(construction_path) != (
-        construction_sha256
-    ):
-        raise QualificationError("throughput construction gate drifted")
-    construction_gate = validate_construction_gate(construction_path)
-    cell_path = Path(str(wrapper.get("cell_record", ""))).resolve()
-    try:
-        cell_path.relative_to(wrapper_path.parent)
-    except ValueError as exc:
-        raise QualificationError("throughput baseline cell escapes its artifact directory") from exc
-    expected_cell_hash = _require_sha256(
-        wrapper.get("cell_record_sha256"), "throughput baseline cell digest"
-    )
-    if not cell_path.is_file() or sha256(cell_path) != expected_cell_hash:
-        raise QualificationError("throughput baseline cell record drifted")
-    cell = _read_json(cell_path)
-    if (cell.get("schema_version") != SCHEMA_VERSION
-            or cell.get("qualification_only") is not True
-            or cell.get("accepted") is not True
-            or cell.get("kind") != "throughput"
-            or cell.get("preceding_runtime") is not True
-            or cell.get("runner_sha256") != current_runner_hash):
-        raise QualificationError("throughput predecessor cell role is invalid")
-    validate_cell_cudagraph_record(
-        cell,
-        expected=DEFAULT_CUDAGRAPH_WARMUP_EPOCHS,
-        rehash_cuda_runtime=True,
-    )
-    identity = cell.get("identity")
-    if not isinstance(identity, Mapping):
-        raise QualificationError("throughput predecessor identity is missing")
-    identity = validate_module_identity(identity, qualification_surface=False)
-    validate_current_identity_files(identity)
-    expected_predecessor = wrapper.get("expected_predecessor")
-    if not isinstance(expected_predecessor, Mapping):
-        raise QualificationError("throughput predecessor expectation is missing")
-    validate_expected_predecessor_identity(identity, expected_predecessor)
-    predecessor_source = wrapper.get("predecessor_source")
-    if not isinstance(predecessor_source, Mapping):
-        raise QualificationError("throughput predecessor source identity is missing")
-    predecessor_source = validate_source_checkout_record(
-        predecessor_source,
-        expected_commit=str(expected_predecessor["source_commit"]),
-        role="predecessor",
-    )
-    if cell.get("predecessor_source") != predecessor_source:
-        raise QualificationError("throughput wrapper/cell source identity mismatch")
-    if cell.get("runner_source") != runner_source:
-        raise QualificationError("throughput wrapper/cell runner identity mismatch")
-    if identity.get("puffer_root") != predecessor_source["puffer_root"]:
-        raise QualificationError("throughput module is outside predecessor source checkout")
-    if wrapper.get("identity") != identity:
-        raise QualificationError("throughput wrapper/cell identity mismatch")
-    throughput = cell.get("throughput")
-    if not isinstance(throughput, Mapping) or wrapper.get("throughput") != throughput:
-        raise QualificationError("throughput wrapper/cell metrics mismatch")
-    if throughput.get("config_sha256") != cell.get("config_sha256"):
-        raise QualificationError("throughput predecessor config digest mismatch")
-    validate_hard_integrity(throughput.get("hard_integrity", {}))
-    if throughput.get("hard_integrity_zero") is not True:
-        raise QualificationError("throughput predecessor integrity verdict is not zero")
-    return {
-        "identity": identity,
-        "expected_predecessor": dict(expected_predecessor),
-        "predecessor_source": predecessor_source,
-        "runner_source": runner_source,
-        "construction_gate": {
-            "path": str(construction_path),
-            "sha256": construction_sha256,
-        },
-        "construction_gate_record": construction_gate,
-        "throughput": dict(throughput),
-        "cell": cell,
-        "cell_path": str(cell_path),
-        "cell_sha256": expected_cell_hash,
-    }
-
-
-def validate_predecessor_transition(
-    predecessor: Mapping[str, Any], candidate: Mapping[str, Any]
-) -> None:
-    for key in (
-        "compiled_env", "environment_sha256", "observation_abi",
-        "observation_version", "action_abi", "precision_bytes",
-    ):
-        if predecessor.get(key) != candidate.get(key):
-            raise QualificationError(f"predecessor/candidate lineage mismatch for {key}")
-    if predecessor.get("qualification_surface") is not False or candidate.get(
-        "qualification_surface"
-    ) is not True:
-        raise QualificationError("predecessor/candidate qualification roles are invalid")
-    if predecessor.get("compiled_backend_sha256") == candidate.get(
-        "compiled_backend_sha256"
-    ):
-        raise QualificationError("candidate backend digest did not change from predecessor")
-    if predecessor.get("module_sha256") == candidate.get("module_sha256"):
-        raise QualificationError("candidate module binary did not change from predecessor")
-
-
 def combine_gate_verdicts(gates: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
     if set(gates) != set(MANDATORY_GATES):
         raise QualificationError(
-            f"mandatory gate set mismatch: {sorted(gates)} != "
-            f"{sorted(MANDATORY_GATES)}"
+            f"mandatory gate set mismatch: {sorted(gates)} != {sorted(MANDATORY_GATES)}"
         )
-    accepted = all(gate.get("accepted") is True for gate in gates.values())
     return {
-        "accepted": accepted,
+        "accepted": all(gate.get("accepted") is True for gate in gates.values()),
         "mandatory_gates": list(MANDATORY_GATES),
         "failed_gates": sorted(
             name for name, gate in gates.items() if gate.get("accepted") is not True
@@ -849,75 +552,79 @@ def combine_gate_verdicts(gates: Mapping[str, Mapping[str, Any]]) -> dict[str, A
     }
 
 
+# -------------------------------------------------------- native tensor decoding
+
+
 def _decode_tensor(record: Mapping[str, Any]) -> np.ndarray:
-    dtype = record.get("dtype")
-    shape_raw = record.get("shape")
-    data = record.get("data")
-    if not isinstance(shape_raw, list) or not all(
-        isinstance(value, int) and not isinstance(value, bool) and value >= 0
-        for value in shape_raw
-    ):
+    dtype, shape_raw, data = (
+        record.get("dtype"), record.get("shape"), record.get("data")
+    )
+    if not isinstance(shape_raw, list):
         raise QualificationError("native tensor shape is malformed")
+    for value in shape_raw:
+        _int(value, "native tensor dimension", minimum=0)
     if not isinstance(data, bytes):
         raise QualificationError("native tensor payload is not bytes")
     shape = tuple(shape_raw)
     elements = math.prod(shape) if shape else 0
+    width = {"f32": 4, "bf16": 2, "i32": 4}.get(str(dtype))
+    if width is None:
+        raise QualificationError(f"unsupported native tensor dtype: {dtype!r}")
+    if len(data) != elements * width:
+        raise QualificationError(f"{dtype} tensor byte count mismatch")
+    if dtype == "i32":
+        return np.frombuffer(data, dtype="<i4").copy().reshape(shape)
     if dtype == "f32":
-        if len(data) != elements * 4:
-            raise QualificationError("fp32 tensor byte count mismatch")
         array = np.frombuffer(data, dtype="<f4").copy()
-    elif dtype == "bf16":
-        if len(data) != elements * 2:
-            raise QualificationError("bf16 tensor byte count mismatch")
+    else:
         words = np.frombuffer(data, dtype="<u2").astype(np.uint32)
         array = (words << np.uint32(16)).view(np.float32).copy()
-    elif dtype == "i32":
-        if len(data) != elements * 4:
-            raise QualificationError("int32 tensor byte count mismatch")
-        return np.frombuffer(data, dtype="<i4").copy().reshape(shape)
-    else:
-        raise QualificationError(f"unsupported native tensor dtype: {dtype!r}")
     return array.reshape(shape).astype(np.float32, copy=False)
 
 
 def decode_snapshot(raw: Mapping[str, Any]) -> dict[str, np.ndarray]:
-    tensors = raw.get("tensors")
-    decoders = raw.get("decoder_outputs")
-    num_banks = raw.get("num_banks")
-    num_buffers = raw.get("num_buffers")
-    if (not isinstance(tensors, Mapping) or not isinstance(decoders, list)
-            or isinstance(num_banks, bool) or not isinstance(num_banks, int)
-            or isinstance(num_buffers, bool) or not isinstance(num_buffers, int)
-            or num_banks <= 0 or num_buffers <= 0):
+    tensors, decoders = raw.get("tensors"), raw.get("decoder_outputs")
+    if not isinstance(tensors, Mapping) or not isinstance(decoders, list):
         raise QualificationError("native snapshot structure is malformed")
+    banks = _int(raw.get("num_banks"), "snapshot num_banks", minimum=1)
+    buffers = _int(raw.get("num_buffers"), "snapshot num_buffers", minimum=1)
     arrays = {str(key): _decode_tensor(value) for key, value in tensors.items()}
     seen: set[tuple[int, int]] = set()
     for entry in decoders:
         if not isinstance(entry, Mapping):
             raise QualificationError("decoder snapshot entry is malformed")
-        bank, buffer = entry.get("bank"), entry.get("buffer")
-        active_rows = entry.get("active_rows")
-        if (isinstance(bank, bool) or not isinstance(bank, int)
-                or isinstance(buffer, bool) or not isinstance(buffer, int)
-                or isinstance(active_rows, bool) or not isinstance(active_rows, int)
-                or active_rows <= 0):
-            raise QualificationError("decoder snapshot index is malformed")
-        key = (bank, buffer)
+        key = (
+            _int(entry.get("bank"), "decoder bank"),
+            _int(entry.get("buffer"), "decoder buffer"),
+        )
+        rows = _int(entry.get("active_rows"), "decoder active rows", minimum=1)
         if key in seen:
             raise QualificationError(f"duplicate decoder snapshot {key}")
         seen.add(key)
         decoded = _decode_tensor(entry.get("tensor"))
-        if decoded.ndim < 1 or decoded.shape[0] != active_rows:
+        if decoded.ndim < 1 or decoded.shape[0] != rows:
             raise QualificationError("decoder snapshot includes inactive rows")
-        arrays[f"decoder_bank_{bank}_buffer_{buffer}"] = decoded
-    expected = {
-        (bank, buffer)
-        for bank in range(num_banks)
-        for buffer in range(num_buffers)
-    }
-    if seen != expected:
+        arrays[f"decoder_bank_{key[0]}_buffer_{key[1]}"] = decoded
+    if seen != {(b, f) for b in range(banks) for f in range(buffers)}:
         raise QualificationError("decoder snapshot bank/buffer coverage is incomplete")
     return arrays
+
+
+# ------------------------------------------------------------ cell configuration
+
+
+def validate_throughput_minibatch(
+    total_agents: int, horizon: int, minibatch_size: int
+) -> int:
+    quantum = total_agents * horizon
+    if (total_agents <= 0 or horizon <= 0 or minibatch_size <= 0
+            or minibatch_size % horizon or minibatch_size > quantum
+            or quantum % minibatch_size):
+        raise QualificationError(
+            "minibatch_size must be positive, horizon-divisible, no larger than "
+            "the rollout quantum, and divide it exactly"
+        )
+    return minibatch_size
 
 
 def qualification_args(
@@ -943,27 +650,17 @@ def qualification_args(
         raise QualificationError("Blood Bowl qualification requires paired agents")
     if horizon <= 0:
         raise QualificationError("qualification horizon must be positive")
-    rollout_quantum = total_agents * horizon
-    if minibatch_size is None:
-        minibatch_size = rollout_quantum
     minibatch_size = validate_throughput_minibatch(
-        total_agents, horizon, minibatch_size
+        total_agents, horizon,
+        total_agents * horizon if minibatch_size is None else minibatch_size,
     )
     return {
-        "env_name": "bloodbowl",
-        "reset_state": True,
-        "cudagraphs": cudagraphs,
-        "profile": False,
-        "rank": 0,
-        "world_size": 1,
-        "gpu_id": 0,
-        "nccl_id": "",
+        "env_name": "bloodbowl", "reset_state": True, "cudagraphs": cudagraphs,
+        "profile": False, "rank": 0, "world_size": 1, "gpu_id": 0, "nccl_id": "",
         "seed": seed,
         "vec": {
-            "total_agents": total_agents,
-            "num_buffers": num_buffers,
-            "num_threads": num_threads,
-            "num_frozen_banks": frozen_banks,
+            "total_agents": total_agents, "num_buffers": num_buffers,
+            "num_threads": num_threads, "num_frozen_banks": frozen_banks,
             "frozen_bank_pct": frozen_bank_pct if frozen_banks else 0.0,
             "frozen_bank_hidden_size": hidden_size,
             "frozen_bank_num_layers": num_layers,
@@ -971,53 +668,22 @@ def qualification_args(
         "env": {"seed": seed, "max_decisions": max_decisions},
         "policy": {"hidden_size": hidden_size, "num_layers": num_layers},
         "train": {
-            "horizon": horizon,
-            "learning_rate": learning_rate,
-            "min_lr_ratio": 1.0,
-            "anneal_lr": False,
-            "beta1": 0.9,
-            "beta2": 0.95,
-            "eps": 1.0e-8,
-            "minibatch_size": minibatch_size,
+            "horizon": horizon, "learning_rate": learning_rate,
+            "min_lr_ratio": 1.0, "anneal_lr": False, "beta1": 0.9, "beta2": 0.95,
+            "eps": 1.0e-8, "minibatch_size": minibatch_size,
             "replay_ratio": replay_ratio,
             "total_timesteps": max(minibatch_size * 256, 1),
-            "max_grad_norm": 1.0,
-            "clip_coef": 0.2,
-            "vf_clip_coef": 0.2,
-            "vf_coef": 0.5,
-            "ent_coef": 0.0,
-            "min_ent_coef_ratio": 1.0,
-            "anneal_ent_coef": False,
-            "gamma": 0.995,
-            "gae_lambda": 0.95,
-            "vtrace_rho_clip": 1.0,
-            "vtrace_c_clip": 1.0,
-            "prio_alpha": 0.0,
-            "prio_beta0": 1.0,
+            "max_grad_norm": 1.0, "clip_coef": 0.2, "vf_clip_coef": 0.2,
+            "vf_coef": 0.5, "ent_coef": 0.0, "min_ent_coef_ratio": 1.0,
+            "anneal_ent_coef": False, "gamma": 0.995, "gae_lambda": 0.95,
+            "vtrace_rho_clip": 1.0, "vtrace_c_clip": 1.0,
+            "prio_alpha": 0.0, "prio_beta0": 1.0,
         },
     }
 
 
-def validate_throughput_minibatch(
-    total_agents: int, horizon: int, minibatch_size: int
-) -> int:
-    rollout_quantum = total_agents * horizon
-    if (
-        total_agents <= 0
-        or horizon <= 0
-        or minibatch_size <= 0
-        or minibatch_size % horizon
-        or minibatch_size > rollout_quantum
-        or rollout_quantum % minibatch_size
-    ):
-        raise QualificationError(
-            "minibatch_size must be positive, horizon-divisible, no larger than "
-            "the rollout quantum, and divide it exactly"
-        )
-    return minibatch_size
-
-
 def validate_cell_cudagraphs(kind: str, cudagraphs: int) -> int:
+    """Graphs off is -1 and only meaningful for the parity rollout cell."""
     if cudagraphs == -1:
         if kind == "rollout":
             return cudagraphs
@@ -1026,8 +692,9 @@ def validate_cell_cudagraphs(kind: str, cudagraphs: int) -> int:
         )
     if cudagraphs != DEFAULT_CUDAGRAPH_WARMUP_EPOCHS:
         raise QualificationError(
-            "graph-enabled qualification cells require the exact-action "
-            f"canary warmup boundary {DEFAULT_CUDAGRAPH_WARMUP_EPOCHS}"
+            "graph-enabled qualification cells require the trainer's warmup "
+            f"boundary {DEFAULT_CUDAGRAPH_WARMUP_EPOCHS}; 0 captures before CUDA "
+            "lazy initialization"
         )
     return cudagraphs
 
@@ -1035,105 +702,108 @@ def validate_cell_cudagraphs(kind: str, cudagraphs: int) -> int:
 def validate_cell_cudagraph_record(
     record: Mapping[str, Any], *, expected: int, rehash_cuda_runtime: bool = False
 ) -> dict[str, Any]:
+    """A cell must report the graph mode and CUDA runtime it actually ran."""
     config = record.get("config")
     if not isinstance(config, Mapping):
         raise QualificationError("qualification cell config is missing")
-    config = dict(config)
-    observed = config.get("cudagraphs")
-    if (
-        not isinstance(observed, int)
-        or isinstance(observed, bool)
-        or observed != expected
-    ):
+    if _int(config.get("cudagraphs"), "qualification cell cudagraphs") != expected:
         raise QualificationError(
-            "qualification cell cudagraph warmup differs from its frozen role"
+            "qualification cell cudagraph warmup differs from its requested role"
         )
-    if record.get("config_sha256") != canonical_hash(config):
-        raise QualificationError("qualification cell config digest mismatch")
     try:
-        cuda_evidence = record.get("cuda_runtime_preflight")
-        validate_cuda_runtime_evidence(cuda_evidence)
-        if cuda_evidence.get("cuda_visible_devices") != "0":
-            raise QualificationError(
-                "qualification CUDA_VISIBLE_DEVICES must be exactly 0"
-            )
+        evidence = record.get("cuda_runtime_preflight")
+        validate_cuda_runtime_evidence(evidence)
         if rehash_cuda_runtime:
-            validate_cuda_runtime_library_file(cuda_evidence)
+            validate_cuda_runtime_library_file(evidence)
     except CudaRuntimePreflightError as exc:
         raise QualificationError(f"qualification CUDA runtime evidence failed: {exc}") from exc
-    throughput = record.get("throughput")
-    if isinstance(throughput, Mapping) and throughput.get(
-        "config_sha256"
-    ) != record.get("config_sha256"):
-        raise QualificationError("qualification throughput config digest mismatch")
-    if isinstance(throughput, Mapping) and (
-        throughput.get("cuda_runtime_library_sha256")
-        != cuda_evidence["library"]["sha256"]
-        or throughput.get("cuda_runtime_device_count")
-        != cuda_evidence["after_extension_import"]["device_count"]
-        or throughput.get("cuda_visible_devices")
-        != cuda_evidence["cuda_visible_devices"]
-    ):
-        raise QualificationError(
-            "qualification throughput CUDA evidence is internally inconsistent"
+    return dict(config)
+
+
+def _cell_config(kind: str, cudagraphs: int, args: argparse.Namespace) -> dict[str, Any]:
+    cudagraphs = validate_cell_cudagraphs(kind, cudagraphs)
+    if kind in {"construction", "rollout", "terminal_auto", "terminal_control"}:
+        return qualification_args(
+            cudagraphs=cudagraphs, seed=args.seed, total_agents=2, num_buffers=1,
+            num_threads=1, horizon=1,
+            max_decisions=1 if kind.startswith("terminal_") else 16,
+            hidden_size=64, num_layers=1, frozen_banks=1, frozen_bank_pct=0.5,
+            learning_rate=0.0,
         )
-    return config
+    if kind == "ratio":
+        return qualification_args(
+            cudagraphs=cudagraphs, seed=args.seed, total_agents=8, num_buffers=2,
+            num_threads=2, horizon=8, max_decisions=4, hidden_size=64,
+            num_layers=1, frozen_banks=1, frozen_bank_pct=0.5, learning_rate=0.0,
+        )
+    if kind == "throughput":
+        return qualification_args(
+            cudagraphs=cudagraphs, seed=args.seed,
+            total_agents=args.throughput_agents,
+            num_buffers=args.throughput_buffers,
+            num_threads=args.throughput_threads,
+            horizon=args.throughput_horizon, max_decisions=64,
+            hidden_size=args.throughput_hidden, num_layers=args.throughput_layers,
+            frozen_banks=1, frozen_bank_pct=0.1, learning_rate=0.0,
+            minibatch_size=args.throughput_minibatch_size,
+        )
+    raise QualificationError(f"unknown qualification cell: {kind}")
 
 
-def validate_construction_cell(
-    cell: Mapping[str, Any], *, rehash_cuda_runtime: bool = False
-) -> None:
-    required = {
-        "schema_version",
-        "qualification_only",
-        "runner_sha256",
-        "kind",
-        "identity",
-        "cuda_runtime_preflight",
-        "config",
-        "config_sha256",
-        "host",
-        "platform",
-        "seed",
-        "preceding_runtime",
-        "accepted",
-        "state",
-    }
-    if set(cell) != required:
-        raise QualificationError("construction cell schema is not exact")
-    if (
-        cell.get("schema_version") != SCHEMA_VERSION
-        or cell.get("qualification_only") is not True
-        or cell.get("runner_sha256") != sha256(Path(__file__).resolve())
-        or cell.get("accepted") is not True
-        or cell.get("kind") != "construction"
-        or cell.get("preceding_runtime") is not False
-    ):
-        raise QualificationError("construction cell is not accepted/isolated")
-    validate_cell_cudagraph_record(
-        cell,
-        expected=DEFAULT_CUDAGRAPH_WARMUP_EPOCHS,
-        rehash_cuda_runtime=rehash_cuda_runtime,
-    )
+# ------------------------------------------------------- compiled-module identity
 
 
-def _load_backend(puffer_root: Path, *, require_qualification: bool = True):
+def qualification_surface_state(module: Any) -> bool:
+    """Accept only a completely absent or completely present evidence surface."""
+    present = tuple(hasattr(module, name) for name in QUALIFICATION_SURFACE_BINDINGS)
+    if any(present) and not all(present):
+        raise QualificationError("compiled qualification surface is partial")
+    return all(present)
+
+
+def backend_source_hash(
+    puffer_root: Path, *, source_files: Iterable[str] = BACKEND_SOURCE_FILES
+) -> str:
+    """Reproduce install_puffer_env.sh's path-bound backend source digest."""
+    root = Path(puffer_root).resolve()
+    manifest = bytearray()
+    for relative in source_files:
+        path = root / relative
+        if not path.is_file():
+            raise QualificationError(f"backend source is missing: {path}")
+        manifest.extend(f"{sha256(path)}  {relative}\n".encode("utf-8"))
+    return hashlib.sha256(manifest).hexdigest()
+
+
+def installed_snapshot_hash(puffer_root: Path) -> str:
+    path = Path(puffer_root).resolve() / "ocean" / "bloodbowl" / ".content_hash"
+    try:
+        value = path.read_text(encoding="ascii").strip()
+    except (OSError, UnicodeError) as exc:
+        raise QualificationError(f"installed snapshot digest is unavailable: {exc}") from exc
+    return _require_sha256(value, "installed snapshot digest")
+
+
+def _load_backend(puffer_root: Path):
+    """Initialize CUDART before importing _C (D225), then probe the module.
+
+    Importing the nvcc-built `_C` before the first CUDART call leaves a fresh
+    WSL process at cudaErrorNoDevice, so the runtime probe has to happen in this
+    process, before this import, and be rechecked afterwards.
+    """
     root = Path(puffer_root).resolve()
     try:
-        cuda_runtime, cuda_evidence = begin_cuda_runtime_preflight()
+        cuda_runtime, evidence = begin_cuda_runtime_preflight()
     except CudaRuntimePreflightError as exc:
         raise QualificationError(f"CUDA runtime pre-import gate failed: {exc}") from exc
     sys.path.insert(0, str(root))
     from pufferlib import _C  # type: ignore
 
     try:
-        cuda_evidence = finish_cuda_runtime_preflight(
-            cuda_runtime, cuda_evidence
-        )
-        validate_cuda_runtime_evidence(cuda_evidence)
+        evidence = finish_cuda_runtime_preflight(cuda_runtime, evidence)
+        validate_cuda_runtime_evidence(evidence)
     except CudaRuntimePreflightError as exc:
         raise QualificationError(f"CUDA runtime post-import gate failed: {exc}") from exc
-
     module = Path(_C.__file__).resolve()
     try:
         module.relative_to(root)
@@ -1141,44 +811,26 @@ def _load_backend(puffer_root: Path, *, require_qualification: bool = True):
         raise QualificationError(
             f"imported native module is outside Puffer root: {module}"
         ) from exc
-    required = [
-        "create_pufferl",
-        "rollouts",
-        "log",
-        "get_utilization",
-        "save_weights",
-        "load_frozen_bank",
+    missing = [
+        name for name in (
+            "create_pufferl", "rollouts", "log", "get_utilization", "save_weights",
+            "load_frozen_bank", "set_evaluation_mode", "train",
+            *QUALIFICATION_SURFACE_BINDINGS,
+        ) if not hasattr(_C, name)
     ]
-    if require_qualification:
-        required.extend((
-            "set_evaluation_mode",
-            "train",
-            "qualification_recurrent_state",
-            "qualification_snapshot",
-        ))
-    missing = [name for name in required if not hasattr(_C, name)]
     if missing:
         raise QualificationError(f"compiled qualification surface is missing: {missing}")
-    return _C, module, cuda_evidence
+    return _C, module, evidence
 
 
 def _module_identity(_C, module: Path, puffer_root: Path) -> dict[str, Any]:
     root = Path(puffer_root).resolve()
-    qualification_surface = qualification_surface_state(_C)
-    compiled_source_files = (
-        BACKEND_SOURCE_FILES
-        if qualification_surface
-        else PREDECESSOR_BACKEND_SOURCE_FILES
-    )
     return {
         "module": str(module),
         "puffer_root": str(root),
         "module_sha256": sha256(module),
         "compiled_backend_sha256": str(_C.exact_action_source_hash),
-        "backend_sources_sha256": backend_source_hash(
-            root, source_files=compiled_source_files
-        ),
-        "runtime_sources_sha256": backend_source_hash(root),
+        "backend_sources_sha256": backend_source_hash(root),
         "environment_sha256": str(_C.environment_source_hash),
         "installed_snapshot_sha256": installed_snapshot_hash(root),
         "observation_abi": str(_C.observation_abi),
@@ -1186,13 +838,20 @@ def _module_identity(_C, module: Path, puffer_root: Path) -> dict[str, Any]:
         "action_abi": str(_C.action_abi),
         "precision_bytes": int(_C.precision_bytes),
         "compiled_env": str(_C.env_name),
-        "qualification_surface": qualification_surface,
+        "qualification_surface": qualification_surface_state(_C),
     }
 
 
 def validate_module_identity(
-    identity: Mapping[str, Any], *, qualification_surface: bool
+    identity: Mapping[str, Any], *, qualification_surface: bool = True
 ) -> dict[str, Any]:
+    """The imported module really is obs-v5 / exact-joint-v1 / fp32.
+
+    obs-v4 and obs-v5 are both 2782 bytes, so only this provenance separates
+    them; a mixup already wasted a 12B-step run. The two digest equalities are
+    compiled == on-disk source and compiled == installed snapshot: the build
+    compiles the snapshot, not your edit.
+    """
     if identity.get("compiled_env") != "bloodbowl":
         raise QualificationError("compiled environment is not bloodbowl")
     if identity.get("observation_abi") != "obs-v5" or identity.get(
@@ -1207,131 +866,22 @@ def validate_module_identity(
         raise QualificationError("compiled qualification-surface role is wrong")
     for key in (
         "module_sha256", "compiled_backend_sha256", "backend_sources_sha256",
-        "runtime_sources_sha256", "environment_sha256",
-        "installed_snapshot_sha256",
+        "environment_sha256", "installed_snapshot_sha256",
     ):
         _require_sha256(identity.get(key), f"module identity {key}")
-    if identity.get("compiled_backend_sha256") != identity.get(
-        "backend_sources_sha256"
-    ):
+    if identity["compiled_backend_sha256"] != identity["backend_sources_sha256"]:
         raise QualificationError("compiled module differs from backend source digest")
-    if identity.get("environment_sha256") != identity.get(
-        "installed_snapshot_sha256"
-    ):
+    if identity["environment_sha256"] != identity["installed_snapshot_sha256"]:
         raise QualificationError("compiled module differs from installed environment digest")
     module = Path(str(identity.get("module", ""))).resolve()
-    root = Path(str(identity.get("puffer_root", ""))).resolve()
     try:
-        module.relative_to(root)
+        module.relative_to(Path(str(identity.get("puffer_root", ""))).resolve())
     except ValueError as exc:
         raise QualificationError("compiled module is outside recorded Puffer root") from exc
     return dict(identity)
 
 
-def validate_current_identity_files(identity: Mapping[str, Any]) -> None:
-    root = Path(str(identity.get("puffer_root", ""))).resolve()
-    module = Path(str(identity.get("module", ""))).resolve()
-    if not module.is_file() or sha256(module) != identity.get("module_sha256"):
-        raise QualificationError("compiled module binary drifted after qualification")
-    qualification_surface = identity.get("qualification_surface")
-    if not isinstance(qualification_surface, bool):
-        raise QualificationError("compiled qualification-surface role is malformed")
-    compiled_source_files = (
-        BACKEND_SOURCE_FILES
-        if qualification_surface
-        else PREDECESSOR_BACKEND_SOURCE_FILES
-    )
-    if backend_source_hash(
-        root, source_files=compiled_source_files
-    ) != identity.get("backend_sources_sha256"):
-        raise QualificationError("Puffer backend sources drifted after qualification")
-    if backend_source_hash(root) != identity.get("runtime_sources_sha256"):
-        raise QualificationError("Puffer runtime sources drifted after qualification")
-    if installed_snapshot_hash(root) != identity.get("installed_snapshot_sha256"):
-        raise QualificationError("installed environment snapshot drifted after qualification")
-
-
-def validate_expected_candidate_identity(
-    identity: Mapping[str, Any],
-    expected: Mapping[str, Any],
-    *,
-    authorized_source_commit: str,
-) -> None:
-    mapping = {
-        "module_sha256": "module_sha256",
-        "compiled_backend_sha256": "backend_sha256",
-        "environment_sha256": "environment_sha256",
-    }
-    if set(expected) != {"source_commit", *mapping.values()}:
-        raise QualificationError("frozen candidate identity schema is not exact")
-    for key in ("module_sha256", "backend_sha256", "environment_sha256"):
-        _require_sha256(expected.get(key), f"frozen candidate {key}")
-    source_commit = expected.get("source_commit")
-    if not isinstance(source_commit, str) or GIT_COMMIT_PATTERN.fullmatch(
-        source_commit
-    ) is None:
-        raise QualificationError("frozen candidate source commit is malformed")
-    if source_commit != authorized_source_commit:
-        raise QualificationError(
-            "frozen candidate source commit differs from predeclared authority"
-        )
-    for identity_key, expected_key in mapping.items():
-        if identity.get(identity_key) != expected.get(expected_key):
-            raise QualificationError(
-                f"candidate identity differs from frozen {expected_key}"
-            )
-
-
-def validate_expected_predecessor_identity(
-    identity: Mapping[str, Any], expected: Mapping[str, Any]
-) -> None:
-    mapping = {
-        "module_sha256": "module_sha256",
-        "compiled_backend_sha256": "backend_sha256",
-        "runtime_sources_sha256": "runtime_sha256",
-        "environment_sha256": "environment_sha256",
-    }
-    if set(expected) != {"source_commit", *mapping.values()}:
-        raise QualificationError("frozen predecessor identity schema is not exact")
-    source_commit = expected.get("source_commit")
-    if not isinstance(source_commit, str) or GIT_COMMIT_PATTERN.fullmatch(
-        source_commit
-    ) is None:
-        raise QualificationError("frozen predecessor source commit is malformed")
-    if source_commit != PREDECESSOR_SOURCE_COMMIT:
-        raise QualificationError("frozen predecessor source commit is not canonical")
-    for expected_key in mapping.values():
-        _require_sha256(expected.get(expected_key), f"frozen predecessor {expected_key}")
-    for identity_key, expected_key in mapping.items():
-        if identity.get(identity_key) != expected.get(expected_key):
-            raise QualificationError(
-                f"predecessor identity differs from frozen {expected_key}"
-            )
-
-
-def expected_predecessor_identity_from_args(
-    args: argparse.Namespace,
-) -> dict[str, str]:
-    """Freeze the operator declaration before a predecessor worker is started."""
-    expected = {
-        "source_commit": args.expected_predecessor_source_commit,
-        "module_sha256": args.expected_predecessor_module_sha256,
-        "backend_sha256": args.expected_predecessor_backend_sha256,
-        "runtime_sha256": args.expected_predecessor_runtime_sha256,
-        "environment_sha256": args.expected_environment_sha256,
-    }
-    if expected["source_commit"] != PREDECESSOR_SOURCE_COMMIT:
-        raise QualificationError(
-            "frozen predecessor source commit is not canonical"
-        )
-    for key in (
-        "module_sha256",
-        "backend_sha256",
-        "runtime_sha256",
-        "environment_sha256",
-    ):
-        _require_sha256(expected[key], f"frozen predecessor {key}")
-    return expected
+# ------------------------------------------ cell worker: one process per measurement
 
 
 def _load_frozen_from_primary(_C, pufferl, directory: Path, banks: int) -> None:
@@ -1346,140 +896,148 @@ def _load_frozen_from_primary(_C, pufferl, directory: Path, banks: int) -> None:
         weight_path.unlink(missing_ok=True)
 
 
-def _cell_config(kind: str, cudagraphs: int, args: argparse.Namespace) -> dict[str, Any]:
-    cudagraphs = validate_cell_cudagraphs(kind, cudagraphs)
-    if kind in {"construction", "rollout", "terminal_auto", "terminal_control"}:
-        return qualification_args(
-            cudagraphs=cudagraphs,
-            seed=args.seed,
-            total_agents=2,
-            num_buffers=1,
-            num_threads=1,
-            horizon=1,
-            max_decisions=1 if kind.startswith("terminal_") else 16,
-            hidden_size=64,
-            num_layers=1,
-            frozen_banks=1,
-            frozen_bank_pct=0.5,
-            learning_rate=0.0,
-        )
-    if kind == "ratio":
-        return qualification_args(
-            cudagraphs=cudagraphs,
-            seed=args.seed,
-            total_agents=8,
-            num_buffers=2,
-            num_threads=2,
-            horizon=8,
-            max_decisions=4,
-            hidden_size=64,
-            num_layers=1,
-            frozen_banks=1,
-            frozen_bank_pct=0.5,
-            learning_rate=0.0,
-        )
-    if kind == "throughput":
-        return qualification_args(
-            cudagraphs=cudagraphs,
-            seed=args.seed,
-            total_agents=args.throughput_agents,
-            num_buffers=args.throughput_buffers,
-            num_threads=args.throughput_threads,
-            horizon=args.throughput_horizon,
-            max_decisions=64,
-            hidden_size=args.throughput_hidden,
-            num_layers=args.throughput_layers,
-            frozen_banks=1,
-            frozen_bank_pct=0.1,
-            learning_rate=0.0,
-            minibatch_size=args.throughput_minibatch_size,
-        )
-    raise QualificationError(f"unknown qualification cell: {kind}")
+def _measure_ratio(
+    _C, pufferl, result: dict[str, Any], arrays: dict[str, np.ndarray],
+    directory: Path, config: Mapping[str, Any], call_limit: int,
+) -> None:
+    layout = _C.qualification_recurrent_state(pufferl, False)
+    primary_rows, frozen_rows = derive_row_partition(
+        layout, total_agents=int(config["vec"]["total_agents"])
+    )
+    result["row_partition"] = {
+        "primary_rows": sorted(primary_rows),
+        "frozen_rows": sorted(frozen_rows),
+        "state_layout": layout,
+    }
+    _C.rollouts(pufferl)
+    bind_transition_integrity(_C, pufferl, result)
+    before_path = directory / f"ratio-before-{os.getpid()}.bin"
+    after_path = directory / f"ratio-after-{os.getpid()}.bin"
+    try:
+        _C.save_weights(pufferl, str(before_path))
+        before = sha256(before_path)
+        covered: set[int] = set()
+        calls = 0
+        while covered != primary_rows and calls < call_limit:
+            _C.train(pufferl)
+            snapshot = decode_snapshot(_C.qualification_snapshot(pufferl))
+            selected = snapshot["selected_rows"].astype(np.int32, copy=False)
+            arrays[f"selected_{calls}"] = selected
+            arrays[f"ratio_{calls}"] = snapshot["mb_ratio"].astype(
+                np.float32, copy=False
+            )
+            rows = {int(value) for value in selected.reshape(-1).tolist()}
+            if rows & frozen_rows:
+                raise QualificationError("PPO selected a frozen-bank row")
+            if not rows <= primary_rows:
+                raise QualificationError("PPO selected a row outside the bank layout")
+            covered.update(rows)
+            calls += 1
+        _C.save_weights(pufferl, str(after_path))
+        after = sha256(after_path)
+    finally:
+        before_path.unlink(missing_ok=True)
+        after_path.unlink(missing_ok=True)
+    validate_weight_identity(before, after)
+    result.update(
+        weights_before_sha256=before, weights_after_sha256=after, ratio_calls=calls
+    )
+
+
+def _measure_throughput(
+    _C, pufferl, config: Mapping[str, Any], evidence: Mapping[str, Any],
+    args: argparse.Namespace,
+) -> dict[str, Any]:
+    for _ in range(args.throughput_warmup_rollouts):
+        _C.rollouts(pufferl)
+    _C.log(pufferl)
+    start_step = int(pufferl.global_step)
+    durations: list[float] = []
+    started = time.perf_counter_ns()
+    for _ in range(args.throughput_timed_rollouts):
+        one = time.perf_counter_ns()
+        _C.rollouts(pufferl)
+        durations.append((time.perf_counter_ns() - one) / 1.0e9)
+    elapsed = (time.perf_counter_ns() - started) / 1.0e9
+    steps = int(pufferl.global_step) - start_step
+    integrity = validate_hard_integrity(dict(_C.log(pufferl)["env"]))
+    gpu = os.environ.get("QUALIFICATION_GPU_NAME", "")
+    if not gpu:
+        gpu = subprocess.run(
+            ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
+            text=True, capture_output=True, check=True, timeout=10,
+        ).stdout.strip().splitlines()[0]
+    return {
+        "host": socket.gethostname(), "gpu": gpu,
+        "precision_bytes": int(_C.precision_bytes), "config": dict(config),
+        "steps": steps, "elapsed_seconds": elapsed,
+        "steps_per_second": steps / elapsed,
+        "median_rollout_seconds": statistics.median(durations),
+        "p95_rollout_seconds": float(np.percentile(durations, 95)),
+        "hard_integrity_zero": True, "hard_integrity": integrity,
+        "utilization": dict(_C.get_utilization(0)),
+    }
 
 
 def run_cell(args: argparse.Namespace) -> int:
     output_json = Path(args.output_json).resolve()
     output_npz = Path(args.output_npz).resolve() if args.output_npz else None
-    if args.preceding_runtime and args.kind != "throughput":
-        raise QualificationError("preceding-runtime mode is throughput-only")
-    expected_predecessor = (
-        expected_predecessor_identity_from_args(args)
-        if args.preceding_runtime
-        else None
-    )
-    _C, module, cuda_evidence = _load_backend(
-        Path(args.puffer_root), require_qualification=not args.preceding_runtime
-    )
-    qualification_surface = qualification_surface_state(_C)
-    if args.preceding_runtime and qualification_surface:
-        raise QualificationError(
-            "throughput predecessor unexpectedly exposes qualification bindings"
-        )
+    _C, module, evidence = _load_backend(Path(args.puffer_root))
     config = _cell_config(args.kind, args.cudagraphs, args)
     pufferl = None
     arrays: dict[str, np.ndarray] = {}
     result: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
-        "qualification_only": QUALIFICATION_ONLY,
-        "runner_sha256": sha256(Path(__file__).resolve()),
         "kind": args.kind,
         "identity": _module_identity(_C, module, Path(args.puffer_root)),
-        "cuda_runtime_preflight": cuda_evidence,
+        "cuda_runtime_preflight": evidence,
         "config": config,
-        "config_sha256": canonical_hash(config),
         "host": socket.gethostname(),
         "platform": platform.platform(),
         "seed": args.seed,
-        "preceding_runtime": bool(args.preceding_runtime),
         "accepted": False,
     }
-    validate_module_identity(
-        result["identity"], qualification_surface=not args.preceding_runtime
-    )
-    if expected_predecessor is not None:
-        validate_expected_predecessor_identity(
-            result["identity"], expected_predecessor
-        )
-        if result["identity"].get("puffer_root") != str(
-            Path(args.puffer_root).resolve()
-        ):
-            raise QualificationError(
-                "predecessor module is outside its frozen Puffer root"
-            )
+    validate_module_identity(result["identity"])
     try:
         pufferl = _C.create_pufferl(config)
-        frozen = int(config["vec"]["num_frozen_banks"])
-        directory = output_json.parent
-        _load_frozen_from_primary(_C, pufferl, directory, frozen)
+        _load_frozen_from_primary(
+            _C, pufferl, output_json.parent, int(config["vec"]["num_frozen_banks"])
+        )
         if args.kind == "construction":
-            state = _C.qualification_recurrent_state(pufferl, False)
-            validate_zero_state(state, expected_banks=2, expected_buffers=1)
-            result["state"] = state
+            result["state"] = _C.qualification_recurrent_state(pufferl, False)
+            validate_zero_state(result["state"], expected_banks=2, expected_buffers=1)
         elif args.kind == "rollout":
-            state = _C.qualification_recurrent_state(pufferl, False)
-            validate_zero_state(state, expected_banks=2, expected_buffers=1)
+            result["state_before"] = _C.qualification_recurrent_state(pufferl, False)
+            validate_zero_state(
+                result["state_before"], expected_banks=2, expected_buffers=1
+            )
             _C.rollouts(pufferl)
             arrays = decode_snapshot(_C.qualification_snapshot(pufferl))
-            result["state_before"] = state
-            # Preserve the first-rollout parity snapshot, then deterministically
+            # Keep the first-rollout parity snapshot, then deterministically
             # cross max_decisions so at least one complete episode contributes
             # integrity telemetry to this isolated cell.
             bind_transition_integrity(
-                _C,
-                pufferl,
-                result,
+                _C, pufferl, result,
                 additional_rollouts=int(config["env"]["max_decisions"]),
             )
         elif args.kind in {"terminal_auto", "terminal_control"}:
             _C.set_evaluation_mode(pufferl, True)
             _C.rollouts(pufferl)
-            exercised = _C.qualification_recurrent_state(pufferl, False)
-            validate_nonzero_state(exercised, expected_banks=2, expected_buffers=1)
-            result["state_after_first_rollout"] = exercised
+            result["state_after_first_rollout"] = _C.qualification_recurrent_state(
+                pufferl, False
+            )
+            validate_nonzero_state(
+                result["state_after_first_rollout"],
+                expected_banks=2, expected_buffers=1,
+            )
             if args.kind == "terminal_control":
-                cleared = _C.qualification_recurrent_state(pufferl, True)
-                validate_zero_state(cleared, expected_banks=2, expected_buffers=1)
-                result["state_after_control_clear"] = cleared
+                result["state_after_control_clear"] = _C.qualification_recurrent_state(
+                    pufferl, True
+                )
+                validate_zero_state(
+                    result["state_after_control_clear"],
+                    expected_banks=2, expected_buffers=1,
+                )
             _C.rollouts(pufferl)
             arrays = decode_snapshot(_C.qualification_snapshot(pufferl))
             terminals = arrays.get("terminals")
@@ -1489,103 +1047,19 @@ def run_cell(args: argparse.Namespace) -> int:
                 raise QualificationError("terminal cell did not exercise every row")
             bind_transition_integrity(_C, pufferl, result)
         elif args.kind == "ratio":
-            layout_report = _C.qualification_recurrent_state(pufferl, False)
-            primary_rows, frozen_rows = derive_row_partition(
-                layout_report, total_agents=int(config["vec"]["total_agents"])
+            _measure_ratio(
+                _C, pufferl, result, arrays, output_json.parent, config,
+                args.ratio_call_limit,
             )
-            result["row_partition"] = {
-                "primary_rows": sorted(primary_rows),
-                "frozen_rows": sorted(frozen_rows),
-                "state_layout": layout_report,
-            }
-            _C.rollouts(pufferl)
-            bind_transition_integrity(_C, pufferl, result)
-            before_path = output_json.parent / f"ratio-before-{os.getpid()}.bin"
-            after_path = output_json.parent / f"ratio-after-{os.getpid()}.bin"
-            try:
-                _C.save_weights(pufferl, str(before_path))
-                before_digest = sha256(before_path)
-                covered: set[int] = set()
-                calls = 0
-                while covered != primary_rows and calls < args.ratio_call_limit:
-                    _C.train(pufferl)
-                    snapshot = decode_snapshot(_C.qualification_snapshot(pufferl))
-                    selected = snapshot["selected_rows"].astype(np.int32, copy=False)
-                    ratios = snapshot["mb_ratio"].astype(np.float32, copy=False)
-                    arrays[f"selected_{calls}"] = selected
-                    arrays[f"ratio_{calls}"] = ratios
-                    selected_values = {
-                        int(value) for value in selected.reshape(-1).tolist()
-                    }
-                    if selected_values & frozen_rows:
-                        raise QualificationError("PPO selected a frozen-bank row")
-                    if not selected_values <= primary_rows:
-                        raise QualificationError("PPO selected a row outside the bank layout")
-                    covered.update(selected_values)
-                    calls += 1
-                _C.save_weights(pufferl, str(after_path))
-                after_digest = sha256(after_path)
-            finally:
-                before_path.unlink(missing_ok=True)
-                after_path.unlink(missing_ok=True)
-            validate_weight_identity(before_digest, after_digest)
-            result["weights_before_sha256"] = before_digest
-            result["weights_after_sha256"] = after_digest
-            result["ratio_calls"] = calls
-        elif args.kind == "throughput":
-            for _ in range(args.throughput_warmup_rollouts):
-                _C.rollouts(pufferl)
-            _C.log(pufferl)
-            start_step = int(pufferl.global_step)
-            durations: list[float] = []
-            started = time.perf_counter_ns()
-            for _ in range(args.throughput_timed_rollouts):
-                one = time.perf_counter_ns()
-                _C.rollouts(pufferl)
-                durations.append((time.perf_counter_ns() - one) / 1.0e9)
-            elapsed = (time.perf_counter_ns() - started) / 1.0e9
-            end_step = int(pufferl.global_step)
-            steps = end_step - start_step
-            log = _C.log(pufferl)
-            integrity = validate_hard_integrity(dict(log["env"]))
-            utilization = dict(_C.get_utilization(0))
-            gpu = os.environ.get("QUALIFICATION_GPU_NAME", "")
-            if not gpu:
-                probe = subprocess.run(
-                    ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
-                    text=True, capture_output=True, check=True, timeout=10,
-                )
-                gpu = probe.stdout.strip().splitlines()[0]
-            result["throughput"] = {
-                "host": socket.gethostname(),
-                "gpu": gpu,
-                "precision_bytes": int(_C.precision_bytes),
-                "cuda_runtime_library_sha256": cuda_evidence["library"]["sha256"],
-                "cuda_runtime_device_count": cuda_evidence[
-                    "after_extension_import"
-                ]["device_count"],
-                "cuda_visible_devices": cuda_evidence[
-                    "cuda_visible_devices"
-                ],
-                "config_sha256": canonical_hash(config),
-                "steps": steps,
-                "elapsed_seconds": elapsed,
-                "steps_per_second": steps / elapsed,
-                "median_rollout_seconds": statistics.median(durations),
-                "p95_rollout_seconds": float(np.percentile(durations, 95)),
-                "hard_integrity_zero": True,
-                "hard_integrity": integrity,
-                "utilization": utilization,
-            }
-        else:  # pragma: no cover - guarded by parser choices
-            raise QualificationError(f"unsupported cell {args.kind}")
-
+        else:
+            result["throughput"] = _measure_throughput(
+                _C, pufferl, config, evidence, args
+            )
         if arrays:
             if output_npz is None:
                 raise QualificationError("cell produced arrays without an NPZ path")
             write_npz_atomic(output_npz, arrays)
             result["artifact"] = str(output_npz)
-            result["artifact_sha256"] = sha256(output_npz)
         result["accepted"] = True
         write_json_atomic(output_json, result)
         return 0
@@ -1594,51 +1068,27 @@ def run_cell(args: argparse.Namespace) -> int:
         write_json_atomic(output_json, result)
         raise
     finally:
-        if pufferl is not None:
+        if pufferl is not None and int(config["cudagraphs"]) >= 0:
             # Puffer 4.0's close path dereferences the absent rollout-graph
             # array when cudagraphs=-1. Graph-off cells are process-isolated,
             # so let process teardown release that CUDA context rather than
             # turning a successful parity cell into an unrelated close crash.
-            if int(config["cudagraphs"]) >= 0:
-                _C.close(pufferl)
+            _C.close(pufferl)
 
 
-def _read_json(path: Path) -> dict[str, Any]:
-    try:
-        value = json.loads(Path(path).read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-        raise QualificationError(f"cannot read JSON artifact {path}: {exc}") from exc
-    if not isinstance(value, dict):
-        raise QualificationError(f"JSON artifact is not an object: {path}")
-    return value
-
-
-def _read_npz(path: Path, expected_sha256: str) -> dict[str, np.ndarray]:
-    if sha256(path) != expected_sha256:
-        raise QualificationError(f"NPZ artifact digest mismatch: {path}")
-    try:
-        with np.load(path, allow_pickle=False) as payload:
-            return {key: payload[key].copy() for key in payload.files}
-    except (OSError, ValueError) as exc:
-        raise QualificationError(f"cannot read NPZ artifact {path}: {exc}") from exc
+# ------------------------------------------------------------------------ driver
 
 
 def _run_worker(
-    args: argparse.Namespace,
-    *,
-    kind: str,
-    name: str,
-    cudagraphs: int,
-    output: Path,
-    preceding_runtime: bool = False,
+    args: argparse.Namespace, *, kind: str, name: str, cudagraphs: int, output: Path
 ) -> dict[str, Any]:
     python = Path(args.python).expanduser().absolute() if args.python else (
         Path(args.puffer_root).resolve() / ".venv" / "bin" / "python"
     )
+    # Absolute, not resolved: resolving a venv's python symlink escapes the venv.
     if not python.is_file():
         raise QualificationError(f"Puffer Python is missing: {python}")
     json_path = output / f"{name}.json"
-    npz_path = output / f"{name}.npz"
     command = [
         str(python), str(Path(__file__).resolve()), "cell",
         "--puffer-root", str(Path(args.puffer_root).resolve()),
@@ -1646,7 +1096,7 @@ def _run_worker(
         "--cudagraphs", str(cudagraphs),
         "--seed", str(args.seed),
         "--output-json", str(json_path),
-        "--output-npz", str(npz_path),
+        "--output-npz", str(output / f"{name}.npz"),
         "--ratio-call-limit", str(args.ratio_call_limit),
         "--throughput-agents", str(args.throughput_agents),
         "--throughput-buffers", str(args.throughput_buffers),
@@ -1658,39 +1108,20 @@ def _run_worker(
         "--throughput-warmup-rollouts", str(args.throughput_warmup_rollouts),
         "--throughput-timed-rollouts", str(args.throughput_timed_rollouts),
     ]
-    if preceding_runtime:
-        command.append("--preceding-runtime")
-        expected_predecessor = expected_predecessor_identity_from_args(args)
-        command.extend((
-            "--expected-predecessor-source-commit",
-            expected_predecessor["source_commit"],
-            "--expected-predecessor-module-sha256",
-            expected_predecessor["module_sha256"],
-            "--expected-predecessor-backend-sha256",
-            expected_predecessor["backend_sha256"],
-            "--expected-predecessor-runtime-sha256",
-            expected_predecessor["runtime_sha256"],
-            "--expected-environment-sha256",
-            expected_predecessor["environment_sha256"],
-        ))
     completed = subprocess.run(
-        command,
-        cwd=Path(args.puffer_root).resolve(),
-        text=True,
-        capture_output=True,
-        timeout=args.cell_timeout_seconds,
+        command, cwd=Path(args.puffer_root).resolve(), text=True,
+        capture_output=True, timeout=args.cell_timeout_seconds,
     )
     if completed.returncode != 0:
         detail = completed.stderr[-4000:] or completed.stdout[-4000:]
         raise QualificationError(f"qualification cell {name} failed: {detail}")
     record = _read_json(json_path)
-    if record.get("accepted") is not True or record.get("qualification_only") is not True:
-        raise QualificationError(f"qualification cell {name} is not accepted/isolated")
+    if record.get("accepted") is not True:
+        raise QualificationError(f"qualification cell {name} is not accepted")
     validate_cell_cudagraph_record(record, expected=cudagraphs)
     if kind in TRANSITION_CELL_KINDS:
         validate_transition_cell_integrity(record, kind)
     record["record_path"] = str(json_path)
-    record["record_sha256"] = sha256(json_path)
     return record
 
 
@@ -1704,1120 +1135,160 @@ def _require_same_identity(records: Iterable[Mapping[str, Any]]) -> dict[str, An
     for record in records[1:]:
         if record.get("identity") != reference:
             raise QualificationError("compiled module identity drifted between cells")
-    return validate_module_identity(reference, qualification_surface=True)
+    return validate_module_identity(reference)
 
 
-def _require_same_cuda_runtime(
-    records: Iterable[Mapping[str, Any]],
-) -> dict[str, Any]:
+def _require_same_cuda_runtime(records: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
     records = list(records)
     if not records:
         raise QualificationError("no cell CUDA runtime evidence was supplied")
-    reference = records[0].get("cuda_runtime_preflight")
     try:
-        reference = validate_cuda_runtime_evidence(reference)
+        reference = validate_cuda_runtime_evidence(records[0].get("cuda_runtime_preflight"))
     except CudaRuntimePreflightError as exc:
-        raise QualificationError(
-            f"qualification CUDA runtime evidence failed: {exc}"
-        ) from exc
+        raise QualificationError(f"qualification CUDA runtime evidence failed: {exc}") from exc
     for record in records[1:]:
         if record.get("cuda_runtime_preflight") != reference:
             raise QualificationError("qualification cell CUDA runtime drifted")
     return reference
 
 
-def _require_clean_source_and_external_output(output: Path) -> Path:
-    output = Path(output).resolve()
-    source_root = Path(__file__).resolve().parents[1]
-    forbidden_roots = (
-        (source_root, "source checkout"),
-        (PROTECTED_RECOVERY_ROOT.resolve(), "protected recovery root"),
-    )
-    for forbidden_root, label in forbidden_roots:
-        try:
-            output.relative_to(forbidden_root)
-        except ValueError:
-            continue
-        raise QualificationError(f"qualification output must be outside the {label}")
-    source_status = subprocess.run(
-        ["git", "status", "--porcelain"],
-        cwd=source_root,
-        text=True,
-        capture_output=True,
-        check=True,
-    ).stdout
-    if source_status:
-        raise QualificationError("qualification source checkout is not clean")
-    if output.exists() and any(output.iterdir()):
-        raise QualificationError(f"qualification output is not empty: {output}")
-    return source_root
-
-
-def current_runner_source_identity() -> dict[str, str]:
-    source_root = Path(__file__).resolve().parents[1]
-    try:
-        top = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"], cwd=source_root,
-            text=True, capture_output=True, check=True, timeout=30,
-        ).stdout.strip()
-        commit = subprocess.run(
-            ["git", "rev-parse", "HEAD"], cwd=source_root,
-            text=True, capture_output=True, check=True, timeout=30,
-        ).stdout.strip()
-        status = subprocess.run(
-            ["git", "status", "--porcelain", "--untracked-files=all"],
-            cwd=source_root, text=True, capture_output=True, check=True, timeout=30,
-        ).stdout
-    except (OSError, subprocess.CalledProcessError) as exc:
-        raise QualificationError(f"cannot inspect control-runner checkout: {exc}") from exc
-    if Path(top).resolve() != source_root or status:
-        raise QualificationError("control-runner checkout is not exact and clean")
-    if GIT_COMMIT_PATTERN.fullmatch(commit) is None:
-        raise QualificationError("control-runner commit is malformed")
-    try:
-        source_root.relative_to(PROTECTED_RECOVERY_ROOT)
-    except ValueError:
-        pass
-    else:
-        raise QualificationError("control runner cannot use the protected recovery root")
-    return {
-        "source_root": str(source_root),
-        "source_commit": commit,
-        "runner_sha256": sha256(Path(__file__).resolve()),
-    }
-
-
-def validate_candidate_source_authority(
-    expected_commit: str, runner_source: Mapping[str, Any]
-) -> None:
-    """Require the operator's predeclared candidate to be this clean runner."""
-    if (
-        not isinstance(expected_commit, str)
-        or GIT_COMMIT_PATTERN.fullmatch(expected_commit) is None
-        or runner_source.get("source_commit") != expected_commit
-    ):
-        raise QualificationError(
-            "predeclared candidate commit differs from the clean control runner"
-        )
-
-
-def validate_source_checkout(
-    source_root: Path,
-    puffer_root: Path,
-    *,
-    expected_commit: str,
-    role: str,
-) -> dict[str, str]:
-    """Bind one built Puffer tree to a clean, exact source checkout."""
-    if role not in {"candidate", "predecessor"}:
-        raise QualificationError("source checkout role is invalid")
-    if not isinstance(expected_commit, str) or GIT_COMMIT_PATTERN.fullmatch(
-        expected_commit
-    ) is None:
-        raise QualificationError(f"{role} source commit must be a full lowercase Git SHA")
-    if role == "predecessor" and expected_commit != PREDECESSOR_SOURCE_COMMIT:
-        raise QualificationError(f"{role} source commit is not the frozen canonical commit")
-    source_root = Path(source_root).resolve()
-    puffer_root = Path(puffer_root).resolve()
-    try:
-        source_root.relative_to(PROTECTED_RECOVERY_ROOT)
-    except ValueError:
-        pass
-    else:
-        raise QualificationError(f"{role} cannot use the protected recovery root")
-    if puffer_root != source_root / "vendor" / "PufferLib":
-        raise QualificationError(
-            f"{role} Puffer root is not the isolated tree inside its source checkout"
-        )
-    try:
-        top = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
-            cwd=source_root,
-            text=True,
-            capture_output=True,
-            timeout=30,
-        )
-        head = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            cwd=source_root,
-            text=True,
-            capture_output=True,
-            timeout=30,
-        )
-        status = subprocess.run(
-            ["git", "status", "--porcelain", "--untracked-files=all"],
-            cwd=source_root,
-            text=True,
-            capture_output=True,
-            timeout=30,
-        )
-    except OSError as exc:
-        raise QualificationError(f"cannot inspect {role} source checkout: {exc}") from exc
-    if top.returncode != 0 or Path(top.stdout.strip()).resolve() != source_root:
-        raise QualificationError(f"{role} source root is not an exact Git checkout root")
-    if head.returncode != 0 or head.stdout.strip() != expected_commit:
-        raise QualificationError(f"{role} source checkout is not at the frozen commit")
-    if status.returncode != 0 or status.stdout:
-        raise QualificationError(f"{role} source checkout is not clean")
-    installer = source_root / "tools" / "install_puffer_env.sh"
-    if not installer.is_file():
-        raise QualificationError(f"{role} source installer is missing")
-    try:
-        installer_check = subprocess.run(
-            [str(installer), "--check", str(puffer_root)],
-            cwd=source_root,
-            text=True,
-            capture_output=True,
-            timeout=300,
-        )
-    except OSError as exc:
-        raise QualificationError(f"cannot check {role} installed runtime: {exc}") from exc
-    if installer_check.returncode != 0:
-        detail = installer_check.stderr[-4000:] or installer_check.stdout[-4000:]
-        raise QualificationError(f"{role} source/module drift check failed: {detail}")
-    return {
-        "role": role,
-        "source_root": str(source_root),
-        "source_commit": expected_commit,
-        "puffer_root": str(puffer_root),
-        "installer_check_sha256": canonical_hash({
-            "stdout": installer_check.stdout,
-            "stderr": installer_check.stderr,
-        }),
-    }
-
-
-def validate_source_checkout_record(
-    record: Mapping[str, Any], *, expected_commit: str, role: str
-) -> dict[str, str]:
-    required = {
-        "role", "source_root", "source_commit", "puffer_root",
-        "installer_check_sha256",
-    }
-    if set(record) != required or record.get("role") != role:
-        raise QualificationError(f"recorded {role} source identity schema is not exact")
-    if record.get("source_commit") != expected_commit:
-        raise QualificationError(f"recorded {role} source commit drifted")
-    _require_sha256(
-        record.get("installer_check_sha256"), f"recorded {role} installer-check digest"
-    )
-    observed = validate_source_checkout(
-        Path(str(record.get("source_root", ""))),
-        Path(str(record.get("puffer_root", ""))),
-        expected_commit=expected_commit,
-        role=role,
-    )
-    if dict(record) != observed:
-        raise QualificationError(f"recorded {role} source checkout drifted")
-    return observed
-
-
-def require_output_outside_source(output: Path, source_root: Path, *, role: str) -> None:
-    try:
-        Path(output).resolve().relative_to(Path(source_root).resolve())
-    except ValueError:
-        return
-    raise QualificationError(f"qualification output must be outside the {role} checkout")
-
-
-def require_distinct_source_roots(*roots: Path) -> None:
-    resolved = [Path(root).resolve() for root in roots]
-    if len(set(resolved)) != len(resolved):
-        raise QualificationError("control-runner, predecessor, and candidate roots must differ")
-
-
-def require_predecessor_source_root(
-    supplied_root: Path, recorded_source: Mapping[str, Any]
-) -> Path:
-    """Require the independently supplied predecessor root to match its artifact."""
-    supplied_root = Path(supplied_root).resolve()
-    recorded_root = Path(str(recorded_source.get("source_root", ""))).resolve()
-    if supplied_root != recorded_root:
-        raise QualificationError(
-            "baseline predecessor source root differs from the independently supplied root"
-        )
-    return supplied_root
-
-
-def run_construction_gate(args: argparse.Namespace) -> int:
-    """Run only the source-bound, pre-transition candidate construction gate."""
-    output = Path(args.output).resolve()
-    runner_source_root = _require_clean_source_and_external_output(output)
-    runner_source = current_runner_source_identity()
-    validate_candidate_source_authority(args.expected_source_commit, runner_source)
-    expected_candidate = {
-        "source_commit": args.expected_source_commit,
-        "module_sha256": args.expected_candidate_module_sha256,
-        "backend_sha256": args.expected_candidate_backend_sha256,
-        "environment_sha256": args.expected_environment_sha256,
-    }
-    for key in ("module_sha256", "backend_sha256", "environment_sha256"):
-        _require_sha256(expected_candidate[key], f"frozen candidate {key}")
-    candidate_source = validate_source_checkout(
-        args.candidate_source_root,
-        args.puffer_root,
-        expected_commit=expected_candidate["source_commit"],
-        role="candidate",
-    )
-    candidate_source_root = Path(candidate_source["source_root"])
-    require_distinct_source_roots(runner_source_root, candidate_source_root)
-    require_output_outside_source(
-        output, candidate_source_root, role="candidate source"
-    )
-    if expected_candidate["backend_sha256"] != backend_source_hash(
-        args.puffer_root
-    ):
-        raise QualificationError(
-            "current backend sources differ from frozen candidate"
-        )
-    if expected_candidate["environment_sha256"] != installed_snapshot_hash(
-        args.puffer_root
-    ):
-        raise QualificationError(
-            "installed environment differs from frozen candidate"
-        )
-
-    output.mkdir(parents=True, exist_ok=True)
-    construction = _run_worker(
-        args,
-        kind="construction",
-        name="construction",
-        cudagraphs=DEFAULT_CUDAGRAPH_WARMUP_EPOCHS,
-        output=output,
-    )
-    identity = construction.get("identity")
-    if not isinstance(identity, Mapping):
-        raise QualificationError("construction module identity is missing")
-    validate_expected_candidate_identity(
-        identity,
-        expected_candidate,
-        authorized_source_commit=runner_source["source_commit"],
-    )
-    if identity.get("puffer_root") != candidate_source["puffer_root"]:
-        raise QualificationError(
-            "candidate module is outside its frozen source checkout"
-        )
-    validate_zero_state(
-        construction.get("state"), expected_banks=2, expected_buffers=1
-    )
-    payload = {
-        "schema_version": SCHEMA_VERSION,
-        "qualification_only": QUALIFICATION_ONLY,
-        "role": "candidate_construction_gate",
-        "accepted": True,
-        "runner_sha256": sha256(Path(__file__).resolve()),
-        "runner_source": runner_source,
-        "candidate_source": candidate_source,
-        "expected_candidate": expected_candidate,
-        "identity": identity,
-        "cuda_runtime_preflight": construction["cuda_runtime_preflight"],
-        "state": construction["state"],
-        "cell_record": construction["record_path"],
-        "cell_record_sha256": construction["record_sha256"],
-    }
-    write_json_atomic(output / "CONSTRUCTION_GATE.json", payload)
-    validate_construction_gate(output / "CONSTRUCTION_GATE.json")
-    return 0
-
-
-def validate_construction_gate(path: Path) -> dict[str, Any]:
-    """Independently revalidate a closed, pre-transition construction gate."""
-    gate_path = Path(path).resolve()
-    gate = _read_json(gate_path)
-    required = {
-        "schema_version",
-        "qualification_only",
-        "role",
-        "accepted",
-        "runner_sha256",
-        "runner_source",
-        "candidate_source",
-        "expected_candidate",
-        "identity",
-        "cuda_runtime_preflight",
-        "state",
-        "cell_record",
-        "cell_record_sha256",
-    }
-    if set(gate) != required:
-        raise QualificationError("construction gate schema is not exact")
-    if (
-        gate.get("schema_version") != SCHEMA_VERSION
-        or gate.get("qualification_only") is not True
-        or gate.get("role") != "candidate_construction_gate"
-        or gate.get("accepted") is not True
-    ):
-        raise QualificationError("construction gate is not accepted/isolated")
-    if gate.get("runner_sha256") != sha256(Path(__file__).resolve()):
-        raise QualificationError("construction gate runner digest drifted")
-    runner_source = current_runner_source_identity()
-    if gate.get("runner_source") != runner_source:
-        raise QualificationError("construction gate runner source drifted")
-
-    expected = gate.get("expected_candidate")
-    if not isinstance(expected, Mapping):
-        raise QualificationError("construction gate candidate authority is missing")
-    validate_candidate_source_authority(expected.get("source_commit"), runner_source)
-    recorded_source = gate.get("candidate_source")
-    if not isinstance(recorded_source, Mapping):
-        raise QualificationError("construction gate candidate source is missing")
-    live_source = validate_source_checkout(
-        Path(str(recorded_source.get("source_root", ""))),
-        Path(str(recorded_source.get("puffer_root", ""))),
-        expected_commit=str(expected.get("source_commit", "")),
-        role="candidate",
-    )
-    if live_source != recorded_source:
-        raise QualificationError("construction gate candidate source drifted")
-    puffer_root = Path(live_source["puffer_root"])
-    if backend_source_hash(puffer_root) != expected.get("backend_sha256"):
-        raise QualificationError("construction gate backend sources drifted")
-    if installed_snapshot_hash(puffer_root) != expected.get("environment_sha256"):
-        raise QualificationError("construction gate environment drifted")
-
-    cell_path = Path(str(gate.get("cell_record", ""))).resolve()
-    if cell_path != gate_path.parent / "construction.json":
-        raise QualificationError("construction cell path is not confined")
-    _require_sha256(gate.get("cell_record_sha256"), "construction cell")
-    if sha256(cell_path) != gate.get("cell_record_sha256"):
-        raise QualificationError("construction cell digest mismatch")
-    if {entry.name for entry in gate_path.parent.iterdir()} != {
-        "CONSTRUCTION_GATE.json",
-        "construction.json",
-    }:
-        raise QualificationError("construction gate directory is not closed")
-    cell = _read_json(cell_path)
-    validate_construction_cell(cell, rehash_cuda_runtime=True)
-    identity = cell.get("identity")
-    if not isinstance(identity, Mapping):
-        raise QualificationError("construction cell identity is missing")
-    validate_module_identity(identity, qualification_surface=True)
-    validate_current_identity_files(identity)
-    validate_expected_candidate_identity(
-        identity,
-        expected,
-        authorized_source_commit=runner_source["source_commit"],
-    )
-    if identity.get("puffer_root") != live_source["puffer_root"]:
-        raise QualificationError("construction cell module escaped candidate source")
-    validate_zero_state(cell.get("state"), expected_banks=2, expected_buffers=1)
-    for key in ("identity", "cuda_runtime_preflight", "state"):
-        if gate.get(key) != cell.get(key):
-            raise QualificationError(f"construction gate {key} differs from cell")
-    return gate
-
-
-def _failure_record_output(
-    output: Path, args: argparse.Namespace | None = None
-) -> Path | None:
-    """Return a path that this invocation may safely use for failure evidence."""
-    output = Path(output).resolve()
-    forbidden = [Path(__file__).resolve().parents[1], PROTECTED_RECOVERY_ROOT]
-    if args is not None:
-        supplied = vars(args)
-        for name in ("candidate_source_root", "predecessor_source_root"):
-            value = supplied.get(name)
-            if value is not None:
-                forbidden.append(Path(value).resolve())
-        baseline = supplied.get("baseline_throughput")
-        if baseline is not None:
-            try:
-                wrapper = _read_json(Path(baseline).resolve())
-                recorded = wrapper.get("predecessor_source")
-                required = {
-                    "role", "source_root", "source_commit", "puffer_root",
-                    "installer_check_sha256",
-                }
-                if not isinstance(recorded, Mapping) or set(recorded) != required:
-                    raise QualificationError(
-                        "baseline predecessor source identity schema is not exact"
-                    )
-                source_root_value = recorded.get("source_root")
-                puffer_root_value = recorded.get("puffer_root")
-                expected_commit = supplied.get("expected_predecessor_source_commit")
-                if (
-                    recorded.get("role") != "predecessor"
-                    or not isinstance(source_root_value, str)
-                    or not isinstance(puffer_root_value, str)
-                    or recorded.get("source_commit") != expected_commit
-                ):
-                    raise QualificationError(
-                        "baseline predecessor source identity is malformed"
-                    )
-                _require_sha256(
-                    recorded.get("installer_check_sha256"),
-                    "baseline predecessor installer-check digest",
-                )
-                source_root = Path(source_root_value)
-                puffer_root = Path(puffer_root_value)
-                if (
-                    not source_root.is_absolute()
-                    or puffer_root.resolve()
-                    != source_root.resolve() / "vendor" / "PufferLib"
-                ):
-                    raise QualificationError(
-                        "baseline predecessor source paths are malformed"
-                    )
-                forbidden.append(source_root.resolve())
-            except (QualificationError, OSError, TypeError, ValueError):
-                return None
-    for root in forbidden:
-        try:
-            output.relative_to(Path(root).resolve())
-        except ValueError:
-            continue
-        return None
-    if output.exists():
-        if not output.is_dir() or any(output.iterdir()):
-            return None
-    return output
-
-
 def run_qualification(args: argparse.Namespace) -> int:
     output = Path(args.output).resolve()
-    runner_source_root = _require_clean_source_and_external_output(output)
-    runner_source = current_runner_source_identity()
-    validate_candidate_source_authority(args.expected_source_commit, runner_source)
-    expected_candidate = {
-        "source_commit": args.expected_source_commit,
-        "module_sha256": args.expected_candidate_module_sha256,
-        "backend_sha256": args.expected_candidate_backend_sha256,
-        "environment_sha256": args.expected_environment_sha256,
-    }
-    expected_predecessor = expected_predecessor_identity_from_args(args)
-    candidate_source = validate_source_checkout(
-        args.candidate_source_root,
-        args.puffer_root,
-        expected_commit=expected_candidate["source_commit"],
-        role="candidate",
-    )
-    require_output_outside_source(
-        output, Path(candidate_source["source_root"]), role="candidate source"
-    )
-    construction_path = Path(args.construction_gate).resolve()
-    construction_gate = validate_construction_gate(construction_path)
-    construction_reference = {
-        "path": str(construction_path),
-        "sha256": sha256(construction_path),
-    }
-    if (
-        construction_gate.get("expected_candidate") != expected_candidate
-        or construction_gate.get("candidate_source") != candidate_source
-    ):
-        raise QualificationError(
-            "construction gate differs from the frozen candidate"
-        )
-    baseline_record = validate_baseline_artifact(
-        Path(args.baseline_throughput).resolve()
-    )
-    if baseline_record.get("construction_gate") != construction_reference:
-        raise QualificationError(
-            "throughput baseline used a different construction gate"
-        )
-    predecessor_source_root = require_predecessor_source_root(
-        args.predecessor_source_root,
-        baseline_record["predecessor_source"],
-    )
-    require_distinct_source_roots(
-        runner_source_root,
-        Path(candidate_source["source_root"]),
-        predecessor_source_root,
-    )
-    require_output_outside_source(
-        output,
-        predecessor_source_root,
-        role="predecessor source",
-    )
-    if baseline_record["runner_source"] != runner_source:
-        raise QualificationError("baseline was not captured by this control runner")
-    if baseline_record["expected_predecessor"] != expected_predecessor:
-        raise QualificationError("baseline differs from frozen predecessor identity")
-    if expected_candidate["backend_sha256"] != backend_source_hash(args.puffer_root):
-        raise QualificationError("current backend sources differ from frozen candidate")
-    if expected_candidate["environment_sha256"] != installed_snapshot_hash(
-        args.puffer_root
-    ):
-        raise QualificationError("installed environment differs from frozen candidate")
     output.mkdir(parents=True, exist_ok=True)
-    gates: dict[str, dict[str, Any]] = {}
     records: list[dict[str, Any]] = []
 
-    construction = _run_worker(
-        args, kind="construction", name="construction",
-        cudagraphs=DEFAULT_CUDAGRAPH_WARMUP_EPOCHS, output=output
-    )
-    records.append(construction)
-    construction_identity = construction.get("identity")
-    if not isinstance(construction_identity, Mapping):
-        raise QualificationError("construction module identity is missing")
-    validate_expected_candidate_identity(
-        construction_identity,
-        expected_candidate,
-        authorized_source_commit=runner_source["source_commit"],
-    )
-    if construction_identity.get("puffer_root") != candidate_source["puffer_root"]:
-        raise QualificationError("candidate module is outside its frozen source checkout")
-    validate_zero_state(
-        construction["state"], expected_banks=2, expected_buffers=1
-    )
+    def cell(kind: str, name: str, cudagraphs: int = DEFAULT_CUDAGRAPH_WARMUP_EPOCHS):
+        record = _run_worker(
+            args, kind=kind, name=name, cudagraphs=cudagraphs, output=output
+        )
+        records.append(record)
+        _require_same_identity(records)
+        return record
+
+    gates: dict[str, dict[str, Any]] = {}
+
+    construction = cell("construction", "construction")
+    validate_zero_state(construction["state"], expected_banks=2, expected_buffers=1)
     gates["construction_state"] = {"accepted": True}
 
-    graph_off = _run_worker(
-        args, kind="rollout", name="graph-off", cudagraphs=-1, output=output
-    )
-    graph_on = _run_worker(
-        args, kind="rollout", name="graph-on",
-        cudagraphs=DEFAULT_CUDAGRAPH_WARMUP_EPOCHS, output=output
-    )
-    records.extend((graph_off, graph_on))
+    graph_off = cell("rollout", "graph-off", cudagraphs=-1)
+    graph_on = cell("rollout", "graph-on")
+    # Every cell recomputes the backend/snapshot digests from the live tree in
+    # its own process, so an identity that agrees across cells also rules out a
+    # rebuild landing mid-qualification.
     identity = _require_same_identity(records)
-    validate_current_identity_files(identity)
-    precision = int(identity["precision_bytes"])
-    graph_atol = GRAPH_ATOL_BY_PRECISION.get(precision)
-    if graph_atol is None:
-        raise QualificationError(f"unsupported native precision: {precision}")
-    graph_off_arrays = _read_npz(
-        Path(graph_off["artifact"]), graph_off["artifact_sha256"]
-    )
-    graph_on_arrays = _read_npz(
-        Path(graph_on["artifact"]), graph_on["artifact_sha256"]
-    )
-    graph_metrics = compare_snapshots(
-        graph_off_arrays, graph_on_arrays, atol=graph_atol
-    )
-    decoder_metrics = compare_decoder_outputs(
-        graph_off_arrays, graph_on_arrays, atol=graph_atol
-    )
+    atol = GRAPH_ATOL_BY_PRECISION[int(identity["precision_bytes"])]
+    off_arrays = _read_npz(Path(graph_off["artifact"]))
+    on_arrays = _read_npz(Path(graph_on["artifact"]))
     gates["graph_parity"] = {
-        "accepted": True,
-        "hard_integrity_zero": True,
-        "atol": graph_atol,
-        "snapshot_max_abs": graph_metrics,
-        "decoder_max_abs": decoder_metrics,
+        "accepted": True, "atol": atol,
+        "snapshot_max_abs": compare_snapshots(off_arrays, on_arrays, atol=atol),
+        "decoder_max_abs": compare_decoder_outputs(off_arrays, on_arrays, atol=atol),
     }
 
-    terminal_auto = _run_worker(
-        args, kind="terminal_auto", name="terminal-auto",
-        cudagraphs=DEFAULT_CUDAGRAPH_WARMUP_EPOCHS, output=output
+    auto = cell("terminal_auto", "terminal-auto")
+    control = cell("terminal_control", "terminal-control")
+    validate_nonzero_state(
+        auto["state_after_first_rollout"], expected_banks=2, expected_buffers=1
     )
-    terminal_control = _run_worker(
-        args,
-        kind="terminal_control",
-        name="terminal-control",
-        cudagraphs=DEFAULT_CUDAGRAPH_WARMUP_EPOCHS,
-        output=output,
+    validate_zero_state(
+        control["state_after_control_clear"], expected_banks=2, expected_buffers=1
     )
-    records.extend((terminal_auto, terminal_control))
-    _require_same_identity(records)
-    auto_arrays = _read_npz(
-        Path(terminal_auto["artifact"]), terminal_auto["artifact_sha256"]
-    )
-    control_arrays = _read_npz(
-        Path(terminal_control["artifact"]), terminal_control["artifact_sha256"]
-    )
-    terminal_metrics = compare_snapshots(
-        auto_arrays,
-        control_arrays,
-        atol=graph_atol,
-        require_all_terminal=True,
-    )
-    terminal_decoder = compare_decoder_outputs(
-        auto_arrays, control_arrays, atol=graph_atol
-    )
+    auto_arrays = _read_npz(Path(auto["artifact"]))
+    control_arrays = _read_npz(Path(control["artifact"]))
     gates["terminal_reset"] = {
-        "accepted": True,
-        "hard_integrity_zero": True,
-        "atol": graph_atol,
-        "snapshot_max_abs": terminal_metrics,
-        "decoder_max_abs": terminal_decoder,
+        "accepted": True, "atol": atol,
+        "snapshot_max_abs": compare_snapshots(
+            auto_arrays, control_arrays, atol=atol, require_all_terminal=True
+        ),
+        "decoder_max_abs": compare_decoder_outputs(
+            auto_arrays, control_arrays, atol=atol
+        ),
     }
 
-    ratio = _run_worker(
-        args, kind="ratio", name="ratio",
-        cudagraphs=DEFAULT_CUDAGRAPH_WARMUP_EPOCHS, output=output
-    )
-    records.append(ratio)
-    _require_same_identity(records)
-    ratio_arrays = _read_npz(Path(ratio["artifact"]), ratio["artifact_sha256"])
-    row_partition = ratio.get("row_partition")
-    if not isinstance(row_partition, Mapping) or not isinstance(
-        row_partition.get("state_layout"), Mapping
+    ratio = cell("ratio", "ratio")
+    layout = ratio.get("row_partition")
+    if not isinstance(layout, Mapping) or not isinstance(
+        layout.get("state_layout"), Mapping
     ):
         raise QualificationError("ratio row partition evidence is missing")
     primary_rows, frozen_rows = derive_row_partition(
-        row_partition["state_layout"],
+        layout["state_layout"],
         total_agents=int(ratio["config"]["vec"]["total_agents"]),
     )
-    if row_partition.get("primary_rows") != sorted(primary_rows) or row_partition.get(
+    if layout.get("primary_rows") != sorted(primary_rows) or layout.get(
         "frozen_rows"
     ) != sorted(frozen_rows):
         raise QualificationError("ratio row partition record differs from bank layout")
-    calls = []
-    for index in range(int(ratio["ratio_calls"])):
-        calls.append(
-            {
-                "selected_rows": ratio_arrays[f"selected_{index}"].astype(
-                    np.int32, copy=False
-                ),
-                "ratios": ratio_arrays[f"ratio_{index}"].astype(
-                    np.float32, copy=False
-                ),
-            }
-        )
-    ratio_atol = RATIO_ATOL_BY_PRECISION[precision]
-    ratio_metrics = validate_ratio_calls(
-        calls, primary_rows=primary_rows, frozen_rows=frozen_rows, atol=ratio_atol
-    )
+    ratio_arrays = _read_npz(Path(ratio["artifact"]))
     validate_weight_identity(
         ratio["weights_before_sha256"], ratio["weights_after_sha256"]
     )
     gates["ratio"] = {
         "accepted": True,
-        "hard_integrity_zero": True,
-        **ratio_metrics,
+        **validate_ratio_calls(
+            [
+                {
+                    "selected_rows": ratio_arrays[f"selected_{index}"].astype(
+                        np.int32, copy=False
+                    ),
+                    "ratios": ratio_arrays[f"ratio_{index}"].astype(
+                        np.float32, copy=False
+                    ),
+                }
+                for index in range(int(ratio["ratio_calls"]))
+            ],
+            primary_rows=primary_rows, frozen_rows=frozen_rows,
+            atol=RATIO_ATOL_BY_PRECISION[int(identity["precision_bytes"])],
+        ),
         "weights_sha256": ratio["weights_before_sha256"],
     }
 
-    throughput = _run_worker(
-        args, kind="throughput", name="throughput",
-        cudagraphs=DEFAULT_CUDAGRAPH_WARMUP_EPOCHS, output=output
-    )
-    records.append(throughput)
-    _require_same_identity(records)
+    throughput = cell("throughput", "throughput")["throughput"]
     _require_same_cuda_runtime(records)
-    validate_predecessor_transition(baseline_record["identity"], identity)
-    baseline = baseline_record["throughput"]
-    throughput_metrics = validate_throughput(
-        throughput["throughput"],
-        baseline,
-        max_regression_fraction=args.max_regression_fraction,
-    )
+    _validate_throughput_record(throughput, "candidate")
     gates["throughput"] = {
-        "accepted": True,
-        "hard_integrity_zero": True,
-        **throughput_metrics,
+        "accepted": True, "steps_per_second": throughput["steps_per_second"],
     }
+    if args.baseline_throughput:
+        baseline = _read_json(Path(args.baseline_throughput)).get("throughput")
+        if not isinstance(baseline, Mapping):
+            raise QualificationError(
+                "baseline artifact has no throughput record to compare against"
+            )
+        gates["throughput"].update(
+            validate_throughput(
+                throughput, baseline,
+                max_regression_fraction=args.max_regression_fraction,
+            )
+        )
 
-    combined = combine_gate_verdicts(gates)
     final = {
         "schema_version": SCHEMA_VERSION,
-        "qualification_only": QUALIFICATION_ONLY,
+        "qualification_only": True,
         "identity": identity,
-        "expected_candidate": expected_candidate,
-        "expected_predecessor": expected_predecessor,
-        "candidate_source": candidate_source,
-        "runner_source_commit": runner_source["source_commit"],
-        "runner_sha256": sha256(Path(__file__).resolve()),
-        "source_files": qualification_source_identity(runner_source_root),
-        "construction_gate": construction_reference,
-        "max_regression_fraction": args.max_regression_fraction,
+        "cuda_runtime_preflight": records[0]["cuda_runtime_preflight"],
+        "host": socket.gethostname(),
         "gates": gates,
+        "throughput": throughput,
         "cells": [
             {
                 "name": Path(record["record_path"]).stem,
                 "kind": record["kind"],
                 "record": record["record_path"],
-                "record_sha256": record["record_sha256"],
                 "artifact": record.get("artifact"),
-                "artifact_sha256": record.get("artifact_sha256"),
             }
             for record in records
         ],
-        "throughput_baseline": {
-            "path": str(Path(args.baseline_throughput).resolve()),
-            "sha256": sha256(Path(args.baseline_throughput).resolve()),
-            "cell_record": baseline_record["cell_path"],
-            "cell_record_sha256": baseline_record["cell_sha256"],
-        },
-        "installer_check_sha256": candidate_source["installer_check_sha256"],
-        **combined,
+        **combine_gate_verdicts(gates),
     }
     write_json_atomic(output / "QUALIFICATION.json", final)
+    print(
+        f"qualification accepted={final['accepted']} "
+        f"steps_per_second={throughput['steps_per_second']:.1f} "
+        f"-> {output / 'QUALIFICATION.json'}"
+    )
     return 0 if final["accepted"] else 1
-
-
-def validate_qualification(path: Path) -> dict[str, Any]:
-    qualification_path = Path(path).resolve()
-    final = _read_json(qualification_path)
-    if final.get("schema_version") != SCHEMA_VERSION:
-        raise QualificationError("qualification schema version mismatch")
-    if final.get("qualification_only") is not True or final.get("accepted") is not True:
-        raise QualificationError("qualification is not an accepted isolated artifact")
-    if final.get("runner_sha256") != sha256(Path(__file__).resolve()):
-        raise QualificationError("qualification runner identity drifted")
-    source_root = Path(__file__).resolve().parents[1]
-    current_commit = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=source_root, text=True,
-        capture_output=True, check=True,
-    ).stdout.strip()
-    current_status = subprocess.run(
-        ["git", "status", "--porcelain"], cwd=source_root, text=True,
-        capture_output=True, check=True,
-    ).stdout
-    if current_status or final.get("runner_source_commit") != current_commit:
-        raise QualificationError("qualification runner checkout/commit drifted")
-    validate_qualification_source_identity(final.get("source_files"), source_root)
-    cells_raw = final.get("cells")
-    if not isinstance(cells_raw, list):
-        raise QualificationError("qualification cell manifest is missing")
-    expected_kinds = {
-        "construction": "construction",
-        "graph-off": "rollout",
-        "graph-on": "rollout",
-        "terminal-auto": "terminal_auto",
-        "terminal-control": "terminal_control",
-        "ratio": "ratio",
-        "throughput": "throughput",
-    }
-    cells: dict[str, dict[str, Any]] = {}
-    for entry in cells_raw:
-        if not isinstance(entry, Mapping):
-            raise QualificationError("qualification cell manifest entry is malformed")
-        name = entry.get("name")
-        if not isinstance(name, str) or name in cells:
-            raise QualificationError("qualification cell name is missing or duplicated")
-        record_path = Path(str(entry.get("record", ""))).resolve()
-        try:
-            record_path.relative_to(qualification_path.parent)
-        except ValueError as exc:
-            raise QualificationError(
-                f"qualification cell record escapes its artifact directory: {name}"
-            ) from exc
-        expected_record_hash = entry.get("record_sha256")
-        if sha256(record_path) != expected_record_hash:
-            raise QualificationError(f"qualification cell record drifted: {name}")
-        record = _read_json(record_path)
-        if (record.get("schema_version") != SCHEMA_VERSION
-                or record.get("accepted") is not True
-                or record.get("qualification_only") is not True
-                or record.get("preceding_runtime") is not False
-                or record.get("runner_sha256") != final.get("runner_sha256")):
-            raise QualificationError(f"qualification cell is not accepted: {name}")
-        if (record.get("kind") != entry.get("kind")
-                or expected_kinds.get(name) != record.get("kind")):
-            raise QualificationError(f"qualification cell kind drifted: {name}")
-        expected_cudagraphs = (
-            -1 if name == "graph-off" else DEFAULT_CUDAGRAPH_WARMUP_EPOCHS
-        )
-        validate_cell_cudagraph_record(
-            record,
-            expected=expected_cudagraphs,
-            rehash_cuda_runtime=True,
-        )
-        if record["kind"] in TRANSITION_CELL_KINDS:
-            validate_transition_cell_integrity(record, record["kind"])
-        artifact = entry.get("artifact")
-        artifact_hash = entry.get("artifact_sha256")
-        expects_artifact = name not in {"construction", "throughput"}
-        if (artifact is not None) is not expects_artifact:
-            raise QualificationError(f"qualification artifact presence is wrong: {name}")
-        if artifact is None:
-            if artifact_hash is not None:
-                raise QualificationError(f"qualification artifact hash without path: {name}")
-        else:
-            artifact_path = Path(str(artifact)).resolve()
-            try:
-                artifact_path.relative_to(qualification_path.parent)
-            except ValueError as exc:
-                raise QualificationError(
-                    f"qualification cell artifact escapes its directory: {name}"
-                ) from exc
-            if sha256(artifact_path) != artifact_hash:
-                raise QualificationError(f"qualification cell artifact drifted: {name}")
-            if record.get("artifact") != str(artifact_path) or record.get(
-                    "artifact_sha256") != artifact_hash:
-                raise QualificationError(f"qualification cell artifact record mismatch: {name}")
-        cells[name] = record
-    if set(cells) != set(expected_kinds):
-        raise QualificationError(
-            f"qualification cell set mismatch: {sorted(cells)} != "
-            f"{sorted(expected_kinds)}"
-        )
-
-    identity = _require_same_identity(cells.values())
-    _require_same_cuda_runtime(cells.values())
-    if final.get("identity") != identity:
-        raise QualificationError("qualification final identity differs from its cells")
-    validate_current_identity_files(identity)
-    expected_candidate = final.get("expected_candidate")
-    if not isinstance(expected_candidate, Mapping):
-        raise QualificationError("frozen candidate identity is missing")
-    validate_expected_candidate_identity(
-        identity,
-        expected_candidate,
-        authorized_source_commit=current_commit,
-    )
-    candidate_source_raw = final.get("candidate_source")
-    if not isinstance(candidate_source_raw, Mapping):
-        raise QualificationError("frozen candidate source identity is missing")
-    candidate_source = validate_source_checkout_record(
-        candidate_source_raw,
-        expected_commit=str(expected_candidate.get("source_commit", "")),
-        role="candidate",
-    )
-    if identity.get("puffer_root") != candidate_source["puffer_root"]:
-        raise QualificationError("candidate module/source checkout binding drifted")
-    construction_reference = final.get("construction_gate")
-    if not isinstance(construction_reference, Mapping) or set(
-        construction_reference
-    ) != {"path", "sha256"}:
-        raise QualificationError("qualification construction gate is malformed")
-    construction_path = Path(str(construction_reference.get("path", ""))).resolve()
-    if (
-        not construction_path.is_file()
-        or sha256(construction_path) != construction_reference.get("sha256")
-    ):
-        raise QualificationError("qualification construction gate drifted")
-    construction_gate = validate_construction_gate(construction_path)
-    if (
-        construction_gate.get("expected_candidate") != expected_candidate
-        or construction_gate.get("candidate_source") != candidate_source
-        or construction_gate.get("identity") != identity
-    ):
-        raise QualificationError(
-            "qualification construction gate differs from candidate"
-        )
-    _require_sha256(
-        final.get("installer_check_sha256"), "qualification installer-check digest"
-    )
-    if final.get("installer_check_sha256") != candidate_source[
-        "installer_check_sha256"
-    ]:
-        raise QualificationError("qualification candidate installer-check digest drifted")
-    precision = int(identity["precision_bytes"])
-    if precision not in GRAPH_ATOL_BY_PRECISION or precision not in RATIO_ATOL_BY_PRECISION:
-        raise QualificationError(f"unsupported qualification precision: {precision}")
-
-    gates: dict[str, dict[str, Any]] = {}
-    validate_zero_state(
-        cells["construction"]["state"], expected_banks=2, expected_buffers=1
-    )
-    gates["construction_state"] = {"accepted": True}
-
-    graph_off = _read_npz(
-        Path(cells["graph-off"]["artifact"]),
-        cells["graph-off"]["artifact_sha256"],
-    )
-    graph_on = _read_npz(
-        Path(cells["graph-on"]["artifact"]),
-        cells["graph-on"]["artifact_sha256"],
-    )
-    graph_atol = GRAPH_ATOL_BY_PRECISION[precision]
-    gates["graph_parity"] = {
-        "accepted": True,
-        "hard_integrity_zero": True,
-        "atol": graph_atol,
-        "snapshot_max_abs": compare_snapshots(
-            graph_off, graph_on, atol=graph_atol
-        ),
-        "decoder_max_abs": compare_decoder_outputs(
-            graph_off, graph_on, atol=graph_atol
-        ),
-    }
-
-    terminal_auto = _read_npz(
-        Path(cells["terminal-auto"]["artifact"]),
-        cells["terminal-auto"]["artifact_sha256"],
-    )
-    terminal_control = _read_npz(
-        Path(cells["terminal-control"]["artifact"]),
-        cells["terminal-control"]["artifact_sha256"],
-    )
-    validate_nonzero_state(
-        cells["terminal-auto"]["state_after_first_rollout"],
-        expected_banks=2,
-        expected_buffers=1,
-    )
-    validate_nonzero_state(
-        cells["terminal-control"]["state_after_first_rollout"],
-        expected_banks=2,
-        expected_buffers=1,
-    )
-    validate_zero_state(
-        cells["terminal-control"]["state_after_control_clear"],
-        expected_banks=2,
-        expected_buffers=1,
-    )
-    gates["terminal_reset"] = {
-        "accepted": True,
-        "hard_integrity_zero": True,
-        "atol": graph_atol,
-        "snapshot_max_abs": compare_snapshots(
-            terminal_auto,
-            terminal_control,
-            atol=graph_atol,
-            require_all_terminal=True,
-        ),
-        "decoder_max_abs": compare_decoder_outputs(
-            terminal_auto, terminal_control, atol=graph_atol
-        ),
-    }
-
-    ratio_record = cells["ratio"]
-    validate_hard_integrity(ratio_record["hard_integrity"])
-    ratio_arrays = _read_npz(
-        Path(ratio_record["artifact"]), ratio_record["artifact_sha256"]
-    )
-    ratio_calls = [
-        {
-            "selected_rows": ratio_arrays[f"selected_{index}"].astype(
-                np.int32, copy=False
-            ),
-            "ratios": ratio_arrays[f"ratio_{index}"].astype(
-                np.float32, copy=False
-            ),
-        }
-        for index in range(int(ratio_record["ratio_calls"]))
-    ]
-    validate_weight_identity(
-        ratio_record["weights_before_sha256"],
-        ratio_record["weights_after_sha256"],
-    )
-    row_partition = ratio_record.get("row_partition")
-    if not isinstance(row_partition, Mapping) or not isinstance(
-        row_partition.get("state_layout"), Mapping
-    ):
-        raise QualificationError("ratio row partition evidence is missing")
-    primary_rows, frozen_rows = derive_row_partition(
-        row_partition["state_layout"],
-        total_agents=int(ratio_record["config"]["vec"]["total_agents"]),
-    )
-    if row_partition.get("primary_rows") != sorted(primary_rows) or row_partition.get(
-        "frozen_rows"
-    ) != sorted(frozen_rows):
-        raise QualificationError("ratio row partition record differs from bank layout")
-    gates["ratio"] = {
-        "accepted": True,
-        "hard_integrity_zero": True,
-        **validate_ratio_calls(
-            ratio_calls,
-            primary_rows=primary_rows,
-            frozen_rows=frozen_rows,
-            atol=RATIO_ATOL_BY_PRECISION[precision],
-        ),
-        "weights_sha256": ratio_record["weights_before_sha256"],
-    }
-
-    baseline_entry = final.get("throughput_baseline")
-    if not isinstance(baseline_entry, Mapping):
-        raise QualificationError("throughput baseline manifest is missing")
-    baseline_path = Path(str(baseline_entry.get("path", ""))).resolve()
-    if sha256(baseline_path) != baseline_entry.get("sha256"):
-        raise QualificationError("throughput baseline artifact drifted")
-    baseline_record = validate_baseline_artifact(baseline_path)
-    if baseline_record.get("construction_gate") != dict(construction_reference):
-        raise QualificationError(
-            "qualification baseline construction gate drifted"
-        )
-    require_distinct_source_roots(
-        source_root,
-        Path(candidate_source["source_root"]),
-        Path(baseline_record["predecessor_source"]["source_root"]),
-    )
-    if (baseline_entry.get("cell_record") != baseline_record["cell_path"]
-            or baseline_entry.get("cell_record_sha256") != baseline_record[
-                "cell_sha256"
-            ]):
-        raise QualificationError("throughput baseline cell manifest drifted")
-    validate_predecessor_transition(baseline_record["identity"], identity)
-    expected_predecessor = final.get("expected_predecessor")
-    if (not isinstance(expected_predecessor, Mapping)
-            or baseline_record["expected_predecessor"] != expected_predecessor):
-        raise QualificationError("frozen predecessor identity drifted")
-    validate_expected_predecessor_identity(
-        baseline_record["identity"], expected_predecessor
-    )
-    baseline = baseline_record["throughput"]
-    candidate = cells["throughput"]["throughput"]
-    validate_hard_integrity(candidate["hard_integrity"])
-    validate_hard_integrity(baseline["hard_integrity"])
-    regression_fraction = _finite_number(
-        final.get("max_regression_fraction"), "recorded regression fraction"
-    )
-    if regression_fraction != DEFAULT_MAX_REGRESSION_FRACTION:
-        raise QualificationError("throughput regression budget is not the frozen value")
-    gates["throughput"] = {
-        "accepted": True,
-        "hard_integrity_zero": True,
-        **validate_throughput(
-            candidate,
-            baseline,
-            max_regression_fraction=regression_fraction,
-        ),
-    }
-
-    if final.get("gates") != gates:
-        raise QualificationError("recorded gate metrics differ from recomputed artifacts")
-    combined = combine_gate_verdicts(gates)
-    if final.get("accepted") != combined["accepted"] or final.get(
-            "failed_gates") != combined["failed_gates"]:
-        raise QualificationError("top-level qualification verdict is inconsistent")
-    return {"accepted": True, "gates": gates, "identity": identity}
-
-
-def capture_throughput(args: argparse.Namespace) -> int:
-    output = Path(args.output).resolve()
-    runner_source_root = _require_clean_source_and_external_output(output)
-    runner_source = current_runner_source_identity()
-    expected_predecessor = expected_predecessor_identity_from_args(args)
-    construction_path = Path(args.construction_gate).resolve()
-    construction_gate = validate_construction_gate(construction_path)
-    construction_candidate_source = construction_gate["candidate_source"]
-    predecessor_source = validate_source_checkout(
-        args.predecessor_source_root,
-        args.puffer_root,
-        expected_commit=args.expected_predecessor_source_commit,
-        role="predecessor",
-    )
-    require_output_outside_source(
-        output, Path(predecessor_source["source_root"]), role="predecessor source"
-    )
-    require_output_outside_source(
-        output,
-        Path(construction_candidate_source["source_root"]),
-        role="candidate source",
-    )
-    require_distinct_source_roots(
-        runner_source_root,
-        Path(predecessor_source["source_root"]),
-        Path(construction_candidate_source["source_root"]),
-    )
-    output.mkdir(parents=True, exist_ok=True)
-    record = _run_worker(
-        args, kind="throughput", name="throughput-baseline",
-        cudagraphs=DEFAULT_CUDAGRAPH_WARMUP_EPOCHS,
-        output=output, preceding_runtime=True,
-    )
-    validate_expected_predecessor_identity(record["identity"], expected_predecessor)
-    if record["identity"].get("puffer_root") != predecessor_source["puffer_root"]:
-        raise QualificationError("predecessor module is outside its frozen source checkout")
-    cell_path = Path(record["record_path"])
-    cell = _read_json(cell_path)
-    cell["predecessor_source"] = predecessor_source
-    cell["runner_source"] = runner_source
-    write_json_atomic(cell_path, cell)
-    record["record_sha256"] = sha256(cell_path)
-    payload = {
-        "schema_version": SCHEMA_VERSION,
-        "qualification_only": True,
-        "role": "preceding_exact_action_throughput_baseline",
-        "runner_sha256": record["runner_sha256"],
-        "identity": record["identity"],
-        "expected_predecessor": expected_predecessor,
-        "predecessor_source": predecessor_source,
-        "runner_source": runner_source,
-        "construction_gate": {
-            "path": str(construction_path),
-            "sha256": sha256(construction_path),
-        },
-        "throughput": record["throughput"],
-        "cell_record": record["record_path"],
-        "cell_record_sha256": record["record_sha256"],
-    }
-    baseline_path = output / "THROUGHPUT_BASELINE.json"
-    write_json_atomic(baseline_path, payload)
-    validate_baseline_artifact(baseline_path)
-    return 0
 
 
 def add_common_arguments(parser: argparse.ArgumentParser) -> None:
@@ -2833,8 +1304,7 @@ def add_common_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--throughput-hidden", type=int, default=512)
     parser.add_argument("--throughput-layers", type=int, default=1)
     parser.add_argument(
-        "--throughput-minibatch-size",
-        type=int,
+        "--throughput-minibatch-size", type=int,
         default=DEFAULT_THROUGHPUT_MINIBATCH_SIZE,
     )
     parser.add_argument("--throughput-warmup-rollouts", type=int, default=2)
@@ -2844,138 +1314,43 @@ def add_common_arguments(parser: argparse.ArgumentParser) -> None:
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
-    run = subparsers.add_parser("run", help="run every mandatory gate")
+
+    run = subparsers.add_parser("run", help="run every gate, write QUALIFICATION.json")
     add_common_arguments(run)
     run.add_argument("--output", required=True, type=Path)
-    run.add_argument("--baseline-throughput", required=True, type=Path)
-    run.add_argument("--construction-gate", required=True, type=Path)
-    run.add_argument("--candidate-source-root", required=True, type=Path)
-    run.add_argument("--predecessor-source-root", required=True, type=Path)
-    run.add_argument("--expected-source-commit", required=True)
-    run.add_argument("--expected-candidate-module-sha256", required=True)
-    run.add_argument("--expected-candidate-backend-sha256", required=True)
-    run.add_argument("--expected-environment-sha256", required=True)
-    run.add_argument("--expected-predecessor-source-commit", required=True)
-    run.add_argument("--expected-predecessor-module-sha256", required=True)
-    run.add_argument("--expected-predecessor-backend-sha256", required=True)
-    run.add_argument("--expected-predecessor-runtime-sha256", required=True)
     run.add_argument(
-        "--max-regression-fraction",
-        type=float,
+        "--baseline-throughput", type=Path,
+        help="previous QUALIFICATION.json to compare steps/second against",
+    )
+    run.add_argument(
+        "--max-regression-fraction", type=float,
         default=DEFAULT_MAX_REGRESSION_FRACTION,
     )
 
-    construct = subparsers.add_parser(
-        "construct", help="run only the pre-transition candidate construction gate"
-    )
-    add_common_arguments(construct)
-    construct.add_argument("--output", required=True, type=Path)
-    construct.add_argument("--candidate-source-root", required=True, type=Path)
-    construct.add_argument("--expected-source-commit", required=True)
-    construct.add_argument("--expected-candidate-module-sha256", required=True)
-    construct.add_argument("--expected-candidate-backend-sha256", required=True)
-    construct.add_argument("--expected-environment-sha256", required=True)
-
-    capture = subparsers.add_parser(
-        "capture-throughput", help="capture the preceding-runtime control"
-    )
-    add_common_arguments(capture)
-    capture.add_argument("--output", required=True, type=Path)
-    capture.add_argument("--construction-gate", required=True, type=Path)
-    capture.add_argument("--predecessor-source-root", required=True, type=Path)
-    capture.add_argument("--expected-predecessor-source-commit", required=True)
-    capture.add_argument("--expected-predecessor-module-sha256", required=True)
-    capture.add_argument("--expected-predecessor-backend-sha256", required=True)
-    capture.add_argument("--expected-predecessor-runtime-sha256", required=True)
-    capture.add_argument("--expected-environment-sha256", required=True)
-
-    validate = subparsers.add_parser(
-        "validate", help="independently recompute an existing qualification"
-    )
-    validate.add_argument("qualification", type=Path)
-
-    validate_construction = subparsers.add_parser(
-        "validate-construction",
-        help="independently recompute a pre-transition construction gate",
-    )
-    validate_construction.add_argument("construction_gate", type=Path)
-
     cell = subparsers.add_parser("cell", help=argparse.SUPPRESS)
     add_common_arguments(cell)
-    cell.add_argument(
-        "--kind",
-        required=True,
-        choices=(
-            "construction", "rollout", "terminal_auto", "terminal_control",
-            "ratio", "throughput",
-        ),
-    )
+    cell.add_argument("--kind", required=True, choices=CELL_KINDS)
     cell.add_argument("--cudagraphs", type=int, required=True)
     cell.add_argument("--output-json", required=True, type=Path)
     cell.add_argument("--output-npz", type=Path)
-    cell.add_argument("--preceding-runtime", action="store_true")
-    cell.add_argument("--expected-predecessor-source-commit")
-    cell.add_argument("--expected-predecessor-module-sha256")
-    cell.add_argument("--expected-predecessor-backend-sha256")
-    cell.add_argument("--expected-predecessor-runtime-sha256")
-    cell.add_argument("--expected-environment-sha256")
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    if args.command == "validate":
-        validate_qualification(args.qualification)
-        return 0
-    if args.command == "validate-construction":
-        validate_construction_gate(args.construction_gate)
-        return 0
     if args.ratio_call_limit <= 0:
         raise QualificationError("ratio call limit must be positive")
     if args.throughput_warmup_rollouts < 0 or args.throughput_timed_rollouts <= 0:
         raise QualificationError("throughput rollout counts are invalid")
-    if (
-        args.command in {"construct", "run", "capture-throughput"}
-        and args.throughput_minibatch_size
-        != DEFAULT_THROUGHPUT_MINIBATCH_SIZE
-    ):
-        raise QualificationError(
-            "operator throughput minibatch is frozen at the exact-action "
-            f"canary value {DEFAULT_THROUGHPUT_MINIBATCH_SIZE}"
-        )
     validate_throughput_minibatch(
-        args.throughput_agents,
-        args.throughput_horizon,
+        args.throughput_agents, args.throughput_horizon,
         args.throughput_minibatch_size,
     )
     if args.command == "cell":
         validate_cell_cudagraphs(args.kind, args.cudagraphs)
         return run_cell(args)
-    if args.command == "construct":
-        return run_construction_gate(args)
-    if args.command == "capture-throughput":
-        return capture_throughput(args)
     if args.command == "run":
-        if args.max_regression_fraction != DEFAULT_MAX_REGRESSION_FRACTION:
-            raise QualificationError("throughput regression budget is frozen at 0.10")
-        failure_output = _failure_record_output(args.output, args)
-        try:
-            return run_qualification(args)
-        except Exception as exc:
-            if failure_output is not None:
-                try:
-                    write_json_atomic(failure_output / "QUALIFICATION.json", {
-                        "schema_version": SCHEMA_VERSION,
-                        "qualification_only": QUALIFICATION_ONLY,
-                        "accepted": False,
-                        "error": f"{type(exc).__name__}: {exc}",
-                        "mandatory_gates": list(MANDATORY_GATES),
-                    })
-                except Exception:
-                    # Preserve the qualification error if best-effort failure
-                    # evidence cannot be written.
-                    pass
-            raise
+        return run_qualification(args)
     raise QualificationError(f"unknown command: {args.command}")
 
 
