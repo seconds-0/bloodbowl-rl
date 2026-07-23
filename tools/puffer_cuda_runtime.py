@@ -88,10 +88,58 @@ def _cuda_text(function: Callable[[int], Any], code: int, label: str) -> str:
     return value
 
 
+def _cuda_runtime_candidates() -> list[str]:
+    """Prefer the CUDART that Torch itself will load, then the system soname.
+
+    Loading the bare soname lets ldconfig win, and on this host that resolves to
+    the system /usr/lib/x86_64-linux-gnu/libcudart.so.12 -> 12.4.127, while the
+    venv ships the 12.8 runtime that torch 2.10.0+cu128 was built against. Once
+    12.4 is in the process, importing torch dies with
+
+        libc10_cuda.so: undefined symbol: cudaGetDriverEntryPointByVersion,
+        version libcudart.so.12
+
+    because that symbol only exists from 12.5 onward (verified: 0 occurrences in
+    the 12.4 system library, 2 in the bundled one). Whose runtime gets loaded is
+    the exact property this preflight exists to pin, so resolving a different one
+    than the trainer uses defeats its own purpose.
+    """
+    candidates: list[str] = []
+    # sys.prefix, not Path(sys.executable).resolve(): the venv's bin/python is a
+    # symlink into uv's interpreter store, so resolving it walks straight out of
+    # the venv and the bundled runtime is never found.
+    roots = [Path(sys.prefix)]
+    try:
+        import site
+        roots.extend(Path(p) for p in site.getsitepackages())
+    except Exception:  # pragma: no cover - site is always present in practice
+        pass
+    for root in roots:
+        for pattern in (
+            f"lib/python3.*/site-packages/nvidia/cuda_runtime/lib/{CUDA_RUNTIME_SONAME}",
+            f"nvidia/cuda_runtime/lib/{CUDA_RUNTIME_SONAME}",
+        ):
+            for lib in sorted(root.glob(pattern)):
+                path = str(lib)
+                if path not in candidates:
+                    candidates.append(path)
+    candidates.append(CUDA_RUNTIME_SONAME)
+    return candidates
+
+
 def begin_cuda_runtime_preflight() -> tuple[Any, dict[str, Any]]:
     """Initialize CUDART before any nvcc-built extension is imported."""
     try:
-        runtime = ctypes.CDLL(CUDA_RUNTIME_SONAME)
+        runtime = None
+        errors = []
+        for candidate in _cuda_runtime_candidates():
+            try:
+                runtime = ctypes.CDLL(candidate)
+                break
+            except OSError as exc:
+                errors.append(f"{candidate}: {exc}")
+        if runtime is None:
+            raise OSError("; ".join(errors) or "no CUDA runtime candidate")
         runtime.cudaGetDeviceCount.argtypes = [ctypes.POINTER(ctypes.c_int)]
         runtime.cudaGetDeviceCount.restype = ctypes.c_int
         runtime.cudaGetErrorName.argtypes = [ctypes.c_int]

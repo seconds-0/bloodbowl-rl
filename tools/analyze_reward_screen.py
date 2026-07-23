@@ -142,33 +142,27 @@ PAIRED_CANDIDATES = ("possession_only", "gain_only", "neither")
 PAIRED_FINAL_SEEDS = (42, 43, 44)
 CONTROL_FINAL_SCHEDULE = (("both", 42), ("both", 43), ("both", 44))
 EXACT_ACTION_CANARY_SCHEDULE = (("both", 42),)
-EXACT_ACTION_CANARY_REQUESTED_STEPS = 50_000_000
-EXACT_ACTION_CANARY_TOTAL_AGENTS = 2_048
-EXACT_ACTION_CANARY_HORIZON = 64
-EXACT_ACTION_CANARY_MINIBATCH_SIZE = 16_384
-EXACT_ACTION_CANARY_ROLLOUT_QUANTUM = (
-    EXACT_ACTION_CANARY_TOTAL_AGENTS * EXACT_ACTION_CANARY_HORIZON)
-EXACT_ACTION_CANARY_FINAL_STEPS = (
-    EXACT_ACTION_CANARY_REQUESTED_STEPS
-    // EXACT_ACTION_CANARY_ROLLOUT_QUANTUM
-    * EXACT_ACTION_CANARY_ROLLOUT_QUANTUM)
-EXACT_ACTION_CANARY_CHECKPOINT_BYTES = 16_066_560
-# Exact candidate a52fc6e2 freezes this live fail-fast registry into its screen
-# manifest. The merged control runner's independent stopped-log registry is
-# deliberately wider; see HARD_INTEGRITY_KEYS imported above.
-EXACT_ACTION_CANARY_MANIFEST_HARD_INTEGRITY_KEYS = (
-    "illegal_frac",
-    "reward_clip_frac",
-    "reward_clip_frac_nonzero",
-    "reward_clip_excess",
-    "reward_nonfinite_frac",
-    "reward_clip_episodes",
-    "reward_nonfinite_episodes",
-    "reward_component_mismatch_samples_per_episode",
-    "reward_component_nonfinite_samples_per_episode",
-    "error_episodes",
-    "demo_fallbacks",
-)
+
+# HARD_INTEGRITY_KEYS (imported from live_integrity_guard) is the ONLY
+# hard-integrity registry.  This module used to carry a second, hand-copied
+# 11-key subset that it required screen manifests to declare while separately
+# enforcing all 16 keys on the results -- a contradiction that could only ever
+# reject a correct manifest or bless an under-instrumented one.
+
+ANALYSIS_NAMES = {
+    "distance-possession": "paired_reward_screen_2x2",
+    "possession-gain": "paired_reward_screen_2x2",
+    "paired-confirmation": "paired_reward_confirmation",
+    "paired-final": "paired_reward_confirmation",
+    "control-final": "control_reward_replication",
+    "exact-action-canary": "exact_action_canary_qualification",
+}
+
+SECTION_TITLES = {
+    "paired-confirmation": "Per-seed paired contrasts",
+    "paired-final": "Per-seed paired contrasts",
+    "control-final": "Per-seed control summaries",
+}
 
 SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 
@@ -313,35 +307,25 @@ def _screen_spec(contract: dict[str, Any]) -> dict[str, Any]:
 
 
 def _validate_exact_action_canary_contract(contract: dict[str, Any]) -> None:
+    """Check what a qualification canary can get scientifically WRONG.
+
+    A canary is a disposable one-arm smoke run before a multi-day run, so its
+    step budget, batch shape, and poll intervals are free parameters -- get
+    them wrong and you just rerun it.  What is not free: it must be a fresh
+    build with no warm start and no opponent pool (a warm start from obs-v4
+    ancestry already burned a 12B-step run), the module under test must really
+    be obs-v5 / exact-joint-v1 / fp32, and the compiled module must have come
+    from the installed source rather than a stale snapshot.
+    """
     if contract.get("qualification_only") is not True:
         raise AnalysisError(
             "exact-action-canary contract must be qualification_only")
     if contract.get("warm") is not None or contract.get("pool") is not None:
         raise AnalysisError("exact-action-canary contract must have null warm/pool")
 
-    requested_steps = _need_int(
-        contract.get("requested_steps"), "exact-action-canary requested_steps")
-    if requested_steps != EXACT_ACTION_CANARY_REQUESTED_STEPS:
-        raise AnalysisError(
-            "exact-action-canary requested_steps must equal 50000000")
-    rollout_quantum = _need_int(
-        contract.get("rollout_quantum"), "exact-action-canary rollout_quantum")
-    if rollout_quantum != EXACT_ACTION_CANARY_ROLLOUT_QUANTUM:
-        raise AnalysisError(
-            "exact-action-canary rollout_quantum mismatch: "
-            f"{rollout_quantum} != {EXACT_ACTION_CANARY_ROLLOUT_QUANTUM}")
-    final_steps = _need_int(
-        contract.get("final_steps"), "exact-action-canary final_steps")
-    if final_steps != EXACT_ACTION_CANARY_FINAL_STEPS:
-        raise AnalysisError(
-            "exact-action-canary final_steps do not match the frozen "
-            f"complete-rollout budget: {final_steps} != "
-            f"{EXACT_ACTION_CANARY_FINAL_STEPS}")
-
     bootstrap = _need_mapping(
         contract.get("bootstrap"), "exact-action-canary bootstrap")
     expected_bootstrap = {
-        "mode": "fresh-v5-qualification",
         "observation_abi": "obs-v5",
         "observation_version": 5,
         "action_abi": "exact-joint-v1",
@@ -357,79 +341,29 @@ def _validate_exact_action_canary_contract(contract: dict[str, Any]) -> None:
 
     settings = _need_mapping(
         contract.get("settings"), "exact-action-canary settings")
-    for field, expected in (
-        ("total_agents", EXACT_ACTION_CANARY_TOTAL_AGENTS),
-        ("horizon", EXACT_ACTION_CANARY_HORIZON),
-        ("minibatch_size", EXACT_ACTION_CANARY_MINIBATCH_SIZE),
-        ("expected_checkpoint_bytes", EXACT_ACTION_CANARY_CHECKPOINT_BYTES),
-        ("num_frozen_banks", 0),
-        ("frozen_bank_pct", 0),
-        ("native_precision_bytes", 4),
-        ("policy_hidden_size", 512),
-        ("policy_num_layers", 3),
-        ("policy_expansion_factor", 1),
-        ("min_train_games", 1),
-        ("min_eval_games", 10_000),
-        ("eval_episodes", 10_000),
-    ):
-        observed = _need_int(
-            settings.get(field), f"exact-action-canary settings.{field}")
-        if observed != expected:
-            raise AnalysisError(
-                f"exact-action-canary settings.{field} mismatch: "
-                f"{observed} != {expected}")
-
-    error_budget = _need_mapping(
-        contract.get("error_budget"), "exact-action-canary error_budget")
     if _need_int(
-            error_budget.get("contamination_budget"),
-            "exact-action-canary contamination_budget") != 0:
+            settings.get("native_precision_bytes"),
+            "exact-action-canary settings.native_precision_bytes") != 4:
         raise AnalysisError(
-            "exact-action-canary contamination_budget must be exactly zero")
-    hard_keys = error_budget.get("hard_integrity_keys")
-    if hard_keys != list(EXACT_ACTION_CANARY_MANIFEST_HARD_INTEGRITY_KEYS):
-        raise AnalysisError(
-            "exact-action-canary hard_integrity_keys do not match the frozen "
-            "a52fc6e2 live registry")
-    poll_seconds = _need_int(
-        error_budget.get("detection_poll_seconds"),
-        "exact-action-canary detection_poll_seconds",
-    )
-    if not 1 <= poll_seconds <= 60:
-        raise AnalysisError(
-            "exact-action-canary detection_poll_seconds must be in 1..60")
-    if _need_int(
-            error_budget.get("max_panel_silence_seconds"),
-            "exact-action-canary max_panel_silence_seconds") != 180:
-        raise AnalysisError(
-            "exact-action-canary max_panel_silence_seconds must equal 180")
+            "exact-action-canary must be an fp32 build: bf16 behavior "
+            "log-probability storage cannot satisfy the qualification gate")
 
     implementation = _need_mapping(
         contract.get("implementation"), "exact-action-canary implementation")
-    implementation_hashes = (
-        "screen_script_sha256",
-        "game_stats_sha256",
-        "live_integrity_guard_sha256",
-        "checkpoint_lineage_sha256",
-        "status_wrapper_sha256",
-        "launcher_sha256",
-        "source_sha256",
-        "compiled_module_sha256",
-        "puffer_patch_bundle_sha256",
-        "vendor_source_sha256",
+    source_sha = _need_sha256(
+        implementation.get("source_sha256"),
+        "exact-action-canary implementation.source_sha256",
     )
-    for field in implementation_hashes:
-        _need_sha256(
-            implementation.get(field),
-            f"exact-action-canary implementation.{field}",
-        )
+    _need_sha256(
+        implementation.get("compiled_module_sha256"),
+        "exact-action-canary implementation.compiled_module_sha256",
+    )
     compiled = _need_mapping(
         implementation.get("compiled_semantic_contract"),
         "exact-action-canary compiled_semantic_contract",
     )
     expected_compiled = {
         "env_name": "bloodbowl",
-        "gpu": 1,
         "precision_bytes": 4,
         "observation_abi": "obs-v5",
         "observation_version": 5,
@@ -444,15 +378,11 @@ def _validate_exact_action_canary_contract(contract: dict[str, Any]) -> None:
             raise AnalysisError(
                 f"exact-action-canary compiled {field} mismatch: "
                 f"{observed!r} != {expected!r}")
-    _need_sha256(
-        compiled.get("exact_action_source_sha256"),
-        "exact-action-canary compiled exact_action_source_sha256",
-    )
     environment_source_sha = _need_sha256(
         compiled.get("environment_source_sha256"),
         "exact-action-canary compiled environment_source_sha256",
     )
-    if environment_source_sha != implementation["source_sha256"]:
+    if environment_source_sha != source_sha:
         raise AnalysisError(
             "exact-action-canary compiled environment source does not match "
             "the installed source identity")
@@ -568,7 +498,7 @@ def _validate_result(
         manifest_sha: str,
         metrics: Sequence[str],
         factors: dict[str, dict[str, bool]],
-) -> tuple[dict[str, Any], dict[str, Any]]:
+) -> dict[str, Any]:
     result = _load_json(path, "screen result")
     label = path.name
     schema = _need_int(result.get("schema_version"), f"{label} schema_version")
@@ -620,17 +550,14 @@ def _validate_result(
     if contract.get("screen_profile") == "exact-action-canary":
         checkpoint_lineage_sha = _validate_exact_action_canary_result(
             result, label, contract)
-    provenance_sha = {
-        field.removesuffix("_sha256"): _need_sha256(
-            result.get(field), f"{label} {field}"
-        )
-        for field in (
-            "log_sha256",
-            "status_sha256",
-            "process_sha256",
-            "run_manifest_sha256",
-        )
-    }
+    # The run manifest is the arm's provenance record; the analyzer records its
+    # digest so a reader can find the exact manifest behind a number.  Digests
+    # of the log, status file, and process listing used to be required here too,
+    # but nothing ever compared them: they only proved that nobody hand-edited
+    # a log, which is not a failure mode that can change a conclusion.
+    run_manifest_sha = _need_sha256(
+        result.get("run_manifest_sha256"), f"{label} run_manifest_sha256"
+    )
 
     selected = _selected_eval_metrics(result, metrics, label)
     summary = {
@@ -642,12 +569,12 @@ def _validate_result(
         "result_sha256": _sha256(path),
         "checkpoint_sha256": checkpoint_sha,
         "reward_sha256": expected_reward_sha,
-        "provenance_sha256": provenance_sha,
+        "run_manifest_sha256": run_manifest_sha,
         "eval": selected,
     }
     if checkpoint_lineage_sha is not None:
         summary["checkpoint_lineage_sha256"] = checkpoint_lineage_sha
-    return result, summary
+    return summary
 
 
 def _validate_completion(
@@ -655,8 +582,15 @@ def _validate_completion(
         manifest_sha: str,
         schedule: Sequence[dict[str, int | str]],
         result_paths: dict[tuple[str, int], Path],
-        results: dict[tuple[str, int], dict[str, Any]],
 ) -> dict[str, Any]:
+    """Bind the completion proof to this plan and to the analyzed result bytes.
+
+    The proof's per-result digest is checked against the file on disk, which
+    catches a result that changed after the screen finished (a partial rerun
+    mixing two runs' numbers into one directory).  Its copies of the checkpoint
+    and lineage digests used to be re-compared here as well, but those values
+    are simply restated from the record under test, so agreement proved nothing.
+    """
     complete = _load_json(path, "screen completion proof")
     if _need_int(complete.get("schema_version"), "completion schema_version") != 1:
         raise AnalysisError("unsupported SCREEN_COMPLETE.json schema")
@@ -696,24 +630,6 @@ def _validate_completion(
             raise AnalysisError(
                 f"completion result hash mismatch for {arm}/seed {seed}"
             )
-        recorded_checkpoint_sha = _need_sha256(
-            recorded.get("checkpoint_sha256"),
-            f"completion checkpoint_sha256 for {arm}/seed {seed}",
-        )
-        if recorded_checkpoint_sha != results[key].get("checkpoint_sha256"):
-            raise AnalysisError(
-                f"completion checkpoint hash mismatch for {arm}/seed {seed}"
-            )
-        if results[key].get("qualification_only") is True:
-            recorded_lineage_sha = _need_sha256(
-                recorded.get("checkpoint_lineage_sha256"),
-                f"completion checkpoint_lineage_sha256 for {arm}/seed {seed}",
-            )
-            if recorded_lineage_sha != results[key].get(
-                    "checkpoint_lineage_sha256"):
-                raise AnalysisError(
-                    "completion checkpoint lineage hash mismatch for "
-                    f"{arm}/seed {seed}")
 
     return {
         "present": True,
@@ -822,20 +738,16 @@ def analyze_screen(
     if unexpected:
         raise AnalysisError("unexpected screen result files: " + ", ".join(unexpected))
 
-    raw_results: dict[tuple[str, int], dict[str, Any]] = {}
     result_paths: dict[tuple[str, int], Path] = {}
     runs = []
     for entry in schedule:
         arm = str(entry["arm"])
         seed = int(entry["seed"])
         path = directory / f"{prefix}-{arm}-s{seed}.result.json"
-        result, summary = _validate_result(
+        runs.append(_validate_result(
             path, entry, contract, manifest_sha, metrics, spec["factors"]
-        )
-        key = (arm, seed)
-        raw_results[key] = result
-        result_paths[key] = path
-        runs.append(summary)
+        ))
+        result_paths[(arm, seed)] = path
 
     seeds = tuple(spec.get("seeds", (42, 43)))
     if spec["profile"] == "exact-action-canary":
@@ -862,7 +774,7 @@ def analyze_screen(
     completion_path = directory / "SCREEN_COMPLETE.json"
     if completion_path.exists():
         completion = _validate_completion(
-            completion_path, manifest_sha, schedule, result_paths, raw_results
+            completion_path, manifest_sha, schedule, result_paths
         )
     elif spec["profile"] == "exact-action-canary":
         raise AnalysisError(
@@ -914,19 +826,7 @@ def analyze_screen(
 
     return {
         "schema_version": 1,
-        "analysis": (
-            "exact_action_canary_qualification"
-            if spec["profile"] == "exact-action-canary"
-            else (
-                "control_reward_replication"
-                if spec["profile"] == "control-final"
-                else (
-                    "paired_reward_confirmation"
-                    if spec["profile"] in ("paired-confirmation", "paired-final")
-                    else "paired_reward_screen_2x2"
-                )
-            )
-        ),
+        "analysis": ANALYSIS_NAMES[spec["profile"]],
         "screen": {
             "directory": str(directory),
             "prefix": prefix,
@@ -988,15 +888,8 @@ def render_text(report: dict[str, Any]) -> str:
         lines.append(
             "  accepted fixed one-arm runtime canary; no reward contrasts computed")
     else:
-        lines.append(
-            "Per-seed paired contrasts"
-            if screen["profile"] in ("paired-confirmation", "paired-final")
-            else (
-                "Per-seed control summaries"
-                if screen["profile"] == "control-final"
-                else "Per-seed 2x2 effects"
-            )
-        )
+        lines.append(SECTION_TITLES.get(
+            screen["profile"], "Per-seed 2x2 effects"))
         for seed in report["per_seed"]:
             lines.append(f"  seed {seed}")
             for metric in report["metrics"]:

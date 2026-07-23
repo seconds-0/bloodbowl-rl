@@ -95,9 +95,10 @@ launch)
     ssh -i "$KEY" -p "$port" -o StrictHostKeyChecking=no "root@$host" \
         "cd /root/bloodbowl-rl/vendor/PufferLib && \
          . /root/bloodbowl-rl/tools/cpu_cap.sh && \
-         nohup puffer train bloodbowl --tag '$tag' $* > /tmp/$tag.log 2>&1 < /dev/null & \
+         nohup .venv/bin/python /root/bloodbowl-rl/tools/puffer_cuda_runtime.py \
+             train bloodbowl --tag '$tag' $* > /tmp/$tag.log 2>&1 < /dev/null & \
          echo LAUNCHED-\$!; sleep 30; \
-         if ! pgrep -f 'puffer [t]rain' > /dev/null; then \
+         if ! pgrep -f '[p]uffer_cuda_runtime.py train|[p]uffer train' > /dev/null; then \
              echo 'TRAINER DIED:'; tail -10 /tmp/$tag.log; exit 1; fi; \
          d=\$(ls -td checkpoints/bloodbowl/*/ 2>/dev/null | head -1); \
          [ -n \"\$d\" ] && echo '$tag' > \"\${d}PROFILE\"; \
@@ -117,7 +118,7 @@ for i in json.load(sys.stdin):
         line=$(ssh -n -i "$KEY" -p "$port" -o StrictHostKeyChecking=no \
             -o ConnectTimeout=10 "root@$host" \
             'log=$(ls -t /tmp/*.log 2>/dev/null | head -1); \
-             pgrep -f "puffer [t]rain" > /dev/null && st=RUNNING || st=idle; \
+             pgrep -f "[p]uffer_cuda_runtime.py train|[p]uffer train" > /dev/null && st=RUNNING || st=idle; \
              vitals=$(sed "s/\x1b\[[0-9;]*[a-zA-Z]//g" "$log" 2>/dev/null | \
                grep -oaE "(Steps +[0-9.]+[BMK]|SPS +[0-9.]+[KM])" | tail -2 | tr "\n" " "); \
              echo "$st ${log##*/} $vitals"' 2>/dev/null || echo "UNREACHABLE")

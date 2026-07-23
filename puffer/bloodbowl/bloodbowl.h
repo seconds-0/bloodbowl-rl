@@ -352,16 +352,36 @@ typedef struct {
     // when the ball SETTLES (held or grounded) — a ball in the air is limbo,
     // so a completed pass is neutral instead of loss-then-gain. Keep
     // |reward_ball_loss| > reward_ball_gain or pickup/drop cycles farm reward.
+    // WARNING: puffer/config/rewards/r0_full.json VIOLATES that invariant --
+    // it ships reward_ball_loss 0.0 against reward_ball_gain 0.05, so every
+    // regain is paid and no drop is charged. Fix the manifest or rebut this
+    // comment; do not leave both standing.
     float reward_ball_gain;
     float reward_ball_loss;
-    // Bootstrap curriculum potentials (default 0 = off). Potential-BASED
-    // (reward = delta-potential, telescoping -> un-farmable): while the ball
-    // is loose, each side's potential is -k_fetch * dist(nearest standing
+    // Bootstrap curriculum potentials (default 0 = off). While the ball is
+    // loose, each side's potential is -k_fetch * dist(nearest standing
     // teammate, ball); while carrying, -k_advance * dist(carrier, opposing
     // end zone). A ladder OUT of the mutual-avoidance basin (both 10B
     // from-scratch arms converged to 0-0 draws) — anneal to 0 via chained
     // runs once tds/match wakes up; NOT a permanent reward (see
     // docs/reward-audit-decision-time.md doctrine vs scaffolding).
+    //
+    // NOT CURRENTLY POTENTIAL-BASED, despite what this comment used to claim.
+    // Two defects, both at the emission site below (search pot_carry_prev):
+    //   1. Each potential is NAN whenever its regime is inactive, the emission
+    //      is skipped when either side is NaN, and prev is then overwritten
+    //      with NAN. So on any possession gap the baseline silently
+    //      RE-ANCHORS wherever possession resumes: advances are paid, drops
+    //      across the gap are never charged, and it does not telescope. A
+    //      gain/advance/lose/regain/advance cycle banks reward for zero net
+    //      field progress. BB_BALL_IN_AIR is such a gap, so a completed pass
+    //      earns no distance credit while carrying the same squares earns
+    //      full credit -- an anti-passing bias.
+    //   2. The emission is raw (Phi' - Phi), not beta*(gamma*Phi' - Phi), so
+    //      it is not exact PBRS at gamma != 1.
+    // Fixing 1 requires Phi total (no NaN) with a value for the inactive
+    // regime that charges rather than pays the drop; fixing 2 requires the
+    // env to know gamma, which it currently does not.
     float reward_dist_ball;
     float reward_dist_endzone;
     // Injury shaping (default 0 = off): per opponent removed to KO/CAS.
@@ -558,6 +578,13 @@ typedef struct {
     uint32_t episode;
     int decisions;
     int illegal;
+    // Set when bbe_decode rejected because two DISTINCT engine actions
+    // projected onto one policy tuple, as opposed to the tuple simply not
+    // being offered. Both paths increment `illegal` and both are fatal, but
+    // they mean different things: a collision is a projection-injectivity
+    // defect in the action encoding, not a policy sampling outside support.
+    // Env-side, never bb_match -- keeps the BBS bank fingerprint stable.
+    int illegal_projection_collision;
     // Behavioral micro-stat counters for the CURRENT episode (summed into
     // the Log by bbe_finish_episode, zeroed by bbe_reset_match).
     int ep_blocks, ep_blitzes;
@@ -1547,6 +1574,7 @@ static bb_action bbe_decode(Bloodbowl* env, int agent, const float* heads) {
                 // Two different engine actions may never collapse onto one
                 // policy tuple. Identical duplicate enumeration is harmless.
                 env->illegal++;
+                env->illegal_projection_collision = 1;
                 return (bb_action){BB_A_NONE, 0, 0, 0};
             }
         }
@@ -2073,6 +2101,7 @@ static void bbe_reset_match(Bloodbowl* env) {
     bbe_refresh_legal(env);
     env->decisions = 0; // max_decisions budgets from the resume point
     env->illegal = 0;
+    env->illegal_projection_collision = 0;
     env->ep_blocks = env->ep_blitzes = 0;
     env->ep_blocks_thrown = 0;
     env->ep_blocks_thrown_team[0] = env->ep_blocks_thrown_team[1] = 0;
@@ -2794,11 +2823,28 @@ static void c_step(Bloodbowl* env) {
         } else {
             act = bbe_decode(env, agent, env->action_ptr[agent]);
             if (act.type == BB_A_NONE) {
-                fprintf(stderr,
-                        "bloodbowl: policy supplied a tuple outside exact "
-                        "joint support (type=%.0f arg=%.0f square=%.0f)\n",
-                        env->action_ptr[agent][0], env->action_ptr[agent][1],
-                        env->action_ptr[agent][2]);
+                if (env->illegal_projection_collision) {
+                    // Distinct cause, distinct message. This is not the policy
+                    // sampling outside support: two different engine actions
+                    // projected onto this one tuple, so the encoding is not
+                    // injective over the current legal set and no choice of
+                    // tuple could have been unambiguous.
+                    fprintf(stderr,
+                            "bloodbowl: projection collision -- two distinct "
+                            "legal engine actions share one policy tuple "
+                            "(type=%.0f arg=%.0f square=%.0f); the action "
+                            "encoding is not injective over this legal set\n",
+                            env->action_ptr[agent][0],
+                            env->action_ptr[agent][1],
+                            env->action_ptr[agent][2]);
+                } else {
+                    fprintf(stderr,
+                            "bloodbowl: policy supplied a tuple outside exact "
+                            "joint support (type=%.0f arg=%.0f square=%.0f)\n",
+                            env->action_ptr[agent][0],
+                            env->action_ptr[agent][1],
+                            env->action_ptr[agent][2]);
+                }
                 abort();
             }
         }

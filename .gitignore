@@ -34,3 +34,7 @@ validation/replay_cache/
 .DS_Store
 checkpoints-backup/
 .claude/worktrees/
+
+# Agent run transcripts (process residue; design briefs are kept)
+.codex-impl/*-run-*.md
+.codex-reviews/

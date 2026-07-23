@@ -48,7 +48,7 @@ case "$WARM" in /*) ;; *) WARM="$HOME/bloodbowl-rl/$WARM" ;; esac
 if [ -n "${POOL:-}" ]; then case "$POOL" in /*) ;; *) POOL="$HOME/bloodbowl-rl/$POOL" ;; esac; fi
 [ -f "$WARM" ] || { echo "REFUSING: warm-start ckpt not found: $WARM"; exit 1; }
 
-if pgrep -f 'puffer [t]rain' >/dev/null; then
+if pgrep -f '[p]uffer_cuda_runtime.py train|[p]uffer train' >/dev/null; then
   echo "REFUSING: a puffer train is already running on this box. pkill it first if intended."
   exit 1
 fi
@@ -88,4 +88,4 @@ nohup puffer train bloodbowl --tag "$TAG" $SLOWLY \
 disown
 echo "PID=$! LOG=$LOG"
 sleep 40
-if pgrep -f 'puffer [t]rain' >/dev/null; then echo "LIVE"; else echo "TRAINER DIED — check $LOG"; tail -20 "$LOG"; fi
+if pgrep -f '[p]uffer_cuda_runtime.py train|[p]uffer train' >/dev/null; then echo "LIVE"; else echo "TRAINER DIED — check $LOG"; tail -20 "$LOG"; fi

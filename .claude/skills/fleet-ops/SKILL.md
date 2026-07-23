@@ -1,387 +1,237 @@
 ---
 name: fleet-ops
-description: Operate Blood Bowl RL compute safely across the local Mac, the Tailscale RTX 2070 WSL host, and any deliberately reactivated Vast.ai instances. Use for host discovery, SSH, isolated checkout selection, process/disk/GPU preflight, source sync, Puffer rebuilds, reward-screen launch or monitoring, checkpoint/artifact transfer, hibernation, recovery, or production-process safety.
+description: Operate Blood Bowl RL compute on the local Mac and the Tailscale RTX 2070 WSL host (plus optionally reactivated Vast.ai instances). Use for host access, isolated checkout selection, process/disk/GPU preflight, source sync, Puffer rebuilds, run launch and monitoring, liveness checks, checkpoint/artifact transfer, and recovery after a run dies.
 ---
 
 # Blood Bowl RL compute operations
 
-Read `AGENTS.md`, the tail of `DECISIONS.md`, and the experiment-specific skill
-before touching remote state. External inventory is live state; old host IDs,
-ports, paths, roles, and process claims in the ledger are historical snapshots.
+## The box
 
-## Current topology
-
-The paid four-box Vast fleet documented in June was stopped after D176. Do not
-restart or destroy those historical instance IDs from documentation.
-
-The current lightweight target is the Tailscale host `wsl-ubuntu` (RTX 2070).
-July audit work used:
-
-- isolated experiment checkout: `/home/rache/bloodbowl-rl-audit`;
-- production/evaluator checkout: `/home/rache/bloodbowl-rl`.
-
-Treat the production checkout and any `server.py`/stream/evaluator process as
-out of scope unless the user explicitly authorizes changing it. Training access
-does not imply permission to kill, rebuild, replace checkpoints for, or deploy to
-the production service.
-
-When the user explicitly authorizes BBTV to follow a reward-screen experiment,
-use `stream_backend/run_follow_latest.sh` and the isolation contract in
-`docs/bbtv-latest-checkpoint.md`. Never point the production stream at a native
-checkpoint directly or build its float viewer module in the trainer's vendored
-Puffer tree. Deploy through the reversible `bbstream.service` override, verify
-the imported viewer `_C` path/hash, and preserve the static launcher as fallback.
-If a delayed queue requires an empty GPU compute-PID list, build BBTV's match
-viewer separately with `bloodbowl --cpu`, verify `env_name=bloodbowl`, `gpu=0`,
-fp32, a real spare-port WebSocket cycle, and absence from the exact gate parser.
-Hiding CUDA from a GPU-built `_C` causes the viewer to fail and is not a handoff
-solution (D189).
-
-## Discover before acting
-
-From the Mac:
+There is one GPU: an RTX 2070 in WSL on the Tailscale host `wsl-ubuntu`.
 
 ```bash
 tailscale status
-ssh -n -o ConnectTimeout=10 rache@wsl-ubuntu \
-  'hostname; pwd; nvidia-smi; df -h /; pgrep -af "puffer|server.py" || true'
+ssh -n -o ConnectTimeout=10 rache@100.97.209.46 'hostname; nvidia-smi; df -h /'
 ```
 
-Before every run, record:
+`rache@100.97.209.46` is the working route. The `wsl-ubuntu` name only resolves when
+Tailscale DNS is up, so prefer the IP in scripts.
 
-- exact host, user, checkout path, branch/commit, and dirty state;
-- live `puffer`, Python, evaluator, stream, and watcher processes;
-- GPU, driver, CUDA, OS/WSL, compiler, Python, and Torch versions;
-- free disk and inode capacity;
-- installed Puffer source/config hash;
-- imported `_C.__file__`, `_C.env_name`, GPU flag, precision bytes, and SHA-256;
-- warm checkpoint format, size, architecture, SHA-256, and conversion route;
-- opponent/data/reward/plan hashes.
+Two checkouts live on it:
 
-If the intended checkout or process ownership is ambiguous, stop before mutating
-anything. Never infer that an idle-looking GPU means an existing service is safe
-to replace.
+- `/home/rache/bloodbowl-rl-audit` — experiments. Use this one.
+- `/home/rache/bloodbowl-rl` — may be running the BBTV/eval `server.py`. Leave it alone
+  unless the user asks for it. Training access is not permission to kill, rebuild, or
+  redeploy that service.
 
-## Isolated-checkout rule
+Confirm the checkout path in every SSH command rather than trusting the remote shell's
+cwd. An idle-looking GPU does not mean an existing service is safe to replace.
 
-Run experiments in `/home/rache/bloodbowl-rl-audit`. Keep production in
-`/home/rache/bloodbowl-rl` untouched. Confirm the path in every SSH command rather
-than relying on the remote shell's current directory.
+The June four-box paid Vast fleet was stopped after D176; the instance IDs in old ledger
+entries are dead. Discover live state instead of restarting anything from documentation.
 
-Do not sync these from the Mac as generic source payloads:
+## Preflight before a run
 
-- `.git/`, local virtual environments, build outputs, caches, or device binaries;
-- `runs/` except intentionally selected manifests/results;
-- production checkpoints, service files, secrets, or runtime logs;
-- the remote replay cache unless performing a deliberate verified data transfer.
+Record, from the exact host and environment the run will use:
 
-Preserve remote-only anchors and checkpoints. Use checksums before and after any
-copy. Never use a destructive rsync option on a directory containing unknown
-remote artifacts.
+- checkout path, branch/commit, dirty state;
+- live `puffer`, Python, evaluator, stream, and watcher processes (with command lines);
+- GPU/driver/CUDA, OS/WSL, compiler, Python, Torch versions;
+- free disk **and inodes**;
+- installed Puffer source/config hash (`tools/install_puffer_env.sh --check`);
+- the imported `_C.__file__`, `_C.env_name`, `_C.gpu`, `_C.precision_bytes`, SHA-256;
+- warm checkpoint format, size, SHA-256, and its `.lineage.json`;
+- reward manifest, opponent, and data hashes.
 
-## Build and installed-snapshot discipline
+If checkout or process ownership is ambiguous, stop before mutating anything.
 
-`puffer/bloodbowl/` is the repository source. Puffer builds the installed snapshot
-under the vendored Puffer tree, not the source directory directly.
+`tools/cpu_cap.sh` fixes the WSL/cgroup thread-thrash footgun (visible CPUs ≫ allowed
+CPUs → unpinned BLAS/torch pools cost ~5× SPS, D59). Launch scripts source it; a manual
+`puffer train` must `. tools/cpu_cap.sh` first. Verify the live trainer's
+`OMP_NUM_THREADS` equals the quota and its thread count is ~150–190, not hundreds.
 
-After any environment, engine, config, or relevant Puffer-patch change:
+## Sync and build discipline
+
+`puffer/bloodbowl/` is the source; the build compiles the **installed snapshot** under
+the vendored Puffer tree. An edit without a re-install silently trains on stale rules.
 
 ```bash
 cd /home/rache/bloodbowl-rl-audit
 bash tools/install_puffer_env.sh
-bash tools/install_puffer_env.sh --check
-cd vendor/PufferLib
-rm -rf build
-./build.sh bloodbowl --float
+bash tools/install_puffer_env.sh --check     # drift guard; exit 1 = re-install
+cd vendor/PufferLib && rm -rf build && ./build.sh bloodbowl --float
 ```
 
-Use plain `./build.sh bloodbowl` only when the experiment explicitly requires the
-native bf16 CUDA backend. `--float` is required for Torch/`--slowly`. One vendored
-tree holds one active `_C` build; rebuilding changes what future processes import.
-Never rebuild a tree used by a live process.
+`--float` (fp32) is required for the Torch backend and for the recurrent CUDA
+qualification; plain `./build.sh bloodbowl` is bf16 native CUDA, which is what
+`puffer match` needs. Never skip `rm -rf build` — stale objects survive a plain rebuild.
+Sync `engine/` and `puffer/bloodbowl/` **together**; a header without its `binding.c`
+builds a stale mixture. After syncing, `grep` the changed symbol on the box to prove the
+right code landed, then install + rebuild there.
 
-After building, verify the imported extension from the exact run environment:
+One vendored tree holds one active `_C`. Never rebuild a tree a live process is using.
+
+Verify what Python actually imported — a source hash proves nothing about the loaded
+extension:
 
 ```bash
 python - <<'PY'
+import hashlib
 from pathlib import Path
 from pufferlib import _C
-import hashlib
 p = Path(_C.__file__).resolve()
-print(p)
-print('env_name', _C.env_name)
-print('gpu', _C.gpu)
-print('precision_bytes', _C.precision_bytes)
-print('sha256', hashlib.sha256(p.read_bytes()).hexdigest())
+print(p, _C.env_name, _C.gpu, _C.precision_bytes,
+      hashlib.sha256(p.read_bytes()).hexdigest())
 PY
 ```
 
-Do not accept a source hash as proof that Python imported the intended extension.
+### CUDA init order (D225 — the real WSL trap)
 
-On the RTX 2070 WSL host, CUDA availability is also a same-process contract.
-The D224-era `predecessor-throughput-v2` and `predecessor-throughput-v3`
-captures are rejected and permanently non-retryable because loading `_C`
-before the worker's first CUDART call left that process reporting
-`cudaErrorNoDevice`. Do not restart WSL or attempt another unchanged capture.
-For qualification and training, use `tools/puffer_cuda_runtime.py` in the exact
-worker/trainer process before any native import, require successful positive
-device counts before and after import through one retained resolved CUDART
-handle, and record its path/hash plus `CUDA_VISIBLE_DEVICES`. Host-level
-`nvidia-smi` and out-of-process Python probes are useful diagnostics but cannot
-substitute for this evidence. A failed pre/post probe terminates that fresh
-process and is never repaired in place. Before any timed recapture, use fresh
-clean control/candidate roots and run only a construction-only integration;
-stop and restore BBTV around that bounded GPU cell under the usual host-state
-contract. The frozen screen launcher remains unauthorized.
-The construction gate must be passed explicitly to `capture-throughput` and
-full qualification; both revalidate it before output or GPU worker dispatch.
-The predecessor timing worker must also receive the complete frozen
-predecessor declaration and validate its own imported module/backend/runtime/
-environment identity before backend construction, warmup, or rollout. Never
-spend timing compute and defer this comparison to the parent process.
-For training, the early launcher probe is only an expectation. The trainer
-wrapper explicitly imports `_C`, writes its own pre/post runtime evidence and
-finalizes the pending manifest before optimization, and the checkpoint
-directory must contain the matching `CUDA_RUNTIME_EVIDENCE.json` sidecar.
+In a fresh WSL process, importing `_C` **before** the first CUDART call leaves that
+process reporting `cudaErrorNoDevice`, even though the host GPU is fine. A separate
+`nvidia-smi`, Torch, or probe process proves nothing about the worker. Every trainer and
+qualification worker must enter through `tools/puffer_cuda_runtime.py`: require
+`cudaSuccess` with a positive device count *before* the native import, keep the resolved
+CUDART handle, import, then require the same count afterwards. Record the CUDART
+path/hash and `CUDA_VISIBLE_DEVICES` with the run. A failed probe should exit the process,
+not try to repair it.
 
-## Reward-screen launch contract
+## Launch contract
 
-Use `.claude/skills/training-experiments/SKILL.md`. New reward experiments use:
-
-- complete JSON manifests under `puffer/config/rewards/`;
-- `tools/reward_manifest.py`;
-- `tools/run_reward_screen.sh` and the per-arm audited launcher;
-- immutable plan, status, result, checkpoint, and completion records;
-- `tools/analyze_reward_screen.py` or `tools/analyze_reward_transfer.py`.
-
-Do not use bare `tools/run_synthesis_c.sh` for a new reward arm. It contains
-historical inherited reward defaults, including a legacy ball-loss penalty.
-Omitted reward fields are not equivalent to explicit zeroes.
-
-Before launch, prove:
-
-1. no conflicting trainer is live in the isolated checkout;
-2. production evaluator/stream processes will remain untouched;
-3. disk can hold checkpoints, logs, and final copied artifacts;
-4. install drift check passes and the imported module matches the plan;
-5. the warm checkpoint and pool hashes match;
-6. reward manifests are complete, canonical, and correctly assigned to arms;
-7. seed/order/eval targets and integrity rejection gates are frozen;
-8. `demo_reset_pct=0` for full-game final evaluation.
+The experiment side lives in `training-experiments`. Before launch, prove on the box: no
+conflicting trainer in the isolated checkout; the production evaluator/stream will be
+untouched; disk and inodes hold checkpoints + logs + copied artifacts; the install drift
+check passes and the imported module matches the plan; warm checkpoint and pool hashes
+match; every reward manifest is complete and assigned to the right arm; seeds, order, and
+eval targets are fixed; `demo_reset_pct=0` for full-game final evaluation. Never launch a
+new reward arm through bare `tools/run_synthesis_c.sh` — it carries a legacy ball-loss
+penalty, and an omitted reward field is not an explicit zero.
 
 ## Monitoring
 
-Use `ssh -n` and an explicit connection timeout in every loop. Avoid
-`pkill -f` patterns that can match the watcher itself; inspect exact PIDs and
-command lines first.
+Use `ssh -n` and an explicit `ConnectTimeout` in every loop, or it will hang forever.
 
-Monitor all of:
+**Liveness is log MTIME, never log content.** A finished trainer leaves its log frozen at
+the final dashboard forever, so any content-grepping monitor reports "running" indefinitely
+(two arms idle-billed 8–13h this way, D65). Gate on `stat -c %Y <log>` age (>360s stale =
+done or dead) **and** a real process check.
 
-- process existence and command line;
-- fresh log/status mtime;
-- exact native step and checkpoint cadence;
-- disk usage and inode pressure;
-- GPU memory/utilization and host memory;
-- train/eval phase;
-- completed full eval games;
-- reward clip/non-finite counters;
-- engine error, demo, and fallback counters;
-- immutable result/checkpoint hashes.
+For the process half, use the PID the launcher recorded — `run_reward_ablation.sh` writes
+`{"pid":…,"process_group":…}` next to the run — and `kill -0 <pid>`. Do **not** reach for
+`pgrep -xc puffer` on a current arm: these runs exec
+`python tools/puffer_cuda_runtime.py train bloodbowl …`, so the process is not named
+`puffer` and does not contain the string `puffer train`. `pgrep -xc puffer` and
+`pgrep -f 'puffer [t]rain'` only match the historical direct-CLI launches.
 
-For repaired exact-action runs, zero tolerance is enforced live as well as at
-acceptance. The frozen `live_integrity_guard.py` must scan each new machine panel
-both from the screen poll loop and from the watchdog embedded beside the detached
-trainer, stop the recorded trainer/process group on any hard field failure, and
-emit `LIVE_INTEGRITY_FAILURE.json`; 180 seconds without an integrity-bearing
-panel is itself a failure. Metadata-only startup panels do not reset that clock.
-The screen and embedded watchdog must use independent incremental state files
-while sharing the failure artifact. Verify the wrapper's atomic nonzero status
-and absence of its trainer child before treating the GPU as idle. Do not relaunch
-under the same run ID or let a later arm advance. A fresh runtime receives only
-the staged provenance/CUDA/deterministic checks and a disposable 50M-step canary
-before any long paired screen.
+**Use bracket patterns in pgrep/pkill** whenever you do pattern-match, e.g.
+`pkill -f '[r]un_synthesis'` — a bare `pkill -f puffer` matches the watcher's own command
+line. One-trainer-per-host is enforced by the launcher's `flock` on
+`/tmp/bloodbowl-rl-*.lock`, which (unlike the pgrep guard beside it) still holds for
+wrapper-launched trainers.
 
-The staged CUDA checks must include recurrent boundaries: exact-zero primary
-and every frozen-bank state after graph warmup; deterministic graph-on/off first
-outputs; fresh train→eval games; primary/frozen first-post-terminal equivalence
-to zero state; Torch/native boundary parity; finite exact zero-update PPO ratios;
-and a target-GPU throughput comparison. Training requires `reset_state=True`
-with evaluation mode off. A row-sized captured reset gate is acceptable; a
-layers × rows × hidden no-op launch is not. Any mismatch consumes the entire
-error budget and blocks the canary.
+Watch: process existence and command line; log/status mtime; native step and checkpoint
+cadence; disk and inode pressure; GPU memory/utilization and host memory; train vs eval
+phase; completed full eval games; reward clip and non-finite counters; engine-error,
+demo, and fallback counters; result/checkpoint hashes.
 
-For canary plan-only closure, account for the launcher's persistent ownership
-inode. The output must contain exactly `SCREEN_MANIFEST.json` and a regular
-zero-byte `.screen.lock`; require the empty-file SHA-256, prove the lock is
-released with nonblocking `flock`, and bind both files' modes, sizes, and
-digests. Do not delete the lock or tolerate any third entry.
+`tools/live_integrity_guard.py` is the kill switch, and it runs twice: from the screen
+poll loop and from a watchdog beside the detached trainer, so losing the outer screen
+does not remove the bound. It scans each new machine panel, stops the trainer's process
+group on any hard-field failure, and writes `LIVE_INTEGRITY_FAILURE.json`. 180 seconds
+without an integrity-bearing panel is itself a failure; metadata-only startup panels do
+not reset that clock. The two watchers use independent incremental state files and share
+the failure artifact. Before treating the GPU as idle, check the wrapper's exit status
+and the absence of its trainer child.
 
-When Bash is embedded in a systemd unit, bind both escaping layers: `$$`
-delivers one literal `$` to Bash and `%%` delivers one literal `%`. Author an
-intended `printf "%s"` as `printf "%%s"` in unit bytes; bare `%s` is systemd's
-user-shell specifier. Prove empty-output success plus fixed-output and command-
-failure rejection with disposable units before any real trainer unit install.
+**A final training `Steps` line is not completion.** The audited evaluator keeps running
+until the completed-game gate is satisfied; do not kill it because the dashboard stopped
+advancing. Acceptance needs the explicit final phase/status reprint, the requested games,
+the final checkpoint, and zero integrity counters.
 
-A final training Steps line is not completion. The audited evaluator may continue
-until the completed-game gate is satisfied. Do not kill it merely because the
-dashboard is no longer advancing training steps. Acceptance requires the explicit
-final phase/status reprint, target games, final checkpoint, and zero integrity
-counters.
+For a fresh runtime, run the staged CUDA checks before a long run: exact-zero primary and
+frozen-bank recurrent state after graph warmup; deterministic graph-on/off first outputs;
+fresh train→eval games; primary/frozen first-post-terminal equivalence to zero state;
+Torch/native parity; finite exact zero-update PPO ratios; target-GPU throughput. Training
+requires `reset_state=True` with evaluation mode off. Then a disposable 50M-step canary.
 
-For a long-running user-directed goal, send a concise progress update about every
-30 minutes, including active arm, steps/games, integrity state, disk, ETA, and any
-decision needed. Monitoring does not authorize modifying production.
+When Bash lives inside a systemd unit, remember the second escape layer: `$$` delivers
+one literal `$` and `%%` one literal `%`, so an intended `printf "%s"` must be written
+`printf "%%s"` in the unit (bare `%s` is systemd's user-shell specifier).
 
-For a multi-day unattended queue, use the tracked
-`training/systemd/experiment-queue@.service` in the lingering user manager.
-Freeze the plan before service start and retain its SHA in atomic queue state.
-Require disk, job-runtime, progress, sustained-temperature, and output-validator
-guards. Use typed command/validator/environment values, recursive tree pins for
-directory inputs, and explicit mutable/predecessor-artifact paths; recheck every
-declared pin and use the allowlisted plan environment. Every invocation is a
-pinned executable plus pinned runner; literal values are only numbers,
-lowercase SHA-256 digests, or long flags. Test interruption
-recovery, completed-artifact drift, and fail-closed suppression of later jobs
-before handoff. `Restart=on-failure` recovers a runner crash; a deliberate
-queue halt must exit normally and remain stopped for inspection. Recheck linger,
-Tailscale online/key-expiry state, enabled BBTV services, disk/inodes, journal
-size, and GPU thresholds immediately before departure.
+For an unattended multi-day run, use the tracked
+`training/systemd/experiment-queue@.service` with `tools/experiment_queue.py`: literal
+commands, per-job max runtime, disk/inode, mtime-progress, thermal, and process-group
+guards. Queue-owned screens set `ARM_DETACH=0`; never add an inner `setsid`, daemonizer,
+or supervisor, which would escape those guards. `Restart=on-failure` recovers a runner
+crash. Before departure, recheck linger, Tailscale key expiry, enabled BBTV services,
+disk/inodes, journal size, and GPU thresholds.
 
-Freeze the concrete July queue with `tools/freeze_vacation_queue.py`; do not
-write a substitute plan on-box. The audit host's experiment tree can be an
-artifact-preserving source snapshot without `.git`. Deploy a merged source
-archive without deleting `runs/`, checkpoints, or vendor artifacts, verify all
-tracked archive paths by checksum, and record `.deployed-source.json`. Do not
-report that tree as an exact Git checkout merely because its tracked bytes match.
-The frozen plan marks PPO screen jobs non-resume-safe and only atomic,
-restart-validating transfer/gate jobs resume-safe. Queue-owned reward screens
-must set `ARM_DETACH=0`: the queue creates a new process group for each job, and
-an inner `setsid`, daemonizer, or supervisor would evade per-job runtime,
-thermal, progress, and capacity termination even if a later systemd service stop
-could still clean the cgroup.
+## BBTV (the stream), when asked
 
-The primary freezer has exactly three reviewed evidence routes. An accepted
-simplification produces the six-job candidate route. A decomposition result
-that recommends `both` and records an empty eligible-candidate list produces
-only the two-job R0 control route: `control-final`, `12B x seeds 42/43/44`, once
-per ancestry. That fallback has no candidate-transfer input, learned-transfer
-input, or gate; both PPO jobs remain non-resume-safe. Its source decomposition
-screen must carry the same recursive config-tree, default-config, and exact
-nine-file runtime identity as every other freezer input. Never accept a legacy
-partial-provenance screen or partial transfer matrix: reference must be `both`
-and candidates must be exactly `possession_only`, `gain_only`, and `neither`.
-Never hand-edit the frozen plan or substitute a rejected reward candidate.
-
-The third primary route, `confirmation-rejected-baseline`, applies only when the
-already-selected candidate fails its unchanged paired confirmation and emits
-the same two R0 jobs after independently reproducing that failure. If measured
-throughput leaves time after the exact primary queue completes, D186 permits a
-separate additive-only overflow built by `tools/freeze_vacation_overflow.py`:
-one unchanged `control-final` screen from the exact netblock pool-bank ancestry.
-Arm its tracked watcher timer only after negative and success smokes. It must
-require primary-service inactivity, the exact primary plan/state/artifacts and
-validators, unchanged overflow pins, no prior overflow state, and an idle GPU.
-Never modify a file pinned by the live primary queue, start concurrent training,
-or allow the timer to relaunch existing state.
-
-A persisted queue halt is terminal across restart and reboot. Do not edit its
-state to resume it. Preserve the evidence and deploy a new reviewed queue
-ID/plan/state after diagnosis if the user-authorized experiment should continue.
-
-For D215/D216 overflow recovery, never deploy into or write under
-`/home/rache/bloodbowl-rl-audit`. Use the exact merged source in the isolated
-`/home/rache/bloodbowl-rl-recovery-20260719` root and the queue ID
-`vacation-r0-overflow-recovery-20260719-v1`. Freeze and record a new plan hash;
-the first queue job must validate the old terminal evidence before the fresh
-three-seed trainer starts. Prove old hashes unchanged before and after setup,
-require the exact reviewed recovery root, and keep BBTV CPU-only and
-observational. The frozen preflight must use its exact pinned `nvidia-smi` and
-revalidate an empty compute-process list immediately before advancing to PPO;
-the complete seven-file Puffer patch bundle must be pinned too. Never copy old
-mutable state into the recovery root, reuse the old rejected checkpoint as
-output, or run old and new trainers concurrently.
-Install the separately rooted `experiment-recovery-queue@.service`; the existing
-`experiment-queue@.service` is audit-root-only. Configure the CPU BBTV follower
-to search both checkpoint roots while writing its state/cache under the recovery
-root. Execute the launcher and follower from the exact merged recovery checkout
-and set `BBTV_ROOT=/home/rache/bloodbowl-rl` only for unchanged production
-runtime assets. Verify the live command includes both checkpoint roots and the
-recovery state dir, and that it keeps the last complete old matchup until a
-newer complete recovery checkpoint is available.
-Use `docs/vacation-operator-runbook.md` for the exact read-only snapshot,
-state-to-action matrix, overflow watcher grace period, BBTV fault isolation,
-and return-day sequence. It is deliberately non-authorizing: do not improvise
-an in-place PPO restart, manual overflow start, evidence cleanup, or concurrent
-evaluation.
-
-For the active July vacation preparation/run, append an operational handoff to
-`docs/vacation-progress.md` at least hourly: timestamp, live service/job state,
-completed work, blockers, and exact next steps. This journal never substitutes
-for immutable experiment manifests, result files, or completion proofs.
+Use `stream_backend/run_follow_latest.sh` and `docs/bbtv-latest-checkpoint.md`. Never
+point the production stream at a native checkpoint directly, and never build its float
+viewer module inside the trainer's vendored Puffer tree. Deploy through the reversible
+`bbstream.service` override, verify the imported viewer `_C` path/hash, and keep the
+static launcher as fallback. If the viewer must stay off the GPU, build it with
+`build.sh bloodbowl --cpu` and verify `env_name=bloodbowl`, `gpu=0`, fp32, and a real
+WebSocket cycle — hiding CUDA from a GPU-built `_C` just makes it fail (D189).
 
 ## Checkpoints and transfer
 
-Select checkpoints by embedded step plus manifest/hash, not newest mtime. Verify
-observation lineage, source/module identity, size, and architecture before
-loading. Current source uses obs-v5 at 2782 bytes. Obs-v4 is also 2782 bytes but
-semantically incompatible. For current training, require the canonical adjacent
-checkpoint lineage sidecar and validate it with `tools/checkpoint_lineage.py`;
-never authorize by size or filename. Qualification-only checkpoints are not
-warm starts or pool seeds. The exact-action canary runs with `WARM` and `POOL`
-unset and zero frozen banks; inherited shell variables must be removed.
-Active historical/live v4 runs remain valid only in their deliberately pinned
-v4 runtime. Flat checkpoint shape cannot distinguish v4 from v5. Older obs-v3
-is shape-incompatible unless deliberately converted with the correct
-`--obs-size 1612`.
+Select a checkpoint by the **step number embedded in its filename** plus its manifest
+hash. Newest mtime ≠ highest step across run dirs.
 
-Native↔Torch conversion is lossy with respect to biases: native-to-Torch
-zero-fills them and Torch-to-native drops them. Apply conversions symmetrically,
-record both hashes, and do not call a converted policy bit-identical unless the
-round trip was actually verified.
+Current source is obs-v5 at 2782 bytes. **Obs-v4 is also 2782 bytes and semantically
+incompatible**, so shape proves nothing: require the adjacent `.lineage.json` and
+validate it with `tools/checkpoint_lineage.py` before any warm start or pool seed.
+Qualification-only checkpoints are never warm starts or pool seeds. Obs-v3 checkpoints
+are shape-incompatible and need an explicit `--obs-size 1612` conversion. The
+exact-action canary runs with `WARM` and `POOL` unset (`env -u WARM -u POOL`) and zero
+frozen banks.
 
-Pull compact artifacts to the Mac after acceptance:
+Native↔Torch conversion is lossy for biases (native→Torch zero-fills, Torch→native
+drops). Convert both sides symmetrically, record both hashes, and don't call a converted
+policy bit-identical unless you verified the round trip.
 
-- plan/completion proof;
-- result or analysis JSON;
-- final logs needed for audit;
-- selected final checkpoints;
-- hashes and environment metadata.
+Pull compact artifacts to the Mac after acceptance: plan/completion record, result or
+analysis JSON, the logs needed for audit, selected checkpoints, hashes and environment
+metadata. Don't pull whole checkpoint trees. Verify local hashes against the remote
+manifest before freeing remote space, and keep remote disk under ~80%.
 
-Do not pull entire checkpoint trees by default. Verify local hashes against the
-remote manifest before freeing space. Keep remote disk below the experiment's
-80% guardrail.
+Do not sync as generic source payloads: `.git/`, venvs, build outputs, caches, device
+binaries, `runs/` (except selected manifests/results), production checkpoints, service
+files, secrets, or the remote replay cache. Preserve remote-only anchors and checkpoints,
+checksum before and after any copy, and never use a destructive rsync flag on a directory
+holding unknown remote artifacts. `tools/fleet.sh setup` will clobber a box's demo state
+bank with the Mac's, and its `bb-<name>` matching silently no-ops on a typo (D65) —
+confirm the rsync actually ran and re-check `Loaded N demo states` afterwards.
 
 ## Vast.ai fallback
 
-Only use Vast when the user asks or the experiment plan explicitly authorizes paid
-capacity. Discover with current CLI state:
+Only with explicit user request or an experiment plan that authorizes paid capacity.
 
 ```bash
 vastai show instances --raw
 vastai show user --raw
 ```
 
-Do not trust June labels, IDs, ports, balances, or roles. Stopped instances can be
-reclaimed. `destroy` is irreversible and requires explicit user authorization.
-Before stopping any instance, copy/hash irreplaceable checkpoints and replay data.
-Before provisioning, establish a spend cap, teardown condition, and idle guard.
+Do not trust June labels, IDs, ports, or balances. Stopped instances can be reclaimed
+(GPU re-rented) — restart promptly or accept a replacement. `destroy` is irreversible and
+needs explicit authorization; copy and hash irreplaceable checkpoints and replay data
+first. Set a spend cap and teardown condition before provisioning. `vastai` CLI < 1.0
+(brew 0.4) creates zombie instances — check the version. After `tools/fleet.sh setup` on
+a new instance, verify what the excludes did not transfer.
 
-If a new Vast instance is intentionally created, run `tools/fleet.sh setup`, then
-verify what its excludes did not transfer. Anchors, checkpoints, caches, virtual
-environments, and builds are often remote-only and must be handled deliberately.
-
-## Recovery and handoff
+## Recovery
 
 When a run dies:
 
-1. preserve the log, status/result JSON, command line, core dump, and last
-   checkpoint before relaunching;
-2. classify clean cap, evaluator still running, out-of-disk, OOM, source drift,
-   integrity rejection, or actual crash;
-3. do not relaunch from a different config or checkpoint under the same arm ID;
-4. use the immutable resume mechanism, if supported, and record the new process;
-5. re-run acceptance analysis from artifacts rather than eyeballing the dashboard.
+1. preserve the log, status/result JSON, command line, core dump, and last checkpoint
+   before relaunching;
+2. classify it: clean step cap, evaluator still running, out of disk, OOM, source drift,
+   integrity rejection, or a real crash;
+3. don't relaunch a different config or checkpoint under the same arm ID;
+4. re-run acceptance analysis from artifacts, not by eyeballing the dashboard.
 
-At handoff, state exact paths/hashes, what remains live, what was copied, tests and
-acceptance gates passed, limitations, and whether anything was committed, deployed,
-promoted, stopped, or destroyed.
+At handoff, state exact paths and hashes, what is still live, what was copied, which gates
+passed, the limitations, and whether anything was committed, deployed, or stopped.

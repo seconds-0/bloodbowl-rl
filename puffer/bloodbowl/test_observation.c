@@ -343,13 +343,19 @@ BB_TEST(policy_decode_rejects_distinct_engine_actions_with_same_projection) {
     bb_action picked = bbe_decode(&f.env, BB_HOME, heads);
     BB_CHECK_EQ(picked.type, BB_A_NONE);
     BB_CHECK_EQ(f.env.illegal, 1);
+    // A collision must be distinguishable from a tuple that simply was not
+    // offered: both are fatal, but only this one means the action encoding is
+    // non-injective over the legal set, and c_step reports them differently.
+    BB_CHECK_EQ(f.env.illegal_projection_collision, 1);
 
     // Exact duplicate enumeration does not create semantic ambiguity.
+    f.env.illegal_projection_collision = 0;
     f.env.legal[1] = f.env.legal[0];
     bbe_fill_mask(&f.env, BB_HOME);
     picked = bbe_decode(&f.env, BB_HOME, heads);
     BB_CHECK(bb_action_eq(picked, f.env.legal[0]));
     BB_CHECK_EQ(f.env.illegal, 1);
+    BB_CHECK_EQ(f.env.illegal_projection_collision, 0);
 }
 
 BB_TEST(push_square_keeps_crowd_and_chain_variant_in_argument_head) {

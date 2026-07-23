@@ -229,9 +229,9 @@ if ! flock -n 9; then
   exit 1
 fi
 
-if pgrep -f 'puffer [t]rain' >/dev/null; then
+if pgrep -f '[p]uffer_cuda_runtime.py train|[p]uffer train' >/dev/null; then
   echo "a puffer trainer is already live on this host" >&2
-  pgrep -af 'puffer [t]rain' >&2 || true
+  pgrep -af '[p]uffer_cuda_runtime.py train|[p]uffer train' >&2 || true
   exit 1
 fi
 command -v nvidia-smi >/dev/null 2>&1 || {

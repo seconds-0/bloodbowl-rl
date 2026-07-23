@@ -1,0 +1,21 @@
+--- a/pufferlib/pufferl.py
++++ b/pufferlib/pufferl.py
+@@ -281,6 +281,18 @@
+         if result_queue is not None:
+             result_queue.put((args['gpu_id'], [], [], []))
+         return
++
++    # Local patch (bloodbowl-rl): warm-start training from a checkpoint.
++    # 'latest' resolves like eval(); absent/empty = cold start (upstream).
++    _load = args.get('load_model_path')
++    if _load:
++        if _load == 'latest':
++            _cands = glob.glob(os.path.join(
++                args['checkpoint_dir'], args['env_name'], '**', '*.bin'),
++                recursive=True)
++            _load = max(_cands, key=os.path.getctime)
++        backend.load_weights(pufferl, _load)
++        print(f'Warm-started training from {_load}')
+ 
+     args.pop('nccl_id', None)
+     model_size = pufferl.num_params()
