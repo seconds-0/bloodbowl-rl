@@ -1,0 +1,27 @@
+[Unit]
+Description=Blood Bowl campaign supervisor tick (%i)
+After=network-online.target
+StartLimitIntervalSec=3600
+StartLimitBurst=20
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/bloodbowl-rl-qualification-candidate-10619e2
+Environment=PYTHONUNBUFFERED=1
+Environment=CUDA_VISIBLE_DEVICES=0
+ExecStart=%h/bloodbowl-rl-qualification-candidate-10619e2/vendor/PufferLib/.venv/bin/python %h/bloodbowl-rl-qualification-candidate-10619e2/tools/campaign_supervisor.py --plan %h/bloodbowl-rl-qualification-candidate-10619e2/runs/campaigns/%i/CAMPAIGN_PLAN.json --state %h/bloodbowl-rl-qualification-candidate-10619e2/runs/campaigns/%i/CAMPAIGN_STATE.json
+
+# KillMode=process is REQUIRED here and is not the usual choice. A oneshot unit
+# defaults to KillMode=control-group, which reaps every process left in the
+# unit's cgroup when ExecStart returns -- and the whole job of a tick is to
+# leave a multi-hour trainer running behind it. control-group would kill the
+# training run seconds after launching it.
+#
+# This does NOT contradict the queue rule against escaping process-group guards.
+# That rule protects experiment_queue.py jobs, where the queue OWNS the
+# trainer's lifetime and enforces runtime, thermal, progress and disk limits by
+# signalling the group. This supervisor owns no lifetime and enforces no limits:
+# it launches and observes, and never signals anything. A stage that the queue
+# owns must run under the queue with ARM_DETACH=0, not from here.
+KillMode=process
+TimeoutStopSec=45
