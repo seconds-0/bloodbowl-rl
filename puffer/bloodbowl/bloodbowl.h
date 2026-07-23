@@ -578,6 +578,13 @@ typedef struct {
     uint32_t episode;
     int decisions;
     int illegal;
+    // Set when bbe_decode rejected because two DISTINCT engine actions
+    // projected onto one policy tuple, as opposed to the tuple simply not
+    // being offered. Both paths increment `illegal` and both are fatal, but
+    // they mean different things: a collision is a projection-injectivity
+    // defect in the action encoding, not a policy sampling outside support.
+    // Env-side, never bb_match -- keeps the BBS bank fingerprint stable.
+    int illegal_projection_collision;
     // Behavioral micro-stat counters for the CURRENT episode (summed into
     // the Log by bbe_finish_episode, zeroed by bbe_reset_match).
     int ep_blocks, ep_blitzes;
@@ -1567,6 +1574,7 @@ static bb_action bbe_decode(Bloodbowl* env, int agent, const float* heads) {
                 // Two different engine actions may never collapse onto one
                 // policy tuple. Identical duplicate enumeration is harmless.
                 env->illegal++;
+                env->illegal_projection_collision = 1;
                 return (bb_action){BB_A_NONE, 0, 0, 0};
             }
         }
@@ -2093,6 +2101,7 @@ static void bbe_reset_match(Bloodbowl* env) {
     bbe_refresh_legal(env);
     env->decisions = 0; // max_decisions budgets from the resume point
     env->illegal = 0;
+    env->illegal_projection_collision = 0;
     env->ep_blocks = env->ep_blitzes = 0;
     env->ep_blocks_thrown = 0;
     env->ep_blocks_thrown_team[0] = env->ep_blocks_thrown_team[1] = 0;
@@ -2814,11 +2823,28 @@ static void c_step(Bloodbowl* env) {
         } else {
             act = bbe_decode(env, agent, env->action_ptr[agent]);
             if (act.type == BB_A_NONE) {
-                fprintf(stderr,
-                        "bloodbowl: policy supplied a tuple outside exact "
-                        "joint support (type=%.0f arg=%.0f square=%.0f)\n",
-                        env->action_ptr[agent][0], env->action_ptr[agent][1],
-                        env->action_ptr[agent][2]);
+                if (env->illegal_projection_collision) {
+                    // Distinct cause, distinct message. This is not the policy
+                    // sampling outside support: two different engine actions
+                    // projected onto this one tuple, so the encoding is not
+                    // injective over the current legal set and no choice of
+                    // tuple could have been unambiguous.
+                    fprintf(stderr,
+                            "bloodbowl: projection collision -- two distinct "
+                            "legal engine actions share one policy tuple "
+                            "(type=%.0f arg=%.0f square=%.0f); the action "
+                            "encoding is not injective over this legal set\n",
+                            env->action_ptr[agent][0],
+                            env->action_ptr[agent][1],
+                            env->action_ptr[agent][2]);
+                } else {
+                    fprintf(stderr,
+                            "bloodbowl: policy supplied a tuple outside exact "
+                            "joint support (type=%.0f arg=%.0f square=%.0f)\n",
+                            env->action_ptr[agent][0],
+                            env->action_ptr[agent][1],
+                            env->action_ptr[agent][2]);
+                }
                 abort();
             }
         }
