@@ -24,7 +24,7 @@ fi
 LAUNCH_CWD="$PWD"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 : "${STEPS:?STEPS is required (explicit experiment budget)}"
-: "${SCREEN_PROFILE:?SCREEN_PROFILE is required (distance-possession, possession-gain, possession-gain-exact, exact-action-canary, genesis, paired-confirmation, paired-final, or control-final)}"
+: "${SCREEN_PROFILE:?SCREEN_PROFILE is required (distance-possession, possession-gain, possession-gain-exact, exact-action-canary, genesis, genesis-pool, paired-confirmation, paired-final, or control-final)}"
 CANDIDATE_ARM="${CANDIDATE_ARM:-}"
 TRANSFER_COMPLETE="${TRANSFER_COMPLETE:-}"
 EXPECTED_TRANSFER_SHA256="${EXPECTED_TRANSFER_SHA256:-}"
@@ -44,6 +44,29 @@ EXPECT_BYTES=16066560
 LR=0.00028
 ENT_COEF=0.009
 GAMMA=0.995
+# Every arm this screen launches must discount at the SAME gamma its reward
+# manifest claims for exact PBRS, or beta*(gamma*Phi' - Phi) is not exact and the
+# distance channels quietly reacquire the bias the discounted form removes. The
+# per-arm launcher asserts the pair (tools/run_reward_ablation.sh), but it only
+# sees the gamma this script passes it, so a divergence here would be invisible:
+# assert it once, up front, against every manifest the profile can select.
+if ! python3 -c '
+import json, pathlib, sys
+root, gamma = pathlib.Path(sys.argv[1]), float(sys.argv[2])
+bad = []
+for m in sorted((root / "puffer/config/rewards").glob("*.json")):
+    reward = json.loads(m.read_text(encoding="utf-8")).get("reward", {})
+    claimed = reward.get("reward_dist_pbrs_gamma", 0.0)
+    if claimed and abs(float(claimed) - gamma) > 1e-9:
+        bad.append(f"{m.name} claims {claimed}")
+if bad:
+    print("; ".join(bad))
+    sys.exit(1)
+' "$ROOT" "$GAMMA" 2>/dev/null; then
+  echo "a reward manifest declares an exact-PBRS gamma other than $GAMMA;" >&2
+  echo "  the distance channels would not be exact PBRS under this screen" >&2
+  exit 1
+fi
 GAE_LAMBDA=0.85
 HORIZON=64
 MINIBATCH_SIZE=16384
@@ -81,7 +104,7 @@ case "$ARM_DETACH" in
   *) echo "ARM_DETACH must be 0 or 1" >&2; exit 1 ;;
 esac
 case "$SCREEN_PROFILE" in
-  distance-possession|possession-gain|possession-gain-exact|exact-action-canary|genesis|control-final)
+  distance-possession|possession-gain|possession-gain-exact|exact-action-canary|genesis|genesis-pool|control-final)
     [ -z "$CANDIDATE_ARM$TRANSFER_COMPLETE$EXPECTED_TRANSFER_SHA256" ] || {
       echo "candidate transfer inputs are only valid with a paired profile" >&2
       exit 1; }
@@ -104,12 +127,13 @@ case "$SCREEN_PROFILE" in
       exit 1
     fi
     ;;
-  *) echo "SCREEN_PROFILE must be distance-possession, possession-gain, possession-gain-exact, exact-action-canary, genesis, paired-confirmation, paired-final, or control-final" >&2
+  *) echo "SCREEN_PROFILE must be distance-possession, possession-gain, possession-gain-exact, exact-action-canary, genesis, genesis-pool, paired-confirmation, paired-final, or control-final" >&2
      exit 1 ;;
 esac
 
 if [ "$SCREEN_PROFILE" = "exact-action-canary" ] || \
-   [ "$SCREEN_PROFILE" = "genesis" ]; then
+   [ "$SCREEN_PROFILE" = "genesis" ] || \
+   [ "$SCREEN_PROFILE" = "genesis-pool" ]; then
   # D217/D218: v4 and v5 have the same tensor sizes. An inherited or explicitly
   # empty legacy variable must not silently authorize a same-size warm/pool.
   [ "${WARM+x}" != x ] || {
@@ -122,7 +146,7 @@ if [ "$SCREEN_PROFILE" = "exact-action-canary" ] || \
   }
   WARM=""
   POOL=""
-  if [ "$SCREEN_PROFILE" = "genesis" ]; then
+  if [ "$SCREEN_PROFILE" = "genesis" ] || [ "$SCREEN_PROFILE" = "genesis-pool" ]; then
     # Same fresh, pool-free shape as the canary; the difference is that an
     # accepted genesis arm publishes ELIGIBLE lineage, which is what lets any
     # later warm/pool profile exist at all. See the mode comment in
@@ -203,6 +227,24 @@ case "$SCREEN_PROFILE" in
     # exposure before any causal screen receives a long budget.
     arms=(both)
     seeds=(42)
+    ;;
+  genesis-pool)
+    # Mint the four independent roots a lineage-v5 pool needs. Same reward and
+    # recipe as `genesis`, four times, differing only by learner seed.
+    #
+    # Seeds are 1042-1045, NOT 42-44: those alias paired-final's seed block, and
+    # a pool bank sharing a seed with a later confirmation arm invites reading a
+    # coincidence as a result.
+    #
+    # This is a SEED-DIVERSE bootstrap pool, not a curated one. The doctrine's
+    # curated composition (weak anchor, era specialist, older ratchet, latest cap)
+    # cannot exist yet -- there is no history to draw from. Four from-scratch
+    # policies differ by noise alone, which is the correct way to START a ladder
+    # and must never later be described as curated. Replace banks as stronger
+    # checkpoints appear, and do not read first-generation bank strength as
+    # evidence about reward quality.
+    arms=(s_both s_both s_both s_both)
+    seeds=(1042 1043 1044 1045)
     ;;
   genesis)
     # One fresh arm on the CORRECTED reward, whose accepted
