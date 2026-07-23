@@ -209,10 +209,14 @@ case "$SCREEN_PROFILE" in
     # checkpoint becomes the root of the obs-v5 lineage. One arm and one seed on
     # purpose: this establishes ancestry, it does not compare anything, so a
     # second arm would only invite reading a contrast that was never controlled.
-    # Deliberately `pbrs`, not `both`: `both` maps to r0_full, whose distance
-    # shaping is the farmable raw-delta form. Rooting a lineage on a reward known
-    # to be farmable would bake those habits into every descendant.
-    arms=(pbrs)
+    # Deliberately `s_both`, the corrected decomposition baseline. Two rewards
+    # were rejected for this role: `both` maps to r0_full, whose distance shaping
+    # is the farmable raw-delta form, and `pbrs` (r4) fixes distance but still
+    # ships reward_ball_loss 0.0 against reward_ball_gain 0.05, violating the
+    # invariant stated in bloodbowl.h. A root cannot be corrected after the fact --
+    # every descendant that warm-starts from it inherits its habits -- so it gets
+    # the reward with no known defect, not merely the newest one.
+    arms=(s_both)
     seeds=(42)
     ;;
   paired-confirmation)
