@@ -242,15 +242,33 @@ cd "$ROOT/vendor/PufferLib"
 REWARD_ARGS=()
 while IFS= read -r token; do REWARD_ARGS+=("$token"); done < <(
   "$PYBIN" "$ROOT/tools/reward_manifest.py" "$REWARD_MANIFEST" --lines)
-read -r REWARD_NAME REWARD_HASH < <(
+read -r REWARD_NAME REWARD_HASH REWARD_PBRS_GAMMA < <(
   "$PYBIN" - "$ROOT" "$REWARD_MANIFEST" <<'PY'
 import sys
 sys.path.insert(0, sys.argv[1] + "/tools")
 from reward_manifest import load_manifest
 manifest, digest = load_manifest(sys.argv[2])
-print(manifest["name"], digest)
+# 0 means the manifest is schema 1, i.e. legacy raw delta-Phi distance shaping.
+print(manifest["name"], digest,
+      manifest["reward"].get("reward_dist_pbrs_gamma", 0.0))
 PY
 )
+
+# Exact PBRS is only exact at the gamma the trainer actually discounts with. A
+# mismatch does not fail loudly -- it silently reintroduces the same class of
+# bias the discounted form exists to remove -- so it is checked here, where both
+# numbers are in scope, rather than left to the env which cannot see train.gamma.
+if [ "${REWARD_PBRS_GAMMA:-0}" != "0" ] && [ "${REWARD_PBRS_GAMMA:-0}" != "0.0" ]; then
+  if ! "$PYBIN" -c "
+import sys
+manifest_gamma, train_gamma = float(sys.argv[1]), float(sys.argv[2])
+sys.exit(0 if abs(manifest_gamma - train_gamma) <= 1e-9 else 1)
+" "$REWARD_PBRS_GAMMA" "$GAMMA"; then
+    echo "reward_dist_pbrs_gamma ($REWARD_PBRS_GAMMA) != train gamma ($GAMMA):" \
+         "the distance channels would not be exact PBRS under this trainer" >&2
+    exit 1
+  fi
+fi
 
 WARM_HASH=""
 WARM_LINEAGE_HASH=""
