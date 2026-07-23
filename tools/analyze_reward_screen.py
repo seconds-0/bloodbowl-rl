@@ -170,6 +170,19 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _require_digest_sidecar(path: Path, digest: str, label: str) -> None:
+    sidecar = path.with_suffix(".sha256")
+    if not sidecar.is_file() or sidecar.is_symlink():
+        raise AnalysisError(f"{label} digest sidecar is missing or not regular")
+    expected = f"{digest}  {path.name}\n"
+    try:
+        observed = sidecar.read_text(encoding="ascii")
+    except (OSError, UnicodeError) as exc:
+        raise AnalysisError(f"cannot read {label} digest sidecar") from exc
+    if observed != expected:
+        raise AnalysisError(f"{label} digest sidecar drifted")
+
+
 def _load_json(path: Path, label: str) -> dict[str, Any]:
     if not path.is_file():
         raise AnalysisError(f"missing {label}: {path}")
@@ -536,6 +549,59 @@ def _validate_exact_action_canary_launch_record(
         record.get("launch_authorization_sha256"),
         "exact-action-canary launch authorization SHA-256",
     )
+    launch_file = Path(launch_path)
+    if (
+        not launch_file.is_file()
+        or launch_file.is_symlink()
+        or _sha256(launch_file) != launch_sha
+    ):
+        raise AnalysisError(
+            "exact-action-canary launch authorization file drifted"
+        )
+    _require_digest_sidecar(
+        launch_file, launch_sha, "exact-action-canary launch authorization"
+    )
+    launch_payload = _load_json(
+        launch_file, "exact-action-canary launch authorization"
+    )
+    launch_plan_output = _need_mapping(
+        launch_payload.get("plan_output"),
+        "exact-action-canary launch authorization plan output",
+    )
+    launch_qualification = _need_mapping(
+        launch_payload.get("qualification"),
+        "exact-action-canary launch authorization qualification",
+    )
+    launch_plan = _need_mapping(
+        launch_payload.get("plan_authorization"),
+        "exact-action-canary launch authorization plan",
+    )
+    if (
+        launch_payload.get("schema_version") != 1
+        or launch_payload.get("kind")
+        != "exact_action_canary_launch_authorization"
+        or launch_payload.get("qualification_only") is not True
+        or launch_plan.get("path") != authority["plan_authorization"]
+        or launch_plan.get("sha256")
+        != authority["plan_authorization_sha256"]
+        or launch_plan.get("sha256_file")
+        != str(Path(authority["plan_authorization"]).with_suffix(".sha256"))
+        or launch_plan_output.get("path") != str(directory.resolve())
+        or launch_qualification.get("path") != authority["qualification"]
+        or launch_qualification.get("sha256")
+        != authority["qualification_sha256"]
+        or launch_payload.get("eligibility")
+        != {
+            "qualification_only": True,
+            "checkpoint_ancestry": False,
+            "reward_evidence": False,
+            "promotion": False,
+            "bbtv_follower": False,
+        }
+    ):
+        raise AnalysisError(
+            "exact-action-canary launch authorization contract drifted"
+        )
     consumption_path = record.get("launch_consumption")
     if not isinstance(consumption_path, str) or not Path(
         consumption_path
@@ -547,6 +613,56 @@ def _validate_exact_action_canary_launch_record(
         record.get("launch_consumption_sha256"),
         "exact-action-canary launch consumption SHA-256",
     )
+    consumption_file = Path(consumption_path)
+    expected_consumption = launch_file.with_name(
+        "CANARY_LAUNCH_CONSUMPTION.json"
+    )
+    if consumption_file != expected_consumption:
+        raise AnalysisError(
+            "exact-action-canary launch consumption path is not canonical"
+        )
+    if (
+        not consumption_file.is_file()
+        or consumption_file.is_symlink()
+        or _sha256(consumption_file) != consumption_sha
+    ):
+        raise AnalysisError(
+            "exact-action-canary launch consumption file drifted"
+        )
+    _require_digest_sidecar(
+        consumption_file,
+        consumption_sha,
+        "exact-action-canary launch consumption",
+    )
+    consumption_payload = _load_json(
+        consumption_file, "exact-action-canary launch consumption"
+    )
+    consumption_authorization = _need_mapping(
+        consumption_payload.get("launch_authorization"),
+        "exact-action-canary launch consumption authorization",
+    )
+    if (
+        consumption_payload.get("schema_version") != 1
+        or consumption_payload.get("kind")
+        != "exact_action_canary_launch_consumption"
+        or consumption_payload.get("qualification_only") is not True
+        or consumption_authorization.get("path") != launch_path
+        or consumption_authorization.get("sha256") != launch_sha
+        or consumption_authorization.get("sha256_file")
+        != str(launch_file.with_suffix(".sha256"))
+        or consumption_payload.get("plan_authorization")
+        != launch_payload.get("plan_authorization")
+        or consumption_payload.get("qualification")
+        != launch_payload.get("qualification")
+        or consumption_payload.get("plan_output") != str(directory.resolve())
+        or consumption_payload.get("attempt") != 1
+        or consumption_payload.get("maximum_starts") != 1
+        or consumption_payload.get("eligibility")
+        != launch_payload.get("eligibility")
+    ):
+        raise AnalysisError(
+            "exact-action-canary launch consumption contract drifted"
+        )
     return {
         "file": path.name,
         "sha256": _sha256(path),
@@ -569,6 +685,10 @@ def _validate_exact_action_canary_result_authority(
         "canary_launch_record_sha256": launch["sha256"],
         "canary_launch_authorization_sha256": launch[
             "launch_authorization_sha256"
+        ],
+        "canary_launch_consumption": launch["launch_consumption"],
+        "canary_launch_consumption_sha256": launch[
+            "launch_consumption_sha256"
         ],
         "canary_qualification_sha256": launch["qualification_sha256"],
         "expected_cuda_runtime_library_sha256": launch[

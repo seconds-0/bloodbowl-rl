@@ -8274,3 +8274,52 @@ surface after documentation/analyzer changes, commit and push the repair, then
 obtain independent approval and fresh hosted checks on that exact new head.
 Only after merge may fresh control/candidate roots requalify the final bytes on
 the RTX 2070; literal-zero acceptance remains mandatory before the 50M start.
+
+## 2026-07-22 18:55 PDT — real producer/consumer seam accepts; final review fixes under verification
+
+Status:
+
+- A fresh exact-head review found two further launch-integrity defects and
+  withheld merge. First, a directory-open or directory-fsync error after the
+  one-start consumption JSON and sidecar had both been linked could delete the
+  already-published token, allowing a later consume. The failing durability
+  regression is retained; consumption publication is now irreversible once
+  linked, even when the command reports the late durability error. Second, a
+  coherently rewritten launch record/result/completion chain could point at a
+  different consumption path without the stopped analyzer reading the bound
+  authorization and consumption bytes. Analysis and post-run materialization
+  now require canonical sibling paths, current byte hashes, exact digest
+  sidecars, full payload bindings, and matching run-manifest/result fields.
+- Behavioral coverage now executes the real `run_reward_screen.sh` boundary in
+  a disposable checkout. Invalid consumption and a valid-shaped authorization
+  for the wrong output both reject before directory creation; the canonical
+  payload reaches the next installer boundary only after creating the output
+  and lock. Concurrency assertions require exactly one success and one expected
+  rejection, and all 16 hard-integrity fields are mutated in both graph-off and
+  the canonical nested throughput location.
+- Read-only integration against the preserved D225 canonical qualification
+  exposed one additional real mismatch: the authority required candidate
+  Python to be a regular file, while the deployed `uv` environment correctly
+  uses `.venv/bin/python` as a symlink to its pinned interpreter. A failing
+  symlink-shaped regression was added first. The executable validator now
+  preserves exact absolute-path requirements while allowing a link that
+  resolves to a regular executable.
+- The current authority bytes were then streamed without remote writes into
+  candidate Python and run from the separate clean D225 control checkout. The
+  real schema-3 qualifier accepted the preserved D225 artifact, after which the
+  authority accepted the same exact candidate/module, 13-file qualification
+  inventory, CUDART hash/device count, all five gates, and all 16 literal-zero
+  fields. Candidate and control remained distinct and pinned to `ee7ace4`; the
+  RTX 2070 was not used or mutated.
+- The three focused authority/analyzer/launcher modules currently pass 68 tests
+  with two dependency skips. Ruff, Python compilation, and diff hygiene are
+  green on the uncommitted repair bytes. This is not yet a merge or launch
+  verdict; the full tools/training suites, hosted checks, and independent
+  exact-head reviews remain mandatory.
+
+Next steps: run the complete focused and repository verification surfaces,
+inspect the final diff, commit and push the review repairs, and require fresh
+independent code/test approval with no P0--P2 findings. Merge only after those
+reviews and the new hosted checks accept. Then rebuild and freshly qualify the
+exact merged commit on the idle RTX 2070; any nonzero integrity field or failed
+gate still stops before the one permitted 50M start.

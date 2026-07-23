@@ -1147,6 +1147,114 @@ if screen["qualification_only"]:
         raise SystemExit("canary launch authorization path is not absolute")
     if len(canary_launch["launch_authorization_sha256"]) != 64:
         raise SystemExit("canary launch authorization digest is malformed")
+    launch_authorization_file = need_file(
+        canary_launch["launch_authorization"], "canary launch authorization"
+    )
+    if launch_authorization_file.is_symlink() or sha(
+        launch_authorization_file
+    ) != canary_launch["launch_authorization_sha256"]:
+        raise SystemExit("canary launch authorization file drifted")
+    launch_authorization_sidecar = need_file(
+        launch_authorization_file.with_suffix(".sha256"),
+        "canary launch authorization digest sidecar",
+    )
+    if launch_authorization_sidecar.is_symlink() or launch_authorization_sidecar.read_text(
+        encoding="ascii"
+    ) != (
+        f"{canary_launch['launch_authorization_sha256']}  "
+        f"{launch_authorization_file.name}\n"
+    ):
+        raise SystemExit("canary launch authorization digest sidecar drifted")
+    launch_authorization = json.loads(
+        launch_authorization_file.read_text(encoding="utf-8")
+    )
+    if (
+        launch_authorization.get("schema_version") != 1
+        or launch_authorization.get("kind")
+        != "exact_action_canary_launch_authorization"
+        or launch_authorization.get("qualification_only") is not True
+        or launch_authorization.get("plan_authorization")
+        != {
+            "path": authority["plan_authorization"],
+            "sha256": authority["plan_authorization_sha256"],
+            "sha256_file": str(pathlib.Path(
+                authority["plan_authorization"]
+            ).with_suffix(".sha256")),
+        }
+        or launch_authorization.get("qualification")
+        != {
+            "path": authority["qualification"],
+            "sha256": authority["qualification_sha256"],
+            "inventory": launch_authorization.get("qualification", {}).get(
+                "inventory"
+            ),
+            "runner_sha256": launch_authorization.get("qualification", {}).get(
+                "runner_sha256"
+            ),
+            "construction_gate": launch_authorization.get(
+                "qualification", {}
+            ).get("construction_gate"),
+            "throughput_baseline": launch_authorization.get(
+                "qualification", {}
+            ).get("throughput_baseline"),
+        }
+        or launch_authorization.get("plan_output", {}).get("path")
+        != str(screen_manifest_file.parent)
+        or launch_authorization.get("eligibility")
+        != {
+            "qualification_only": True,
+            "checkpoint_ancestry": False,
+            "reward_evidence": False,
+            "promotion": False,
+            "bbtv_follower": False,
+        }
+    ):
+        raise SystemExit("canary launch authorization contract drifted")
+    expected_consumption_path = launch_authorization_file.with_name(
+        "CANARY_LAUNCH_CONSUMPTION.json"
+    )
+    if canary_launch.get("launch_consumption") != str(expected_consumption_path):
+        raise SystemExit("canary launch consumption path is not canonical")
+    consumption_file = need_file(
+        expected_consumption_path, "canary launch consumption"
+    )
+    if consumption_file.is_symlink() or sha(consumption_file) != canary_launch.get(
+        "launch_consumption_sha256"
+    ):
+        raise SystemExit("canary launch consumption file drifted")
+    consumption_sidecar = need_file(
+        consumption_file.with_suffix(".sha256"),
+        "canary launch consumption digest sidecar",
+    )
+    if consumption_sidecar.is_symlink() or consumption_sidecar.read_text(
+        encoding="ascii"
+    ) != (
+        f"{canary_launch['launch_consumption_sha256']}  "
+        f"{consumption_file.name}\n"
+    ):
+        raise SystemExit("canary launch consumption digest sidecar drifted")
+    consumption = json.loads(consumption_file.read_text(encoding="utf-8"))
+    if (
+        consumption.get("schema_version") != 1
+        or consumption.get("kind") != "exact_action_canary_launch_consumption"
+        or consumption.get("qualification_only") is not True
+        or consumption.get("launch_authorization", {}).get("path")
+        != str(launch_authorization_file)
+        or consumption.get("launch_authorization", {}).get("sha256")
+        != canary_launch["launch_authorization_sha256"]
+        or consumption.get("launch_authorization", {}).get("sha256_file")
+        != str(launch_authorization_sidecar)
+        or consumption.get("plan_authorization")
+        != launch_authorization.get("plan_authorization")
+        or consumption.get("qualification")
+        != launch_authorization.get("qualification")
+        or consumption.get("plan_output") != str(screen_manifest_file.parent)
+        or consumption.get("attempt") != 1
+        or consumption.get("maximum_starts") != 1
+        or consumption.get("eligibility")
+        != launch_authorization.get("eligibility")
+    ):
+        raise SystemExit("canary launch consumption contract drifted")
 expected_contract = {
     "mode": ("native_fresh_v5_qualification"
              if screen["qualification_only"]
@@ -1208,6 +1316,9 @@ if canary_launch is not None:
         "canary_launch_authorization": canary_launch["launch_authorization"],
         "expected_canary_launch_authorization_sha256": canary_launch[
             "launch_authorization_sha256"],
+        "canary_launch_consumption": canary_launch["launch_consumption"],
+        "canary_launch_consumption_sha256": canary_launch[
+            "launch_consumption_sha256"],
         "canary_qualification": authority["qualification"],
         "canary_qualification_sha256": authority["qualification_sha256"],
         "canary_launch_record": str(launch_record_path),
@@ -1387,6 +1498,9 @@ if canary_launch is not None:
         "canary_launch_record_sha256": sha(launch_record_path),
         "canary_launch_authorization_sha256": canary_launch[
             "launch_authorization_sha256"],
+        "canary_launch_consumption": canary_launch["launch_consumption"],
+        "canary_launch_consumption_sha256": canary_launch[
+            "launch_consumption_sha256"],
         "canary_qualification_sha256": screen["canary_authority"][
             "qualification_sha256"],
         "expected_cuda_runtime_library_sha256": screen[

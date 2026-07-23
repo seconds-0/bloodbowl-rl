@@ -134,8 +134,72 @@ class RewardScreenAnalysisTests(unittest.TestCase):
         manifest_path = root / "SCREEN_MANIFEST.json"
         write_json(manifest_path, manifest)
         manifest_sha = sha256(manifest_path)
-        launch_authorization_sha = digest("launch-authorization")
-        launch_consumption_sha = digest("launch-consumption")
+        evidence_root = root / "launch-evidence"
+        evidence_root.mkdir()
+        launch_authorization_path = (
+            evidence_root / "CANARY_LAUNCH_AUTHORIZATION.json"
+        )
+        launch_authorization_sidecar = launch_authorization_path.with_suffix(
+            ".sha256"
+        )
+        launch_authorization = {
+            "schema_version": 1,
+            "kind": "exact_action_canary_launch_authorization",
+            "qualification_only": True,
+            "plan_authorization": {
+                "path": plan_authorization,
+                "sha256": plan_authorization_sha,
+                "sha256_file": str(
+                    Path(plan_authorization).with_suffix(".sha256")
+                ),
+            },
+            "qualification": {
+                "path": qualification,
+                "sha256": qualification_sha,
+            },
+            "plan_output": {"path": str(root.resolve())},
+            "systemd": {"maximum_starts": 1},
+            "eligibility": {
+                "qualification_only": True,
+                "checkpoint_ancestry": False,
+                "reward_evidence": False,
+                "promotion": False,
+                "bbtv_follower": False,
+            },
+        }
+        write_json(launch_authorization_path, launch_authorization)
+        launch_authorization_sha = sha256(launch_authorization_path)
+        launch_authorization_sidecar.write_text(
+            f"{launch_authorization_sha}  {launch_authorization_path.name}\n",
+            encoding="ascii",
+        )
+        launch_consumption_path = (
+            evidence_root / "CANARY_LAUNCH_CONSUMPTION.json"
+        )
+        launch_consumption_sidecar = launch_consumption_path.with_suffix(
+            ".sha256"
+        )
+        write_json(launch_consumption_path, {
+            "schema_version": 1,
+            "kind": "exact_action_canary_launch_consumption",
+            "qualification_only": True,
+            "launch_authorization": {
+                "path": str(launch_authorization_path.resolve()),
+                "sha256": launch_authorization_sha,
+                "sha256_file": str(launch_authorization_sidecar.resolve()),
+            },
+            "plan_authorization": launch_authorization["plan_authorization"],
+            "qualification": launch_authorization["qualification"],
+            "plan_output": str(root.resolve()),
+            "attempt": 1,
+            "maximum_starts": 1,
+            "eligibility": launch_authorization["eligibility"],
+        })
+        launch_consumption_sha = sha256(launch_consumption_path)
+        launch_consumption_sidecar.write_text(
+            f"{launch_consumption_sha}  {launch_consumption_path.name}\n",
+            encoding="ascii",
+        )
         launch_record_path = root / "CANARY_LAUNCH_RECORD.json"
         write_json(launch_record_path, {
             "schema_version": 1,
@@ -143,13 +207,9 @@ class RewardScreenAnalysisTests(unittest.TestCase):
             "qualification_only": True,
             "eligible": False,
             "reward_evidence_eligible": False,
-            "launch_authorization": (
-                "/remote/evidence/CANARY_LAUNCH_AUTHORIZATION.json"
-            ),
+            "launch_authorization": str(launch_authorization_path.resolve()),
             "launch_authorization_sha256": launch_authorization_sha,
-            "launch_consumption": (
-                "/remote/evidence/CANARY_LAUNCH_CONSUMPTION.json"
-            ),
+            "launch_consumption": str(launch_consumption_path.resolve()),
             "launch_consumption_sha256": launch_consumption_sha,
             "plan_authorization": plan_authorization,
             "plan_authorization_sha256": plan_authorization_sha,
@@ -186,6 +246,8 @@ class RewardScreenAnalysisTests(unittest.TestCase):
             "run_manifest_sha256": digest("manifest-both-42"),
             "canary_launch_record_sha256": launch_record_sha,
             "canary_launch_authorization_sha256": launch_authorization_sha,
+            "canary_launch_consumption": str(launch_consumption_path.resolve()),
+            "canary_launch_consumption_sha256": launch_consumption_sha,
             "canary_qualification_sha256": qualification_sha,
             "expected_cuda_runtime_library_sha256": cuda_runtime_sha,
             "expected_cuda_runtime_device_count": 1,
@@ -360,6 +422,206 @@ class RewardScreenAnalysisTests(unittest.TestCase):
         self.assertIn("Qualification verdict", rendered)
         self.assertNotIn("2x2 effects", rendered)
         self.assertNotIn("Across 1 seeds", rendered)
+
+    def test_exact_action_canary_rejects_coherently_rebound_consumption(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.build_exact_action_canary(root)
+            launch_record_path = root / "CANARY_LAUNCH_RECORD.json"
+            launch_record = json.loads(
+                launch_record_path.read_text(encoding="utf-8")
+            )
+            launch_record["launch_consumption"] = "/wrong/evidence/OTHER.json"
+            launch_record["launch_consumption_sha256"] = "0" * 64
+            write_json(launch_record_path, launch_record)
+
+            result_path = root / (
+                f"{analyze_reward_screen.EXACT_ACTION_CANARY_PREFIX}"
+                "-both-s42.result.json"
+            )
+            result = json.loads(result_path.read_text(encoding="utf-8"))
+            result["canary_launch_record_sha256"] = sha256(launch_record_path)
+            write_json(result_path, result)
+
+            completion_path = root / "SCREEN_COMPLETE.json"
+            completion = json.loads(
+                completion_path.read_text(encoding="utf-8")
+            )
+            completion["results"][0]["sha256"] = sha256(result_path)
+            write_json(completion_path, completion)
+
+            with self.assertRaisesRegex(
+                analyze_reward_screen.AnalysisError, "launch consumption"
+            ):
+                analyze_reward_screen.analyze_screen(root, ("tds",))
+
+    def test_exact_action_canary_rejects_launch_evidence_file_drift(self):
+        cases = (
+            (
+                "authorization-bytes",
+                lambda evidence: evidence["authorization"].write_bytes(
+                    evidence["authorization"].read_bytes() + b" "
+                ),
+            ),
+            (
+                "missing-consumption",
+                lambda evidence: evidence["consumption"].unlink(),
+            ),
+            (
+                "authorization-sidecar",
+                lambda evidence: evidence["authorization_sidecar"].write_text(
+                    f"{'0' * 64}  CANARY_LAUNCH_AUTHORIZATION.json\n",
+                    encoding="ascii",
+                ),
+            ),
+            (
+                "consumption-sidecar",
+                lambda evidence: evidence["consumption_sidecar"].write_text(
+                    f"{'0' * 64}  CANARY_LAUNCH_CONSUMPTION.json\n",
+                    encoding="ascii",
+                ),
+            ),
+        )
+        for name, mutate in cases:
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                self.build_exact_action_canary(root)
+                evidence_root = root / "launch-evidence"
+                authorization = (
+                    evidence_root / "CANARY_LAUNCH_AUTHORIZATION.json"
+                )
+                consumption = evidence_root / "CANARY_LAUNCH_CONSUMPTION.json"
+                mutate({
+                    "authorization": authorization,
+                    "authorization_sidecar": authorization.with_suffix(
+                        ".sha256"
+                    ),
+                    "consumption": consumption,
+                    "consumption_sidecar": consumption.with_suffix(".sha256"),
+                })
+                with self.assertRaisesRegex(
+                    analyze_reward_screen.AnalysisError,
+                    "launch (authorization|consumption)",
+                ):
+                    analyze_reward_screen.analyze_screen(root, ("tds",))
+
+    def test_exact_action_canary_rejects_rehashed_consumption_payload_drift(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.build_exact_action_canary(root)
+            consumption_path = (
+                root / "launch-evidence/CANARY_LAUNCH_CONSUMPTION.json"
+            )
+            consumption = json.loads(
+                consumption_path.read_text(encoding="utf-8")
+            )
+            consumption["maximum_starts"] = 2
+            write_json(consumption_path, consumption)
+            consumption_sha = sha256(consumption_path)
+            consumption_path.with_suffix(".sha256").write_text(
+                f"{consumption_sha}  {consumption_path.name}\n",
+                encoding="ascii",
+            )
+
+            launch_record_path = root / "CANARY_LAUNCH_RECORD.json"
+            launch_record = json.loads(
+                launch_record_path.read_text(encoding="utf-8")
+            )
+            launch_record["launch_consumption_sha256"] = consumption_sha
+            write_json(launch_record_path, launch_record)
+
+            result_path = root / (
+                f"{analyze_reward_screen.EXACT_ACTION_CANARY_PREFIX}"
+                "-both-s42.result.json"
+            )
+            result = json.loads(result_path.read_text(encoding="utf-8"))
+            result["canary_launch_consumption_sha256"] = consumption_sha
+            result["canary_launch_record_sha256"] = sha256(launch_record_path)
+            write_json(result_path, result)
+
+            completion_path = root / "SCREEN_COMPLETE.json"
+            completion = json.loads(
+                completion_path.read_text(encoding="utf-8")
+            )
+            completion["results"][0]["sha256"] = sha256(result_path)
+            write_json(completion_path, completion)
+
+            with self.assertRaisesRegex(
+                analyze_reward_screen.AnalysisError,
+                "launch consumption contract drifted",
+            ):
+                analyze_reward_screen.analyze_screen(root, ("tds",))
+
+    def test_exact_action_canary_rejects_rehashed_launch_plan_drift(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.build_exact_action_canary(root)
+            evidence_root = root / "launch-evidence"
+            authorization_path = (
+                evidence_root / "CANARY_LAUNCH_AUTHORIZATION.json"
+            )
+            authorization = json.loads(
+                authorization_path.read_text(encoding="utf-8")
+            )
+            authorization["plan_authorization"] = {
+                "path": "/wrong/evidence/PLAN.json",
+                "sha256": "0" * 64,
+                "sha256_file": "/wrong/evidence/PLAN.sha256",
+            }
+            write_json(authorization_path, authorization)
+            authorization_sha = sha256(authorization_path)
+            authorization_path.with_suffix(".sha256").write_text(
+                f"{authorization_sha}  {authorization_path.name}\n",
+                encoding="ascii",
+            )
+
+            consumption_path = (
+                evidence_root / "CANARY_LAUNCH_CONSUMPTION.json"
+            )
+            consumption = json.loads(
+                consumption_path.read_text(encoding="utf-8")
+            )
+            consumption["launch_authorization"]["sha256"] = authorization_sha
+            consumption["plan_authorization"] = authorization[
+                "plan_authorization"
+            ]
+            write_json(consumption_path, consumption)
+            consumption_sha = sha256(consumption_path)
+            consumption_path.with_suffix(".sha256").write_text(
+                f"{consumption_sha}  {consumption_path.name}\n",
+                encoding="ascii",
+            )
+
+            launch_record_path = root / "CANARY_LAUNCH_RECORD.json"
+            launch_record = json.loads(
+                launch_record_path.read_text(encoding="utf-8")
+            )
+            launch_record["launch_authorization_sha256"] = authorization_sha
+            launch_record["launch_consumption_sha256"] = consumption_sha
+            write_json(launch_record_path, launch_record)
+
+            result_path = root / (
+                f"{analyze_reward_screen.EXACT_ACTION_CANARY_PREFIX}"
+                "-both-s42.result.json"
+            )
+            result = json.loads(result_path.read_text(encoding="utf-8"))
+            result["canary_launch_authorization_sha256"] = authorization_sha
+            result["canary_launch_consumption_sha256"] = consumption_sha
+            result["canary_launch_record_sha256"] = sha256(launch_record_path)
+            write_json(result_path, result)
+
+            completion_path = root / "SCREEN_COMPLETE.json"
+            completion = json.loads(
+                completion_path.read_text(encoding="utf-8")
+            )
+            completion["results"][0]["sha256"] = sha256(result_path)
+            write_json(completion_path, completion)
+
+            with self.assertRaisesRegex(
+                analyze_reward_screen.AnalysisError,
+                "launch authorization contract drifted",
+            ):
+                analyze_reward_screen.analyze_screen(root, ("tds",))
 
     def test_exact_action_canary_rejects_nonfresh_or_misaligned_contract(self):
         mutations = (

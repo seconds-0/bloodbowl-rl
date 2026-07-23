@@ -463,6 +463,21 @@ class ExperimentContractTests(unittest.TestCase):
         self.assertIn('CANARY_LAUNCH_CONSUMPTION', screen)
         self.assertIn('CANARY_LAUNCH_CONSUMPTION_SHA256_FILE', screen)
         self.assertIn(
+            '"canary_launch_consumption": canary_launch["launch_consumption"]',
+            screen,
+        )
+        self.assertIn(
+            '"canary_launch_consumption_sha256": canary_launch[',
+            screen,
+        )
+        self.assertGreaterEqual(
+            screen.count(
+                '"canary_launch_consumption": canary_launch['
+                '"launch_consumption"]'
+            ),
+            2,
+        )
+        self.assertIn(
             '[ "$OUT_DIR" = "$CANARY_AUTHORIZED_OUTPUT" ]', screen
         )
         self.assertLess(
@@ -476,6 +491,123 @@ class ExperimentContractTests(unittest.TestCase):
         self.assertIn('case "$BOOTSTRAP_MODE" in', arm)
         self.assertIn('--selfplay.enabled 0', arm)
         self.assertIn('--vec.num-frozen-banks 0', arm)
+
+    def test_exact_action_canary_consumption_guards_real_shell_boundary(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repo"
+            tools = root / "tools"
+            python_dir = root / "vendor/PufferLib/.venv/bin"
+            fake_bin = root / "fake-bin"
+            tools.mkdir(parents=True)
+            python_dir.mkdir(parents=True)
+            fake_bin.mkdir()
+
+            screen = tools / "run_reward_screen.sh"
+            screen.write_text(
+                (ROOT / "tools/run_reward_screen.sh").read_text(
+                    encoding="utf-8"
+                ),
+                encoding="utf-8",
+            )
+            screen.chmod(0o755)
+            (tools / "exact_action_canary_authority.py").write_text(
+                "# shell-boundary test authority placeholder\n",
+                encoding="utf-8",
+            )
+
+            fake_python = python_dir / "python"
+            fake_python.write_text(
+                """#!/usr/bin/env python3
+import hashlib
+import json
+import os
+import sys
+
+if len(sys.argv) > 1 and sys.argv[1] == "-":
+    os.execv(sys.executable, [sys.executable, *sys.argv[1:]])
+if "validate-consumption" not in sys.argv:
+    raise SystemExit("unexpected fake authority invocation")
+mode = os.environ["FAKE_AUTHORITY_MODE"]
+if mode == "invalid":
+    raise SystemExit("synthetic invalid consumption")
+output = os.environ["OUT_DIR"]
+if mode == "wrong-output":
+    output += "-wrong"
+digest = hashlib.sha256(b"fixture").hexdigest()
+print(json.dumps({
+    "kind": "exact_action_canary_launch_authorization",
+    "authorization_sha256": digest,
+    "plan_authorization": {"path": "/evidence/plan.json", "sha256": digest},
+    "qualification": {"path": "/evidence/qualification.json", "sha256": digest},
+    "cuda_runtime": {
+        "library": {"resolved_path": "/usr/lib/libcudart.so", "sha256": digest},
+        "after_extension_import": {"device_count": 1},
+    },
+    "launch_consumption": {"path": "/evidence/consumption.json", "sha256": digest},
+    "plan_output": {"path": output},
+}))
+""",
+                encoding="utf-8",
+            )
+            fake_python.chmod(0o755)
+
+            installer = tools / "install_puffer_env.sh"
+            installer.write_text(
+                "#!/usr/bin/env bash\necho reached-install-boundary >&2\nexit 73\n",
+                encoding="utf-8",
+            )
+            installer.chmod(0o755)
+            fake_flock = fake_bin / "flock"
+            fake_flock.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+            fake_flock.chmod(0o755)
+
+            base_env = {
+                "STEPS": "50000000",
+                "SCREEN_PROFILE": "exact-action-canary",
+                "PREFIX": "exact-action-canary-50m-s42-v4",
+                "POLL_SECONDS": "30",
+                "PLAN_ONLY": "0",
+                "ARM_DETACH": "0",
+                "CANARY_LAUNCH_AUTHORIZATION": "/evidence/authorization.json",
+                "CANARY_LAUNCH_AUTHORIZATION_SHA256_FILE": (
+                    "/evidence/authorization.sha256"
+                ),
+                "CANARY_LAUNCH_CONSUMPTION": "/evidence/consumption.json",
+                "CANARY_LAUNCH_CONSUMPTION_SHA256_FILE": (
+                    "/evidence/consumption.sha256"
+                ),
+                "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            }
+
+            for mode in ("invalid", "wrong-output", "valid"):
+                out = root / f"screen-{mode}"
+                env = {**base_env, "FAKE_AUTHORITY_MODE": mode, "OUT_DIR": str(out)}
+                result = subprocess.run(
+                    ["bash", str(screen)],
+                    cwd=root,
+                    env={**os.environ, **env},
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    check=False,
+                )
+                if mode == "invalid":
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("synthetic invalid consumption", result.stderr)
+                    self.assertFalse(out.exists())
+                elif mode == "wrong-output":
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn(
+                        "OUT_DIR differs from the authorized output",
+                        result.stderr,
+                    )
+                    self.assertFalse(out.exists())
+                    self.assertFalse(Path(f"{out}-wrong").exists())
+                else:
+                    self.assertEqual(result.returncode, 73)
+                    self.assertIn("reached-install-boundary", result.stderr)
+                    self.assertTrue(out.is_dir())
+                    self.assertTrue((out / ".screen.lock").is_file())
 
     @unittest.skipUnless(VENDOR_CHECKOUT, "vendored Puffer checkout unavailable")
     def test_puffer_machine_log_uses_explicit_loop_phase_and_fresh_panels(self):

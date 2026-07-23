@@ -128,6 +128,25 @@ def _exact_absolute_file(path: Path, label: str) -> Path:
     return path
 
 
+def _exact_absolute_executable(path: Path, label: str) -> Path:
+    """Accept an exact executable path, including a normal venv symlink."""
+    if not path.is_absolute() or Path(os.path.abspath(path)) != path:
+        raise AuthorityError(f"{label} must be an exact absolute path: {path}")
+    try:
+        mode = path.lstat().st_mode
+        resolved = path.resolve(strict=True)
+        resolved_mode = resolved.stat().st_mode
+    except OSError as exc:
+        raise AuthorityError(f"missing {label}: {path}") from exc
+    if not (stat.S_ISREG(mode) or stat.S_ISLNK(mode)):
+        raise AuthorityError(f"{label} must be a file or symlink: {path}")
+    if not stat.S_ISREG(resolved_mode) or not os.access(resolved, os.X_OK):
+        raise AuthorityError(
+            f"{label} must resolve to a regular executable: {path}"
+        )
+    return path
+
+
 def _exact_absolute_directory(path: Path, label: str) -> Path:
     if not path.is_absolute() or path.resolve() != path:
         raise AuthorityError(f"{label} must be an exact absolute path: {path}")
@@ -216,7 +235,7 @@ def _run_qualification_validator(
         qualification_runner_root / "tools" / "qualify_recurrent_cuda.py",
         "qualification validator",
     )
-    python = _exact_absolute_file(
+    python = _exact_absolute_executable(
         source_root / "vendor" / "PufferLib" / ".venv" / "bin" / "python",
         "candidate Python",
     )
@@ -1327,7 +1346,9 @@ def consume_launch_authorization(
         "maximum_starts": 1,
         "eligibility": launch.get("eligibility"),
     }
-    return write_authority(destination, payload)
+    return write_authority(
+        destination, payload, irreversible_once_published=True
+    )
 
 
 def validate_launch_consumption(
@@ -1390,7 +1411,12 @@ def validate_launch_consumption(
     return result
 
 
-def write_authority(destination: Path, payload: Mapping[str, Any]) -> str:
+def write_authority(
+    destination: Path,
+    payload: Mapping[str, Any],
+    *,
+    irreversible_once_published: bool = False,
+) -> str:
     """Create one JSON authority and digest sidecar without overwriting."""
     if not destination.is_absolute() or destination.resolve() != destination:
         raise AuthorityError("authority destination must be an exact absolute path")
@@ -1426,10 +1452,11 @@ def write_authority(destination: Path, payload: Mapping[str, Any]) -> str:
         finally:
             os.close(directory_fd)
     except OSError as exc:
-        if sidecar_published:
-            sidecar.unlink(missing_ok=True)
-        if destination_published:
-            destination.unlink(missing_ok=True)
+        if not irreversible_once_published:
+            if sidecar_published:
+                sidecar.unlink(missing_ok=True)
+            if destination_published:
+                destination.unlink(missing_ok=True)
         raise AuthorityError(f"cannot publish authority atomically: {exc}") from exc
     finally:
         temporary.unlink(missing_ok=True)

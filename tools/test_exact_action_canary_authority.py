@@ -4,6 +4,7 @@ import hashlib
 import importlib.util
 import json
 from pathlib import Path
+import stat
 import subprocess
 import sys
 import tempfile
@@ -241,11 +242,7 @@ class ExactActionCanaryAuthorityTests(unittest.TestCase):
             python.parent.mkdir(parents=True)
             validator.parent.mkdir(parents=True)
             qualification.write_text("{}\n", encoding="utf-8")
-            python.write_text(
-                "#!/bin/sh\nexec " + json.dumps(sys.executable) + ' "$@"\n',
-                encoding="utf-8",
-            )
-            python.chmod(0o755)
+            python.symlink_to(Path(sys.executable).resolve())
             validator.write_text(
                 "import pathlib, sys\n"
                 f"assert pathlib.Path.cwd() == pathlib.Path({str(runner)!r})\n"
@@ -310,36 +307,49 @@ class ExactActionCanaryAuthorityTests(unittest.TestCase):
                         qualification_runner_root=runner,
                     )
 
-        for key in self.a.HARD_INTEGRITY_KEYS:
-            with self.subTest(hard_integrity_key=key), \
+        for cell_name in ("graph-off", "throughput"):
+            for key in self.a.HARD_INTEGRITY_KEYS:
+                with self.subTest(cell=cell_name, hard_integrity_key=key), \
                     tempfile.TemporaryDirectory() as tmp:
-                source, runner, _, _, qualification, _ = self.make_qualification(
-                    Path(tmp).resolve()
-                )
-                payload = json.loads(
-                    qualification.read_text(encoding="utf-8")
-                )
-                graph_record = Path(payload["cells"][1]["record"])
-                graph = json.loads(graph_record.read_text(encoding="utf-8"))
-                graph["hard_integrity"][key] = 1e-12
-                graph_record.write_text(
-                    json.dumps(graph, sort_keys=True) + "\n", encoding="utf-8"
-                )
-                payload["cells"][1]["record_sha256"] = sha(graph_record)
-                payload["cells"][1]["artifact_sha256"] = sha(graph_record)
-                qualification.write_text(
-                    json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8"
-                )
-                with mock.patch.object(
-                    self.a, "_run_qualification_validator"
-                ), self.assertRaisesRegex(
-                    self.a.AuthorityError, f"hard-integrity.*{key}"
-                ):
-                    self.a.validate_qualification(
-                        qualification,
-                        source_root=source,
-                        qualification_runner_root=runner,
+                    source, runner, _, _, qualification, _ = self.make_qualification(
+                        Path(tmp).resolve()
                     )
+                    payload = json.loads(
+                        qualification.read_text(encoding="utf-8")
+                    )
+                    cell = next(
+                        item for item in payload["cells"]
+                        if item["name"] == cell_name
+                    )
+                    record_path = Path(cell["record"])
+                    record = json.loads(record_path.read_text(encoding="utf-8"))
+                    integrity = (
+                        record["throughput"]
+                        if cell_name == "throughput"
+                        else record
+                    )
+                    integrity["hard_integrity"][key] = 1e-12
+                    record_path.write_text(
+                        json.dumps(record, sort_keys=True) + "\n",
+                        encoding="utf-8",
+                    )
+                    cell["record_sha256"] = sha(record_path)
+                    if cell["artifact"] is not None:
+                        cell["artifact_sha256"] = sha(record_path)
+                    qualification.write_text(
+                        json.dumps(payload, sort_keys=True) + "\n",
+                        encoding="utf-8",
+                    )
+                    with mock.patch.object(
+                        self.a, "_run_qualification_validator"
+                    ), self.assertRaisesRegex(
+                        self.a.AuthorityError, f"hard-integrity.*{key}"
+                    ):
+                        self.a.validate_qualification(
+                            qualification,
+                            source_root=source,
+                            qualification_runner_root=runner,
+                        )
 
     def test_plan_output_requires_exact_regular_manifest_and_released_empty_lock(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -534,15 +544,15 @@ class ExactActionCanaryAuthorityTests(unittest.TestCase):
 
             def consume():
                 try:
-                    outcomes.append(
-                        self.a.consume_launch_authorization(
+                    outcomes.append((
+                        "success", self.a.consume_launch_authorization(
                             authorization=launch,
                             sha256_file=launch_sha,
                             destination=consumption,
                         )
-                    )
-                except self.a.AuthorityError as exc:
-                    outcomes.append(type(exc).__name__)
+                    ))
+                except BaseException as exc:
+                    outcomes.append(("error", type(exc), str(exc)))
 
             with mock.patch.object(
                 self.a, "validate_launch_authorization", side_effect=validate
@@ -553,12 +563,91 @@ class ExactActionCanaryAuthorityTests(unittest.TestCase):
                 for thread in threads:
                     thread.join(timeout=10)
             self.assertTrue(all(not thread.is_alive() for thread in threads))
-            self.assertEqual(sum(item != "AuthorityError" for item in outcomes), 1)
+            self.assertEqual(len(outcomes), 2)
+            successes = [item for item in outcomes if item[0] == "success"]
+            errors = [item for item in outcomes if item[0] == "error"]
+            self.assertEqual(len(successes), 1)
+            self.assertEqual(len(errors), 1)
+            self.assertIs(errors[0][1], self.a.AuthorityError)
             self.assertTrue(consumption.is_file())
-            self.assertEqual(sha(consumption), next(
-                item for item in outcomes if item != "AuthorityError"
-            ))
+            self.assertEqual(sha(consumption), successes[0][1])
             self.assertTrue(consumption.with_suffix(".sha256").is_file())
+            with mock.patch.object(
+                self.a, "validate_launch_authorization", return_value=accepted
+            ):
+                observed = self.a.validate_launch_consumption(
+                    consumption,
+                    consumption_sha256_file=consumption.with_suffix(".sha256"),
+                    authorization=launch,
+                    authorization_sha256_file=launch_sha,
+                )
+            self.assertEqual(
+                observed["launch_consumption"]["sha256"], successes[0][1]
+            )
+
+    def test_launch_consumption_survives_post_publish_durability_failures(self):
+        def fail_directory_fsync(real_fsync):
+            def fsync(fd):
+                if stat.S_ISDIR(self.a.os.fstat(fd).st_mode):
+                    raise OSError("forced directory fsync failure")
+                return real_fsync(fd)
+
+            return fsync
+
+        for failure in ("directory_open", "directory_fsync"):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp).resolve()
+                launch = root / "CANARY_LAUNCH_AUTHORIZATION.json"
+                launch.write_text("{}\n", encoding="utf-8")
+                launch_sha = launch.with_suffix(".sha256")
+                launch_digest = sha(launch)
+                launch_sha.write_text(
+                    f"{launch_digest}  {launch.name}\n", encoding="ascii"
+                )
+                consumption = root / "CANARY_LAUNCH_CONSUMPTION.json"
+                accepted = {
+                    "kind": self.a.LAUNCH_KIND,
+                    "authorization_sha256": launch_digest,
+                    "qualification_only": True,
+                    "plan_output": {"path": str(root / "authorized-screen")},
+                    "systemd": {"maximum_starts": 1},
+                }
+                if failure == "directory_open":
+                    durability_failure = mock.patch.object(
+                        self.a.os,
+                        "open",
+                        side_effect=OSError("forced directory open failure"),
+                    )
+                else:
+                    durability_failure = mock.patch.object(
+                        self.a.os,
+                        "fsync",
+                        side_effect=fail_directory_fsync(self.a.os.fsync),
+                    )
+
+                with mock.patch.object(
+                    self.a, "validate_launch_authorization", return_value=accepted
+                ), durability_failure, self.assertRaisesRegex(
+                    self.a.AuthorityError, "cannot publish authority atomically"
+                ):
+                    self.a.consume_launch_authorization(
+                        authorization=launch,
+                        sha256_file=launch_sha,
+                        destination=consumption,
+                    )
+
+                self.assertTrue(consumption.is_file())
+                self.assertTrue(consumption.with_suffix(".sha256").is_file())
+                with mock.patch.object(
+                    self.a, "validate_launch_authorization", return_value=accepted
+                ), self.assertRaisesRegex(
+                    self.a.AuthorityError, "already consumed"
+                ):
+                    self.a.consume_launch_authorization(
+                        authorization=launch,
+                        sha256_file=launch_sha,
+                        destination=consumption,
+                    )
 
     def test_authority_files_use_exclusive_atomic_creation(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -606,9 +695,9 @@ class ExactActionCanaryAuthorityTests(unittest.TestCase):
 
             def publish():
                 try:
-                    outcomes.append(self.a.write_unit(destination, paths))
-                except self.a.AuthorityError as exc:
-                    outcomes.append(type(exc).__name__)
+                    outcomes.append(("success", self.a.write_unit(destination, paths)))
+                except BaseException as exc:
+                    outcomes.append(("error", type(exc), str(exc)))
 
             with mock.patch.object(
                 self.a.secrets, "token_hex", side_effect=token_hex
@@ -619,12 +708,18 @@ class ExactActionCanaryAuthorityTests(unittest.TestCase):
                 for thread in threads:
                     thread.join(timeout=10)
             self.assertTrue(all(not thread.is_alive() for thread in threads))
-            self.assertEqual(sum(item != "AuthorityError" for item in outcomes), 1)
+            self.assertEqual(len(outcomes), 2)
+            successes = [item for item in outcomes if item[0] == "success"]
+            errors = [item for item in outcomes if item[0] == "error"]
+            self.assertEqual(len(successes), 1)
+            self.assertEqual(len(errors), 1)
+            self.assertIs(errors[0][1], self.a.AuthorityError)
             self.assertTrue(destination.is_file())
             self.assertEqual(
                 sha(destination),
-                next(item for item in outcomes if item != "AuthorityError"),
+                successes[0][1],
             )
+            self.assertEqual(destination.read_text(encoding="utf-8"), self.a.render_systemd_unit(paths))
 
     def make_plan_prerequisites(self, temp: Path):
         source, runner, commit, tree, qualification, runtime = self.make_qualification(temp)

@@ -20,7 +20,11 @@ Usage (on the cache box, japan):
   python3 tools/per_team_baseline.py [--sample N] [--out docs/per-team-baseline.json]
 Runs nice'd; single-threaded; ~0.3s/replay.
 """
-import argparse, gzip, json, os, re, sys
+import argparse
+import gzip
+import json
+import os
+import sys
 from collections import defaultdict
 
 CACHE = "validation/replay_cache"
