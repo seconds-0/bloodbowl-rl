@@ -203,6 +203,55 @@ class LiveIntegrityGuardTests(unittest.TestCase):
                     "no complete machine integrity panel"):
                 guard.check_log(log, state, failure, now=281.0)
 
+    def test_pool_epoch_zero_elo_only_panel_is_not_a_registry_violation(self):
+        # A self-play pool run publishes env/elo every epoch whether or not an
+        # episode finished, so the first epoch's panel carries elo and nothing
+        # else env-side. That is not a missing registry -- it is a run that has
+        # not aggregated an episode yet. Treating it as a violation killed a
+        # 500M decomposition screen 2M steps in.
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            log = root / "arm.log"
+            state = root / "guard-state.json"
+            failure = root / "guard-failure.json"
+            metadata = {
+                "_puffer_schema": 2,
+                "_puffer_agent_steps": 131072.0,
+                "_puffer_epoch": 0,
+                "elo": 0.0,
+            }
+            log.write_text(
+                "PUFFER_ENV_JSON " + json.dumps(metadata) + "\n",
+                encoding="utf-8",
+            )
+            result = guard.check_log(log, state, failure, now=100.0)
+            self.assertEqual(result.total_panels, 0)
+            self.assertFalse(failure.exists())
+
+            # Consumed, but it must not count as liveness either.
+            with self.assertRaisesRegex(
+                    guard.IntegrityFailure,
+                    "no complete machine integrity panel"):
+                guard.check_log(log, state, failure, now=281.0)
+
+    def test_elo_does_not_excuse_a_panel_that_aggregated_an_episode(self):
+        # The exemption is narrow: once any episode-aggregated key appears,
+        # the full registry is mandatory even alongside elo.
+        with tempfile.TemporaryDirectory() as root:
+            values = {key: 0.0 for key in guard.HARD_INTEGRITY_KEYS}
+            values.pop("illegal_frac")
+            values.update({
+                "_puffer_schema": 2,
+                "_puffer_agent_steps": 131072.0,
+                "elo": 1234.0,
+                "n": 775.0,
+            })
+            text = "PUFFER_ENV_JSON " + json.dumps(values) + "\n"
+            with self.assertRaisesRegex(
+                    guard.IntegrityFailure,
+                    "missing hard-integrity keys"):
+                self.run_guard(root, text)
+
     def test_completed_log_rejects_unterminated_tail(self):
         with tempfile.TemporaryDirectory() as root:
             root = Path(root)
