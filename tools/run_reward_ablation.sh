@@ -4,7 +4,7 @@
 # Required for every mode:
 #   TAG=<unique arm tag>
 #   REWARD_MANIFEST=<puffer/config/rewards/*.json>
-#   BOOTSTRAP_MODE=fresh-v5-qualification|lineage-v5
+#   BOOTSTRAP_MODE=fresh-v5-qualification|fresh-v5-genesis|lineage-v5
 # lineage-v5 additionally requires WARM and POOL with eligible obs-v5 lineage
 # sidecars. fresh-v5-qualification forbids both inputs.
 #
@@ -44,13 +44,43 @@ case "$BOOTSTRAP_MODE" in
     POOL=""
     QUALIFICATION_ONLY=1
     ;;
+  fresh-v5-genesis)
+    # The genesis of an obs-v5 lineage. Structurally identical to the
+    # qualification canary -- fresh weights, no warm start, no opponent pool --
+    # and differing in exactly one respect: its accepted checkpoint publishes an
+    # ELIGIBLE lineage, so it can be warm-started from and can seed a pool.
+    #
+    # This mode exists because without it the lineage cannot begin. Eligible
+    # lineage may only be published by an accepted screen result
+    # (tools/checkpoint_lineage.py), and every non-fresh profile requires an
+    # already-eligible warm checkpoint plus a four-bank pool of eligible
+    # checkpoints. That is a closed loop with no entry point: measured on the
+    # training host, zero .lineage.json files exist anywhere, so there is no
+    # ancestor to start from and no way to mint one.
+    #
+    # It is NOT a weaker canary. It passes the identical acceptance gate --
+    # all 16 hard-integrity counters at literal zero, required metrics, the
+    # completed-game floor, the telemetry-schema check, exact final checkpoint
+    # size -- and it must carry a complete reward manifest like any causal arm.
+    # The only thing being granted is ancestry, which every lineage needs at its
+    # root; the alternative is that obs-v5 can never train at all.
+    [ -z "${WARM:-}" ] || {
+      echo "fresh-v5-genesis forbids WARM; genesis is by definition unancestored" >&2
+      exit 1; }
+    [ -z "${POOL:-}" ] || {
+      echo "fresh-v5-genesis forbids POOL; there is no eligible pool to draw on yet" >&2
+      exit 1; }
+    WARM=""
+    POOL=""
+    QUALIFICATION_ONLY=0
+    ;;
   lineage-v5)
     : "${WARM:?WARM is required for lineage-v5}"
     : "${POOL:?POOL is required for lineage-v5}"
     QUALIFICATION_ONLY=0
     ;;
   *)
-    echo "BOOTSTRAP_MODE must be fresh-v5-qualification or lineage-v5" >&2
+    echo "BOOTSTRAP_MODE must be fresh-v5-qualification, fresh-v5-genesis, or lineage-v5" >&2
     exit 1
     ;;
 esac
@@ -167,7 +197,7 @@ CUDA_RUNTIME_WRAPPER="$ROOT/tools/puffer_cuda_runtime.py"
   echo "CUDA runtime wrapper missing: $CUDA_RUNTIME_WRAPPER" >&2; exit 1; }
 [ "${CUDA_VISIBLE_DEVICES:-}" = "0" ] || {
   echo "CUDA_VISIBLE_DEVICES must be exactly 0" >&2; exit 1; }
-if [ "$BOOTSTRAP_MODE" = "fresh-v5-qualification" ]; then
+if [ "$BOOTSTRAP_MODE" != "lineage-v5" ]; then
   FROZEN_BANK_PCT=0
   NUM_FROZEN_BANKS=0
   FROZEN_PER_BANK=0
@@ -563,7 +593,7 @@ CMD=(env PUFFER_CUDA_RUNTIME_MANIFEST="$RUN_MANIFEST" \
   --train.update-epochs 1 --train.beta1 0.95 --train.beta2 0.999 \
   --train.eps 0.000000000001)
 
-if [ "$BOOTSTRAP_MODE" = "fresh-v5-qualification" ]; then
+if [ "$BOOTSTRAP_MODE" != "lineage-v5" ]; then
   CMD+=(--selfplay.enabled 0 --vec.num-frozen-banks 0 \
     --vec.frozen-bank-pct 0)
 else
@@ -643,6 +673,8 @@ manifest.update({
     "schema_version": 1,
     "mode": ("native_fresh_v5_qualification"
              if manifest["bootstrap_mode"] == "fresh-v5-qualification"
+             else "native_fresh_v5_genesis"
+             if manifest["bootstrap_mode"] == "fresh-v5-genesis"
              else "native_static_pool_reward_ablation"),
     "command": sys.argv[split + 1:],
 })

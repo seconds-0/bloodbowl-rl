@@ -107,6 +107,73 @@ class CheckpointLineageTests(unittest.TestCase):
         self.assertEqual(observed["ancestry"]["warm_lineage_sha256"],
                          "5" * 64)
 
+    def test_declared_genesis_is_the_only_eligible_fresh_lineage(self):
+        # Without this exception the eligibility rules close into a loop with no
+        # entry point: eligible requires non-qualification, non-qualification
+        # required non-fresh initialization, non-fresh requires an eligible warm
+        # checkpoint and pool, and eligible may only be published by an accepted
+        # screen. Nothing could mint the first eligible checkpoint, so obs-v5
+        # could never train -- measured on the training host as zero
+        # .lineage.json files in existence.
+        def manifest_with(**over):
+            m = json.loads(self.run_manifest.read_text(encoding="utf-8"))
+            m.update(over)
+            self.run_manifest.write_text(
+                json.dumps(m, sort_keys=True) + "\n", encoding="utf-8")
+
+        # Declared genesis: fresh AND eligible, published by the screen.
+        manifest_with(qualification_only="0", initialization="fresh",
+                      mode="native_fresh_v5_genesis")
+        payload = checkpoint_lineage.lineage_from_run_manifest(
+            self.checkpoint, self.run_manifest,
+            allow_eligible_publication=True)
+        sidecar = checkpoint_lineage.sidecar_path(self.checkpoint)
+        checkpoint_lineage.write_lineage(sidecar, payload)
+        observed = checkpoint_lineage.validate_lineage(
+            self.checkpoint, sidecar, expected=self.expected(),
+            require_eligible=True)
+        self.assertTrue(observed["ancestry"]["eligible"])
+        self.assertFalse(observed["ancestry"]["qualification_only"])
+
+        # The exception is narrow. A fresh run that does NOT declare genesis
+        # cannot become ancestry, so an ordinary canary stays ineligible even if
+        # its qualification flag is flipped.
+        manifest_with(qualification_only="0", initialization="fresh",
+                      mode="native_fresh_v5_qualification")
+        with self.assertRaisesRegex(
+                checkpoint_lineage.LineageError, "declared genesis"):
+            checkpoint_lineage.lineage_from_run_manifest(
+                self.checkpoint, self.run_manifest,
+                allow_eligible_publication=True)
+
+        # Genesis is ancestry by definition, so it may not claim to be
+        # qualification-only at the same time.
+        manifest_with(qualification_only="1", initialization="fresh",
+                      mode="native_fresh_v5_genesis")
+        with self.assertRaisesRegex(
+                checkpoint_lineage.LineageError, "not qualification-only"):
+            checkpoint_lineage.lineage_from_run_manifest(
+                self.checkpoint, self.run_manifest,
+                allow_eligible_publication=True)
+
+        # Genesis must actually be fresh; it cannot relabel a warm-started run.
+        manifest_with(qualification_only="0", initialization="lineage-v5",
+                      mode="native_fresh_v5_genesis")
+        with self.assertRaisesRegex(
+                checkpoint_lineage.LineageError, "must use fresh"):
+            checkpoint_lineage.lineage_from_run_manifest(
+                self.checkpoint, self.run_manifest,
+                allow_eligible_publication=True)
+
+        # And genesis still cannot self-publish: only accepted screen result
+        # materialization may mint eligible lineage.
+        manifest_with(qualification_only="0", initialization="fresh",
+                      mode="native_fresh_v5_genesis")
+        with self.assertRaisesRegex(
+                checkpoint_lineage.LineageError, "accepted screen"):
+            checkpoint_lineage.lineage_from_run_manifest(
+                self.checkpoint, self.run_manifest)
+
     def test_missing_malformed_and_noncanonical_sidecars_fail_closed(self):
         missing = self.root / "missing.json"
         with self.assertRaisesRegex(checkpoint_lineage.LineageError, "missing"):

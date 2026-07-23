@@ -127,11 +127,31 @@ def lineage_from_run_manifest(checkpoint, run_manifest, *,
         manifest.get("qualification_only"), "qualification_only")
     if qualification_only and initialization != "fresh":
         raise LineageError("qualification-only output must use fresh initialization")
-    if initialization == "fresh" and not qualification_only:
+    # A fresh run may publish eligible lineage in exactly one case: it declared
+    # itself the GENESIS of the lineage. Without that exception the rules form a
+    # closed loop with no entry point -- eligible output requires non-fresh
+    # initialization, non-fresh requires an eligible warm checkpoint and pool,
+    # and eligible may only be published by an accepted screen -- so obs-v5
+    # could never train at all. Measured on the training host: zero
+    # .lineage.json files existed anywhere, i.e. no ancestor and no way to mint
+    # one. The exception is narrow on purpose: the mode string must SAY genesis,
+    # so an ordinary fresh canary still cannot become ancestry by accident, and
+    # the caller must still be accepted-screen materialization (checked below).
+    mode = manifest.get("mode")
+    if initialization == "fresh" and not qualification_only \
+            and mode != "native_fresh_v5_genesis":
         raise LineageError(
-            "fresh initialization is reserved for qualification-only output")
+            "fresh initialization may only publish eligible lineage as declared "
+            "genesis (mode native_fresh_v5_genesis)")
+    if mode == "native_fresh_v5_genesis":
+        if qualification_only:
+            raise LineageError(
+                "genesis output is eligible ancestry, not qualification-only")
+        if initialization != "fresh":
+            raise LineageError("genesis output must use fresh initialization")
     expected_mode = (
         "native_fresh_v5_qualification" if qualification_only
+        else "native_fresh_v5_genesis" if mode == "native_fresh_v5_genesis"
         else "native_static_pool_reward_ablation")
     if manifest.get("mode") != expected_mode:
         raise LineageError(
@@ -213,6 +233,12 @@ def lineage_from_run_manifest(checkpoint, run_manifest, *,
         },
         "ancestry": {
             "initialization": initialization,
+            # The producer's mode is bound here, not merely checked at create
+            # time, because it is what distinguishes declared genesis from an
+            # ordinary fresh canary. validate_lineage needs it to re-derive that
+            # distinction, and binding it means the eligibility flag cannot be
+            # edited into a lie without also editing a hashed field.
+            "mode": mode,
             "qualification_only": qualification_only,
             "eligible": not qualification_only,
             "warm_lineage_sha256": warm_lineage,
@@ -332,9 +358,24 @@ def validate_lineage(checkpoint, sidecar=None, *, expected=None,
         ancestry.get("pool_lineage_bundle_sha256", ""),
         "pool_lineage_bundle_sha256", allow_empty=True)
     if initialization == "fresh":
-        if not qualification_only or eligible or warm_lineage or pool_lineage:
+        # Fresh output is ancestry-free by construction: it has no warm
+        # checkpoint and no pool, so those two digests must stay empty either
+        # way. Eligibility is the one axis where genesis differs -- it is the
+        # root of the lineage, so it is eligible while every ordinary fresh
+        # canary is not. The mode string carries that declaration and is itself
+        # bound into the sidecar, so this cannot be loosened by editing the
+        # eligibility flag alone.
+        genesis = ancestry.get("mode") == "native_fresh_v5_genesis"
+        if warm_lineage or pool_lineage:
+            raise LineageError("fresh lineage must be ancestry-free")
+        if genesis:
+            if qualification_only or not eligible:
+                raise LineageError(
+                    "genesis lineage must be eligible and not qualification-only")
+        elif not qualification_only or eligible:
             raise LineageError(
-                "fresh lineage must be qualification-only, ineligible, and ancestry-free")
+                "fresh lineage must be qualification-only and ineligible unless "
+                "it is declared genesis")
     elif qualification_only or not eligible or not warm_lineage or not pool_lineage:
         raise LineageError(
             "lineage-v5 must be eligible and bind warm/pool ancestry")

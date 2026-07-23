@@ -24,7 +24,7 @@ fi
 LAUNCH_CWD="$PWD"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 : "${STEPS:?STEPS is required (explicit experiment budget)}"
-: "${SCREEN_PROFILE:?SCREEN_PROFILE is required (distance-possession, possession-gain, exact-action-canary, paired-confirmation, paired-final, or control-final)}"
+: "${SCREEN_PROFILE:?SCREEN_PROFILE is required (distance-possession, possession-gain, exact-action-canary, genesis, paired-confirmation, paired-final, or control-final)}"
 CANDIDATE_ARM="${CANDIDATE_ARM:-}"
 TRANSFER_COMPLETE="${TRANSFER_COMPLETE:-}"
 EXPECTED_TRANSFER_SHA256="${EXPECTED_TRANSFER_SHA256:-}"
@@ -81,7 +81,7 @@ case "$ARM_DETACH" in
   *) echo "ARM_DETACH must be 0 or 1" >&2; exit 1 ;;
 esac
 case "$SCREEN_PROFILE" in
-  distance-possession|possession-gain|exact-action-canary|control-final)
+  distance-possession|possession-gain|exact-action-canary|genesis|control-final)
     [ -z "$CANDIDATE_ARM$TRANSFER_COMPLETE$EXPECTED_TRANSFER_SHA256" ] || {
       echo "candidate transfer inputs are only valid with a paired profile" >&2
       exit 1; }
@@ -104,24 +104,33 @@ case "$SCREEN_PROFILE" in
       exit 1
     fi
     ;;
-  *) echo "SCREEN_PROFILE must be distance-possession, possession-gain, exact-action-canary, paired-confirmation, paired-final, or control-final" >&2
+  *) echo "SCREEN_PROFILE must be distance-possession, possession-gain, exact-action-canary, genesis, paired-confirmation, paired-final, or control-final" >&2
      exit 1 ;;
 esac
 
-if [ "$SCREEN_PROFILE" = "exact-action-canary" ]; then
+if [ "$SCREEN_PROFILE" = "exact-action-canary" ] || \
+   [ "$SCREEN_PROFILE" = "genesis" ]; then
   # D217/D218: v4 and v5 have the same tensor sizes. An inherited or explicitly
   # empty legacy variable must not silently authorize a same-size warm/pool.
   [ "${WARM+x}" != x ] || {
-    echo "exact-action-canary forbids WARM; qualification uses fresh obs-v5 initialization" >&2
+    echo "$SCREEN_PROFILE forbids WARM; qualification uses fresh obs-v5 initialization" >&2
     exit 1
   }
   [ "${POOL+x}" != x ] || {
-    echo "exact-action-canary forbids POOL; qualification uses fresh obs-v5 self-play" >&2
+    echo "$SCREEN_PROFILE forbids POOL; it trains fresh obs-v5 self-play" >&2
     exit 1
   }
   WARM=""
   POOL=""
-  BOOTSTRAP_MODE=fresh-v5-qualification
+  if [ "$SCREEN_PROFILE" = "genesis" ]; then
+    # Same fresh, pool-free shape as the canary; the difference is that an
+    # accepted genesis arm publishes ELIGIBLE lineage, which is what lets any
+    # later warm/pool profile exist at all. See the mode comment in
+    # tools/run_reward_ablation.sh for why this cannot be avoided.
+    BOOTSTRAP_MODE=fresh-v5-genesis
+  else
+    BOOTSTRAP_MODE=fresh-v5-qualification
+  fi
   NUM_FROZEN_BANKS=0
   FROZEN_BANK_PCT=0
   EXPECTED_POOL_HASH=""
@@ -180,6 +189,14 @@ case "$SCREEN_PROFILE" in
   exact-action-canary)
     # Qualification only: one reward-frozen arm bounds repaired-runtime
     # exposure before any causal screen receives a long budget.
+    arms=(both)
+    seeds=(42)
+    ;;
+  genesis)
+    # One fresh arm on the current experimental baseline, whose accepted
+    # checkpoint becomes the root of the obs-v5 lineage. One arm and one seed on
+    # purpose: this establishes ancestry, it does not compare anything, so a
+    # second arm would only invite reading a contrast that was never controlled.
     arms=(both)
     seeds=(42)
     ;;
