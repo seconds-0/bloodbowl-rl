@@ -473,31 +473,39 @@ fi
 # applied last, after the whole exact-action stack: the scripted guard shares its
 # call sites with require_training_state_reset, which puffer_recurrent_eval_state
 # installs above, so cutting it against any earlier tree does not apply.
-for local_pufferl_patch in \
-    "$ROOT/training/pufferl_scripted_training_guard.patch" \
-    "$ROOT/training/pufferl_warm_start.patch"; do
-    if [ ! -f "$local_pufferl_patch" ]; then
-        echo "error: missing $local_pufferl_patch" >&2
-        exit 1
-    fi
-    if git -C "$PUFFER" apply --reverse --check --no-index \
-            "$local_pufferl_patch" 2>/dev/null; then
-        : # Already installed.
-    elif git -C "$PUFFER" apply --check --no-index \
-            "$local_pufferl_patch" 2>/dev/null; then
-        git -C "$PUFFER" apply --no-index "$local_pufferl_patch"
-        echo "applied:   $(basename "$local_pufferl_patch") -> pufferlib/pufferl.py"
-    else
-        echo "error: $(basename "$local_pufferl_patch") is neither applicable nor already applied" >&2
-        exit 1
-    fi
-done
-for local_marker in 'Warm-started training from' 'guard_scripted_training'; do
-    if ! grep -Fq "$local_marker" "$PUFFER/pufferlib/pufferl.py"; then
-        echo "error: pufferlib/pufferl.py lacks '$local_marker' after patching" >&2
-        exit 1
-    fi
-done
+# Only a full trainer tree can host these. require_training_state_reset is
+# installed by puffer_recurrent_eval_state above, whose own completeness check
+# already exits non-zero on a real tree, so its presence is a sound discriminator:
+# absent means this is a partial fixture tree (training/test_recurrent_cuda_-
+# qualification.py builds one to exercise the selfplay state machine alone), not a
+# trainer tree with drifted patches. Hard-fail on the latter, skip the former.
+if grep -Fq 'require_training_state_reset' "$PUFFER/pufferlib/pufferl.py" 2>/dev/null; then
+    for local_pufferl_patch in \
+        "$ROOT/training/pufferl_scripted_training_guard.patch" \
+        "$ROOT/training/pufferl_warm_start.patch"; do
+        if [ ! -f "$local_pufferl_patch" ]; then
+            echo "error: missing $local_pufferl_patch" >&2
+            exit 1
+        fi
+        if git -C "$PUFFER" apply --reverse --check --no-index \
+                "$local_pufferl_patch" 2>/dev/null; then
+            : # Already installed.
+        elif git -C "$PUFFER" apply --check --no-index \
+                "$local_pufferl_patch" 2>/dev/null; then
+            git -C "$PUFFER" apply --no-index "$local_pufferl_patch"
+            echo "applied:   $(basename "$local_pufferl_patch") -> pufferlib/pufferl.py"
+        else
+            echo "error: $(basename "$local_pufferl_patch") is neither applicable nor already applied" >&2
+            exit 1
+        fi
+    done
+    for local_marker in 'Warm-started training from' 'guard_scripted_training'; do
+        if ! grep -Fq "$local_marker" "$PUFFER/pufferlib/pufferl.py"; then
+            echo "error: pufferlib/pufferl.py lacks '$local_marker' after patching" >&2
+            exit 1
+        fi
+    done
+fi
 
 EXACT_BACKEND_HASH="$(exact_backend_hash)" || {
     echo "error: could not hash exact-action backend sources" >&2
