@@ -1197,3 +1197,59 @@ BB_TEST(distance_pbrs_charges_the_drop_that_legacy_ignored) {
     BB_CHECK(regain > 0.0f);
     BB_CHECK(fabsf(drop + regain) < k);          // gap round-trip is ~neutral
 }
+
+BB_TEST(distance_pbrs_terminal_payback_survives_terminal_suppression) {
+    // The terminal emission of a potential channel is gamma*0 - Phi(s): the
+    // mandatory payback of shaping already granted on the way to the goal.
+    // Terminal composition otherwise discards every incidental component on the
+    // final action, which would keep all the positives and drop only the
+    // repayment. Measured at -0.292757 per episode on a 2M probe before this
+    // exemption existed, against a 0.6 win bonus, so it is not a rounding issue.
+    RewardFixture f;
+    setup_env_buffers(&f);
+    f.env.reward_configured = 1;
+    f.env.reward_win = 0.60f;
+    f.env.reward_dist_pbrs_gamma = 0.995f;
+    f.env.match.score[BB_HOME] = 1;
+    f.env.match.score[BB_AWAY] = 0;
+
+    const float payback = -0.25f;
+    bbe_reward_add(&f.env, BB_HOME, BBE_REWARD_TOUCHDOWN, 0.40f);
+    bbe_reward_add(&f.env, BB_HOME, BBE_REWARD_DISTANCE_ENDZONE, payback);
+    // A genuinely incidental term on the same step must still be suppressed.
+    bbe_reward_add(&f.env, BB_HOME, BBE_REWARD_BALL_GAIN, 0.05f);
+    f.env.step_objective_reward[BB_HOME] = 0.40f;
+    f.env.step_objective_reward[BB_AWAY] = 0.0f;
+    bbe_finish_episode(&f.env);
+
+    // Payback kept, in the ledger and in the effective return.
+    check_float(f.env.log.reward_component[BBE_REWARD_DISTANCE_ENDZONE],
+                payback);
+    // Incidental ball-gain on the terminal action still dropped.
+    check_float(f.env.log.reward_component[BBE_REWARD_BALL_GAIN], 0.0f);
+    // Suppression telemetry must exclude the payback, or it would double-count
+    // as both "kept" and "suppressed".
+    check_float(f.env.log.reward_terminal_suppressed_signed, 0.05f);
+}
+
+BB_TEST(distance_legacy_terminal_composition_is_unchanged) {
+    // With the knob off, terminal composition must behave exactly as it always
+    // did: a distance component landing on the terminal action is incidental and
+    // is suppressed like everything else.
+    RewardFixture f;
+    setup_env_buffers(&f);
+    f.env.reward_configured = 1;
+    f.env.reward_win = 0.60f;
+    f.env.reward_dist_pbrs_gamma = 0.0f;
+    f.env.match.score[BB_HOME] = 1;
+    f.env.match.score[BB_AWAY] = 0;
+
+    bbe_reward_add(&f.env, BB_HOME, BBE_REWARD_TOUCHDOWN, 0.40f);
+    bbe_reward_add(&f.env, BB_HOME, BBE_REWARD_DISTANCE_ENDZONE, -0.25f);
+    f.env.step_objective_reward[BB_HOME] = 0.40f;
+    f.env.step_objective_reward[BB_AWAY] = 0.0f;
+    bbe_finish_episode(&f.env);
+
+    check_float(f.env.log.reward_component[BBE_REWARD_DISTANCE_ENDZONE], 0.0f);
+    check_float(f.env.log.reward_terminal_suppressed_signed, -0.25f);
+}

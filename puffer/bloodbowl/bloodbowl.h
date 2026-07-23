@@ -2403,7 +2403,26 @@ static void bbe_finish_episode(Bloodbowl* env) {
         float pre_terminal = env->reward_ptr[a][0];
         if (!isfinite(pre_terminal)) suppressed_nonfinite_mask |= 1u << a;
         float objective = env->step_objective_reward[a];
-        float suppressed = pre_terminal - objective;
+        // An exact-PBRS potential channel is exempt from terminal suppression.
+        // Its terminal emission is gamma*0 - Phi(s): the mandatory PAYBACK of
+        // shaping already granted while approaching the goal, not incidental
+        // shaping that happened to land on the final action. Suppressing only
+        // the payback while keeping every earlier positive is strictly worse
+        // than suppressing both or neither -- measured at -0.292757 per episode
+        // on a 2M probe, against a 0.6 win bonus, and it would pay the agent to
+        // end the game holding the ball near the opponent end zone. Legacy mode
+        // keeps the historical behaviour exactly: it emits nothing here anyway,
+        // because it skips the emission whenever a team scored.
+        float potential_kept = 0.0f;
+        if (env->reward_dist_pbrs_gamma > 0.0f) {
+            float pot_ball =
+                env->step_reward_component[a][BBE_REWARD_DISTANCE_BALL];
+            float pot_endzone =
+                env->step_reward_component[a][BBE_REWARD_DISTANCE_ENDZONE];
+            if (isfinite(pot_ball)) potential_kept += pot_ball;
+            if (isfinite(pot_endzone)) potential_kept += pot_endzone;
+        }
+        float suppressed = pre_terminal - objective - potential_kept;
         if (isfinite(suppressed)) {
             // `abs` is the absolute NET suppressed subtotal on this terminal
             // emission, not the sum of absolute per-component contributions.
@@ -2424,6 +2443,14 @@ static void bbe_finish_episode(Bloodbowl* env) {
         // Rebuild both the effective reward and its scratch ledger with the
         // same terminal authority. The assignment expressions remain exactly
         // as before; only result/statmatch below are new effective components.
+        float kept_ball = 0.0f, kept_endzone = 0.0f;
+        if (env->reward_dist_pbrs_gamma > 0.0f) {
+            kept_ball = env->step_reward_component[a][BBE_REWARD_DISTANCE_BALL];
+            kept_endzone =
+                env->step_reward_component[a][BBE_REWARD_DISTANCE_ENDZONE];
+            if (!isfinite(kept_ball)) kept_ball = 0.0f;
+            if (!isfinite(kept_endzone)) kept_endzone = 0.0f;
+        }
         memset(env->step_reward_component[a], 0,
                sizeof env->step_reward_component[a]);
         env->step_reward_component[a][BBE_REWARD_TOUCHDOWN] = objective;
@@ -2431,8 +2458,14 @@ static void bbe_finish_episode(Bloodbowl* env) {
             m->score[0] == m->score[1] ? BBE_REWARD_RESULT_DRAW
                                        : BBE_REWARD_RESULT_WINLOSS;
         env->step_reward_component[a][result_component] = bonus[a];
-        env->reward_ptr[a][0] = objective + bonus[a];
-        env->ep_return[a] = env->step_return_base[a] + objective + bonus[a];
+        // Restored after the memset so the ledger and the effective reward carry
+        // the same potential payback and still reconcile component-by-component.
+        env->step_reward_component[a][BBE_REWARD_DISTANCE_BALL] = kept_ball;
+        env->step_reward_component[a][BBE_REWARD_DISTANCE_ENDZONE] = kept_endzone;
+        float kept = kept_ball + kept_endzone;
+        env->reward_ptr[a][0] = objective + bonus[a] + kept;
+        env->ep_return[a] =
+            env->step_return_base[a] + objective + bonus[a] + kept;
         env->terminal_ptr[a][0] = 1.0f;
     }
     if (env->possessor >= 0) {
