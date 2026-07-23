@@ -24,7 +24,7 @@ fi
 LAUNCH_CWD="$PWD"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 : "${STEPS:?STEPS is required (explicit experiment budget)}"
-: "${SCREEN_PROFILE:?SCREEN_PROFILE is required (distance-possession, possession-gain, exact-action-canary, paired-confirmation, paired-final, or control-final)}"
+: "${SCREEN_PROFILE:?SCREEN_PROFILE is required (distance-possession, possession-gain, possession-gain-exact, exact-action-canary, genesis, paired-confirmation, paired-final, or control-final)}"
 CANDIDATE_ARM="${CANDIDATE_ARM:-}"
 TRANSFER_COMPLETE="${TRANSFER_COMPLETE:-}"
 EXPECTED_TRANSFER_SHA256="${EXPECTED_TRANSFER_SHA256:-}"
@@ -81,7 +81,7 @@ case "$ARM_DETACH" in
   *) echo "ARM_DETACH must be 0 or 1" >&2; exit 1 ;;
 esac
 case "$SCREEN_PROFILE" in
-  distance-possession|possession-gain|exact-action-canary|control-final)
+  distance-possession|possession-gain|possession-gain-exact|exact-action-canary|genesis|control-final)
     [ -z "$CANDIDATE_ARM$TRANSFER_COMPLETE$EXPECTED_TRANSFER_SHA256" ] || {
       echo "candidate transfer inputs are only valid with a paired profile" >&2
       exit 1; }
@@ -104,24 +104,33 @@ case "$SCREEN_PROFILE" in
       exit 1
     fi
     ;;
-  *) echo "SCREEN_PROFILE must be distance-possession, possession-gain, exact-action-canary, paired-confirmation, paired-final, or control-final" >&2
+  *) echo "SCREEN_PROFILE must be distance-possession, possession-gain, possession-gain-exact, exact-action-canary, genesis, paired-confirmation, paired-final, or control-final" >&2
      exit 1 ;;
 esac
 
-if [ "$SCREEN_PROFILE" = "exact-action-canary" ]; then
+if [ "$SCREEN_PROFILE" = "exact-action-canary" ] || \
+   [ "$SCREEN_PROFILE" = "genesis" ]; then
   # D217/D218: v4 and v5 have the same tensor sizes. An inherited or explicitly
   # empty legacy variable must not silently authorize a same-size warm/pool.
   [ "${WARM+x}" != x ] || {
-    echo "exact-action-canary forbids WARM; qualification uses fresh obs-v5 initialization" >&2
+    echo "$SCREEN_PROFILE forbids WARM; qualification uses fresh obs-v5 initialization" >&2
     exit 1
   }
   [ "${POOL+x}" != x ] || {
-    echo "exact-action-canary forbids POOL; qualification uses fresh obs-v5 self-play" >&2
+    echo "$SCREEN_PROFILE forbids POOL; it trains fresh obs-v5 self-play" >&2
     exit 1
   }
   WARM=""
   POOL=""
-  BOOTSTRAP_MODE=fresh-v5-qualification
+  if [ "$SCREEN_PROFILE" = "genesis" ]; then
+    # Same fresh, pool-free shape as the canary; the difference is that an
+    # accepted genesis arm publishes ELIGIBLE lineage, which is what lets any
+    # later warm/pool profile exist at all. See the mode comment in
+    # tools/run_reward_ablation.sh for why this cannot be avoided.
+    BOOTSTRAP_MODE=fresh-v5-genesis
+  else
+    BOOTSTRAP_MODE=fresh-v5-qualification
+  fi
   NUM_FROZEN_BANKS=0
   FROZEN_BANK_PCT=0
   EXPECTED_POOL_HASH=""
@@ -173,14 +182,41 @@ case "$SCREEN_PROFILE" in
     seeds=(42 42 42 42 43 43 43 43)
     ;;
   possession-gain)
+    # LEGACY: these four arms are schema-1 manifests carrying the farmable
+    # raw-delta distance form, so a contrast between them is confounded by how
+    # much each component subsidises the distance exploit. Retained only so
+    # historical curves stay reproducible; use possession-gain-exact for new work.
     arms=(both neither possession_only gain_only \
           gain_only possession_only neither both)
+    seeds=(42 42 42 42 43 43 43 43)
+    ;;
+  possession-gain-exact)
+    # The same 2x2 on corrected semantics: exact PBRS distance in all four arms
+    # and a symmetric ball-gain family. Seed 43 reverses seed 42's arm order to
+    # reduce time/order confounding, exactly as the legacy profile does.
+    arms=(s_both s_neither s_possession_only s_gain_only \
+          s_gain_only s_possession_only s_neither s_both)
     seeds=(42 42 42 42 43 43 43 43)
     ;;
   exact-action-canary)
     # Qualification only: one reward-frozen arm bounds repaired-runtime
     # exposure before any causal screen receives a long budget.
     arms=(both)
+    seeds=(42)
+    ;;
+  genesis)
+    # One fresh arm on the CORRECTED reward, whose accepted
+    # checkpoint becomes the root of the obs-v5 lineage. One arm and one seed on
+    # purpose: this establishes ancestry, it does not compare anything, so a
+    # second arm would only invite reading a contrast that was never controlled.
+    # Deliberately `s_both`, the corrected decomposition baseline. Two rewards
+    # were rejected for this role: `both` maps to r0_full, whose distance shaping
+    # is the farmable raw-delta form, and `pbrs` (r4) fixes distance but still
+    # ships reward_ball_loss 0.0 against reward_ball_gain 0.05, violating the
+    # invariant stated in bloodbowl.h. A root cannot be corrected after the fact --
+    # every descendant that warm-starts from it inherits its habits -- so it gets
+    # the reward with no known defect, not merely the newest one.
+    arms=(s_both)
     seeds=(42)
     ;;
   paired-confirmation)
@@ -213,6 +249,17 @@ manifest_for() {
     r2) printf '%s\n' "$ROOT/puffer/config/rewards/r2_no_possession.json" ;;
     r3) printf '%s\n' "$ROOT/puffer/config/rewards/r3_minimal_block.json" ;;
     both) printf '%s\n' "$ROOT/puffer/config/rewards/r0_full.json" ;;
+    # Genesis roots the lineage, so it trains on the CORRECTED distance form
+    # rather than the legacy ratchet. r4 differs from r0_full in exactly one
+    # declared factor, reward_dist_pbrs_gamma.
+    pbrs) printf '%s\n' "$ROOT/puffer/config/rewards/r4_pbrs_distance.json" ;;
+    # The corrected decomposition 2x2. All four carry the exact PBRS distance
+    # form, so the possession/gain contrast is not confounded by the farmable
+    # raw-delta shaping, and the ball-gain family is a symmetric gain/loss pair.
+    s_both) printf '%s\n' "$ROOT/puffer/config/rewards/s0_both.json" ;;
+    s_possession_only) printf '%s\n' "$ROOT/puffer/config/rewards/s1_possession_only.json" ;;
+    s_gain_only) printf '%s\n' "$ROOT/puffer/config/rewards/s2_gain_only.json" ;;
+    s_neither) printf '%s\n' "$ROOT/puffer/config/rewards/s3_neither.json" ;;
     possession_only) printf '%s\n' "$ROOT/puffer/config/rewards/p1_possession_only.json" ;;
     gain_only) printf '%s\n' "$ROOT/puffer/config/rewards/p2_gain_only.json" ;;
     neither) printf '%s\n' "$ROOT/puffer/config/rewards/r2_no_possession.json" ;;
@@ -388,9 +435,20 @@ warm_identity = None
 pool_identity = None
 warm_lineage_sha = ""
 pool_lineage_bundle_sha = ""
-if qualification_only:
-    if warm is not None or pool is not None:
-        raise SystemExit("fresh qualification cannot carry a warm start or pool")
+# Branch on whether this screen is FRESH, not on whether it is
+# qualification-only. Those were the same condition until genesis existed: a
+# genesis screen is fresh (no warm start, no pool -- it is the root of the
+# lineage) yet deliberately NOT qualification-only, because its accepted
+# checkpoint is eligible ancestry. Keying the warm/pool binding off
+# qualification_only sent genesis down the warm-start path and called .stat() on
+# None. This whole fresh branch had never executed before: the canary profile was
+# hard-rejected earlier in this script, so no fresh screen could reach here.
+fresh = warm is None and pool is None
+if warm is None or pool is None:
+    if not fresh:
+        raise SystemExit(
+            "a fresh screen must carry neither a warm start nor a pool; got "
+            f"warm={warm} pool={pool}")
 else:
     from checkpoint_lineage import lineage_digest, sidecar_path, validate_lineage
     if warm.stat().st_size != expect_size:
@@ -452,7 +510,10 @@ contract = {
         "observation_abi": "obs-v5",
         "observation_version": 5,
         "action_abi": "exact-joint-v1",
-        "initialization": "fresh" if qualification_only else "lineage-v5",
+        # Genesis is fresh yet not qualification-only, so this must key on
+        # freshness. checkpoint_lineage cross-checks initialization against the
+        # producer mode, so getting this wrong fails the run at publication.
+        "initialization": "fresh" if fresh else "lineage-v5",
         "warm_lineage_sha256": warm_lineage_sha,
         "pool_lineage_bundle_sha256": pool_lineage_bundle_sha,
     },
