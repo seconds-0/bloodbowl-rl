@@ -105,10 +105,24 @@ def _cuda_runtime_candidates() -> list[str]:
     than the trainer uses defeats its own purpose.
     """
     candidates: list[str] = []
-    site_root = Path(sys.executable).resolve().parent.parent
-    for lib in sorted(site_root.glob(
-            f"lib/python3.*/site-packages/nvidia/cuda_runtime/lib/{CUDA_RUNTIME_SONAME}")):
-        candidates.append(str(lib))
+    # sys.prefix, not Path(sys.executable).resolve(): the venv's bin/python is a
+    # symlink into uv's interpreter store, so resolving it walks straight out of
+    # the venv and the bundled runtime is never found.
+    roots = [Path(sys.prefix)]
+    try:
+        import site
+        roots.extend(Path(p) for p in site.getsitepackages())
+    except Exception:  # pragma: no cover - site is always present in practice
+        pass
+    for root in roots:
+        for pattern in (
+            f"lib/python3.*/site-packages/nvidia/cuda_runtime/lib/{CUDA_RUNTIME_SONAME}",
+            f"nvidia/cuda_runtime/lib/{CUDA_RUNTIME_SONAME}",
+        ):
+            for lib in sorted(root.glob(pattern)):
+                path = str(lib)
+                if path not in candidates:
+                    candidates.append(path)
     candidates.append(CUDA_RUNTIME_SONAME)
     return candidates
 
