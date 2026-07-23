@@ -45,11 +45,14 @@ PATCHES=(
   torch_pufferl_bcreg
   sweep_match_mode_exclusion
   selfplay_league
-  pufferl_scripted_training_guard
-  pufferl_warm_start
   puffer_exact_joint_actions
   puffer_recurrent_eval_state
   puffer_frozen_prio_mask
+  # These two are cut against the post-recurrent tree: the reset-state guard
+  # from puffer_recurrent_eval_state occupies the same call sites, and the two
+  # guards are meant to coexist rather than replace one another.
+  pufferl_scripted_training_guard
+  pufferl_warm_start
   puffer_recurrent_cuda_qualification
 )
 

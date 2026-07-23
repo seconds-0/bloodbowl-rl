@@ -1,10 +1,9 @@
 --- a/pufferlib/pufferl.py
 +++ b/pufferlib/pufferl.py
-@@ -203,6 +203,26 @@
-         f'minibatch_size {minibatch_size} must be divisible by horizon {horizon}'
+@@ -204,6 +204,26 @@
      assert minibatch_size <= horizon * total_agents, \
          f'minibatch_size {minibatch_size} > total_agents {total_agents} * horizon {horizon}'
-+
+ 
 +def guard_scripted_training(args):
 +    env = args.get('env', {})
 +    train = args.get('train', {})
@@ -24,22 +23,31 @@
 +            'c_step and the native PPO path does not implement scripted row '
 +            'exclusion. Use --slowly for the torch row-filter, or keep '
 +            'learning_rate <= 1e-9 for frozen eval.')
- 
- def _resolve_backend(args):
-     compiled_env = getattr(_C, 'env_name', None)
-@@ -214,6 +234,7 @@
-     return _C
++
+ def require_training_state_reset(args):
+     if not args['reset_state']:
+         raise ValueError('training requires reset_state=True')
+@@ -219,6 +239,7 @@
  
  def _train_worker(args):
+     require_training_state_reset(args)
 +    guard_scripted_training(args)
      backend = _resolve_backend(args)
      pufferl = backend.create_pufferl(args)
      args.pop('nccl_id', None)
-@@ -225,6 +246,7 @@
- 
+@@ -231,6 +252,7 @@
  def _train(env_name, args, sweep_obj=None, result_queue=None, verbose=False):
      '''Single-GPU training worker. Process target for both DDP ranks and sweep trials.'''
+     require_training_state_reset(args)
 +    guard_scripted_training(args)
      backend = _resolve_backend(args)
      rank = args['rank']
      run_id = str(int(1000*time.time()))
+@@ -453,6 +475,7 @@
+ def train(env_name, args=None, gpus=None, **kwargs):
+     args = args or load_config(env_name)
+     require_training_state_reset(args)
++    guard_scripted_training(args)
+     validate_config(args)
+ 
+     subprocess = gpus is not None
