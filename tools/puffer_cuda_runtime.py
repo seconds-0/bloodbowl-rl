@@ -25,6 +25,9 @@ CUDA_RUNTIME_LOG_PREFIX = "PUFFER_CUDA_RUNTIME "
 RUN_MANIFEST_LOG_PREFIX = "BB_RUN_MANIFEST "
 MANIFEST_ENV = "PUFFER_CUDA_RUNTIME_MANIFEST"
 EVIDENCE_ENV = "PUFFER_CUDA_RUNTIME_EVIDENCE"
+EXPECTED_LIBRARY_PATH_ENV = "PUFFER_EXPECTED_CUDA_RUNTIME_LIBRARY_PATH"
+EXPECTED_LIBRARY_SHA256_ENV = "PUFFER_EXPECTED_CUDA_RUNTIME_LIBRARY_SHA256"
+EXPECTED_DEVICE_COUNT_ENV = "PUFFER_EXPECTED_CUDA_RUNTIME_DEVICE_COUNT"
 
 
 class CudaRuntimePreflightError(RuntimeError):
@@ -304,6 +307,39 @@ def _publish_runtime_evidence(
     if not isinstance(manifest, dict) or manifest.get("schema_version") != 1:
         raise CudaRuntimePreflightError("pending trainer manifest is malformed")
     wrapper_sha256 = _sha256(Path(__file__).resolve())
+    expected_library_path = os.environ.get(EXPECTED_LIBRARY_PATH_ENV)
+    expected_library_sha256 = os.environ.get(EXPECTED_LIBRARY_SHA256_ENV)
+    expected_device_count = os.environ.get(EXPECTED_DEVICE_COUNT_ENV)
+    if not all((
+        expected_library_path,
+        expected_library_sha256,
+        expected_device_count,
+    )):
+        raise CudaRuntimePreflightError(
+            "qualified CUDA runtime path, digest, and device count are mandatory"
+        )
+    expected_qualified = {
+        "expected_cuda_runtime_library_path": expected_library_path,
+        "expected_cuda_runtime_library_sha256": expected_library_sha256,
+        "expected_cuda_runtime_device_count": expected_device_count,
+    }
+    observed_qualified = {
+        "expected_cuda_runtime_library_path": evidence["library"]["resolved_path"],
+        "expected_cuda_runtime_library_sha256": evidence["library"]["sha256"],
+        "expected_cuda_runtime_device_count": str(
+            evidence["after_extension_import"]["device_count"]
+        ),
+    }
+    if observed_qualified != expected_qualified:
+        raise CudaRuntimePreflightError(
+            "trainer process differs from the qualified CUDA runtime: "
+            f"{observed_qualified!r} != {expected_qualified!r}"
+        )
+    for key, expected in expected_qualified.items():
+        if manifest.get(key) != expected:
+            raise CudaRuntimePreflightError(
+                f"trainer manifest differs from qualified CUDA runtime field {key}"
+            )
     expected_launcher = {
         "cuda_runtime_wrapper_sha256": wrapper_sha256,
         "cuda_runtime_evidence_status": "pending",

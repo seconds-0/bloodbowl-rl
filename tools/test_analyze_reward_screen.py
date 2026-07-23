@@ -31,7 +31,12 @@ def digest(value):
 class RewardScreenAnalysisTests(unittest.TestCase):
     def build_exact_action_canary(self, root):
         root = Path(root)
-        prefix = "exact-action-canary-test"
+        prefix = analyze_reward_screen.EXACT_ACTION_CANARY_PREFIX
+        plan_authorization_sha = digest("plan-authorization")
+        qualification_sha = digest("qualification")
+        cuda_runtime_sha = digest("cudart")
+        plan_authorization = "/remote/evidence/CANARY_PLAN_AUTHORIZATION.json"
+        qualification = "/remote/evidence/QUALIFICATION.json"
         manifest = {
             "schema_version": 1,
             "contract": {
@@ -68,6 +73,17 @@ class RewardScreenAnalysisTests(unittest.TestCase):
                 },
                 "warm": None,
                 "pool": None,
+                "canary_authority": {
+                    "plan_authorization": plan_authorization,
+                    "plan_authorization_sha256": plan_authorization_sha,
+                    "qualification": qualification,
+                    "qualification_sha256": qualification_sha,
+                    "cuda_runtime_library_path": (
+                        "/usr/lib/x86_64-linux-gnu/libcudart.so.12.4.127"
+                    ),
+                    "cuda_runtime_library_sha256": cuda_runtime_sha,
+                    "cuda_runtime_device_count": 1,
+                },
                 "rewards": {
                     "both": {
                         "reward_sha256": analyze_reward_screen
@@ -92,6 +108,8 @@ class RewardScreenAnalysisTests(unittest.TestCase):
                             "live_integrity_guard_sha256",
                             "checkpoint_lineage_sha256",
                             "status_wrapper_sha256",
+                            "cuda_runtime_wrapper_sha256",
+                            "canary_authority_tool_sha256",
                             "launcher_sha256",
                             "source_sha256",
                             "compiled_module_sha256",
@@ -116,6 +134,26 @@ class RewardScreenAnalysisTests(unittest.TestCase):
         manifest_path = root / "SCREEN_MANIFEST.json"
         write_json(manifest_path, manifest)
         manifest_sha = sha256(manifest_path)
+        launch_authorization_sha = digest("launch-authorization")
+        launch_record_path = root / "CANARY_LAUNCH_RECORD.json"
+        write_json(launch_record_path, {
+            "schema_version": 1,
+            "kind": "exact_action_canary_launch_record",
+            "qualification_only": True,
+            "eligible": False,
+            "reward_evidence_eligible": False,
+            "launch_authorization": (
+                "/remote/evidence/CANARY_LAUNCH_AUTHORIZATION.json"
+            ),
+            "launch_authorization_sha256": launch_authorization_sha,
+            "plan_authorization": plan_authorization,
+            "plan_authorization_sha256": plan_authorization_sha,
+            "qualification": qualification,
+            "qualification_sha256": qualification_sha,
+            "screen_manifest": str(manifest_path.resolve()),
+            "screen_manifest_sha256": manifest_sha,
+        })
+        launch_record_sha = sha256(launch_record_path)
         checkpoint_lineage_sha = digest("checkpoint-lineage")
         zero_metrics = {
             key: 0.0 for key in HARD_INTEGRITY_KEYS
@@ -141,6 +179,11 @@ class RewardScreenAnalysisTests(unittest.TestCase):
             "status_sha256": digest("status-both-42"),
             "process_sha256": digest("process-both-42"),
             "run_manifest_sha256": digest("manifest-both-42"),
+            "canary_launch_record_sha256": launch_record_sha,
+            "canary_launch_authorization_sha256": launch_authorization_sha,
+            "canary_qualification_sha256": qualification_sha,
+            "expected_cuda_runtime_library_sha256": cuda_runtime_sha,
+            "expected_cuda_runtime_device_count": 1,
             "train_metrics": {"n": 20_000, **zero_metrics},
             "eval_metrics": {"n": 10_000, "tds": 1.0, **zero_metrics},
         }
@@ -165,7 +208,9 @@ class RewardScreenAnalysisTests(unittest.TestCase):
         root = Path(root)
         manifest_path = root / "SCREEN_MANIFEST.json"
         manifest_sha = sha256(manifest_path)
-        result_path = root / "exact-action-canary-test-both-s42.result.json"
+        result_path = root / (
+            f"{analyze_reward_screen.EXACT_ACTION_CANARY_PREFIX}-both-s42.result.json"
+        )
         result = json.loads(result_path.read_text(encoding="utf-8"))
         result["screen_manifest_sha256"] = manifest_sha
         write_json(result_path, result)
@@ -295,25 +340,7 @@ class RewardScreenAnalysisTests(unittest.TestCase):
     def test_exact_action_canary_is_independently_qualified(self):
         self.assertEqual(
             analyze_reward_screen.EXACT_ACTION_CANARY_MANIFEST_HARD_INTEGRITY_KEYS,
-            (
-                "illegal_frac",
-                "reward_clip_frac",
-                "reward_clip_frac_nonzero",
-                "reward_clip_excess",
-                "reward_nonfinite_frac",
-                "reward_clip_episodes",
-                "reward_nonfinite_episodes",
-                "reward_component_mismatch_samples_per_episode",
-                "reward_component_nonfinite_samples_per_episode",
-                "error_episodes",
-                "demo_fallbacks",
-            ),
-        )
-        self.assertTrue(
-            set(
-                analyze_reward_screen
-                .EXACT_ACTION_CANARY_MANIFEST_HARD_INTEGRITY_KEYS
-            ) < set(HARD_INTEGRITY_KEYS)
+            HARD_INTEGRITY_KEYS,
         )
         with tempfile.TemporaryDirectory() as tmp:
             self.build_exact_action_canary(tmp)
@@ -404,7 +431,10 @@ class RewardScreenAnalysisTests(unittest.TestCase):
                 root = Path(tmp)
                 manifest_path = root / "SCREEN_MANIFEST.json"
                 result_path = (
-                    root / "exact-action-canary-test-both-s42.result.json")
+                    root / (
+                        f"{analyze_reward_screen.EXACT_ACTION_CANARY_PREFIX}"
+                        "-both-s42.result.json"
+                    ))
                 manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
                 result = json.loads(result_path.read_text(encoding="utf-8"))
                 mutate(manifest["contract"], result)
@@ -446,7 +476,10 @@ class RewardScreenAnalysisTests(unittest.TestCase):
             with self.subTest(label=label), tempfile.TemporaryDirectory() as tmp:
                 self.build_exact_action_canary(tmp)
                 result_path = (
-                    Path(tmp) / "exact-action-canary-test-both-s42.result.json")
+                    Path(tmp) / (
+                        f"{analyze_reward_screen.EXACT_ACTION_CANARY_PREFIX}"
+                        "-both-s42.result.json"
+                    ))
                 result = json.loads(result_path.read_text(encoding="utf-8"))
                 mutate(result)
                 write_json(result_path, result)
@@ -459,13 +492,63 @@ class RewardScreenAnalysisTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             self.build_exact_action_canary(tmp)
             result_path = (
-                Path(tmp) / "exact-action-canary-test-both-s42.result.json")
+                Path(tmp) / (
+                    f"{analyze_reward_screen.EXACT_ACTION_CANARY_PREFIX}"
+                    "-both-s42.result.json"
+                ))
             result = json.loads(result_path.read_text(encoding="utf-8"))
             result["acceptance_failures"] = None
             write_json(result_path, result)
             with self.assertRaisesRegex(
                     analyze_reward_screen.AnalysisError,
                     "exactly empty acceptance_failures"):
+                analyze_reward_screen.analyze_screen(tmp, ("tds",))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            self.build_exact_action_canary(tmp)
+            launch_record = Path(tmp) / "CANARY_LAUNCH_RECORD.json"
+            launch_record.unlink()
+            with self.assertRaisesRegex(
+                    analyze_reward_screen.AnalysisError,
+                    "launch record"):
+                analyze_reward_screen.analyze_screen(tmp, ("tds",))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            self.build_exact_action_canary(tmp)
+            launch_record = Path(tmp) / "CANARY_LAUNCH_RECORD.json"
+            payload = json.loads(launch_record.read_text(encoding="utf-8"))
+            payload["reward_evidence_eligible"] = True
+            write_json(launch_record, payload)
+            with self.assertRaisesRegex(
+                analyze_reward_screen.AnalysisError,
+                    "reward evidence"):
+                analyze_reward_screen.analyze_screen(tmp, ("tds",))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            self.build_exact_action_canary(tmp)
+            root = Path(tmp)
+            launch_record = root / "CANARY_LAUNCH_RECORD.json"
+            launch_payload = json.loads(
+                launch_record.read_text(encoding="utf-8")
+            )
+            launch_payload["screen_manifest"] = (
+                "/different/output/SCREEN_MANIFEST.json"
+            )
+            write_json(launch_record, launch_payload)
+            result_path = root / (
+                f"{analyze_reward_screen.EXACT_ACTION_CANARY_PREFIX}"
+                "-both-s42.result.json"
+            )
+            result = json.loads(result_path.read_text(encoding="utf-8"))
+            result["canary_launch_record_sha256"] = sha256(launch_record)
+            write_json(result_path, result)
+            completion_path = root / "SCREEN_COMPLETE.json"
+            completion = json.loads(completion_path.read_text(encoding="utf-8"))
+            completion["results"][0]["sha256"] = sha256(result_path)
+            write_json(completion_path, completion)
+            with self.assertRaisesRegex(
+                    analyze_reward_screen.AnalysisError,
+                    "screen manifest path"):
                 analyze_reward_screen.analyze_screen(tmp, ("tds",))
 
         with tempfile.TemporaryDirectory() as tmp:

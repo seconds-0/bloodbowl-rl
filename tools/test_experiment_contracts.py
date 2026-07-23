@@ -415,13 +415,29 @@ class ExperimentContractTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertNotIn("WARM is required", result.stderr)
             self.assertNotIn("POOL is required", result.stderr)
-            self.assertIn("exact-action-canary is frozen", result.stderr)
-            self.assertIn("permanently rejected", result.stderr)
-            self.assertIn("no replacement is authorized", result.stderr)
-            self.assertNotIn("invoke that exact isolated checkout", result.stderr)
+            self.assertIn("CANARY_LAUNCH_AUTHORIZATION is required", result.stderr)
+            self.assertIn("before output creation", result.stderr)
+            self.assertNotIn("a52fc6e2", result.stderr)
+            self.assertFalse(out.exists())
+
+            plan = dict(base)
+            plan.update({"PLAN_ONLY": "1", "ARM_DETACH": "0"})
+            result = run_script("tools/run_reward_screen.sh", env=plan)
+            self.assertNotEqual(result.returncode, 0)
             self.assertIn(
-                "a52fc6e2f4ece5a7ff16bb4791e3aca4dd72f2e3",
-                result.stderr,
+                "CANARY_PLAN_AUTHORIZATION is required", result.stderr
+            )
+            self.assertFalse(out.exists())
+
+            wrong_mode = dict(plan)
+            wrong_mode["CANARY_LAUNCH_AUTHORIZATION"] = "/tmp/not-authorized"
+            wrong_mode["CANARY_LAUNCH_AUTHORIZATION_SHA256_FILE"] = (
+                "/tmp/not-authorized.sha256"
+            )
+            result = run_script("tools/run_reward_screen.sh", env=wrong_mode)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(
+                "plan-only forbids live launch authorization", result.stderr
             )
             self.assertFalse(out.exists())
 
@@ -436,6 +452,20 @@ class ExperimentContractTests(unittest.TestCase):
         ):
             self.assertIn(contract, screen)
         self.assertIn('BOOTSTRAP_MODE="$BOOTSTRAP_MODE"', screen)
+        self.assertIn("exact_action_canary_authority.py", screen)
+        self.assertIn('contract["canary_authority"] = canary_authority', screen)
+        self.assertLess(
+            screen.index("exact_action_canary_authority.py"),
+            screen.index('mkdir -p "$OUT_DIR"'),
+        )
+        self.assertIn('CANARY_AUTHORIZED_OUTPUT', screen)
+        self.assertIn(
+            '[ "$OUT_DIR" = "$CANARY_AUTHORIZED_OUTPUT" ]', screen
+        )
+        self.assertLess(
+            screen.index('[ "$OUT_DIR" = "$CANARY_AUTHORIZED_OUTPUT" ]'),
+            screen.index('mkdir -p "$OUT_DIR"'),
+        )
         self.assertIn('case "$BOOTSTRAP_MODE" in', arm)
         self.assertIn('--selfplay.enabled 0', arm)
         self.assertIn('--vec.num-frozen-banks 0', arm)
@@ -463,6 +493,23 @@ class ExperimentContractTests(unittest.TestCase):
         self.assertIn('cuda_runtime_wrapper_sha256 "$CUDA_RUNTIME_WRAPPER_HASH"', source)
         self.assertIn('cuda_launcher_probe_library_sha256 "$CUDA_RUNTIME_LIBRARY_SHA256"', source)
         self.assertIn('cuda_launcher_probe_visible_devices "$CUDA_VISIBLE_DEVICES"', source)
+        self.assertIn(
+            'expected_cuda_runtime_library_sha256 '
+            '"$EXPECTED_CUDA_RUNTIME_LIBRARY_SHA256"',
+            source,
+        )
+        self.assertIn(
+            'expected_canary_launch_authorization_sha256 '
+            '"$CANARY_LAUNCH_AUTHORIZATION_SHA256"',
+            source,
+        )
+        self.assertIn(
+            'canary_qualification_sha256 "$CANARY_QUALIFICATION_SHA256"',
+            source,
+        )
+        self.assertIn(
+            'PUFFER_EXPECTED_CUDA_RUNTIME_LIBRARY_SHA256=', source
+        )
         self.assertIn('[ "${CUDA_VISIBLE_DEVICES:-}" = "0" ]', source)
         self.assertIn('PUFFER_CUDA_RUNTIME_MANIFEST="$RUN_MANIFEST"', source)
         self.assertIn('PUFFER_CUDA_RUNTIME_EVIDENCE="$CUDA_RUNTIME_EVIDENCE"', source)

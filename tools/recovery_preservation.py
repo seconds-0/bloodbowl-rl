@@ -590,6 +590,11 @@ def _validate_manifest(manifest: Mapping[str, Any]) -> list[dict[str, Any]]:
     return normalized
 
 
+def validate_manifest(manifest: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Validate and normalize one closed recovery-preservation inventory."""
+    return _validate_manifest(manifest)
+
+
 def verify_copy(manifest: Mapping[str, Any], copy_root: Path) -> dict[str, Any]:
     records = _validate_manifest(manifest)
     copy_root = Path(copy_root).resolve()

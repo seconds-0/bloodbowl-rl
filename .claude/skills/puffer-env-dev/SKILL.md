@@ -462,8 +462,14 @@ native binding must check the `cudaGetDeviceCount` return code and raise a
 Python-visible error containing CUDA name/string rather than assert only on the
 count. Before any new timed capture, merge/review this contract, use fresh clean
 control/candidate roots, and pass one construction-only target integration.
-The frozen screen launcher remains unchanged and unauthorized until a separate
-post-qualification change binds the wrapper into a new canary manifest.
+The D225 `ee7ace4` screen launcher remains historical and unauthorized. D226's
+replacement launcher is launch-inert until the exact final merged authorization
+commit receives a fresh schema-3 qualification: the earlier accepted D225
+qualification is a prerequisite, never authority for changed launcher bytes.
+After that fresh qualification accepts, freeze a plan authorization before the
+two-file plan-only output and a separate launch authorization afterward. The
+launch authority binds the released zero-byte lock, immutable screen manifest,
+canonical disabled one-shot unit, and initially empty stopped-validation root.
 Treat the construction artifact as a required executable input: both
 `capture-throughput` and full `run` must receive the same
 `--construction-gate`, revalidate its current module/backend/environment/CUDART
@@ -478,16 +484,15 @@ its own complete pre/post evidence into the pending run manifest before
 optimization; the earlier launcher probe is only a separately labeled
 expectation and must match. Preserve the hash-bound evidence with checkpoints.
 The archived `a52fc6e2` canary manifest keeps its original 11-key live fail-fast
-registry. Control qualification and independent stopped validation additionally
-gate signed clamp delta, clipped samples, terminal/non-terminal clipped samples,
-and non-finite samples per episode. These five should be redundant with the
-primary ratios, but any nonzero or disagreement invalidates evidence; do not
-dirty or relabel that rejected checkout to widen its manifest. The merged control
-`run_reward_screen.sh` therefore rejects the `exact-action-canary` profile
-before output creation. Do not invoke that profile from any current checkout;
-analyze the rejected stopped artifact only from the clean merged control
-checkout. A later reviewed change may authorize one replacement only after
-schema-3 qualification accepts.
+registry. Never dirty or relabel that rejected checkout to widen its manifest.
+The replacement v4 manifest instead freezes the complete 16-key control registry
+live and at stopped validation: the former 11 plus signed clamp delta, clipped
+samples, terminal/non-terminal clipped samples, and non-finite samples per
+episode. Any missing, non-finite, nonzero, or internally inconsistent value
+invalidates the run. Only the exact D226 plan and launch authorization artifacts
+may admit `exact-action-canary-50m-s42-v4`; absent, relative, stale, mismatched,
+or reused authority must reject before output mutation or optimization. Never
+invoke v1/v2/v3 or analyze them as replacement evidence.
 The sole `a52fc6e2` canary start is rejected and permanently non-retryable: its
 last preflight found `training/selfplay_league.patch` unapplied before GPU use.
 Qualification schema 3 requires that the replacement candidate and control
@@ -498,8 +503,12 @@ reverse-verifies that patch, `pufferlib/selfplay.py` participates in backend
 identity, and qualification provenance binds the patch file. Recapture the
 fixed predecessor from `afc8008933548438ca93c41341f5f08fdd294386` with the
 schema-3 runner, use fresh runtime/qualification/canary identities, and never
-modify or reuse the recovery Puffer tree. Keep the replacement-canary launcher
-frozen until qualification accepts, then authorize its exact commit separately.
+modify or reuse the recovery Puffer tree. The qualified CUDART path, SHA-256,
+device count, and `CUDA_VISIBLE_DEVICES=0` must flow through the plan, screen,
+launch record, per-run manifest, and trainer environment. The same-process
+trainer pre/post evidence must match that declaration before optimization; an
+external launcher probe alone is not authority. Keep qualification and canary
+checkpoints permanently ancestry-, reward-, promotion-, and BBTV-ineligible.
 The explicit recurrent-state clear is
 only the paired post-terminal control and must never be used to alter ordinary
 training/evaluation behavior. Qualification outputs and checkpoints are never

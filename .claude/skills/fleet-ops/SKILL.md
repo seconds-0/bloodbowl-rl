@@ -132,7 +132,14 @@ substitute for this evidence. A failed pre/post probe terminates that fresh
 process and is never repaired in place. Before any timed recapture, use fresh
 clean control/candidate roots and run only a construction-only integration;
 stop and restore BBTV around that bounded GPU cell under the usual host-state
-contract. The frozen screen launcher remains unauthorized.
+contract. Historical merged launcher `ee7ace4` remains unauthorized. D226's v4
+launcher is usable only after the exact final merged commit is rebuilt and
+independently requalified, followed by separate plan and launch authorities
+under `docs/replacement-exact-action-canary-2070-execution-checklist.md`.
+Before the one allowed start, keep the BBTV tunnel active, stop only
+`bbstream.service`, install a restoration trap, and require the authorized unit
+disabled/inactive with `NRestarts=0`. A failed authority, unit, start, or live
+integrity boundary is terminal; never restart or reuse its output.
 The construction gate must be passed explicitly to `capture-throughput` and
 full qualification; both revalidate it before output or GPU worker dispatch.
 The predecessor timing worker must also receive the complete frozen

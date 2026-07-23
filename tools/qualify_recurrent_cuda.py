@@ -169,9 +169,11 @@ def qualification_source_paths(source_root: Path) -> tuple[Path, ...]:
         source_root / "training/puffer_frozen_prio_mask.patch",
         source_root / "training/puffer_recurrent_cuda_qualification.patch",
         source_root / "training/selfplay_league.patch",
+        source_root / "tools/exact_action_canary_authority.py",
         source_root / "tools/install_puffer_env.sh",
         source_root / "tools/puffer_cuda_runtime.py",
         source_root / "tools/qualify_recurrent_cuda.py",
+        source_root / "tools/recovery_preservation.py",
     )
 
 

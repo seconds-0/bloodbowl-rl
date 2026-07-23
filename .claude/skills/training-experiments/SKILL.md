@@ -210,8 +210,13 @@ checkpoints, and remember that stopped instances can be reclaimed.
   runtime hash/count. A failure exits the fresh process without repair. Before
   recapturing throughput, merge/review the contract, create fresh clean
   control/candidate roots, and pass one construction-only target check. The
-  screen launcher remains frozen and cannot launch a replacement until a
-  separate post-qualification authorization binds the wrapper and evidence.
+  historical `ee7ace4` screen launcher remains frozen. D226's replacement uses
+  separate immutable plan and launch authorities, but changing launcher bytes
+  requires the exact final merged authorization commit to receive its own fresh
+  target-GPU qualification and independent acceptance before plan-only output.
+  The plan authority binds the qualified wrapper/CUDART evidence before output;
+  the launch authority additionally binds the exact two-file plan, canonical
+  disabled one-shot unit, and empty stopped-validation output.
   Both predecessor timing and full qualification require the same
   `--construction-gate` and revalidate/bind its current path, hash, candidate
   module/backend/environment, runner, and CUDART identity before output or
@@ -229,10 +234,12 @@ checkpoints, and remember that stopped instances can be reclaimed.
   with module/backend/runtime/environment hashes declared both when captured
   and when consumed, not a loose metrics dictionary or an unplanned old binary. Missing baseline,
   coverage, bank/buffer, tensor, or hard-integrity evidence fails closed.
-  The clean merged control launcher must reject `exact-action-canary` before
-  creating output. Never launch through the rejected `a52fc6e2` checkout;
-  independently analyze its stopped artifact from the merged control. Only a
-  separate reviewed post-qualification change may authorize a replacement.
+  Never launch through the rejected `a52fc6e2` checkout or reuse any v1/v2/v3
+  artifact. The v4 launcher must reject before output unless the exact phase-
+  appropriate authority validates current source, qualification, predecessor,
+  recovery, CUDART, output, unit, and eligibility exclusions. Follow
+  `docs/replacement-exact-action-canary-2070-execution-checklist.md`; a failed
+  plan or live identity is terminal and never retried.
 
 ---
 
@@ -439,14 +446,12 @@ See §4. Check the invariants before every reward-config launch. No exceptions.
   a liveness failure. Terminate the trainer before publishing failure status so
   status I/O cannot delay containment.
 - The archived candidate `a52fc6e2` froze an 11-key live registry. Preserve it
-  only as rejected evidence; never launch, relabel, or reuse it. Require the
-  merged control qualification and
-  independent stopped canary validation to enforce five additional emitted
-  redundancy counters at exact zero: signed clamp delta, clipped samples,
-  terminal and non-terminal clipped samples, and non-finite samples per episode.
-  Primary zero ratios should imply them; a disagreement is still invalid
-  evidence. Freeze both registries rather than changing or relabeling the
-  candidate.
+  only as rejected evidence; never launch, relabel, or reuse it. The replacement
+  v4 manifest, live guards, qualification, and independent stopped validation
+  freeze all 16 emitted counters at exact zero, including signed clamp delta,
+  clipped samples, terminal and non-terminal clipped samples, and non-finite
+  samples per episode. Primary zero ratios should imply the redundant values;
+  a disagreement is still invalid evidence.
 - The sole `a52fc6e2` canary start is rejected, stopped, and non-retryable: its
   final preflight caught the existing `training/selfplay_league.patch` missing
   from vendored `selfplay.py` before GPU work. Qualification schema 3 makes the
@@ -457,9 +462,10 @@ See §4. Check the invariants before every reward-config launch. No exceptions.
   Recapture the predecessor
   at `afc8008933548438ca93c41341f5f08fdd294386` with the schema-3 runner, create
   entirely fresh runtime/qualification/unit/output/authorization identities,
-  and never modify or reuse the recovery Puffer tree. Keep the replacement
-  canary frozen until qualification accepts, then authorize its exact commit in
-  a separate reviewed change.
+  and never modify or reuse the recovery Puffer tree. D226 is still inert until
+  the final merged commit itself qualifies, the two authorities validate, and
+  the one-start v4 checklist accepts every preflight gate. The resulting canary
+  remains ancestry-, reward-, promotion-, and BBTV-ineligible.
 
 ### D174/D176 — Current BC and opponent verdicts
 

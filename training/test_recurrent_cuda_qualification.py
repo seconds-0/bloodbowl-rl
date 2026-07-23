@@ -29,6 +29,9 @@ SCREEN_LAUNCHER = ROOT / "tools" / "run_reward_screen.sh"
 PLAN = ROOT / "docs" / "plans" / "recurrent-cuda-qualification.md"
 QUALIFICATION_CHECKLIST = ROOT / "docs" / "qualification-2070-execution-checklist.md"
 CANARY_CHECKLIST = ROOT / "docs" / "exact-action-canary-2070-execution-checklist.md"
+REPLACEMENT_CANARY_CHECKLIST = (
+    ROOT / "docs" / "replacement-exact-action-canary-2070-execution-checklist.md"
+)
 AGENTS = ROOT / "AGENTS.md"
 CLAUDE = ROOT / "CLAUDE.md"
 PUFFER_SKILL = ROOT / ".claude" / "skills" / "puffer-env-dev" / "SKILL.md"
@@ -685,6 +688,13 @@ class QualificationValidatorTests(unittest.TestCase):
                 ],
                 "cuda_launcher_probe_device_count": "1",
                 "cuda_launcher_probe_visible_devices": "0",
+                "expected_cuda_runtime_library_path": evidence["library"][
+                    "resolved_path"
+                ],
+                "expected_cuda_runtime_library_sha256": evidence["library"][
+                    "sha256"
+                ],
+                "expected_cuda_runtime_device_count": "1",
             }
             manifest_path.write_text(
                 json.dumps(manifest, sort_keys=True) + "\n", encoding="utf-8"
@@ -696,6 +706,13 @@ class QualificationValidatorTests(unittest.TestCase):
                 {
                     "PUFFER_CUDA_RUNTIME_MANIFEST": str(manifest_path),
                     "PUFFER_CUDA_RUNTIME_EVIDENCE": str(evidence_path),
+                    "PUFFER_EXPECTED_CUDA_RUNTIME_LIBRARY_PATH": evidence[
+                        "library"
+                    ]["resolved_path"],
+                    "PUFFER_EXPECTED_CUDA_RUNTIME_LIBRARY_SHA256": evidence[
+                        "library"
+                    ]["sha256"],
+                    "PUFFER_EXPECTED_CUDA_RUNTIME_DEVICE_COUNT": "1",
                 },
                 clear=False,
             ), mock.patch.object(
@@ -737,6 +754,13 @@ class QualificationValidatorTests(unittest.TestCase):
                 {
                     "PUFFER_CUDA_RUNTIME_MANIFEST": str(manifest_path),
                     "PUFFER_CUDA_RUNTIME_EVIDENCE": str(evidence_path),
+                    "PUFFER_EXPECTED_CUDA_RUNTIME_LIBRARY_PATH": evidence[
+                        "library"
+                    ]["resolved_path"],
+                    "PUFFER_EXPECTED_CUDA_RUNTIME_LIBRARY_SHA256": evidence[
+                        "library"
+                    ]["sha256"],
+                    "PUFFER_EXPECTED_CUDA_RUNTIME_DEVICE_COUNT": "1",
                 },
                 clear=False,
             ), mock.patch.object(
@@ -757,12 +781,51 @@ class QualificationValidatorTests(unittest.TestCase):
                 cuda_runtime.main()
             puffer_main.assert_not_called()
 
+            puffer_main.reset_mock()
+            finalized["cuda_launcher_probe_device_count"] = "1"
+            finalized["expected_cuda_runtime_library_sha256"] = "e" * 64
+            manifest_path.write_text(
+                json.dumps(finalized, sort_keys=True) + "\n", encoding="utf-8"
+            )
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "PUFFER_CUDA_RUNTIME_MANIFEST": str(manifest_path),
+                    "PUFFER_CUDA_RUNTIME_EVIDENCE": str(evidence_path),
+                    "PUFFER_EXPECTED_CUDA_RUNTIME_LIBRARY_PATH": evidence[
+                        "library"
+                    ]["resolved_path"],
+                    "PUFFER_EXPECTED_CUDA_RUNTIME_LIBRARY_SHA256": "e" * 64,
+                    "PUFFER_EXPECTED_CUDA_RUNTIME_DEVICE_COUNT": "1",
+                },
+                clear=False,
+            ), mock.patch.object(
+                cuda_runtime,
+                "begin_cuda_runtime_preflight",
+                return_value=(object(), evidence),
+            ), mock.patch.object(
+                cuda_runtime, "_import_puffer_main", return_value=puffer_main
+            ), mock.patch.object(
+                cuda_runtime,
+                "finish_cuda_runtime_preflight",
+                return_value=evidence,
+            ), mock.patch.object(
+                cuda_runtime, "validate_cuda_runtime_evidence"
+            ), mock.patch("builtins.print"), self.assertRaisesRegex(
+                cuda_runtime.CudaRuntimePreflightError,
+                "qualified CUDA runtime",
+            ):
+                cuda_runtime.main()
+            puffer_main.assert_not_called()
+
     def test_qualification_source_identity_includes_selfplay_patch(self):
         relative = {
             path.relative_to(ROOT).as_posix()
             for path in self.q.qualification_source_paths(ROOT)
         }
         self.assertIn("training/selfplay_league.patch", relative)
+        self.assertIn("tools/exact_action_canary_authority.py", relative)
+        self.assertIn("tools/recovery_preservation.py", relative)
         self.assertEqual(
             hashlib.sha256(LEAGUE_PATCH.read_bytes()).hexdigest(),
             self.q.sha256(LEAGUE_PATCH),
@@ -2213,17 +2276,41 @@ class QualificationValidatorTests(unittest.TestCase):
 
 
 class QualificationPatchContractTests(unittest.TestCase):
+    def test_replacement_canary_checklist_freezes_two_phase_authority(self):
+        checklist = REPLACEMENT_CANARY_CHECKLIST.read_text(encoding="utf-8")
+        for fragment in (
+            "CANARY_PLAN_AUTHORIZATION.json",
+            "CANARY_LAUNCH_AUTHORIZATION.json",
+            "exact-action-canary-50m-s42-v4",
+            "bloodbowl-exact-action-canary-50m-s42-v4.service",
+            "Restart=no",
+            "KillMode=control-group",
+            "TimeoutStartSec=7200",
+            "env -u WARM -u POOL",
+            "exactly two regular files",
+            "all 16 hard-integrity",
+            "requalify the exact merged authorization commit",
+            "never restart",
+            "ancestry-ineligible",
+            "reward-evidence-ineligible",
+        ):
+            with self.subTest(fragment=fragment):
+                self.assertIn(fragment, checklist)
+        self.assertNotIn(
+            "/home/rache/bloodbowl-rl-qualification-candidate-a52fc6e",
+            checklist,
+        )
+
     def test_canary_plan_contract_accounts_for_persistent_screen_lock(self):
         launcher = SCREEN_LAUNCHER.read_text(encoding="utf-8")
-        self.assertEqual(
-            hashlib.sha256(SCREEN_LAUNCHER.read_bytes()).hexdigest(),
-            "3845f6e79e5702f09f5620fa46ca3badfab5be658761e6295cd685a426aaec67",
+        self.assertIn("tools/exact_action_canary_authority.py", launcher)
+        self.assertIn("CANARY_PLAN_AUTHORIZATION", launcher)
+        self.assertIn("CANARY_LAUNCH_AUTHORIZATION", launcher)
+        self.assertIn("--require-output-absent", launcher)
+        self.assertNotIn("a52fc6e2f4ece5a7ff16bb4791e3aca4dd72f2e3", launcher)
+        self.assertLess(
+            launcher.index("validate-plan"), launcher.index('mkdir -p "$OUT_DIR"')
         )
-        self.assertIn("exact-action-canary is frozen", launcher)
-        self.assertIn("a52fc6e2f4ece5a7ff16bb4791e3aca4dd72f2e3", launcher)
-        self.assertIn("permanently rejected", launcher)
-        self.assertIn("no replacement is authorized", launcher)
-        self.assertNotIn("invoke that exact isolated checkout", launcher)
 
         candidate = "a52fc6e2f4ece5a7ff16bb4791e3aca4dd72f2e3"
         candidate_launcher_bytes = subprocess.run(

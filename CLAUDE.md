@@ -309,9 +309,15 @@ newer evidence wins.
   No baseline,
   incomplete coverage, malformed/non-finite data, or failed gate means no 50M
   canary. All outputs are qualification-only and ancestry-ineligible. Never
-  launch from the rejected `a52fc6e2` checkout. The merged control launcher
-  rejects that profile before creating output; after qualification accepts, a
-  separate reviewed change must authorize the replacement's exact commit.
+  launch from the rejected `a52fc6e2` checkout. Historical merged commit
+  `ee7ace4` rejects that profile before creating output. D226 uses two separate
+  immutable records: a plan authorization binds a fresh accepted schema-3
+  qualification before the two-file plan can exist, and a launch authorization
+  binds that plan plus the exact disabled one-shot unit and empty stopped-
+  validation output. Rebuild and independently requalify the exact final merged
+  authorization commit; the accepted parent qualification does not cover changed
+  launcher bytes. Follow
+  `docs/replacement-exact-action-canary-2070-execution-checklist.md`.
   The frozen screen launcher intentionally creates and retains
   `$OUT_DIR/.screen.lock` before plan freezing. Plan-only closure is exactly two
   regular files: `SCREEN_MANIFEST.json` plus a zero-byte, empty-digest,
@@ -332,8 +338,10 @@ newer evidence wins.
   into backend identity, and requires full reverse applicability. Recapture predecessor
   `afc8008933548438ca93c41341f5f08fdd294386` with the schema-3 runner and use
   all-new qualification/canary authority identities. Never modify or reuse the
-  recovery Puffer tree, and do not relax the replacement-canary launcher freeze
-  until the new qualification accepts.
+  recovery Puffer tree. The v4 launcher remains fail-closed without both exact
+  authorities, accepts only the fixed 50M seed-42 fresh contract, and binds the
+  shared CUDART path/hash/count through the trainer's same-process evidence.
+  Any failed identity is terminal and never retried.
   The first schema-3 predecessor capture is also rejected and non-retryable: it
   compared the immutable predecessor's historical compiled digest against the
   newer expanded source registry and failed before timing or GPU work. Under
@@ -412,12 +420,13 @@ newer evidence wins.
   independent incremental state files. Before a long post-v5 run, require
   provenance, CUDA graph/zero-update checks, deterministic full games, then a
   disposable 50M-step reward-frozen canary. Never continue from its checkpoint.
-  Exact candidate `a52fc6e2` freezes the original 11-key live registry into its
-  manifest. The merged control qualification and independent stopped checks
-  also require exact zero for signed clamp delta, clipped samples, terminal and
+  Rejected candidate `a52fc6e2` retains its original 11-key live registry only
+  as historical evidence. The replacement v4 manifest, live guards,
+  qualification, and stopped analyzer all require the complete 16-key registry
+  at literal zero, including signed clamp delta, clipped samples, terminal and
   non-terminal clipped samples, and non-finite samples per episode. Those five
   are redundant under coherent telemetry, but any disagreement invalidates the
-  evidence; preserve the exact candidate identity and bind both registries.
+  evidence. Never relabel the old candidate as the replacement.
 
 ### Reward economy (July-audited interpretation)
 - **Reward objective outcomes or decision quality, not lucky dice.** Realized

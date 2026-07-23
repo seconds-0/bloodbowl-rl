@@ -82,6 +82,15 @@ EXPECTED_PUFFER_PATCH_BUNDLE_SHA256="${EXPECTED_PUFFER_PATCH_BUNDLE_SHA256:-}"
 LIVE_INTEGRITY_FAILURE="${LIVE_INTEGRITY_FAILURE:-}"
 LIVE_INTEGRITY_MAX_SILENCE="${LIVE_INTEGRITY_MAX_SILENCE:-180}"
 LIVE_INTEGRITY_POLL_SECONDS="${LIVE_INTEGRITY_POLL_SECONDS:-30}"
+EXPECTED_CUDA_RUNTIME_LIBRARY_PATH="${EXPECTED_CUDA_RUNTIME_LIBRARY_PATH:-}"
+EXPECTED_CUDA_RUNTIME_LIBRARY_SHA256="${EXPECTED_CUDA_RUNTIME_LIBRARY_SHA256:-}"
+EXPECTED_CUDA_RUNTIME_DEVICE_COUNT="${EXPECTED_CUDA_RUNTIME_DEVICE_COUNT:-}"
+CANARY_LAUNCH_AUTHORIZATION="${CANARY_LAUNCH_AUTHORIZATION:-}"
+CANARY_LAUNCH_AUTHORIZATION_SHA256="${CANARY_LAUNCH_AUTHORIZATION_SHA256:-}"
+CANARY_QUALIFICATION="${CANARY_QUALIFICATION:-}"
+CANARY_QUALIFICATION_SHA256="${CANARY_QUALIFICATION_SHA256:-}"
+CANARY_LAUNCH_RECORD="${CANARY_LAUNCH_RECORD:-}"
+CANARY_LAUNCH_RECORD_SHA256="${CANARY_LAUNCH_RECORD_SHA256:-}"
 
 for digest_name in SCREEN_MANIFEST_SHA256 \
                    EXPECTED_PUFFER_PATCH_BUNDLE_SHA256; do
@@ -404,6 +413,122 @@ fi
 if [ "$precision" != "2" ] && [ "$precision" != "4" ]; then
   echo "unsupported native precision_bytes=$precision" >&2; exit 1
 fi
+if [ "$BOOTSTRAP_MODE" = "fresh-v5-qualification" ]; then
+  [ -n "$EXPECTED_CUDA_RUNTIME_LIBRARY_PATH" ] || {
+    echo "fresh-v5-qualification requires EXPECTED_CUDA_RUNTIME_LIBRARY_PATH" >&2
+    exit 1
+  }
+  [ -n "$EXPECTED_CUDA_RUNTIME_LIBRARY_SHA256" ] || {
+    echo "fresh-v5-qualification requires EXPECTED_CUDA_RUNTIME_LIBRARY_SHA256" >&2
+    exit 1
+  }
+  [ -n "$EXPECTED_CUDA_RUNTIME_DEVICE_COUNT" ] || {
+    echo "fresh-v5-qualification requires EXPECTED_CUDA_RUNTIME_DEVICE_COUNT" >&2
+    exit 1
+  }
+  [ -n "$CANARY_LAUNCH_AUTHORIZATION" ] || {
+    echo "fresh-v5-qualification requires CANARY_LAUNCH_AUTHORIZATION" >&2
+    exit 1
+  }
+  [ -n "$CANARY_LAUNCH_AUTHORIZATION_SHA256" ] || {
+    echo "fresh-v5-qualification requires CANARY_LAUNCH_AUTHORIZATION_SHA256" >&2
+    exit 1
+  }
+  [ -n "$CANARY_QUALIFICATION" ] || {
+    echo "fresh-v5-qualification requires CANARY_QUALIFICATION" >&2
+    exit 1
+  }
+  [ -n "$CANARY_QUALIFICATION_SHA256" ] || {
+    echo "fresh-v5-qualification requires CANARY_QUALIFICATION_SHA256" >&2
+    exit 1
+  }
+  [ -n "$CANARY_LAUNCH_RECORD" ] || {
+    echo "fresh-v5-qualification requires CANARY_LAUNCH_RECORD" >&2
+    exit 1
+  }
+  [ -n "$CANARY_LAUNCH_RECORD_SHA256" ] || {
+    echo "fresh-v5-qualification requires CANARY_LAUNCH_RECORD_SHA256" >&2
+    exit 1
+  }
+else
+  EXPECTED_CUDA_RUNTIME_LIBRARY_PATH="$CUDA_RUNTIME_LIBRARY_PATH"
+  EXPECTED_CUDA_RUNTIME_LIBRARY_SHA256="$CUDA_RUNTIME_LIBRARY_SHA256"
+  EXPECTED_CUDA_RUNTIME_DEVICE_COUNT="$CUDA_RUNTIME_DEVICE_COUNT"
+  CANARY_LAUNCH_AUTHORIZATION=""
+  CANARY_LAUNCH_AUTHORIZATION_SHA256=""
+  CANARY_QUALIFICATION=""
+  CANARY_QUALIFICATION_SHA256=""
+  CANARY_LAUNCH_RECORD=""
+  CANARY_LAUNCH_RECORD_SHA256=""
+fi
+case "$EXPECTED_CUDA_RUNTIME_DEVICE_COUNT" in
+  ''|*[!0-9]*)
+    echo "EXPECTED_CUDA_RUNTIME_DEVICE_COUNT must be a positive integer" >&2
+    exit 1 ;;
+esac
+if [ "$EXPECTED_CUDA_RUNTIME_DEVICE_COUNT" -le 0 ]; then
+  echo "EXPECTED_CUDA_RUNTIME_DEVICE_COUNT must be positive" >&2; exit 1
+fi
+if [[ ! "$EXPECTED_CUDA_RUNTIME_LIBRARY_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+  echo "EXPECTED_CUDA_RUNTIME_LIBRARY_SHA256 must be a lowercase SHA-256" >&2
+  exit 1
+fi
+if [ "$CUDA_RUNTIME_LIBRARY_PATH" != "$EXPECTED_CUDA_RUNTIME_LIBRARY_PATH" ] || \
+   [ "$CUDA_RUNTIME_LIBRARY_SHA256" != "$EXPECTED_CUDA_RUNTIME_LIBRARY_SHA256" ] || \
+   [ "$CUDA_RUNTIME_DEVICE_COUNT" != "$EXPECTED_CUDA_RUNTIME_DEVICE_COUNT" ]; then
+  echo "launcher process differs from the qualified CUDA runtime" >&2
+  exit 1
+fi
+if [ "$BOOTSTRAP_MODE" = "fresh-v5-qualification" ]; then
+  case "$CANARY_LAUNCH_AUTHORIZATION" in
+    /*) ;;
+    *) echo "CANARY_LAUNCH_AUTHORIZATION must be absolute" >&2; exit 1 ;;
+  esac
+  [ -f "$CANARY_LAUNCH_AUTHORIZATION" ] || {
+    echo "missing CANARY_LAUNCH_AUTHORIZATION: $CANARY_LAUNCH_AUTHORIZATION" >&2
+    exit 1
+  }
+  if [[ ! "$CANARY_LAUNCH_AUTHORIZATION_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "CANARY_LAUNCH_AUTHORIZATION_SHA256 must be a lowercase SHA-256" >&2
+    exit 1
+  fi
+  observed_canary_authorization_sha="$(sha256sum "$CANARY_LAUNCH_AUTHORIZATION" | awk '{print $1}')"
+  if [ "$observed_canary_authorization_sha" != "$CANARY_LAUNCH_AUTHORIZATION_SHA256" ]; then
+    echo "CANARY_LAUNCH_AUTHORIZATION digest drifted" >&2; exit 1
+  fi
+  case "$CANARY_QUALIFICATION" in
+    /*) ;;
+    *) echo "CANARY_QUALIFICATION must be absolute" >&2; exit 1 ;;
+  esac
+  [ -f "$CANARY_QUALIFICATION" ] || {
+    echo "missing CANARY_QUALIFICATION: $CANARY_QUALIFICATION" >&2
+    exit 1
+  }
+  if [[ ! "$CANARY_QUALIFICATION_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "CANARY_QUALIFICATION_SHA256 must be a lowercase SHA-256" >&2
+    exit 1
+  fi
+  observed_canary_qualification_sha="$(sha256sum "$CANARY_QUALIFICATION" | awk '{print $1}')"
+  if [ "$observed_canary_qualification_sha" != "$CANARY_QUALIFICATION_SHA256" ]; then
+    echo "CANARY_QUALIFICATION digest drifted" >&2; exit 1
+  fi
+  case "$CANARY_LAUNCH_RECORD" in
+    /*) ;;
+    *) echo "CANARY_LAUNCH_RECORD must be absolute" >&2; exit 1 ;;
+  esac
+  [ -f "$CANARY_LAUNCH_RECORD" ] || {
+    echo "missing CANARY_LAUNCH_RECORD: $CANARY_LAUNCH_RECORD" >&2
+    exit 1
+  }
+  if [[ ! "$CANARY_LAUNCH_RECORD_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "CANARY_LAUNCH_RECORD_SHA256 must be a lowercase SHA-256" >&2
+    exit 1
+  fi
+  observed_canary_launch_record_sha="$(sha256sum "$CANARY_LAUNCH_RECORD" | awk '{print $1}')"
+  if [ "$observed_canary_launch_record_sha" != "$CANARY_LAUNCH_RECORD_SHA256" ]; then
+    echo "CANARY_LAUNCH_RECORD digest drifted" >&2; exit 1
+  fi
+fi
 
 . "$ROOT/tools/cpu_cap.sh"
 NUM_THREADS="${NUM_THREADS:-${OMP_NUM_THREADS:-8}}"
@@ -522,6 +647,9 @@ echo "lr=$LR ent_coef=$ENT_COEF gamma=$GAMMA gae_lambda=$GAE_LAMBDA replay_ratio
 
 CMD=(env PUFFER_CUDA_RUNTIME_MANIFEST="$RUN_MANIFEST" \
   PUFFER_CUDA_RUNTIME_EVIDENCE="$CUDA_RUNTIME_EVIDENCE" \
+  PUFFER_EXPECTED_CUDA_RUNTIME_LIBRARY_PATH="$EXPECTED_CUDA_RUNTIME_LIBRARY_PATH" \
+  PUFFER_EXPECTED_CUDA_RUNTIME_LIBRARY_SHA256="$EXPECTED_CUDA_RUNTIME_LIBRARY_SHA256" \
+  PUFFER_EXPECTED_CUDA_RUNTIME_DEVICE_COUNT="$EXPECTED_CUDA_RUNTIME_DEVICE_COUNT" \
   "$PYBIN" "$CUDA_RUNTIME_WRAPPER" train bloodbowl --tag "$TAG" \
   --seed "$SEED" --train.seed "$SEED" --selfplay.seed "$SEED" --env.seed "$SEED" \
   --train.gpus 1 --eval-episodes 10000 \
@@ -597,6 +725,15 @@ META_ARGS=(
   cuda_launcher_probe_library_sha256 "$CUDA_RUNTIME_LIBRARY_SHA256"
   cuda_launcher_probe_device_count "$CUDA_RUNTIME_DEVICE_COUNT"
   cuda_launcher_probe_visible_devices "$CUDA_VISIBLE_DEVICES"
+  expected_cuda_runtime_library_path "$EXPECTED_CUDA_RUNTIME_LIBRARY_PATH"
+  expected_cuda_runtime_library_sha256 "$EXPECTED_CUDA_RUNTIME_LIBRARY_SHA256"
+  expected_cuda_runtime_device_count "$EXPECTED_CUDA_RUNTIME_DEVICE_COUNT"
+  canary_launch_authorization "$CANARY_LAUNCH_AUTHORIZATION"
+  expected_canary_launch_authorization_sha256 "$CANARY_LAUNCH_AUTHORIZATION_SHA256"
+  canary_qualification "$CANARY_QUALIFICATION"
+  canary_qualification_sha256 "$CANARY_QUALIFICATION_SHA256"
+  canary_launch_record "$CANARY_LAUNCH_RECORD"
+  canary_launch_record_sha256 "$CANARY_LAUNCH_RECORD_SHA256"
   status_wrapper_sha256 "$STATUS_WRAPPER_HASH"
   live_integrity_guard_sha256 "$LIVE_GUARD_HASH"
   checkpoint_lineage_sha256 "$CHECKPOINT_LINEAGE_HASH"

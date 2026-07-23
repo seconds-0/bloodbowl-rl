@@ -589,10 +589,16 @@ changes a reward, active queue, production default, or promotion verdict.
   JSON or an unplanned old binary is invalid.
   A missing predecessor throughput
   artifact is a failure, not an ungated pass. Qualification artifacts are
-  permanently ineligible as checkpoint ancestry. The merged control checkout
-  must reject `exact-action-canary` launch before creating output. No current
-  checkout is authorized to launch a replacement; only a separate reviewed
-  post-qualification change may name its exact commit and frozen registry.
+  permanently ineligible as checkpoint ancestry. Historical merged commit
+  `ee7ace4` rejects `exact-action-canary` before creating output. D226's
+  replacement remains inert without an absolute two-phase authority: one plan
+  authorization must bind a fresh accepted schema-3 qualification before the
+  exactly two-file plan is created; a separate launch authorization must then
+  bind that plan, the canonical disabled one-shot unit, and the empty stopped-
+  validation output. Because launcher bytes changed, rebuild and independently
+  requalify the exact final merged authorization commit—never claim the accepted
+  `ee7ace4` qualification covers its descendant. See
+  `docs/replacement-exact-action-canary-2070-execution-checklist.md`.
 - The sole `a52fc6e2` canary start is permanently rejected: its final preflight
   proved that `training/selfplay_league.patch` existed but was not applied to
   vendored `pufferlib/selfplay.py`. It used no GPU and has zero restarts; never
@@ -606,8 +612,12 @@ changes a reward, active queue, production default, or promotion verdict.
   different isolated source. Recapture its throughput with the schema-3 runner,
   then create entirely new runtime, qualification, output, stopped-validation,
   unit, authorization, and marker identities. Never modify or reuse the
-  recovery Puffer tree. Keep the merged launcher frozen against a replacement
-  canary until qualification accepts; authorize its exact commit separately.
+  recovery Puffer tree. The replacement launcher accepts only the exact v4
+  profile/prefix and `ARM_DETACH=0`; it validates source, qualification,
+  predecessor, recovery, CUDART, plan, released lock, launch unit, and authority
+  before output or compute. Any failed identity is terminal and never retried.
+  The resulting checkpoint and metrics remain ancestry-, reward-, promotion-,
+  and BBTV-ineligible even if the canary accepts.
 - The first schema-3 predecessor capture is rejected and non-retryable. It
   failed before timing or GPU work because the immutable predecessor's native
   digest used its historical backend registry, while the new runner compared

@@ -8149,3 +8149,83 @@ replacement handoff only after hosted checks pass, then continue monitoring.
 At atomic completion, establish the stopped queue/service/process predicates,
 run the pinned screen validator and independent three-log auditor, and preserve
 and verify the exact evidence off-box before creating any qualification root.
+
+## 2026-07-22 17:10 PDT — recovery and D225 qualification complete; replacement canary still withheld
+
+Status:
+
+- The seed-44 recovery boundary is now closed. The recovery queue service is
+  `inactive/dead` with `NRestarts=0`, the atomic
+  `work/full-control/SCREEN_COMPLETE.json` exists, and it records accepted
+  results for seeds 42, 43, and 44. Seed 44 finished at step 11,999,903,744.
+- BBTV remains available: `bbstream`, `bbweb`, and `bbtv-tunnel` are all
+  `active/running` with zero restarts. The follower selected the completed
+  seed-44 checkpoint at 17:02 PDT and is comparing it with the frozen warm
+  baseline. The RTX 2070 is idle at this sample: no compute process, 0% GPU
+  utilization, and 69 MiB allocated.
+- The D225 recurrent-CUDA qualification for merged main `ee7ace4` completed and
+  received an independent APPROVE with no P0--P3 findings. The preserved
+  qualification is accepted, all five mandatory gates pass, all 16
+  hard-integrity fields are exactly zero, all 158 preservation-manifest entries
+  verify, and a fresh validation left both artifacts and checkouts unchanged.
+- No replacement exact-action canary has been launched. The current local
+  branch remains based on `ee7ace4` and contains uncommitted implementation,
+  tests, runbook, and guideline changes for a two-phase plan/launch authority.
+  Because those bytes postdate D225, the final merged authorization commit must
+  receive its own fresh qualification before it can authorize even the plan-only
+  materialization, and a separate launch authority is required before the one
+  permitted start.
+- The prior hourly journal entry was stale at this check. That was a reporting
+  lapse, not an active-process failure; this entry records the live service,
+  completion, viewer, and GPU state directly. The remote host does not have
+  `jq`, so the small immutable status records were inspected read-only without
+  installing or changing anything.
+
+Next steps: complete the remaining documentation consistency pass, rerun the
+full tools and training suites plus static checks after the latest edits, conduct
+read-only bug/simplification and independent exact-head reviews, then commit,
+open, review, and merge the authorization tranche. Only the exact final merged
+commit may be rebuilt and freshly qualified. Any nonzero hard-integrity field,
+failed test/gate, source or runtime identity drift, missing evidence, unexpected
+service state, or unavailable host stops progression and is reported; it is not
+silently retried or worked around.
+
+## 2026-07-22 17:27 PDT — local authorization tranche green; two review defects closed
+
+Status:
+
+- The D226 two-phase authorization implementation, v4 stopped analyzer,
+  same-process qualified-CUDART binding, plan/run manifests, execution
+  checklist, decision ledger, and all relevant agent/Claude/Puffer/fleet/
+  training guidance are now locally consistent. No remote runtime, service,
+  output, or GPU process was changed.
+- Analyze-only bug review confirmed and fixed two launch-authority defects with
+  failing regressions first. The plan previously accepted an unstructured
+  `{"accepted":true}` recovery reference; it now requires the exact preserved
+  Gate-6 verifier and full recovery inventory, validates all 37 files and three
+  seed bindings, and reconciles the 3,493,832,521-byte inventory identity. The
+  shell also previously failed to compare the authority's bound output with
+  `OUT_DIR`; both plan-only and live launch now require exact equality before
+  directory or lock creation. Independent stopped analysis now requires the
+  launch record's exact current manifest path rather than only its basename.
+- The real preserved recovery pair passes the new validator with verifier
+  SHA-256 `53008b4176d54827d65eed58ee9b1c0efb4956710da14f294269dc4dfbead07b`,
+  inventory-file SHA-256
+  `1f0a11977c284483e2d36380b2a2a46c1734ae6b9318ea44c8d24195ff291d40`,
+  and inner inventory identity
+  `d0102a612b4b295923bb875e604bd7d7863160a549d708aeb25c405b31c069d8`.
+- Final local checks on the current bytes: 269 tools tests pass with two skips;
+  97 training tests pass with one skip; Ruff, Python compilation, both shell
+  syntax checks, and diff hygiene pass. The prior `make test` run passed 442
+  engine tests plus all Puffer auxiliary binaries, and the same native surface
+  passed under ASan/UBSan; no native source changed afterward.
+- Simplification review found no implicit fallback or retry lane: the v4 canary
+  has one explicit two-phase path, with old v1/v2/v3 identities permanently
+  rejected. The large authority module remains one schema owner so shell and
+  Python cannot diverge into competing parsers.
+
+Next steps: commit the exact local state, push and open the PR, dispatch
+independent exact-head code/test reviews, require hosted checks green, fix any
+P0--P2 finding with another full regression pass, and merge only after the
+guardrails accept. Training remains withheld until the exact squash-merged
+commit is rebuilt and freshly qualified on the RTX 2070.

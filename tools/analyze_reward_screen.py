@@ -142,6 +142,7 @@ PAIRED_CANDIDATES = ("possession_only", "gain_only", "neither")
 PAIRED_FINAL_SEEDS = (42, 43, 44)
 CONTROL_FINAL_SCHEDULE = (("both", 42), ("both", 43), ("both", 44))
 EXACT_ACTION_CANARY_SCHEDULE = (("both", 42),)
+EXACT_ACTION_CANARY_PREFIX = "exact-action-canary-50m-s42-v4"
 EXACT_ACTION_CANARY_REQUESTED_STEPS = 50_000_000
 EXACT_ACTION_CANARY_TOTAL_AGENTS = 2_048
 EXACT_ACTION_CANARY_HORIZON = 64
@@ -153,22 +154,10 @@ EXACT_ACTION_CANARY_FINAL_STEPS = (
     // EXACT_ACTION_CANARY_ROLLOUT_QUANTUM
     * EXACT_ACTION_CANARY_ROLLOUT_QUANTUM)
 EXACT_ACTION_CANARY_CHECKPOINT_BYTES = 16_066_560
-# Exact candidate a52fc6e2 freezes this live fail-fast registry into its screen
-# manifest. The merged control runner's independent stopped-log registry is
-# deliberately wider; see HARD_INTEGRITY_KEYS imported above.
-EXACT_ACTION_CANARY_MANIFEST_HARD_INTEGRITY_KEYS = (
-    "illegal_frac",
-    "reward_clip_frac",
-    "reward_clip_frac_nonzero",
-    "reward_clip_excess",
-    "reward_nonfinite_frac",
-    "reward_clip_episodes",
-    "reward_nonfinite_episodes",
-    "reward_component_mismatch_samples_per_episode",
-    "reward_component_nonfinite_samples_per_episode",
-    "error_episodes",
-    "demo_fallbacks",
-)
+# The replacement candidate freezes the complete control registry live. The
+# rejected a52fc6e2 manifest remains historical evidence with its narrower
+# registry and is never relabeled or accepted by this replacement contract.
+EXACT_ACTION_CANARY_MANIFEST_HARD_INTEGRITY_KEYS = HARD_INTEGRITY_KEYS
 
 SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 
@@ -318,6 +307,10 @@ def _validate_exact_action_canary_contract(contract: dict[str, Any]) -> None:
             "exact-action-canary contract must be qualification_only")
     if contract.get("warm") is not None or contract.get("pool") is not None:
         raise AnalysisError("exact-action-canary contract must have null warm/pool")
+    if contract.get("prefix") != EXACT_ACTION_CANARY_PREFIX:
+        raise AnalysisError(
+            "exact-action-canary prefix does not match the replacement authority"
+        )
 
     requested_steps = _need_int(
         contract.get("requested_steps"), "exact-action-canary requested_steps")
@@ -389,8 +382,8 @@ def _validate_exact_action_canary_contract(contract: dict[str, Any]) -> None:
     hard_keys = error_budget.get("hard_integrity_keys")
     if hard_keys != list(EXACT_ACTION_CANARY_MANIFEST_HARD_INTEGRITY_KEYS):
         raise AnalysisError(
-            "exact-action-canary hard_integrity_keys do not match the frozen "
-            "a52fc6e2 live registry")
+            "exact-action-canary hard_integrity_keys do not match the complete "
+            "replacement live registry")
     poll_seconds = _need_int(
         error_budget.get("detection_poll_seconds"),
         "exact-action-canary detection_poll_seconds",
@@ -412,6 +405,8 @@ def _validate_exact_action_canary_contract(contract: dict[str, Any]) -> None:
         "live_integrity_guard_sha256",
         "checkpoint_lineage_sha256",
         "status_wrapper_sha256",
+        "cuda_runtime_wrapper_sha256",
+        "canary_authority_tool_sha256",
         "launcher_sha256",
         "source_sha256",
         "compiled_module_sha256",
@@ -456,6 +451,125 @@ def _validate_exact_action_canary_contract(contract: dict[str, Any]) -> None:
         raise AnalysisError(
             "exact-action-canary compiled environment source does not match "
             "the installed source identity")
+
+    authority = _need_mapping(
+        contract.get("canary_authority"),
+        "exact-action-canary canary_authority",
+    )
+    for field in ("plan_authorization", "qualification"):
+        value = authority.get(field)
+        if not isinstance(value, str) or not Path(value).is_absolute():
+            raise AnalysisError(
+                f"exact-action-canary authority {field} must be absolute"
+            )
+    for field in (
+        "plan_authorization_sha256",
+        "qualification_sha256",
+        "cuda_runtime_library_sha256",
+    ):
+        _need_sha256(
+            authority.get(field), f"exact-action-canary authority {field}"
+        )
+    cuda_path = authority.get("cuda_runtime_library_path")
+    if not isinstance(cuda_path, str) or not Path(cuda_path).is_absolute():
+        raise AnalysisError(
+            "exact-action-canary authority CUDA runtime path must be absolute"
+        )
+    if _need_int(
+        authority.get("cuda_runtime_device_count"),
+        "exact-action-canary authority CUDA device count",
+    ) <= 0:
+        raise AnalysisError(
+            "exact-action-canary authority CUDA device count must be positive"
+        )
+
+
+def _validate_exact_action_canary_launch_record(
+    directory: Path, contract: dict[str, Any], manifest_sha: str
+) -> dict[str, Any]:
+    path = directory / "CANARY_LAUNCH_RECORD.json"
+    if not path.is_file() or path.is_symlink():
+        raise AnalysisError(
+            "exact-action-canary launch record is missing or not regular"
+        )
+    record = _load_json(path, "exact-action-canary launch record")
+    if (
+        record.get("schema_version") != 1
+        or record.get("kind") != "exact_action_canary_launch_record"
+        or record.get("qualification_only") is not True
+        or record.get("eligible") is not False
+    ):
+        raise AnalysisError("exact-action-canary launch record contract drifted")
+    if record.get("reward_evidence_eligible") is not False:
+        raise AnalysisError(
+            "exact-action-canary launch record must exclude reward evidence"
+        )
+    authority = _need_mapping(
+        contract.get("canary_authority"), "exact-action-canary authority"
+    )
+    expected = {
+        "plan_authorization": authority["plan_authorization"],
+        "plan_authorization_sha256": authority["plan_authorization_sha256"],
+        "qualification": authority["qualification"],
+        "qualification_sha256": authority["qualification_sha256"],
+        "screen_manifest_sha256": manifest_sha,
+    }
+    for field, value in expected.items():
+        if record.get(field) != value:
+            raise AnalysisError(
+                f"exact-action-canary launch record {field} drifted"
+            )
+    screen_manifest = record.get("screen_manifest")
+    expected_manifest = (directory / "SCREEN_MANIFEST.json").resolve()
+    if not isinstance(screen_manifest, str) or screen_manifest != str(
+        expected_manifest
+    ):
+        raise AnalysisError(
+            "exact-action-canary launch record screen manifest path drifted"
+        )
+    launch_path = record.get("launch_authorization")
+    if not isinstance(launch_path, str) or not Path(launch_path).is_absolute():
+        raise AnalysisError(
+            "exact-action-canary launch record authorization path must be absolute"
+        )
+    launch_sha = _need_sha256(
+        record.get("launch_authorization_sha256"),
+        "exact-action-canary launch authorization SHA-256",
+    )
+    return {
+        "file": path.name,
+        "sha256": _sha256(path),
+        "launch_authorization": launch_path,
+        "launch_authorization_sha256": launch_sha,
+        "qualification_sha256": authority["qualification_sha256"],
+        "cuda_runtime_library_sha256": authority[
+            "cuda_runtime_library_sha256"
+        ],
+        "cuda_runtime_device_count": authority["cuda_runtime_device_count"],
+    }
+
+
+def _validate_exact_action_canary_result_authority(
+    result: dict[str, Any], launch: dict[str, Any], label: str
+) -> None:
+    expected = {
+        "canary_launch_record_sha256": launch["sha256"],
+        "canary_launch_authorization_sha256": launch[
+            "launch_authorization_sha256"
+        ],
+        "canary_qualification_sha256": launch["qualification_sha256"],
+        "expected_cuda_runtime_library_sha256": launch[
+            "cuda_runtime_library_sha256"
+        ],
+    }
+    for field, value in expected.items():
+        if result.get(field) != value:
+            raise AnalysisError(f"{label} {field} authority binding drifted")
+    if _need_int(
+        result.get("expected_cuda_runtime_device_count"),
+        f"{label} expected_cuda_runtime_device_count",
+    ) != launch["cuda_runtime_device_count"]:
+        raise AnalysisError(f"{label} qualified CUDA device count drifted")
 
 
 def _validate_exact_action_canary_result(
@@ -807,6 +921,13 @@ def analyze_screen(
                 "screen manifest SHA-256 does not match --expected-screen-sha: "
                 f"{manifest_sha} != {expected_screen_sha}"
             )
+    canary_launch = (
+        _validate_exact_action_canary_launch_record(
+            directory, contract, manifest_sha
+        )
+        if spec["profile"] == "exact-action-canary"
+        else None
+    )
     schedule = _validate_schedule(contract, spec["schedule"])
     _validate_reward_plan(contract, spec["reward_sha256"])
 
@@ -832,6 +953,10 @@ def analyze_screen(
         result, summary = _validate_result(
             path, entry, contract, manifest_sha, metrics, spec["factors"]
         )
+        if canary_launch is not None:
+            _validate_exact_action_canary_result_authority(
+                result, canary_launch, path.name
+            )
         key = (arm, seed)
         raw_results[key] = result
         result_paths[key] = path
@@ -912,7 +1037,7 @@ def analyze_screen(
             }
             effect_summaries[metric][effect] = _describe_seed_values(values, seeds)
 
-    return {
+    report = {
         "schema_version": 1,
         "analysis": (
             "exact_action_canary_qualification"
@@ -951,6 +1076,9 @@ def analyze_screen(
         },
         "warnings": warnings,
     }
+    if canary_launch is not None:
+        report["screen"]["canary_launch"] = canary_launch
+    return report
 
 
 def _format_number(value: float) -> str:

@@ -33,6 +33,20 @@ OUT_DIR="${OUT_DIR:-$ROOT/runs/reward-screens/$PREFIX}"
 POLL_SECONDS="${POLL_SECONDS:-30}"
 PLAN_ONLY="${PLAN_ONLY:-0}"
 ARM_DETACH="${ARM_DETACH:-1}"
+CANARY_PLAN_AUTHORIZATION="${CANARY_PLAN_AUTHORIZATION:-}"
+CANARY_PLAN_AUTHORIZATION_SHA256_FILE="${CANARY_PLAN_AUTHORIZATION_SHA256_FILE:-}"
+CANARY_LAUNCH_AUTHORIZATION="${CANARY_LAUNCH_AUTHORIZATION:-}"
+CANARY_LAUNCH_AUTHORIZATION_SHA256_FILE="${CANARY_LAUNCH_AUTHORIZATION_SHA256_FILE:-}"
+CANARY_PLAN_AUTHORIZATION_PATH=""
+CANARY_PLAN_AUTHORIZATION_SHA256=""
+CANARY_QUALIFICATION_PATH=""
+CANARY_QUALIFICATION_SHA256=""
+CANARY_CUDA_RUNTIME_LIBRARY_PATH=""
+CANARY_CUDA_RUNTIME_LIBRARY_SHA256=""
+CANARY_CUDA_RUNTIME_DEVICE_COUNT=""
+CANARY_LAUNCH_AUTHORIZATION_PATH=""
+CANARY_LAUNCH_AUTHORIZATION_SHA256=""
+CANARY_AUTHORIZED_OUTPUT=""
 
 # Fixed Stage-1 causal contract. Assign, rather than inherit, every optional
 # launcher input which could alter optimization, batching, or pool allocation.
@@ -131,14 +145,6 @@ else
   BOOTSTRAP_MODE=lineage-v5
 fi
 
-# D223: the sole a52 canary attempt is permanently rejected and non-retryable.
-# Fail before creating an output directory. A replacement remains unauthorized
-# until schema-3 qualification accepts and a separate reviewed change names it.
-if [ "$SCREEN_PROFILE" = "exact-action-canary" ]; then
-  echo "exact-action-canary is frozen: a52fc6e2f4ece5a7ff16bb4791e3aca4dd72f2e3 is permanently rejected; no replacement is authorized" >&2
-  exit 1
-fi
-
 abspath() {
   case "$1" in
     /*) printf '%s\n' "$1" ;;
@@ -162,6 +168,116 @@ if [ "$BOOTSTRAP_MODE" = "lineage-v5" ]; then
   }
   [[ "$EXPECTED_POOL_HASH" =~ ^[0-9a-f]{64}$ ]] || {
     echo "EXPECTED_POOL_HASH must be a lowercase SHA-256 digest" >&2
+    exit 1
+  }
+fi
+
+# A replacement canary is authorized only by the two-phase evidence tool. The
+# validator runs before mkdir/flock so a missing or drifted authority cannot
+# create or alter the requested output identity.
+if [ "$SCREEN_PROFILE" = "exact-action-canary" ]; then
+  AUTHORITY_TOOL="$ROOT/tools/exact_action_canary_authority.py"
+  AUTHORITY_PYBIN="$ROOT/vendor/PufferLib/.venv/bin/python"
+  if [ "$PLAN_ONLY" = "1" ]; then
+    [ -z "$CANARY_LAUNCH_AUTHORIZATION$CANARY_LAUNCH_AUTHORIZATION_SHA256_FILE" ] || {
+      echo "exact-action canary plan-only forbids live launch authorization before output creation" >&2
+      exit 1
+    }
+    [ -n "$CANARY_PLAN_AUTHORIZATION" ] || {
+      echo "CANARY_PLAN_AUTHORIZATION is required before output creation" >&2
+      exit 1
+    }
+    [ -n "$CANARY_PLAN_AUTHORIZATION_SHA256_FILE" ] || {
+      echo "CANARY_PLAN_AUTHORIZATION_SHA256_FILE is required before output creation" >&2
+      exit 1
+    }
+    [ -f "$AUTHORITY_TOOL" ] || {
+      echo "exact-action canary authority tool is missing before output creation" >&2
+      exit 1
+    }
+    [ -x "$AUTHORITY_PYBIN" ] || {
+      echo "exact-action canary candidate Python is missing before output creation" >&2
+      exit 1
+    }
+    AUTHORITY_JSON="$($AUTHORITY_PYBIN -B "$AUTHORITY_TOOL" validate-plan \
+      --authorization "$CANARY_PLAN_AUTHORIZATION" \
+      --sha256-file "$CANARY_PLAN_AUTHORIZATION_SHA256_FILE" \
+      --source-root "$ROOT" --require-output-absent)"
+  else
+    [ -z "$CANARY_PLAN_AUTHORIZATION$CANARY_PLAN_AUTHORIZATION_SHA256_FILE" ] || {
+      echo "exact-action canary live launch accepts only the frozen launch authorization" >&2
+      exit 1
+    }
+    [ -n "$CANARY_LAUNCH_AUTHORIZATION" ] || {
+      echo "CANARY_LAUNCH_AUTHORIZATION is required before output creation" >&2
+      exit 1
+    }
+    [ -n "$CANARY_LAUNCH_AUTHORIZATION_SHA256_FILE" ] || {
+      echo "CANARY_LAUNCH_AUTHORIZATION_SHA256_FILE is required before output creation" >&2
+      exit 1
+    }
+    [ -f "$AUTHORITY_TOOL" ] || {
+      echo "exact-action canary authority tool is missing before output creation" >&2
+      exit 1
+    }
+    [ -x "$AUTHORITY_PYBIN" ] || {
+      echo "exact-action canary candidate Python is missing before output creation" >&2
+      exit 1
+    }
+    AUTHORITY_JSON="$($AUTHORITY_PYBIN -B "$AUTHORITY_TOOL" validate-launch \
+      --authorization "$CANARY_LAUNCH_AUTHORIZATION" \
+      --sha256-file "$CANARY_LAUNCH_AUTHORIZATION_SHA256_FILE")"
+  fi
+  {
+    IFS= read -r CANARY_PLAN_AUTHORIZATION_PATH
+    IFS= read -r CANARY_PLAN_AUTHORIZATION_SHA256
+    IFS= read -r CANARY_QUALIFICATION_PATH
+    IFS= read -r CANARY_QUALIFICATION_SHA256
+    IFS= read -r CANARY_CUDA_RUNTIME_LIBRARY_PATH
+    IFS= read -r CANARY_CUDA_RUNTIME_LIBRARY_SHA256
+    IFS= read -r CANARY_CUDA_RUNTIME_DEVICE_COUNT
+    IFS= read -r CANARY_LAUNCH_AUTHORIZATION_PATH
+    IFS= read -r CANARY_LAUNCH_AUTHORIZATION_SHA256
+    IFS= read -r CANARY_AUTHORIZED_OUTPUT
+  } < <("$AUTHORITY_PYBIN" - "$AUTHORITY_JSON" \
+      "$CANARY_PLAN_AUTHORIZATION" "$CANARY_LAUNCH_AUTHORIZATION" <<'PY'
+import json, sys
+payload = json.loads(sys.argv[1])
+if payload["kind"] == "exact_action_canary_plan_authorization":
+    plan_path = sys.argv[2]
+    plan_sha = payload["authorization_sha256"]
+    launch_path = ""
+    launch_sha = ""
+    output = payload["screen"]["output"]
+else:
+    plan_path = payload["plan_authorization"]["path"]
+    plan_sha = payload["plan_authorization"]["sha256"]
+    launch_path = sys.argv[3]
+    launch_sha = payload["authorization_sha256"]
+    output = payload["plan_output"]["path"]
+runtime = payload["cuda_runtime"]
+print(plan_path)
+print(plan_sha)
+print(payload["qualification"]["path"])
+print(payload["qualification"]["sha256"])
+print(runtime["library"]["resolved_path"])
+print(runtime["library"]["sha256"])
+print(runtime["after_extension_import"]["device_count"])
+print(launch_path)
+print(launch_sha)
+print(output)
+PY
+  )
+  [ "$OUT_DIR" = "$CANARY_AUTHORIZED_OUTPUT" ] || {
+    echo "exact-action canary OUT_DIR differs from the authorized output" >&2
+    exit 1
+  }
+  [ "$PREFIX" = "exact-action-canary-50m-s42-v4" ] || {
+    echo "exact-action canary requires PREFIX=exact-action-canary-50m-s42-v4" >&2
+    exit 1
+  }
+  [ "$ARM_DETACH" = "0" ] || {
+    echo "exact-action canary requires ARM_DETACH=0" >&2
     exit 1
   }
 fi
@@ -243,7 +359,11 @@ freeze_screen_manifest() {
     "$SCREEN_PROFILE" "$CANDIDATE_ARM" "$TRANSFER_COMPLETE" \
     "$EXPECTED_TRANSFER_SHA256" "$ARM_DETACH" "$POLL_SECONDS" \
     "$MAX_PANEL_SILENCE_SECONDS" "$BOOTSTRAP_MODE" \
-    "$NUM_FROZEN_BANKS" <<'PY'
+    "$NUM_FROZEN_BANKS" "$CANARY_PLAN_AUTHORIZATION_PATH" \
+    "$CANARY_PLAN_AUTHORIZATION_SHA256" "$CANARY_QUALIFICATION_PATH" \
+    "$CANARY_QUALIFICATION_SHA256" "$CANARY_CUDA_RUNTIME_LIBRARY_PATH" \
+    "$CANARY_CUDA_RUNTIME_LIBRARY_SHA256" \
+    "$CANARY_CUDA_RUNTIME_DEVICE_COUNT" <<'PY'
 import datetime, hashlib, json, pathlib, subprocess, sys, sysconfig
 
 (
@@ -254,7 +374,10 @@ import datetime, hashlib, json, pathlib, subprocess, sys, sysconfig
     max_grad_norm, expected_pool_hash, min_train_games, min_eval_games,
     screen_profile, candidate_arm, transfer_complete_path,
     expected_transfer_sha, arm_detach, poll_seconds, max_panel_silence_seconds,
-    bootstrap_mode, num_frozen_banks,
+    bootstrap_mode, num_frozen_banks, canary_plan_authorization,
+    canary_plan_authorization_sha256, canary_qualification,
+    canary_qualification_sha256, canary_cuda_runtime_library_path,
+    canary_cuda_runtime_library_sha256, canary_cuda_runtime_device_count,
 ) = sys.argv[1:]
 root = pathlib.Path(root_path).resolve()
 vendor = root / "vendor" / "PufferLib"
@@ -598,6 +721,8 @@ game_stats = root / "tools/game_stats.py"
 live_integrity_guard = root / "tools/live_integrity_guard.py"
 checkpoint_lineage_tool = root / "tools/checkpoint_lineage.py"
 status_wrapper = root / "tools/trainer_status_wrapper.sh"
+cuda_runtime_wrapper = root / "tools/puffer_cuda_runtime.py"
+canary_authority_tool = root / "tools/exact_action_canary_authority.py"
 contract = {
     "screen_profile": screen_profile,
     "qualification_only": qualification_only,
@@ -641,6 +766,8 @@ contract = {
         "live_integrity_guard_sha256": sha(live_integrity_guard),
         "checkpoint_lineage_sha256": sha(checkpoint_lineage_tool),
         "status_wrapper_sha256": sha(status_wrapper),
+        "cuda_runtime_wrapper_sha256": sha(cuda_runtime_wrapper),
+        "canary_authority_tool_sha256": sha(canary_authority_tool),
         "launcher_sha256": sha(launcher),
         "candidate_transfer_analyzer_sha256": sha(
             root / "tools/analyze_reward_candidate_transfer.py"),
@@ -666,6 +793,39 @@ contract = {
         "historical_game_share": str(historical_share),
     },
 }
+if qualification_only:
+    canary_authority = {
+        "plan_authorization": str(
+            pathlib.Path(canary_plan_authorization).resolve()),
+        "plan_authorization_sha256": canary_plan_authorization_sha256,
+        "qualification": str(pathlib.Path(canary_qualification).resolve()),
+        "qualification_sha256": canary_qualification_sha256,
+        "cuda_runtime_library_path": str(
+            pathlib.Path(canary_cuda_runtime_library_path).resolve()),
+        "cuda_runtime_library_sha256": canary_cuda_runtime_library_sha256,
+        "cuda_runtime_device_count": int(canary_cuda_runtime_device_count),
+    }
+    for key in (
+        "plan_authorization_sha256",
+        "qualification_sha256",
+        "cuda_runtime_library_sha256",
+    ):
+        value = canary_authority[key]
+        if len(value) != 64 or any(c not in "0123456789abcdef" for c in value):
+            raise SystemExit(f"canary authority {key} is not a SHA-256 digest")
+    if canary_authority["cuda_runtime_device_count"] <= 0:
+        raise SystemExit("canary authority CUDA device count must be positive")
+    contract["canary_authority"] = canary_authority
+elif any((
+    canary_plan_authorization,
+    canary_plan_authorization_sha256,
+    canary_qualification,
+    canary_qualification_sha256,
+    canary_cuda_runtime_library_path,
+    canary_cuda_runtime_library_sha256,
+    canary_cuda_runtime_device_count,
+)):
+    raise SystemExit("non-canary screen cannot carry canary authority")
 if screen_profile in ("paired-confirmation", "paired-final"):
     contract["candidate_arm"] = candidate_arm
     transfer_complete = pathlib.Path(transfer_complete_path).resolve()
@@ -722,6 +882,56 @@ if [ "$PLAN_ONLY" = "1" ]; then
   echo "SCREEN PLAN VERIFIED: $SCREEN_MANIFEST"
   echo "screen_manifest_sha256=$SCREEN_MANIFEST_SHA"
   exit 0
+fi
+
+CANARY_LAUNCH_RECORD=""
+CANARY_LAUNCH_RECORD_SHA256=""
+if [ "$SCREEN_PROFILE" = "exact-action-canary" ]; then
+  CANARY_LAUNCH_RECORD="$OUT_DIR/CANARY_LAUNCH_RECORD.json"
+  [ ! -e "$CANARY_LAUNCH_RECORD" ] || {
+    echo "refusing to reuse exact-action canary launch record: $CANARY_LAUNCH_RECORD" >&2
+    exit 1
+  }
+  "$PYBIN" - "$CANARY_LAUNCH_RECORD" "$CANARY_LAUNCH_AUTHORIZATION_PATH" \
+    "$CANARY_LAUNCH_AUTHORIZATION_SHA256" "$CANARY_PLAN_AUTHORIZATION_PATH" \
+    "$CANARY_PLAN_AUTHORIZATION_SHA256" "$CANARY_QUALIFICATION_PATH" \
+    "$CANARY_QUALIFICATION_SHA256" "$SCREEN_MANIFEST" \
+    "$SCREEN_MANIFEST_SHA" <<'PY'
+import datetime, json, os, pathlib, sys
+(
+    destination_raw, launch_path, launch_sha, plan_path, plan_sha,
+    qualification_path, qualification_sha, manifest_path, manifest_sha,
+) = sys.argv[1:]
+destination = pathlib.Path(destination_raw)
+payload = {
+    "schema_version": 1,
+    "kind": "exact_action_canary_launch_record",
+    "created_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+    "qualification_only": True,
+    "eligible": False,
+    "reward_evidence_eligible": False,
+    "launch_authorization": launch_path,
+    "launch_authorization_sha256": launch_sha,
+    "plan_authorization": plan_path,
+    "plan_authorization_sha256": plan_sha,
+    "qualification": qualification_path,
+    "qualification_sha256": qualification_sha,
+    "screen_manifest": manifest_path,
+    "screen_manifest_sha256": manifest_sha,
+}
+temporary = destination.with_name(f".{destination.name}.tmp.{os.getpid()}")
+try:
+    with temporary.open("xb") as handle:
+        handle.write((json.dumps(
+            payload, indent=2, sort_keys=True, allow_nan=False) + "\n"
+        ).encode("utf-8"))
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.link(temporary, destination)
+finally:
+    temporary.unlink(missing_ok=True)
+PY
+  CANARY_LAUNCH_RECORD_SHA256="$(sha256sum "$CANARY_LAUNCH_RECORD" | awk '{print $1}')"
 fi
 
 CURRENT_ARM=""
@@ -817,6 +1027,22 @@ if (
     != screen["implementation"]["checkpoint_lineage_sha256"]
 ):
     raise SystemExit("checkpoint_lineage.py changed after screen plan freeze")
+cuda_runtime_wrapper_path = root / "tools/puffer_cuda_runtime.py"
+if (
+    not cuda_runtime_wrapper_path.is_file()
+    or sha(cuda_runtime_wrapper_path)
+    != screen["implementation"]["cuda_runtime_wrapper_sha256"]
+):
+    raise SystemExit("puffer_cuda_runtime.py changed after screen plan freeze")
+canary_authority_tool_path = root / "tools/exact_action_canary_authority.py"
+if (
+    not canary_authority_tool_path.is_file()
+    or sha(canary_authority_tool_path)
+    != screen["implementation"]["canary_authority_tool_sha256"]
+):
+    raise SystemExit(
+        "exact_action_canary_authority.py changed after screen plan freeze"
+    )
 
 sys.path.insert(0, str(root / "tools"))
 from game_stats import (
@@ -862,6 +1088,39 @@ run_dir_manifest = need_file(run_dir / "RUN_MANIFEST.json", "run-directory manif
 if run_dir_manifest.read_bytes() != run_manifest_path.read_bytes():
     raise SystemExit("run-directory and log-side manifests differ")
 _, expected_reward_sha = load_manifest(reward_manifest_path)
+canary_launch = None
+if screen["qualification_only"]:
+    authority = screen.get("canary_authority")
+    if not isinstance(authority, dict):
+        raise SystemExit("fresh qualification screen lacks canary authority")
+    launch_record_path = need_file(
+        screen_manifest_file.parent / "CANARY_LAUNCH_RECORD.json",
+        "canary launch record",
+    )
+    canary_launch = json.loads(
+        launch_record_path.read_text(encoding="utf-8")
+    )
+    expected_launch_record = {
+        "schema_version": 1,
+        "kind": "exact_action_canary_launch_record",
+        "qualification_only": True,
+        "eligible": False,
+        "reward_evidence_eligible": False,
+        "plan_authorization": authority["plan_authorization"],
+        "plan_authorization_sha256": authority["plan_authorization_sha256"],
+        "qualification": authority["qualification"],
+        "qualification_sha256": authority["qualification_sha256"],
+        "screen_manifest_sha256": screen_manifest_sha,
+    }
+    for key, expected in expected_launch_record.items():
+        if canary_launch.get(key) != expected:
+            raise SystemExit(f"canary launch record {key} drifted")
+    if pathlib.Path(canary_launch["screen_manifest"]).resolve() != screen_manifest_file.resolve():
+        raise SystemExit("canary launch record screen manifest path drifted")
+    if not pathlib.Path(canary_launch["launch_authorization"]).is_absolute():
+        raise SystemExit("canary launch authorization path is not absolute")
+    if len(canary_launch["launch_authorization_sha256"]) != 64:
+        raise SystemExit("canary launch authorization digest is malformed")
 expected_contract = {
     "mode": ("native_fresh_v5_qualification"
              if screen["qualification_only"]
@@ -917,6 +1176,23 @@ expected_contract = {
     "warm_bytes": "0" if screen["warm"] is None else str(screen["warm"]["bytes"]),
     "checkpoint_interval": screen["derived"]["checkpoint_interval"],
 }
+if canary_launch is not None:
+    authority = screen["canary_authority"]
+    expected_contract.update({
+        "canary_launch_authorization": canary_launch["launch_authorization"],
+        "expected_canary_launch_authorization_sha256": canary_launch[
+            "launch_authorization_sha256"],
+        "canary_qualification": authority["qualification"],
+        "canary_qualification_sha256": authority["qualification_sha256"],
+        "canary_launch_record": str(launch_record_path),
+        "canary_launch_record_sha256": sha(launch_record_path),
+        "expected_cuda_runtime_library_path": authority[
+            "cuda_runtime_library_path"],
+        "expected_cuda_runtime_library_sha256": authority[
+            "cuda_runtime_library_sha256"],
+        "expected_cuda_runtime_device_count": str(authority[
+            "cuda_runtime_device_count"]),
+    })
 settings_to_manifest = {
     "total_agents": "total_agents",
     "num_buffers": "num_buffers",
@@ -1080,6 +1356,18 @@ result = {
     "train_metrics": phase_metrics["train"],
     "eval_metrics": phase_metrics["eval"],
 }
+if canary_launch is not None:
+    result.update({
+        "canary_launch_record_sha256": sha(launch_record_path),
+        "canary_launch_authorization_sha256": canary_launch[
+            "launch_authorization_sha256"],
+        "canary_qualification_sha256": screen["canary_authority"][
+            "qualification_sha256"],
+        "expected_cuda_runtime_library_sha256": screen[
+            "canary_authority"]["cuda_runtime_library_sha256"],
+        "expected_cuda_runtime_device_count": screen[
+            "canary_authority"]["cuda_runtime_device_count"],
+    })
 path = pathlib.Path(result_path)
 if mode == "validate":
     recorded = json.loads(path.read_text(encoding="utf-8"))
@@ -1255,6 +1543,15 @@ PY
         LIVE_INTEGRITY_FAILURE="$OUT_DIR/LIVE_INTEGRITY_FAILURE.json" \
         LIVE_INTEGRITY_MAX_SILENCE="$MAX_PANEL_SILENCE_SECONDS" \
         LIVE_INTEGRITY_POLL_SECONDS="$POLL_SECONDS" \
+        EXPECTED_CUDA_RUNTIME_LIBRARY_PATH="$CANARY_CUDA_RUNTIME_LIBRARY_PATH" \
+        EXPECTED_CUDA_RUNTIME_LIBRARY_SHA256="$CANARY_CUDA_RUNTIME_LIBRARY_SHA256" \
+        EXPECTED_CUDA_RUNTIME_DEVICE_COUNT="$CANARY_CUDA_RUNTIME_DEVICE_COUNT" \
+        CANARY_LAUNCH_AUTHORIZATION="$CANARY_LAUNCH_AUTHORIZATION_PATH" \
+        CANARY_LAUNCH_AUTHORIZATION_SHA256="$CANARY_LAUNCH_AUTHORIZATION_SHA256" \
+        CANARY_QUALIFICATION="$CANARY_QUALIFICATION_PATH" \
+        CANARY_QUALIFICATION_SHA256="$CANARY_QUALIFICATION_SHA256" \
+        CANARY_LAUNCH_RECORD="$CANARY_LAUNCH_RECORD" \
+        CANARY_LAUNCH_RECORD_SHA256="$CANARY_LAUNCH_RECORD_SHA256" \
         /bin/bash "$ROOT/tools/run_reward_ablation.sh"
     wait_for_status "$tag" "$log"
   fi
