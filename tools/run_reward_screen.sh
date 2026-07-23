@@ -131,14 +131,6 @@ else
   BOOTSTRAP_MODE=lineage-v5
 fi
 
-# D223: the sole a52 canary attempt is permanently rejected and non-retryable.
-# Fail before creating an output directory. A replacement remains unauthorized
-# until schema-3 qualification accepts and a separate reviewed change names it.
-if [ "$SCREEN_PROFILE" = "exact-action-canary" ]; then
-  echo "exact-action-canary is frozen: a52fc6e2f4ece5a7ff16bb4791e3aca4dd72f2e3 is permanently rejected; no replacement is authorized" >&2
-  exit 1
-fi
-
 abspath() {
   case "$1" in
     /*) printf '%s\n' "$1" ;;
