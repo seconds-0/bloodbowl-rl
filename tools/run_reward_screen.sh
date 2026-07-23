@@ -24,7 +24,7 @@ fi
 LAUNCH_CWD="$PWD"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 : "${STEPS:?STEPS is required (explicit experiment budget)}"
-: "${SCREEN_PROFILE:?SCREEN_PROFILE is required (distance-possession, possession-gain, exact-action-canary, genesis, paired-confirmation, paired-final, or control-final)}"
+: "${SCREEN_PROFILE:?SCREEN_PROFILE is required (distance-possession, possession-gain, possession-gain-exact, exact-action-canary, genesis, paired-confirmation, paired-final, or control-final)}"
 CANDIDATE_ARM="${CANDIDATE_ARM:-}"
 TRANSFER_COMPLETE="${TRANSFER_COMPLETE:-}"
 EXPECTED_TRANSFER_SHA256="${EXPECTED_TRANSFER_SHA256:-}"
@@ -81,7 +81,7 @@ case "$ARM_DETACH" in
   *) echo "ARM_DETACH must be 0 or 1" >&2; exit 1 ;;
 esac
 case "$SCREEN_PROFILE" in
-  distance-possession|possession-gain|exact-action-canary|genesis|control-final)
+  distance-possession|possession-gain|possession-gain-exact|exact-action-canary|genesis|control-final)
     [ -z "$CANDIDATE_ARM$TRANSFER_COMPLETE$EXPECTED_TRANSFER_SHA256" ] || {
       echo "candidate transfer inputs are only valid with a paired profile" >&2
       exit 1; }
@@ -104,7 +104,7 @@ case "$SCREEN_PROFILE" in
       exit 1
     fi
     ;;
-  *) echo "SCREEN_PROFILE must be distance-possession, possession-gain, exact-action-canary, genesis, paired-confirmation, paired-final, or control-final" >&2
+  *) echo "SCREEN_PROFILE must be distance-possession, possession-gain, possession-gain-exact, exact-action-canary, genesis, paired-confirmation, paired-final, or control-final" >&2
      exit 1 ;;
 esac
 
@@ -182,8 +182,20 @@ case "$SCREEN_PROFILE" in
     seeds=(42 42 42 42 43 43 43 43)
     ;;
   possession-gain)
+    # LEGACY: these four arms are schema-1 manifests carrying the farmable
+    # raw-delta distance form, so a contrast between them is confounded by how
+    # much each component subsidises the distance exploit. Retained only so
+    # historical curves stay reproducible; use possession-gain-exact for new work.
     arms=(both neither possession_only gain_only \
           gain_only possession_only neither both)
+    seeds=(42 42 42 42 43 43 43 43)
+    ;;
+  possession-gain-exact)
+    # The same 2x2 on corrected semantics: exact PBRS distance in all four arms
+    # and a symmetric ball-gain family. Seed 43 reverses seed 42's arm order to
+    # reduce time/order confounding, exactly as the legacy profile does.
+    arms=(s_both s_neither s_possession_only s_gain_only \
+          s_gain_only s_possession_only s_neither s_both)
     seeds=(42 42 42 42 43 43 43 43)
     ;;
   exact-action-canary)
@@ -237,6 +249,13 @@ manifest_for() {
     # rather than the legacy ratchet. r4 differs from r0_full in exactly one
     # declared factor, reward_dist_pbrs_gamma.
     pbrs) printf '%s\n' "$ROOT/puffer/config/rewards/r4_pbrs_distance.json" ;;
+    # The corrected decomposition 2x2. All four carry the exact PBRS distance
+    # form, so the possession/gain contrast is not confounded by the farmable
+    # raw-delta shaping, and the ball-gain family is a symmetric gain/loss pair.
+    s_both) printf '%s\n' "$ROOT/puffer/config/rewards/s0_both.json" ;;
+    s_possession_only) printf '%s\n' "$ROOT/puffer/config/rewards/s1_possession_only.json" ;;
+    s_gain_only) printf '%s\n' "$ROOT/puffer/config/rewards/s2_gain_only.json" ;;
+    s_neither) printf '%s\n' "$ROOT/puffer/config/rewards/s3_neither.json" ;;
     possession_only) printf '%s\n' "$ROOT/puffer/config/rewards/p1_possession_only.json" ;;
     gain_only) printf '%s\n' "$ROOT/puffer/config/rewards/p2_gain_only.json" ;;
     neither) printf '%s\n' "$ROOT/puffer/config/rewards/r2_no_possession.json" ;;

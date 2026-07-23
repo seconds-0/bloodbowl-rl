@@ -657,6 +657,62 @@ class ExperimentContractTests(unittest.TestCase):
         }
         self.assertEqual(differing, {"reward_dist_pbrs_gamma"})
 
+    def test_exact_decomposition_2x2_varies_only_its_declared_factors(self):
+        # The whole point of the exact-PBRS work is lost if the arms that
+        # actually get compared still carry the farmable raw-delta distance form.
+        # Every legacy decomposition arm does: r0_full, p1_possession_only,
+        # p2_gain_only and r2_no_possession are all schema 1 with the gamma key
+        # absent, so a contrast between them measures how much each component
+        # subsidises the distance exploit as well as its own utility.
+        from reward_manifest import load_manifest
+        rewards = ROOT / "puffer/config/rewards"
+        arms = {}
+        for name in ("s0_both", "s1_possession_only",
+                     "s2_gain_only", "s3_neither"):
+            manifest, _ = load_manifest(rewards / f"{name}.json")
+            self.assertEqual(manifest["schema_version"], 2, name)
+            arms[name] = manifest["reward"]
+
+        # Distance is the exact form in ALL FOUR, at one identical gamma.
+        gammas = {a["reward_dist_pbrs_gamma"] for a in arms.values()}
+        self.assertEqual(gammas, {0.995})
+
+        # Only the two factors under test may differ. reward_ball_loss moves with
+        # reward_ball_gain because the ball-gain FAMILY is the factor, not the
+        # gain leg alone.
+        varying = {
+            k for k in arms["s0_both"]
+            if len({repr(a[k]) for a in arms.values()}) > 1
+        }
+        self.assertEqual(
+            varying,
+            {"reward_possession", "reward_ball_gain", "reward_ball_loss"})
+
+        # The 2x2 is complete and correctly assigned.
+        self.assertEqual(
+            {n: (a["reward_possession"] > 0, a["reward_ball_gain"] > 0)
+             for n, a in arms.items()},
+            {"s0_both": (True, True), "s1_possession_only": (True, False),
+             "s2_gain_only": (False, True), "s3_neither": (False, False)})
+
+        # bloodbowl.h states: keep |reward_ball_loss| > reward_ball_gain or
+        # pickup/drop cycles farm reward. Every historical manifest violated it
+        # by shipping loss=0.0 against gain=0.05; whenever the family is ON here
+        # it must hold.
+        for name, a in arms.items():
+            if a["reward_ball_gain"] > 0:
+                self.assertGreater(abs(a["reward_ball_loss"]),
+                                   a["reward_ball_gain"], name)
+                self.assertLess(a["reward_ball_loss"], 0, name)
+            else:
+                self.assertEqual(a["reward_ball_loss"], 0.0, name)
+
+        # And the screen must actually route the exact profile at these arms.
+        screen = (ROOT / "tools/run_reward_screen.sh").read_text(encoding="utf-8")
+        self.assertIn("possession-gain-exact", screen)
+        for arm in ("s_both", "s_possession_only", "s_gain_only", "s_neither"):
+            self.assertIn(arm, screen)
+
     def test_vacation_queue_is_hash_pinned_and_fail_closed(self):
         source = (ROOT / "tools/experiment_queue.py").read_text(
             encoding="utf-8"
