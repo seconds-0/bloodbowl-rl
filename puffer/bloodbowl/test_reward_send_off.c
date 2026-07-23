@@ -1104,3 +1104,152 @@ BB_TEST(puffer_reward_component_ledger_resets_with_episode_return) {
     BB_CHECK_EQ(f.env.ep_reward_component_mismatch_samples, 0);
     BB_CHECK_EQ(f.env.ep_reward_component_nonfinite_samples, 0);
 }
+
+// ---------------------------------------------------------------------------
+// Exact-PBRS distance shaping (reward_dist_pbrs_gamma > 0).
+//
+// The legacy form set each potential to NaN whenever its regime went inactive
+// and overwrote prev with NaN, so the baseline re-anchored on every possession
+// gap: advances were paid and drops across a gap were never charged. These two
+// tests pin the property that fixes it.
+// ---------------------------------------------------------------------------
+
+BB_TEST(distance_potential_is_total_and_nonnegative) {
+    // Inactive regimes must have a VALUE, not NaN. That is what lets a regime
+    // exit be charged instead of silently re-anchoring the baseline.
+    check_float(bbe_potential(0.04f, -1), 0.0f);
+    // A zero coefficient contributes nothing even when the regime is active.
+    check_float(bbe_potential(0.0f, 7), 0.0f);
+    // Phi rises toward the goal and is non-negative across the whole pitch,
+    // which is what makes the closed-cycle bound below hold.
+    check_float(bbe_potential(0.04f, BB_PITCH_LEN - 1), 0.0f);
+    check_float(bbe_potential(0.04f, 0), 0.04f * (float)(BB_PITCH_LEN - 1));
+    BB_CHECK(bbe_potential(0.04f, 5) > bbe_potential(0.04f, 6));
+    for (int d = 0; d < BB_PITCH_LEN; d++) {
+        BB_CHECK(bbe_potential(0.04f, d) >= 0.0f);
+    }
+}
+
+BB_TEST(distance_pbrs_closed_cycle_cannot_pay_while_legacy_does) {
+    // The farm cycle the legacy form rewards: gain the ball 10 squares out,
+    // advance 5, lose it, regain it at the SAME place, advance 5 again. The
+    // state returns to where it started, so an honest potential must not pay.
+    const float k = 0.04f;
+    const int cycle[] = {-1, 10, 9, 8, 7, 6, 5, -1, 10, 9, 8, 7, 6, 5, -1};
+    const int n = (int)(sizeof(cycle) / sizeof(cycle[0]));
+
+    // Legacy: emission skipped whenever either side is NaN, prev overwritten
+    // with NaN, so both advances are paid in full and neither drop is charged.
+    float legacy_total = 0.0f;
+    float prev = NAN;
+    for (int i = 0; i < n; i++) {
+        float cur = cycle[i] < 0 ? NAN : -k * (float)cycle[i];
+        if (!isnan(cur) && !isnan(prev)) legacy_total += cur - prev;
+        prev = cur;
+    }
+    BB_CHECK(legacy_total > 0.35f);   // 2 x 5 squares x 0.04 = 0.40
+
+    // Exact PBRS at gamma=1: a closed cycle telescopes to exactly zero.
+    float pbrs_total = 0.0f;
+    float phi_prev = bbe_potential(k, cycle[0]);
+    for (int i = 1; i < n; i++) {
+        float phi = bbe_potential(k, cycle[i]);
+        pbrs_total += 1.0f * phi - phi_prev;
+        phi_prev = phi;
+    }
+    BB_CHECK(fabsf(pbrs_total) < 1e-6f);
+
+    // And at the real gamma < 1 it is NON-POSITIVE for any closed cycle, since
+    // sum(gamma*Phi' - Phi) = (gamma-1) * sum(Phi) <= 0 when Phi >= 0. So the
+    // cycle can never be farmed at any length, not merely at this one.
+    for (int gi = 0; gi < 3; gi++) {
+        const float gam = (float)(0.9 + 0.045 * gi);   // 0.900, 0.945, 0.990
+        float total = 0.0f;
+        float pp = bbe_potential(k, cycle[0]);
+        for (int i = 1; i < n; i++) {
+            float phi = bbe_potential(k, cycle[i]);
+            total += gam * phi - pp;
+            pp = phi;
+        }
+        BB_CHECK(total <= 0.0f);
+    }
+}
+
+BB_TEST(distance_pbrs_charges_the_drop_that_legacy_ignored) {
+    // A possession loss at distance d must cost the progress it gave up. Under
+    // the legacy form this transition emitted nothing at all.
+    const float k = 0.04f;
+    const int d = 6;
+    const float gam = 0.995f;
+
+    float phi_held = bbe_potential(k, d);
+    float phi_lost = bbe_potential(k, -1);
+    BB_CHECK(phi_held > 0.0f);
+    check_float(phi_lost, 0.0f);
+
+    float drop = gam * phi_lost - phi_held;
+    BB_CHECK(drop < 0.0f);                       // charged, not free
+    check_float(drop, -phi_held);
+
+    // In-air limbo is the same kind of gap, so a completed pass is charged the
+    // same way rather than earning nothing and silently re-anchoring.
+    float regain = gam * bbe_potential(k, d) - phi_lost;
+    BB_CHECK(regain > 0.0f);
+    BB_CHECK(fabsf(drop + regain) < k);          // gap round-trip is ~neutral
+}
+
+BB_TEST(distance_pbrs_terminal_payback_survives_terminal_suppression) {
+    // The terminal emission of a potential channel is gamma*0 - Phi(s): the
+    // mandatory payback of shaping already granted on the way to the goal.
+    // Terminal composition otherwise discards every incidental component on the
+    // final action, which would keep all the positives and drop only the
+    // repayment. Measured at -0.292757 per episode on a 2M probe before this
+    // exemption existed, against a 0.6 win bonus, so it is not a rounding issue.
+    RewardFixture f;
+    setup_env_buffers(&f);
+    f.env.reward_configured = 1;
+    f.env.reward_win = 0.60f;
+    f.env.reward_dist_pbrs_gamma = 0.995f;
+    f.env.match.score[BB_HOME] = 1;
+    f.env.match.score[BB_AWAY] = 0;
+
+    const float payback = -0.25f;
+    bbe_reward_add(&f.env, BB_HOME, BBE_REWARD_TOUCHDOWN, 0.40f);
+    bbe_reward_add(&f.env, BB_HOME, BBE_REWARD_DISTANCE_ENDZONE, payback);
+    // A genuinely incidental term on the same step must still be suppressed.
+    bbe_reward_add(&f.env, BB_HOME, BBE_REWARD_BALL_GAIN, 0.05f);
+    f.env.step_objective_reward[BB_HOME] = 0.40f;
+    f.env.step_objective_reward[BB_AWAY] = 0.0f;
+    bbe_finish_episode(&f.env);
+
+    // Payback kept, in the ledger and in the effective return.
+    check_float(f.env.log.reward_component[BBE_REWARD_DISTANCE_ENDZONE],
+                payback);
+    // Incidental ball-gain on the terminal action still dropped.
+    check_float(f.env.log.reward_component[BBE_REWARD_BALL_GAIN], 0.0f);
+    // Suppression telemetry must exclude the payback, or it would double-count
+    // as both "kept" and "suppressed".
+    check_float(f.env.log.reward_terminal_suppressed_signed, 0.05f);
+}
+
+BB_TEST(distance_legacy_terminal_composition_is_unchanged) {
+    // With the knob off, terminal composition must behave exactly as it always
+    // did: a distance component landing on the terminal action is incidental and
+    // is suppressed like everything else.
+    RewardFixture f;
+    setup_env_buffers(&f);
+    f.env.reward_configured = 1;
+    f.env.reward_win = 0.60f;
+    f.env.reward_dist_pbrs_gamma = 0.0f;
+    f.env.match.score[BB_HOME] = 1;
+    f.env.match.score[BB_AWAY] = 0;
+
+    bbe_reward_add(&f.env, BB_HOME, BBE_REWARD_TOUCHDOWN, 0.40f);
+    bbe_reward_add(&f.env, BB_HOME, BBE_REWARD_DISTANCE_ENDZONE, -0.25f);
+    f.env.step_objective_reward[BB_HOME] = 0.40f;
+    f.env.step_objective_reward[BB_AWAY] = 0.0f;
+    bbe_finish_episode(&f.env);
+
+    check_float(f.env.log.reward_component[BBE_REWARD_DISTANCE_ENDZONE], 0.0f);
+    check_float(f.env.log.reward_terminal_suppressed_signed, -0.25f);
+}

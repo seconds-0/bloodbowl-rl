@@ -384,6 +384,13 @@ typedef struct {
     // env to know gamma, which it currently does not.
     float reward_dist_ball;
     float reward_dist_endzone;
+    // Exact potential-based form for the two distance channels.
+    // 0 (default) = legacy raw (Phi' - Phi) with the NaN regime gaps described
+    // above: bit-identical to every historical run, and farmable.
+    // >0 = discounted-exact PBRS at this gamma. MUST equal the trainer's
+    // train.gamma or the shaping reintroduces the same bias class it fixes;
+    // tools/run_reward_ablation.sh asserts that equality at launch.
+    float reward_dist_pbrs_gamma;
     // Injury shaping (default 0 = off): per opponent removed to KO/CAS.
     float reward_injury_inflicted;
     float reward_injury_taken;
@@ -733,6 +740,47 @@ typedef struct {
     int setup_block_start[BBE_HEAD_ARG];   // projected arg -> block start (-1)
     uint16_t setup_sq_off[BBE_HEAD_SQ];    // sq -> template offset (0xFFFF)
 } Bloodbowl;
+
+// Chebyshev distance backing the two bootstrap distance channels, or -1 when
+// the channel's regime is inactive. Factored out so the legacy raw-delta form
+// and the exact PBRS form derive from ONE distance definition and cannot drift.
+static int bbe_dist_fetch(const bb_match* m, int t) {
+    if (m->ball.state != BB_BALL_ON_GROUND) return -1;
+    int best = -1;
+    for (int sl = t * BB_TEAM_SLOTS; sl < (t + 1) * BB_TEAM_SLOTS; sl++) {
+        const bb_player* p = &m->players[sl];
+        if (p->location != BB_LOC_ON_PITCH ||
+            p->stance != BB_STANCE_STANDING) continue;
+        int dx = p->x > m->ball.x ? p->x - m->ball.x : m->ball.x - p->x;
+        int dy = p->y > m->ball.y ? p->y - m->ball.y : m->ball.y - p->y;
+        int d = dx > dy ? dx : dy;
+        if (best < 0 || d < best) best = d;
+    }
+    return best;
+}
+
+static int bbe_dist_carry(const bb_match* m, int t) {
+    if (m->ball.state != BB_BALL_HELD) return -1;
+    if (BB_TEAM_OF(m->ball.carrier) != t) return -1;
+    const bb_player* c = &m->players[m->ball.carrier];
+    int ez = bb_endzone_x(t);
+    return c->x > ez ? c->x - ez : ez - c->x;
+}
+
+// PBRS potential, >= 0 and TOTAL: every state has a value, including states
+// where the channel is inactive. Both distances are Chebyshev on the pitch and
+// so are bounded by BB_PITCH_LEN - 1, which makes this non-negative.
+//
+// Inactive MUST be 0 rather than the legacy NaN, and the potential must rise
+// toward the goal rather than fall. With the legacy Phi = -k*d, going inactive
+// would PAY +k*d on a possession loss; with Phi = k*(D_max - d), losing at
+// distance d emits gamma*0 - k*(D_max - d) < 0, so the drop is charged and a
+// gain/advance/lose/regain cycle telescopes to zero instead of banking reward.
+#define BBE_POT_DMAX ((float)(BB_PITCH_LEN - 1))
+static float bbe_potential(float coeff, int dist) {
+    if (coeff == 0.0f || dist < 0) return 0.0f;
+    return coeff * (BBE_POT_DMAX - (float)dist);
+}
 
 // Single mutation seam for ordinary reward contributions. Keeping the two
 // pre-existing additions in their original order preserves reward behavior;
@@ -2355,7 +2403,26 @@ static void bbe_finish_episode(Bloodbowl* env) {
         float pre_terminal = env->reward_ptr[a][0];
         if (!isfinite(pre_terminal)) suppressed_nonfinite_mask |= 1u << a;
         float objective = env->step_objective_reward[a];
-        float suppressed = pre_terminal - objective;
+        // An exact-PBRS potential channel is exempt from terminal suppression.
+        // Its terminal emission is gamma*0 - Phi(s): the mandatory PAYBACK of
+        // shaping already granted while approaching the goal, not incidental
+        // shaping that happened to land on the final action. Suppressing only
+        // the payback while keeping every earlier positive is strictly worse
+        // than suppressing both or neither -- measured at -0.292757 per episode
+        // on a 2M probe, against a 0.6 win bonus, and it would pay the agent to
+        // end the game holding the ball near the opponent end zone. Legacy mode
+        // keeps the historical behaviour exactly: it emits nothing here anyway,
+        // because it skips the emission whenever a team scored.
+        float potential_kept = 0.0f;
+        if (env->reward_dist_pbrs_gamma > 0.0f) {
+            float pot_ball =
+                env->step_reward_component[a][BBE_REWARD_DISTANCE_BALL];
+            float pot_endzone =
+                env->step_reward_component[a][BBE_REWARD_DISTANCE_ENDZONE];
+            if (isfinite(pot_ball)) potential_kept += pot_ball;
+            if (isfinite(pot_endzone)) potential_kept += pot_endzone;
+        }
+        float suppressed = pre_terminal - objective - potential_kept;
         if (isfinite(suppressed)) {
             // `abs` is the absolute NET suppressed subtotal on this terminal
             // emission, not the sum of absolute per-component contributions.
@@ -2376,6 +2443,14 @@ static void bbe_finish_episode(Bloodbowl* env) {
         // Rebuild both the effective reward and its scratch ledger with the
         // same terminal authority. The assignment expressions remain exactly
         // as before; only result/statmatch below are new effective components.
+        float kept_ball = 0.0f, kept_endzone = 0.0f;
+        if (env->reward_dist_pbrs_gamma > 0.0f) {
+            kept_ball = env->step_reward_component[a][BBE_REWARD_DISTANCE_BALL];
+            kept_endzone =
+                env->step_reward_component[a][BBE_REWARD_DISTANCE_ENDZONE];
+            if (!isfinite(kept_ball)) kept_ball = 0.0f;
+            if (!isfinite(kept_endzone)) kept_endzone = 0.0f;
+        }
         memset(env->step_reward_component[a], 0,
                sizeof env->step_reward_component[a]);
         env->step_reward_component[a][BBE_REWARD_TOUCHDOWN] = objective;
@@ -2383,8 +2458,14 @@ static void bbe_finish_episode(Bloodbowl* env) {
             m->score[0] == m->score[1] ? BBE_REWARD_RESULT_DRAW
                                        : BBE_REWARD_RESULT_WINLOSS;
         env->step_reward_component[a][result_component] = bonus[a];
-        env->reward_ptr[a][0] = objective + bonus[a];
-        env->ep_return[a] = env->step_return_base[a] + objective + bonus[a];
+        // Restored after the memset so the ledger and the effective reward carry
+        // the same potential payback and still reconcile component-by-component.
+        env->step_reward_component[a][BBE_REWARD_DISTANCE_BALL] = kept_ball;
+        env->step_reward_component[a][BBE_REWARD_DISTANCE_ENDZONE] = kept_endzone;
+        float kept = kept_ball + kept_endzone;
+        env->reward_ptr[a][0] = objective + bonus[a] + kept;
+        env->ep_return[a] =
+            env->step_return_base[a] + objective + bonus[a] + kept;
         env->terminal_ptr[a][0] = 1.0f;
     }
     if (env->possessor >= 0) {
@@ -3321,39 +3402,49 @@ static void c_step(Bloodbowl* env) {
             }
             env->sent_off_prev[t] = sent;
         }
-        // Bootstrap potentials: emit delta-potential per side. Skip across
-        // score/drive boundaries (potential resets silently, like possession).
+        // Bootstrap potentials, two forms selected by reward_dist_pbrs_gamma.
         if (env->reward_dist_ball != 0.0f || env->reward_dist_endzone != 0.0f) {
+            float gam = env->reward_dist_pbrs_gamma;
             for (int t = 0; t < 2; t++) {
-                // Fetch channel: active only while the ball is loose.
-                float pf = NAN;
-                if (m->ball.state == BB_BALL_ON_GROUND) {
-                    int best = 99;
-                    for (int sl = t * BB_TEAM_SLOTS; sl < (t + 1) * BB_TEAM_SLOTS; sl++) {
-                        const bb_player* p = &m->players[sl];
-                        if (p->location != BB_LOC_ON_PITCH ||
-                            p->stance != BB_STANCE_STANDING) continue;
-                        int dx = p->x > m->ball.x ? p->x - m->ball.x : m->ball.x - p->x;
-                        int dy = p->y > m->ball.y ? p->y - m->ball.y : m->ball.y - p->y;
-                        int d = dx > dy ? dx : dy;
-                        if (d < best) best = d;
+                int df = bbe_dist_fetch(m, t);
+                int dc = bbe_dist_carry(m, t);
+                if (gam > 0.0f) {
+                    // Exact discounted PBRS. Phi is total and >= 0, so regime
+                    // exits are charged instead of silently re-anchoring, and
+                    // the emission happens on EVERY transition -- including
+                    // across a score or drive boundary, because skipping one is
+                    // exactly what breaks telescoping.
+                    float phf = bbe_potential(env->reward_dist_ball, df);
+                    float phc = bbe_potential(env->reward_dist_endzone, dc);
+                    float pf0 = isnan(env->pot_fetch_prev[t])
+                                    ? phf : env->pot_fetch_prev[t];
+                    float pc0 = isnan(env->pot_carry_prev[t])
+                                    ? phc : env->pot_carry_prev[t];
+                    if (env->reward_dist_ball != 0.0f) {
+                        bbe_reward_add(env, t, BBE_REWARD_DISTANCE_BALL,
+                                       gam * phf - pf0);
                     }
-                    if (best < 99) pf = -env->reward_dist_ball * (float)best;
+                    if (env->reward_dist_endzone != 0.0f) {
+                        bbe_reward_add(env, t, BBE_REWARD_DISTANCE_ENDZONE,
+                                       gam * phc - pc0);
+                    }
+                    env->pot_fetch_prev[t] = phf;
+                    env->pot_carry_prev[t] = phc;
+                    continue;
                 }
+                // Legacy raw-delta form, bit-identical to every historical run:
+                // Phi = -k*d while the regime is active and NaN otherwise, the
+                // emission skipped whenever either side is NaN or the team just
+                // scored. Farmable (see the field comment); retained only so
+                // existing lineages stay comparable.
+                float pf = df < 0 ? NAN : -env->reward_dist_ball * (float)df;
                 if (!scored && !isnan(pf) &&
                     !isnan(env->pot_fetch_prev[t])) {
                     float dr = pf - env->pot_fetch_prev[t];
                     bbe_reward_add(env, t, BBE_REWARD_DISTANCE_BALL, dr);
                 }
                 env->pot_fetch_prev[t] = pf;
-                // Carry channel: active only while this team holds the ball.
-                float pc = NAN;
-                if (m->ball.state == BB_BALL_HELD && BB_TEAM_OF(m->ball.carrier) == t) {
-                    const bb_player* c = &m->players[m->ball.carrier];
-                    int ez = bb_endzone_x(t);
-                    int d = c->x > ez ? c->x - ez : ez - c->x;
-                    pc = -env->reward_dist_endzone * (float)d;
-                }
+                float pc = dc < 0 ? NAN : -env->reward_dist_endzone * (float)dc;
                 if (!scored && !isnan(pc) &&
                     !isnan(env->pot_carry_prev[t])) {
                     float dr = pc - env->pot_carry_prev[t];

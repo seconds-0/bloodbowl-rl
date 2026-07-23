@@ -34,6 +34,7 @@ REWARD_FLOAT_KEYS = (
     "reward_ball_loss",
     "reward_dist_ball",
     "reward_dist_endzone",
+    "reward_dist_pbrs_gamma",
     "reward_injury_inflicted",
     "reward_injury_taken",
     "reward_send_off",
@@ -57,12 +58,24 @@ REWARD_FLOAT_KEYS = (
     "reward_statmatch_scale",
 )
 REWARD_INT_KEYS = ("reward_injury_value_scaled",)
+
+# Keys introduced after schema 1. A schema-1 manifest must NOT carry them: its
+# digest is quoted as provenance by completed experiments and in DECISIONS.md, so
+# adding a field to those files would silently invalidate every reference. Schema
+# 1 therefore *means* the legacy behaviour for each of these (raw delta-Phi for
+# the distance channels), which is a documented semantic, not an inherited
+# default. Schema 2 must state every one of them explicitly.
+SCHEMA2_ONLY_FLOAT_KEYS = ("reward_dist_pbrs_gamma",)
+MAX_SCHEMA_VERSION = 2
+
 REQUIRED_KEYS = REWARD_FLOAT_KEYS + REWARD_INT_KEYS
 
 
 def validate_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
-    if manifest.get("schema_version") != 1:
-        raise ValueError("reward manifest schema_version must be 1")
+    version = manifest.get("schema_version")
+    if version not in (1, 2):
+        raise ValueError(
+            f"reward manifest schema_version must be 1 or {MAX_SCHEMA_VERSION}")
     if not isinstance(manifest.get("name"), str) or not manifest["name"].strip():
         raise ValueError("reward manifest needs a non-empty name")
     reward = manifest.get("reward")
@@ -71,6 +84,8 @@ def validate_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
 
     keys = set(reward)
     required = set(REQUIRED_KEYS)
+    if version < 2:
+        required -= set(SCHEMA2_ONLY_FLOAT_KEYS)
     missing = sorted(required - keys)
     unknown = sorted(keys - required)
     if missing:
@@ -79,6 +94,8 @@ def validate_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
         raise ValueError(f"unknown reward keys: {', '.join(unknown)}")
 
     for key in REWARD_FLOAT_KEYS:
+        if key not in reward:
+            continue  # schema-1 manifest, legacy semantics (see above)
         value = reward[key]
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise ValueError(f"{key} must be numeric")
@@ -170,6 +187,13 @@ def cli_args(manifest: dict[str, Any]) -> list[str]:
     reward = manifest["reward"]
     args = []
     for key in REQUIRED_KEYS:
+        # A schema-1 manifest legitimately omits the schema-2 keys. Emitting a
+        # token for one anyway would be worse than omitting it: the env's own
+        # default is the legacy behaviour that schema 1 means, so silence here
+        # is the accurate statement, and validate_manifest has already proved
+        # the omission is confined to exactly those keys.
+        if key not in reward:
+            continue
         args.extend((f"--env.{key.replace('_', '-')}",
                      _format_value(reward[key])))
     return args

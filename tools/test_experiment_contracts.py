@@ -627,6 +627,36 @@ class ExperimentContractTests(unittest.TestCase):
         self.assertIn("environment_source_sha256", screen)
         self.assertIn("COMPILED_ENVIRONMENT_SOURCE_HASH", arm)
 
+    def test_exact_pbrs_distance_requires_matching_trainer_gamma(self):
+        # beta*(gamma*Phi' - Phi) is only exact at the gamma the trainer really
+        # discounts with, and a mismatch fails silently rather than loudly: it
+        # just reintroduces the bias class the discounted form removes. The env
+        # cannot see train.gamma, so the launcher owns this check.
+        arm = (ROOT / "tools/run_reward_ablation.sh").read_text(encoding="utf-8")
+        self.assertIn("reward_dist_pbrs_gamma", arm)
+        self.assertIn("!= train gamma", arm)
+        # The legacy path must stay reachable and silent: a schema-1 manifest
+        # omits the key, so the launcher must not demand it.
+        from reward_manifest import load_manifest, cli_args
+        legacy, _ = load_manifest(
+            ROOT / "puffer/config/rewards/r0_full.json")
+        self.assertEqual(legacy["schema_version"], 1)
+        self.assertNotIn("reward_dist_pbrs_gamma", legacy["reward"])
+        self.assertNotIn("--env.reward-dist-pbrs-gamma", cli_args(legacy))
+        # The candidate states it explicitly and renders the token.
+        exact, _ = load_manifest(
+            ROOT / "puffer/config/rewards/r4_pbrs_distance.json")
+        self.assertEqual(exact["schema_version"], 2)
+        self.assertAlmostEqual(
+            exact["reward"]["reward_dist_pbrs_gamma"], 0.995)
+        self.assertIn("--env.reward-dist-pbrs-gamma", cli_args(exact))
+        # Exactly one declared factor may differ from the r0 control.
+        differing = {
+            k for k in exact["reward"]
+            if legacy["reward"].get(k, "<absent>") != exact["reward"][k]
+        }
+        self.assertEqual(differing, {"reward_dist_pbrs_gamma"})
+
     def test_vacation_queue_is_hash_pinned_and_fail_closed(self):
         source = (ROOT / "tools/experiment_queue.py").read_text(
             encoding="utf-8"
