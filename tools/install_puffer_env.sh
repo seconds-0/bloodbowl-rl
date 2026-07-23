@@ -484,8 +484,8 @@ fi
 DASHBOARD_PY="$PUFFER/pufferlib/pufferl.py"
 if [ -f "$DASHBOARD_PY" ] && \
    ! grep -Fq 'os.write(sys.stdout.fileno()' "$DASHBOARD_PY"; then
-    if perl -0pi -e "s/(\\n)(\\s*)print\\('PUFFER_ENV_JSON ' \\+ json\\.dumps\\(\\n\\s*env_json, sort_keys=True, allow_nan=False\\)\\)/\\1\\2_panel = 'PUFFER_ENV_JSON ' + json.dumps(\\n\\2    env_json, sort_keys=True, allow_nan=False)\\n\\2sys.stdout.flush()\\n\\2os.write(sys.stdout.fileno(), (_panel + chr(10)).encode('utf-8'))/s" \\
-        "$DASHBOARD_PY" && \\
+    if perl -0pi -e "s/(\\n)(\\s*)print\\('PUFFER_ENV_JSON ' \\+ json\\.dumps\\(\\n\\s*env_json, sort_keys=True, allow_nan=False\\)\\)/\\1\\2_panel = 'PUFFER_ENV_JSON ' + json.dumps(\\n\\2    env_json, sort_keys=True, allow_nan=False)\\n\\2sys.stdout.flush()\\n\\2os.write(sys.stdout.fileno(), (_panel + chr(10)).encode('utf-8'))/s" \
+        "$DASHBOARD_PY" && \
        grep -Fq 'os.write(sys.stdout.fileno()' "$DASHBOARD_PY"; then
         echo "applied:   atomic machine-panel write -> pufferlib/pufferl.py"
     else
