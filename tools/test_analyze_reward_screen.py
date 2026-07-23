@@ -32,11 +32,107 @@ class RewardScreenAnalysisTests(unittest.TestCase):
     def build_exact_action_canary(self, root):
         root = Path(root)
         prefix = analyze_reward_screen.EXACT_ACTION_CANARY_PREFIX
-        plan_authorization_sha = digest("plan-authorization")
-        qualification_sha = digest("qualification")
+        evidence_root = root / "launch-evidence"
+        evidence_root.mkdir()
+        qualification_path = evidence_root / "QUALIFICATION.json"
+        mandatory_gates = (
+            "construction_state",
+            "graph_parity",
+            "terminal_reset",
+            "ratio",
+            "throughput",
+        )
+        write_json(qualification_path, {
+            "schema_version": 3,
+            "qualification_only": True,
+            "accepted": True,
+            "failed_gates": [],
+            "mandatory_gates": list(mandatory_gates),
+            "gates": {
+                gate: {"accepted": True, "hard_integrity_zero": True}
+                for gate in mandatory_gates
+            },
+        })
+        qualification_sha = sha256(qualification_path)
+        plan_authorization_path = (
+            evidence_root / "CANARY_PLAN_AUTHORIZATION.json"
+        )
+        plan_authorization_sidecar = plan_authorization_path.with_suffix(
+            ".sha256"
+        )
         cuda_runtime_sha = digest("cudart")
-        plan_authorization = "/remote/evidence/CANARY_PLAN_AUTHORIZATION.json"
-        qualification = "/remote/evidence/QUALIFICATION.json"
+        source_identity = {
+            "root": "/candidate",
+            "commit": "a" * 40,
+            "tree": "b" * 40,
+        }
+        runner_identity = {
+            "root": "/qualification-runner",
+            "commit": "a" * 40,
+            "tree": "b" * 40,
+        }
+        candidate_identity = {
+            "module_sha256": digest("module"),
+            "action_abi": "exact-joint-v1",
+        }
+        cuda_runtime = {
+            "library": {
+                "resolved_path": (
+                    "/usr/lib/x86_64-linux-gnu/libcudart.so.12.4.127"
+                ),
+                "sha256": cuda_runtime_sha,
+            },
+            "after_extension_import": {"device_count": 1},
+        }
+        write_json(plan_authorization_path, {
+            "schema_version": 1,
+            "kind": "exact_action_canary_plan_authorization",
+            "qualification_only": True,
+            "source": source_identity,
+            "qualification_runner": runner_identity,
+            "qualification": {
+                "path": str(qualification_path.resolve()),
+                "sha256": qualification_sha,
+            },
+            "candidate": candidate_identity,
+            "cuda_runtime": cuda_runtime,
+            "screen": {
+                "profile": "exact-action-canary",
+                "prefix": prefix,
+                "requested_steps": 50_000_000,
+                "final_steps": 49_938_432,
+                "rollout_quantum": 131_072,
+                "poll_seconds": 30,
+                "arm_detach": 0,
+                "seed": 42,
+                "arm": "both",
+                "precision": "fp32",
+                "observation_abi": "obs-v5",
+                "observation_version": 5,
+                "action_abi": "exact-joint-v1",
+                "initialization": "fresh",
+                "output": str(root.resolve()),
+            },
+            "error_budget": {
+                "contamination_budget": 0,
+                "hard_integrity_keys": list(HARD_INTEGRITY_KEYS),
+                "max_panel_silence_seconds": 180,
+            },
+            "eligibility": {
+                "qualification_only": True,
+                "checkpoint_ancestry": False,
+                "reward_evidence": False,
+                "promotion": False,
+                "bbtv_follower": False,
+            },
+        })
+        plan_authorization_sha = sha256(plan_authorization_path)
+        plan_authorization_sidecar.write_text(
+            f"{plan_authorization_sha}  {plan_authorization_path.name}\n",
+            encoding="ascii",
+        )
+        plan_authorization = str(plan_authorization_path.resolve())
+        qualification = str(qualification_path.resolve())
         manifest = {
             "schema_version": 1,
             "contract": {
@@ -134,18 +230,27 @@ class RewardScreenAnalysisTests(unittest.TestCase):
         manifest_path = root / "SCREEN_MANIFEST.json"
         write_json(manifest_path, manifest)
         manifest_sha = sha256(manifest_path)
-        evidence_root = root / "launch-evidence"
-        evidence_root.mkdir()
         launch_authorization_path = (
             evidence_root / "CANARY_LAUNCH_AUTHORIZATION.json"
         )
         launch_authorization_sidecar = launch_authorization_path.with_suffix(
             ".sha256"
         )
+        unit_path = evidence_root / (
+            "bloodbowl-exact-action-canary-50m-s42-v4.service"
+        )
+        unit_path.write_text("fixture unit\n", encoding="utf-8")
+        stopped_validation = evidence_root / "stopped-validation"
+        stopped_validation.mkdir()
+        launch_consumption_path = (
+            evidence_root / "CANARY_LAUNCH_CONSUMPTION.json"
+        )
         launch_authorization = {
             "schema_version": 1,
             "kind": "exact_action_canary_launch_authorization",
             "qualification_only": True,
+            "source": source_identity,
+            "qualification_runner": runner_identity,
             "plan_authorization": {
                 "path": plan_authorization,
                 "sha256": plan_authorization_sha,
@@ -157,8 +262,27 @@ class RewardScreenAnalysisTests(unittest.TestCase):
                 "path": qualification,
                 "sha256": qualification_sha,
             },
+            "candidate": candidate_identity,
+            "cuda_runtime": cuda_runtime,
             "plan_output": {"path": str(root.resolve())},
-            "systemd": {"maximum_starts": 1},
+            "unit": {
+                "path": str(unit_path.resolve()),
+                "name": unit_path.name,
+                "sha256": sha256(unit_path),
+            },
+            "stopped_validation": {
+                "path": str(stopped_validation.resolve()),
+                "initially_empty": True,
+            },
+            "launch_consumption": {
+                "path": str(launch_consumption_path.resolve()),
+                "sha256_file": str(
+                    launch_consumption_path.with_suffix(".sha256").resolve()
+                ),
+                "initially_absent": True,
+            },
+            "systemd": dict(analyze_reward_screen.EXACT_ACTION_CANARY_SYSTEMD),
+            "command": dict(analyze_reward_screen.EXACT_ACTION_CANARY_COMMAND),
             "eligibility": {
                 "qualification_only": True,
                 "checkpoint_ancestry": False,
@@ -172,9 +296,6 @@ class RewardScreenAnalysisTests(unittest.TestCase):
         launch_authorization_sidecar.write_text(
             f"{launch_authorization_sha}  {launch_authorization_path.name}\n",
             encoding="ascii",
-        )
-        launch_consumption_path = (
-            evidence_root / "CANARY_LAUNCH_CONSUMPTION.json"
         )
         launch_consumption_sidecar = launch_consumption_path.with_suffix(
             ".sha256"
@@ -200,6 +321,25 @@ class RewardScreenAnalysisTests(unittest.TestCase):
             f"{launch_consumption_sha}  {launch_consumption_path.name}\n",
             encoding="ascii",
         )
+        live_invocation_path = root / "CANARY_LIVE_INVOCATION.json"
+        write_json(live_invocation_path, {
+            "schema_version": 1,
+            "kind": "exact_action_canary_live_invocation",
+            "created_utc": "2026-07-21T00:00:00+00:00",
+            "qualification_only": True,
+            "launch_authorization": {
+                "path": str(launch_authorization_path.resolve()),
+                "sha256": launch_authorization_sha,
+            },
+            "launch_consumption": {
+                "path": str(launch_consumption_path.resolve()),
+                "sha256": launch_consumption_sha,
+            },
+            "plan_output": str(root.resolve()),
+            "attempt": 1,
+            "maximum_starts": 1,
+        })
+        live_invocation_sha = sha256(live_invocation_path)
         launch_record_path = root / "CANARY_LAUNCH_RECORD.json"
         write_json(launch_record_path, {
             "schema_version": 1,
@@ -211,6 +351,8 @@ class RewardScreenAnalysisTests(unittest.TestCase):
             "launch_authorization_sha256": launch_authorization_sha,
             "launch_consumption": str(launch_consumption_path.resolve()),
             "launch_consumption_sha256": launch_consumption_sha,
+            "live_invocation": str(live_invocation_path.resolve()),
+            "live_invocation_sha256": live_invocation_sha,
             "plan_authorization": plan_authorization,
             "plan_authorization_sha256": plan_authorization_sha,
             "qualification": qualification,
@@ -219,6 +361,29 @@ class RewardScreenAnalysisTests(unittest.TestCase):
             "screen_manifest_sha256": manifest_sha,
         })
         launch_record_sha = sha256(launch_record_path)
+        run_manifest_path = root / "run-manifest.json"
+        write_json(run_manifest_path, {
+            "screen_manifest_sha256": manifest_sha,
+            "canary_launch_authorization": str(
+                launch_authorization_path.resolve()
+            ),
+            "expected_canary_launch_authorization_sha256": (
+                launch_authorization_sha
+            ),
+            "canary_launch_consumption": str(
+                launch_consumption_path.resolve()
+            ),
+            "canary_launch_consumption_sha256": launch_consumption_sha,
+            "canary_qualification": qualification,
+            "canary_qualification_sha256": qualification_sha,
+            "canary_launch_record": str(launch_record_path.resolve()),
+            "canary_launch_record_sha256": launch_record_sha,
+            "expected_cuda_runtime_library_path": cuda_runtime[
+                "library"
+            ]["resolved_path"],
+            "expected_cuda_runtime_library_sha256": cuda_runtime_sha,
+            "expected_cuda_runtime_device_count": "1",
+        })
         checkpoint_lineage_sha = digest("checkpoint-lineage")
         zero_metrics = {
             key: 0.0 for key in HARD_INTEGRITY_KEYS
@@ -243,7 +408,8 @@ class RewardScreenAnalysisTests(unittest.TestCase):
             "log_sha256": digest("log-both-42"),
             "status_sha256": digest("status-both-42"),
             "process_sha256": digest("process-both-42"),
-            "run_manifest_sha256": digest("manifest-both-42"),
+            "run_manifest": str(run_manifest_path.resolve()),
+            "run_manifest_sha256": sha256(run_manifest_path),
             "canary_launch_record_sha256": launch_record_sha,
             "canary_launch_authorization_sha256": launch_authorization_sha,
             "canary_launch_consumption": str(launch_consumption_path.resolve()),
@@ -284,6 +450,73 @@ class RewardScreenAnalysisTests(unittest.TestCase):
         completion_path = root / "SCREEN_COMPLETE.json"
         completion = json.loads(completion_path.read_text(encoding="utf-8"))
         completion["screen_manifest_sha256"] = manifest_sha
+        completion["results"][0]["sha256"] = sha256(result_path)
+        write_json(completion_path, completion)
+
+    def coherently_rehash_launch_chain(self, root, mutate_authorization):
+        root = Path(root)
+        evidence_root = root / "launch-evidence"
+        authorization_path = (
+            evidence_root / "CANARY_LAUNCH_AUTHORIZATION.json"
+        )
+        authorization = json.loads(
+            authorization_path.read_text(encoding="utf-8")
+        )
+        mutate_authorization(authorization)
+        write_json(authorization_path, authorization)
+        authorization_sha = sha256(authorization_path)
+        authorization_path.with_suffix(".sha256").write_text(
+            f"{authorization_sha}  {authorization_path.name}\n",
+            encoding="ascii",
+        )
+
+        consumption_path = evidence_root / "CANARY_LAUNCH_CONSUMPTION.json"
+        consumption = json.loads(
+            consumption_path.read_text(encoding="utf-8")
+        )
+        consumption["launch_authorization"]["sha256"] = authorization_sha
+        consumption["plan_authorization"] = authorization[
+            "plan_authorization"
+        ]
+        consumption["qualification"] = authorization["qualification"]
+        write_json(consumption_path, consumption)
+        consumption_sha = sha256(consumption_path)
+        consumption_path.with_suffix(".sha256").write_text(
+            f"{consumption_sha}  {consumption_path.name}\n",
+            encoding="ascii",
+        )
+
+        live_invocation_path = root / "CANARY_LIVE_INVOCATION.json"
+        live_invocation = json.loads(
+            live_invocation_path.read_text(encoding="utf-8")
+        )
+        live_invocation["launch_authorization"]["sha256"] = authorization_sha
+        live_invocation["launch_consumption"]["sha256"] = consumption_sha
+        write_json(live_invocation_path, live_invocation)
+
+        launch_record_path = root / "CANARY_LAUNCH_RECORD.json"
+        launch_record = json.loads(
+            launch_record_path.read_text(encoding="utf-8")
+        )
+        launch_record["launch_authorization_sha256"] = authorization_sha
+        launch_record["launch_consumption_sha256"] = consumption_sha
+        launch_record["live_invocation_sha256"] = sha256(
+            live_invocation_path
+        )
+        write_json(launch_record_path, launch_record)
+
+        result_path = root / (
+            f"{analyze_reward_screen.EXACT_ACTION_CANARY_PREFIX}"
+            "-both-s42.result.json"
+        )
+        result = json.loads(result_path.read_text(encoding="utf-8"))
+        result["canary_launch_authorization_sha256"] = authorization_sha
+        result["canary_launch_consumption_sha256"] = consumption_sha
+        result["canary_launch_record_sha256"] = sha256(launch_record_path)
+        write_json(result_path, result)
+
+        completion_path = root / "SCREEN_COMPLETE.json"
+        completion = json.loads(completion_path.read_text(encoding="utf-8"))
         completion["results"][0]["sha256"] = sha256(result_path)
         write_json(completion_path, completion)
 
@@ -620,6 +853,67 @@ class RewardScreenAnalysisTests(unittest.TestCase):
             with self.assertRaisesRegex(
                 analyze_reward_screen.AnalysisError,
                 "launch authorization contract drifted",
+            ):
+                analyze_reward_screen.analyze_screen(root, ("tds",))
+
+    def test_exact_action_canary_rejects_rehashed_two_start_authority(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.build_exact_action_canary(root)
+            self.coherently_rehash_launch_chain(
+                root,
+                lambda authorization: authorization["systemd"].__setitem__(
+                    "maximum_starts", 2
+                ),
+            )
+            with self.assertRaisesRegex(
+                analyze_reward_screen.AnalysisError,
+                "launch authorization contract drifted",
+            ):
+                analyze_reward_screen.analyze_screen(root, ("tds",))
+
+    def test_exact_action_canary_requires_current_plan_and_qualification(self):
+        for name, relative, error in (
+            (
+                "plan",
+                "launch-evidence/CANARY_PLAN_AUTHORIZATION.json",
+                "plan authorization file drifted",
+            ),
+            (
+                "qualification",
+                "launch-evidence/QUALIFICATION.json",
+                "qualification file drifted",
+            ),
+        ):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                self.build_exact_action_canary(root)
+                (root / relative).unlink()
+                with self.assertRaisesRegex(
+                    analyze_reward_screen.AnalysisError, error
+                ):
+                    analyze_reward_screen.analyze_screen(root, ("tds",))
+
+    def test_exact_action_canary_rejects_rebound_run_manifest_digest(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.build_exact_action_canary(root)
+            result_path = root / (
+                f"{analyze_reward_screen.EXACT_ACTION_CANARY_PREFIX}"
+                "-both-s42.result.json"
+            )
+            result = json.loads(result_path.read_text(encoding="utf-8"))
+            result["run_manifest_sha256"] = "0" * 64
+            write_json(result_path, result)
+            completion_path = root / "SCREEN_COMPLETE.json"
+            completion = json.loads(
+                completion_path.read_text(encoding="utf-8")
+            )
+            completion["results"][0]["sha256"] = sha256(result_path)
+            write_json(completion_path, completion)
+            with self.assertRaisesRegex(
+                analyze_reward_screen.AnalysisError,
+                "run manifest file drifted",
             ):
                 analyze_reward_screen.analyze_screen(root, ("tds",))
 

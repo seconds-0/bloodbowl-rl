@@ -46,10 +46,12 @@ independent validation before plan-only or live canary work.
 6. The live unit is one-shot, disabled, `Restart=no`,
    `KillMode=control-group`, `ARM_DETACH=0`, and bounded to two hours. Its first
    `ExecStartPre` exclusively creates the immutable sibling
-   `CANARY_LAUNCH_CONSUMPTION.json`; qualification and empty-GPU probes run only
-   after that irreversible operation, so any later prestart or launcher failure
-   consumes the sole attempt. The launcher validates that consumption before
-   output mutation and uses `env -u WARM -u POOL`.
+   `CANARY_LAUNCH_CONSUMPTION.json` after authenticating only the frozen launch
+   bytes; qualification, current-file checks, and empty-GPU probes run only
+   after that irreversible operation. The launcher validates that consumption
+   and exclusively publishes `CANARY_LIVE_INVOCATION.json` before the installer,
+   so any later prestart or launcher failure consumes the sole attempt and a
+   direct `ExecStart` replay rejects. It uses `env -u WARM -u POOL`.
 7. Any nonzero, missing, malformed, non-finite, or drifted integrity/provenance
    field rejects the attempt. No retry, resume, repair-in-place, checkpoint
    eligibility, reward evidence, or BBTV promotion is introduced.

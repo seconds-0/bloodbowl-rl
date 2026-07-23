@@ -317,10 +317,14 @@ newer evidence wins.
   validation output. Revalidation runs the qualifier from a separately bound
   clean control/runner root using candidate Python; runner and candidate roots
   must differ and their merged commits must match. The unit's first prestart
-  atomically and exclusively creates sibling `CANARY_LAUNCH_CONSUMPTION.json`;
-  qualification and empty-GPU probes occur only afterward, and the launcher
-  validates that record before any output mutation. A failure after consumption
-  burns the sole attempt and every manual retry rejects. Rebuild and
+  authenticates only the frozen launch bytes and atomically/exclusively creates
+  sibling `CANARY_LAUNCH_CONSUMPTION.json`; every fallible current-file,
+  qualification, and empty-GPU check occurs afterward. The launcher validates
+  that record and exclusively creates `CANARY_LIVE_INVOCATION.json` before the
+  installer, so direct command replay also rejects. A failure after consumption
+  burns the sole attempt. Stopped analysis opens and hashes the actual plan,
+  qualification, unit, consumption, invocation claim, launch record, and run
+  manifest rather than trusting recorded digest strings. Rebuild and
   independently requalify the exact final merged
   authorization commit; the accepted parent qualification does not cover changed
   launcher bytes. Follow

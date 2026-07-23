@@ -8323,3 +8323,49 @@ independent code/test approval with no P0--P2 findings. Merge only after those
 reviews and the new hosted checks accept. Then rebuild and freshly qualify the
 exact merged commit on the idle RTX 2070; any nonzero integrity field or failed
 gate still stops before the one permitted 50M start.
+
+## 2026-07-22 19:25 PDT — backend review stopped merge; two replay paths reproduced and closed locally
+
+Status:
+
+- Hosted checks and the independent test review accepted pushed head `eb88d40`,
+  but the independent backend review correctly returned REQUEST_CHANGES with
+  three P1 and one P2 evidence findings. Merge was stopped; no deployment,
+  service, GPU, or experiment action occurred.
+- Two failing temp-only regressions proved the one-start contract was still
+  incomplete. `consume-launch` called the full plan/qualification/current-file
+  validator before publishing consumption, so a synthetic first preflight
+  failure left no token and a second attempt could succeed. Separately, two
+  direct live-shell invocations with the same valid consumption both reached a
+  failing installer because the exclusive launch record was created later.
+- Consumption now authenticates only the immutable frozen launch bytes and
+  publishes irreversibly before every fallible current-file or qualification
+  check. The shell now exclusively and durably publishes
+  `CANARY_LIVE_INVOCATION.json` immediately after acquiring the output lock and
+  before the installer. The claim binds authorization, consumption, output,
+  attempt `1`, and maximum starts `1`; it is never removed after a later error.
+  The two retained regressions now pass, and a second direct invocation rejects
+  before reaching the installer.
+- The backend review also proved stopped analysis could accept a coherently
+  rehashed launch authority with `maximum_starts=2`, nonexistent plan and
+  qualification paths, or a result whose claimed run-manifest hash was 64
+  zeroes. The analyzer now opens and hashes the actual plan, plan sidecar,
+  qualification, launch authorization/sidecar, canonical unit, consumption and
+  sidecar, live-invocation claim, launch record, and run manifest. It requires
+  the exact plan screen/error budget, five accepted qualification gates,
+  one-shot systemd and command contracts, shared identities/CUDART, and complete
+  run-manifest authority bindings. New coherent two-start, missing plan,
+  missing qualification, and rebound run-manifest regressions all reject.
+- Current repair bytes pass 73 focused authority/analyzer/shell tests with two
+  dependency skips, along with Ruff on all changed Python, shell syntax, and
+  diff hygiene. Guidance in `AGENTS.md`, `CLAUDE.md`, both relevant local skills,
+  the implementation plan, and the RTX 2070 checklist now records both the
+  pre-validation consumption order and the independent live invocation claim.
+  Full repository verification and fresh exact-head review are still pending.
+
+Next steps: complete the full tools/training/native/sanitizer verification on
+these new bytes, rerun the real preserved D225 producer/consumer seam, inspect
+and commit the exact repair, and require both independent reviewers plus fresh
+hosted checks to accept the new head. Only then may the PR merge; the exact
+squash-merged commit still requires a fresh RTX 2070 qualification with every
+hard-integrity field literally zero before one 50M start.

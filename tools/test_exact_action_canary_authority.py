@@ -37,6 +37,65 @@ class ExactActionCanaryAuthorityTests(unittest.TestCase):
     def setUpClass(cls):
         cls.a = load_module()
 
+    def make_consumable_launch(self, root: Path, output: Path):
+        launch = root / "CANARY_LAUNCH_AUTHORIZATION.json"
+        consumption = root / self.a.CANARY_LAUNCH_CONSUMPTION_NAME
+        payload = {
+            "schema_version": self.a.SCHEMA_VERSION,
+            "kind": self.a.LAUNCH_KIND,
+            "qualification_only": True,
+            "source": {},
+            "qualification_runner": {},
+            "qualification": {"sha256": "a" * 64},
+            "candidate": {},
+            "cuda_runtime": {},
+            "plan_authorization": {"sha256": "b" * 64},
+            "plan_output": {"path": str(output)},
+            "unit": {},
+            "stopped_validation": {},
+            "launch_consumption": {
+                "path": str(consumption),
+                "sha256_file": str(consumption.with_suffix(".sha256")),
+                "initially_absent": True,
+            },
+            "systemd": {
+                "type": "oneshot",
+                "restart": "no",
+                "kill_mode": "control-group",
+                "timeout_start_seconds": 7200,
+                "timeout_stop_seconds": 60,
+                "enabled": False,
+                "maximum_starts": 1,
+            },
+            "command": {
+                **self.a._expected_screen(),
+                "plan_only": 0,
+                "warm_environment": "unset",
+                "pool_environment": "unset",
+                "cuda_visible_devices": "0",
+                "thread_cap": 16,
+            },
+            "eligibility": {
+                "qualification_only": True,
+                "checkpoint_ancestry": False,
+                "reward_evidence": False,
+                "promotion": False,
+                "bbtv_follower": False,
+            },
+        }
+        launch.write_text(
+            json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        launch_sha = launch.with_suffix(".sha256")
+        launch_digest = sha(launch)
+        launch_sha.write_text(
+            f"{launch_digest}  {launch.name}\n", encoding="ascii"
+        )
+        return launch, launch_sha, consumption, {
+            **payload,
+            "authorization_sha256": launch_digest,
+        }
+
     def make_git_source(self, root: Path) -> tuple[str, str]:
         subprocess.run(["git", "init", "-q", "-b", "main"], cwd=root, check=True)
         subprocess.run(
@@ -452,33 +511,16 @@ class ExactActionCanaryAuthorityTests(unittest.TestCase):
     def test_launch_authorization_consumption_is_atomic_and_exactly_once(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp).resolve()
-            launch = root / "CANARY_LAUNCH_AUTHORIZATION.json"
-            launch.write_text("{}\n", encoding="utf-8")
-            launch_sha = launch.with_suffix(".sha256")
-            launch_digest = sha(launch)
-            launch_sha.write_text(
-                f"{launch_digest}  {launch.name}\n", encoding="ascii"
-            )
             output = root / "authorized-screen"
-            consumption = root / "CANARY_LAUNCH_CONSUMPTION.json"
-            accepted = {
-                "kind": self.a.LAUNCH_KIND,
-                "authorization_sha256": launch_digest,
-                "qualification_only": True,
-                "plan_output": {"path": str(output)},
-                "systemd": {"maximum_starts": 1},
-            }
-            with mock.patch.object(
-                self.a, "validate_launch_authorization", return_value=accepted
-            ) as validate:
-                digest = self.a.consume_launch_authorization(
-                    authorization=launch,
-                    sha256_file=launch_sha,
-                    destination=consumption,
-                )
-                validate.assert_called_once_with(
-                    launch, sha256_file=launch_sha
-                )
+            launch, launch_sha, consumption, accepted = (
+                self.make_consumable_launch(root, output)
+            )
+            launch_digest = sha(launch)
+            digest = self.a.consume_launch_authorization(
+                authorization=launch,
+                sha256_file=launch_sha,
+                destination=consumption,
+            )
             before = consumption.read_bytes()
             payload = json.loads(before)
             self.assertEqual(digest, sha(consumption))
@@ -506,9 +548,7 @@ class ExactActionCanaryAuthorityTests(unittest.TestCase):
                 validated["launch_consumption"]["sha256"], sha(consumption)
             )
 
-            with mock.patch.object(
-                self.a, "validate_launch_authorization", return_value=accepted
-            ), self.assertRaisesRegex(self.a.AuthorityError, "already|consum"):
+            with self.assertRaisesRegex(self.a.AuthorityError, "already|consum"):
                 self.a.consume_launch_authorization(
                     authorization=launch,
                     sha256_file=launch_sha,
@@ -519,31 +559,18 @@ class ExactActionCanaryAuthorityTests(unittest.TestCase):
     def test_concurrent_launch_consumers_leave_exactly_one_intact_record(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp).resolve()
-            launch = root / "CANARY_LAUNCH_AUTHORIZATION.json"
-            launch.write_text("{}\n", encoding="utf-8")
-            launch_sha = launch.with_suffix(".sha256")
-            launch_digest = sha(launch)
-            launch_sha.write_text(
-                f"{launch_digest}  {launch.name}\n", encoding="ascii"
+            launch, launch_sha, consumption, accepted = (
+                self.make_consumable_launch(
+                    root, root / "authorized-screen"
+                )
             )
-            consumption = root / "CANARY_LAUNCH_CONSUMPTION.json"
-            accepted = {
-                "kind": self.a.LAUNCH_KIND,
-                "authorization_sha256": launch_digest,
-                "qualification_only": True,
-                "plan_output": {"path": str(root / "authorized-screen")},
-                "systemd": {"maximum_starts": 1},
-            }
             barrier = threading.Barrier(2)
-
-            def validate(*args, **kwargs):
-                barrier.wait(timeout=5)
-                return accepted
 
             outcomes = []
 
             def consume():
                 try:
+                    barrier.wait(timeout=5)
                     outcomes.append((
                         "success", self.a.consume_launch_authorization(
                             authorization=launch,
@@ -554,14 +581,11 @@ class ExactActionCanaryAuthorityTests(unittest.TestCase):
                 except BaseException as exc:
                     outcomes.append(("error", type(exc), str(exc)))
 
-            with mock.patch.object(
-                self.a, "validate_launch_authorization", side_effect=validate
-            ):
-                threads = [threading.Thread(target=consume) for _ in range(2)]
-                for thread in threads:
-                    thread.start()
-                for thread in threads:
-                    thread.join(timeout=10)
+            threads = [threading.Thread(target=consume) for _ in range(2)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(timeout=10)
             self.assertTrue(all(not thread.is_alive() for thread in threads))
             self.assertEqual(len(outcomes), 2)
             successes = [item for item in outcomes if item[0] == "success"]
@@ -597,21 +621,11 @@ class ExactActionCanaryAuthorityTests(unittest.TestCase):
         for failure in ("directory_open", "directory_fsync"):
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp).resolve()
-                launch = root / "CANARY_LAUNCH_AUTHORIZATION.json"
-                launch.write_text("{}\n", encoding="utf-8")
-                launch_sha = launch.with_suffix(".sha256")
-                launch_digest = sha(launch)
-                launch_sha.write_text(
-                    f"{launch_digest}  {launch.name}\n", encoding="ascii"
+                launch, launch_sha, consumption, _ = (
+                    self.make_consumable_launch(
+                        root, root / "authorized-screen"
+                    )
                 )
-                consumption = root / "CANARY_LAUNCH_CONSUMPTION.json"
-                accepted = {
-                    "kind": self.a.LAUNCH_KIND,
-                    "authorization_sha256": launch_digest,
-                    "qualification_only": True,
-                    "plan_output": {"path": str(root / "authorized-screen")},
-                    "systemd": {"maximum_starts": 1},
-                }
                 if failure == "directory_open":
                     durability_failure = mock.patch.object(
                         self.a.os,
@@ -625,9 +639,7 @@ class ExactActionCanaryAuthorityTests(unittest.TestCase):
                         side_effect=fail_directory_fsync(self.a.os.fsync),
                     )
 
-                with mock.patch.object(
-                    self.a, "validate_launch_authorization", return_value=accepted
-                ), durability_failure, self.assertRaisesRegex(
+                with durability_failure, self.assertRaisesRegex(
                     self.a.AuthorityError, "cannot publish authority atomically"
                 ):
                     self.a.consume_launch_authorization(
@@ -638,9 +650,7 @@ class ExactActionCanaryAuthorityTests(unittest.TestCase):
 
                 self.assertTrue(consumption.is_file())
                 self.assertTrue(consumption.with_suffix(".sha256").is_file())
-                with mock.patch.object(
-                    self.a, "validate_launch_authorization", return_value=accepted
-                ), self.assertRaisesRegex(
+                with self.assertRaisesRegex(
                     self.a.AuthorityError, "already consumed"
                 ):
                     self.a.consume_launch_authorization(
@@ -1113,6 +1123,36 @@ class ExactActionCanaryAuthorityTests(unittest.TestCase):
                 observed["plan_output"]["path"], str(paths["screen_output"])
             )
             with self.authority_evidence(paths), self.assertRaisesRegex(
+                self.a.AuthorityError, "already consumed"
+            ):
+                self.a.consume_launch_authorization(
+                    authorization=paths["launch"],
+                    sha256_file=paths["launch_sha"],
+                    destination=consumption,
+                )
+
+    def test_consumption_precedes_fallible_launch_revalidation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = self.make_frozen_launch(Path(tmp).resolve())
+            consumption = paths["launch"].with_name(
+                self.a.CANARY_LAUNCH_CONSUMPTION_NAME
+            )
+            with mock.patch.object(
+                self.a,
+                "validate_launch_authorization",
+                side_effect=self.a.AuthorityError(
+                    "synthetic post-consumption preflight failure"
+                ),
+            ) as full_validation:
+                digest = self.a.consume_launch_authorization(
+                    authorization=paths["launch"],
+                    sha256_file=paths["launch_sha"],
+                    destination=consumption,
+                )
+            full_validation.assert_not_called()
+            self.assertEqual(digest, sha(consumption))
+            self.assertTrue(consumption.with_suffix(".sha256").is_file())
+            with self.assertRaisesRegex(
                 self.a.AuthorityError, "already consumed"
             ):
                 self.a.consume_launch_authorization(

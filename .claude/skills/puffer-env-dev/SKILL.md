@@ -430,6 +430,10 @@ runtime/environment hashes must be declared both when captured and when
 consumed. Its
 runtime must be built after the immutable recovery boundary in a fresh isolated
 fp32 checkout at exact commit `afc8008933548438ca93c41341f5f08fdd294386`.
+For the replacement one-start canary, publish the immutable consumption before
+any fallible qualification/current-file revalidation, then have the launcher
+exclusively publish `CANARY_LIVE_INVOCATION.json` before installer or backend
+setup. A second direct launcher invocation must reject on that retained claim.
 Require obs-v5, exact-joint-v1, matching compiled hashes, and no qualification
 surface. The former exact candidate
 `a52fc6e2f4ece5a7ff16bb4791e3aca4dd72f2e3` used a different isolated source

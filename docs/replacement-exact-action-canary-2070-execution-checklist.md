@@ -213,7 +213,9 @@ bind the exact plan inventory/manifest, source and qualification, shared CUDART,
 canonical unit bytes/hash, empty stopped output, fixed command/environment,
 one-start ceiling, the initially absent canonical sibling
 `CANARY_LAUNCH_CONSUMPTION.json` and digest sidecar, exact-zero budget, and all
-eligibility exclusions.
+eligibility exclusions. Consumption authentication before publication is
+strictly limited to those frozen launch bytes; do not move fallible plan,
+qualification, source, unit, or GPU revalidation ahead of the publication.
 
 Copy the unit, both authorities, both sidecars, and closed evidence inventory
 off-box. Obtain an independent read-only review before installing anything.
@@ -270,10 +272,15 @@ main PID, process group, GPU PID, command line, consumption hash,
 manifest hash, launch-record hash, log inode/size/mtime,
 source/module/CUDART identities, and BBTV tunnel health.
 
+Before the installer or any training setup, require the launcher to exclusively
+publish `$OUT_DIR/CANARY_LIVE_INVOCATION.json`, binding the exact authorization,
+consumption hash, output, attempt `1`, and maximum starts `1`. Preserve its hash.
+An existing, malformed, or drifted claim rejects; never remove it to retry.
+
 No second `systemctl start`, `restart`, reset-failed-and-retry, manual trainer,
-or alternate command is permitted. The immutable consumption makes this a
-machine-enforced rejection even if the first attempt fails before trainer
-launch.
+or alternate command is permitted. The immutable consumption blocks a second
+unit start, while the live-invocation claim independently blocks direct
+`ExecStart` replay even if the first attempt fails before trainer launch.
 
 ## Gate 7: live monitoring and zero error budget
 

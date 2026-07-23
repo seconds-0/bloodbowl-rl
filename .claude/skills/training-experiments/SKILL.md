@@ -465,7 +465,13 @@ See §4. Check the invariants before every reward-config launch. No exceptions.
   and never modify or reuse the recovery Puffer tree. D226 is still inert until
   the final merged commit itself qualifies, the two authorities validate, and
   the one-start v4 checklist accepts every preflight gate. The resulting canary
-  remains ancestry-, reward-, promotion-, and BBTV-ineligible.
+  remains ancestry-, reward-, promotion-, and BBTV-ineligible. The first
+  prestart must publish consumption after frozen-record authentication but
+  before every fallible revalidation. The live launcher must then exclusively
+  publish `CANARY_LIVE_INVOCATION.json` before its installer; never remove that
+  claim or replay the direct launch command after any failure. Stopped analysis
+  must rehash the actual plan, qualification, unit, consumption, claim, launch
+  record, and run manifest.
 
 ### D174/D176 — Current BC and opponent verdicts
 

@@ -51,6 +51,8 @@ CANARY_LAUNCH_AUTHORIZATION_SHA256=""
 CANARY_LAUNCH_CONSUMPTION_PATH=""
 CANARY_LAUNCH_CONSUMPTION_SHA256=""
 CANARY_AUTHORIZED_OUTPUT=""
+CANARY_LIVE_INVOCATION=""
+CANARY_LIVE_INVOCATION_SHA256=""
 
 # Fixed Stage-1 causal contract. Assign, rather than inherit, every optional
 # launcher input which could alter optimization, batching, or pool allocation.
@@ -315,6 +317,60 @@ fi
 
 PYBIN="$ROOT/vendor/PufferLib/.venv/bin/python"
 [ -x "$PYBIN" ] || { echo "vendored Python missing: $PYBIN" >&2; exit 1; }
+if [ "$SCREEN_PROFILE" = "exact-action-canary" ]; then
+  CANARY_LIVE_INVOCATION="$OUT_DIR/CANARY_LIVE_INVOCATION.json"
+  CANARY_LIVE_INVOCATION_SHA256="$($PYBIN - \
+    "$CANARY_LIVE_INVOCATION" "$CANARY_LAUNCH_AUTHORIZATION_PATH" \
+    "$CANARY_LAUNCH_AUTHORIZATION_SHA256" \
+    "$CANARY_LAUNCH_CONSUMPTION_PATH" \
+    "$CANARY_LAUNCH_CONSUMPTION_SHA256" "$OUT_DIR" <<'PY'
+import datetime, hashlib, json, os, pathlib, sys
+
+destination = pathlib.Path(sys.argv[1])
+payload = {
+    "schema_version": 1,
+    "kind": "exact_action_canary_live_invocation",
+    "created_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+    "qualification_only": True,
+    "launch_authorization": {
+        "path": sys.argv[2],
+        "sha256": sys.argv[3],
+    },
+    "launch_consumption": {
+        "path": sys.argv[4],
+        "sha256": sys.argv[5],
+    },
+    "plan_output": sys.argv[6],
+    "attempt": 1,
+    "maximum_starts": 1,
+}
+raw = (json.dumps(
+    payload, indent=2, sort_keys=True, allow_nan=False
+) + "\n").encode("utf-8")
+try:
+    with destination.open("xb") as handle:
+        handle.write(raw)
+        handle.flush()
+        os.fsync(handle.fileno())
+except FileExistsError as exc:
+    raise SystemExit(
+        "exact-action canary live invocation was already claimed"
+    ) from exc
+try:
+    directory_fd = os.open(destination.parent, os.O_RDONLY)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+except OSError as exc:
+    raise SystemExit(
+        "exact-action canary live invocation claim durability failed; "
+        "the claim remains consumed"
+    ) from exc
+print(hashlib.sha256(raw).hexdigest())
+PY
+  )"
+fi
 /bin/bash "$ROOT/tools/install_puffer_env.sh" --check "$ROOT/vendor/PufferLib"
 
 case "$SCREEN_PROFILE" in
@@ -916,14 +972,15 @@ if [ "$SCREEN_PROFILE" = "exact-action-canary" ]; then
   }
   "$PYBIN" - "$CANARY_LAUNCH_RECORD" "$CANARY_LAUNCH_AUTHORIZATION_PATH" \
     "$CANARY_LAUNCH_AUTHORIZATION_SHA256" "$CANARY_LAUNCH_CONSUMPTION_PATH" \
-    "$CANARY_LAUNCH_CONSUMPTION_SHA256" "$CANARY_PLAN_AUTHORIZATION_PATH" \
+    "$CANARY_LAUNCH_CONSUMPTION_SHA256" "$CANARY_LIVE_INVOCATION" \
+    "$CANARY_LIVE_INVOCATION_SHA256" "$CANARY_PLAN_AUTHORIZATION_PATH" \
     "$CANARY_PLAN_AUTHORIZATION_SHA256" "$CANARY_QUALIFICATION_PATH" \
     "$CANARY_QUALIFICATION_SHA256" "$SCREEN_MANIFEST" \
     "$SCREEN_MANIFEST_SHA" <<'PY'
 import datetime, json, os, pathlib, sys
 (
     destination_raw, launch_path, launch_sha, consumption_path, consumption_sha,
-    plan_path, plan_sha,
+    live_invocation, live_invocation_sha, plan_path, plan_sha,
     qualification_path, qualification_sha, manifest_path, manifest_sha,
 ) = sys.argv[1:]
 destination = pathlib.Path(destination_raw)
@@ -938,6 +995,8 @@ payload = {
     "launch_authorization_sha256": launch_sha,
     "launch_consumption": consumption_path,
     "launch_consumption_sha256": consumption_sha,
+    "live_invocation": live_invocation,
+    "live_invocation_sha256": live_invocation_sha,
     "plan_authorization": plan_path,
     "plan_authorization_sha256": plan_sha,
     "qualification": qualification_path,
@@ -1255,6 +1314,41 @@ if screen["qualification_only"]:
         != launch_authorization.get("eligibility")
     ):
         raise SystemExit("canary launch consumption contract drifted")
+    expected_live_invocation_path = (
+        screen_manifest_file.parent / "CANARY_LIVE_INVOCATION.json"
+    )
+    if canary_launch.get("live_invocation") != str(
+        expected_live_invocation_path
+    ):
+        raise SystemExit("canary live invocation path is not canonical")
+    live_invocation_file = need_file(
+        expected_live_invocation_path, "canary live invocation"
+    )
+    if live_invocation_file.is_symlink() or sha(
+        live_invocation_file
+    ) != canary_launch.get("live_invocation_sha256"):
+        raise SystemExit("canary live invocation file drifted")
+    live_invocation = json.loads(
+        live_invocation_file.read_text(encoding="utf-8")
+    )
+    if live_invocation != {
+        "schema_version": 1,
+        "kind": "exact_action_canary_live_invocation",
+        "created_utc": live_invocation.get("created_utc"),
+        "qualification_only": True,
+        "launch_authorization": {
+            "path": str(launch_authorization_file),
+            "sha256": canary_launch["launch_authorization_sha256"],
+        },
+        "launch_consumption": {
+            "path": str(consumption_file),
+            "sha256": canary_launch["launch_consumption_sha256"],
+        },
+        "plan_output": str(screen_manifest_file.parent),
+        "attempt": 1,
+        "maximum_starts": 1,
+    } or not isinstance(live_invocation.get("created_utc"), str):
+        raise SystemExit("canary live invocation contract drifted")
 expected_contract = {
     "mode": ("native_fresh_v5_qualification"
              if screen["qualification_only"]
@@ -1482,6 +1576,7 @@ result = {
     "log_sha256": sha(log),
     "status_sha256": sha(status_path),
     "process_sha256": sha(process_path),
+    "run_manifest": str(run_manifest_path),
     "run_manifest_sha256": sha(run_manifest_path),
     "reward_sha256": expected_reward_sha,
     "checkpoint": str(checkpoint),

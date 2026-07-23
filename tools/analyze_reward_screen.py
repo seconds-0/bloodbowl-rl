@@ -154,6 +154,53 @@ EXACT_ACTION_CANARY_FINAL_STEPS = (
     // EXACT_ACTION_CANARY_ROLLOUT_QUANTUM
     * EXACT_ACTION_CANARY_ROLLOUT_QUANTUM)
 EXACT_ACTION_CANARY_CHECKPOINT_BYTES = 16_066_560
+EXACT_ACTION_CANARY_MANDATORY_GATES = (
+    "construction_state",
+    "graph_parity",
+    "terminal_reset",
+    "ratio",
+    "throughput",
+)
+EXACT_ACTION_CANARY_ELIGIBILITY = {
+    "qualification_only": True,
+    "checkpoint_ancestry": False,
+    "reward_evidence": False,
+    "promotion": False,
+    "bbtv_follower": False,
+}
+EXACT_ACTION_CANARY_SYSTEMD = {
+    "type": "oneshot",
+    "restart": "no",
+    "kill_mode": "control-group",
+    "timeout_start_seconds": 7200,
+    "timeout_stop_seconds": 60,
+    "enabled": False,
+    "maximum_starts": 1,
+}
+EXACT_ACTION_CANARY_SCREEN = {
+    "profile": "exact-action-canary",
+    "prefix": EXACT_ACTION_CANARY_PREFIX,
+    "requested_steps": EXACT_ACTION_CANARY_REQUESTED_STEPS,
+    "final_steps": EXACT_ACTION_CANARY_FINAL_STEPS,
+    "rollout_quantum": EXACT_ACTION_CANARY_ROLLOUT_QUANTUM,
+    "poll_seconds": 30,
+    "arm_detach": 0,
+    "seed": 42,
+    "arm": "both",
+    "precision": "fp32",
+    "observation_abi": "obs-v5",
+    "observation_version": 5,
+    "action_abi": "exact-joint-v1",
+    "initialization": "fresh",
+}
+EXACT_ACTION_CANARY_COMMAND = {
+    **EXACT_ACTION_CANARY_SCREEN,
+    "plan_only": 0,
+    "warm_environment": "unset",
+    "pool_environment": "unset",
+    "cuda_visible_devices": "0",
+    "thread_cap": 16,
+}
 # The replacement candidate freezes the complete control registry live. The
 # rejected a52fc6e2 manifest remains historical evidence with its narrower
 # registry and is never relabeled or accepted by this replacement contract.
@@ -497,6 +544,81 @@ def _validate_exact_action_canary_contract(contract: dict[str, Any]) -> None:
         )
 
 
+def _validate_exact_action_canary_plan_and_qualification(
+    directory: Path, authority: dict[str, Any]
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    plan_path = Path(authority["plan_authorization"])
+    plan_sha = authority["plan_authorization_sha256"]
+    if (
+        not plan_path.is_file()
+        or plan_path.is_symlink()
+        or _sha256(plan_path) != plan_sha
+    ):
+        raise AnalysisError(
+            "exact-action-canary plan authorization file drifted"
+        )
+    _require_digest_sidecar(
+        plan_path, plan_sha, "exact-action-canary plan authorization"
+    )
+    plan = _load_json(plan_path, "exact-action-canary plan authorization")
+    plan_qualification = _need_mapping(
+        plan.get("qualification"),
+        "exact-action-canary plan qualification",
+    )
+    if (
+        plan.get("schema_version") != 1
+        or plan.get("kind") != "exact_action_canary_plan_authorization"
+        or plan.get("qualification_only") is not True
+        or plan_qualification.get("path") != authority["qualification"]
+        or plan_qualification.get("sha256")
+        != authority["qualification_sha256"]
+        or plan.get("screen")
+        != {**EXACT_ACTION_CANARY_SCREEN, "output": str(directory.resolve())}
+        or plan.get("error_budget")
+        != {
+            "contamination_budget": 0,
+            "hard_integrity_keys": list(HARD_INTEGRITY_KEYS),
+            "max_panel_silence_seconds": 180,
+        }
+        or plan.get("eligibility") != EXACT_ACTION_CANARY_ELIGIBILITY
+    ):
+        raise AnalysisError(
+            "exact-action-canary plan authorization contract drifted"
+        )
+
+    qualification_path = Path(authority["qualification"])
+    qualification_sha = authority["qualification_sha256"]
+    if (
+        not qualification_path.is_file()
+        or qualification_path.is_symlink()
+        or _sha256(qualification_path) != qualification_sha
+    ):
+        raise AnalysisError("exact-action-canary qualification file drifted")
+    qualification = _load_json(
+        qualification_path, "exact-action-canary qualification"
+    )
+    gates = qualification.get("gates")
+    if (
+        qualification.get("schema_version") != 3
+        or qualification.get("qualification_only") is not True
+        or qualification.get("accepted") is not True
+        or qualification.get("failed_gates") != []
+        or tuple(qualification.get("mandatory_gates", ()))
+        != EXACT_ACTION_CANARY_MANDATORY_GATES
+        or not isinstance(gates, dict)
+        or set(gates) != set(EXACT_ACTION_CANARY_MANDATORY_GATES)
+        or any(
+            not isinstance(gates[name], dict)
+            or gates[name].get("accepted") is not True
+            for name in EXACT_ACTION_CANARY_MANDATORY_GATES
+        )
+    ):
+        raise AnalysisError(
+            "exact-action-canary qualification verdict drifted"
+        )
+    return plan, qualification
+
+
 def _validate_exact_action_canary_launch_record(
     directory: Path, contract: dict[str, Any], manifest_sha: str
 ) -> dict[str, Any]:
@@ -519,6 +641,9 @@ def _validate_exact_action_canary_launch_record(
         )
     authority = _need_mapping(
         contract.get("canary_authority"), "exact-action-canary authority"
+    )
+    plan_payload, _ = _validate_exact_action_canary_plan_and_qualification(
+        directory, authority
     )
     expected = {
         "plan_authorization": authority["plan_authorization"],
@@ -590,17 +715,82 @@ def _validate_exact_action_canary_launch_record(
         or launch_qualification.get("path") != authority["qualification"]
         or launch_qualification.get("sha256")
         != authority["qualification_sha256"]
-        or launch_payload.get("eligibility")
-        != {
-            "qualification_only": True,
-            "checkpoint_ancestry": False,
-            "reward_evidence": False,
-            "promotion": False,
-            "bbtv_follower": False,
-        }
+        or any(
+            launch_payload.get(key) != plan_payload.get(key)
+            for key in (
+                "source",
+                "qualification_runner",
+                "candidate",
+                "cuda_runtime",
+            )
+        )
+        or launch_payload.get("systemd") != EXACT_ACTION_CANARY_SYSTEMD
+        or launch_payload.get("command") != EXACT_ACTION_CANARY_COMMAND
+        or launch_payload.get("eligibility") != EXACT_ACTION_CANARY_ELIGIBILITY
     ):
         raise AnalysisError(
             "exact-action-canary launch authorization contract drifted"
+        )
+    cuda_runtime = _need_mapping(
+        launch_payload.get("cuda_runtime"),
+        "exact-action-canary launch CUDA runtime",
+    )
+    cuda_library = _need_mapping(
+        cuda_runtime.get("library"),
+        "exact-action-canary launch CUDA library",
+    )
+    cuda_after = _need_mapping(
+        cuda_runtime.get("after_extension_import"),
+        "exact-action-canary launch CUDA post-import probe",
+    )
+    if (
+        cuda_library.get("resolved_path")
+        != authority["cuda_runtime_library_path"]
+        or cuda_library.get("sha256")
+        != authority["cuda_runtime_library_sha256"]
+        or cuda_after.get("device_count")
+        != authority["cuda_runtime_device_count"]
+    ):
+        raise AnalysisError(
+            "exact-action-canary launch CUDA authority drifted"
+        )
+    expected_consumption_file = launch_file.with_name(
+        "CANARY_LAUNCH_CONSUMPTION.json"
+    )
+    if launch_payload.get("launch_consumption") != {
+        "path": str(expected_consumption_file),
+        "sha256_file": str(expected_consumption_file.with_suffix(".sha256")),
+        "initially_absent": True,
+    }:
+        raise AnalysisError(
+            "exact-action-canary launch initial consumption contract drifted"
+        )
+    unit = _need_mapping(
+        launch_payload.get("unit"), "exact-action-canary launch unit"
+    )
+    unit_path = Path(str(unit.get("path", "")))
+    if (
+        unit.get("name")
+        != "bloodbowl-exact-action-canary-50m-s42-v4.service"
+        or unit_path.name != unit.get("name")
+        or not unit_path.is_file()
+        or unit_path.is_symlink()
+        or _sha256(unit_path) != unit.get("sha256")
+    ):
+        raise AnalysisError("exact-action-canary launch unit drifted")
+    stopped_validation = _need_mapping(
+        launch_payload.get("stopped_validation"),
+        "exact-action-canary stopped-validation authority",
+    )
+    stopped_path = Path(str(stopped_validation.get("path", "")))
+    if (
+        stopped_validation.get("initially_empty") is not True
+        or not stopped_path.is_absolute()
+        or not stopped_path.is_dir()
+        or stopped_path.is_symlink()
+    ):
+        raise AnalysisError(
+            "exact-action-canary stopped-validation authority drifted"
         )
     consumption_path = record.get("launch_consumption")
     if not isinstance(consumption_path, str) or not Path(
@@ -663,14 +853,66 @@ def _validate_exact_action_canary_launch_record(
         raise AnalysisError(
             "exact-action-canary launch consumption contract drifted"
         )
+    live_invocation_path = record.get("live_invocation")
+    expected_live_invocation = directory.resolve() / (
+        "CANARY_LIVE_INVOCATION.json"
+    )
+    if live_invocation_path != str(expected_live_invocation):
+        raise AnalysisError(
+            "exact-action-canary live invocation path is not canonical"
+        )
+    live_invocation_sha = _need_sha256(
+        record.get("live_invocation_sha256"),
+        "exact-action-canary live invocation SHA-256",
+    )
+    if (
+        not expected_live_invocation.is_file()
+        or expected_live_invocation.is_symlink()
+        or _sha256(expected_live_invocation) != live_invocation_sha
+    ):
+        raise AnalysisError("exact-action-canary live invocation file drifted")
+    live_invocation = _load_json(
+        expected_live_invocation,
+        "exact-action-canary live invocation",
+    )
+    if live_invocation != {
+        **{
+            key: live_invocation.get(key)
+            for key in ("created_utc",)
+        },
+        "schema_version": 1,
+        "kind": "exact_action_canary_live_invocation",
+        "qualification_only": True,
+        "launch_authorization": {
+            "path": launch_path,
+            "sha256": launch_sha,
+        },
+        "launch_consumption": {
+            "path": consumption_path,
+            "sha256": consumption_sha,
+        },
+        "plan_output": str(directory.resolve()),
+        "attempt": 1,
+        "maximum_starts": 1,
+    } or not isinstance(live_invocation.get("created_utc"), str):
+        raise AnalysisError(
+            "exact-action-canary live invocation contract drifted"
+        )
     return {
         "file": path.name,
+        "path": str(path.resolve()),
         "sha256": _sha256(path),
         "launch_authorization": launch_path,
         "launch_authorization_sha256": launch_sha,
         "launch_consumption": consumption_path,
         "launch_consumption_sha256": consumption_sha,
+        "live_invocation": live_invocation_path,
+        "live_invocation_sha256": live_invocation_sha,
+        "qualification": authority["qualification"],
         "qualification_sha256": authority["qualification_sha256"],
+        "cuda_runtime_library_path": authority[
+            "cuda_runtime_library_path"
+        ],
         "cuda_runtime_library_sha256": authority[
             "cuda_runtime_library_sha256"
         ],
@@ -703,6 +945,52 @@ def _validate_exact_action_canary_result_authority(
         f"{label} expected_cuda_runtime_device_count",
     ) != launch["cuda_runtime_device_count"]:
         raise AnalysisError(f"{label} qualified CUDA device count drifted")
+    run_manifest_path = result.get("run_manifest")
+    if not isinstance(run_manifest_path, str) or not Path(
+        run_manifest_path
+    ).is_absolute():
+        raise AnalysisError(f"{label} run_manifest path is not absolute")
+    run_manifest_file = Path(run_manifest_path)
+    run_manifest_sha = _need_sha256(
+        result.get("run_manifest_sha256"),
+        f"{label} run_manifest_sha256",
+    )
+    if (
+        not run_manifest_file.is_file()
+        or run_manifest_file.is_symlink()
+        or _sha256(run_manifest_file) != run_manifest_sha
+    ):
+        raise AnalysisError(f"{label} run manifest file drifted")
+    run_manifest = _load_json(run_manifest_file, f"{label} run manifest")
+    expected_run_manifest = {
+        "screen_manifest_sha256": result["screen_manifest_sha256"],
+        "canary_launch_authorization": launch["launch_authorization"],
+        "expected_canary_launch_authorization_sha256": launch[
+            "launch_authorization_sha256"
+        ],
+        "canary_launch_consumption": launch["launch_consumption"],
+        "canary_launch_consumption_sha256": launch[
+            "launch_consumption_sha256"
+        ],
+        "canary_qualification": launch["qualification"],
+        "canary_qualification_sha256": launch["qualification_sha256"],
+        "canary_launch_record": launch["path"],
+        "canary_launch_record_sha256": launch["sha256"],
+        "expected_cuda_runtime_library_path": launch[
+            "cuda_runtime_library_path"
+        ],
+        "expected_cuda_runtime_library_sha256": launch[
+            "cuda_runtime_library_sha256"
+        ],
+        "expected_cuda_runtime_device_count": str(
+            launch["cuda_runtime_device_count"]
+        ),
+    }
+    for field, value in expected_run_manifest.items():
+        if str(run_manifest.get(field)) != str(value):
+            raise AnalysisError(
+                f"{label} run manifest {field} authority binding drifted"
+            )
 
 
 def _validate_exact_action_canary_result(

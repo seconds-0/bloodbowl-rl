@@ -608,6 +608,18 @@ print(json.dumps({
                     self.assertIn("reached-install-boundary", result.stderr)
                     self.assertTrue(out.is_dir())
                     self.assertTrue((out / ".screen.lock").is_file())
+                    replay = subprocess.run(
+                        ["bash", str(screen)],
+                        cwd=root,
+                        env={**os.environ, **env},
+                        text=True,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        check=False,
+                    )
+                    self.assertNotEqual(replay.returncode, 73)
+                    self.assertIn("already claimed", replay.stderr)
+                    self.assertNotIn("reached-install-boundary", replay.stderr)
 
     @unittest.skipUnless(VENDOR_CHECKOUT, "vendored Puffer checkout unavailable")
     def test_puffer_machine_log_uses_explicit_loop_phase_and_fresh_panels(self):

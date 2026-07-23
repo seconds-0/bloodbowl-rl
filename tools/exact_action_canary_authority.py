@@ -1170,9 +1170,10 @@ def freeze_launch_authorization(
     return write_authority(destination, payload)
 
 
-def validate_launch_authorization(
+def _read_launch_authorization_for_consumption(
     authorization: Path, *, sha256_file: Path
 ) -> dict[str, Any]:
+    """Authenticate the frozen launch record without running fallible gates."""
     authorization = _exact_absolute_file(
         authorization, "canary launch authorization"
     )
@@ -1184,13 +1185,92 @@ def validate_launch_authorization(
         raise AuthorityError("canary launch authorization schema/kind mismatch")
     if payload.get("qualification_only") is not True:
         raise AuthorityError("canary launch authorization is not qualification-only")
+    for key, label in (
+        ("source", "source"),
+        ("qualification_runner", "qualification runner"),
+        ("qualification", "qualification"),
+        ("candidate", "candidate"),
+        ("cuda_runtime", "CUDA runtime"),
+        ("plan_authorization", "plan authorization"),
+        ("plan_output", "plan output"),
+        ("unit", "unit"),
+        ("stopped_validation", "stopped validation"),
+    ):
+        if not isinstance(payload.get(key), dict):
+            raise AuthorityError(f"canary launch {label} identity is malformed")
+    plan_ref = payload["plan_authorization"]
+    _require_digest(
+        plan_ref.get("sha256"), "canary launch plan authorization digest"
+    )
+    qualification = payload["qualification"]
+    _require_digest(
+        qualification.get("sha256"), "canary launch qualification digest"
+    )
+    plan_output = payload["plan_output"]
+    if not isinstance(plan_output.get("path"), str) or not Path(
+        plan_output["path"]
+    ).is_absolute():
+        raise AuthorityError("canary launch plan output path is malformed")
+    if payload.get("launch_consumption") != {
+        "path": str(authorization.with_name(CANARY_LAUNCH_CONSUMPTION_NAME)),
+        "sha256_file": str(
+            authorization.with_name(CANARY_LAUNCH_CONSUMPTION_NAME).with_suffix(
+                ".sha256"
+            )
+        ),
+        "initially_absent": True,
+    }:
+        raise AuthorityError("canary launch consumption identity drifted")
+    if payload.get("systemd") != {
+        "type": "oneshot",
+        "restart": "no",
+        "kill_mode": "control-group",
+        "timeout_start_seconds": 7200,
+        "timeout_stop_seconds": 60,
+        "enabled": False,
+        "maximum_starts": 1,
+    }:
+        raise AuthorityError("canary launch systemd contract drifted")
+    if payload.get("command") != {
+        **_expected_screen(),
+        "plan_only": 0,
+        "warm_environment": "unset",
+        "pool_environment": "unset",
+        "cuda_visible_devices": "0",
+        "thread_cap": 16,
+    }:
+        raise AuthorityError("canary launch command contract drifted")
+    if payload.get("eligibility") != {
+        "qualification_only": True,
+        "checkpoint_ancestry": False,
+        "reward_evidence": False,
+        "promotion": False,
+        "bbtv_follower": False,
+    }:
+        raise AuthorityError("canary launch eligibility exclusions drifted")
+    result = dict(payload)
+    result["authorization_sha256"] = digest
+    return result
+
+
+def validate_launch_authorization(
+    authorization: Path, *, sha256_file: Path
+) -> dict[str, Any]:
+    authorization = _exact_absolute_file(
+        authorization, "canary launch authorization"
+    )
+    sha256_file = _exact_absolute_file(
+        sha256_file, "canary launch authorization digest"
+    )
+    payload = _read_launch_authorization_for_consumption(
+        authorization, sha256_file=sha256_file
+    )
+    digest = payload["authorization_sha256"]
     source = payload.get("source")
-    if not isinstance(source, dict):
-        raise AuthorityError("canary launch source identity is malformed")
+    assert isinstance(source, dict)
     source_root = Path(str(source.get("root", "")))
     plan_ref = payload.get("plan_authorization")
-    if not isinstance(plan_ref, dict):
-        raise AuthorityError("canary launch plan authority reference is malformed")
+    assert isinstance(plan_ref, dict)
     plan = validate_plan_authorization(
         Path(str(plan_ref.get("path", ""))),
         sha256_file=Path(str(plan_ref.get("sha256_file", ""))),
@@ -1228,16 +1308,6 @@ def validate_launch_authorization(
     _require_empty_directory(
         Path(str(stopped.get("path", ""))), "stopped-validation output"
     )
-    if payload.get("launch_consumption") != {
-        "path": str(authorization.with_name(CANARY_LAUNCH_CONSUMPTION_NAME)),
-        "sha256_file": str(
-            authorization.with_name(CANARY_LAUNCH_CONSUMPTION_NAME).with_suffix(
-                ".sha256"
-            )
-        ),
-        "initially_absent": True,
-    }:
-        raise AuthorityError("canary launch consumption identity drifted")
     unit = payload.get("unit")
     if not isinstance(unit, dict):
         raise AuthorityError("canary launch unit identity is malformed")
@@ -1262,33 +1332,6 @@ def validate_launch_authorization(
     )
     if unit_path.read_text(encoding="utf-8") != expected_unit:
         raise AuthorityError("canary launch unit bytes drifted")
-    if payload.get("systemd") != {
-        "type": "oneshot",
-        "restart": "no",
-        "kill_mode": "control-group",
-        "timeout_start_seconds": 7200,
-        "timeout_stop_seconds": 60,
-        "enabled": False,
-        "maximum_starts": 1,
-    }:
-        raise AuthorityError("canary launch systemd contract drifted")
-    if payload.get("command") != {
-        **_expected_screen(),
-        "plan_only": 0,
-        "warm_environment": "unset",
-        "pool_environment": "unset",
-        "cuda_visible_devices": "0",
-        "thread_cap": 16,
-    }:
-        raise AuthorityError("canary launch command contract drifted")
-    if payload.get("eligibility") != {
-        "qualification_only": True,
-        "checkpoint_ancestry": False,
-        "reward_evidence": False,
-        "promotion": False,
-        "bbtv_follower": False,
-    }:
-        raise AuthorityError("canary launch eligibility exclusions drifted")
     result = dict(payload)
     result["authorization_sha256"] = digest
     return result
@@ -1319,7 +1362,7 @@ def consume_launch_authorization(
         ".sha256"
     ).exists():
         raise AuthorityError("launch authorization was already consumed")
-    launch = validate_launch_authorization(
+    launch = _read_launch_authorization_for_consumption(
         authorization, sha256_file=sha256_file
     )
     if launch.get("systemd", {}).get("maximum_starts") != 1:
