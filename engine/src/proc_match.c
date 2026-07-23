@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include "bb/bb_proc.h"
 #include "bb/bb_hooks.h"
+#include "bb/bb_stall.h"
 #include "bb/gen_tables.h"
 #include <string.h>
 
@@ -951,6 +952,7 @@ static void touchdown_advance(bb_match* m, bb_rng* rng) {
     // the endzone during the active team's turn did not give the active team
     // possession credit.
     m->turns_completed[active]++;
+    bb_stall_note_turn_end(active, m->turn[active]); // stall-rate denominator
     if (team == active) m->turns_completed_held[active]++;
     if (m->turnover) m->turnovers_completed[active]++;
     m->score[team]++;

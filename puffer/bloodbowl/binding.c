@@ -302,7 +302,8 @@ void my_log(Log* log, Dict* out) {
     //
     // CAPACITY: vec_log (src/bindings_cpu.cpp / bindings.cu) must hand us a
     // dict large enough for these keys plus the vecenv-appended "n". We emit
-    // 123. Growing past the call-site capacity is SILENT HEAP CORRUPTION
+    // 144 (capacity is 160 — training/puffer_dict_capacity.patch), so there is
+    // room for 15 more. Growing past the call-site capacity is SILENT HEAP CORRUPTION
     // upstream (assert compiles out under NDEBUG); our vendored dict_set
     // aborts loudly instead (training/puffer_dict_capacity.patch).
     // History: key count hit 37 vs capacity 32 when slot scores + demo
@@ -455,6 +456,34 @@ void my_log(Log* log, Dict* out) {
     dict_set(out, "def_carrier_path_zerotz", log->def_carrier_path_zerotz);
     dict_set(out, "def_carrier_min_dodges", log->def_carrier_min_dodges);
     dict_set(out, "def_carrier_marked_frac", log->def_carrier_marked_frac);
+    // BB2025 Stalling (D193). stall_rolls = crowd D6s CONSUMED = how often the
+    // team actually stalled (dice-independent, and still counted on turns 7-8);
+    // stall_crowd_acted = the roll succeeded; stall_turnovers = it cost the
+    // turn (acted - turnovers = Steady Footing saves). stall_rate_turn1_6* is
+    // the reward-audit gate metric: stalls per completed team turn, turns 1-6.
+    dict_set(out, "stall_rolls", log->stall_rolls);
+    dict_set(out, "stall_rolls_t0", log->stall_rolls_t0);
+    dict_set(out, "stall_rolls_t1", log->stall_rolls_t1);
+    dict_set(out, "stall_crowd_acted", log->stall_crowd_acted);
+    dict_set(out, "stall_turnovers", log->stall_turnovers);
+    dict_set(out, "stall_turnovers_t0", log->stall_turnovers_t0);
+    dict_set(out, "stall_turnovers_t1", log->stall_turnovers_t1);
+    dict_set(out, "stall_rolls_turn1_6", log->stall_rolls_turn1_6);
+    dict_set(out, "stall_turnovers_turn1_6", log->stall_turnovers_turn1_6);
+    dict_set(out, "stall_turns_turn1_6", log->stall_turns_turn1_6);
+    dict_set(out, "stall_rate_turn1_6", log->stall_rate_turn1_6);
+    dict_set(out, "stall_rate_turn1_6_t0", log->stall_rate_turn1_6_t0);
+    dict_set(out, "stall_rate_turn1_6_t1", log->stall_rate_turn1_6_t1);
+    dict_set(out, "stall_rolls_turn1", log->stall_rolls_by_turn[0]);
+    dict_set(out, "stall_rolls_turn2", log->stall_rolls_by_turn[1]);
+    dict_set(out, "stall_rolls_turn3", log->stall_rolls_by_turn[2]);
+    dict_set(out, "stall_rolls_turn4", log->stall_rolls_by_turn[3]);
+    dict_set(out, "stall_rolls_turn5", log->stall_rolls_by_turn[4]);
+    dict_set(out, "stall_rolls_turn6", log->stall_rolls_by_turn[5]);
+    dict_set(out, "stall_rolls_turn7", log->stall_rolls_by_turn[6]);
+    dict_set(out, "stall_rolls_turn8", log->stall_rolls_by_turn[7]);
+    _Static_assert(BB_STALL_TURNS == 8,
+                   "stall_rolls_turnN keys must cover BB_STALL_TURNS");
     dict_set(out, "error_episodes", log->error_episodes);
     dict_set(out, "demo_episodes", log->demo_episodes);
     dict_set(out, "demo_fallbacks", log->demo_fallbacks);

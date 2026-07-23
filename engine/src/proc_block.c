@@ -3,6 +3,7 @@
 #include "bb/bb_proc.h"
 #include "bb/bb_skills.h"
 #include "bb/bb_hooks.h"
+#include "bb/bb_stall.h"
 #include "bb/gen_tables.h"
 
 // --- assists -----------------------------------------------------------------
@@ -871,6 +872,14 @@ static void knockdown_advance(bb_match* m, bb_rng* rng) {
         if (p->flags & BB_PF_HAS_BALL) bb_turnover(m);
     } else if (BB_TEAM_OF(f.a) == m->active_team) {
         bb_turnover(m);
+    }
+    // Stalling telemetry: the crowd knockdown actually cost the team its turn.
+    // Reached only past the Steady Footing / off-pitch early returns above,
+    // and Stalling requires no prior Turnover, so m->turnover here is exactly
+    // this chain's (bb_stall.h).
+    if (f.b == BB_KD_STALLING && m->turnover) {
+        int st = BB_TEAM_OF(f.a);
+        bb_stall_note_turnover(st, m->turn[st]);
     }
     bool had_ball = (p->flags & BB_PF_HAS_BALL) != 0;
     int bx = p->x, by = p->y;

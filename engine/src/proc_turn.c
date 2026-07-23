@@ -2,6 +2,12 @@
 #include "bb/bb_proc.h"
 #include "bb/bb_hooks.h"
 #include "bb/bb_reachability.h"
+#include "bb/bb_stall.h"
+
+// Stalling telemetry sink (bb_stall.h). Defined here because this file owns
+// the rule; thread-local and NULL by default, so an unattached caller sees no
+// behavior change at all. Never read by any rule.
+BB_STALL_THREAD_LOCAL bb_stall_tally* bb_stall_sink = 0;
 
 // ===== TEAM_TURN =============================================================
 // a = team. phase 0: turn start bookkeeping. phase 1: activation loop.
@@ -77,6 +83,7 @@ static void pick_me_up(bb_match* m, bb_rng* rng, int helping_team) {
 
 static void turn_end(bb_match* m, int team) {
     m->turns_completed[team]++;
+    bb_stall_note_turn_end(team, m->turn[team]); // stall-rate denominator
     if (m->ball.state == BB_BALL_HELD &&
         BB_TEAM_OF(m->ball.carrier) == team) {
         m->turns_completed_held[team]++;
@@ -115,8 +122,15 @@ static int stalling_forgone_carrier(const bb_match* m, int team) {
     return m->ball.carrier;
 }
 
+// The single site where the non-rerollable crowd D6 is consumed, and therefore
+// the single definition of "this team stalled on this turn" (telemetry counts
+// the ROLL, not the outcome: the D6 is consumed on turns 7-8 too, where it
+// cannot succeed).
 static bool stalling_crowd_acts(bb_match* m, bb_rng* rng, int team) {
-    return bb_d6(rng) >= m->turn[team];
+    int turn = m->turn[team];
+    bool acts = bb_d6(rng) >= turn;
+    bb_stall_note_roll(team, turn, acts);
+    return acts;
 }
 
 static void team_turn_advance(bb_match* m, bb_rng* rng) {
@@ -193,7 +207,7 @@ static void team_turn_apply(bb_match* m, bb_action a, bb_rng* rng) {
             // both the knockdown and turnover (May 2026 FAQ).
             m->players[carrier].flags |= BB_PF_USED;
             if (stalling_crowd_acts(m, rng, f->a)) {
-                bb_knockdown(m, carrier, BB_KD_OTHER, 0);
+                bb_knockdown(m, carrier, BB_KD_STALLING, 0);
             }
         }
         return;
@@ -326,7 +340,7 @@ static void activation_advance(bb_match* m, bb_rng* rng) {
         // Keep ACTIVATION beneath the resolution chain. KNOCKDOWN causes the
         // turnover only if Steady Footing does not prevent the knockdown.
         f->phase = 3;
-        bb_knockdown(m, slot, BB_KD_OTHER, 0);
+        bb_knockdown(m, slot, BB_KD_STALLING, 0);
         return;
     }
     bb_pop(m);

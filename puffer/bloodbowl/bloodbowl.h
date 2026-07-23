@@ -104,6 +104,8 @@
 #undef DIR8
 #include "contact_bot.h"
 #include "offense_bot.h"
+#include "bb/bb_stall.h" // Stalling telemetry tally (already pulled in by
+                         // proc_turn.c above; explicit for the Log below)
 
 #define BBE_OBS_VERSION 5      // semantic ABI; v4 has the same 2782-byte shape
 #define BBE_PLAYER_BYTES 24    // 11 stat/state bytes + 12 skill-id slots + TZ byte
@@ -279,6 +281,27 @@ typedef struct {
     float def_carrier_path_zerotz; // mean zero-defender-TZ squares on score path
     float def_carrier_min_dodges; // mean dodges on carrier min-cost score path
     float def_carrier_marked_frac; // frac defensive turns carrier is marked
+    // BB2025 Stalling (D193 engine rule) telemetry, from the engine-side
+    // bb_stall_tally (bb_stall.h). "stall_rolls" counts crowd D6s CONSUMED —
+    // i.e. how often the team actually stalled, independent of the dice; the
+    // roll is consumed on turns 7-8 too. Per-episode sums; the vec /n makes
+    // them per-episode means. The reward-audit promotion gate ("no more than
+    // five percentage points of extra T1-T6 Stalling") reads
+    // stall_rate_turn1_6*: stalls per COMPLETED team turn over turns 1-6.
+    float stall_rolls;               // both teams
+    float stall_rolls_t0;            // team 0 / HOME
+    float stall_rolls_t1;            // team 1 / AWAY
+    float stall_crowd_acted;         // D6 >= turn (crowd knocked the carrier down)
+    float stall_turnovers;           // that knockdown latched a Turnover
+    float stall_turnovers_t0;
+    float stall_turnovers_t1;
+    float stall_rolls_turn1_6;       // gate band: turns 1-6, both teams
+    float stall_turnovers_turn1_6;
+    float stall_turns_turn1_6;       // denominator: team turns 1-6 completed
+    float stall_rate_turn1_6;        // rolls / turns over turns 1-6, both teams
+    float stall_rate_turn1_6_t0;
+    float stall_rate_turn1_6_t1;
+    float stall_rolls_by_turn[BB_STALL_TURNS]; // per-turn histogram, both teams
     // Learner (slot 0) score vs frozen bank b on envs tagged b+1; selfplay.py
     // reads hist_score_bank_<b>/hist_n_bank_<b> to drive bank swaps.
     float hist_score_bank[BBE_MAX_BANKS];
@@ -635,6 +658,11 @@ typedef struct {
     int ep_pickup_att[2], ep_pickup_ok[2];
     int ep_pass_att[2], ep_handoff_att[2], ep_foul_att[2];
     int ep_turnovers[2];
+    // BB2025 Stalling telemetry for this episode. The engine records into it
+    // through the thread-local bb_stall_sink (bb_stall.h) while THIS env is
+    // being stepped; it lives in the env precisely because bb_match must not
+    // grow (BBS bank fingerprint). Zeroed by bbe_reset_match.
+    bb_stall_tally ep_stall;
     int ep_knockdowns_inflicted, ep_knockdowns_own;
     int ep_carrier_knockdowns;
     int ep_send_offs;
@@ -1997,6 +2025,13 @@ static void bbe_update_ball_possession(Bloodbowl* env, bool scored) {
 
 static void bbe_reset_match(Bloodbowl* env) {
     env->episode++;
+    // Stalling telemetry: clear this episode's tally and point the engine at
+    // it BEFORE any bb_advance below (a resumed banked state can complete a
+    // playerless team turn inside the reset advance). Attaching per call, on
+    // the calling thread, is what keeps vectorized workers from
+    // cross-attributing — see bb_stall.h.
+    bb_stall_reset(&env->ep_stall);
+    bb_stall_attach(&env->ep_stall);
     bb_rng_seed(&env->procgen, env->seed * 2654435761u + env->episode, 11);
     // Demo-state reset curriculum: with probability demo_reset_pct, resume
     // from a uniformly drawn banked mid-game state instead of a procgen
@@ -2581,6 +2616,49 @@ static void bbe_finish_episode(Bloodbowl* env) {
         env->log.def_carrier_marked_frac +=
             env->ep_def_carrier_marked_sum / ndef;
     }
+    // --- BB2025 Stalling (D193) ---------------------------------------------
+    // Straight per-episode counts out of the engine tally, plus the rate the
+    // T1-T6 promotion gate is written in (stalls per completed team turn on
+    // turns 1-6). Episodes with no turns 1-6 completed contribute 0 to the
+    // rate, matching how possession_rate handles an empty denominator.
+    {
+        const bb_stall_tally* st = &env->ep_stall;
+        env->log.stall_rolls +=
+            (float)bb_stall_sum(st, BB_STALL_ROLLS, -1, 1, BB_STALL_TURNS);
+        env->log.stall_rolls_t0 +=
+            (float)bb_stall_sum(st, BB_STALL_ROLLS, 0, 1, BB_STALL_TURNS);
+        env->log.stall_rolls_t1 +=
+            (float)bb_stall_sum(st, BB_STALL_ROLLS, 1, 1, BB_STALL_TURNS);
+        env->log.stall_crowd_acted +=
+            (float)bb_stall_sum(st, BB_STALL_ACTED, -1, 1, BB_STALL_TURNS);
+        env->log.stall_turnovers +=
+            (float)bb_stall_sum(st, BB_STALL_TURNOVERS, -1, 1, BB_STALL_TURNS);
+        env->log.stall_turnovers_t0 +=
+            (float)bb_stall_sum(st, BB_STALL_TURNOVERS, 0, 1, BB_STALL_TURNS);
+        env->log.stall_turnovers_t1 +=
+            (float)bb_stall_sum(st, BB_STALL_TURNOVERS, 1, 1, BB_STALL_TURNS);
+        uint32_t band_rolls = bb_stall_sum(st, BB_STALL_ROLLS, -1, 1, 6);
+        uint32_t band_turns = bb_stall_sum(st, BB_STALL_TURN_ENDS, -1, 1, 6);
+        env->log.stall_rolls_turn1_6 += (float)band_rolls;
+        env->log.stall_turnovers_turn1_6 +=
+            (float)bb_stall_sum(st, BB_STALL_TURNOVERS, -1, 1, 6);
+        env->log.stall_turns_turn1_6 += (float)band_turns;
+        if (band_turns > 0) {
+            env->log.stall_rate_turn1_6 +=
+                (float)band_rolls / (float)band_turns;
+        }
+        for (int t = 0; t < 2; t++) {
+            uint32_t r = bb_stall_sum(st, BB_STALL_ROLLS, t, 1, 6);
+            uint32_t d = bb_stall_sum(st, BB_STALL_TURN_ENDS, t, 1, 6);
+            float rate = d > 0 ? (float)r / (float)d : 0.0f;
+            if (t == 0) env->log.stall_rate_turn1_6_t0 += rate;
+            else env->log.stall_rate_turn1_6_t1 += rate;
+        }
+        for (int i = 0; i < BB_STALL_TURNS; i++) {
+            env->log.stall_rolls_by_turn[i] +=
+                (float)(st->rolls[0][i] + st->rolls[1][i]);
+        }
+    }
     // --- Aggregate-statistic-matching pseudo-reward (D114) ------------------
     // Episode-end term = -scale * sqrt(sum_i z_i^2) over the 7 full-game stats,
     // z_i = (agent_stat_i - human_mean_i)/human_std_i. Pulls the policy's
@@ -2880,6 +2958,11 @@ static void bbe_apply_kickoff_touchback_reward(Bloodbowl* env) {
 }
 
 static void c_step(Bloodbowl* env) {
+    // Stalling telemetry: (re)point the engine at THIS env's tally on THIS
+    // thread for the whole step, including the macro-move continuation loop and
+    // any end-of-episode reset below (bb_stall.h). Cheap: one thread-local
+    // store per step, no allocation, never read by a rule.
+    bb_stall_attach(&env->ep_stall);
     for (int a = 0; a < BBE_AGENTS; a++) {
         env->reward_ptr[a][0] = 0.0f;
         env->terminal_ptr[a][0] = 0.0f;

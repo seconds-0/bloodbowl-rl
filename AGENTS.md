@@ -128,6 +128,15 @@ requires prior candidate-transfer evidence. For unattended multi-day work use
   the crowd cannot act. The finer rulebook choice to forego only that player and
   continue the turn is not yet a distinct action-space surface. Possession is not
   automatically valuable independent of score and clock.
+- **Stalling is measured, not inferred.** The engine records every consumed crowd
+  D6 — per team, per turn — plus whether the crowd acted and whether it caused a
+  Turnover, into a caller-owned `bb_stall_tally` reached through a thread-local
+  sink (`engine/include/bb/bb_stall.h`). Never into `bb_match`: the BBS bank
+  serializes that struct wholesale. The env attaches its own tally in `c_step`
+  and publishes `stall_rolls*`, `stall_crowd_acted`, `stall_turnovers*`,
+  `stall_rolls_turnN` and the gate metric `stall_rate_turn1_6*` (stalls per
+  completed team turn, turns 1-6) to the machine panel. Do not re-derive stalls
+  from distance or end position (footgun 20).
 - Reward declarations or settled state, not realized dice luck, except for true
   terminal/objective outcomes. Expected-value shaping can still redefine the
   objective, so it also requires held-out match validation. "Secure the ball,"

@@ -53,6 +53,12 @@ typedef enum {
     BB_KD_FOUL,
     BB_KD_TTM_LANDING, // failed TTM landing: turnover only if carrying
     BB_KD_OTHER,
+    // BB2025 Stalling crowd knockdown. Resolves EXACTLY like BB_KD_OTHER
+    // (knockdown_advance only special-cases BB_KD_BLOCK and BB_KD_TTM_LANDING);
+    // the distinct id exists so the turnover it causes can be attributed to
+    // Stalling telemetry at the one site that latches it. Appended, never
+    // renumbered: banked KNOCKDOWN frames carry the cause in frame.b.
+    BB_KD_STALLING,
 } bb_kd_cause;
 void bb_knockdown(bb_match* m, int slot, int cause, int armour_mod);
 // Knockdown with a known causer (block/foul) so armour/injury skill mods
