@@ -114,6 +114,11 @@ blockstats: $(OBJ)
 	$(CC) $(CFLAGS) tools/bb_blockstats.c $(OBJ) -o $(BUILD)/bb_blockstats -lm $(LDFLAGS)
 	@echo "run: ./$(BUILD)/bb_blockstats validation/normalized/*.jsonl"
 
+backplay-coverage: tools/bank_backplay_coverage.c
+	$(CC) $(CFLAGS) tools/bank_backplay_coverage.c \
+		-o $(BUILD)/bank_backplay_coverage $(LDFLAGS) -lm
+	@echo "run: ./$(BUILD)/bank_backplay_coverage validation/states/bank.bbs"
+
 scenario-scan: $(OBJ) tools/bank_scenario_scan.c tools/bank_scenario_scan.h $(SCENARIO_SRC) tools/bank_scenario_predicates.h
 	$(CC) $(CFLAGS) tools/bank_scenario_scan.c $(SCENARIO_SRC) $(OBJ) \
 		-o $(BUILD)/bank_scenario_scan $(LDFLAGS)
