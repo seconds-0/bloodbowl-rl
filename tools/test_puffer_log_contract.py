@@ -20,7 +20,10 @@ class PufferLogContractTests(unittest.TestCase):
     def test_binding_keys_plus_vec_n_fit_patched_capacity(self) -> None:
         binding = BINDING.read_text()
         emitted_keys = len(re.findall(r"\bdict_set\s*\(\s*out\s*,", binding))
-        self.assertEqual(emitted_keys, 123)
+        # Kept exact on purpose: the count is load-bearing history (37 keys vs
+        # capacity 32 corrupted the heap at ~786K steps). binding.c's my_log
+        # CAPACITY comment is the authority -- update both together.
+        self.assertEqual(emitted_keys, 144)
         self.assertLessEqual(emitted_keys + 1, EXPECTED_CAPACITY)
 
     def test_both_puffer_backends_and_installer_pin_same_capacity(self) -> None:

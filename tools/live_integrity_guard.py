@@ -19,6 +19,14 @@ from pathlib import Path
 from typing import Any
 
 
+# Keys the trainer publishes under the `env/` namespace on every epoch even
+# when no episode has finished, so their presence does NOT imply the env
+# aggregated an episode. `elo` is written unconditionally by the self-play
+# league (vendor/PufferLib/pufferlib/selfplay.py, `flat_logs['env/elo']`),
+# unlike its `historical_winrate*` neighbours which are gated on hist_n > 0.
+# Only reachable in a pool run, which is why no genesis arm ever hit it.
+NON_EPISODE_PANEL_KEYS = frozenset({"elo"})
+
 HARD_INTEGRITY_KEYS = (
     "illegal_frac",
     "reward_clip_frac",
@@ -292,11 +300,15 @@ def check_log(
                     offset=line_start,
                 )
             # Before an episode completes, Puffer's schema-2 phase contract
-            # intentionally emits only _puffer_* metadata. Consume that record
-            # without resetting the integrity-panel liveness clock. Once any
-            # environment metric is present, the complete hard registry is
-            # mandatory.
-            if not any(not key.startswith("_") for key in panel):
+            # emits only _puffer_* metadata plus the always-on wrapper metrics
+            # in NON_EPISODE_PANEL_KEYS. Consume that record without resetting
+            # the integrity-panel liveness clock. Once any key that requires an
+            # aggregated episode is present, the complete hard registry is
+            # mandatory -- including `n`, so an env that published metrics
+            # without the registry still fails closed.
+            if not any(
+                    not key.startswith("_") and key not in NON_EPISODE_PANEL_KEYS
+                    for key in panel):
                 continue
             missing = [key for key in HARD_INTEGRITY_KEYS if key not in panel]
             if missing:
