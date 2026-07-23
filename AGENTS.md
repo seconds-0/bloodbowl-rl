@@ -595,7 +595,14 @@ changes a reward, active queue, production default, or promotion verdict.
   authorization must bind a fresh accepted schema-3 qualification before the
   exactly two-file plan is created; a separate launch authorization must then
   bind that plan, the canonical disabled one-shot unit, and the empty stopped-
-  validation output. Because launcher bytes changed, rebuild and independently
+  validation output. Qualification revalidation must execute the qualifier from
+  its separately bound clean control/runner root with candidate Python; control
+  and candidate roots differ while their merged commits match. The canonical
+  unit's first prestart exclusively creates sibling
+  `CANARY_LAUNCH_CONSUMPTION.json`; qualification and GPU probes follow it, and
+  every later launcher validates it. Thus any post-consumption failure burns
+  the only start and a manual retry rejects in code, not merely by checklist.
+  Because launcher bytes changed, rebuild and independently
   requalify the exact final merged authorization commit—never claim the accepted
   `ee7ace4` qualification covers its descendant. See
   `docs/replacement-exact-action-canary-2070-execution-checklist.md`.

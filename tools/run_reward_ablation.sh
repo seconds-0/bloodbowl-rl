@@ -87,6 +87,8 @@ EXPECTED_CUDA_RUNTIME_LIBRARY_SHA256="${EXPECTED_CUDA_RUNTIME_LIBRARY_SHA256:-}"
 EXPECTED_CUDA_RUNTIME_DEVICE_COUNT="${EXPECTED_CUDA_RUNTIME_DEVICE_COUNT:-}"
 CANARY_LAUNCH_AUTHORIZATION="${CANARY_LAUNCH_AUTHORIZATION:-}"
 CANARY_LAUNCH_AUTHORIZATION_SHA256="${CANARY_LAUNCH_AUTHORIZATION_SHA256:-}"
+CANARY_LAUNCH_CONSUMPTION="${CANARY_LAUNCH_CONSUMPTION:-}"
+CANARY_LAUNCH_CONSUMPTION_SHA256="${CANARY_LAUNCH_CONSUMPTION_SHA256:-}"
 CANARY_QUALIFICATION="${CANARY_QUALIFICATION:-}"
 CANARY_QUALIFICATION_SHA256="${CANARY_QUALIFICATION_SHA256:-}"
 CANARY_LAUNCH_RECORD="${CANARY_LAUNCH_RECORD:-}"
@@ -434,6 +436,14 @@ if [ "$BOOTSTRAP_MODE" = "fresh-v5-qualification" ]; then
     echo "fresh-v5-qualification requires CANARY_LAUNCH_AUTHORIZATION_SHA256" >&2
     exit 1
   }
+  [ -n "$CANARY_LAUNCH_CONSUMPTION" ] || {
+    echo "fresh-v5-qualification requires CANARY_LAUNCH_CONSUMPTION" >&2
+    exit 1
+  }
+  [ -n "$CANARY_LAUNCH_CONSUMPTION_SHA256" ] || {
+    echo "fresh-v5-qualification requires CANARY_LAUNCH_CONSUMPTION_SHA256" >&2
+    exit 1
+  }
   [ -n "$CANARY_QUALIFICATION" ] || {
     echo "fresh-v5-qualification requires CANARY_QUALIFICATION" >&2
     exit 1
@@ -456,6 +466,8 @@ else
   EXPECTED_CUDA_RUNTIME_DEVICE_COUNT="$CUDA_RUNTIME_DEVICE_COUNT"
   CANARY_LAUNCH_AUTHORIZATION=""
   CANARY_LAUNCH_AUTHORIZATION_SHA256=""
+  CANARY_LAUNCH_CONSUMPTION=""
+  CANARY_LAUNCH_CONSUMPTION_SHA256=""
   CANARY_QUALIFICATION=""
   CANARY_QUALIFICATION_SHA256=""
   CANARY_LAUNCH_RECORD=""
@@ -495,6 +507,22 @@ if [ "$BOOTSTRAP_MODE" = "fresh-v5-qualification" ]; then
   observed_canary_authorization_sha="$(sha256sum "$CANARY_LAUNCH_AUTHORIZATION" | awk '{print $1}')"
   if [ "$observed_canary_authorization_sha" != "$CANARY_LAUNCH_AUTHORIZATION_SHA256" ]; then
     echo "CANARY_LAUNCH_AUTHORIZATION digest drifted" >&2; exit 1
+  fi
+  case "$CANARY_LAUNCH_CONSUMPTION" in
+    /*) ;;
+    *) echo "CANARY_LAUNCH_CONSUMPTION must be absolute" >&2; exit 1 ;;
+  esac
+  [ -f "$CANARY_LAUNCH_CONSUMPTION" ] || {
+    echo "missing CANARY_LAUNCH_CONSUMPTION: $CANARY_LAUNCH_CONSUMPTION" >&2
+    exit 1
+  }
+  if [[ ! "$CANARY_LAUNCH_CONSUMPTION_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "CANARY_LAUNCH_CONSUMPTION_SHA256 must be a lowercase SHA-256" >&2
+    exit 1
+  fi
+  observed_canary_consumption_sha="$(sha256sum "$CANARY_LAUNCH_CONSUMPTION" | awk '{print $1}')"
+  if [ "$observed_canary_consumption_sha" != "$CANARY_LAUNCH_CONSUMPTION_SHA256" ]; then
+    echo "CANARY_LAUNCH_CONSUMPTION digest drifted" >&2; exit 1
   fi
   case "$CANARY_QUALIFICATION" in
     /*) ;;
@@ -730,6 +758,8 @@ META_ARGS=(
   expected_cuda_runtime_device_count "$EXPECTED_CUDA_RUNTIME_DEVICE_COUNT"
   canary_launch_authorization "$CANARY_LAUNCH_AUTHORIZATION"
   expected_canary_launch_authorization_sha256 "$CANARY_LAUNCH_AUTHORIZATION_SHA256"
+  canary_launch_consumption "$CANARY_LAUNCH_CONSUMPTION"
+  canary_launch_consumption_sha256 "$CANARY_LAUNCH_CONSUMPTION_SHA256"
   canary_qualification "$CANARY_QUALIFICATION"
   canary_qualification_sha256 "$CANARY_QUALIFICATION_SHA256"
   canary_launch_record "$CANARY_LAUNCH_RECORD"

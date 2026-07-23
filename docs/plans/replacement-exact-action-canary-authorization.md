@@ -29,7 +29,10 @@ independent validation before plan-only or live canary work.
    `.screen.lock`; live launch additionally requires an authorization that
    binds that exact two-file output and the exact systemd unit.
 3. The authority validator independently revalidates the accepted schema-3
-   qualification, exact clean source commit/tree, candidate/Puffer/module/
+   qualification from its separately bound clean control/runner checkout using
+   candidate Python, while requiring the runner and candidate roots to differ
+   but their merged commits to match. It also revalidates the exact clean
+   source commit/tree, candidate/Puffer/module/
    backend/environment identities, the byte-identical accepted Gate-6 recovery
    verdict and full preservation inventory, CUDA runtime identity, frozen
    one-seed 50M contract, zero error budget, and qualification/ancestry
@@ -41,9 +44,12 @@ independent validation before plan-only or live canary work.
    CUDART declaration before optimization. A mismatch terminates the fresh
    process and no fallback exists.
 6. The live unit is one-shot, disabled, `Restart=no`,
-   `KillMode=control-group`, `ARM_DETACH=0`, bounded to two hours, validates the
-   qualification in `ExecStartPre`, proves an empty GPU process list, and uses
-   `env -u WARM -u POOL`.
+   `KillMode=control-group`, `ARM_DETACH=0`, and bounded to two hours. Its first
+   `ExecStartPre` exclusively creates the immutable sibling
+   `CANARY_LAUNCH_CONSUMPTION.json`; qualification and empty-GPU probes run only
+   after that irreversible operation, so any later prestart or launcher failure
+   consumes the sole attempt. The launcher validates that consumption before
+   output mutation and uses `env -u WARM -u POOL`.
 7. Any nonzero, missing, malformed, non-finite, or drifted integrity/provenance
    field rejects the attempt. No retry, resume, repair-in-place, checkpoint
    eligibility, reward evidence, or BBTV promotion is introduced.

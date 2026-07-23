@@ -88,14 +88,7 @@ class LiveIntegrityGuardTests(unittest.TestCase):
             self.assertEqual(failure["metrics"], {"illegal_frac": 1e-12})
 
     def test_nonzero_redundant_reward_counters_also_fail_closed(self):
-        counters = (
-            "reward_clip_signed_delta",
-            "reward_clipped_samples_per_episode",
-            "reward_clip_terminal_samples_per_episode",
-            "reward_clip_nonterminal_samples_per_episode",
-            "reward_nonfinite_samples_per_episode",
-        )
-        for key in counters:
+        for key in guard.HARD_INTEGRITY_KEYS:
             with self.subTest(key=key), tempfile.TemporaryDirectory() as root:
                 with self.assertRaisesRegex(guard.IntegrityFailure, key):
                     self.run_guard(root, panel(**{key: 1e-12}))

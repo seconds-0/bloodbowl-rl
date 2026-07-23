@@ -17,6 +17,7 @@ import json
 import math
 import os
 from pathlib import Path
+import secrets
 import stat
 import subprocess
 import sys
@@ -33,6 +34,7 @@ except ModuleNotFoundError:  # Imported as tools.exact_action_canary_authority.
 SCHEMA_VERSION = 1
 PLAN_KIND = "exact_action_canary_plan_authorization"
 LAUNCH_KIND = "exact_action_canary_launch_authorization"
+CONSUMPTION_KIND = "exact_action_canary_launch_consumption"
 MANDATORY_QUALIFICATION_GATES = (
     "construction_state",
     "graph_parity",
@@ -57,6 +59,7 @@ CANARY_POLL_SECONDS = 30
 CANARY_ARM_DETACH = 0
 CANARY_PLAN_ONLY = 0
 CANARY_UNIT_NAME = "bloodbowl-exact-action-canary-50m-s42-v4.service"
+CANARY_LAUNCH_CONSUMPTION_NAME = "CANARY_LAUNCH_CONSUMPTION.json"
 EXPECTED_RECOVERY_ROOT = "/home/rache/bloodbowl-rl-recovery-20260719"
 EXPECTED_RECOVERY_QUEUE_ID = "vacation-r0-overflow-recovery-20260719-v1"
 EXPECTED_RECOVERY_PLAN_SHA256 = (
@@ -82,6 +85,7 @@ class AuthorityError(RuntimeError):
 @dataclass(frozen=True)
 class UnitPaths:
     source_root: Path
+    qualification_runner_root: Path
     qualification: Path
     output: Path
     launch_authorization: Path
@@ -202,9 +206,14 @@ def _inventory(root: Path) -> list[dict[str, Any]]:
     return entries
 
 
-def _run_qualification_validator(qualification: Path, source_root: Path) -> None:
+def _run_qualification_validator(
+    qualification: Path,
+    *,
+    source_root: Path,
+    qualification_runner_root: Path,
+) -> None:
     runner = _exact_absolute_file(
-        source_root / "tools" / "qualify_recurrent_cuda.py",
+        qualification_runner_root / "tools" / "qualify_recurrent_cuda.py",
         "qualification validator",
     )
     python = _exact_absolute_file(
@@ -216,7 +225,7 @@ def _run_qualification_validator(qualification: Path, source_root: Path) -> None
     environment["CUDA_VISIBLE_DEVICES"] = "0"
     result = subprocess.run(
         [str(python), "-B", str(runner), "validate", str(qualification)],
-        cwd=source_root,
+        cwd=qualification_runner_root,
         env=environment,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -320,13 +329,28 @@ def _validate_identity(
 
 
 def validate_qualification(
-    qualification: Path, *, source_root: Path
+    qualification: Path,
+    *,
+    source_root: Path,
+    qualification_runner_root: Path,
 ) -> dict[str, Any]:
     """Revalidate one accepted schema-3 qualification from current files."""
     qualification = _exact_absolute_file(qualification, "qualification")
     source_root = _exact_absolute_directory(source_root, "candidate source root")
-    _run_qualification_validator(qualification, source_root)
+    qualification_runner_root = _exact_absolute_directory(
+        qualification_runner_root, "qualification runner source root"
+    )
+    if qualification_runner_root == source_root:
+        raise AuthorityError(
+            "qualification runner and candidate source roots must differ"
+        )
+    _run_qualification_validator(
+        qualification,
+        source_root=source_root,
+        qualification_runner_root=qualification_runner_root,
+    )
     source = _observe_source(source_root)
+    qualification_runner = _observe_source(qualification_runner_root)
     payload = _read_json(qualification, "qualification")
     if payload.get("schema_version") != 3:
         raise AuthorityError("qualification schema must be exactly 3")
@@ -367,6 +391,14 @@ def validate_qualification(
     ):
         if observed != source["commit"]:
             raise AuthorityError(f"{label} does not equal clean candidate HEAD")
+    if qualification_runner["commit"] != payload.get("runner_source_commit"):
+        raise AuthorityError(
+            "qualification runner source commit does not equal recorded runner"
+        )
+    if qualification_runner["commit"] != source["commit"]:
+        raise AuthorityError(
+            "qualification runner and candidate commits must be identical"
+        )
     _require_digest(payload.get("runner_sha256"), "qualification runner digest")
     _require_digest(
         candidate.get("installer_check_sha256"), "installer check digest"
@@ -410,15 +442,22 @@ def validate_qualification(
             cell.get("record_sha256"), f"qualification {cell.get('name')} record digest"
         ):
             raise AuthorityError(f"qualification {cell.get('name')} record drifted")
-        artifact_path = _exact_absolute_file(
-            Path(str(cell.get("artifact", ""))),
-            f"qualification {cell.get('name')} artifact",
-        )
-        if _sha256(artifact_path) != _require_digest(
-            cell.get("artifact_sha256"),
-            f"qualification {cell.get('name')} artifact digest",
-        ):
-            raise AuthorityError(f"qualification {cell.get('name')} artifact drifted")
+        name = str(cell.get("name"))
+        expects_artifact = name not in {"construction", "throughput"}
+        artifact = cell.get("artifact")
+        artifact_sha256 = cell.get("artifact_sha256")
+        if expects_artifact:
+            artifact_path = _exact_absolute_file(
+                Path(str(artifact)), f"qualification {name} artifact"
+            )
+            if _sha256(artifact_path) != _require_digest(
+                artifact_sha256, f"qualification {name} artifact digest"
+            ):
+                raise AuthorityError(f"qualification {name} artifact drifted")
+        elif artifact is not None or artifact_sha256 is not None:
+            raise AuthorityError(
+                f"qualification {name} must not declare a separate artifact"
+            )
         record = _read_json(record_path, f"qualification {cell.get('name')} record")
         if record.get("accepted") is not True or record.get("qualification_only") is not True:
             raise AuthorityError(f"qualification cell did not accept: {cell.get('name')}")
@@ -429,17 +468,22 @@ def validate_qualification(
             runtime = observed_runtime
         elif runtime != observed_runtime:
             raise AuthorityError("qualification CUDA runtime differs across cells")
-        if cell.get("name") != "construction":
-            hard = record.get("hard_integrity")
+        if name != "construction":
+            integrity_payload = record.get("throughput") if name == "throughput" else record
+            if not isinstance(integrity_payload, dict):
+                raise AuthorityError(
+                    f"qualification {name} hard-integrity payload is malformed"
+                )
+            hard = integrity_payload.get("hard_integrity")
             if not isinstance(hard, dict) or set(hard) != set(
                 HARD_INTEGRITY_KEYS
             ):
                 raise AuthorityError(
-                    f"qualification {cell.get('name')} hard-integrity registry drifted"
+                    f"qualification {name} hard-integrity registry drifted"
                 )
-            if record.get("hard_integrity_zero") is not True:
+            if integrity_payload.get("hard_integrity_zero") is not True:
                 raise AuthorityError(
-                    f"qualification {cell.get('name')} hard-integrity verdict is false"
+                    f"qualification {name} hard-integrity verdict is false"
                 )
             for key in HARD_INTEGRITY_KEYS:
                 value = hard[key]
@@ -450,13 +494,14 @@ def validate_qualification(
                     or float(value) != 0.0
                 ):
                     raise AuthorityError(
-                        f"qualification {cell.get('name')} hard-integrity "
+                        f"qualification {name} hard-integrity "
                         f"field is not exact zero: {key}"
                     )
     assert runtime is not None
 
     return {
         "source": source,
+        "qualification_runner": qualification_runner,
         "qualification": {
             "path": str(qualification),
             "sha256": _sha256(qualification),
@@ -523,9 +568,14 @@ def validate_plan_output(output: Path) -> list[dict[str, Any]]:
 def render_systemd_unit(paths: UnitPaths) -> str:
     """Render the only one-shot systemd unit shape accepted by this tranche."""
     source = paths.source_root
+    qualification_runner = paths.qualification_runner_root
     python = source / "vendor/PufferLib/.venv/bin/python"
     authority = source / "tools/exact_action_canary_authority.py"
     launcher = source / "tools/run_reward_screen.sh"
+    consumption = paths.launch_authorization.with_name(
+        CANARY_LAUNCH_CONSUMPTION_NAME
+    )
+    consumption_sha = consumption.with_suffix(".sha256")
     return f"""[Unit]
 Description=Blood Bowl exact-action fresh 50M seed-42 qualification canary v4
 After=default.target
@@ -533,10 +583,10 @@ After=default.target
 [Service]
 Type=oneshot
 WorkingDirectory={source}
-ExecStartPre={python} -B {authority} validate-launch --authorization {paths.launch_authorization} --sha256-file {paths.launch_authorization_sha}
-ExecStartPre={python} -B {source}/tools/qualify_recurrent_cuda.py validate {paths.qualification}
+ExecStartPre={python} -B {authority} consume-launch --authorization {paths.launch_authorization} --sha256-file {paths.launch_authorization_sha} --destination {consumption}
+ExecStartPre={python} -B {qualification_runner}/tools/qualify_recurrent_cuda.py validate {paths.qualification}
 ExecStartPre=/usr/bin/bash -c 'set -euo pipefail; out="$$(/usr/local/bin/nvidia-smi --query-compute-apps=pid --format=csv,noheader,nounits)"; stripped="$$(/usr/bin/printf "%%s" "$${{out}}" | /usr/bin/tr -d "[:space:]")"; test -z "$${{stripped}}"'
-ExecStart=/usr/bin/env -u WARM -u POOL PATH={python.parent}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin CUDA_VISIBLE_DEVICES=0 OMP_NUM_THREADS=16 OPENBLAS_NUM_THREADS=16 MKL_NUM_THREADS=16 NUMEXPR_NUM_THREADS=16 STEPS=50000000 SCREEN_PROFILE=exact-action-canary PREFIX={CANARY_PREFIX} OUT_DIR={paths.output} POLL_SECONDS=30 PLAN_ONLY=0 ARM_DETACH=0 CANARY_LAUNCH_AUTHORIZATION={paths.launch_authorization} CANARY_LAUNCH_AUTHORIZATION_SHA256_FILE={paths.launch_authorization_sha} /usr/bin/bash {launcher}
+ExecStart=/usr/bin/env -u WARM -u POOL PATH={python.parent}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin CUDA_VISIBLE_DEVICES=0 OMP_NUM_THREADS=16 OPENBLAS_NUM_THREADS=16 MKL_NUM_THREADS=16 NUMEXPR_NUM_THREADS=16 STEPS=50000000 SCREEN_PROFILE=exact-action-canary PREFIX={CANARY_PREFIX} OUT_DIR={paths.output} POLL_SECONDS=30 PLAN_ONLY=0 ARM_DETACH=0 CANARY_LAUNCH_AUTHORIZATION={paths.launch_authorization} CANARY_LAUNCH_AUTHORIZATION_SHA256_FILE={paths.launch_authorization_sha} CANARY_LAUNCH_CONSUMPTION={consumption} CANARY_LAUNCH_CONSUMPTION_SHA256_FILE={consumption_sha} /usr/bin/bash {launcher}
 Restart=no
 KillMode=control-group
 TimeoutStartSec=7200
@@ -681,6 +731,7 @@ def freeze_plan_authorization(
     destination: Path,
     qualification: Path,
     source_root: Path,
+    qualification_runner_root: Path,
     screen_output: Path,
     recovery_verification: Path,
     recovery_inventory: Path,
@@ -699,7 +750,9 @@ def freeze_plan_authorization(
     if not screen_output.parent.is_dir():
         raise AuthorityError("canary plan output parent must already exist")
     observed = validate_qualification(
-        qualification, source_root=source_root
+        qualification,
+        source_root=source_root,
+        qualification_runner_root=qualification_runner_root,
     )
     recovery = _validate_recovery_preservation(
         recovery_verification, recovery_inventory
@@ -720,6 +773,7 @@ def freeze_plan_authorization(
         "created_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
         "qualification_only": True,
         "source": observed["source"],
+        "qualification_runner": observed["qualification_runner"],
         "qualification": observed["qualification"],
         "candidate": observed["candidate"],
         "cuda_runtime": observed["cuda_runtime"],
@@ -774,12 +828,21 @@ def validate_plan_authorization(
     qualification_section = payload.get("qualification")
     if not isinstance(qualification_section, dict):
         raise AuthorityError("canary plan qualification identity is malformed")
+    qualification_runner = payload.get("qualification_runner")
+    if not isinstance(qualification_runner, dict):
+        raise AuthorityError(
+            "canary plan qualification runner identity is malformed"
+        )
     observed = validate_qualification(
         Path(str(qualification_section.get("path", ""))),
         source_root=source_root,
+        qualification_runner_root=Path(
+            str(qualification_runner.get("root", ""))
+        ),
     )
     for key in (
         "source",
+        "qualification_runner",
         "qualification",
         "candidate",
         "cuda_runtime",
@@ -918,6 +981,13 @@ def write_unit(destination: Path, paths: UnitPaths) -> str:
     source_root = _exact_absolute_directory(
         paths.source_root, "candidate source root"
     )
+    qualification_runner_root = _exact_absolute_directory(
+        paths.qualification_runner_root, "qualification runner source root"
+    )
+    if qualification_runner_root == source_root:
+        raise AuthorityError(
+            "qualification runner and candidate source roots must differ"
+        )
     qualification = _exact_absolute_file(
         paths.qualification, "qualification"
     )
@@ -934,6 +1004,7 @@ def write_unit(destination: Path, paths: UnitPaths) -> str:
     )
     paths = UnitPaths(
         source_root=source_root,
+        qualification_runner_root=qualification_runner_root,
         qualification=qualification,
         output=output,
         launch_authorization=launch_authorization,
@@ -947,15 +1018,20 @@ def write_unit(destination: Path, paths: UnitPaths) -> str:
     if destination.exists() or destination.is_symlink():
         raise AuthorityError("canary unit destination already exists")
     raw = render_systemd_unit(paths).encode("utf-8")
-    temporary = destination.with_name(f".{destination.name}.tmp.{os.getpid()}")
+    temporary = destination.with_name(
+        f".{destination.name}.tmp.{os.getpid()}.{secrets.token_hex(8)}"
+    )
+    destination_published = False
     try:
         with temporary.open("xb") as handle:
             handle.write(raw)
             handle.flush()
             os.fsync(handle.fileno())
         os.link(temporary, destination)
+        destination_published = True
     except OSError as exc:
-        destination.unlink(missing_ok=True)
+        if destination_published:
+            destination.unlink(missing_ok=True)
         raise AuthorityError(f"cannot publish canary unit atomically: {exc}") from exc
     finally:
         temporary.unlink(missing_ok=True)
@@ -975,6 +1051,17 @@ def freeze_launch_authorization(
     destination = _require_external_path(
         destination, source_root, "launch authorization destination"
     )
+    consumption = destination.with_name(CANARY_LAUNCH_CONSUMPTION_NAME)
+    consumption_sha = consumption.with_suffix(".sha256")
+    if (
+        consumption.exists()
+        or consumption.is_symlink()
+        or consumption_sha.exists()
+        or consumption_sha.is_symlink()
+    ):
+        raise AuthorityError(
+            "launch consumption must be absent before launch authorization"
+        )
     plan = validate_plan_authorization(
         plan_authorization,
         sha256_file=plan_sha256_file,
@@ -994,6 +1081,7 @@ def freeze_launch_authorization(
         raise AuthorityError("canonical canary unit name drifted")
     unit_paths = UnitPaths(
         source_root=source_root,
+        qualification_runner_root=Path(plan["qualification_runner"]["root"]),
         qualification=Path(plan["qualification"]["path"]),
         output=output,
         launch_authorization=destination,
@@ -1007,6 +1095,7 @@ def freeze_launch_authorization(
         "created_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
         "qualification_only": True,
         "source": plan["source"],
+        "qualification_runner": plan["qualification_runner"],
         "qualification": plan["qualification"],
         "candidate": plan["candidate"],
         "cuda_runtime": plan["cuda_runtime"],
@@ -1028,6 +1117,11 @@ def freeze_launch_authorization(
         "stopped_validation": {
             "path": str(stopped),
             "initially_empty": True,
+        },
+        "launch_consumption": {
+            "path": str(consumption),
+            "sha256_file": str(consumption_sha),
+            "initially_absent": True,
         },
         "systemd": {
             "type": "oneshot",
@@ -1087,7 +1181,13 @@ def validate_launch_authorization(
     plan["authorization_path"] = plan_ref["path"]
     if plan_ref.get("sha256") != plan["authorization_sha256"]:
         raise AuthorityError("canary launch plan authorization digest drifted")
-    for key in ("source", "qualification", "candidate", "cuda_runtime"):
+    for key in (
+        "source",
+        "qualification_runner",
+        "qualification",
+        "candidate",
+        "cuda_runtime",
+    ):
         if payload.get(key) != plan.get(key):
             raise AuthorityError(f"canary launch {key} identity drifted")
     plan_output = payload.get("plan_output")
@@ -1109,6 +1209,16 @@ def validate_launch_authorization(
     _require_empty_directory(
         Path(str(stopped.get("path", ""))), "stopped-validation output"
     )
+    if payload.get("launch_consumption") != {
+        "path": str(authorization.with_name(CANARY_LAUNCH_CONSUMPTION_NAME)),
+        "sha256_file": str(
+            authorization.with_name(CANARY_LAUNCH_CONSUMPTION_NAME).with_suffix(
+                ".sha256"
+            )
+        ),
+        "initially_absent": True,
+    }:
+        raise AuthorityError("canary launch consumption identity drifted")
     unit = payload.get("unit")
     if not isinstance(unit, dict):
         raise AuthorityError("canary launch unit identity is malformed")
@@ -1122,6 +1232,9 @@ def validate_launch_authorization(
     expected_unit = render_systemd_unit(
         UnitPaths(
             source_root=source_root,
+            qualification_runner_root=Path(
+                plan["qualification_runner"]["root"]
+            ),
             qualification=Path(plan["qualification"]["path"]),
             output=output,
             launch_authorization=authorization,
@@ -1162,6 +1275,121 @@ def validate_launch_authorization(
     return result
 
 
+def consume_launch_authorization(
+    *, authorization: Path, sha256_file: Path, destination: Path
+) -> str:
+    """Irreversibly consume the sole authorized systemd start."""
+    authorization = _exact_absolute_file(
+        authorization, "canary launch authorization"
+    )
+    sha256_file = _exact_absolute_file(
+        sha256_file, "canary launch authorization digest"
+    )
+    if not destination.is_absolute() or destination.resolve() != destination:
+        raise AuthorityError(
+            "launch consumption destination must be an exact absolute path"
+        )
+    expected_destination = authorization.with_name(
+        CANARY_LAUNCH_CONSUMPTION_NAME
+    )
+    if destination != expected_destination:
+        raise AuthorityError(
+            "launch consumption destination is not the canonical sibling path"
+        )
+    if destination.exists() or destination.is_symlink() or destination.with_suffix(
+        ".sha256"
+    ).exists():
+        raise AuthorityError("launch authorization was already consumed")
+    launch = validate_launch_authorization(
+        authorization, sha256_file=sha256_file
+    )
+    if launch.get("systemd", {}).get("maximum_starts") != 1:
+        raise AuthorityError("launch authorization does not permit exactly one start")
+    plan_output = launch.get("plan_output")
+    if not isinstance(plan_output, dict) or not isinstance(
+        plan_output.get("path"), str
+    ):
+        raise AuthorityError("launch authorization plan output is malformed")
+    payload = {
+        "schema_version": SCHEMA_VERSION,
+        "kind": CONSUMPTION_KIND,
+        "created_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "qualification_only": True,
+        "launch_authorization": {
+            "path": str(authorization),
+            "sha256": launch["authorization_sha256"],
+            "sha256_file": str(sha256_file),
+        },
+        "plan_authorization": launch.get("plan_authorization"),
+        "qualification": launch.get("qualification"),
+        "plan_output": plan_output["path"],
+        "attempt": 1,
+        "maximum_starts": 1,
+        "eligibility": launch.get("eligibility"),
+    }
+    return write_authority(destination, payload)
+
+
+def validate_launch_consumption(
+    consumption: Path,
+    *,
+    consumption_sha256_file: Path,
+    authorization: Path,
+    authorization_sha256_file: Path,
+) -> dict[str, Any]:
+    """Validate the immutable first-start record before launcher mutation."""
+    authorization = _exact_absolute_file(
+        authorization, "canary launch authorization"
+    )
+    authorization_sha256_file = _exact_absolute_file(
+        authorization_sha256_file, "canary launch authorization digest"
+    )
+    consumption = _exact_absolute_file(
+        consumption, "canary launch consumption"
+    )
+    if consumption != authorization.with_name(CANARY_LAUNCH_CONSUMPTION_NAME):
+        raise AuthorityError("launch consumption path is not the canonical sibling")
+    consumption_digest = _validate_digest_sidecar(
+        consumption,
+        consumption_sha256_file,
+        label="canary launch consumption",
+    )
+    launch = validate_launch_authorization(
+        authorization, sha256_file=authorization_sha256_file
+    )
+    payload = _read_json(consumption, "canary launch consumption")
+    if (
+        payload.get("schema_version") != SCHEMA_VERSION
+        or payload.get("kind") != CONSUMPTION_KIND
+        or payload.get("qualification_only") is not True
+    ):
+        raise AuthorityError("launch consumption schema/kind drifted")
+    if payload.get("launch_authorization") != {
+        "path": str(authorization),
+        "sha256": launch["authorization_sha256"],
+        "sha256_file": str(authorization_sha256_file),
+    }:
+        raise AuthorityError("launch consumption authorization identity drifted")
+    exact = {
+        "plan_authorization": launch.get("plan_authorization"),
+        "qualification": launch.get("qualification"),
+        "plan_output": launch["plan_output"]["path"],
+        "attempt": 1,
+        "maximum_starts": 1,
+        "eligibility": launch.get("eligibility"),
+    }
+    for key, required in exact.items():
+        if payload.get(key) != required:
+            raise AuthorityError(f"launch consumption {key} drifted")
+    result = dict(launch)
+    result["launch_consumption"] = {
+        "path": str(consumption),
+        "sha256": consumption_digest,
+        "sha256_file": str(consumption_sha256_file),
+    }
+    return result
+
+
 def write_authority(destination: Path, payload: Mapping[str, Any]) -> str:
     """Create one JSON authority and digest sidecar without overwriting."""
     if not destination.is_absolute() or destination.resolve() != destination:
@@ -1174,8 +1402,11 @@ def write_authority(destination: Path, payload: Mapping[str, Any]) -> str:
     raw = _json_bytes(payload)
     digest = hashlib.sha256(raw).hexdigest()
     sidecar_raw = f"{digest}  {destination.name}\n".encode("ascii")
-    temporary = destination.with_name(f".{destination.name}.tmp.{os.getpid()}")
-    sidecar_temporary = sidecar.with_name(f".{sidecar.name}.tmp.{os.getpid()}")
+    nonce = f"{os.getpid()}.{secrets.token_hex(8)}"
+    temporary = destination.with_name(f".{destination.name}.tmp.{nonce}")
+    sidecar_temporary = sidecar.with_name(f".{sidecar.name}.tmp.{nonce}")
+    destination_published = False
+    sidecar_published = False
     try:
         with temporary.open("xb") as handle:
             handle.write(raw)
@@ -1186,15 +1417,19 @@ def write_authority(destination: Path, payload: Mapping[str, Any]) -> str:
             handle.flush()
             os.fsync(handle.fileno())
         os.link(temporary, destination)
+        destination_published = True
         os.link(sidecar_temporary, sidecar)
+        sidecar_published = True
         directory_fd = os.open(destination.parent, os.O_RDONLY)
         try:
             os.fsync(directory_fd)
         finally:
             os.close(directory_fd)
     except OSError as exc:
-        destination.unlink(missing_ok=True)
-        sidecar.unlink(missing_ok=True)
+        if sidecar_published:
+            sidecar.unlink(missing_ok=True)
+        if destination_published:
+            destination.unlink(missing_ok=True)
         raise AuthorityError(f"cannot publish authority atomically: {exc}") from exc
     finally:
         temporary.unlink(missing_ok=True)
@@ -1208,10 +1443,16 @@ def _build_parser() -> argparse.ArgumentParser:
     validate = sub.add_parser("validate-qualification")
     validate.add_argument("qualification", type=Path)
     validate.add_argument("--source-root", required=True, type=Path)
+    validate.add_argument(
+        "--qualification-runner-root", required=True, type=Path
+    )
     freeze_plan = sub.add_parser("freeze-plan")
     freeze_plan.add_argument("--destination", required=True, type=Path)
     freeze_plan.add_argument("--qualification", required=True, type=Path)
     freeze_plan.add_argument("--source-root", required=True, type=Path)
+    freeze_plan.add_argument(
+        "--qualification-runner-root", required=True, type=Path
+    )
     freeze_plan.add_argument("--screen-output", required=True, type=Path)
     freeze_plan.add_argument("--recovery-verification", required=True, type=Path)
     freeze_plan.add_argument("--recovery-inventory", required=True, type=Path)
@@ -1226,6 +1467,9 @@ def _build_parser() -> argparse.ArgumentParser:
     render = sub.add_parser("render-unit")
     render.add_argument("--destination", required=True, type=Path)
     render.add_argument("--source-root", required=True, type=Path)
+    render.add_argument(
+        "--qualification-runner-root", required=True, type=Path
+    )
     render.add_argument("--qualification", required=True, type=Path)
     render.add_argument("--screen-output", required=True, type=Path)
     render.add_argument("--launch-authorization", required=True, type=Path)
@@ -1242,6 +1486,21 @@ def _build_parser() -> argparse.ArgumentParser:
     launch = sub.add_parser("validate-launch")
     launch.add_argument("--authorization", required=True, type=Path)
     launch.add_argument("--sha256-file", required=True, type=Path)
+    consume = sub.add_parser("consume-launch")
+    consume.add_argument("--authorization", required=True, type=Path)
+    consume.add_argument("--sha256-file", required=True, type=Path)
+    consume.add_argument("--destination", required=True, type=Path)
+    validate_consumption = sub.add_parser("validate-consumption")
+    validate_consumption.add_argument("--consumption", required=True, type=Path)
+    validate_consumption.add_argument(
+        "--consumption-sha256-file", required=True, type=Path
+    )
+    validate_consumption.add_argument(
+        "--authorization", required=True, type=Path
+    )
+    validate_consumption.add_argument(
+        "--authorization-sha256-file", required=True, type=Path
+    )
     return parser
 
 
@@ -1249,7 +1508,9 @@ def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     if args.command == "validate-qualification":
         payload = validate_qualification(
-            args.qualification, source_root=args.source_root
+            args.qualification,
+            source_root=args.source_root,
+            qualification_runner_root=args.qualification_runner_root,
         )
         print(json.dumps(payload, sort_keys=True, allow_nan=False))
         return 0
@@ -1258,6 +1519,7 @@ def main(argv: list[str] | None = None) -> int:
             destination=args.destination,
             qualification=args.qualification,
             source_root=args.source_root,
+            qualification_runner_root=args.qualification_runner_root,
             screen_output=args.screen_output,
             recovery_verification=args.recovery_verification,
             recovery_inventory=args.recovery_inventory,
@@ -1279,6 +1541,7 @@ def main(argv: list[str] | None = None) -> int:
             args.destination,
             UnitPaths(
                 source_root=args.source_root,
+                qualification_runner_root=args.qualification_runner_root,
                 qualification=args.qualification,
                 output=args.screen_output,
                 launch_authorization=args.launch_authorization,
@@ -1301,6 +1564,23 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "validate-launch":
         payload = validate_launch_authorization(
             args.authorization, sha256_file=args.sha256_file
+        )
+        print(json.dumps(payload, sort_keys=True, allow_nan=False))
+        return 0
+    if args.command == "consume-launch":
+        digest = consume_launch_authorization(
+            authorization=args.authorization,
+            sha256_file=args.sha256_file,
+            destination=args.destination,
+        )
+        print(digest)
+        return 0
+    if args.command == "validate-consumption":
+        payload = validate_launch_consumption(
+            args.consumption,
+            consumption_sha256_file=args.consumption_sha256_file,
+            authorization=args.authorization,
+            authorization_sha256_file=args.authorization_sha256_file,
         )
         print(json.dumps(payload, sort_keys=True, allow_nan=False))
         return 0

@@ -8229,3 +8229,48 @@ independent exact-head code/test reviews, require hosted checks green, fix any
 P0--P2 finding with another full regression pass, and merge only after the
 guardrails accept. Training remains withheld until the exact squash-merged
 commit is rebuilt and freshly qualified on the RTX 2070.
+
+## 2026-07-22 17:55 PDT — independent review blocked merge; canonical integration and one-start repairs green locally
+
+Status:
+
+- PR 71's original head `3c175a3` passed both hosted checks, but independent
+  backend review correctly withheld approval. It proved that the authority
+  could not consume its canonical schema-3 qualification: construction and
+  throughput have intentionally null separate-artifact references, throughput
+  integrity is nested under `record["throughput"]`, and the qualifier must run
+  from a clean control/runner root distinct from candidate and predecessor.
+  Existing tests had mocked that validator boundary and fabricated the wrong
+  producer shape. No merge, deployment, qualification, service, GPU, or canary
+  mutation occurred.
+- Correct producer-shaped regression evidence failed at the exact null-artifact
+  boundary before the repair. Authority now mirrors the canonical artifact and
+  nested-integrity schema, binds a separately clean qualification-runner root,
+  invokes its qualifier with candidate Python, and requires different roots at
+  the same exact merged commit. A real subprocess topology test proves the
+  distinct runner is executed from its own working directory.
+- Review also proved `Restart=no` did not enforce the declared one-start limit
+  after an early lock or installer failure. The canonical unit now uses
+  `consume-launch` as its first prestart. Once full launch validation accepts,
+  it exclusively publishes sibling `CANARY_LAUNCH_CONSUMPTION.json` and digest;
+  the separate qualification and empty-GPU prestarts follow, and the launcher
+  validates/propagates the frozen consumption before output mutation. A second
+  consume rejects even if the first later fails before trainer launch.
+- A new concurrency regression exposed an additional atomic-publication bug:
+  two same-time consumers could share a temporary name and a losing publisher
+  could delete the winner. Unique temporary identities plus ownership-aware
+  cleanup now leave exactly one intact immutable record. The failing proof is
+  retained and passes.
+- Expanded review coverage now mutates all 16 hard-integrity fields in
+  qualification, live-guard, train-stopped, and eval-stopped paths; it also
+  covers structured recovery cross-mismatches, dependency/authority drift,
+  held locks, relative references, and exact unit ordering. Focused integration
+  is 134 passed with two skips; full tools are 276 passed with two skips and
+  training is 97 passed with one skip. Ruff, Python compilation, shell syntax,
+  and diff hygiene are green on the current uncommitted repair bytes.
+
+Next steps: finish the inline integration review, rerun the full verification
+surface after documentation/analyzer changes, commit and push the repair, then
+obtain independent approval and fresh hosted checks on that exact new head.
+Only after merge may fresh control/candidate roots requalify the final bytes on
+the RTX 2070; literal-zero acceptance remains mandatory before the 50M start.

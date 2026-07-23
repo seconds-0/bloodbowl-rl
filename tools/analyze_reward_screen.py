@@ -536,11 +536,24 @@ def _validate_exact_action_canary_launch_record(
         record.get("launch_authorization_sha256"),
         "exact-action-canary launch authorization SHA-256",
     )
+    consumption_path = record.get("launch_consumption")
+    if not isinstance(consumption_path, str) or not Path(
+        consumption_path
+    ).is_absolute():
+        raise AnalysisError(
+            "exact-action-canary launch consumption path must be absolute"
+        )
+    consumption_sha = _need_sha256(
+        record.get("launch_consumption_sha256"),
+        "exact-action-canary launch consumption SHA-256",
+    )
     return {
         "file": path.name,
         "sha256": _sha256(path),
         "launch_authorization": launch_path,
         "launch_authorization_sha256": launch_sha,
+        "launch_consumption": consumption_path,
+        "launch_consumption_sha256": consumption_sha,
         "qualification_sha256": authority["qualification_sha256"],
         "cuda_runtime_library_sha256": authority[
             "cuda_runtime_library_sha256"

@@ -135,6 +135,7 @@ Invoke the merged candidate tool from its candidate venv with absolute paths:
   --destination <authority-root>/CANARY_PLAN_AUTHORIZATION.json \
   --qualification <qualification-root>/QUALIFICATION.json \
   --source-root <candidate-root> \
+  --qualification-runner-root <control-runner-root> \
   --screen-output <fresh-plan-output> \
   --recovery-verification <exact-gate6-verifier.stdout> \
   --recovery-inventory <accepted-recovery-inventory> \
@@ -177,9 +178,22 @@ lock or extra entry, rewrite the manifest, or rerun the launcher into that path.
 ## Gate 4: canonical unit and launch authority
 
 Create the separately new/empty stopped-validation directory. Render the unit
-once with `render-unit`, supplying the fixed source, qualification, plan output,
-future launch-authorization destination, and future digest-sidecar path. Require
+once with `render-unit`, supplying the fixed candidate source, separate clean
+control/qualification-runner source, qualification, plan output, future
+launch-authorization destination, and future digest-sidecar path. Require
 the unit name `bloodbowl-exact-action-canary-50m-s42-v4.service`.
+
+```text
+<candidate-python> -B <candidate-root>/tools/exact_action_canary_authority.py \
+  render-unit \
+  --destination <authority-root>/bloodbowl-exact-action-canary-50m-s42-v4.service \
+  --source-root <candidate-root> \
+  --qualification-runner-root <control-runner-root> \
+  --qualification <qualification-root>/QUALIFICATION.json \
+  --screen-output <fresh-plan-output> \
+  --launch-authorization <authority-root>/CANARY_LAUNCH_AUTHORIZATION.json \
+  --launch-authorization-sha256-file <authority-root>/CANARY_LAUNCH_AUTHORIZATION.sha256
+```
 
 Then freeze the launch authority:
 
@@ -197,7 +211,9 @@ Then freeze the launch authority:
 Require exclusive creation of the JSON and sidecar. The launch authority must
 bind the exact plan inventory/manifest, source and qualification, shared CUDART,
 canonical unit bytes/hash, empty stopped output, fixed command/environment,
-one-start ceiling, exact-zero budget, and all eligibility exclusions.
+one-start ceiling, the initially absent canonical sibling
+`CANARY_LAUNCH_CONSUMPTION.json` and digest sidecar, exact-zero budget, and all
+eligibility exclusions.
 
 Copy the unit, both authorities, both sidecars, and closed evidence inventory
 off-box. Obtain an independent read-only review before installing anything.
@@ -225,7 +241,8 @@ directory, daemon-reload, and require:
 - inactive before start;
 - `NRestarts=0`;
 - `Restart=no` and `KillMode=control-group`;
-- the exact two `ExecStartPre` validators plus empty-GPU probe;
+- the exact first `consume-launch` prestart, separate-runner qualification
+  validator, and empty-GPU probe in that order;
 - the exact `/usr/bin/env -u WARM -u POOL` 50M command.
 
 Do not enable the unit.
@@ -245,12 +262,18 @@ Immediately before start:
 4. Recheck empty GPU, unit disabled/inactive, no trainer, no old canary unit, and
    no held screen lock.
 
-Start the exact unit once. Record the start timestamp, unit properties, main PID,
-process group, GPU PID, command line, manifest hash, launch-record hash, log
-inode/size/mtime, source/module/CUDART identities, and BBTV tunnel health.
+Start the exact unit once. Its first prestart must exclusively publish
+`CANARY_LAUNCH_CONSUMPTION.json` and its digest sidecar before qualification or
+GPU checks; require both to bind the exact launch authorization, plan output,
+attempt `1`, and maximum starts `1`. Record the start timestamp, unit properties,
+main PID, process group, GPU PID, command line, consumption hash,
+manifest hash, launch-record hash, log inode/size/mtime,
+source/module/CUDART identities, and BBTV tunnel health.
 
 No second `systemctl start`, `restart`, reset-failed-and-retry, manual trainer,
-or alternate command is permitted.
+or alternate command is permitted. The immutable consumption makes this a
+machine-enforced rejection even if the first attempt fails before trainer
+launch.
 
 ## Gate 7: live monitoring and zero error budget
 

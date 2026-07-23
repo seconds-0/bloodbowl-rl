@@ -37,6 +37,8 @@ CANARY_PLAN_AUTHORIZATION="${CANARY_PLAN_AUTHORIZATION:-}"
 CANARY_PLAN_AUTHORIZATION_SHA256_FILE="${CANARY_PLAN_AUTHORIZATION_SHA256_FILE:-}"
 CANARY_LAUNCH_AUTHORIZATION="${CANARY_LAUNCH_AUTHORIZATION:-}"
 CANARY_LAUNCH_AUTHORIZATION_SHA256_FILE="${CANARY_LAUNCH_AUTHORIZATION_SHA256_FILE:-}"
+CANARY_LAUNCH_CONSUMPTION="${CANARY_LAUNCH_CONSUMPTION:-}"
+CANARY_LAUNCH_CONSUMPTION_SHA256_FILE="${CANARY_LAUNCH_CONSUMPTION_SHA256_FILE:-}"
 CANARY_PLAN_AUTHORIZATION_PATH=""
 CANARY_PLAN_AUTHORIZATION_SHA256=""
 CANARY_QUALIFICATION_PATH=""
@@ -46,6 +48,8 @@ CANARY_CUDA_RUNTIME_LIBRARY_SHA256=""
 CANARY_CUDA_RUNTIME_DEVICE_COUNT=""
 CANARY_LAUNCH_AUTHORIZATION_PATH=""
 CANARY_LAUNCH_AUTHORIZATION_SHA256=""
+CANARY_LAUNCH_CONSUMPTION_PATH=""
+CANARY_LAUNCH_CONSUMPTION_SHA256=""
 CANARY_AUTHORIZED_OUTPUT=""
 
 # Fixed Stage-1 causal contract. Assign, rather than inherit, every optional
@@ -179,8 +183,8 @@ if [ "$SCREEN_PROFILE" = "exact-action-canary" ]; then
   AUTHORITY_TOOL="$ROOT/tools/exact_action_canary_authority.py"
   AUTHORITY_PYBIN="$ROOT/vendor/PufferLib/.venv/bin/python"
   if [ "$PLAN_ONLY" = "1" ]; then
-    [ -z "$CANARY_LAUNCH_AUTHORIZATION$CANARY_LAUNCH_AUTHORIZATION_SHA256_FILE" ] || {
-      echo "exact-action canary plan-only forbids live launch authorization before output creation" >&2
+    [ -z "$CANARY_LAUNCH_AUTHORIZATION$CANARY_LAUNCH_AUTHORIZATION_SHA256_FILE$CANARY_LAUNCH_CONSUMPTION$CANARY_LAUNCH_CONSUMPTION_SHA256_FILE" ] || {
+      echo "exact-action canary plan-only forbids live launch authorization or consumption evidence before output creation" >&2
       exit 1
     }
     [ -n "$CANARY_PLAN_AUTHORIZATION" ] || {
@@ -216,6 +220,14 @@ if [ "$SCREEN_PROFILE" = "exact-action-canary" ]; then
       echo "CANARY_LAUNCH_AUTHORIZATION_SHA256_FILE is required before output creation" >&2
       exit 1
     }
+    [ -n "$CANARY_LAUNCH_CONSUMPTION" ] || {
+      echo "CANARY_LAUNCH_CONSUMPTION is required before output creation" >&2
+      exit 1
+    }
+    [ -n "$CANARY_LAUNCH_CONSUMPTION_SHA256_FILE" ] || {
+      echo "CANARY_LAUNCH_CONSUMPTION_SHA256_FILE is required before output creation" >&2
+      exit 1
+    }
     [ -f "$AUTHORITY_TOOL" ] || {
       echo "exact-action canary authority tool is missing before output creation" >&2
       exit 1
@@ -224,9 +236,11 @@ if [ "$SCREEN_PROFILE" = "exact-action-canary" ]; then
       echo "exact-action canary candidate Python is missing before output creation" >&2
       exit 1
     }
-    AUTHORITY_JSON="$($AUTHORITY_PYBIN -B "$AUTHORITY_TOOL" validate-launch \
+    AUTHORITY_JSON="$($AUTHORITY_PYBIN -B "$AUTHORITY_TOOL" validate-consumption \
+      --consumption "$CANARY_LAUNCH_CONSUMPTION" \
+      --consumption-sha256-file "$CANARY_LAUNCH_CONSUMPTION_SHA256_FILE" \
       --authorization "$CANARY_LAUNCH_AUTHORIZATION" \
-      --sha256-file "$CANARY_LAUNCH_AUTHORIZATION_SHA256_FILE")"
+      --authorization-sha256-file "$CANARY_LAUNCH_AUTHORIZATION_SHA256_FILE")"
   fi
   {
     IFS= read -r CANARY_PLAN_AUTHORIZATION_PATH
@@ -238,6 +252,8 @@ if [ "$SCREEN_PROFILE" = "exact-action-canary" ]; then
     IFS= read -r CANARY_CUDA_RUNTIME_DEVICE_COUNT
     IFS= read -r CANARY_LAUNCH_AUTHORIZATION_PATH
     IFS= read -r CANARY_LAUNCH_AUTHORIZATION_SHA256
+    IFS= read -r CANARY_LAUNCH_CONSUMPTION_PATH
+    IFS= read -r CANARY_LAUNCH_CONSUMPTION_SHA256
     IFS= read -r CANARY_AUTHORIZED_OUTPUT
   } < <("$AUTHORITY_PYBIN" - "$AUTHORITY_JSON" \
       "$CANARY_PLAN_AUTHORIZATION" "$CANARY_LAUNCH_AUTHORIZATION" <<'PY'
@@ -248,12 +264,16 @@ if payload["kind"] == "exact_action_canary_plan_authorization":
     plan_sha = payload["authorization_sha256"]
     launch_path = ""
     launch_sha = ""
+    consumption_path = ""
+    consumption_sha = ""
     output = payload["screen"]["output"]
 else:
     plan_path = payload["plan_authorization"]["path"]
     plan_sha = payload["plan_authorization"]["sha256"]
     launch_path = sys.argv[3]
     launch_sha = payload["authorization_sha256"]
+    consumption_path = payload["launch_consumption"]["path"]
+    consumption_sha = payload["launch_consumption"]["sha256"]
     output = payload["plan_output"]["path"]
 runtime = payload["cuda_runtime"]
 print(plan_path)
@@ -265,6 +285,8 @@ print(runtime["library"]["sha256"])
 print(runtime["after_extension_import"]["device_count"])
 print(launch_path)
 print(launch_sha)
+print(consumption_path)
+print(consumption_sha)
 print(output)
 PY
   )
@@ -893,13 +915,15 @@ if [ "$SCREEN_PROFILE" = "exact-action-canary" ]; then
     exit 1
   }
   "$PYBIN" - "$CANARY_LAUNCH_RECORD" "$CANARY_LAUNCH_AUTHORIZATION_PATH" \
-    "$CANARY_LAUNCH_AUTHORIZATION_SHA256" "$CANARY_PLAN_AUTHORIZATION_PATH" \
+    "$CANARY_LAUNCH_AUTHORIZATION_SHA256" "$CANARY_LAUNCH_CONSUMPTION_PATH" \
+    "$CANARY_LAUNCH_CONSUMPTION_SHA256" "$CANARY_PLAN_AUTHORIZATION_PATH" \
     "$CANARY_PLAN_AUTHORIZATION_SHA256" "$CANARY_QUALIFICATION_PATH" \
     "$CANARY_QUALIFICATION_SHA256" "$SCREEN_MANIFEST" \
     "$SCREEN_MANIFEST_SHA" <<'PY'
 import datetime, json, os, pathlib, sys
 (
-    destination_raw, launch_path, launch_sha, plan_path, plan_sha,
+    destination_raw, launch_path, launch_sha, consumption_path, consumption_sha,
+    plan_path, plan_sha,
     qualification_path, qualification_sha, manifest_path, manifest_sha,
 ) = sys.argv[1:]
 destination = pathlib.Path(destination_raw)
@@ -912,6 +936,8 @@ payload = {
     "reward_evidence_eligible": False,
     "launch_authorization": launch_path,
     "launch_authorization_sha256": launch_sha,
+    "launch_consumption": consumption_path,
+    "launch_consumption_sha256": consumption_sha,
     "plan_authorization": plan_path,
     "plan_authorization_sha256": plan_sha,
     "qualification": qualification_path,
@@ -1548,6 +1574,8 @@ PY
         EXPECTED_CUDA_RUNTIME_DEVICE_COUNT="$CANARY_CUDA_RUNTIME_DEVICE_COUNT" \
         CANARY_LAUNCH_AUTHORIZATION="$CANARY_LAUNCH_AUTHORIZATION_PATH" \
         CANARY_LAUNCH_AUTHORIZATION_SHA256="$CANARY_LAUNCH_AUTHORIZATION_SHA256" \
+        CANARY_LAUNCH_CONSUMPTION="$CANARY_LAUNCH_CONSUMPTION_PATH" \
+        CANARY_LAUNCH_CONSUMPTION_SHA256="$CANARY_LAUNCH_CONSUMPTION_SHA256" \
         CANARY_QUALIFICATION="$CANARY_QUALIFICATION_PATH" \
         CANARY_QUALIFICATION_SHA256="$CANARY_QUALIFICATION_SHA256" \
         CANARY_LAUNCH_RECORD="$CANARY_LAUNCH_RECORD" \

@@ -459,11 +459,18 @@ class ExperimentContractTests(unittest.TestCase):
             screen.index('mkdir -p "$OUT_DIR"'),
         )
         self.assertIn('CANARY_AUTHORIZED_OUTPUT', screen)
+        self.assertIn('validate-consumption', screen)
+        self.assertIn('CANARY_LAUNCH_CONSUMPTION', screen)
+        self.assertIn('CANARY_LAUNCH_CONSUMPTION_SHA256_FILE', screen)
         self.assertIn(
             '[ "$OUT_DIR" = "$CANARY_AUTHORIZED_OUTPUT" ]', screen
         )
         self.assertLess(
             screen.index('[ "$OUT_DIR" = "$CANARY_AUTHORIZED_OUTPUT" ]'),
+            screen.index('mkdir -p "$OUT_DIR"'),
+        )
+        self.assertLess(
+            screen.index('validate-consumption'),
             screen.index('mkdir -p "$OUT_DIR"'),
         )
         self.assertIn('case "$BOOTSTRAP_MODE" in', arm)

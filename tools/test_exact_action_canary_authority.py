@@ -7,6 +7,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from unittest import mock
 
@@ -73,6 +74,10 @@ class ExactActionCanaryAuthorityTests(unittest.TestCase):
         source = temp / "candidate"
         source.mkdir()
         commit, tree = self.make_git_source(source)
+        runner = temp / "qualification-runner"
+        subprocess.run(
+            ["git", "clone", "-q", str(source), str(runner)], check=True
+        )
         puffer = source / "vendor" / "PufferLib"
         module = puffer / "pufferlib" / "_C.test.so"
         module.parent.mkdir(parents=True)
@@ -133,20 +138,26 @@ class ExactActionCanaryAuthorityTests(unittest.TestCase):
                 "identity": identity,
                 "cuda_runtime_preflight": runtime,
             }
-            if name != "construction":
+            if name == "throughput":
+                payload["throughput"] = {
+                    "hard_integrity": hard_zero,
+                    "hard_integrity_zero": True,
+                }
+            elif name != "construction":
                 payload["hard_integrity"] = hard_zero
                 payload["hard_integrity_zero"] = True
             record.write_text(
                 json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8"
             )
+            has_separate_artifact = name not in {"construction", "throughput"}
             cells.append(
                 {
                     "name": name,
                     "kind": name,
                     "record": str(record),
                     "record_sha256": sha(record),
-                    "artifact": str(record),
-                    "artifact_sha256": sha(record),
+                    "artifact": str(record) if has_separate_artifact else None,
+                    "artifact_sha256": sha(record) if has_separate_artifact else None,
                 }
             )
 
@@ -199,22 +210,68 @@ class ExactActionCanaryAuthorityTests(unittest.TestCase):
             json.dumps(payload, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
-        return source, commit, tree, qualification, runtime
+        return source, runner, commit, tree, qualification, runtime
 
     def test_accepted_qualification_is_recomputed_and_normalized(self):
         with tempfile.TemporaryDirectory() as tmp:
-            source, commit, tree, qualification, runtime = self.make_qualification(
+            source, runner, commit, tree, qualification, runtime = self.make_qualification(
                 Path(tmp).resolve()
             )
             with mock.patch.object(self.a, "_run_qualification_validator"):
                 observed = self.a.validate_qualification(
-                    qualification, source_root=source
+                    qualification,
+                    source_root=source,
+                    qualification_runner_root=runner,
                 )
             self.assertEqual(observed["source"]["commit"], commit)
             self.assertEqual(observed["source"]["tree"], tree)
             self.assertEqual(observed["qualification"]["sha256"], sha(qualification))
             self.assertEqual(observed["cuda_runtime"], runtime)
             self.assertEqual(observed["hard_integrity_keys"], list(self.a.HARD_INTEGRITY_KEYS))
+
+    def test_fresh_validator_runs_from_distinct_bound_runner_with_candidate_python(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            candidate = root / "candidate"
+            runner = root / "qualification-runner"
+            qualification = root / "QUALIFICATION.json"
+            marker = root / "validator-ran"
+            python = candidate / "vendor" / "PufferLib" / ".venv" / "bin" / "python"
+            validator = runner / "tools" / "qualify_recurrent_cuda.py"
+            python.parent.mkdir(parents=True)
+            validator.parent.mkdir(parents=True)
+            qualification.write_text("{}\n", encoding="utf-8")
+            python.write_text(
+                "#!/bin/sh\nexec " + json.dumps(sys.executable) + ' "$@"\n',
+                encoding="utf-8",
+            )
+            python.chmod(0o755)
+            validator.write_text(
+                "import pathlib, sys\n"
+                f"assert pathlib.Path.cwd() == pathlib.Path({str(runner)!r})\n"
+                "assert sys.argv[1] == 'validate'\n"
+                f"assert pathlib.Path(sys.argv[2]) == pathlib.Path({str(qualification)!r})\n"
+                f"pathlib.Path({str(marker)!r}).write_text('accepted\\n')\n",
+                encoding="utf-8",
+            )
+            self.a._run_qualification_validator(
+                qualification,
+                source_root=candidate,
+                qualification_runner_root=runner,
+            )
+            self.assertEqual(marker.read_text(encoding="utf-8"), "accepted\n")
+
+            same = root / "same"
+            same.mkdir()
+            source, _, _, _, produced, _ = self.make_qualification(same)
+            with self.assertRaisesRegex(
+                self.a.AuthorityError, "runner and candidate.*must differ"
+            ):
+                self.a.validate_qualification(
+                    produced,
+                    source_root=source,
+                    qualification_runner_root=source,
+                )
 
     def test_every_qualification_identity_or_zero_budget_drift_rejects(self):
         mutations = {
@@ -237,7 +294,7 @@ class ExactActionCanaryAuthorityTests(unittest.TestCase):
         }
         for label, mutate in mutations.items():
             with self.subTest(label=label), tempfile.TemporaryDirectory() as tmp:
-                source, _, _, qualification, _ = self.make_qualification(
+                source, runner, _, _, qualification, _ = self.make_qualification(
                     Path(tmp).resolve()
                 )
                 payload = json.loads(qualification.read_text(encoding="utf-8"))
@@ -247,27 +304,42 @@ class ExactActionCanaryAuthorityTests(unittest.TestCase):
                 )
                 with mock.patch.object(self.a, "_run_qualification_validator"), \
                         self.assertRaises(self.a.AuthorityError):
-                    self.a.validate_qualification(qualification, source_root=source)
+                    self.a.validate_qualification(
+                        qualification,
+                        source_root=source,
+                        qualification_runner_root=runner,
+                    )
 
-        with tempfile.TemporaryDirectory() as tmp:
-            source, _, _, qualification, _ = self.make_qualification(
-                Path(tmp).resolve()
-            )
-            payload = json.loads(qualification.read_text(encoding="utf-8"))
-            graph_record = Path(payload["cells"][1]["record"])
-            graph = json.loads(graph_record.read_text(encoding="utf-8"))
-            graph["hard_integrity"][self.a.HARD_INTEGRITY_KEYS[0]] = 1.0
-            graph_record.write_text(
-                json.dumps(graph, sort_keys=True) + "\n", encoding="utf-8"
-            )
-            payload["cells"][1]["record_sha256"] = sha(graph_record)
-            payload["cells"][1]["artifact_sha256"] = sha(graph_record)
-            qualification.write_text(
-                json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8"
-            )
-            with mock.patch.object(self.a, "_run_qualification_validator"), \
-                    self.assertRaisesRegex(self.a.AuthorityError, "hard-integrity"):
-                self.a.validate_qualification(qualification, source_root=source)
+        for key in self.a.HARD_INTEGRITY_KEYS:
+            with self.subTest(hard_integrity_key=key), \
+                    tempfile.TemporaryDirectory() as tmp:
+                source, runner, _, _, qualification, _ = self.make_qualification(
+                    Path(tmp).resolve()
+                )
+                payload = json.loads(
+                    qualification.read_text(encoding="utf-8")
+                )
+                graph_record = Path(payload["cells"][1]["record"])
+                graph = json.loads(graph_record.read_text(encoding="utf-8"))
+                graph["hard_integrity"][key] = 1e-12
+                graph_record.write_text(
+                    json.dumps(graph, sort_keys=True) + "\n", encoding="utf-8"
+                )
+                payload["cells"][1]["record_sha256"] = sha(graph_record)
+                payload["cells"][1]["artifact_sha256"] = sha(graph_record)
+                qualification.write_text(
+                    json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8"
+                )
+                with mock.patch.object(
+                    self.a, "_run_qualification_validator"
+                ), self.assertRaisesRegex(
+                    self.a.AuthorityError, f"hard-integrity.*{key}"
+                ):
+                    self.a.validate_qualification(
+                        qualification,
+                        source_root=source,
+                        qualification_runner_root=runner,
+                    )
 
     def test_plan_output_requires_exact_regular_manifest_and_released_empty_lock(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -311,12 +383,15 @@ class ExactActionCanaryAuthorityTests(unittest.TestCase):
                     "relative/QUALIFICATION.json",
                     "--source-root",
                     "relative/candidate",
+                    "--qualification-runner-root",
+                    "relative/qualification-runner",
                 ]
             )
 
     def test_systemd_unit_is_one_shot_disabled_contract_with_double_escaping(self):
         paths = self.a.UnitPaths(
             source_root=Path("/work/candidate"),
+            qualification_runner_root=Path("/work/qualification-runner"),
             qualification=Path("/evidence/qualification/QUALIFICATION.json"),
             output=Path("/evidence/canary"),
             launch_authorization=Path("/evidence/auth/CANARY_LAUNCH_AUTHORIZATION.json"),
@@ -338,6 +413,153 @@ class ExactActionCanaryAuthorityTests(unittest.TestCase):
         self.assertNotIn("Restart=always", unit)
         self.assertNotIn("WantedBy=", unit)
 
+        consumption = (
+            paths.launch_authorization.parent
+            / "CANARY_LAUNCH_CONSUMPTION.json"
+        )
+        consumption_sha = consumption.with_suffix(".sha256")
+        prestarts = [
+            line for line in unit.splitlines() if line.startswith("ExecStartPre=")
+        ]
+        self.assertEqual(len(prestarts), 3)
+        self.assertIn(" consume-launch ", prestarts[0])
+        self.assertIn(
+            f"--authorization {paths.launch_authorization}", prestarts[0]
+        )
+        self.assertIn(f"--sha256-file {paths.launch_authorization_sha}", prestarts[0])
+        self.assertIn(f"--destination {consumption}", prestarts[0])
+        self.assertIn("qualify_recurrent_cuda.py validate", prestarts[1])
+        self.assertIn("nvidia-smi --query-compute-apps", prestarts[2])
+        execstart = next(
+            line for line in unit.splitlines() if line.startswith("ExecStart=")
+        )
+        self.assertIn(f"CANARY_LAUNCH_CONSUMPTION={consumption}", execstart)
+        self.assertIn(
+            f"CANARY_LAUNCH_CONSUMPTION_SHA256_FILE={consumption_sha}",
+            execstart,
+        )
+
+    def test_launch_authorization_consumption_is_atomic_and_exactly_once(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            launch = root / "CANARY_LAUNCH_AUTHORIZATION.json"
+            launch.write_text("{}\n", encoding="utf-8")
+            launch_sha = launch.with_suffix(".sha256")
+            launch_digest = sha(launch)
+            launch_sha.write_text(
+                f"{launch_digest}  {launch.name}\n", encoding="ascii"
+            )
+            output = root / "authorized-screen"
+            consumption = root / "CANARY_LAUNCH_CONSUMPTION.json"
+            accepted = {
+                "kind": self.a.LAUNCH_KIND,
+                "authorization_sha256": launch_digest,
+                "qualification_only": True,
+                "plan_output": {"path": str(output)},
+                "systemd": {"maximum_starts": 1},
+            }
+            with mock.patch.object(
+                self.a, "validate_launch_authorization", return_value=accepted
+            ) as validate:
+                digest = self.a.consume_launch_authorization(
+                    authorization=launch,
+                    sha256_file=launch_sha,
+                    destination=consumption,
+                )
+                validate.assert_called_once_with(
+                    launch, sha256_file=launch_sha
+                )
+            before = consumption.read_bytes()
+            payload = json.loads(before)
+            self.assertEqual(digest, sha(consumption))
+            self.assertEqual(
+                payload["kind"], "exact_action_canary_launch_consumption"
+            )
+            self.assertEqual(payload["launch_authorization"]["path"], str(launch))
+            self.assertEqual(
+                payload["launch_authorization"]["sha256"], launch_digest
+            )
+            self.assertEqual(payload["plan_output"], str(output))
+            self.assertEqual(payload["attempt"], 1)
+            self.assertEqual(payload["maximum_starts"], 1)
+            self.assertTrue(consumption.with_suffix(".sha256").is_file())
+            with mock.patch.object(
+                self.a, "validate_launch_authorization", return_value=accepted
+            ):
+                validated = self.a.validate_launch_consumption(
+                    consumption,
+                    consumption_sha256_file=consumption.with_suffix(".sha256"),
+                    authorization=launch,
+                    authorization_sha256_file=launch_sha,
+                )
+            self.assertEqual(
+                validated["launch_consumption"]["sha256"], sha(consumption)
+            )
+
+            with mock.patch.object(
+                self.a, "validate_launch_authorization", return_value=accepted
+            ), self.assertRaisesRegex(self.a.AuthorityError, "already|consum"):
+                self.a.consume_launch_authorization(
+                    authorization=launch,
+                    sha256_file=launch_sha,
+                    destination=consumption,
+                )
+            self.assertEqual(consumption.read_bytes(), before)
+
+    def test_concurrent_launch_consumers_leave_exactly_one_intact_record(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            launch = root / "CANARY_LAUNCH_AUTHORIZATION.json"
+            launch.write_text("{}\n", encoding="utf-8")
+            launch_sha = launch.with_suffix(".sha256")
+            launch_digest = sha(launch)
+            launch_sha.write_text(
+                f"{launch_digest}  {launch.name}\n", encoding="ascii"
+            )
+            consumption = root / "CANARY_LAUNCH_CONSUMPTION.json"
+            accepted = {
+                "kind": self.a.LAUNCH_KIND,
+                "authorization_sha256": launch_digest,
+                "qualification_only": True,
+                "plan_output": {"path": str(root / "authorized-screen")},
+                "systemd": {"maximum_starts": 1},
+            }
+            barrier = threading.Barrier(2)
+
+            def validate(*args, **kwargs):
+                barrier.wait(timeout=5)
+                return accepted
+
+            outcomes = []
+
+            def consume():
+                try:
+                    outcomes.append(
+                        self.a.consume_launch_authorization(
+                            authorization=launch,
+                            sha256_file=launch_sha,
+                            destination=consumption,
+                        )
+                    )
+                except self.a.AuthorityError as exc:
+                    outcomes.append(type(exc).__name__)
+
+            with mock.patch.object(
+                self.a, "validate_launch_authorization", side_effect=validate
+            ):
+                threads = [threading.Thread(target=consume) for _ in range(2)]
+                for thread in threads:
+                    thread.start()
+                for thread in threads:
+                    thread.join(timeout=10)
+            self.assertTrue(all(not thread.is_alive() for thread in threads))
+            self.assertEqual(sum(item != "AuthorityError" for item in outcomes), 1)
+            self.assertTrue(consumption.is_file())
+            self.assertEqual(sha(consumption), next(
+                item for item in outcomes if item != "AuthorityError"
+            ))
+            self.assertTrue(consumption.with_suffix(".sha256").is_file())
+
     def test_authority_files_use_exclusive_atomic_creation(self):
         with tempfile.TemporaryDirectory() as tmp:
             destination = Path(tmp).resolve() / "AUTH.json"
@@ -353,8 +575,59 @@ class ExactActionCanaryAuthorityTests(unittest.TestCase):
                 self.a.write_authority(destination, payload)
             self.assertEqual(destination.read_bytes(), before)
 
+    def test_concurrent_unit_publishers_leave_exactly_one_intact_unit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            source = root / "candidate"
+            runner = root / "runner"
+            output = root / "plan-output"
+            authority_root = root / "authority"
+            for directory in (source, runner, output, authority_root):
+                directory.mkdir()
+            qualification = root / "QUALIFICATION.json"
+            qualification.write_text("{}\n", encoding="utf-8")
+            launch = authority_root / "CANARY_LAUNCH_AUTHORIZATION.json"
+            paths = self.a.UnitPaths(
+                source_root=source,
+                qualification_runner_root=runner,
+                qualification=qualification,
+                output=output,
+                launch_authorization=launch,
+                launch_authorization_sha=launch.with_suffix(".sha256"),
+            )
+            destination = authority_root / self.a.CANARY_UNIT_NAME
+            barrier = threading.Barrier(2)
+
+            def token_hex(_):
+                barrier.wait(timeout=5)
+                return f"{threading.get_ident():016x}"[-16:]
+
+            outcomes = []
+
+            def publish():
+                try:
+                    outcomes.append(self.a.write_unit(destination, paths))
+                except self.a.AuthorityError as exc:
+                    outcomes.append(type(exc).__name__)
+
+            with mock.patch.object(
+                self.a.secrets, "token_hex", side_effect=token_hex
+            ):
+                threads = [threading.Thread(target=publish) for _ in range(2)]
+                for thread in threads:
+                    thread.start()
+                for thread in threads:
+                    thread.join(timeout=10)
+            self.assertTrue(all(not thread.is_alive() for thread in threads))
+            self.assertEqual(sum(item != "AuthorityError" for item in outcomes), 1)
+            self.assertTrue(destination.is_file())
+            self.assertEqual(
+                sha(destination),
+                next(item for item in outcomes if item != "AuthorityError"),
+            )
+
     def make_plan_prerequisites(self, temp: Path):
-        source, commit, tree, qualification, runtime = self.make_qualification(temp)
+        source, runner, commit, tree, qualification, runtime = self.make_qualification(temp)
         recovery_verification, recovery_inventory = self.make_recovery_evidence(temp)
         predecessor = qualification.parent
         authority_root = temp / "authority"
@@ -363,6 +636,7 @@ class ExactActionCanaryAuthorityTests(unittest.TestCase):
         plan_authorization = authority_root / "CANARY_PLAN_AUTHORIZATION.json"
         return {
             "source": source,
+            "qualification_runner": runner,
             "commit": commit,
             "tree": tree,
             "qualification": qualification,
@@ -503,6 +777,7 @@ class ExactActionCanaryAuthorityTests(unittest.TestCase):
                     destination=paths["plan_authorization"],
                     qualification=paths["qualification"],
                     source_root=paths["source"],
+                    qualification_runner_root=paths["qualification_runner"],
                     screen_output=paths["screen_output"],
                     recovery_verification=paths["recovery_verification"],
                     recovery_inventory=paths["recovery_inventory"],
@@ -552,11 +827,58 @@ class ExactActionCanaryAuthorityTests(unittest.TestCase):
                     destination=paths["plan_authorization"],
                     qualification=paths["qualification"],
                     source_root=paths["source"],
+                    qualification_runner_root=paths["qualification_runner"],
                     screen_output=paths["screen_output"],
                     recovery_verification=paths["recovery_verification"],
                     recovery_inventory=paths["recovery_inventory"],
                     predecessor_root=paths["predecessor"],
                 )
+
+    def test_plan_authorization_rejects_structured_recovery_mismatches(self):
+        mutations = {
+            "verifier_file_count": lambda verdict, manifest: verdict.__setitem__(
+                "file_count", manifest["file_count"] + 1
+            ),
+            "verifier_total_bytes": lambda verdict, manifest: verdict.__setitem__(
+                "total_bytes", manifest["total_bytes"] + 1
+            ),
+            "verifier_inventory": lambda verdict, manifest: verdict.__setitem__(
+                "inventory_sha256", "0" * 64
+            ),
+            "inventory_queue_id": lambda verdict, manifest: manifest.__setitem__(
+                "queue_id", "structured-but-wrong-queue"
+            ),
+        }
+        for label, mutate in mutations.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as tmp:
+                paths = self.make_plan_prerequisites(Path(tmp).resolve())
+                verdict = json.loads(
+                    paths["recovery_verification"].read_text(encoding="utf-8")
+                )
+                manifest = json.loads(
+                    paths["recovery_inventory"].read_text(encoding="utf-8")
+                )
+                mutate(verdict, manifest)
+                paths["recovery_verification"].write_text(
+                    json.dumps(verdict, sort_keys=True) + "\n", encoding="utf-8"
+                )
+                paths["recovery_inventory"].write_text(
+                    json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+                    encoding="utf-8",
+                )
+                with self.authority_evidence(paths), self.assertRaisesRegex(
+                    self.a.AuthorityError, "recovery preservation"
+                ):
+                    self.a.freeze_plan_authorization(
+                        destination=paths["plan_authorization"],
+                        qualification=paths["qualification"],
+                        source_root=paths["source"],
+                        qualification_runner_root=paths["qualification_runner"],
+                        screen_output=paths["screen_output"],
+                        recovery_verification=paths["recovery_verification"],
+                        recovery_inventory=paths["recovery_inventory"],
+                        predecessor_root=paths["predecessor"],
+                    )
 
     def write_plan_output(self, paths):
         output = paths["screen_output"]
@@ -620,6 +942,232 @@ class ExactActionCanaryAuthorityTests(unittest.TestCase):
         )
         (output / ".screen.lock").write_bytes(b"")
 
+    def freeze_plan(self, paths):
+        with self.authority_evidence(paths):
+            return self.a.freeze_plan_authorization(
+                destination=paths["plan_authorization"],
+                qualification=paths["qualification"],
+                source_root=paths["source"],
+                qualification_runner_root=paths["qualification_runner"],
+                screen_output=paths["screen_output"],
+                recovery_verification=paths["recovery_verification"],
+                recovery_inventory=paths["recovery_inventory"],
+                predecessor_root=paths["predecessor"],
+            )
+
+    def make_frozen_launch(self, temp: Path):
+        paths = self.make_plan_prerequisites(temp)
+        self.freeze_plan(paths)
+        self.write_plan_output(paths)
+        stopped = paths["authority_root"] / "stopped-validation"
+        stopped.mkdir()
+        launch = paths["authority_root"] / "CANARY_LAUNCH_AUTHORIZATION.json"
+        launch_sha = launch.with_suffix(".sha256")
+        unit = paths["authority_root"] / self.a.CANARY_UNIT_NAME
+        self.a.write_unit(
+            unit,
+            self.a.UnitPaths(
+                source_root=paths["source"],
+                qualification_runner_root=paths["qualification_runner"],
+                qualification=paths["qualification"],
+                output=paths["screen_output"],
+                launch_authorization=launch,
+                launch_authorization_sha=launch_sha,
+            ),
+        )
+        with self.authority_evidence(paths):
+            self.a.freeze_launch_authorization(
+                destination=launch,
+                plan_authorization=paths["plan_authorization"],
+                plan_sha256_file=paths["plan_authorization_sha"],
+                source_root=paths["source"],
+                unit=unit,
+                stopped_validation_output=stopped,
+            )
+        paths.update({
+            "stopped": stopped,
+            "launch": launch,
+            "launch_sha": launch_sha,
+            "unit": unit,
+        })
+        return paths
+
+    def test_frozen_launch_is_consumed_and_revalidated_end_to_end(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = self.make_frozen_launch(Path(tmp).resolve())
+            consumption = paths["launch"].with_name(
+                self.a.CANARY_LAUNCH_CONSUMPTION_NAME
+            )
+            with self.authority_evidence(paths):
+                digest = self.a.consume_launch_authorization(
+                    authorization=paths["launch"],
+                    sha256_file=paths["launch_sha"],
+                    destination=consumption,
+                )
+                observed = self.a.validate_launch_consumption(
+                    consumption,
+                    consumption_sha256_file=consumption.with_suffix(".sha256"),
+                    authorization=paths["launch"],
+                    authorization_sha256_file=paths["launch_sha"],
+                )
+            self.assertEqual(digest, sha(consumption))
+            self.assertEqual(
+                observed["launch_consumption"]["sha256"], digest
+            )
+            self.assertEqual(
+                observed["plan_output"]["path"], str(paths["screen_output"])
+            )
+            with self.authority_evidence(paths), self.assertRaisesRegex(
+                self.a.AuthorityError, "already consumed"
+            ):
+                self.a.consume_launch_authorization(
+                    authorization=paths["launch"],
+                    sha256_file=paths["launch_sha"],
+                    destination=consumption,
+                )
+
+    def test_frozen_plan_rejects_current_dependency_drift(self):
+        def qualification_drift(paths):
+            paths["qualification"].write_bytes(
+                paths["qualification"].read_bytes() + b"\n"
+            )
+
+        def module_drift(paths):
+            qualification = json.loads(
+                paths["qualification"].read_text(encoding="utf-8")
+            )
+            Path(qualification["identity"]["module"]).write_bytes(b"drifted")
+
+        def cudart_drift(paths):
+            Path(paths["runtime"]["library"]["resolved_path"]).write_bytes(
+                b"drifted"
+            )
+
+        def source_drift(paths):
+            (paths["source"] / "tracked.txt").write_text(
+                "drifted\n", encoding="utf-8"
+            )
+
+        def sidecar_drift(paths):
+            paths["plan_authorization_sha"].write_text(
+                f"{'0' * 64}  {paths['plan_authorization'].name}\n",
+                encoding="ascii",
+            )
+
+        mutations = {
+            "qualification": qualification_drift,
+            "compiled_module": module_drift,
+            "cudart": cudart_drift,
+            "tracked_source": source_drift,
+            "plan_digest_sidecar": sidecar_drift,
+        }
+        for label, mutate in mutations.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as tmp:
+                paths = self.make_plan_prerequisites(Path(tmp).resolve())
+                self.freeze_plan(paths)
+                mutate(paths)
+                with self.authority_evidence(paths), self.assertRaises(
+                    self.a.AuthorityError
+                ):
+                    self.a.validate_plan_authorization(
+                        paths["plan_authorization"],
+                        sha256_file=paths["plan_authorization_sha"],
+                        source_root=paths["source"],
+                        require_output_absent=True,
+                    )
+
+    def test_plan_and_launch_validation_reject_relative_authority_references(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = self.make_plan_prerequisites(Path(tmp).resolve())
+            self.freeze_plan(paths)
+            with self.assertRaisesRegex(self.a.AuthorityError, "exact absolute"):
+                self.a.validate_plan_authorization(
+                    Path("relative/CANARY_PLAN_AUTHORIZATION.json"),
+                    sha256_file=paths["plan_authorization_sha"],
+                    source_root=paths["source"],
+                    require_output_absent=True,
+                )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = self.make_frozen_launch(Path(tmp).resolve())
+            with self.assertRaisesRegex(self.a.AuthorityError, "exact absolute"):
+                self.a.validate_launch_authorization(
+                    Path("relative/CANARY_LAUNCH_AUTHORIZATION.json"),
+                    sha256_file=paths["launch_sha"],
+                )
+
+    def test_frozen_launch_rejects_plan_output_authority_and_unit_drift(self):
+        def manifest_drift(paths):
+            manifest = paths["screen_output"] / "SCREEN_MANIFEST.json"
+            manifest.write_bytes(manifest.read_bytes() + b"\n")
+
+        def lock_drift(paths):
+            (paths["screen_output"] / ".screen.lock").write_bytes(b"not empty")
+
+        def plan_authority_drift(paths):
+            payload = json.loads(
+                paths["plan_authorization"].read_text(encoding="utf-8")
+            )
+            payload["created_utc"] = "2099-01-01T00:00:00+00:00"
+            paths["plan_authorization"].write_text(
+                json.dumps(payload, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            digest = sha(paths["plan_authorization"])
+            paths["plan_authorization_sha"].write_text(
+                f"{digest}  {paths['plan_authorization'].name}\n",
+                encoding="ascii",
+            )
+
+        def unit_drift(paths):
+            paths["unit"].write_bytes(paths["unit"].read_bytes() + b"\n")
+
+        mutations = {
+            "screen_manifest": manifest_drift,
+            "screen_lock": lock_drift,
+            "plan_authority": plan_authority_drift,
+            "canonical_unit": unit_drift,
+        }
+        for label, mutate in mutations.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as tmp:
+                paths = self.make_frozen_launch(Path(tmp).resolve())
+                mutate(paths)
+                with self.authority_evidence(paths), self.assertRaises(
+                    self.a.AuthorityError
+                ):
+                    self.a.validate_launch_authorization(
+                        paths["launch"], sha256_file=paths["launch_sha"]
+                    )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = self.make_frozen_launch(Path(tmp).resolve())
+            lock = paths["screen_output"] / ".screen.lock"
+            with lock.open("rb") as handle:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                with self.authority_evidence(paths), self.assertRaisesRegex(
+                    self.a.AuthorityError, "held"
+                ):
+                    self.a.validate_launch_authorization(
+                        paths["launch"], sha256_file=paths["launch_sha"]
+                    )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = self.make_frozen_launch(Path(tmp).resolve())
+            launch = json.loads(paths["launch"].read_text(encoding="utf-8"))
+            launch["plan_authorization"]["path"] = "relative/PLAN.json"
+            paths["launch"].write_text(
+                json.dumps(launch, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            launch_digest = sha(paths["launch"])
+            paths["launch_sha"].write_text(
+                f"{launch_digest}  {paths['launch'].name}\n", encoding="ascii"
+            )
+            with self.assertRaisesRegex(self.a.AuthorityError, "exact absolute"):
+                self.a.validate_launch_authorization(
+                    paths["launch"], sha256_file=paths["launch_sha"]
+                )
+
     def test_launch_authorization_binds_plan_unit_and_empty_stopped_output(self):
         with tempfile.TemporaryDirectory() as tmp:
             paths = self.make_plan_prerequisites(Path(tmp).resolve())
@@ -628,6 +1176,7 @@ class ExactActionCanaryAuthorityTests(unittest.TestCase):
                     destination=paths["plan_authorization"],
                     qualification=paths["qualification"],
                     source_root=paths["source"],
+                    qualification_runner_root=paths["qualification_runner"],
                     screen_output=paths["screen_output"],
                     recovery_verification=paths["recovery_verification"],
                     recovery_inventory=paths["recovery_inventory"],
@@ -641,6 +1190,7 @@ class ExactActionCanaryAuthorityTests(unittest.TestCase):
             unit_path = paths["authority_root"] / self.a.CANARY_UNIT_NAME
             unit_paths = self.a.UnitPaths(
                 source_root=paths["source"],
+                qualification_runner_root=paths["qualification_runner"],
                 qualification=paths["qualification"],
                 output=paths["screen_output"],
                 launch_authorization=launch,

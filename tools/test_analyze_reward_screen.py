@@ -135,6 +135,7 @@ class RewardScreenAnalysisTests(unittest.TestCase):
         write_json(manifest_path, manifest)
         manifest_sha = sha256(manifest_path)
         launch_authorization_sha = digest("launch-authorization")
+        launch_consumption_sha = digest("launch-consumption")
         launch_record_path = root / "CANARY_LAUNCH_RECORD.json"
         write_json(launch_record_path, {
             "schema_version": 1,
@@ -146,6 +147,10 @@ class RewardScreenAnalysisTests(unittest.TestCase):
                 "/remote/evidence/CANARY_LAUNCH_AUTHORIZATION.json"
             ),
             "launch_authorization_sha256": launch_authorization_sha,
+            "launch_consumption": (
+                "/remote/evidence/CANARY_LAUNCH_CONSUMPTION.json"
+            ),
+            "launch_consumption_sha256": launch_consumption_sha,
             "plan_authorization": plan_authorization,
             "plan_authorization_sha256": plan_authorization_sha,
             "qualification": qualification,
@@ -446,34 +451,33 @@ class RewardScreenAnalysisTests(unittest.TestCase):
                     analyze_reward_screen.analyze_screen(root, ("tds",))
 
     def test_exact_action_canary_rejects_nonzero_or_missing_hard_metrics(self):
-        mutations = (
-            (
-                "nonzero",
-                lambda result: result["train_metrics"].__setitem__(
-                    "illegal_frac", 1.0),
-                "train_metrics.illegal_frac must be exactly zero",
-            ),
-            (
-                "missing",
-                lambda result: result["eval_metrics"].pop(
-                    "reward_nonfinite_episodes"),
-                "eval_metrics.reward_nonfinite_episodes must be numeric",
-            ),
-            (
-                "redundant_nonzero",
-                lambda result: result["train_metrics"].__setitem__(
-                    "reward_clip_signed_delta", 1e-12),
-                "train_metrics.reward_clip_signed_delta must be exactly zero",
-            ),
-            (
-                "redundant_missing",
-                lambda result: result["eval_metrics"].pop(
-                    "reward_nonfinite_samples_per_episode"),
-                "eval_metrics.reward_nonfinite_samples_per_episode must be numeric",
-            ),
+        for phase in ("train", "eval"):
+            for key in HARD_INTEGRITY_KEYS:
+                with self.subTest(phase=phase, key=key), \
+                        tempfile.TemporaryDirectory() as tmp:
+                    self.build_exact_action_canary(tmp)
+                    result_path = (
+                        Path(tmp) / (
+                            f"{analyze_reward_screen.EXACT_ACTION_CANARY_PREFIX}"
+                            "-both-s42.result.json"
+                        ))
+                    result = json.loads(result_path.read_text(encoding="utf-8"))
+                    result[f"{phase}_metrics"][key] = 1e-12
+                    write_json(result_path, result)
+                    self.rebind_exact_action_canary(tmp)
+                    with self.assertRaisesRegex(
+                        analyze_reward_screen.AnalysisError,
+                        rf"{phase}_metrics\.{key} must be exactly zero",
+                    ):
+                        analyze_reward_screen.analyze_screen(tmp, ("tds",))
+
+        missing = (
+            ("train", "reward_nonfinite_episodes"),
+            ("eval", "reward_nonfinite_samples_per_episode"),
         )
-        for label, mutate, message in mutations:
-            with self.subTest(label=label), tempfile.TemporaryDirectory() as tmp:
+        for phase, key in missing:
+            with self.subTest(missing_phase=phase, missing_key=key), \
+                    tempfile.TemporaryDirectory() as tmp:
                 self.build_exact_action_canary(tmp)
                 result_path = (
                     Path(tmp) / (
@@ -481,11 +485,13 @@ class RewardScreenAnalysisTests(unittest.TestCase):
                         "-both-s42.result.json"
                     ))
                 result = json.loads(result_path.read_text(encoding="utf-8"))
-                mutate(result)
+                result[f"{phase}_metrics"].pop(key)
                 write_json(result_path, result)
                 self.rebind_exact_action_canary(tmp)
                 with self.assertRaisesRegex(
-                        analyze_reward_screen.AnalysisError, message):
+                    analyze_reward_screen.AnalysisError,
+                    rf"{phase}_metrics\.{key} must be numeric",
+                ):
                     analyze_reward_screen.analyze_screen(tmp, ("tds",))
 
     def test_exact_action_canary_requires_empty_failures_and_lineage_binding(self):

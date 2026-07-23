@@ -314,7 +314,14 @@ newer evidence wins.
   immutable records: a plan authorization binds a fresh accepted schema-3
   qualification before the two-file plan can exist, and a launch authorization
   binds that plan plus the exact disabled one-shot unit and empty stopped-
-  validation output. Rebuild and independently requalify the exact final merged
+  validation output. Revalidation runs the qualifier from a separately bound
+  clean control/runner root using candidate Python; runner and candidate roots
+  must differ and their merged commits must match. The unit's first prestart
+  atomically and exclusively creates sibling `CANARY_LAUNCH_CONSUMPTION.json`;
+  qualification and empty-GPU probes occur only afterward, and the launcher
+  validates that record before any output mutation. A failure after consumption
+  burns the sole attempt and every manual retry rejects. Rebuild and
+  independently requalify the exact final merged
   authorization commit; the accepted parent qualification does not cover changed
   launcher bytes. Follow
   `docs/replacement-exact-action-canary-2070-execution-checklist.md`.
