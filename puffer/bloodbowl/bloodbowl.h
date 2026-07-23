@@ -2485,6 +2485,31 @@ static void bbe_finish_episode(Bloodbowl* env) {
                 env->step_reward_component[a][BBE_REWARD_DISTANCE_ENDZONE];
             if (!isfinite(kept_ball)) kept_ball = 0.0f;
             if (!isfinite(kept_endzone)) kept_endzone = 0.0f;
+            // Turn the ordinary emission into the TERMINAL payback.
+            //
+            // The step emission is gamma*Phi(s_T) - Phi(s_T-1). PBRS requires
+            // Phi(terminal) = 0, so the terminal emission must be -Phi(s_T-1);
+            // removing the gamma*Phi(s_T) term converts one into the other.
+            //
+            // On a natural end this changes nothing, because every route there
+            // (touchdown_advance / end_drive_advance, engine/src/proc_match.c)
+            // sets the ball OFF_PITCH before this code runs, so Phi(s_T) is
+            // already 0 -- which is exactly why the bug was invisible.
+            // The `decisions >= max_decisions` TRUNCATION at the bottom of
+            // c_step ends mid-drive with the ball typically still HELD, so
+            // Phi(s_T) > 0 there, terminal is set to 1.0 so PPO does not
+            // bootstrap it away, and the next reset NaN-primes pot_*_prev --
+            // the accumulated potential debt was simply forgiven. Since
+            // truncation still pays the full result bonus from the current
+            // score, that made "pad decisions to the cap while parked deep with
+            // the ball" worth up to k_fetch*25 + k_carry*25 on top of it, and
+            // decision count is policy-controlled. That is the same
+            // terminal-result-plus-shaping class as D182.
+            float gam = env->reward_dist_pbrs_gamma;
+            float phi_fetch = env->pot_fetch_prev[a];
+            float phi_carry = env->pot_carry_prev[a];
+            if (isfinite(phi_fetch)) kept_ball -= gam * phi_fetch;
+            if (isfinite(phi_carry)) kept_endzone -= gam * phi_carry;
         }
         memset(env->step_reward_component[a], 0,
                sizeof env->step_reward_component[a]);

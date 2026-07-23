@@ -1360,3 +1360,84 @@ BB_TEST(puffer_stall_telemetry_keeps_late_turns_out_of_the_gate_band) {
     check_float(f.env.log.stall_rate_turn1_6, 0.0f);
     check_float(f.env.log.stall_rolls_by_turn[6], 1.0f);
 }
+
+// ---------------------------------------------------------------------------
+// Terminal payback on the TRUNCATION path, driven through the real c_step
+// emission block rather than by hand-injecting a component.
+//
+// The exact invariant: with Phi >= 0, gamma <= 1 and Phi(terminal) = 0, an
+// episode's total for each potential channel is
+//     (gamma-1) * sum(Phi_intermediate) - Phi(s_0)  <=  0
+// so a NON-POSITIVE episode total is necessary for the shaping to be a
+// potential at all. The bug made it positive: `decisions >= max_decisions`
+// truncates mid-drive with the ball still HELD, and the terminal step kept the
+// ordinary gamma*Phi(s_T) - Phi(s_T-1) instead of the payback -Phi(s_T-1), so
+// the accumulated potential was never repaid. Natural ends hid it because they
+// set the ball OFF_PITCH first, making Phi(s_T) already 0.
+// ---------------------------------------------------------------------------
+
+BB_TEST(distance_pbrs_terminal_removes_the_gamma_phi_term) {
+    // The step emission is gamma*Phi(s_T) - Phi(s_T-1). PBRS needs
+    // Phi(terminal) = 0, so a terminal must emit -Phi(s_T-1); the composition
+    // gets there by REMOVING gamma*Phi(s_T). This pins that arithmetic.
+    //
+    // Why it matters only on truncation: every natural end sets the ball
+    // OFF_PITCH before this code runs, so Phi(s_T) is already 0 and the
+    // subtraction is a no-op. The `decisions >= max_decisions` truncation ends
+    // mid-drive with the ball typically HELD, so Phi(s_T) > 0 -- and terminal is
+    // flagged 1.0, so PPO does not bootstrap the debt away either. Truncation
+    // still pays the full result bonus, so forgiving the debt made "pad
+    // decisions to the cap while parked deep with the ball" profitable.
+    const float GAM = 0.995f;
+    const float PHI_T = 0.40f;       // ball still held at the cut: Phi(s_T) > 0
+    const float STEP_EMISSION = -0.05f;
+
+    RewardFixture f;
+    setup_env_buffers(&f);
+    Bloodbowl* env = &f.env;
+    env->reward_configured = 1;
+    env->reward_dist_endzone = 0.04f;
+    env->reward_dist_pbrs_gamma = GAM;
+    env->reward_win = 0.60f;
+    env->match.score[BB_HOME] = 1;
+    env->match.score[BB_AWAY] = 0;
+
+    // Phi(s_T) as the emission block left it, and this step's ordinary emission.
+    env->pot_carry_prev[BB_HOME] = PHI_T;
+    env->pot_fetch_prev[BB_HOME] = 0.0f;
+    bbe_reward_add(env, BB_HOME, BBE_REWARD_DISTANCE_ENDZONE, STEP_EMISSION);
+    bbe_reward_add(env, BB_HOME, BBE_REWARD_TOUCHDOWN, 0.40f);
+    env->step_objective_reward[BB_HOME] = 0.40f;
+    env->step_objective_reward[BB_AWAY] = 0.0f;
+    bbe_finish_episode(env);
+
+    // The kept channel must be the step emission MINUS gamma*Phi(s_T).
+    check_float(env->log.reward_component[BBE_REWARD_DISTANCE_ENDZONE],
+                STEP_EMISSION - GAM * PHI_T);
+    // Which is strictly more negative than the unpaid version: a build that
+    // forgets the subtraction keeps STEP_EMISSION and is in credit by gamma*Phi.
+    BB_CHECK(env->log.reward_component[BBE_REWARD_DISTANCE_ENDZONE]
+             < STEP_EMISSION - 0.5f * GAM * PHI_T);
+}
+
+BB_TEST(distance_pbrs_natural_end_zeroes_phi_before_the_payback) {
+    // The reason the truncation bug was invisible: every natural end routes
+    // through touchdown_advance / end_drive_advance, which set the ball
+    // OFF_PITCH (engine/src/proc_match.c) BEFORE this reward code runs. So
+    // Phi(s_T) is already 0 there and removing gamma*Phi(s_T) is a no-op.
+    // Pin that, so a change to the engine's end-of-drive ball handling cannot
+    // silently reintroduce a debt-forgiving terminal.
+    RewardFixture f;
+    setup_env_buffers(&f);
+    Bloodbowl* env = &f.env;
+    env->reward_configured = 1;
+    env->reward_dist_endzone = 0.04f;
+    env->reward_dist_pbrs_gamma = 0.995f;
+    env->match.status = BB_STATUS_MATCH_OVER;
+    env->match.ball.state = BB_BALL_OFF_PITCH;
+
+    // Phi is zero for an off-pitch ball, so the potential channels contribute
+    // nothing at a natural terminal however deep the carrier had been.
+    check_float(bbe_potential(env->reward_dist_endzone, bbe_dist_carry(&env->match, BB_HOME)), 0.0f);
+    BB_CHECK_EQ(bbe_dist_carry(&env->match, BB_HOME), -1);
+}
