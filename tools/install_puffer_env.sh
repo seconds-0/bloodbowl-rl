@@ -349,39 +349,6 @@ if [ -f "$TORCH_PUFFERL_PY" ] && \
     fi
 fi
 
-# Two pufferl.py edits lived only as untracked local edits inside individual box
-# checkouts until they were captured as patches. vendor/*/ is gitignored, so a
-# re-clone silently dropped them, and the obs-v5 checkout never had them at all:
-# it could not warm-start (run_reward_ablation.sh greps for the marker below
-# before it will launch) and it had no scripted-training guard. Both are applied
-# here, after the exact-action stack, because the scripted guard shares its call
-# sites with require_training_state_reset from puffer_recurrent_eval_state.
-for local_pufferl_patch in \
-    "$ROOT/training/pufferl_scripted_training_guard.patch" \
-    "$ROOT/training/pufferl_warm_start.patch"; do
-    if [ ! -f "$local_pufferl_patch" ]; then
-        echo "error: missing $local_pufferl_patch" >&2
-        exit 1
-    fi
-    if git -C "$PUFFER" apply --reverse --check --no-index \
-            "$local_pufferl_patch" 2>/dev/null; then
-        : # Already installed.
-    elif git -C "$PUFFER" apply --check --no-index \
-            "$local_pufferl_patch" 2>/dev/null; then
-        git -C "$PUFFER" apply --no-index "$local_pufferl_patch"
-        echo "applied:   $(basename "$local_pufferl_patch") -> pufferlib/pufferl.py"
-    else
-        echo "error: $(basename "$local_pufferl_patch") is neither applicable nor already applied" >&2
-        exit 1
-    fi
-done
-for local_marker in 'Warm-started training from' 'guard_scripted_training'; do
-    if ! grep -Fq "$local_marker" "$PUFFER/pufferlib/pufferl.py"; then
-        echo "error: pufferlib/pufferl.py lacks '$local_marker' after patching" >&2
-        exit 1
-    fi
-done
-
 # Selfplay bank initialization is a training-semantic runtime surface. Install
 # its optional league-preseed branch centrally even for fresh runs: the empty
 # league_preseed path remains upstream-equivalent, while every runner and
@@ -497,6 +464,40 @@ if ! grep -q 'qualification_recurrent_state' "$PUFFER/src/bindings.cu" || \
     echo "error: recurrent CUDA qualification evidence is incomplete" >&2
     exit 1
 fi
+
+# Two pufferl.py edits lived only as untracked local edits inside individual box
+# checkouts until they were captured as patches. vendor/*/ is gitignored, so a
+# re-clone silently dropped them, and the obs-v5 checkout never had them at all:
+# it could not warm-start (run_reward_ablation.sh greps for the marker below
+# before it will launch) and it had no scripted-training guard. Both are applied
+# applied last, after the whole exact-action stack: the scripted guard shares its
+# call sites with require_training_state_reset, which puffer_recurrent_eval_state
+# installs above, so cutting it against any earlier tree does not apply.
+for local_pufferl_patch in \
+    "$ROOT/training/pufferl_scripted_training_guard.patch" \
+    "$ROOT/training/pufferl_warm_start.patch"; do
+    if [ ! -f "$local_pufferl_patch" ]; then
+        echo "error: missing $local_pufferl_patch" >&2
+        exit 1
+    fi
+    if git -C "$PUFFER" apply --reverse --check --no-index \
+            "$local_pufferl_patch" 2>/dev/null; then
+        : # Already installed.
+    elif git -C "$PUFFER" apply --check --no-index \
+            "$local_pufferl_patch" 2>/dev/null; then
+        git -C "$PUFFER" apply --no-index "$local_pufferl_patch"
+        echo "applied:   $(basename "$local_pufferl_patch") -> pufferlib/pufferl.py"
+    else
+        echo "error: $(basename "$local_pufferl_patch") is neither applicable nor already applied" >&2
+        exit 1
+    fi
+done
+for local_marker in 'Warm-started training from' 'guard_scripted_training'; do
+    if ! grep -Fq "$local_marker" "$PUFFER/pufferlib/pufferl.py"; then
+        echo "error: pufferlib/pufferl.py lacks '$local_marker' after patching" >&2
+        exit 1
+    fi
+done
 
 EXACT_BACKEND_HASH="$(exact_backend_hash)" || {
     echo "error: could not hash exact-action backend sources" >&2
