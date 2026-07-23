@@ -14,6 +14,7 @@
 #include "bb/bb_match.h"
 #include "bb/bb_proc.h"
 #include "bb/bb_reachability.h"
+#include "bb/bb_stall.h"
 #include "bb/gen_teams.h"
 #include "bb_fixtures.h"
 #include "bb_test.h"
@@ -1819,6 +1820,336 @@ BB_TEST(struct_stalling_steady_footing_six_prevents_turnover) {
     BB_CHECK_EQ(m.ball.carrier, carrier);
     BB_CHECK_EQ(rng.script_pos, 2);
     BB_CHECK(!bb_rng_error(&rng));
+}
+
+// ===========================================================================
+// STALLING TELEMETRY (bb_stall.h) — the rule above is measurable.
+//
+// The tally is FILE-SCOPE on purpose: BB_CHECK does not abort a test, but a
+// test body may `return` early, and a stack-allocated tally left attached
+// would leave the engine's thread-local sink pointing at a dead frame. Every
+// test zeroes it through stx_stall_begin() and detaches at the end.
+// ===========================================================================
+
+static bb_stall_tally stx_stall;
+
+static void stx_stall_begin(void) {
+    bb_stall_reset(&stx_stall);
+    bb_stall_attach(&stx_stall);
+}
+
+static void stx_stall_end(void) { bb_stall_attach(0); }
+
+static uint32_t stx_stall_n(bb_stall_series s, int team, int lo, int hi) {
+    return bb_stall_sum(&stx_stall, s, team, lo, hi);
+}
+
+// Every counter is empty (used by the exemption tests, which must record
+// nothing at all — not even a roll the crowd declined).
+static void stx_stall_expect_silent(void) {
+    BB_CHECK_EQ(stx_stall_n(BB_STALL_ROLLS, -1, 1, BB_STALL_TURNS), 0);
+    BB_CHECK_EQ(stx_stall_n(BB_STALL_ACTED, -1, 1, BB_STALL_TURNS), 0);
+    BB_CHECK_EQ(stx_stall_n(BB_STALL_TURNOVERS, -1, 1, BB_STALL_TURNS), 0);
+}
+
+// An eligible carrier one dice-free square from their end zone, on team turn
+// `turn`, with a spare team-mate far away so the turn stays open. Mirrors the
+// geometry of the rule tests above (home scores at x == 25, away at x == 0).
+static int stx_stall_fixture(bb_match* m, int team, int turn) {
+    fx_match_midturn(m, team, 0);
+    m->turn[team] = (uint8_t)(turn - 1); // turn_start advances to `turn`
+    int carrier = fx_lineman(m, team, 0, team == BB_HOME ? 24 : 1, 7);
+    fx_lineman(m, team, 1, team == BB_HOME ? 3 : 22, 3);
+    fx_lineman(m, 1 - team, 0, team == BB_HOME ? 17 : 8, 9);
+    fx_ball_held(m, carrier);
+    return carrier;
+}
+
+// The counter increments exactly where the rule fires: one roll, one crowd
+// action, one Turnover, booked against the stalling team and the turn number.
+BB_TEST(struct_stalling_telemetry_counts_activation_stall) {
+    bb_match m;
+    stx_stall_begin();
+    int carrier = stx_stall_fixture(&m, BB_HOME, 1);
+    const uint8_t dice[] = {1, 1, 1, 4}; // crowd acts; armour holds; bounce
+    bb_rng rng;
+    bb_rng_script(&rng, dice, 4);
+    fx_run(&m, &rng);
+    stx_activate(&m, carrier, BB_ACT_MOVE, &rng);
+    fx_apply(&m, stx_act(BB_A_END_ACTIVATION, 0, 0, 0), &rng);
+
+    BB_CHECK_EQ(m.players[carrier].stance, BB_STANCE_PRONE);
+    BB_CHECK_EQ(stx_stall.rolls[BB_HOME][0], 1);
+    BB_CHECK_EQ(stx_stall.acted[BB_HOME][0], 1);
+    BB_CHECK_EQ(stx_stall.turnovers[BB_HOME][0], 1);
+    // Nothing anywhere else: not the other team, not another turn.
+    BB_CHECK_EQ(stx_stall_n(BB_STALL_ROLLS, -1, 1, BB_STALL_TURNS), 1);
+    BB_CHECK_EQ(stx_stall_n(BB_STALL_ROLLS, BB_AWAY, 1, BB_STALL_TURNS), 0);
+    BB_CHECK_EQ(stx_stall_n(BB_STALL_ROLLS, BB_HOME, 2, BB_STALL_TURNS), 0);
+    BB_CHECK_EQ(stx_stall_n(BB_STALL_TURNOVERS, -1, 1, BB_STALL_TURNS), 1);
+    // The rate denominator saw the turn the Turnover ended.
+    BB_CHECK_EQ(stx_stall.turn_ends[BB_HOME][0], 1);
+    stx_stall_end();
+}
+
+// A roll the crowd DECLINES is still a stall: rolls counts it, acted does not.
+BB_TEST(struct_stalling_telemetry_separates_roll_from_crowd_action) {
+    bb_match m;
+    stx_stall_begin();
+    int carrier = stx_stall_fixture(&m, BB_HOME, 6);
+    const uint8_t dice[] = {5}; // 5 < turn 6: crowd does not act
+    bb_rng rng;
+    bb_rng_script(&rng, dice, 1);
+    fx_run(&m, &rng);
+    stx_activate(&m, carrier, BB_ACT_MOVE, &rng);
+    fx_apply(&m, stx_act(BB_A_END_ACTIVATION, 0, 0, 0), &rng);
+
+    BB_CHECK_EQ(m.players[carrier].stance, BB_STANCE_STANDING);
+    BB_CHECK_EQ(stx_stall.rolls[BB_HOME][5], 1);
+    BB_CHECK_EQ(stx_stall.acted[BB_HOME][5], 0);
+    BB_CHECK_EQ(stx_stall.turnovers[BB_HOME][5], 0);
+    BB_CHECK_EQ(stx_stall_n(BB_STALL_ROLLS, -1, 1, 6), 1); // inside the gate band
+    BB_CHECK_EQ(stx_stall_n(BB_STALL_ROLLS, -1, 7, 8), 0);
+    stx_stall_end();
+}
+
+// The roll is consumed on turns 7-8 where it cannot succeed, so the stall is
+// still COUNTED there — the gate band (turns 1-6) must exclude it by turn
+// number, not by whether anything happened.
+BB_TEST(struct_stalling_telemetry_counts_turn_seven_and_eight_rolls) {
+    for (int turn = 7; turn <= 8; turn++) {
+        bb_match m;
+        stx_stall_begin();
+        int carrier = stx_stall_fixture(&m, BB_HOME, turn);
+        const uint8_t dice[] = {6}; // even a 6 cannot reach turn 7/8
+        bb_rng rng;
+        bb_rng_script(&rng, dice, 1);
+        fx_run(&m, &rng);
+        BB_CHECK_EQ(m.turn[BB_HOME], turn);
+        stx_activate(&m, carrier, BB_ACT_MOVE, &rng);
+        fx_apply(&m, stx_act(BB_A_END_ACTIVATION, 0, 0, 0), &rng);
+
+        BB_CHECK_EQ(m.players[carrier].stance, BB_STANCE_STANDING);
+        BB_CHECK_EQ(rng.script_pos, 1);
+        BB_CHECK_EQ(stx_stall.rolls[BB_HOME][turn - 1], 1);
+        BB_CHECK_EQ(stx_stall.acted[BB_HOME][turn - 1], 0);
+        BB_CHECK_EQ(stx_stall_n(BB_STALL_ROLLS, -1, 1, 6), 0);
+        BB_CHECK_EQ(stx_stall_n(BB_STALL_ROLLS, -1, 7, 8), 1);
+        stx_stall_end();
+    }
+}
+
+// Per-team, per-turn attribution: the AWAY team stalling on turn 3 lands in
+// exactly one cell.
+BB_TEST(struct_stalling_telemetry_attributes_team_and_turn) {
+    bb_match m;
+    stx_stall_begin();
+    int carrier = stx_stall_fixture(&m, BB_AWAY, 3);
+    const uint8_t dice[] = {4}; // 4 >= turn 3: crowd acts
+    bb_rng rng;
+    bb_rng_script(&rng, dice, 1);
+    fx_run(&m, &rng);
+    BB_CHECK_EQ(m.turn[BB_AWAY], 3);
+    stx_activate(&m, carrier, BB_ACT_MOVE, &rng);
+    fx_apply(&m, stx_act(BB_A_END_ACTIVATION, 0, 0, 0), &rng);
+
+    BB_CHECK_EQ(stx_stall.rolls[BB_AWAY][2], 1);
+    BB_CHECK_EQ(stx_stall.acted[BB_AWAY][2], 1);
+    BB_CHECK_EQ(stx_stall_n(BB_STALL_ROLLS, BB_HOME, 1, BB_STALL_TURNS), 0);
+    BB_CHECK_EQ(stx_stall_n(BB_STALL_ROLLS, BB_AWAY, 1, 2), 0);
+    BB_CHECK_EQ(stx_stall_n(BB_STALL_ROLLS, BB_AWAY, 4, BB_STALL_TURNS), 0);
+    stx_stall_end();
+}
+
+// Foregoing the carrier by ending the team turn is the same stall and is
+// counted on the same path.
+BB_TEST(struct_stalling_telemetry_counts_forgone_carrier) {
+    bb_match m;
+    stx_stall_begin();
+    int carrier = stx_stall_fixture(&m, BB_HOME, 2);
+    const uint8_t dice[] = {2, 1, 1, 4}; // 2 >= turn 2: crowd acts
+    bb_rng rng;
+    bb_rng_script(&rng, dice, 4);
+    fx_run(&m, &rng);
+    fx_apply(&m, stx_act(BB_A_END_TURN, 0, 0, 0), &rng);
+
+    BB_CHECK_EQ(m.players[carrier].stance, BB_STANCE_PRONE);
+    BB_CHECK_EQ(stx_stall.rolls[BB_HOME][1], 1);
+    BB_CHECK_EQ(stx_stall.acted[BB_HOME][1], 1);
+    BB_CHECK_EQ(stx_stall.turnovers[BB_HOME][1], 1);
+    BB_CHECK_EQ(stx_stall.turn_ends[BB_HOME][1], 1);
+    stx_stall_end();
+}
+
+// FAQ (May 2026): Steady Footing's 6 prevents the knockdown, so the crowd
+// acted but no Turnover followed. acted - turnovers is exactly that save.
+BB_TEST(struct_stalling_telemetry_counts_steady_footing_save_as_no_turnover) {
+    bb_match m;
+    stx_stall_begin();
+    int carrier = stx_stall_fixture(&m, BB_HOME, 1);
+    fx_give_skill(&m, carrier, BB_SK_STEADY_FOOTING);
+    const uint8_t dice[] = {1, 6}; // crowd acts; Steady Footing prevents it
+    bb_rng rng;
+    bb_rng_script(&rng, dice, 2);
+    fx_run(&m, &rng);
+    stx_activate(&m, carrier, BB_ACT_MOVE, &rng);
+    fx_apply(&m, stx_act(BB_A_END_ACTIVATION, 0, 0, 0), &rng);
+
+    BB_CHECK_EQ(m.players[carrier].stance, BB_STANCE_STANDING);
+    BB_CHECK_EQ(m.active_team, BB_HOME);
+    BB_CHECK_EQ(stx_stall.rolls[BB_HOME][0], 1);
+    BB_CHECK_EQ(stx_stall.acted[BB_HOME][0], 1);
+    BB_CHECK_EQ(stx_stall.turnovers[BB_HOME][0], 0);
+    stx_stall_end();
+}
+
+// The documented exemptions record NOTHING — this is the counter's version of
+// footgun 20: a distance/end-position heuristic would have booked a stall in
+// every one of these five situations.
+BB_TEST(struct_stalling_telemetry_silent_on_rush_exemption) {
+    bb_match m;
+    stx_stall_begin();
+    fx_match_midturn(&m, BB_HOME, 0);
+    int carrier = fx_player(&m, BB_HOME, 0, 23, 7, 1, 3, 3, 4, 9); // MA 1
+    fx_lineman(&m, BB_HOME, 1, 3, 3);
+    fx_lineman(&m, BB_AWAY, 0, 17, 7);
+    fx_ball_held(&m, carrier);
+    bb_rng rng;
+    bb_rng_script(&rng, 0, 0);
+    fx_run(&m, &rng);
+    BB_CHECK(!bb_can_score_without_dice(&m, carrier));
+    stx_activate(&m, carrier, BB_ACT_MOVE, &rng);
+    fx_apply(&m, stx_act(BB_A_END_ACTIVATION, 0, 0, 0), &rng);
+    BB_CHECK(!bb_rng_error(&rng)); // no crowd roll attempted
+    stx_stall_expect_silent();
+    stx_stall_end();
+}
+
+BB_TEST(struct_stalling_telemetry_silent_on_dodge_exemption) {
+    bb_match m;
+    stx_stall_begin();
+    fx_match_midturn(&m, BB_HOME, 0);
+    int carrier = fx_lineman(&m, BB_HOME, 0, 24, 7);
+    fx_lineman(&m, BB_HOME, 1, 3, 3);
+    fx_lineman(&m, BB_AWAY, 0, 24, 8); // marks the carrier's origin
+    fx_ball_held(&m, carrier);
+    bb_rng rng;
+    bb_rng_script(&rng, 0, 0);
+    fx_run(&m, &rng);
+    BB_CHECK(!bb_can_score_without_dice(&m, carrier));
+    stx_activate(&m, carrier, BB_ACT_MOVE, &rng);
+    fx_apply(&m, stx_act(BB_A_END_ACTIVATION, 0, 0, 0), &rng);
+    BB_CHECK(!bb_rng_error(&rng));
+    stx_stall_expect_silent();
+    stx_stall_end();
+}
+
+BB_TEST(struct_stalling_telemetry_silent_on_activation_gate_exemption) {
+    bb_match m;
+    stx_stall_begin();
+    fx_match_midturn(&m, BB_HOME, 0);
+    int carrier = fx_lineman(&m, BB_HOME, 0, 24, 7);
+    fx_lineman(&m, BB_HOME, 1, 3, 3);
+    fx_lineman(&m, BB_AWAY, 0, 17, 7);
+    fx_give_skill(&m, carrier, BB_SK_BONE_HEAD);
+    fx_ball_held(&m, carrier);
+    const uint8_t dice[] = {6}; // Bone Head passes; that is the only die
+    bb_rng rng;
+    bb_rng_script(&rng, dice, 1);
+    fx_run(&m, &rng);
+    stx_activate(&m, carrier, BB_ACT_MOVE, &rng);
+    fx_apply(&m, stx_act(BB_A_END_ACTIVATION, 0, 0, 0), &rng);
+    BB_CHECK_EQ(rng.script_pos, 1);
+    stx_stall_expect_silent();
+    stx_stall_end();
+}
+
+BB_TEST(struct_stalling_telemetry_silent_after_earlier_turnover) {
+    bb_match m;
+    stx_stall_begin();
+    fx_match_midturn(&m, BB_HOME, 0);
+    int carrier = fx_lineman(&m, BB_HOME, 0, 24, 7);
+    int mover = fx_lineman(&m, BB_HOME, 1, 10, 7);
+    fx_lineman(&m, BB_AWAY, 0, 10, 8); // marks mover
+    fx_lineman(&m, BB_AWAY, 1, 17, 7);
+    fx_ball_held(&m, carrier);
+    const uint8_t dice[] = {2, 3, 3}; // failed Dodge, armour holds
+    bb_rng rng;
+    bb_rng_script(&rng, dice, 3);
+    fx_run(&m, &rng);
+    stx_activate(&m, mover, BB_ACT_MOVE, &rng);
+    fx_apply(&m, stx_act(BB_A_STEP, 0, 9, 7), &rng);
+    BB_CHECK_EQ(rng.script_pos, 3);
+    stx_expect_turn_ended(&m, BB_HOME);
+    // The prior Turnover ended the turn: no stall, but the turn still counts
+    // in the rate denominator.
+    stx_stall_expect_silent();
+    BB_CHECK_EQ(stx_stall.turn_ends[BB_HOME][0], 1);
+    stx_stall_end();
+}
+
+BB_TEST(struct_stalling_telemetry_silent_after_successful_handoff) {
+    bb_match m;
+    stx_stall_begin();
+    fx_match_midturn(&m, BB_HOME, 0);
+    int carrier = fx_lineman(&m, BB_HOME, 0, 24, 7);
+    int receiver = fx_lineman(&m, BB_HOME, 1, 24, 8);
+    fx_lineman(&m, BB_HOME, 2, 3, 3);
+    fx_lineman(&m, BB_AWAY, 0, 17, 7);
+    fx_ball_held(&m, carrier);
+    const uint8_t dice[] = {5}; // receiver catches the Hand-off
+    bb_rng rng;
+    bb_rng_script(&rng, dice, 1);
+    fx_run(&m, &rng);
+    stx_activate(&m, carrier, BB_ACT_HANDOFF, &rng);
+    fx_apply(&m, stx_act(BB_A_HANDOFF_TARGET, 0, 24, 8), &rng);
+    BB_CHECK_EQ(m.ball.carrier, receiver);
+    BB_CHECK_EQ(rng.script_pos, 1);
+    stx_stall_expect_silent();
+    stx_stall_end();
+}
+
+// The telemetry is an observer: attaching a sink must not change one die, one
+// byte of match state, or the number of dice consumed.
+BB_TEST(struct_stalling_telemetry_does_not_perturb_the_engine) {
+    const uint8_t dice[] = {1, 1, 1, 4};
+    bb_match with, without;
+    bb_rng rw, rwo;
+
+    bb_stall_attach(0);
+    bb_rng_script(&rwo, dice, 4);
+    int c0 = stx_stall_fixture(&without, BB_HOME, 1);
+    fx_run(&without, &rwo);
+    stx_activate(&without, c0, BB_ACT_MOVE, &rwo);
+    fx_apply(&without, stx_act(BB_A_END_ACTIVATION, 0, 0, 0), &rwo);
+
+    stx_stall_begin();
+    bb_rng_script(&rw, dice, 4);
+    int c1 = stx_stall_fixture(&with, BB_HOME, 1);
+    fx_run(&with, &rw);
+    stx_activate(&with, c1, BB_ACT_MOVE, &rw);
+    fx_apply(&with, stx_act(BB_A_END_ACTIVATION, 0, 0, 0), &rw);
+
+    BB_CHECK_EQ(c0, c1);
+    BB_CHECK_EQ(rw.script_pos, rwo.script_pos);
+    BB_CHECK_EQ(memcmp(&with, &without, sizeof(bb_match)), 0);
+    BB_CHECK_EQ(stx_stall.rolls[BB_HOME][0], 1); // the attached run did count
+    stx_stall_end();
+}
+
+// The whole reason the counter lives outside bb_match: the BBS demo-state bank
+// stores sizeof(bb_match) in its BBS1 header and one raw bb_match per record
+// (puffer/bloodbowl/bloodbowl.h:1655-1671), and bbe_state_fingerprint() hashes
+// the same size. 2240 is the size the pinned 15,348-record BB2025 bank (D191)
+// was written with; if this assert ever fires, that bank and every hash pinned
+// to it are invalid and the change must be deliberate, not incidental.
+BB_TEST(struct_stalling_telemetry_leaves_the_match_layout_untouched) {
+    _Static_assert(sizeof(bb_match) == 2240,
+                   "bb_match layout changed: the BBS state bank and its "
+                   "hash pins are invalidated");
+    // The tally is a separate, caller-owned struct — not reachable from state.
+    BB_CHECK_EQ(sizeof(bb_stall_tally), 4u * 2u * BB_STALL_TURNS * sizeof(uint32_t));
+    BB_CHECK(bb_stall_attached() == 0 || bb_stall_attached() == &stx_stall);
 }
 
 // Shared driver: the ACTIVE team (home) pushes the INACTIVE team's standing
