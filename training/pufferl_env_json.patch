@@ -33,8 +33,19 @@ diff --git a/pufferlib/pufferl.py b/pufferlib/pufferl.py
 +        '_puffer_agent_steps': float(flat_logs.get('agent_steps', 0)),
 +        '_puffer_epoch': epoch,
 +    })
-+    print('PUFFER_ENV_JSON ' + json.dumps(
-+        env_json, sort_keys=True, allow_nan=False))
++    # Emit the machine panel as ONE write() syscall, not via print().
++    # stdout and stderr are merged into a single log file by the launcher, and
++    # each has its own buffer, so a panel longer than the stdout buffer is
++    # flushed in pieces and the other stream can land in the middle -- producing
++    # a JSON line with dashboard box-drawing characters spliced into it. That is
++    # not hypothetical: at 144 log keys the panel reached 5330 bytes and the live
++    # integrity guard correctly killed a run on "malformed machine panel ...
++    # Extra data: line 1 column 5205". A single os.write on an O_APPEND regular
++    # file cannot be split, so the panel stays parseable however long it grows.
++    _panel = 'PUFFER_ENV_JSON ' + json.dumps(
++        env_json, sort_keys=True, allow_nan=False) + '\n'
++    sys.stdout.flush()
++    os.write(sys.stdout.fileno(), _panel.encode('utf-8'))
  
  def validate_config(args):
      minibatch_size = args['train']['minibatch_size']
