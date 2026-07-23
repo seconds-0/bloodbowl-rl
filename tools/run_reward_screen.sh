@@ -193,11 +193,14 @@ case "$SCREEN_PROFILE" in
     seeds=(42)
     ;;
   genesis)
-    # One fresh arm on the current experimental baseline, whose accepted
+    # One fresh arm on the CORRECTED reward, whose accepted
     # checkpoint becomes the root of the obs-v5 lineage. One arm and one seed on
     # purpose: this establishes ancestry, it does not compare anything, so a
     # second arm would only invite reading a contrast that was never controlled.
-    arms=(both)
+    # Deliberately `pbrs`, not `both`: `both` maps to r0_full, whose distance
+    # shaping is the farmable raw-delta form. Rooting a lineage on a reward known
+    # to be farmable would bake those habits into every descendant.
+    arms=(pbrs)
     seeds=(42)
     ;;
   paired-confirmation)
@@ -230,6 +233,10 @@ manifest_for() {
     r2) printf '%s\n' "$ROOT/puffer/config/rewards/r2_no_possession.json" ;;
     r3) printf '%s\n' "$ROOT/puffer/config/rewards/r3_minimal_block.json" ;;
     both) printf '%s\n' "$ROOT/puffer/config/rewards/r0_full.json" ;;
+    # Genesis roots the lineage, so it trains on the CORRECTED distance form
+    # rather than the legacy ratchet. r4 differs from r0_full in exactly one
+    # declared factor, reward_dist_pbrs_gamma.
+    pbrs) printf '%s\n' "$ROOT/puffer/config/rewards/r4_pbrs_distance.json" ;;
     possession_only) printf '%s\n' "$ROOT/puffer/config/rewards/p1_possession_only.json" ;;
     gain_only) printf '%s\n' "$ROOT/puffer/config/rewards/p2_gain_only.json" ;;
     neither) printf '%s\n' "$ROOT/puffer/config/rewards/r2_no_possession.json" ;;
