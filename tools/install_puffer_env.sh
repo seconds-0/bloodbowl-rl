@@ -465,6 +465,36 @@ if ! grep -q 'qualification_recurrent_state' "$PUFFER/src/bindings.cu" || \
     exit 1
 fi
 
+# Make the machine panel a single write() syscall.
+#
+# stdout and stderr are merged into one log file by the launchers, and each has
+# its own buffer, so a panel longer than the stdout buffer is flushed in pieces
+# and the other stream can land in the middle -- yielding a JSON line with rich
+# dashboard box-drawing characters spliced into it. Measured: 4,755 bytes at 123
+# log keys, 5,330 once Stalling telemetry took it to 144, and the live integrity
+# guard correctly killed a run on "malformed machine panel ... Extra data: line 1
+# column 5205". A single os.write on an O_APPEND regular file cannot be split.
+#
+# Done as an in-place transform rather than by growing pufferl_env_json.patch,
+# because that patch sits in the MIDDLE of a serial stack: adding lines to it
+# shifts pufferl.py's line numbers and breaks every later patch that targets the
+# same file (measured: phase-contract at :179, eval-gate at :189, recurrent
+# eval-state at :289 all failed). Same reasoning as the create_dict transform
+# above. Idempotent: guarded on the marker it installs.
+DASHBOARD_PY="$PUFFER/pufferlib/pufferl.py"
+if [ -f "$DASHBOARD_PY" ] && \
+   ! grep -Fq 'os.write(sys.stdout.fileno()' "$DASHBOARD_PY"; then
+    if perl -0pi -e "s/(\\n)(\\s*)print\\('PUFFER_ENV_JSON ' \\+ json\\.dumps\\(\\n\\s*env_json, sort_keys=True, allow_nan=False\\)\\)/\\1\\2_panel = 'PUFFER_ENV_JSON ' + json.dumps(\\n\\2    env_json, sort_keys=True, allow_nan=False)\\n\\2sys.stdout.flush()\\n\\2os.write(sys.stdout.fileno(), (_panel + chr(10)).encode('utf-8'))/s" \\
+        "$DASHBOARD_PY" && \\
+       grep -Fq 'os.write(sys.stdout.fileno()' "$DASHBOARD_PY"; then
+        echo "applied:   atomic machine-panel write -> pufferlib/pufferl.py"
+    else
+        echo "error: could not make the machine panel write atomic; a split panel" >&2
+        echo "       corrupts JSON and the live integrity guard will kill the run" >&2
+        exit 1
+    fi
+fi
+
 # Two pufferl.py edits lived only as untracked local edits inside individual box
 # checkouts until they were captured as patches. vendor/*/ is gitignored, so a
 # re-clone silently dropped them, and the obs-v5 checkout never had them at all:
