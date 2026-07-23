@@ -405,9 +405,20 @@ warm_identity = None
 pool_identity = None
 warm_lineage_sha = ""
 pool_lineage_bundle_sha = ""
-if qualification_only:
-    if warm is not None or pool is not None:
-        raise SystemExit("fresh qualification cannot carry a warm start or pool")
+# Branch on whether this screen is FRESH, not on whether it is
+# qualification-only. Those were the same condition until genesis existed: a
+# genesis screen is fresh (no warm start, no pool -- it is the root of the
+# lineage) yet deliberately NOT qualification-only, because its accepted
+# checkpoint is eligible ancestry. Keying the warm/pool binding off
+# qualification_only sent genesis down the warm-start path and called .stat() on
+# None. This whole fresh branch had never executed before: the canary profile was
+# hard-rejected earlier in this script, so no fresh screen could reach here.
+fresh = warm is None and pool is None
+if warm is None or pool is None:
+    if not fresh:
+        raise SystemExit(
+            "a fresh screen must carry neither a warm start nor a pool; got "
+            f"warm={warm} pool={pool}")
 else:
     from checkpoint_lineage import lineage_digest, sidecar_path, validate_lineage
     if warm.stat().st_size != expect_size:
@@ -469,7 +480,10 @@ contract = {
         "observation_abi": "obs-v5",
         "observation_version": 5,
         "action_abi": "exact-joint-v1",
-        "initialization": "fresh" if qualification_only else "lineage-v5",
+        # Genesis is fresh yet not qualification-only, so this must key on
+        # freshness. checkpoint_lineage cross-checks initialization against the
+        # producer mode, so getting this wrong fails the run at publication.
+        "initialization": "fresh" if fresh else "lineage-v5",
         "warm_lineage_sha256": warm_lineage_sha,
         "pool_lineage_bundle_sha256": pool_lineage_bundle_sha,
     },

@@ -614,7 +614,7 @@ fi
 META_ARGS=(
   tag "$TAG" seed "$SEED" requested_steps "$STEPS" final_steps "$FINAL_STEPS"
   bootstrap_mode "$BOOTSTRAP_MODE" initialization \
-  "$([ "$QUALIFICATION_ONLY" = "1" ] && printf fresh || printf lineage-v5)" \
+  "$([ "$BOOTSTRAP_MODE" != "lineage-v5" ] && printf fresh || printf lineage-v5)" \
   qualification_only "$QUALIFICATION_ONLY" observation_abi obs-v5 \
   observation_version 5 action_abi exact-joint-v1 \
   policy_hidden_size 512 policy_num_layers 3 policy_expansion_factor 1 \
