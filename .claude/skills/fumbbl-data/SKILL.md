@@ -5,10 +5,9 @@ description: Fetch, parse, audit, and train from FUMBBL data with embedded-rules
 
 # FUMBBL Data: API, Replays, Curation
 
-Read `runs/replay-audit-20260713/corpus.json`, D179–D180, and the replay sections
-of `docs/reward-and-replay-audit-2026-07-09.md` before changing the corpus or BC
-sampler. The current corpus is mixed-edition at the raw layer and sharply
-prefix-censored; shard presence and directory names are not edition proof.
+Read `runs/replay-audit-20260713/corpus.json` and D179–D180 before changing the corpus or
+the BC sampler. The corpus is mixed-edition at the raw layer and sharply prefix-censored;
+shard presence and directory names are not edition proof.
 
 Ground truth lives in two vendored codebases (paths relative to repo root):
 
@@ -110,15 +109,14 @@ reportIds observed in `example_input/1559380.json` with real payload shapes (ful
 - 9,118 non-empty BB2025 IDs in the strict allowlist at
   `runs/replay-audit-20260713/bb2025-nonempty.ids`.
 
-The old phrase "12,304 replays" was wrong: it counted pair shards, not verified
-BB2025 games. Determine edition from the replay's embedded `rulesVersion`, never
-from filenames, directories, dates, API division, or successful conversion.
-Never mix BB2020 into BB2025 BC.
+The old phrase "12,304 replays" was wrong: it counted pair shards, not verified BB2025
+games. Determine edition from the replay's embedded `rulesVersion`, never from filenames,
+directories, dates, API division, or successful conversion. Never mix BB2020 into BB2025 BC.
 
-BBP records are observation-lineage-specific; an observation change requires
-re-extraction from cached raw replay data. BBS state banks store engine states,
-not observations, but still require matching engine fingerprints and strict
-edition/semantic validation.
+BBP records are observation-lineage-specific (see the version table in `puffer-env-dev`):
+an observation change requires re-extraction from cached raw replay data. BBS state banks
+store engine states rather than observations, but still need matching engine fingerprints
+and strict edition validation.
 
 ### Coverage limitations
 

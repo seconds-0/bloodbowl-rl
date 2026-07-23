@@ -9,10 +9,9 @@ The engine implements **BB2025 / Third Season Edition** (released 2025). Never i
 mechanic from memory of BB2016 or BB2020 — the editions differ in load-bearing ways
 (see "Edition deltas" below). Always read the local mirror first.
 
-For reward/strategy work, also read the rules and strategy sections of
-`docs/reward-and-replay-audit-2026-07-09.md`. Rule text establishes legal game
-semantics; coaching guidance is contextual evidence, not permission to create an
-unconditional event reward.
+For reward/strategy work also read the rules and strategy sections of
+`docs/reward-and-replay-audit-2026-07-09.md`. Rule text establishes legal game semantics;
+coaching guidance is contextual evidence, not a licence for an unconditional event reward.
 
 ## Sources on disk (paths relative to repo root)
 
@@ -123,28 +122,24 @@ All paths below are under `docs/vendor/bloodbowlbase/bloodbowlbase.ru/bb2025/`.
 
 ## Reward-design implications of the rules
 
-- **Secure the Ball is contextual.** It is a legal tactical option with declaration
-  constraints, not a universally correct action. Do not reward its declaration or
-  success directly.
-- **"Safe actions first" is expected-value reasoning.** The value of an action is
-  its foregone future value multiplied by turnover/failure risk in the current
-  score, clock, board, and roster state. Do not pay a blanket ordering coupon.
-- **Blocks are instrumental.** They create space, removals, ball pressure, and
-  tempo. More blocks, knockdowns, or casualties are not objectives; validate any
-  decision-time block scaffold by held-out W/D/L and TD for/against.
-- **Possession depends on clock and score.** BB2025 Stalling makes indefinite
-  end-zone camping explicitly risky. With `D6 >= turn number`, crowd action
-  probabilities on turns 1–8 are `1, 5/6, 4/6, 3/6, 2/6, 1/6, 0, 0`.
-- **Movement toward goal is not always policy-invariant.** Raw
-  `Phi(s') - Phi(s)` changes discounted utility when `gamma < 1`. If distance
-  shaping is needed, prefer exact `beta*(gamma*Phi(s') - Phi(s))`, and still
-  test clock/risk behavior plus annealing.
-- **Reward realized dice only when it is the true terminal/objective result.** For
-  shaping, use declaration-time expectation or settled state. Even EV shaping can
-  redefine the game, so keep it small/temporary and require transfer evidence.
-- **Human strategy rates are canaries.** A human possession, rush, pass, or block
-  rate can expose pathology, but team identity, matchup, score, clock, and replay
-  coverage make it unsuitable as a scalar target.
+Rule-specific facts that decide whether a proposed reward matches the actual game (the
+general reward contract lives in the `training-experiments` skill):
+
+- **Secure the Ball is contextual** — a legal option with declaration constraints, not a
+  universally correct action. Do not reward its declaration or success.
+- **"Safe actions first" is expected-value reasoning**, not an ordering rule: an action's
+  value is its foregone future value times turnover risk in the current score, clock, board,
+  and roster state. Don't pay a blanket ordering coupon.
+- **Blocks are instrumental** — space, removals, ball pressure, tempo. More blocks,
+  knockdowns, or casualties are not objectives.
+- **Possession depends on clock and score.** BB2025 Stalling makes indefinite end-zone
+  camping explicitly risky: with `D6 >= turn number`, crowd-action probability on turns 1–8
+  is `1, 5/6, 4/6, 3/6, 2/6, 1/6, 0, 0`.
+- **Realized dice are not decision quality.** Reward a die result only when it *is* the
+  terminal objective outcome; otherwise price the declaration from pre-roll EV or a settled
+  state.
+- **Human strategy rates are canaries, not targets** — team identity, matchup, score, clock,
+  and replay coverage all confound them.
 
 ## Skills & traits system
 
