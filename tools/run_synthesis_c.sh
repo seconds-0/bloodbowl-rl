@@ -18,7 +18,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT/vendor/PufferLib"
 
-if pgrep -f 'puffer [t]rain' > /dev/null; then
+if pgrep -f '[p]uffer_cuda_runtime.py train|[p]uffer train' > /dev/null; then
   echo "a training run is already live on this box — kill it first" >&2
   exit 1
 fi

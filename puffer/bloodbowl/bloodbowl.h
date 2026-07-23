@@ -352,16 +352,36 @@ typedef struct {
     // when the ball SETTLES (held or grounded) — a ball in the air is limbo,
     // so a completed pass is neutral instead of loss-then-gain. Keep
     // |reward_ball_loss| > reward_ball_gain or pickup/drop cycles farm reward.
+    // WARNING: puffer/config/rewards/r0_full.json VIOLATES that invariant --
+    // it ships reward_ball_loss 0.0 against reward_ball_gain 0.05, so every
+    // regain is paid and no drop is charged. Fix the manifest or rebut this
+    // comment; do not leave both standing.
     float reward_ball_gain;
     float reward_ball_loss;
-    // Bootstrap curriculum potentials (default 0 = off). Potential-BASED
-    // (reward = delta-potential, telescoping -> un-farmable): while the ball
-    // is loose, each side's potential is -k_fetch * dist(nearest standing
+    // Bootstrap curriculum potentials (default 0 = off). While the ball is
+    // loose, each side's potential is -k_fetch * dist(nearest standing
     // teammate, ball); while carrying, -k_advance * dist(carrier, opposing
     // end zone). A ladder OUT of the mutual-avoidance basin (both 10B
     // from-scratch arms converged to 0-0 draws) — anneal to 0 via chained
     // runs once tds/match wakes up; NOT a permanent reward (see
     // docs/reward-audit-decision-time.md doctrine vs scaffolding).
+    //
+    // NOT CURRENTLY POTENTIAL-BASED, despite what this comment used to claim.
+    // Two defects, both at the emission site below (search pot_carry_prev):
+    //   1. Each potential is NAN whenever its regime is inactive, the emission
+    //      is skipped when either side is NaN, and prev is then overwritten
+    //      with NAN. So on any possession gap the baseline silently
+    //      RE-ANCHORS wherever possession resumes: advances are paid, drops
+    //      across the gap are never charged, and it does not telescope. A
+    //      gain/advance/lose/regain/advance cycle banks reward for zero net
+    //      field progress. BB_BALL_IN_AIR is such a gap, so a completed pass
+    //      earns no distance credit while carrying the same squares earns
+    //      full credit -- an anti-passing bias.
+    //   2. The emission is raw (Phi' - Phi), not beta*(gamma*Phi' - Phi), so
+    //      it is not exact PBRS at gamma != 1.
+    // Fixing 1 requires Phi total (no NaN) with a value for the inactive
+    // regime that charges rather than pays the drop; fixing 2 requires the
+    // env to know gamma, which it currently does not.
     float reward_dist_ball;
     float reward_dist_endzone;
     // Injury shaping (default 0 = off): per opponent removed to KO/CAS.

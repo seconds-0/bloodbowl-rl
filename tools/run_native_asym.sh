@@ -113,7 +113,7 @@ for a in "$@"; do
 done
 
 # ---- guard: one trainer per box ([b]racket so pgrep can't match itself) ----
-if pgrep -f 'puffer [t]rain' > /dev/null; then
+if pgrep -f '[p]uffer_cuda_runtime.py train|[p]uffer train' > /dev/null; then
   echo "a training run is already live on this box — kill it first:" >&2
   echo "  pkill -f 'puffer [t]rain'" >&2
   exit 1
