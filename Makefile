@@ -30,7 +30,7 @@ PUFFER_OBSERVATION_TESTBIN := $(BUILD)/puffer_observation_tests
 BBP_V4_WRITER_TESTBIN := $(BUILD)/bbp_v4_writer_tests
 PUFFER_TESTBINS := $(PUFFER_REWARD_TESTBIN) $(PUFFER_CONTACT_TESTBIN) $(PUFFER_STATE_BANK_TESTBIN) $(PUFFER_OBSERVATION_TESTBIN) $(BBP_V4_WRITER_TESTBIN)
 
-.PHONY: all test asan authored-identity-verify fuzz coverage coverage-run lockstep ballstats blockstats human-ball-advancement blockev-mc scenario-scan clean
+.PHONY: all test asan fuzz coverage coverage-run lockstep ballstats blockstats human-ball-advancement blockev-mc scenario-scan clean
 
 all: test
 
@@ -83,9 +83,6 @@ blockev-mc: $(OBJ)
 
 asan:
 	$(MAKE) BUILD=build/asan CFLAGS="-std=c11 $(SAN_FLAGS) -Wall -Wextra -Werror -Iengine/include" test
-
-authored-identity-verify:
-	python3 tools/authored_identity_compat/verify_candidate.py .
 
 # libFuzzer harness. Apple clang has no libFuzzer: use Homebrew LLVM
 # (brew install llvm) on macOS, or any stock clang on Linux (CI nightly).

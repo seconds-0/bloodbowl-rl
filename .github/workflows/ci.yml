@@ -35,14 +35,10 @@ jobs:
             tools.test_replay_corpus_audit \
             tools.test_reward_manifest \
             tools.test_run_reward_candidate_transfer \
-            tools.test_freeze_vacation_queue \
-            tools.test_freeze_vacation_overflow \
-            tools.test_run_frozen_reward_screen \
             tools.test_run_checkpoint_milestone_eval \
             tools.test_run_reward_learned_transfer \
-            tools.test_start_vacation_overflow \
-            tools.test_validate_primary_queue_completion \
-            tools.test_vacation_reward_gate
+            tools.test_live_integrity_guard \
+            tools.test_checkpoint_lineage
           for manifest in puffer/config/rewards/*.json; do
             python3 tools/reward_manifest.py "$manifest" --json >/dev/null
           done
@@ -55,7 +51,10 @@ jobs:
           PYTHONPATH=training python3 -m unittest \
             training.test_bc_pretrain_filter \
             training.test_bc_pretrain_streaming \
-            training.test_recurrent_cuda_qualification
+            training.test_recurrent_cuda_qualification \
+            training.test_exact_joint_actions \
+            training.test_recurrent_eval_state \
+            training.test_convert_checkpoint
       - name: Build + unit tests
         run: make test
       - name: ASan/UBSan tests

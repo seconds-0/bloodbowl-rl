@@ -490,17 +490,18 @@ class ExperimentContractTests(unittest.TestCase):
             screen,
         )
 
-    def test_vacation_screen_keeps_trainer_in_queue_process_group(self):
-        wrapper = (ROOT / "tools/run_frozen_reward_screen.py").read_text(
-            encoding="utf-8"
-        )
+    def test_queue_owned_screen_keeps_trainer_in_queue_process_group(self):
+        # A trainer that escapes the queue's process group survives the queue's
+        # guard cleanup and idle-bills the GPU, so the ARM_DETACH=0 chain stays
+        # under test. The run_frozen_reward_screen.py wrapper that used to carry
+        # the third assertion here existed only to feed the typed-literal queue
+        # a path it was forbidden to express directly, and went with it.
         screen = (ROOT / "tools/run_reward_screen.sh").read_text(
             encoding="utf-8"
         )
         arm = (ROOT / "tools/run_reward_ablation.sh").read_text(
             encoding="utf-8"
         )
-        self.assertIn('"ARM_DETACH": "0"', wrapper)
         self.assertIn('DETACH="$ARM_DETACH"', screen)
         self.assertIn('if [ "$DETACH" = "1" ]', arm)
         self.assertIn('else os.getpgrp()', screen)
