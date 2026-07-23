@@ -33,6 +33,73 @@ if [ $# -ne 0 ]; then
   exit 1
 fi
 
+# Backplay curriculum knobs. Every default is 0, which reproduces the previous
+# hard-coded flags byte for byte, so a non-ladder run is unchanged.
+#
+# These are validated HERE, before any CUDA/venv preflight, because each one has
+# a failure mode where the env silently ignores the setting and trains something
+# other than what the operator asked for -- and the counters stay clean while it
+# happens (bloodbowl.h:2150 increments demo_fallbacks only for a record that is
+# not a live decision state, never for a selector that found nothing).
+LADDER_RESET_PCT="${LADDER_RESET_PCT:-0}"
+LADDER_ENDZONE_MAXDIST="${LADDER_ENDZONE_MAXDIST:-0}"
+LADDER_PICKUP_MAXDIST="${LADDER_PICKUP_MAXDIST:-0}"
+LADDER_POSTKICK_MAXTURN="${LADDER_POSTKICK_MAXTURN:-0}"
+LADDER_PASS_MAXRANGE="${LADDER_PASS_MAXRANGE:-0}"
+
+case "$LADDER_RESET_PCT" in
+  0|0.0|1|1.0|0.[0-9]*) : ;;
+  *) echo "LADDER_RESET_PCT must be a fraction in [0,1], got '$LADDER_RESET_PCT'" >&2
+     exit 1 ;;
+esac
+for knob in LADDER_ENDZONE_MAXDIST LADDER_PICKUP_MAXDIST \
+            LADDER_POSTKICK_MAXTURN LADDER_PASS_MAXRANGE; do
+  eval "value=\$$knob"
+  case "$value" in
+    ''|*[!0-9]*) echo "$knob must be a non-negative integer, got '$value'" >&2
+                 exit 1 ;;
+  esac
+done
+
+# The env selects a curriculum with an if / else-if chain -- endzone, then
+# pickup, then postkick, then pass (bloodbowl.h ~2056-2130). Setting two means
+# the later one is silently never applied, so refuse instead of quietly training
+# the first.
+LADDER_SELECTORS=0
+for value in "$LADDER_ENDZONE_MAXDIST" "$LADDER_PICKUP_MAXDIST" \
+             "$LADDER_POSTKICK_MAXTURN" "$LADDER_PASS_MAXRANGE"; do
+  [ "$value" -gt 0 ] && LADDER_SELECTORS=$((LADDER_SELECTORS + 1))
+done
+if [ "$LADDER_SELECTORS" -gt 1 ]; then
+  echo "only one curriculum selector may be set: the env applies the first of" >&2
+  echo "endzone/pickup/postkick/pass and silently ignores the rest" >&2
+  exit 1
+fi
+
+case "$LADDER_RESET_PCT" in
+  0|0.0)
+    if [ "$LADDER_SELECTORS" -gt 0 ]; then
+      echo "a curriculum selector is set but LADDER_RESET_PCT is 0, so the env" >&2
+      echo "never draws a banked state and the selector is a no-op" >&2
+      exit 1
+    fi
+    LADDER_STATE_BANK_SHA256="unused"
+    ;;
+  *)
+    # Without a staged bank, bbe_state_bank_load finds nothing, bbe_state_bank_n
+    # stays 0, and the whole curriculum degrades to procgen kickoffs with no
+    # counter to show it. Bind the bank's identity into the run manifest so a
+    # ladder result can never be attributed to the wrong start-state corpus.
+    LADDER_STATE_BANK="$ROOT/vendor/PufferLib/resources/bloodbowl/state_bank.bbs"
+    [ -f "$LADDER_STATE_BANK" ] || {
+      echo "LADDER_RESET_PCT > 0 requires a staged state bank at" >&2
+      echo "  $LADDER_STATE_BANK" >&2
+      echo "without it the curriculum silently degrades to procgen kickoffs" >&2
+      exit 1; }
+    LADDER_STATE_BANK_SHA256="$(sha256sum "$LADDER_STATE_BANK" | awk '{print $1}')"
+    ;;
+esac
+
 : "${BOOTSTRAP_MODE:?BOOTSTRAP_MODE is required}"
 case "$BOOTSTRAP_MODE" in
   fresh-v5-qualification)
@@ -578,9 +645,11 @@ CMD=(env PUFFER_CUDA_RUNTIME_MANIFEST="$RUN_MANIFEST" \
   --vec.total-agents "$TOTAL_AGENTS" --vec.num-buffers "$NUM_BUFFERS" \
   --vec.num-threads "$NUM_THREADS" \
   "${REWARD_ARGS[@]}" \
-  --env.demo-reset-pct 0 --env.demo-endzone-maxdist 0 \
-  --env.demo-pickup-maxdist 0 --env.demo-postkick-maxturn 0 \
-  --env.demo-pass-maxrange 0 \
+  --env.demo-reset-pct "$LADDER_RESET_PCT" \
+  --env.demo-endzone-maxdist "$LADDER_ENDZONE_MAXDIST" \
+  --env.demo-pickup-maxdist "$LADDER_PICKUP_MAXDIST" \
+  --env.demo-postkick-maxturn "$LADDER_POSTKICK_MAXTURN" \
+  --env.demo-pass-maxrange "$LADDER_PASS_MAXRANGE" \
   --train.total-timesteps "$STEPS" --train.learning-rate "$LR" \
   --train.ent-coef "$ENT_COEF" --train.gamma "$GAMMA" \
   --train.gae-lambda "$GAE_LAMBDA" --train.horizon "$HORIZON" \
@@ -618,6 +687,12 @@ META_ARGS=(
   qualification_only "$QUALIFICATION_ONLY" observation_abi obs-v5 \
   observation_version 5 action_abi exact-joint-v1 \
   policy_hidden_size 512 policy_num_layers 3 policy_expansion_factor 1 \
+  ladder_reset_pct "$LADDER_RESET_PCT"
+  ladder_endzone_maxdist "$LADDER_ENDZONE_MAXDIST"
+  ladder_pickup_maxdist "$LADDER_PICKUP_MAXDIST"
+  ladder_postkick_maxturn "$LADDER_POSTKICK_MAXTURN"
+  ladder_pass_maxrange "$LADDER_PASS_MAXRANGE"
+  ladder_state_bank_sha256 "$LADDER_STATE_BANK_SHA256"
   rollout_quantum "$ROLLOUT_QUANTUM" reward_name "$REWARD_NAME"
   reward_sha256 "$REWARD_HASH" reward_manifest "$REWARD_MANIFEST"
   pool "$POOL" pool_identity_sha256 "$POOL_HASH"
