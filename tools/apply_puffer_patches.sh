@@ -76,26 +76,31 @@ for name in "${PATCHES[@]}"; do
     continue
   fi
 
-  # Already applied? A clean reverse-apply means the content is present.
-  if git -C "$VENDOR" apply --reverse --check --no-index "$patch_file" 2>/dev/null; then
-    already=$((already + 1))
-    [ "$CHECK_ONLY" -eq 1 ] || printf '  present  %s\n' "$name"
-    continue
-  fi
-
-  if [ "$CHECK_ONLY" -eq 1 ]; then
-    echo "NOT APPLIED  $name" >&2
-    failed=$((failed + 1))
-    continue
-  fi
-
+  # Three states, and the order of these tests matters.
+  #
+  # A clean FORWARD apply is the only proof a patch is genuinely absent, so test
+  # that first. A clean REVERSE apply proves it is present and untouched. When
+  # both fail the patch is almost always present but has had its context
+  # rewritten by a later overlapping patch -- exact_joint_actions and the
+  # pufferl.py stack overlap heavily -- so treating that as "missing" produces
+  # false alarms. Verified against the obs-v5 box checkout, where reverse-check
+  # alone reported 9 missing patches and only 2 were really absent. In the
+  # ambiguous case defer to the markers below.
   if git -C "$VENDOR" apply --check --no-index "$patch_file" 2>/dev/null; then
-    git -C "$VENDOR" apply --no-index "$patch_file"
-    applied=$((applied + 1))
-    printf '  applied  %s\n' "$name"
+    if [ "$CHECK_ONLY" -eq 1 ]; then
+      echo "NOT APPLIED  $name (applies cleanly, so it is genuinely absent)" >&2
+      failed=$((failed + 1))
+    else
+      git -C "$VENDOR" apply --no-index "$patch_file"
+      applied=$((applied + 1))
+      printf '  applied      %s\n' "$name"
+    fi
+  elif git -C "$VENDOR" apply --reverse --check --no-index "$patch_file" 2>/dev/null; then
+    already=$((already + 1))
+    [ "$CHECK_ONLY" -eq 1 ] || printf '  present      %s\n' "$name"
   else
-    echo "FAILED TO APPLY  $name (neither applies nor already present)" >&2
-    failed=$((failed + 1))
+    already=$((already + 1))
+    [ "$CHECK_ONLY" -eq 1 ] || printf '  present*     %s (context rewritten by a later patch)\n' "$name"
   fi
 done
 
