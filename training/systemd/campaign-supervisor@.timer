@@ -1,0 +1,16 @@
+[Unit]
+Description=Tick the Blood Bowl campaign supervisor (%i)
+
+[Timer]
+# Five minutes is chosen against what a tick costs, not what it gains: a tick is
+# a pgrep plus a few stat() calls, so the only real cost of a miss is up to five
+# minutes of idle GPU between stages. Persistent=true so a tick that was due
+# while the box was down fires once on boot rather than waiting a full interval.
+OnBootSec=2min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Persistent=true
+Unit=campaign-supervisor@%i.service
+
+[Install]
+WantedBy=timers.target
