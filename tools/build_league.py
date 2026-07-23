@@ -223,8 +223,22 @@ def main(argv=None):
               f"sha256 {s['sha256'][:12]}  <- {s['source']}")
     print(f"  {MANIFEST_NAME}  ({len(manifest['seeds'])} seeds, "
           f"{manifest['expected_bytes']} bytes each)")
+    # Emit the canonical pool identity the launcher will demand as
+    # EXPECTED_POOL_HASH. tools/run_reward_ablation.sh recomputes exactly this
+    # digest and refuses to launch on a mismatch, but nothing used to PRINT it,
+    # so the only ways to obtain it were to reimplement the definition by hand or
+    # to read it out of a failed launch's error message. Keep the two in step:
+    # sha256 over canonical JSON of [{bank, name, bytes, sha256}], sorted keys and
+    # no whitespace.
+    identity = [{'bank': s['bank'], 'name': s['name'],
+                 'bytes': s['bytes'], 'sha256': s['sha256']}
+                for s in manifest['seeds']]
+    pool_hash = hashlib.sha256(json.dumps(
+        identity, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+    print(f'  pool identity sha256: {pool_hash}')
     print('launch with: --selfplay.league-preseed ' + os.path.abspath(pool_dir)
           + f"  --vec.num-frozen-banks {len(manifest['seeds'])}")
+    print(f'             EXPECTED_POOL_HASH={pool_hash}')
     return 0
 
 
