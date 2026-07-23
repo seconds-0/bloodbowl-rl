@@ -1253,3 +1253,110 @@ BB_TEST(distance_legacy_terminal_composition_is_unchanged) {
     check_float(f.env.log.reward_component[BBE_REWARD_DISTANCE_ENDZONE], 0.0f);
     check_float(f.env.log.reward_terminal_suppressed_signed, -0.25f);
 }
+
+// --- BB2025 Stalling telemetry (bb_stall.h) ---------------------------------
+// The engine records stalls through a thread-local sink that c_step points at
+// the env being stepped; these tests prove the env half of that wiring — the
+// sink is attached during a real step, the counts land in the env's tally, and
+// bbe_finish_episode publishes them (and the T1-T6 rate) into the Log.
+
+// An eligible HOME carrier one dice-free square from the end zone on team turn
+// `turn`, with a spare team-mate so the turn stays open.
+static int build_stall_env(RewardFixture* f, int turn, const uint8_t* dice,
+                           int n_dice) {
+    setup_env_buffers(f);
+    Bloodbowl* env = &f->env;
+    bb_match* m = &env->match;
+    fx_match_midturn(m, BB_HOME, 0);
+    m->turn[BB_HOME] = (uint8_t)(turn - 1); // turn_start advances to `turn`
+    int carrier = fx_lineman(m, BB_HOME, 0, 24, 7);
+    fx_lineman(m, BB_HOME, 1, 3, 3);
+    fx_lineman(m, BB_AWAY, 0, 17, 9);
+    fx_ball_held(m, carrier);
+
+    bb_rng_script(&env->rng, dice, n_dice);
+    bb_advance(m, &env->rng);
+    bbe_refresh_legal(env);
+    env->prev_active_team = m->active_team;
+    env->pending_pickup_slot = -1;
+    env->pending_gfi_slot = -1;
+    env->pending_dodge_slot = -1;
+    env->possessor = BB_HOME;
+    env->pot_fetch_prev[0] = env->pot_fetch_prev[1] = NAN;
+    env->pot_carry_prev[0] = env->pot_carry_prev[1] = NAN;
+    env->score_prev[0] = env->score_start[0] = m->score[0];
+    env->score_prev[1] = env->score_start[1] = m->score[1];
+    bb_stall_reset(&env->ep_stall);
+    bb_stall_attach(0); // c_step must attach it itself
+    bbe_emit_all(env);
+    return carrier;
+}
+
+BB_TEST(puffer_stall_telemetry_reaches_the_log) {
+    RewardFixture f;
+    static const uint8_t dice[] = {1, 1, 1, 4}; // crowd acts, armour, bounce
+    int carrier = build_stall_env(&f, 1, dice, 4);
+
+    step_action(&f, (bb_action){BB_A_ACTIVATE, (uint8_t)carrier, 0, 0});
+    step_action(&f, (bb_action){BB_A_DECLARE, BB_ACT_MOVE, 0, 0});
+    step_action(&f, (bb_action){BB_A_END_ACTIVATION, 0, 0, 0});
+
+    // The rule fired...
+    BB_CHECK_EQ(f.env.match.players[carrier].stance, BB_STANCE_PRONE);
+    // ...and c_step's attach put the counts in THIS env.
+    BB_CHECK_EQ(f.env.ep_stall.rolls[BB_HOME][0], 1);
+    BB_CHECK_EQ(f.env.ep_stall.acted[BB_HOME][0], 1);
+    BB_CHECK_EQ(f.env.ep_stall.turnovers[BB_HOME][0], 1);
+    BB_CHECK_EQ(f.env.ep_stall.turn_ends[BB_HOME][0], 1);
+    BB_CHECK_EQ(bb_stall_sum(&f.env.ep_stall, BB_STALL_ROLLS, BB_AWAY, 1,
+                             BB_STALL_TURNS), 0);
+
+    bbe_finish_episode(&f.env);
+
+    check_float(f.env.log.stall_rolls, 1.0f);
+    check_float(f.env.log.stall_rolls_t0, 1.0f);
+    check_float(f.env.log.stall_rolls_t1, 0.0f);
+    check_float(f.env.log.stall_crowd_acted, 1.0f);
+    check_float(f.env.log.stall_turnovers, 1.0f);
+    check_float(f.env.log.stall_turnovers_t0, 1.0f);
+    check_float(f.env.log.stall_turnovers_t1, 0.0f);
+    check_float(f.env.log.stall_rolls_turn1_6, 1.0f);
+    check_float(f.env.log.stall_turnovers_turn1_6, 1.0f);
+    check_float(f.env.log.stall_turns_turn1_6, 1.0f);
+    check_float(f.env.log.stall_rate_turn1_6, 1.0f);   // 1 stall / 1 team turn
+    check_float(f.env.log.stall_rate_turn1_6_t0, 1.0f);
+    check_float(f.env.log.stall_rate_turn1_6_t1, 0.0f);
+    check_float(f.env.log.stall_rolls_by_turn[0], 1.0f);
+    for (int i = 1; i < BB_STALL_TURNS; i++) {
+        check_float(f.env.log.stall_rolls_by_turn[i], 0.0f);
+    }
+    // The episode tally is cleared for the next episode (finish resets).
+    BB_CHECK_EQ(bb_stall_sum(&f.env.ep_stall, BB_STALL_ROLLS, -1, 1,
+                             BB_STALL_TURNS), 0);
+}
+
+// A turn-7 stall is counted (the die is consumed) but must stay OUT of the
+// T1-T6 gate band and its rate.
+BB_TEST(puffer_stall_telemetry_keeps_late_turns_out_of_the_gate_band) {
+    RewardFixture f;
+    static const uint8_t dice[] = {6}; // cannot reach turn 7
+    int carrier = build_stall_env(&f, 7, dice, 1);
+    BB_CHECK_EQ(f.env.match.turn[BB_HOME], 7);
+
+    step_action(&f, (bb_action){BB_A_ACTIVATE, (uint8_t)carrier, 0, 0});
+    step_action(&f, (bb_action){BB_A_DECLARE, BB_ACT_MOVE, 0, 0});
+    step_action(&f, (bb_action){BB_A_END_ACTIVATION, 0, 0, 0});
+
+    BB_CHECK_EQ(f.env.match.players[carrier].stance, BB_STANCE_STANDING);
+    BB_CHECK_EQ(f.env.ep_stall.rolls[BB_HOME][6], 1);
+    BB_CHECK_EQ(f.env.ep_stall.acted[BB_HOME][6], 0);
+
+    bbe_finish_episode(&f.env);
+
+    check_float(f.env.log.stall_rolls, 1.0f);
+    check_float(f.env.log.stall_crowd_acted, 0.0f);
+    check_float(f.env.log.stall_turnovers, 0.0f);
+    check_float(f.env.log.stall_rolls_turn1_6, 0.0f);
+    check_float(f.env.log.stall_rate_turn1_6, 0.0f);
+    check_float(f.env.log.stall_rolls_by_turn[6], 1.0f);
+}
