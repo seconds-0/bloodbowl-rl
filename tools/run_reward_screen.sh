@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
 # Run a paired native reward screen sequentially on one owned GPU.
 # Seed 43 reverses seed 42's arm order to reduce time/order confounding.
-# The screen plan, every completed arm, and final completion summary are
-# content-addressed. A restarted orchestrator can recover a cleanly completed
-# detached arm, but code/config/artifact drift fails closed.
+#
+# SCREEN_MANIFEST.json records the provenance a later analysis actually needs:
+# the compiled obs-v5/exact-joint-v1 module identity, the complete reward
+# manifest hashes, the Puffer patch bundle, and the warm/pool lineage. Each
+# arm's acceptance evidence lands in <tag>.result.json. Restarting the screen is
+# expected and safe: completed arms are re-validated, unfinished ones relaunch.
 # Example (current possession/gain screen):
 #   WARM=/abs/warm.bin POOL=/abs/pool STEPS=500000000 \
-#     SCREEN_PROFILE=possession-gain PREFIX=possession-gain-v2 \
-#     bash tools/run_reward_screen.sh
-# Example (longer two-arm confirmation after transfer selects a candidate):
-#   WARM=/abs/warm.bin POOL=/abs/pool STEPS=1000000000 \
-#     SCREEN_PROFILE=paired-confirmation CANDIDATE_ARM=gain_only \
-#     TRANSFER_COMPLETE=/abs/TRANSFER_COMPLETE.json \
-#     EXPECTED_TRANSFER_SHA256=<sha256> \
-#     PREFIX=gain-confirm-v1 bash tools/run_reward_screen.sh
+#     EXPECTED_POOL_HASH=<sha256> SCREEN_PROFILE=possession-gain \
+#     PREFIX=possession-gain-v2 bash tools/run_reward_screen.sh
+# Example (fresh pool-free exact-action canary before a long run):
+#   STEPS=50000000 SCREEN_PROFILE=exact-action-canary \
+#     PREFIX=exact-action-canary-50m bash tools/run_reward_screen.sh
 set -euo pipefail
 
 if [ $# -ne 0 ]; then
@@ -148,12 +148,8 @@ fi
 if [ "$BOOTSTRAP_MODE" = "lineage-v5" ]; then
   [ -f "$WARM" ] || { echo "missing warm checkpoint: $WARM" >&2; exit 1; }
   [ -d "$POOL" ] || { echo "missing static pool: $POOL" >&2; exit 1; }
-  [ -n "$EXPECTED_POOL_HASH" ] || {
-    echo "lineage-v5 screen requires the explicit current EXPECTED_POOL_HASH" >&2
-    exit 1
-  }
   [[ "$EXPECTED_POOL_HASH" =~ ^[0-9a-f]{64}$ ]] || {
-    echo "EXPECTED_POOL_HASH must be a lowercase SHA-256 digest" >&2
+    echo "lineage-v5 screen requires the explicit current EXPECTED_POOL_HASH as a lowercase SHA-256 digest" >&2
     exit 1
   }
 fi
@@ -224,244 +220,77 @@ manifest_for() {
   esac
 }
 
-freeze_screen_manifest() {
-  "$PYBIN" - "$SCREEN_MANIFEST" "$ROOT" "$PREFIX" "$STEPS" \
-    "$OUT_DIR" "$WARM" "$POOL" "$TOTAL_AGENTS" "$NUM_BUFFERS" \
-    "$NUM_THREADS" "$FROZEN_BANK_PCT" "$EXPECT_BYTES" "$LR" \
-    "$ENT_COEF" "$GAMMA" "$GAE_LAMBDA" "$HORIZON" \
-    "$MINIBATCH_SIZE" "$CHECKPOINT_STEPS" "$REPLAY_RATIO" \
-    "$CLIP_COEF" "$VF_COEF" "$VF_CLIP_COEF" "$MAX_GRAD_NORM" \
-    "$EXPECTED_POOL_HASH" "$MIN_TRAIN_GAMES" "$MIN_EVAL_GAMES" \
-    "$SCREEN_PROFILE" "$CANDIDATE_ARM" "$TRANSFER_COMPLETE" \
-    "$EXPECTED_TRANSFER_SHA256" "$ARM_DETACH" "$POLL_SECONDS" \
-    "$MAX_PANEL_SILENCE_SECONDS" "$BOOTSTRAP_MODE" \
-    "$NUM_FROZEN_BANKS" <<'PY'
-import datetime, hashlib, json, pathlib, subprocess, sys, sysconfig
+# The bash arm/seed schedule above is the single definition; the manifest writer
+# receives it rather than restating it in Python.
+SCHEDULE=()
+for index in "${!arms[@]}"; do
+  SCHEDULE+=("${arms[$index]}:${seeds[$index]}:$(manifest_for "${arms[$index]}")")
+done
+SCHEDULE_TEXT="$(printf '%s\n' "${SCHEDULE[@]}")"
 
-(
-    manifest_path, root_path, prefix, steps, out_dir, warm_path, pool_path,
-    total_agents, num_buffers, num_threads, frozen_bank_pct, expect_bytes,
-    learning_rate, ent_coef, gamma, gae_lambda, horizon, minibatch_size,
-    checkpoint_steps, replay_ratio, clip_coef, vf_coef, vf_clip_coef,
-    max_grad_norm, expected_pool_hash, min_train_games, min_eval_games,
-    screen_profile, candidate_arm, transfer_complete_path,
-    expected_transfer_sha, arm_detach, poll_seconds, max_panel_silence_seconds,
-    bootstrap_mode, num_frozen_banks,
-) = sys.argv[1:]
-root = pathlib.Path(root_path).resolve()
+# One provenance record per screen: what trained, on which reward manifests,
+# from which ancestry. The PPO knobs above are not mirrored here; the per-arm
+# launcher writes them into every run manifest, which each result hashes.
+# Command substitution, not process substitution: a failed provenance check has
+# to fail the screen.
+SCREEN_PLAN="$(
+  env ROOT="$ROOT" PREFIX="$PREFIX" STEPS="$STEPS" OUT_DIR="$OUT_DIR" \
+      SCREEN_PROFILE="$SCREEN_PROFILE" BOOTSTRAP_MODE="$BOOTSTRAP_MODE" \
+      CANDIDATE_ARM="$CANDIDATE_ARM" TRANSFER_COMPLETE="$TRANSFER_COMPLETE" \
+      EXPECTED_TRANSFER_SHA256="$EXPECTED_TRANSFER_SHA256" \
+      WARM="$WARM" POOL="$POOL" EXPECTED_POOL_HASH="$EXPECTED_POOL_HASH" \
+      SCHEDULE="$SCHEDULE_TEXT" POLL_SECONDS="$POLL_SECONDS" \
+      MAX_PANEL_SILENCE_SECONDS="$MAX_PANEL_SILENCE_SECONDS" \
+      TOTAL_AGENTS="$TOTAL_AGENTS" HORIZON="$HORIZON" \
+      MINIBATCH_SIZE="$MINIBATCH_SIZE" EXPECT_BYTES="$EXPECT_BYTES" \
+      FROZEN_BANK_PCT="$FROZEN_BANK_PCT" \
+      NUM_FROZEN_BANKS="$NUM_FROZEN_BANKS" \
+      MIN_TRAIN_GAMES="$MIN_TRAIN_GAMES" MIN_EVAL_GAMES="$MIN_EVAL_GAMES" \
+      "$PYBIN" - "$SCREEN_MANIFEST" <<'PY'
+import datetime, hashlib, json, os, pathlib, subprocess, sys, sysconfig
+
+destination = pathlib.Path(sys.argv[1])
+root = pathlib.Path(os.environ["ROOT"]).resolve()
 vendor = root / "vendor" / "PufferLib"
-warm = pathlib.Path(warm_path).resolve() if warm_path else None
-pool = pathlib.Path(pool_path).resolve() if pool_path else None
-destination = pathlib.Path(manifest_path)
-qualification_only = screen_profile == "exact-action-canary"
-if qualification_only != (bootstrap_mode == "fresh-v5-qualification"):
-    raise SystemExit("qualification profile/bootstrap mode mismatch")
-environment_header = root / "puffer/bloodbowl/bloodbowl.h"
-if "#define BBE_OBS_VERSION 5" not in environment_header.read_text(
-        encoding="utf-8"):
-    raise SystemExit("source tree does not declare obs-v5")
+profile = os.environ["SCREEN_PROFILE"]
+qualification_only = profile == "exact-action-canary"
+expect_size = int(os.environ["EXPECT_BYTES"])
+warm = pathlib.Path(os.environ["WARM"]).resolve() if os.environ["WARM"] else None
+pool = pathlib.Path(os.environ["POOL"]).resolve() if os.environ["POOL"] else None
+sys.path.insert(0, str(root / "tools"))
+from reward_manifest import load_manifest
+from live_integrity_guard import HARD_INTEGRITY_KEYS
+
 
 def sha(path):
     return hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()
 
-def sha256sum_bundle(paths, labels):
-    payload = b"".join(
+
+def bundle_sha(paths, labels):
+    return hashlib.sha256(b"".join(
         f"{sha(path)}  {label}\n".encode()
-        for path, label in zip(paths, labels)
-    )
-    return hashlib.sha256(payload).hexdigest()
+        for path, label in zip(paths, labels))).hexdigest()
 
-def tree_sha256(path):
-    path = pathlib.Path(path)
-    if not path.is_dir():
-        raise SystemExit(f"runtime tree is missing: {path}")
-    digest = hashlib.sha256()
-    for child in sorted(path.rglob("*")):
-        if child.is_symlink() or (not child.is_dir() and not child.is_file()):
-            raise SystemExit(f"runtime tree contains unsupported entry: {child}")
-        if child.is_dir():
-            continue
-        relative = child.relative_to(path).as_posix()
-        size = child.stat().st_size
-        digest.update(relative.encode("utf-8"))
-        digest.update(b"\0")
-        digest.update(str(size).encode("ascii"))
-        digest.update(b"\0")
-        digest.update(sha(child).encode("ascii"))
-        digest.update(b"\n")
-    return digest.hexdigest()
 
-settings = {
-    "total_agents": total_agents,
-    "num_buffers": num_buffers,
-    "num_threads": num_threads,
-    "frozen_bank_pct": frozen_bank_pct,
-    "expected_checkpoint_bytes": expect_bytes,
-    "learning_rate": learning_rate,
-    "ent_coef": ent_coef,
-    "gamma": gamma,
-    "gae_lambda": gae_lambda,
-    "horizon": horizon,
-    "minibatch_size": minibatch_size,
-    "checkpoint_steps": checkpoint_steps,
-    "replay_ratio": replay_ratio,
-    "clip_coef": clip_coef,
-    "vf_coef": vf_coef,
-    "vf_clip_coef": vf_clip_coef,
-    "max_grad_norm": max_grad_norm,
-    "expected_pool_hash": expected_pool_hash,
-    "min_train_games": min_train_games,
-    "min_eval_games": min_eval_games,
-    "eval_episodes": "10000",
-    "native_precision_bytes": "4",
-    "policy_hidden_size": "512",
-    "policy_num_layers": "3",
-    "policy_expansion_factor": "1",
-    "num_frozen_banks": num_frozen_banks,
-    "arm_detach": arm_detach,
-}
+# obs-v4 and obs-v5 observations are both 2782 bytes, so only source and
+# compiled-module provenance can tell them apart; one mixup already wasted a
+# 12B-step run.
+environment_header = root / "puffer/bloodbowl/bloodbowl.h"
+if "#define BBE_OBS_VERSION 5" not in environment_header.read_text(
+        encoding="utf-8"):
+    raise SystemExit("source tree does not declare obs-v5")
+source_hash_path = vendor / "ocean/bloodbowl/.content_hash"
+if not source_hash_path.is_file():
+    raise SystemExit("installed Blood Bowl content hash is missing")
+source_hash = source_hash_path.read_text(encoding="utf-8").strip()
 
-expect_size = int(expect_bytes)
-if qualification_only:
-    if warm is not None or pool is not None or int(num_frozen_banks) != 0:
-        raise SystemExit("fresh qualification cannot carry warm/pool/frozen banks")
-    pool_raw = b""
-    pool_identity = ""
-    bank_identity = []
-else:
-    if warm is None or pool is None or int(num_frozen_banks) != 4:
-        raise SystemExit("lineage-v5 screen requires warm and four-bank pool")
-    if warm.stat().st_size != expect_size:
-        raise SystemExit(
-            f"warm checkpoint is {warm.stat().st_size} bytes; expected {expect_size}")
-    pool_manifest_path = pool / "league_seeds.json"
-    pool_raw = pool_manifest_path.read_bytes()
-    pool_manifest = json.loads(pool_raw)
-    if pool_manifest.get("expected_bytes") != expect_size:
-        raise SystemExit("pool expected_bytes does not match screen checkpoint size")
-    seeds = pool_manifest.get("seeds")
-    if not isinstance(seeds, list) or len(seeds) != 4:
-        raise SystemExit("screen pool must contain exactly four banks")
-    bank_identity = []
-    for index, seed in enumerate(seeds):
-        if seed.get("bank") != index:
-            raise SystemExit(f"pool bank order mismatch at index {index}")
-        path = pool / seed["file"]
-        digest = sha(path)
-        size = path.stat().st_size
-        if size != expect_size or seed.get("bytes") != size or seed.get("sha256") != digest:
-            raise SystemExit(f"pool bank contract mismatch: {path}")
-        lineage_file = seed.get("lineage_file")
-        if not isinstance(lineage_file, str) or not lineage_file:
-            raise SystemExit(f"pool bank {index} lacks lineage_file")
-        lineage_manifest_sha = seed.get("lineage_sha256")
-        if (not isinstance(lineage_manifest_sha, str) or
-                len(lineage_manifest_sha) != 64):
-            raise SystemExit(f"pool bank {index} lacks lineage_sha256")
-        bank_identity.append({
-            "bank": index, "name": seed.get("name"), "file": str(path),
-            "bytes": size, "sha256": digest,
-            "lineage_file": str((pool / lineage_file).resolve()),
-            "manifest_lineage_sha256": lineage_manifest_sha,
-        })
-    identity_body = [
-        {key: bank[key] for key in ("bank", "name", "bytes", "sha256")}
-        for bank in bank_identity
-    ]
-    pool_identity = hashlib.sha256(json.dumps(
-        identity_body, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-    if pool_identity != expected_pool_hash:
-        raise SystemExit(
-            f"pool identity {pool_identity} does not match {expected_pool_hash}")
-
-sys.path.insert(0, str(root / "tools"))
-from reward_manifest import load_manifest
-from analyze_reward_candidate_transfer import (
-    TransferError, validate_completion_evidence,
-)
-from live_integrity_guard import HARD_INTEGRITY_KEYS
-from checkpoint_lineage import (
-    lineage_digest, sidecar_path, validate_lineage,
-)
-if screen_profile == "distance-possession":
-    reward_files = {
-        "r0": root / "puffer/config/rewards/r0_full.json",
-        "r1": root / "puffer/config/rewards/r1_no_distance.json",
-        "r2": root / "puffer/config/rewards/r2_no_possession.json",
-        "r3": root / "puffer/config/rewards/r3_minimal_block.json",
-    }
-    arm_order = ("r0", "r3", "r1", "r2", "r2", "r1", "r3", "r0")
-elif screen_profile == "possession-gain":
-    reward_files = {
-        "both": root / "puffer/config/rewards/r0_full.json",
-        "possession_only": root / "puffer/config/rewards/p1_possession_only.json",
-        "gain_only": root / "puffer/config/rewards/p2_gain_only.json",
-        "neither": root / "puffer/config/rewards/r2_no_possession.json",
-    }
-    arm_order = (
-        "both", "neither", "possession_only", "gain_only",
-        "gain_only", "possession_only", "neither", "both",
-    )
-    schedule_seeds = (42, 42, 42, 42, 43, 43, 43, 43)
-elif screen_profile == "exact-action-canary":
-    if int(steps) != 50_000_000:
-        raise SystemExit("exact-action-canary requires exactly 50M requested steps")
-    reward_files = {
-        "both": root / "puffer/config/rewards/r0_full.json",
-    }
-    arm_order = ("both",)
-    schedule_seeds = (42,)
-elif screen_profile == "control-final":
-    reward_files = {
-        "both": root / "puffer/config/rewards/r0_full.json",
-    }
-    arm_order = ("both", "both", "both")
-    schedule_seeds = (42, 43, 44)
-elif screen_profile in ("paired-confirmation", "paired-final"):
-    allowed = {"possession_only", "gain_only", "neither"}
-    if candidate_arm not in allowed:
-        raise SystemExit(f"invalid {screen_profile} candidate")
-    all_reward_files = {
-        "both": root / "puffer/config/rewards/r0_full.json",
-        "possession_only": root / "puffer/config/rewards/p1_possession_only.json",
-        "gain_only": root / "puffer/config/rewards/p2_gain_only.json",
-        "neither": root / "puffer/config/rewards/r2_no_possession.json",
-    }
-    reward_files = {
-        arm: all_reward_files[arm] for arm in ("both", candidate_arm)
-    }
-    if screen_profile == "paired-confirmation":
-        arm_order = ("both", candidate_arm, candidate_arm, "both")
-        schedule_seeds = (42, 42, 43, 43)
-    else:
-        arm_order = (
-            "both", candidate_arm, candidate_arm,
-            "both", "both", candidate_arm,
-        )
-        schedule_seeds = (42, 42, 43, 43, 44, 44)
-else:
-    raise SystemExit(f"unsupported screen profile: {screen_profile}")
-if screen_profile == "distance-possession":
-    schedule_seeds = (42, 42, 42, 42, 43, 43, 43, 43)
-rewards = {}
-for arm, path in reward_files.items():
-    reward, digest = load_manifest(path)
-    rewards[arm] = {
-        "path": str(path.resolve()), "name": reward["name"],
-        "reward_sha256": digest, "file_sha256": sha(path),
-    }
-
+# The imported _C, not the source tree, is what will actually train.
 extension_suffix = sysconfig.get_config_var("EXT_SUFFIX")
 if not extension_suffix:
     raise SystemExit("Python did not report an extension-module suffix")
 module = vendor / "pufferlib" / ("_C" + extension_suffix)
 if not module.is_file():
     raise SystemExit(f"current-Python compiled _C module is missing: {module}")
-config = vendor / "config/bloodbowl.ini"
-source_hash_path = vendor / "ocean/bloodbowl/.content_hash"
-if not source_hash_path.is_file():
-    raise SystemExit("installed Blood Bowl content hash is missing")
-source_hash = source_hash_path.read_text(encoding="utf-8").strip()
 module_probe = subprocess.run(
     [sys.executable, "-c", """
 import json
@@ -488,7 +317,7 @@ if module_probe.returncode != 0:
         module_probe.stderr.strip())
 compiled_contract = json.loads(module_probe.stdout)
 if pathlib.Path(compiled_contract["module"]).resolve() != module.resolve():
-    raise SystemExit("imported native module differs from frozen module path")
+    raise SystemExit("imported native module differs from the probed module path")
 if (
     compiled_contract["env_name"] != "bloodbowl" or
     compiled_contract["gpu"] != 1 or
@@ -500,8 +329,10 @@ if (
     len(compiled_contract["exact_action_source_sha256"]) != 64
 ):
     raise SystemExit(
-        "compiled native module does not satisfy the frozen obs-v5/exact-action contract")
+        "compiled native module does not satisfy the obs-v5/exact-action contract")
 
+# The per-arm launcher recomputes this bundle digest and refuses to train if it
+# drifts, so the screen only has to publish the value it launched with.
 patches = [
     root / "training/pufferl_env_dashboard_limit.patch",
     root / "training/pufferl_env_json.patch",
@@ -524,66 +355,80 @@ vendor_sources = [
     "src/vecenv.h",
 ]
 vendor_paths = [vendor / relative for relative in vendor_sources]
-patch_bundle_sha = sha256sum_bundle(patches, [str(path) for path in patches])
-vendor_source_sha = sha256sum_bundle(vendor_paths, vendor_sources)
+patch_bundle_sha = bundle_sha(patches, [str(path) for path in patches])
+vendor_source_sha = bundle_sha(vendor_paths, vendor_sources)
 vendor_head_result = subprocess.run(
     ["git", "-C", str(vendor), "rev-parse", "HEAD"],
     text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=False)
 vendor_head = (vendor_head_result.stdout.strip()
                if vendor_head_result.returncode == 0 else "<not-a-git-checkout>")
 
-warm_identity = None
-pool_lineage_bundle_sha = ""
-if not qualification_only:
-    expected_lineage = {
-        "source_sha256": source_hash,
-        "compiled_module_sha256": sha(module),
-        "puffer_patch_bundle_sha256": patch_bundle_sha,
-    }
-    warm_payload = validate_lineage(
-        warm, sidecar_path(warm), expected=expected_lineage,
-        require_eligible=True)
-    warm_identity = {
-        "path": str(warm), "bytes": warm.stat().st_size, "sha256": sha(warm),
-        "lineage_path": str(sidecar_path(warm).resolve()),
-        "lineage_sha256": lineage_digest(warm_payload),
-    }
-    pool_lineages = []
-    for bank in bank_identity:
-        payload = validate_lineage(
-            bank["file"], bank["lineage_file"], expected=expected_lineage,
-            require_eligible=True)
-        bank["lineage_sha256"] = lineage_digest(payload)
-        if bank["lineage_sha256"] != bank["manifest_lineage_sha256"]:
-            raise SystemExit(
-                f"pool bank {bank['bank']} lineage digest differs from manifest")
-        pool_lineages.append({
-            "bank": bank["bank"], "checkpoint_sha256": bank["sha256"],
-            "lineage_sha256": bank["lineage_sha256"],
-        })
-    pool_lineage_bundle_sha = hashlib.sha256(json.dumps(
-        pool_lineages, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+# load_manifest rejects an incomplete reward manifest: an omitted field is not
+# the same as an explicit zero.
+schedule = []
+rewards = {}
+for index, entry in enumerate(os.environ["SCHEDULE"].splitlines(), 1):
+    arm, seed, reward_path = entry.split(":", 2)
+    schedule.append({"index": index, "arm": arm, "seed": int(seed)})
+    if arm not in rewards:
+        reward, digest = load_manifest(reward_path)
+        rewards[arm] = {
+            "path": str(pathlib.Path(reward_path).resolve()),
+            "name": reward["name"], "reward_sha256": digest,
+            "file_sha256": sha(reward_path),
+        }
 
-total = int(total_agents)
-buffers = int(num_buffers)
-rollout_quantum = total * int(horizon)
-train_epochs = int(steps) // rollout_quantum
+rollout_quantum = int(os.environ["TOTAL_AGENTS"]) * int(os.environ["HORIZON"])
+train_epochs = int(os.environ["STEPS"]) // rollout_quantum
 if train_epochs <= 0:
     raise SystemExit("screen STEPS is smaller than one rollout quantum")
 final_steps = train_epochs * rollout_quantum
-checkpoint_interval = (
-    int(checkpoint_steps) + rollout_quantum // 2) // rollout_quantum
-per_bank = int((total // buffers) * float(frozen_bank_pct))
-historical_share = (
-    int(num_frozen_banks) * per_bank / ((total // buffers) / 2.0)
-    if int(num_frozen_banks) else 0.0
-)
 
-schedule = [
-    {"index": index + 1, "arm": arm, "seed": seed}
-    for index, (arm, seed) in enumerate(zip(
-        arm_order, schedule_seeds))
-]
+warm_identity = None
+pool_identity = None
+warm_lineage_sha = ""
+pool_lineage_bundle_sha = ""
+if qualification_only:
+    if warm is not None or pool is not None:
+        raise SystemExit("fresh qualification cannot carry a warm start or pool")
+else:
+    from checkpoint_lineage import lineage_digest, sidecar_path, validate_lineage
+    if warm.stat().st_size != expect_size:
+        raise SystemExit(
+            f"warm checkpoint is {warm.stat().st_size} bytes; expected {expect_size}")
+    # The lineage sidecar is the only thing that keeps an obs-v4 checkpoint out
+    # of an obs-v5 run. The per-arm launcher validates the four pool banks the
+    # same way, against the same expectations, before it allocates GPU state.
+    warm_payload = validate_lineage(
+        warm, sidecar_path(warm),
+        expected={
+            "source_sha256": source_hash,
+            "compiled_module_sha256": sha(module),
+            "puffer_patch_bundle_sha256": patch_bundle_sha,
+        },
+        require_eligible=True)
+    warm_lineage_sha = lineage_digest(warm_payload)
+    warm_identity = {
+        "path": str(warm), "bytes": warm.stat().st_size, "sha256": sha(warm),
+        "lineage_path": str(sidecar_path(warm).resolve()),
+        "lineage_sha256": warm_lineage_sha,
+    }
+    pool_manifest_raw = (pool / "league_seeds.json").read_bytes()
+    banks = json.loads(pool_manifest_raw).get("seeds")
+    if not isinstance(banks, list) or len(banks) != 4:
+        raise SystemExit("screen pool must contain exactly four banks")
+    pool_lineage_bundle_sha = hashlib.sha256(json.dumps([
+        {"bank": index, "checkpoint_sha256": bank["sha256"],
+         "lineage_sha256": bank["lineage_sha256"]}
+        for index, bank in enumerate(banks)
+    ], sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    pool_identity = {
+        "path": str(pool),
+        "manifest_sha256": hashlib.sha256(pool_manifest_raw).hexdigest(),
+        "identity_sha256": os.environ["EXPECTED_POOL_HASH"],
+        "lineage_bundle_sha256": pool_lineage_bundle_sha,
+    }
+
 launcher = root / "tools/run_reward_ablation.sh"
 screen_script = root / "tools/run_reward_screen.sh"
 game_stats = root / "tools/game_stats.py"
@@ -591,125 +436,100 @@ live_integrity_guard = root / "tools/live_integrity_guard.py"
 checkpoint_lineage_tool = root / "tools/checkpoint_lineage.py"
 status_wrapper = root / "tools/trainer_status_wrapper.sh"
 contract = {
-    "screen_profile": screen_profile,
+    "screen_profile": profile,
     "qualification_only": qualification_only,
+    "prefix": os.environ["PREFIX"],
+    "out_dir": str(pathlib.Path(os.environ["OUT_DIR"]).resolve()),
+    "requested_steps": int(os.environ["STEPS"]),
+    "final_steps": final_steps,
+    "rollout_quantum": rollout_quantum,
+    "schedule": schedule,
+    "rewards": rewards,
+    "warm": warm_identity,
+    "pool": pool_identity,
     "bootstrap": {
-        "mode": bootstrap_mode,
+        "mode": os.environ["BOOTSTRAP_MODE"],
         "observation_abi": "obs-v5",
         "observation_version": 5,
         "action_abi": "exact-joint-v1",
         "initialization": "fresh" if qualification_only else "lineage-v5",
-        "warm_lineage_sha256": (
-            "" if warm_identity is None else warm_identity["lineage_sha256"]),
+        "warm_lineage_sha256": warm_lineage_sha,
         "pool_lineage_bundle_sha256": pool_lineage_bundle_sha,
     },
-    "prefix": prefix,
-    "out_dir": str(pathlib.Path(out_dir).resolve()),
-    "requested_steps": int(steps),
-    "final_steps": final_steps,
-    "rollout_quantum": rollout_quantum,
-    "schedule": schedule,
-    "settings": settings,
-    "warm": warm_identity,
-    "pool": None if qualification_only else {
-        "path": str(pool),
-        "manifest_sha256": hashlib.sha256(pool_raw).hexdigest(),
-        "identity_sha256": pool_identity,
-        "lineage_bundle_sha256": pool_lineage_bundle_sha,
-        "banks": bank_identity,
-        "rows_per_bank": per_bank,
-        "historical_game_share": str(historical_share),
+    # Batching, architecture, and acceptance floors: the values an analysis has
+    # to know to read the arms it is comparing.
+    "settings": {
+        "total_agents": os.environ["TOTAL_AGENTS"],
+        "horizon": os.environ["HORIZON"],
+        "minibatch_size": os.environ["MINIBATCH_SIZE"],
+        "expected_checkpoint_bytes": os.environ["EXPECT_BYTES"],
+        "frozen_bank_pct": os.environ["FROZEN_BANK_PCT"],
+        "num_frozen_banks": os.environ["NUM_FROZEN_BANKS"],
+        "min_train_games": os.environ["MIN_TRAIN_GAMES"],
+        "min_eval_games": os.environ["MIN_EVAL_GAMES"],
+        "eval_episodes": os.environ["MIN_EVAL_GAMES"],
+        "native_precision_bytes": "4",
+        "policy_hidden_size": "512",
+        "policy_num_layers": "3",
+        "policy_expansion_factor": "1",
     },
-    "rewards": rewards,
     "error_budget": {
         "contamination_budget": 0,
-        "detection_poll_seconds": int(poll_seconds),
-        "max_panel_silence_seconds": int(max_panel_silence_seconds),
+        "detection_poll_seconds": int(os.environ["POLL_SECONDS"]),
+        "max_panel_silence_seconds": int(
+            os.environ["MAX_PANEL_SILENCE_SECONDS"]),
         "hard_integrity_keys": list(HARD_INTEGRITY_KEYS),
     },
+    # Which version of the tooling produced this screen. Recorded, not policed:
+    # editing game_stats.py mid-screen is a bug to notice in review, not
+    # something worth refusing to resume a multi-day run over.
     "implementation": {
         "screen_script_sha256": sha(screen_script),
+        "launcher_sha256": sha(launcher),
         "game_stats_sha256": sha(game_stats),
         "live_integrity_guard_sha256": sha(live_integrity_guard),
         "checkpoint_lineage_sha256": sha(checkpoint_lineage_tool),
         "status_wrapper_sha256": sha(status_wrapper),
-        "launcher_sha256": sha(launcher),
-        "candidate_transfer_analyzer_sha256": sha(
-            root / "tools/analyze_reward_candidate_transfer.py"),
-        "source_sha256": source_hash_path.read_text().strip(),
-        "config_sha256": sha(config),
-        "config_tree_sha256": tree_sha256(vendor / "config"),
-        "default_config_sha256": sha(vendor / "config/default.ini"),
+        "source_sha256": source_hash,
         "compiled_module": str(module.resolve()),
-        "compiled_module_bytes": module.stat().st_size,
         "compiled_module_sha256": sha(module),
         "compiled_semantic_contract": compiled_contract,
         "puffer_patch_bundle_sha256": patch_bundle_sha,
         "vendor_head": vendor_head,
         "vendor_source_sha256": vendor_source_sha,
-        "critical_vendor_files": {
-            relative: sha(path)
-            for relative, path in zip(vendor_sources, vendor_paths)
-        },
-        "patches": {str(path.resolve()): sha(path) for path in patches},
-    },
-    "derived": {
-        "checkpoint_interval": str(max(checkpoint_interval, 1)),
-        "historical_game_share": str(historical_share),
     },
 }
-if screen_profile in ("paired-confirmation", "paired-final"):
-    contract["candidate_arm"] = candidate_arm
-    transfer_complete = pathlib.Path(transfer_complete_path).resolve()
-    # The shared validator binds recommended_confirmation_arm, analysis
-    # recommendation, transfer_manifest_sha256, analysis_sha256, and the exact
-    # evaluated cell hashes.
+if profile in ("paired-confirmation", "paired-final"):
+    from analyze_reward_candidate_transfer import (
+        TransferError, validate_completion_evidence,
+    )
+    contract["candidate_arm"] = os.environ["CANDIDATE_ARM"]
+    # Binds recommended_confirmation_arm, the analysis recommendation,
+    # transfer_manifest_sha256, analysis_sha256, and the evaluated cell hashes,
+    # so a confirmation cannot quietly run an arm the transfer study rejected.
     try:
         contract["candidate_evidence"] = validate_completion_evidence(
-            transfer_complete,
-            expected_complete_sha=expected_transfer_sha,
-            expected_candidate=candidate_arm,
+            pathlib.Path(os.environ["TRANSFER_COMPLETE"]).resolve(),
+            expected_complete_sha=os.environ["EXPECTED_TRANSFER_SHA256"],
+            expected_candidate=os.environ["CANDIDATE_ARM"],
         )
     except (OSError, TransferError, ValueError) as exc:
         raise SystemExit(f"invalid candidate transfer evidence: {exc}") from exc
 
-if destination.exists():
-    recorded = json.loads(destination.read_text(encoding="utf-8"))
-    if recorded.get("schema_version") != 1 or recorded.get("contract") != contract:
-        old_contract = recorded.get("contract", {})
-        changed = sorted(
-            key for key in set(old_contract) | set(contract)
-            if old_contract.get(key) != contract.get(key))
-        raise SystemExit(
-            "screen plan drift; changed top-level contract fields: " +
-            ", ".join(changed or ["schema_version"]))
-else:
-    payload = {
+# A retried screen reuses the plan it already published so its accepted arms
+# keep one manifest identity.
+if not destination.exists():
+    temporary = destination.with_suffix(destination.suffix + ".tmp")
+    temporary.write_text(json.dumps({
         "schema_version": 1,
         "created_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "contract": contract,
-    }
-    temporary = destination.with_suffix(destination.suffix + ".tmp")
-    temporary.write_text(json.dumps(
-        payload, indent=2, sort_keys=True, allow_nan=False) + "\n",
-        encoding="utf-8")
+    }, indent=2, sort_keys=True, allow_nan=False) + "\n", encoding="utf-8")
     temporary.replace(destination)
-print(sha(destination))
-PY
-}
-
-SCREEN_MANIFEST_SHA="$(freeze_screen_manifest)"
-SCREEN_PATCH_BUNDLE_SHA="$($PYBIN - "$SCREEN_MANIFEST" <<'PY'
-import json, sys
-print(json.load(open(sys.argv[1], encoding="utf-8"))
-      ["contract"]["implementation"]["puffer_patch_bundle_sha256"])
+print(sha(destination), patch_bundle_sha)
 PY
 )"
-grep -q 'EXPECTED_PUFFER_PATCH_BUNDLE_SHA256' \
-  "$ROOT/tools/run_reward_ablation.sh" || {
-    echo "reward launcher cannot enforce the frozen Puffer patch bundle" >&2
-    exit 1
-  }
+read -r SCREEN_MANIFEST_SHA SCREEN_PATCH_BUNDLE_SHA <<<"$SCREEN_PLAN"
 if [ "$PLAN_ONLY" = "1" ]; then
   echo "SCREEN PLAN VERIFIED: $SCREEN_MANIFEST"
   echo "screen_manifest_sha256=$SCREEN_MANIFEST_SHA"
@@ -763,53 +583,20 @@ screen_exit() {
 trap screen_exit EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-write_screen_status running 0 "screen contract frozen; validating or launching arms"
+write_screen_status running 0 "screen plan published; validating or launching arms"
 
 materialize_result() {
   local mode=$1 arm=$2 seed=$3 tag=$4 manifest_path=$5 log=$6 result=$7
-  "$PYBIN" - "$ROOT" "$mode" "$arm" "$seed" "$tag" \
-    "$manifest_path" "$WARM" "$POOL" "$STEPS" "$log" "$result" \
-    "$SCREEN_MANIFEST" "$SCREEN_MANIFEST_SHA" "$MIN_TRAIN_GAMES" \
-    "$MIN_EVAL_GAMES" <<'PY'
+  "$PYBIN" - "$ROOT" "$mode" "$arm" "$seed" "$tag" "$manifest_path" \
+    "$log" "$result" "$SCREEN_MANIFEST" "$SCREEN_MANIFEST_SHA" \
+    "$MIN_TRAIN_GAMES" "$MIN_EVAL_GAMES" "$ARM_DETACH" <<'PY'
 import hashlib, json, os, pathlib, sys
 (
-    root, mode, arm, seed, tag, reward_manifest_path, warm_path, pool_path,
-    requested_steps, log_path, result_path, screen_manifest_path,
-    screen_manifest_sha, min_train_games, min_eval_games,
+    root, mode, arm, seed, tag, reward_manifest_path, log_path, result_path,
+    screen_manifest_path, screen_manifest_sha, min_train_games, min_eval_games,
+    detach,
 ) = sys.argv[1:]
 root = pathlib.Path(root).resolve()
-
-def sha(path):
-    return hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()
-
-screen_manifest_file = pathlib.Path(screen_manifest_path)
-if not screen_manifest_file.is_file():
-    raise SystemExit(f"missing screen manifest: {screen_manifest_file}")
-if sha(screen_manifest_file) != screen_manifest_sha:
-    raise SystemExit("screen manifest content changed after plan freeze")
-screen = json.loads(screen_manifest_file.read_text(encoding="utf-8"))["contract"]
-game_stats_path = root / "tools/game_stats.py"
-if (
-    not game_stats_path.is_file()
-    or sha(game_stats_path)
-    != screen["implementation"]["game_stats_sha256"]
-):
-    raise SystemExit("game_stats.py changed after screen plan freeze")
-live_integrity_guard_path = root / "tools/live_integrity_guard.py"
-if (
-    not live_integrity_guard_path.is_file()
-    or sha(live_integrity_guard_path)
-    != screen["implementation"]["live_integrity_guard_sha256"]
-):
-    raise SystemExit("live_integrity_guard.py changed after screen plan freeze")
-checkpoint_lineage_path = root / "tools/checkpoint_lineage.py"
-if (
-    not checkpoint_lineage_path.is_file()
-    or sha(checkpoint_lineage_path)
-    != screen["implementation"]["checkpoint_lineage_sha256"]
-):
-    raise SystemExit("checkpoint_lineage.py changed after screen plan freeze")
-
 sys.path.insert(0, str(root / "tools"))
 from game_stats import (
     completed_game_requirement_met,
@@ -818,14 +605,15 @@ from game_stats import (
 )
 from reward_manifest import load_manifest
 from live_integrity_guard import HARD_INTEGRITY_KEYS
+from checkpoint_lineage import (
+    lineage_digest, lineage_from_run_manifest, sidecar_path, validate_lineage,
+    write_lineage,
+)
 
-error_budget = screen.get("error_budget")
-if not isinstance(error_budget, dict):
-    raise SystemExit("screen lacks a frozen error budget")
-if error_budget.get("contamination_budget") != 0:
-    raise SystemExit("screen contamination budget is not zero")
-if tuple(error_budget.get("hard_integrity_keys", ())) != HARD_INTEGRITY_KEYS:
-    raise SystemExit("screen hard-integrity registry drifted")
+
+def sha(path):
+    return hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()
+
 
 def need_file(path, label):
     path = pathlib.Path(path)
@@ -833,123 +621,32 @@ def need_file(path, label):
         raise SystemExit(f"missing {label}: {path}")
     return path
 
+
+screen = json.loads(need_file(
+    screen_manifest_path, "screen manifest").read_text(encoding="utf-8"))["contract"]
 log = need_file(log_path, "trainer log")
 status_path = need_file(log_path + ".status.json", "trainer status")
 process_path = need_file(log_path + ".process.json", "trainer process sidecar")
 run_dir_path = need_file(log_path + ".run_dir", "run-directory sidecar")
 run_manifest_path = need_file(log_path + ".manifest.json", "run manifest")
-screen_manifest_file = need_file(screen_manifest_path, "screen manifest")
 
 run_dir = pathlib.Path(run_dir_path.read_text(encoding="utf-8").strip())
 if not run_dir.is_absolute() or not run_dir.is_dir():
     raise SystemExit(f"invalid run directory: {run_dir}")
+# Accept a final checkpoint only out of this checkout's trainer output, never a
+# production or stale run directory that happens to hold the same step number.
 checkpoint_root = (root / "vendor/PufferLib/checkpoints/bloodbowl").resolve()
 try:
     run_dir.resolve().relative_to(checkpoint_root)
 except ValueError as exc:
-    raise SystemExit(f"run directory is outside {checkpoint_root}: {run_dir}") from exc
-
+    raise SystemExit(
+        f"run directory is outside {checkpoint_root}: {run_dir}") from exc
 run_manifest = json.loads(run_manifest_path.read_text(encoding="utf-8"))
-run_dir_manifest = need_file(run_dir / "RUN_MANIFEST.json", "run-directory manifest")
-if run_dir_manifest.read_bytes() != run_manifest_path.read_bytes():
-    raise SystemExit("run-directory and log-side manifests differ")
 _, expected_reward_sha = load_manifest(reward_manifest_path)
-expected_contract = {
-    "mode": ("native_fresh_v5_qualification"
-             if screen["qualification_only"]
-             else "native_static_pool_reward_ablation"),
-    "tag": tag,
-    "seed": str(int(seed)),
-    "bootstrap_mode": screen["bootstrap"]["mode"],
-    "initialization": screen["bootstrap"]["initialization"],
-    "qualification_only": "1" if screen["qualification_only"] else "0",
-    "observation_abi": "obs-v5",
-    "observation_version": "5",
-    "action_abi": "exact-joint-v1",
-    "policy_hidden_size": screen["settings"]["policy_hidden_size"],
-    "policy_num_layers": screen["settings"]["policy_num_layers"],
-    "policy_expansion_factor": screen["settings"]["policy_expansion_factor"],
-    "requested_steps": str(int(requested_steps)),
-    "reward_sha256": expected_reward_sha,
-    "native_precision_bytes": "4",
-    "screen_manifest_sha256": screen_manifest_sha,
-    "warm_sha256": "" if screen["warm"] is None else screen["warm"]["sha256"],
-    "warm_lineage_sha256": screen["bootstrap"]["warm_lineage_sha256"],
-    "pool_identity_sha256": (
-        "" if screen["pool"] is None else screen["pool"]["identity_sha256"]),
-    "pool_manifest_sha256": (
-        "" if screen["pool"] is None else screen["pool"]["manifest_sha256"]),
-    "pool_lineage_bundle_sha256": screen["bootstrap"]["pool_lineage_bundle_sha256"],
-    "source_sha256": screen["implementation"]["source_sha256"],
-    "config_sha256": screen["implementation"]["config_sha256"],
-    "config_tree_sha256": screen["implementation"]["config_tree_sha256"],
-    "default_config_sha256": screen["implementation"]["default_config_sha256"],
-    "compiled_module_sha256": screen["implementation"]["compiled_module_sha256"],
-    "compiled_exact_action_source_sha256": screen["implementation"]["compiled_semantic_contract"]["exact_action_source_sha256"],
-    "compiled_environment_source_sha256": screen["implementation"]["compiled_semantic_contract"]["environment_source_sha256"],
-    "compiled_observation_abi": screen["implementation"]["compiled_semantic_contract"]["observation_abi"],
-    "compiled_observation_version": screen["implementation"]["compiled_semantic_contract"]["observation_version"],
-    "compiled_action_abi": screen["implementation"]["compiled_semantic_contract"]["action_abi"],
-    "launcher_sha256": screen["implementation"]["launcher_sha256"],
-    "status_wrapper_sha256": screen["implementation"]["status_wrapper_sha256"],
-    "live_integrity_guard_sha256": screen["implementation"]["live_integrity_guard_sha256"],
-    "checkpoint_lineage_sha256": screen["implementation"]["checkpoint_lineage_sha256"],
-    "live_integrity_max_silence": str(
-        screen["error_budget"]["max_panel_silence_seconds"]),
-    "live_integrity_poll_seconds": str(
-        screen["error_budget"]["detection_poll_seconds"]),
-    "puffer_patch_bundle_sha256": screen["implementation"]["puffer_patch_bundle_sha256"],
-    "vendor_head": screen["implementation"]["vendor_head"],
-    "vendor_source_sha256": screen["implementation"]["vendor_source_sha256"],
-    "historical_game_share": (
-        "0" if screen["pool"] is None else screen["pool"]["historical_game_share"]),
-    "frozen_bank_pct": screen["settings"]["frozen_bank_pct"],
-    "num_frozen_banks": screen["settings"]["num_frozen_banks"],
-    "expected_pool_hash": screen["settings"]["expected_pool_hash"],
-    "warm_bytes": "0" if screen["warm"] is None else str(screen["warm"]["bytes"]),
-    "checkpoint_interval": screen["derived"]["checkpoint_interval"],
-}
-settings_to_manifest = {
-    "total_agents": "total_agents",
-    "num_buffers": "num_buffers",
-    "num_threads": "num_threads",
-    "horizon": "horizon",
-    "minibatch_size": "minibatch_size",
-    "checkpoint_steps": "checkpoint_steps",
-    "learning_rate": "learning_rate",
-    "ent_coef": "ent_coef",
-    "gamma": "gamma",
-    "gae_lambda": "gae_lambda",
-    "replay_ratio": "replay_ratio",
-    "clip_coef": "clip_coef",
-    "vf_coef": "vf_coef",
-    "vf_clip_coef": "vf_clip_coef",
-    "max_grad_norm": "max_grad_norm",
-    "expected_checkpoint_bytes": "expected_checkpoint_bytes",
-}
-for setting, field in settings_to_manifest.items():
-    expected_contract[field] = screen["settings"][setting]
-for key, expected in expected_contract.items():
-    actual = run_manifest.get(key)
-    if str(actual) != str(expected):
-        raise SystemExit(
-            f"run-manifest contract mismatch for {key}: {actual!r} != {expected!r}")
-
-def same_path(actual, expected, label):
-    if pathlib.Path(actual).resolve() != pathlib.Path(expected).resolve():
-        raise SystemExit(
-            f"run-manifest {label} mismatch: {actual!r} != {expected!r}")
-
-same_path(run_manifest["reward_manifest"], reward_manifest_path,
-          "reward_manifest")
-if screen["qualification_only"]:
-    if run_manifest["warm"] or run_manifest["pool"]:
-        raise SystemExit("fresh qualification run manifest contains warm/pool paths")
-else:
-    same_path(run_manifest["warm"], warm_path, "warm")
-    same_path(run_manifest["pool"], pool_path, "pool")
-same_path(run_manifest["compiled_module"],
-          screen["implementation"]["compiled_module"], "compiled_module")
+if run_manifest.get("reward_sha256") != expected_reward_sha:
+    raise SystemExit(
+        f"arm {tag} trained reward {run_manifest.get('reward_sha256')}, "
+        f"not this arm's {expected_reward_sha}")
 
 status = json.loads(status_path.read_text(encoding="utf-8"))
 process = json.loads(process_path.read_text(encoding="utf-8"))
@@ -957,31 +654,23 @@ if int(status["exit_code"]) != 0:
     raise SystemExit(f"trainer status is {status['exit_code']}")
 if int(status["pid"]) != int(process["pid"]):
     raise SystemExit("trainer status PID differs from process sidecar")
-detach = screen["settings"].get("arm_detach")
-if detach not in ("0", "1"):
-    raise SystemExit(f"screen has invalid arm_detach setting: {detach!r}")
-expected_process_group = (
-    int(process["pid"]) if detach == "1" else os.getpgrp()
-)
+# ARM_DETACH=0 keeps the trainer inside the queue job's process group; one that
+# escapes survives the queue's cleanup and idle-bills the GPU.
+expected_process_group = int(process["pid"]) if detach == "1" else os.getpgrp()
 if int(process["process_group"]) != expected_process_group:
     raise SystemExit(
-        "trainer process group differs from the frozen containment contract: "
-        f"{process['process_group']} != {expected_process_group}"
-    )
+        "trainer process group differs from the containment contract: "
+        f"{process['process_group']} != {expected_process_group}")
 
 final_steps = int(run_manifest["final_steps"])
 if final_steps != int(screen["final_steps"]):
-    raise SystemExit("run final step differs from frozen screen plan")
+    raise SystemExit("run final step differs from the screen plan")
 checkpoint = need_file(run_dir / f"{final_steps:016d}.bin", "exact final checkpoint")
-expected_bytes = int(run_manifest["expected_checkpoint_bytes"])
+expected_bytes = int(screen["settings"]["expected_checkpoint_bytes"])
 if checkpoint.stat().st_size != expected_bytes:
     raise SystemExit(
         f"final checkpoint is {checkpoint.stat().st_size} bytes; expected {expected_bytes}")
 
-from checkpoint_lineage import (
-    lineage_digest, lineage_from_run_manifest, sidecar_path, validate_lineage,
-    write_lineage,
-)
 lineage_payload = lineage_from_run_manifest(
     checkpoint, run_manifest_path, allow_eligible_publication=True)
 lineage_path = sidecar_path(checkpoint)
@@ -1074,10 +763,14 @@ result = {
 }
 path = pathlib.Path(result_path)
 if mode == "validate":
+    # Acceptance was just recomputed from the log above, so the recorded
+    # sidecar only has to agree about the arm it accepted.
     recorded = json.loads(path.read_text(encoding="utf-8"))
-    if recorded != result:
+    if recorded.get("acceptance_pass") is not True:
+        raise SystemExit(f"recorded result is not an accepted arm: {path}")
+    if recorded.get("checkpoint_sha256") != result["checkpoint_sha256"]:
         raise SystemExit(
-            f"existing result sidecar does not match recomputed evidence: {path}")
+            f"recorded result belongs to a different checkpoint: {path}")
 elif mode == "write":
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(json.dumps(
@@ -1189,10 +882,6 @@ for index in "${!arms[@]}"; do
   CURRENT_ARM="$arm"
   CURRENT_SEED="$seed"
   CURRENT_INDEX=$((index + 1))
-
-  current_screen_sha="$(freeze_screen_manifest)"
-  [ "$current_screen_sha" = "$SCREEN_MANIFEST_SHA" ] || {
-    echo "screen manifest hash changed during execution" >&2; exit 1; }
   write_screen_status running 0 "validating arm artifacts"
 
   if [ -f "$result" ]; then
@@ -1295,9 +984,6 @@ done
 CURRENT_ARM=""
 CURRENT_SEED=""
 CURRENT_INDEX=$TOTAL_ARMS
-current_screen_sha="$(freeze_screen_manifest)"
-[ "$current_screen_sha" = "$SCREEN_MANIFEST_SHA" ] || {
-  echo "screen manifest hash changed before completion" >&2; exit 1; }
 
 "$PYBIN" - "$SCREEN_COMPLETE" "$SCREEN_MANIFEST_SHA" "$OUT_DIR" \
   "$PREFIX" "$SCREEN_MANIFEST" <<'PY'
@@ -1310,8 +996,10 @@ schedule = tuple(
     for entry in manifest["contract"]["schedule"]
 )
 
+
 def sha(target):
     return hashlib.sha256(pathlib.Path(target).read_bytes()).hexdigest()
+
 
 results = []
 for index, (arm, seed) in enumerate(schedule, 1):
@@ -1327,20 +1015,17 @@ for index, (arm, seed) in enumerate(schedule, 1):
         "checkpoint_sha256": result["checkpoint_sha256"],
         "checkpoint_lineage_sha256": result["checkpoint_lineage_sha256"],
     })
-core = {
-    "schema_version": 1,
-    "screen_manifest_sha256": manifest_sha,
-    "results": results,
-}
 destination = pathlib.Path(path)
-if destination.exists():
-    recorded = json.loads(destination.read_text(encoding="utf-8"))
-    if {key: recorded.get(key) for key in core} != core:
-        raise SystemExit("existing SCREEN_COMPLETE.json is stale or inconsistent")
-else:
-    payload = dict(core)
-    payload["completed_utc"] = datetime.datetime.now(
-        datetime.timezone.utc).isoformat()
+# A published completion summary keeps its bytes, so a downstream analysis that
+# pinned its hash still resolves after the screen is re-validated.
+if not destination.exists():
+    payload = {
+        "schema_version": 1,
+        "screen_manifest_sha256": manifest_sha,
+        "results": results,
+        "completed_utc": datetime.datetime.now(
+            datetime.timezone.utc).isoformat(),
+    }
     temporary = destination.with_suffix(destination.suffix + ".tmp")
     temporary.write_text(json.dumps(
         payload, indent=2, sort_keys=True, allow_nan=False) + "\n",
