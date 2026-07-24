@@ -163,21 +163,23 @@ def validate_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
     # potential. Both channels are priced per square. The 20M R0 preflight
     # empirically clipped the historical .05/.20 recipe in exactly these
     # long-jump-sized increments, so reject any coefficient whose channel can
-    # exceed PPO's clamp even before another term co-fires.
+    # cross the whole objective budget on a single move.
     #
     # D234 keeps this per-channel bound at 1.0 even though the trainer clamp
-    # moved. It is not a clamp-fitting rule: it caps how much of the total
-    # reward a single scaffold channel may be worth over a full-pitch move, and
-    # relaxing it would let distance shaping outweigh the match objective.
+    # moved to 8. It was never really a clamp-fitting rule: it caps how much of
+    # the total reward a single scaffold channel may be worth over a full-pitch
+    # move, and relaxing it would let distance shaping outweigh the match
+    # objective outright. The clamp-fitting job now belongs to the derived
+    # envelope check above.
     fetch_bound = fetch_reach
     if fetch_bound > 1.0 + 1e-9:
         raise ValueError(
-            "full-pitch fetch potential can exceed trainer clamp: "
+            "full-pitch fetch potential can outweigh the match objective: "
             f"25 * abs(reward_dist_ball) = {fetch_bound}")
     carry_bound = carry_reach
     if carry_bound > 1.0 + 1e-9:
         raise ValueError(
-            "full-pitch carry potential can exceed trainer clamp: "
+            "full-pitch carry potential can outweigh the match objective: "
             f"25 * abs(reward_dist_endzone) = {carry_bound}")
 
     if (reward["reward_carrier_threat"] != 0.0 and
