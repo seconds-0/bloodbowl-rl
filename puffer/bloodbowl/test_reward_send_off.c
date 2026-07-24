@@ -1441,3 +1441,147 @@ BB_TEST(distance_pbrs_natural_end_zeroes_phi_before_the_payback) {
     check_float(bbe_potential(env->reward_dist_endzone, bbe_dist_carry(&env->match, BB_HOME)), 0.0f);
     BB_CHECK_EQ(bbe_dist_carry(&env->match, BB_HOME), -1);
 }
+
+// ---------------------------------------------------------------------------
+// The PBRS terminal payback must fit INSIDE PPO's [-1,1] clamp.
+//
+// D226 made the distance channels exact discounted PBRS, so a closed cycle sums
+// to (gamma-1)*sum(Phi) <= 0 and cannot be farmed. That only holds if the
+// terminal repayment actually lands. PBRS needs Phi(terminal) = 0, so a
+// terminal emits -Phi(s_T-1) in ONE shot, whereas the matching +Phi increments
+// were earned a square at a time and are individually far too small to clip.
+// Clamp the one-shot repayment and the agent keeps shaping it owed: the
+// telescoping breaks in its favour, on exactly the behaviour being taught.
+//
+// reward_manifest.py already bounds each piece SEPARATELY -- 25*k_fetch <= 1,
+// 25*k_carry <= 1, abs(td)+abs(win) <= 1 -- and s0_both sits at exactly 1.0 on
+// two of the three. Nothing bounded them landing on the SAME agent-step, which
+// is what a scoring terminal does.
+//
+// This drives a REAL touchdown through c_step rather than hand-injecting a
+// component. The 8-arm decomposition screen missed this defect entirely
+// because tds was 0.000000 in all eight arms, so no fixture ever scored.
+// ---------------------------------------------------------------------------
+
+// A HOME carrier one square from the end zone at (24,7), with the AWAY player
+// far enough away not to project a tackle zone (an adjacent defender turns the
+// scoring step into a dodge and never reaches the end zone). Scoring on the
+// final outstanding turn of half 2 ends the match in the SAME c_step that emits
+// the touchdown, so the TD and the terminal payback share one agent-step.
+static int build_scoring_terminal_env(RewardFixture* f, float k_fetch,
+                                      float k_carry, int home_score,
+                                      int away_score) {
+    setup_env_buffers(f);
+    Bloodbowl* env = &f->env;
+    env->reward_configured = 1;
+    env->reward_dist_ball = k_fetch;
+    env->reward_dist_endzone = k_carry;
+    env->reward_dist_pbrs_gamma = 0.995f;
+    env->reward_td = 0.4f;
+    env->reward_win = 0.6f;
+    env->reward_draw = 0.0f;
+
+    fx_match_midturn(&env->match, BB_HOME, 0);
+    int mover = fx_lineman(&env->match, BB_HOME, 0, 24, 7);
+    fx_lineman(&env->match, BB_AWAY, 0, 23, 12);
+    fx_ball_held(&env->match, mover);
+
+    bb_advance(&env->match, &env->rng);
+    bbe_refresh_legal(env);
+    env->prev_active_team = env->match.active_team;
+    env->pending_pickup_slot = -1;
+    env->pending_gfi_slot = -1;
+    env->pending_dodge_slot = -1;
+    env->possessor = BB_HOME;
+    env->pot_fetch_prev[0] = env->pot_fetch_prev[1] = NAN;
+    env->pot_carry_prev[0] = env->pot_carry_prev[1] = NAN;
+
+    // This already-open HOME turn is the final outstanding turn of half 2.
+    env->match.half = 2;
+    env->match.turn[BB_HOME] = 8;
+    env->match.turn[BB_AWAY] = 8;
+    env->match.score[BB_HOME] = (uint8_t)home_score;
+    env->match.score[BB_AWAY] = (uint8_t)away_score;
+    env->score_prev[0] = env->score_start[0] = home_score;
+    env->score_prev[1] = env->score_start[1] = away_score;
+    bbe_emit_all(env);
+    return mover;
+}
+
+// Drive the scoring step. Returns HOME's terminal reward; reports the potential
+// that was outstanding at s_T-1 and the episode distance-channel total.
+static float run_scoring_terminal(RewardFixture* f, float k_fetch, float k_carry,
+                                  int home_score, int away_score,
+                                  float* phi_carry_prev, float* dist_total) {
+    int mover = build_scoring_terminal_env(f, k_fetch, k_carry,
+                                           home_score, away_score);
+    step_action(f, (bb_action){BB_A_ACTIVATE, (uint8_t)mover, 0, 0});
+    // Phi(s_T-1) as the emission block left it, before the scoring step.
+    if (phi_carry_prev) *phi_carry_prev = f->env.pot_carry_prev[BB_HOME];
+    step_action(f, (bb_action){BB_A_DECLARE, BB_ACT_MOVE, 0, 0});
+    step_action(f, (bb_action){BB_A_STEP, 0, 25, 7});
+
+    // The touchdown really happened and it really ended the episode.
+    BB_CHECK(f->terminals[BB_HOME] == 1.0f);
+    if (dist_total) {
+        *dist_total = f->env.log.reward_component[BBE_REWARD_DISTANCE_BALL]
+                    + f->env.log.reward_component[BBE_REWARD_DISTANCE_ENDZONE];
+    }
+    return f->rewards[BB_HOME];
+}
+
+BB_TEST(distance_pbrs_scoring_terminal_stays_inside_the_clamp) {
+    // A team that scores but still LOSES is the binding case, and it is
+    // reachable: a consolation touchdown on the final turn. That agent takes
+    // +reward_td, -reward_win AND the full carry payback on one step.
+    //
+    // The winner and the drawing scorer are NOT binding (+0.4+0.6-Phi and
+    // +0.4+0.0-Phi are comfortably inside the clamp), which is precisely why
+    // this needed a scoring fixture with a losing scorer to surface at all.
+    const int HOME_SCORE = 1, AWAY_SCORE = 3;  // 1-3 -> 2-3: scores, still loses
+
+    // --- OLD s0_both coefficients: the defect. --------------------------
+    // Phi_carry(s_T-1) = 0.04 * (25 - 1) = 0.96 (a carrier can never be AT the
+    // end zone while holding -- entering it scores -- so distance 1 is the
+    // maximum reachable potential). Terminal = 0.4 - 0.6 - 0.96 = -1.16.
+    RewardFixture old_f;
+    float old_phi = 0.0f, old_dist = 0.0f;
+    float old_terminal = run_scoring_terminal(&old_f, 0.02f, 0.04f,
+                                              HOME_SCORE, AWAY_SCORE,
+                                              &old_phi, &old_dist);
+    check_float(old_phi, 0.96f);
+    check_float(old_terminal, -1.16f);
+    // THE DEFECT: the emitted terminal is outside the clamp, so PPO truncates
+    // the repayment while every +Phi increment on the way up was kept in full.
+    BB_CHECK(fabsf(old_terminal) > 1.0f);
+    // And the env's own clip telemetry sees it, on the TERMINAL sample only --
+    // the same signature the live runs showed (terminal clips, zero
+    // non-terminal clips).
+    check_float(old_f.env.log.reward_clipped_samples, 1.0f);
+    check_float(old_f.env.log.reward_clip_terminal_samples, 1.0f);
+    check_float(old_f.env.log.reward_clip_nonterminal_samples, 0.0f);
+
+    // --- NEW s0_both_clampsafe coefficients: the fix. -------------------
+    // Phi_carry(s_T-1) = 0.025 * 24 = 0.60. Terminal = 0.4 - 0.6 - 0.60 = -0.80.
+    RewardFixture new_f;
+    float new_phi = 0.0f, new_dist = 0.0f;
+    float new_terminal = run_scoring_terminal(&new_f, 0.015f, 0.025f,
+                                              HOME_SCORE, AWAY_SCORE,
+                                              &new_phi, &new_dist);
+    check_float(new_phi, 0.60f);
+    check_float(new_terminal, -0.80f);
+    // THE FIX: the whole payback is emitted, unclamped.
+    BB_CHECK(fabsf(new_terminal) < 1.0f);
+    check_float(new_f.env.log.reward_clipped_samples, 0.0f);
+    check_float(new_f.env.log.reward_clip_terminal_samples, 0.0f);
+    check_float(new_f.env.log.reward_clip_nonterminal_samples, 0.0f);
+
+    // D226's guarantee survives the fix: with Phi >= 0, gamma <= 1 and
+    // Phi(terminal) = 0, an episode's distance-channel total must be
+    // (gamma-1)*sum(Phi_intermediate) - Phi(s_0) <= 0. A NON-POSITIVE total is
+    // necessary for the shaping to be a potential at all.
+    BB_CHECK(new_dist <= 0.0f);
+    BB_CHECK(old_dist <= 0.0f);
+    // The fix shrinks the debt but must not stop charging it.
+    BB_CHECK(new_dist < 0.0f);
+}
