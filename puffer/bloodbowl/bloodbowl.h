@@ -450,22 +450,29 @@ typedef struct {
     // runs once tds/match wakes up; NOT a permanent reward (see
     // docs/reward-audit-decision-time.md doctrine vs scaffolding).
     //
-    // NOT CURRENTLY POTENTIAL-BASED, despite what this comment used to claim.
-    // Two defects, both at the emission site below (search pot_carry_prev):
-    //   1. Each potential is NAN whenever its regime is inactive, the emission
-    //      is skipped when either side is NaN, and prev is then overwritten
-    //      with NAN. So on any possession gap the baseline silently
-    //      RE-ANCHORS wherever possession resumes: advances are paid, drops
-    //      across the gap are never charged, and it does not telescope. A
-    //      gain/advance/lose/regain/advance cycle banks reward for zero net
-    //      field progress. BB_BALL_IN_AIR is such a gap, so a completed pass
-    //      earns no distance credit while carrying the same squares earns
-    //      full credit -- an anti-passing bias.
-    //   2. The emission is raw (Phi' - Phi), not beta*(gamma*Phi' - Phi), so
-    //      it is not exact PBRS at gamma != 1.
-    // Fixing 1 requires Phi total (no NaN) with a value for the inactive
-    // regime that charges rather than pays the drop; fixing 2 requires the
-    // env to know gamma, which it currently does not.
+    // Potential-based ONLY when reward_dist_pbrs_gamma > 0 (D226). The two
+    // defects this comment used to describe as unfixed are both fixed on that
+    // path, and both deliberately retained on the legacy gamma == 0 path so
+    // historical runs stay bit-identical:
+    //   1. WAS: each potential went NaN whenever its regime was inactive, the
+    //      emission was skipped when either side was NaN, and prev was then
+    //      overwritten with NaN, so the baseline silently RE-ANCHORED on every
+    //      possession gap -- advances paid, drops across the gap never charged.
+    //      NOW: Phi is total and >= 0 (bbe_potential), inactive reads as 0, so
+    //      a drop across a gap is charged and the sum telescopes.
+    //   2. WAS: the emission was raw (Phi' - Phi), not exact PBRS.
+    //      NOW: gam*Phi' - Phi on every transition, with the terminal emitting
+    //      -Phi(s_T-1) so a closed cycle sums to (gam-1)*sum(Phi) <= 0.
+    // One claim in the old text was simply WRONG and is not merely outdated: it
+    // blamed the anti-passing bias on BB_BALL_IN_AIR being a possession gap. A
+    // pass never enters that state. BB_BALL_IN_AIR is set at exactly one site,
+    // the kickoff scatter (engine/src/proc_match.c:664), where it IS observable
+    // at a decision because kickoff_event pauses for High Kick. So the
+    // BB_BALL_IN_AIR limbo case in bbe_update_ball_possession covers High Kick
+    // and nothing else, and it does NOT shield a pass in flight.
+    // The real anti-passing tax is D230's, still open: a pass with two or more
+    // interception candidates books a phantom loss-plus-gain of net -0.01 per
+    // completed pass. Do not attribute that to this channel.
     float reward_dist_ball;
     float reward_dist_endzone;
     // Exact potential-based form for the two distance channels.
