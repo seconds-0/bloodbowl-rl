@@ -44,7 +44,7 @@ static int byte_diff_count(const uint8_t* a, const uint8_t* b, size_t n) {
 }
 
 BB_TEST(observation_block_faces_are_public_at_reroll_and_choice_windows) {
-    BB_CHECK_EQ(BBE_OBS_VERSION, 5);
+    BB_CHECK_EQ(BBE_OBS_VERSION, 6);
     for (int phase = 1; phase <= 2; phase++) {
         ObservationFixture f;
         observation_fixture_init(&f);
