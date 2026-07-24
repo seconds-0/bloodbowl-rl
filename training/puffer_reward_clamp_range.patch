@@ -1,0 +1,48 @@
+diff --git a/pufferlib/torch_pufferl.py b/pufferlib/torch_pufferl.py
+--- a/pufferlib/torch_pufferl.py
++++ b/pufferlib/torch_pufferl.py
+@@ -546,7 +546,20 @@ class PuffeRL:
+                    if self.masks is not None else None)
+         val = self.values.T.contiguous()
+         lp = self.logprobs.T.contiguous()
+-        rew = self.rewards.T.contiguous().clamp(-1, 1)
++        # LOCAL PATCH (bloodbowl-rl, D234): this bound was -1, 1, which
++        # truncated legitimate emissions. A conceding loser's terminal stack
++        # is -reward_td - reward_win = -1.0 exactly, and the exact-PBRS
++        # terminal payback -Phi(s_T-1) lands on that same emission, so |raw|
++        # crossed the bound. Truncating the shaped SUM voids Ng-Harada-Russell
++        # policy invariance: the proof substitutes R' = R + F, and clip(R + F)
++        # does not decompose as R + (gamma*Phi' - Phi) for any potential. The
++        # leak is one-sided -- only the loss-side payback is destroyed -- so
++        # the agent banks the increments earned advancing the ball and repays
++        # none. This clamp is now a NaN/pathology guard only; the tight
++        # instrument is the env's derived clip threshold
++        # (bbe_reward_clip_threshold, ocean/bloodbowl/bloodbowl.h), which the
++        # env asserts at init to sit inside this range.
++        rew = self.rewards.T.contiguous().clamp(-8, 8)
+         ter = self.terminals.T.contiguous()
+         # LOCAL PATCH (bloodbowl-rl): asymmetric — train on learner rows only.
+         if self.learner_rows is not None:
+diff --git a/src/pufferlib.cu b/src/pufferlib.cu
+--- a/src/pufferlib.cu
++++ b/src/pufferlib.cu
+@@ -1529,9 +1529,17 @@ void train_impl(PuffeRL& pufferl) {
+             rollouts.action_mask.data, src.action_mask.data, T, B, mask_size);
+     }
+ 
+-    // We hard-clamp rewards to -1, 1. Our envs are mostly designed to respect this range
++    // LOCAL PATCH (bloodbowl-rl, D234): this bound was -1, 1, which truncated
++    // legitimate Blood Bowl emissions. A conceding loser's terminal stack is
++    // exactly -1.0 and the exact-PBRS terminal payback -Phi(s_T-1) lands on
++    // that same emission, so |raw| crossed the bound. Truncating the shaped
++    // SUM voids Ng-Harada-Russell policy invariance, and one-sidedly: only the
++    // loss-side payback is destroyed. The clamp is now a NaN/pathology guard
++    // only. The tight instrument is the env's derived clip threshold
++    // (bbe_reward_clip_threshold, ocean/bloodbowl/bloodbowl.h), which the env
++    // asserts at init to sit inside this range.
+     clamp_precision_kernel<<<grid_size(numel(rollouts.rewards.shape)), BLOCK_SIZE, 0, train_stream>>>(
+-        rollouts.rewards.data, -1.0f, 1.0f, numel(rollouts.rewards.shape));
++        rollouts.rewards.data, -8.0f, 8.0f, numel(rollouts.rewards.shape));
+ 
+     // Set importance weights to 1.0
+     fill_precision_kernel<<<grid_size(numel(rollouts.ratio.shape)), BLOCK_SIZE, 0, train_stream>>>(

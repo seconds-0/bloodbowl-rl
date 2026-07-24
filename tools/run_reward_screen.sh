@@ -435,6 +435,15 @@ patches = [
     root / "training/puffer_recurrent_eval_state.patch",
     root / "training/puffer_frozen_prio_mask.patch",
     root / "training/puffer_recurrent_cuda_qualification.patch",
+    # D234. Load-bearing that this is IN the bundle, not merely applied: it
+    # edits pufferlib/torch_pufferl.py, which is pure Python and therefore does
+    # not change compiled_module_sha256. Without this entry a post-patch run
+    # could warm-start a pre-patch checkpoint and pass lineage eligibility
+    # clean, because vendor_source_sha256 is recorded but never validated
+    # (checkpoint_lineage.SHA256_KEYS gates only three digests). Appended at
+    # the END: bundle_sha is order-sensitive and run_reward_ablation.sh must
+    # recompute the identical digest.
+    root / "training/puffer_reward_clamp_range.patch",
 ]
 vendor_sources = [
     "pufferlib/__init__.py", "pufferlib/pufferl.py",

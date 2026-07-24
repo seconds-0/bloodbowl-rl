@@ -161,6 +161,23 @@ if [ "$MODE" = "check" ]; then
             exit 1
         fi
     done
+    # D234: BOTH backends, checked separately, and ordered LAST among the
+    # marker checks -- the earlier ones carry message-ordering contracts
+    # that training/test_recurrent_cuda_qualification.py asserts against a
+    # partial fixture tree. A tree with only one of these
+    # trains one path on truncated rewards, and the vendored tree is gitignored
+    # so a re-clone drops the edit silently.
+    if ! grep -Fq 'clamp(-8, 8)' "$PUFFER/pufferlib/torch_pufferl.py"; then
+        echo "drift check: torch backend still clamps rewards to +-1" >&2
+        echo "  fix: tools/install_puffer_env.sh $PUFFER" >&2
+        exit 1
+    fi
+    if ! grep -Fq -- '-8.0f, 8.0f, numel(rollouts.rewards.shape)' \
+        "$PUFFER/src/pufferlib.cu"; then
+        echo "drift check: CUDA backend still clamps rewards to +-1" >&2
+        echo "  fix: tools/install_puffer_env.sh $PUFFER" >&2
+        exit 1
+    fi
     PYBIN="$PUFFER/.venv/bin/python"
     if [ ! -x "$PYBIN" ]; then
         echo "drift check: vendored Python is missing: $PYBIN" >&2
@@ -477,6 +494,41 @@ fi
 if ! grep -q 'qualification_recurrent_state' "$PUFFER/src/bindings.cu" || \
    ! grep -q 'qualification_snapshot' "$PUFFER/src/bindings.cu"; then
     echo "error: recurrent CUDA qualification evidence is incomplete" >&2
+    exit 1
+fi
+
+# Widen the trainer's reward clamp from +-1 to +-8 in BOTH backends (D234).
+# Stock Puffer truncates every reward to +-1; Blood Bowl's conceding-loser
+# terminal is exactly -1.0 and the exact-PBRS payback lands on the same
+# emission, so legitimate rewards were being destroyed one-sidedly and PBRS
+# policy invariance was void. The Torch path is what run_synthesis_c.sh trains
+# on and the CUDA path is what the production screen trains on, so patching one
+# is a half-fix. Applies to both files; touched last because it is a leaf edit
+# on lines no other patch in the stack goes near.
+REWARD_CLAMP_PATCH="$ROOT/training/puffer_reward_clamp_range.patch"
+if [ ! -f "$REWARD_CLAMP_PATCH" ]; then
+    echo "error: missing $REWARD_CLAMP_PATCH" >&2
+    exit 1
+fi
+if ! grep -Fq 'clamp(-8, 8)' "$TORCH_PUFFERL_PY"; then
+    if git -C "$PUFFER" apply --no-index "$REWARD_CLAMP_PATCH"; then
+        echo "applied:   +-8 trainer reward clamp -> Puffer native/Torch backends"
+    else
+        echo "error: reward-clamp range patch did not apply" >&2
+        exit 1
+    fi
+elif ! git -C "$PUFFER" apply --reverse --check --no-index "$REWARD_CLAMP_PATCH"; then
+    echo "error: installed reward-clamp range patch is stale" >&2
+    echo "  fix: recreate the pinned Puffer tree and reinstall the complete patch stack" >&2
+    exit 1
+fi
+# Both backends, checked independently: a one-file install silently trains the
+# torch path on truncated rewards while the CUDA path is correct (or vice
+# versa), and nothing downstream would distinguish the two.
+if ! grep -Fq 'clamp(-8, 8)' "$TORCH_PUFFERL_PY" || \
+   ! grep -Fq -- '-8.0f, 8.0f, numel(rollouts.rewards.shape)' \
+        "$PUFFER/src/pufferlib.cu"; then
+    echo "error: +-8 trainer reward clamp is incomplete (needs BOTH backends)" >&2
     exit 1
 fi
 

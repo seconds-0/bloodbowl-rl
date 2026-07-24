@@ -68,6 +68,15 @@ REWARD_INT_KEYS = ("reward_injury_value_scaled",)
 SCHEMA2_ONLY_FLOAT_KEYS = ("reward_dist_pbrs_gamma",)
 MAX_SCHEMA_VERSION = 2
 
+# The vendored trainer's reward clamp, applied in both backends by
+# training/puffer_reward_clamp_range.patch and mirrored as
+# BBE_TRAINER_REWARD_CLAMP in puffer/bloodbowl/bloodbowl.h. It is a
+# NaN/pathology guard, not a design bound: clipping a shaped reward SUM voids
+# Ng-Harada-Russell policy invariance, so the launch-time job is to prove the
+# design never reaches it (D234).
+TRAINER_REWARD_CLAMP = 8.0
+MAX_PITCH_DELTA = 25.0  # BB_PITCH_LEN - 1 (x coordinates 0..25)
+
 REQUIRED_KEYS = REWARD_FLOAT_KEYS + REWARD_INT_KEYS
 
 
@@ -115,16 +124,38 @@ def validate_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
     # A touchdown that decides a non-drawn match receives both terms on one
     # agent-step. Other shaping can also co-fire and is monitored at runtime,
     # but this deterministic objective stack must be safe before launch.
-    td_win_bound = abs(reward["reward_td"]) + abs(reward["reward_win"])
-    if td_win_bound > 1.0 + 1e-9:
+    #
+    # D234: this used to be `abs(td) + abs(win) <= 1.0`, which existed solely
+    # to fit the trainer's old +-1 clamp -- and the bound was WRONG, not merely
+    # tight: it ignored the exact-PBRS terminal payback, which lands on the very
+    # same emission, so a manifest could satisfy it and still be truncated
+    # live. The bound is now the full derived envelope against the widened
+    # clamp, mirroring bbe_reward_clip_threshold in puffer/bloodbowl/bloodbowl.h
+    # term for term. Keep the two in sync.
+    objective_bound = abs(reward["reward_td"]) + max(
+        abs(reward["reward_win"]), abs(reward["reward_draw"]))
+    fetch_reach = MAX_PITCH_DELTA * abs(reward["reward_dist_ball"])
+    carry_reach = MAX_PITCH_DELTA * abs(reward["reward_dist_endzone"])
+    if reward.get("reward_dist_pbrs_gamma", 0.0) > 0.0:
+        # Exact PBRS emits on every transition, so the terminal payback
+        # -Phi(s_T-1) ADDS to the objective stack.
+        envelope = objective_bound + fetch_reach + carry_reach
+        # Phi = k*(D_max - dist) must stay >= 0, or every sign conclusion the
+        # channel rests on inverts. The env aborts on this too.
+        for key in ("reward_dist_ball", "reward_dist_endzone"):
+            if reward[key] < 0.0:
+                raise ValueError(
+                    f"{key}={reward[key]!r} must be >= 0 under exact PBRS so "
+                    "the potential stays non-negative")
+    else:
+        # Legacy raw-delta emits nothing at the terminal and is skipped on any
+        # step where a team scored, so a distance delta and the objective stack
+        # can never co-fire: the bound is their max, not their sum.
+        envelope = max(objective_bound, fetch_reach, carry_reach)
+    if envelope > TRAINER_REWARD_CLAMP + 1e-9:
         raise ValueError(
-            "TD/win objective stack can exceed trainer clamp: "
-            f"abs(reward_td) + abs(reward_win) = {td_win_bound}")
-    td_draw_bound = abs(reward["reward_td"]) + abs(reward["reward_draw"])
-    if td_draw_bound > 1.0 + 1e-9:
-        raise ValueError(
-            "TD/draw objective stack can exceed trainer clamp: "
-            f"abs(reward_td) + abs(reward_draw) = {td_draw_bound}")
+            "reward design envelope can exceed the trainer clamp "
+            f"{TRAINER_REWARD_CLAMP}: derived envelope = {envelope}")
 
     # A same-team catch, throw-in, or hand-off can move the carrier from one
     # extreme x-coordinate to the other while remaining in the carry regime;
@@ -132,17 +163,23 @@ def validate_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
     # potential. Both channels are priced per square. The 20M R0 preflight
     # empirically clipped the historical .05/.20 recipe in exactly these
     # long-jump-sized increments, so reject any coefficient whose channel can
-    # exceed PPO's clamp even before another term co-fires.
-    max_pitch_delta = 25.0  # BB_PITCH_LEN - 1 (x coordinates 0..25)
-    fetch_bound = max_pitch_delta * abs(reward["reward_dist_ball"])
+    # cross the whole objective budget on a single move.
+    #
+    # D234 keeps this per-channel bound at 1.0 even though the trainer clamp
+    # moved to 8. It was never really a clamp-fitting rule: it caps how much of
+    # the total reward a single scaffold channel may be worth over a full-pitch
+    # move, and relaxing it would let distance shaping outweigh the match
+    # objective outright. The clamp-fitting job now belongs to the derived
+    # envelope check above.
+    fetch_bound = fetch_reach
     if fetch_bound > 1.0 + 1e-9:
         raise ValueError(
-            "full-pitch fetch potential can exceed trainer clamp: "
+            "full-pitch fetch potential can outweigh the match objective: "
             f"25 * abs(reward_dist_ball) = {fetch_bound}")
-    carry_bound = max_pitch_delta * abs(reward["reward_dist_endzone"])
+    carry_bound = carry_reach
     if carry_bound > 1.0 + 1e-9:
         raise ValueError(
-            "full-pitch carry potential can exceed trainer clamp: "
+            "full-pitch carry potential can outweigh the match objective: "
             f"25 * abs(reward_dist_endzone) = {carry_bound}")
 
     if (reward["reward_carrier_threat"] != 0.0 and
