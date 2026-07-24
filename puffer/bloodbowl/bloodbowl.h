@@ -1315,9 +1315,13 @@ static void bbe_encode_obs(Bloodbowl* env, int agent) {
         // decision with an autofix penalty priced into the reward economy.
         {
             int budget_left = -1;
+            bool in_placement_window = false;
             if (top->proc == BB_PROC_SETUP && top->phase <= 1) {
+                in_placement_window = true;
                 budget_left = SETUP_ACTION_BUDGET - (int)top->data;
             } else if (top->proc == BB_PROC_KICKOFF) {
+                in_placement_window =
+                    top->phase >= 5 && top->phase <= 7;
                 if (top->phase == 5 || top->phase == 6) {
                     // Solid Defence / Quick Snap: fresh picks left, the
                     // predicate kickoff_legal itself uses.
@@ -1327,8 +1331,13 @@ static void bbe_encode_obs(Bloodbowl* env, int agent) {
                 }
             }
             if (budget_left >= 0) {
+                // Clamp rather than wrap: an over-budget counter still means
+                // "no placements left" (byte 1), never "not a placement
+                // window" (byte 0).
                 if (budget_left > 254) budget_left = 254;
                 s[BBE_S_PLACEMENT_BUDGET] = (unsigned char)(budget_left + 1);
+            } else if (in_placement_window) {
+                s[BBE_S_PLACEMENT_BUDGET] = 1;
             }
         }
         // s[28] the MOVE frame's stashed target slot (data bits 9-13), ego
