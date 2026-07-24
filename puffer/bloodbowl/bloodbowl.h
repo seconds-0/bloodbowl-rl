@@ -5,7 +5,7 @@
 // engine to the next decision, and emits observations + per-head legality
 // masks. Episodes are full matches over procedurally generated rosters.
 //
-// Observation (uint8, BBE_OBS_SIZE = 2782B, obs v5), egocentric: each agent
+// Observation (uint8, BBE_OBS_SIZE = 2782B, obs v6), egocentric: each agent
 // sees its own players first and the pitch x-mirrored for the away coach, so
 // "forward" is always +x. Layout (offsets from the BBE_* macros below):
 //   [0..767]   32 players x BBE_PLAYER_BYTES (24): rows 0-15 = my team,
@@ -25,12 +25,16 @@
 //                [6]  frame a as row+1 when the proc stores a player slot
 //                     there (bbe_frame_a_is_slot), else 0
 //                [7]  frame b likewise (bbe_frame_b_is_slot)
-//                [8]  pending TEST target number (2..6 when the top frame
-//                     is a TEST reroll window, else 0)
-//                [9]  pending Dodge destination x+1 (egocentric; 0 unless
-//                     top TEST(Dodge) has a matching parent MOVE)
+//                [8]  pending TEST target number (2..6 at a TEST reroll
+//                     window), or the ACTIVATION negatrait gate's needed
+//                     roll at its phase-2 window, else 0
+//                [9]  pending CONSEQUENCE square x+1 (egocentric, v6: the
+//                     step destination under TEST{DODGE,RUSH,JUMP}, the
+//                     pass target under TEST{PASS}/PASS phase 2, the
+//                     vacated square at PUSH phase 3; 0 otherwise, and
+//                     deliberately 0 where the parent MOVE's x/y is stale)
 //                [10] I am the deciding coach, [11] my team is active
-//                [12] pending Dodge destination y+1 (same condition)
+//                [12] pending CONSEQUENCE square y+1 (same condition)
 //                [13..15] rolled block faces 0..2 (bb_block_die; 0 = absent),
 //                         only at BLOCK reroll/choose-die phases
 //   [784..831] scalars (BBE_SCALAR_OFF):
@@ -43,8 +47,23 @@
 //                [19] active MOVE player's squares moved + 1 (0 = no mover)
 //                [20] active MOVE player's Rushes spent + 1 (0 = no mover)
 //                [21] top TEST kind + 1 (0 = not a TEST decision)
-//                [22..47] spare (team ids deliberately NOT observed — see
-//                         the encoder comment; forces roster-reading)
+//                [22] window flags (BBE_WF_*: PUSH POW / FROM_BLITZ /
+//                     SF_DECLINED, PASS inaccurate; by proc, ctx[4])
+//                [23] declared bb_act_kind + 1 (0 = no activation)
+//                [24] casualty roll A, [25] casualty roll B (CASUALTY
+//                     apothecary windows only; B is 0 at phase 1)
+//                [26] stack flags (BBE_SF_*: turnover / kickoff charge /
+//                     in kickoff)
+//                [27] remaining placements + 1 (SETUP, KICKOFF 5/6/7;
+//                     0 = not a placement window)
+//                [28] stashed MOVE target row + 1 (0 = no live stash)
+//                [29] ktm_used
+//                [30..31] reserved, always zero (obs-v6 slack)
+//                [32..47] CHOOSE_OPTION option index -> row + 1 (0 = no
+//                         such option / not a player-valued option list)
+//              Team ids are deliberately NOT observed — see the encoder
+//              comment; it forces roster-reading. Full spec:
+//              docs/obs-v6-spec.md.
 //   [832..1611] tackle-zone planes (obs v3, BBE_TZ_OFF): two per-square
 //              TZ-count planes of 390 bytes each (index y*26 + x, x
 //              mirrored for the away agent like every spatial feature):
