@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """Content-addressed policy lineage for current Blood Bowl checkpoints.
 
-Flat Puffer checkpoints carry no header, and obs-v4/obs-v5 plus marginal/exact
-action policies have identical tensor shapes. This module is the single launch
-authority for proving that a blob belongs to the current semantic lineage.
+Flat Puffer checkpoints carry no header, and obs-v4/obs-v5/obs-v6 plus
+marginal/exact action policies have identical tensor shapes -- 2782 bytes of
+observation and 16,066,560 bytes of weights for all three observation
+revisions. This module is the single launch authority for proving that a blob
+belongs to the current semantic lineage, and the observation version is the
+ONLY thing that separates v4 from v5 from v6.
 """
 
 import argparse
@@ -14,14 +17,14 @@ from pathlib import Path
 
 
 SCHEMA_VERSION = 1
-OBSERVATION_ABI = "obs-v5"
-OBSERVATION_VERSION = 5
+OBSERVATION_ABI = "obs-v6"
+OBSERVATION_VERSION = 6
 ACTION_ABI = "exact-joint-v1"
 POLICY_HIDDEN_SIZE = 512
 POLICY_NUM_LAYERS = 3
 POLICY_EXPANSION_FACTOR = 1
 EXPECTED_CHECKPOINT_BYTES = 16_066_560
-ALLOWED_INITIALIZATIONS = frozenset(("fresh", "lineage-v5"))
+ALLOWED_INITIALIZATIONS = frozenset(("fresh", "lineage-v6"))
 SHA256_KEYS = (
     "source_sha256",
     "compiled_module_sha256",
@@ -131,7 +134,7 @@ def lineage_from_run_manifest(checkpoint, run_manifest, *,
     # itself the GENESIS of the lineage. Without that exception the rules form a
     # closed loop with no entry point -- eligible output requires non-fresh
     # initialization, non-fresh requires an eligible warm checkpoint and pool,
-    # and eligible may only be published by an accepted screen -- so obs-v5
+    # and eligible may only be published by an accepted screen -- so obs-v6
     # could never train at all. Measured on the training host: zero
     # .lineage.json files existed anywhere, i.e. no ancestor and no way to mint
     # one. The exception is narrow on purpose: the mode string must SAY genesis,
@@ -139,19 +142,19 @@ def lineage_from_run_manifest(checkpoint, run_manifest, *,
     # the caller must still be accepted-screen materialization (checked below).
     mode = manifest.get("mode")
     if initialization == "fresh" and not qualification_only \
-            and mode != "native_fresh_v5_genesis":
+            and mode != "native_fresh_v6_genesis":
         raise LineageError(
             "fresh initialization may only publish eligible lineage as declared "
-            "genesis (mode native_fresh_v5_genesis)")
-    if mode == "native_fresh_v5_genesis":
+            "genesis (mode native_fresh_v6_genesis)")
+    if mode == "native_fresh_v6_genesis":
         if qualification_only:
             raise LineageError(
                 "genesis output is eligible ancestry, not qualification-only")
         if initialization != "fresh":
             raise LineageError("genesis output must use fresh initialization")
     expected_mode = (
-        "native_fresh_v5_qualification" if qualification_only
-        else "native_fresh_v5_genesis" if mode == "native_fresh_v5_genesis"
+        "native_fresh_v6_qualification" if qualification_only
+        else "native_fresh_v6_genesis" if mode == "native_fresh_v6_genesis"
         else "native_static_pool_reward_ablation")
     if manifest.get("mode") != expected_mode:
         raise LineageError(
@@ -205,8 +208,8 @@ def lineage_from_run_manifest(checkpoint, run_manifest, *,
         "pool_lineage_bundle_sha256", allow_empty=True)
     if initialization == "fresh" and (warm_lineage or pool_lineage):
         raise LineageError("fresh initialization cannot declare warm/pool ancestry")
-    if initialization == "lineage-v5" and not (warm_lineage and pool_lineage):
-        raise LineageError("lineage-v5 requires warm and pool lineage digests")
+    if initialization == "lineage-v6" and not (warm_lineage and pool_lineage):
+        raise LineageError("lineage-v6 requires warm and pool lineage digests")
 
     screen_sha = _need_sha(
         manifest.get("screen_manifest_sha256"), "screen_manifest_sha256")
@@ -300,6 +303,25 @@ def validate_lineage(checkpoint, sidecar=None, *, expected=None,
         if not isinstance(value, dict):
             raise LineageError(f"checkpoint lineage {name} must be an object")
 
+    # The observation revision is checked FIRST, explicitly, and with a message
+    # that names the failure. obs-v4, obs-v5 and obs-v6 are all 2782-byte
+    # observations producing 16,066,560-byte checkpoints, so the byte checks
+    # below cannot see the difference and every other field can agree while the
+    # semantics silently do not. A v4/v5 mixup of exactly this shape already
+    # cost a 12B-step run; warm-starting an obs-v6 module from an obs-v5
+    # sidecar would repeat it with no symptom other than a bad learning curve.
+    sidecar_abi = compatibility.get("observation_abi")
+    sidecar_version = compatibility.get("observation_version")
+    if sidecar_abi != OBSERVATION_ABI or sidecar_version != OBSERVATION_VERSION:
+        raise LineageError(
+            "observation_abi/observation_version lineage mismatch: "
+            "sidecar declares "
+            f"{sidecar_abi!r}/{sidecar_version!r} but this module is "
+            f"{OBSERVATION_ABI!r}/{OBSERVATION_VERSION!r}. Every observation "
+            "revision has the same blob size, so this cannot be detected by "
+            "checkpoint bytes -- there is no warm start, replay mix or curve "
+            "comparison across the boundary without a reviewed bridge")
+
     actual_bytes = checkpoint.stat().st_size
     actual_sha = sha256_file(checkpoint)
     if actual_bytes != EXPECTED_CHECKPOINT_BYTES:
@@ -365,7 +387,7 @@ def validate_lineage(checkpoint, sidecar=None, *, expected=None,
         # canary is not. The mode string carries that declaration and is itself
         # bound into the sidecar, so this cannot be loosened by editing the
         # eligibility flag alone.
-        genesis = ancestry.get("mode") == "native_fresh_v5_genesis"
+        genesis = ancestry.get("mode") == "native_fresh_v6_genesis"
         if warm_lineage or pool_lineage:
             raise LineageError("fresh lineage must be ancestry-free")
         if genesis:
@@ -378,7 +400,7 @@ def validate_lineage(checkpoint, sidecar=None, *, expected=None,
                 "it is declared genesis")
     elif qualification_only or not eligible or not warm_lineage or not pool_lineage:
         raise LineageError(
-            "lineage-v5 must be eligible and bind warm/pool ancestry")
+            "lineage-v6 must be eligible and bind warm/pool ancestry")
     if require_eligible and not eligible:
         raise LineageError("qualification-only checkpoint is not eligible ancestry")
     return payload
