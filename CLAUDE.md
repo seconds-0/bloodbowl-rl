@@ -86,29 +86,38 @@ evidence disagree, the newer evidence wins.
 ## Hard-won facts (verified — don't relearn these)
 
 ### Obs / checkpoints / build
-- **obs-v5 = 2782 bytes** (obs-v4 probability planes plus decision-window truth;
-  spec `docs/obs-v5-spec.md`). Rolled block faces are visible at reroll/choose
-  windows, TEST kind and active movement expenditure are explicit, invalid ball
-  coordinates zero, and Touchback placements are spatially addressable.
+- **obs-v6 = 2782 bytes** (obs-v5 decision-window truth plus the ten
+  addressable-but-invisible blind spots; spec `docs/obs-v6-spec.md`, audit
+  `docs/plans/obs-v6-blind-spot-inventory.md`). v6 spends the scalar bytes
+  `s[22..47]` (obs offsets 806–831) that v5 left permanently zero: the
+  `CHOOSE_OPTION` candidate table, PUSH POW/FROM_BLITZ, the declared
+  `bb_act_kind`, both casualty rolls, the turnover/kickoff-charge flags, the
+  placement budgets, the stashed MOVE target and `ktm_used`; and it widens
+  `ctx[9]/ctx[12]` from the Dodge destination to a general pending consequence
+  square, and `ctx[8]` to the ACTIVATION gate target.
   **Three OBS_SIZE sync points must agree** (static asserts catch 2 of 3):
   `BBE_OBS_SIZE` in `puffer/bloodbowl/bloodbowl.h`, `#define OBS_SIZE` in
   `puffer/bloodbowl/binding.c:8`, `--obs-size` in
   `training/convert_checkpoint.py` (default 2782; v3 ckpts need
-  `--obs-size 1612`). **Obs-v4 is ALSO 2782 bytes** with different semantics —
-  blob size cannot distinguish them, so only source/module provenance can. No v4
-  warm-start, replay mixing, or direct curve comparison without a reviewed
-  bridge. (A v4/v5 mixup already wasted a 12B-step run.) Obs-v3 and older
-  checkpoints are input-shape **incompatible**.
+  `--obs-size 1612`). **Obs-v4 AND obs-v5 are ALSO 2782 bytes** with different
+  semantics — blob size cannot distinguish any of the three, so only
+  `BBE_OBS_VERSION` plus source/module provenance can. No v4/v5 warm-start,
+  replay mixing, or direct curve comparison without a reviewed bridge. (A v4/v5
+  mixup already wasted a 12B-step run; that is why v6 bumped the version and
+  why `checkpoint_lineage.py` refuses a v5 sidecar outright.) **The v5 lineage
+  is closed: D228's genesis root is out of lineage and obs-v6 needs a fresh
+  `genesis` + `genesis-pool` on one build.** Obs-v3 and older checkpoints are
+  input-shape **incompatible**.
 - **Checkpoint lineage is external and mandatory.** A flat blob has no header;
   require its canonical `.lineage.json` from `tools/checkpoint_lineage.py`, which
-  binds obs-v5/exact-joint-v1, policy shape, checkpoint hash, producer manifest,
+  binds obs-v6/exact-joint-v1, policy shape, checkpoint hash, producer manifest,
   and source/module/Puffer patch hashes. This is what prevents warm-starting an
-  obs-v5 run from an obs-v4 checkpoint; launchers reject missing or mismatched
+  obs-v6 run from an obs-v4/obs-v5 checkpoint; launchers reject missing or mismatched
   sidecars. Build pools with `tools/build_league.py`; `--legacy-unlabeled` is
   historical reconstruction only.
 - **Probe the compiled module, not the source tree.** Before launching, record
   `_C.__file__`, `_C.env_name`, GPU flag, precision bytes, and the imported module
-  hash, and confirm the imported `_C` really is obs-v5 / exact-joint-v1 / fp32. A
+  hash, and confirm the imported `_C` really is obs-v6 / exact-joint-v1 / fp32. A
   source-tree hash does not prove which extension ran.
 - **CUDA init order (D225).** Importing `_C` before the process's first CUDART
   call leaves a fresh WSL process at `cudaErrorNoDevice`; a successful CUDART

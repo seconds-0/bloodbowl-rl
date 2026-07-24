@@ -4,9 +4,9 @@
 # Required for every mode:
 #   TAG=<unique arm tag>
 #   REWARD_MANIFEST=<puffer/config/rewards/*.json>
-#   BOOTSTRAP_MODE=fresh-v5-qualification|fresh-v5-genesis|lineage-v5
-# lineage-v5 additionally requires WARM and POOL with eligible obs-v5 lineage
-# sidecars. fresh-v5-qualification forbids both inputs.
+#   BOOTSTRAP_MODE=fresh-v6-qualification|fresh-v6-genesis|lineage-v6
+# lineage-v6 additionally requires WARM and POOL with eligible obs-v6 lineage
+# sidecars. fresh-v6-qualification forbids both inputs.
 #
 # Optional:
 #   STEPS=250000000 SEED=42 LOG=/tmp/$TAG.log
@@ -102,17 +102,17 @@ esac
 
 : "${BOOTSTRAP_MODE:?BOOTSTRAP_MODE is required}"
 case "$BOOTSTRAP_MODE" in
-  fresh-v5-qualification)
+  fresh-v6-qualification)
     [ -z "${WARM:-}" ] || {
-      echo "fresh-v5-qualification forbids WARM" >&2; exit 1; }
+      echo "fresh-v6-qualification forbids WARM" >&2; exit 1; }
     [ -z "${POOL:-}" ] || {
-      echo "fresh-v5-qualification forbids POOL" >&2; exit 1; }
+      echo "fresh-v6-qualification forbids POOL" >&2; exit 1; }
     WARM=""
     POOL=""
     QUALIFICATION_ONLY=1
     ;;
-  fresh-v5-genesis)
-    # The genesis of an obs-v5 lineage. Structurally identical to the
+  fresh-v6-genesis)
+    # The genesis of an obs-v6 lineage. Structurally identical to the
     # qualification canary -- fresh weights, no warm start, no opponent pool --
     # and differing in exactly one respect: its accepted checkpoint publishes an
     # ELIGIBLE lineage, so it can be warm-started from and can seed a pool.
@@ -130,24 +130,24 @@ case "$BOOTSTRAP_MODE" in
     # completed-game floor, the telemetry-schema check, exact final checkpoint
     # size -- and it must carry a complete reward manifest like any causal arm.
     # The only thing being granted is ancestry, which every lineage needs at its
-    # root; the alternative is that obs-v5 can never train at all.
+    # root; the alternative is that obs-v6 can never train at all.
     [ -z "${WARM:-}" ] || {
-      echo "fresh-v5-genesis forbids WARM; genesis is by definition unancestored" >&2
+      echo "fresh-v6-genesis forbids WARM; genesis is by definition unancestored" >&2
       exit 1; }
     [ -z "${POOL:-}" ] || {
-      echo "fresh-v5-genesis forbids POOL; there is no eligible pool to draw on yet" >&2
+      echo "fresh-v6-genesis forbids POOL; there is no eligible pool to draw on yet" >&2
       exit 1; }
     WARM=""
     POOL=""
     QUALIFICATION_ONLY=0
     ;;
-  lineage-v5)
-    : "${WARM:?WARM is required for lineage-v5}"
-    : "${POOL:?POOL is required for lineage-v5}"
+  lineage-v6)
+    : "${WARM:?WARM is required for lineage-v6}"
+    : "${POOL:?POOL is required for lineage-v6}"
     QUALIFICATION_ONLY=0
     ;;
   *)
-    echo "BOOTSTRAP_MODE must be fresh-v5-qualification, fresh-v5-genesis, or lineage-v5" >&2
+    echo "BOOTSTRAP_MODE must be fresh-v6-qualification, fresh-v6-genesis, or lineage-v6" >&2
     exit 1
     ;;
 esac
@@ -237,7 +237,7 @@ if [ "$STEPS" -le 0 ] || [ "$TOTAL_AGENTS" -le 0 ] || \
   exit 1
 fi
 if [ "$EXPECT_BYTES" -ne 16066560 ]; then
-  echo "obs-v5/exact-joint-v1 requires EXPECT_BYTES=16066560; got $EXPECT_BYTES" >&2
+  echo "obs-v6/exact-joint-v1 requires EXPECT_BYTES=16066560; got $EXPECT_BYTES" >&2
   exit 1
 fi
 if [ $(( TOTAL_AGENTS % NUM_BUFFERS )) -ne 0 ]; then
@@ -264,17 +264,17 @@ CUDA_RUNTIME_WRAPPER="$ROOT/tools/puffer_cuda_runtime.py"
   echo "CUDA runtime wrapper missing: $CUDA_RUNTIME_WRAPPER" >&2; exit 1; }
 [ "${CUDA_VISIBLE_DEVICES:-}" = "0" ] || {
   echo "CUDA_VISIBLE_DEVICES must be exactly 0" >&2; exit 1; }
-if [ "$BOOTSTRAP_MODE" != "lineage-v5" ]; then
+if [ "$BOOTSTRAP_MODE" != "lineage-v6" ]; then
   FROZEN_BANK_PCT=0
   NUM_FROZEN_BANKS=0
   FROZEN_PER_BANK=0
   HISTORICAL_GAME_SHARE=0
   [ -z "$EXPECTED_POOL_HASH" ] || {
-    echo "fresh-v5-qualification forbids EXPECTED_POOL_HASH" >&2; exit 1; }
+    echo "fresh-v6-qualification forbids EXPECTED_POOL_HASH" >&2; exit 1; }
 else
   NUM_FROZEN_BANKS=4
   [ -n "$EXPECTED_POOL_HASH" ] || {
-    echo "lineage-v5 requires EXPECTED_POOL_HASH" >&2; exit 1; }
+    echo "lineage-v6 requires EXPECTED_POOL_HASH" >&2; exit 1; }
   read -r FROZEN_PER_BANK HISTORICAL_GAME_SHARE < <(
     "$PYBIN" - "$TOTAL_AGENTS" "$NUM_BUFFERS" "$FROZEN_BANK_PCT" <<'PY'
 import math, sys
@@ -299,7 +299,7 @@ PY
 fi
 
 [ -f "$REWARD_MANIFEST" ] || { echo "missing reward manifest: $REWARD_MANIFEST" >&2; exit 1; }
-if [ "$BOOTSTRAP_MODE" = "lineage-v5" ]; then
+if [ "$BOOTSTRAP_MODE" = "lineage-v6" ]; then
   [ -f "$WARM" ] || { echo "missing warm checkpoint: $WARM" >&2; exit 1; }
   [ -f "$POOL/league_seeds.json" ] || { echo "missing $POOL/league_seeds.json" >&2; exit 1; }
 fi
@@ -374,7 +374,7 @@ POOL_BANKS=0
 POOL_MANIFEST_HASH=""
 POOL_LINEAGE_BUNDLE_HASH=""
 warm_size=0
-if [ "$BOOTSTRAP_MODE" = "lineage-v5" ]; then
+if [ "$BOOTSTRAP_MODE" = "lineage-v6" ]; then
   warm_size=$(wc -c < "$WARM")
   if [ "$warm_size" -ne "$EXPECT_BYTES" ]; then
     echo "warm checkpoint is $warm_size bytes; expected $EXPECT_BYTES" >&2
@@ -498,10 +498,10 @@ if [ "$cenv" != "bloodbowl" ] || [ "$cgpu" != "1" ]; then
 fi
 if [[ ! "$COMPILED_EXACT_ACTION_SOURCE_HASH" =~ ^[0-9a-f]{64}$ ]] || \
    [ "$COMPILED_ENVIRONMENT_SOURCE_HASH" != "$SOURCE_HASH" ] || \
-   [ "$COMPILED_OBSERVATION_ABI" != "obs-v5" ] || \
-   [ "$COMPILED_OBSERVATION_VERSION" != "5" ] || \
+   [ "$COMPILED_OBSERVATION_ABI" != "obs-v6" ] || \
+   [ "$COMPILED_OBSERVATION_VERSION" != "6" ] || \
    [ "$COMPILED_ACTION_ABI" != "exact-joint-v1" ]; then
-  echo "compiled native module does not satisfy the obs-v5/exact-action contract" >&2
+  echo "compiled native module does not satisfy the obs-v6/exact-action contract" >&2
   echo "  exact-action source: ${COMPILED_EXACT_ACTION_SOURCE_HASH:-<missing>}" >&2
   echo "  environment source: ${COMPILED_ENVIRONMENT_SOURCE_HASH:-<missing>} (expected $SOURCE_HASH)" >&2
   echo "  observation: ${COMPILED_OBSERVATION_ABI:-<missing>} / ${COMPILED_OBSERVATION_VERSION:-<missing>}" >&2
@@ -585,7 +585,7 @@ VENDOR_SOURCE_HASH="$({
     src/bindings_cpu.cpp src/kernels.cu src/vecenv.h
 } | sha256sum | awk '{print $1}')"
 
-if [ "$BOOTSTRAP_MODE" = "lineage-v5" ]; then
+if [ "$BOOTSTRAP_MODE" = "lineage-v6" ]; then
   read -r WARM_LINEAGE_HASH POOL_LINEAGE_BUNDLE_HASH < <(
     "$PYBIN" - "$ROOT" "$WARM" "$POOL" "$SOURCE_HASH" \
       "$MODULE_HASH" "$PATCH_HASH" <<'PY'
@@ -626,7 +626,7 @@ PY
 fi
 
 echo "tag=$TAG seed=$SEED requested_steps=$STEPS final_steps=$FINAL_STEPS rollout_quantum=$ROLLOUT_QUANTUM"
-echo "bootstrap=$BOOTSTRAP_MODE observation_abi=obs-v5 observation_version=5 action_abi=exact-joint-v1 qualification_only=$QUALIFICATION_ONLY"
+echo "bootstrap=$BOOTSTRAP_MODE observation_abi=obs-v6 observation_version=6 action_abi=exact-joint-v1 qualification_only=$QUALIFICATION_ONLY"
 echo "reward=$REWARD_NAME reward_sha256=$REWARD_HASH"
 echo "pool=$POOL pool_identity_sha256=$POOL_HASH pool_manifest_sha256=$POOL_MANIFEST_HASH banks=$POOL_BANKS pct=$FROZEN_BANK_PCT rows_per_bank=$FROZEN_PER_BANK historical_game_share=$HISTORICAL_GAME_SHARE"
 echo "warm=$WARM warm_sha256=$WARM_HASH"
@@ -662,7 +662,7 @@ CMD=(env PUFFER_CUDA_RUNTIME_MANIFEST="$RUN_MANIFEST" \
   --train.update-epochs 1 --train.beta1 0.95 --train.beta2 0.999 \
   --train.eps 0.000000000001)
 
-if [ "$BOOTSTRAP_MODE" != "lineage-v5" ]; then
+if [ "$BOOTSTRAP_MODE" != "lineage-v6" ]; then
   CMD+=(--selfplay.enabled 0 --vec.num-frozen-banks 0 \
     --vec.frozen-bank-pct 0)
 else
@@ -683,9 +683,9 @@ fi
 META_ARGS=(
   tag "$TAG" seed "$SEED" requested_steps "$STEPS" final_steps "$FINAL_STEPS"
   bootstrap_mode "$BOOTSTRAP_MODE" initialization \
-  "$([ "$BOOTSTRAP_MODE" != "lineage-v5" ] && printf fresh || printf lineage-v5)" \
-  qualification_only "$QUALIFICATION_ONLY" observation_abi obs-v5 \
-  observation_version 5 action_abi exact-joint-v1 \
+  "$([ "$BOOTSTRAP_MODE" != "lineage-v6" ] && printf fresh || printf lineage-v6)" \
+  qualification_only "$QUALIFICATION_ONLY" observation_abi obs-v6 \
+  observation_version 6 action_abi exact-joint-v1 \
   policy_hidden_size 512 policy_num_layers 3 policy_expansion_factor 1 \
   ladder_reset_pct "$LADDER_RESET_PCT"
   ladder_endzone_maxdist "$LADDER_ENDZONE_MAXDIST"
@@ -746,10 +746,10 @@ if len(pairs) % 2:
 manifest = dict(zip(pairs[::2], pairs[1::2]))
 manifest.update({
     "schema_version": 1,
-    "mode": ("native_fresh_v5_qualification"
-             if manifest["bootstrap_mode"] == "fresh-v5-qualification"
-             else "native_fresh_v5_genesis"
-             if manifest["bootstrap_mode"] == "fresh-v5-genesis"
+    "mode": ("native_fresh_v6_qualification"
+             if manifest["bootstrap_mode"] == "fresh-v6-qualification"
+             else "native_fresh_v6_genesis"
+             if manifest["bootstrap_mode"] == "fresh-v6-genesis"
              else "native_static_pool_reward_ablation"),
     "command": sys.argv[split + 1:],
 })
@@ -830,7 +830,7 @@ PY
       {
         echo "reward-ablation tag=$TAG"
         echo "reward=$REWARD_NAME sha256=$REWARD_HASH"
-        echo "bootstrap=$BOOTSTRAP_MODE qualification_only=$QUALIFICATION_ONLY obs=obs-v5 action=exact-joint-v1"
+        echo "bootstrap=$BOOTSTRAP_MODE qualification_only=$QUALIFICATION_ONLY obs=obs-v6 action=exact-joint-v1"
         echo "pool=$POOL identity_sha256=$POOL_HASH manifest_sha256=$POOL_MANIFEST_HASH lineage_bundle_sha256=$POOL_LINEAGE_BUNDLE_HASH pct=$FROZEN_BANK_PCT"
         echo "warm=$WARM sha256=$WARM_HASH lineage_sha256=$WARM_LINEAGE_HASH seed=$SEED requested_steps=$STEPS final_steps=$FINAL_STEPS"
         echo "run_manifest_sha256=$(sha256sum "$RUN_MANIFEST" | awk '{print $1}')"

@@ -84,13 +84,17 @@ and expected artifacts in a `tools/experiment_queue.py` plan with per-job max ru
 success validator, and progress artifacts. Unattended evidence never changes a production
 default.
 
-## 3. Current era: obs-v5
+## 3. Current era: obs-v6
 
-- **obs-v5 = 2782 bytes** — obs-v4's probability planes plus observable block faces and
-  decision-window movement, rush, TEST, ball-validity, and touchback state
-  (`docs/obs-v5-spec.md`). **Obs-v4 is also 2782 bytes**, so tensor shape cannot identify the
-  semantic lineage — only source/module provenance can, and a v4/v5 mixup already wasted a
-  12B-step run.
+- **obs-v6 = 2782 bytes** — obs-v5's decision-window truth plus the ten
+  addressable-but-invisible blind spots that audit closed: the `CHOOSE_OPTION` candidate
+  table, PUSH POW/FROM_BLITZ, the declared `bb_act_kind`, both casualty rolls, the
+  turnover/kickoff flags, the placement budgets, the stashed MOVE target, `ktm_used`, and a
+  generalized pending consequence square (`docs/obs-v6-spec.md`). **Obs-v4 AND obs-v5 are
+  also 2782 bytes**, so tensor shape cannot identify the semantic lineage — only
+  `BBE_OBS_VERSION` plus source/module provenance can, and a v4/v5 mixup already wasted a
+  12B-step run. **The v5 lineage is closed: obs-v6 needs a fresh `genesis` +
+  `genesis-pool` on one build before any `lineage-v6` arm can launch.**
 - **OBS_SIZE sync points — all three must agree:** `BBE_OBS_SIZE` in
   `puffer/bloodbowl/bloodbowl.h`, `#define OBS_SIZE` in `puffer/bloodbowl/binding.c:8`, and
   `--obs-size` in `training/convert_checkpoint.py` (`DEFAULT_OBS_SIZE`, 2782). A
@@ -99,14 +103,16 @@ default.
   `--obs-size 1612`, obs-v2 `832`.
 - Flat checkpoints carry no lineage header, so a current checkpoint requires its adjacent
   `.lineage.json` from `tools/checkpoint_lineage.py`, binding the checkpoint hash,
-  obs-v5/exact-joint-v1 ABI, policy shape, producer manifest, source/module/patch identity,
+  obs-v6/exact-joint-v1 ABI, policy shape, producer manifest, source/module/patch identity,
   and ancestry eligibility. Missing, mismatched, or qualification-only sidecars are not warm
   starts or pool seeds. Build pools with `tools/build_league.py` (`--legacy-unlabeled` is
   historical reconstruction only).
-- There is **no accepted obs-v5 BC anchor**. `training/bc_v4.bin` (val exact 0.508, D53) and
+- There is **no accepted obs-v6 BC anchor**. `training/bc_v4.bin` (val exact 0.508, D53) and
   the 2.09M v4 pairs in `validation/pairs_v4` are valid only in a deliberately pinned obs-v4
-  runtime — never warm-start or evaluate them under v5 because the shape loads. New
-  exact-action obs-v5 exports are BBP v4; the loader rejects v1–v3 (version table in
+  runtime — never warm-start or evaluate them under v5/v6 because the shape loads. New
+  exact-action obs-v6 exports are BBP v4; NOTE that the BBP header does not record which
+  observation revision produced a shard, so v5 and v6 pairs are indistinguishable by header
+  and must be kept separate by provenance. The loader rejects v1–v3 (version table in
   `puffer-env-dev` §9).
 - The `exact-action-canary` is a fresh-initialization qualification run: launch with
   `env -u WARM -u POOL` and zero frozen banks. Its output is qualification-only — never

@@ -845,19 +845,19 @@ def _module_identity(_C, module: Path, puffer_root: Path) -> dict[str, Any]:
 def validate_module_identity(
     identity: Mapping[str, Any], *, qualification_surface: bool = True
 ) -> dict[str, Any]:
-    """The imported module really is obs-v5 / exact-joint-v1 / fp32.
+    """The imported module really is obs-v6 / exact-joint-v1 / fp32.
 
-    obs-v4 and obs-v5 are both 2782 bytes, so only this provenance separates
-    them; a mixup already wasted a 12B-step run. The two digest equalities are
+    obs-v4, obs-v5 and obs-v6 are all 2782 bytes, so only this provenance
+    separates them; a mixup already wasted a 12B-step run. The two digest equalities are
     compiled == on-disk source and compiled == installed snapshot: the build
     compiles the snapshot, not your edit.
     """
     if identity.get("compiled_env") != "bloodbowl":
         raise QualificationError("compiled environment is not bloodbowl")
-    if identity.get("observation_abi") != "obs-v5" or identity.get(
+    if identity.get("observation_abi") != "obs-v6" or identity.get(
         "observation_version"
-    ) != 5:
-        raise QualificationError("compiled observation lineage is not obs-v5")
+    ) != 6:
+        raise QualificationError("compiled observation lineage is not obs-v6")
     if identity.get("action_abi") != "exact-joint-v1":
         raise QualificationError("compiled action lineage is not exact-joint-v1")
     if identity.get("precision_bytes") not in GRAPH_ATOL_BY_PRECISION:

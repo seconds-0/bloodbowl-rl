@@ -314,7 +314,7 @@ def _validate_exact_action_canary_contract(contract: dict[str, Any]) -> None:
     them wrong and you just rerun it.  What is not free: it must be a fresh
     build with no warm start and no opponent pool (a warm start from obs-v4
     ancestry already burned a 12B-step run), the module under test must really
-    be obs-v5 / exact-joint-v1 / fp32, and the compiled module must have come
+    be obs-v6 / exact-joint-v1 / fp32, and the compiled module must have come
     from the installed source rather than a stale snapshot.
     """
     if contract.get("qualification_only") is not True:
@@ -326,8 +326,8 @@ def _validate_exact_action_canary_contract(contract: dict[str, Any]) -> None:
     bootstrap = _need_mapping(
         contract.get("bootstrap"), "exact-action-canary bootstrap")
     expected_bootstrap = {
-        "observation_abi": "obs-v5",
-        "observation_version": 5,
+        "observation_abi": "obs-v6",
+        "observation_version": 6,
         "action_abi": "exact-joint-v1",
         "initialization": "fresh",
         "warm_lineage_sha256": "",
@@ -365,8 +365,8 @@ def _validate_exact_action_canary_contract(contract: dict[str, Any]) -> None:
     expected_compiled = {
         "env_name": "bloodbowl",
         "precision_bytes": 4,
-        "observation_abi": "obs-v5",
-        "observation_version": 5,
+        "observation_abi": "obs-v6",
+        "observation_version": 6,
         "action_abi": "exact-joint-v1",
     }
     for field, expected in expected_compiled.items():

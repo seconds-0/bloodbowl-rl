@@ -15,10 +15,11 @@ self-play perm, FEN curriculum — structurally closest to Blood Bowl).
 Minimal: `ocean/squared/`. MultiDiscrete: `ocean/drive/`.
 Cached upstream docs: `docs/vendor/pufferlib/docs.html`.
 
-For observation work also read `docs/obs-v5-spec.md`. Obs-v5 keeps obs-v4's 2,782-byte
-shape but changes reserved-byte semantics and Touchback projection, so **blob size cannot
-distinguish the lineages** — require exact source/module identity and never treat a
-shape-loadable v4 checkpoint or pair shard as v5.
+For observation work also read `docs/obs-v6-spec.md` (and `docs/obs-v5-spec.md` for the
+v4→v5 delta it builds on). Obs-v6 keeps the same 2,782-byte shape and spends the scalar
+bytes v5 left zero, so **blob size cannot distinguish any of v4/v5/v6** — require exact
+source/module identity plus `BBE_OBS_VERSION`, and never treat a shape-loadable v4 or v5
+checkpoint or pair shard as v6.
 
 ## 1. The binding ABI
 
@@ -331,9 +332,11 @@ out-of-process `nvidia-smi`, Torch, or CUDART probe is not evidence for this wor
 
 ## 9. Observation lineage and checkpoint conversion
 
-**Every obs bump is a LINEAGE BREAK. Current runtime: obs-v5, `BBE_OBS_SIZE = 2782.**
-History: v2 832 → v3 1612 → v4 2782 → v5 2782. The equal v4/v5 shape makes size
-insufficient — never warm-start a v5 runtime from a v4 checkpoint.
+**Every obs bump is a LINEAGE BREAK. Current runtime: obs-v6, `BBE_OBS_SIZE = 2782.**
+History: v2 832 → v3 1612 → v4 2782 → v5 2782 → v6 2782. THREE consecutive revisions at the
+same size make blob size worthless — never warm-start a v6 runtime from a v4 or v5
+checkpoint. `tools/checkpoint_lineage.py` refuses a mismatched `observation_version` as its
+first check, because nothing else can see the difference.
 
 The three OBS_SIZE sync points (`bloodbowl.h`, `binding.c`, `convert_checkpoint.py`) and the
 `--obs-size` rules for older lineages are in `training-experiments` §3. The build-side half
@@ -348,7 +351,11 @@ caught the stale 1612 (D54); nothing guards the converter default.
 | v1 | obs-v2, 832 bytes |
 | v2 | historical marginal-mask era; spans obs-v3 (1612) **and** obs-v4 (2782) |
 | v3 | obs-v5's semantic ABI at 2782, still pre-exact-action |
-| v4 | **current** — exact sequential action semantics and canonical inactive-head sentinels, obs-v5/2782 |
+| v4 | **current** — exact sequential action semantics and canonical inactive-head sentinels, 2782 |
+
+**Known gap:** the BBP header does not record the observation revision, so a v4 shard
+written under obs-v5 and one written under obs-v6 are indistinguishable by header. obs-v6
+deliberately did not touch BBP; keep v5 and v6 pair stores separate by provenance.
 
 The writer emits v4, and `bc_pretrain.py` rejects anything but v4 unless `--allow-legacy` is
 passed. v2/2782, v3/2782, and v4/2782 must never mix despite identical physical shape, and
@@ -358,7 +365,7 @@ embedded-`rulesVersion` BB2025 surface is 9,118 non-empty replay IDs / 1,622,231
 records (`runs/replay-audit-20260713/`). Never call shard count replay count, and never mix
 BB2020 into BC.
 
-Historical anchor: **bc_v4** (val exact 0.508) is not valid for obs-v5 warm-start and lives
+Historical anchor: **bc_v4** (val exact 0.508) is not valid for obs-v6 warm-start and lives
 only on the training boxes; local `training/` holds ≤ bc_v3b.
 
 Warm relaunch: checkpoints land under `vendor/PufferLib/checkpoints/` (`[base]

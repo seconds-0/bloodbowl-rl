@@ -440,8 +440,8 @@ class QualificationValidatorTests(unittest.TestCase):
             backend = SimpleNamespace(
                 exact_action_source_hash=compiled,
                 environment_source_hash="b" * 64,
-                observation_abi="obs-v5",
-                observation_version=5,
+                observation_abi="obs-v6",
+                observation_version=6,
                 action_abi="exact-joint-v1",
                 precision_bytes=4,
                 env_name="bloodbowl",
@@ -478,7 +478,7 @@ class QualificationValidatorTests(unittest.TestCase):
                 del incomplete["backend_sources_sha256"]
                 self.q.validate_module_identity(incomplete)
 
-    def test_module_identity_requires_exact_bloodbowl_obs_v5_fp32_lineage(self):
+    def test_module_identity_requires_exact_bloodbowl_obs_v6_fp32_lineage(self):
         digest = "a" * 64
         identity = {
             "module": "/puffer/pufferlib/_C.so",
@@ -488,16 +488,16 @@ class QualificationValidatorTests(unittest.TestCase):
             "backend_sources_sha256": digest,
             "environment_sha256": "b" * 64,
             "installed_snapshot_sha256": "b" * 64,
-            "observation_abi": "obs-v5",
-            "observation_version": 5,
+            "observation_abi": "obs-v6",
+            "observation_version": 6,
             "action_abi": "exact-joint-v1",
             "precision_bytes": 4,
             "compiled_env": "bloodbowl",
             "qualification_surface": True,
         }
         self.q.validate_module_identity(identity)
-        # obs-v4 and obs-v5 are both 2782 bytes: only this provenance separates
-        # them, and BF16 cannot satisfy the ratio contract.
+        # obs-v4, obs-v5 and obs-v6 are all 2782 bytes: only this provenance
+        # separates them, and BF16 cannot satisfy the ratio contract.
         for key, value in (
             ("compiled_env", "other"),
             ("observation_abi", "obs-v4"),

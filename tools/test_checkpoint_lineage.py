@@ -19,17 +19,17 @@ class CheckpointLineageTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.checkpoint = self.root / "policy.bin"
         self.checkpoint.write_bytes(
-            b"exact-v5-policy" + b"\0" * (
+            b"exact-v6-policy" + b"\0" * (
                 checkpoint_lineage.EXPECTED_CHECKPOINT_BYTES -
-                len(b"exact-v5-policy")))
+                len(b"exact-v6-policy")))
         self.original_checkpoint = self.checkpoint.read_bytes()
         self.run_manifest = self.root / "RUN_MANIFEST.json"
         self.run_manifest.write_text(json.dumps({
             "schema_version": 1,
-            "mode": "native_fresh_v5_qualification",
+            "mode": "native_fresh_v6_qualification",
             "seed": "42",
-            "observation_abi": "obs-v5",
-            "observation_version": "5",
+            "observation_abi": "obs-v6",
+            "observation_version": "6",
             "action_abi": "exact-joint-v1",
             "initialization": "fresh",
             "qualification_only": "1",
@@ -89,7 +89,7 @@ class CheckpointLineageTests(unittest.TestCase):
     def test_eligible_nonqualification_lineage_round_trips(self):
         manifest = json.loads(self.run_manifest.read_text(encoding="utf-8"))
         manifest["qualification_only"] = "0"
-        manifest["initialization"] = "lineage-v5"
+        manifest["initialization"] = "lineage-v6"
         manifest["mode"] = "native_static_pool_reward_ablation"
         manifest["warm_lineage_sha256"] = "5" * 64
         manifest["pool_lineage_bundle_sha256"] = "6" * 64
@@ -112,7 +112,7 @@ class CheckpointLineageTests(unittest.TestCase):
         # entry point: eligible requires non-qualification, non-qualification
         # required non-fresh initialization, non-fresh requires an eligible warm
         # checkpoint and pool, and eligible may only be published by an accepted
-        # screen. Nothing could mint the first eligible checkpoint, so obs-v5
+        # screen. Nothing could mint the first eligible checkpoint, so obs-v6
         # could never train -- measured on the training host as zero
         # .lineage.json files in existence.
         def manifest_with(**over):
@@ -123,7 +123,7 @@ class CheckpointLineageTests(unittest.TestCase):
 
         # Declared genesis: fresh AND eligible, published by the screen.
         manifest_with(qualification_only="0", initialization="fresh",
-                      mode="native_fresh_v5_genesis")
+                      mode="native_fresh_v6_genesis")
         payload = checkpoint_lineage.lineage_from_run_manifest(
             self.checkpoint, self.run_manifest,
             allow_eligible_publication=True)
@@ -139,7 +139,7 @@ class CheckpointLineageTests(unittest.TestCase):
         # cannot become ancestry, so an ordinary canary stays ineligible even if
         # its qualification flag is flipped.
         manifest_with(qualification_only="0", initialization="fresh",
-                      mode="native_fresh_v5_qualification")
+                      mode="native_fresh_v6_qualification")
         with self.assertRaisesRegex(
                 checkpoint_lineage.LineageError, "declared genesis"):
             checkpoint_lineage.lineage_from_run_manifest(
@@ -149,7 +149,7 @@ class CheckpointLineageTests(unittest.TestCase):
         # Genesis is ancestry by definition, so it may not claim to be
         # qualification-only at the same time.
         manifest_with(qualification_only="1", initialization="fresh",
-                      mode="native_fresh_v5_genesis")
+                      mode="native_fresh_v6_genesis")
         with self.assertRaisesRegex(
                 checkpoint_lineage.LineageError, "not qualification-only"):
             checkpoint_lineage.lineage_from_run_manifest(
@@ -157,8 +157,8 @@ class CheckpointLineageTests(unittest.TestCase):
                 allow_eligible_publication=True)
 
         # Genesis must actually be fresh; it cannot relabel a warm-started run.
-        manifest_with(qualification_only="0", initialization="lineage-v5",
-                      mode="native_fresh_v5_genesis")
+        manifest_with(qualification_only="0", initialization="lineage-v6",
+                      mode="native_fresh_v6_genesis")
         with self.assertRaisesRegex(
                 checkpoint_lineage.LineageError, "must use fresh"):
             checkpoint_lineage.lineage_from_run_manifest(
@@ -168,7 +168,7 @@ class CheckpointLineageTests(unittest.TestCase):
         # And genesis still cannot self-publish: only accepted screen result
         # materialization may mint eligible lineage.
         manifest_with(qualification_only="0", initialization="fresh",
-                      mode="native_fresh_v5_genesis")
+                      mode="native_fresh_v6_genesis")
         with self.assertRaisesRegex(
                 checkpoint_lineage.LineageError, "accepted screen"):
             checkpoint_lineage.lineage_from_run_manifest(
@@ -239,7 +239,7 @@ class CheckpointLineageTests(unittest.TestCase):
         manifest.update({
             "mode": "native_static_pool_reward_ablation",
             "qualification_only": "0",
-            "initialization": "lineage-v5",
+            "initialization": "lineage-v6",
             "warm_lineage_sha256": "5" * 64,
             "pool_lineage_bundle_sha256": "6" * 64,
         })
@@ -278,6 +278,52 @@ class CheckpointLineageTests(unittest.TestCase):
             checkpoint_lineage.validate_lineage(
                 self.checkpoint, sidecar, expected=self.expected(),
                 require_eligible=False)
+
+    def test_obs_v5_sidecar_is_refused_against_an_obs_v6_module(self):
+        """The v5->v6 lineage trap: same 2782-byte observation, same
+        16,066,560-byte checkpoint, different semantics. This is the exact
+        shape that cost a 12B-step run across v4/v5, and blob size cannot see
+        it, so the declared observation version must be checked explicitly."""
+        payload, sidecar = self.create()
+        # Precondition: the blob is EXACTLY the size the current ABI demands,
+        # so any refusal below cannot have come from the size check.
+        self.assertEqual(self.checkpoint.stat().st_size,
+                         checkpoint_lineage.EXPECTED_CHECKPOINT_BYTES)
+        self.assertEqual(payload["compatibility"]["observation_abi"], "obs-v6")
+        self.assertEqual(payload["compatibility"]["observation_version"], 6)
+
+        for abi, version in (("obs-v5", 5), ("obs-v5", 6), ("obs-v6", 5)):
+            with self.subTest(abi=abi, version=version):
+                stale = json.loads(json.dumps(payload))
+                stale["compatibility"]["observation_abi"] = abi
+                stale["compatibility"]["observation_version"] = version
+                checkpoint_lineage.write_lineage(sidecar, stale, replace=True)
+                with self.assertRaisesRegex(
+                        checkpoint_lineage.LineageError,
+                        "observation_abi/observation_version lineage mismatch"):
+                    checkpoint_lineage.validate_lineage(
+                        self.checkpoint, sidecar, expected=self.expected(),
+                        require_eligible=False)
+
+        # And a v5 run manifest cannot mint a v6 sidecar in the first place.
+        manifest = json.loads(self.run_manifest.read_text(encoding="utf-8"))
+        manifest["observation_abi"] = "obs-v5"
+        stale_manifest = self.root / "stale-abi.json"
+        stale_manifest.write_text(
+            json.dumps(manifest, sort_keys=True) + "\n", encoding="utf-8")
+        with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                    "observation_abi must be obs-v6"):
+            checkpoint_lineage.lineage_from_run_manifest(
+                self.checkpoint, stale_manifest)
+
+        manifest = json.loads(self.run_manifest.read_text(encoding="utf-8"))
+        manifest["observation_version"] = "5"
+        stale_manifest.write_text(
+            json.dumps(manifest, sort_keys=True) + "\n", encoding="utf-8")
+        with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                    "observation_version must be 6"):
+            checkpoint_lineage.lineage_from_run_manifest(
+                self.checkpoint, stale_manifest)
 
     def test_same_size_legacy_semantics_are_rejected(self):
         payload, sidecar = self.create()

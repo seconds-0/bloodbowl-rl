@@ -5,7 +5,7 @@
 // engine to the next decision, and emits observations + per-head legality
 // masks. Episodes are full matches over procedurally generated rosters.
 //
-// Observation (uint8, BBE_OBS_SIZE = 2782B, obs v5), egocentric: each agent
+// Observation (uint8, BBE_OBS_SIZE = 2782B, obs v6), egocentric: each agent
 // sees its own players first and the pitch x-mirrored for the away coach, so
 // "forward" is always +x. Layout (offsets from the BBE_* macros below):
 //   [0..767]   32 players x BBE_PLAYER_BYTES (24): rows 0-15 = my team,
@@ -25,12 +25,16 @@
 //                [6]  frame a as row+1 when the proc stores a player slot
 //                     there (bbe_frame_a_is_slot), else 0
 //                [7]  frame b likewise (bbe_frame_b_is_slot)
-//                [8]  pending TEST target number (2..6 when the top frame
-//                     is a TEST reroll window, else 0)
-//                [9]  pending Dodge destination x+1 (egocentric; 0 unless
-//                     top TEST(Dodge) has a matching parent MOVE)
+//                [8]  pending TEST target number (2..6 at a TEST reroll
+//                     window), or the ACTIVATION negatrait gate's needed
+//                     roll at its phase-2 window, else 0
+//                [9]  pending CONSEQUENCE square x+1 (egocentric, v6: the
+//                     step destination under TEST{DODGE,RUSH,JUMP}, the
+//                     pass target under TEST{PASS}/PASS phase 2, the
+//                     vacated square at PUSH phase 3; 0 otherwise, and
+//                     deliberately 0 where the parent MOVE's x/y is stale)
 //                [10] I am the deciding coach, [11] my team is active
-//                [12] pending Dodge destination y+1 (same condition)
+//                [12] pending CONSEQUENCE square y+1 (same condition)
 //                [13..15] rolled block faces 0..2 (bb_block_die; 0 = absent),
 //                         only at BLOCK reroll/choose-die phases
 //   [784..831] scalars (BBE_SCALAR_OFF):
@@ -43,8 +47,23 @@
 //                [19] active MOVE player's squares moved + 1 (0 = no mover)
 //                [20] active MOVE player's Rushes spent + 1 (0 = no mover)
 //                [21] top TEST kind + 1 (0 = not a TEST decision)
-//                [22..47] spare (team ids deliberately NOT observed — see
-//                         the encoder comment; forces roster-reading)
+//                [22] window flags (BBE_WF_*: PUSH POW / FROM_BLITZ /
+//                     SF_DECLINED, PASS inaccurate; by proc, ctx[4])
+//                [23] declared bb_act_kind + 1 (0 = no activation)
+//                [24] casualty roll A, [25] casualty roll B (CASUALTY
+//                     apothecary windows only; B is 0 at phase 1)
+//                [26] stack flags (BBE_SF_*: turnover / kickoff charge /
+//                     in kickoff)
+//                [27] remaining placements + 1 (SETUP, KICKOFF 5/6/7;
+//                     0 = not a placement window)
+//                [28] stashed MOVE target row + 1 (0 = no live stash)
+//                [29] ktm_used
+//                [30..31] reserved, always zero (obs-v6 slack)
+//                [32..47] CHOOSE_OPTION option index -> row + 1 (0 = no
+//                         such option / not a player-valued option list)
+//              Team ids are deliberately NOT observed — see the encoder
+//              comment; it forces roster-reading. Full spec:
+//              docs/obs-v6-spec.md.
 //   [832..1611] tackle-zone planes (obs v3, BBE_TZ_OFF): two per-square
 //              TZ-count planes of 390 bytes each (index y*26 + x, x
 //              mirrored for the away agent like every spatial feature):
@@ -107,13 +126,55 @@
 #include "bb/bb_stall.h" // Stalling telemetry tally (already pulled in by
                          // proc_turn.c above; explicit for the Log below)
 
-#define BBE_OBS_VERSION 5      // semantic ABI; v4 has the same 2782-byte shape
+// Semantic ABI. v4, v5 AND v6 are all the same 2782-byte shape: v6 spends the
+// 26 scalar bytes v5 left memset-zero (obs offsets 806..831), so blob size can
+// distinguish NONE of the three. This constant is the only discriminator, and
+// tools/checkpoint_lineage.py refuses a sidecar whose observation_version
+// differs from it. Never warm-start, mix replays, or compare curves across a
+// bump without a reviewed bridge (docs/obs-v6-spec.md).
+#define BBE_OBS_VERSION 6
 #define BBE_PLAYER_BYTES 24    // 11 stat/state bytes + 12 skill-id slots + TZ byte
 #define BBE_SKILL_SLOTS 12     // >= max base-roster skills (10) + procgen cap
-#define BBE_OBS_SIZE 2782      // v4 shape retained; decision context is obs v5
+#define BBE_OBS_SIZE 2782      // v4 shape retained; decision context is obs v6
 #define BBE_CTX_OFF (BB_NUM_PLAYERS * BBE_PLAYER_BYTES) // 768
 #define BBE_SCALAR_OFF (BBE_CTX_OFF + 16)               // 784
 #define BBE_TZ_OFF (BBE_SCALAR_OFF + 48)                // 832
+
+// obs-v6 scalar reservations: indices into the 48-byte scalar block at
+// BBE_SCALAR_OFF. s[0..21] are the obs-v5 scalars; s[22..47] were always zero
+// in v5 (memset(o, 0, BBE_TZ_OFF)) and carry the v6 decision-window bytes.
+// Absolute obs offsets are BBE_SCALAR_OFF + index, i.e. 806..831.
+#define BBE_S_WINDOW_FLAGS 22     // 806  PUSH POW/FROM_BLITZ/SF_DECLINED; PASS inaccurate
+#define BBE_S_ACT_KIND 23         // 807  declared bb_act_kind + 1 (0 = none)
+#define BBE_S_CAS_ROLL_A 24       // 808  CASUALTY roll A (frame x), 0 off-window
+#define BBE_S_CAS_ROLL_B 25       // 809  CASUALTY roll B (frame y), 0 = not rolled
+#define BBE_S_STACK_FLAGS 26      // 810  turnover / in_kickoff_charge / in_kickoff
+#define BBE_S_PLACEMENT_BUDGET 27 // 811  remaining placements + 1 (0 = not a placement window)
+#define BBE_S_MOVE_TARGET 28      // 812  stashed MOVE target: ego slot + 1
+#define BBE_S_KTM_USED 29         // 813  m->ktm_used
+// s[30..31] (814..815) reserved: the 2 bytes of slack, always zero.
+#define BBE_S_OPTION_TABLE 32     // 816..831  CHOOSE_OPTION index -> ego slot + 1
+#define BBE_S_OPTION_SLOTS 16
+_Static_assert(BBE_S_OPTION_TABLE + BBE_S_OPTION_SLOTS ==
+                   BBE_TZ_OFF - BBE_SCALAR_OFF,
+               "obs-v6 scalar reservations must fill the 48-byte scalar block");
+
+// BBE_S_WINDOW_FLAGS bits. Proc-disambiguated by ctx[4] exactly as ctx[8] is:
+// the PUSH bits are only meaningful at a PUSH window, the PASS bit at a PASS
+// window.
+enum {
+    BBE_WF_PUSH_POW = 1 << 0,         // PSH_POW: the pushee ends prone
+    BBE_WF_PUSH_FROM_BLITZ = 1 << 1,  // PSH_FROM_BLITZ: Juggernaut/Fend/Frenzy-2nd
+    BBE_WF_PUSH_SF_DECLINED = 1 << 2, // PSH_SF_DECLINED: Stand Firm already refused
+    BBE_WF_PASS_INACCURATE = 1 << 3,  // PASS f->data & 0x100: interception mod -2 vs -3
+};
+
+// BBE_S_STACK_FLAGS bits.
+enum {
+    BBE_SF_TURNOVER = 1 << 0,        // m->turnover already latched
+    BBE_SF_KICKOFF_CHARGE = 1 << 1,  // inside the Charge! free-activation loop
+    BBE_SF_KICKOFF = 1 << 2,         // a KICKOFF frame is anywhere on the stack
+};
 #define BBE_TZ_PLANE (BB_PITCH_LEN * BB_PITCH_WID)      // 390 bytes per plane
 #define BBE_HEAD_TYPE 30
 #define BBE_HEAD_ARG 33
@@ -963,6 +1024,37 @@ static int bbe_active_move_slot(const bb_match* m) {
     return BB_NO_PLAYER;
 }
 
+// obs-v6 P2-8: the same walk, returning the frame rather than the mover, so
+// the encoder can read the MOVE frame's stashed target slot (data bits 9-13).
+static const bb_frame* bbe_active_move_frame(const bb_match* m) {
+    for (int i = (int)m->stack_top - 1; i >= 0; i--) {
+        if (m->stack[i].proc == BB_PROC_MOVE) return &m->stack[i];
+    }
+    return NULL;
+}
+
+// obs-v6 P0-3: the declared bb_act_kind that owns the current decision, or -1
+// when no activation does (PREGAME/SETUP/KICKOFF/TEAM_TURN and the pre-DECLARE
+// ACTIVATION window). MOVE carries the kind in `b` from the moment
+// activation_begin_action pushes it. ACTIVATION carries it in `b` only from
+// phase 1 onward: activation_apply writes `f->b = a.arg` when the coach
+// DECLAREs, so at phase 0 `b` is still the push-time zero and would read as a
+// declared BB_ACT_MOVE. The nearest frame wins because a procedure stack is
+// only the active call chain (same argument as bbe_active_move_slot), so a
+// nested TEST/BLOCK/PUSH/TTM window inherits its parent's declaration.
+static int bbe_declared_act_kind(const bb_match* m) {
+    for (int i = (int)m->stack_top - 1; i >= 0; i--) {
+        const bb_frame* frame = &m->stack[i];
+        if (frame->proc == BB_PROC_MOVE) {
+            return frame->b < BB_ACT_KIND_COUNT ? frame->b : -1;
+        }
+        if (frame->proc == BB_PROC_ACTIVATION && frame->phase >= 1) {
+            return frame->b < BB_ACT_KIND_COUNT ? frame->b : -1;
+        }
+    }
+    return -1;
+}
+
 // The physical block die has five public symbols: its two Push faces are
 // visually and legally identical. The engine distinguishes them only to model
 // the six equiprobable sides, so collapse PUSH_2 before exposing a face to the
@@ -1066,17 +1158,67 @@ static void bbe_encode_obs(Bloodbowl* env, int agent) {
         // x), else 0. Lets the policy price a reroll directly instead of
         // re-deriving stats/modifiers from the board rows.
         b[8] = top->proc == BB_PROC_TEST ? top->x : 0;
-        if (top->proc == BB_PROC_TEST && top->b == BB_TEST_DODGE &&
-            m->stack_top >= 2) {
-            const bb_frame* move = &m->stack[m->stack_top - 2];
-            if (move->proc == BB_PROC_MOVE && move->a == top->a &&
-                bb_on_pitch_xy(move->x, move->y)) {
-                int dx = me == BB_HOME
-                             ? move->x
-                             : (BB_PITCH_LEN - 1 - move->x);
-                b[9] = (unsigned char)(dx + 1);
-                b[12] = (unsigned char)(move->y + 1);
+        // obs-v6 P2-10: the ACTIVATION negatrait-gate re-roll window has the
+        // same shape as a TEST re-roll window but keeps nothing in the frame.
+        // proc_turn.c re-derives the gate from pure helpers at apply time, so
+        // call the same helpers: the needed raw D6 is target - modifier
+        // (activation_apply compares `bb_d6(rng) + mod >= target`). Clamped to
+        // 1..7 so the byte reads as a plain "needed roll" like the TEST case;
+        // 7 means the gate cannot be passed.
+        if (top->proc == BB_PROC_ACTIVATION && top->phase == 2 &&
+            top->a < BB_NUM_PLAYERS) {
+            int gate_target = 0, gate_kind = 0;
+            int gskill = gate_skill_for(m, top->a, &gate_target, &gate_kind);
+            if (gskill >= 0) {
+                int need =
+                    gate_target - gate_modifier(m, top->a, gskill, top->b);
+                if (need < 1) need = 1;
+                if (need > 7) need = 7;
+                b[8] = (unsigned char)need;
             }
+        }
+        // [9]/[12] pending CONSEQUENCE SQUARE, x ego-mirrored exactly like the
+        // ball and player coordinates. obs-v5 filled this for a pending Dodge
+        // only; obs-v6 (P0-1/P0-2/P1-7) widens it to every window where a
+        // frame square is BOTH live AND the consequence of the pending choice:
+        //   TEST{DODGE,RUSH,JUMP} under its own MOVE -> the step destination
+        //     (proc_move.c writes f->x/f->y before pushing each of the three)
+        //   TEST{PASS} under its PASS parent   -> the pass target square
+        //   PASS phase 2 (interception window) -> the pass target square, the
+        //     one thing that makes the ruler path reconstructible
+        //   PUSH phase 3 (follow-up)           -> the square the pushee
+        //     vacated (proc_block.c:593-594, and :559-560 on the crowd path)
+        // Deliberately EXCLUDED because the parent MOVE frame's x/y is STALE
+        // there: BB_TEST_STANDUP (the MA<3 stand-up never writes f->x/f->y)
+        // and the Jump-Up prone-block BB_TEST_GENERIC (which parks its target
+        // in data bits 9-13 and leaves x/y alone). Encoding either would
+        // report a destination the engine will never move the player to.
+        int pending_x = -1, pending_y = -1;
+        if (top->proc == BB_PROC_TEST && m->stack_top >= 2) {
+            const bb_frame* parent = &m->stack[m->stack_top - 2];
+            int kind = top->b;
+            if ((kind == BB_TEST_DODGE || kind == BB_TEST_RUSH ||
+                 kind == BB_TEST_JUMP) &&
+                parent->proc == BB_PROC_MOVE && parent->a == top->a) {
+                pending_x = parent->x;
+                pending_y = parent->y;
+            } else if (kind == BB_TEST_PASS &&
+                       parent->proc == BB_PROC_PASS) {
+                pending_x = parent->x;
+                pending_y = parent->y;
+            }
+        } else if (top->proc == BB_PROC_PASS && top->phase == 2) {
+            pending_x = top->x;
+            pending_y = top->y;
+        } else if (top->proc == BB_PROC_PUSH && top->phase == 3) {
+            pending_x = top->x;
+            pending_y = top->y;
+        }
+        if (pending_x >= 0 && bb_on_pitch_xy(pending_x, pending_y)) {
+            int dx = me == BB_HOME ? pending_x
+                                   : (BB_PITCH_LEN - 1 - pending_x);
+            b[9] = (unsigned char)(dx + 1);
+            b[12] = (unsigned char)(pending_y + 1);
         }
         // Rolled block faces are public at both policy decisions that use
         // them: whether to reroll the pool (phase 1) and which die to choose
@@ -1121,6 +1263,167 @@ static void bbe_encode_obs(Bloodbowl* env, int agent) {
     }
     if (top && top->proc == BB_PROC_TEST && top->b < BB_TEST_KIND_COUNT) {
         s[21] = (unsigned char)(top->b + 1u);
+    }
+
+    // --- obs-v6 decision-window scalars (s[22..47], obs offsets 806..831) ----
+    // Every byte below was memset-zero in obs-v5. Each is gated to the windows
+    // where its source field is genuinely live; off-window they stay zero, so
+    // "0" always means "not applicable here" rather than a stale reading.
+    // s[23] declared bb_act_kind + 1. move_legal branches on this kind at
+    // every MOVE decision and BLOCK inherits it as BLK_IS_BLITZ, yet ctx[7] is
+    // deliberately 0 for MOVE (b is a kind, not a slot) and nothing else
+    // emitted it. m->blitz_used (s[8]) is a team-turn flag, not this
+    // activation's declaration, so it is not a substitute.
+    int declared_kind = bbe_declared_act_kind(m);
+    if (declared_kind >= 0) {
+        s[BBE_S_ACT_KIND] = (unsigned char)(declared_kind + 1);
+    }
+    // s[26] stack flags. Decisions really are surfaced with the turnover latch
+    // already set (the crowd-push follow-up, and the whole
+    // ARMOUR/INJURY/CASUALTY chain after an attacker-down), and the Charge!
+    // context changes the rules (mid-kickoff team re-rolls) from a KICKOFF
+    // frame buried below the top of the stack.
+    {
+        unsigned int stack_flags = 0;
+        if (m->turnover) stack_flags |= BBE_SF_TURNOVER;
+        if (bb_in_kickoff_charge(m)) stack_flags |= BBE_SF_KICKOFF_CHARGE;
+        if (bb_in_kickoff(m)) stack_flags |= BBE_SF_KICKOFF;
+        s[BBE_S_STACK_FLAGS] = (unsigned char)stack_flags;
+    }
+    // s[29] the one once-per-turn latch s[8..13] omitted. Addressable via
+    // DECLARE BB_ACT_KTM; matters for cross-activation planning.
+    s[BBE_S_KTM_USED] = m->ktm_used;
+    if (top) {
+        // s[22] window flags, proc-disambiguated by ctx[4]. resolve_face POPS
+        // the BLOCK frame before pushing PUSH (proc_block.c:389-421), so at
+        // every PUSH decision the block face is gone and PSH_POW in f->data is
+        // the only trace of whether the pushee ends prone. FROM_BLITZ gates
+        // Juggernaut, Fend cancellation and the Frenzy second block.
+        if (top->proc == BB_PROC_PUSH) {
+            unsigned int window_flags = 0;
+            if (top->data & PSH_POW) window_flags |= BBE_WF_PUSH_POW;
+            if (top->data & PSH_FROM_BLITZ) {
+                window_flags |= BBE_WF_PUSH_FROM_BLITZ;
+            }
+            if (top->data & PSH_SF_DECLINED) {
+                window_flags |= BBE_WF_PUSH_SF_DECLINED;
+            }
+            s[BBE_S_WINDOW_FLAGS] = (unsigned char)window_flags;
+        } else if (top->proc == BB_PROC_PASS) {
+            // The accurate/inaccurate latch sets the interception modifier to
+            // -2 vs -3 (proc_ball.c:379).
+            s[BBE_S_WINDOW_FLAGS] = (top->data & 0x100)
+                                        ? (unsigned char)BBE_WF_PASS_INACCURATE
+                                        : 0;
+        }
+        // s[24]/s[25] the two casualty rolls. The apothecary windows ask the
+        // coach to burn a once-per-match resource (phase 1) and then to pick
+        // between two numbers (phase 2) with neither number observed. Because
+        // bb_casualty_table is monotone (1-8 Badly Hurt -> Reserves, 9+ out
+        // for the match) the raw rolls are directly learnable. At phase 1
+        // f->y is still 0: the second roll does not exist yet.
+        if (top->proc == BB_PROC_CASUALTY &&
+            (top->phase == 1 || top->phase == 2)) {
+            s[BBE_S_CAS_ROLL_A] = top->x;
+            s[BBE_S_CAS_ROLL_B] = top->y;
+        }
+        // s[27] remaining placement budget + 1 (0 = not a placement window, so
+        // "one placement left" and "budget exhausted" stay distinguishable).
+        // The mask reveals whether a placement is currently legal but not that
+        // it is the last one, and SETUP offers ~1354 legal actions per
+        // decision with an autofix penalty priced into the reward economy.
+        {
+            int budget_left = -1;
+            bool in_placement_window = false;
+            if (top->proc == BB_PROC_SETUP && top->phase <= 1) {
+                in_placement_window = true;
+                budget_left = SETUP_ACTION_BUDGET - (int)top->data;
+            } else if (top->proc == BB_PROC_KICKOFF) {
+                in_placement_window =
+                    top->phase >= 5 && top->phase <= 7;
+                if (top->phase == 5 || top->phase == 6) {
+                    // Solid Defence / Quick Snap: fresh picks left, the
+                    // predicate kickoff_legal itself uses.
+                    budget_left = (int)top->x - ko_popcount16(top->data);
+                } else if (top->phase == 7) {
+                    budget_left = (int)top->x; // Charge!: activations left
+                }
+            }
+            if (budget_left >= 0) {
+                // Clamp rather than wrap: an over-budget counter still means
+                // "no placements left" (byte 1), never "not a placement
+                // window" (byte 0).
+                if (budget_left > 254) budget_left = 254;
+                s[BBE_S_PLACEMENT_BUDGET] = (unsigned char)(budget_left + 1);
+            } else if (in_placement_window) {
+                s[BBE_S_PLACEMENT_BUDGET] = 1;
+            }
+        }
+        // s[28] the MOVE frame's stashed target slot (data bits 9-13), ego
+        // slot + 1. Those bits are overloaded (BB_A_JUMP parks a rush count
+        // there), so each gate below is the same predicate the engine uses:
+        //   MV_BLOCK_RUSH            -> blitz/stab rush-for-block target
+        //   MV_STAND_PEND + GENERIC  -> Jump-Up prone-block target (plain
+        //                               stand-up pushes BB_TEST_STANDUP, and
+        //                               never writes the stash)
+        //   MV_BLOCK_DONE + TTM/KTM  -> the picked team-mate; move_legal:455
+        //                               reuses MV_BLOCK_DONE as "mate picked"
+        // Without it BB_A_TTM_TARGET picks among ~60 squares without knowing
+        // which team-mate is being thrown.
+        {
+            const bb_frame* move_frame = bbe_active_move_frame(m);
+            if (move_frame != NULL) {
+                int stash = (move_frame->data >> 9) & 31;
+                bool stash_live = false;
+                if (move_frame->data & MV_BLOCK_RUSH) {
+                    stash_live = true;
+                } else if ((move_frame->data & MV_STAND_PEND) &&
+                           top->proc == BB_PROC_TEST &&
+                           top->b == BB_TEST_GENERIC) {
+                    stash_live = true;
+                } else if ((move_frame->data & MV_BLOCK_DONE) &&
+                           (move_frame->b == BB_ACT_TTM ||
+                            move_frame->b == BB_ACT_KTM)) {
+                    stash_live = true;
+                }
+                if (stash_live && stash < BB_NUM_PLAYERS) {
+                    s[BBE_S_MOVE_TARGET] =
+                        (unsigned char)(1 + bbe_ego_slot(me, stash));
+                }
+            }
+        }
+        // s[32..47] player-valued CHOOSE_OPTION option table: option index i
+        // -> 1 + ego slot, 0 = no such option (or a non-player option list).
+        // CHOOSE_OPTION carries a LIST INDEX, not a slot (bb_actions.h; raw
+        // slots leaked side-dependent arg semantics, review M15), so up to 17
+        // distinct addressable options previously had zero observational
+        // content separating them. Both engine producers enumerate purely
+        // from match state, so the encoder calls the SAME pure helper the
+        // legal-action builder and the apply path call: index -> slot cannot
+        // drift from what pass_apply / kickoff_apply will resolve.
+        // CASUALTY phase 2 and FOUL also use CHOOSE_OPTION but their options
+        // are not players (roll A/B, argue/accept), so the table stays zero
+        // there -- s[24]/s[25] carry the casualty case.
+        {
+            unsigned char* option = s + BBE_S_OPTION_TABLE;
+            if (top->proc == BB_PROC_PASS && top->phase == 2 &&
+                top->a < BB_NUM_PLAYERS) {
+                uint8_t candidates[16];
+                int nc = interception_candidates(m, top->a, top->x, top->y,
+                                                candidates);
+                for (int i = 0; i < nc && i < BBE_S_OPTION_SLOTS; i++) {
+                    option[i] =
+                        (unsigned char)(1 + bbe_ego_slot(me, candidates[i]));
+                }
+            } else if (top->proc == BB_PROC_KICKOFF && top->phase == 4) {
+                uint8_t candidates[BB_TEAM_SLOTS];
+                int nc = high_kick_candidates(m, top->a, candidates);
+                for (int i = 0; i < nc && i < BBE_S_OPTION_SLOTS; i++) {
+                    option[i] =
+                        (unsigned char)(1 + bbe_ego_slot(me, candidates[i]));
+                }
+            }
+        }
     }
     // Team ids are NOT observed. Identity is fully derivable from visible
     // player stats/skills, and hiding the id forces the policy to read rosters

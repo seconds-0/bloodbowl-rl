@@ -1,5 +1,12 @@
 # Obs-v5: decision-window observation truth
 
+> **SUPERSEDED by `docs/obs-v6-spec.md`.** The current runtime is obs-v6, which
+> keeps this same 2,782-byte shape and spends the scalar bytes `s[22..47]` that
+> this document reserved as zero. Everything below still describes obs-v6
+> correctly except `BBE_OBS_VERSION`, the `s[22..47]` reservation, and the
+> `ctx[8]`/`ctx[9]`/`ctx[12]` gates, all of which the v6 spec restates. Kept as
+> the historical record of the v4 -> v5 delta.
+
 Obs-v5 keeps obs-v4's physical tensor shape—2,782 `uint8` values—but changes
 the semantic ABI of reserved context/scalar bytes and Touchback action
 projection. It is therefore a new policy/data lineage even though an obs-v4
