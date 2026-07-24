@@ -8,6 +8,8 @@ recompute seams from drifting independently.
 from __future__ import annotations
 
 import pathlib
+import re
+import sys
 import unittest
 
 try:
@@ -17,9 +19,13 @@ except ImportError:  # pragma: no cover - exercised in minimal CI images
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+REPO = ROOT
 PATCH = ROOT / "training" / "puffer_exact_joint_actions.patch"
 INSTALLER = ROOT / "tools" / "install_puffer_env.sh"
 BINDING = ROOT / "puffer" / "bloodbowl" / "binding.c"
+
+sys.path.insert(0, str(ROOT / "tools"))
+import checkpoint_lineage  # noqa: E402
 
 
 class ExactJointActionPatchTests(unittest.TestCase):
@@ -81,7 +87,6 @@ class ExactJointActionPatchTests(unittest.TestCase):
             "PUFFER_ENV_SOURCE_HASH",
             "PUFFER_OBSERVATION_VERSION",
             "PUFFER_ACTION_ABI",
-            '"obs-v6"',
             '"exact-joint-v1"',
             'getattr(_C, "environment_source_hash"',
             'getattr(_C, "observation_abi"',
@@ -89,6 +94,35 @@ class ExactJointActionPatchTests(unittest.TestCase):
             'getattr(_C, "action_abi"',
         ):
             self.assertIn(fragment, installer)
+        # The installer must DERIVE the observation revision from the header it
+        # installs, not carry its own literal. Two literals meant an obs bump
+        # had to be edited in both places, and getting it wrong made the
+        # compiled module advertise the previous revision with no symptom --
+        # every revision since obs-v4 is the same 2782 bytes.
+        self.assertIn("BBE_OBS_VERSION", installer)
+        self.assertIn('SOURCE_OBSERVATION_ABI="obs-v$SOURCE_OBSERVATION_VERSION"',
+                      installer)
+        self.assertNotRegex(
+            installer,
+            r'#define PUFFER_OBSERVATION_ABI \\"obs-v[0-9]',
+            "installer hardcodes an observation ABI instead of deriving it")
+        self.assertNotRegex(
+            installer,
+            r'#define PUFFER_OBSERVATION_VERSION [0-9]',
+            "installer hardcodes an observation version instead of deriving it")
+        header_version = re.search(
+            r"^#define BBE_OBS_VERSION (\d+)",
+            (REPO / "puffer/bloodbowl/bloodbowl.h").read_text(encoding="utf-8"),
+            re.MULTILINE)
+        self.assertIsNotNone(header_version)
+        self.assertEqual(
+            checkpoint_lineage.OBSERVATION_VERSION,
+            int(header_version.group(1)),
+            "the lineage authority and the env header disagree about the "
+            "observation revision")
+        self.assertEqual(
+            checkpoint_lineage.OBSERVATION_ABI,
+            f"obs-v{header_version.group(1)}")
         for fragment in (
             'm.attr("environment_source_hash") = PUFFER_ENV_SOURCE_HASH;',
             'm.attr("observation_abi") = PUFFER_OBSERVATION_ABI;',

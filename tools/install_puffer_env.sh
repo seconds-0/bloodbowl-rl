@@ -30,6 +30,20 @@ PUFFER="$(cd "$PUFFER" && pwd)"
 DST="$PUFFER/ocean/bloodbowl"
 SELFPLAY_LEAGUE_PATCH="$ROOT/training/selfplay_league.patch"
 
+# The observation revision is DERIVED from the header, never typed twice. The
+# generated build header and the --check gate both used to carry their own
+# literal, so an obs bump had to be edited in three places or the compiled
+# module would advertise the previous revision -- with no symptom, because
+# every observation revision since v4 has been 2782 bytes.
+ENV_HEADER="$ROOT/puffer/bloodbowl/bloodbowl.h"
+[ -f "$ENV_HEADER" ] || {
+    echo "error: missing $ENV_HEADER" >&2; exit 1; }
+SOURCE_OBSERVATION_VERSION="$(sed -n \
+    's/^#define BBE_OBS_VERSION \([0-9][0-9]*\).*$/\1/p' "$ENV_HEADER" | head -1)"
+[ -n "$SOURCE_OBSERVATION_VERSION" ] || {
+    echo "error: could not read BBE_OBS_VERSION from $ENV_HEADER" >&2; exit 1; }
+SOURCE_OBSERVATION_ABI="obs-v$SOURCE_OBSERVATION_VERSION"
+
 # Content hash of a tree with symlinks dereferenced (the puffer/bloodbowl
 # engine/ and bb/ links reach into engine/src and engine/include/bb, so any
 # engine change changes the hash). Relative paths keep source and snapshot
@@ -194,15 +208,16 @@ if [ "$MODE" = "check" ]; then
     fi
     if [ "$want" != "$header_environment_hash" ] || \
        [ "$want" != "$compiled_environment_hash" ] || \
-       [ "$header_observation_abi" != "obs-v6" ] || \
-       [ "$compiled_observation_abi" != "obs-v6" ] || \
-       [ "$header_observation_version" != "6" ] || \
-       [ "$compiled_observation_version" != "6" ] || \
+       [ "$header_observation_abi" != "$SOURCE_OBSERVATION_ABI" ] || \
+       [ "$compiled_observation_abi" != "$SOURCE_OBSERVATION_ABI" ] || \
+       [ "$header_observation_version" != "$SOURCE_OBSERVATION_VERSION" ] || \
+       [ "$compiled_observation_version" != "$SOURCE_OBSERVATION_VERSION" ] || \
        [ "$header_action_abi" != "exact-joint-v1" ] || \
        [ "$compiled_action_abi" != "exact-joint-v1" ]; then
         echo "drift check: compiled observation/action lineage mismatch" >&2
         echo "  environment source: $want" >&2
         echo "  header/module source: ${header_environment_hash:-<missing>} / ${compiled_environment_hash:-<missing>}" >&2
+        echo "  source obs: $SOURCE_OBSERVATION_ABI / $SOURCE_OBSERVATION_VERSION" >&2
         echo "  header/module obs ABI: ${header_observation_abi:-<missing>} / ${compiled_observation_abi:-<missing>}" >&2
         echo "  header/module obs: ${header_observation_version:-<missing>} / ${compiled_observation_version:-<missing>}" >&2
         echo "  header/module action: ${header_action_abi:-<missing>} / ${compiled_action_abi:-<missing>}" >&2
@@ -542,8 +557,9 @@ EXACT_BACKEND_HASH="$(exact_backend_hash)" || {
     exit 1
 }
 INSTALLED_SOURCE_HASH="$(cat "$DST/.content_hash")"
-printf '#pragma once\n#define PUFFER_EXACT_ACTION_SOURCE_HASH "%s"\n#define PUFFER_ENV_SOURCE_HASH "%s"\n#define PUFFER_OBSERVATION_ABI "obs-v6"\n#define PUFFER_OBSERVATION_VERSION 6\n#define PUFFER_ACTION_ABI "exact-joint-v1"\n' \
+printf '#pragma once\n#define PUFFER_EXACT_ACTION_SOURCE_HASH "%s"\n#define PUFFER_ENV_SOURCE_HASH "%s"\n#define PUFFER_OBSERVATION_ABI "%s"\n#define PUFFER_OBSERVATION_VERSION %s\n#define PUFFER_ACTION_ABI "exact-joint-v1"\n' \
     "$EXACT_BACKEND_HASH" "$INSTALLED_SOURCE_HASH" \
+    "$SOURCE_OBSERVATION_ABI" "$SOURCE_OBSERVATION_VERSION" \
     > "$PUFFER/src/exact_action_build_hash.h"
 echo "recorded:   exact-action backend digest $EXACT_BACKEND_HASH"
 
