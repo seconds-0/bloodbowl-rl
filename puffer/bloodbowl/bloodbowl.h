@@ -188,7 +188,8 @@ enum {
 #define BBE_DEFAULT_REWARD_DRAW 0.0f
 
 // Effective emitted-reward taxonomy. Each entry is the signed contribution
-// seen by one agent before Puffer's [-1, 1] clamp. The block-exposure entry is
+// seen by one agent before the trainer's clamp (a +-8 pathology guard since
+// D234, not a design bound). The block-exposure entry is
 // deliberately the existing combined declaration-time EV expression: splitting
 // its three addends would change float accumulation order in the live reward.
 typedef enum {
@@ -268,8 +269,12 @@ typedef struct {
     // on curriculum-start episodes. Watch it converge toward 0 during a
     // statmatch arm; a stuck-large value means an untracked-dimension exploit.
     float statmatch_term;
-    // PPO clamps each emitted agent reward to [-1,1]. These aggregates expose
-    // any difference between raw env return and the learner's reward stream.
+    // The trainer clamps each emitted agent reward, and since D234 that clamp
+    // is a loose +-8 pathology guard rather than a design bound. These
+    // aggregates are measured against the ENV's derived design envelope
+    // (bbe_reward_clip_threshold), which is tighter, so anything the trainer
+    // would truncate is caught here first. They expose any difference between
+    // the raw env return and what the design says is legitimate.
     // Raw emission counters. Vec aggregation sums these and divides each by
     // the same episode count; my_log forms ratios afterward, preserving exact
     // emission weighting across short curriculum and full-game episodes.
@@ -741,8 +746,8 @@ typedef struct {
     // the same step ends the episode, bbe_finish_episode keeps this objective
     // component and discards incidental action/board shaping before adding
     // the result bonus. Otherwise a terminal action can silently push an
-    // otherwise-valid TD/result or result-only emission through PPO's [-1,1]
-    // clamp (D182).
+    // otherwise-valid TD/result or result-only emission past the derived clip
+    // envelope (D182; the envelope itself is D234).
     float step_objective_reward[BBE_AGENTS];
     // Episode return before this c_step. Terminal composition restores this
     // base and adds only the emitted objective/result terms, so even discarded
@@ -1045,8 +1050,8 @@ static void bbe_validate_reward_config(const Bloodbowl* env) {
     if (!bbe_reward_config_scalars_valid(env, &bad_field)) {
         fprintf(stderr,
                 "bloodbowl: reward coefficient %s must be finite and within "
-                "[-1,1]; PPO clamps the summed agent-step reward to that "
-                "range\n",
+                "[-1,1]; no single shaping channel may be worth more than the "
+                "whole match objective\n",
                 bad_field != NULL ? bad_field : "<unknown>");
         abort();
     }
@@ -3849,13 +3854,20 @@ static void c_step(Bloodbowl* env) {
                 bb_def_threat dt = bb_def_threat_eval(m, t);
                 int hard_true = dt.n_threats_1turn;
                 int soft_true = dt.n_threats_2turn - dt.n_threats_1turn;
-                // CAP (D136 FOLLOW-UP 1): per-step rewards are clamped to [-1,1]
-                // on the SUM, and R12 lands on the same step as the win/loss
-                // terminal bonus + possession + carrier-exposure. Cap the
-                // CHARGED count at 4 per tier so the worst case (terminal loss +
-                // many deep threats) stays inside the clamp and does not corrupt
-                // the loss gradient. Telemetry below records the TRUE uncapped
-                // counts so the real threat level stays visible.
+                // CAP (D136 FOLLOW-UP 1): R12's count is unbounded (~11) and it
+                // lands on the same step as the win/loss terminal bonus +
+                // possession + carrier-exposure. Cap the CHARGED count at 4 per
+                // tier so the worst case (terminal loss + many deep threats)
+                // stays inside the reward design envelope. Telemetry below
+                // records the TRUE uncapped counts so the real threat level
+                // stays visible. D234 note: the cap is retained, but the reason
+                // is no longer 'the trainer truncates at 1.0' -- it does not,
+                // it guards at 8.0. The cap survives on its own merits (an
+                // unbounded count channel should not be able to outweigh the
+                // match result), and capping THIS channel is sound precisely
+                // because it is a count and not an exactness guarantee, which
+                // is why D234 could not reuse the same remedy for the PBRS
+                // payback.
                 int hard = hard_true < 4 ? hard_true : 4;
                 int soft = soft_true < 4 ? soft_true : 4;
                 if (hard > 0 && env->reward_defensive_threat != 0.0f) {
