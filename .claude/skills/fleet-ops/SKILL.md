@@ -181,8 +181,8 @@ WebSocket cycle — hiding CUDA from a GPU-built `_C` just makes it fail (D189).
 Select a checkpoint by the **step number embedded in its filename** plus its manifest
 hash. Newest mtime ≠ highest step across run dirs.
 
-Current source is obs-v5 at 2782 bytes. **Obs-v4 is also 2782 bytes and semantically
-incompatible**, so shape proves nothing: require the adjacent `.lineage.json` and
+Current source is obs-v6 at 2782 bytes. **Obs-v4 AND obs-v5 are also 2782 bytes and
+semantically incompatible**, so shape proves nothing: require the adjacent `.lineage.json` and
 validate it with `tools/checkpoint_lineage.py` before any warm start or pool seed.
 Qualification-only checkpoints are never warm starts or pool seeds. Obs-v3 checkpoints
 are shape-incompatible and need an explicit `--obs-size 1612` conversion. The

@@ -81,7 +81,7 @@ class ExactJointActionPatchTests(unittest.TestCase):
             "PUFFER_ENV_SOURCE_HASH",
             "PUFFER_OBSERVATION_VERSION",
             "PUFFER_ACTION_ABI",
-            '"obs-v5"',
+            '"obs-v6"',
             '"exact-joint-v1"',
             'getattr(_C, "environment_source_hash"',
             'getattr(_C, "observation_abi"',

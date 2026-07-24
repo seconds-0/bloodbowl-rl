@@ -29,7 +29,7 @@ pre-existing pool, hence training/selfplay_league.patch (skips the bootstrap
 and seeds each bank from this manifest when [selfplay] league_preseed names
 this pool dir).
 
-Seed files must be CUDA flat-fp32 weight blobs with eligible obs-v5/exact-action
+Seed files must be CUDA flat-fp32 weight blobs with eligible obs-v6/exact-action
 lineage sidecars — the save_weights format
 (vendor/PufferLib/src/bindings.cu:180: raw fwrite of master_weights, no
 header). Semantic compatibility comes from the sidecar, not blob size.
@@ -204,7 +204,7 @@ def main(argv=None):
              f'default {DEFAULT_EXPECT_BYTES})')
     ap.add_argument('--legacy-unlabeled', action='store_true',
         help='historical reconstruction only: permit checkpoints without '
-             'obs-v5/exact-action lineage; repaired launchers still reject it')
+             'obs-v6/exact-action lineage; repaired launchers still reject it')
     args = ap.parse_args(argv)
 
     try:

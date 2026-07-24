@@ -24,7 +24,7 @@ def run(**knobs) -> subprocess.CompletedProcess:
     # Enough to get past the required-variable checks and reach the knobs.
     env.setdefault("TAG", "ladder-knob-test")
     env.setdefault("REWARD_MANIFEST", str(ROOT / "puffer/config/rewards/s0_both.json"))
-    env.setdefault("BOOTSTRAP_MODE", "fresh-v5-genesis")
+    env.setdefault("BOOTSTRAP_MODE", "fresh-v6-genesis")
     env.setdefault("STEPS", "1000000")
     for key, value in knobs.items():
         env[key] = str(value)

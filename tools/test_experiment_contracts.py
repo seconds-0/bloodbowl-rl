@@ -50,13 +50,13 @@ class ExperimentContractTests(unittest.TestCase):
             env={
                 "TAG": "wrong-size-contract-test",
                 "REWARD_MANIFEST": "missing.json",
-                "BOOTSTRAP_MODE": "fresh-v5-qualification",
+                "BOOTSTRAP_MODE": "fresh-v6-qualification",
                 "EXPECT_BYTES": "13670400",
             },
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(
-            "obs-v5/exact-joint-v1 requires EXPECT_BYTES=16066560",
+            "obs-v6/exact-joint-v1 requires EXPECT_BYTES=16066560",
             result.stderr,
         )
         self.assertNotIn("vendored Python missing", result.stderr)
@@ -430,7 +430,7 @@ class ExperimentContractTests(unittest.TestCase):
         arm = (ROOT / "tools/run_reward_ablation.sh").read_text(
             encoding="utf-8")
         for contract in (
-            "fresh-v5-qualification", "obs-v5", "exact-joint-v1",
+            "fresh-v6-qualification", "obs-v6", "exact-joint-v1",
             '"qualification_only": qualification_only',
             'NUM_FROZEN_BANKS=0',
         ):
@@ -607,13 +607,13 @@ class ExperimentContractTests(unittest.TestCase):
         self.assertIn('"compiled_semantic_contract": compiled_contract', screen)
         # Assert the compiled-module probe by the CHECKS it performs, not by the
         # manifest field names it happens to use. This is the single invariant
-        # that distinguishes obs-v4 from obs-v5 -- both are 2782 bytes, so blob
-        # shape cannot -- and a v4/v5 mixup already wasted a 12B-step run. The
-        # screen and the launcher each verify it independently against the
-        # imported _C, which is deliberate redundancy over the compiled artifact
-        # rather than a shadow validator over a file.
+        # that distinguishes obs-v4/obs-v5/obs-v6 -- all three are 2782 bytes,
+        # so blob shape cannot -- and a v4/v5 mixup already wasted a 12B-step
+        # run. The screen and the launcher each verify it independently
+        # against the imported _C, which is deliberate redundancy over the
+        # compiled artifact rather than a shadow validator over a file.
         for probe in (
-            '"obs-v5"',
+            '"obs-v6"',
             '"exact-joint-v1"',
             "precision_bytes",
             "observation_version",

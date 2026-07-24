@@ -47,12 +47,13 @@ bias terms; the CUDA backend's layers are pure matmuls with NO biases.
     you can judge the warm-start fidelity loss).
   cuda -> torch: biases are zero-filled.
 
-OBS-V5 LINEAGE: the default obs size is 2782 (obs-v4 decision-support planes
-plus obs-v5 decision-window semantics) — 16,066,560 bytes = 4,016,640 fp32 for
-heads (30, 33, 391) / hidden 512 / 3 layers. Obs-v4 has the SAME shape and
-parameter count but different reserved-byte/Touchback semantics; this converter
-cannot identify or bridge it from blob size. Require source provenance and do
-not treat a shape-loadable v4 artifact as a v5 warm start. For obs-v3 (1612;
+OBS-V6 LINEAGE: the default obs size is 2782 (obs-v4 decision-support planes
+plus obs-v6 decision-window semantics) — 16,066,560 bytes = 4,016,640 fp32 for
+heads (30, 33, 391) / hidden 512 / 3 layers. Obs-v4 AND obs-v5 both have the
+SAME shape and parameter count but different reserved-byte/Touchback/
+decision-window semantics; this converter cannot identify or bridge either from
+blob size. Require source provenance and do not treat a shape-loadable v4 or v5
+artifact as a v6 warm start. For obs-v3 (1612;
 13,670,400 bytes) or obs-v2 (832; 12,072,960 bytes), pass the corresponding
 explicit --obs-size.
 
@@ -233,7 +234,7 @@ def main():
     ap.add_argument("--num-layers", type=int)
     ap.add_argument("--obs-size", type=int, default=DEFAULT_OBS_SIZE,
                     help=f"encoder input dim (default {DEFAULT_OBS_SIZE} = "
-                         f"obs-v5 shared shape; size cannot identify obs-v4; "
+                         f"obs-v6 shared shape; size cannot identify obs-v4; "
                          f"pass {OBS_V3_SIZE} for obs-v3 or "
                          f"{LEGACY_OBS_SIZE} for obs-v2 lineage checkpoints)")
     ap.add_argument("--act-sizes", default=",".join(map(str, DEFAULT_ACT_SIZES)),

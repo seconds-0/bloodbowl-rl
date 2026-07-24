@@ -3,7 +3,7 @@
 # Seed 43 reverses seed 42's arm order to reduce time/order confounding.
 #
 # SCREEN_MANIFEST.json records the provenance a later analysis actually needs:
-# the compiled obs-v5/exact-joint-v1 module identity, the complete reward
+# the compiled obs-v6/exact-joint-v1 module identity, the complete reward
 # manifest hashes, the Puffer patch bundle, and the warm/pool lineage. Each
 # arm's acceptance evidence lands in <tag>.result.json. Restarting the screen is
 # expected and safe: completed arms are re-validated, unfinished ones relaunch.
@@ -137,11 +137,11 @@ if [ "$SCREEN_PROFILE" = "exact-action-canary" ] || \
   # D217/D218: v4 and v5 have the same tensor sizes. An inherited or explicitly
   # empty legacy variable must not silently authorize a same-size warm/pool.
   [ "${WARM+x}" != x ] || {
-    echo "$SCREEN_PROFILE forbids WARM; qualification uses fresh obs-v5 initialization" >&2
+    echo "$SCREEN_PROFILE forbids WARM; qualification uses fresh obs-v6 initialization" >&2
     exit 1
   }
   [ "${POOL+x}" != x ] || {
-    echo "$SCREEN_PROFILE forbids POOL; it trains fresh obs-v5 self-play" >&2
+    echo "$SCREEN_PROFILE forbids POOL; it trains fresh obs-v6 self-play" >&2
     exit 1
   }
   WARM=""
@@ -151,9 +151,9 @@ if [ "$SCREEN_PROFILE" = "exact-action-canary" ] || \
     # accepted genesis arm publishes ELIGIBLE lineage, which is what lets any
     # later warm/pool profile exist at all. See the mode comment in
     # tools/run_reward_ablation.sh for why this cannot be avoided.
-    BOOTSTRAP_MODE=fresh-v5-genesis
+    BOOTSTRAP_MODE=fresh-v6-genesis
   else
-    BOOTSTRAP_MODE=fresh-v5-qualification
+    BOOTSTRAP_MODE=fresh-v6-qualification
   fi
   NUM_FROZEN_BANKS=0
   FROZEN_BANK_PCT=0
@@ -161,7 +161,7 @@ if [ "$SCREEN_PROFILE" = "exact-action-canary" ] || \
 else
   : "${WARM:?WARM is required}"
   : "${POOL:?POOL is required}"
-  BOOTSTRAP_MODE=lineage-v5
+  BOOTSTRAP_MODE=lineage-v6
 fi
 
 abspath() {
@@ -178,11 +178,11 @@ if [ -n "$TRANSFER_COMPLETE" ]; then
   [ -f "$TRANSFER_COMPLETE" ] || {
     echo "missing transfer completion: $TRANSFER_COMPLETE" >&2; exit 1; }
 fi
-if [ "$BOOTSTRAP_MODE" = "lineage-v5" ]; then
+if [ "$BOOTSTRAP_MODE" = "lineage-v6" ]; then
   [ -f "$WARM" ] || { echo "missing warm checkpoint: $WARM" >&2; exit 1; }
   [ -d "$POOL" ] || { echo "missing static pool: $POOL" >&2; exit 1; }
   [[ "$EXPECTED_POOL_HASH" =~ ^[0-9a-f]{64}$ ]] || {
-    echo "lineage-v5 screen requires the explicit current EXPECTED_POOL_HASH as a lowercase SHA-256 digest" >&2
+    echo "lineage-v6 screen requires the explicit current EXPECTED_POOL_HASH as a lowercase SHA-256 digest" >&2
     exit 1
   }
 fi
@@ -229,7 +229,7 @@ case "$SCREEN_PROFILE" in
     seeds=(42)
     ;;
   genesis-pool)
-    # Mint the four independent roots a lineage-v5 pool needs. Same reward and
+    # Mint the four independent roots a lineage-v6 pool needs. Same reward and
     # recipe as `genesis`, four times, differing only by learner seed.
     #
     # Seeds are 1042-1045, NOT 42-44: those alias paired-final's seed block, and
@@ -248,7 +248,7 @@ case "$SCREEN_PROFILE" in
     ;;
   genesis)
     # One fresh arm on the CORRECTED reward, whose accepted
-    # checkpoint becomes the root of the obs-v5 lineage. One arm and one seed on
+    # checkpoint becomes the root of the obs-v6 lineage. One arm and one seed on
     # purpose: this establishes ancestry, it does not compare anything, so a
     # second arm would only invite reading a contrast that was never controlled.
     # Deliberately `s_both`, the corrected decomposition baseline. Two rewards
@@ -361,13 +361,13 @@ def bundle_sha(paths, labels):
         for path, label in zip(paths, labels))).hexdigest()
 
 
-# obs-v4 and obs-v5 observations are both 2782 bytes, so only source and
+# obs-v4, obs-v5 and obs-v6 observations are all 2782 bytes, so only source
 # compiled-module provenance can tell them apart; one mixup already wasted a
 # 12B-step run.
 environment_header = root / "puffer/bloodbowl/bloodbowl.h"
-if "#define BBE_OBS_VERSION 5" not in environment_header.read_text(
+if "#define BBE_OBS_VERSION 6" not in environment_header.read_text(
         encoding="utf-8"):
-    raise SystemExit("source tree does not declare obs-v5")
+    raise SystemExit("source tree does not declare obs-v6")
 source_hash_path = vendor / "ocean/bloodbowl/.content_hash"
 if not source_hash_path.is_file():
     raise SystemExit("installed Blood Bowl content hash is missing")
@@ -412,13 +412,13 @@ if (
     compiled_contract["gpu"] != 1 or
     compiled_contract["precision_bytes"] != 4 or
     compiled_contract["environment_source_sha256"] != source_hash or
-    compiled_contract["observation_abi"] != "obs-v5" or
-    compiled_contract["observation_version"] != 5 or
+    compiled_contract["observation_abi"] != "obs-v6" or
+    compiled_contract["observation_version"] != 6 or
     compiled_contract["action_abi"] != "exact-joint-v1" or
     len(compiled_contract["exact_action_source_sha256"]) != 64
 ):
     raise SystemExit(
-        "compiled native module does not satisfy the obs-v5/exact-action contract")
+        "compiled native module does not satisfy the obs-v6/exact-action contract")
 
 # The per-arm launcher recomputes this bundle digest and refuses to train if it
 # drifts, so the screen only has to publish the value it launched with.
@@ -497,7 +497,7 @@ else:
         raise SystemExit(
             f"warm checkpoint is {warm.stat().st_size} bytes; expected {expect_size}")
     # The lineage sidecar is the only thing that keeps an obs-v4 checkpoint out
-    # of an obs-v5 run. The per-arm launcher validates the four pool banks the
+    # of an obs-v6 run. The per-arm launcher validates the four pool banks the
     # same way, against the same expectations, before it allocates GPU state.
     warm_payload = validate_lineage(
         warm, sidecar_path(warm),
@@ -549,13 +549,13 @@ contract = {
     "pool": pool_identity,
     "bootstrap": {
         "mode": os.environ["BOOTSTRAP_MODE"],
-        "observation_abi": "obs-v5",
-        "observation_version": 5,
+        "observation_abi": "obs-v6",
+        "observation_version": 6,
         "action_abi": "exact-joint-v1",
         # Genesis is fresh yet not qualification-only, so this must key on
         # freshness. checkpoint_lineage cross-checks initialization against the
         # producer mode, so getting this wrong fails the run at publication.
-        "initialization": "fresh" if fresh else "lineage-v5",
+        "initialization": "fresh" if fresh else "lineage-v6",
         "warm_lineage_sha256": warm_lineage_sha,
         "pool_lineage_bundle_sha256": pool_lineage_bundle_sha,
     },

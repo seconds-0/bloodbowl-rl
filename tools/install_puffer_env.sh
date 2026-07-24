@@ -194,10 +194,10 @@ if [ "$MODE" = "check" ]; then
     fi
     if [ "$want" != "$header_environment_hash" ] || \
        [ "$want" != "$compiled_environment_hash" ] || \
-       [ "$header_observation_abi" != "obs-v5" ] || \
-       [ "$compiled_observation_abi" != "obs-v5" ] || \
-       [ "$header_observation_version" != "5" ] || \
-       [ "$compiled_observation_version" != "5" ] || \
+       [ "$header_observation_abi" != "obs-v6" ] || \
+       [ "$compiled_observation_abi" != "obs-v6" ] || \
+       [ "$header_observation_version" != "6" ] || \
+       [ "$compiled_observation_version" != "6" ] || \
        [ "$header_action_abi" != "exact-joint-v1" ] || \
        [ "$compiled_action_abi" != "exact-joint-v1" ]; then
         echo "drift check: compiled observation/action lineage mismatch" >&2
@@ -542,7 +542,7 @@ EXACT_BACKEND_HASH="$(exact_backend_hash)" || {
     exit 1
 }
 INSTALLED_SOURCE_HASH="$(cat "$DST/.content_hash")"
-printf '#pragma once\n#define PUFFER_EXACT_ACTION_SOURCE_HASH "%s"\n#define PUFFER_ENV_SOURCE_HASH "%s"\n#define PUFFER_OBSERVATION_ABI "obs-v5"\n#define PUFFER_OBSERVATION_VERSION 5\n#define PUFFER_ACTION_ABI "exact-joint-v1"\n' \
+printf '#pragma once\n#define PUFFER_EXACT_ACTION_SOURCE_HASH "%s"\n#define PUFFER_ENV_SOURCE_HASH "%s"\n#define PUFFER_OBSERVATION_ABI "obs-v6"\n#define PUFFER_OBSERVATION_VERSION 6\n#define PUFFER_ACTION_ABI "exact-joint-v1"\n' \
     "$EXACT_BACKEND_HASH" "$INSTALLED_SOURCE_HASH" \
     > "$PUFFER/src/exact_action_build_hash.h"
 echo "recorded:   exact-action backend digest $EXACT_BACKEND_HASH"

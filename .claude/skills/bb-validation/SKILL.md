@@ -114,9 +114,10 @@ harness — the Theft library is abandoned, do not depend on it).
    silently changes the hash). Run before AND after every env change: intended-no-op
    refactor ⇒ identical hash; intended obs/mask change ⇒ hash changes and nothing else does.
    The obs-v5 boundary is a pinned example: the 100-episode seed-42 hash intentionally moved
-   from v4 `afb3850b011cc9f2` to v5 `b12a03950a1cdd28`, and repeat v5 runs must match. Equal
-   2,782-byte shape does not establish semantic compatibility — record `BBE_OBS_VERSION`
-   plus imported-module/source identity.
+   from v4 `afb3850b011cc9f2` to v5 `b12a03950a1cdd28`, and repeat v5 runs must match. The
+   obs-v6 batch is the same shape of change and moves the hash again; re-pin it on the
+   first v6 build. Equal 2,782-byte shape does not establish semantic compatibility across
+   ANY of v4/v5/v6 — record `BBE_OBS_VERSION` plus imported-module/source identity.
 9. **Procedure-stack sanity** — bounded depth; empty between activations; no leaks.
 10. **Stat bounds** — MA/ST/AG/PA/AV within rulebook ranges; score monotonic.
 11. **Raw snapshot admission** — the BBS1 size/fingerprint proves ABI compatibility, **not

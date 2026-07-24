@@ -5,7 +5,7 @@ Run with the PufferLib venv:
   vendor/PufferLib/.venv/bin/python training/test_convert_checkpoint.py
 
 Covers:
-  1. layout totals: the current obs-v5 semantic ABI / obs-v4 shared shape
+  1. layout totals: the current obs-v6 semantic ABI / obs-v4+v5 shared shape
      (16,066,560 bytes for obs 2782), the obs-v3 lineage (13,670,400 bytes for obs 1612), and the
      legacy obs-v2 lineage, which must match the real CUDA-backend artifact
      byte-for-byte (12,072,960 bytes for obs 832 / heads (30,33,391) /

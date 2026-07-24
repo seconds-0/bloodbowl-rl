@@ -148,8 +148,8 @@ class RewardScreenAnalysisTests(unittest.TestCase):
                 "screen_profile": "exact-action-canary",
                 "qualification_only": True,
                 "bootstrap": {
-                    "observation_abi": "obs-v5",
-                    "observation_version": 5,
+                    "observation_abi": "obs-v6",
+                    "observation_version": 6,
                     "action_abi": "exact-joint-v1",
                     "initialization": "fresh",
                     "warm_lineage_sha256": "",
@@ -178,8 +178,8 @@ class RewardScreenAnalysisTests(unittest.TestCase):
                     "compiled_semantic_contract": {
                         "env_name": "bloodbowl",
                         "precision_bytes": 4,
-                        "observation_abi": "obs-v5",
-                        "observation_version": 5,
+                        "observation_abi": "obs-v6",
+                        "observation_version": 6,
                         "action_abi": "exact-joint-v1",
                         "environment_source_sha256": source_sha,
                     },
@@ -308,7 +308,7 @@ class RewardScreenAnalysisTests(unittest.TestCase):
         self.assertNotIn("Across 1 seeds", rendered)
 
     def test_exact_action_canary_rejects_contaminated_or_wrong_build(self):
-        """The canary's real preconditions: fresh, obs-v5/exact-joint, fp32,
+        """The canary's real preconditions: fresh, obs-v6/exact-joint, fp32,
         and compiled from the installed source."""
         mutations = (
             (
