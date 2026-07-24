@@ -65,15 +65,36 @@ echo "  bank       $(sha256sum "$C/vendor/PufferLib/resources/bloodbowl/state_ba
 echo "  log        $LOG"
 
 bash "$C/tools/run_reward_ablation.sh"
-rc=$?
-echo "LADDER_CANARY_EXIT=$rc"
+launch_rc=$?
+echo "LADDER_CANARY_LAUNCH_EXIT=$launch_rc"
+[ "$launch_rc" -eq 0 ] || exit "$launch_rc"
 
-# Publish a success marker only on a clean exit, so a campaign supervisor cannot
-# mistake a crashed canary for a finished one.
-if [ "$rc" -eq 0 ]; then
-    printf '{"tag":"%s","steps":"%s","endzone_maxdist":%s,"reset_pct":%s,"log":"%s"}\n' \
-        "$TAG" "$STEPS" "$LADDER_ENDZONE_MAXDIST" "$LADDER_RESET_PCT" "$LOG" \
-        > "$OUT/LADDER_CANARY_COMPLETE.json"
-    echo "wrote $OUT/LADDER_CANARY_COMPLETE.json"
+# run_reward_ablation.sh DETACHES the trainer (setsid nohup; ARM_DETACH defaults
+# to 1) and returns 0 as soon as the LAUNCH succeeds -- not when training
+# finishes. Treating that exit code as completion published a success marker at
+# 14,811,136 of 49,938,432 steps once already, with the trainer still running.
+# The real signal is the trainer's own atomic status sidecar, which is what
+# run_reward_screen.sh waits on too.
+STATUS="${LOG}.status.json"
+DEADLINE=$(( $(date +%s) + 7200 ))
+while [ ! -f "$STATUS" ]; do
+    if [ "$(date +%s)" -ge "$DEADLINE" ]; then
+        echo "timed out after 2h waiting for $STATUS" >&2
+        exit 1
+    fi
+    sleep 30
+done
+
+rc="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("exit_code"))' \
+      "$STATUS" 2>/dev/null)"
+echo "LADDER_CANARY_TRAINER_EXIT=$rc"
+if [ "$rc" != "0" ]; then
+    echo "trainer did not exit cleanly; publishing no completion marker" >&2
+    exit 1
 fi
-exit "$rc"
+
+# Only now is the canary genuinely finished.
+printf '{"tag":"%s","steps":"%s","endzone_maxdist":%s,"reset_pct":%s,"log":"%s","trainer_exit":%s}\n' \
+    "$TAG" "$STEPS" "$LADDER_ENDZONE_MAXDIST" "$LADDER_RESET_PCT" "$LOG" "$rc" \
+    > "$OUT/LADDER_CANARY_COMPLETE.json"
+echo "wrote $OUT/LADDER_CANARY_COMPLETE.json"
