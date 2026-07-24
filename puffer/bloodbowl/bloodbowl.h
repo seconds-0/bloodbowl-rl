@@ -963,6 +963,28 @@ static float bbe_reward_clip_threshold(const Bloodbowl* env) {
     return objective > distance ? objective : distance;
 }
 
+// D234: Phi >= 0 is an enforced invariant now, not a manifest convention.
+// bbe_potential is coeff*(D_max - dist), so a negative distance coefficient
+// makes Phi <= 0 and inverts every conclusion the exact-PBRS path rests on:
+// regime exits would PAY instead of being charged, and the terminal payback
+// would become a bonus. Checked only when the exact form is selected -- the
+// legacy gamma == 0 form is Phi = -k*d, a different object with a different
+// (historical, reproduced-not-defended) semantic -- which keeps every legacy
+// lineage's validation behaviour byte-identical.
+static bool bbe_reward_potential_sign_valid(const Bloodbowl* env) {
+    if (env->reward_dist_pbrs_gamma <= 0.0f) return true;
+    return env->reward_dist_ball >= 0.0f && env->reward_dist_endzone >= 0.0f;
+}
+
+// D234: the env's own design envelope must fit inside the trainer's clamp.
+// This is the launch-time role the manifest's `td + win <= 1` rule used to
+// play. The trainer no longer truncates at 1, so what has to be proved is not
+// that the stack fits in one unit but that the largest legitimate emission is
+// nowhere near the guard.
+static bool bbe_reward_envelope_valid(const Bloodbowl* env) {
+    return bbe_reward_clip_threshold(env) <= BBE_TRAINER_REWARD_CLAMP;
+}
+
 // Single mutation seam for ordinary reward contributions. Keeping the two
 // pre-existing additions in their original order preserves reward behavior;
 // the third addition is observation-only scratch for later commit.
@@ -1043,16 +1065,7 @@ static void bbe_validate_reward_config(const Bloodbowl* env) {
                 "both zero-sum board-EV annuities; set one arm only\n");
         abort();
     }
-    // D234: Phi >= 0 becomes an enforced invariant, not a manifest convention.
-    // bbe_potential is coeff*(D_max - dist), so a negative distance coefficient
-    // makes Phi <= 0 and inverts the entire sign argument the exact-PBRS path
-    // rests on -- regime exits would PAY instead of being charged, and the
-    // terminal payback would be a bonus. Checked only when the exact form is
-    // selected: the legacy gamma == 0 form is Phi = -k*d, a different object
-    // with a different (historical, reproduced-not-defended) semantic, and
-    // gating here keeps every legacy lineage's validation byte-identical.
-    if (env->reward_dist_pbrs_gamma > 0.0f &&
-        (env->reward_dist_ball < 0.0f || env->reward_dist_endzone < 0.0f)) {
+    if (!bbe_reward_potential_sign_valid(env)) {
         fprintf(stderr,
                 "bloodbowl: exact-PBRS distance coefficients must be >= 0 so "
                 "the potential stays non-negative; got reward_dist_ball=%g "
@@ -1061,17 +1074,13 @@ static void bbe_validate_reward_config(const Bloodbowl* env) {
                 (double)env->reward_dist_endzone);
         abort();
     }
-    // D234: the env's own design envelope must fit inside the trainer's clamp.
-    // This replaces the launch-time role the old `td + win <= 1` manifest rule
-    // played: the trainer no longer truncates at 1, so what must be proved is
-    // that the largest legitimate emission is still nowhere near the guard.
-    float envelope = bbe_reward_clip_threshold(env);
-    if (!(envelope <= BBE_TRAINER_REWARD_CLAMP)) {
+    if (!bbe_reward_envelope_valid(env)) {
         fprintf(stderr,
                 "bloodbowl: reward design envelope %g exceeds the trainer "
                 "clamp %g; the trainer would truncate a legitimate emission "
                 "and void PBRS policy invariance\n",
-                (double)envelope, (double)BBE_TRAINER_REWARD_CLAMP);
+                (double)bbe_reward_clip_threshold(env),
+                (double)BBE_TRAINER_REWARD_CLAMP);
         abort();
     }
 }

@@ -631,6 +631,100 @@ BB_TEST(puffer_reward_config_rejects_nonfinite_coefficients) {
     BB_CHECK(strcmp(bad_field, "reward_dist_endzone") == 0);
 }
 
+BB_TEST(puffer_reward_clip_threshold_derives_both_pbrs_forms) {
+    RewardFixture f;
+    setup_env_buffers(&f);
+    f.env.reward_configured = 1;
+    f.env.reward_td = 0.4f;
+    f.env.reward_win = 0.6f;
+
+    // No distance channel: the objective stack alone.
+    check_float(bbe_reward_clip_threshold(&f.env), 1.0f);
+
+    // A larger draw penalty than win bonus still contributes only once --
+    // bbe_finish_episode applies exactly one of the two.
+    f.env.reward_draw = 0.5f;
+    check_float(bbe_reward_clip_threshold(&f.env), 1.0f);
+    f.env.reward_draw = 0.0f;
+
+    // Legacy raw-delta form: a distance emission and the objective stack can
+    // never co-fire (the legacy path skips its emission whenever a team
+    // scored, and the terminal suppresses it), so the bound is their MAX.
+    // 25 * 0.04 = 1.0 for the r0 family, which is why the historical
+    // hardcoded 1.0 was correct for every legacy manifest.
+    f.env.reward_dist_ball = 0.02f;
+    f.env.reward_dist_endzone = 0.04f;
+    check_float(bbe_reward_clip_threshold(&f.env), 1.0f);
+    f.env.reward_dist_endzone = 0.06f;
+    check_float(bbe_reward_clip_threshold(&f.env), 1.5f);
+    f.env.reward_dist_endzone = 0.04f;
+
+    // Exact PBRS: the payback ADDS to the terminal stack.
+    f.env.reward_dist_pbrs_gamma = 0.995f;
+    check_float(bbe_reward_clip_threshold(&f.env), 2.5f);
+
+    // Every shipped manifest stays far inside the trainer's guard.
+    BB_CHECK(bbe_reward_envelope_valid(&f.env));
+    BB_CHECK(BBE_TRAINER_REWARD_CLAMP == 8.0f);
+}
+
+BB_TEST(puffer_reward_envelope_must_fit_inside_the_trainer_clamp) {
+    RewardFixture f;
+    setup_env_buffers(&f);
+    f.env.reward_configured = 1;
+    f.env.reward_td = 1.0f;
+    f.env.reward_win = 1.0f;
+    f.env.reward_dist_pbrs_gamma = 0.995f;
+    f.env.reward_dist_ball = 0.1f;
+    f.env.reward_dist_endzone = 0.1f;
+    // 1.0 + 1.0 + 25*(0.1 + 0.1) = 7.0
+    check_float(bbe_reward_clip_threshold(&f.env), 7.0f);
+    BB_CHECK(bbe_reward_envelope_valid(&f.env));
+
+    // Each coefficient is individually legal under the per-channel [-1,1] rule,
+    // yet the stack now exceeds the guard and the trainer would truncate a
+    // legitimate emission.
+    f.env.reward_dist_endzone = 0.2f;
+    check_float(bbe_reward_clip_threshold(&f.env), 9.5f);
+    BB_CHECK(bbe_reward_config_scalars_valid(&f.env, NULL));
+    BB_CHECK(!bbe_reward_envelope_valid(&f.env));
+}
+
+BB_TEST(puffer_exact_pbrs_potential_coefficients_must_keep_phi_nonnegative) {
+    RewardFixture f;
+    setup_env_buffers(&f);
+    f.env.reward_configured = 1;
+    f.env.reward_dist_ball = 0.02f;
+    f.env.reward_dist_endzone = 0.04f;
+
+    // Legacy form is Phi = -k*d, a different object: its historical validation
+    // behaviour is preserved exactly, negative coefficients included.
+    f.env.reward_dist_pbrs_gamma = 0.0f;
+    f.env.reward_dist_ball = -0.02f;
+    BB_CHECK(bbe_reward_potential_sign_valid(&f.env));
+
+    // On the exact path a negative coefficient makes Phi <= 0, which inverts
+    // the sign argument the whole channel rests on.
+    f.env.reward_dist_pbrs_gamma = 0.995f;
+    BB_CHECK(!bbe_reward_potential_sign_valid(&f.env));
+    f.env.reward_dist_ball = 0.02f;
+    BB_CHECK(bbe_reward_potential_sign_valid(&f.env));
+    f.env.reward_dist_endzone = -0.04f;
+    BB_CHECK(!bbe_reward_potential_sign_valid(&f.env));
+    f.env.reward_dist_endzone = 0.04f;
+    BB_CHECK(bbe_reward_potential_sign_valid(&f.env));
+
+    // And the invariant itself holds across the whole legal distance range,
+    // inactive regimes included.
+    BB_CHECK(bbe_potential(0.04f, -1) == 0.0f);
+    for (int d = 0; d <= BB_PITCH_LEN - 1; d++) {
+        BB_CHECK(bbe_potential(0.02f, d) >= 0.0f);
+        BB_CHECK(bbe_potential(0.04f, d) >= 0.0f);
+    }
+    check_float(bbe_potential(0.02f, 0), 0.5f);
+    check_float(bbe_potential(0.02f, BB_PITCH_LEN - 1), 0.0f);
+}
+
 BB_TEST(puffer_reward_clip_telemetry_sees_terminal_stack) {
     RewardFixture f;
     setup_env_buffers(&f);
