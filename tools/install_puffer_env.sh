@@ -108,20 +108,6 @@ if [ "$MODE" = "check" ]; then
         echo "  fix: tools/install_puffer_env.sh $PUFFER" >&2
         exit 1
     fi
-    # D234: BOTH backends, checked separately. A tree with only one of these
-    # trains one path on truncated rewards, and the vendored tree is gitignored
-    # so a re-clone drops the edit silently.
-    if ! grep -Fq 'clamp(-8, 8)' "$PUFFER/pufferlib/torch_pufferl.py"; then
-        echo "drift check: torch backend still clamps rewards to +-1" >&2
-        echo "  fix: tools/install_puffer_env.sh $PUFFER" >&2
-        exit 1
-    fi
-    if ! grep -Fq -- '-8.0f, 8.0f, numel(rollouts.rewards.shape)' \
-        "$PUFFER/src/pufferlib.cu"; then
-        echo "drift check: CUDA backend still clamps rewards to +-1" >&2
-        echo "  fix: tools/install_puffer_env.sh $PUFFER" >&2
-        exit 1
-    fi
     if [ ! -f "$SELFPLAY_LEAGUE_PATCH" ] || \
        ! grep -Fq 'Patch copy: training/selfplay_league.patch' \
            "$PUFFER/pufferlib/selfplay.py" || \
@@ -175,6 +161,23 @@ if [ "$MODE" = "check" ]; then
             exit 1
         fi
     done
+    # D234: BOTH backends, checked separately, and ordered LAST among the
+    # marker checks -- the earlier ones carry message-ordering contracts
+    # that training/test_recurrent_cuda_qualification.py asserts against a
+    # partial fixture tree. A tree with only one of these
+    # trains one path on truncated rewards, and the vendored tree is gitignored
+    # so a re-clone drops the edit silently.
+    if ! grep -Fq 'clamp(-8, 8)' "$PUFFER/pufferlib/torch_pufferl.py"; then
+        echo "drift check: torch backend still clamps rewards to +-1" >&2
+        echo "  fix: tools/install_puffer_env.sh $PUFFER" >&2
+        exit 1
+    fi
+    if ! grep -Fq -- '-8.0f, 8.0f, numel(rollouts.rewards.shape)' \
+        "$PUFFER/src/pufferlib.cu"; then
+        echo "drift check: CUDA backend still clamps rewards to +-1" >&2
+        echo "  fix: tools/install_puffer_env.sh $PUFFER" >&2
+        exit 1
+    fi
     PYBIN="$PUFFER/.venv/bin/python"
     if [ ! -x "$PYBIN" ]; then
         echo "drift check: vendored Python is missing: $PYBIN" >&2
