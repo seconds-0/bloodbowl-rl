@@ -875,7 +875,92 @@ static int bbe_dist_carry(const bb_match* m, int t) {
 #define BBE_POT_DMAX ((float)(BB_PITCH_LEN - 1))
 static float bbe_potential(float coeff, int dist) {
     if (coeff == 0.0f || dist < 0) return 0.0f;
-    return coeff * (BBE_POT_DMAX - (float)dist);
+    float phi = coeff * (BBE_POT_DMAX - (float)dist);
+    // Phi >= 0 is load-bearing, not decorative (D234). The whole sign argument
+    // above -- and the terminal payback's bound in bbe_reward_clip_threshold --
+    // reads "Phi is total and >= 0". A negative coefficient inverts every one of
+    // those conclusions. bbe_reward_config_scalars_valid rejects that at config
+    // time on the exact-PBRS path; this is the belt to that suspenders, because
+    // the property was previously only a manifest convention that nothing in the
+    // env actually checked. dist is Chebyshev on the pitch, so it never exceeds
+    // BBE_POT_DMAX and the factor cannot go negative on its own.
+    if (!(phi >= 0.0f)) {
+        fprintf(stderr,
+                "bloodbowl: PBRS potential must be non-negative; coeff=%g "
+                "dist=%d gave Phi=%g\n", (double)coeff, dist, (double)phi);
+        abort();
+    }
+    return phi;
+}
+
+// The vendored trainer's reward clamp, applied in BOTH backends by
+// training/puffer_reward_clamp_range.patch (pufferlib/torch_pufferl.py and
+// src/pufferlib.cu). It is deliberately far outside anything this reward design
+// can emit: its only remaining job is a NaN/pathology guard. It is NOT the
+// clipping instrument -- see bbe_reward_clip_threshold. Keep in sync with the
+// patch; bbe_validate_reward_config asserts the env stays inside it.
+#define BBE_TRAINER_REWARD_CLAMP 8.0f
+
+// The largest magnitude the reward DESIGN can legitimately place on one
+// agent-step, derived from the env's own configured scalars. This -- not the
+// trainer's loose guard -- is the tight instrument behind D182's zero-budget
+// any-clip gate: an emission above it is a design breach and must still fail
+// the run hard.
+//
+// Derivation. bbe_finish_episode suppresses every incidental shaping term on
+// the final emission and rebuilds it as exactly
+//
+//     reward = objective + bonus + kept_ball + kept_endzone
+//
+// so the terminal stack is closed-form, and it is the only place where terms
+// deliberately co-fire:
+//
+//   |objective| <= |reward_td|
+//        One score changes hands per agent-step. This is the same multiplicity
+//        assumption reward_manifest.py's objective-stack check already makes.
+//   |bonus| <= max(|reward_win|, |reward_draw|)
+//        Exactly one of the two is applied, never both.
+//   |kept_*| <= BBE_POT_DMAX * |coeff|
+//        The mandatory PBRS payback -Phi(s_T-1). bbe_potential is
+//        coeff*(D_max - dist) with 0 <= dist <= D_max, so |Phi| <= |coeff|*D_max.
+//
+// The two forms of the distance channel need different arithmetic:
+//
+//   Exact PBRS (reward_dist_pbrs_gamma > 0). Both channels emit on EVERY
+//   transition, so their payback ADDS to the terminal stack. Summed rather
+//   than maxed even though the two regimes are mutually exclusive at any one
+//   state (fetch needs BB_BALL_ON_GROUND, carry needs BB_BALL_HELD by that
+//   team): the BB_STATUS_ERROR path reaches bbe_finish_episode without running
+//   the potential block, so pot_fetch_prev/pot_carry_prev need not both be
+//   from s_T-1. Half a point of slack is cheaper than depending on that proof.
+//
+//   Legacy raw delta (gamma == 0). Nothing is emitted at the terminal at all,
+//   and the non-terminal emission is skipped whenever a team scored -- so a
+//   distance delta and the objective stack can NEVER co-fire, and the bound is
+//   their max, not their sum. One channel emits per team-step at most (a
+//   channel needs its regime live at BOTH ends of the transition, and the two
+//   regimes are mutually exclusive), with |delta| = |pf - pf_prev| <=
+//   D_max*|coeff| because both endpoints lie in [-D_max*|coeff|, 0]. For every
+//   historical manifest (td .4, win .6, k_ez .04) that max is 1.0 on the nose,
+//   so legacy lineages keep byte-identical clip telemetry.
+//
+// Honest limitation, stated rather than hidden: the other dense shaping
+// channels (block EV, possession annuity, threat annuities, injury) are not in
+// this sum, so a non-terminal stack of those is bounded only by the
+// per-coefficient |c| <= 1 manifest rule. They were not in the old hardcoded
+// 1.0 either -- that constant came from the same per-coefficient rule, not from
+// a stacking analysis -- so the instrument is not weaker than it was designed
+// to be, only re-anchored on the stack that actually breached. The
+// terminal/non-terminal split counters remain, so a recurrence is separable.
+static float bbe_reward_clip_threshold(const Bloodbowl* env) {
+    float win = fabsf(env->reward_win);
+    float draw = fabsf(env->reward_draw);
+    float objective = fabsf(env->reward_td) + (win > draw ? win : draw);
+    float fetch = BBE_POT_DMAX * fabsf(env->reward_dist_ball);
+    float carry = BBE_POT_DMAX * fabsf(env->reward_dist_endzone);
+    if (env->reward_dist_pbrs_gamma > 0.0f) return objective + fetch + carry;
+    float distance = fetch > carry ? fetch : carry;
+    return objective > distance ? objective : distance;
 }
 
 // Single mutation seam for ordinary reward contributions. Keeping the two
@@ -956,6 +1041,37 @@ static void bbe_validate_reward_config(const Bloodbowl* env) {
         fprintf(stderr,
                 "bloodbowl: reward_k_assist and reward_carrier_threat are "
                 "both zero-sum board-EV annuities; set one arm only\n");
+        abort();
+    }
+    // D234: Phi >= 0 becomes an enforced invariant, not a manifest convention.
+    // bbe_potential is coeff*(D_max - dist), so a negative distance coefficient
+    // makes Phi <= 0 and inverts the entire sign argument the exact-PBRS path
+    // rests on -- regime exits would PAY instead of being charged, and the
+    // terminal payback would be a bonus. Checked only when the exact form is
+    // selected: the legacy gamma == 0 form is Phi = -k*d, a different object
+    // with a different (historical, reproduced-not-defended) semantic, and
+    // gating here keeps every legacy lineage's validation byte-identical.
+    if (env->reward_dist_pbrs_gamma > 0.0f &&
+        (env->reward_dist_ball < 0.0f || env->reward_dist_endzone < 0.0f)) {
+        fprintf(stderr,
+                "bloodbowl: exact-PBRS distance coefficients must be >= 0 so "
+                "the potential stays non-negative; got reward_dist_ball=%g "
+                "reward_dist_endzone=%g\n",
+                (double)env->reward_dist_ball,
+                (double)env->reward_dist_endzone);
+        abort();
+    }
+    // D234: the env's own design envelope must fit inside the trainer's clamp.
+    // This replaces the launch-time role the old `td + win <= 1` manifest rule
+    // played: the trainer no longer truncates at 1, so what must be proved is
+    // that the largest legitimate emission is still nowhere near the guard.
+    float envelope = bbe_reward_clip_threshold(env);
+    if (!(envelope <= BBE_TRAINER_REWARD_CLAMP)) {
+        fprintf(stderr,
+                "bloodbowl: reward design envelope %g exceeds the trainer "
+                "clamp %g; the trainer would truncate a legitimate emission "
+                "and void PBRS policy invariance\n",
+                (double)envelope, (double)BBE_TRAINER_REWARD_CLAMP);
         abort();
     }
 }
@@ -2681,7 +2797,13 @@ static void bbe_commit_reward_components(Bloodbowl* env,
             env->ep_reward_component_mismatch_samples++;
         }
 
-        float postclip = fminf(1.0f, fmaxf(-1.0f, raw));
+        // Clipped against the DERIVED design envelope, not a literal (D234).
+        // All three clip instruments below and above must describe the same
+        // event: they share a zero budget in live_integrity_guard.py, so a
+        // threshold split between them would let one counter fire while another
+        // reported nothing destroyed.
+        float limit = bbe_reward_clip_threshold(env);
+        float postclip = fminf(limit, fmaxf(-limit, raw));
         env->ep_reward_postclip_return[a] += postclip;
         env->ep_reward_clip_signed_delta[a] += raw - postclip;
     }
@@ -2691,6 +2813,9 @@ static void bbe_record_reward_emission_masked(Bloodbowl* env,
                                                unsigned nonfinite_mask,
                                                bool terminal) {
     bbe_commit_reward_components(env, nonfinite_mask);
+    // D234: the tight instrument is derived from the env's own reward scalars,
+    // not hardcoded to the trainer's clamp. See bbe_reward_clip_threshold.
+    float limit = bbe_reward_clip_threshold(env);
     for (int a = 0; a < BBE_AGENTS; a++) {
         float raw = env->reward_ptr[a][0];
         env->ep_reward_samples++;
@@ -2704,9 +2829,9 @@ static void bbe_record_reward_emission_masked(Bloodbowl* env,
         if (magnitude > env->ep_reward_abs_max) {
             env->ep_reward_abs_max = magnitude;
         }
-        if (magnitude > 1.0f) {
+        if (magnitude > limit) {
             env->ep_reward_clipped++;
-            env->ep_reward_clip_excess += magnitude - 1.0f;
+            env->ep_reward_clip_excess += magnitude - limit;
             if (terminal) env->ep_reward_clip_terminal++;
             else env->ep_reward_clip_nonterminal++;
         }

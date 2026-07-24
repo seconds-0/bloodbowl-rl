@@ -635,6 +635,11 @@ BB_TEST(puffer_reward_clip_telemetry_sees_terminal_stack) {
     RewardFixture f;
     setup_env_buffers(&f);
     f.env.reward_configured = 1;
+    // Declared envelope is 0.2 + 0.8 = 1.0 (D234: derived from the scalars,
+    // not a literal). The injected objective is twice reward_td -- the shape a
+    // double-score accounting bug would take -- so the terminal emission
+    // breaches the design envelope by 0.2 per agent and must be flagged.
+    f.env.reward_td = 0.2f;
     f.env.reward_win = 0.8f;
     f.env.match.score[BB_HOME] = 1;
     f.env.match.score[BB_AWAY] = 0;
@@ -756,10 +761,16 @@ BB_TEST(puffer_reward_nonfinite_telemetry_sees_raw_nan_and_infinity) {
     check_float(f.env.log.reward_episode_abs_max_mean, 0.0f);
 }
 
-BB_TEST(puffer_reward_clip_threshold_is_strictly_above_one) {
+BB_TEST(puffer_reward_clip_threshold_is_strictly_above_the_derived_envelope) {
+    // The boundary is the DERIVED envelope, not a literal 1.0 (D234). These
+    // scalars derive exactly 1.0 -- reward_td 1.0, drawn game so the bonus is
+    // reward_draw 0.0 -- which keeps the historical nextafterf boundary while
+    // pinning it to the derivation instead of a constant.
     RewardFixture exact;
     setup_env_buffers(&exact);
     exact.env.reward_configured = 1;
+    exact.env.reward_td = 1.0f;
+    check_float(bbe_reward_clip_threshold(&exact.env), 1.0f);
     exact.rewards[BB_HOME] = 1.0f;
     exact.rewards[BB_AWAY] = -1.0f;
     exact.env.step_objective_reward[BB_HOME] = 1.0f;
@@ -772,6 +783,7 @@ BB_TEST(puffer_reward_clip_threshold_is_strictly_above_one) {
     RewardFixture over;
     setup_env_buffers(&over);
     over.env.reward_configured = 1;
+    over.env.reward_td = 1.0f;
     float just_over = nextafterf(1.0f, INFINITY);
     over.rewards[BB_HOME] = just_over;
     over.rewards[BB_AWAY] = -just_over;
@@ -782,6 +794,93 @@ BB_TEST(puffer_reward_clip_threshold_is_strictly_above_one) {
     check_float(over.env.log.reward_clip_episodes, 1.0f);
     BB_CHECK(over.env.log.reward_clip_excess > 0.0f);
     check_float(over.env.log.reward_episode_abs_max_mean, just_over);
+}
+
+// D234 regression for the breach the live screen actually produced.
+//
+// Stage the terminal state of a step in which the OPPONENT scored while the
+// ball was ON_GROUND beforehand, so the exact-PBRS fetch channel is live. The
+// conceding agent's terminal stack is -reward_td - reward_win = -1.0 exactly,
+// and the mandatory payback -Phi_fetch(s_T-1) lands on that same emission.
+// With reward_dist_ball 0.02 and a nearest standing teammate at Chebyshev
+// distance `fetch_dist`, the payback is -0.02*(25 - fetch_dist): exactly the
+// observed 0.02*{1,2,3,4} excess quantization, and |raw| = 1.08 at dist 21.
+//
+// Slot 0 (HOME) is the loser on purpose: reward_postclip_return and
+// reward_clip_signed_delta are logged from slot 0 only, so putting the breach
+// there makes every clip counter discriminating.
+static void build_conceded_score_with_live_fetch(RewardFixture* f,
+                                                 int fetch_dist) {
+    setup_env_buffers(f);
+    Bloodbowl* env = &f->env;
+    env->reward_configured = 1;
+    env->reward_td = 0.4f;
+    env->reward_win = 0.6f;
+    env->reward_draw = 0.0f;
+    env->reward_dist_ball = 0.02f;
+    env->reward_dist_endzone = 0.04f;
+    env->reward_dist_pbrs_gamma = 0.995f;
+    env->match.score[BB_HOME] = 0;
+    env->match.score[BB_AWAY] = 1;
+
+    // The scoring step as c_step leaves it. Scoring sends the ball OFF_PITCH,
+    // so Phi(s_T) is 0 on both channels: the step emission is gamma*0 - Phi,
+    // and pot_*_prev has already been advanced to Phi(s_T) = 0. Terminal
+    // rebuild then computes kept = step_emission - gamma*pot_prev = -Phi.
+    float phi_fetch = bbe_potential(env->reward_dist_ball, fetch_dist);
+    for (int a = 0; a < BBE_AGENTS; a++) {
+        float td = a == BB_AWAY ? 0.4f : -0.4f;
+        env->step_objective_reward[a] = td;
+        env->step_reward_component[a][BBE_REWARD_TOUCHDOWN] = td;
+        env->step_reward_component[a][BBE_REWARD_DISTANCE_BALL] = -phi_fetch;
+        env->pot_fetch_prev[a] = 0.0f;
+        env->pot_carry_prev[a] = 0.0f;
+        env->ep_return[a] = td - phi_fetch;
+        f->rewards[a] = td - phi_fetch;
+    }
+}
+
+BB_TEST(puffer_terminal_pbrs_payback_on_a_conceded_score_is_not_a_clip) {
+    RewardFixture f;
+    build_conceded_score_with_live_fetch(&f, 21);
+
+    bbe_finish_episode(&f.env);
+
+    // The payback survives into the emission on both sides, and the leak is
+    // ONE-SIDED: the winner banks 0.92 and stays inside 1.0, only the loser
+    // crosses it.
+    check_float(f.rewards[BB_HOME], -1.08f);
+    check_float(f.rewards[BB_AWAY], 0.92f);
+    check_float(f.env.log.reward_episode_abs_max_mean, 1.08f);
+
+    // A legitimate emission under this manifest: the derived envelope is
+    // 0.4 + 0.6 + 25*(0.02 + 0.04) = 2.5, so nothing is flagged.
+    check_float(bbe_reward_clip_threshold(&f.env), 2.5f);
+    check_float(f.env.log.reward_clipped_samples, 0.0f);
+    check_float(f.env.log.reward_clip_excess, 0.0f);
+    check_float(f.env.log.reward_clip_episodes, 0.0f);
+    check_float(f.env.log.reward_clip_terminal_samples, 0.0f);
+    check_float(reward_clip_frac(&f.env.log), 0.0f);
+    // The D190 identity: nothing was destroyed, so postclip == raw.
+    check_float(f.env.log.reward_clip_signed_delta, 0.0f);
+    check_float(f.env.log.reward_postclip_return, -1.08f);
+    check_float(f.env.log.episode_return, -1.08f);
+}
+
+BB_TEST(puffer_terminal_pbrs_payback_quantization_never_registers_excess) {
+    // The live artifact's per-event excess was 0.02*{1,2,3,4}; each of those
+    // four distances must be clean, not merely the largest one.
+    for (int n = 1; n <= 4; n++) {
+        RewardFixture f;
+        build_conceded_score_with_live_fetch(&f, 25 - n);
+
+        bbe_finish_episode(&f.env);
+
+        check_float(f.rewards[BB_HOME], -1.0f - 0.02f * (float)n);
+        check_float(f.env.log.reward_clipped_samples, 0.0f);
+        check_float(f.env.log.reward_clip_excess, 0.0f);
+        check_float(f.env.log.reward_clip_signed_delta, 0.0f);
+    }
 }
 
 BB_TEST(puffer_reward_clip_fraction_is_emission_weighted_across_episodes) {
@@ -965,6 +1064,9 @@ BB_TEST(puffer_reward_component_ledger_commits_nonterminal_emissions) {
     RewardFixture f;
     setup_env_buffers(&f);
     f.env.reward_configured = 1;
+    // Declare the channel this fixture emits from, so the derived clip
+    // envelope (D234) covers it: legacy raw-delta form, 25 * 0.02 = 0.5.
+    f.env.reward_dist_ball = 0.02f;
 
     bbe_reward_add(&f.env, BB_HOME, BBE_REWARD_DISTANCE_BALL, 0.20f);
     bbe_reward_add(&f.env, BB_AWAY, BBE_REWARD_DISTANCE_BALL, -0.20f);
@@ -1000,6 +1102,9 @@ BB_TEST(puffer_reward_component_ledger_discards_terminal_shaping_once) {
     RewardFixture f;
     setup_env_buffers(&f);
     f.env.reward_configured = 1;
+    // Declared envelope 0.40 + 0.60 = 1.0 (D234), which is exactly the
+    // terminal stack this fixture composes: nothing here is a breach.
+    f.env.reward_td = 0.40f;
     f.env.reward_win = 0.60f;
     f.env.match.score[BB_HOME] = 1;
     f.env.match.score[BB_AWAY] = 0;
@@ -1031,6 +1136,10 @@ BB_TEST(puffer_reward_component_ledger_reconciles_signed_clipping) {
     RewardFixture f;
     setup_env_buffers(&f);
     f.env.reward_configured = 1;
+    // Declared envelope 0.20 + 0.80 = 1.0 (D234). The injected objective is
+    // twice reward_td, so the terminal stack breaches by 0.20 and the signed
+    // ledger identity has something real to reconcile.
+    f.env.reward_td = 0.20f;
     f.env.reward_win = 0.80f;
     f.env.match.score[BB_HOME] = 1;
     f.env.match.score[BB_AWAY] = 0;
