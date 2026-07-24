@@ -1015,13 +1015,25 @@ BB_TEST(observation_pending_square_generalizes_to_the_live_windows) {
     BB_CHECK_EQ(obs_ctx(&f, BB_HOME)[12], 0);
 
     // Off-pitch/garbage frame squares zero out exactly like the ball coords.
-    f.env.match.stack[0] =
-        (bb_frame){BB_PROC_MOVE, 1, 1, BB_ACT_MOVE, 0xFF, 0xFF, 0};
+    // 0xFF alone is a WORTHLESS probe here: 0xFF + 1 truncates back to 0, so
+    // dropping the bb_on_pitch_xy guard would still read as zero. Use values
+    // that survive the +1 encoding.
+    static const uint8_t invalid_frame_xy[][2] = {
+        {BB_PITCH_LEN, 4}, {6, BB_PITCH_WID}, {30, 20}, {0xFF, 0xFF},
+    };
     f.env.match.stack[1] =
         (bb_frame){BB_PROC_TEST, 0, 1, BB_TEST_DODGE, 3, 0, 0};
-    encode_both(&f);
-    BB_CHECK_EQ(obs_ctx(&f, BB_HOME)[9], 0);
-    BB_CHECK_EQ(obs_ctx(&f, BB_HOME)[12], 0);
+    for (size_t i = 0;
+         i < sizeof invalid_frame_xy / sizeof invalid_frame_xy[0]; i++) {
+        f.env.match.stack[0] =
+            (bb_frame){BB_PROC_MOVE, 1, 1, BB_ACT_MOVE,
+                       invalid_frame_xy[i][0], invalid_frame_xy[i][1], 0};
+        encode_both(&f);
+        for (int agent = 0; agent < BBE_AGENTS; agent++) {
+            BB_CHECK_EQ(obs_ctx(&f, agent)[9], 0);
+            BB_CHECK_EQ(obs_ctx(&f, agent)[12], 0);
+        }
+    }
 }
 
 BB_TEST(observation_activation_gate_target_is_visible_at_its_reroll_window) {
