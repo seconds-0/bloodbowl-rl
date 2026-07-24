@@ -570,6 +570,13 @@ PATCH_HASH="$({
   sha256sum "$ROOT/training/puffer_recurrent_eval_state.patch"
   sha256sum "$ROOT/training/puffer_frozen_prio_mask.patch"
   sha256sum "$ROOT/training/puffer_recurrent_cuda_qualification.patch"
+  # D234. Must stay LAST and must mirror run_reward_screen.sh's list exactly:
+  # the digest is order-sensitive and this script compares its result against
+  # EXPECTED_PUFFER_PATCH_BUNDLE_SHA256, which the screen publishes. This entry
+  # is what makes a pure-Python trainer edit visible to lineage validation --
+  # torch_pufferl.py does not change compiled_module_sha256, and
+  # vendor_source_sha256 is recorded below but never validated.
+  sha256sum "$ROOT/training/puffer_reward_clamp_range.patch"
 } | sha256sum | awk '{print $1}')"
 if [ -n "$EXPECTED_PUFFER_PATCH_BUNDLE_SHA256" ] && \
    [ "$PATCH_HASH" != "$EXPECTED_PUFFER_PATCH_BUNDLE_SHA256" ]; then

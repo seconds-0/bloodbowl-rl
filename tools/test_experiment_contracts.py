@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import hashlib
 import os
 import re
 import subprocess
@@ -238,6 +239,85 @@ class ExperimentContractTests(unittest.TestCase):
             arm,
         )
         self.assertIn("Patch copy: training/selfplay_league.patch", arm)
+
+    def test_pure_python_trainer_edits_ride_the_gated_patch_bundle(self):
+        """D234: close the lineage hole a pure-Python trainer edit falls through.
+
+        `tools/checkpoint_lineage.py` validates exactly three implementation
+        digests. `vendor_source_sha256` is recorded by run_reward_ablation.sh
+        and published by run_reward_screen.sh but is never checked, and
+        `pufferlib/torch_pufferl.py` is pure Python so editing it does not move
+        `compiled_module_sha256` either. Without the reward-clamp patch inside
+        the bundle, a post-patch run could warm-start a pre-patch checkpoint and
+        pass eligibility clean.
+        """
+        lineage = (ROOT / "tools/checkpoint_lineage.py").read_text(
+            encoding="utf-8")
+        keys_block = re.search(
+            r"SHA256_KEYS = \((.*?)\)", lineage, re.S).group(1)
+        self.assertIn("puffer_patch_bundle_sha256", keys_block)
+        # The hole itself, pinned so it cannot silently reopen as a false
+        # sense of coverage: this key is NOT validated, which is exactly why
+        # the patch bundle has to carry the change.
+        self.assertNotIn("vendor_source_sha256", keys_block)
+        self.assertIn("vendor_source_sha256", (
+            ROOT / "tools/run_reward_ablation.sh").read_text(encoding="utf-8"))
+
+        clamp_patch = ROOT / "training/puffer_reward_clamp_range.patch"
+        body = clamp_patch.read_text(encoding="utf-8")
+        # A one-file patch is a half-fix: the torch path is what
+        # run_synthesis_c.sh trains on, the CUDA path is what the screen
+        # trains on.
+        self.assertIn("+++ b/pufferlib/torch_pufferl.py", body)
+        self.assertIn("+++ b/src/pufferlib.cu", body)
+        self.assertIn("clamp(-8, 8)", body)
+        self.assertIn("-8.0f, 8.0f, numel(rollouts.rewards.shape)", body)
+
+        screen = (ROOT / "tools/run_reward_screen.sh").read_text(
+            encoding="utf-8")
+        arm = (ROOT / "tools/run_reward_ablation.sh").read_text(
+            encoding="utf-8")
+        screen_block = screen.split("patches = [", 1)[1].split(
+            "vendor_sources = [", 1)[0]
+        arm_block = arm.split('PATCH_HASH="$({', 1)[1].split(
+            '} | sha256sum', 1)[0]
+        screen_patches = re.findall(r'training/([^"/]+\.patch)', screen_block)
+        arm_patches = re.findall(r'training/([^"/]+\.patch)', arm_block)
+        self.assertEqual(screen_patches, arm_patches)
+        self.assertIn("puffer_reward_clamp_range.patch", screen_patches)
+        self.assertIn("puffer_reward_clamp_range.patch", arm_patches)
+
+        # The digest is order-sensitive and the arm recomputes it to compare
+        # against the value the screen published, so both lists must agree on
+        # position, not merely membership.
+        self.assertEqual(
+            screen_patches.index("puffer_reward_clamp_range.patch"),
+            arm_patches.index("puffer_reward_clamp_range.patch"),
+        )
+
+        # And the entry must actually move the digest, which is the only
+        # property the lineage check consumes.
+        def bundle_sha(names):
+            joined = b"".join(
+                hashlib.sha256(
+                    (ROOT / "training" / name).read_bytes()
+                ).hexdigest().encode() + b"  " + name.encode() + b"\n"
+                for name in names)
+            return hashlib.sha256(joined).hexdigest()
+
+        without = [n for n in arm_patches
+                   if n != "puffer_reward_clamp_range.patch"]
+        self.assertNotEqual(bundle_sha(arm_patches), bundle_sha(without))
+
+    def test_install_drift_check_verifies_both_reward_clamp_backends(self):
+        """D234: vendor/ is gitignored, so a re-clone silently drops the edit."""
+        installer = (ROOT / "tools/install_puffer_env.sh").read_text(
+            encoding="utf-8")
+        self.assertIn("training/puffer_reward_clamp_range.patch", installer)
+        check_block = installer.split('if [ "$MODE" = "check" ]', 1)[1].split(
+            'rm -rf "$DST"', 1)[0]
+        self.assertIn("torch backend still clamps rewards to +-1", check_block)
+        self.assertIn("CUDA backend still clamps rewards to +-1", check_block)
 
     def test_reward_screen_has_exact_possession_gain_decomposition(self):
         source = (ROOT / "tools/run_reward_screen.sh").read_text(
