@@ -1,8 +1,8 @@
 diff --git a/pufferlib/torch_pufferl.py b/pufferlib/torch_pufferl.py
 --- a/pufferlib/torch_pufferl.py
 +++ b/pufferlib/torch_pufferl.py
-@@ -546,7 +546,20 @@ class PuffeRL:
-                    if self.masks is not None else None)
+@@ -443,7 +443,19 @@
+         act = self.actions.transpose(0, 1).contiguous()
          val = self.values.T.contiguous()
          lp = self.logprobs.T.contiguous()
 -        rew = self.rewards.T.contiguous().clamp(-1, 1)
@@ -17,31 +17,25 @@ diff --git a/pufferlib/torch_pufferl.py b/pufferlib/torch_pufferl.py
 +        # the agent banks the increments earned advancing the ball and repays
 +        # none. This clamp is now a NaN/pathology guard only; the tight
 +        # instrument is the env's derived clip threshold
-+        # (bbe_reward_clip_threshold, ocean/bloodbowl/bloodbowl.h), which the
-+        # env asserts at init to sit inside this range.
++        # (bbe_reward_clip_threshold), which stays far below this bound.
 +        rew = self.rewards.T.contiguous().clamp(-8, 8)
          ter = self.terminals.T.contiguous()
-         # LOCAL PATCH (bloodbowl-rl): asymmetric — train on learner rows only.
-         if self.learner_rows is not None:
+         masks = (self.action_masks.transpose(0, 1).contiguous()
+                  if self.action_masks is not None else None)
 diff --git a/src/pufferlib.cu b/src/pufferlib.cu
 --- a/src/pufferlib.cu
 +++ b/src/pufferlib.cu
-@@ -1529,9 +1529,17 @@ void train_impl(PuffeRL& pufferl) {
-             rollouts.action_mask.data, src.action_mask.data, T, B, mask_size);
+@@ -1652,8 +1652,12 @@
      }
  
--    // We hard-clamp rewards to -1, 1. Our envs are mostly designed to respect this range
-+    // LOCAL PATCH (bloodbowl-rl, D234): this bound was -1, 1, which truncated
-+    // legitimate Blood Bowl emissions. A conceding loser's terminal stack is
-+    // exactly -1.0 and the exact-PBRS terminal payback -Phi(s_T-1) lands on
-+    // that same emission, so |raw| crossed the bound. Truncating the shaped
-+    // SUM voids Ng-Harada-Russell policy invariance, and one-sidedly: only the
-+    // loss-side payback is destroyed. The clamp is now a NaN/pathology guard
-+    // only. The tight instrument is the env's derived clip threshold
-+    // (bbe_reward_clip_threshold, ocean/bloodbowl/bloodbowl.h), which the env
-+    // asserts at init to sit inside this range.
-     clamp_precision_kernel<<<grid_size(numel(rollouts.rewards.shape)), BLOCK_SIZE, 0, train_stream>>>(
+     // We hard-clamp rewards to -1, 1. Our envs are mostly designed to respect this range
+-    clamp_precision_kernel<<<grid_size(numel(rollouts.rewards.shape)), BLOCK_SIZE, 0, train_stream>>>(
 -        rollouts.rewards.data, -1.0f, 1.0f, numel(rollouts.rewards.shape));
++        // LOCAL PATCH (bloodbowl-rl, D234): widened from -1,1. See the
++    // matching comment in pufferlib/torch_pufferl.py. This is now a
++    // NaN/pathology guard; the tight instrument is the env's derived
++    // bbe_reward_clip_threshold.
++clamp_precision_kernel<<<grid_size(numel(rollouts.rewards.shape)), BLOCK_SIZE, 0, train_stream>>>(
 +        rollouts.rewards.data, -8.0f, 8.0f, numel(rollouts.rewards.shape));
  
      // Set importance weights to 1.0
