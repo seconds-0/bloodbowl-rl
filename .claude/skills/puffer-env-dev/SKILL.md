@@ -174,9 +174,9 @@ src/bindings.cu:510; `_resolve_backend` asserts it matches, pufferl.py:172-174).
 ```bash
 # 1. "Register" = install the snapshot. NEVER symlink or hand-copy — use the installer:
 bash tools/install_puffer_env.sh           # cp -RL puffer/bloodbowl -> ocean/bloodbowl
-                                           # (+ puffer/config/bloodbowl.ini + demo state
-                                           # bank), applies the patch stack, writes
-                                           # .content_hash
+                                           # (+ puffer/config/bloodbowl.ini), installs
+                                           # the explicit no-bank contract, applies the
+                                           # patch stack, writes .content_hash
 bash tools/install_puffer_env.sh --check    # drift guard: ALL builds (incl. --fast/--local)
                                             # compile the installed SNAPSHOT, never puffer/
                                             # or engine/src — exit 1 = re-install
@@ -254,27 +254,27 @@ the result to an accepted arm; `tools/run_reward_screen.sh` hashes the whole ord
 
 Installer order:
 
-1. snapshot copy (`cp -RL puffer/bloodbowl` → `ocean/bloodbowl`), ini, demo state bank,
-   generated exact-action header, `.content_hash`;
-2. **dict capacity** — bumped in place with perl in `src/bindings.cu`,
+1. snapshot copy (`cp -RL puffer/bloodbowl` → `ocean/bloodbowl`), ini,
+   generated exact-action and no-bank state-contract headers, `.content_hash`;
+2. `puffer_standalone_env_include.patch` — adds the installed environment root to the
+   pinned standalone `--local`/`--fast` compile. The dereferenced snapshot contains
+   `engine/bb/*.h` headers whose `bb/*.h` includes are otherwise unresolvable;
+3. **dict capacity** — bumped in place with perl in `src/bindings.cu`,
    `src/bindings_cpu.cpp`, `src/pufferlib.cu` to `create_dict(160)`.
    `training/puffer_dict_capacity.patch` is the *record* of that change, not what gets
    applied (see §3 for why the capacity is load-bearing);
-3. `sweep_match_mode_exclusion.patch` → `pufferlib/sweep.py` (upstream omits `match_*` from
+4. `sweep_match_mode_exclusion.patch` → `pufferlib/sweep.py` (upstream omits `match_*` from
    `_params_from_puffer_sweep`'s skip-list, so a match-mode sweep crashes; also clears the
    stale `__pycache__` that would shadow it);
-4. `pufferl_env_dashboard_limit.patch` (stock dashboard truncates env metrics at 30 keys;
+5. `pufferl_env_dashboard_limit.patch` (stock dashboard truncates env metrics at 30 keys;
    we emit 123);
-5. `pufferl_env_json.patch`, then `pufferl_env_json_metadata_upgrade.patch`;
-6. `pufferl_env_phase_contract.patch` (explicit train vs final-eval phase);
-7. `pufferl_eval_episode_gate.patch` (accumulates completed games across intervals and
+6. `pufferl_env_json.patch`, then `pufferl_env_json_metadata_upgrade.patch`;
+7. `pufferl_env_phase_contract.patch` (explicit train vs final-eval phase);
+8. `pufferl_eval_episode_gate.patch` (accumulates completed games across intervals and
    scales the eval budget to the requested target);
-8. `pufferl_metrics_keyerror.patch` (keeps `metrics.setdefault` for dynamic keys);
-9. `torch_pufferl_trusted_load.patch` (PyTorch 2.6 flipped `torch.load` to
+9. `pufferl_metrics_keyerror.patch` (keeps `metrics.setdefault` for dynamic keys);
+10. `torch_pufferl_trusted_load.patch` (PyTorch 2.6 flipped `torch.load` to
    `weights_only=True`; our checkpoints are trusted local full-pickle state dicts);
-10. `pufferl_scripted_training_guard.patch` and `pufferl_warm_start.patch` — the two edits
-    that existed only as untracked local edits in individual box checkouts until they were
-    captured. Their absence is why the obs-v5 checkout could not warm-start;
 11. `selfplay_league.patch` → `pufferlib/selfplay.py` (§10);
 12. `puffer_exact_joint_actions.patch` — C-side + Torch: extends the vec interface with the
     transient ragged joint-support buffer (§5);
@@ -282,11 +282,20 @@ Installer order:
     native and Torch rollout paths;
 14. `puffer_frozen_prio_mask.patch` — frozen PPO rows must be mathematically ineligible for
     priority sampling; zero advantage is not exclusion at `alpha=0` because `pow(0,0) == 1`;
-15. `puffer_recurrent_cuda_qualification.patch` — last: it inspects the tensors produced by
+15. `puffer_recurrent_cuda_qualification.patch` — it inspects the tensors produced by
     the preceding patches, so it belongs to the same compiled backend identity.
+16. `puffer_reward_clamp_range.patch` — widens both Torch and CUDA trainer clamps to ±8;
+17. atomic machine-panel write transform — an idempotent in-place edit kept outside the
+    middle of the serial patch stack so later patch contexts remain stable;
+18. `pufferl_scripted_training_guard.patch`, then `pufferl_warm_start.patch` — captured
+    pure-Python edits applied after the recurrent call sites they extend;
+19. `puffer_state_bank_contract.patch` — exports all generated state-bank contract fields
+    from CPU and CUDA modules.
 
-`--check` reverse-verifies the qualification, frozen-prio, trusted-load, and selfplay-league
-patches, so a stale vendored tree fails before a build rather than after a run.
+`--check` reverse-verifies the standalone-build, qualification, frozen-prio,
+scripted-training, warm-start, state-bank, trusted-load, and selfplay-league patches,
+and separately checks both reward-clamp backends. A stale vendored tree therefore
+fails before a build rather than after a run.
 
 `training/torch_pufferl_bcreg.patch` is **not** in the stack (§11).
 
@@ -469,10 +478,12 @@ OBS_TENSOR_T, dict keys, stride isolation, float actions, and mask width. Additi
    ```
    The install step is NOT optional (build.sh compiles the installed snapshot, so skipping it
    hashes STALE code and a real change reads as "no-op"). Run the binary FROM vendor/PufferLib
-   both times — the state bank resolves via the cwd-relative
-   `resources/bloodbowl/state_bank.bbs`, and a missing bank is SILENT (procgen-only episodes)
-   and changes the hash. Same seed/episodes/cwd: intended-no-op refactor ⇒ identical hash;
-   intended obs/mask change ⇒ hash changes and NOTHING else does.
+   both times. The tracked build contract is explicitly `NONE`: installation removes stale
+   state-bank artifacts, and ordinary FNV mode remains kickoff/procgen-only. A positive reset
+   is a typed, hash-pinned contract and must abort when its complete authorized transaction is
+   unavailable; it must never silently fall back to kickoffs. Same seed/episodes/cwd:
+   intended-no-op refactor ⇒ identical hash; intended obs/mask change ⇒ hash changes and
+   NOTHING else does.
 
 ## 14. Where 4.0 differs from 3.0 articles online
 

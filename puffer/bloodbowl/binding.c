@@ -130,7 +130,39 @@ static double kw(Dict* kwargs, const char* key, double fallback) {
     return item != NULL ? item->value : fallback;
 }
 
+static bbe_state_bank_config_values bank_kwargs(Dict* kwargs) {
+    bbe_state_bank_config_values values = {
+        kw(kwargs, "demo_reset_pct", 0.0),
+        kw(kwargs, "state_bank_kind", 0.0),
+        kw(kwargs, "demo_endzone_maxdist", 0.0),
+        kw(kwargs, "demo_pickup_maxdist", 0.0),
+        kw(kwargs, "demo_postkick_maxturn", 0.0),
+        kw(kwargs, "demo_pass_maxrange", 0.0),
+        kw(kwargs, "exclude_team", -1.0),
+        kw(kwargs, "force_home_team", -1.0),
+        kw(kwargs, "force_away_team", -1.0),
+    };
+    return values;
+}
+
+static void validate_bank_kwargs_or_exit(
+        const bbe_state_bank_config_values* values) {
+    bbe_state_bank_error error = bbe_state_bank_validate_config_values(
+        values, PUFFER_STATE_BANK_COMPILED_KIND);
+    if (error != BBE_SB_OK) {
+        fprintf(stderr, "bloodbowl: invalid state-bank configuration: %s\n",
+                bbe_state_bank_error_name(error));
+        exit(1);
+    }
+}
+
 static void apply_kwargs(Env* env, Dict* kwargs) {
+    // Retain and validate original doubles before any float/int conversion.
+    // In particular, 1.5 must not become strict kind 1, and a tiny positive
+    // reset probability must not underflow into an unintended kickoff run.
+    bbe_state_bank_config_values bank_values = bank_kwargs(kwargs);
+    validate_bank_kwargs_or_exit(&bank_values);
+
     env->reward_td = (float)kw(kwargs, "reward_td", BBE_DEFAULT_REWARD_TD);
     env->reward_win = (float)kw(kwargs, "reward_win", BBE_DEFAULT_REWARD_WIN);
     env->reward_draw = (float)kw(kwargs, "reward_draw", BBE_DEFAULT_REWARD_DRAW);
@@ -180,14 +212,13 @@ static void apply_kwargs(Env* env, Dict* kwargs) {
     // Validate only after every reward field has been populated. Keeping this
     // call above the final fields made apply_kwargs' validation incomplete.
     bbe_validate_reward_config(env);
-    // Backplay curriculum: scoring-proximal demo resets (0 = uniform)
-    env->demo_endzone_maxdist = (int)kw(kwargs, "demo_endzone_maxdist", 0.0);
-    // Pickup curriculum (D64): loose-ball-near-mover demo resets (0 = off)
-    env->demo_pickup_maxdist = (int)kw(kwargs, "demo_pickup_maxdist", 0.0);
-    // Post-kickoff scoop drill (D68): loose ball at team-turn <= N (0 = off)
-    env->demo_postkick_maxturn = (int)kw(kwargs, "demo_postkick_maxturn", 0.0);
-    // Passing ladder (D72): held-ball + downfield-receiver demo resets (0=off)
-    env->demo_pass_maxrange = (int)kw(kwargs, "demo_pass_maxrange", 0.0);
+    // Legacy selectors remain in the ABI but typed-bank validation currently
+    // requires all four to be zero; strata must be constructed and pinned in
+    // the immutable artifact contract instead of sampled by the loader.
+    env->demo_endzone_maxdist = (int)bank_values.endzone_selector;
+    env->demo_pickup_maxdist = (int)bank_values.pickup_selector;
+    env->demo_postkick_maxturn = (int)bank_values.postkick_selector;
+    env->demo_pass_maxrange = (int)bank_values.pass_selector;
     env->skillup_max_players = (int)kw(kwargs, "skillup_max_players", 4.0);
     env->skillup_max_each = (int)kw(kwargs, "skillup_max_each", 2.0);
     env->skillup_secondary_pct = (float)kw(kwargs, "skillup_secondary_pct", 0.0);
@@ -195,10 +226,11 @@ static void apply_kwargs(Env* env, Dict* kwargs) {
     env->macro_moves = (int)kw(kwargs, "macro_moves", 0.0);
     env->reach_mover = -1;
     env->macro_mover = -1;
-    env->demo_reset_pct = (float)kw(kwargs, "demo_reset_pct", 0.0);
-    env->exclude_team = (int)kw(kwargs, "exclude_team", -1.0);
-    env->force_home_team = (int)kw(kwargs, "force_home_team", -1.0);
-    env->force_away_team = (int)kw(kwargs, "force_away_team", -1.0);
+    env->demo_reset_pct = (float)bank_values.reset_pct;
+    env->state_bank_kind = (int)bank_values.kind;
+    env->exclude_team = (int)bank_values.exclude_team;
+    env->force_home_team = (int)bank_values.force_home_team;
+    env->force_away_team = (int)bank_values.force_away_team;
     env->scripted_opponent = (int)kw(kwargs, "scripted_opponent", 0.0);
     env->scripted_opponent_team = (int)kw(kwargs, "scripted_opponent_team", 1.0);
     env->scripted_opponent_type = (int)kw(kwargs, "scripted_opponent_type", 0.0);
@@ -248,11 +280,12 @@ Env* my_vec_init(int* num_envs_out, int* buffer_env_starts, int* buffer_env_coun
         exit(1);
     }
 
-    // Demo-state curriculum: one shared load BEFORE any stepping thread
-    // exists (the chess SHARED_FEN_CURRICULUM pattern) — the lazy reset-time
-    // path then never races. Missing file degrades to plain procgen resets.
-    if ((float)kw(env_kwargs, "demo_reset_pct", 0.0) > 0.0f) {
-        bbe_state_bank_load();
+    // Validate the untouched dictionary doubles, then require the immutable
+    // process-wide contract before any worker can be returned.
+    bbe_state_bank_config_values bank_values = bank_kwargs(env_kwargs);
+    validate_bank_kwargs_or_exit(&bank_values);
+    if (bank_values.reset_pct > 0.0) {
+        bbe_state_bank_require_or_abort((int)bank_values.kind);
     }
 
     int num_envs = total_agents / BBE_AGENTS;
@@ -293,7 +326,7 @@ void my_init(Env* env, Dict* kwargs) {
         env->seed = (uint64_t)kw(kwargs, "seed", 1.0);
     }
     if (env->demo_reset_pct > 0.0f) {
-        bbe_state_bank_load(); // before stepping, mirroring my_vec_init
+        bbe_state_bank_require_or_abort(env->state_bank_kind);
     }
 }
 

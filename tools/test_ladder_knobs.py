@@ -21,6 +21,13 @@ LAUNCHER = ROOT / "tools" / "run_reward_ablation.sh"
 
 def run(**knobs) -> subprocess.CompletedProcess:
     env = dict(os.environ)
+    for key in (
+        "LADDER_STATE_BANK_KIND",
+        "EXPECTED_LADDER_STATE_BANK_SHA256",
+        "EXPECTED_LADDER_STATE_BANK_PRODUCER_MANIFEST_SHA256",
+        "EXPECTED_LADDER_STATE_BANK_CONTRACT_SHA256",
+    ):
+        env.pop(key, None)
     # Enough to get past the required-variable checks and reach the knobs.
     env.setdefault("TAG", "ladder-knob-test")
     env.setdefault("REWARD_MANIFEST", str(ROOT / "puffer/config/rewards/s0_both.json"))
@@ -40,49 +47,118 @@ def run(**knobs) -> subprocess.CompletedProcess:
 
 
 class LadderKnobTests(unittest.TestCase):
+    def assert_refused(
+        self,
+        result: subprocess.CompletedProcess,
+        message: str,
+    ) -> None:
+        self.assertNotEqual(
+            result.returncode,
+            0,
+            f"launcher warned but continued: {result.stdout}",
+        )
+        self.assertIn(message, result.stdout)
+
     def test_selector_without_reset_pct_is_refused_as_a_no_op(self):
         # The whole failure mode: a maxdist with reset_pct 0 means the env never
         # draws a banked state, so the "curriculum" run is a kickoff run.
-        out = run(LADDER_ENDZONE_MAXDIST=6, LADDER_RESET_PCT=0).stdout
-        self.assertIn("selector is a no-op", out)
+        result = run(LADDER_ENDZONE_MAXDIST=6, LADDER_RESET_PCT=0)
+        self.assert_refused(result, "selector is a no-op")
 
-    def test_two_selectors_are_refused_because_the_env_applies_only_the_first(self):
-        out = run(
+    def test_two_selectors_are_refused_as_ambiguous(self):
+        result = run(
             LADDER_ENDZONE_MAXDIST=6,
             LADDER_PASS_MAXRANGE=6,
             LADDER_RESET_PCT="0.5",
-        ).stdout
-        self.assertIn("only one curriculum selector", out)
+        )
+        self.assert_refused(result, "only one curriculum selector")
 
     def test_reset_pct_out_of_range_is_refused(self):
-        out = run(LADDER_RESET_PCT="1.5").stdout
-        self.assertIn("must be a fraction in [0,1]", out)
+        result = run(LADDER_RESET_PCT="1.5")
+        self.assert_refused(result, "must be a fraction in [0,1]")
+
+    def test_reset_pct_with_numeric_prefix_and_junk_is_refused(self):
+        result = run(LADDER_RESET_PCT="0.5oops")
+        self.assert_refused(result, "must be a fraction in [0,1]")
+
+    def test_decimal_zero_uses_the_inactive_contract(self):
+        result = run(LADDER_RESET_PCT="0.00")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn(
+            "LADDER_STATE_BANK_KIND is required", result.stdout
+        )
+
+    def test_zero_reset_rejects_bank_authority_variables(self):
+        result = run(
+            LADDER_RESET_PCT="0",
+            LADDER_STATE_BANK_KIND="strict-replay",
+            EXPECTED_LADDER_STATE_BANK_SHA256="1" * 64,
+            EXPECTED_LADDER_STATE_BANK_PRODUCER_MANIFEST_SHA256="2" * 64,
+            EXPECTED_LADDER_STATE_BANK_CONTRACT_SHA256="3" * 64,
+        )
+        self.assert_refused(
+            result,
+            "state-bank authority variables require LADDER_RESET_PCT > 0",
+        )
 
     def test_non_integer_selector_is_refused(self):
-        out = run(LADDER_ENDZONE_MAXDIST="six", LADDER_RESET_PCT="0.5").stdout
-        self.assertIn("must be a non-negative integer", out)
+        result = run(
+            LADDER_ENDZONE_MAXDIST="six", LADDER_RESET_PCT="0.5"
+        )
+        self.assert_refused(
+            result, "must be a canonical non-negative integer"
+        )
 
-    def test_reset_pct_without_a_staged_bank_is_refused(self):
-        # A Mac checkout has no staged bank, so this exercises the real path.
-        bank = ROOT / "vendor/PufferLib/resources/bloodbowl/state_bank.bbs"
-        if bank.exists():
-            self.skipTest("this checkout has a staged bank; covered on the box")
-        out = run(LADDER_RESET_PCT="0.5", LADDER_ENDZONE_MAXDIST=6).stdout
-        self.assertIn("requires a staged state bank", out)
+    def test_selector_rejects_noncanonical_leading_zero(self):
+        result = run(
+            LADDER_ENDZONE_MAXDIST="00", LADDER_RESET_PCT="0.5"
+        )
+        self.assert_refused(
+            result, "must be a canonical non-negative integer"
+        )
+
+    def test_selector_rejects_value_larger_than_signed_c_int(self):
+        result = run(
+            LADDER_ENDZONE_MAXDIST="9" * 100,
+            LADDER_RESET_PCT="0.5",
+        )
+        self.assert_refused(result, "must be at most 2147483647")
+        self.assertNotIn("integer expression expected", result.stdout)
+
+    def test_reset_pct_without_external_authority_is_refused(self):
+        # Artifact presence is not authority: the operator must supply the
+        # independently reviewed kind and all three pins.
+        result = run(
+            LADDER_RESET_PCT="0.5", LADDER_ENDZONE_MAXDIST=6
+        )
+        self.assert_refused(result, "LADDER_STATE_BANK_KIND is required")
 
     def test_the_default_configuration_passes_the_knob_gate(self):
         # With no knobs set the run must reach a LATER failure, never a knob
         # complaint -- otherwise this change would have broken every ordinary
         # non-ladder arm.
-        out = run().stdout
+        result = run()
+        self.assertNotEqual(
+            result.returncode,
+            0,
+            "default config unexpectedly launched or returned success",
+        )
+        self.assertTrue(
+            result.stdout.strip(),
+            "default config did not reach a diagnosable later preflight",
+        )
         for message in (
             "selector is a no-op",
             "only one curriculum selector",
             "must be a fraction in [0,1]",
             "must be a non-negative integer",
-            "requires a staged state bank",
+            "LADDER_STATE_BANK_KIND is required",
         ):
-            self.assertNotIn(message, out, f"default config tripped: {message}")
+            self.assertNotIn(
+                message,
+                result.stdout,
+                f"default config tripped: {message}",
+            )
 
 
 if __name__ == "__main__":

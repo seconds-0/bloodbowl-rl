@@ -8,6 +8,8 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#define BBE_STATE_BANK_PATH PUFFER_STATE_BANK_BBS_PATH
+
 static void check_state_bank_float(float got, float want) {
     float delta = got - want;
     if (delta < 0.0f) delta = -delta;
@@ -55,16 +57,224 @@ static void write_state_bank_meta(const char* path, const bb_match* match,
 static void write_state_bank(const char* path, const bb_match* match) {
     uint8_t turn = match->active_team <= BB_AWAY
         ? match->turn[match->active_team] : 1;
-    write_state_bank_meta(path, match, 1u, match->half,
+    uint32_t source_id = bb_state_bank_boundary_valid(match)
+                             ? 1u : UINT32_C(0xa9000001);
+    write_state_bank_meta(path, match, source_id, match->half,
                           turn, 0);
 }
 
+static void write_state_bank_valid_invalid_pair(
+        const char* path, const bb_match* valid) {
+    FILE* file = fopen(path, "wb");
+    BB_CHECK(file != NULL);
+    if (file == NULL) return;
+
+    BB_CHECK_EQ(fwrite("BBS1", 1, 4, file), 4);
+    write_le32(file, 1u);
+    write_le32(file, (uint32_t)sizeof(bb_match));
+    write_le32(file, bbe_state_fingerprint());
+    for (int record = 0; record < 2; record++) {
+        uint8_t metadata[BBE_STATE_BANK_REC_META] = {0};
+        uint32_t source_id = record == 0 ? 1u : 0u;
+        metadata[0] = (uint8_t)source_id;
+        metadata[1] = (uint8_t)(source_id >> 8);
+        metadata[2] = (uint8_t)(source_id >> 16);
+        metadata[3] = (uint8_t)(source_id >> 24);
+        metadata[8] = valid->half;
+        metadata[9] = valid->turn[valid->active_team];
+        BB_CHECK_EQ(fwrite(metadata, 1, sizeof metadata, file),
+                    sizeof metadata);
+        BB_CHECK_EQ(fwrite(valid, sizeof *valid, 1, file), 1);
+    }
+    BB_CHECK_EQ(fclose(file), 0);
+}
+
+static const char* test_state_bank_path;
+static char test_producer_path[512];
+static char test_contract_path[512];
+
+static void remove_test_sidecars(void) {
+    if (test_producer_path[0] != '\0') (void)remove(test_producer_path);
+    if (test_contract_path[0] != '\0') (void)remove(test_contract_path);
+    test_producer_path[0] = '\0';
+    test_contract_path[0] = '\0';
+}
+
 static void reset_state_bank_loader(const char* path) {
-    free(bbe_state_bank);
-    bbe_state_bank = NULL;
-    bbe_state_bank_n = 0;
-    bbe_state_bank_tried = 0;
-    bbe_state_bank_path = path;
+    remove_test_sidecars();
+    bbe_state_bank_test_reset_process();
+    test_state_bank_path = path;
+}
+
+static int test_file_sha256(const char* path, char hex[65], size_t* size_out) {
+    FILE* file = fopen(path, "rb");
+    if (file == NULL) return -1;
+    bbe_sha256 sha;
+    bbe_sha256_init(&sha);
+    size_t size = 0;
+    uint8_t buffer[4096];
+    for (;;) {
+        size_t n = fread(buffer, 1, sizeof buffer, file);
+        if (n != 0) {
+            bbe_sha256_update(&sha, buffer, n);
+            size += n;
+        }
+        if (n < sizeof buffer) {
+            if (ferror(file)) {
+                fclose(file);
+                return -1;
+            }
+            break;
+        }
+    }
+    if (fclose(file) != 0) return -1;
+    uint8_t digest[32];
+    bbe_sha256_final(&sha, digest);
+    bbe_sha256_hex(digest, hex);
+    if (size_out != NULL) *size_out = size;
+    return 0;
+}
+
+static int write_test_sidecar(const char* path, const char* bytes,
+                              char sha[65]) {
+    FILE* file = fopen(path, "wb");
+    if (file == NULL) return -1;
+    size_t size = strlen(bytes);
+    int ok = fwrite(bytes, 1, size, file) == size;
+    if (fclose(file) != 0) ok = 0;
+    return ok && test_file_sha256(path, sha, NULL) == 0 ? 0 : -1;
+}
+
+typedef struct {
+    bbe_state_bank_request request;
+    char bbs_sha[65];
+    char producer_sha[65];
+    char contract_sha[65];
+    char producer_path[512];
+    char contract_path[512];
+} TestCandidateRequest;
+
+static int prepare_test_candidate_request(
+        TestCandidateRequest* fixture, const char* bbs_path, int kind,
+        int test_only_allow_authored) {
+    memset(fixture, 0, sizeof *fixture);
+    size_t bbs_size = 0;
+    if (test_file_sha256(bbs_path, fixture->bbs_sha, &bbs_size) != 0) return -1;
+    int n = snprintf(fixture->producer_path, sizeof fixture->producer_path,
+                     "%s.candidate.producer.json", bbs_path);
+    if (n <= 0 || (size_t)n >= sizeof fixture->producer_path) return -1;
+    n = snprintf(fixture->contract_path, sizeof fixture->contract_path,
+                 "%s.candidate.contract.json", bbs_path);
+    if (n <= 0 || (size_t)n >= sizeof fixture->contract_path) return -1;
+    if (write_test_sidecar(
+            fixture->producer_path, "{\"test\":\"producer\"}\n",
+            fixture->producer_sha) != 0 ||
+        write_test_sidecar(
+            fixture->contract_path, "{\"test\":\"contract\"}\n",
+            fixture->contract_sha) != 0) {
+        return -1;
+    }
+    size_t record_size = BBE_STATE_BANK_REC_META + sizeof(bb_match);
+    size_t records = bbs_size >= 16u ? (bbs_size - 16u) / record_size : 0;
+    fixture->request = (bbe_state_bank_request){
+        "bloodbowl-state-bank-training-contract-v1",
+        "bloodbowl-state-bank-producer-v1",
+        "bloodbowl-state-bank-authorization-v1",
+        kind,
+        kind == BBE_STATE_BANK_AUTHORED_SCENARIO
+            ? "authored-scenario" : "strict-replay",
+        "BB2025",
+        fixture->bbs_sha,
+        fixture->producer_sha,
+        fixture->contract_sha,
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "1111111111111111111111111111111111111111111111111111111111111111",
+        bbs_size,
+        records,
+        1,
+        sizeof(bb_match),
+        bbe_state_fingerprint(),
+        "candidate-test-only",
+        bbs_path,
+        fixture->producer_path,
+        fixture->contract_path,
+        test_only_allow_authored,
+    };
+    return 0;
+}
+
+static void cleanup_test_candidate_request(TestCandidateRequest* fixture) {
+    (void)remove(fixture->producer_path);
+    (void)remove(fixture->contract_path);
+}
+
+/*
+ * Legacy behavior tests load through the pure candidate seam and publish via
+ * a test-build-only helper. Production never gains a mutable path/hash API.
+ */
+static void bbe_state_bank_load(void) {
+    if (test_state_bank_path == NULL) return;
+    char bbs_sha[65], producer_sha[65], contract_sha[65];
+    size_t bbs_size = 0;
+    if (test_file_sha256(test_state_bank_path, bbs_sha, &bbs_size) != 0) return;
+    int n = snprintf(test_producer_path, sizeof test_producer_path,
+                     "%s.producer.json", test_state_bank_path);
+    if (n <= 0 || (size_t)n >= sizeof test_producer_path) return;
+    n = snprintf(test_contract_path, sizeof test_contract_path,
+                 "%s.contract.json", test_state_bank_path);
+    if (n <= 0 || (size_t)n >= sizeof test_contract_path) return;
+    if (write_test_sidecar(test_producer_path, "{\"test\":\"producer\"}\n",
+                           producer_sha) != 0 ||
+        write_test_sidecar(test_contract_path, "{\"test\":\"contract\"}\n",
+                           contract_sha) != 0) {
+        return;
+    }
+
+    FILE* file = fopen(test_state_bank_path, "rb");
+    if (file == NULL) return;
+    uint8_t prefix[28];
+    size_t prefix_n = fread(prefix, 1, sizeof prefix, file);
+    fclose(file);
+    if (prefix_n != sizeof prefix || bbs_size < 16u) return;
+    uint32_t source_id = bbe_state_bank_le32(prefix + 16);
+    int authored =
+        (source_id & UINT32_C(0xf0000000)) == UINT32_C(0xa0000000);
+    size_t record_size = BBE_STATE_BANK_REC_META + sizeof(bb_match);
+    size_t records = (bbs_size - 16u) / record_size;
+    bbe_state_bank_request request = {
+        "bloodbowl-state-bank-training-contract-v1",
+        "bloodbowl-state-bank-producer-v1",
+        "bloodbowl-state-bank-authorization-v1",
+        authored ? BBE_STATE_BANK_AUTHORED_SCENARIO
+                 : BBE_STATE_BANK_STRICT_REPLAY,
+        authored ? "authored-scenario" : "strict-replay",
+        "BB2025",
+        bbs_sha,
+        producer_sha,
+        contract_sha,
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "1111111111111111111111111111111111111111111111111111111111111111",
+        bbs_size,
+        records,
+        1,
+        sizeof(bb_match),
+        bbe_state_fingerprint(),
+        "candidate-test-only",
+        test_state_bank_path,
+        test_producer_path,
+        test_contract_path,
+        authored,
+    };
+    bbe_state_bank_candidate candidate;
+    bbe_state_bank_error error =
+        bbe_state_bank_load_candidate(&request, &candidate);
+    if (error == BBE_SB_OK) {
+        // Historical resume/PBRS behavior tests exercise nested authored
+        // proof states through this test-only publication route. Production
+        // publication rejects authored kind before loading.
+        candidate.kind = BBE_STATE_BANK_STRICT_REPLAY;
+        bbe_state_bank_test_publish_candidate(&candidate);
+    }
 }
 
 static bb_match valid_bank_match(void) {
@@ -152,6 +362,9 @@ static void configure_restored_pbrs_env(StateBankEnvFixture* fixture,
     env->force_away_team = -1;
     env->exclude_team = -1;
     env->demo_reset_pct = 1.0f;
+    env->state_bank_kind = bbe_state_bank_test_publication
+                               ? bbe_state_bank_loaded_kind
+                               : BBE_STATE_BANK_STRICT_REPLAY;
     env->reward_configured = 1;
     env->reward_dist_ball = fetch_coeff;
     env->reward_dist_endzone = carry_coeff;
@@ -209,6 +422,23 @@ static void cleanup_state_bank_path(const char* path) {
     bb_stall_attach(0);
     reset_state_bank_loader(BBE_STATE_BANK_PATH);
     BB_CHECK_EQ(remove(path), 0);
+}
+
+static void check_state_bank_child_aborted(
+        pid_t child, const char* normal_exit_meaning) {
+    int status = 0;
+    BB_CHECK_EQ(waitpid(child, &status, 0), child);
+    if (WIFEXITED(status)) {
+        printf("OBSERVED %s: child exited %d instead of aborting\n",
+               normal_exit_meaning, WEXITSTATUS(status));
+    } else if (WIFSIGNALED(status) && WTERMSIG(status) != SIGABRT) {
+        printf("OBSERVED unexpected signal %d instead of SIGABRT\n",
+               WTERMSIG(status));
+    }
+    BB_CHECK(WIFSIGNALED(status));
+    if (WIFSIGNALED(status)) {
+        BB_CHECK_EQ(WTERMSIG(status), SIGABRT);
+    }
 }
 
 BB_TEST(restored_pbrs_nested_loose_first_transition_uses_s0) {
@@ -452,6 +682,7 @@ BB_TEST(restored_pbrs_fresh_procgen_initializes_finite_zero) {
     StateBankEnvFixture fixture;
     configure_restored_pbrs_env(&fixture, 0.05f, 0.04f, 0.995f);
     fixture.env.demo_reset_pct = 0.0f;
+    fixture.env.state_bank_kind = BBE_STATE_BANK_NONE;
     poison_potential_history(&fixture.env);
     c_reset(&fixture.env);
 
@@ -1283,6 +1514,89 @@ BB_TEST(state_bank_accepts_pending_dodge_reroll_and_emits_decision) {
     BB_CHECK_EQ(remove(path), 0);
 }
 
+BB_TEST(state_bank_required_missing_aborts_instead_of_procgen) {
+    char path[256];
+    snprintf(path, sizeof path, "/tmp/bloodbowl-missing-required-%ld.bbs",
+             (long)getpid());
+    (void)remove(path);
+    reset_state_bank_loader(path);
+
+    fflush(NULL);
+    pid_t child = fork();
+    BB_CHECK(child >= 0);
+    if (child == 0) {
+        FILE* sink = freopen("/dev/null", "w", stderr);
+        (void)sink;
+        StateBankEnvFixture fixture;
+        configure_restored_pbrs_env(&fixture, 0.0f, 0.0f, 0.995f);
+        c_reset(&fixture.env);
+        int silently_used_procgen =
+            fixture.env.demo_started == 0 &&
+            fixture.env.match.status == BB_STATUS_DECISION;
+        _exit(silently_used_procgen ? 41 : 42);
+    }
+    if (child > 0) {
+        check_state_bank_child_aborted(
+            child, "missing required bank reached a procedural decision");
+    }
+
+    bb_stall_attach(0);
+    reset_state_bank_loader(BBE_STATE_BANK_PATH);
+}
+
+BB_TEST(state_bank_mixed_valid_invalid_rejects_all_records) {
+    char path[256];
+    snprintf(path, sizeof path, "/tmp/bloodbowl-mixed-bank-%ld.bbs",
+             (long)getpid());
+    bb_match valid = valid_bank_match();
+    BB_CHECK(bb_state_bank_resumable_valid(&valid));
+    write_state_bank_valid_invalid_pair(path, &valid);
+
+    reset_state_bank_loader(path);
+    bbe_state_bank_load();
+    if (bbe_state_bank_n != 0) {
+        printf("OBSERVED mixed valid/invalid bank published %d-record subset\n",
+               bbe_state_bank_n);
+    }
+    BB_CHECK_EQ(bbe_state_bank_n, 0);
+
+    cleanup_state_bank_path(path);
+}
+
+BB_TEST(state_bank_selector_miss_aborts_instead_of_last_random_record) {
+    char path[256];
+    snprintf(path, sizeof path, "/tmp/bloodbowl-selector-miss-%ld.bbs",
+             (long)getpid());
+    bb_match restored = valid_bank_match();
+    BB_CHECK_EQ(restored.ball.state, BB_BALL_OFF_PITCH);
+    BB_CHECK(bb_state_bank_boundary_valid(&restored));
+    write_state_bank(path, &restored);
+    reset_state_bank_loader(path);
+
+    fflush(NULL);
+    pid_t child = fork();
+    BB_CHECK(child >= 0);
+    if (child == 0) {
+        FILE* sink = freopen("/dev/null", "w", stderr);
+        (void)sink;
+        StateBankEnvFixture fixture;
+        configure_restored_pbrs_env(&fixture, 0.0f, 0.0f, 0.995f);
+        fixture.env.demo_endzone_maxdist = 1;
+        c_reset(&fixture.env);
+        int silently_used_nonqualifying_record =
+            fixture.env.demo_started == 1 &&
+            fixture.env.log.demo_fallbacks == 0.0f &&
+            memcmp(&fixture.env.match, &restored, sizeof restored) == 0;
+        _exit(silently_used_nonqualifying_record ? 51 : 52);
+    }
+    if (child > 0) {
+        check_state_bank_child_aborted(
+            child, "selector miss used the last nonqualifying random record");
+    }
+
+    cleanup_state_bank_path(path);
+}
+
 BB_TEST(state_bank_rejects_unsafe_record_content) {
     char path[256];
     snprintf(path, sizeof path, "/tmp/bloodbowl-state-bank-%ld.bbs",
@@ -1457,4 +1771,473 @@ BB_TEST(state_bank_accepts_complete_authored_proof_bundle) {
     reset_state_bank_loader(BBE_STATE_BANK_PATH);
     BB_CHECK_EQ(remove(path), 0);
     free(recipes);
+}
+
+static void check_sha256_literal(const uint8_t* bytes, size_t size,
+                                 const char* expected) {
+    uint8_t digest[32];
+    char actual[65];
+    bbe_sha256_bytes(bytes, size, digest);
+    bbe_sha256_hex(digest, actual);
+    BB_CHECK_EQ(strcmp(actual, expected), 0);
+
+    bbe_sha256 incremental;
+    bbe_sha256_init(&incremental);
+    for (size_t i = 0; i < size; i++) {
+        bbe_sha256_update(&incremental, bytes + i, 1);
+    }
+    bbe_sha256_final(&incremental, digest);
+    bbe_sha256_hex(digest, actual);
+    BB_CHECK_EQ(strcmp(actual, expected), 0);
+}
+
+BB_TEST(state_bank_sha256_independent_standard_vectors) {
+    static const uint8_t empty[] = "";
+    static const uint8_t abc[] = "abc";
+    static const uint8_t multiblock[] =
+        "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq";
+    check_sha256_literal(
+        empty, 0,
+        "e3b0c44298fc1c149afbf4c8996fb924"
+        "27ae41e4649b934ca495991b7852b855");
+    check_sha256_literal(
+        abc, 3,
+        "ba7816bf8f01cfea414140de5dae2223"
+        "b00361a396177a9cb410ff61f20015ad");
+    check_sha256_literal(
+        multiblock, sizeof multiblock - 1,
+        "248d6a61d20638b8e5c026930c3e6039"
+        "a33ce45964ff2167f6ecedd419db06c1");
+}
+
+BB_TEST(state_bank_sha256_padding_boundaries) {
+    static const char* const expected[] = {
+        "463eb28e72f82e0a96c0a4cc53690c57"
+        "1281131f672aa229e0d45ae59b598b59",
+        "da2ae4d6b36748f2a318f23e7ab1dfd"
+        "f45acdc9d049bd80e59de82a60895f562",
+        "29af2686fd53374a36b0846694cc34217"
+        "7e428d1647515f078784d69cdb9e488",
+        "fdeab9acf3710362bd2658cdc9a29e8f9"
+        "c757fcf9811603a8c447cd1d9151108",
+        "4bfd2c8b6f1eec7a2afeb48b934ee4b2"
+        "694182027e6d0fc075074f2fabb31781",
+    };
+    static const size_t lengths[] = {55, 56, 63, 64, 65};
+    uint8_t bytes[65];
+    for (size_t i = 0; i < sizeof bytes; i++) bytes[i] = (uint8_t)i;
+    for (size_t i = 0; i < sizeof lengths / sizeof lengths[0]; i++) {
+        check_sha256_literal(bytes, lengths[i], expected[i]);
+    }
+}
+
+BB_TEST(state_bank_config_rejects_raw_conversion_traps) {
+    bbe_state_bank_config_values values = {
+        0.0, BBE_STATE_BANK_NONE, 0.0, 0.0, 0.0, 0.0,
+        -1.0, -1.0, -1.0,
+    };
+    BB_CHECK_EQ(bbe_state_bank_validate_config_values(
+                    &values, BBE_STATE_BANK_STRICT_REPLAY),
+                BBE_SB_OK);
+
+    values.reset_pct = NAN;
+    BB_CHECK_EQ(bbe_state_bank_validate_config_values(
+                    &values, BBE_STATE_BANK_STRICT_REPLAY),
+                BBE_SB_CONFIG_RESET_PCT);
+    values.reset_pct = 2.0;
+    BB_CHECK_EQ(bbe_state_bank_validate_config_values(
+                    &values, BBE_STATE_BANK_STRICT_REPLAY),
+                BBE_SB_CONFIG_RESET_PCT);
+    values.reset_pct = 0x1p-1074;
+    BB_CHECK_EQ(bbe_state_bank_validate_config_values(
+                    &values, BBE_STATE_BANK_STRICT_REPLAY),
+                BBE_SB_CONFIG_RESET_PCT_UNDERFLOW);
+
+    values.reset_pct = 1.0;
+    values.kind = 1.5;
+    BB_CHECK_EQ(bbe_state_bank_validate_config_values(
+                    &values, BBE_STATE_BANK_STRICT_REPLAY),
+                BBE_SB_CONFIG_KIND);
+    values.kind = BBE_STATE_BANK_AUTHORED_SCENARIO;
+    BB_CHECK_EQ(bbe_state_bank_validate_config_values(
+                    &values, BBE_STATE_BANK_STRICT_REPLAY),
+                BBE_SB_REQUEST_AUTHORED_DISABLED);
+    values.kind = BBE_STATE_BANK_NONE;
+    BB_CHECK_EQ(bbe_state_bank_validate_config_values(
+                    &values, BBE_STATE_BANK_STRICT_REPLAY),
+                BBE_SB_CONFIG_MISSING_KIND);
+    values.kind = BBE_STATE_BANK_STRICT_REPLAY;
+    BB_CHECK_EQ(bbe_state_bank_validate_config_values(
+                    &values, BBE_STATE_BANK_NONE),
+                BBE_SB_CONFIG_KIND_MISMATCH);
+    values.exclude_team = NAN;
+    BB_CHECK_EQ(bbe_state_bank_validate_config_values(
+                    &values, BBE_STATE_BANK_STRICT_REPLAY),
+                BBE_SB_CONFIG_TEAM_SENTINEL);
+    values.exclude_team = -1.0;
+    values.endzone_selector = 1.5;
+    BB_CHECK_EQ(bbe_state_bank_validate_config_values(
+                    &values, BBE_STATE_BANK_STRICT_REPLAY),
+                BBE_SB_CONFIG_SELECTOR);
+    values.endzone_selector = 1.0;
+    values.pickup_selector = 1.0;
+    BB_CHECK_EQ(bbe_state_bank_validate_config_values(
+                    &values, BBE_STATE_BANK_STRICT_REPLAY),
+                BBE_SB_CONFIG_MULTIPLE_SELECTORS);
+    values.pickup_selector = 0.0;
+    BB_CHECK_EQ(bbe_state_bank_validate_config_values(
+                    &values, BBE_STATE_BANK_STRICT_REPLAY),
+                BBE_SB_CONFIG_SELECTOR_BRIDGE);
+    values.reset_pct = 0.0;
+    BB_CHECK_EQ(bbe_state_bank_validate_config_values(
+                    &values, BBE_STATE_BANK_STRICT_REPLAY),
+                BBE_SB_CONFIG_INERT_SELECTOR);
+    values.endzone_selector = 0.0;
+    BB_CHECK_EQ(bbe_state_bank_validate_config_values(
+                    &values, BBE_STATE_BANK_STRICT_REPLAY),
+                BBE_SB_CONFIG_INERT_KIND);
+}
+
+BB_TEST(state_bank_request_paths_are_nonempty_and_bounded) {
+    char path[256];
+    snprintf(path, sizeof path, "/tmp/bloodbowl-request-path-%ld.bbs",
+             (long)getpid());
+    bb_match match = valid_bank_match();
+    write_state_bank(path, &match);
+    TestCandidateRequest fixture;
+    BB_CHECK_EQ(prepare_test_candidate_request(
+                    &fixture, path, BBE_STATE_BANK_STRICT_REPLAY, 0),
+                0);
+    BB_CHECK_EQ(bbe_state_bank_validate_request(&fixture.request, 0),
+                BBE_SB_OK);
+    fixture.request.bbs_path = "";
+    BB_CHECK_EQ(bbe_state_bank_validate_request(&fixture.request, 0),
+                BBE_SB_REQUEST_PATH_TOO_LONG);
+
+    char maximum[BBE_STATE_BANK_MAX_PATH];
+    memset(maximum, 'x', sizeof maximum);
+    maximum[sizeof maximum - 1] = '\0';
+    fixture.request.bbs_path = maximum;
+    BB_CHECK_EQ(bbe_state_bank_validate_request(&fixture.request, 0),
+                BBE_SB_OK);
+
+    char too_long[BBE_STATE_BANK_MAX_PATH + 1];
+    memset(too_long, 'x', sizeof too_long);
+    too_long[sizeof too_long - 1] = '\0';
+    fixture.request.bbs_path = too_long;
+    BB_CHECK_EQ(bbe_state_bank_validate_request(&fixture.request, 0),
+                BBE_SB_REQUEST_PATH_TOO_LONG);
+
+    cleanup_test_candidate_request(&fixture);
+    BB_CHECK_EQ(remove(path), 0);
+}
+
+BB_TEST(state_bank_resource_limits_are_hard_and_boundary_inclusive) {
+    char bbs_path[256];
+    snprintf(bbs_path, sizeof bbs_path,
+             "/tmp/bloodbowl-request-limits-%ld.bbs", (long)getpid());
+    bb_match match = valid_bank_match();
+    write_state_bank(bbs_path, &match);
+    TestCandidateRequest fixture;
+    BB_CHECK_EQ(prepare_test_candidate_request(
+                    &fixture, bbs_path, BBE_STATE_BANK_STRICT_REPLAY, 0),
+                0);
+
+    bbe_state_bank_request request = fixture.request;
+    request.bbs_bytes = BBE_STATE_BANK_MAX_BBS_BYTES + 1u;
+    BB_CHECK_EQ(bbe_state_bank_validate_request(&request, 0),
+                BBE_SB_REQUEST_LIMIT);
+
+    request = fixture.request;
+    request.records = BBE_STATE_BANK_MAX_RECORDS + 1u;
+    BB_CHECK_EQ(bbe_state_bank_validate_request(&request, 0),
+                BBE_SB_REQUEST_LIMIT);
+
+    const uint64_t record_bytes =
+        BBE_STATE_BANK_REC_META + (uint64_t)sizeof(bb_match);
+    const uint64_t maximum_fitting_records =
+        (BBE_STATE_BANK_MAX_BBS_BYTES - 16u) / record_bytes;
+    request = fixture.request;
+    request.records = maximum_fitting_records;
+    request.bbs_bytes = 16u + maximum_fitting_records * record_bytes;
+    BB_CHECK(request.bbs_bytes <= BBE_STATE_BANK_MAX_BBS_BYTES);
+    BB_CHECK_EQ(bbe_state_bank_validate_request(&request, 0), BBE_SB_OK);
+
+    char manifest_path[256];
+    snprintf(manifest_path, sizeof manifest_path,
+             "/tmp/bloodbowl-manifest-limits-%ld.json", (long)getpid());
+    int fd = open(manifest_path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    BB_CHECK(fd >= 0);
+    if (fd >= 0) {
+        BB_CHECK_EQ(ftruncate(
+                        fd, (off_t)BBE_STATE_BANK_MAX_MANIFEST_BYTES),
+                    0);
+        BB_CHECK_EQ(close(fd), 0);
+        BB_CHECK_EQ(bbe_state_bank_check_manifest(
+                        manifest_path,
+                        "0000000000000000000000000000000000000000000000000000000000000000",
+                        BBE_SB_CONTRACT_OPEN, BBE_SB_CONTRACT_NOT_REGULAR,
+                        BBE_SB_CONTRACT_SIZE, BBE_SB_CONTRACT_READ,
+                        BBE_SB_CONTRACT_HASH),
+                    BBE_SB_CONTRACT_HASH);
+
+        fd = open(manifest_path, O_WRONLY);
+        BB_CHECK(fd >= 0);
+        if (fd >= 0) {
+            BB_CHECK_EQ(ftruncate(
+                            fd,
+                            (off_t)(BBE_STATE_BANK_MAX_MANIFEST_BYTES + 1u)),
+                        0);
+            BB_CHECK_EQ(close(fd), 0);
+            BB_CHECK_EQ(bbe_state_bank_check_manifest(
+                            manifest_path,
+                            "0000000000000000000000000000000000000000000000000000000000000000",
+                            BBE_SB_CONTRACT_OPEN,
+                            BBE_SB_CONTRACT_NOT_REGULAR,
+                            BBE_SB_CONTRACT_SIZE, BBE_SB_CONTRACT_READ,
+                            BBE_SB_CONTRACT_HASH),
+                        BBE_SB_CONTRACT_SIZE);
+        }
+        BB_CHECK_EQ(remove(manifest_path), 0);
+    }
+
+    cleanup_test_candidate_request(&fixture);
+    BB_CHECK_EQ(remove(bbs_path), 0);
+}
+
+BB_TEST(state_bank_candidate_retains_metadata_and_never_publishes) {
+    char path[256];
+    snprintf(path, sizeof path, "/tmp/bloodbowl-candidate-%ld.bbs",
+             (long)getpid());
+    bb_match match = valid_bank_match();
+    write_state_bank_meta(path, &match, 0x1234u, match.half,
+                          match.turn[match.active_team], 0);
+    TestCandidateRequest fixture;
+    BB_CHECK_EQ(prepare_test_candidate_request(
+                    &fixture, path, BBE_STATE_BANK_STRICT_REPLAY, 0),
+                0);
+    bbe_state_bank_test_reset_process();
+    bbe_state_bank_candidate candidate;
+    BB_CHECK_EQ(bbe_state_bank_load_candidate(
+                    &fixture.request, &candidate),
+                BBE_SB_OK);
+    BB_CHECK_EQ(candidate.count, 1);
+    BB_CHECK_EQ(candidate.kind, BBE_STATE_BANK_STRICT_REPLAY);
+    BB_CHECK_EQ(candidate.metadata[0].source_id, 0x1234u);
+    BB_CHECK_EQ(candidate.metadata[0].command, 0u);
+    BB_CHECK_EQ(candidate.metadata[0].half, match.half);
+    BB_CHECK_EQ(candidate.metadata[0].turn,
+                match.turn[match.active_team]);
+    BB_CHECK_EQ(memcmp(&candidate.matches[0], &match, sizeof match), 0);
+    BB_CHECK_EQ(bbe_state_bank_status, BBE_SB_UNTRIED);
+    BB_CHECK(bbe_state_bank == NULL);
+    bbe_state_bank_candidate_close(&candidate);
+    cleanup_test_candidate_request(&fixture);
+    BB_CHECK_EQ(remove(path), 0);
+}
+
+BB_TEST(state_bank_authored_is_candidate_only_and_production_rejected) {
+    char path[256];
+    snprintf(path, sizeof path, "/tmp/bloodbowl-authored-candidate-%ld.bbs",
+             (long)getpid());
+    bb_match match = pending_dodge_reroll_match();
+    write_state_bank(path, &match);
+    TestCandidateRequest fixture;
+    BB_CHECK_EQ(prepare_test_candidate_request(
+                    &fixture, path, BBE_STATE_BANK_AUTHORED_SCENARIO, 1),
+                0);
+    bbe_state_bank_candidate candidate;
+    BB_CHECK_EQ(bbe_state_bank_load_candidate(
+                    &fixture.request, &candidate),
+                BBE_SB_OK);
+    BB_CHECK_EQ(candidate.kind, BBE_STATE_BANK_AUTHORED_SCENARIO);
+    bbe_state_bank_candidate_close(&candidate);
+
+    bbe_state_bank_test_reset_process();
+    fixture.request.test_only_allow_authored = 0;
+    BB_CHECK_EQ(bbe_state_bank_require_core(&fixture.request),
+                BBE_SB_REQUEST_AUTHORED_DISABLED);
+    BB_CHECK_EQ(bbe_state_bank_status, BBE_SB_FAILED);
+    BB_CHECK(bbe_state_bank == NULL);
+    bbe_state_bank_test_reset_process();
+    cleanup_test_candidate_request(&fixture);
+    BB_CHECK_EQ(remove(path), 0);
+}
+
+BB_TEST(state_bank_process_identity_covers_every_request_string) {
+    char path[256];
+    snprintf(path, sizeof path, "/tmp/bloodbowl-identity-%ld.bbs",
+             (long)getpid());
+    bb_match match = valid_bank_match();
+    write_state_bank(path, &match);
+    TestCandidateRequest fixture;
+    BB_CHECK_EQ(prepare_test_candidate_request(
+                    &fixture, path, BBE_STATE_BANK_STRICT_REPLAY, 0),
+                0);
+    bbe_state_bank_test_reset_process();
+    BB_CHECK_EQ(bbe_state_bank_require_core(&fixture.request), BBE_SB_OK);
+    BB_CHECK_EQ(bbe_state_bank_status, BBE_SB_READY);
+    BB_CHECK_EQ(bbe_state_bank_publications, 1u);
+    BB_CHECK_EQ(bbe_state_bank_load_attempts, 1u);
+    BB_CHECK_EQ(bbe_state_bank_require_core(&fixture.request), BBE_SB_OK);
+    BB_CHECK_EQ(bbe_state_bank_publications, 1u);
+
+#define CHECK_IDENTITY_STRING(field, replacement)                              \
+    do {                                                                       \
+        bbe_state_bank_request changed = fixture.request;                      \
+        changed.field = replacement;                                           \
+        BB_CHECK_EQ(bbe_state_bank_require_core(&changed),                     \
+                    BBE_SB_IDENTITY_CONFLICT);                                 \
+    } while (0)
+    CHECK_IDENTITY_STRING(contract_schema, "different-contract-schema");
+    CHECK_IDENTITY_STRING(producer_schema, "different-producer-schema");
+    CHECK_IDENTITY_STRING(authorization_schema, "different-auth-schema");
+    CHECK_IDENTITY_STRING(kind_name, "different-kind");
+    CHECK_IDENTITY_STRING(ruleset, "different-ruleset");
+    CHECK_IDENTITY_STRING(contract_identity, "different-identity");
+    CHECK_IDENTITY_STRING(bbs_sha256,
+                          "2222222222222222222222222222222222222222222222222222222222222222");
+    CHECK_IDENTITY_STRING(
+        producer_manifest_sha256,
+        "2222222222222222222222222222222222222222222222222222222222222222");
+    CHECK_IDENTITY_STRING(
+        training_contract_sha256,
+        "2222222222222222222222222222222222222222222222222222222222222222");
+    CHECK_IDENTITY_STRING(
+        producer_engine_source_sha256,
+        "2222222222222222222222222222222222222222222222222222222222222222");
+    CHECK_IDENTITY_STRING(
+        loader_engine_source_sha256,
+        "2222222222222222222222222222222222222222222222222222222222222222");
+    CHECK_IDENTITY_STRING(bbs_path, "/tmp/different-bank.bbs");
+    CHECK_IDENTITY_STRING(producer_manifest_path, "/tmp/different-producer");
+    CHECK_IDENTITY_STRING(training_contract_path, "/tmp/different-contract");
+#undef CHECK_IDENTITY_STRING
+    bbe_state_bank_request numeric = fixture.request;
+    numeric.kind = BBE_STATE_BANK_AUTHORED_SCENARIO;
+    BB_CHECK_EQ(bbe_state_bank_require_core(&numeric),
+                BBE_SB_IDENTITY_CONFLICT);
+    numeric = fixture.request;
+    numeric.bbs_bytes++;
+    BB_CHECK_EQ(bbe_state_bank_require_core(&numeric),
+                BBE_SB_IDENTITY_CONFLICT);
+    numeric = fixture.request;
+    numeric.records++;
+    BB_CHECK_EQ(bbe_state_bank_require_core(&numeric),
+                BBE_SB_IDENTITY_CONFLICT);
+    numeric = fixture.request;
+    numeric.bbs_version++;
+    BB_CHECK_EQ(bbe_state_bank_require_core(&numeric),
+                BBE_SB_IDENTITY_CONFLICT);
+    numeric = fixture.request;
+    numeric.match_size++;
+    BB_CHECK_EQ(bbe_state_bank_require_core(&numeric),
+                BBE_SB_IDENTITY_CONFLICT);
+    numeric = fixture.request;
+    numeric.engine_fingerprint++;
+    BB_CHECK_EQ(bbe_state_bank_require_core(&numeric),
+                BBE_SB_IDENTITY_CONFLICT);
+    bbe_state_bank_request changed = fixture.request;
+    changed.test_only_allow_authored = 1;
+    BB_CHECK_EQ(bbe_state_bank_require_core(&changed),
+                BBE_SB_IDENTITY_CONFLICT);
+
+    bbe_state_bank_test_reset_process();
+    cleanup_test_candidate_request(&fixture);
+    BB_CHECK_EQ(remove(path), 0);
+}
+
+BB_TEST(state_bank_failed_request_is_stable_and_not_retried) {
+    char path[256];
+    snprintf(path, sizeof path, "/tmp/bloodbowl-failed-identity-%ld.bbs",
+             (long)getpid());
+    bb_match match = valid_bank_match();
+    write_state_bank(path, &match);
+    TestCandidateRequest fixture;
+    BB_CHECK_EQ(prepare_test_candidate_request(
+                    &fixture, path, BBE_STATE_BANK_STRICT_REPLAY, 0),
+                0);
+    BB_CHECK_EQ(remove(path), 0);
+    bbe_state_bank_test_reset_process();
+    BB_CHECK_EQ(bbe_state_bank_require_core(&fixture.request),
+                BBE_SB_BBS_OPEN);
+    BB_CHECK_EQ(bbe_state_bank_status, BBE_SB_FAILED);
+    BB_CHECK_EQ(bbe_state_bank_load_attempts, 1u);
+    BB_CHECK_EQ(bbe_state_bank_require_core(&fixture.request),
+                BBE_SB_BBS_OPEN);
+    BB_CHECK_EQ(bbe_state_bank_load_attempts, 1u);
+    bbe_state_bank_request changed = fixture.request;
+    changed.bbs_path = "/tmp/a-different-missing-bank.bbs";
+    BB_CHECK_EQ(bbe_state_bank_require_core(&changed),
+                BBE_SB_IDENTITY_CONFLICT);
+    BB_CHECK_EQ(bbe_state_bank_load_attempts, 1u);
+    bbe_state_bank_test_reset_process();
+    cleanup_test_candidate_request(&fixture);
+}
+
+BB_TEST(state_bank_unstorable_path_failure_reserves_bounded_identity) {
+    char path[256];
+    snprintf(path, sizeof path, "/tmp/bloodbowl-unstorable-identity-%ld.bbs",
+             (long)getpid());
+    bb_match match = valid_bank_match();
+    write_state_bank(path, &match);
+    TestCandidateRequest fixture;
+    BB_CHECK_EQ(prepare_test_candidate_request(
+                    &fixture, path, BBE_STATE_BANK_STRICT_REPLAY, 0),
+                0);
+
+    bbe_state_bank_request malformed = fixture.request;
+    malformed.bbs_path = "";
+    bbe_state_bank_test_reset_process();
+    BB_CHECK_EQ(bbe_state_bank_require_core(&malformed),
+                BBE_SB_REQUEST_PATH_TOO_LONG);
+    BB_CHECK_EQ(bbe_state_bank_require_core(&malformed),
+                BBE_SB_REQUEST_PATH_TOO_LONG);
+    BB_CHECK_EQ(bbe_state_bank_status, BBE_SB_FAILED);
+    BB_CHECK_EQ(bbe_state_bank_load_attempts, 0u);
+    BB_CHECK_EQ(bbe_state_bank_require_core(&fixture.request),
+                BBE_SB_IDENTITY_CONFLICT);
+    BB_CHECK_EQ(bbe_state_bank_load_attempts, 0u);
+
+    char overlong[BBE_STATE_BANK_MAX_PATH + 1u];
+    memset(overlong, 'x', BBE_STATE_BANK_MAX_PATH);
+    overlong[BBE_STATE_BANK_MAX_PATH] = '\0';
+    malformed = fixture.request;
+    malformed.bbs_path = overlong;
+    bbe_state_bank_test_reset_process();
+    BB_CHECK_EQ(bbe_state_bank_require_core(&malformed),
+                BBE_SB_REQUEST_PATH_TOO_LONG);
+    BB_CHECK_EQ(bbe_state_bank_require_core(&malformed),
+                BBE_SB_REQUEST_PATH_TOO_LONG);
+    BB_CHECK_EQ(bbe_state_bank_status, BBE_SB_FAILED);
+    BB_CHECK_EQ(bbe_state_bank_load_attempts, 0u);
+    overlong[BBE_STATE_BANK_MAX_PATH - 1u] = 'y';
+    BB_CHECK_EQ(bbe_state_bank_require_core(&malformed),
+                BBE_SB_IDENTITY_CONFLICT);
+    BB_CHECK_EQ(bbe_state_bank_load_attempts, 0u);
+
+    bbe_state_bank_test_reset_process();
+    cleanup_test_candidate_request(&fixture);
+    BB_CHECK_EQ(remove(path), 0);
+}
+
+BB_TEST(state_bank_uniform_index_rejects_low_biased_range) {
+    const uint32_t bound = UINT32_C(0x80000001);
+    const uint32_t threshold = -bound % bound;
+    bb_rng actual;
+    bb_rng expected;
+    bb_rng_seed(&actual, 4u, 3u);
+    bb_rng_seed(&expected, 4u, 3u);
+
+    uint32_t rejected = bb_rng_next(&expected);
+    uint32_t accepted = bb_rng_next(&expected);
+    BB_CHECK_EQ(threshold, UINT32_C(0x7fffffff));
+    BB_CHECK_EQ(rejected, UINT32_C(0x54f13138));
+    BB_CHECK_EQ(accepted, UINT32_C(0xb20b4acc));
+    BB_CHECK(rejected < threshold);
+    BB_CHECK(accepted >= threshold);
+
+    BB_CHECK_EQ(bbe_rng_uniform_below(&actual, bound),
+                UINT32_C(0x320b4acb));
+    BB_CHECK_EQ(actual.state, expected.state);
 }

@@ -41,6 +41,8 @@ class RewardScreenAnalysisTests(unittest.TestCase):
         rewards=None,
         requested_steps=500_000_000,
         completion=False,
+        manifest_schema=1,
+        completion_schema=1,
     ):
         """Write a plan plus one accepted result per scheduled (arm, seed) cell.
 
@@ -71,7 +73,10 @@ class RewardScreenAnalysisTests(unittest.TestCase):
         if candidate_arm is not None:
             contract["candidate_arm"] = candidate_arm
         manifest_path = root / "SCREEN_MANIFEST.json"
-        write_json(manifest_path, {"schema_version": 1, "contract": contract})
+        write_json(
+            manifest_path,
+            {"schema_version": manifest_schema, "contract": contract},
+        )
         manifest_sha = sha256(manifest_path)
 
         complete_results = []
@@ -90,25 +95,39 @@ class RewardScreenAnalysisTests(unittest.TestCase):
                 "reward_sha256": reward_sha[arm],
                 "checkpoint_bytes": 16,
                 "checkpoint_sha256": digest(f"checkpoint-{arm}-{seed}"),
+                "checkpoint_lineage_sha256": digest(
+                    f"checkpoint-lineage-{arm}-{seed}"
+                ),
                 "run_manifest_sha256": digest(f"manifest-{arm}-{seed}"),
                 "eval_metrics": eval_metrics(index, arm, seed),
             }
             write_json(path, result)
-            complete_results.append({
+            complete_result = {
                 "index": index,
                 "arm": arm,
                 "seed": seed,
                 "path": f"/remote/screen/{name}",
                 "sha256": sha256(path),
-            })
+            }
+            if completion_schema == 2:
+                complete_result.update({
+                    "checkpoint_sha256": result["checkpoint_sha256"],
+                    "checkpoint_lineage_sha256":
+                        result["checkpoint_lineage_sha256"],
+                })
+            complete_results.append(complete_result)
 
         if completion:
-            write_json(root / "SCREEN_COMPLETE.json", {
-                "schema_version": 1,
-                "completed_utc": "2026-07-10T01:00:00+00:00",
+            completion_payload = {
+                "schema_version": completion_schema,
                 "screen_manifest_sha256": manifest_sha,
                 "results": complete_results,
-            })
+            }
+            if completion_schema == 1:
+                completion_payload["completed_utc"] = (
+                    "2026-07-10T01:00:00+00:00"
+                )
+            write_json(root / "SCREEN_COMPLETE.json", completion_payload)
         return manifest_sha
 
     def build_screen(self, root, *, completion=True):
@@ -287,6 +306,121 @@ class RewardScreenAnalysisTests(unittest.TestCase):
         self.assertEqual(across["distance_main"]["mean"], 6.5)
         self.assertEqual(across["interaction"]["mean"], 4.0)
         self.assertIn("n=2", " ".join(report["warnings"]))
+
+    def test_deterministic_v2_manifest_and_completion_are_analyzable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.build_profile_screen(
+                tmp,
+                prefix="screen-v2",
+                schedule_pairs=analyze_reward_screen.EXPECTED_SCHEDULE,
+                rewards=analyze_reward_screen.CANONICAL_REWARD_SHA256,
+                eval_metrics=lambda index, _arm, _seed: {
+                    "n": 10_000 + index,
+                    "tds": float(index),
+                },
+                completion=True,
+                manifest_schema=2,
+                completion_schema=2,
+            )
+            report = analyze_reward_screen.analyze_screen(tmp, ("tds",))
+
+        self.assertTrue(report["screen"]["completion"]["present"])
+        self.assertIsNone(
+            report["screen"]["completion"]["completed_utc"]
+        )
+
+    def test_v2_manifest_and_completion_envelopes_are_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.build_profile_screen(
+                tmp,
+                prefix="screen-v2",
+                schedule_pairs=analyze_reward_screen.EXPECTED_SCHEDULE,
+                rewards=analyze_reward_screen.CANONICAL_REWARD_SHA256,
+                eval_metrics=lambda index, _arm, _seed: {
+                    "n": 10_000 + index,
+                    "tds": float(index),
+                },
+                completion=True,
+                manifest_schema=2,
+                completion_schema=2,
+            )
+            manifest_path = Path(tmp) / "SCREEN_MANIFEST.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["created_utc"] = "mutable"
+            write_json(manifest_path, manifest)
+            with self.assertRaisesRegex(
+                analyze_reward_screen.AnalysisError,
+                "schema-2 screen manifest envelope",
+            ):
+                analyze_reward_screen.analyze_screen(tmp, ("tds",))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            self.build_profile_screen(
+                tmp,
+                prefix="screen-v2",
+                schedule_pairs=analyze_reward_screen.EXPECTED_SCHEDULE,
+                rewards=analyze_reward_screen.CANONICAL_REWARD_SHA256,
+                eval_metrics=lambda index, _arm, _seed: {
+                    "n": 10_000 + index,
+                    "tds": float(index),
+                },
+                completion=True,
+                manifest_schema=2,
+                completion_schema=2,
+            )
+            completion_path = Path(tmp) / "SCREEN_COMPLETE.json"
+            completion = json.loads(
+                completion_path.read_text(encoding="utf-8")
+            )
+            completion["completed_utc"] = "mutable"
+            write_json(completion_path, completion)
+            with self.assertRaisesRegex(
+                analyze_reward_screen.AnalysisError,
+                "schema-2 screen completion envelope",
+            ):
+                analyze_reward_screen.analyze_screen(tmp, ("tds",))
+
+    def test_analyzer_rejects_oversized_symlinked_and_duplicate_evidence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.build_screen(tmp)
+            completion = Path(tmp) / "SCREEN_COMPLETE.json"
+            completion.write_bytes(b"x" * (17 * 1024 * 1024))
+            with self.assertRaisesRegex(
+                analyze_reward_screen.AnalysisError,
+                "byte bound",
+            ):
+                analyze_reward_screen.analyze_screen(tmp, ("tds",))
+
+        if hasattr(os, "symlink"):
+            with tempfile.TemporaryDirectory() as tmp:
+                self.build_screen(tmp)
+                completion = Path(tmp) / "SCREEN_COMPLETE.json"
+                target = Path(tmp) / "completion-target.json"
+                completion.replace(target)
+                completion.symlink_to(target)
+                with self.assertRaisesRegex(
+                    analyze_reward_screen.AnalysisError,
+                    "safely read screen completion proof",
+                ):
+                    analyze_reward_screen.analyze_screen(tmp, ("tds",))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            self.build_screen(tmp)
+            manifest = Path(tmp) / "SCREEN_MANIFEST.json"
+            raw = manifest.read_text(encoding="utf-8")
+            manifest.write_text(
+                raw.replace(
+                    '"schema_version": 1',
+                    '"schema_version": 1, "schema_version": 1',
+                    1,
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(
+                analyze_reward_screen.AnalysisError,
+                "duplicate JSON key: schema_version",
+            ):
+                analyze_reward_screen.analyze_screen(tmp, ("tds",))
 
     def test_exact_action_canary_reports_qualification_only(self):
         with tempfile.TemporaryDirectory() as tmp:

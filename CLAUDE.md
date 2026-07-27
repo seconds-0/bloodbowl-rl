@@ -45,6 +45,12 @@ evidence disagree, the newer evidence wins.
   or curriculum weight. The BBS1 fingerprint is an ABI/build guard, not content
   validation: preserve the loader's bounds, enum, grid/player, and ball-state
   checks for every raw snapshot before it enters reset selection.
+- **Typed training-bank gate:** production producer admission is currently
+  empty. `install_puffer_env.sh` performs an explicit no-bank install and
+  removes stale staged artifacts; a positive reset must match a compiled,
+  independently pinned BBS/producer/training contract and otherwise aborts
+  before workers exist. Do not relabel the D191 analysis bank or authored proof.
+  Nonuniform selectors remain disabled until pre-indexed strata land.
 - **Authored drill bank:** design, recipe families, and validator split live in
   `docs/plans/authored-drill-state-bank.md`. The load-bearing invariant: every
   state is reached only through legal `bb_apply` actions from an engine
@@ -286,7 +292,14 @@ evidence disagree, the newer evidence wins.
 11. **CPU thread cap (D59):** `nproc` (visible CPUs) ≫ cgroup quota (allowed CPUs) on some boxes → unpinned torch/BLAS pools thrash (5x SPS loss). `tools/cpu_cap.sh` fixes it and is auto-sourced by all launch scripts + `~/.bashrc`; any manual `puffer train` must `. tools/cpu_cap.sh` first. Verify: live trainer's `OMP_NUM_THREADS` == quota, thread count ~150-190 not hundreds.
 12. **A run completes/dies but the box keeps billing — detect via LOG MTIME, not log content (D65).** A finished trainer leaves its log frozen at the final dashboard; any monitor that greps log *content* reports it "running" forever. Two flagship arms idle-billed 8–13h this way. ALWAYS gate liveness primarily on `stat -c %Y <log>` age (>360s stale = dead/done). A run hitting its STEPS cap exits cleanly (not a crash) — advance the ladder or reassign/stop the box.
     **The process-name half of this check was silently dead and is now fixed.** Since D225 the trainer runs in-process under the CUDA wrapper, so its argv is `python .../tools/puffer_cuda_runtime.py train bloodbowl ...`: comm is `python`, and the cmdline contains neither `puffer train` nor a process named `puffer`. So `pgrep -xc puffer` AND every `pgrep -f 'puffer [t]rain'` guard returned constant zero — measured against a live run at 67% GPU. That silently reduced double-launch protection to `flock` alone in six scripts. Use `pgrep -f '[p]uffer_cuda_runtime.py train|[p]uffer train'`, which matches both the wrapper and any legacy direct launch and brackets each alternative so a watcher carrying the pattern inline cannot match itself (footgun 3).
-13. **`fleet.sh setup` clobbers a box's demo bank with the Mac's (D65).** The rsync excludes don't cover `validation/states/` or `resources/bloodbowl/`, so setup overwrites the box's `state_bank.bbs` with whatever the Mac repo holds. Keep the canonical (largest) bank in the Mac's `validation/states/bank.bbs` (gitignored) so syncs ship it; after any setup, re-check `Loaded N demo states` / bank byte-size on the box.
+13. **A raw `.bbs` file is not a training-authorized state bank.** The
+    historical setup flow copied `validation/states/bank.bbs` into Puffer and
+    silently used it—or silently fell back to kickoffs when it was absent.
+    Installation now publishes an explicit typed no-bank contract and removes
+    stale staged artifacts. Positive-reset launchers require externally
+    reviewed bank, producer-manifest, and training-contract pins, and the
+    production producer allowlist is intentionally empty until a from-source
+    producer receives its own review. Never restore the old copy/staging flow.
 14. **`fleet.sh <cmd> <name>` exact-matches `bb-<name>` and SILENTLY no-ops on a miss (D65).** `bb-taiwan-anchor` ≠ `bb-taiwan` → `setup taiwan` prints "no running instance labeled bb-taiwan" and the sync never runs (the box stays on stale code, e.g. obs-v3). Always pass the exact label suffix (`taiwan-anchor`) and confirm the rsync/build actually ran.
 15. **A reward field omitted from a launcher/config is not the same as explicit
     zero.** Use a complete canonical reward manifest and validate its SHA; never

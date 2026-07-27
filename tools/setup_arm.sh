@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
-# setup_arm.sh — bootstrap a freshly-provisioned Vast box into a torch
-# experiment arm and launch it. One command per fleet arm:
+# setup_arm.sh — disabled historical bootstrap recipe.
+#
+# This entry point stops before inspecting arguments, provisioning, contacting
+# an instance, transferring files, or launching training. The recipe below is
+# retained only as migration evidence until typed state-bank production
+# authorization exists.
 #
 #   tools/setup_arm.sh <label> <tag> [extra puffer args...]
 #   e.g. tools/setup_arm.sh kzero profile-kzero \
@@ -8,12 +12,17 @@
 #          --env.reward-k-ball 0 --env.reward-k-seq 0
 #
 # Chain: wait for 'running' -> fleet setup (repo rsync + gpu_box_setup) ->
-# --float rebuild (torch backend) -> pull the 1M-pair corpus + 15K bank +
-# bc_v3b from bb-taiwan-anchor (box-to-box; needs ssh-agent forwarding with
+# --float rebuild (torch backend) -> pull the 1M-pair corpus + bc_v3b from
+# bb-taiwan-anchor (box-to-box; needs ssh-agent forwarding with
 # the key loaded: ssh-add ~/.ssh/id_ed25519) -> run_synthesis_c.sh with the
 # given tag/args -> print the first vitals.
+# shellcheck disable=SC2317,SC2329
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+echo "setup_arm.sh is disabled pending the typed state-bank migration;" >&2
+echo "no instance was provisioned or contacted" >&2
+exit 2
+
 KEY="$HOME/.ssh/id_ed25519"
 LABEL="${1:?label (without bb- prefix)}"
 TAG="${2:?run tag}"
@@ -48,15 +57,10 @@ ssh -i "$KEY" -p "$PORT" -o StrictHostKeyChecking=no "root@$HOST" \
      ./build.sh bloodbowl --float > /tmp/build_float.log 2>&1 && \
      python -c 'from pufferlib import _C; assert _C.precision_bytes==4'"
 
-echo "[$LABEL] pulling corpus + bank + anchor from bb-taiwan-anchor"
+echo "[$LABEL] pulling corpus + anchor from bb-taiwan-anchor"
 ssh -A -i "$KEY" -p "$SRC_PORT" -o StrictHostKeyChecking=no "$SRC_HOST" \
     "rsync -az --delete -e 'ssh -p $PORT -o StrictHostKeyChecking=no' \
          /root/bloodbowl-rl/validation/pairs/ root@$HOST:/root/bloodbowl-rl/validation/pairs/ && \
-     rsync -az -e 'ssh -p $PORT -o StrictHostKeyChecking=no' \
-         /root/bloodbowl-rl/validation/states/bank.bbs root@$HOST:/root/bloodbowl-rl/validation/states/bank.bbs && \
-     rsync -az -e 'ssh -p $PORT -o StrictHostKeyChecking=no' \
-         /root/bloodbowl-rl/vendor/PufferLib/resources/bloodbowl/state_bank.bbs \
-         root@$HOST:/root/bloodbowl-rl/vendor/PufferLib/resources/bloodbowl/state_bank.bbs && \
      rsync -az -e 'ssh -p $PORT -o StrictHostKeyChecking=no' \
          /root/bloodbowl-rl/training/bc_v3b.bin root@$HOST:/root/bloodbowl-rl/training/"
 

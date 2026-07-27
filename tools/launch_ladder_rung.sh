@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Launch one rung of the backplay curriculum ladder and wait for it to finish.
+# Historical backplay-rung recipe. It now stops at the typed-bank bridge below;
+# no nonzero selector is launchable until pre-indexed strata are implemented.
 #
 # The ladder (CLAUDE.md, D50/D51/D67-D74) is maxdist 6 -> 9 -> 12 -> uniform ->
 # kickoff, +3 squares per rung and never more (D51: 6->12 overshot and tds went
@@ -25,7 +26,14 @@
 #   STEPS (default 5000000000)  RESET_PCT (default 0.5)  SEED (default 42)
 #   TAG, OUT, C, DEADLINE_HOURS (default 36)
 
+# The executable tombstone intentionally leaves the historical recipe below
+# unreachable as migration evidence.
+# shellcheck disable=SC2317
 set -uo pipefail
+
+echo "ladder rung blocked: selector curricula require pre-indexed strata" >&2
+echo "no checkout was inspected and no Puffer process was started" >&2
+exit 2
 
 C="${C:-/home/rache/bloodbowl-rl-qualification-candidate-10619e2}"
 cd "$C" || exit 1
@@ -60,6 +68,13 @@ export BOOTSTRAP_MODE=lineage-v6
 export REWARD_MANIFEST="$C/puffer/config/rewards/s0_both.json"
 export LADDER_RESET_PCT="$RESET_PCT"
 export LADDER_ENDZONE_MAXDIST="$RUNG"
+: "${LADDER_STATE_BANK_KIND:?LADDER_STATE_BANK_KIND is required}"
+: "${EXPECTED_LADDER_STATE_BANK_SHA256:?EXPECTED_LADDER_STATE_BANK_SHA256 is required}"
+: "${EXPECTED_LADDER_STATE_BANK_PRODUCER_MANIFEST_SHA256:?EXPECTED_LADDER_STATE_BANK_PRODUCER_MANIFEST_SHA256 is required}"
+: "${EXPECTED_LADDER_STATE_BANK_CONTRACT_SHA256:?EXPECTED_LADDER_STATE_BANK_CONTRACT_SHA256 is required}"
+export LADDER_STATE_BANK_KIND EXPECTED_LADDER_STATE_BANK_SHA256
+export EXPECTED_LADDER_STATE_BANK_PRODUCER_MANIFEST_SHA256
+export EXPECTED_LADDER_STATE_BANK_CONTRACT_SHA256
 
 echo "=== ladder rung ==="
 echo "  tag    $TAG"
@@ -67,7 +82,7 @@ echo "  rung   maxdist $RUNG at reset_pct $RESET_PCT"
 echo "  steps  $STEPS (CAP -- read the plateau, chain if still climbing)"
 echo "  warm   $WARM"
 echo "  pool   $POOL ($EXPECTED_POOL_HASH)"
-echo "  bank   $(sha256sum "$C/vendor/PufferLib/resources/bloodbowl/state_bank.bbs" 2>/dev/null | cut -c1-16)"
+echo "  bank pin ${EXPECTED_LADDER_STATE_BANK_SHA256:0:16}"
 echo "  log    $LOG"
 
 bash "$C/tools/run_reward_ablation.sh"

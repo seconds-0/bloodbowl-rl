@@ -12,10 +12,15 @@
 #   - anchor model training/bc_v3b.bin (override: ANCHOR=...; PINNED, not
 #     mtime-glob-resolved — panel: bc_v1/bc_v15 are dead-lineage 832-obs
 #     checkpoints that an `ls -t` glob can mis-resolve to)
-#   - demo bank staged at vendor/PufferLib/resources/bloodbowl/state_bank.bbs
-#     (panel: a missing bank is SILENT — the env trains procgen-only)
+#   - RETIRED historical prerequisite: a raw demo bank used to be copied into
+#     Puffer without a producer/training contract. The hard stop below exists
+#     because that recipe is no longer an authorized training path.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+echo "run_synthesis_c.sh is disabled: its legacy raw state bank has no typed," >&2
+echo "hash-pinned producer/training contract; no Puffer process was started" >&2
+exit 2
+
 cd "$ROOT/vendor/PufferLib"
 
 if pgrep -f '[p]uffer_cuda_runtime.py train|[p]uffer train' > /dev/null; then
@@ -34,7 +39,7 @@ asize=$(wc -c < "$ANCHOR")
 echo "anchor: $ANCHOR ($asize B)"
 
 BANK="resources/bloodbowl/state_bank.bbs"
-[ -f "$BANK" ] || { echo "demo bank missing: $BANK (env would silently train procgen-only)" >&2; exit 1; }
+[ -f "$BANK" ] || { echo "legacy demo bank missing: $BANK" >&2; exit 1; }
 bsize=$(wc -c < "$BANK")
 # 16-byte header + N x (12 + sizeof(bb_match)) records; demand a real corpus.
 [ "$bsize" -gt 1000000 ] || { echo "demo bank suspiciously small ($bsize B) — stale 401-replay bank?" >&2; exit 1; }
@@ -79,4 +84,4 @@ if ! kill -0 "$PID" 2>/dev/null; then
   exit 1
 fi
 grep -aE "Warm-started|demo states|bc.*pairs|BC anchor" "$LOG" | head -5 || true
-echo "LIVE: pid $PID at 40s — verify 'Loaded N demo states' appeared above"
+echo "LIVE: pid $PID at 40s — historical unreachable recipe"

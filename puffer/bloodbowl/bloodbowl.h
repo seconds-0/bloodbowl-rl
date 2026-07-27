@@ -382,9 +382,10 @@ typedef struct {
     // else means the engine/binding contract broke mid-training.
     float error_episodes;
     // Demo-state reset curriculum: episodes started from a banked mid-game
-    // state (should track demo_reset_pct when the bank is staged), and bank
-    // draws that failed validation and silently fell back to procgen
-    // (should stay at 0.0 — anything else means a corrupt/stale bank).
+    // state (should track demo_reset_pct when the bank is active).
+    // demo_fallbacks is legacy telemetry retained for metric compatibility;
+    // typed banks validate before publication and abort on later corruption,
+    // so it remains exactly zero rather than recording a procgen fallback.
     float demo_episodes;
     float demo_fallbacks;
     // Team-0/home signed component returns. Team 0 is the primary learner in
@@ -596,32 +597,16 @@ typedef struct {
     // reward_possession == 0 (the annuity's dense gradient would dominate the
     // joint possession_rate target). 0 = off (default). See D114.
     float reward_statmatch_scale;
-    // Backplay curriculum (D47): when >0, demo resets rejection-sample the
-    // bank for SCORING-PROXIMAL states — a standing carrier within this
-    // many squares of their endzone — so the policy experiences touchdowns
-    // densely before the start distribution expands backward. 0 = uniform
-    // bank sampling (default). Stages launched manually (6 -> 12 -> 0),
-    // like the k-anneal chain.
+    // Legacy state-bank selector fields are retained in the environment ABI
+    // while typed-bank construction moves selection into the immutable
+    // artifact contract. The runtime currently rejects every nonzero selector
+    // instead of silently changing the requested uniform distribution.
     int demo_endzone_maxdist;
-    // Pickup curriculum (D64): when >0, demo resets rejection-sample the bank
-    // for BALL-ACQUISITION states — a LOOSE ball (on the ground) within this
-    // many Chebyshev squares of a standing player of the team-to-move — so the
-    // policy densely experiences the scoop that backplay skips (backplay starts
-    // with the ball already HELD). 0 = off (default). Mutually exclusive with
-    // demo_endzone_maxdist (backplay takes precedence if both >0). Stages
-    // launched manually, expanding outward like the backplay ladder.
+    // Must remain zero under the current typed-bank contract.
     int demo_pickup_maxdist;
-    // Post-kickoff pickup drill (Alex, D68): when >0, demo resets
-    // rejection-sample the bank for the natural game opening — a LOOSE ball
-    // with the team-to-move on team-turn <= this value (1 = strict
-    // post-kickoff scoop, 2 = + early recoveries). Unlike the mid-game pickup
-    // drill (D67 context-lock failure), the drill state here IS the game's
-    // real starting context — 28.5% of the bank qualifies at maxturn 1.
-    // Precedence: endzone > pickup > postkick (first nonzero wins).
+    // Must remain zero under the current typed-bank contract.
     int demo_postkick_maxturn;
-    // Passing ladder (D72): >0 = demo resets prefer states where the
-    // team-to-move holds the ball with a standing downfield receiver within
-    // this Chebyshev pass-range. Pure ladder, graduates to kickoff (D69).
+    // Must remain zero under the current typed-bank contract.
     int demo_pass_maxrange;
     // Procgen skill-entropy knobs. Defaults reproduce historical procgen:
     // 0-4 advancement draws/team, 1-2 skills/draw, primary categories only.
@@ -643,14 +628,18 @@ typedef struct {
     uint8_t reach_p255[390];             // approx P(path succeeds) for obs B
     int16_t reach_parent[390];           // square idx -> predecessor idx
     uint8_t reach_len[390];
-    // Demo-state reset curriculum (Backplay / chess fen_curric pattern,
-    // docs/rl-best-practices.md hole #2): with probability demo_reset_pct
-    // each episode starts from a uniformly drawn banked mid-game state
-    // (resources/bloodbowl/state_bank.bbs, built by
-    // validation/build_state_bank.py from FUMBBL replays) instead of a
-    // procgen kickoff. 0 = off (default). demo_started flags the CURRENT
-    // episode for the Log.
+    // Typed state-bank reset curriculum: with probability demo_reset_pct,
+    // each episode starts from a uniform record in the exact three-artifact
+    // contract compiled into this environment. Positive values require the
+    // generated strict kind, all three pinned files, valid ordinary-boundary
+    // records, and unconstrained (-1) team sentinels. Any startup/record
+    // mismatch aborts; it never degrades to procgen. 0 = off (default), in
+    // which case state_bank_kind must also be 0. demo_started identifies the
+    // current episode's chosen start distribution.
     float demo_reset_pct;
+    // Exact typed-bank request. Zero is required when demo_reset_pct is zero;
+    // positive reset probability currently supports strict replay (1) only.
+    int state_bank_kind;
     int demo_started;
     // Procgen controls: held-out-team experiments and fixed-matchup eval.
     // -1 = unconstrained.
@@ -2169,101 +2158,11 @@ void (*bbe_feed_hook)(const Bloodbowl* env, int kind, int a, int b) = 0;
 #define BBE_FEED(env, kind, a, b) \
     do { if (bbe_feed_hook) bbe_feed_hook((env), (kind), (a), (b)); } while (0)
 
-// --- Demo-state bank (Backplay / chess-FEN curriculum) -----------------------
-// Shared, lazily loaded once per process (per TU — binding.c is the single
-// training TU, mirroring chess's SHARED_FEN_CURRICULUM in my_vec_init).
-// File: "BBS1" written by tools/bb_lockstep.c --dump-states, concatenated by
-// validation/build_state_bank.py, staged by tools/install_puffer_env.sh.
-// Missing file = curriculum silently off (the chess pattern); a header that
-// fails the match_size/fingerprint guards is reported and ignored — training
-// on stale-engine states would be silent corruption. BBS1 currently accepts
-// the shared, structurally validated MATCH -> TEAM_TURN boundary plus the one
-// explicitly validated pending-Dodge reroll stack documented in D201. Every
-// other nested procedure decision remains fail-closed.
-#define BBE_STATE_BANK_PATH "resources/bloodbowl/state_bank.bbs"
-#define BBE_STATE_BANK_REC_META 12 // replay_id u32, cmd u32, half, turn, pad[2]
-
-static const char* bbe_state_bank_path = BBE_STATE_BANK_PATH;
-static bb_match* bbe_state_bank = NULL;
-static int bbe_state_bank_n = 0;
-static int bbe_state_bank_tried = 0;
-
-static uint32_t bbe_le32(const uint8_t* b) {
-    return (uint32_t)b[0] | ((uint32_t)b[1] << 8) | ((uint32_t)b[2] << 16) |
-           ((uint32_t)b[3] << 24);
-}
-
-// Load the bank once. Call sites: the binding's init entry points (before
-// any stepping thread exists) and, for standalone callers (driver, tests),
-// lazily from the first bbe_reset_match with demo_reset_pct > 0.
-static void bbe_state_bank_load(void) {
-    if (bbe_state_bank_tried) return;
-    bbe_state_bank_tried = 1;
-    FILE* f = fopen(bbe_state_bank_path, "rb");
-    if (f == NULL) return; // no bank staged: curriculum off
-    uint8_t hdr[16];
-    size_t rec_len = BBE_STATE_BANK_REC_META + sizeof(bb_match);
-    if (fread(hdr, 1, sizeof hdr, f) != sizeof hdr ||
-        memcmp(hdr, "BBS1", 4) != 0 || bbe_le32(hdr + 4) != 1u ||
-        bbe_le32(hdr + 8) != (uint32_t)sizeof(bb_match) ||
-        bbe_le32(hdr + 12) != bbe_state_fingerprint()) {
-        fprintf(stderr,
-                "bloodbowl: state bank %s incompatible with this engine build "
-                "(stale bank? rebuild with validation/build_state_bank.py) — "
-                "demo resets disabled\n",
-                bbe_state_bank_path);
-        fclose(f);
-        return;
-    }
-    if (fseek(f, 0, SEEK_END) != 0) {
-        fclose(f);
-        return;
-    }
-    long size = ftell(f);
-    long n = size > 16 ? (size - 16) / (long)rec_len : 0;
-    if (n <= 0 || (size - 16) % (long)rec_len != 0) {
-        fprintf(stderr, "bloodbowl: state bank %s malformed (%ld bytes) — "
-                        "demo resets disabled\n",
-                bbe_state_bank_path, size);
-        fclose(f);
-        return;
-    }
-    if ((uint64_t)n > SIZE_MAX / sizeof(bb_match)) {
-        fclose(f);
-        return;
-    }
-    bb_match* bank = (bb_match*)malloc((size_t)n * sizeof(bb_match));
-    if (bank == NULL) {
-        fclose(f);
-        return;
-    }
-    int kept = 0;
-    for (long i = 0; i < n; i++) {
-        uint8_t metadata[BBE_STATE_BANK_REC_META];
-        if (fseek(f, 16 + i * (long)rec_len, SEEK_SET) != 0 ||
-            fread(metadata, 1, sizeof metadata, f) != sizeof metadata ||
-            fread(&bank[kept], sizeof(bb_match), 1, f) != 1) {
-            break;
-        }
-        const bb_match* match = &bank[kept];
-        uint8_t half = metadata[8];
-        uint8_t turn = metadata[9];
-        int metadata_valid = bbe_le32(metadata) != 0 &&
-            metadata[10] == 0 && metadata[11] == 0 &&
-            half >= 1 && half <= 3 && turn >= 1 && turn <= 8 &&
-            match->half == half && match->active_team <= BB_AWAY &&
-            match->turn[match->active_team] == turn;
-        kept += metadata_valid && bb_state_bank_resumable_valid(match);
-    }
-    fclose(f);
-    if (kept == 0) {
-        free(bank);
-        return;
-    }
-    bbe_state_bank = bank;
-    bbe_state_bank_n = kept;
-    printf("Loaded %d demo states from %s\n", kept, bbe_state_bank_path);
-}
+// --- Typed state-bank trust boundary ----------------------------------------
+// The tracked generated contract is NONE. Installed builds include the sole
+// generated authority through state_bank_build.h. Loading is exact,
+// hash-pinned, all-or-nothing, and process-global; see the focused header.
+#include "state_bank_runtime.h"
 
 // --- Lifecycle -------------------------------------------------------------------
 // Per-step tackle-zone scratch, computed ONCE for both agent views:
@@ -2493,6 +2392,19 @@ static void bbe_update_ball_possession(Bloodbowl* env, bool scored) {
     // BB_BALL_IN_AIR: limbo — the active possession is judged when it settles.
 }
 
+static uint32_t bbe_rng_uniform_below(bb_rng* rng, uint32_t bound) {
+    if (bound == 0) {
+        fprintf(stderr, "bloodbowl: zero bound for uniform random draw\n");
+        abort();
+    }
+    uint32_t threshold = -bound % bound;
+    uint32_t value;
+    do {
+        value = bb_rng_next(rng);
+    } while (value < threshold);
+    return value % bound;
+}
+
 static void bbe_reset_match(Bloodbowl* env) {
     env->episode++;
     // Stalling telemetry: clear this episode's tally and point the engine at
@@ -2503,122 +2415,36 @@ static void bbe_reset_match(Bloodbowl* env) {
     bb_stall_reset(&env->ep_stall);
     bb_stall_attach(&env->ep_stall);
     bb_rng_seed(&env->procgen, env->seed * 2654435761u + env->episode, 11);
-    // Demo-state reset curriculum: with probability demo_reset_pct, resume
-    // from a uniformly drawn banked mid-game state instead of a procgen
-    // kickoff (both draws from the procgen stream). A banked state that
-    // fails validation falls back to procgen silently, counted in the Log.
+    // Typed state-bank curriculum: the process-global contract was required
+    // before this point. The probability draw is the only valid route from an
+    // active contract to procgen; an invalid drawn record is corruption, not
+    // an excuse to silently change the requested start distribution.
     env->reach_mover = -1;          // v5 scratch: new match = stale reach
     env->macro_len = env->macro_pos = 0;
     env->macro_mover = -1;
     env->demo_started = 0;
     if (env->demo_reset_pct > 0.0f) {
-        bbe_state_bank_load(); // lazy once; no-op when already tried
-        if (bbe_state_bank_n > 0 &&
-            (float)(bb_rng_next(&env->procgen) >> 8) * (1.0f / 16777216.0f) <
-                env->demo_reset_pct) {
-            int idx = (int)(bb_rng_next(&env->procgen) %
-                            (uint32_t)bbe_state_bank_n);
-            // Backplay: rejection-sample for a standing carrier within
-            // demo_endzone_maxdist of their endzone; fall back to the last
-            // uniform draw if the bank tier is thin (loud via demo stats
-            // would lie — count fallbacks separately below).
-            if (env->demo_endzone_maxdist > 0) {
-                for (int try = 0; try < 256; try++) {
-                    const bb_match* cand = &bbe_state_bank[idx];
-                    int c = cand->ball.carrier;
-                    if (cand->ball.state == BB_BALL_HELD && c != BB_NO_PLAYER) {
-                        const bb_player* cp = &cand->players[c];
-                        if (cp->location == BB_LOC_ON_PITCH &&
-                            cp->stance == BB_STANCE_STANDING) {
-                            int d = cp->x - bb_endzone_x(BB_TEAM_OF(c));
-                            if (d < 0) d = -d;
-                            if (d <= env->demo_endzone_maxdist) break;
-                        }
-                    }
-                    idx = (int)(bb_rng_next(&env->procgen) %
-                                (uint32_t)bbe_state_bank_n);
-                }
-            } else if (env->demo_pickup_maxdist > 0) {
-                // Pickup curriculum (D64): rejection-sample for a LOOSE ball
-                // with a standing player of the team-to-move within
-                // demo_pickup_maxdist (Chebyshev) — the scoop backplay skips.
-                // Fall back to the last uniform draw if the tier is thin
-                // (counted in demo_fallbacks below, same as backplay).
-                for (int try = 0; try < 256; try++) {
-                    const bb_match* cand = &bbe_state_bank[idx];
-                    if (cand->ball.state == BB_BALL_ON_GROUND) {
-                        int bx = cand->ball.x, by = cand->ball.y;
-                        int at = cand->active_team;
-                        int hit = 0;
-                        for (int s = 0; s < BB_NUM_PLAYERS; s++) {
-                            if (BB_TEAM_OF(s) != at) continue;
-                            const bb_player* p = &cand->players[s];
-                            if (p->location != BB_LOC_ON_PITCH ||
-                                p->stance != BB_STANCE_STANDING) continue;
-                            int dx = (int)p->x - bx; if (dx < 0) dx = -dx;
-                            int dy = (int)p->y - by; if (dy < 0) dy = -dy;
-                            int d = dx > dy ? dx : dy;
-                            if (d <= env->demo_pickup_maxdist) { hit = 1; break; }
-                        }
-                        if (hit) break;
-                    }
-                    idx = (int)(bb_rng_next(&env->procgen) %
-                                (uint32_t)bbe_state_bank_n);
-                }
-            } else if (env->demo_postkick_maxturn > 0) {
-                // Post-kickoff scoop drill (D68): loose ball at the top of a
-                // drive — the team-to-move's turn counter is still <= N.
-                for (int try = 0; try < 256; try++) {
-                    const bb_match* cand = &bbe_state_bank[idx];
-                    if (cand->ball.state == BB_BALL_ON_GROUND &&
-                        (int)cand->turn[cand->active_team & 1] <=
-                            env->demo_postkick_maxturn)
-                        break;
-                    idx = (int)(bb_rng_next(&env->procgen) %
-                                (uint32_t)bbe_state_bank_n);
-                }
-            } else if (env->demo_pass_maxrange > 0) {
-                // Passing ladder (D72): team-to-move HOLDS the ball and has a
-                // standing friendly receiver DOWNFIELD (closer to the enemy
-                // endzone than the carrier) within Chebyshev pass-range N — a
-                // state where throwing is a live option. Pure ladder, meant to
-                // GRADUATE to kickoff (demo_reset_pct -> 0) per D69, not to be
-                // mixed in perpetuity. ~15% of bank qualifies at range 6.
-                for (int try = 0; try < 256; try++) {
-                    const bb_match* cand = &bbe_state_bank[idx];
-                    int c = cand->ball.carrier;
-                    if (cand->ball.state == BB_BALL_HELD && c != BB_NO_PLAYER &&
-                        BB_TEAM_OF(c) == cand->active_team) {
-                        const bb_player* cp = &cand->players[c];
-                        int tgt0 = (bb_endzone_x(BB_TEAM_OF(c)) == 0);
-                        int cx = tgt0 ? cp->x : (BB_PITCH_LEN - 1 - cp->x);
-                        int hit = 0;
-                        for (int s = 0; s < BB_NUM_PLAYERS; s++) {
-                            if (BB_TEAM_OF(s) != cand->active_team || s == c)
-                                continue;
-                            const bb_player* p = &cand->players[s];
-                            if (p->location != BB_LOC_ON_PITCH ||
-                                p->stance != BB_STANCE_STANDING) continue;
-                            int rx = tgt0 ? p->x : (BB_PITCH_LEN - 1 - p->x);
-                            if (rx >= cx) continue;  // not downfield of carrier
-                            int dx = (int)p->x - cp->x; if (dx < 0) dx = -dx;
-                            int dy = (int)p->y - cp->y; if (dy < 0) dy = -dy;
-                            int rng = dx > dy ? dx : dy;
-                            if (rng <= env->demo_pass_maxrange) { hit = 1; break; }
-                        }
-                        if (hit) break;
-                    }
-                    idx = (int)(bb_rng_next(&env->procgen) %
-                                (uint32_t)bbe_state_bank_n);
-                }
-            }
+        if (bbe_state_bank_status != BBE_SB_READY ||
+            bbe_state_bank_loaded_kind != env->state_bank_kind ||
+            bbe_state_bank == NULL || bbe_state_bank_metadata == NULL ||
+            bbe_state_bank_n <= 0) {
+            fprintf(stderr,
+                    "bloodbowl: required state bank is not published at reset\n");
+            abort();
+        }
+        if ((float)(bb_rng_next(&env->procgen) >> 8) *
+                (1.0f / 16777216.0f) < env->demo_reset_pct) {
+            int idx = (int)bbe_rng_uniform_below(
+                &env->procgen, (uint32_t)bbe_state_bank_n);
             env->match = bbe_state_bank[idx];
-            if (env->match.status == BB_STATUS_DECISION &&
-                env->match.stack_top > 0) {
-                env->demo_started = 1;
-            } else {
-                env->log.demo_fallbacks += 1.0f;
+            if (env->match.status != BB_STATUS_DECISION ||
+                env->match.stack_top == 0) {
+                fprintf(stderr,
+                        "bloodbowl: published state-bank record corrupted "
+                        "before reset\n");
+                abort();
             }
+            env->demo_started = 1;
         }
     }
     if (!env->demo_started) {
@@ -2652,6 +2478,14 @@ static void bbe_reset_match(Bloodbowl* env) {
     bb_rng_seed(&env->rng, env->seed + env->episode * 7919u, 1);
     bb_advance(&env->match, &env->rng);
     bbe_refresh_legal(env);
+    if (env->demo_started &&
+        (env->match.status != BB_STATUS_DECISION ||
+         env->match.stack_top == 0 ||
+         env->n_legal <= 0 || env->n_legal > BB_LEGAL_MAX)) {
+        fprintf(stderr,
+                "bloodbowl: banked reset lost its legal decision surface\n");
+        abort();
+    }
     env->decisions = 0; // max_decisions budgets from the resume point
     env->illegal = 0;
     env->illegal_projection_collision = 0;
@@ -2785,6 +2619,22 @@ static void bbe_reset_match(Bloodbowl* env) {
     }
 }
 
+static bbe_state_bank_config_values bbe_state_bank_env_config(
+        const Bloodbowl* env) {
+    bbe_state_bank_config_values values = {
+        env->demo_reset_pct,
+        env->state_bank_kind,
+        env->demo_endzone_maxdist,
+        env->demo_pickup_maxdist,
+        env->demo_postkick_maxturn,
+        env->demo_pass_maxrange,
+        env->exclude_team,
+        env->force_home_team,
+        env->force_away_team,
+    };
+    return values;
+}
+
 static void c_reset(Bloodbowl* env) {
     // Force a full v4-plane clear on the first encode of a (re)pointed obs
     // buffer (my_setup_perm also sets these — vecenv re-points obs_ptr
@@ -2799,6 +2649,15 @@ static void c_reset(Bloodbowl* env) {
         env->reward_draw = BBE_DEFAULT_REWARD_DRAW;
     }
     bbe_validate_reward_config(env);
+    bbe_state_bank_config_values bank_config =
+        bbe_state_bank_env_config(env);
+    bbe_state_bank_validate_config_or_abort(&bank_config);
+    if (env->demo_reset_pct > 0.0f) {
+#ifdef BBE_STATE_BANK_TESTING
+        if (!bbe_state_bank_test_publication)
+#endif
+            bbe_state_bank_require_or_abort(env->state_bank_kind);
+    }
     bbe_reset_match(env);
     bbe_emit_all(env);
 }

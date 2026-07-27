@@ -1,17 +1,14 @@
 #!/usr/bin/env bash
-# Disposable backplay-ladder canary: does the curriculum mechanism actually work
-# on this harness, and does tds move off zero?
+# Historical disposable backplay-ladder canary, retained as an exact recipe
+# record. It now stops at the typed-bank bridge below and cannot launch.
 #
 # This is a CANARY in D219's sense -- never warm-start from its output, never add
 # it to an opponent pool, never quote it as a reward result. Its only job is to
 # answer three questions before a multi-day ladder budget is committed:
 #
-#   1. Do the sixteen hard-integrity counters stay zero with demo_reset_pct > 0?
-#      demo_fallbacks is one of them and fires for a banked record that is not a
-#      live decision state, so this is the first real test of the bank's content
-#      against the loader (all 15,348 filtered records scan as live decision
-#      states, but that was measured by tools/bank_backplay_coverage.c, not by
-#      the env).
+#   1. Historically: did the integrity counters stay zero with banked resets?
+#      The new typed loader validates every candidate before publication, so a
+#      future canary will consume a pre-indexed, authorized stratum instead.
 #   2. Does episode_length rise off the ~137.7 floor the kickoff-only runs sit
 #      at? A backplay start puts the carrier near the endzone, so if the knob is
 #      really applied the episode shape must change. If episode_length stays at
@@ -21,18 +18,22 @@
 #      scoreless (D26/D34/D40/D49, one capped at 10.1B), and the ladder is the
 #      only thing that ever fixed it (D50/D67-D74).
 #
-# Rung choice: maxdist 6 is D51's backplay-s1 rung. tools/bank_backplay_coverage.c
-# measures 313 qualifying records in the filtered bank (2.04%), giving a 0.5%
-# chance that a reset exhausts the 256-try rejection sampler and silently falls
-# back to a uniform draw. That is small, measured rather than assumed, and the
-# alternative rung 9 (784 records, 1.5e-06) trades scoring proximity for a
-# safety margin we do not need at 0.5%.
+# Historical rung choice: maxdist 6 was D51's backplay-s1 rung. The measured
+# 313-record population is evidence for building a named stratum, not authority
+# to revive runtime rejection sampling.
 #
 # reset_pct 0.5, not 0.9: D69 retired 0.9 as "drill saturation [that] overwrites
 # game-context behavior" and D74 graduates 0.5 -> 0.25 -> 0. 0.5 is the mixed
 # ratio that transferred.
 
+# The executable tombstone intentionally leaves the historical recipe below
+# unreachable as migration evidence.
+# shellcheck disable=SC2317
 set -uo pipefail
+
+echo "ladder canary blocked: selector curricula require pre-indexed strata" >&2
+echo "no checkout was inspected and no Puffer process was started" >&2
+exit 2
 
 C="${C:-/home/rache/bloodbowl-rl-qualification-candidate-10619e2}"
 cd "$C" || exit 1
@@ -50,6 +51,13 @@ export EXPECTED_POOL_HASH="${EXPECTED_POOL_HASH:-c75d4baa2b962ce9687607a018ff6a0
 # The curriculum itself.
 export LADDER_RESET_PCT=0.5
 export LADDER_ENDZONE_MAXDIST=6
+: "${LADDER_STATE_BANK_KIND:?LADDER_STATE_BANK_KIND is required}"
+: "${EXPECTED_LADDER_STATE_BANK_SHA256:?EXPECTED_LADDER_STATE_BANK_SHA256 is required}"
+: "${EXPECTED_LADDER_STATE_BANK_PRODUCER_MANIFEST_SHA256:?EXPECTED_LADDER_STATE_BANK_PRODUCER_MANIFEST_SHA256 is required}"
+: "${EXPECTED_LADDER_STATE_BANK_CONTRACT_SHA256:?EXPECTED_LADDER_STATE_BANK_CONTRACT_SHA256 is required}"
+export LADDER_STATE_BANK_KIND EXPECTED_LADDER_STATE_BANK_SHA256
+export EXPECTED_LADDER_STATE_BANK_PRODUCER_MANIFEST_SHA256
+export EXPECTED_LADDER_STATE_BANK_CONTRACT_SHA256
 
 OUT="${OUT:-$C/runs/ladder-canary-$STAMP}"
 mkdir -p "$OUT"
@@ -61,7 +69,7 @@ echo "  steps      $STEPS"
 echo "  rung       maxdist $LADDER_ENDZONE_MAXDIST at reset_pct $LADDER_RESET_PCT"
 echo "  warm       $WARM"
 echo "  pool       $POOL"
-echo "  bank       $(sha256sum "$C/vendor/PufferLib/resources/bloodbowl/state_bank.bbs" 2>/dev/null | cut -c1-16)"
+echo "  bank pin   ${EXPECTED_LADDER_STATE_BANK_SHA256:0:16}"
 echo "  log        $LOG"
 
 bash "$C/tools/run_reward_ablation.sh"

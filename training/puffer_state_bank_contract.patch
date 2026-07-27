@@ -1,0 +1,60 @@
+diff --git a/src/bindings.cu b/src/bindings.cu
+--- a/src/bindings.cu
++++ b/src/bindings.cu
+@@ -515,6 +515,26 @@ PYBIND11_MODULE(_C, m) {
+     m.attr("observation_abi") = PUFFER_OBSERVATION_ABI;
+     m.attr("observation_version") = PUFFER_OBSERVATION_VERSION;
+     m.attr("action_abi") = PUFFER_ACTION_ABI;
++    m.attr("state_bank_contract_schema") = PUFFER_STATE_BANK_CONTRACT_SCHEMA;
++    m.attr("state_bank_producer_schema") = PUFFER_STATE_BANK_PRODUCER_SCHEMA;
++    m.attr("state_bank_authorization_schema") = PUFFER_STATE_BANK_AUTHORIZATION_SCHEMA;
++    m.attr("state_bank_kind") = PUFFER_STATE_BANK_COMPILED_KIND;
++    m.attr("state_bank_kind_name") = PUFFER_STATE_BANK_KIND_NAME;
++    m.attr("state_bank_ruleset") = PUFFER_STATE_BANK_RULESET;
++    m.attr("state_bank_bbs_sha256") = PUFFER_STATE_BANK_BBS_SHA256;
++    m.attr("state_bank_producer_manifest_sha256") = PUFFER_STATE_BANK_PRODUCER_MANIFEST_SHA256;
++    m.attr("state_bank_training_contract_sha256") = PUFFER_STATE_BANK_TRAINING_CONTRACT_SHA256;
++    m.attr("state_bank_producer_engine_source_sha256") = PUFFER_STATE_BANK_PRODUCER_ENGINE_SOURCE_SHA256;
++    m.attr("state_bank_loader_engine_source_sha256") = PUFFER_STATE_BANK_LOADER_ENGINE_SOURCE_SHA256;
++    m.attr("state_bank_bbs_bytes") = (unsigned long long)PUFFER_STATE_BANK_BBS_BYTES;
++    m.attr("state_bank_records") = (unsigned long long)PUFFER_STATE_BANK_RECORDS;
++    m.attr("state_bank_bbs_version") = PUFFER_STATE_BANK_BBS_VERSION;
++    m.attr("state_bank_match_size") = PUFFER_STATE_BANK_MATCH_SIZE;
++    m.attr("state_bank_engine_fingerprint") = (unsigned long long)PUFFER_STATE_BANK_ENGINE_FINGERPRINT;
++    m.attr("state_bank_contract_identity") = PUFFER_STATE_BANK_CONTRACT_IDENTITY;
++    m.attr("state_bank_bbs_path") = PUFFER_STATE_BANK_BBS_PATH;
++    m.attr("state_bank_producer_manifest_path") = PUFFER_STATE_BANK_PRODUCER_MANIFEST_PATH;
++    m.attr("state_bank_training_contract_path") = PUFFER_STATE_BANK_TRAINING_CONTRACT_PATH;
+ 
+     // Core functions
+     m.def("log", &puf_log);
+diff --git a/src/bindings_cpu.cpp b/src/bindings_cpu.cpp
+--- a/src/bindings_cpu.cpp
++++ b/src/bindings_cpu.cpp
+@@ -170,6 +170,26 @@ PYBIND11_MODULE(_C, m) {
+     m.attr("observation_abi") = PUFFER_OBSERVATION_ABI;
+     m.attr("observation_version") = PUFFER_OBSERVATION_VERSION;
+     m.attr("action_abi") = PUFFER_ACTION_ABI;
++    m.attr("state_bank_contract_schema") = PUFFER_STATE_BANK_CONTRACT_SCHEMA;
++    m.attr("state_bank_producer_schema") = PUFFER_STATE_BANK_PRODUCER_SCHEMA;
++    m.attr("state_bank_authorization_schema") = PUFFER_STATE_BANK_AUTHORIZATION_SCHEMA;
++    m.attr("state_bank_kind") = PUFFER_STATE_BANK_COMPILED_KIND;
++    m.attr("state_bank_kind_name") = PUFFER_STATE_BANK_KIND_NAME;
++    m.attr("state_bank_ruleset") = PUFFER_STATE_BANK_RULESET;
++    m.attr("state_bank_bbs_sha256") = PUFFER_STATE_BANK_BBS_SHA256;
++    m.attr("state_bank_producer_manifest_sha256") = PUFFER_STATE_BANK_PRODUCER_MANIFEST_SHA256;
++    m.attr("state_bank_training_contract_sha256") = PUFFER_STATE_BANK_TRAINING_CONTRACT_SHA256;
++    m.attr("state_bank_producer_engine_source_sha256") = PUFFER_STATE_BANK_PRODUCER_ENGINE_SOURCE_SHA256;
++    m.attr("state_bank_loader_engine_source_sha256") = PUFFER_STATE_BANK_LOADER_ENGINE_SOURCE_SHA256;
++    m.attr("state_bank_bbs_bytes") = (unsigned long long)PUFFER_STATE_BANK_BBS_BYTES;
++    m.attr("state_bank_records") = (unsigned long long)PUFFER_STATE_BANK_RECORDS;
++    m.attr("state_bank_bbs_version") = PUFFER_STATE_BANK_BBS_VERSION;
++    m.attr("state_bank_match_size") = PUFFER_STATE_BANK_MATCH_SIZE;
++    m.attr("state_bank_engine_fingerprint") = (unsigned long long)PUFFER_STATE_BANK_ENGINE_FINGERPRINT;
++    m.attr("state_bank_contract_identity") = PUFFER_STATE_BANK_CONTRACT_IDENTITY;
++    m.attr("state_bank_bbs_path") = PUFFER_STATE_BANK_BBS_PATH;
++    m.attr("state_bank_producer_manifest_path") = PUFFER_STATE_BANK_PRODUCER_MANIFEST_PATH;
++    m.attr("state_bank_training_contract_path") = PUFFER_STATE_BANK_TRAINING_CONTRACT_PATH;
+ 
+     m.def("puff_advantage_cpu", &py_puff_advantage_cpu);
+     m.def("create_vec", &create_vec, py::arg("args"), py::arg("gpu") = 0);

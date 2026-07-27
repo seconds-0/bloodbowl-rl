@@ -1,0 +1,11 @@
+diff --git a/build.sh b/build.sh
+--- a/build.sh
++++ b/build.sh
+@@ -155,6 +155,7 @@
+ if [ "$MODE" = "local" ] || [ "$MODE" = "fast" ]; then
+     FLAGS=(
+         "${INCLUDES[@]}"
++        -I"$SRC_DIR"
+         "$SRC_DIR/$ENV.c" $EXTRA_SRC -o "$OUTPUT_NAME"
+         "${LINK_ARCHIVES[@]}"
+         "${EXTRA_LDFLAGS[@]}"

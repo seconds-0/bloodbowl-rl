@@ -172,7 +172,13 @@ ANCHOR=training/turnover3_torch.bin LOG=/tmp/defense_a1.log STEPS=4000000000 \
   --tag defense_a1_anchorpersist
 ```
 
-> **VERIFY the exact flag spellings against a live defense twin's command line before launch** (`ps aux | grep 'puffer [t]rain'` or `head /tmp/defense1.log`). The CLI maps `bc_coef_anneal`/`bc_coef_floor` config keys to `--train.bc-coef-anneal`/`--train.bc-coef-floor`; if a key isn't exposed on the CLI, set it in `puffer/config/bloodbowl.ini` instead. The script prints LIVE/TRAINER DIED at ~40s — read it. Confirm `Loaded N demo states` and bank byte-size (footgun #13), and that the dashboard shows `bc_loss`/`bc_acc` nonzero for A1 and absent/zero for A0.
+> **Historical recipe—do not launch it verbatim.** Verify exact flag spellings
+> against the current launcher contract. The former “Loaded N demo states”
+> check described an unauthenticated raw-bank path that has been retired:
+> current kickoff runs require the compiled typed `NONE` contract and no stale
+> staged bank artifacts, while every positive reset remains blocked until an
+> authorized producer transaction exists. The dashboard must still show
+> `bc_loss`/`bc_acc` nonzero for A1 and absent/zero for A0.
 
 **Frozen eval (run on saved checkpoints of BOTH arms, mirroring D170):**
 ```bash

@@ -202,9 +202,10 @@ Do not sync as generic source payloads: `.git/`, venvs, build outputs, caches, d
 binaries, `runs/` (except selected manifests/results), production checkpoints, service
 files, secrets, or the remote replay cache. Preserve remote-only anchors and checkpoints,
 checksum before and after any copy, and never use a destructive rsync flag on a directory
-holding unknown remote artifacts. `tools/fleet.sh setup` will clobber a box's demo state
-bank with the Mac's, and its `bb-<name>` matching silently no-ops on a typo (D65) —
-confirm the rsync actually ran and re-check `Loaded N demo states` afterwards.
+holding unknown remote artifacts. Historical setup used to clobber a box's raw demo bank;
+the current installer must instead remove all three stale bank artifacts and publish the
+typed `NONE` contract. Its `bb-<name>` matching still silently no-ops on a typo (D65), so
+confirm the rsync and explicit no-bank installer check actually ran.
 
 ## Vast.ai fallback
 

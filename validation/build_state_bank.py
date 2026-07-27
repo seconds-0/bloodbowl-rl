@@ -5,9 +5,10 @@ For every validation/normalized/<id>.jsonl (or just the ids given on the
 command line): run the mapper (lockstep_map.py), then the lockstep runner
 with --dump-states, landing one shard per replay at
 validation/states/<id>.bbs, then concatenate every shard into
-validation/states/bank.bbs — the file tools/install_puffer_env.sh stages to
-resources/bloodbowl/state_bank.bbs for the env's demo-state reset curriculum
-(demo_reset_pct; docs/rl-best-practices.md hole #2).
+validation/states/bank.bbs. These raw host-ABI snapshots are analysis artifacts:
+tools/install_puffer_env.sh deliberately does not stage them, and possession of
+a .bbs file is not producer provenance or training authorization. A future
+training bank must pass the separately reviewed typed producer/contract gate.
 
 The .bbs format (v1) is documented in the comment block of
 tools/bb_lockstep.c and in validation/README.md: a 16-byte header

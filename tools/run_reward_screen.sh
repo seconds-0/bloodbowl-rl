@@ -336,7 +336,7 @@ SCREEN_PLAN="$(
       NUM_FROZEN_BANKS="$NUM_FROZEN_BANKS" \
       MIN_TRAIN_GAMES="$MIN_TRAIN_GAMES" MIN_EVAL_GAMES="$MIN_EVAL_GAMES" \
       "$PYBIN" - "$SCREEN_MANIFEST" <<'PY'
-import datetime, hashlib, json, os, pathlib, subprocess, sys, sysconfig
+import hashlib, json, os, pathlib, subprocess, sys, sysconfig
 
 destination = pathlib.Path(sys.argv[1])
 root = pathlib.Path(os.environ["ROOT"]).resolve()
@@ -349,6 +349,10 @@ pool = pathlib.Path(os.environ["POOL"]).resolve() if os.environ["POOL"] else Non
 sys.path.insert(0, str(root / "tools"))
 from reward_manifest import load_manifest
 from live_integrity_guard import HARD_INTEGRITY_KEYS
+from screen_manifest_contract import (
+    ScreenManifestContractError,
+    freeze_screen_manifest,
+)
 
 
 def sha(path):
@@ -397,6 +401,42 @@ print(json.dumps({
     "observation_version": getattr(
         _C, "observation_version", "<missing>"),
     "action_abi": getattr(_C, "action_abi", "<missing>"),
+    "state_bank_contract_schema": getattr(
+        _C, "state_bank_contract_schema", "<missing>"),
+    "state_bank_producer_schema": getattr(
+        _C, "state_bank_producer_schema", "<missing>"),
+    "state_bank_authorization_schema": getattr(
+        _C, "state_bank_authorization_schema", "<missing>"),
+    "state_bank_kind": int(getattr(_C, "state_bank_kind", -1)),
+    "state_bank_kind_name": getattr(
+        _C, "state_bank_kind_name", "<missing>"),
+    "state_bank_ruleset": getattr(_C, "state_bank_ruleset", "<missing>"),
+    "state_bank_bbs_sha256": getattr(
+        _C, "state_bank_bbs_sha256", "<missing>"),
+    "state_bank_producer_manifest_sha256": getattr(
+        _C, "state_bank_producer_manifest_sha256", "<missing>"),
+    "state_bank_training_contract_sha256": getattr(
+        _C, "state_bank_training_contract_sha256", "<missing>"),
+    "state_bank_producer_engine_source_sha256": getattr(
+        _C, "state_bank_producer_engine_source_sha256", "<missing>"),
+    "state_bank_loader_engine_source_sha256": getattr(
+        _C, "state_bank_loader_engine_source_sha256", "<missing>"),
+    "state_bank_bbs_bytes": int(getattr(_C, "state_bank_bbs_bytes", -1)),
+    "state_bank_records": int(getattr(_C, "state_bank_records", -1)),
+    "state_bank_bbs_version": int(
+        getattr(_C, "state_bank_bbs_version", -1)),
+    "state_bank_match_size": int(
+        getattr(_C, "state_bank_match_size", -1)),
+    "state_bank_engine_fingerprint": int(
+        getattr(_C, "state_bank_engine_fingerprint", -1)),
+    "state_bank_contract_identity": getattr(
+        _C, "state_bank_contract_identity", "<missing>"),
+    "state_bank_bbs_path": getattr(
+        _C, "state_bank_bbs_path", "<missing>"),
+    "state_bank_producer_manifest_path": getattr(
+        _C, "state_bank_producer_manifest_path", "<missing>"),
+    "state_bank_training_contract_path": getattr(
+        _C, "state_bank_training_contract_path", "<missing>"),
 }, sort_keys=True))
 """], cwd=vendor, text=True, stdout=subprocess.PIPE,
     stderr=subprocess.PIPE, check=False)
@@ -415,14 +455,33 @@ if (
     compiled_contract["observation_abi"] != "obs-v6" or
     compiled_contract["observation_version"] != 6 or
     compiled_contract["action_abi"] != "exact-joint-v1" or
-    len(compiled_contract["exact_action_source_sha256"]) != 64
+    len(compiled_contract["exact_action_source_sha256"]) != 64 or
+    compiled_contract["state_bank_contract_schema"] != "none" or
+    compiled_contract["state_bank_producer_schema"] != "none" or
+    compiled_contract["state_bank_authorization_schema"] != "none" or
+    compiled_contract["state_bank_kind"] != 0 or
+    compiled_contract["state_bank_kind_name"] != "none" or
+    compiled_contract["state_bank_ruleset"] != "none" or
+    compiled_contract["state_bank_bbs_sha256"] != "unused" or
+    compiled_contract["state_bank_producer_manifest_sha256"] != "unused" or
+    compiled_contract["state_bank_training_contract_sha256"] != "unused" or
+    compiled_contract["state_bank_producer_engine_source_sha256"] != "unused" or
+    compiled_contract["state_bank_loader_engine_source_sha256"] != "unused" or
+    compiled_contract["state_bank_bbs_bytes"] != 0 or
+    compiled_contract["state_bank_records"] != 0 or
+    compiled_contract["state_bank_bbs_version"] != 0 or
+    compiled_contract["state_bank_match_size"] != 0 or
+    compiled_contract["state_bank_engine_fingerprint"] != 0 or
+    compiled_contract["state_bank_contract_identity"] != "none"
 ):
     raise SystemExit(
-        "compiled native module does not satisfy the obs-v6/exact-action contract")
+        "compiled native module does not satisfy the "
+        "obs-v6/exact-action/no-bank contract")
 
 # The per-arm launcher recomputes this bundle digest and refuses to train if it
 # drifts, so the screen only has to publish the value it launched with.
 patches = [
+    root / "training/puffer_standalone_env_include.patch",
     root / "training/pufferl_env_dashboard_limit.patch",
     root / "training/pufferl_env_json.patch",
     root / "training/pufferl_env_json_metadata_upgrade.patch",
@@ -435,25 +494,24 @@ patches = [
     root / "training/puffer_recurrent_eval_state.patch",
     root / "training/puffer_frozen_prio_mask.patch",
     root / "training/puffer_recurrent_cuda_qualification.patch",
-    # D234. Load-bearing that this is IN the bundle, not merely applied: it
-    # edits pufferlib/torch_pufferl.py, which is pure Python and therefore does
-    # not change compiled_module_sha256. Without this entry a post-patch run
-    # could warm-start a pre-patch checkpoint and pass lineage eligibility
-    # clean, because vendor_source_sha256 is recorded but never validated
-    # (checkpoint_lineage.SHA256_KEYS gates only three digests). Appended at
-    # the END: bundle_sha is order-sensitive and run_reward_ablation.sh must
-    # recompute the identical digest.
     root / "training/puffer_reward_clamp_range.patch",
+    # Keep every remaining installer patch in the ordered causal bundle so the
+    # published recipe binds exact patch artifacts as well as source/module
+    # state.
+    root / "training/pufferl_scripted_training_guard.patch",
+    root / "training/pufferl_warm_start.patch",
+    root / "training/puffer_state_bank_contract.patch",
 ]
 vendor_sources = [
-    "pufferlib/__init__.py", "pufferlib/pufferl.py",
+    "build.sh", "pufferlib/__init__.py", "pufferlib/pufferl.py",
     "pufferlib/selfplay.py", "pufferlib/torch_pufferl.py",
     "pufferlib/models.py", "pufferlib/muon.py", "src/pufferlib.cu",
     "src/bindings.cu", "src/bindings_cpu.cpp", "src/kernels.cu",
     "src/vecenv.h",
 ]
 vendor_paths = [vendor / relative for relative in vendor_sources]
-patch_bundle_sha = bundle_sha(patches, [str(path) for path in patches])
+patch_bundle_sha = bundle_sha(
+    patches, [path.relative_to(root).as_posix() for path in patches])
 vendor_source_sha = bundle_sha(vendor_paths, vendor_sources)
 vendor_head_result = subprocess.run(
     ["git", "-C", str(vendor), "rev-parse", "HEAD"],
@@ -544,6 +602,8 @@ game_stats = root / "tools/game_stats.py"
 live_integrity_guard = root / "tools/live_integrity_guard.py"
 checkpoint_lineage_tool = root / "tools/checkpoint_lineage.py"
 status_wrapper = root / "tools/trainer_status_wrapper.sh"
+screen_manifest_contract_tool = root / "tools/screen_manifest_contract.py"
+screen_evidence_contract_tool = root / "tools/screen_evidence_contract.py"
 contract = {
     "screen_profile": profile,
     "qualification_only": qualification_only,
@@ -592,9 +652,10 @@ contract = {
             os.environ["MAX_PANEL_SILENCE_SECONDS"]),
         "hard_integrity_keys": list(HARD_INTEGRITY_KEYS),
     },
-    # Which version of the tooling produced this screen. Recorded, not policed:
-    # editing game_stats.py mid-screen is a bug to notice in review, not
-    # something worth refusing to resume a multi-day run over.
+    # Which version of the tooling produced this screen. The immutable retry
+    # check below polices these along with schedule/profile/settings: resuming
+    # under edited materialization or acceptance logic would otherwise mix two
+    # causal/evidentiary plans under one manifest SHA.
     "implementation": {
         "screen_script_sha256": sha(screen_script),
         "launcher_sha256": sha(launcher),
@@ -602,6 +663,8 @@ contract = {
         "live_integrity_guard_sha256": sha(live_integrity_guard),
         "checkpoint_lineage_sha256": sha(checkpoint_lineage_tool),
         "status_wrapper_sha256": sha(status_wrapper),
+        "screen_manifest_contract_sha256": sha(screen_manifest_contract_tool),
+        "screen_evidence_contract_sha256": sha(screen_evidence_contract_tool),
         "source_sha256": source_hash,
         "compiled_module": str(module.resolve()),
         "compiled_module_sha256": sha(module),
@@ -628,17 +691,14 @@ if profile in ("paired-confirmation", "paired-final"):
     except (OSError, TransferError, ValueError) as exc:
         raise SystemExit(f"invalid candidate transfer evidence: {exc}") from exc
 
-# A retried screen reuses the plan it already published so its accepted arms
-# keep one manifest identity.
-if not destination.exists():
-    temporary = destination.with_suffix(destination.suffix + ".tmp")
-    temporary.write_text(json.dumps({
-        "schema_version": 1,
-        "created_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-        "contract": contract,
-    }, indent=2, sort_keys=True, allow_nan=False) + "\n", encoding="utf-8")
-    temporary.replace(destination)
-print(sha(destination), patch_bundle_sha)
+# A retried screen may reuse its manifest only after proving this invocation
+# recomputed the exact same causal contract. Otherwise the shell schedule and
+# the manifest SHA would describe different experiments.
+try:
+    screen_manifest_sha = freeze_screen_manifest(destination, contract)
+except ScreenManifestContractError as exc:
+    raise SystemExit(str(exc)) from exc
+print(screen_manifest_sha, patch_bundle_sha)
 PY
 )"
 read -r SCREEN_MANIFEST_SHA SCREEN_PATCH_BUNDLE_SHA <<<"$SCREEN_PLAN"
@@ -721,6 +781,12 @@ from checkpoint_lineage import (
     lineage_digest, lineage_from_run_manifest, sidecar_path, validate_lineage,
     write_lineage,
 )
+from screen_evidence_contract import (
+    ScreenEvidenceContractError,
+    load_frozen_screen_contract,
+    load_run_manifest_for_screen,
+    publish_or_validate_result,
+)
 
 
 def sha(path):
@@ -734,8 +800,11 @@ def need_file(path, label):
     return path
 
 
-screen = json.loads(need_file(
-    screen_manifest_path, "screen manifest").read_text(encoding="utf-8"))["contract"]
+try:
+    screen = load_frozen_screen_contract(
+        screen_manifest_path, screen_manifest_sha)
+except ScreenEvidenceContractError as exc:
+    raise SystemExit(str(exc)) from exc
 log = need_file(log_path, "trainer log")
 status_path = need_file(log_path + ".status.json", "trainer status")
 process_path = need_file(log_path + ".process.json", "trainer process sidecar")
@@ -753,7 +822,11 @@ try:
 except ValueError as exc:
     raise SystemExit(
         f"run directory is outside {checkpoint_root}: {run_dir}") from exc
-run_manifest = json.loads(run_manifest_path.read_text(encoding="utf-8"))
+try:
+    run_manifest = load_run_manifest_for_screen(
+        run_manifest_path, screen_manifest_sha)
+except ScreenEvidenceContractError as exc:
+    raise SystemExit(str(exc)) from exc
 _, expected_reward_sha = load_manifest(reward_manifest_path)
 if run_manifest.get("reward_sha256") != expected_reward_sha:
     raise SystemExit(
@@ -873,24 +946,10 @@ result = {
     "train_metrics": phase_metrics["train"],
     "eval_metrics": phase_metrics["eval"],
 }
-path = pathlib.Path(result_path)
-if mode == "validate":
-    # Acceptance was just recomputed from the log above, so the recorded
-    # sidecar only has to agree about the arm it accepted.
-    recorded = json.loads(path.read_text(encoding="utf-8"))
-    if recorded.get("acceptance_pass") is not True:
-        raise SystemExit(f"recorded result is not an accepted arm: {path}")
-    if recorded.get("checkpoint_sha256") != result["checkpoint_sha256"]:
-        raise SystemExit(
-            f"recorded result belongs to a different checkpoint: {path}")
-elif mode == "write":
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(
-        result, indent=2, sort_keys=True, allow_nan=False) + "\n",
-        encoding="utf-8")
-    temporary.replace(path)
-else:
-    raise SystemExit(f"unknown result mode: {mode}")
+try:
+    publish_or_validate_result(result_path, result, mode)
+except ScreenEvidenceContractError as exc:
+    raise SystemExit(str(exc)) from exc
 
 print(json.dumps({
     "arm": arm, "seed": int(seed), "acceptance_pass": not failures,
@@ -1030,8 +1089,15 @@ PY
   else
     echo "START index=$CURRENT_INDEX/$TOTAL_ARMS arm=$arm seed=$seed steps=$STEPS tag=$tag"
     write_screen_status running 0 "launching arm"
-    env TAG="$tag" REWARD_MANIFEST="$manifest" WARM="$WARM" POOL="$POOL" \
+    env -u LADDER_STATE_BANK_KIND \
+        -u EXPECTED_LADDER_STATE_BANK_SHA256 \
+        -u EXPECTED_LADDER_STATE_BANK_PRODUCER_MANIFEST_SHA256 \
+        -u EXPECTED_LADDER_STATE_BANK_CONTRACT_SHA256 \
+        TAG="$tag" REWARD_MANIFEST="$manifest" WARM="$WARM" POOL="$POOL" \
         BOOTSTRAP_MODE="$BOOTSTRAP_MODE" \
+        LADDER_RESET_PCT=0 LADDER_ENDZONE_MAXDIST=0 \
+        LADDER_PICKUP_MAXDIST=0 LADDER_POSTKICK_MAXTURN=0 \
+        LADDER_PASS_MAXRANGE=0 \
         STEPS="$STEPS" SEED="$seed" LOG="$log" RIG_ALLOW_FLOAT=1 \
         SCREEN_MANIFEST_SHA256="$SCREEN_MANIFEST_SHA" DRY_RUN=0 \
         EXPECTED_PUFFER_PATCH_BUNDLE_SHA256="$SCREEN_PATCH_BUNDLE_SHA" \
@@ -1097,53 +1163,24 @@ CURRENT_ARM=""
 CURRENT_SEED=""
 CURRENT_INDEX=$TOTAL_ARMS
 
-"$PYBIN" - "$SCREEN_COMPLETE" "$SCREEN_MANIFEST_SHA" "$OUT_DIR" \
+"$PYBIN" - "$ROOT" "$SCREEN_COMPLETE" "$SCREEN_MANIFEST_SHA" "$OUT_DIR" \
   "$PREFIX" "$SCREEN_MANIFEST" <<'PY'
-import datetime, hashlib, json, pathlib, sys
-path, manifest_sha, out_dir, prefix, manifest_path = sys.argv[1:]
-out = pathlib.Path(out_dir)
-manifest = json.loads(pathlib.Path(manifest_path).read_text(encoding="utf-8"))
-schedule = tuple(
-    (entry["arm"], int(entry["seed"]))
-    for entry in manifest["contract"]["schedule"]
+import pathlib, sys
+(
+    root, path, manifest_sha, out_dir, prefix, manifest_path,
+) = sys.argv[1:]
+sys.path.insert(0, str(pathlib.Path(root).resolve() / "tools"))
+from screen_evidence_contract import (
+    ScreenEvidenceContractError,
+    freeze_screen_completion,
 )
 
-
-def sha(target):
-    return hashlib.sha256(pathlib.Path(target).read_bytes()).hexdigest()
-
-
-results = []
-for index, (arm, seed) in enumerate(schedule, 1):
-    result_path = out / f"{prefix}-{arm}-s{seed}.result.json"
-    result = json.loads(result_path.read_text(encoding="utf-8"))
-    if not result.get("trainer_complete") or not result.get("acceptance_pass"):
-        raise SystemExit(f"result is not accepted: {result_path}")
-    if result.get("screen_manifest_sha256") != manifest_sha:
-        raise SystemExit(f"result belongs to another screen: {result_path}")
-    results.append({
-        "index": index, "arm": arm, "seed": seed,
-        "path": str(result_path), "sha256": sha(result_path),
-        "checkpoint_sha256": result["checkpoint_sha256"],
-        "checkpoint_lineage_sha256": result["checkpoint_lineage_sha256"],
-    })
-destination = pathlib.Path(path)
-# A published completion summary keeps its bytes, so a downstream analysis that
-# pinned its hash still resolves after the screen is re-validated.
-if not destination.exists():
-    payload = {
-        "schema_version": 1,
-        "screen_manifest_sha256": manifest_sha,
-        "results": results,
-        "completed_utc": datetime.datetime.now(
-            datetime.timezone.utc).isoformat(),
-    }
-    temporary = destination.with_suffix(destination.suffix + ".tmp")
-    temporary.write_text(json.dumps(
-        payload, indent=2, sort_keys=True, allow_nan=False) + "\n",
-        encoding="utf-8")
-    temporary.replace(destination)
-print(f"SCREEN COMPLETE: {destination}")
+try:
+    freeze_screen_completion(
+        path, manifest_path, manifest_sha, out_dir, prefix)
+except ScreenEvidenceContractError as exc:
+    raise SystemExit(str(exc)) from exc
+print(f"SCREEN COMPLETE: {path}")
 PY
 
 COMPLETED_ARMS=$TOTAL_ARMS

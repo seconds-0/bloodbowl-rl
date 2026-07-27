@@ -643,6 +643,11 @@ int main(int argc, char** argv) {
     int demo = 0;
     int fnv_mode = 0;
     int action_stats_mode = 0;
+    int state_bank_contract_mode = 0;
+    const char* bank_kind_arg = NULL;
+    const char* bank_path_arg = NULL;
+    const char* bank_producer_arg = NULL;
+    const char* bank_contract_arg = NULL;
     uint64_t seed = 42;
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--unmasked") == 0) unmasked = 1;
@@ -651,13 +656,110 @@ int main(int argc, char** argv) {
         else if (strcmp(argv[i], "--selftest") == 0) selftest = 1;
         else if (strcmp(argv[i], "--r12test") == 0) r12test = 1;
         else if (strcmp(argv[i], "--demo") == 0) demo = 1;
-        else if (strcmp(argv[i], "--bank") == 0 && i + 1 < argc) {
-            // Override the staged-bank path (default BBE_STATE_BANK_PATH);
-            // lets repo-root runs point straight at validation/states/bank.bbs.
-            bbe_state_bank_path = argv[++i];
+        else if (strcmp(argv[i], "--state-bank-contract") == 0)
+            state_bank_contract_mode = 1;
+        else if (strcmp(argv[i], "--bank-kind") == 0) {
+            if (i + 1 >= argc || strncmp(argv[i + 1], "--", 2) == 0) {
+                fprintf(stderr, "bloodbowl: --bank-kind requires a value\n");
+                return 2;
+            }
+            bank_kind_arg = argv[++i];
+        }
+        else if (strcmp(argv[i], "--bank") == 0) {
+            if (i + 1 >= argc || strncmp(argv[i + 1], "--", 2) == 0) {
+                fprintf(stderr, "bloodbowl: --bank requires a value\n");
+                return 2;
+            }
+            bank_path_arg = argv[++i];
+        }
+        else if (strcmp(argv[i], "--bank-producer-manifest") == 0) {
+            if (i + 1 >= argc || strncmp(argv[i + 1], "--", 2) == 0) {
+                fprintf(stderr,
+                        "bloodbowl: --bank-producer-manifest "
+                        "requires a value\n");
+                return 2;
+            }
+            bank_producer_arg = argv[++i];
+        }
+        else if (strcmp(argv[i], "--bank-contract") == 0) {
+            if (i + 1 >= argc || strncmp(argv[i + 1], "--", 2) == 0) {
+                fprintf(stderr,
+                        "bloodbowl: --bank-contract requires a value\n");
+                return 2;
+            }
+            bank_contract_arg = argv[++i];
         }
         else if (strcmp(argv[i], "--seed") == 0 && i + 1 < argc) seed = strtoull(argv[++i], 0, 10);
         else episodes = atoi(argv[i]);
+    }
+    if (state_bank_contract_mode) {
+        printf("{\"contract_schema\":\"%s\","
+               "\"producer_schema\":\"%s\","
+               "\"authorization_schema\":\"%s\","
+               "\"kind_value\":%d,"
+               "\"kind\":\"%s\","
+               "\"ruleset\":\"%s\","
+               "\"bank_sha256\":\"%s\","
+               "\"producer_manifest_sha256\":\"%s\","
+               "\"training_contract_sha256\":\"%s\","
+               "\"producer_engine_source_sha256\":\"%s\","
+               "\"loader_engine_source_sha256\":\"%s\","
+               "\"bytes\":%llu,"
+               "\"records\":%llu,"
+               "\"bbs_version\":%u,"
+               "\"match_size\":%u,"
+               "\"engine_fingerprint\":%u,"
+               "\"contract_identity\":\"%s\","
+               "\"bank_path\":\"%s\","
+               "\"producer_manifest_path\":\"%s\","
+               "\"training_contract_path\":\"%s\"}\n",
+               PUFFER_STATE_BANK_CONTRACT_SCHEMA,
+               PUFFER_STATE_BANK_PRODUCER_SCHEMA,
+               PUFFER_STATE_BANK_AUTHORIZATION_SCHEMA,
+               PUFFER_STATE_BANK_COMPILED_KIND,
+               PUFFER_STATE_BANK_KIND_NAME,
+               PUFFER_STATE_BANK_RULESET,
+               PUFFER_STATE_BANK_BBS_SHA256,
+               PUFFER_STATE_BANK_PRODUCER_MANIFEST_SHA256,
+               PUFFER_STATE_BANK_TRAINING_CONTRACT_SHA256,
+               PUFFER_STATE_BANK_PRODUCER_ENGINE_SOURCE_SHA256,
+               PUFFER_STATE_BANK_LOADER_ENGINE_SOURCE_SHA256,
+               (unsigned long long)PUFFER_STATE_BANK_BBS_BYTES,
+               (unsigned long long)PUFFER_STATE_BANK_RECORDS,
+               (unsigned)PUFFER_STATE_BANK_BBS_VERSION,
+               (unsigned)PUFFER_STATE_BANK_MATCH_SIZE,
+               (unsigned)PUFFER_STATE_BANK_ENGINE_FINGERPRINT,
+               PUFFER_STATE_BANK_CONTRACT_IDENTITY,
+               PUFFER_STATE_BANK_BBS_PATH,
+               PUFFER_STATE_BANK_PRODUCER_MANIFEST_PATH,
+               PUFFER_STATE_BANK_TRAINING_CONTRACT_PATH);
+        return 0;
+    }
+    int typed_bank_args =
+        (bank_kind_arg != NULL) + (bank_path_arg != NULL) +
+        (bank_producer_arg != NULL) + (bank_contract_arg != NULL);
+    if (typed_bank_args != 0 && typed_bank_args != 4) {
+        fprintf(stderr,
+                "bloodbowl: --bank-kind, --bank, "
+                "--bank-producer-manifest, and --bank-contract are "
+                "all-or-nothing\n");
+        return 2;
+    }
+    if (demo && typed_bank_args != 4) {
+        fprintf(stderr,
+                "bloodbowl: --demo requires the complete typed state-bank "
+                "location tuple\n");
+        return 2;
+    }
+    if (typed_bank_args == 4) {
+        if (!demo || strcmp(bank_kind_arg, "strict-replay") != 0) {
+            fprintf(stderr,
+                    "bloodbowl: typed bank args require "
+                    "--demo --bank-kind strict-replay\n");
+            return 2;
+        }
+        bbe_state_bank_set_location_overrides(
+            bank_path_arg, bank_producer_arg, bank_contract_arg);
     }
     if (selftest) return bbe_selftest(seed, episodes);
     if (r12test) return bbe_r12_selftest(seed, episodes);
@@ -679,7 +781,13 @@ int main(int argc, char** argv) {
     }
     // --demo: every episode starts from a banked state (demo_reset_pct
     // forced to 1.0); episodes must still complete and the Log stay sane.
-    if (demo) env.demo_reset_pct = 1.0f;
+    if (demo) {
+        env.demo_reset_pct = 1.0f;
+        env.state_bank_kind = BBE_STATE_BANK_STRICT_REPLAY;
+        env.exclude_team = -1;
+        env.force_home_team = -1;
+        env.force_away_team = -1;
+    }
     c_reset(&env);
     if (demo) demo_note_start(&env);
 

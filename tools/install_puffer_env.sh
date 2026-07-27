@@ -3,12 +3,17 @@
 #
 # puffer/bloodbowl/ holds the source of truth; its engine/ and bb/ symlinks
 # (-> ../../engine/{src,include/bb}) are dereferenced here (cp -RL) so the
-# installed ocean/bloodbowl/ is self-contained — build.sh's stock
-# `-I$SRC_DIR` covers every include, no build.sh patch needed, and
-# vendor/PufferLib can be rsynced to a GPU box as-is.
+# installed ocean/bloodbowl/ is self-contained. Pinned build.sh omits
+# `-I$SRC_DIR` from standalone builds, so the exact tracked include patch below
+# supplies it; vendor/PufferLib can then be rsynced to a GPU box as-is.
 #
 # Usage: tools/install_puffer_env.sh [path-to-pufferlib]   (default: vendor/PufferLib)
 #        tools/install_puffer_env.sh --check [path-to-pufferlib]
+#
+# The seven --state-bank-* arguments below are a reserved, all-or-none form.
+# They are fully parsed, hash checked, and schema reconciled, but production
+# authorization is intentionally empty in this tranche, so the request always
+# exits with NO_AUTHORIZED_PRODUCER before this script mutates PufferLib.
 #
 # --check is the drift guard (adversarial review LOW): the GPU run compiles
 # the installed snapshot, NOT engine/src — an engine edit without a re-install
@@ -18,17 +23,151 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 MODE=install
-if [ "${1:-}" = "--check" ]; then
-    MODE=check
-    shift
+PUFFER_ARG=""
+STATE_BANK_KIND=""
+STATE_BANK_SOURCE=""
+STATE_BANK_SHA256=""
+STATE_BANK_PRODUCER_MANIFEST_SOURCE=""
+STATE_BANK_PRODUCER_MANIFEST_SHA256=""
+STATE_BANK_CONTRACT_SOURCE=""
+STATE_BANK_CONTRACT_SHA256=""
+BANK_ARGUMENT_COUNT=0
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --check)
+            [ "$MODE" = install ] || {
+                echo "error: duplicate --check" >&2; exit 2; }
+            MODE=check
+            shift
+            ;;
+        --state-bank-kind)
+            [ "$#" -ge 2 ] || {
+                echo "error: --state-bank-kind requires a value" >&2; exit 2; }
+            [ -n "$2" ] && [ -z "$STATE_BANK_KIND" ] || {
+                echo "error: duplicate or empty --state-bank-kind" >&2; exit 2; }
+            STATE_BANK_KIND="$2"
+            BANK_ARGUMENT_COUNT=$((BANK_ARGUMENT_COUNT + 1))
+            shift 2
+            ;;
+        --state-bank)
+            [ "$#" -ge 2 ] || {
+                echo "error: --state-bank requires a value" >&2; exit 2; }
+            [ -n "$2" ] && [ -z "$STATE_BANK_SOURCE" ] || {
+                echo "error: duplicate or empty --state-bank" >&2; exit 2; }
+            STATE_BANK_SOURCE="$2"
+            BANK_ARGUMENT_COUNT=$((BANK_ARGUMENT_COUNT + 1))
+            shift 2
+            ;;
+        --state-bank-sha256)
+            [ "$#" -ge 2 ] || {
+                echo "error: --state-bank-sha256 requires a value" >&2; exit 2; }
+            [ -n "$2" ] && [ -z "$STATE_BANK_SHA256" ] || {
+                echo "error: duplicate or empty --state-bank-sha256" >&2; exit 2; }
+            STATE_BANK_SHA256="$2"
+            BANK_ARGUMENT_COUNT=$((BANK_ARGUMENT_COUNT + 1))
+            shift 2
+            ;;
+        --state-bank-producer-manifest)
+            [ "$#" -ge 2 ] || {
+                echo "error: --state-bank-producer-manifest requires a value" >&2
+                exit 2
+            }
+            [ -n "$2" ] && \
+                [ -z "$STATE_BANK_PRODUCER_MANIFEST_SOURCE" ] || {
+                echo "error: duplicate or empty --state-bank-producer-manifest" >&2
+                exit 2
+            }
+            STATE_BANK_PRODUCER_MANIFEST_SOURCE="$2"
+            BANK_ARGUMENT_COUNT=$((BANK_ARGUMENT_COUNT + 1))
+            shift 2
+            ;;
+        --state-bank-producer-manifest-sha256)
+            [ "$#" -ge 2 ] || {
+                echo "error: --state-bank-producer-manifest-sha256 requires a value" >&2
+                exit 2
+            }
+            [ -n "$2" ] && \
+                [ -z "$STATE_BANK_PRODUCER_MANIFEST_SHA256" ] || {
+                echo "error: duplicate or empty --state-bank-producer-manifest-sha256" >&2
+                exit 2
+            }
+            STATE_BANK_PRODUCER_MANIFEST_SHA256="$2"
+            BANK_ARGUMENT_COUNT=$((BANK_ARGUMENT_COUNT + 1))
+            shift 2
+            ;;
+        --state-bank-contract)
+            [ "$#" -ge 2 ] || {
+                echo "error: --state-bank-contract requires a value" >&2; exit 2; }
+            [ -n "$2" ] && [ -z "$STATE_BANK_CONTRACT_SOURCE" ] || {
+                echo "error: duplicate or empty --state-bank-contract" >&2; exit 2; }
+            STATE_BANK_CONTRACT_SOURCE="$2"
+            BANK_ARGUMENT_COUNT=$((BANK_ARGUMENT_COUNT + 1))
+            shift 2
+            ;;
+        --state-bank-contract-sha256)
+            [ "$#" -ge 2 ] || {
+                echo "error: --state-bank-contract-sha256 requires a value" >&2
+                exit 2
+            }
+            [ -n "$2" ] && [ -z "$STATE_BANK_CONTRACT_SHA256" ] || {
+                echo "error: duplicate or empty --state-bank-contract-sha256" >&2
+                exit 2
+            }
+            STATE_BANK_CONTRACT_SHA256="$2"
+            BANK_ARGUMENT_COUNT=$((BANK_ARGUMENT_COUNT + 1))
+            shift 2
+            ;;
+        --*)
+            echo "error: unknown installer option: $1" >&2
+            exit 2
+            ;;
+        *)
+            [ -z "$PUFFER_ARG" ] || {
+                echo "error: multiple PufferLib paths supplied" >&2; exit 2; }
+            PUFFER_ARG="$1"
+            shift
+            ;;
+    esac
+done
+
+if [ "$BANK_ARGUMENT_COUNT" -ne 0 ] && [ "$BANK_ARGUMENT_COUNT" -ne 7 ]; then
+    echo "error: state-bank arguments are all-or-none" >&2
+    exit 2
 fi
-PUFFER="${1:-$ROOT/vendor/PufferLib}"
+if [ "$MODE" = check ] && [ "$BANK_ARGUMENT_COUNT" -ne 0 ]; then
+    echo "error: --check does not accept state-bank source arguments" >&2
+    exit 2
+fi
+if [ "$BANK_ARGUMENT_COUNT" -eq 7 ]; then
+    # This call is deliberately before even validating the destination tree.
+    # Its public authorization allowlist is a literal empty frozenset, so a
+    # completely valid request still fails before any installation mutation.
+    if python3 "$ROOT/tools/state_bank_contract.py" validate-request \
+        --kind "$STATE_BANK_KIND" \
+        --bank "$STATE_BANK_SOURCE" \
+        --bank-sha256 "$STATE_BANK_SHA256" \
+        --producer-manifest "$STATE_BANK_PRODUCER_MANIFEST_SOURCE" \
+        --producer-manifest-sha256 \
+            "$STATE_BANK_PRODUCER_MANIFEST_SHA256" \
+        --training-contract "$STATE_BANK_CONTRACT_SOURCE" \
+        --training-contract-sha256 "$STATE_BANK_CONTRACT_SHA256" \
+        --engine-root "$ROOT"; then
+        echo "error: production state-bank authorization unexpectedly succeeded" >&2
+        exit 2
+    else
+        status=$?
+        exit "$status"
+    fi
+fi
+
+PUFFER="${PUFFER_ARG:-$ROOT/vendor/PufferLib}"
 
 [ -f "$PUFFER/build.sh" ] || { echo "error: $PUFFER is not a PufferLib tree" >&2; exit 1; }
 PUFFER="$(cd "$PUFFER" && pwd)"
 
 DST="$PUFFER/ocean/bloodbowl"
 SELFPLAY_LEAGUE_PATCH="$ROOT/training/selfplay_league.patch"
+STANDALONE_INCLUDE_PATCH="$ROOT/training/puffer_standalone_env_include.patch"
 
 # The observation revision is DERIVED from the header, never typed twice. The
 # generated build header and the --check gate both used to carry their own
@@ -48,10 +187,17 @@ SOURCE_OBSERVATION_ABI="obs-v$SOURCE_OBSERVATION_VERSION"
 # engine/ and bb/ links reach into engine/src and engine/include/bb, so any
 # engine change changes the hash). Relative paths keep source and snapshot
 # hashes comparable.
-if command -v sha256sum >/dev/null 2>&1; then SHA256="sha256sum"; else SHA256="shasum -a 256"; fi
+if command -v sha256sum >/dev/null 2>&1; then
+    SHA256=(sha256sum)
+else
+    SHA256=(shasum -a 256)
+fi
 snapshot_hash() {
-    (cd "$1" && find -L . -type f ! -name .content_hash -print0 | LC_ALL=C sort -z \
-        | xargs -0 $SHA256 | $SHA256 | awk '{print $1}')
+    (cd "$1" && find -L . -type f \
+        ! -path './.content_hash' \
+        ! -path './state_bank_build.h' \
+        -print0 | LC_ALL=C sort -z \
+        | xargs -0 "${SHA256[@]}" | "${SHA256[@]}" | awk '{print $1}')
 }
 
 # Hash every source that defines exact-action transport, sampling, or recurrent
@@ -71,19 +217,27 @@ exact_backend_hash() {
             src/pufferlib.cu \
             src/vecenv.h; do
             [ -f "$rel" ] || exit 1
-            $SHA256 "$rel"
-        done | $SHA256 | awk '{print $1}'
+            "${SHA256[@]}" "$rel"
+        done | "${SHA256[@]}" | awk '{print $1}'
     )
 }
 
 if [ "$MODE" = "check" ]; then
     [ -d "$DST" ] || { echo "drift check: $DST not installed — run tools/install_puffer_env.sh" >&2; exit 1; }
     want="$(snapshot_hash "$ROOT/puffer/bloodbowl")"
+    installed="$(snapshot_hash "$DST")"
     have="$(cat "$DST/.content_hash" 2>/dev/null || echo "<none>")"
-    if [ "$want" != "$have" ]; then
+    if [ "$want" != "$installed" ] || [ "$want" != "$have" ]; then
         echo "drift check: STALE snapshot — engine/src or puffer/bloodbowl changed since install" >&2
         echo "  source now: $want" >&2
-        echo "  installed:  $have" >&2
+        echo "  installed:  $installed" >&2
+        echo "  recorded:   $have" >&2
+        echo "  fix: tools/install_puffer_env.sh $PUFFER" >&2
+        exit 1
+    fi
+    if ! python3 "$ROOT/tools/state_bank_contract.py" check-no-bank \
+        --puffer-root "$PUFFER" >/dev/null; then
+        echo "drift check: installed no-bank state contract is stale" >&2
         echo "  fix: tools/install_puffer_env.sh $PUFFER" >&2
         exit 1
     fi
@@ -152,11 +306,19 @@ if [ "$MODE" = "check" ]; then
             exit 1
         fi
     done
+    if ! git -C "$PUFFER" apply --reverse --check --no-index "$STANDALONE_INCLUDE_PATCH"; then
+        echo "drift check: installed standalone include patch is missing or stale" >&2
+        echo "  fix: recreate the pinned Puffer tree and reinstall the complete patch stack" >&2
+        exit 1
+    fi
     for exact_patch in \
         "$ROOT/training/puffer_recurrent_cuda_qualification.patch" \
-        "$ROOT/training/puffer_frozen_prio_mask.patch"; do
+        "$ROOT/training/puffer_frozen_prio_mask.patch" \
+        "$ROOT/training/pufferl_scripted_training_guard.patch" \
+        "$ROOT/training/pufferl_warm_start.patch" \
+        "$ROOT/training/puffer_state_bank_contract.patch"; do
         if ! git -C "$PUFFER" apply --reverse --check --no-index "$exact_patch"; then
-            echo "drift check: installed qualification patch is stale: $exact_patch" >&2
+            echo "drift check: installed exact patch is missing or stale: $exact_patch" >&2
             echo "  fix: recreate the pinned Puffer tree and reinstall the complete patch stack" >&2
             exit 1
         fi
@@ -241,8 +403,60 @@ if [ "$MODE" = "check" ]; then
         echo "  fix: reinstall, then rebuild PufferLib for bloodbowl" >&2
         exit 1
     fi
-    if [ ! "$current_module" -nt "$DST/.content_hash" ]; then
-        echo "drift check: compiled _C module predates the installed snapshot" >&2
+    installed_state_contract="$(
+        python3 "$ROOT/tools/state_bank_contract.py" show-installed \
+            --puffer-root "$PUFFER"
+    )"
+    compiled_state_contract="$(cd "$PUFFER" && \
+        "$PYBIN" - "$ROOT/tools" <<'PY'
+import json
+import sys
+
+sys.path.insert(0, sys.argv[1])
+import state_bank_contract
+from pufferlib import _C
+
+print(json.dumps(
+    state_bank_contract.contract_from_module(_C),
+    sort_keys=True,
+    separators=(",", ":"),
+))
+PY
+    )"
+    if [ "$installed_state_contract" != "$compiled_state_contract" ]; then
+        echo "drift check: compiled state-bank contract differs from generated authority" >&2
+        echo "  header: $installed_state_contract" >&2
+        echo "  module: $compiled_state_contract" >&2
+        echo "  fix: reinstall, then rebuild PufferLib for bloodbowl" >&2
+        exit 1
+    fi
+    STANDALONE="$PUFFER/bloodbowl"
+    if [ ! -x "$STANDALONE" ]; then
+        echo "drift check: installed standalone is missing: $STANDALONE" >&2
+        echo "  fix: cd $PUFFER && ./build.sh bloodbowl --fast" >&2
+        exit 1
+    fi
+    standalone_state_contract="$(
+        "$STANDALONE" --state-bank-contract | python3 -c \
+            'import json,sys; print(json.dumps(json.load(sys.stdin), sort_keys=True, separators=(",", ":")))'
+    )" || {
+        echo "drift check: standalone state-bank metadata is malformed" >&2
+        exit 1
+    }
+    if [ "$installed_state_contract" != "$standalone_state_contract" ]; then
+        echo "drift check: standalone state-bank contract differs from generated authority" >&2
+        echo "  header:     $installed_state_contract" >&2
+        echo "  standalone: $standalone_state_contract" >&2
+        echo "  fix: reinstall, then rebuild PufferLib for bloodbowl" >&2
+        exit 1
+    fi
+    if [ ! "$current_module" -nt "$DST/.content_hash" ] || \
+       [ ! "$current_module" -nt "$DST/state_bank_build.h" ] || \
+       [ ! "$current_module" -nt "$PUFFER/src/exact_action_build_hash.h" ] || \
+       [ ! "$STANDALONE" -nt "$DST/.content_hash" ] || \
+       [ ! "$STANDALONE" -nt "$DST/state_bank_build.h" ] || \
+       [ ! "$STANDALONE" -nt "$PUFFER/src/exact_action_build_hash.h" ]; then
+        echo "drift check: compiled outputs predate the installed snapshot or generated contract" >&2
         echo "  fix: rebuild PufferLib for bloodbowl" >&2
         exit 1
     fi
@@ -256,6 +470,29 @@ cp "$ROOT/puffer/config/bloodbowl.ini" "$PUFFER/config/bloodbowl.ini"
 # Record the source content hash for the --check drift guard.
 snapshot_hash "$ROOT/puffer/bloodbowl" > "$DST/.content_hash"
 
+# PufferLib's pinned standalone build flags omit the environment root. The
+# dereferenced snapshot has engine/bb/*.h headers that include bb/*.h, so local
+# and fast builds need this one exact build-recipe patch. Reverse applicability
+# is the durable installed-state check; a marker alone could accept a partial
+# or hand-edited build.sh.
+if [ ! -f "$STANDALONE_INCLUDE_PATCH" ]; then
+    echo "error: missing $STANDALONE_INCLUDE_PATCH" >&2
+    exit 1
+fi
+if git -C "$PUFFER" apply --reverse --check --no-index "$STANDALONE_INCLUDE_PATCH" 2>/dev/null; then
+    : # Exact standalone include patch is already installed.
+elif git -C "$PUFFER" apply --check --no-index "$STANDALONE_INCLUDE_PATCH" 2>/dev/null; then
+    git -C "$PUFFER" apply --no-index "$STANDALONE_INCLUDE_PATCH"
+    echo "applied:   standalone environment include root -> build.sh"
+else
+    echo "error: standalone include patch is neither applicable nor already applied" >&2
+    exit 1
+fi
+if ! git -C "$PUFFER" apply --reverse --check --no-index "$STANDALONE_INCLUDE_PATCH"; then
+    echo "error: installed standalone include patch is stale or incomplete" >&2
+    exit 1
+fi
+
 # Stage FFB spectator art (optional — needs vendor/ffb and a python with yaml;
 # training and the fallback circle renderer work fine without it).
 if [ -d "$ROOT/vendor/ffb" ] && [ -x "$PUFFER/.venv/bin/python" ]; then
@@ -263,15 +500,19 @@ if [ -d "$ROOT/vendor/ffb" ] && [ -x "$PUFFER/.venv/bin/python" ]; then
         echo "warning: spectator art staging failed (renderer falls back to circles)"
 fi
 
-# Stage the demo-state reset bank (optional — built by
-# validation/build_state_bank.py; the env's demo_reset_pct curriculum loads
-# it from resources/bloodbowl/state_bank.bbs and degrades to plain procgen
-# resets when absent).
-if [ -f "$ROOT/validation/states/bank.bbs" ]; then
-    mkdir -p "$PUFFER/resources/bloodbowl"
-    cp "$ROOT/validation/states/bank.bbs" "$PUFFER/resources/bloodbowl/state_bank.bbs"
-    echo "staged:    $PUFFER/resources/bloodbowl/state_bank.bbs"
-fi
+# No bank arguments mean an explicit no-bank transaction.  Delete only the
+# three contract-owned resource names.  The shared publisher repeats this
+# cleanup and fsyncs the directory immediately before publishing the generated
+# no-bank authority last.
+STATE_BANK_RESOURCE_DIR="$PUFFER/resources/bloodbowl"
+STATE_BANK_BBS_DST="$STATE_BANK_RESOURCE_DIR/state_bank.bbs"
+STATE_BANK_PRODUCER_MANIFEST_DST="$STATE_BANK_RESOURCE_DIR/state_bank.producer.json"
+STATE_BANK_CONTRACT_DST="$STATE_BANK_RESOURCE_DIR/state_bank.contract.json"
+mkdir -p "$STATE_BANK_RESOURCE_DIR"
+rm -f \
+    "$STATE_BANK_BBS_DST" \
+    "$STATE_BANK_PRODUCER_MANIFEST_DST" \
+    "$STATE_BANK_CONTRACT_DST"
 
 # Blood Bowl's my_log currently emits 123 keys, and vecenv appends "n" after
 # the env binding returns. Keep the vendored dict allocations comfortably above
@@ -604,15 +845,75 @@ if grep -Fq 'require_training_state_reset' "$PUFFER/pufferlib/pufferl.py" 2>/dev
     done
 fi
 
+# Export every generated state-bank contract field from both extension
+# backends.  This patch is part of exact_backend_hash()'s closure, so a stale
+# one-backend module cannot retain the previous backend digest.
+STATE_BANK_EXPORT_PATCH="$ROOT/training/puffer_state_bank_contract.patch"
+if [ ! -f "$STATE_BANK_EXPORT_PATCH" ]; then
+    echo "error: missing $STATE_BANK_EXPORT_PATCH" >&2
+    exit 1
+fi
+if git -C "$PUFFER" apply --reverse --check --no-index \
+        "$STATE_BANK_EXPORT_PATCH" 2>/dev/null; then
+    : # Exact export patch is already installed.
+elif git -C "$PUFFER" apply --check --no-index \
+        "$STATE_BANK_EXPORT_PATCH" 2>/dev/null; then
+    git -C "$PUFFER" apply --no-index "$STATE_BANK_EXPORT_PATCH"
+    echo "applied:   compiled state-bank contract exports -> CPU/CUDA bindings"
+else
+    echo "error: state-bank contract export patch is stale or incomplete" >&2
+    exit 1
+fi
+for binding in "$PUFFER/src/bindings.cu" "$PUFFER/src/bindings_cpu.cpp"; do
+    for attribute in \
+        state_bank_contract_schema \
+        state_bank_producer_schema \
+        state_bank_authorization_schema \
+        state_bank_kind \
+        state_bank_kind_name \
+        state_bank_ruleset \
+        state_bank_bbs_sha256 \
+        state_bank_producer_manifest_sha256 \
+        state_bank_training_contract_sha256 \
+        state_bank_producer_engine_source_sha256 \
+        state_bank_loader_engine_source_sha256 \
+        state_bank_bbs_bytes \
+        state_bank_records \
+        state_bank_bbs_version \
+        state_bank_match_size \
+        state_bank_engine_fingerprint \
+        state_bank_contract_identity \
+        state_bank_bbs_path \
+        state_bank_producer_manifest_path \
+        state_bank_training_contract_path; do
+        if ! grep -Fq "m.attr(\"$attribute\")" "$binding"; then
+            echo "error: $(basename "$binding") lacks state-bank export $attribute" >&2
+            exit 1
+        fi
+    done
+done
+
 EXACT_BACKEND_HASH="$(exact_backend_hash)" || {
     echo "error: could not hash exact-action backend sources" >&2
     exit 1
 }
-INSTALLED_SOURCE_HASH="$(cat "$DST/.content_hash")"
-printf '#pragma once\n#define PUFFER_EXACT_ACTION_SOURCE_HASH "%s"\n#define PUFFER_ENV_SOURCE_HASH "%s"\n#define PUFFER_OBSERVATION_ABI "%s"\n#define PUFFER_OBSERVATION_VERSION %s\n#define PUFFER_ACTION_ABI "exact-joint-v1"\n' \
-    "$EXACT_BACKEND_HASH" "$INSTALLED_SOURCE_HASH" \
-    "$SOURCE_OBSERVATION_ABI" "$SOURCE_OBSERVATION_VERSION" \
-    > "$PUFFER/src/exact_action_build_hash.h"
+ROOT_SOURCE_HASH="$(snapshot_hash "$ROOT/puffer/bloodbowl")"
+INSTALLED_SOURCE_HASH="$(snapshot_hash "$DST")"
+RECORDED_SOURCE_HASH="$(cat "$DST/.content_hash")"
+if [ "$ROOT_SOURCE_HASH" != "$INSTALLED_SOURCE_HASH" ] || \
+   [ "$ROOT_SOURCE_HASH" != "$RECORDED_SOURCE_HASH" ]; then
+    echo "error: environment source changed during installation" >&2
+    echo "  source:    $ROOT_SOURCE_HASH" >&2
+    echo "  installed: $INSTALLED_SOURCE_HASH" >&2
+    echo "  recorded:  $RECORDED_SOURCE_HASH" >&2
+    exit 1
+fi
+python3 "$ROOT/tools/state_bank_contract.py" install-no-bank \
+    --puffer-root "$PUFFER" \
+    --exact-action-source-hash "$EXACT_BACKEND_HASH" \
+    --environment-source-hash "$INSTALLED_SOURCE_HASH" \
+    --observation-abi "$SOURCE_OBSERVATION_ABI" \
+    --observation-version "$SOURCE_OBSERVATION_VERSION" >/dev/null
 echo "recorded:   exact-action backend digest $EXACT_BACKEND_HASH"
 
 echo "installed: $DST"

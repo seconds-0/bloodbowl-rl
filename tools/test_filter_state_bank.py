@@ -12,6 +12,7 @@ from pathlib import Path
 from unittest import mock
 
 import filter_state_bank as state_filter
+import state_bank_contract
 from validation import build_state_bank
 
 
@@ -112,7 +113,8 @@ class StateBankFilterTests(unittest.TestCase):
         self.assertEqual(self.selected_ids.read_text(encoding="utf-8"), "10\n12\n")
         manifest = json.loads(self.manifest.read_text(encoding="utf-8"))
         self.assertEqual(result, manifest)
-        self.assertEqual(manifest["schema_version"], 1)
+        self.assertEqual(manifest["schema"], "bloodbowl-strict-filter-manifest-v2")
+        self.assertEqual(manifest["schema_version"], 2)
         self.assertEqual(
             manifest["format"],
             {
@@ -157,6 +159,35 @@ class StateBankFilterTests(unittest.TestCase):
             self.sha256(Path(state_filter.__file__).resolve()),
         )
         self.assertIn("half one", " ".join(manifest["limitations"]))
+        self.assertEqual(
+            manifest["artifact"],
+            {
+                "schema": "bloodbowl-state-bank-producer-v1",
+                "artifact_role": "analysis-only",
+                "bank_kind": "strict-replay",
+                "ruleset": "BB2025",
+                "training_eligible": False,
+                "bank": {
+                    "sha256": self.sha256(self.output),
+                    "bytes": len(expected),
+                    "records": 3,
+                    "format": {
+                        "magic": "BBS1",
+                        "version": 1,
+                        "match_size": 4,
+                        "engine_fingerprint": "0x12345678",
+                    },
+                },
+                "producer": {
+                    "kind": "strict-bb2025-filter-v2",
+                    "producer_engine_source_sha256": None,
+                },
+            },
+        )
+        self.assertEqual(
+            state_bank_contract.validate_filter_manifest(manifest),
+            manifest,
+        )
 
         header, body, metadata = build_state_bank.read_shard(self.output)
         self.assertEqual(header, source[: HEADER.size])
@@ -186,6 +217,29 @@ class StateBankFilterTests(unittest.TestCase):
             for path in (self.output, self.selected_ids, self.manifest)
         )
         self.assertEqual(first, second)
+
+    def test_filter_manifest_is_closed_and_cannot_claim_current_engine(self) -> None:
+        self.write_bank([self.record(10, 1, 1, 1, b"aaaa")])
+        self.write_allowlist("10\n")
+        self.run_filter()
+        manifest = json.loads(self.manifest.read_text(encoding="utf-8"))
+
+        manifest["unknown"] = 1
+        with self.assertRaisesRegex(
+            state_bank_contract.StateBankContractError, "SCHEMA_KEYS"
+        ):
+            state_bank_contract.validate_filter_manifest(manifest)
+        del manifest["unknown"]
+
+        manifest["artifact"]["producer"]["producer_engine_source_sha256"] = (
+            state_bank_contract.engine_source_sha256(
+                Path(__file__).resolve().parents[1]
+            )
+        )
+        with self.assertRaisesRegex(
+            state_bank_contract.StateBankContractError, "must equal None"
+        ):
+            state_bank_contract.validate_filter_manifest(manifest)
 
     def test_hash_pins_fail_before_any_output_is_created(self) -> None:
         self.write_bank([self.record(10, 1, 1, 1, b"aaaa")])
@@ -409,6 +463,202 @@ class StateBankFilterTests(unittest.TestCase):
         self.assertEqual(result["output"]["sha256"], self.sha256(self.output))
         self.assertTrue(self.selected_ids.is_file())
         self.assertTrue(self.manifest.is_file())
+
+    def test_staged_set_mutation_fails_before_first_publication(self) -> None:
+        self.write_bank([self.record(10, 1, 1, 1, b"aaaa")])
+        self.write_allowlist("10\n")
+        real_write = state_filter._write_bytes
+        real_link = os.link
+
+        for target in ("output-sha", "ids-size", "manifest-bytes"):
+            with self.subTest(target=target):
+                for path in (
+                    self.output,
+                    self.selected_ids,
+                    self.manifest,
+                    *self.root.glob(".*.tmp"),
+                ):
+                    path.unlink(missing_ok=True)
+                link_calls = 0
+
+                def count_link(*args: object, **kwargs: object) -> None:
+                    nonlocal link_calls
+                    link_calls += 1
+                    real_link(*args, **kwargs)
+
+                def mutate_after_manifest_write(path: Path, payload: bytes) -> None:
+                    real_write(path, payload)
+                    if not path.name.startswith(f".{self.manifest.name}."):
+                        return
+                    if target == "output-sha":
+                        staged = next(self.root.glob(f".{self.output.name}.*.tmp"))
+                        mutated = bytearray(staged.read_bytes())
+                        mutated[-1] ^= 1
+                        staged.write_bytes(mutated)
+                    elif target == "ids-size":
+                        staged = next(
+                            self.root.glob(f".{self.selected_ids.name}.*.tmp")
+                        )
+                        staged.write_bytes(staged.read_bytes() + b"11\n")
+                    else:
+                        staged = path
+                        mutated = bytearray(staged.read_bytes())
+                        mutated[0] ^= 1
+                        staged.write_bytes(mutated)
+
+                with mock.patch.object(
+                    state_filter,
+                    "_write_bytes",
+                    side_effect=mutate_after_manifest_write,
+                ), mock.patch.object(state_filter.os, "link", side_effect=count_link):
+                    with self.assertRaisesRegex(
+                        state_filter.StateBankError, "staged .* changed"
+                    ):
+                        self.run_filter()
+                self.assertEqual(link_calls, 0)
+                self.assertFalse(self.output.exists())
+                self.assertFalse(self.selected_ids.exists())
+                self.assertFalse(self.manifest.exists())
+                self.assertEqual(list(self.root.glob(".*.tmp")), [])
+
+    def test_first_link_source_swap_fails_clean_without_authority(self) -> None:
+        self.write_bank([self.record(10, 1, 1, 1, b"aaaa")])
+        self.write_allowlist("10\n")
+        real_link = os.link
+        link_calls = 0
+        swapped = False
+
+        def swap_first_source_then_link(
+            source: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+            destination: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+        ) -> None:
+            nonlocal link_calls, swapped
+            link_calls += 1
+            source_path = Path(source)
+            if not swapped:
+                swapped = True
+                payload = bytearray(source_path.read_bytes())
+                payload[-1] ^= 1
+                replacement = source_path.with_name(f"{source_path.name}.replacement")
+                replacement.write_bytes(payload)
+                replacement.chmod(0)
+                os.replace(replacement, source_path)
+            real_link(source, destination)
+
+        with mock.patch.object(
+            state_filter.os,
+            "link",
+            side_effect=swap_first_source_then_link,
+        ):
+            with self.assertRaisesRegex(
+                state_filter.StateBankError,
+                "published output changed",
+            ):
+                self.run_filter()
+
+        self.assertTrue(swapped)
+        self.assertEqual(link_calls, 1)
+        self.assertFalse(self.output.exists())
+        self.assertFalse(self.selected_ids.exists())
+        self.assertFalse(self.manifest.exists())
+        self.assertEqual(list(self.root.glob(".*.tmp")), [])
+
+    def test_post_link_open_failure_removes_only_verified_publication(
+        self,
+    ) -> None:
+        self.write_bank([self.record(10, 1, 1, 1, b"aaaa")])
+        self.write_allowlist("10\n")
+        real_open = state_filter._open_published_destination
+        calls = 0
+
+        def fail_first_destination_open(*args: object, **kwargs: object):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise state_filter.StateBankError(
+                    "injected post-link destination open failure"
+                )
+            return real_open(*args, **kwargs)
+
+        with mock.patch.object(
+            state_filter,
+            "_open_published_destination",
+            side_effect=fail_first_destination_open,
+        ):
+            with self.assertRaisesRegex(
+                state_filter.StateBankError,
+                "injected post-link destination open failure",
+            ):
+                self.run_filter()
+
+        self.assertEqual(calls, 1)
+        self.assertFalse(self.output.exists())
+        self.assertFalse(self.selected_ids.exists())
+        self.assertFalse(self.manifest.exists())
+        self.assertEqual(list(self.root.glob(".*.tmp")), [])
+
+        sentinel = b"competing destination\n"
+
+        def replace_with_competitor_then_fail(binding: object, destination: Path):
+            competitor = self.root / "competitor"
+            competitor.write_bytes(sentinel)
+            os.replace(competitor, destination)
+            return real_open(binding, destination)
+
+        with mock.patch.object(
+            state_filter,
+            "_open_published_destination",
+            side_effect=replace_with_competitor_then_fail,
+        ):
+            with self.assertRaisesRegex(
+                state_filter.StateBankError,
+                "inode does not match verified staged file",
+            ):
+                self.run_filter()
+        self.assertEqual(self.output.read_bytes(), sentinel)
+        self.assertFalse(self.selected_ids.exists())
+        self.assertFalse(self.manifest.exists())
+        self.assertEqual(list(self.root.glob(".*.tmp")), [])
+
+    def test_manifest_path_replacement_after_verification_fails_cleanly(
+        self,
+    ) -> None:
+        self.write_bank([self.record(10, 1, 1, 1, b"aaaa")])
+        self.write_allowlist("10\n")
+        sentinel = b"competing manifest after verification\n"
+        real_verify = state_filter._verify_published_descriptor
+        replaced = False
+
+        def replace_manifest_after_real_verify(
+            binding: object,
+            destination: Path,
+            descriptor: int,
+        ) -> os.stat_result:
+            nonlocal replaced
+            verified = real_verify(binding, destination, descriptor)
+            if not replaced and destination.name == self.manifest.name:
+                replaced = True
+                competitor = self.root / "manifest-competitor"
+                competitor.write_bytes(sentinel)
+                os.replace(competitor, destination)
+            return verified
+
+        with mock.patch.object(
+            state_filter,
+            "_verify_published_descriptor",
+            side_effect=replace_manifest_after_real_verify,
+        ):
+            with self.assertRaisesRegex(
+                state_filter.StateBankError,
+                "published manifest changed: destination path inode",
+            ):
+                self.run_filter()
+
+        self.assertTrue(replaced)
+        self.assertFalse(self.output.exists())
+        self.assertFalse(self.selected_ids.exists())
+        self.assertEqual(self.manifest.read_bytes(), sentinel)
+        self.assertEqual(list(self.root.glob(".*.tmp")), [])
 
 
 if __name__ == "__main__":

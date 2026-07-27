@@ -26,11 +26,17 @@ TESTBIN  := $(BUILD)/bb_tests
 PUFFER_REWARD_TESTBIN := $(BUILD)/puffer_reward_tests
 PUFFER_CONTACT_TESTBIN := $(BUILD)/puffer_contact_bot_tests
 PUFFER_STATE_BANK_TESTBIN := $(BUILD)/puffer_state_bank_tests
+PUFFER_STATE_BANK_FIXTURE_WRITER := $(BUILD)/state_bank_fixture_writer
+PUFFER_STATE_BANK_CONTRACT_DIR := $(BUILD)/test_state_bank_contract
+PUFFER_STATE_BANK_CONTRACT_STAMP := $(PUFFER_STATE_BANK_CONTRACT_DIR)/.generated
+PUFFER_STATE_BANK_CONTRACT_TESTBIN := $(BUILD)/puffer_state_bank_contract_tests
+PUFFER_STANDALONE_TESTBIN := $(BUILD)/bloodbowl_standalone_test
+STATE_BANK_VALIDATE_BIN := $(BUILD)/state_bank_validate
 PUFFER_OBSERVATION_TESTBIN := $(BUILD)/puffer_observation_tests
 BBP_V6_WRITER_TESTBIN := $(BUILD)/bbp_v6_writer_tests
-PUFFER_TESTBINS := $(PUFFER_REWARD_TESTBIN) $(PUFFER_CONTACT_TESTBIN) $(PUFFER_STATE_BANK_TESTBIN) $(PUFFER_OBSERVATION_TESTBIN) $(BBP_V6_WRITER_TESTBIN)
+PUFFER_TESTBINS := $(PUFFER_REWARD_TESTBIN) $(PUFFER_CONTACT_TESTBIN) $(PUFFER_STATE_BANK_TESTBIN) $(PUFFER_STATE_BANK_CONTRACT_TESTBIN) $(PUFFER_STANDALONE_TESTBIN) $(PUFFER_OBSERVATION_TESTBIN) $(BBP_V6_WRITER_TESTBIN)
 
-.PHONY: all test asan fuzz coverage coverage-run lockstep ballstats blockstats human-ball-advancement blockev-mc scenario-scan clean
+.PHONY: all test asan fuzz coverage coverage-run lockstep ballstats blockstats human-ball-advancement blockev-mc scenario-scan state-bank-validate clean
 
 all: test
 
@@ -60,8 +66,38 @@ $(PUFFER_REWARD_TESTBIN): puffer/bloodbowl/test_reward_send_off.c puffer/bloodbo
 $(PUFFER_CONTACT_TESTBIN): puffer/bloodbowl/test_contact_bot.c puffer/bloodbowl/bloodbowl.h puffer/bloodbowl/contact_bot.h engine/tests/bb_test.h $(SRC) $(ENGINE_HDR)
 	$(CC) $(CFLAGS) -Iengine/tests -Ipuffer/bloodbowl -Wno-unused-function $< -o $@ -lm $(LDFLAGS)
 
-$(PUFFER_STATE_BANK_TESTBIN): puffer/bloodbowl/test_state_bank.c puffer/bloodbowl/bloodbowl.h $(AUTHORED_DRILL_SRC) $(AUTHORED_IDENTITY_SRC) tools/authored_drill.h tools/authored_identity_internal.h engine/tests/bb_test.h engine/tests/bb_fixtures.h $(SRC) $(ENGINE_HDR)
-	$(CC) $(CFLAGS) -Iengine/tests -Ipuffer/bloodbowl -Itools -Wno-unused-function $< $(AUTHORED_DRILL_SRC) $(AUTHORED_IDENTITY_SRC) -o $@ -lm $(LDFLAGS)
+$(PUFFER_STATE_BANK_TESTBIN): puffer/bloodbowl/test_state_bank.c puffer/bloodbowl/bloodbowl.h puffer/bloodbowl/state_bank_runtime.h puffer/bloodbowl/state_bank_sha256.h puffer/bloodbowl/state_bank_build.h $(AUTHORED_DRILL_SRC) $(AUTHORED_IDENTITY_SRC) tools/authored_drill.h tools/authored_identity_internal.h engine/tests/bb_test.h engine/tests/bb_fixtures.h $(SRC) $(ENGINE_HDR)
+	$(CC) $(CFLAGS) -DBBE_STATE_BANK_TESTING -Iengine/tests -Ipuffer/bloodbowl -Itools -Wno-unused-function $< $(AUTHORED_DRILL_SRC) $(AUTHORED_IDENTITY_SRC) -o $@ -lm $(LDFLAGS)
+
+$(PUFFER_STATE_BANK_FIXTURE_WRITER): puffer/bloodbowl/state_bank_fixture_writer.c puffer/bloodbowl/bloodbowl.h puffer/bloodbowl/state_bank_runtime.h puffer/bloodbowl/state_bank_sha256.h puffer/bloodbowl/state_bank_build.h engine/tests/bb_fixtures.h $(SRC) $(ENGINE_HDR)
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -Iengine/tests -Ipuffer/bloodbowl -Wno-unused-function $< -o $@ -lm $(LDFLAGS)
+
+$(PUFFER_STATE_BANK_CONTRACT_STAMP): $(PUFFER_STATE_BANK_FIXTURE_WRITER) tools/generate_state_bank_contract_fixture.py tools/state_bank_contract.py
+	@mkdir -p $(PUFFER_STATE_BANK_CONTRACT_DIR)/immutable
+	$(PUFFER_STATE_BANK_FIXTURE_WRITER) $(PUFFER_STATE_BANK_CONTRACT_DIR)/immutable/state_bank.bbs
+	python3 tools/generate_state_bank_contract_fixture.py \
+		--bbs $(PUFFER_STATE_BANK_CONTRACT_DIR)/immutable/state_bank.bbs \
+		--out-dir $(PUFFER_STATE_BANK_CONTRACT_DIR)
+	@touch $@
+
+$(PUFFER_STATE_BANK_CONTRACT_TESTBIN): puffer/bloodbowl/test_state_bank_contract_integration.c puffer/bloodbowl/bloodbowl.h puffer/bloodbowl/state_bank_runtime.h puffer/bloodbowl/state_bank_sha256.h $(PUFFER_STATE_BANK_CONTRACT_STAMP) $(SRC) $(ENGINE_HDR)
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -DBBE_STATE_BANK_TESTING \
+		-DBBE_STATE_BANK_BUILD_HEADER='"state_bank_build.generated.h"' \
+		-I$(PUFFER_STATE_BANK_CONTRACT_DIR) -Ipuffer/bloodbowl \
+		-Wno-unused-function $< -o $@ -lm -pthread $(LDFLAGS)
+
+$(PUFFER_STANDALONE_TESTBIN): puffer/bloodbowl/bloodbowl.c puffer/bloodbowl/bloodbowl.h puffer/bloodbowl/state_bank_runtime.h puffer/bloodbowl/state_bank_sha256.h puffer/bloodbowl/state_bank_build.h $(SRC) $(ENGINE_HDR)
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -Ipuffer/bloodbowl -Wno-unused-function $< -o $@ -lm $(LDFLAGS)
+
+$(STATE_BANK_VALIDATE_BIN): puffer/bloodbowl/state_bank_validate.c puffer/bloodbowl/bloodbowl.h puffer/bloodbowl/state_bank_runtime.h puffer/bloodbowl/state_bank_sha256.h puffer/bloodbowl/state_bank_build.h $(SRC) $(ENGINE_HDR)
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -Ipuffer/bloodbowl -Wno-unused-function $< -o $@ -lm $(LDFLAGS)
+
+state-bank-validate: $(STATE_BANK_VALIDATE_BIN)
+	@echo "$(STATE_BANK_VALIDATE_BIN)"
 
 $(PUFFER_OBSERVATION_TESTBIN): puffer/bloodbowl/test_observation.c puffer/bloodbowl/bloodbowl.h engine/tests/bb_test.h $(SRC) $(ENGINE_HDR)
 	$(CC) $(CFLAGS) -Iengine/tests -Ipuffer/bloodbowl -Wno-unused-function $< -o $@ -lm $(LDFLAGS)
@@ -70,12 +106,18 @@ $(BBP_V6_WRITER_TESTBIN): tools/test_bbp_v6_writer.c tools/bb_lockstep.c puffer/
 	$(CC) $(CFLAGS) -Ipuffer/bloodbowl -Itools -Wno-unused-function $< -o $@ -lm $(LDFLAGS)
 
 test: $(TESTBIN) $(PUFFER_TESTBINS)
-	./$(TESTBIN) $(TEST)
-	./$(PUFFER_REWARD_TESTBIN) $(TEST)
-	./$(PUFFER_CONTACT_TESTBIN) $(TEST)
-	./$(PUFFER_STATE_BANK_TESTBIN) $(TEST)
-	./$(PUFFER_OBSERVATION_TESTBIN) $(TEST)
-	./$(BBP_V6_WRITER_TESTBIN)
+	$(TESTBIN) $(TEST)
+	$(PUFFER_REWARD_TESTBIN) $(TEST)
+	$(PUFFER_CONTACT_TESTBIN) $(TEST)
+	$(PUFFER_STATE_BANK_TESTBIN) $(TEST)
+	$(PUFFER_STATE_BANK_CONTRACT_TESTBIN)
+	$(PUFFER_STANDALONE_TESTBIN) --state-bank-contract
+	! $(PUFFER_STANDALONE_TESTBIN) --demo --bank-kind >/dev/null 2>&1
+	! $(PUFFER_STANDALONE_TESTBIN) --demo --bank >/dev/null 2>&1
+	! $(PUFFER_STANDALONE_TESTBIN) --demo --bank-producer-manifest >/dev/null 2>&1
+	! $(PUFFER_STANDALONE_TESTBIN) --demo --bank-contract >/dev/null 2>&1
+	$(PUFFER_OBSERVATION_TESTBIN) $(TEST)
+	$(BBP_V6_WRITER_TESTBIN)
 
 blockev-mc: $(OBJ)
 	$(CC) $(CFLAGS) -Iengine/tests tools/blockev_mc.c $(OBJ) -o $(BUILD)/blockev_mc -lm

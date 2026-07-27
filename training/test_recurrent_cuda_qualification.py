@@ -1242,7 +1242,18 @@ class QualificationPatchContractTests(unittest.TestCase):
             (puffer / "pufferlib").mkdir(parents=True)
             (puffer / "src").mkdir()
             (puffer / "config").mkdir()
-            (puffer / "build.sh").write_text("fixture\n", encoding="utf-8")
+            # The real installer now owns one exact patch against the pinned
+            # standalone FLAGS block. Keep that upstream surface in this
+            # deliberately partial fixture so the test still reaches the
+            # selfplay state machine it is designed to exercise.
+            (puffer / "build.sh").write_text(textwrap.dedent("""\
+                if [ "$MODE" = "local" ] || [ "$MODE" = "fast" ]; then
+                    FLAGS=(
+                        "${INCLUDES[@]}"
+                        "$SRC_DIR/$ENV.c" $EXTRA_SRC -o "$OUTPUT_NAME"
+                        "${LINK_ARCHIVES[@]}"
+                        "${EXTRA_LDFLAGS[@]}"
+            """), encoding="utf-8")
             (puffer / "pufferlib/pufferl.py").write_text(
                 dashboard_markers, encoding="utf-8"
             )
@@ -1306,6 +1317,28 @@ class QualificationPatchContractTests(unittest.TestCase):
             self.assertNotIn("applied:   training/selfplay_league.patch", second.stdout)
             self.assertNotIn("selfplay league patch", second.stderr)
             self.assertEqual(selfplay.read_bytes(), patched)
+
+            # This deliberately partial fixture stops installation before the
+            # normal authority-last no-bank publisher. Seed that exact
+            # prerequisite explicitly so --check can continue to the
+            # selfplay/exact-action marker ordering this test owns.
+            no_bank = subprocess.run(
+                [
+                    "python3",
+                    str(ROOT / "tools/state_bank_contract.py"),
+                    "install-no-bank",
+                    "--puffer-root", str(puffer),
+                    "--exact-action-source-hash", "0" * 64,
+                    "--environment-source-hash", "1" * 64,
+                    "--observation-abi", "obs-v6",
+                    "--observation-version", "6",
+                ],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+                timeout=60,
+            )
+            self.assertEqual(no_bank.returncode, 0, no_bank.stderr)
 
             checked = install("--check")
             self.assertNotEqual(checked.returncode, 0)

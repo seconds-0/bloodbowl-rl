@@ -44,6 +44,12 @@ class CheckpointLineageTests(unittest.TestCase):
             "screen_manifest_sha256": "4" * 64,
             "warm_lineage_sha256": "",
             "pool_lineage_bundle_sha256": "",
+            "ladder_reset_pct": "0",
+            "ladder_endzone_maxdist": "0",
+            "ladder_pickup_maxdist": "0",
+            "ladder_postkick_maxturn": "0",
+            "ladder_pass_maxrange": "0",
+            **checkpoint_lineage.STATE_BANK_INACTIVE,
         }, sort_keys=True) + "\n", encoding="utf-8")
 
     def tearDown(self):
@@ -77,6 +83,132 @@ class CheckpointLineageTests(unittest.TestCase):
         self.assertTrue(payload["ancestry"]["qualification_only"])
         self.assertEqual(
             sidecar.read_bytes(), checkpoint_lineage.canonical_bytes(payload))
+
+    def test_state_bank_inactive_form_is_complete_and_exactly_typed(self):
+        base = json.loads(self.run_manifest.read_text(encoding="utf-8"))
+        for key in checkpoint_lineage.STATE_BANK_INACTIVE:
+            with self.subTest(missing=key):
+                changed = dict(base)
+                del changed[key]
+                self.run_manifest.write_text(
+                    json.dumps(changed, sort_keys=True) + "\n",
+                    encoding="utf-8")
+                with self.assertRaisesRegex(
+                        checkpoint_lineage.LineageError, key):
+                    checkpoint_lineage.lineage_from_run_manifest(
+                        self.checkpoint, self.run_manifest)
+        for key, expected in checkpoint_lineage.STATE_BANK_INACTIVE.items():
+            with self.subTest(noncanonical=key):
+                changed = dict(base)
+                changed[key] = (
+                    False if isinstance(expected, int) else expected.upper())
+                self.run_manifest.write_text(
+                    json.dumps(changed, sort_keys=True) + "\n",
+                    encoding="utf-8")
+                with self.assertRaisesRegex(
+                        checkpoint_lineage.LineageError, key):
+                    checkpoint_lineage.lineage_from_run_manifest(
+                        self.checkpoint, self.run_manifest)
+
+    def test_state_bank_active_form_requires_every_identity(self):
+        active = json.loads(self.run_manifest.read_text(encoding="utf-8"))
+        active.update({
+            "ladder_reset_pct": "0.5",
+            "ladder_state_bank_contract_schema":
+                checkpoint_lineage.STATE_BANK_CONTRACT_SCHEMA,
+            "ladder_state_bank_producer_schema":
+                checkpoint_lineage.STATE_BANK_PRODUCER_SCHEMA,
+            "ladder_state_bank_kind": checkpoint_lineage.STATE_BANK_KIND,
+            "ladder_state_bank_ruleset": checkpoint_lineage.STATE_BANK_RULESET,
+            "ladder_state_bank_sha256": "5" * 64,
+            "ladder_state_bank_producer_manifest_sha256": "6" * 64,
+            "ladder_state_bank_contract_sha256": "7" * 64,
+            "ladder_state_bank_producer_engine_source_sha256": "8" * 64,
+            "ladder_state_bank_loader_engine_source_sha256": "9" * 64,
+            "ladder_state_bank_records": 3,
+            "ladder_state_bank_bytes": 16 + 3 * (12 + 2240),
+        })
+        self.run_manifest.write_text(
+            json.dumps(active, sort_keys=True) + "\n", encoding="utf-8")
+        checkpoint_lineage.lineage_from_run_manifest(
+            self.checkpoint, self.run_manifest)
+
+        active_keys = (
+            "ladder_state_bank_contract_schema",
+            "ladder_state_bank_producer_schema",
+            "ladder_state_bank_kind",
+            "ladder_state_bank_ruleset",
+            "ladder_state_bank_sha256",
+            "ladder_state_bank_producer_manifest_sha256",
+            "ladder_state_bank_contract_sha256",
+            "ladder_state_bank_producer_engine_source_sha256",
+            "ladder_state_bank_loader_engine_source_sha256",
+            "ladder_state_bank_records",
+            "ladder_state_bank_bytes",
+        )
+        for key in active_keys:
+            with self.subTest(missing=key):
+                changed = dict(active)
+                del changed[key]
+                self.run_manifest.write_text(
+                    json.dumps(changed, sort_keys=True) + "\n",
+                    encoding="utf-8")
+                with self.assertRaisesRegex(
+                        checkpoint_lineage.LineageError, key):
+                    checkpoint_lineage.lineage_from_run_manifest(
+                        self.checkpoint, self.run_manifest)
+
+        wrong_types = {
+            key: False for key in active_keys
+        }
+        wrong_types["ladder_state_bank_records"] = "3"
+        wrong_types["ladder_state_bank_bytes"] = "6772"
+        for key, wrong in wrong_types.items():
+            with self.subTest(wrong_type=key):
+                changed = dict(active)
+                changed[key] = wrong
+                self.run_manifest.write_text(
+                    json.dumps(changed, sort_keys=True) + "\n",
+                    encoding="utf-8")
+                with self.assertRaisesRegex(
+                        checkpoint_lineage.LineageError, key):
+                    checkpoint_lineage.lineage_from_run_manifest(
+                        self.checkpoint, self.run_manifest)
+
+        changed = dict(active)
+        changed["ladder_state_bank_bytes"] += 1
+        self.run_manifest.write_text(
+            json.dumps(changed, sort_keys=True) + "\n", encoding="utf-8")
+        with self.assertRaisesRegex(
+                checkpoint_lineage.LineageError, "bytes.*records|reconcile"):
+            checkpoint_lineage.lineage_from_run_manifest(
+                self.checkpoint, self.run_manifest)
+
+    def test_state_bank_bridge_rejects_active_selector_lineage(self):
+        manifest = json.loads(self.run_manifest.read_text(encoding="utf-8"))
+        manifest["ladder_reset_pct"] = "0.5"
+        manifest.update({
+            "ladder_state_bank_contract_schema":
+                checkpoint_lineage.STATE_BANK_CONTRACT_SCHEMA,
+            "ladder_state_bank_producer_schema":
+                checkpoint_lineage.STATE_BANK_PRODUCER_SCHEMA,
+            "ladder_state_bank_kind": checkpoint_lineage.STATE_BANK_KIND,
+            "ladder_state_bank_ruleset": checkpoint_lineage.STATE_BANK_RULESET,
+            "ladder_state_bank_sha256": "5" * 64,
+            "ladder_state_bank_producer_manifest_sha256": "6" * 64,
+            "ladder_state_bank_contract_sha256": "7" * 64,
+            "ladder_state_bank_producer_engine_source_sha256": "8" * 64,
+            "ladder_state_bank_loader_engine_source_sha256": "9" * 64,
+            "ladder_state_bank_records": 3,
+            "ladder_state_bank_bytes": 16 + 3 * (12 + 2240),
+            "ladder_endzone_maxdist": "6",
+        })
+        self.run_manifest.write_text(
+            json.dumps(manifest, sort_keys=True) + "\n", encoding="utf-8")
+        with self.assertRaisesRegex(
+                checkpoint_lineage.LineageError, "pre-indexed strata"):
+            checkpoint_lineage.lineage_from_run_manifest(
+                self.checkpoint, self.run_manifest)
 
     def test_qualification_output_is_never_eligible_ancestry(self):
         _, sidecar = self.create()

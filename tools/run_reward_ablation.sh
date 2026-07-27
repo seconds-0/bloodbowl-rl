@@ -33,70 +33,136 @@ if [ $# -ne 0 ]; then
   exit 1
 fi
 
-# Backplay curriculum knobs. Every default is 0, which reproduces the previous
-# hard-coded flags byte for byte, so a non-ladder run is unchanged.
+# State-bank curriculum knobs. Every default is 0, which reproduces the
+# previous kickoff-only command. A positive reset is an exact compiled-artifact
+# contract; an observed file digest is never promoted to operator authority.
 #
-# These are validated HERE, before any CUDA/venv preflight, because each one has
-# a failure mode where the env silently ignores the setting and trains something
-# other than what the operator asked for -- and the counters stay clean while it
-# happens (bloodbowl.h:2150 increments demo_fallbacks only for a record that is
-# not a live decision state, never for a selector that found nothing).
+# These are validated HERE, before any CUDA/venv preflight. Historically the
+# runtime could silently ignore a selector and train something other than what
+# the operator asked for. The typed runtime now rejects that configuration too;
+# this launcher gate keeps the failure early, explicit, and independent of a
+# compiled backend.
 LADDER_RESET_PCT="${LADDER_RESET_PCT:-0}"
 LADDER_ENDZONE_MAXDIST="${LADDER_ENDZONE_MAXDIST:-0}"
 LADDER_PICKUP_MAXDIST="${LADDER_PICKUP_MAXDIST:-0}"
 LADDER_POSTKICK_MAXTURN="${LADDER_POSTKICK_MAXTURN:-0}"
 LADDER_PASS_MAXRANGE="${LADDER_PASS_MAXRANGE:-0}"
 
-case "$LADDER_RESET_PCT" in
-  0|0.0|1|1.0|0.[0-9]*) : ;;
-  *) echo "LADDER_RESET_PCT must be a fraction in [0,1], got '$LADDER_RESET_PCT'" >&2
-     exit 1 ;;
-esac
+if ! [[ "$LADDER_RESET_PCT" =~ ^(0([.][0-9]+)?|1([.]0+)?)$ ]]; then
+  echo "LADDER_RESET_PCT must be a fraction in [0,1], got '$LADDER_RESET_PCT'" >&2
+  exit 1
+fi
+if [[ "$LADDER_RESET_PCT" =~ ^0([.]0+)?$ ]]; then
+  LADDER_RESET_ACTIVE=0
+else
+  LADDER_RESET_ACTIVE=1
+fi
 for knob in LADDER_ENDZONE_MAXDIST LADDER_PICKUP_MAXDIST \
             LADDER_POSTKICK_MAXTURN LADDER_PASS_MAXRANGE; do
-  eval "value=\$$knob"
-  case "$value" in
-    ''|*[!0-9]*) echo "$knob must be a non-negative integer, got '$value'" >&2
-                 exit 1 ;;
-  esac
+  value="${!knob}"
+  if ! [[ "$value" =~ ^(0|[1-9][0-9]*)$ ]]; then
+    echo "$knob must be a canonical non-negative integer, got '$value'" >&2
+    exit 1
+  fi
+  if [ "${#value}" -gt 10 ] || \
+     { [ "${#value}" -eq 10 ] && [ "$value" -gt 2147483647 ]; }; then
+    echo "$knob must be at most 2147483647, got '$value'" >&2
+    exit 1
+  fi
 done
 
-# The env selects a curriculum with an if / else-if chain -- endzone, then
-# pickup, then postkick, then pass (bloodbowl.h ~2056-2130). Setting two means
-# the later one is silently never applied, so refuse instead of quietly training
-# the first.
+# Old runtimes selected curricula with an if/else chain, making later selectors
+# silent no-ops. The binding now rejects multiple selectors, but retain the
+# launcher check as a defense-in-depth contract before any native code loads.
 LADDER_SELECTORS=0
 for value in "$LADDER_ENDZONE_MAXDIST" "$LADDER_PICKUP_MAXDIST" \
              "$LADDER_POSTKICK_MAXTURN" "$LADDER_PASS_MAXRANGE"; do
   [ "$value" -gt 0 ] && LADDER_SELECTORS=$((LADDER_SELECTORS + 1))
 done
 if [ "$LADDER_SELECTORS" -gt 1 ]; then
-  echo "only one curriculum selector may be set: the env applies the first of" >&2
-  echo "endzone/pickup/postkick/pass and silently ignores the rest" >&2
+  echo "only one curriculum selector may be set; multiple selectors are invalid" >&2
+  echo "the typed binding rejects ambiguous selector combinations" >&2
   exit 1
 fi
 
-case "$LADDER_RESET_PCT" in
-  0|0.0)
+case "$LADDER_RESET_ACTIVE" in
+  0)
     if [ "$LADDER_SELECTORS" -gt 0 ]; then
       echo "a curriculum selector is set but LADDER_RESET_PCT is 0, so the env" >&2
       echo "never draws a banked state and the selector is a no-op" >&2
       exit 1
     fi
+    if [ "${LADDER_STATE_BANK_KIND+x}" = x ] || \
+       [ "${EXPECTED_LADDER_STATE_BANK_SHA256+x}" = x ] || \
+       [ "${EXPECTED_LADDER_STATE_BANK_PRODUCER_MANIFEST_SHA256+x}" = x ] || \
+       [ "${EXPECTED_LADDER_STATE_BANK_CONTRACT_SHA256+x}" = x ]; then
+      echo "state-bank authority variables require LADDER_RESET_PCT > 0" >&2
+      exit 1
+    fi
+    LADDER_STATE_BANK_CONTRACT_SCHEMA="none"
+    LADDER_STATE_BANK_PRODUCER_SCHEMA="none"
+    LADDER_STATE_BANK_KIND="none"
+    LADDER_STATE_BANK_KIND_VALUE=0
+    LADDER_STATE_BANK_RULESET="none"
     LADDER_STATE_BANK_SHA256="unused"
+    LADDER_STATE_BANK_PRODUCER_MANIFEST_SHA256="unused"
+    LADDER_STATE_BANK_CONTRACT_SHA256="unused"
+    LADDER_STATE_BANK_PRODUCER_ENGINE_SOURCE_SHA256="unused"
+    LADDER_STATE_BANK_LOADER_ENGINE_SOURCE_SHA256="unused"
+    LADDER_STATE_BANK_RECORDS=0
+    LADDER_STATE_BANK_BYTES=0
     ;;
-  *)
-    # Without a staged bank, bbe_state_bank_load finds nothing, bbe_state_bank_n
-    # stays 0, and the whole curriculum degrades to procgen kickoffs with no
-    # counter to show it. Bind the bank's identity into the run manifest so a
-    # ladder result can never be attributed to the wrong start-state corpus.
-    LADDER_STATE_BANK="$ROOT/vendor/PufferLib/resources/bloodbowl/state_bank.bbs"
-    [ -f "$LADDER_STATE_BANK" ] || {
-      echo "LADDER_RESET_PCT > 0 requires a staged state bank at" >&2
-      echo "  $LADDER_STATE_BANK" >&2
-      echo "without it the curriculum silently degrades to procgen kickoffs" >&2
-      exit 1; }
-    LADDER_STATE_BANK_SHA256="$(sha256sum "$LADDER_STATE_BANK" | awk '{print $1}')"
+  1)
+    : "${LADDER_STATE_BANK_KIND:?LADDER_STATE_BANK_KIND is required when LADDER_RESET_PCT > 0}"
+    : "${EXPECTED_LADDER_STATE_BANK_SHA256:?EXPECTED_LADDER_STATE_BANK_SHA256 is required when LADDER_RESET_PCT > 0}"
+    : "${EXPECTED_LADDER_STATE_BANK_PRODUCER_MANIFEST_SHA256:?EXPECTED_LADDER_STATE_BANK_PRODUCER_MANIFEST_SHA256 is required when LADDER_RESET_PCT > 0}"
+    : "${EXPECTED_LADDER_STATE_BANK_CONTRACT_SHA256:?EXPECTED_LADDER_STATE_BANK_CONTRACT_SHA256 is required when LADDER_RESET_PCT > 0}"
+    if [ "$LADDER_SELECTORS" -gt 0 ]; then
+      echo "state-bank selectors require the reviewed pre-indexed-strata tranche" >&2
+      echo "uniform typed-bank reset is the only runtime contract implemented here" >&2
+      exit 2
+    fi
+    STATE_BANK_CONTRACT_JSON="$(
+      python3 "$ROOT/tools/state_bank_contract.py" validate-installed \
+        --puffer-root "$ROOT/vendor/PufferLib" \
+        --kind "$LADDER_STATE_BANK_KIND" \
+        --bank-sha256 "$EXPECTED_LADDER_STATE_BANK_SHA256" \
+        --producer-manifest-sha256 \
+          "$EXPECTED_LADDER_STATE_BANK_PRODUCER_MANIFEST_SHA256" \
+        --training-contract-sha256 \
+          "$EXPECTED_LADDER_STATE_BANK_CONTRACT_SHA256"
+    )" || exit $?
+    read -r LADDER_STATE_BANK_CONTRACT_SCHEMA \
+      LADDER_STATE_BANK_PRODUCER_SCHEMA LADDER_STATE_BANK_KIND \
+      LADDER_STATE_BANK_KIND_VALUE LADDER_STATE_BANK_RULESET \
+      LADDER_STATE_BANK_SHA256 \
+      LADDER_STATE_BANK_PRODUCER_MANIFEST_SHA256 \
+      LADDER_STATE_BANK_CONTRACT_SHA256 \
+      LADDER_STATE_BANK_PRODUCER_ENGINE_SOURCE_SHA256 \
+      LADDER_STATE_BANK_LOADER_ENGINE_SOURCE_SHA256 \
+      LADDER_STATE_BANK_RECORDS LADDER_STATE_BANK_BYTES < <(
+        python3 - "$STATE_BANK_CONTRACT_JSON" <<'PY'
+import json
+import sys
+
+contract = json.loads(sys.argv[1])
+keys = (
+    "contract_schema",
+    "producer_schema",
+    "kind",
+    "kind_value",
+    "ruleset",
+    "bank_sha256",
+    "producer_manifest_sha256",
+    "training_contract_sha256",
+    "producer_engine_source_sha256",
+    "loader_engine_source_sha256",
+    "records",
+    "bytes",
+)
+print(*(contract[key] for key in keys))
+PY
+      )
     ;;
 esac
 
@@ -557,26 +623,31 @@ STATUS_WRAPPER_HASH="$(sha256sum "$STATUS_WRAPPER" | awk '{print $1}')"
 LIVE_GUARD="$ROOT/tools/live_integrity_guard.py"
 LIVE_GUARD_HASH="$(sha256sum "$LIVE_GUARD" | awk '{print $1}')"
 CHECKPOINT_LINEAGE_HASH="$(sha256sum "$ROOT/tools/checkpoint_lineage.py" | awk '{print $1}')"
+patch_bundle_line() {
+  local relative=$1 digest
+  digest="$(sha256sum "$ROOT/$relative" | awk '{print $1}')"
+  printf '%s  %s\n' "$digest" "$relative"
+}
 PATCH_HASH="$({
-  sha256sum "$ROOT/training/pufferl_env_dashboard_limit.patch"
-  sha256sum "$ROOT/training/pufferl_env_json.patch"
-  sha256sum "$ROOT/training/pufferl_env_json_metadata_upgrade.patch"
-  sha256sum "$ROOT/training/pufferl_env_phase_contract.patch"
-  sha256sum "$ROOT/training/pufferl_eval_episode_gate.patch"
-  sha256sum "$ROOT/training/pufferl_metrics_keyerror.patch"
-  sha256sum "$ROOT/training/torch_pufferl_trusted_load.patch"
-  sha256sum "$ROOT/training/selfplay_league.patch"
-  sha256sum "$ROOT/training/puffer_exact_joint_actions.patch"
-  sha256sum "$ROOT/training/puffer_recurrent_eval_state.patch"
-  sha256sum "$ROOT/training/puffer_frozen_prio_mask.patch"
-  sha256sum "$ROOT/training/puffer_recurrent_cuda_qualification.patch"
-  # D234. Must stay LAST and must mirror run_reward_screen.sh's list exactly:
-  # the digest is order-sensitive and this script compares its result against
-  # EXPECTED_PUFFER_PATCH_BUNDLE_SHA256, which the screen publishes. This entry
-  # is what makes a pure-Python trainer edit visible to lineage validation --
-  # torch_pufferl.py does not change compiled_module_sha256, and
-  # vendor_source_sha256 is recorded below but never validated.
-  sha256sum "$ROOT/training/puffer_reward_clamp_range.patch"
+  patch_bundle_line training/puffer_standalone_env_include.patch
+  patch_bundle_line training/pufferl_env_dashboard_limit.patch
+  patch_bundle_line training/pufferl_env_json.patch
+  patch_bundle_line training/pufferl_env_json_metadata_upgrade.patch
+  patch_bundle_line training/pufferl_env_phase_contract.patch
+  patch_bundle_line training/pufferl_eval_episode_gate.patch
+  patch_bundle_line training/pufferl_metrics_keyerror.patch
+  patch_bundle_line training/torch_pufferl_trusted_load.patch
+  patch_bundle_line training/selfplay_league.patch
+  patch_bundle_line training/puffer_exact_joint_actions.patch
+  patch_bundle_line training/puffer_recurrent_eval_state.patch
+  patch_bundle_line training/puffer_frozen_prio_mask.patch
+  patch_bundle_line training/puffer_recurrent_cuda_qualification.patch
+  patch_bundle_line training/puffer_reward_clamp_range.patch
+  # Keep every remaining installer patch in the ordered causal bundle so the
+  # published recipe binds exact patch artifacts as well as source/module state.
+  patch_bundle_line training/pufferl_scripted_training_guard.patch
+  patch_bundle_line training/pufferl_warm_start.patch
+  patch_bundle_line training/puffer_state_bank_contract.patch
 } | sha256sum | awk '{print $1}')"
 if [ -n "$EXPECTED_PUFFER_PATCH_BUNDLE_SHA256" ] && \
    [ "$PATCH_HASH" != "$EXPECTED_PUFFER_PATCH_BUNDLE_SHA256" ]; then
@@ -586,7 +657,7 @@ if [ -n "$EXPECTED_PUFFER_PATCH_BUNDLE_SHA256" ] && \
 fi
 VENDOR_HEAD="$(git rev-parse HEAD 2>/dev/null || printf '%s' '<not-a-git-checkout>')"
 VENDOR_SOURCE_HASH="$({
-  sha256sum pufferlib/__init__.py pufferlib/pufferl.py \
+  sha256sum build.sh pufferlib/__init__.py pufferlib/pufferl.py \
     pufferlib/selfplay.py pufferlib/torch_pufferl.py pufferlib/models.py \
     pufferlib/muon.py src/pufferlib.cu src/bindings.cu \
     src/bindings_cpu.cpp src/kernels.cu src/vecenv.h
@@ -653,6 +724,7 @@ CMD=(env PUFFER_CUDA_RUNTIME_MANIFEST="$RUN_MANIFEST" \
   --vec.num-threads "$NUM_THREADS" \
   "${REWARD_ARGS[@]}" \
   --env.demo-reset-pct "$LADDER_RESET_PCT" \
+  --env.state-bank-kind "$LADDER_STATE_BANK_KIND_VALUE" \
   --env.demo-endzone-maxdist "$LADDER_ENDZONE_MAXDIST" \
   --env.demo-pickup-maxdist "$LADDER_PICKUP_MAXDIST" \
   --env.demo-postkick-maxturn "$LADDER_POSTKICK_MAXTURN" \
@@ -699,7 +771,20 @@ META_ARGS=(
   ladder_pickup_maxdist "$LADDER_PICKUP_MAXDIST"
   ladder_postkick_maxturn "$LADDER_POSTKICK_MAXTURN"
   ladder_pass_maxrange "$LADDER_PASS_MAXRANGE"
+  ladder_state_bank_contract_schema "$LADDER_STATE_BANK_CONTRACT_SCHEMA"
+  ladder_state_bank_producer_schema "$LADDER_STATE_BANK_PRODUCER_SCHEMA"
+  ladder_state_bank_kind "$LADDER_STATE_BANK_KIND"
+  ladder_state_bank_ruleset "$LADDER_STATE_BANK_RULESET"
   ladder_state_bank_sha256 "$LADDER_STATE_BANK_SHA256"
+  ladder_state_bank_producer_manifest_sha256 \
+  "$LADDER_STATE_BANK_PRODUCER_MANIFEST_SHA256"
+  ladder_state_bank_contract_sha256 "$LADDER_STATE_BANK_CONTRACT_SHA256"
+  ladder_state_bank_producer_engine_source_sha256 \
+  "$LADDER_STATE_BANK_PRODUCER_ENGINE_SOURCE_SHA256"
+  ladder_state_bank_loader_engine_source_sha256 \
+  "$LADDER_STATE_BANK_LOADER_ENGINE_SOURCE_SHA256"
+  ladder_state_bank_records "$LADDER_STATE_BANK_RECORDS"
+  ladder_state_bank_bytes "$LADDER_STATE_BANK_BYTES"
   rollout_quantum "$ROLLOUT_QUANTUM" reward_name "$REWARD_NAME"
   reward_sha256 "$REWARD_HASH" reward_manifest "$REWARD_MANIFEST"
   pool "$POOL" pool_identity_sha256 "$POOL_HASH"
@@ -751,6 +836,8 @@ pairs = sys.argv[2:split]
 if len(pairs) % 2:
     raise SystemExit("invalid run-manifest metadata pairs")
 manifest = dict(zip(pairs[::2], pairs[1::2]))
+for key in ("ladder_state_bank_records", "ladder_state_bank_bytes"):
+    manifest[key] = int(manifest[key])
 manifest.update({
     "schema_version": 1,
     "mode": ("native_fresh_v6_qualification"

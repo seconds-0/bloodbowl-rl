@@ -3,6 +3,7 @@
 import hashlib
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -136,6 +137,9 @@ class ExperimentContractTests(unittest.TestCase):
     def test_reward_screen_freezes_and_revalidates_one_causal_plan(self):
         source = (ROOT / "tools/run_reward_screen.sh").read_text(
             encoding="utf-8")
+        evidence_contract = (
+            ROOT / "tools/screen_evidence_contract.py"
+        ).read_text(encoding="utf-8")
         for contract in (
             "SCREEN_MANIFEST.json",
             "SCREEN_MANIFEST_SHA256",
@@ -150,14 +154,29 @@ class ExperimentContractTests(unittest.TestCase):
         ):
             self.assertIn(contract, source)
         self.assertNotIn('TOTAL_AGENTS="${TOTAL_AGENTS:-', source)
-        # The analysis-tool hashes above stay recorded as provenance, but the
-        # screen no longer aborts mid-run because game_stats.py / the manifest /
-        # live_integrity_guard.py changed since the freeze. An edited analysis
-        # tool is a review finding; voiding a multi-day run over it protects
-        # nothing, and the science is still bound where it matters: every arm's
-        # result records the reward manifest sha it actually trained under, and
-        # SCREEN_COMPLETE rejects a result minted by a different screen.
+        # The complete contract, including implementation hashes, is compared
+        # on every retry. A schedule/profile/acceptance-tool mutation must not
+        # run new arms under the old manifest SHA.
+        self.assertIn("freeze_screen_manifest(destination, contract)", source)
+        self.assertIn("screen_manifest_contract_sha256", source)
+        self.assertIn("screen_evidence_contract_sha256", source)
         self.assertIn('"reward_sha256"', source)
+        self.assertIn(
+            "load_frozen_screen_contract(",
+            source,
+        )
+        self.assertIn(
+            "load_run_manifest_for_screen(",
+            source,
+        )
+        self.assertIn(
+            "recorded result differs from recomputed screen evidence",
+            evidence_contract,
+        )
+        self.assertIn(
+            "existing screen completion differs from recomputed results",
+            evidence_contract,
+        )
 
     def test_reward_screen_has_zero_budget_live_integrity_guard(self):
         source = (ROOT / "tools/run_reward_screen.sh").read_text(
@@ -209,6 +228,7 @@ class ExperimentContractTests(unittest.TestCase):
             'PATCH_HASH" != "$EXPECTED_PUFFER_PATCH_BUNDLE_SHA256"', arm
         )
         for patch in (
+            "puffer_standalone_env_include.patch",
             "pufferl_env_dashboard_limit.patch",
             "pufferl_env_json.patch",
             "pufferl_env_json_metadata_upgrade.patch",
@@ -216,7 +236,10 @@ class ExperimentContractTests(unittest.TestCase):
             "pufferl_eval_episode_gate.patch",
             "pufferl_metrics_keyerror.patch",
             "torch_pufferl_trusted_load.patch",
+            "pufferl_scripted_training_guard.patch",
+            "pufferl_warm_start.patch",
             "puffer_exact_joint_actions.patch",
+            "puffer_state_bank_contract.patch",
             "selfplay_league.patch",
         ):
             self.assertIn(patch, screen)
@@ -240,28 +263,175 @@ class ExperimentContractTests(unittest.TestCase):
         )
         self.assertIn("Patch copy: training/selfplay_league.patch", arm)
 
-    def test_pure_python_trainer_edits_ride_the_gated_patch_bundle(self):
-        """D234: close the lineage hole a pure-Python trainer edit falls through.
+    def test_standalone_build_owns_the_environment_include_contract(self):
+        patch_path = ROOT / "training/puffer_standalone_env_include.patch"
+        patch = patch_path.read_text(encoding="utf-8")
+        installer = (ROOT / "tools/install_puffer_env.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertEqual(patch.count("diff --git a/build.sh b/build.sh"), 1)
+        self.assertEqual(patch.count('+        -I"$SRC_DIR"'), 1)
+        self.assertNotIn("+        -I.", patch)
+        self.assertIn(
+            'STANDALONE_INCLUDE_PATCH="$ROOT/training/'
+            'puffer_standalone_env_include.patch"',
+            installer,
+        )
+        check_block = installer.split(
+            'if [ "$MODE" = "check" ]', 1
+        )[1].split('rm -rf "$DST"', 1)[0]
+        self.assertIn(
+            'apply --reverse --check --no-index '
+            '"$STANDALONE_INCLUDE_PATCH"',
+            check_block,
+        )
+        install_block = installer.split('rm -rf "$DST"', 1)[1]
+        self.assertIn(
+            'apply --check --no-index "$STANDALONE_INCLUDE_PATCH"',
+            install_block,
+        )
+        self.assertIn(
+            'apply --no-index "$STANDALONE_INCLUDE_PATCH"',
+            install_block,
+        )
 
-        `tools/checkpoint_lineage.py` validates exactly three implementation
-        digests. `vendor_source_sha256` is recorded by run_reward_ablation.sh
-        and published by run_reward_screen.sh but is never checked, and
-        `pufferlib/torch_pufferl.py` is pure Python so editing it does not move
-        `compiled_module_sha256` either. Without the reward-clamp patch inside
-        the bundle, a post-patch run could warm-start a pre-patch checkpoint and
-        pass eligibility clean.
-        """
+        screen = (ROOT / "tools/run_reward_screen.sh").read_text(
+            encoding="utf-8"
+        )
+        arm = (ROOT / "tools/run_reward_ablation.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("puffer_standalone_env_include.patch", screen)
+        self.assertIn("puffer_standalone_env_include.patch", arm)
+        for source in (screen, arm):
+            self.assertIn("build.sh", source)
+
+    def test_snapshot_nested_headers_compile_only_with_environment_include(self):
+        compiler = shutil.which(os.environ.get("CC", "cc"))
+        if compiler is None:
+            self.skipTest("C compiler unavailable")
+        with tempfile.TemporaryDirectory() as tmp:
+            snapshot = Path(tmp) / "ocean" / "bloodbowl"
+            shutil.copytree(
+                ROOT / "puffer" / "bloodbowl",
+                snapshot,
+                symlinks=False,
+            )
+            common = [
+                compiler,
+                "-std=c11",
+                "-fsyntax-only",
+                "-Wno-unused-function",
+            ]
+            missing = subprocess.run(
+                [*common, str(snapshot / "bloodbowl.c")],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertNotEqual(missing.returncode, 0)
+            self.assertIn("bb/bb_types.h", missing.stderr)
+
+            resolved = subprocess.run(
+                [*common, f"-I{snapshot}", str(snapshot / "bloodbowl.c")],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertEqual(resolved.returncode, 0, resolved.stderr)
+
+    def test_patch_bundle_labels_are_checkout_root_independent(self):
+        screen = (ROOT / "tools/run_reward_screen.sh").read_text(
+            encoding="utf-8"
+        )
+        arm = (ROOT / "tools/run_reward_ablation.sh").read_text(
+            encoding="utf-8"
+        )
+        screen_block = screen.split("patches = [", 1)[1].split(
+            "vendor_sources = [", 1
+        )[0]
+        arm_block = arm.split('PATCH_HASH="$({', 1)[1].split(
+            '} | sha256sum', 1
+        )[0]
+        self.assertIn(
+            "path.relative_to(root).as_posix()",
+            screen,
+        )
+        self.assertNotIn("[str(path) for path in patches]", screen)
+        self.assertIn("patch_bundle_line training/", arm_block)
+        self.assertNotIn('sha256sum "$ROOT/training/', arm_block)
+
+        # The canonical algorithm itself must produce one identity when the
+        # same bytes live under different absolute checkout roots.
+        patch_names = re.findall(r'training/([^"/]+\.patch)', screen_block)
+        with tempfile.TemporaryDirectory() as first, tempfile.TemporaryDirectory() as second:
+            for checkout in (Path(first), Path(second)):
+                (checkout / "training").mkdir()
+                for name in patch_names:
+                    (checkout / "training" / name).write_bytes(
+                        (ROOT / "training" / name).read_bytes()
+                    )
+
+            def digest(checkout):
+                lines = []
+                for name in patch_names:
+                    relative = f"training/{name}"
+                    value = hashlib.sha256(
+                        (checkout / relative).read_bytes()
+                    ).hexdigest()
+                    lines.append(f"{value}  {relative}\n".encode())
+                return hashlib.sha256(b"".join(lines)).hexdigest()
+
+            self.assertEqual(digest(Path(first)), digest(Path(second)))
+
+    def test_screen_launch_clears_ambient_bank_authority_and_sets_zero_knobs(self):
+        source = (ROOT / "tools/run_reward_screen.sh").read_text(
+            encoding="utf-8"
+        )
+        launch_start = source.index("env -u LADDER_STATE_BANK_KIND")
+        launch_end = source.index(
+            '/bin/bash "$ROOT/tools/run_reward_ablation.sh"',
+            launch_start,
+        )
+        launch = source[launch_start:launch_end]
+        for variable in (
+            "LADDER_STATE_BANK_KIND",
+            "EXPECTED_LADDER_STATE_BANK_SHA256",
+            "EXPECTED_LADDER_STATE_BANK_PRODUCER_MANIFEST_SHA256",
+            "EXPECTED_LADDER_STATE_BANK_CONTRACT_SHA256",
+        ):
+            self.assertIn(f"-u {variable}", launch)
+        for variable in (
+            "LADDER_RESET_PCT",
+            "LADDER_ENDZONE_MAXDIST",
+            "LADDER_PICKUP_MAXDIST",
+            "LADDER_POSTKICK_MAXTURN",
+            "LADDER_PASS_MAXRANGE",
+        ):
+            self.assertIn(f'{variable}=0', launch)
+
+    def test_installer_reverse_checks_local_pufferl_patches(self):
+        installer = (ROOT / "tools/install_puffer_env.sh").read_text(
+            encoding="utf-8"
+        )
+        check_block = installer.split('if [ "$MODE" = "check" ]', 1)[1].split(
+            'rm -rf "$DST"', 1
+        )[0]
+        for patch in (
+            "pufferl_scripted_training_guard.patch",
+            "pufferl_warm_start.patch",
+        ):
+            self.assertIn(patch, check_block)
+
+    def test_installer_patch_recipe_rides_the_gated_patch_bundle(self):
+        """Bind exact patch artifacts independently of source/module closure."""
         lineage = (ROOT / "tools/checkpoint_lineage.py").read_text(
             encoding="utf-8")
         keys_block = re.search(
             r"SHA256_KEYS = \((.*?)\)", lineage, re.S).group(1)
         self.assertIn("puffer_patch_bundle_sha256", keys_block)
-        # The hole itself, pinned so it cannot silently reopen as a false
-        # sense of coverage: this key is NOT validated, which is exactly why
-        # the patch bundle has to carry the change.
-        self.assertNotIn("vendor_source_sha256", keys_block)
-        self.assertIn("vendor_source_sha256", (
-            ROOT / "tools/run_reward_ablation.sh").read_text(encoding="utf-8"))
 
         clamp_patch = ROOT / "training/puffer_reward_clamp_range.patch"
         body = clamp_patch.read_text(encoding="utf-8")
@@ -702,6 +872,19 @@ class ExperimentContractTests(unittest.TestCase):
             self.assertIn(probe.strip('"'), arm)
         self.assertIn("exact_action_source_sha256", screen)
         self.assertIn("COMPILED_EXACT_ACTION_SOURCE_HASH", arm)
+        for field in (
+            "state_bank_contract_schema",
+            "state_bank_producer_schema",
+            "state_bank_authorization_schema",
+            "state_bank_kind",
+            "state_bank_bbs_sha256",
+            "state_bank_producer_manifest_sha256",
+            "state_bank_training_contract_sha256",
+            "state_bank_producer_engine_source_sha256",
+            "state_bank_loader_engine_source_sha256",
+            "state_bank_contract_identity",
+        ):
+            self.assertIn(field, screen)
         # Both must reject a module whose environment digest disagrees with the
         # installed source, which is what catches a mid-screen rebuild.
         self.assertIn("environment_source_sha256", screen)

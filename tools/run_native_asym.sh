@@ -65,11 +65,14 @@
 #     see puffer-env-dev skill). Hard-required here when WARM is set.
 #   - installed config/bloodbowl.ini has the league_preseed key (load_config
 #     only accepts CLI args for keys present in the ini). Auto-refreshed.
-#   - demo bank at vendor/PufferLib/resources/bloodbowl/state_bank.bbs
-#     (a missing bank is SILENT — the env trains procgen-only).
+#   - RETIRED historical prerequisite: this recipe used an unauthenticated raw
+#     demo bank. The hard stop below prevents that path from reaching Puffer.
 set -euo pipefail
 LAUNCH_CWD="$PWD"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+echo "run_native_asym.sh is disabled: its legacy raw state bank has no typed," >&2
+echo "hash-pinned producer/training contract; no Puffer process was started" >&2
+exit 2
 
 : "${TAG:?TAG is required (run tag; also names the pool dir and log)}"
 TEACHER="${TEACHER:-$ROOT/training/bc_v4_cuda.bin}"

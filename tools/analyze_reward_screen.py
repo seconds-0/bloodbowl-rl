@@ -38,8 +38,16 @@ from typing import Any, Iterable, Sequence
 
 if __package__:
     from .live_integrity_guard import HARD_INTEGRITY_KEYS
+    from .screen_evidence_contract import (
+        ScreenEvidenceContractError,
+        load_screen_evidence_json,
+    )
 else:
     from live_integrity_guard import HARD_INTEGRITY_KEYS
+    from screen_evidence_contract import (
+        ScreenEvidenceContractError,
+        load_screen_evidence_json,
+    )
 
 
 EXPECTED_SCHEDULE = (
@@ -171,19 +179,19 @@ class AnalysisError(ValueError):
     """The screen artifact set is incomplete, stale, or inconsistent."""
 
 
-def _sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+def _load_json_with_sha(
+    path: Path,
+    label: str,
+) -> tuple[dict[str, Any], str]:
+    try:
+        value, raw = load_screen_evidence_json(path, label)
+    except ScreenEvidenceContractError as exc:
+        raise AnalysisError(f"invalid {label}: {path}: {exc}") from exc
+    return value, hashlib.sha256(raw).hexdigest()
 
 
 def _load_json(path: Path, label: str) -> dict[str, Any]:
-    if not path.is_file():
-        raise AnalysisError(f"missing {label}: {path}")
-    try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise AnalysisError(f"invalid {label}: {path}: {exc}") from exc
-    if not isinstance(value, dict):
-        raise AnalysisError(f"{label} must contain a JSON object: {path}")
+    value, _digest = _load_json_with_sha(path, label)
     return value
 
 
@@ -203,6 +211,19 @@ def _need_int(value: Any, label: str) -> int:
     if isinstance(value, float) and parsed != value:
         raise AnalysisError(f"{label} must be an integer")
     return parsed
+
+
+def _need_schema_version(
+    value: Any,
+    label: str,
+    supported: tuple[int, ...],
+) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise AnalysisError(f"{label} must be an integer")
+    if value not in supported:
+        versions = ", ".join(str(version) for version in supported)
+        raise AnalysisError(f"{label} must be one of: {versions}")
+    return value
 
 
 def _finite_number(value: Any, label: str) -> float:
@@ -499,7 +520,7 @@ def _validate_result(
         metrics: Sequence[str],
         factors: dict[str, dict[str, bool]],
 ) -> dict[str, Any]:
-    result = _load_json(path, "screen result")
+    result, result_sha = _load_json_with_sha(path, "screen result")
     label = path.name
     schema = _need_int(result.get("schema_version"), f"{label} schema_version")
     if schema < 2:
@@ -566,7 +587,7 @@ def _validate_result(
         "seed": seed,
         "factors": factors[arm],
         "result_file": path.name,
-        "result_sha256": _sha256(path),
+        "result_sha256": result_sha,
         "checkpoint_sha256": checkpoint_sha,
         "reward_sha256": expected_reward_sha,
         "run_manifest_sha256": run_manifest_sha,
@@ -591,9 +612,20 @@ def _validate_completion(
     and lineage digests used to be re-compared here as well, but those values
     are simply restated from the record under test, so agreement proved nothing.
     """
-    complete = _load_json(path, "screen completion proof")
-    if _need_int(complete.get("schema_version"), "completion schema_version") != 1:
-        raise AnalysisError("unsupported SCREEN_COMPLETE.json schema")
+    complete, completion_sha = _load_json_with_sha(
+        path, "screen completion proof")
+    completion_schema = _need_schema_version(
+        complete.get("schema_version"),
+        "completion schema_version",
+        (1, 2),
+    )
+    if completion_schema == 2 and set(complete) != {
+        "schema_version", "screen_manifest_sha256", "results",
+    }:
+        raise AnalysisError(
+            "schema-2 screen completion envelope must contain exactly "
+            "schema_version, screen_manifest_sha256, and results"
+        )
     if complete.get("screen_manifest_sha256") != manifest_sha:
         raise AnalysisError("completion proof belongs to another screen plan")
     entries = complete.get("results")
@@ -604,6 +636,19 @@ def _validate_completion(
     for expected, recorded in zip(schedule, entries):
         if not isinstance(recorded, dict):
             raise AnalysisError("completion result entry must be an object")
+        if completion_schema == 2 and set(recorded) != {
+            "index",
+            "arm",
+            "seed",
+            "path",
+            "sha256",
+            "checkpoint_sha256",
+            "checkpoint_lineage_sha256",
+        }:
+            raise AnalysisError(
+                "schema-2 completion result entry has an open or incomplete "
+                "envelope"
+            )
         arm = str(expected["arm"])
         seed = int(expected["seed"])
         key = (arm, seed)
@@ -626,15 +671,30 @@ def _validate_completion(
             recorded.get("sha256"),
             f"completion result sha256 for {arm}/seed {seed}",
         )
-        if recorded_result_sha != _sha256(result_path):
+        result, result_sha = _load_json_with_sha(
+            result_path, f"screen result {arm}/seed {seed}")
+        if recorded_result_sha != result_sha:
             raise AnalysisError(
                 f"completion result hash mismatch for {arm}/seed {seed}"
             )
+        if completion_schema == 2:
+            for field in (
+                "checkpoint_sha256",
+                "checkpoint_lineage_sha256",
+            ):
+                recorded_digest = _need_sha256(
+                    recorded.get(field),
+                    f"completion {field} for {arm}/seed {seed}",
+                )
+                if recorded_digest != result.get(field):
+                    raise AnalysisError(
+                        f"completion {field} mismatch for {arm}/seed {seed}"
+                    )
 
     return {
         "present": True,
         "file": path.name,
-        "sha256": _sha256(path),
+        "sha256": completion_sha,
         "completed_utc": complete.get("completed_utc"),
     }
 
@@ -703,9 +763,20 @@ def analyze_screen(
         )
 
     manifest_path = directory / "SCREEN_MANIFEST.json"
-    manifest = _load_json(manifest_path, "screen manifest")
-    if _need_int(manifest.get("schema_version"), "manifest schema_version") != 1:
-        raise AnalysisError("unsupported SCREEN_MANIFEST.json schema")
+    manifest, manifest_sha = _load_json_with_sha(
+        manifest_path, "screen manifest")
+    manifest_schema = _need_schema_version(
+        manifest.get("schema_version"),
+        "manifest schema_version",
+        (1, 2),
+    )
+    if manifest_schema == 2 and set(manifest) != {
+        "schema_version", "contract",
+    }:
+        raise AnalysisError(
+            "schema-2 screen manifest envelope must contain exactly "
+            "schema_version and contract"
+        )
     contract = _need_mapping(manifest.get("contract"), "screen contract")
     spec = _screen_spec(contract)
     if spec["profile"] == "exact-action-canary":
@@ -713,7 +784,6 @@ def analyze_screen(
     prefix = contract.get("prefix")
     if not isinstance(prefix, str) or not prefix:
         raise AnalysisError("screen contract has no prefix")
-    manifest_sha = _sha256(manifest_path)
     if expected_screen_sha is not None:
         expected_screen_sha = _need_sha256(
             expected_screen_sha, "expected screen manifest SHA-256"

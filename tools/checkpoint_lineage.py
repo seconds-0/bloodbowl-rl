@@ -10,9 +10,11 @@ ONLY thing that separates v4 from v5 from v6.
 """
 
 import argparse
+import decimal
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 
 
@@ -30,6 +32,39 @@ SHA256_KEYS = (
     "compiled_module_sha256",
     "puffer_patch_bundle_sha256",
 )
+STATE_BANK_CONTRACT_SCHEMA = "bloodbowl-state-bank-training-contract-v1"
+STATE_BANK_PRODUCER_SCHEMA = "bloodbowl-state-bank-producer-v1"
+STATE_BANK_KIND = "strict-replay"
+STATE_BANK_RULESET = "BB2025"
+STATE_BANK_HEADER_BYTES = 16
+# The active contract is a raw BBS1 snapshot of the current bb_match ABI.
+# Keeping this literal beside checkpoint lineage is intentional: a struct-size
+# change must be an explicit semantic migration, not an inferred acceptance of
+# a different state representation.
+STATE_BANK_MATCH_BYTES = 2240
+STATE_BANK_RECORD_BYTES = 12 + STATE_BANK_MATCH_BYTES
+STATE_BANK_MAX_BYTES = 256 << 20
+STATE_BANK_MAX_RECORDS = 1_000_000
+STATE_BANK_SELECTOR_KEYS = (
+    "ladder_endzone_maxdist",
+    "ladder_pickup_maxdist",
+    "ladder_postkick_maxturn",
+    "ladder_pass_maxrange",
+)
+STATE_BANK_INACTIVE = {
+    "ladder_state_bank_contract_schema": "none",
+    "ladder_state_bank_producer_schema": "none",
+    "ladder_state_bank_kind": "none",
+    "ladder_state_bank_ruleset": "none",
+    "ladder_state_bank_sha256": "unused",
+    "ladder_state_bank_producer_manifest_sha256": "unused",
+    "ladder_state_bank_contract_sha256": "unused",
+    "ladder_state_bank_producer_engine_source_sha256": "unused",
+    "ladder_state_bank_loader_engine_source_sha256": "unused",
+    "ladder_state_bank_records": 0,
+    "ladder_state_bank_bytes": 0,
+}
+_FRACTION_RE = re.compile(r"(?:0(?:\.[0-9]+)?|1(?:\.0+)?)\Z")
 
 
 class LineageError(RuntimeError):
@@ -82,6 +117,84 @@ def _need_bool_string(value, label):
     return str(value) == "1"
 
 
+def _need_reset_fraction(value):
+    if not isinstance(value, str) or _FRACTION_RE.fullmatch(value) is None:
+        raise LineageError(
+            "ladder_reset_pct must be a canonical decimal string in [0,1]")
+    try:
+        parsed = decimal.Decimal(value)
+    except decimal.InvalidOperation as exc:
+        raise LineageError("ladder_reset_pct is not a finite decimal") from exc
+    if not parsed.is_finite() or parsed < 0 or parsed > 1:
+        raise LineageError("ladder_reset_pct must be in [0,1]")
+    return parsed
+
+
+def _validate_state_bank_fields(manifest):
+    """Validate the complete conditional bank identity before lineage exists."""
+
+    reset_pct = _need_reset_fraction(manifest.get("ladder_reset_pct"))
+    for key in STATE_BANK_SELECTOR_KEYS:
+        selector = _need_int(manifest.get(key), key)
+        if selector < 0:
+            raise LineageError(f"{key} must be nonnegative")
+
+    if reset_pct == 0:
+        for key, expected in STATE_BANK_INACTIVE.items():
+            observed = manifest.get(key)
+            # JSON booleans compare equal to integers; reject them explicitly.
+            if isinstance(expected, int) and isinstance(observed, bool):
+                raise LineageError(
+                    f"{key} must be JSON integer {expected}, not boolean")
+            if observed != expected or type(observed) is not type(expected):
+                raise LineageError(
+                    f"{key} must be canonical inactive value "
+                    f"{expected!r}, got {observed!r}")
+        if any(_need_int(manifest.get(key), key)
+               for key in STATE_BANK_SELECTOR_KEYS):
+            raise LineageError(
+                "inactive state-bank lineage requires every selector to be zero")
+        return
+
+    expected_strings = {
+        "ladder_state_bank_contract_schema": STATE_BANK_CONTRACT_SCHEMA,
+        "ladder_state_bank_producer_schema": STATE_BANK_PRODUCER_SCHEMA,
+        "ladder_state_bank_kind": STATE_BANK_KIND,
+        "ladder_state_bank_ruleset": STATE_BANK_RULESET,
+    }
+    for key, expected in expected_strings.items():
+        if manifest.get(key) != expected:
+            raise LineageError(f"{key} must be {expected!r}")
+    for key in (
+        "ladder_state_bank_sha256",
+        "ladder_state_bank_producer_manifest_sha256",
+        "ladder_state_bank_contract_sha256",
+        "ladder_state_bank_producer_engine_source_sha256",
+        "ladder_state_bank_loader_engine_source_sha256",
+    ):
+        _need_sha(manifest.get(key), key)
+    active_counts = {}
+    for key in ("ladder_state_bank_records", "ladder_state_bank_bytes"):
+        value = manifest.get(key)
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise LineageError(f"{key} must be a positive JSON integer")
+        active_counts[key] = value
+    records = active_counts["ladder_state_bank_records"]
+    byte_count = active_counts["ladder_state_bank_bytes"]
+    if records > STATE_BANK_MAX_RECORDS or byte_count > STATE_BANK_MAX_BYTES:
+        raise LineageError(
+            "state-bank records/bytes exceed the compiled contract bounds")
+    expected_bytes = STATE_BANK_HEADER_BYTES + records * STATE_BANK_RECORD_BYTES
+    if byte_count != expected_bytes:
+        raise LineageError(
+            "ladder_state_bank_bytes does not reconcile with "
+            "ladder_state_bank_records and the current BBS1 match ABI")
+    if any(_need_int(manifest.get(key), key)
+           for key in STATE_BANK_SELECTOR_KEYS):
+        raise LineageError(
+            "banked lineage cannot mint before pre-indexed strata are implemented")
+
+
 def _load_object(path, label):
     path = Path(path)
     if not path.is_file():
@@ -120,6 +233,7 @@ def lineage_from_run_manifest(checkpoint, run_manifest, *,
     if action_abi != ACTION_ABI:
         raise LineageError(
             f"action_abi must be {ACTION_ABI}, got {action_abi!r}")
+    _validate_state_bank_fields(manifest)
 
     initialization = manifest.get("initialization")
     if initialization not in ALLOWED_INITIALIZATIONS:

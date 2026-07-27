@@ -44,7 +44,8 @@ sys.path.insert(0, os.path.join(ROOT, 'tools'))
 from build_league import (  # noqa: E402
     DEFAULT_EXPECT_BYTES, LeagueError, build_league, parse_seed_args)
 from checkpoint_lineage import (  # noqa: E402
-    lineage_from_run_manifest, sidecar_path, write_lineage)
+    STATE_BANK_INACTIVE, lineage_from_run_manifest, sidecar_path,
+    write_lineage)
 
 
 def find_pufferlib():
@@ -286,6 +287,12 @@ class BuildLeagueTest(unittest.TestCase):
                     'screen_manifest_sha256': '4' * 64,
                     'warm_lineage_sha256': '5' * 64,
                     'pool_lineage_bundle_sha256': '6' * 64,
+                    'ladder_reset_pct': '0',
+                    'ladder_endzone_maxdist': '0',
+                    'ladder_pickup_maxdist': '0',
+                    'ladder_postkick_maxturn': '0',
+                    'ladder_pass_maxrange': '0',
+                    **STATE_BANK_INACTIVE,
                 }, handle, sort_keys=True)
                 handle.write('\n')
             payload = lineage_from_run_manifest(

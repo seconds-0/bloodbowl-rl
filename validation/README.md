@@ -576,9 +576,9 @@ concatenated `validation/states/bank.bbs` (both gitignored; regenerate at
 will), with corpus stats and a per-half/turn histogram of the banked states.
 **Read the histogram**: the lockstep currently consumes ~8-18% of each replay
 before first divergence, so the bank is opening-biased (mostly half 1, turns
-1-3) — it deepens automatically as mapper coverage improves. Stage into the
-training tree with `tools/install_puffer_env.sh` (lands at
-`resources/bloodbowl/state_bank.bbs`).
+1-3) — it deepens automatically as mapper coverage improves. This raw builder
+does not publish producer provenance or a training-authorization contract.
+Its output is analysis-only and `tools/install_puffer_env.sh` will not stage it.
 
 ### Exact-edition subset of an existing bank
 
@@ -615,6 +615,12 @@ and remain gitignored. This removes edition contamination only: all 15,348
 selected records are still from half one, with 12,001 (78.2%) on turns 1–2.
 Authored fixtures remain necessary for passing, handoffs, late-game score/clock,
 Stalling, and reroll-budget decisions.
+
+The filter manifest is `bloodbowl-strict-filter-manifest-v2` and explicitly
+labels this historical derivative `analysis-only`. Its original serializer
+engine identity is unknown, so neither a new filter run nor a hand-written
+sidecar can promote the unchanged bytes to a training bank. Production
+state-bank admission currently has an empty producer-kind allowlist.
 
 ### Descriptive S1–S6 coverage of the strict bank
 

@@ -35,10 +35,13 @@ scenario practiced densely until the skill exists, then mixed into scrimmage.
 
 Two state-source types:
 
-1. **Predicate drill** — rejection-sample the FUMBBL demo bank at env reset.
-   Proven pattern (`demo_endzone_maxdist`, `demo_pickup_maxdist` in
-   `puffer/bloodbowl/bloodbowl.h` reset logic). Cost: ~30 lines of C per
-   predicate + 1 ini/binding knob. Limited to states that occur in human play.
+1. **Indexed predicate drill** — build and validate a named stratum before
+   training, then sample it directly under a hash-pinned typed-bank contract.
+   The historical D47/D64 runtime rejection filters are useful evidence about
+   candidate predicates, but are retired—not a live implementation pattern.
+   All four legacy selector knobs currently reject nonzero values until the
+   pre-indexed-strata tranche is reviewed and shipped. Predicate drills remain
+   limited to states that occur in the admitted source distribution.
 
 2. **Authored drill** — *synthesized* scenario. Humans rarely leave the exact
    teaching positions we want (e.g. open-receiver geometries decay before they
@@ -62,20 +65,21 @@ FUMBBL games. The compiler:
 4. Emits N parameterized variants per drill (positions jittered, rosters
    procgen'd) so the policy can't memorize a single layout.
 
-**Drills compile to banks; the env needs zero new code** beyond what the
-pickup knob already established. Each drill bank ships to
-`vendor/PufferLib/resources/bloodbowl/` and an arm points at it.
+Drills may eventually compile to typed training banks, but the current authored
+bundle is a structural proof, not training data. Production admission remains
+disabled until the authored publisher emits durable identity sidecars, a
+balanced report, a closed producer manifest, and an independently reviewed
+training contract. Copying a BBS file into Puffer resources never authorizes it.
 
-Bank-path note: `bbe_state_bank_path` is currently a hardcoded single path.
-Phase 1 keeps one-drill-per-arm (matches the fleet pattern — each box runs one
-stage). A `demo_bank_path` knob or tagged multi-drill banks + mixture weights
-is phase 2.
+The runtime path is intentionally single-contract and hash-pinned. Arbitrary
+bank-path knobs, tagged mixtures, and selector weights are future work after
+pre-indexed strata; path selection supplies routing only, never authority.
 
 ## Drill library v1 (ranked by measured gap, D61/D63 human baseline)
 
 | # | drill | gap (agent vs human) | source | success metric |
 |---|-------|----------------------|--------|----------------|
-| 1 | Scoop (pickup) | pickup_success 0.30 vs 4.88 | predicate — **LIVE** (D64) | pickup_success |
+| 1 | Scoop (pickup) | pickup_success 0.30 vs 4.88 | indexed predicate proposed; historical D64 runtime filter retired | pickup_success |
 | 2 | **Passing** | pass 0.00 vs 1.97 — never passes | authored: carrier + open receiver downfield, turn-8 clock pressure variants | pass_attempts, completions |
 | 3 | Cage-crack / sack | no strip game; 2dred gauge can't see skill-package EV | authored: opponent cage at midfield, our blitzer (Wrestle/Tackle/Strip Ball variants) adjacent | opponent carrier drops ball |
 | 4 | Two-turn scoring | tds 0.10 vs 2.22 from kickoff | predicate: backplay filter + turn counter near half-end | tds |
@@ -84,8 +88,9 @@ is phase 2.
 
 ## ⚠️ The mix-ratio doctrine (D67 — learned the hard way)
 
-**Drills must be mixed with scrimmage.** The pickup drill at `demo-reset-pct
-0.9` (90% drill episodes) produced a drill-locked skill that NEVER deployed
+**Drills must be mixed with scrimmage.** In the historical D64 experiment, the
+pickup drill at `demo-reset-pct 0.9` (90% drill episodes) produced a
+drill-locked skill that NEVER deployed
 from kickoff, and from-kickoff play regressed on every axis (pickup_attempts
 0.714 → 0.000 vs ancestor, equal-treatment eval) — catastrophic forgetting of
 game-context behavior. Meanwhile the flagship ladder (backplay → uniform →
