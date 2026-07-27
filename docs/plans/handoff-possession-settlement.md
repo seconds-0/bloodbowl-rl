@@ -1,7 +1,7 @@
 # Handoff Catch-retry possession settlement
 
-Status: implemented; pre-checkpoint gates and independent adversarial review
-green; post-checkpoint identity closure pending
+Status: complete; implementation, independent reviews, clean checkpoint, and
+all post-checkpoint identity gates green
 
 Base: `db03bcfc5a153291264d6f4872bde4da50bd11cd`
 
@@ -423,10 +423,10 @@ Final validation on the review snapshot:
 - ASan/UBSan: the same complete matrix, all green;
 - CI-equivalent BC/lineage/producer suite: 90 tests green, including every
   known historical tuple and a fabricated tuple for every historical version;
-- replay/reward/tool suite while the engine diff is uncommitted: 200 green, 2
+- replay/reward/tool suite while the engine diff was uncommitted: 200 green, 2
   skipped, with only the three scenario-publication tests correctly refusing
-  a tracked engine tree that differs from `HEAD`; those identity-bound tests
-  remain a mandatory post-checkpoint rerun;
+  a tracked engine tree that differed from `HEAD`; after local checkpoint
+  `8613dba`, all 205 tests complete successfully (203 green, 2 skipped);
 - code generation, reward manifests, shell syntax, and `git diff --check`
   green;
 - clean install/check in pinned PufferLib commit
@@ -461,8 +461,8 @@ assertions. The representative same-team rebound chain now pins independently
 derived literal potentials `0.15`, `0.13`, and `0.1287`; its focused regression
 and the refreshed clean-build gates pass. Repetitive branch setup remains a
 future behavior-preserving test refactor, not an Item 2 correctness gap. The
-only checkpoint closeout obligation is the documented rerun of the three
-source-identity publication tests.
+checkpoint closeout obligation was the documented rerun of the three
+source-identity publication tests; all three pass from committed `HEAD`.
 
 The user explicitly waived the unavailable Kimi Code CLI gate for the
 remaining program. No Kimi result is claimed.
