@@ -125,6 +125,19 @@ class LadderKnobTests(unittest.TestCase):
         self.assert_refused(result, "must be at most 2147483647")
         self.assertNotIn("integer expression expected", result.stdout)
 
+    def test_each_selector_rejects_its_first_out_of_range_value(self):
+        for knob, value, maximum in (
+            ("LADDER_ENDZONE_MAXDIST", 26, 25),
+            ("LADDER_PICKUP_MAXDIST", 26, 25),
+            ("LADDER_POSTKICK_MAXTURN", 9, 8),
+            ("LADDER_PASS_MAXRANGE", 26, 25),
+        ):
+            with self.subTest(knob=knob):
+                result = run(LADDER_RESET_PCT="0.5", **{knob: value})
+                self.assert_refused(
+                    result, f"{knob} must be at most {maximum}"
+                )
+
     def test_reset_pct_without_external_authority_is_refused(self):
         # Artifact presence is not authority: the operator must supply the
         # independently reviewed kind and all three pins.
@@ -132,6 +145,22 @@ class LadderKnobTests(unittest.TestCase):
             LADDER_RESET_PCT="0.5", LADDER_ENDZONE_MAXDIST=6
         )
         self.assert_refused(result, "LADDER_STATE_BANK_KIND is required")
+
+    def test_valid_selector_reaches_installed_contract_validation(self):
+        result = run(
+            LADDER_RESET_PCT="0.5",
+            LADDER_ENDZONE_MAXDIST=6,
+            LADDER_STATE_BANK_KIND="strict-replay",
+            EXPECTED_LADDER_STATE_BANK_SHA256="1" * 64,
+            EXPECTED_LADDER_STATE_BANK_PRODUCER_MANIFEST_SHA256="2" * 64,
+            EXPECTED_LADDER_STATE_BANK_CONTRACT_SHA256="3" * 64,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn(
+            "state-bank selectors require the reviewed pre-indexed-strata tranche",
+            result.stdout,
+        )
+        self.assertIn("state-bank contract failed:", result.stdout)
 
     def test_the_default_configuration_passes_the_knob_gate(self):
         # With no knobs set the run must reach a LATER failure, never a knob

@@ -29,9 +29,30 @@ class PufferLogContractTests(unittest.TestCase):
     def test_both_puffer_backends_and_installer_pin_same_capacity(self) -> None:
         patch = CAPACITY_PATCH.read_text()
         self.assertEqual(patch.count(f"create_dict({EXPECTED_CAPACITY})"), 2)
+        self.assertEqual(
+            re.findall(r"^diff --git a/(\S+) b/", patch, re.MULTILINE),
+            ["src/bindings.cu", "src/bindings_cpu.cpp", "src/vecenv.h"],
+        )
+        self.assertIn("dict_set: capacity %d exceeded", patch)
+        self.assertNotIn("src/kernels.cu", patch)
+        self.assertNotIn("action_mask_ptr", patch)
 
         installer = INSTALLER.read_text()
-        self.assertIn(f"create_dict({EXPECTED_CAPACITY})", installer)
+        self.assertIn(
+            'DICT_CAPACITY_PATCH="$ROOT/training/puffer_dict_capacity.patch"',
+            installer,
+        )
+        capacity_install = installer.split("DICT_CAPACITY_PATCH=", 1)[1]
+        capacity_install = capacity_install.split("\n# ", 1)[0]
+        self.assertIn("apply --reverse --check --no-index", capacity_install)
+        self.assertIn("apply --check --no-index", capacity_install)
+        self.assertNotIn("'s/create_dict\\(", installer)
+
+        launcher = (ROOT / "tools/run_reward_ablation.sh").read_text()
+        self.assertIn(
+            "patch_bundle_line training/puffer_dict_capacity.patch",
+            launcher,
+        )
         dashboard_patch = (
             ROOT / "training" / "pufferl_env_dashboard_limit.patch"
         ).read_text()

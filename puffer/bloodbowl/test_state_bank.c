@@ -89,6 +89,37 @@ static void write_state_bank_valid_invalid_pair(
     BB_CHECK_EQ(fclose(file), 0);
 }
 
+static void write_state_bank_pair(const char* path,
+                                  const bb_match* first,
+                                  const bb_match* second) {
+    FILE* file = fopen(path, "wb");
+    BB_CHECK(file != NULL);
+    if (file == NULL) return;
+
+    BB_CHECK_EQ(fwrite("BBS1", 1, 4, file), 4);
+    write_le32(file, 1u);
+    write_le32(file, (uint32_t)sizeof(bb_match));
+    write_le32(file, bbe_state_fingerprint());
+    const bb_match* matches[] = {first, second};
+    for (uint32_t record = 0; record < 2; record++) {
+        uint8_t metadata[BBE_STATE_BANK_REC_META] = {0};
+        uint32_t source_id = record + 1u;
+        metadata[0] = (uint8_t)source_id;
+        metadata[1] = (uint8_t)(source_id >> 8);
+        metadata[2] = (uint8_t)(source_id >> 16);
+        metadata[3] = (uint8_t)(source_id >> 24);
+        metadata[4] = (uint8_t)(0x40u + record);
+        metadata[8] = matches[record]->half;
+        metadata[9] =
+            matches[record]->turn[matches[record]->active_team];
+        BB_CHECK_EQ(fwrite(metadata, 1, sizeof metadata, file),
+                    sizeof metadata);
+        BB_CHECK_EQ(fwrite(matches[record], sizeof *matches[record], 1, file),
+                    1);
+    }
+    BB_CHECK_EQ(fclose(file), 0);
+}
+
 static const char* test_state_bank_path;
 static char test_producer_path[512];
 static char test_contract_path[512];
@@ -439,6 +470,23 @@ static void check_state_bank_child_aborted(
     if (WIFSIGNALED(status)) {
         BB_CHECK_EQ(WTERMSIG(status), SIGABRT);
     }
+}
+
+static void check_state_bank_child_succeeded(
+        pid_t child, const char* expected_success) {
+    int status = 0;
+    BB_CHECK_EQ(waitpid(child, &status, 0), child);
+    int succeeded = WIFEXITED(status) && WEXITSTATUS(status) == 0;
+    if (!succeeded) {
+        if (WIFSIGNALED(status)) {
+            printf("OBSERVED %s: child received signal %d\n",
+                   expected_success, WTERMSIG(status));
+        } else if (WIFEXITED(status)) {
+            printf("OBSERVED %s: child exited %d\n",
+                   expected_success, WEXITSTATUS(status));
+        }
+    }
+    BB_CHECK(succeeded);
 }
 
 BB_TEST(restored_pbrs_nested_loose_first_transition_uses_s0) {
@@ -1597,6 +1645,46 @@ BB_TEST(state_bank_selector_miss_aborts_instead_of_last_random_record) {
     cleanup_state_bank_path(path);
 }
 
+BB_TEST(state_bank_qualifying_endzone_selector_resets_exact_record) {
+    char path[256];
+    snprintf(path, sizeof path, "/tmp/bloodbowl-endzone-stratum-%ld.bbs",
+             (long)getpid());
+    bb_match nonqualifying = valid_bank_match();
+    fx_ball_held(&nonqualifying, 0);
+    bb_match qualifying = nonqualifying;
+    bb_place(&qualifying, 0, 20, 7);
+    fx_ball_held(&qualifying, 0);
+    BB_CHECK(bb_state_bank_boundary_valid(&nonqualifying));
+    BB_CHECK(bb_state_bank_boundary_valid(&qualifying));
+    write_state_bank_pair(path, &nonqualifying, &qualifying);
+    reset_state_bank_loader(path);
+    bbe_state_bank_load();
+    BB_CHECK_EQ(bbe_state_bank_n, 2);
+
+    fflush(NULL);
+    pid_t child = fork();
+    BB_CHECK(child >= 0);
+    if (child == 0) {
+        StateBankEnvFixture fixture;
+        configure_restored_pbrs_env(&fixture, 0.0f, 0.0f, 0.995f);
+        fixture.env.demo_endzone_maxdist = 6;
+        for (int reset = 0; reset < 8; reset++) {
+            c_reset(&fixture.env);
+            if (fixture.env.demo_started != 1) _exit(61);
+            if (memcmp(&fixture.env.match, &qualifying,
+                       sizeof qualifying) != 0) {
+                _exit(62);
+            }
+        }
+        _exit(0);
+    }
+    if (child > 0) {
+        check_state_bank_child_succeeded(
+            child, "qualifying endzone selector should reset successfully");
+    }
+    cleanup_state_bank_path(path);
+}
+
 BB_TEST(state_bank_rejects_unsafe_record_content) {
     char path[256];
     snprintf(path, sizeof path, "/tmp/bloodbowl-state-bank-%ld.bbs",
@@ -1896,6 +1984,59 @@ BB_TEST(state_bank_config_rejects_raw_conversion_traps) {
     BB_CHECK_EQ(bbe_state_bank_validate_config_values(
                     &values, BBE_STATE_BANK_STRICT_REPLAY),
                 BBE_SB_CONFIG_INERT_KIND);
+}
+
+static void check_state_bank_selector_range_error(
+        const bbe_state_bank_config_values* values,
+        const char* expected_error) {
+    bbe_state_bank_error actual = bbe_state_bank_validate_config_values(
+        values, BBE_STATE_BANK_STRICT_REPLAY);
+    const char* actual_error = bbe_state_bank_error_name(actual);
+    if (strcmp(actual_error, expected_error) != 0) {
+        printf("OBSERVED selector range error: got \"%s\", expected \"%s\"\n",
+               actual_error, expected_error);
+    }
+    BB_CHECK_EQ(strcmp(actual_error, expected_error), 0);
+}
+
+BB_TEST(state_bank_endzone_selector_rejects_upper_bound_26) {
+    const bbe_state_bank_config_values values = {
+        1.0, BBE_STATE_BANK_STRICT_REPLAY, 26.0, 0.0, 0.0, 0.0,
+        -1.0, -1.0, -1.0,
+    };
+    check_state_bank_selector_range_error(
+        &values,
+        "demo_endzone_maxdist must be an exact integer in [0,25]");
+}
+
+BB_TEST(state_bank_pickup_selector_rejects_upper_bound_26) {
+    const bbe_state_bank_config_values values = {
+        1.0, BBE_STATE_BANK_STRICT_REPLAY, 0.0, 26.0, 0.0, 0.0,
+        -1.0, -1.0, -1.0,
+    };
+    check_state_bank_selector_range_error(
+        &values,
+        "demo_pickup_maxdist must be an exact integer in [0,25]");
+}
+
+BB_TEST(state_bank_postkick_selector_rejects_upper_bound_9) {
+    const bbe_state_bank_config_values values = {
+        1.0, BBE_STATE_BANK_STRICT_REPLAY, 0.0, 0.0, 9.0, 0.0,
+        -1.0, -1.0, -1.0,
+    };
+    check_state_bank_selector_range_error(
+        &values,
+        "demo_postkick_maxturn must be an exact integer in [0,8]");
+}
+
+BB_TEST(state_bank_pass_selector_rejects_upper_bound_26) {
+    const bbe_state_bank_config_values values = {
+        1.0, BBE_STATE_BANK_STRICT_REPLAY, 0.0, 0.0, 0.0, 26.0,
+        -1.0, -1.0, -1.0,
+    };
+    check_state_bank_selector_range_error(
+        &values,
+        "demo_pass_maxrange must be an exact integer in [0,25]");
 }
 
 BB_TEST(state_bank_request_paths_are_nonempty_and_bounded) {

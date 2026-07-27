@@ -1514,6 +1514,18 @@ class PufferStateBankPatchTests(unittest.TestCase):
         self.assertIn('isolated_build / "state_bank_validate"', validator)
         self.assertNotIn('repo_root / "build/state_bank_validate"', validator)
 
+    def test_validator_binds_predicate_sources_to_installed_environment_hash(
+        self,
+    ) -> None:
+        source = (ROOT / "tools/state_bank_contract.py").read_text(encoding="utf-8")
+        validator = source.split("def _run_engine_validator(", 1)[1]
+        validator = validator.split("def _stage_authorized_request_for_test(", 1)[0]
+        installed = source.split("def validate_installed(", 1)[1]
+        installed = installed.split("\ndef ", 1)[0]
+        self.assertIn("environment_source_sha256", validator)
+        self.assertIn("_run_engine_validator(", installed)
+        self.assertIn("PUFFER_ENV_SOURCE_HASH", installed)
+
     def test_backend_hash_closure_contains_both_changed_bindings(self) -> None:
         function = self.installer.split("exact_backend_hash() {", 1)[1]
         function = function.split("\n}", 1)[0]

@@ -177,17 +177,49 @@ static void missing_wrapper_aborts(void) {
     _exit(101);
 }
 
-static void selector_bridge_aborts(void) {
+static void empty_endzone_stratum_aborts_distinctly(void) {
     bbe_state_bank_request request =
         bbe_state_bank_compiled_request(NULL, NULL, NULL);
     ICHECK(bbe_state_bank_require_core(&request) == BBE_SB_OK);
     ICHECK(bbe_state_bank_status == BBE_SB_READY);
     ICHECK(bbe_state_bank_n == 1);
-    IntegrationEnv fixture;
-    setup_integration_env(&fixture, 1.0f);
-    fixture.env.demo_endzone_maxdist = 1;
-    c_reset(&fixture.env);
-    _exit(101);
+    int diagnostic[2];
+    ICHECK(pipe(diagnostic) == 0);
+    pid_t child = fork();
+    ICHECK(child >= 0);
+    if (child == 0) {
+        close(diagnostic[0]);
+        ICHECK(dup2(diagnostic[1], STDERR_FILENO) == STDERR_FILENO);
+        close(diagnostic[1]);
+        IntegrationEnv fixture;
+        setup_integration_env(&fixture, 0.01f);
+        fixture.env.demo_endzone_maxdist = 1;
+        c_reset(&fixture.env);
+        _exit(101);
+    }
+    close(diagnostic[1]);
+    char observed[512];
+    size_t used = 0;
+    while (used + 1 < sizeof observed) {
+        ssize_t count =
+            read(diagnostic[0], observed + used, sizeof observed - used - 1);
+        if (count <= 0) break;
+        used += (size_t)count;
+    }
+    observed[used] = '\0';
+    close(diagnostic[0]);
+    int status = 0;
+    ICHECK(waitpid(child, &status, 0) == child);
+    ICHECK(WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT);
+    static const char expected[] =
+        "bloodbowl: requested state-bank stratum is empty: "
+        "endzone-maxdist=1\n";
+    if (strcmp(observed, expected) != 0) {
+        fprintf(stderr,
+                "observed empty-stratum diagnostic \"%s\", expected \"%s\"\n",
+                observed, expected);
+    }
+    ICHECK(strcmp(observed, expected) == 0);
 }
 
 static void different_path_conflicts(void) {
@@ -363,7 +395,8 @@ int main(void) {
                          changed_location_override_after_require_aborts, 1);
     failures += run_case("failed request is stable", failed_missing_is_stable, 0);
     failures += run_case("missing wrapper aborts", missing_wrapper_aborts, 1);
-    failures += run_case("selector bridge aborts", selector_bridge_aborts, 1);
+    failures += run_case("empty endzone stratum aborts distinctly",
+                         empty_endzone_stratum_aborts_distinctly, 0);
     failures += run_case("different path conflicts", different_path_conflicts, 0);
     failures += run_case("mutated contract fails", mutated_contract_hash_fails, 0);
     failures += run_case("mutated producer fails", mutated_producer_hash_fails, 0);

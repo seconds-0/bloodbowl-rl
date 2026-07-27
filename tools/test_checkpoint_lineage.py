@@ -184,7 +184,12 @@ class CheckpointLineageTests(unittest.TestCase):
             checkpoint_lineage.lineage_from_run_manifest(
                 self.checkpoint, self.run_manifest)
 
-    def test_state_bank_bridge_rejects_active_selector_lineage(self):
+    def active_selector_manifest(
+        self,
+        selector_key="ladder_endzone_maxdist",
+        threshold=6,
+        family="endzone-maxdist",
+    ):
         manifest = json.loads(self.run_manifest.read_text(encoding="utf-8"))
         manifest["ladder_reset_pct"] = "0.5"
         manifest.update({
@@ -201,14 +206,71 @@ class CheckpointLineageTests(unittest.TestCase):
             "ladder_state_bank_loader_engine_source_sha256": "9" * 64,
             "ladder_state_bank_records": 3,
             "ladder_state_bank_bytes": 16 + 3 * (12 + 2240),
-            "ladder_endzone_maxdist": "6",
+            selector_key: str(threshold),
+            "ladder_state_bank_strata_schema":
+                "bloodbowl-legacy-state-bank-strata-v1",
+            "ladder_state_bank_strata_family": family,
+            "ladder_state_bank_strata_threshold": threshold,
+            "ladder_state_bank_strata_eligible_records": 2,
+            "ladder_state_bank_strata_sha256": "a" * 64,
         })
+        return manifest
+
+    def test_state_bank_active_selector_with_exact_descriptor_is_accepted(self):
+        manifest = self.active_selector_manifest()
         self.run_manifest.write_text(
             json.dumps(manifest, sort_keys=True) + "\n", encoding="utf-8")
-        with self.assertRaisesRegex(
-                checkpoint_lineage.LineageError, "pre-indexed strata"):
-            checkpoint_lineage.lineage_from_run_manifest(
-                self.checkpoint, self.run_manifest)
+        payload = checkpoint_lineage.lineage_from_run_manifest(
+            self.checkpoint, self.run_manifest)
+        self.assertEqual(
+            payload["producer"]["run_manifest_sha256"],
+            digest(self.run_manifest.read_bytes()),
+        )
+
+    def test_state_bank_selector_bounds_are_family_specific(self):
+        cases = (
+            ("ladder_endzone_maxdist", 26, "endzone-maxdist", 25),
+            ("ladder_pickup_maxdist", 26, "pickup-maxdist", 25),
+            ("ladder_postkick_maxturn", 9, "postkick-maxturn", 8),
+            ("ladder_pass_maxrange", 26, "pass-maxrange", 25),
+        )
+        for key, threshold, family, maximum in cases:
+            with self.subTest(key=key):
+                manifest = self.active_selector_manifest(
+                    selector_key=key,
+                    threshold=threshold,
+                    family=family,
+                )
+                self.run_manifest.write_text(
+                    json.dumps(manifest, sort_keys=True) + "\n",
+                    encoding="utf-8",
+                )
+                with self.assertRaisesRegex(
+                    checkpoint_lineage.LineageError,
+                    rf"{key}.*{maximum}",
+                ):
+                    checkpoint_lineage.lineage_from_run_manifest(
+                        self.checkpoint, self.run_manifest)
+
+    def test_state_bank_descriptor_counts_are_exact_json_integers(self):
+        for key in (
+            "ladder_state_bank_strata_threshold",
+            "ladder_state_bank_strata_eligible_records",
+        ):
+            for wrong in ("6", False):
+                with self.subTest(key=key, wrong=wrong):
+                    manifest = self.active_selector_manifest()
+                    manifest[key] = wrong
+                    self.run_manifest.write_text(
+                        json.dumps(manifest, sort_keys=True) + "\n",
+                        encoding="utf-8",
+                    )
+                    with self.assertRaisesRegex(
+                        checkpoint_lineage.LineageError,
+                        rf"{key}.*JSON integer",
+                    ):
+                        checkpoint_lineage.lineage_from_run_manifest(
+                            self.checkpoint, self.run_manifest)
 
     def test_qualification_output_is_never_eligible_ancestry(self):
         _, sidecar = self.create()
