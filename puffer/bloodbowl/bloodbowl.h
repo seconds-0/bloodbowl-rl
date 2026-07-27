@@ -783,10 +783,10 @@ typedef struct {
     int ep_ball_possessions;
     float poss_pickup_fwd, poss_path;
     int poss_last_x, poss_last_y;
-    // Bootstrap potentials, per channel: deltas emitted only WITHIN a regime
-    // (ball stays loose / same team keeps carrying); regime transitions emit
-    // nothing — pickup itself is priced by reward_ball_gain. NaN = inactive;
-    // finite negative values are valid potentials at any configured scale.
+    // Distance-potential history, per channel. Exact PBRS stores a finite TOTAL
+    // potential for every state (inactive = 0) and emits across every regime
+    // transition. Legacy raw-delta mode stores NaN while inactive and emits only
+    // within one uninterrupted regime; finite negative legacy values are valid.
     float pot_fetch_prev[2];
     float pot_carry_prev[2];
     float prev_contact_fav[2];
@@ -892,6 +892,40 @@ static float bbe_potential(float coeff, int dist) {
         abort();
     }
     return phi;
+}
+
+static void bbe_reset_potential_history(Bloodbowl* env) {
+    if (env->reward_dist_pbrs_gamma > 0.0f) {
+        for (int team = 0; team < BBE_AGENTS; team++) {
+            env->pot_fetch_prev[team] =
+                bbe_potential(
+                    env->reward_dist_ball,
+                    bbe_dist_fetch(&env->match, team));
+            env->pot_carry_prev[team] =
+                bbe_potential(
+                    env->reward_dist_endzone,
+                    bbe_dist_carry(&env->match, team));
+        }
+        return;
+    }
+    // Historical raw-delta mode: NaN is the inactive/unprimed sentinel.
+    env->pot_fetch_prev[0] = env->pot_fetch_prev[1] = NAN;
+    env->pot_carry_prev[0] = env->pot_carry_prev[1] = NAN;
+}
+
+static void bbe_require_exact_potential_history(
+        const Bloodbowl* env, int team) {
+    if (isfinite(env->pot_fetch_prev[team]) &&
+        isfinite(env->pot_carry_prev[team])) {
+        return;
+    }
+    fprintf(stderr,
+            "bloodbowl: exact PBRS history must be finite before stepping "
+            "(team=%d fetch=%g carry=%g); reset lifecycle was bypassed or "
+            "corrupted\n",
+            team, (double)env->pot_fetch_prev[team],
+            (double)env->pot_carry_prev[team]);
+    abort();
 }
 
 // The vendored trainer's reward clamp, applied in BOTH backends by
@@ -2717,11 +2751,10 @@ static void bbe_reset_match(Bloodbowl* env) {
         bbe_ball_xy(&env->match, &x, &y);
         bbe_start_ball_possession(env, env->possessor, x, y);
     }
-    // Potentials start inactive in both channels: the first post-reset step
-    // primes them without emitting a delta, so a resumed carrier/loose ball
-    // never books a phantom potential jump against the inactive sentinel.
-    env->pot_fetch_prev[0] = env->pot_fetch_prev[1] = NAN;
-    env->pot_carry_prev[0] = env->pot_carry_prev[1] = NAN;
+    // Exact PBRS must begin from the actual first policy-visible state s0;
+    // otherwise its first transition silently substitutes Phi(s1) for Phi(s0).
+    // Legacy raw-delta lineages retain their historical NaN priming semantics.
+    bbe_reset_potential_history(env);
     if (env->reward_k_assist != 0.0f) {
         env->prev_contact_fav[0] = bb_team_contact_favorability(&env->match, 0);
         env->prev_contact_fav[1] = bb_team_contact_favorability(&env->match, 1);
@@ -2943,8 +2976,8 @@ static void bbe_finish_episode(Bloodbowl* env) {
             // The `decisions >= max_decisions` TRUNCATION at the bottom of
             // c_step ends mid-drive with the ball typically still HELD, so
             // Phi(s_T) > 0 there, terminal is set to 1.0 so PPO does not
-            // bootstrap it away, and the next reset NaN-primes pot_*_prev --
-            // the accumulated potential debt was simply forgiven. Since
+            // bootstrap it away. Before terminal payback was added, the
+            // accumulated potential debt was simply forgiven. Since
             // truncation still pays the full result bonus from the current
             // score, that made "pad decisions to the cap while parked deep with
             // the ball" worth up to k_fetch*25 + k_carry*25 on top of it, and
@@ -3974,12 +4007,11 @@ static void c_step(Bloodbowl* env) {
                     // the emission happens on EVERY transition -- including
                     // across a score or drive boundary, because skipping one is
                     // exactly what breaks telescoping.
+                    bbe_require_exact_potential_history(env, t);
                     float phf = bbe_potential(env->reward_dist_ball, df);
                     float phc = bbe_potential(env->reward_dist_endzone, dc);
-                    float pf0 = isnan(env->pot_fetch_prev[t])
-                                    ? phf : env->pot_fetch_prev[t];
-                    float pc0 = isnan(env->pot_carry_prev[t])
-                                    ? phc : env->pot_carry_prev[t];
+                    float pf0 = env->pot_fetch_prev[t];
+                    float pc0 = env->pot_carry_prev[t];
                     if (env->reward_dist_ball != 0.0f) {
                         bbe_reward_add(env, t, BBE_REWARD_DISTANCE_BALL,
                                        gam * phf - pf0);
