@@ -468,16 +468,12 @@ typedef struct {
     //   2. WAS: the emission was raw (Phi' - Phi), not exact PBRS.
     //      NOW: gam*Phi' - Phi on every transition, with the terminal emitting
     //      -Phi(s_T-1) so a closed cycle sums to (gam-1)*sum(Phi) <= 0.
-    // One claim in the old text was simply WRONG and is not merely outdated: it
-    // blamed the anti-passing bias on BB_BALL_IN_AIR being a possession gap. A
-    // pass never enters that state. BB_BALL_IN_AIR is set at exactly one site,
-    // the kickoff scatter (engine/src/proc_match.c:664), where it IS observable
-    // at a decision because kickoff_event pauses for High Kick. So the
-    // BB_BALL_IN_AIR limbo case in bbe_update_ball_possession covers High Kick
-    // and nothing else, and it does NOT shield a pass in flight.
-    // The real anti-passing tax is D230's, still open: a pass with two or more
-    // interception candidates books a phantom loss-plus-gain of net -0.01 per
-    // completed pass. Do not attribute that to this channel.
+    // D230 is fixed in engine/src/proc_ball.c: a successful throw now enters
+    // BB_BALL_IN_AIR at release and remains there through interception,
+    // Catch/re-roll, Scatter, and pass-originated Throw-in windows. Possession
+    // therefore settles exactly once as HELD or ON_GROUND. The same existing
+    // state also covers unresolved kick flight; ordinary ground-originated
+    // bounces, fumbles, hand-offs, and throw-ins remain ground-based.
     float reward_dist_ball;
     float reward_dist_endzone;
     // Exact potential-based form for the two distance channels.

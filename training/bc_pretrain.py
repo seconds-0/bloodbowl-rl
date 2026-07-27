@@ -79,8 +79,11 @@ sys.path.insert(0, os.path.join(ROOT, "vendor", "PufferLib"))
 # header's mask_size below — the shards only pin the sum).
 ACT_SIZES = (30, 33, 391)
 MAGIC = b"BBP1"
-KNOWN_VERSIONS = (1, 2, 3, 4)  # v4: exact sequential action-mask semantics.
-                               # v3: obs-v5 with historical marginal masks.
+KNOWN_VERSIONS = (1, 2, 3, 4, 5)
+CURRENT_VERSION = 5
+CURRENT_OBS_SIZE = 2782
+CURRENT_MASK_SIZE = sum(ACT_SIZES)
+CURRENT_LINEAGE = (CURRENT_VERSION, CURRENT_OBS_SIZE, CURRENT_MASK_SIZE)
 HEADER_LEN = 16
 REPLAY_ID_SCAN_BATCH = 65_536
 
@@ -88,9 +91,10 @@ REPLAY_ID_SCAN_BATCH = 65_536
 def rec_dtype(obs_size, mask_size):
     """Return the header-driven BBP record layout.
 
-    Legacy shards remain readable, but an index rejects mixed header versions
-    or shapes. Version is load-bearing because BBP v2/2782 is obs-v4 while
-    BBP v3/2782 is same-shape obs-v5.
+    Legacy shards remain readable for explicit historical reproduction, but an
+    index rejects mixed header versions or shapes. Version is load-bearing:
+    v4 and v5 both use exact action masks and 2782-byte observations, but only
+    v5 binds the current obs-v6 pass/kick flight semantics.
     """
     return np.dtype([
         ("replay", "<u4"), ("cmd", "<u4"), ("agent", "u1"), ("pad", "u1", (3,)),
@@ -310,14 +314,25 @@ class ShardIndex:
 
 
 def require_exact_action_lineage(index, allow_legacy=False):
-    """Reject historical marginal-mask corpora for current BC runs."""
-    version = index.shards[0].version
-    if version != 4 and not allow_legacy:
+    """Require the complete current replay-observation/action lineage tuple."""
+    first = index.shards[0]
+    lineage = (first.version, index.obs_size, index.mask_size)
+    current = (
+        f"v{CURRENT_VERSION}/{CURRENT_OBS_SIZE}/{CURRENT_MASK_SIZE}")
+    if first.version == CURRENT_VERSION and lineage != CURRENT_LINEAGE:
         raise SystemExit(
-            f"BBP v{version} uses historical observation/action semantics; "
-            "current BC requires exact-action BBP v4. Pass "
-            "--allow-legacy-bbp only for an explicitly historical reproduction.")
-    return version
+            f"malformed BBP v{CURRENT_VERSION} lineage "
+            f"v{lineage[0]}/{lineage[1]}/{lineage[2]}; current BC requires "
+            f"BBP {current}, and version {CURRENT_VERSION} cannot be "
+            "reinterpreted by --allow-legacy-bbp")
+    if lineage != CURRENT_LINEAGE and not allow_legacy:
+        raise SystemExit(
+            f"BBP v{lineage[0]}/{lineage[1]}/{lineage[2]} uses historical "
+            f"observation/action semantics; current BC requires BBP {current}. "
+            "Re-extract pairs with the current lockstep writer, "
+            "or pass --allow-legacy-bbp only for an explicitly historical "
+            "reproduction.")
+    return first.version
 
 
 def split_replay_ids(replay_ids, val_frac, seed):
@@ -447,7 +462,7 @@ def resolve_device(requested):
     return "cpu"
 
 
-def load_shards(pair_dir, replay_ids=None):
+def load_shards(pair_dir, replay_ids=None, allow_legacy=False):
     """Compatibility loader for small callers; the CLI uses ShardIndex.
 
     Unlike the historical implementation this allocates one final array and
@@ -456,6 +471,7 @@ def load_shards(pair_dir, replay_ids=None):
     """
     with ShardIndex.from_directory(
             pair_dir, replay_ids=replay_ids, cache_size=2) as index:
+        require_exact_action_lineage(index, allow_legacy)
         data = LazyReplayDataset(index, index.nonempty_replay_ids)
         records = np.empty(index.total_records,
                            dtype=rec_dtype(index.obs_size, index.mask_size))
@@ -623,8 +639,8 @@ def main():
              "tools/replay_corpus_audit.py --write-bb2025-ids")
     ap.add_argument(
         "--allow-legacy-bbp", action="store_true",
-        help="permit v1-v3 only for an explicitly historical reproduction; "
-             "current exact-action BC requires v4")
+        help="permit v1-v4 only for an explicitly historical reproduction; "
+             "current BC requires the complete v5/2782/454 lineage")
     ap.add_argument("--config", default=os.path.join(ROOT, "puffer", "config",
                                                      "bloodbowl.ini"))
     ap.add_argument("--out", default=os.path.join(ROOT, "training", "checkpoints",

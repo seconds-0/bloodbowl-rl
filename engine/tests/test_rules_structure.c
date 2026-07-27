@@ -427,12 +427,52 @@ BB_TEST(struct_kickoff_catch_skill_reroll_still_offered) {
     BB_CHECK_EQ(st, BB_STATUS_DECISION);
     BB_CHECK(fx_find(&m, stx_act(BB_A_USE_REROLL, BB_RR_SKILL, BB_SK_CATCH, 0)) >= 0);
     BB_CHECK_EQ(fx_find(&m, stx_act(BB_A_USE_REROLL, BB_RR_TEAM, 0, 0)), -1);
+    BB_CHECK_EQ(m.ball.state, BB_BALL_IN_AIR);
+    BB_CHECK_EQ(m.ball.carrier, BB_NO_PLAYER);
+    BB_CHECK_EQ(m.ball.x, 18);
+    BB_CHECK_EQ(m.ball.y, 4);
     st = fx_apply(&m, stx_act(BB_A_USE_REROLL, BB_RR_SKILL, BB_SK_CATCH, 0), &rng);
     BB_CHECK_EQ(st, BB_STATUS_DECISION);
     BB_CHECK(!bb_rng_error(&rng));
     BB_CHECK_EQ(m.ball.state, BB_BALL_HELD);
     BB_CHECK_EQ(m.ball.carrier, catcher);
     BB_CHECK_EQ(m.rerolls[BB_AWAY], 3); // team pool untouched
+}
+
+// A kicked ball is already BB_BALL_IN_AIR. If it first lands empty, Bounces
+// onto a catcher, and opens a Catch-skill retry window, that nested Scatter
+// must preserve the same unresolved kick-flight state. Direct kick catches
+// already behave this way; this pins the equivalent bounced route.
+BB_TEST(struct_kickoff_bounce_catch_reroll_stays_airborne) {
+    bb_match m;
+    stx_kickoff_fixture(&m, BB_HOME);
+    int catcher = fx_player(&m, 1, 0, 19, 4, 6, 3, 2, 3, 9);
+    fx_give_skill(&m, catcher, BB_SK_CATCH);
+    fx_lineman(&m, 1, 1, 20, 10);
+    bb_rng rng;
+    // Deviate to empty (18,4); event 1+1; Bounce face 5 reaches (19,4).
+    // Bounced Catch is -1, so AG 2+ roll 2 fails and opens Catch; retry 3.
+    const uint8_t dice[] = {2, 3, 1, 1, 5, 2, 3};
+    bb_rng_script(&rng, dice, 7);
+    BB_CHECK_EQ(fx_run(&m, &rng), BB_STATUS_DECISION);
+    BB_CHECK_EQ(fx_apply(&m, stx_act(BB_A_KICK_TARGET, 0, 18, 7), &rng),
+                BB_STATUS_DECISION);
+    BB_CHECK(fx_find(
+                 &m,
+                 stx_act(BB_A_USE_REROLL, BB_RR_SKILL, BB_SK_CATCH, 0)) >= 0);
+    BB_CHECK_EQ(m.ball.state, BB_BALL_IN_AIR);
+    BB_CHECK_EQ(m.ball.carrier, BB_NO_PLAYER);
+    BB_CHECK_EQ(m.ball.x, 19);
+    BB_CHECK_EQ(m.ball.y, 4);
+
+    BB_CHECK_EQ(fx_apply(
+                    &m,
+                    stx_act(BB_A_USE_REROLL, BB_RR_SKILL, BB_SK_CATCH, 0),
+                    &rng),
+                BB_STATUS_DECISION);
+    BB_CHECK(!bb_rng_error(&rng));
+    BB_CHECK_EQ(m.ball.state, BB_BALL_HELD);
+    BB_CHECK_EQ(m.ball.carrier, catcher);
 }
 
 // GAME TOUCHBACKS: "The ball must land safely in the opposition half ... If

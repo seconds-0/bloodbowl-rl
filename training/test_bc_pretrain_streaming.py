@@ -94,32 +94,50 @@ class StreamingShardTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            self.write_shard(root, 42, 1, obs_size=2782, version=4)
+            self.write_shard(root, 42, 1, obs_size=2782, version=5)
             index = bc_pretrain.ShardIndex.from_directory(root)
-            self.assertEqual(index.shards[0].version, 4)
+            self.assertEqual(index.shards[0].version, 5)
             self.assertEqual(
-                bc_pretrain.require_exact_action_lineage(index), 4)
+                bc_pretrain.require_exact_action_lineage(index), 5)
             index.close()
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            self.write_shard(root, 42, 1, obs_size=2782, version=3)
+            # v4 has exact conditional actions, but predates D235's observable
+            # pass/kick flight semantics and is not a current BC corpus.
+            self.write_shard(root, 42, 1, obs_size=2782, version=4)
             index = bc_pretrain.ShardIndex.from_directory(root)
-            with self.assertRaisesRegex(SystemExit, "requires exact-action BBP v4"):
+            with self.assertRaisesRegex(
+                    SystemExit, "current BC requires BBP v5/2782/454"):
                 bc_pretrain.require_exact_action_lineage(index)
             self.assertEqual(
                 bc_pretrain.require_exact_action_lineage(
                     index, allow_legacy=True),
-                3,
+                4,
             )
             index.close()
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            self.write_shard(root, 42, 1, obs_size=2782, version=3)
-            self.write_shard(root, 43, 1, obs_size=2782, version=4)
+            self.write_shard(root, 42, 1, obs_size=2782, version=4)
+            self.write_shard(root, 43, 1, obs_size=2782, version=5)
             with self.assertRaisesRegex(SystemExit, "header mismatch across shards"):
                 bc_pretrain.ShardIndex.from_directory(root)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            # Version alone is not enough: current lineage is the complete
+            # v5/2782/454 tuple.
+            self.write_shard(root, 42, 1, obs_size=8, version=5)
+            index = bc_pretrain.ShardIndex.from_directory(root)
+            with self.assertRaisesRegex(
+                    SystemExit, "current BC requires BBP v5/2782/454"):
+                bc_pretrain.require_exact_action_lineage(index)
+            with self.assertRaisesRegex(
+                    SystemExit, "malformed BBP v5 lineage"):
+                bc_pretrain.require_exact_action_lineage(
+                    index, allow_legacy=True)
+            index.close()
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -148,6 +166,15 @@ class StreamingShardTests(unittest.TestCase):
                 struct.pack("<4sIII", b"BBP1", 2, 8,
                             sum(bc_pretrain.ACT_SIZES)) + b"partial")
             with self.assertRaisesRegex(SystemExit, "whole number"):
+                bc_pretrain.ShardIndex.from_directory(root)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            # A v5 label alone is insufficient: the complete current tuple is
+            # v5/2782/454.
+            (root / "10.bbp").write_bytes(
+                struct.pack("<4sIII", b"BBP1", 5, 2782, 453))
+            with self.assertRaisesRegex(SystemExit, "mask size 453"):
                 bc_pretrain.ShardIndex.from_directory(root)
 
     def test_v4_singleton_inactive_heads_have_zero_bc_gradient(self):

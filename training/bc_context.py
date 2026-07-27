@@ -15,7 +15,7 @@ Four A/B arms:
 
 Example:
   vendor/PufferLib/.venv/bin/python training/bc_context.py \\
-      --pairs-dir validation/pairs_v4 --arm structural_last_action \\
+      --pairs-dir validation/pairs --arm structural_last_action \\
       --expect-obs-size 2782 --head-loss legacy \\
       --steps 3000 --batch-size 256 --lr 1e-3 --cosine
 """
@@ -231,11 +231,15 @@ def verify_roundtrip(out_path, input_size, config_path, trained_policy, probe_ob
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--pairs-dir", default=os.path.join(ROOT, "validation", "pairs_v4"))
+    ap.add_argument("--pairs-dir", default=os.path.join(ROOT, "validation", "pairs"))
     ap.add_argument(
         "--replay-ids", default=None,
         help="exact replay-ID allowlist; generate the BB2025 list with "
              "tools/replay_corpus_audit.py --write-bb2025-ids")
+    ap.add_argument(
+        "--allow-legacy-bbp", action="store_true",
+        help="permit a historical BBP lineage only for explicit reproduction; "
+             "current context BC requires v5/2782/454")
     ap.add_argument("--config", default=os.path.join(ROOT, "puffer", "config",
                                                      "bloodbowl.ini"))
     ap.add_argument("--out", default=None,
@@ -287,7 +291,8 @@ def main():
     replay_ids = (bc_pretrain.load_replay_ids(args.replay_ids)
                   if args.replay_ids else None)
     recs, obs_size, mask_size = bc_pretrain.load_shards(
-        args.pairs_dir, replay_ids=replay_ids)
+        args.pairs_dir, replay_ids=replay_ids,
+        allow_legacy=args.allow_legacy_bbp)
     if args.expect_obs_size and obs_size != args.expect_obs_size:
         raise SystemExit(
             f"obs-size guard failed: {args.pairs_dir} has {obs_size}B obs, "

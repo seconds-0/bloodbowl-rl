@@ -49,7 +49,11 @@ jobs:
       - name: BC corpus filtering, bounded streaming, and qualification contracts
         run: |
           PYTHONPATH=training python3 -m unittest \
+            validation.test_extract_pairs \
+            training.test_bbp_lineage_contract \
+            training.test_bc_context_lineage \
             training.test_bc_pretrain_filter \
+            training.test_bc_pretrain_lineage \
             training.test_bc_pretrain_streaming \
             training.test_recurrent_cuda_qualification \
             training.test_exact_joint_actions \

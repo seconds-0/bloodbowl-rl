@@ -12,8 +12,9 @@ import bc_pretrain
 
 
 class ReplayIdFilterTests(unittest.TestCase):
-    def write_shard(self, root: Path, replay_id: int) -> None:
-        obs_size = 8
+    def write_shard(
+            self, root: Path, replay_id: int, *, version: int = 5) -> None:
+        obs_size = 2782
         mask_size = sum(bc_pretrain.ACT_SIZES)
         dtype = bc_pretrain.rec_dtype(obs_size, mask_size)
         record = np.zeros(1, dtype=dtype)
@@ -22,7 +23,8 @@ class ReplayIdFilterTests(unittest.TestCase):
         record["mask"][:, bc_pretrain.ACT_SIZES[0]] = 1
         record["mask"][:, bc_pretrain.ACT_SIZES[0] + bc_pretrain.ACT_SIZES[1]] = 1
         with (root / f"{replay_id}.bbp").open("wb") as f:
-            f.write(struct.pack("<4sIII", b"BBP1", 2, obs_size, mask_size))
+            f.write(struct.pack(
+                "<4sIII", b"BBP1", version, obs_size, mask_size))
             f.write(record.tobytes())
 
     def test_allowlist_excludes_other_ruleset_shards(self):
@@ -42,7 +44,7 @@ class ReplayIdFilterTests(unittest.TestCase):
             bc_pretrain.replay_ids_sha256(replay_ids),
             hashlib.sha256(b"25\n").hexdigest())
         self.assertEqual(records["replay"].tolist(), [25])
-        self.assertEqual(obs_size, 8)
+        self.assertEqual(obs_size, 2782)
         self.assertEqual(mask_size, sum(bc_pretrain.ACT_SIZES))
 
     def test_allowlist_fails_if_expected_shard_is_missing(self):
@@ -61,6 +63,31 @@ class ReplayIdFilterTests(unittest.TestCase):
 
             with self.assertRaisesRegex(SystemExit, "duplicate .bbp shard"):
                 bc_pretrain.load_shards(root)
+
+    def test_compatibility_loader_rejects_pre_d235_v4_by_default(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write_shard(root, 25, version=4)
+
+            with self.assertRaisesRegex(
+                    SystemExit, "current BC requires BBP v5/2782/454"):
+                bc_pretrain.load_shards(root)
+
+            records, obs_size, mask_size = bc_pretrain.load_shards(
+                root, allow_legacy=True)
+            self.assertEqual(records["replay"].tolist(), [25])
+            self.assertEqual(obs_size, 2782)
+            self.assertEqual(mask_size, sum(bc_pretrain.ACT_SIZES))
+
+    def test_legacy_override_never_allows_mixed_v4_v5_lineages(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write_shard(root, 24, version=4)
+            self.write_shard(root, 25, version=5)
+
+            with self.assertRaisesRegex(
+                    SystemExit, "header mismatch across shards"):
+                bc_pretrain.load_shards(root, allow_legacy=True)
 
 
 if __name__ == "__main__":

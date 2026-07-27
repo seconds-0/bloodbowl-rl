@@ -46,10 +46,18 @@ action space and the BBP lineage on top of the observation break, inside D218's
 exact-joint contract where a `bbe_decode` rejection aborts the engine. The
 16-byte option table ships instead and 2 bytes of slack are accepted.
 
-Also not done, and left as a known gap: `tools/bb_lockstep.c`, the BBP header
-version table, and the BC loader still describe BBP v3 as "same-shape obs-v5".
-BBP was out of scope for this revision, so a BBP v4 shard does not record which
-observation revision produced it.
+At the time obs-v6 shipped, BBP remained a known gap: a v4 shard did not record
+whether obs-v5 or obs-v6 produced it. D235 closes that collision for current
+data by minting BBP v5. The record layout is unchanged, but v5 binds current
+obs-v6—including pass/kick flight settlement—to v4's exact conditional masks.
+Current BC requires the full v5/2782/454 tuple; BC training consumers can read
+v1-v4 only behind an explicit historical-reproduction override. Audit-only
+readers continue to inspect old versions without treating them as trainable
+current data.
+Because BBP v5 is named lineage rather than source-addressed provenance, any
+future policy-visible engine or action-semantic correction must mint another
+BBP version (or introduce a stronger source-bound successor) even when the
+observation ABI and tensor shape remain unchanged.
 
 ## Layout delta from obs-v5
 

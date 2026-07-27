@@ -7,15 +7,17 @@ with --dump-pairs, landing one shard per replay at validation/pairs/<id>.bbp.
 Prints per-replay yields and corpus totals (replays, pairs, pairs/replay,
 bytes).
 
-The .bbp format (v3 = same-shape semantic obs-v5 marker) is documented in the
-comment block of tools/bb_lockstep.c and in validation/README.md: a 16-byte header
+The current .bbp v5 format binds obs-v6 plus D235 pass/kick flight semantics
+and exact conditional action masks. It is documented in tools/bb_lockstep.c
+and validation/README.md: a 16-byte header
 ("BBP1", version u32, obs_size u32, mask_size u32 = 454) followed
 by (12 + obs_size + mask_size + 4)-byte records (replay_id u32, cmd u32,
 agent u8, pad[3], obs[obs_size], mask[mask_size], type u8, arg u8, sq u16,
-little-endian). Record sizing honors the HEADER fields, so v1 shards
-(obs 832) still validate. Each shard is re-validated here: header fields,
-size % record size, and the invariant that every record's action targets
-are set in its own mask slices.
+little-endian). This is a producer-side validator: every shard emitted by the
+current extraction command must be exactly v5/2782/454. Historical shards are
+read by the audit tools, not accepted here. Each new shard is re-validated:
+exact lineage, size % record size, and the invariant that every record's
+action targets are set in its own mask slices.
 
 Stock python3, stdlib only. Consumers needing torch use
 training/bc_pretrain.py with vendor/PufferLib/.venv/bin/python.
@@ -38,8 +40,10 @@ RUNNER = os.path.join(ROOT, "build", "bb_lockstep")
 PAIR_DIR = os.path.join(ROOT, "validation", "pairs")
 
 MAGIC = b"BBP1"
-KNOWN_VERSIONS = (1, 2, 3, 4)  # v4 adds exact conditional action semantics
-MASK_SIZE = 454
+CURRENT_VERSION = 5
+CURRENT_OBS_SIZE = 2782
+CURRENT_MASK_SIZE = 454
+CURRENT_LINEAGE = (CURRENT_VERSION, CURRENT_OBS_SIZE, CURRENT_MASK_SIZE)
 HEAD_TYPE, HEAD_ARG, HEAD_SQ = 30, 33, 391
 HEADER_LEN = 16
 
@@ -47,15 +51,22 @@ HEADER_LEN = 16
 def validate_shard(path):
     """Header + per-record invariant check; returns the record count.
 
-    Record size comes from the HEADER's obs_size/mask_size (backward-compat:
-    historical shards still validate; version plus shape identifies lineage)."""
+    This validates output from the current writer, so legacy-compatible readers
+    are intentionally elsewhere. A stale lockstep binary must fail extraction
+    rather than quietly repopulate the current directory with v4 shards."""
     with open(path, "rb") as f:
         raw = f.read()
     if len(raw) < HEADER_LEN:
         raise ValueError(f"{path}: truncated header")
     magic, ver, osz, msz = struct.unpack("<4sIII", raw[:HEADER_LEN])
-    if magic != MAGIC or ver not in KNOWN_VERSIONS or msz != MASK_SIZE:
+    if magic != MAGIC:
         raise ValueError(f"{path}: bad header {magic} v{ver} obs={osz} mask={msz}")
+    if (ver, osz, msz) != CURRENT_LINEAGE:
+        raise ValueError(
+            f"{path}: current extractor must emit "
+            f"BBP v{CURRENT_VERSION}/{CURRENT_OBS_SIZE}/{CURRENT_MASK_SIZE}, "
+            f"got v{ver}/{osz}/{msz}; rebuild build/bb_lockstep before "
+            "extracting pairs")
     rec_len = 4 + 4 + 4 + osz + msz + 4
     body = raw[HEADER_LEN:]
     if len(body) % rec_len:

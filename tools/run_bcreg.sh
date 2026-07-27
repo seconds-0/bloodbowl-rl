@@ -19,7 +19,7 @@
 set -euo pipefail
 if [ "${ALLOW_LEGACY_BCREG:-0}" != "1" ]; then
   echo "run_bcreg.sh is a historical BBP/checkpoint-v1 reproduction only." >&2
-  echo "Current exact-action training requires BBP v4; set ALLOW_LEGACY_BCREG=1 only to reproduce the rejected historical arm." >&2
+  echo "Current training requires BBP v5/2782/454; set ALLOW_LEGACY_BCREG=1 only to reproduce the rejected historical arm." >&2
   exit 1
 fi
 # Mac uses the repo venv; GPU boxes install into system python.

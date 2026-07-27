@@ -96,10 +96,11 @@ names an offered engine action (or an explicit macro-move env action).
 - Physical shape stays 2,782, so checkpoint blob size and network parameter
   count cannot distinguish obs-v4 from obs-v5.
 - `BBE_OBS_VERSION` is 5 and source/module provenance is mandatory.
-- Newly extracted replay pairs use BBP version 4 for exact conditional action
-  masks. Historical BBP v3/2782 is obs-v5 with marginal action masks and
-  v2/2782 is obs-v4. The BC loader includes header version in its lineage key
-  and rejects mixed lineages before opening training memmaps.
+- The obs-v5 exact-action lineage used BBP version 4. Historical BBP v3/2782
+  is obs-v5 with marginal action masks and v2/2782 is obs-v4. Current
+  obs-v6/D235 extraction uses BBP v5 (see `docs/obs-v6-spec.md`). The BC loader
+  includes header version in its lineage key and rejects mixed lineages before
+  opening training memmaps.
 - Obs-v4 weights, replay-pair observations, and training curves are not
   semantically interchangeable with obs-v5 despite shape compatibility.
 - Do not warm-start a v5 run from v4, compare their curves as one lineage, or
