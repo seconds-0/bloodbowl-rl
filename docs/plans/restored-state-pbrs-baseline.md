@@ -1,8 +1,9 @@
 # Restored-state exact-PBRS `s0` baseline
 
-Status: implemented and independently approved; watched-fail, optimized,
-sanitizer, lineage, and repository validation green; installed-environment
-checkpoint validation in progress
+Status: complete at runtime checkpoint
+`ac3c4fecbf664774a5d8b471b5a2fb352ab45bc5`; watched-fail, independent
+review, optimized, sanitizer, lineage, clean-install, and deterministic
+validation green
 
 Base: `3512e7c2ff2b64bad397586fcff55a54388ec1df`
 
@@ -555,6 +556,28 @@ numeric BBP-v6 writer tests; the replay/reward/tool suite passes 205 tests with
 90 tests; and code generation, all reward manifests, shell syntax, and
 `git diff --check` pass.
 
-Kimi CLI review is omitted under the user's explicit waiver. Clean pinned
-installation, hashes, repeated FNV, checkpoint commits, and the chronological
-decision entry remain to be recorded before this item is complete.
+The runtime/test/plan checkpoint is
+`ac3c4fecbf664774a5d8b471b5a2fb352ab45bc5`. A clean install into PufferLib
+commit `9836f0d2e78889c1aaf189c04d161b6fc61a9386`, followed by a from-scratch
+CPU build and installer drift check, records:
+
+- environment source SHA-256
+  `2f1b9ebab1ee42d8dfe96b157a0feb2ae7df50467e38660a74ae94cf11fdd61c`;
+- unchanged exact-action source SHA-256
+  `1414c9041d1942bdd049eb257338c3a2df3cf72240015e58e5eab095ff691ca7`;
+- imported CPU/fp32 module SHA-256
+  `7a8a46e96d28251438058270107c93e467324c9bd9d47a16a576b9900b370aee`;
+- standalone SHA-256
+  `2daf6a2e67cd9dc0c7f2dba35393bc5e9bef4bc5656e9f2d95f6d21f5fdfbb66`;
+- advertised `bloodbowl`, CPU, fp32, `obs-v6/6`, and `exact-joint-v1`.
+
+The seed-42, 100-episode deterministic smoke repeats byte-identically as
+`ea1d720e69f5a491`, with 26,251 steps and `illegal_frac 0.0000`. Equality with
+D236 is the expected negative control: the smoke has bank curriculum and
+distance shaping disabled. The real restored-state exact-PBRS regressions are
+the positive proof that the changed source path executes.
+
+Kimi CLI review is omitted under the user's explicit waiver. No push, PR,
+merge, training launch, corpus mutation, observation/record version bump, or
+historical relabelling occurred. D237 records the final chronological decision
+and evidence.
