@@ -2636,6 +2636,18 @@ BB_TEST(state_bank_config_rejects_raw_conversion_traps) {
                 BBE_SB_CONFIG_INERT_KIND);
 }
 
+BB_TEST(state_bank_procgen_config_rejects_out_of_range_team) {
+    const bbe_state_bank_config_values values = {
+        .reset_pct = 0.0,
+        .kind = BBE_STATE_BANK_NONE,
+        .exclude_team = -1.0,
+        .force_home_team = (double)BB_TEAM_COUNT,
+        .force_away_team = -1.0,
+    };
+    BB_CHECK(bbe_state_bank_validate_config_values(
+                    &values, BBE_STATE_BANK_STRICT_REPLAY) != BBE_SB_OK);
+}
+
 BB_TEST(state_bank_each_selector_enforces_exact_closed_numeric_domain) {
     bbe_state_bank_config_values values = {
         1.0, BBE_STATE_BANK_STRICT_REPLAY, 0.0, 0.0, 0.0, 0.0,

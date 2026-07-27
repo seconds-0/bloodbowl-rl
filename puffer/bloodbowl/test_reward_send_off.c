@@ -1443,6 +1443,15 @@ BB_TEST(puffer_reward_config_rejects_nonfinite_coefficients) {
     f.env.reward_dist_endzone = 3.402823466e+38F;
     BB_CHECK(!bbe_reward_config_scalars_valid(&f.env, &bad_field));
     BB_CHECK(strcmp(bad_field, "reward_dist_endzone") == 0);
+
+    f.env.reward_dist_endzone = 0.0f;
+    f.env.reward_dist_pbrs_gamma = NAN;
+    bad_field = NULL;
+    BB_CHECK(!bbe_reward_config_scalars_valid(&f.env, &bad_field));
+    BB_CHECK(bad_field != NULL);
+    if (bad_field != NULL) {
+        BB_CHECK(strcmp(bad_field, "reward_dist_pbrs_gamma") == 0);
+    }
 }
 
 BB_TEST(puffer_reward_clip_threshold_derives_both_pbrs_forms) {
