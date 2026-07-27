@@ -13,7 +13,7 @@ import bc_pretrain
 
 class ReplayIdFilterTests(unittest.TestCase):
     def write_shard(
-            self, root: Path, replay_id: int, *, version: int = 5) -> None:
+            self, root: Path, replay_id: int, *, version: int = 6) -> None:
         obs_size = 2782
         mask_size = sum(bc_pretrain.ACT_SIZES)
         dtype = bc_pretrain.rec_dtype(obs_size, mask_size)
@@ -64,13 +64,13 @@ class ReplayIdFilterTests(unittest.TestCase):
             with self.assertRaisesRegex(SystemExit, "duplicate .bbp shard"):
                 bc_pretrain.load_shards(root)
 
-    def test_compatibility_loader_rejects_pre_d235_v4_by_default(self):
+    def test_compatibility_loader_rejects_pre_d236_v5_by_default(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            self.write_shard(root, 25, version=4)
+            self.write_shard(root, 25, version=5)
 
             with self.assertRaisesRegex(
-                    SystemExit, "current BC requires BBP v5/2782/454"):
+                    SystemExit, "current BC requires BBP v6/2782/454"):
                 bc_pretrain.load_shards(root)
 
             records, obs_size, mask_size = bc_pretrain.load_shards(
@@ -79,11 +79,11 @@ class ReplayIdFilterTests(unittest.TestCase):
             self.assertEqual(obs_size, 2782)
             self.assertEqual(mask_size, sum(bc_pretrain.ACT_SIZES))
 
-    def test_legacy_override_never_allows_mixed_v4_v5_lineages(self):
+    def test_legacy_override_never_allows_mixed_v5_v6_lineages(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            self.write_shard(root, 24, version=4)
-            self.write_shard(root, 25, version=5)
+            self.write_shard(root, 24, version=5)
+            self.write_shard(root, 25, version=6)
 
             with self.assertRaisesRegex(
                     SystemExit, "header mismatch across shards"):

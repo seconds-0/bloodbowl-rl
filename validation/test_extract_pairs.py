@@ -9,10 +9,15 @@ from validation import extract_pairs
 
 
 class ExtractedPairLineageTests(unittest.TestCase):
-    def write_shard(self, root: Path, version: int) -> Path:
+    def write_shard(
+            self,
+            root: Path,
+            version: int,
+            *,
+            obs_size: int = 2782,
+            mask_size: int = 454,
+    ) -> Path:
         path = root / "25.bbp"
-        obs_size = 2782
-        mask_size = 454
         mask = bytearray(mask_size)
         mask[0] = 1
         mask[30] = 1
@@ -30,16 +35,30 @@ class ExtractedPairLineageTests(unittest.TestCase):
         )
         return path
 
-    def test_current_v5_shard_is_accepted(self):
+    def test_current_v6_shard_is_accepted(self):
         with tempfile.TemporaryDirectory() as tmp:
-            path = self.write_shard(Path(tmp), version=5)
+            path = self.write_shard(Path(tmp), version=6)
             self.assertEqual(extract_pairs.validate_shard(path), 1)
 
-    def test_stale_v4_writer_output_is_rejected(self):
+    def test_stale_v5_writer_output_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
-            path = self.write_shard(Path(tmp), version=4)
+            path = self.write_shard(Path(tmp), version=5)
             with self.assertRaisesRegex(
-                    ValueError, "must emit BBP v5/2782/454"):
+                    ValueError, "must emit BBP v6/2782/454"):
+                extract_pairs.validate_shard(path)
+
+    def test_v6_label_with_wrong_observation_size_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self.write_shard(Path(tmp), version=6, obs_size=8)
+            with self.assertRaisesRegex(
+                    ValueError, "must emit BBP v6/2782/454"):
+                extract_pairs.validate_shard(path)
+
+    def test_v6_label_with_wrong_mask_size_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self.write_shard(Path(tmp), version=6, mask_size=453)
+            with self.assertRaisesRegex(
+                    ValueError, "must emit BBP v6/2782/454"):
                 extract_pairs.validate_shard(path)
 
 

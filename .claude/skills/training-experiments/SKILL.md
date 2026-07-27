@@ -110,10 +110,12 @@ default.
 - There is **no accepted obs-v6 BC anchor**. `training/bc_v4.bin` (val exact 0.508, D53) and
   the 2.09M v4 pairs in `validation/pairs_v4` are valid only in a deliberately pinned obs-v4
   runtime — never warm-start or evaluate them under v5/v6 because the shape loads. New
-  exact-action obs-v6 exports are BBP v4; NOTE that the BBP header does not record which
-  observation revision produced a shard, so v5 and v6 pairs are indistinguishable by header
-  and must be kept separate by provenance. The loader rejects v1–v3 (version table in
-  `puffer-env-dev` §9).
+  exact-action obs-v6 exports are BBP v6: v4 first introduced exact conditional actions,
+  v5 binds D235 pass/kick settlement, and current v6 binds D236 handoff Catch-retry
+  settlement. BBP is a named semantic lineage rather than a source hash, so retain
+  source/module provenance too. The loader requires exact v6/2782/454 by default and permits
+  one known homogeneous v1-v5 lineage only behind the explicit historical override (version
+  table in `puffer-env-dev` §9).
 - The `exact-action-canary` is a fresh-initialization qualification run: launch with
   `env -u WARM -u POOL` and zero frozen banks. Its output is qualification-only — never
   continue from it, never analyze it as a result cell.

@@ -219,20 +219,20 @@ static void report_divergence(runner* R, long cmd, const char* cls,
 }
 
 // --- BC pair dump (--dump-pairs <out.bbp>) -----------------------------------
-// .bbp format v5: binary, little-endian, written by this runner; consumed by
+// .bbp format v6: binary, little-endian, written by this runner; consumed by
 // training/bc_pretrain.py (extraction orchestrated by
 // validation/extract_pairs.py). Also documented in validation/README.md.
-// v5 retains v4's exact sequential action support and canonical inactive-head
-// sentinels, and binds the current obs-v6 semantics including D235's
-// policy-visible pass/kick flight settlement. v4 predates that settlement
-// boundary; v3 identifies obs-v5 with historical marginal masks.
+// v6 retains v5's exact sequential action support, canonical inactive-head
+// sentinels, and D235 pass/kick settlement, then adds D236's policy-visible
+// unresolved handoff Catch-retry settlement. v5 predates that handoff boundary;
+// v4 predates D235; v3 identifies obs-v5 with historical marginal masks.
 // Historical v2 spans obs-v3 (1612 B) and obs-v4 (2782 B); v1 carried 832 B.
 // Readers size records from the header and include VERSION in lineage checks:
-// v2/v3/v4/v5 at 2782 bytes must never mix despite equal physical shape.
+// v2/v3/v4/v5/v6 at 2782 bytes must never mix despite equal physical shape.
 //
 //   header (16 bytes):
 //     magic     char[4]  "BBP1"
-//     version   u32      5 (current obs-v6 + exact-action semantics)
+//     version   u32      6 (current obs-v6 + exact-action semantics)
 //     obs_size  u32      BBE_OBS_SIZE  (2782; historical v2 may also be 2782)
 //     mask_size u32      BBE_MASK_SIZE (454)
 //   record (12 + obs_size + mask_size + 4 = 3252 bytes), one per
@@ -287,7 +287,7 @@ typedef struct {
     float rew_buf[BBE_AGENTS], term_buf[BBE_AGENTS];
 } pair_dumper;
 
-#define BBP_CURRENT_VERSION 5
+#define BBP_CURRENT_VERSION 6
 
 static pair_dumper PD; // static: Bloodbowl carries ~30KB of legal buffers
 

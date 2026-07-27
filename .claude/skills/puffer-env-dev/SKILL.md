@@ -351,19 +351,23 @@ caught the stale 1612 (D54); nothing guards the converter default.
 | v1 | obs-v2, 832 bytes |
 | v2 | historical marginal-mask era; spans obs-v3 (1612) **and** obs-v4 (2782) |
 | v3 | obs-v5's semantic ABI at 2782, still pre-exact-action |
-| v4 | **current** — exact sequential action semantics and canonical inactive-head sentinels, 2782 |
+| v4 | first exact sequential actions and canonical inactive-head sentinels, 2782 |
+| v5 | historical obs-v6/D235 pass-and-kick settlement semantics, 2782 |
+| v6 | **current** — obs-v6/D236 handoff Catch-retry settlement semantics, 2782 |
 
-**Known gap:** the BBP header does not record the observation revision, so a v4 shard
-written under obs-v5 and one written under obs-v6 are indistinguishable by header. obs-v6
-deliberately did not touch BBP; keep v5 and v6 pair stores separate by provenance.
+BBP versions are named semantic lineages, not source-addressed provenance. Historical v4
+can still collide across obs-v5/early-obs-v6 producers, while v5 and v6 distinguish D235
+and D236 policy-visible engine semantics despite identical shapes. Always retain the
+producer source/module identity as well as the BBP header.
 
-The writer emits v4, and `bc_pretrain.py` rejects anything but v4 unless `--allow-legacy` is
-passed. v2/2782, v3/2782, and v4/2782 must never mix despite identical physical shape, and
-an index rejects mixed header versions outright. The historical pair store is 2,085,330
-obs-v4 records across 12,304 BBP-v2 shards — **not** current training data. The strict
-embedded-`rulesVersion` BB2025 surface is 9,118 non-empty replay IDs / 1,622,231 joined
-records (`runs/replay-audit-20260713/`). Never call shard count replay count, and never mix
-BB2020 into BC.
+The writer emits v6, and `bc_pretrain.py` requires exactly v6/2782/454 by default.
+`--allow-legacy-bbp` permits only one homogeneous, explicitly known v1-v5 tuple for
+historical reproduction; it cannot reinterpret malformed or mixed headers.
+v2/v3/v4/v5/v6 at 2782 bytes must never mix despite identical physical shape. The
+historical pair store is 2,085,330 obs-v4 records across 12,304 BBP-v2 shards — **not**
+current training data. The strict embedded-`rulesVersion` BB2025 surface is 9,118
+non-empty replay IDs / 1,622,231 joined records (`runs/replay-audit-20260713/`). Never
+call shard count replay count, and never mix BB2020 into BC.
 
 Historical anchor: **bc_v4** (val exact 0.508) is not valid for obs-v6 warm-start and lives
 only on the training boxes; local `training/` holds ≤ bc_v3b.
@@ -445,7 +449,7 @@ editions. Keep `bc_coef=0`; reconsidering needs bounded streaming, a BB2025-exac
 and a new hypothesis. `training/torch_pufferl_bcreg.patch` is applied only by
 `tools/run_bcreg.sh` and validated by `training/test_bcreg_torch_pufferl.py`; its hardcoded
 `training/bc_v1.bin` is dead obs-v2 lineage, so never run the historical recipe against the
-v5 runtime even with a shape-loadable checkpoint.
+current v6 runtime (or any non-obs-v2 runtime) even with a shape-loadable checkpoint.
 
 ## 13. Footguns beyond §1–§6
 

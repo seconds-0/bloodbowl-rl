@@ -451,27 +451,31 @@ and the head projections `bbe_action_arg`/`bbe_action_sq` are byte-identical
 to training. Divergence reporting is unchanged; records stop at the first
 divergence (nothing past it is applied).
 
-### `.bbp` format v5 (binary, little-endian)
+### `.bbp` format v6 (binary, little-endian)
 
-v5 retains v4's exact sequential action semantics and 454-byte mask: the stored
+v6 retains v5's exact sequential action semantics and 454-byte mask: the stored
 slices are the type support, argument support conditioned on the target type,
 and square support conditioned on the target type+argument, with inactive heads
-canonicalized to arg=32 and square=390. It additionally binds the current
-obs-v6 semantics, including D235's policy-visible pass/kick flight settlement.
-v4 has the same shape and exact action masks but predates that settlement
-boundary; v3 marks obs-v5 with historical marginal masks.
+canonicalized to arg=32 and square=390. It binds the current obs-v6 engine
+semantics through D236's policy-visible unresolved handoff Catch-retry
+settlement. v5 has the same shape and exact action masks and includes D235's
+pass/kick flight settlement, but predates D236. v4 predates D235; v3 marks
+obs-v5 with historical marginal masks.
 Historical v2 spans obs-v3 (1612 B) and obs-v4 (2782 B); v1 carried 832 B.
 The historical audit readers (`bbp_behavior_audit.py` and
-`replay_corpus_audit.py`) size records from the header and accept v1-v5.
-`bc_pretrain.py` and `bc_context.py` require the exact v5/2782/454 tuple by
-default; their explicit legacy override still requires a homogeneous full
-`(version, obs_size, mask_size)` lineage. The rejected Torch BC-regularizer is
-deliberately frozen at v1-v4 and refuses v5 rather than acting as a current
-consumer; resurrecting that archived path would require repairing its stored
-patch and making version part of its own cross-shard comparison.
+`replay_corpus_audit.py`) size records from the header and accept v1-v6.
+`bc_pretrain.py` and `bc_context.py` require the exact v6/2782/454 tuple by
+default. Their explicit legacy override accepts only one homogeneous,
+known-valid historical tuple from v1-v5; arbitrary version/shape combinations
+and mixed lineages remain invalid. The rejected Torch BC-regularizer is
+deliberately frozen at v1-v4 and refuses both v5 and v6 rather than acting as a
+current consumer. Its launcher requires an explicitly supplied archived,
+homogeneous v1-v4 directory; the current extractor cannot recreate that arm.
+Resurrecting the archived path would also require repairing its stored patch
+and making version part of its own cross-shard comparison.
 `extract_pairs.py` is stricter still: as a producer validator it accepts only
-exact v5/2782/454, so a stale v4 `bb_lockstep` binary fails the extraction run.
-Re-extract every current shard with the v5 writer before BC; no in-place header
+exact v6/2782/454, so a stale v5 `bb_lockstep` binary fails the extraction run.
+Re-extract every current shard with the v6 writer before BC; no in-place header
 relabel is valid.
 
 BBP versions name the engine semantics used during extraction, not just the
@@ -482,7 +486,7 @@ source-bound provenance, even when observation and mask dimensions do not move.
 ```
 header (16 bytes):
   magic     char[4]  "BBP1"
-  version   u32      5 (current obs-v6 plus exact sequential actions)
+  version   u32      6 (current obs-v6 plus exact sequential actions)
   obs_size  u32      2782 (BBE_OBS_SIZE; same physical shape as obs-v4)
   mask_size u32      454  (BBE_MASK_SIZE = 30 + 33 + 391 head bits)
 record (12 + obs_size + mask_size + 4 = 3252 bytes each):
@@ -520,7 +524,7 @@ plus corpus totals (replays, pairs, pairs/replay, bytes). Consumed by
 was .bbp v2 on the cycle-2 engine: **70 231 pairs (175.1 pairs/replay)** —
 v1 yielded 58 079 pre-cycle-2; v0 yielded 1 766 over 21 replays. It is
 historical evidence, not a current corpus. This repository does not claim a
-usable local v5 corpus; one must be regenerated from normalized source replays
+usable local v6 corpus; one must be regenerated from normalized source replays
 before current BC. Pair count grows automatically as lockstep coverage improves.
 
 ## Demo-state dump — `bb_lockstep --dump-states` + `build_state_bank.py`

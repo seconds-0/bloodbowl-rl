@@ -47,14 +47,25 @@ exact-joint contract where a `bbe_decode` rejection aborts the engine. The
 16-byte option table ships instead and 2 bytes of slack are accepted.
 
 At the time obs-v6 shipped, BBP remained a known gap: a v4 shard did not record
-whether obs-v5 or obs-v6 produced it. D235 closes that collision for current
-data by minting BBP v5. The record layout is unchanged, but v5 binds current
-obs-v6—including pass/kick flight settlement—to v4's exact conditional masks.
-Current BC requires the full v5/2782/454 tuple; BC training consumers can read
-v1-v4 only behind an explicit historical-reproduction override. Audit-only
-readers continue to inspect old versions without treating them as trainable
-current data.
-Because BBP v5 is named lineage rather than source-addressed provenance, any
+whether obs-v5 or obs-v6 produced it. D235 closed that collision by minting BBP
+v5 for current obs-v6 plus pass/kick flight settlement. D236 now mints BBP v6
+because unresolved handoff Catch-retry settlement is also policy-visible at the
+same physical shape. The record layout is unchanged. Current BC requires the
+full v6/2782/454 tuple; BC training consumers can read one homogeneous,
+known-valid v1-v5 lineage only behind an explicit historical-reproduction
+override. Audit-only readers continue to inspect v1-v6 without treating old
+versions as trainable current data.
+
+`BBE_OBS_VERSION = 6` and `BBP version = 6` are independent identifiers whose
+equal number is coincidental. No observation byte, offset, size, enum numeric
+mapping, action projection, or operative value meaning changed in D236:
+`BB_BALL_IN_AIR` remains carrierless, non-fetch, unsettled limbo. The engine
+transition graph now reaches that existing category for a handoff retry. The
+declared HANDOFF action, nested TEST/Catch context, tested player, teams, and
+exact mask disambiguate the window. Source/module hashes protect checkpoint
+dynamics; BBP v6 protects recorded replay dynamics.
+
+Because BBP is named lineage rather than source-addressed provenance, any
 future policy-visible engine or action-semantic correction must mint another
 BBP version (or introduce a stronger source-bound successor) even when the
 observation ABI and tensor shape remain unchanged.

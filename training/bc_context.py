@@ -239,7 +239,7 @@ def main():
     ap.add_argument(
         "--allow-legacy-bbp", action="store_true",
         help="permit a historical BBP lineage only for explicit reproduction; "
-             "current context BC requires v5/2782/454")
+             "current context BC requires v6/2782/454")
     ap.add_argument("--config", default=os.path.join(ROOT, "puffer", "config",
                                                      "bloodbowl.ini"))
     ap.add_argument("--out", default=None,

@@ -104,7 +104,7 @@ typedef enum {
     BB_BALL_OFF_PITCH = 0, // pre-kickoff / out of bounds being thrown in
     BB_BALL_ON_GROUND,
     BB_BALL_HELD,          // carried by .carrier
-    BB_BALL_IN_AIR,        // mid-pass/kick scatter resolution
+    BB_BALL_IN_AIR,        // unresolved pass/kick/handoff transfer
 } bb_ball_state;
 
 typedef struct {

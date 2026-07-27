@@ -10,7 +10,7 @@ This tool joins three immutable artifacts without loading BBP record bodies:
 
 * replay-cache ``manifest.json`` for match metadata;
 * ``replay_<id>.json.gz`` for the exact rules version;
-* ``<id>.bbp`` shards for observation version, byte size, and record count.
+* ``<id>.bbp`` shards for semantic lineage, byte size, and record count.
 
 It prints aggregate JSON only; coach and team names are never emitted. Use
 ``--write-bb2025-ids`` to create an exact replay-id allowlist for downstream
@@ -32,7 +32,7 @@ from typing import Any
 
 BBP_HEADER = struct.Struct("<4sIII")
 BBP_MAGIC = b"BBP1"
-BBP_KNOWN_VERSIONS = (1, 2, 3, 4, 5)
+BBP_KNOWN_VERSIONS = (1, 2, 3, 4, 5, 6)
 RULES_RE = re.compile(
     rb'"gameOptionId"\s*:\s*"rulesVersion"\s*,\s*'
     rb'"gameOptionValue"\s*:\s*"([^"]+)"'

@@ -180,10 +180,11 @@ requires prior candidate-transfer evidence. For unattended multi-day work use
   mode off; persistent-state training is unsupported because recomputation does
   not capture trajectory initial state.
 - BBP v4 is the first replay-pair lineage with exact conditional masks and
-  canonical inactive-head sentinels (`arg=32`, `square=390`), but it predates
-  D235's policy-visible pass/kick flight semantics. Current BC requires the
-  exact BBP v5/2782/454 tuple. Do not train a current experiment from v1–v4,
-  or mix lineages, merely because obs/mask dimensions are unchanged.
+  canonical inactive-head sentinels (`arg=32`, `square=390`). BBP v5 adds
+  D235's policy-visible pass/kick flight semantics but predates D236's
+  unresolved handoff Catch-retry settlement. Current BC requires the exact
+  BBP v6/2782/454 tuple. Do not train a current experiment from v1–v5, or mix
+  lineages, merely because obs/mask dimensions are unchanged.
   Any later policy-visible engine/action semantic change requires a new BBP
   version or source-bound successor, even if the tensor ABI does not move.
 - Record `_C.__file__`, `_C.env_name`, GPU flag, precision bytes, and the imported

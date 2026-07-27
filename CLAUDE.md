@@ -175,8 +175,9 @@ evidence disagree, the newer evidence wins.
   are singleton sentinels, so they contribute zero log-probability and entropy.
   `bbe_decode` rejects instead of repairing. Historical marginal-mask
   checkpoints/corpora are a distinct behavior lineage. BBP v4 first carried
-  exact conditional masks, but current pairs are BBP v5 because D235 changes
-  policy-visible pass/kick flight semantics at the same obs-v6 shape.
+  exact conditional masks; v5 adds D235 pass/kick settlement. Current pairs
+  are BBP v6 because D236 changes policy-visible handoff Catch-retry settlement
+  at the same obs-v6 shape.
 - **Detection is fail-fast, not paperwork.** The engine aborts on the first
   decode/support violation (`bloodbowl.h:2796-2803`) — stronger than any
   end-of-run audit. On top of that, `illegal_frac` and the 16 hard-integrity

@@ -468,12 +468,12 @@ typedef struct {
     //   2. WAS: the emission was raw (Phi' - Phi), not exact PBRS.
     //      NOW: gam*Phi' - Phi on every transition, with the terminal emitting
     //      -Phi(s_T-1) so a closed cycle sums to (gam-1)*sum(Phi) <= 0.
-    // D230 is fixed in engine/src/proc_ball.c: a successful throw now enters
-    // BB_BALL_IN_AIR at release and remains there through interception,
-    // Catch/re-roll, Scatter, and pass-originated Throw-in windows. Possession
-    // therefore settles exactly once as HELD or ON_GROUND. The same existing
-    // state also covers unresolved kick flight; ordinary ground-originated
-    // bounces, fumbles, hand-offs, and throw-ins remain ground-based.
+    // D230/D236 are fixed in engine/src/proc_ball.c: a successful throw or
+    // released handoff enters BB_BALL_IN_AIR and remains there through its
+    // Catch/re-roll, Scatter/Bounce, and transfer-originated Throw-in windows.
+    // Possession therefore settles exactly once as HELD or ON_GROUND. The same
+    // state covers unresolved kick flight; ordinary ground-originated bounces,
+    // fumbles, and throw-ins remain ground-based.
     float reward_dist_ball;
     float reward_dist_endzone;
     // Exact potential-based form for the two distance channels.

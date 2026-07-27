@@ -79,11 +79,20 @@ sys.path.insert(0, os.path.join(ROOT, "vendor", "PufferLib"))
 # header's mask_size below — the shards only pin the sum).
 ACT_SIZES = (30, 33, 391)
 MAGIC = b"BBP1"
-KNOWN_VERSIONS = (1, 2, 3, 4, 5)
-CURRENT_VERSION = 5
+KNOWN_VERSIONS = (1, 2, 3, 4, 5, 6)
+CURRENT_VERSION = 6
 CURRENT_OBS_SIZE = 2782
 CURRENT_MASK_SIZE = sum(ACT_SIZES)
 CURRENT_LINEAGE = (CURRENT_VERSION, CURRENT_OBS_SIZE, CURRENT_MASK_SIZE)
+KNOWN_LINEAGES = frozenset({
+    (1, 832, CURRENT_MASK_SIZE),
+    (2, 1612, CURRENT_MASK_SIZE),
+    (2, 2782, CURRENT_MASK_SIZE),
+    (3, 2782, CURRENT_MASK_SIZE),
+    (4, 2782, CURRENT_MASK_SIZE),
+    (5, 2782, CURRENT_MASK_SIZE),
+    CURRENT_LINEAGE,
+})
 HEADER_LEN = 16
 REPLAY_ID_SCAN_BATCH = 65_536
 
@@ -93,8 +102,8 @@ def rec_dtype(obs_size, mask_size):
 
     Legacy shards remain readable for explicit historical reproduction, but an
     index rejects mixed header versions or shapes. Version is load-bearing:
-    v4 and v5 both use exact action masks and 2782-byte observations, but only
-    v5 binds the current obs-v6 pass/kick flight semantics.
+    v4, v5, and v6 use exact action masks and 2782-byte observations. v5 adds
+    D235 pass/kick settlement; only v6 adds D236 handoff-retry settlement.
     """
     return np.dtype([
         ("replay", "<u4"), ("cmd", "<u4"), ("agent", "u1"), ("pad", "u1", (3,)),
@@ -325,6 +334,12 @@ def require_exact_action_lineage(index, allow_legacy=False):
             f"v{lineage[0]}/{lineage[1]}/{lineage[2]}; current BC requires "
             f"BBP {current}, and version {CURRENT_VERSION} cannot be "
             "reinterpreted by --allow-legacy-bbp")
+    if lineage not in KNOWN_LINEAGES:
+        raise SystemExit(
+            f"unsupported BBP lineage "
+            f"v{lineage[0]}/{lineage[1]}/{lineage[2]}; "
+            "--allow-legacy-bbp permits only a homogeneous, known historical "
+            "lineage and cannot reinterpret fabricated version/shape tuples")
     if lineage != CURRENT_LINEAGE and not allow_legacy:
         raise SystemExit(
             f"BBP v{lineage[0]}/{lineage[1]}/{lineage[2]} uses historical "
@@ -639,8 +654,8 @@ def main():
              "tools/replay_corpus_audit.py --write-bb2025-ids")
     ap.add_argument(
         "--allow-legacy-bbp", action="store_true",
-        help="permit v1-v4 only for an explicitly historical reproduction; "
-             "current BC requires the complete v5/2782/454 lineage")
+        help="permit v1-v5 only for an explicitly historical reproduction; "
+             "current BC requires the complete v6/2782/454 lineage")
     ap.add_argument("--config", default=os.path.join(ROOT, "puffer", "config",
                                                      "bloodbowl.ini"))
     ap.add_argument("--out", default=os.path.join(ROOT, "training", "checkpoints",

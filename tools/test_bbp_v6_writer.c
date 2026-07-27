@@ -21,7 +21,7 @@ int main(void) {
     assert(context_runner.ctx_n == 1);
     assert(strlen(context_runner.ctx[0]) == sizeof context_runner.ctx[0] - 1);
 
-    char path[] = "/tmp/bbp-v5-writer-XXXXXX";
+    char path[] = "/tmp/bbp-v6-writer-XXXXXX";
     int fd = mkstemp(path);
     assert(fd >= 0);
     close(fd);
@@ -56,10 +56,10 @@ int main(void) {
     unlink(path);
 
     assert(memcmp(bytes, "BBP1", 4) == 0);
-    // BBP v5 is the first replay-pair lineage that binds the current obs-v6
-    // pass/kick flight semantics. A v4 header here would silently make newly
-    // extracted pairs mixable with pre-D235 observations at the same shape.
-    assert(read_u32(bytes + 4) == 5);
+    // BBP v6 binds unresolved handoff Catch-retry settlement in addition to
+    // v5's pass/kick flight semantics. A v5 header here would silently make
+    // newly extracted pairs mixable with pre-D236 observations at this shape.
+    assert(read_u32(bytes + 4) == 6);
     assert(read_u32(bytes + 8) == BBE_OBS_SIZE);
     assert(read_u32(bytes + 12) == BBE_MASK_SIZE);
 
@@ -96,6 +96,6 @@ int main(void) {
            second_mask[BBE_HEAD_TYPE + BBE_HEAD_ARG + 390] == 1);
 
     free(bytes);
-    puts("bbp v5 writer: current observation lineage and exact actions verified");
+    puts("bbp v6 writer: current semantic lineage and exact actions verified");
     return 0;
 }

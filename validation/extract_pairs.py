@@ -7,14 +7,14 @@ with --dump-pairs, landing one shard per replay at validation/pairs/<id>.bbp.
 Prints per-replay yields and corpus totals (replays, pairs, pairs/replay,
 bytes).
 
-The current .bbp v5 format binds obs-v6 plus D235 pass/kick flight semantics
-and exact conditional action masks. It is documented in tools/bb_lockstep.c
-and validation/README.md: a 16-byte header
+The current .bbp v6 format binds obs-v6 plus D235 pass/kick flight and D236
+handoff Catch-retry settlement semantics with exact conditional action masks.
+It is documented in tools/bb_lockstep.c and validation/README.md: a 16-byte header
 ("BBP1", version u32, obs_size u32, mask_size u32 = 454) followed
 by (12 + obs_size + mask_size + 4)-byte records (replay_id u32, cmd u32,
 agent u8, pad[3], obs[obs_size], mask[mask_size], type u8, arg u8, sq u16,
 little-endian). This is a producer-side validator: every shard emitted by the
-current extraction command must be exactly v5/2782/454. Historical shards are
+current extraction command must be exactly v6/2782/454. Historical shards are
 read by the audit tools, not accepted here. Each new shard is re-validated:
 exact lineage, size % record size, and the invariant that every record's
 action targets are set in its own mask slices.
@@ -40,7 +40,7 @@ RUNNER = os.path.join(ROOT, "build", "bb_lockstep")
 PAIR_DIR = os.path.join(ROOT, "validation", "pairs")
 
 MAGIC = b"BBP1"
-CURRENT_VERSION = 5
+CURRENT_VERSION = 6
 CURRENT_OBS_SIZE = 2782
 CURRENT_MASK_SIZE = 454
 CURRENT_LINEAGE = (CURRENT_VERSION, CURRENT_OBS_SIZE, CURRENT_MASK_SIZE)
@@ -53,7 +53,7 @@ def validate_shard(path):
 
     This validates output from the current writer, so legacy-compatible readers
     are intentionally elsewhere. A stale lockstep binary must fail extraction
-    rather than quietly repopulate the current directory with v4 shards."""
+    rather than quietly repopulate the current directory with v5 shards."""
     with open(path, "rb") as f:
         raw = f.read()
     if len(raw) < HEADER_LEN:

@@ -94,56 +94,121 @@ class StreamingShardTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            self.write_shard(root, 42, 1, obs_size=2782, version=5)
-            index = bc_pretrain.ShardIndex.from_directory(root)
-            self.assertEqual(index.shards[0].version, 5)
-            self.assertEqual(
-                bc_pretrain.require_exact_action_lineage(index), 5)
-            index.close()
+            self.write_shard(root, 40, 2, record_replay_id=41)
+            with self.assertRaisesRegex(SystemExit, "record replay IDs"):
+                bc_pretrain.ShardIndex.from_directory(root)
 
+    def test_current_v6_lineage_is_accepted(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            # v4 has exact conditional actions, but predates D235's observable
-            # pass/kick flight semantics and is not a current BC corpus.
-            self.write_shard(root, 42, 1, obs_size=2782, version=4)
+            self.write_shard(root, 42, 1, obs_size=2782, version=6)
+            index = bc_pretrain.ShardIndex.from_directory(root)
+            self.assertEqual(index.shards[0].version, 6)
+            self.assertEqual(
+                bc_pretrain.require_exact_action_lineage(index), 6)
+            index.close()
+
+    def test_v5_requires_explicit_legacy_override(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            # v5 has exact conditional actions and D235 pass/kick flight
+            # semantics, but predates D236 handoff Catch-retry settlement.
+            self.write_shard(root, 42, 1, obs_size=2782, version=5)
             index = bc_pretrain.ShardIndex.from_directory(root)
             with self.assertRaisesRegex(
-                    SystemExit, "current BC requires BBP v5/2782/454"):
+                    SystemExit, "current BC requires BBP v6/2782/454"):
                 bc_pretrain.require_exact_action_lineage(index)
             self.assertEqual(
                 bc_pretrain.require_exact_action_lineage(
                     index, allow_legacy=True),
-                4,
+                5,
             )
             index.close()
 
+    def test_every_known_historical_tuple_requires_and_accepts_override(self):
+        known = (
+            (1, 832),
+            (2, 1612),
+            (2, 2782),
+            (3, 2782),
+            (4, 2782),
+            (5, 2782),
+        )
+        for version, obs_size in known:
+            with self.subTest(version=version, obs_size=obs_size):
+                with tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    self.write_shard(
+                        root, 42, 1, obs_size=obs_size, version=version)
+                    index = bc_pretrain.ShardIndex.from_directory(root)
+                    with self.assertRaisesRegex(
+                            SystemExit,
+                            "current BC requires BBP v6/2782/454"):
+                        bc_pretrain.require_exact_action_lineage(index)
+                    self.assertEqual(
+                        bc_pretrain.require_exact_action_lineage(
+                            index, allow_legacy=True),
+                        version,
+                    )
+                    index.close()
+
+    def test_fabricated_tuple_for_each_historical_version_is_rejected(self):
+        fabricated = (
+            (1, 2782),
+            (2, 832),
+            (3, 1612),
+            (4, 832),
+            (5, 8),
+        )
+        for version, obs_size in fabricated:
+            with self.subTest(version=version, obs_size=obs_size):
+                with tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    self.write_shard(
+                        root, 42, 1, obs_size=obs_size, version=version)
+                    index = bc_pretrain.ShardIndex.from_directory(root)
+                    with self.assertRaisesRegex(
+                            SystemExit, "unsupported BBP lineage"):
+                        bc_pretrain.require_exact_action_lineage(
+                            index, allow_legacy=True)
+                    index.close()
+
+    def test_v5_v6_mixed_lineages_are_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            self.write_shard(root, 42, 1, obs_size=2782, version=4)
-            self.write_shard(root, 43, 1, obs_size=2782, version=5)
+            self.write_shard(root, 42, 1, obs_size=2782, version=5)
+            self.write_shard(root, 43, 1, obs_size=2782, version=6)
             with self.assertRaisesRegex(SystemExit, "header mismatch across shards"):
                 bc_pretrain.ShardIndex.from_directory(root)
 
+    def test_malformed_current_v6_cannot_use_legacy_override(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             # Version alone is not enough: current lineage is the complete
-            # v5/2782/454 tuple.
-            self.write_shard(root, 42, 1, obs_size=8, version=5)
+            # v6/2782/454 tuple.
+            self.write_shard(root, 42, 1, obs_size=8, version=6)
             index = bc_pretrain.ShardIndex.from_directory(root)
             with self.assertRaisesRegex(
-                    SystemExit, "current BC requires BBP v5/2782/454"):
+                    SystemExit, "current BC requires BBP v6/2782/454"):
                 bc_pretrain.require_exact_action_lineage(index)
             with self.assertRaisesRegex(
-                    SystemExit, "malformed BBP v5 lineage"):
+                    SystemExit, "malformed BBP v6 lineage"):
                 bc_pretrain.require_exact_action_lineage(
                     index, allow_legacy=True)
             index.close()
 
+    def test_fabricated_historical_v5_tuple_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            self.write_shard(root, 40, 2, record_replay_id=41)
-            with self.assertRaisesRegex(SystemExit, "record replay IDs"):
-                bc_pretrain.ShardIndex.from_directory(root)
+            # Once v5 becomes historical, the override must still recognize
+            # only real historical tuples. v5/8/454 never existed and must not
+            # become valid merely because its version is on the legacy list.
+            self.write_shard(root, 42, 1, obs_size=8, version=5)
+            index = bc_pretrain.ShardIndex.from_directory(root)
+            with self.assertRaises(SystemExit):
+                bc_pretrain.require_exact_action_lineage(
+                    index, allow_legacy=True)
+            index.close()
 
     def test_malformed_headers_and_partial_records_are_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -170,10 +235,10 @@ class StreamingShardTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            # A v5 label alone is insufficient: the complete current tuple is
-            # v5/2782/454.
+            # A v6 label alone is insufficient: the complete current tuple is
+            # v6/2782/454.
             (root / "10.bbp").write_bytes(
-                struct.pack("<4sIII", b"BBP1", 5, 2782, 453))
+                struct.pack("<4sIII", b"BBP1", 6, 2782, 453))
             with self.assertRaisesRegex(SystemExit, "mask size 453"):
                 bc_pretrain.ShardIndex.from_directory(root)
 

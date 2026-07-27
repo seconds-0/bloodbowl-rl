@@ -12,9 +12,9 @@ static const int8_t DIR8[8][2] = {
     {-1, -1}, {0, -1}, {1, -1}, {-1, 0}, {1, 0}, {-1, 1}, {0, 1}, {1, 1},
 };
 
-// Reposition an unresolved pass/kick without prematurely settling it on the
-// ground. Ground-originated bounces, hand-offs, fumbles, and throw-ins retain
-// their existing state; only a ball that was already in flight stays in flight.
+// Reposition an unresolved pass/kick/handoff without prematurely settling it
+// on the ground. Ground-originated bounces, fumbles, and throw-ins retain their
+// existing state; only a ball that was already unresolved stays unresolved.
 static void ball_to_preserving_air(bb_match* m, int x, int y) {
     bool was_in_air = m->ball.state == BB_BALL_IN_AIR;
     bb_ball_to(m, x, y);
@@ -429,6 +429,10 @@ static void handoff_advance(bb_match* m, bb_rng* rng) {
     bb_pop(m);
     bb_drop_ball(m);
     bb_ball_to(m, m->players[f.b].x, m->players[f.b].y);
+    // A policy-visible Catch re-roll is still part of the transfer. Preserve
+    // carrierless limbo through its complete Catch/Bounce/Throw-in chain;
+    // bb_give_ball() or a terminal raw bb_ball_to() settles the result.
+    m->ball.state = BB_BALL_IN_AIR;
     bb_push(m, BB_PROC_CATCH, f.b, 0, 0, 0);
 }
 

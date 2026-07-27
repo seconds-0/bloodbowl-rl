@@ -113,7 +113,7 @@ class ReplayCorpusAuditTests(unittest.TestCase):
         self.assertEqual(result["obs_size"], obs_size)
         self.assertEqual(result["records"], 1)
 
-    def test_bbp_v5_current_observation_header_is_supported(self):
+    def test_bbp_v5_historical_d235_header_is_supported(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "10.bbp"
             obs_size, mask_size = 2782, 454
@@ -126,6 +126,22 @@ class ReplayCorpusAuditTests(unittest.TestCase):
             result = corpus_audit.inspect_bbp(path)
 
         self.assertEqual(result["version"], 5)
+        self.assertEqual(result["obs_size"], obs_size)
+        self.assertEqual(result["records"], 1)
+
+    def test_bbp_v6_current_handoff_semantics_header_is_supported(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "10.bbp"
+            obs_size, mask_size = 2782, 454
+            record_size = 12 + obs_size + mask_size + 4
+            path.write_bytes(
+                struct.pack("<4sIII", b"BBP1", 6, obs_size, mask_size)
+                + bytes(record_size)
+            )
+
+            result = corpus_audit.inspect_bbp(path)
+
+        self.assertEqual(result["version"], 6)
         self.assertEqual(result["obs_size"], obs_size)
         self.assertEqual(result["records"], 1)
 
