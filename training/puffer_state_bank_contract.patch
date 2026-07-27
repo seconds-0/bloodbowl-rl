@@ -1,13 +1,99 @@
+diff --git a/build.sh b/build.sh
+--- a/build.sh
++++ b/build.sh
+@@ -259,6 +259,12 @@ if [ ! -f "$BINDING_SRC" ]; then
+     exit 1
+ fi
+ 
++STATE_BANK_STRATUM_QUERY_CFLAG=""
++if grep -Fxq '#define PUFFER_HAS_STATE_BANK_STRATUM_QUERY 1' \
++        "$BINDING_SRC"; then
++    STATE_BANK_STRATUM_QUERY_CFLAG="-DPUFFER_HAS_STATE_BANK_STRATUM_QUERY=1"
++fi
++
+ echo "Compiling static library for $ENV..."
+ ${CC:-clang} -c "${CLANG_OPT[@]}" $EXTRA_CFLAGS \
+     -I. -Isrc -I$SRC_DIR -Ivendor \
+@@ -290,6 +296,7 @@ if [ -z "$MODE" ]; then
+         -Xcompiler=-fopenmp \
+         -DOBS_TENSOR_T=$OBS_TENSOR_T \
+         -DENV_NAME=$ENV \
++        $STATE_BANK_STRATUM_QUERY_CFLAG \
+         $PRECISION $NVCC_OPT \
+         src/bindings.cu -o build/bindings.o
+ 
+@@ -317,6 +324,7 @@ elif [ "$MODE" = "cpu" ]; then
+         -I$PYTHON_INCLUDE -I$PYBIND_INCLUDE \
+         -DOBS_TENSOR_T=$OBS_TENSOR_T \
+         -DENV_NAME=$ENV \
++        $STATE_BANK_STRATUM_QUERY_CFLAG \
+         $PRECISION $LINK_OPT \
+         src/bindings_cpu.cpp -o build/bindings_cpu.o
+     LINK_CMD=(
 diff --git a/src/bindings.cu b/src/bindings.cu
 --- a/src/bindings.cu
 +++ b/src/bindings.cu
-@@ -515,6 +515,26 @@ PYBIND11_MODULE(_C, m) {
+@@ -13,6 +13,51 @@
+ 
+ namespace py = pybind11;
+ 
++#ifdef PUFFER_HAS_STATE_BANK_STRATUM_QUERY
++extern "C" int my_state_bank_stratum_descriptor(
++    const char* family, uint32_t threshold, uint32_t* eligible_records,
++    char ordered_index_sha256[65]);
++
++static py::dict py_state_bank_stratum_descriptor(
++        py::handle family, py::handle threshold) {
++    if (!PyUnicode_Check(family.ptr())) {
++        throw py::type_error("family must be a string");
++    }
++    if (!PyLong_CheckExact(threshold.ptr())) {
++        throw py::type_error("threshold must be an exact integer");
++    }
++    unsigned long long raw_threshold =
++        PyLong_AsUnsignedLongLong(threshold.ptr());
++    if (PyErr_Occurred()) throw py::error_already_set();
++    if (raw_threshold > UINT32_MAX) {
++        throw py::value_error("threshold exceeds uint32");
++    }
++    Py_ssize_t family_size = 0;
++    const char* family_name =
++        PyUnicode_AsUTF8AndSize(family.ptr(), &family_size);
++    if (family_name == nullptr) throw py::error_already_set();
++    if ((size_t)family_size != strlen(family_name)) {
++        throw py::value_error("family must not contain NUL");
++    }
++    uint32_t eligible_records = 0;
++    char sha256[65] = {0};
++    int error = my_state_bank_stratum_descriptor(
++        family_name, (uint32_t)raw_threshold, &eligible_records, sha256);
++    if (error != 0) {
++        throw py::value_error(
++            "state-bank stratum descriptor query failed: " +
++            std::to_string(error));
++    }
++    py::dict result;
++    result["schema"] = PUFFER_STATE_BANK_STRATA_SCHEMA;
++    result["family"] = family_name;
++    result["threshold"] = (uint32_t)raw_threshold;
++    result["eligible_records"] = eligible_records;
++    result["sha256"] = sha256;
++    return result;
++}
++#endif
++
+ // Wrapper functions for Python bindings
+ pybind11::dict puf_log(pybind11::object pufferl_obj) {
+     auto& pufferl = pufferl_obj.cast<PuffeRL&>();
+@@ -808,7 +853,33 @@ PYBIND11_MODULE(_C, m) {
      m.attr("observation_abi") = PUFFER_OBSERVATION_ABI;
      m.attr("observation_version") = PUFFER_OBSERVATION_VERSION;
      m.attr("action_abi") = PUFFER_ACTION_ABI;
+-
 +    m.attr("state_bank_contract_schema") = PUFFER_STATE_BANK_CONTRACT_SCHEMA;
 +    m.attr("state_bank_producer_schema") = PUFFER_STATE_BANK_PRODUCER_SCHEMA;
 +    m.attr("state_bank_authorization_schema") = PUFFER_STATE_BANK_AUTHORIZATION_SCHEMA;
++    m.attr("state_bank_strata_schema") = PUFFER_STATE_BANK_STRATA_SCHEMA;
 +    m.attr("state_bank_kind") = PUFFER_STATE_BANK_COMPILED_KIND;
 +    m.attr("state_bank_kind_name") = PUFFER_STATE_BANK_KIND_NAME;
 +    m.attr("state_bank_ruleset") = PUFFER_STATE_BANK_RULESET;
@@ -25,19 +111,78 @@ diff --git a/src/bindings.cu b/src/bindings.cu
 +    m.attr("state_bank_bbs_path") = PUFFER_STATE_BANK_BBS_PATH;
 +    m.attr("state_bank_producer_manifest_path") = PUFFER_STATE_BANK_PRODUCER_MANIFEST_PATH;
 +    m.attr("state_bank_training_contract_path") = PUFFER_STATE_BANK_TRAINING_CONTRACT_PATH;
- 
++
++#ifdef PUFFER_HAS_STATE_BANK_STRATUM_QUERY
++    m.def("state_bank_stratum_descriptor",
++          &py_state_bank_stratum_descriptor,
++          py::arg("family"), py::arg("threshold"));
++#endif
      // Core functions
      m.def("log", &puf_log);
+     m.def("eval_log", &puf_eval_log);
 diff --git a/src/bindings_cpu.cpp b/src/bindings_cpu.cpp
 --- a/src/bindings_cpu.cpp
 +++ b/src/bindings_cpu.cpp
-@@ -170,6 +170,26 @@ PYBIND11_MODULE(_C, m) {
+@@ -13,6 +13,51 @@
+ 
+ namespace py = pybind11;
+ 
++#ifdef PUFFER_HAS_STATE_BANK_STRATUM_QUERY
++extern "C" int my_state_bank_stratum_descriptor(
++    const char* family, uint32_t threshold, uint32_t* eligible_records,
++    char ordered_index_sha256[65]);
++
++static py::dict py_state_bank_stratum_descriptor(
++        py::handle family, py::handle threshold) {
++    if (!PyUnicode_Check(family.ptr())) {
++        throw py::type_error("family must be a string");
++    }
++    if (!PyLong_CheckExact(threshold.ptr())) {
++        throw py::type_error("threshold must be an exact integer");
++    }
++    unsigned long long raw_threshold =
++        PyLong_AsUnsignedLongLong(threshold.ptr());
++    if (PyErr_Occurred()) throw py::error_already_set();
++    if (raw_threshold > UINT32_MAX) {
++        throw py::value_error("threshold exceeds uint32");
++    }
++    Py_ssize_t family_size = 0;
++    const char* family_name =
++        PyUnicode_AsUTF8AndSize(family.ptr(), &family_size);
++    if (family_name == nullptr) throw py::error_already_set();
++    if ((size_t)family_size != strlen(family_name)) {
++        throw py::value_error("family must not contain NUL");
++    }
++    uint32_t eligible_records = 0;
++    char sha256[65] = {0};
++    int error = my_state_bank_stratum_descriptor(
++        family_name, (uint32_t)raw_threshold, &eligible_records, sha256);
++    if (error != 0) {
++        throw py::value_error(
++            "state-bank stratum descriptor query failed: " +
++            std::to_string(error));
++    }
++    py::dict result;
++    result["schema"] = PUFFER_STATE_BANK_STRATA_SCHEMA;
++    result["family"] = family_name;
++    result["threshold"] = (uint32_t)raw_threshold;
++    result["eligible_records"] = eligible_records;
++    result["sha256"] = sha256;
++    return result;
++}
++#endif
++
+ // Stub out CUDA functions that the static lib references (dead code when gpu=0)
+ extern "C" {
+ typedef int cudaError_t;
+@@ -170,7 +215,33 @@ PYBIND11_MODULE(_C, m) {
      m.attr("observation_abi") = PUFFER_OBSERVATION_ABI;
      m.attr("observation_version") = PUFFER_OBSERVATION_VERSION;
      m.attr("action_abi") = PUFFER_ACTION_ABI;
 +    m.attr("state_bank_contract_schema") = PUFFER_STATE_BANK_CONTRACT_SCHEMA;
 +    m.attr("state_bank_producer_schema") = PUFFER_STATE_BANK_PRODUCER_SCHEMA;
 +    m.attr("state_bank_authorization_schema") = PUFFER_STATE_BANK_AUTHORIZATION_SCHEMA;
++    m.attr("state_bank_strata_schema") = PUFFER_STATE_BANK_STRATA_SCHEMA;
 +    m.attr("state_bank_kind") = PUFFER_STATE_BANK_COMPILED_KIND;
 +    m.attr("state_bank_kind_name") = PUFFER_STATE_BANK_KIND_NAME;
 +    m.attr("state_bank_ruleset") = PUFFER_STATE_BANK_RULESET;
@@ -56,5 +201,11 @@ diff --git a/src/bindings_cpu.cpp b/src/bindings_cpu.cpp
 +    m.attr("state_bank_producer_manifest_path") = PUFFER_STATE_BANK_PRODUCER_MANIFEST_PATH;
 +    m.attr("state_bank_training_contract_path") = PUFFER_STATE_BANK_TRAINING_CONTRACT_PATH;
  
++#ifdef PUFFER_HAS_STATE_BANK_STRATUM_QUERY
++    m.def("state_bank_stratum_descriptor",
++          &py_state_bank_stratum_descriptor,
++          py::arg("family"), py::arg("threshold"));
++#endif
      m.def("puff_advantage_cpu", &py_puff_advantage_cpu);
      m.def("create_vec", &create_vec, py::arg("args"), py::arg("gpu") = 0);
+ 

@@ -36,6 +36,7 @@ STATE_BANK_CONTRACT_SCHEMA = "bloodbowl-state-bank-training-contract-v1"
 STATE_BANK_PRODUCER_SCHEMA = "bloodbowl-state-bank-producer-v1"
 STATE_BANK_KIND = "strict-replay"
 STATE_BANK_RULESET = "BB2025"
+STATE_BANK_STRATA_SCHEMA = "bloodbowl-legacy-state-bank-strata-v1"
 STATE_BANK_HEADER_BYTES = 16
 # The active contract is a raw BBS1 snapshot of the current bb_match ABI.
 # Keeping this literal beside checkpoint lineage is intentional: a struct-size
@@ -51,6 +52,12 @@ STATE_BANK_SELECTOR_KEYS = (
     "ladder_postkick_maxturn",
     "ladder_pass_maxrange",
 )
+STATE_BANK_SELECTOR_CONTRACT = {
+    "ladder_endzone_maxdist": ("endzone-maxdist", 25),
+    "ladder_pickup_maxdist": ("pickup-maxdist", 25),
+    "ladder_postkick_maxturn": ("postkick-maxturn", 8),
+    "ladder_pass_maxrange": ("pass-maxrange", 25),
+}
 STATE_BANK_INACTIVE = {
     "ladder_state_bank_contract_schema": "none",
     "ladder_state_bank_producer_schema": "none",
@@ -63,6 +70,11 @@ STATE_BANK_INACTIVE = {
     "ladder_state_bank_loader_engine_source_sha256": "unused",
     "ladder_state_bank_records": 0,
     "ladder_state_bank_bytes": 0,
+    "ladder_state_bank_strata_schema": "none",
+    "ladder_state_bank_strata_family": "none",
+    "ladder_state_bank_strata_threshold": 0,
+    "ladder_state_bank_strata_eligible_records": 0,
+    "ladder_state_bank_strata_sha256": "unused",
 }
 _FRACTION_RE = re.compile(r"(?:0(?:\.[0-9]+)?|1(?:\.0+)?)\Z")
 
@@ -111,6 +123,12 @@ def _need_int(value, label):
     return parsed
 
 
+def _need_json_int(value, label):
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise LineageError(f"{label} must be a JSON integer")
+    return value
+
+
 def _need_bool_string(value, label):
     if str(value) not in ("0", "1"):
         raise LineageError(f"{label} must be 0 or 1")
@@ -134,10 +152,19 @@ def _validate_state_bank_fields(manifest):
     """Validate the complete conditional bank identity before lineage exists."""
 
     reset_pct = _need_reset_fraction(manifest.get("ladder_reset_pct"))
+    selectors = {}
     for key in STATE_BANK_SELECTOR_KEYS:
         selector = _need_int(manifest.get(key), key)
-        if selector < 0:
-            raise LineageError(f"{key} must be nonnegative")
+        maximum = STATE_BANK_SELECTOR_CONTRACT[key][1]
+        if selector < 0 or selector > maximum:
+            raise LineageError(f"{key} must be in [0,{maximum}]")
+        selectors[key] = selector
+    active_selectors = [
+        key for key, selector in selectors.items() if selector > 0
+    ]
+    if len(active_selectors) > 1:
+        raise LineageError(
+            "state-bank lineage permits only one curriculum selector")
 
     if reset_pct == 0:
         for key, expected in STATE_BANK_INACTIVE.items():
@@ -150,8 +177,7 @@ def _validate_state_bank_fields(manifest):
                 raise LineageError(
                     f"{key} must be canonical inactive value "
                     f"{expected!r}, got {observed!r}")
-        if any(_need_int(manifest.get(key), key)
-               for key in STATE_BANK_SELECTOR_KEYS):
+        if active_selectors:
             raise LineageError(
                 "inactive state-bank lineage requires every selector to be zero")
         return
@@ -189,10 +215,49 @@ def _validate_state_bank_fields(manifest):
         raise LineageError(
             "ladder_state_bank_bytes does not reconcile with "
             "ladder_state_bank_records and the current BBS1 match ABI")
-    if any(_need_int(manifest.get(key), key)
-           for key in STATE_BANK_SELECTOR_KEYS):
+    expected_selector_key = active_selectors[0] if active_selectors else None
+    expected_family = (
+        STATE_BANK_SELECTOR_CONTRACT[expected_selector_key][0]
+        if expected_selector_key is not None
+        else "uniform"
+    )
+    expected_threshold = (
+        selectors[expected_selector_key]
+        if expected_selector_key is not None
+        else 0
+    )
+    if manifest.get("ladder_state_bank_strata_schema") != STATE_BANK_STRATA_SCHEMA:
         raise LineageError(
-            "banked lineage cannot mint before pre-indexed strata are implemented")
+            "ladder_state_bank_strata_schema must be "
+            f"{STATE_BANK_STRATA_SCHEMA!r}")
+    if manifest.get("ladder_state_bank_strata_family") != expected_family:
+        raise LineageError(
+            "ladder_state_bank_strata_family does not reconcile with "
+            f"the selector fields: expected {expected_family!r}")
+    stratum_threshold = _need_json_int(
+        manifest.get("ladder_state_bank_strata_threshold"),
+        "ladder_state_bank_strata_threshold",
+    )
+    if stratum_threshold != expected_threshold:
+        raise LineageError(
+            "ladder_state_bank_strata_threshold does not reconcile with "
+            f"the selector fields: {stratum_threshold} != {expected_threshold}")
+    eligible_records = _need_json_int(
+        manifest.get("ladder_state_bank_strata_eligible_records"),
+        "ladder_state_bank_strata_eligible_records",
+    )
+    if eligible_records <= 0 or eligible_records > records:
+        raise LineageError(
+            "ladder_state_bank_strata_eligible_records must be in "
+            f"[1,{records}]")
+    if expected_family == "uniform" and eligible_records != records:
+        raise LineageError(
+            "uniform stratum eligible records must equal "
+            "ladder_state_bank_records")
+    _need_sha(
+        manifest.get("ladder_state_bank_strata_sha256"),
+        "ladder_state_bank_strata_sha256",
+    )
 
 
 def _load_object(path, label):

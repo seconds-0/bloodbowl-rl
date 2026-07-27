@@ -459,6 +459,8 @@ if (
     compiled_contract["state_bank_contract_schema"] != "none" or
     compiled_contract["state_bank_producer_schema"] != "none" or
     compiled_contract["state_bank_authorization_schema"] != "none" or
+    compiled_contract["state_bank_strata_schema"] !=
+        "bloodbowl-legacy-state-bank-strata-v1" or
     compiled_contract["state_bank_kind"] != 0 or
     compiled_contract["state_bank_kind_name"] != "none" or
     compiled_contract["state_bank_ruleset"] != "none" or
@@ -482,6 +484,7 @@ if (
 # drifts, so the screen only has to publish the value it launched with.
 patches = [
     root / "training/puffer_standalone_env_include.patch",
+    root / "training/puffer_dict_capacity.patch",
     root / "training/pufferl_env_dashboard_limit.patch",
     root / "training/pufferl_env_json.patch",
     root / "training/pufferl_env_json_metadata_upgrade.patch",

@@ -23,15 +23,20 @@ class PufferLogContractTests(unittest.TestCase):
         # Kept exact on purpose: the count is load-bearing history (37 keys vs
         # capacity 32 corrupted the heap at ~786K steps). binding.c's my_log
         # CAPACITY comment is the authority -- update both together.
-        self.assertEqual(emitted_keys, 144)
+        self.assertEqual(emitted_keys, 152)
         self.assertLessEqual(emitted_keys + 1, EXPECTED_CAPACITY)
 
-    def test_both_puffer_backends_and_installer_pin_same_capacity(self) -> None:
+    def test_every_puffer_log_path_and_installer_pin_same_capacity(self) -> None:
         patch = CAPACITY_PATCH.read_text()
-        self.assertEqual(patch.count(f"create_dict({EXPECTED_CAPACITY})"), 2)
+        self.assertEqual(patch.count(f"create_dict({EXPECTED_CAPACITY})"), 4)
         self.assertEqual(
             re.findall(r"^diff --git a/(\S+) b/", patch, re.MULTILINE),
-            ["src/bindings.cu", "src/bindings_cpu.cpp", "src/vecenv.h"],
+            [
+                "src/bindings.cu",
+                "src/bindings_cpu.cpp",
+                "src/pufferlib.cu",
+                "src/vecenv.h",
+            ],
         )
         self.assertIn("dict_set: capacity %d exceeded", patch)
         self.assertNotIn("src/kernels.cu", patch)
@@ -46,6 +51,9 @@ class PufferLogContractTests(unittest.TestCase):
         capacity_install = capacity_install.split("\n# ", 1)[0]
         self.assertIn("apply --reverse --check --no-index", capacity_install)
         self.assertIn("apply --check --no-index", capacity_install)
+        self.assertIn("bindings_cuda_capacity_count", capacity_install)
+        self.assertIn("bindings_cpu_capacity_count", capacity_install)
+        self.assertIn("pufferlib_capacity_count", capacity_install)
         self.assertNotIn("'s/create_dict\\(", installer)
 
         launcher = (ROOT / "tools/run_reward_ablation.sh").read_text()

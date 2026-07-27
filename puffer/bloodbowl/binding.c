@@ -11,6 +11,7 @@
 #define OBS_TENSOR_T ByteTensor
 #define MY_ACTION_MASK 454
 #define MY_JOINT_ACTION_MAX 4487 // BB_LEGAL_MAX + 391 virtual destinations
+#define PUFFER_HAS_STATE_BANK_STRATUM_QUERY 1
 
 #define MY_VEC_INIT
 #define MY_USES_PERM
@@ -23,6 +24,23 @@ _Static_assert(MY_ACTION_MASK == BBE_MASK_SIZE,
                "MY_ACTION_MASK out of sync with bloodbowl.h");
 _Static_assert(MY_JOINT_ACTION_MAX >= BB_LEGAL_MAX + BBE_HEAD_SQ,
                "joint support capacity cannot hold legal + virtual actions");
+
+int my_state_bank_stratum_descriptor(
+        const char* family, uint32_t threshold,
+        uint32_t* eligible_records, char ordered_index_sha256[65]) {
+    if (eligible_records == NULL || ordered_index_sha256 == NULL) {
+        return (int)BBE_SB_REQUEST_INCOMPLETE;
+    }
+    bbe_state_bank_stratum_descriptor descriptor;
+    bbe_state_bank_error error =
+        bbe_state_bank_copy_named_stratum_descriptor(
+            family, threshold, &descriptor);
+    if (error != BBE_SB_OK) return (int)error;
+    *eligible_records = descriptor.eligible_records;
+    memcpy(ordered_index_sha256, descriptor.sha256,
+           sizeof descriptor.sha256);
+    return (int)BBE_SB_OK;
+}
 
 static uint32_t bbe_pack_joint(int type, int arg, int square) {
     return (uint32_t)type | ((uint32_t)arg << 10) |
@@ -156,6 +174,38 @@ static void validate_bank_kwargs_or_exit(
     }
 }
 
+static void prepare_bank_kwargs_or_exit(
+        const bbe_state_bank_config_values* values) {
+    validate_bank_kwargs_or_exit(values);
+    if (values->reset_pct <= 0.0) return;
+
+    bbe_state_bank_require_or_abort((int)values->kind);
+    bbe_state_bank_selector_family family;
+    uint32_t threshold;
+    bbe_state_bank_error error = bbe_state_bank_selector_from_config(
+        values, &family, &threshold);
+    if (error != BBE_SB_OK) {
+        fprintf(stderr, "bloodbowl: invalid state-bank selector: %s\n",
+                bbe_state_bank_error_name(error));
+        exit(1);
+    }
+    bbe_state_bank_stratum_descriptor descriptor;
+    error = bbe_state_bank_copy_stratum_descriptor(
+        family, threshold, &descriptor);
+    if (error != BBE_SB_OK) {
+        fprintf(stderr,
+                "bloodbowl: state-bank descriptor resolution failed: %s\n",
+                bbe_state_bank_error_name(error));
+        exit(1);
+    }
+    if (descriptor.eligible_records == 0) {
+        fprintf(stderr,
+                "bloodbowl: requested state-bank stratum is empty: %s=%u\n",
+                bbe_state_bank_selector_family_name(family), threshold);
+        exit(1);
+    }
+}
+
 static void apply_kwargs(Env* env, Dict* kwargs) {
     // Retain and validate original doubles before any float/int conversion.
     // In particular, 1.5 must not become strict kind 1, and a tiny positive
@@ -212,9 +262,9 @@ static void apply_kwargs(Env* env, Dict* kwargs) {
     // Validate only after every reward field has been populated. Keeping this
     // call above the final fields made apply_kwargs' validation incomplete.
     bbe_validate_reward_config(env);
-    // Legacy selectors remain in the ABI but typed-bank validation currently
-    // requires all four to be zero; strata must be constructed and pinned in
-    // the immutable artifact contract instead of sampled by the loader.
+    // Exact legacy-predicate curricula: at most one field may be positive.
+    // Startup resolves that family/threshold to a nonempty, hash-pinned prefix
+    // of the immutable process-wide index; reset samples the prefix directly.
     env->demo_endzone_maxdist = (int)bank_values.endzone_selector;
     env->demo_pickup_maxdist = (int)bank_values.pickup_selector;
     env->demo_postkick_maxturn = (int)bank_values.postkick_selector;
@@ -283,10 +333,7 @@ Env* my_vec_init(int* num_envs_out, int* buffer_env_starts, int* buffer_env_coun
     // Validate the untouched dictionary doubles, then require the immutable
     // process-wide contract before any worker can be returned.
     bbe_state_bank_config_values bank_values = bank_kwargs(env_kwargs);
-    validate_bank_kwargs_or_exit(&bank_values);
-    if (bank_values.reset_pct > 0.0) {
-        bbe_state_bank_require_or_abort((int)bank_values.kind);
-    }
+    prepare_bank_kwargs_or_exit(&bank_values);
 
     int num_envs = total_agents / BBE_AGENTS;
     Env* envs = (Env*)calloc(num_envs, sizeof(Env));
@@ -320,13 +367,12 @@ Env* my_vec_init(int* num_envs_out, int* buffer_env_starts, int* buffer_env_coun
 
 void my_init(Env* env, Dict* kwargs) {
     bbe_check_act_sizes();
+    bbe_state_bank_config_values bank_values = bank_kwargs(kwargs);
+    prepare_bank_kwargs_or_exit(&bank_values);
     apply_kwargs(env, kwargs);
     env->num_agents = BBE_AGENTS;
     if (env->seed == 0) {
         env->seed = (uint64_t)kw(kwargs, "seed", 1.0);
-    }
-    if (env->demo_reset_pct > 0.0f) {
-        bbe_state_bank_require_or_abort(env->state_bank_kind);
     }
 }
 
@@ -335,8 +381,8 @@ void my_log(Log* log, Dict* out) {
     //
     // CAPACITY: vec_log (src/bindings_cpu.cpp / bindings.cu) must hand us a
     // dict large enough for these keys plus the vecenv-appended "n". We emit
-    // 144 (capacity is 160 — training/puffer_dict_capacity.patch), so there is
-    // room for 15 more. Growing past the call-site capacity is SILENT HEAP CORRUPTION
+    // 152 (capacity is 160 — training/puffer_dict_capacity.patch), so there is
+    // room for 7 more. Growing past the call-site capacity is SILENT HEAP CORRUPTION
     // upstream (assert compiles out under NDEBUG); our vendored dict_set
     // aborts loudly instead (training/puffer_dict_capacity.patch).
     // History: key count hit 37 vs capacity 32 when slot scores + demo
@@ -520,6 +566,27 @@ void my_log(Log* log, Dict* out) {
     dict_set(out, "error_episodes", log->error_episodes);
     dict_set(out, "demo_episodes", log->demo_episodes);
     dict_set(out, "demo_fallbacks", log->demo_fallbacks);
+    dict_set(out, "demo_uniform_episode_frac_all",
+             log->demo_uniform_episodes);
+    dict_set(out, "demo_endzone_episode_frac_all",
+             log->demo_endzone_episodes);
+    dict_set(out, "demo_pickup_episode_frac_all",
+             log->demo_pickup_episodes);
+    dict_set(out, "demo_postkick_episode_frac_all",
+             log->demo_postkick_episodes);
+    dict_set(out, "demo_pass_episode_frac_all",
+             log->demo_pass_episodes);
+    dict_set(out, "state_bank_config_episode_frac_all",
+             log->state_bank_config_episodes);
+    float configured = log->state_bank_config_episodes;
+    dict_set(out, "demo_selector_threshold_mean_configured",
+             configured > 0.0f
+                 ? log->demo_selector_threshold_configured / configured
+                 : 0.0f);
+    dict_set(out, "demo_selector_eligible_mean_configured",
+             configured > 0.0f
+                 ? log->demo_selector_eligible_configured / configured
+                 : 0.0f);
     dict_set(out, "hist_score_bank_0", log->hist_score_bank[0]);
     dict_set(out, "hist_score_bank_1", log->hist_score_bank[1]);
     dict_set(out, "hist_score_bank_2", log->hist_score_bank[2]);

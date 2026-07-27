@@ -17,7 +17,7 @@ def source(relative: str) -> str:
 
 
 class StateBankMigrationTests(unittest.TestCase):
-    def test_selector_wrappers_require_authority_and_stop_before_puffer(self):
+    def test_selector_wrappers_are_retired_before_any_delegate(self):
         for relative in (
             "tools/launch_ladder_canary.sh",
             "tools/launch_ladder_rung.sh",
@@ -31,10 +31,15 @@ class StateBankMigrationTests(unittest.TestCase):
                     "EXPECTED_LADDER_STATE_BANK_CONTRACT_SHA256",
                 ):
                     self.assertIn(f"${{{variable}:?", text)
-                bridge = text.index("require pre-indexed strata")
-                stop = text.index("exit 2", bridge)
+                retirement = text.index("retired:")
+                stop = text.index("exit 2", retirement)
                 delegate = text.index('bash "$C/tools/run_reward_ablation.sh"')
                 self.assertLess(stop, delegate)
+                self.assertIn(
+                    "use tools/run_reward_ablation.sh with complete typed "
+                    "state-bank authority",
+                    text,
+                )
                 self.assertNotIn(
                     'sha256sum "$C/vendor/PufferLib/resources/bloodbowl/'
                     'state_bank.bbs"',
@@ -60,7 +65,12 @@ class StateBankMigrationTests(unittest.TestCase):
                     timeout=10,
                 )
                 self.assertEqual(result.returncode, 2, result.stdout)
-                self.assertIn("require pre-indexed strata", result.stdout)
+                self.assertIn("retired:", result.stdout)
+                self.assertIn(
+                    "use tools/run_reward_ablation.sh with complete typed "
+                    "state-bank authority",
+                    result.stdout,
+                )
                 self.assertIn(
                     "no checkout was inspected and no Puffer process was started",
                     result.stdout,
@@ -124,13 +134,23 @@ class StateBankMigrationTests(unittest.TestCase):
             "ladder_state_bank_loader_engine_source_sha256",
             "ladder_state_bank_records",
             "ladder_state_bank_bytes",
+            "ladder_state_bank_strata_schema",
+            "ladder_state_bank_strata_family",
+            "ladder_state_bank_strata_threshold",
+            "ladder_state_bank_strata_eligible_records",
+            "ladder_state_bank_strata_sha256",
         ):
             self.assertIn(field, text)
-        self.assertIn(
-            'for key in ("ladder_state_bank_records", '
-            '"ladder_state_bank_bytes")',
-            text,
-        )
+        conversion = text.split(
+            "manifest = dict(zip(pairs[::2], pairs[1::2]))", 1
+        )[1].split("manifest.update({", 1)[0]
+        for field in (
+            "ladder_state_bank_records",
+            "ladder_state_bank_bytes",
+            "ladder_state_bank_strata_threshold",
+            "ladder_state_bank_strata_eligible_records",
+        ):
+            self.assertIn(f'"{field}"', conversion)
 
 
 if __name__ == "__main__":

@@ -70,6 +70,18 @@ for knob in LADDER_ENDZONE_MAXDIST LADDER_PICKUP_MAXDIST \
     exit 1
   fi
 done
+for knob_and_max in \
+    "LADDER_ENDZONE_MAXDIST 25" \
+    "LADDER_PICKUP_MAXDIST 25" \
+    "LADDER_POSTKICK_MAXTURN 8" \
+    "LADDER_PASS_MAXRANGE 25"; do
+  read -r knob maximum <<< "$knob_and_max"
+  value="${!knob}"
+  if [ "$value" -gt "$maximum" ]; then
+    echo "$knob must be at most $maximum, got '$value'" >&2
+    exit 1
+  fi
+done
 
 # Old runtimes selected curricula with an if/else chain, making later selectors
 # silent no-ops. The binding now rejects multiple selectors, but retain the
@@ -83,6 +95,21 @@ if [ "$LADDER_SELECTORS" -gt 1 ]; then
   echo "only one curriculum selector may be set; multiple selectors are invalid" >&2
   echo "the typed binding rejects ambiguous selector combinations" >&2
   exit 1
+fi
+LADDER_SELECTOR_FAMILY="uniform"
+LADDER_SELECTOR_THRESHOLD=0
+if [ "$LADDER_ENDZONE_MAXDIST" -gt 0 ]; then
+  LADDER_SELECTOR_FAMILY="endzone-maxdist"
+  LADDER_SELECTOR_THRESHOLD="$LADDER_ENDZONE_MAXDIST"
+elif [ "$LADDER_PICKUP_MAXDIST" -gt 0 ]; then
+  LADDER_SELECTOR_FAMILY="pickup-maxdist"
+  LADDER_SELECTOR_THRESHOLD="$LADDER_PICKUP_MAXDIST"
+elif [ "$LADDER_POSTKICK_MAXTURN" -gt 0 ]; then
+  LADDER_SELECTOR_FAMILY="postkick-maxturn"
+  LADDER_SELECTOR_THRESHOLD="$LADDER_POSTKICK_MAXTURN"
+elif [ "$LADDER_PASS_MAXRANGE" -gt 0 ]; then
+  LADDER_SELECTOR_FAMILY="pass-maxrange"
+  LADDER_SELECTOR_THRESHOLD="$LADDER_PASS_MAXRANGE"
 fi
 
 case "$LADDER_RESET_ACTIVE" in
@@ -111,17 +138,18 @@ case "$LADDER_RESET_ACTIVE" in
     LADDER_STATE_BANK_LOADER_ENGINE_SOURCE_SHA256="unused"
     LADDER_STATE_BANK_RECORDS=0
     LADDER_STATE_BANK_BYTES=0
+    LADDER_STATE_BANK_VALIDATED_ENVIRONMENT_SOURCE_SHA256="unused"
+    LADDER_STATE_BANK_STRATA_SCHEMA="none"
+    LADDER_STATE_BANK_STRATA_FAMILY="none"
+    LADDER_STATE_BANK_STRATA_THRESHOLD=0
+    LADDER_STATE_BANK_STRATA_ELIGIBLE_RECORDS=0
+    LADDER_STATE_BANK_STRATA_SHA256="unused"
     ;;
   1)
     : "${LADDER_STATE_BANK_KIND:?LADDER_STATE_BANK_KIND is required when LADDER_RESET_PCT > 0}"
     : "${EXPECTED_LADDER_STATE_BANK_SHA256:?EXPECTED_LADDER_STATE_BANK_SHA256 is required when LADDER_RESET_PCT > 0}"
     : "${EXPECTED_LADDER_STATE_BANK_PRODUCER_MANIFEST_SHA256:?EXPECTED_LADDER_STATE_BANK_PRODUCER_MANIFEST_SHA256 is required when LADDER_RESET_PCT > 0}"
     : "${EXPECTED_LADDER_STATE_BANK_CONTRACT_SHA256:?EXPECTED_LADDER_STATE_BANK_CONTRACT_SHA256 is required when LADDER_RESET_PCT > 0}"
-    if [ "$LADDER_SELECTORS" -gt 0 ]; then
-      echo "state-bank selectors require the reviewed pre-indexed-strata tranche" >&2
-      echo "uniform typed-bank reset is the only runtime contract implemented here" >&2
-      exit 2
-    fi
     STATE_BANK_CONTRACT_JSON="$(
       python3 "$ROOT/tools/state_bank_contract.py" validate-installed \
         --puffer-root "$ROOT/vendor/PufferLib" \
@@ -130,7 +158,9 @@ case "$LADDER_RESET_ACTIVE" in
         --producer-manifest-sha256 \
           "$EXPECTED_LADDER_STATE_BANK_PRODUCER_MANIFEST_SHA256" \
         --training-contract-sha256 \
-          "$EXPECTED_LADDER_STATE_BANK_CONTRACT_SHA256"
+          "$EXPECTED_LADDER_STATE_BANK_CONTRACT_SHA256" \
+        --selector-family "$LADDER_SELECTOR_FAMILY" \
+        --selector-threshold "$LADDER_SELECTOR_THRESHOLD"
     )" || exit $?
     read -r LADDER_STATE_BANK_CONTRACT_SCHEMA \
       LADDER_STATE_BANK_PRODUCER_SCHEMA LADDER_STATE_BANK_KIND \
@@ -140,7 +170,12 @@ case "$LADDER_RESET_ACTIVE" in
       LADDER_STATE_BANK_CONTRACT_SHA256 \
       LADDER_STATE_BANK_PRODUCER_ENGINE_SOURCE_SHA256 \
       LADDER_STATE_BANK_LOADER_ENGINE_SOURCE_SHA256 \
-      LADDER_STATE_BANK_RECORDS LADDER_STATE_BANK_BYTES < <(
+      LADDER_STATE_BANK_RECORDS LADDER_STATE_BANK_BYTES \
+      LADDER_STATE_BANK_VALIDATED_ENVIRONMENT_SOURCE_SHA256 \
+      LADDER_STATE_BANK_STRATA_SCHEMA LADDER_STATE_BANK_STRATA_FAMILY \
+      LADDER_STATE_BANK_STRATA_THRESHOLD \
+      LADDER_STATE_BANK_STRATA_ELIGIBLE_RECORDS \
+      LADDER_STATE_BANK_STRATA_SHA256 < <(
         python3 - "$STATE_BANK_CONTRACT_JSON" <<'PY'
 import json
 import sys
@@ -159,6 +194,12 @@ keys = (
     "loader_engine_source_sha256",
     "records",
     "bytes",
+    "environment_source_sha256",
+    "strata_schema",
+    "strata_family",
+    "strata_threshold",
+    "strata_eligible_records",
+    "strata_sha256",
 )
 print(*(contract[key] for key in keys))
 PY
@@ -574,6 +615,14 @@ if [[ ! "$COMPILED_EXACT_ACTION_SOURCE_HASH" =~ ^[0-9a-f]{64}$ ]] || \
   echo "  action: ${COMPILED_ACTION_ABI:-<missing>}" >&2
   exit 1
 fi
+if [ "$LADDER_RESET_ACTIVE" = "1" ] && \
+   [ "$LADDER_STATE_BANK_VALIDATED_ENVIRONMENT_SOURCE_SHA256" != \
+     "$COMPILED_ENVIRONMENT_SOURCE_HASH" ]; then
+  echo "validated state-bank predicate source differs from the compiled module" >&2
+  echo "  validator: $LADDER_STATE_BANK_VALIDATED_ENVIRONMENT_SOURCE_SHA256" >&2
+  echo "  module:    $COMPILED_ENVIRONMENT_SOURCE_HASH" >&2
+  exit 1
+fi
 if [ "${RIG_ALLOW_FLOAT:-0}" = "1" ] && [ "$precision" != "4" ]; then
   echo "RIG_ALLOW_FLOAT=1 requires the Turing fp32 build (precision_bytes=4); got $precision" >&2
   echo "rebuild with: cd $ROOT/vendor/PufferLib && ./build.sh bloodbowl --float" >&2
@@ -630,6 +679,7 @@ patch_bundle_line() {
 }
 PATCH_HASH="$({
   patch_bundle_line training/puffer_standalone_env_include.patch
+  patch_bundle_line training/puffer_dict_capacity.patch
   patch_bundle_line training/pufferl_env_dashboard_limit.patch
   patch_bundle_line training/pufferl_env_json.patch
   patch_bundle_line training/pufferl_env_json_metadata_upgrade.patch
@@ -785,6 +835,12 @@ META_ARGS=(
   "$LADDER_STATE_BANK_LOADER_ENGINE_SOURCE_SHA256"
   ladder_state_bank_records "$LADDER_STATE_BANK_RECORDS"
   ladder_state_bank_bytes "$LADDER_STATE_BANK_BYTES"
+  ladder_state_bank_strata_schema "$LADDER_STATE_BANK_STRATA_SCHEMA"
+  ladder_state_bank_strata_family "$LADDER_STATE_BANK_STRATA_FAMILY"
+  ladder_state_bank_strata_threshold "$LADDER_STATE_BANK_STRATA_THRESHOLD"
+  ladder_state_bank_strata_eligible_records \
+  "$LADDER_STATE_BANK_STRATA_ELIGIBLE_RECORDS"
+  ladder_state_bank_strata_sha256 "$LADDER_STATE_BANK_STRATA_SHA256"
   rollout_quantum "$ROLLOUT_QUANTUM" reward_name "$REWARD_NAME"
   reward_sha256 "$REWARD_HASH" reward_manifest "$REWARD_MANIFEST"
   pool "$POOL" pool_identity_sha256 "$POOL_HASH"
@@ -836,7 +892,12 @@ pairs = sys.argv[2:split]
 if len(pairs) % 2:
     raise SystemExit("invalid run-manifest metadata pairs")
 manifest = dict(zip(pairs[::2], pairs[1::2]))
-for key in ("ladder_state_bank_records", "ladder_state_bank_bytes"):
+for key in (
+    "ladder_state_bank_records",
+    "ladder_state_bank_bytes",
+    "ladder_state_bank_strata_threshold",
+    "ladder_state_bank_strata_eligible_records",
+):
     manifest[key] = int(manifest[key])
 manifest.update({
     "schema_version": 1,

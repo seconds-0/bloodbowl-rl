@@ -1266,11 +1266,72 @@ class QualificationPatchContractTests(unittest.TestCase):
             (puffer / "pufferlib/sweep.py").write_text(
                 "match_enemy_model_path\n", encoding="utf-8"
             )
+            # The installer now applies one exact capacity patch before the
+            # selfplay patch. Preserve every reachable upstream log-allocation
+            # surface in this deliberately partial fixture so installation
+            # reaches the selfplay state machine this test owns.
             for relative, contents in {
-                "src/vecenv.h": "joint_action_offsets\n",
-                "src/pufferlib.cu": "fixture stops after selfplay\n",
-                "src/bindings.cu": "fixture\n",
-                "src/bindings_cpu.cpp": "fixture\n",
+                "src/vecenv.h": textwrap.dedent("""\
+                    static inline DictItem* dict_get(Dict* dict, const char* key) {
+                        return NULL;
+                    }
+
+                    static inline void dict_set(Dict* dict, const char* key, double value) {
+                        assert(dict->size < dict->capacity);
+                        DictItem* item = dict_get_unsafe(dict, key);
+                        if (item != NULL) {
+                            item->value = value;
+                            return;
+                        }
+                        dict->items[dict->size].key = key;
+                        dict->items[dict->size].value = value;
+                        dict->size++;
+                    }
+                    joint_action_offsets
+                """),
+                "src/pufferlib.cu": textwrap.dedent("""\
+                    Dict* log_environments_impl(PuffeRL& pufferl) {
+                        // Capacity raised from 32 to 64 to accommodate chess's per-bank
+                        // hist_score_bank_<b> / hist_n_bank_<b> entries (16 keys for 8 banks).
+                        Dict* out = create_dict(64);
+                        static_vec_log(pufferl.vec, out);
+                        return out;
+                    }
+                    fixture stops after selfplay
+                """),
+                "src/bindings.cu": textwrap.dedent("""\
+                    pybind11::dict puf_eval_log(pybind11::object pufferl_obj) {
+                        pybind11::dict env_dict;
+                        // Capacity 64 to fit chess's per-bank hist_score_bank/hist_n_bank entries
+                        // (16 keys across 8 banks) on top of base env-log fields.
+                        Dict* env_out = create_dict(64);
+                        static_vec_eval_log(pufferl.vec, env_out);
+                        for (int i = 0; i < env_out->size; i++) {
+                            env_dict[env_out->items[i].key] = env_out->items[i].value;
+                        }
+                    }
+
+                    void cpu_vec_step_py(VecEnv& ve, long long actions_ptr) {
+                    }
+
+                    py::dict vec_log(VecEnv& ve) {
+                        Dict* out = create_dict(32);
+                        static_vec_log(ve.vec, out);
+                        py::dict result;
+                        for (int i = 0; i < out->size; i++) {
+                    }
+                """),
+                "src/bindings_cpu.cpp": textwrap.dedent("""\
+                    static void cpu_vec_step_py(VecEnv& ve, long long actions_ptr) {
+                    }
+
+                    static py::dict vec_log(VecEnv& ve) {
+                        Dict* out = create_dict(32);
+                        static_vec_log(ve.vec, out);
+                        py::dict result;
+                        for (int i = 0; i < out->size; i++)
+                    }
+                """),
                 "src/kernels.cu": "fixture\n",
             }.items():
                 (puffer / relative).write_text(contents, encoding="utf-8")

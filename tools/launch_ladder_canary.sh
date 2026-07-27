@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Historical disposable backplay-ladder canary, retained as an exact recipe
-# record. It now stops at the typed-bank bridge below and cannot launch.
+# record. It is retired and cannot launch.
 #
 # This is a CANARY in D219's sense -- never warm-start from its output, never add
 # it to an opponent pool, never quote it as a reward result. Its only job is to
@@ -31,7 +31,8 @@
 # shellcheck disable=SC2317
 set -uo pipefail
 
-echo "ladder canary blocked: selector curricula require pre-indexed strata" >&2
+echo "ladder canary retired: its checkout paths and operational defaults are stale" >&2
+echo "use tools/run_reward_ablation.sh with complete typed state-bank authority" >&2
 echo "no checkout was inspected and no Puffer process was started" >&2
 exit 2
 

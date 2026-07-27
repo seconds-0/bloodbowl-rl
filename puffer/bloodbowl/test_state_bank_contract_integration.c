@@ -1,4 +1,5 @@
 #include "bloodbowl.h"
+#include "state_bank_fixture.expected.h"
 
 #include <pthread.h>
 #include <signal.h>
@@ -45,37 +46,211 @@ static void setup_integration_env(IntegrationEnv* fixture, float reset_pct) {
     }
 }
 
-static void valid_uniform_reset(void) {
-    static const char expected_fixture_sha[] =
-        "0f47d8ba9754555bd5eac5bc954c1c52"
-        "5ff97295d5e0bcfadebbb823a4457a93";
-    ICHECK(strcmp(PUFFER_STATE_BANK_BBS_SHA256,
-                  expected_fixture_sha) == 0);
+static void require_and_verify_fixture(void) {
     bbe_state_bank_request request =
         bbe_state_bank_compiled_request(NULL, NULL, NULL);
     ICHECK(bbe_state_bank_require_core(&request) == BBE_SB_OK);
     ICHECK(bbe_state_bank_status == BBE_SB_READY);
-    ICHECK(bbe_state_bank_n == 1);
+    ICHECK(strcmp(PUFFER_STATE_BANK_STRATA_SCHEMA,
+                  "bloodbowl-legacy-state-bank-strata-v1") == 0);
+    ICHECK(bbe_state_bank_n ==
+           (int)BBE_TEST_STATE_BANK_FIXTURE_RECORDS);
     ICHECK(bbe_state_bank_metadata != NULL);
-    ICHECK(bbe_state_bank_metadata[0].source_id == UINT32_C(0x01020304));
-    ICHECK(bbe_state_bank_metadata[0].command == UINT32_C(0x0a0b0c0d));
+    for (uint32_t ordinal = 0;
+         ordinal < BBE_TEST_STATE_BANK_FIXTURE_RECORDS; ordinal++) {
+        const bbe_state_bank_meta* metadata =
+            &bbe_state_bank_metadata[ordinal];
+        ICHECK(metadata->source_id ==
+               bbe_test_fixture_source_ids[ordinal]);
+        ICHECK(metadata->command ==
+               bbe_test_fixture_commands[ordinal]);
+        ICHECK(metadata->half == bbe_test_fixture_halves[ordinal]);
+        ICHECK(metadata->turn == bbe_test_fixture_turns[ordinal]);
+
+        for (unsigned family = BBE_STATE_BANK_SELECTOR_ENDZONE;
+             family < BBE_STATE_BANK_SELECTOR_FAMILY_COUNT; family++) {
+            int expected =
+                bbe_test_fixture_metrics[ordinal][family - 1u];
+            uint32_t metric = UINT32_MAX;
+            int eligible = bbe_state_bank_metric(
+                &bbe_state_bank[ordinal],
+                (bbe_state_bank_selector_family)family, &metric);
+            if (expected == BBE_TEST_STATE_BANK_FIXTURE_INELIGIBLE) {
+                ICHECK(!eligible);
+            } else {
+                ICHECK(eligible);
+                ICHECK(metric == (uint32_t)expected);
+            }
+        }
+    }
     ICHECK(bbe_state_bank_publications == 1);
     ICHECK(bbe_state_bank_load_attempts == 1);
+}
 
+static int fixture_record_eligible(
+        uint32_t ordinal, bbe_state_bank_selector_family family,
+        uint32_t threshold) {
+    if (family == BBE_STATE_BANK_SELECTOR_UNIFORM) return threshold == 0;
+    int metric = bbe_test_fixture_metrics[ordinal][family - 1u];
+    return metric != BBE_TEST_STATE_BANK_FIXTURE_INELIGIBLE &&
+           (uint32_t)metric <= threshold;
+}
+
+static uint32_t fixture_expected_ordinal(
+        bbe_state_bank_selector_family family, uint32_t threshold,
+        uint32_t position) {
+    if (family == BBE_STATE_BANK_SELECTOR_UNIFORM) {
+        return position < BBE_TEST_STATE_BANK_FIXTURE_RECORDS
+                   ? position : UINT32_MAX;
+    }
+    /*
+     * The immutable index order is metric bucket first, then original BBS
+     * ordinal within a bucket.  Derive that order from the authored metric
+     * table rather than consulting the implementation's index.
+     */
+    for (uint32_t metric = 0; metric <= threshold; metric++) {
+        for (uint32_t ordinal = 0;
+             ordinal < BBE_TEST_STATE_BANK_FIXTURE_RECORDS; ordinal++) {
+            if (bbe_test_fixture_metrics[ordinal][family - 1u] !=
+                (int)metric) {
+                continue;
+            }
+            if (position == 0) return ordinal;
+            position--;
+        }
+    }
+    return UINT32_MAX;
+}
+
+static void verify_latched_selection(
+        const IntegrationEnv* fixture,
+        bbe_state_bank_selector_family family, uint32_t threshold) {
+    const Bloodbowl* env = &fixture->env;
+    ICHECK(env->demo_started == 1);
+    ICHECK(env->state_bank_config_latched == 1);
+    ICHECK(env->state_bank_selector_family_latched == (int)family);
+    ICHECK(env->state_bank_selector_threshold_latched == threshold);
+    ICHECK(env->state_bank_selector_eligible_latched ==
+           bbe_test_fixture_prefix_counts[family][threshold]);
+    ICHECK(strcmp(env->state_bank_stratum_sha256_latched,
+                  bbe_test_fixture_prefix_sha256[family][threshold]) == 0);
+    uint32_t ordinal = env->state_bank_record_index_latched;
+    ICHECK(ordinal < BBE_TEST_STATE_BANK_FIXTURE_RECORDS);
+    ICHECK(fixture_record_eligible(ordinal, family, threshold));
+    ICHECK(env->state_bank_source_id_latched ==
+           bbe_test_fixture_source_ids[ordinal]);
+    ICHECK(env->state_bank_source_command_latched ==
+           bbe_test_fixture_commands[ordinal]);
+    ICHECK(env->state_bank_source_half_latched ==
+           bbe_test_fixture_halves[ordinal]);
+    ICHECK(env->state_bank_source_turn_latched ==
+           bbe_test_fixture_turns[ordinal]);
+    ICHECK(memcmp(&env->match, &bbe_state_bank[ordinal],
+                  sizeof env->match) == 0);
+    ICHECK(env->match.status == BB_STATUS_DECISION);
+    ICHECK(env->match.stack_top > 0);
+    ICHECK(env->n_legal > 0 && env->n_legal <= BB_LEGAL_MAX);
+}
+
+static void set_integration_selector(
+        Bloodbowl* env, bbe_state_bank_selector_family family,
+        uint32_t threshold) {
+    env->demo_endzone_maxdist = 0;
+    env->demo_pickup_maxdist = 0;
+    env->demo_postkick_maxturn = 0;
+    env->demo_pass_maxrange = 0;
+    switch (family) {
+        case BBE_STATE_BANK_SELECTOR_UNIFORM:
+            ICHECK(threshold == 0);
+            break;
+        case BBE_STATE_BANK_SELECTOR_ENDZONE:
+            env->demo_endzone_maxdist = (int)threshold;
+            break;
+        case BBE_STATE_BANK_SELECTOR_PICKUP:
+            env->demo_pickup_maxdist = (int)threshold;
+            break;
+        case BBE_STATE_BANK_SELECTOR_POSTKICK:
+            env->demo_postkick_maxturn = (int)threshold;
+            break;
+        case BBE_STATE_BANK_SELECTOR_PASS:
+            env->demo_pass_maxrange = (int)threshold;
+            break;
+        default:
+            ICHECK(0);
+    }
+}
+
+static void valid_uniform_reset(void) {
+    require_and_verify_fixture();
     IntegrationEnv fixture;
     setup_integration_env(&fixture, 1.0f);
     c_reset(&fixture.env);
-    ICHECK(fixture.env.demo_started == 1);
-    ICHECK(fixture.env.match.status == BB_STATUS_DECISION);
-    ICHECK(fixture.env.match.stack_top > 0);
-    ICHECK(fixture.env.n_legal > 0 &&
-           fixture.env.n_legal <= BB_LEGAL_MAX);
-    ICHECK(memcmp(&fixture.env.match, &bbe_state_bank[0],
-                  sizeof fixture.env.match) == 0);
+    verify_latched_selection(
+        &fixture, BBE_STATE_BANK_SELECTOR_UNIFORM, 0);
     c_reset(&fixture.env);
-    ICHECK(fixture.env.demo_started == 1);
+    verify_latched_selection(
+        &fixture, BBE_STATE_BANK_SELECTOR_UNIFORM, 0);
     ICHECK(bbe_state_bank_publications == 1);
     ICHECK(bbe_state_bank_load_attempts == 1);
+}
+
+static void all_descriptors_match_independent_fixture_oracle(void) {
+    require_and_verify_fixture();
+    for (unsigned family_value = BBE_STATE_BANK_SELECTOR_UNIFORM;
+         family_value < BBE_STATE_BANK_SELECTOR_FAMILY_COUNT;
+         family_value++) {
+        bbe_state_bank_selector_family family =
+            (bbe_state_bank_selector_family)family_value;
+        uint32_t maximum =
+            bbe_state_bank_selector_max_threshold(family);
+        for (uint32_t threshold = 0; threshold <= maximum; threshold++) {
+            bbe_state_bank_stratum_descriptor descriptor;
+            ICHECK(bbe_state_bank_copy_stratum_descriptor(
+                        family, threshold, &descriptor) == BBE_SB_OK);
+            ICHECK(descriptor.family == family);
+            ICHECK(descriptor.threshold == threshold);
+            ICHECK(descriptor.eligible_records ==
+                   bbe_test_fixture_prefix_counts[family][threshold]);
+            ICHECK(strcmp(
+                       descriptor.sha256,
+                       bbe_test_fixture_prefix_sha256[family][threshold]) ==
+                   0);
+            for (uint32_t position = 0;
+                 position < descriptor.eligible_records; position++) {
+                uint32_t ordinal = UINT32_MAX;
+                ICHECK(bbe_state_bank_copy_stratum_ordinal(
+                            family, threshold, position, &ordinal) ==
+                       BBE_SB_OK);
+                ICHECK(ordinal == fixture_expected_ordinal(
+                                       family, threshold, position));
+            }
+        }
+    }
+}
+
+static void every_qualifying_selector_resets_from_exact_prefix(void) {
+    require_and_verify_fixture();
+    static const struct {
+        bbe_state_bank_selector_family family;
+        uint32_t threshold;
+    } cases[] = {
+        {BBE_STATE_BANK_SELECTOR_ENDZONE, 2},
+        {BBE_STATE_BANK_SELECTOR_PICKUP, 2},
+        {BBE_STATE_BANK_SELECTOR_POSTKICK, 1},
+        {BBE_STATE_BANK_SELECTOR_PASS, 3},
+    };
+    for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+        IntegrationEnv fixture;
+        setup_integration_env(&fixture, 1.0f);
+        fixture.env.seed += (uint64_t)i * UINT64_C(0x10001);
+        set_integration_selector(
+            &fixture.env, cases[i].family, cases[i].threshold);
+        for (int episode = 0; episode < 16; episode++) {
+            c_reset(&fixture.env);
+            verify_latched_selection(
+                &fixture, cases[i].family, cases[i].threshold);
+        }
+    }
 }
 
 static void zero_reset_never_opens_bank(void) {
@@ -182,7 +357,8 @@ static void empty_endzone_stratum_aborts_distinctly(void) {
         bbe_state_bank_compiled_request(NULL, NULL, NULL);
     ICHECK(bbe_state_bank_require_core(&request) == BBE_SB_OK);
     ICHECK(bbe_state_bank_status == BBE_SB_READY);
-    ICHECK(bbe_state_bank_n == 1);
+    ICHECK(bbe_state_bank_n ==
+           (int)BBE_TEST_STATE_BANK_FIXTURE_RECORDS);
     int diagnostic[2];
     ICHECK(pipe(diagnostic) == 0);
     pid_t child = fork();
@@ -270,7 +446,9 @@ static int copy_and_flip(const char* source, char* destination,
             break;
         }
     }
-    int failed = total == 0 || fclose(in) != 0 || fclose(out) != 0;
+    int close_in_failed = fclose(in) != 0;
+    int close_out_failed = fclose(out) != 0;
+    int failed = total == 0 || close_in_failed || close_out_failed;
     return failed ? -1 : 0;
 }
 
@@ -386,6 +564,11 @@ static int run_case(const char* name, integration_case function,
 int main(void) {
     int failures = 0;
     failures += run_case("valid uniform reset", valid_uniform_reset, 0);
+    failures += run_case("all descriptors match independent fixture oracle",
+                         all_descriptors_match_independent_fixture_oracle, 0);
+    failures += run_case("qualifying selectors reset from exact prefixes",
+                         every_qualifying_selector_resets_from_exact_prefix,
+                         0);
     failures += run_case("zero reset leaves bank unopened",
                          zero_reset_never_opens_bank, 0);
     failures += run_case("owned path copies", owned_paths_survive_caller_mutation, 0);

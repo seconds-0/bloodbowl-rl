@@ -71,15 +71,16 @@ disabled until the authored publisher emits durable identity sidecars, a
 balanced report, a closed producer manifest, and an independently reviewed
 training contract. Copying a BBS file into Puffer resources never authorizes it.
 
-The runtime path is intentionally single-contract and hash-pinned. Arbitrary
-bank-path knobs, tagged mixtures, and selector weights are future work after
-pre-indexed strata; path selection supplies routing only, never authority.
+The runtime path is intentionally single-contract and hash-pinned. It now
+supports one exact preindexed legacy-predicate family and threshold at a time;
+arbitrary bank-path knobs, tagged mixtures, and selector weights remain future
+work. Path selection supplies routing only, never authority.
 
 ## Drill library v1 (ranked by measured gap, D61/D63 human baseline)
 
 | # | drill | gap (agent vs human) | source | success metric |
 |---|-------|----------------------|--------|----------------|
-| 1 | Scoop (pickup) | pickup_success 0.30 vs 4.88 | indexed predicate proposed; historical D64 runtime filter retired | pickup_success |
+| 1 | Scoop (pickup) | pickup_success 0.30 vs 4.88 | exact preindexed legacy pickup predicate; historical D64 retry filter retired | pickup_success |
 | 2 | **Passing** | pass 0.00 vs 1.97 — never passes | authored: carrier + open receiver downfield, turn-8 clock pressure variants | pass_attempts, completions |
 | 3 | Cage-crack / sack | no strip game; 2dred gauge can't see skill-package EV | authored: opponent cage at midfield, our blitzer (Wrestle/Tackle/Strip Ball variants) adjacent | opponent carrier drops ball |
 | 4 | Two-turn scoring | tds 0.10 vs 2.22 from kickoff | predicate: backplay filter + turn counter near half-end | tds |

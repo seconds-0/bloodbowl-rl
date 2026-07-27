@@ -1,7 +1,8 @@
 # Exact preindexed state-bank strata
 
-Status: implementation in progress; adversarially approved and watched red
-captured 2026-07-27
+Status: implemented and validated 2026-07-27; adversarially approved, watched
+red captured before implementation, and two independent post-implementation
+reviews closed with no residual P0/P1/P2 findings
 
 Base: `7bc96f1`
 
@@ -449,14 +450,15 @@ Eight new keys bring the environment total from 144 to 152; Puffer appends
 
 Before adding these keys, replace the stale multi-purpose
 `training/puffer_dict_capacity.patch` with a focused pinned patch containing
-only the two 160-slot log allocations and the `vecenv.h` release-build
-capacity abort. Its historical action-mask and float-cast hunks are already
-owned by other reviewed patches and make the present bundle neither
-forward- nor reverse-applicable after the current stack. Then:
+only the four reachable 160-slot log allocations (native train/eval and
+generic CPU/CUDA vector logs) and the `vecenv.h` release-build capacity abort.
+Its historical action-mask and float-cast hunks are already owned by other
+reviewed patches and make the present bundle neither forward- nor
+reverse-applicable after the current stack. Then:
 
 - apply or reverse-verify the focused exact patch at one deterministic stack
-  point, then remove the broad Perl allocation rewrite for the two binding
-  files;
+  point, then remove the broad Perl allocation rewrite across the affected
+  backend sources;
 - prove its `vecenv.h` release-build capacity abort;
 - verify both CPU and CUDA log dictionaries allocate 160;
 - include the patch in launcher patch-bundle provenance;
@@ -538,8 +540,14 @@ Before compiling validation-v2:
    same shared function the installer used for source and installed snapshots;
 3. require equality with the installed/generated `PUFFER_ENV_SOURCE_HASH`;
 4. retain the independent canonical engine-source reconstruction and pin;
-5. build only from the two frozen source closures; and
-6. require validation-v2 to echo the environment hash exactly.
+5. generate the minimal validator `state_bank_build.h` from reconciled
+   literals and that environment identity—never copy the live excluded header;
+6. invoke a fixed-path system compiler with explicit flags and a minimal
+   environment that carries no make, compiler/include, or loader overrides;
+7. build only from the two frozen source closures plus that deterministic
+   generated header; and
+8. require validation-v2 to reconcile and echo its compiled environment hash
+   exactly.
 
 `validate-installed` reconciles that echo with the installed generated header
 before returning a descriptor. The launcher's existing mandatory compiled
@@ -783,9 +791,9 @@ without reconciliation to `PUFFER_ENV_SOURCE_HASH`.
 
 Inspect a clean exact-pinned installation.
 
-Expected new behavior: the exact capacity patch reverse-applies, both log
-dictionaries allocate 160, and `vecenv.h` contains the release-build
-`dict_set: capacity` abort.
+Expected new behavior: the exact capacity patch reverse-applies, all four
+reachable log dictionaries allocate 160, and `vecenv.h` contains the
+release-build `dict_set: capacity` abort.
 
 Current watched behavior: allocations are Perl-expanded, but the exact
 `vecenv.h` hard-abort patch is neither applied nor reverse-verified.
@@ -842,7 +850,7 @@ $ python3 -m unittest \
   tools.test_ladder_knobs.LadderKnobTests.test_each_selector_rejects_its_first_out_of_range_value \
   tools.test_ladder_knobs.LadderKnobTests.test_valid_selector_reaches_installed_contract_validation \
   tools.test_state_bank_contract.PufferStateBankPatchTests.test_validator_binds_predicate_sources_to_installed_environment_hash \
-  tools.test_puffer_log_contract.PufferLogContractTests.test_both_puffer_backends_and_installer_pin_same_capacity
+  tools.test_puffer_log_contract.PufferLogContractTests.test_every_puffer_log_path_and_installer_pin_same_capacity
 Ran 7 tests in 0.070s
 FAILED (failures=15, errors=1)
 ```
@@ -949,7 +957,7 @@ reconciliation, and the stale multi-purpose capacity patch.
     `ea1d720e69f5a491`, 26,251 steps, zero illegal actions.
 11. Clean exact-pinned no-bank PufferLib install/rebuild/check on
     `9836f0d2e78889c1aaf189c04d161b6fc61a9386`, including the installed
-    dictionary hard-abort and both 160-slot allocations.
+    dictionary hard-abort and all four 160-slot allocations.
 12. Separate private authorized multi-record fixture staging/rebuild. Exercise
     the same v2 parser/reconciliation suffix that future public authorization
     would use, then prove native-validator, CPU-module query, and standalone
@@ -959,6 +967,102 @@ reconciliation, and the stale multi-purpose capacity patch.
     does not introduce an unresolved Blood Bowl symbol.
 14. Record exact engine, environment, backend, module, standalone, and
     generated-header hashes.
+
+## Completed implementation and evidence — 2026-07-27
+
+The watched-red commit is `fff4a1c`. The implementation preserves the
+production producer allowlist as the literal empty set and adds no training
+launch or active-asset mutation.
+
+Implemented:
+
+- exact historical metrics for all four selector families;
+- one immutable, transactional, stable-prefix index built before publication;
+- exact unbiased selection from the requested prefix, with selected-record
+  predicate revalidation and hard empty-tier failure;
+- per-episode selector provenance and aggregate Puffer telemetry;
+- the independent seven-record oracle, generated-header integration, native
+  validator-v2, module query, standalone descriptor, and bounded reset audit;
+- full environment-source snapshot/reconciliation for validator compilation;
+- exact primary-launcher and checkpoint-lineage descriptor support;
+- all four reachable 160-slot Puffer log dictionaries plus the release-build
+  capacity abort; and
+- explicit retirement of the stale historical wrapper recipes.
+
+The adversarial implementation reviews found and closed:
+
+- an explicit threshold-zero selector incorrectly collapsing to public
+  selector-zero/uniform behavior;
+- uninitialized negative-test descriptors and short-circuit cleanup leaks;
+- only the generic vector-log dictionaries, rather than all four reachable
+  native train/eval dictionaries, initially receiving the larger capacity;
+- validator compilation inheriting caller compiler/include/loader state;
+- the frozen validator build consuming the live excluded
+  `state_bank_build.h`;
+- incomplete build-race coverage for the predicate and validator sources; and
+- relative installed-Puffer roots becoming invalid when the native validator
+  changed into its isolated working directory.
+
+After those fixes, the independent native and Python/Puffer reviewers both
+reported no residual P0, P1, or P2 issues. The required Kimi pass was omitted
+only after the user explicitly authorized proceeding without it.
+
+Validation results on the final tree:
+
+- `make test`: 476 engine, 64 reward, 2 contact-bot, 54 state-bank,
+  26 observation, generated-header integration, standalone contract/audit,
+  and BBP-v6 writer checks passed;
+- `ASAN_OPTIONS=detect_leaks=0 make asan`: the same complete native matrix
+  passed under ASan/UBSan;
+- tools: 331 tests passed, 2 skipped;
+- training: 95 tests passed, 1 skipped;
+- generated-header integration passed twice with zero failures;
+- seed-42 masked 100-episode trajectory passed twice with FNV
+  `ea1d720e69f5a491`, 26,251 steps, and zero illegal actions;
+- `bash -n`, `shellcheck --severity=warning`, `py_compile`, `ruff check`,
+  the new standalone test's `ruff format --check`, and `git diff --check`
+  passed;
+- a new checkout at PufferLib
+  `9836f0d2e78889c1aaf189c04d161b6fc61a9386` accepted the final installer
+  twice, both exact patches reverse-applied, the no-bank contract checked,
+  all four 160-slot allocations were present, and the capacity abort was
+  present;
+- the compiled no-bank CPU module and standalone passed
+  `install_puffer_env.sh --check`; and
+- after private staging, the CPU module matched all 88 independently
+  generated descriptors and the standalone passed the full descriptor,
+  32-reset exact-audit, invalid-CLI, empty-tier, and compiled-contract suite.
+
+The container's x86 emulator does not implement the AVX2 instructions emitted
+by upstream's unconditional `-mavx2 -mfma` flags. The exact upstream CPU build
+therefore compiled successfully but trapped at import. For executable
+module/standalone validation only, an external compiler wrapper filtered those
+two architecture-target flags without changing Puffer or environment source.
+The resulting module and standalone passed all identity, descriptor, audit,
+and drift checks. No GPU training was launched.
+
+Final identities and artifacts:
+
+```text
+engine source
+  0fc21a6b46f536e09b972299290e48f34aa290e7894bf113443cbb1c0c4d9bc6
+environment source
+  0e8913d9ee03159703cf4fb9d89f79b8ba541ed0a09d793af89eea9c8c365106
+exact Puffer backend source
+  4ef767a1374326a2cc5923064f02c40955a242651b7e8c0369e560ca0de2aa9b
+private-bank CPU module
+  b44a6309ffeb225d3f53795bef13a54f8132a9db42c5575b52882e43e17a5cab
+private-bank Puffer standalone
+  8d5d4f3dadffee07c1209b16350054cecc747b9821ca4f3ee64bd603444492f1
+private installed generated authority
+  37fb59b25af22d06c90bb58a06171377cc9b9b6aa58c80201143b8dedc8ac76d
+local generated integration header
+  b72b269babe54a4d311200f19c6435cc9ca49af2d3e79633aa89f1ecd40a61b4
+seven-record BBS
+  d1deac8d398b5c5888ef2a05d45ba904aeb9a6f5362129fbcaf9b8232e32a1ca
+private compiled contract identity
+  f87003b441b94f23a1e19598922de976e12057c870ff25b11b160fe04cdaada6
+```
 
 ## Version and lineage decision
 

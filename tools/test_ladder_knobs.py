@@ -147,6 +147,11 @@ class LadderKnobTests(unittest.TestCase):
         self.assert_refused(result, "LADDER_STATE_BANK_KIND is required")
 
     def test_valid_selector_reaches_installed_contract_validation(self):
+        launcher = LAUNCHER.read_text(encoding="utf-8")
+        validate_call = launcher.split(" validate-installed \\", 1)[1]
+        validate_call = validate_call.split(')" || exit $?', 1)[0]
+        self.assertIn("--selector-family", validate_call)
+        self.assertIn("--selector-threshold", validate_call)
         result = run(
             LADDER_RESET_PCT="0.5",
             LADDER_ENDZONE_MAXDIST=6,

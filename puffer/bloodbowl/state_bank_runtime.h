@@ -26,6 +26,48 @@
 #define BBE_STATE_BANK_MAX_RECORDS UINT64_C(1000000)
 #define BBE_STATE_BANK_MAX_MANIFEST_BYTES (UINT64_C(4) * 1024u * 1024u)
 #define BBE_STATE_BANK_MAX_PATH 4096u
+#define BBE_STATE_BANK_MAX_TURN 8u
+#define BBE_STATE_BANK_MAX_DISTANCE ((uint32_t)BB_PITCH_LEN - 1u)
+#define BBE_STATE_BANK_SELECTOR_FAMILY_COUNT 5u
+#define BBE_STATE_BANK_SELECTOR_PREFIX_CAP ((uint32_t)BB_PITCH_LEN)
+#define BBE_STATE_BANK_METRIC_INELIGIBLE UINT8_MAX
+
+typedef enum {
+    BBE_STATE_BANK_SELECTOR_UNIFORM = 0,
+    BBE_STATE_BANK_SELECTOR_ENDZONE = 1,
+    BBE_STATE_BANK_SELECTOR_PICKUP = 2,
+    BBE_STATE_BANK_SELECTOR_POSTKICK = 3,
+    BBE_STATE_BANK_SELECTOR_PASS = 4,
+} bbe_state_bank_selector_family;
+
+_Static_assert(BBE_STATE_BANK_SELECTOR_UNIFORM == 0 &&
+                   BBE_STATE_BANK_SELECTOR_ENDZONE == 1 &&
+                   BBE_STATE_BANK_SELECTOR_PICKUP == 2 &&
+                   BBE_STATE_BANK_SELECTOR_POSTKICK == 3 &&
+                   BBE_STATE_BANK_SELECTOR_PASS == 4,
+               "state-bank selector family values are an external contract");
+
+typedef struct {
+    bbe_state_bank_selector_family family;
+    uint32_t threshold;
+    uint32_t eligible_records;
+    char sha256[65];
+} bbe_state_bank_stratum_descriptor;
+
+typedef struct {
+    uint32_t offset;
+    uint32_t length;
+    uint32_t prefix_count[BBE_STATE_BANK_SELECTOR_PREFIX_CAP];
+    char prefix_sha256[BBE_STATE_BANK_SELECTOR_PREFIX_CAP][65];
+} bbe_state_bank_family_index;
+
+typedef struct {
+    uint32_t* ordinals;
+    uint32_t ordinal_count;
+    uint32_t record_count;
+    bbe_state_bank_family_index
+        family[BBE_STATE_BANK_SELECTOR_FAMILY_COUNT];
+} bbe_state_bank_strata;
 
 typedef enum {
     BBE_STATE_BANK_NONE = 0,
@@ -81,7 +123,19 @@ typedef enum {
     BBE_SB_CONFIG_MISSING_KIND,
     BBE_SB_CONFIG_KIND_MISMATCH,
     BBE_SB_CONFIG_TEAM_SENTINEL,
-    BBE_SB_CONFIG_SELECTOR_BRIDGE,
+    BBE_SB_CONFIG_ENDZONE_SELECTOR,
+    BBE_SB_CONFIG_PICKUP_SELECTOR,
+    BBE_SB_CONFIG_POSTKICK_SELECTOR,
+    BBE_SB_CONFIG_PASS_SELECTOR,
+    BBE_SB_SELECTOR_FAMILY,
+    BBE_SB_SELECTOR_THRESHOLD,
+    BBE_SB_SELECTOR_NOT_READY,
+    BBE_SB_SELECTOR_EMPTY,
+    BBE_SB_SELECTOR_BOUNDS,
+    BBE_SB_SELECTOR_POSITION,
+    BBE_SB_SELECTOR_ORDINAL,
+    BBE_SB_SELECTOR_PREDICATE,
+    BBE_SB_INDEX_RECONCILIATION,
 } bbe_state_bank_error;
 
 static const char* bbe_state_bank_error_name(bbe_state_bank_error error) {
@@ -126,7 +180,19 @@ static const char* bbe_state_bank_error_name(bbe_state_bank_error error) {
         "positive demo_reset_pct requires a nonzero state_bank_kind",
         "requested state_bank_kind differs from the compiled contract",
         "banked resets require exact -1 team sentinels",
-        "pre-indexed state-bank strata required",
+        "demo_endzone_maxdist must be an exact integer in [0,25]",
+        "demo_pickup_maxdist must be an exact integer in [0,25]",
+        "demo_postkick_maxturn must be an exact integer in [0,8]",
+        "demo_pass_maxrange must be an exact integer in [0,25]",
+        "unknown state-bank selector family",
+        "state-bank selector threshold is out of range",
+        "state-bank stratum query requires a published typed bank",
+        "requested state-bank stratum is empty",
+        "published state-bank stratum bounds are corrupt",
+        "state-bank stratum position is out of range",
+        "selected state-bank record ordinal is corrupt",
+        "selected state-bank record no longer satisfies its predicate",
+        "state-bank index reconciliation failed",
     };
     size_t count = sizeof names / sizeof names[0];
     return (unsigned)error < count ? names[error] : "unknown state-bank error";
@@ -163,14 +229,46 @@ typedef struct {
 typedef struct {
     bb_match* matches;
     bbe_state_bank_meta* metadata;
+    bbe_state_bank_strata strata;
     size_t count;
     int kind;
 } bbe_state_bank_candidate;
+
+#ifdef BBE_STATE_BANK_TESTING
+static int bbe_state_bank_test_index_alloc_fail_at = -1;
+static unsigned bbe_state_bank_test_index_alloc_attempts = 0;
+static unsigned bbe_state_bank_test_index_alloc_live = 0;
+#endif
+
+static void* bbe_state_bank_index_malloc(size_t size) {
+#ifdef BBE_STATE_BANK_TESTING
+    unsigned attempt = bbe_state_bank_test_index_alloc_attempts++;
+    if (bbe_state_bank_test_index_alloc_fail_at >= 0 &&
+        attempt == (unsigned)bbe_state_bank_test_index_alloc_fail_at) {
+        return NULL;
+    }
+#endif
+    void* allocation = malloc(size);
+#ifdef BBE_STATE_BANK_TESTING
+    if (allocation != NULL) bbe_state_bank_test_index_alloc_live++;
+#endif
+    return allocation;
+}
+
+static void bbe_state_bank_index_free(void* allocation) {
+    if (allocation == NULL) return;
+#ifdef BBE_STATE_BANK_TESTING
+    if (bbe_state_bank_test_index_alloc_live == 0) abort();
+    bbe_state_bank_test_index_alloc_live--;
+#endif
+    free(allocation);
+}
 
 static void bbe_state_bank_candidate_close(bbe_state_bank_candidate* candidate) {
     if (candidate == NULL) return;
     free(candidate->matches);
     free(candidate->metadata);
+    bbe_state_bank_index_free(candidate->strata.ordinals);
     memset(candidate, 0, sizeof *candidate);
 }
 
@@ -201,6 +299,395 @@ static int bbe_state_bank_small_string_valid(const char* value,
                                              size_t maximum) {
     return value != NULL && value[0] != '\0' &&
            bbe_state_bank_bounded_strlen(value, maximum) < maximum;
+}
+
+static const char* bbe_state_bank_selector_family_name(
+        bbe_state_bank_selector_family family) {
+    static const char* const names[BBE_STATE_BANK_SELECTOR_FAMILY_COUNT] = {
+        "uniform",
+        "endzone-maxdist",
+        "pickup-maxdist",
+        "postkick-maxturn",
+        "pass-maxrange",
+    };
+    return (unsigned)family < BBE_STATE_BANK_SELECTOR_FAMILY_COUNT
+               ? names[family] : NULL;
+}
+
+static bbe_state_bank_error bbe_state_bank_selector_family_parse(
+        const char* name, bbe_state_bank_selector_family* output) {
+    if (name == NULL || output == NULL) return BBE_SB_SELECTOR_FAMILY;
+    for (unsigned family = 0;
+         family < BBE_STATE_BANK_SELECTOR_FAMILY_COUNT; family++) {
+        if (strcmp(name, bbe_state_bank_selector_family_name(
+                             (bbe_state_bank_selector_family)family)) == 0) {
+            *output = (bbe_state_bank_selector_family)family;
+            return BBE_SB_OK;
+        }
+    }
+    return BBE_SB_SELECTOR_FAMILY;
+}
+
+static uint32_t bbe_state_bank_selector_max_threshold(
+        bbe_state_bank_selector_family family) {
+    if (family == BBE_STATE_BANK_SELECTOR_UNIFORM) return 0;
+    if (family == BBE_STATE_BANK_SELECTOR_POSTKICK) {
+        return BBE_STATE_BANK_MAX_TURN;
+    }
+    if (family == BBE_STATE_BANK_SELECTOR_ENDZONE ||
+        family == BBE_STATE_BANK_SELECTOR_PICKUP ||
+        family == BBE_STATE_BANK_SELECTOR_PASS) {
+        return BBE_STATE_BANK_MAX_DISTANCE;
+    }
+    return 0;
+}
+
+static int bbe_state_bank_metric(
+        const bb_match* match, bbe_state_bank_selector_family family,
+        uint32_t* metric_out) {
+    if (match == NULL || metric_out == NULL) return 0;
+    if (family == BBE_STATE_BANK_SELECTOR_UNIFORM) {
+        *metric_out = 0;
+        return 1;
+    }
+    if (family == BBE_STATE_BANK_SELECTOR_ENDZONE) {
+        if (match->ball.state != BB_BALL_HELD ||
+            match->ball.carrier >= BB_NUM_PLAYERS) {
+            return 0;
+        }
+        int carrier = match->ball.carrier;
+        const bb_player* player = &match->players[carrier];
+        if (player->location != BB_LOC_ON_PITCH ||
+            player->stance != BB_STANCE_STANDING ||
+            !bb_on_pitch_xy(player->x, player->y)) {
+            return 0;
+        }
+        int distance = player->x - bb_endzone_x(BB_TEAM_OF(carrier));
+        if (distance < 0) distance = -distance;
+        *metric_out = (uint32_t)distance;
+        return *metric_out <= BBE_STATE_BANK_MAX_DISTANCE;
+    }
+    if (family == BBE_STATE_BANK_SELECTOR_PICKUP) {
+        if (match->ball.state != BB_BALL_ON_GROUND ||
+            match->active_team > BB_AWAY ||
+            !bb_on_pitch_xy(match->ball.x, match->ball.y)) {
+            return 0;
+        }
+        uint32_t best = UINT32_MAX;
+        for (int slot = 0; slot < BB_NUM_PLAYERS; slot++) {
+            if (BB_TEAM_OF(slot) != match->active_team) continue;
+            const bb_player* player = &match->players[slot];
+            if (player->location != BB_LOC_ON_PITCH ||
+                player->stance != BB_STANCE_STANDING ||
+                !bb_on_pitch_xy(player->x, player->y)) {
+                continue;
+            }
+            int dx = (int)player->x - (int)match->ball.x;
+            int dy = (int)player->y - (int)match->ball.y;
+            if (dx < 0) dx = -dx;
+            if (dy < 0) dy = -dy;
+            uint32_t distance = (uint32_t)(dx > dy ? dx : dy);
+            if (distance < best) best = distance;
+        }
+        if (best == UINT32_MAX || best > BBE_STATE_BANK_MAX_DISTANCE) return 0;
+        *metric_out = best;
+        return 1;
+    }
+    if (family == BBE_STATE_BANK_SELECTOR_POSTKICK) {
+        if (match->ball.state != BB_BALL_ON_GROUND ||
+            match->active_team > BB_AWAY) {
+            return 0;
+        }
+        uint32_t turn = match->turn[match->active_team];
+        if (turn < 1u || turn > BBE_STATE_BANK_MAX_TURN) return 0;
+        *metric_out = turn;
+        return 1;
+    }
+    if (family == BBE_STATE_BANK_SELECTOR_PASS) {
+        if (match->ball.state != BB_BALL_HELD ||
+            match->ball.carrier >= BB_NUM_PLAYERS ||
+            match->active_team > BB_AWAY ||
+            BB_TEAM_OF(match->ball.carrier) != match->active_team) {
+            return 0;
+        }
+        int carrier = match->ball.carrier;
+        const bb_player* carrier_player = &match->players[carrier];
+        if (carrier_player->location != BB_LOC_ON_PITCH ||
+            !bb_on_pitch_xy(carrier_player->x, carrier_player->y)) {
+            return 0;
+        }
+        int endzone = bb_endzone_x(match->active_team);
+        int carrier_distance = (int)carrier_player->x - endzone;
+        if (carrier_distance < 0) carrier_distance = -carrier_distance;
+        uint32_t best = UINT32_MAX;
+        for (int slot = 0; slot < BB_NUM_PLAYERS; slot++) {
+            if (slot == carrier || BB_TEAM_OF(slot) != match->active_team) {
+                continue;
+            }
+            const bb_player* receiver = &match->players[slot];
+            if (receiver->location != BB_LOC_ON_PITCH ||
+                receiver->stance != BB_STANCE_STANDING ||
+                !bb_on_pitch_xy(receiver->x, receiver->y)) {
+                continue;
+            }
+            int receiver_distance = (int)receiver->x - endzone;
+            if (receiver_distance < 0) receiver_distance = -receiver_distance;
+            if (receiver_distance >= carrier_distance) continue;
+            int dx = (int)receiver->x - (int)carrier_player->x;
+            int dy = (int)receiver->y - (int)carrier_player->y;
+            if (dx < 0) dx = -dx;
+            if (dy < 0) dy = -dy;
+            uint32_t distance = (uint32_t)(dx > dy ? dx : dy);
+            if (distance < best) best = distance;
+        }
+        if (best == UINT32_MAX || best > BBE_STATE_BANK_MAX_DISTANCE) return 0;
+        *metric_out = best;
+        return 1;
+    }
+    return 0;
+}
+
+static void bbe_state_bank_sha256_le32(bbe_sha256* sha, uint32_t value) {
+    uint8_t encoded[4] = {
+        (uint8_t)value,
+        (uint8_t)(value >> 8),
+        (uint8_t)(value >> 16),
+        (uint8_t)(value >> 24),
+    };
+    bbe_sha256_update(sha, encoded, sizeof encoded);
+}
+
+static void bbe_state_bank_stratum_digest(
+        const char* bbs_sha256, bbe_state_bank_selector_family family,
+        uint32_t threshold, uint32_t count, const uint32_t* ordinals,
+        int uniform, char output[65]) {
+    static const char domain[] = "bloodbowl-state-bank-stratum-v1";
+    bbe_sha256 sha;
+    bbe_sha256_init(&sha);
+    bbe_sha256_update(&sha, domain, sizeof domain);
+    bbe_sha256_update(&sha, bbs_sha256, 64);
+    static const uint8_t zero = 0;
+    bbe_sha256_update(&sha, &zero, 1);
+    const char* family_name = bbe_state_bank_selector_family_name(family);
+    bbe_sha256_update(&sha, family_name, strlen(family_name));
+    bbe_sha256_update(&sha, &zero, 1);
+    bbe_state_bank_sha256_le32(&sha, threshold);
+    bbe_state_bank_sha256_le32(&sha, count);
+    for (uint32_t i = 0; i < count; i++) {
+        uint32_t ordinal = uniform ? i : ordinals[i];
+        bbe_state_bank_sha256_le32(&sha, ordinal);
+    }
+    uint8_t digest[32];
+    bbe_sha256_final(&sha, digest);
+    bbe_sha256_hex(digest, output);
+}
+
+static bbe_state_bank_error bbe_state_bank_build_strata(
+        const bbe_state_bank_request* request, const bb_match* matches,
+        size_t count, bbe_state_bank_strata* output) {
+    if (request == NULL || matches == NULL || output == NULL ||
+        count == 0 || count > UINT32_MAX ||
+        count > SIZE_MAX / (BBE_STATE_BANK_SELECTOR_FAMILY_COUNT - 1u)) {
+        return BBE_SB_INDEX_RECONCILIATION;
+    }
+    memset(output, 0, sizeof *output);
+    output->record_count = (uint32_t)count;
+    bbe_state_bank_family_index* uniform =
+        &output->family[BBE_STATE_BANK_SELECTOR_UNIFORM];
+    uniform->length = (uint32_t)count;
+    uniform->prefix_count[0] = (uint32_t)count;
+    bbe_state_bank_stratum_digest(
+        request->bbs_sha256, BBE_STATE_BANK_SELECTOR_UNIFORM, 0,
+        (uint32_t)count, NULL, 1, uniform->prefix_sha256[0]);
+
+    size_t metric_bytes =
+        count * (BBE_STATE_BANK_SELECTOR_FAMILY_COUNT - 1u);
+    uint8_t* metrics =
+        (uint8_t*)bbe_state_bank_index_malloc(metric_bytes);
+    if (metrics == NULL) return BBE_SB_ALLOC;
+    memset(metrics, BBE_STATE_BANK_METRIC_INELIGIBLE, metric_bytes);
+
+    uint32_t buckets[BBE_STATE_BANK_SELECTOR_FAMILY_COUNT]
+                    [BBE_STATE_BANK_SELECTOR_PREFIX_CAP] = {{0}};
+    uint64_t total = 0;
+    for (unsigned family = BBE_STATE_BANK_SELECTOR_ENDZONE;
+         family < BBE_STATE_BANK_SELECTOR_FAMILY_COUNT; family++) {
+        uint32_t maximum = bbe_state_bank_selector_max_threshold(
+            (bbe_state_bank_selector_family)family);
+        for (size_t ordinal = 0; ordinal < count; ordinal++) {
+            uint32_t metric = 0;
+            if (!bbe_state_bank_metric(
+                    &matches[ordinal],
+                    (bbe_state_bank_selector_family)family, &metric)) {
+                continue;
+            }
+            if (metric > maximum ||
+                metric >= BBE_STATE_BANK_SELECTOR_PREFIX_CAP) {
+                bbe_state_bank_index_free(metrics);
+                return BBE_SB_INDEX_RECONCILIATION;
+            }
+            metrics[(family - 1u) * count + ordinal] = (uint8_t)metric;
+            if (buckets[family][metric] == UINT32_MAX) {
+                bbe_state_bank_index_free(metrics);
+                return BBE_SB_INDEX_RECONCILIATION;
+            }
+            buckets[family][metric]++;
+        }
+        uint64_t family_count = 0;
+        for (uint32_t metric = 0; metric <= maximum; metric++) {
+            family_count += buckets[family][metric];
+            if (family_count > UINT32_MAX) {
+                bbe_state_bank_index_free(metrics);
+                return BBE_SB_INDEX_RECONCILIATION;
+            }
+            output->family[family].prefix_count[metric] =
+                (uint32_t)family_count;
+        }
+        output->family[family].offset = (uint32_t)total;
+        output->family[family].length = (uint32_t)family_count;
+        total += family_count;
+        if (total > UINT32_MAX || total > SIZE_MAX / sizeof(uint32_t)) {
+            bbe_state_bank_index_free(metrics);
+            return BBE_SB_INDEX_RECONCILIATION;
+        }
+    }
+    output->ordinal_count = (uint32_t)total;
+    if (total != 0) {
+        output->ordinals = (uint32_t*)bbe_state_bank_index_malloc(
+            (size_t)total * sizeof *output->ordinals);
+        if (output->ordinals == NULL) {
+            bbe_state_bank_index_free(metrics);
+            memset(output, 0, sizeof *output);
+            return BBE_SB_ALLOC;
+        }
+    }
+
+    for (unsigned family = BBE_STATE_BANK_SELECTOR_ENDZONE;
+         family < BBE_STATE_BANK_SELECTOR_FAMILY_COUNT; family++) {
+        uint32_t maximum = bbe_state_bank_selector_max_threshold(
+            (bbe_state_bank_selector_family)family);
+        uint32_t cursor[BBE_STATE_BANK_SELECTOR_PREFIX_CAP] = {0};
+        uint32_t next = output->family[family].offset;
+        for (uint32_t metric = 0; metric <= maximum; metric++) {
+            cursor[metric] = next;
+            next += buckets[family][metric];
+        }
+        if (next != output->family[family].offset +
+                        output->family[family].length) {
+            bbe_state_bank_index_free(metrics);
+            bbe_state_bank_index_free(output->ordinals);
+            memset(output, 0, sizeof *output);
+            return BBE_SB_INDEX_RECONCILIATION;
+        }
+        for (uint32_t ordinal = 0; ordinal < (uint32_t)count; ordinal++) {
+            uint8_t metric = metrics[(family - 1u) * count + ordinal];
+            if (metric == BBE_STATE_BANK_METRIC_INELIGIBLE) continue;
+            uint32_t position = cursor[metric]++;
+            if (position >= output->ordinal_count) {
+                bbe_state_bank_index_free(metrics);
+                bbe_state_bank_index_free(output->ordinals);
+                memset(output, 0, sizeof *output);
+                return BBE_SB_INDEX_RECONCILIATION;
+            }
+            output->ordinals[position] = ordinal;
+        }
+        for (uint32_t metric = 0; metric <= maximum; metric++) {
+            if (cursor[metric] !=
+                output->family[family].offset +
+                    output->family[family].prefix_count[metric]) {
+                bbe_state_bank_index_free(metrics);
+                bbe_state_bank_index_free(output->ordinals);
+                memset(output, 0, sizeof *output);
+                return BBE_SB_INDEX_RECONCILIATION;
+            }
+            uint32_t eligible =
+                output->family[family].prefix_count[metric];
+            bbe_state_bank_stratum_digest(
+                request->bbs_sha256,
+                (bbe_state_bank_selector_family)family, metric, eligible,
+                output->ordinals == NULL
+                    ? NULL
+                    : output->ordinals + output->family[family].offset,
+                0,
+                output->family[family].prefix_sha256[metric]);
+            for (uint32_t position = 0; position < eligible; position++) {
+                uint32_t ordinal = output->ordinals[
+                    output->family[family].offset + position];
+                uint32_t observed = 0;
+                if (ordinal >= count ||
+                    !bbe_state_bank_metric(
+                        &matches[ordinal],
+                        (bbe_state_bank_selector_family)family, &observed) ||
+                    observed > metric) {
+                    bbe_state_bank_index_free(metrics);
+                    bbe_state_bank_index_free(output->ordinals);
+                    memset(output, 0, sizeof *output);
+                    return BBE_SB_INDEX_RECONCILIATION;
+                }
+            }
+        }
+    }
+    bbe_state_bank_index_free(metrics);
+    return BBE_SB_OK;
+}
+
+static bbe_state_bank_error bbe_state_bank_strata_descriptor(
+        const bbe_state_bank_strata* strata, uint32_t bank_records,
+        bbe_state_bank_selector_family family, uint32_t threshold,
+        bbe_state_bank_stratum_descriptor* output) {
+    if (output == NULL ||
+        (unsigned)family >= BBE_STATE_BANK_SELECTOR_FAMILY_COUNT) {
+        return BBE_SB_SELECTOR_FAMILY;
+    }
+    uint32_t maximum = bbe_state_bank_selector_max_threshold(family);
+    if (threshold > maximum ||
+        (family == BBE_STATE_BANK_SELECTOR_UNIFORM && threshold != 0)) {
+        return BBE_SB_SELECTOR_THRESHOLD;
+    }
+    if (strata == NULL || bank_records == 0 ||
+        strata->record_count != bank_records) {
+        return BBE_SB_SELECTOR_BOUNDS;
+    }
+    const bbe_state_bank_family_index* index = &strata->family[family];
+    uint32_t eligible = index->prefix_count[threshold];
+    if (family == BBE_STATE_BANK_SELECTOR_UNIFORM) {
+        if (index->offset != 0 || index->length != bank_records ||
+            eligible != bank_records) {
+            return BBE_SB_SELECTOR_BOUNDS;
+        }
+    } else if (index->offset > strata->ordinal_count ||
+               index->length > strata->ordinal_count - index->offset ||
+               index->length > bank_records ||
+               eligible > index->length || eligible > bank_records ||
+               (index->length != 0 && strata->ordinals == NULL)) {
+        return BBE_SB_SELECTOR_BOUNDS;
+    }
+    if (!bbe_sha256_valid_hex(index->prefix_sha256[threshold])) {
+        return BBE_SB_SELECTOR_BOUNDS;
+    }
+    memset(output, 0, sizeof *output);
+    output->family = family;
+    output->threshold = threshold;
+    output->eligible_records = eligible;
+    memcpy(output->sha256, index->prefix_sha256[threshold],
+           sizeof output->sha256);
+    return BBE_SB_OK;
+}
+
+static bbe_state_bank_error bbe_state_bank_candidate_stratum_descriptor(
+        const bbe_state_bank_candidate* candidate,
+        bbe_state_bank_selector_family family, uint32_t threshold,
+        bbe_state_bank_stratum_descriptor* output) {
+    if (candidate == NULL || candidate->matches == NULL ||
+        candidate->metadata == NULL || candidate->count == 0 ||
+        candidate->count > UINT32_MAX ||
+        (candidate->kind != BBE_STATE_BANK_STRICT_REPLAY &&
+         candidate->kind != BBE_STATE_BANK_AUTHORED_SCENARIO)) {
+        return BBE_SB_SELECTOR_NOT_READY;
+    }
+    return bbe_state_bank_strata_descriptor(
+        &candidate->strata, (uint32_t)candidate->count,
+        family, threshold, output);
 }
 
 static bbe_state_bank_error bbe_state_bank_validate_request(
@@ -461,9 +948,13 @@ static bbe_state_bank_error bbe_state_bank_load_candidate(
         }
         metadata[i] = meta;
     }
+    bbe_state_bank_strata strata;
+    error = bbe_state_bank_build_strata(request, matches, count, &strata);
+    if (error != BBE_SB_OK) goto reject;
     free(bytes);
     output->matches = matches;
     output->metadata = metadata;
+    output->strata = strata;
     output->count = count;
     output->kind = request->kind;
     return BBE_SB_OK;
@@ -514,6 +1005,7 @@ static int bbe_state_bank_failure_identity_valid = 0;
 static uint8_t bbe_state_bank_failure_identity[32];
 static bb_match* bbe_state_bank = NULL;
 static bbe_state_bank_meta* bbe_state_bank_metadata = NULL;
+static bbe_state_bank_strata bbe_state_bank_published_strata;
 static int bbe_state_bank_n = 0;
 static int bbe_state_bank_loaded_kind = BBE_STATE_BANK_NONE;
 static unsigned bbe_state_bank_load_attempts = 0;
@@ -531,6 +1023,79 @@ static void bbe_state_bank_lock_acquire(void) {
 
 static void bbe_state_bank_lock_release(void) {
     atomic_flag_clear_explicit(&bbe_state_bank_lock, memory_order_release);
+}
+
+static bbe_state_bank_error bbe_state_bank_descriptor_locked(
+        bbe_state_bank_selector_family family, uint32_t threshold,
+        bbe_state_bank_stratum_descriptor* output) {
+    if (bbe_state_bank_status != BBE_SB_READY ||
+        bbe_state_bank_loaded_kind != BBE_STATE_BANK_STRICT_REPLAY ||
+        bbe_state_bank == NULL || bbe_state_bank_metadata == NULL ||
+        bbe_state_bank_n <= 0) {
+        return BBE_SB_SELECTOR_NOT_READY;
+    }
+    return bbe_state_bank_strata_descriptor(
+        &bbe_state_bank_published_strata, (uint32_t)bbe_state_bank_n,
+        family, threshold, output);
+}
+
+static bbe_state_bank_error bbe_state_bank_copy_stratum_descriptor(
+        bbe_state_bank_selector_family family, uint32_t threshold,
+        bbe_state_bank_stratum_descriptor* output) {
+    bbe_state_bank_lock_acquire();
+    bbe_state_bank_error error =
+        bbe_state_bank_descriptor_locked(family, threshold, output);
+    bbe_state_bank_lock_release();
+    return error;
+}
+
+static bbe_state_bank_error bbe_state_bank_copy_named_stratum_descriptor(
+        const char* family_name, uint32_t threshold,
+        bbe_state_bank_stratum_descriptor* output) {
+    bbe_state_bank_selector_family family;
+    bbe_state_bank_error error =
+        bbe_state_bank_selector_family_parse(family_name, &family);
+    if (error != BBE_SB_OK) return error;
+    return bbe_state_bank_copy_stratum_descriptor(family, threshold, output);
+}
+
+static bbe_state_bank_error bbe_state_bank_copy_stratum_ordinal(
+        bbe_state_bank_selector_family family, uint32_t threshold,
+        uint32_t position, uint32_t* ordinal_out) {
+    if (ordinal_out == NULL) return BBE_SB_SELECTOR_POSITION;
+    bbe_state_bank_lock_acquire();
+    bbe_state_bank_stratum_descriptor descriptor;
+    bbe_state_bank_error error =
+        bbe_state_bank_descriptor_locked(family, threshold, &descriptor);
+    if (error == BBE_SB_OK && descriptor.eligible_records == 0) {
+        error = BBE_SB_SELECTOR_EMPTY;
+    }
+    if (error == BBE_SB_OK && position >= descriptor.eligible_records) {
+        error = BBE_SB_SELECTOR_POSITION;
+    }
+    uint32_t ordinal = 0;
+    if (error == BBE_SB_OK) {
+        if (family == BBE_STATE_BANK_SELECTOR_UNIFORM) {
+            ordinal = position;
+        } else {
+            const bbe_state_bank_family_index* index =
+                &bbe_state_bank_published_strata.family[family];
+            if (position > UINT32_MAX - index->offset ||
+                index->offset + position >=
+                    bbe_state_bank_published_strata.ordinal_count) {
+                error = BBE_SB_SELECTOR_BOUNDS;
+            } else {
+                ordinal = bbe_state_bank_published_strata.ordinals[
+                    index->offset + position];
+            }
+        }
+    }
+    if (error == BBE_SB_OK && ordinal >= (uint32_t)bbe_state_bank_n) {
+        error = BBE_SB_SELECTOR_ORDINAL;
+    }
+    if (error == BBE_SB_OK) *ordinal_out = ordinal;
+    bbe_state_bank_lock_release();
+    return error;
 }
 
 static void bbe_state_bank_fingerprint_u64(
@@ -798,8 +1363,13 @@ static bbe_state_bank_error bbe_state_bank_require_core(
         if (error == BBE_SB_OK) {
             bbe_state_bank = candidate.matches;
             bbe_state_bank_metadata = candidate.metadata;
+            bbe_state_bank_published_strata = candidate.strata;
             bbe_state_bank_n = (int)candidate.count;
             bbe_state_bank_loaded_kind = candidate.kind;
+            candidate.matches = NULL;
+            candidate.metadata = NULL;
+            memset(&candidate.strata, 0, sizeof candidate.strata);
+            candidate.count = 0;
             bbe_state_bank_status = BBE_SB_READY;
             bbe_state_bank_failure = BBE_SB_OK;
             bbe_state_bank_publications++;
@@ -949,10 +1519,26 @@ static bbe_state_bank_error bbe_state_bank_validate_config_values(
         values->postkick_selector,
         values->pass_selector,
     };
+    const int maxima[] = {
+        (int)BBE_STATE_BANK_MAX_DISTANCE,
+        (int)BBE_STATE_BANK_MAX_DISTANCE,
+        (int)BBE_STATE_BANK_MAX_TURN,
+        (int)BBE_STATE_BANK_MAX_DISTANCE,
+    };
+    const bbe_state_bank_error selector_errors[] = {
+        BBE_SB_CONFIG_ENDZONE_SELECTOR,
+        BBE_SB_CONFIG_PICKUP_SELECTOR,
+        BBE_SB_CONFIG_POSTKICK_SELECTOR,
+        BBE_SB_CONFIG_PASS_SELECTOR,
+    };
     int nonzero = 0;
     for (size_t i = 0; i < sizeof selectors / sizeof selectors[0]; i++) {
-        if (!bbe_state_bank_exact_int(selectors[i], 0, INT_MAX)) {
+        if (!isfinite(selectors[i]) || selectors[i] < 0.0 ||
+            selectors[i] != floor(selectors[i])) {
             return BBE_SB_CONFIG_SELECTOR;
+        }
+        if (selectors[i] > maxima[i]) {
+            return selector_errors[i];
         }
         nonzero += selectors[i] != 0.0;
     }
@@ -969,7 +1555,36 @@ static bbe_state_bank_error bbe_state_bank_validate_config_values(
         values->force_away_team != -1.0) {
         return BBE_SB_CONFIG_TEAM_SENTINEL;
     }
-    if (nonzero != 0) return BBE_SB_CONFIG_SELECTOR_BRIDGE;
+    return BBE_SB_OK;
+}
+
+static bbe_state_bank_error bbe_state_bank_selector_from_config(
+        const bbe_state_bank_config_values* values,
+        bbe_state_bank_selector_family* family_out,
+        uint32_t* threshold_out) {
+    if (values == NULL || family_out == NULL || threshold_out == NULL) {
+        return BBE_SB_REQUEST_INCOMPLETE;
+    }
+    bbe_state_bank_selector_family family = BBE_STATE_BANK_SELECTOR_UNIFORM;
+    uint32_t threshold = 0;
+    if (values->endzone_selector != 0.0) {
+        family = BBE_STATE_BANK_SELECTOR_ENDZONE;
+        threshold = (uint32_t)values->endzone_selector;
+    } else if (values->pickup_selector != 0.0) {
+        family = BBE_STATE_BANK_SELECTOR_PICKUP;
+        threshold = (uint32_t)values->pickup_selector;
+    } else if (values->postkick_selector != 0.0) {
+        family = BBE_STATE_BANK_SELECTOR_POSTKICK;
+        threshold = (uint32_t)values->postkick_selector;
+    } else if (values->pass_selector != 0.0) {
+        family = BBE_STATE_BANK_SELECTOR_PASS;
+        threshold = (uint32_t)values->pass_selector;
+    }
+    if (threshold > bbe_state_bank_selector_max_threshold(family)) {
+        return BBE_SB_SELECTOR_THRESHOLD;
+    }
+    *family_out = family;
+    *threshold_out = threshold;
     return BBE_SB_OK;
 }
 
@@ -999,8 +1614,11 @@ static void bbe_state_bank_test_reset_process(void) {
     bbe_state_bank_lock_acquire();
     free(bbe_state_bank);
     free(bbe_state_bank_metadata);
+    bbe_state_bank_index_free(bbe_state_bank_published_strata.ordinals);
     bbe_state_bank = NULL;
     bbe_state_bank_metadata = NULL;
+    memset(&bbe_state_bank_published_strata, 0,
+           sizeof bbe_state_bank_published_strata);
     bbe_state_bank_n = 0;
     bbe_state_bank_loaded_kind = BBE_STATE_BANK_NONE;
     bbe_state_bank_status = BBE_SB_UNTRIED;
@@ -1020,6 +1638,8 @@ static void bbe_state_bank_test_reset_process(void) {
     memset(bbe_state_bank_contract_path_override, 0,
            sizeof bbe_state_bank_contract_path_override);
     bbe_state_bank_test_publication = 0;
+    bbe_state_bank_test_index_alloc_fail_at = -1;
+    bbe_state_bank_test_index_alloc_attempts = 0;
     bbe_state_bank_lock_release();
 }
 
@@ -1028,12 +1648,14 @@ static void bbe_state_bank_test_publish_candidate(
     bbe_state_bank_test_reset_process();
     bbe_state_bank = candidate->matches;
     bbe_state_bank_metadata = candidate->metadata;
+    bbe_state_bank_published_strata = candidate->strata;
     bbe_state_bank_n = (int)candidate->count;
     bbe_state_bank_loaded_kind = candidate->kind;
     bbe_state_bank_status = BBE_SB_READY;
     bbe_state_bank_test_publication = 1;
     candidate->matches = NULL;
     candidate->metadata = NULL;
+    memset(&candidate->strata, 0, sizeof candidate->strata);
     candidate->count = 0;
 }
 #else

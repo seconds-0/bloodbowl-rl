@@ -120,6 +120,38 @@ static void write_state_bank_pair(const char* path,
     BB_CHECK_EQ(fclose(file), 0);
 }
 
+static void write_state_bank_records(const char* path,
+                                     const bb_match* matches,
+                                     size_t count) {
+    FILE* file = fopen(path, "wb");
+    BB_CHECK(file != NULL);
+    if (file == NULL) return;
+    BB_CHECK_EQ(fwrite("BBS1", 1, 4, file), 4);
+    write_le32(file, 1u);
+    write_le32(file, (uint32_t)sizeof(bb_match));
+    write_le32(file, bbe_state_fingerprint());
+    for (size_t ordinal = 0; ordinal < count; ordinal++) {
+        const bb_match* match = &matches[ordinal];
+        uint8_t metadata[BBE_STATE_BANK_REC_META] = {0};
+        uint32_t source_id = (uint32_t)ordinal + 1u;
+        uint32_t command = UINT32_C(0x8000) + (uint32_t)ordinal;
+        metadata[0] = (uint8_t)source_id;
+        metadata[1] = (uint8_t)(source_id >> 8);
+        metadata[2] = (uint8_t)(source_id >> 16);
+        metadata[3] = (uint8_t)(source_id >> 24);
+        metadata[4] = (uint8_t)command;
+        metadata[5] = (uint8_t)(command >> 8);
+        metadata[6] = (uint8_t)(command >> 16);
+        metadata[7] = (uint8_t)(command >> 24);
+        metadata[8] = match->half;
+        metadata[9] = match->turn[match->active_team];
+        BB_CHECK_EQ(fwrite(metadata, 1, sizeof metadata, file),
+                    sizeof metadata);
+        BB_CHECK_EQ(fwrite(match, sizeof *match, 1, file), 1);
+    }
+    BB_CHECK_EQ(fclose(file), 0);
+}
+
 static const char* test_state_bank_path;
 static char test_producer_path[512];
 static char test_contract_path[512];
@@ -1919,6 +1951,624 @@ BB_TEST(state_bank_sha256_padding_boundaries) {
     }
 }
 
+static void check_state_bank_metric(
+        const bb_match* match, bbe_state_bank_selector_family family,
+        int eligible, uint32_t expected) {
+    uint32_t actual = UINT32_MAX;
+    BB_CHECK_EQ(bbe_state_bank_metric(match, family, &actual), eligible);
+    if (eligible) BB_CHECK_EQ(actual, expected);
+}
+
+BB_TEST(state_bank_selector_metrics_lock_legacy_semantics) {
+    bb_match match = valid_bank_match();
+    int receiver = fx_lineman(&match, BB_HOME, 1, 12, 9);
+    fx_lineman(&match, BB_AWAY, 1, 11, 7);
+
+    bb_place(&match, 0, 20, 7);
+    fx_ball_held(&match, 0);
+    check_state_bank_metric(
+        &match, BBE_STATE_BANK_SELECTOR_ENDZONE, 1, 5);
+    match.players[0].stance = BB_STANCE_PRONE;
+    check_state_bank_metric(
+        &match, BBE_STATE_BANK_SELECTOR_ENDZONE, 0, 0);
+    match.players[0].stance = BB_STANCE_STANDING;
+
+    bb_place(&match, 0, 8, 7);
+    fx_ball_ground(&match, 11, 7);
+    check_state_bank_metric(
+        &match, BBE_STATE_BANK_SELECTOR_PICKUP, 1, 2);
+    match.players[receiver].stance = BB_STANCE_PRONE;
+    check_state_bank_metric(
+        &match, BBE_STATE_BANK_SELECTOR_PICKUP, 1, 3);
+    match.players[0].stance = BB_STANCE_PRONE;
+    check_state_bank_metric(
+        &match, BBE_STATE_BANK_SELECTOR_PICKUP, 0, 0);
+    match.players[0].stance = BB_STANCE_STANDING;
+    match.players[receiver].stance = BB_STANCE_STANDING;
+    match.turn[BB_HOME] = 1;
+    check_state_bank_metric(
+        &match, BBE_STATE_BANK_SELECTOR_POSTKICK, 1, 1);
+    match.turn[BB_HOME] = 8;
+    check_state_bank_metric(
+        &match, BBE_STATE_BANK_SELECTOR_POSTKICK, 1, 8);
+
+    match.turn[BB_HOME] = 2;
+    bb_place(&match, 0, 8, 7);
+    bb_place(&match, receiver, 12, 9);
+    fx_ball_held(&match, 0);
+    check_state_bank_metric(
+        &match, BBE_STATE_BANK_SELECTOR_PASS, 1, 4);
+    // Historical pass semantics do not require a standing carrier.
+    match.players[0].stance = BB_STANCE_PRONE;
+    check_state_bank_metric(
+        &match, BBE_STATE_BANK_SELECTOR_PASS, 1, 4);
+    match.players[receiver].stance = BB_STANCE_PRONE;
+    check_state_bank_metric(
+        &match, BBE_STATE_BANK_SELECTOR_PASS, 0, 0);
+    match.players[receiver].stance = BB_STANCE_STANDING;
+    bb_place(&match, receiver, 8, 9);
+    check_state_bank_metric(
+        &match, BBE_STATE_BANK_SELECTOR_PASS, 0, 0);
+
+    bb_match away;
+    fx_match_midturn(&away, BB_AWAY, 2);
+    fx_lineman(&away, BB_HOME, 0, 8, 7);
+    int away_carrier = fx_lineman(&away, BB_AWAY, 0, 5, 7);
+    int away_receiver = fx_lineman(&away, BB_AWAY, 1, 1, 9);
+    bb_rng rng;
+    bb_rng_seed(&rng, 0xA11Au, 3);
+    BB_CHECK_EQ(fx_run(&away, &rng), BB_STATUS_DECISION);
+    fx_ball_held(&away, away_carrier);
+    check_state_bank_metric(
+        &away, BBE_STATE_BANK_SELECTOR_ENDZONE, 1, 5);
+    check_state_bank_metric(
+        &away, BBE_STATE_BANK_SELECTOR_PASS, 1, 4);
+    away.active_team = BB_HOME;
+    // Endzone is carrier-team based and intentionally ignores active_team.
+    check_state_bank_metric(
+        &away, BBE_STATE_BANK_SELECTOR_ENDZONE, 1, 5);
+    check_state_bank_metric(
+        &away, BBE_STATE_BANK_SELECTOR_PASS, 0, 0);
+    (void)away_receiver;
+}
+
+BB_TEST(state_bank_index_is_stable_prefix_bucketed_and_digest_pinned) {
+    bb_match matches[4];
+    for (int i = 0; i < 4; i++) {
+        matches[i] = valid_bank_match();
+        fx_ball_held(&matches[i], 0);
+    }
+    bb_place(&matches[0], 0, 23, 7); // distance 2
+    bb_place(&matches[1], 0, 24, 7); // distance 1
+    matches[2].ball.state = BB_BALL_OFF_PITCH;
+    matches[2].ball.carrier = BB_NO_PLAYER;
+    bb_place(&matches[3], 0, 24, 9); // distance 1, stable after ordinal 1
+
+    bbe_state_bank_request request = {0};
+    request.bbs_sha256 =
+        "0000000000000000000000000000000000000000000000000000000000000000";
+    bbe_state_bank_strata strata;
+    BB_CHECK_EQ(bbe_state_bank_build_strata(
+                    &request, matches, 4, &strata),
+                BBE_SB_OK);
+    BB_CHECK_EQ(strata.record_count, 4);
+    BB_CHECK_EQ(strata.family[BBE_STATE_BANK_SELECTOR_ENDZONE]
+                    .prefix_count[0],
+                0);
+    BB_CHECK_EQ(strata.family[BBE_STATE_BANK_SELECTOR_ENDZONE]
+                    .prefix_count[1],
+                2);
+    BB_CHECK_EQ(strata.family[BBE_STATE_BANK_SELECTOR_ENDZONE]
+                    .prefix_count[2],
+                3);
+    uint32_t offset =
+        strata.family[BBE_STATE_BANK_SELECTOR_ENDZONE].offset;
+    BB_CHECK_EQ(strata.ordinals[offset], 1);
+    BB_CHECK_EQ(strata.ordinals[offset + 1], 3);
+    BB_CHECK_EQ(strata.ordinals[offset + 2], 0);
+    BB_CHECK_EQ(
+        strcmp(strata.family[BBE_STATE_BANK_SELECTOR_UNIFORM]
+                   .prefix_sha256[0],
+               "1face8333070b1ecae6ceed71499c35c"
+               "ec83c7fc3b048c98dbfb2b49a1be6b88"),
+        0);
+    BB_CHECK_EQ(
+        strcmp(strata.family[BBE_STATE_BANK_SELECTOR_ENDZONE]
+                   .prefix_sha256[1],
+               "8a5dd377d486aca88c04db63582a86b"
+               "59d48831b3e9e4a25cb22ec9f2cea6422"),
+        0);
+    BB_CHECK_EQ(
+        strcmp(strata.family[BBE_STATE_BANK_SELECTOR_ENDZONE]
+                   .prefix_sha256[2],
+               "71b6cd5f443923ce7d1b70286b39ae"
+               "f01979d71293159749dbfe52f82b4075ad"),
+        0);
+    for (uint32_t threshold = 1;
+         threshold <= BBE_STATE_BANK_MAX_DISTANCE; threshold++) {
+        BB_CHECK(strata.family[BBE_STATE_BANK_SELECTOR_ENDZONE]
+                         .prefix_count[threshold] >=
+                 strata.family[BBE_STATE_BANK_SELECTOR_ENDZONE]
+                         .prefix_count[threshold - 1]);
+    }
+    bbe_state_bank_index_free(strata.ordinals);
+    BB_CHECK_EQ(bbe_state_bank_test_index_alloc_live, 0);
+}
+
+BB_TEST(state_bank_all_empty_strata_avoid_null_pointer_arithmetic) {
+    bb_match match;
+    memset(&match, 0, sizeof match);
+    match.ball.state = BB_BALL_OFF_PITCH;
+    match.ball.carrier = BB_NO_PLAYER;
+    match.active_team = BB_HOME;
+    bbe_state_bank_request request = {0};
+    request.bbs_sha256 =
+        "1111111111111111111111111111111111111111111111111111111111111111";
+    bbe_state_bank_strata strata;
+    BB_CHECK_EQ(bbe_state_bank_build_strata(
+                    &request, &match, 1, &strata),
+                BBE_SB_OK);
+    BB_CHECK(strata.ordinals == NULL);
+    BB_CHECK_EQ(strata.ordinal_count, 0);
+    for (unsigned family = BBE_STATE_BANK_SELECTOR_ENDZONE;
+         family < BBE_STATE_BANK_SELECTOR_FAMILY_COUNT; family++) {
+        BB_CHECK_EQ(strata.family[family].length, 0);
+        uint32_t maximum = bbe_state_bank_selector_max_threshold(
+            (bbe_state_bank_selector_family)family);
+        for (uint32_t threshold = 0; threshold <= maximum; threshold++) {
+            BB_CHECK_EQ(strata.family[family].prefix_count[threshold], 0);
+            BB_CHECK(bbe_sha256_valid_hex(
+                strata.family[family].prefix_sha256[threshold]));
+        }
+    }
+    bbe_state_bank_index_free(strata.ordinals);
+    BB_CHECK_EQ(bbe_state_bank_test_index_alloc_live, 0);
+}
+
+BB_TEST(state_bank_index_allocation_failures_are_transactional) {
+    bb_match match = valid_bank_match();
+    fx_ball_ground(&match, 9, 7);
+    bbe_state_bank_request request = {0};
+    request.bbs_sha256 =
+        "2222222222222222222222222222222222222222222222222222222222222222";
+    for (int fail_at = 0; fail_at < 2; fail_at++) {
+        bbe_state_bank_strata strata;
+        memset(&strata, 0xA5, sizeof strata);
+        bbe_state_bank_test_index_alloc_attempts = 0;
+        bbe_state_bank_test_index_alloc_fail_at = fail_at;
+        BB_CHECK_EQ(bbe_state_bank_build_strata(
+                        &request, &match, 1, &strata),
+                    BBE_SB_ALLOC);
+        BB_CHECK(strata.ordinals == NULL);
+        BB_CHECK_EQ(strata.ordinal_count, 0);
+        BB_CHECK_EQ(bbe_state_bank_test_index_alloc_live, 0);
+    }
+    bbe_state_bank_test_index_alloc_fail_at = -1;
+    bbe_state_bank_test_index_alloc_attempts = 0;
+}
+
+BB_TEST(state_bank_candidate_index_allocation_failure_publishes_nothing) {
+    char path[256];
+    snprintf(path, sizeof path, "/tmp/bloodbowl-index-alloc-%ld.bbs",
+             (long)getpid());
+    bb_match match = valid_bank_match();
+    fx_ball_ground(&match, 9, 7);
+    write_state_bank(path, &match);
+    TestCandidateRequest fixture;
+    BB_CHECK_EQ(prepare_test_candidate_request(
+                    &fixture, path, BBE_STATE_BANK_STRICT_REPLAY, 0),
+                0);
+    for (int fail_at = 0; fail_at < 2; fail_at++) {
+        bbe_state_bank_candidate candidate;
+        memset(&candidate, 0x5A, sizeof candidate);
+        bbe_state_bank_test_index_alloc_attempts = 0;
+        bbe_state_bank_test_index_alloc_fail_at = fail_at;
+        BB_CHECK_EQ(bbe_state_bank_load_candidate(
+                        &fixture.request, &candidate),
+                    BBE_SB_ALLOC);
+        BB_CHECK(candidate.matches == NULL);
+        BB_CHECK(candidate.metadata == NULL);
+        BB_CHECK(candidate.strata.ordinals == NULL);
+        BB_CHECK_EQ(candidate.count, 0);
+        BB_CHECK_EQ(bbe_state_bank_test_index_alloc_live, 0);
+    }
+    bbe_state_bank_test_index_alloc_fail_at = -1;
+    bbe_state_bank_test_index_alloc_attempts = 0;
+    cleanup_test_candidate_request(&fixture);
+    BB_CHECK_EQ(remove(path), 0);
+}
+
+BB_TEST(state_bank_require_index_failure_is_sticky_and_never_publishes) {
+    char path[256];
+    snprintf(path, sizeof path, "/tmp/bloodbowl-require-index-%ld.bbs",
+             (long)getpid());
+    bb_match match = valid_bank_match();
+    fx_ball_ground(&match, 9, 7);
+    write_state_bank(path, &match);
+    TestCandidateRequest fixture;
+    BB_CHECK_EQ(prepare_test_candidate_request(
+                    &fixture, path, BBE_STATE_BANK_STRICT_REPLAY, 0),
+                0);
+    bbe_state_bank_test_reset_process();
+    bbe_state_bank_test_index_alloc_fail_at = 0;
+    BB_CHECK_EQ(bbe_state_bank_require_core(&fixture.request), BBE_SB_ALLOC);
+    BB_CHECK_EQ(bbe_state_bank_status, BBE_SB_FAILED);
+    BB_CHECK(bbe_state_bank == NULL);
+    BB_CHECK(bbe_state_bank_metadata == NULL);
+    BB_CHECK(bbe_state_bank_published_strata.ordinals == NULL);
+    BB_CHECK_EQ(bbe_state_bank_n, 0);
+    BB_CHECK_EQ(bbe_state_bank_load_attempts, 1);
+    BB_CHECK_EQ(bbe_state_bank_publications, 0);
+    BB_CHECK_EQ(bbe_state_bank_test_index_alloc_live, 0);
+    unsigned attempts = bbe_state_bank_test_index_alloc_attempts;
+    BB_CHECK_EQ(bbe_state_bank_require_core(&fixture.request), BBE_SB_ALLOC);
+    BB_CHECK_EQ(bbe_state_bank_test_index_alloc_attempts, attempts);
+    BB_CHECK_EQ(bbe_state_bank_load_attempts, 1);
+    BB_CHECK_EQ(bbe_state_bank_publications, 0);
+    bbe_state_bank_test_reset_process();
+    cleanup_test_candidate_request(&fixture);
+    BB_CHECK_EQ(remove(path), 0);
+}
+
+BB_TEST(state_bank_candidate_and_ready_descriptor_share_exact_contract) {
+    char path[256];
+    snprintf(path, sizeof path, "/tmp/bloodbowl-descriptor-%ld.bbs",
+             (long)getpid());
+    bb_match matches[2] = {valid_bank_match(), valid_bank_match()};
+    bb_place(&matches[0], 0, 20, 7);
+    fx_ball_held(&matches[0], 0);
+    matches[1].ball.state = BB_BALL_OFF_PITCH;
+    matches[1].ball.carrier = BB_NO_PLAYER;
+    BB_CHECK(bb_state_bank_boundary_valid(&matches[0]));
+    BB_CHECK(bb_state_bank_boundary_valid(&matches[1]));
+    write_state_bank_records(path, matches, 2);
+    TestCandidateRequest fixture;
+    BB_CHECK_EQ(prepare_test_candidate_request(
+                    &fixture, path, BBE_STATE_BANK_STRICT_REPLAY, 0),
+                0);
+    bbe_state_bank_candidate candidate;
+    BB_CHECK_EQ(bbe_state_bank_load_candidate(
+                    &fixture.request, &candidate),
+                BBE_SB_OK);
+    bbe_state_bank_stratum_descriptor before = {0};
+    BB_CHECK_EQ(bbe_state_bank_candidate_stratum_descriptor(
+                    &candidate, BBE_STATE_BANK_SELECTOR_ENDZONE, 5, &before),
+                BBE_SB_OK);
+    BB_CHECK_EQ(before.eligible_records, 1);
+    BB_CHECK(bbe_sha256_valid_hex(before.sha256));
+    BB_CHECK_EQ(bbe_state_bank_candidate_stratum_descriptor(
+                    &candidate, BBE_STATE_BANK_SELECTOR_ENDZONE, 4, &before),
+                BBE_SB_OK);
+    BB_CHECK_EQ(before.eligible_records, 0);
+    BB_CHECK_EQ(bbe_state_bank_candidate_stratum_descriptor(
+                    &candidate, BBE_STATE_BANK_SELECTOR_ENDZONE, 26, &before),
+                BBE_SB_SELECTOR_THRESHOLD);
+
+    bbe_state_bank_test_publish_candidate(&candidate);
+    bbe_state_bank_stratum_descriptor after = {0};
+    BB_CHECK_EQ(bbe_state_bank_copy_named_stratum_descriptor(
+                    "endzone-maxdist", 5, &after),
+                BBE_SB_OK);
+    BB_CHECK_EQ(after.eligible_records, 1);
+    BB_CHECK_EQ(strcmp(after.sha256,
+                       bbe_state_bank_published_strata
+                           .family[BBE_STATE_BANK_SELECTOR_ENDZONE]
+                           .prefix_sha256[5]),
+                0);
+    BB_CHECK_EQ(bbe_state_bank_copy_named_stratum_descriptor(
+                    "Endzone-Maxdist", 5, &after),
+                BBE_SB_SELECTOR_FAMILY);
+    BB_CHECK_EQ(bbe_state_bank_copy_named_stratum_descriptor(
+                    "uniform", 1, &after),
+                BBE_SB_SELECTOR_THRESHOLD);
+    reset_state_bank_loader(BBE_STATE_BANK_PATH);
+
+    // READY is not sufficient when no typed kind was published.
+    bbe_state_bank_status = BBE_SB_READY;
+    bbe_state_bank_loaded_kind = BBE_STATE_BANK_NONE;
+    bbe_state_bank = calloc(1, sizeof *bbe_state_bank);
+    bbe_state_bank_metadata = calloc(1, sizeof *bbe_state_bank_metadata);
+    bbe_state_bank_n = 1;
+    BB_CHECK(bbe_state_bank != NULL);
+    BB_CHECK(bbe_state_bank_metadata != NULL);
+    BB_CHECK_EQ(bbe_state_bank_copy_named_stratum_descriptor(
+                    "uniform", 0, &after),
+                BBE_SB_SELECTOR_NOT_READY);
+    bbe_state_bank_test_reset_process();
+    cleanup_test_candidate_request(&fixture);
+    BB_CHECK_EQ(remove(path), 0);
+}
+
+static void set_state_bank_selector(Bloodbowl* env,
+                                    bbe_state_bank_selector_family family,
+                                    int threshold) {
+    env->demo_endzone_maxdist = 0;
+    env->demo_pickup_maxdist = 0;
+    env->demo_postkick_maxturn = 0;
+    env->demo_pass_maxrange = 0;
+    if (family == BBE_STATE_BANK_SELECTOR_ENDZONE) {
+        env->demo_endzone_maxdist = threshold;
+    } else if (family == BBE_STATE_BANK_SELECTOR_PICKUP) {
+        env->demo_pickup_maxdist = threshold;
+    } else if (family == BBE_STATE_BANK_SELECTOR_POSTKICK) {
+        env->demo_postkick_maxturn = threshold;
+    } else if (family == BBE_STATE_BANK_SELECTOR_PASS) {
+        env->demo_pass_maxrange = threshold;
+    }
+}
+
+BB_TEST(state_bank_every_family_resets_from_exact_prefix_and_latches_identity) {
+    char path[256];
+    snprintf(path, sizeof path, "/tmp/bloodbowl-all-strata-%ld.bbs",
+             (long)getpid());
+    bb_match matches[3] = {
+        valid_bank_match(), valid_bank_match(), valid_bank_match(),
+    };
+    bb_place(&matches[0], 0, 20, 7);
+    fx_ball_held(&matches[0], 0);
+    fx_ball_ground(&matches[1], 9, 7);
+    int receiver = fx_lineman(&matches[2], BB_HOME, 1, 12, 9);
+    (void)receiver;
+    fx_ball_held(&matches[2], 0);
+    BB_CHECK(bb_state_bank_boundary_valid(&matches[0]));
+    BB_CHECK(bb_state_bank_boundary_valid(&matches[1]));
+    BB_CHECK(bb_state_bank_boundary_valid(&matches[2]));
+    write_state_bank_records(path, matches, 3);
+    reset_state_bank_loader(path);
+    bbe_state_bank_load();
+    BB_CHECK_EQ(bbe_state_bank_n, 3);
+
+    const bbe_state_bank_selector_family families[] = {
+        BBE_STATE_BANK_SELECTOR_UNIFORM,
+        BBE_STATE_BANK_SELECTOR_ENDZONE,
+        BBE_STATE_BANK_SELECTOR_PICKUP,
+        BBE_STATE_BANK_SELECTOR_POSTKICK,
+        BBE_STATE_BANK_SELECTOR_PASS,
+    };
+    const int thresholds[] = {0, 5, 1, 1, 4};
+    for (size_t i = 0; i < sizeof families / sizeof families[0]; i++) {
+        StateBankEnvFixture fixture;
+        configure_restored_pbrs_env(&fixture, 0.0f, 0.0f, 0.995f);
+        fixture.env.seed = 0x6100u + (uint64_t)i;
+        set_state_bank_selector(&fixture.env, families[i], thresholds[i]);
+        c_reset(&fixture.env);
+        BB_CHECK_EQ(fixture.env.demo_started, 1);
+        BB_CHECK_EQ(fixture.env.state_bank_config_latched, 1);
+        BB_CHECK_EQ(fixture.env.state_bank_selector_family_latched,
+                    families[i]);
+        BB_CHECK_EQ(fixture.env.state_bank_selector_threshold_latched,
+                    thresholds[i]);
+        BB_CHECK(fixture.env.state_bank_selector_eligible_latched > 0);
+        BB_CHECK(fixture.env.state_bank_record_index_latched <
+                 (uint32_t)bbe_state_bank_n);
+        uint32_t ordinal = fixture.env.state_bank_record_index_latched;
+        BB_CHECK_EQ(fixture.env.state_bank_source_id_latched, ordinal + 1u);
+        BB_CHECK_EQ(fixture.env.state_bank_source_command_latched,
+                    UINT32_C(0x8000) + ordinal);
+        BB_CHECK_EQ(fixture.env.state_bank_source_half_latched,
+                    bbe_state_bank_metadata[ordinal].half);
+        BB_CHECK_EQ(fixture.env.state_bank_source_turn_latched,
+                    bbe_state_bank_metadata[ordinal].turn);
+        BB_CHECK(bbe_sha256_valid_hex(
+            fixture.env.state_bank_stratum_sha256_latched));
+        uint32_t metric = 0;
+        if (families[i] != BBE_STATE_BANK_SELECTOR_UNIFORM) {
+            BB_CHECK(bbe_state_bank_metric(
+                &fixture.env.match, families[i], &metric));
+            BB_CHECK(metric <= (uint32_t)thresholds[i]);
+        }
+    }
+
+    StateBankEnvFixture first;
+    StateBankEnvFixture second;
+    configure_restored_pbrs_env(&first, 0.0f, 0.0f, 0.995f);
+    configure_restored_pbrs_env(&second, 0.0f, 0.0f, 0.995f);
+    first.env.seed = second.env.seed = UINT64_C(0xDEC0DE);
+    set_state_bank_selector(
+        &first.env, BBE_STATE_BANK_SELECTOR_ENDZONE, 25);
+    set_state_bank_selector(
+        &second.env, BBE_STATE_BANK_SELECTOR_ENDZONE, 25);
+    for (int reset = 0; reset < 32; reset++) {
+        c_reset(&first.env);
+        c_reset(&second.env);
+        BB_CHECK_EQ(first.env.state_bank_record_index_latched,
+                    second.env.state_bank_record_index_latched);
+        uint32_t ordinal = first.env.state_bank_record_index_latched;
+        BB_CHECK(ordinal == 0 || ordinal == 2);
+    }
+    cleanup_state_bank_path(path);
+}
+
+BB_TEST(state_bank_explicit_nonuniform_zero_threshold_uses_exact_family) {
+    char path[256];
+    snprintf(path, sizeof path, "/tmp/bloodbowl-zero-tier-%ld.bbs",
+             (long)getpid());
+    bb_match match = valid_bank_match();
+    bb_place(&match, 0, bb_endzone_x(BB_HOME), 7);
+    fx_ball_held(&match, 0);
+    BB_CHECK(bb_state_bank_boundary_valid(&match));
+    BB_CHECK_EQ(load_one(path, &match), 1);
+
+    StateBankEnvFixture fixture;
+    configure_restored_pbrs_env(&fixture, 0.0f, 0.0f, 0.995f);
+    fixture.env.state_bank_explicit_selector = 1;
+    fixture.env.state_bank_explicit_selector_family =
+        BBE_STATE_BANK_SELECTOR_ENDZONE;
+    fixture.env.state_bank_explicit_selector_threshold = 0;
+    c_reset(&fixture.env);
+
+    BB_CHECK_EQ(fixture.env.demo_started, 1);
+    BB_CHECK_EQ(fixture.env.state_bank_selector_family_latched,
+                BBE_STATE_BANK_SELECTOR_ENDZONE);
+    BB_CHECK_EQ(fixture.env.state_bank_selector_threshold_latched, 0);
+    BB_CHECK_EQ(fixture.env.state_bank_selector_eligible_latched, 1);
+    BB_CHECK_EQ(fixture.env.state_bank_record_index_latched, 0);
+    uint32_t metric = UINT32_MAX;
+    BB_CHECK(bbe_state_bank_metric(
+        &fixture.env.match, BBE_STATE_BANK_SELECTOR_ENDZONE, &metric));
+    BB_CHECK_EQ(metric, 0);
+    cleanup_state_bank_path(path);
+}
+
+BB_TEST(state_bank_episode_telemetry_uses_reset_latch_not_mutable_knobs) {
+    char path[256];
+    snprintf(path, sizeof path, "/tmp/bloodbowl-strata-log-%ld.bbs",
+             (long)getpid());
+    bb_match match = valid_bank_match();
+    bb_place(&match, 0, 20, 7);
+    fx_ball_held(&match, 0);
+    BB_CHECK(bb_state_bank_boundary_valid(&match));
+    BB_CHECK_EQ(load_one(path, &match), 1);
+
+    StateBankEnvFixture fixture;
+    configure_restored_pbrs_env(&fixture, 0.0f, 0.0f, 0.995f);
+    set_state_bank_selector(
+        &fixture.env, BBE_STATE_BANK_SELECTOR_ENDZONE, 5);
+    c_reset(&fixture.env);
+    BB_CHECK_EQ(fixture.env.demo_started, 1);
+    // Relabeling stored config after reset must not relabel the running episode.
+    set_state_bank_selector(
+        &fixture.env, BBE_STATE_BANK_SELECTOR_PICKUP, 1);
+    bbe_log_state_bank_episode(&fixture.env);
+    BB_CHECK_EQ(fixture.env.log.demo_episodes, 1.0f);
+    BB_CHECK_EQ(fixture.env.log.demo_uniform_episodes, 0.0f);
+    BB_CHECK_EQ(fixture.env.log.demo_endzone_episodes, 1.0f);
+    BB_CHECK_EQ(fixture.env.log.demo_pickup_episodes, 0.0f);
+    BB_CHECK_EQ(fixture.env.log.demo_postkick_episodes, 0.0f);
+    BB_CHECK_EQ(fixture.env.log.demo_pass_episodes, 0.0f);
+    BB_CHECK_EQ(fixture.env.log.state_bank_config_episodes, 1.0f);
+    BB_CHECK_EQ(fixture.env.log.demo_selector_threshold_configured, 5.0f);
+    BB_CHECK_EQ(fixture.env.log.demo_selector_eligible_configured, 1.0f);
+
+    StateBankEnvFixture configured_procgen;
+    configure_restored_pbrs_env(
+        &configured_procgen, 0.0f, 0.0f, 0.995f);
+    configured_procgen.env.demo_reset_pct = 0.5f;
+    set_state_bank_selector(
+        &configured_procgen.env, BBE_STATE_BANK_SELECTOR_ENDZONE, 5);
+    uint64_t seed = 1;
+    for (;; seed++) {
+        bb_rng probe;
+        bb_rng_seed(
+            &probe, seed * UINT64_C(2654435761) + 1u, 11);
+        float draw = (float)(bb_rng_next(&probe) >> 8) *
+                     (1.0f / 16777216.0f);
+        if (draw >= configured_procgen.env.demo_reset_pct) break;
+    }
+    configured_procgen.env.seed = seed;
+    c_reset(&configured_procgen.env);
+    BB_CHECK_EQ(configured_procgen.env.demo_started, 0);
+    BB_CHECK_EQ(configured_procgen.env.state_bank_config_latched, 1);
+    bbe_log_state_bank_episode(&configured_procgen.env);
+    BB_CHECK_EQ(configured_procgen.env.log.demo_episodes, 0.0f);
+    BB_CHECK_EQ(configured_procgen.env.log.demo_endzone_episodes, 0.0f);
+    BB_CHECK_EQ(configured_procgen.env.log.state_bank_config_episodes, 1.0f);
+    BB_CHECK_EQ(
+        configured_procgen.env.log.demo_selector_threshold_configured,
+        5.0f);
+    BB_CHECK_EQ(
+        configured_procgen.env.log.demo_selector_eligible_configured,
+        1.0f);
+
+    StateBankEnvFixture procgen;
+    configure_restored_pbrs_env(&procgen, 0.0f, 0.0f, 0.995f);
+    procgen.env.demo_reset_pct = 0.0f;
+    procgen.env.state_bank_kind = BBE_STATE_BANK_NONE;
+    c_reset(&procgen.env);
+    bbe_log_state_bank_episode(&procgen.env);
+    BB_CHECK_EQ(procgen.env.log.demo_episodes, 0.0f);
+    BB_CHECK_EQ(procgen.env.log.demo_uniform_episodes, 0.0f);
+    BB_CHECK_EQ(procgen.env.log.demo_endzone_episodes, 0.0f);
+    BB_CHECK_EQ(procgen.env.log.demo_pickup_episodes, 0.0f);
+    BB_CHECK_EQ(procgen.env.log.demo_postkick_episodes, 0.0f);
+    BB_CHECK_EQ(procgen.env.log.demo_pass_episodes, 0.0f);
+    BB_CHECK_EQ(procgen.env.log.state_bank_config_episodes, 0.0f);
+
+    cleanup_state_bank_path(path);
+}
+
+static void run_state_bank_corruption_child(int corruption) {
+    FILE* sink = freopen("/dev/null", "w", stderr);
+    (void)sink;
+    StateBankEnvFixture fixture;
+    configure_restored_pbrs_env(&fixture, 0.0f, 0.0f, 0.995f);
+    set_state_bank_selector(
+        &fixture.env, BBE_STATE_BANK_SELECTOR_ENDZONE, 5);
+    bbe_state_bank_family_index* index =
+        &bbe_state_bank_published_strata
+             .family[BBE_STATE_BANK_SELECTOR_ENDZONE];
+    if (corruption == 0) {
+        index->prefix_count[5] = index->length + 1u;
+    } else if (corruption == 1) {
+        bbe_state_bank_published_strata.ordinals[index->offset] =
+            (uint32_t)bbe_state_bank_n;
+    } else {
+        uint32_t ordinal =
+            bbe_state_bank_published_strata.ordinals[index->offset];
+        bbe_state_bank[ordinal].ball.state = BB_BALL_OFF_PITCH;
+        bbe_state_bank[ordinal].ball.carrier = BB_NO_PLAYER;
+    }
+    c_reset(&fixture.env);
+    _exit(90 + corruption);
+}
+
+BB_TEST(state_bank_o1_reset_checks_abort_on_deterministic_corruption) {
+    char path[256];
+    snprintf(path, sizeof path, "/tmp/bloodbowl-strata-corrupt-%ld.bbs",
+             (long)getpid());
+    bb_match matches[2] = {valid_bank_match(), valid_bank_match()};
+    bb_place(&matches[0], 0, 20, 7);
+    fx_ball_held(&matches[0], 0);
+    BB_CHECK(bb_state_bank_boundary_valid(&matches[0]));
+    write_state_bank_records(path, matches, 2);
+    reset_state_bank_loader(path);
+    bbe_state_bank_load();
+    BB_CHECK_EQ(bbe_state_bank_n, 2);
+    BB_CHECK_EQ(
+        bbe_state_bank_published_strata
+            .family[BBE_STATE_BANK_SELECTOR_ENDZONE].prefix_count[5],
+        1);
+    for (int corruption = 0; corruption < 3; corruption++) {
+        fflush(NULL);
+        pid_t child = fork();
+        BB_CHECK(child >= 0);
+        if (child == 0) run_state_bank_corruption_child(corruption);
+        if (child > 0) {
+            check_state_bank_child_aborted(
+                child, "corrupt indexed state-bank reset returned normally");
+        }
+    }
+    cleanup_state_bank_path(path);
+}
+
+BB_TEST(state_bank_selector_mutation_is_revalidated_on_next_reset) {
+    char path[256];
+    snprintf(path, sizeof path, "/tmp/bloodbowl-strata-mutate-%ld.bbs",
+             (long)getpid());
+    bb_match match = valid_bank_match();
+    bb_place(&match, 0, 20, 7);
+    fx_ball_held(&match, 0);
+    int receiver = fx_lineman(&match, BB_HOME, 1, 22, 9);
+    (void)receiver;
+    BB_CHECK(bb_state_bank_boundary_valid(&match));
+    BB_CHECK_EQ(load_one(path, &match), 1);
+    StateBankEnvFixture fixture;
+    configure_restored_pbrs_env(&fixture, 0.0f, 0.0f, 0.995f);
+    set_state_bank_selector(
+        &fixture.env, BBE_STATE_BANK_SELECTOR_ENDZONE, 5);
+    c_reset(&fixture.env);
+    BB_CHECK_EQ(fixture.env.state_bank_selector_family_latched,
+                BBE_STATE_BANK_SELECTOR_ENDZONE);
+    set_state_bank_selector(
+        &fixture.env, BBE_STATE_BANK_SELECTOR_PASS, 2);
+    c_reset(&fixture.env);
+    BB_CHECK_EQ(fixture.env.state_bank_selector_family_latched,
+                BBE_STATE_BANK_SELECTOR_PASS);
+    BB_CHECK_EQ(fixture.env.state_bank_selector_threshold_latched, 2);
+    BB_CHECK_EQ(fixture.env.demo_started, 1);
+    cleanup_state_bank_path(path);
+}
+
 BB_TEST(state_bank_config_rejects_raw_conversion_traps) {
     bbe_state_bank_config_values values = {
         0.0, BBE_STATE_BANK_NONE, 0.0, 0.0, 0.0, 0.0,
@@ -1975,7 +2625,7 @@ BB_TEST(state_bank_config_rejects_raw_conversion_traps) {
     values.pickup_selector = 0.0;
     BB_CHECK_EQ(bbe_state_bank_validate_config_values(
                     &values, BBE_STATE_BANK_STRICT_REPLAY),
-                BBE_SB_CONFIG_SELECTOR_BRIDGE);
+                BBE_SB_OK);
     values.reset_pct = 0.0;
     BB_CHECK_EQ(bbe_state_bank_validate_config_values(
                     &values, BBE_STATE_BANK_STRICT_REPLAY),
@@ -1984,6 +2634,53 @@ BB_TEST(state_bank_config_rejects_raw_conversion_traps) {
     BB_CHECK_EQ(bbe_state_bank_validate_config_values(
                     &values, BBE_STATE_BANK_STRICT_REPLAY),
                 BBE_SB_CONFIG_INERT_KIND);
+}
+
+BB_TEST(state_bank_each_selector_enforces_exact_closed_numeric_domain) {
+    bbe_state_bank_config_values values = {
+        1.0, BBE_STATE_BANK_STRICT_REPLAY, 0.0, 0.0, 0.0, 0.0,
+        -1.0, -1.0, -1.0,
+    };
+    double* selectors[] = {
+        &values.endzone_selector,
+        &values.pickup_selector,
+        &values.postkick_selector,
+        &values.pass_selector,
+    };
+    const int maxima[] = {25, 25, 8, 25};
+    const bbe_state_bank_error upper_errors[] = {
+        BBE_SB_CONFIG_ENDZONE_SELECTOR,
+        BBE_SB_CONFIG_PICKUP_SELECTOR,
+        BBE_SB_CONFIG_POSTKICK_SELECTOR,
+        BBE_SB_CONFIG_PASS_SELECTOR,
+    };
+    for (size_t i = 0; i < sizeof selectors / sizeof selectors[0]; i++) {
+        *selectors[i] = NAN;
+        BB_CHECK_EQ(bbe_state_bank_validate_config_values(
+                        &values, BBE_STATE_BANK_STRICT_REPLAY),
+                    BBE_SB_CONFIG_SELECTOR);
+        *selectors[i] = INFINITY;
+        BB_CHECK_EQ(bbe_state_bank_validate_config_values(
+                        &values, BBE_STATE_BANK_STRICT_REPLAY),
+                    BBE_SB_CONFIG_SELECTOR);
+        *selectors[i] = -1.0;
+        BB_CHECK_EQ(bbe_state_bank_validate_config_values(
+                        &values, BBE_STATE_BANK_STRICT_REPLAY),
+                    BBE_SB_CONFIG_SELECTOR);
+        *selectors[i] = 1.5;
+        BB_CHECK_EQ(bbe_state_bank_validate_config_values(
+                        &values, BBE_STATE_BANK_STRICT_REPLAY),
+                    BBE_SB_CONFIG_SELECTOR);
+        *selectors[i] = maxima[i];
+        BB_CHECK_EQ(bbe_state_bank_validate_config_values(
+                        &values, BBE_STATE_BANK_STRICT_REPLAY),
+                    BBE_SB_OK);
+        *selectors[i] = maxima[i] + 1.0;
+        BB_CHECK_EQ(bbe_state_bank_validate_config_values(
+                        &values, BBE_STATE_BANK_STRICT_REPLAY),
+                    upper_errors[i]);
+        *selectors[i] = 0.0;
+    }
 }
 
 static void check_state_bank_selector_range_error(

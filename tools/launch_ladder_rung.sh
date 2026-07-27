@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Historical backplay-rung recipe. It now stops at the typed-bank bridge below;
-# no nonzero selector is launchable until pre-indexed strata are implemented.
+# Historical backplay-rung recipe. It is retained as an executable tombstone;
+# its checkout paths and operational defaults are stale.
 #
 # The ladder (CLAUDE.md, D50/D51/D67-D74) is maxdist 6 -> 9 -> 12 -> uniform ->
 # kickoff, +3 squares per rung and never more (D51: 6->12 overshot and tds went
@@ -31,7 +31,8 @@
 # shellcheck disable=SC2317
 set -uo pipefail
 
-echo "ladder rung blocked: selector curricula require pre-indexed strata" >&2
+echo "ladder rung retired: its checkout paths and operational defaults are stale" >&2
+echo "use tools/run_reward_ablation.sh with complete typed state-bank authority" >&2
 echo "no checkout was inspected and no Puffer process was started" >&2
 exit 2
 

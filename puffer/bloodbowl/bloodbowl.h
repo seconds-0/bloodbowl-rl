@@ -388,6 +388,14 @@ typedef struct {
     // so it remains exactly zero rather than recording a procgen fallback.
     float demo_episodes;
     float demo_fallbacks;
+    float demo_uniform_episodes;
+    float demo_endzone_episodes;
+    float demo_pickup_episodes;
+    float demo_postkick_episodes;
+    float demo_pass_episodes;
+    float state_bank_config_episodes;
+    float demo_selector_threshold_configured;
+    float demo_selector_eligible_configured;
     // Team-0/home signed component returns. Team 0 is the primary learner in
     // frozen-bank envs and matches the existing episode_return perspective.
     // Integrity checks below still run independently for both agents.
@@ -597,16 +605,11 @@ typedef struct {
     // reward_possession == 0 (the annuity's dense gradient would dominate the
     // joint possession_rate target). 0 = off (default). See D114.
     float reward_statmatch_scale;
-    // Legacy state-bank selector fields are retained in the environment ABI
-    // while typed-bank construction moves selection into the immutable
-    // artifact contract. The runtime currently rejects every nonzero selector
-    // instead of silently changing the requested uniform distribution.
+    // Exact pre-indexed typed-bank strata. At most one field is nonzero; a
+    // positive threshold samples uniformly from the immutable matching prefix.
     int demo_endzone_maxdist;
-    // Must remain zero under the current typed-bank contract.
     int demo_pickup_maxdist;
-    // Must remain zero under the current typed-bank contract.
     int demo_postkick_maxturn;
-    // Must remain zero under the current typed-bank contract.
     int demo_pass_maxrange;
     // Procgen skill-entropy knobs. Defaults reproduce historical procgen:
     // 0-4 advancement draws/team, 1-2 skills/draw, primary categories only.
@@ -640,7 +643,26 @@ typedef struct {
     // Exact typed-bank request. Zero is required when demo_reset_pct is zero;
     // positive reset probability currently supports strict replay (1) only.
     int state_bank_kind;
+    /*
+     * Internal explicit selector used only by the bounded standalone audit.
+     * Training kwargs never set it.  It exists because the public knob value
+     * zero canonically means "uniform", while the descriptor/audit API must
+     * still be able to name a nonuniform family at threshold zero.
+     */
+    int state_bank_explicit_selector;
+    int state_bank_explicit_selector_family;
+    uint32_t state_bank_explicit_selector_threshold;
     int demo_started;
+    int state_bank_config_latched;
+    int state_bank_selector_family_latched;
+    uint32_t state_bank_selector_threshold_latched;
+    uint32_t state_bank_selector_eligible_latched;
+    uint32_t state_bank_record_index_latched;
+    uint32_t state_bank_source_id_latched;
+    uint32_t state_bank_source_command_latched;
+    uint8_t state_bank_source_half_latched;
+    uint8_t state_bank_source_turn_latched;
+    char state_bank_stratum_sha256_latched[65];
     // Procgen controls: held-out-team experiments and fixed-matchup eval.
     // -1 = unconstrained.
     int exclude_team;
@@ -2164,6 +2186,98 @@ void (*bbe_feed_hook)(const Bloodbowl* env, int kind, int a, int b) = 0;
 // hash-pinned, all-or-nothing, and process-global; see the focused header.
 #include "state_bank_runtime.h"
 
+static bbe_state_bank_config_values bbe_state_bank_env_config(
+        const Bloodbowl* env) {
+    bbe_state_bank_config_values values = {
+        env->demo_reset_pct,
+        env->state_bank_kind,
+        env->demo_endzone_maxdist,
+        env->demo_pickup_maxdist,
+        env->demo_postkick_maxturn,
+        env->demo_pass_maxrange,
+        env->exclude_team,
+        env->force_home_team,
+        env->force_away_team,
+    };
+    return values;
+}
+
+static void bbe_state_bank_prepare_env_reset_or_abort(Bloodbowl* env) {
+    bbe_state_bank_config_values values = bbe_state_bank_env_config(env);
+    bbe_state_bank_validate_config_or_abort(&values);
+    env->state_bank_config_latched = 0;
+    env->state_bank_selector_family_latched =
+        BBE_STATE_BANK_SELECTOR_UNIFORM;
+    env->state_bank_selector_threshold_latched = 0;
+    env->state_bank_selector_eligible_latched = 0;
+    env->state_bank_record_index_latched = UINT32_MAX;
+    env->state_bank_source_id_latched = 0;
+    env->state_bank_source_command_latched = 0;
+    env->state_bank_source_half_latched = 0;
+    env->state_bank_source_turn_latched = 0;
+    memset(env->state_bank_stratum_sha256_latched, 0,
+           sizeof env->state_bank_stratum_sha256_latched);
+    if (env->demo_reset_pct <= 0.0f) return;
+
+#ifdef BBE_STATE_BANK_TESTING
+    if (!bbe_state_bank_test_publication)
+#endif
+        bbe_state_bank_require_or_abort(env->state_bank_kind);
+
+    bbe_state_bank_selector_family family;
+    uint32_t threshold;
+    bbe_state_bank_error error;
+    if (env->state_bank_explicit_selector) {
+        if (values.endzone_selector != 0.0 ||
+            values.pickup_selector != 0.0 ||
+            values.postkick_selector != 0.0 ||
+            values.pass_selector != 0.0) {
+            error = BBE_SB_CONFIG_MULTIPLE_SELECTORS;
+        } else if ((unsigned)env->state_bank_explicit_selector_family >=
+                   BBE_STATE_BANK_SELECTOR_FAMILY_COUNT) {
+            error = BBE_SB_SELECTOR_FAMILY;
+        } else {
+            family = (bbe_state_bank_selector_family)
+                env->state_bank_explicit_selector_family;
+            threshold = env->state_bank_explicit_selector_threshold;
+            error =
+                threshold > bbe_state_bank_selector_max_threshold(family)
+                    ? BBE_SB_SELECTOR_THRESHOLD : BBE_SB_OK;
+        }
+    } else {
+        error = bbe_state_bank_selector_from_config(
+            &values, &family, &threshold);
+    }
+    if (error != BBE_SB_OK) {
+        fprintf(stderr,
+                "bloodbowl: invalid state-bank selector: %s\n",
+                bbe_state_bank_error_name(error));
+        abort();
+    }
+    bbe_state_bank_stratum_descriptor descriptor;
+    error = bbe_state_bank_copy_stratum_descriptor(
+        family, threshold, &descriptor);
+    if (error != BBE_SB_OK) {
+        fprintf(stderr,
+                "bloodbowl: state-bank descriptor resolution failed: %s\n",
+                bbe_state_bank_error_name(error));
+        abort();
+    }
+    if (descriptor.eligible_records == 0) {
+        fprintf(stderr,
+                "bloodbowl: requested state-bank stratum is empty: %s=%u\n",
+                bbe_state_bank_selector_family_name(family), threshold);
+        abort();
+    }
+    env->state_bank_config_latched = 1;
+    env->state_bank_selector_family_latched = family;
+    env->state_bank_selector_threshold_latched = threshold;
+    env->state_bank_selector_eligible_latched =
+        descriptor.eligible_records;
+    memcpy(env->state_bank_stratum_sha256_latched, descriptor.sha256,
+           sizeof env->state_bank_stratum_sha256_latched);
+}
+
 // --- Lifecycle -------------------------------------------------------------------
 // Per-step tackle-zone scratch, computed ONCE for both agent views:
 // tz_plane[t][y*26+x] = TZs exerted BY team t's players on that square
@@ -2406,6 +2520,11 @@ static uint32_t bbe_rng_uniform_below(bb_rng* rng, uint32_t bound) {
 }
 
 static void bbe_reset_match(Bloodbowl* env) {
+    // Validate and latch the exact configured stratum before consuming either
+    // the episode number or either RNG stream. Automatic episode resets take
+    // this same path, so mutating a stored selector between episodes cannot
+    // silently reuse the prior descriptor.
+    bbe_state_bank_prepare_env_reset_or_abort(env);
     env->episode++;
     // Stalling telemetry: clear this episode's tally and point the engine at
     // it BEFORE any bb_advance below (a resumed banked state can complete a
@@ -2432,11 +2551,49 @@ static void bbe_reset_match(Bloodbowl* env) {
                     "bloodbowl: required state bank is not published at reset\n");
             abort();
         }
+        bbe_state_bank_selector_family family =
+            (bbe_state_bank_selector_family)
+                env->state_bank_selector_family_latched;
+        uint32_t threshold =
+            env->state_bank_selector_threshold_latched;
+        bbe_state_bank_stratum_descriptor descriptor;
+        bbe_state_bank_error descriptor_error =
+            bbe_state_bank_copy_stratum_descriptor(
+                family, threshold, &descriptor);
+        if (descriptor_error != BBE_SB_OK ||
+            descriptor.eligible_records == 0 ||
+            descriptor.eligible_records !=
+                env->state_bank_selector_eligible_latched ||
+            memcmp(descriptor.sha256,
+                   env->state_bank_stratum_sha256_latched,
+                   sizeof descriptor.sha256) != 0) {
+            fprintf(stderr,
+                    "bloodbowl: published state-bank stratum descriptor "
+                    "corrupted before reset: %s\n",
+                    bbe_state_bank_error_name(
+                        descriptor_error != BBE_SB_OK
+                            ? descriptor_error : BBE_SB_SELECTOR_BOUNDS));
+            abort();
+        }
         if ((float)(bb_rng_next(&env->procgen) >> 8) *
                 (1.0f / 16777216.0f) < env->demo_reset_pct) {
-            int idx = (int)bbe_rng_uniform_below(
-                &env->procgen, (uint32_t)bbe_state_bank_n);
-            env->match = bbe_state_bank[idx];
+            uint32_t position = bbe_rng_uniform_below(
+                &env->procgen, descriptor.eligible_records);
+            uint32_t ordinal = UINT32_MAX;
+            bbe_state_bank_error ordinal_error =
+                bbe_state_bank_copy_stratum_ordinal(
+                    family, threshold, position, &ordinal);
+            if (ordinal_error != BBE_SB_OK ||
+                ordinal >= (uint32_t)bbe_state_bank_n) {
+                fprintf(stderr,
+                        "bloodbowl: selected state-bank record index "
+                        "corrupted: %s\n",
+                        bbe_state_bank_error_name(
+                            ordinal_error != BBE_SB_OK
+                                ? ordinal_error : BBE_SB_SELECTOR_ORDINAL));
+                abort();
+            }
+            env->match = bbe_state_bank[ordinal];
             if (env->match.status != BB_STATUS_DECISION ||
                 env->match.stack_top == 0) {
                 fprintf(stderr,
@@ -2444,6 +2601,25 @@ static void bbe_reset_match(Bloodbowl* env) {
                         "before reset\n");
                 abort();
             }
+            uint32_t observed_metric = 0;
+            if (family != BBE_STATE_BANK_SELECTOR_UNIFORM &&
+                (!bbe_state_bank_metric(
+                     &env->match, family, &observed_metric) ||
+                 observed_metric > threshold)) {
+                fprintf(stderr,
+                        "bloodbowl: selected state-bank record predicate "
+                        "mismatch: %s\n",
+                        bbe_state_bank_error_name(
+                            BBE_SB_SELECTOR_PREDICATE));
+                abort();
+            }
+            const bbe_state_bank_meta* metadata =
+                &bbe_state_bank_metadata[ordinal];
+            env->state_bank_record_index_latched = ordinal;
+            env->state_bank_source_id_latched = metadata->source_id;
+            env->state_bank_source_command_latched = metadata->command;
+            env->state_bank_source_half_latched = metadata->half;
+            env->state_bank_source_turn_latched = metadata->turn;
             env->demo_started = 1;
         }
     }
@@ -2619,22 +2795,6 @@ static void bbe_reset_match(Bloodbowl* env) {
     }
 }
 
-static bbe_state_bank_config_values bbe_state_bank_env_config(
-        const Bloodbowl* env) {
-    bbe_state_bank_config_values values = {
-        env->demo_reset_pct,
-        env->state_bank_kind,
-        env->demo_endzone_maxdist,
-        env->demo_pickup_maxdist,
-        env->demo_postkick_maxturn,
-        env->demo_pass_maxrange,
-        env->exclude_team,
-        env->force_home_team,
-        env->force_away_team,
-    };
-    return values;
-}
-
 static void c_reset(Bloodbowl* env) {
     // Force a full v4-plane clear on the first encode of a (re)pointed obs
     // buffer (my_setup_perm also sets these — vecenv re-points obs_ptr
@@ -2649,15 +2809,6 @@ static void c_reset(Bloodbowl* env) {
         env->reward_draw = BBE_DEFAULT_REWARD_DRAW;
     }
     bbe_validate_reward_config(env);
-    bbe_state_bank_config_values bank_config =
-        bbe_state_bank_env_config(env);
-    bbe_state_bank_validate_config_or_abort(&bank_config);
-    if (env->demo_reset_pct > 0.0f) {
-#ifdef BBE_STATE_BANK_TESTING
-        if (!bbe_state_bank_test_publication)
-#endif
-            bbe_state_bank_require_or_abort(env->state_bank_kind);
-    }
     bbe_reset_match(env);
     bbe_emit_all(env);
 }
@@ -2742,6 +2893,42 @@ static void bbe_record_reward_emission_masked(Bloodbowl* env,
 
 static void bbe_record_reward_emission(Bloodbowl* env) {
     bbe_record_reward_emission_masked(env, 0, false);
+}
+
+static void bbe_log_state_bank_episode(Bloodbowl* env) {
+    if (env->demo_started) {
+        env->log.demo_episodes += 1.0f;
+        switch ((bbe_state_bank_selector_family)
+                    env->state_bank_selector_family_latched) {
+            case BBE_STATE_BANK_SELECTOR_UNIFORM:
+                env->log.demo_uniform_episodes += 1.0f;
+                break;
+            case BBE_STATE_BANK_SELECTOR_ENDZONE:
+                env->log.demo_endzone_episodes += 1.0f;
+                break;
+            case BBE_STATE_BANK_SELECTOR_PICKUP:
+                env->log.demo_pickup_episodes += 1.0f;
+                break;
+            case BBE_STATE_BANK_SELECTOR_POSTKICK:
+                env->log.demo_postkick_episodes += 1.0f;
+                break;
+            case BBE_STATE_BANK_SELECTOR_PASS:
+                env->log.demo_pass_episodes += 1.0f;
+                break;
+            default:
+                fprintf(stderr,
+                        "bloodbowl: completed banked episode has corrupt "
+                        "selector telemetry\n");
+                abort();
+        }
+    }
+    if (env->state_bank_config_latched) {
+        env->log.state_bank_config_episodes += 1.0f;
+        env->log.demo_selector_threshold_configured +=
+            (float)env->state_bank_selector_threshold_latched;
+        env->log.demo_selector_eligible_configured +=
+            (float)env->state_bank_selector_eligible_latched;
+    }
 }
 
 static void bbe_finish_episode(Bloodbowl* env) {
@@ -2884,7 +3071,7 @@ static void bbe_finish_episode(Bloodbowl* env) {
     env->log.tds += (float)(d0 + d1);
     env->log.tds_t0 += (float)env->ep_tds_team[0];
     env->log.tds_t1 += (float)env->ep_tds_team[1];
-    if (env->demo_started) env->log.demo_episodes += 1.0f;
+    bbe_log_state_bank_episode(env);
     env->log.episode_return += env->ep_return[0];
     env->log.episode_length += (float)env->decisions;
     env->log.illegal_frac += env->decisions

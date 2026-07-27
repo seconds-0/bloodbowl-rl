@@ -29,7 +29,8 @@ FILTER_SCHEMA = "bloodbowl-strict-filter-manifest-v2"
 PRODUCER_SCHEMA = "bloodbowl-state-bank-producer-v1"
 TRAINING_SCHEMA = "bloodbowl-state-bank-training-contract-v1"
 AUTHORIZATION_SCHEMA = "bloodbowl-state-bank-authorization-v1"
-VALIDATION_SCHEMA = "bloodbowl-state-bank-validation-v1"
+VALIDATION_SCHEMA = "bloodbowl-state-bank-validation-v2"
+STRATA_SCHEMA = "bloodbowl-legacy-state-bank-strata-v1"
 PRODUCTION_AUTHORIZED_PRODUCER_KINDS: frozenset[str] = frozenset()
 
 BBS_HEADER = struct.Struct("<4sIII")
@@ -40,6 +41,7 @@ MAX_BBS_BYTES = 256 << 20
 MAX_MANIFEST_BYTES = 4 << 20
 MAX_RECORDS = 1_000_000
 MAX_PATH_BYTES = 4096
+MAX_ENVIRONMENT_SOURCE_FILES = 100_000
 AUTHORED_SOURCE_NAMESPACE = 0xA0000000
 AUTHORED_SOURCE_MASK = 0xF0000000
 
@@ -55,6 +57,7 @@ STATE_BANK_MACROS = (
     "PUFFER_STATE_BANK_CONTRACT_SCHEMA",
     "PUFFER_STATE_BANK_PRODUCER_SCHEMA",
     "PUFFER_STATE_BANK_AUTHORIZATION_SCHEMA",
+    "PUFFER_STATE_BANK_STRATA_SCHEMA",
     "PUFFER_STATE_BANK_COMPILED_KIND",
     "PUFFER_STATE_BANK_KIND_NAME",
     "PUFFER_STATE_BANK_RULESET",
@@ -86,6 +89,7 @@ NO_BANK_STATE_FIELDS: dict[str, str | int] = {
     "contract_schema": "none",
     "producer_schema": "none",
     "authorization_schema": "none",
+    "strata_schema": STRATA_SCHEMA,
     "kind_value": 0,
     "kind": "none",
     "ruleset": "none",
@@ -109,6 +113,7 @@ STATE_FIELD_TO_MACRO = {
     "contract_schema": "PUFFER_STATE_BANK_CONTRACT_SCHEMA",
     "producer_schema": "PUFFER_STATE_BANK_PRODUCER_SCHEMA",
     "authorization_schema": "PUFFER_STATE_BANK_AUTHORIZATION_SCHEMA",
+    "strata_schema": "PUFFER_STATE_BANK_STRATA_SCHEMA",
     "kind_value": "PUFFER_STATE_BANK_COMPILED_KIND",
     "kind": "PUFFER_STATE_BANK_KIND_NAME",
     "ruleset": "PUFFER_STATE_BANK_RULESET",
@@ -132,6 +137,7 @@ MODULE_STATE_FIELD_NAMES = {
     "contract_schema": "state_bank_contract_schema",
     "producer_schema": "state_bank_producer_schema",
     "authorization_schema": "state_bank_authorization_schema",
+    "strata_schema": "state_bank_strata_schema",
     "kind_value": "state_bank_kind",
     "kind": "state_bank_kind_name",
     "ruleset": "state_bank_ruleset",
@@ -164,7 +170,21 @@ LAUNCHER_CONTRACT_FIELDS = (
     "loader_engine_source_sha256",
     "records",
     "bytes",
+    "environment_source_sha256",
+    "strata_schema",
+    "strata_family",
+    "strata_threshold",
+    "strata_eligible_records",
+    "strata_sha256",
 )
+
+SELECTOR_FAMILY_BOUNDS = {
+    "uniform": 0,
+    "endzone-maxdist": 25,
+    "pickup-maxdist": 25,
+    "postkick-maxturn": 8,
+    "pass-maxrange": 25,
+}
 
 
 class StateBankContractError(RuntimeError):
@@ -829,6 +849,251 @@ def engine_source_sha256(root: str | Path) -> str:
     return _engine_source_entries_sha256(_read_engine_source_entries(Path(root)))
 
 
+def _validate_environment_relative_path(relative: bytes) -> None:
+    """Reject names whose ``sha256sum`` presentation is not canonical."""
+
+    if (
+        not relative
+        or relative.startswith(b"/")
+        or b"\\" in relative
+        or b"\n" in relative
+        or b"\r" in relative
+        or b"\0" in relative
+    ):
+        _fail(
+            "ENVIRONMENT_SOURCE_TREE",
+            f"unsafe environment source path {relative!r}",
+        )
+    components = relative.split(b"/")
+    if any(component in (b"", b".", b"..") for component in components):
+        _fail(
+            "ENVIRONMENT_SOURCE_TREE",
+            f"noncanonical environment source path {relative!r}",
+        )
+    if len(b"./" + relative) > MAX_PATH_BYTES:
+        _fail(
+            "ENVIRONMENT_SOURCE_TREE",
+            f"environment source path exceeds {MAX_PATH_BYTES} bytes",
+        )
+
+
+def _read_environment_source_file(
+    path: bytes,
+    expected: os.stat_result,
+    relative: bytes,
+) -> bytes:
+    """Read a regular ``find -L`` target and reconcile the followed inode."""
+
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        _fail(
+            "ENVIRONMENT_SOURCE_TREE",
+            f"cannot open environment source file {relative!r}: {exc}",
+        )
+    try:
+        before = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or before.st_dev != expected.st_dev
+            or before.st_ino != expected.st_ino
+            or before.st_size != expected.st_size
+            or before.st_mtime_ns != expected.st_mtime_ns
+            or before.st_ctime_ns != expected.st_ctime_ns
+        ):
+            _fail(
+                "ENVIRONMENT_SOURCE_TREE",
+                f"environment source path changed before read: {relative!r}",
+            )
+        if before.st_size > MAX_BBS_BYTES:
+            _fail(
+                "ENVIRONMENT_SOURCE_TREE",
+                f"environment source file exceeds {MAX_BBS_BYTES} bytes: "
+                f"{relative!r}",
+            )
+        chunks: list[bytes] = []
+        remaining = before.st_size
+        while remaining:
+            chunk = os.read(descriptor, min(1 << 20, remaining))
+            if not chunk:
+                _fail(
+                    "ENVIRONMENT_SOURCE_TREE",
+                    f"environment source file became shorter: {relative!r}",
+                )
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        if os.read(descriptor, 1):
+            _fail(
+                "ENVIRONMENT_SOURCE_TREE",
+                f"environment source file grew while reading: {relative!r}",
+            )
+        after = os.fstat(descriptor)
+        try:
+            path_after = os.stat(path, follow_symlinks=True)
+        except OSError as exc:
+            _fail(
+                "ENVIRONMENT_SOURCE_TREE",
+                f"environment source path vanished after read "
+                f"{relative!r}: {exc}",
+            )
+        identities = (
+            (
+                before.st_dev,
+                before.st_ino,
+                before.st_size,
+                before.st_mtime_ns,
+                before.st_ctime_ns,
+            ),
+            (
+                after.st_dev,
+                after.st_ino,
+                after.st_size,
+                after.st_mtime_ns,
+                after.st_ctime_ns,
+            ),
+            (
+                path_after.st_dev,
+                path_after.st_ino,
+                path_after.st_size,
+                path_after.st_mtime_ns,
+                path_after.st_ctime_ns,
+            ),
+        )
+        if identities[0] != identities[1] or identities[0] != identities[2]:
+            _fail(
+                "ENVIRONMENT_SOURCE_TREE",
+                f"environment source path changed while reading: {relative!r}",
+            )
+        return b"".join(chunks)
+    finally:
+        os.close(descriptor)
+
+
+def _read_environment_source_entries(
+    environment_root: str | Path,
+) -> list[tuple[bytes, bytes]]:
+    """Read the legacy ``find -L`` environment closure without shell escaping."""
+
+    root = Path(environment_root)
+    if not root.is_dir() or root.is_symlink():
+        _fail(
+            "ENVIRONMENT_SOURCE_TREE",
+            f"environment root must be a real directory: {root}",
+        )
+    root_bytes = os.fsencode(os.path.abspath(root))
+    entries: list[tuple[bytes, bytes]] = []
+    seen_paths: set[bytes] = set()
+
+    try:
+        root_info = os.stat(root_bytes, follow_symlinks=True)
+    except OSError as exc:
+        _fail(
+            "ENVIRONMENT_SOURCE_TREE",
+            f"cannot stat environment root {root}: {exc}",
+        )
+
+    def walk(
+        directory: bytes,
+        logical_components: tuple[bytes, ...],
+        ancestor_directories: frozenset[tuple[int, int]],
+    ) -> None:
+        try:
+            children = list(os.scandir(directory))
+        except OSError as exc:
+            _fail(
+                "ENVIRONMENT_SOURCE_TREE",
+                f"cannot enumerate environment source directory "
+                f"{os.fsdecode(directory)!r}: {exc}",
+            )
+        for child in children:
+            name = child.name
+            if not isinstance(name, bytes):
+                name = os.fsencode(name)
+            relative = b"/".join((*logical_components, name))
+            _validate_environment_relative_path(relative)
+            try:
+                info = child.stat(follow_symlinks=True)
+            except OSError as exc:
+                _fail(
+                    "ENVIRONMENT_SOURCE_TREE",
+                    f"cannot stat environment source path {relative!r}: {exc}",
+                )
+            identity = (info.st_dev, info.st_ino)
+            if stat.S_ISDIR(info.st_mode):
+                if identity in ancestor_directories:
+                    _fail(
+                        "ENVIRONMENT_SOURCE_TREE",
+                        f"directory symlink cycle at {relative!r}",
+                    )
+                walk(
+                    child.path,
+                    (*logical_components, name),
+                    ancestor_directories | frozenset((identity,)),
+                )
+                continue
+            if not stat.S_ISREG(info.st_mode):
+                _fail(
+                    "ENVIRONMENT_SOURCE_TREE",
+                    f"nonregular environment source is forbidden: {relative!r}",
+                )
+            if relative in (b".content_hash", b"state_bank_build.h"):
+                continue
+            if relative in seen_paths:
+                _fail(
+                    "ENVIRONMENT_SOURCE_TREE",
+                    f"duplicate logical environment path {relative!r}",
+                )
+            seen_paths.add(relative)
+            if len(entries) >= MAX_ENVIRONMENT_SOURCE_FILES:
+                _fail(
+                    "ENVIRONMENT_SOURCE_TREE",
+                    "environment source file count exceeds "
+                    f"{MAX_ENVIRONMENT_SOURCE_FILES}",
+                )
+            entries.append(
+                (
+                    b"./" + relative,
+                    _read_environment_source_file(
+                        child.path,
+                        info,
+                        relative,
+                    ),
+                )
+            )
+
+    walk(
+        root_bytes,
+        (),
+        frozenset(((root_info.st_dev, root_info.st_ino),)),
+    )
+    if not entries:
+        _fail("ENVIRONMENT_SOURCE_TREE", "environment source tree is empty")
+    return entries
+
+
+def _environment_source_entries_sha256(
+    entries: Collection[tuple[bytes, bytes]],
+) -> str:
+    """Reproduce ``find -L | sort -z | sha256sum | sha256sum`` exactly."""
+
+    digest = hashlib.sha256()
+    for relative, payload in sorted(entries, key=lambda item: item[0]):
+        digest.update(hashlib.sha256(payload).hexdigest().encode("ascii"))
+        digest.update(b"  ")
+        digest.update(relative)
+        digest.update(b"\n")
+    return digest.hexdigest()
+
+
+def environment_source_sha256(environment_root: str | Path) -> str:
+    """Hash the complete dereferenced Blood Bowl environment source closure."""
+
+    return _environment_source_entries_sha256(
+        _read_environment_source_entries(environment_root)
+    )
+
+
 def inspect_bbs(payload: bytes, *, validate_metadata: bool) -> dict[str, Any]:
     if len(payload) < BBS_HEADER.size:
         _fail("BBS_HEADER", "truncated BBS1 header")
@@ -1478,6 +1743,7 @@ def _complete_compiled_fields(fields: Mapping[str, Any]) -> dict[str, str | int]
         "contract_schema": fields["contract_schema"],
         "producer_schema": fields["producer_schema"],
         "authorization_schema": fields["authorization_schema"],
+        "strata_schema": STRATA_SCHEMA,
         "kind_value": fields["kind_value"],
         "kind": fields["kind"],
         "ruleset": fields["ruleset"],
@@ -1522,17 +1788,79 @@ def _require_json_uint32(value: Any, location: str) -> int:
     return result
 
 
-_ENGINE_VALIDATOR_BUILD_INPUTS = (
-    Path("Makefile"),
-    Path("puffer/bloodbowl/bbe_render.h"),
-    Path("puffer/bloodbowl/bloodbowl.h"),
-    Path("puffer/bloodbowl/contact_bot.h"),
-    Path("puffer/bloodbowl/offense_bot.h"),
-    Path("puffer/bloodbowl/state_bank_build.h"),
-    Path("puffer/bloodbowl/state_bank_runtime.h"),
-    Path("puffer/bloodbowl/state_bank_sha256.h"),
-    Path("puffer/bloodbowl/state_bank_validate.c"),
+def _require_selector_request(
+    family: Any,
+    threshold: Any,
+    *,
+    location: str,
+) -> tuple[str, int]:
+    if not isinstance(family, str) or family not in SELECTOR_FAMILY_BOUNDS:
+        _fail(
+            "SELECTOR_FAMILY",
+            f"{location}.family must be one of "
+            f"{tuple(SELECTOR_FAMILY_BOUNDS)!r}",
+        )
+    if isinstance(threshold, bool) or not isinstance(threshold, int):
+        _fail(
+            "SELECTOR_THRESHOLD",
+            f"{location}.threshold must be an exact integer",
+        )
+    maximum = SELECTOR_FAMILY_BOUNDS[family]
+    if threshold < 0 or threshold > maximum:
+        _fail(
+            "SELECTOR_THRESHOLD",
+            f"{location}.threshold for {family} must be in [0,{maximum}]",
+        )
+    return family, threshold
+
+
+_ENGINE_VALIDATOR_CFLAGS = (
+    "-std=c11",
+    "-O2",
+    "-g",
+    "-Wall",
+    "-Wextra",
+    "-Werror",
+    "-Wno-unused-function",
 )
+
+
+def _trusted_system_c_compiler() -> Path:
+    """Resolve a compiler from fixed system paths, never caller environment."""
+
+    for candidate in (
+        Path("/usr/bin/clang"),
+        Path("/usr/bin/cc"),
+        Path("/usr/bin/gcc"),
+        Path("/bin/cc"),
+    ):
+        try:
+            resolved = candidate.resolve(strict=True)
+        except OSError:
+            continue
+        if resolved.is_file() and os.access(resolved, os.X_OK):
+            return resolved
+    _fail(
+        "ENGINE_VALIDATOR_BUILD",
+        "no trusted system C compiler exists at a fixed system path",
+    )
+
+
+def _engine_validator_subprocess_environment(build_root: Path) -> dict[str, str]:
+    """Return a minimal environment without build or loader injection hooks."""
+
+    try:
+        system_path = os.confstr("CS_PATH")
+    except (AttributeError, OSError, ValueError):
+        system_path = None
+    if not system_path:
+        system_path = "/usr/bin:/bin"
+    return {
+        "LANG": "C",
+        "LC_ALL": "C",
+        "PATH": system_path,
+        "TMPDIR": str(build_root),
+    }
 
 
 def _write_snapshot_file(path: Path, payload: bytes) -> None:
@@ -1569,6 +1897,28 @@ def _write_snapshot_file(path: Path, payload: bytes) -> None:
         )
     finally:
         os.close(descriptor)
+
+
+def _render_engine_validator_build_header(
+    environment_source_sha256: str,
+) -> bytes:
+    """Render the only generated input to the two pinned source closures."""
+
+    _require_sha256(
+        environment_source_sha256,
+        "validator environment source SHA-256",
+    )
+    lines = [
+        "#pragma once",
+        f'#define PUFFER_ENV_SOURCE_HASH "{environment_source_sha256}"',
+    ]
+    for field, macro in STATE_FIELD_TO_MACRO.items():
+        value = NO_BANK_STATE_FIELDS[field]
+        if isinstance(value, str):
+            lines.append(f'#define {macro} "{value}"')
+        else:
+            lines.append(f"#define {macro} {value}")
+    return ("\n".join(lines) + "\n").encode("ascii")
 
 
 def _snapshot_engine_source(
@@ -1609,24 +1959,34 @@ def _snapshot_engine_source(
         )
 
 
-def _snapshot_engine_validator_build_inputs(
-    source_root: Path, snapshot_root: Path
+def _snapshot_environment_source(
+    source_environment_root: Path,
+    snapshot_environment_root: Path,
+    *,
+    expected_sha256: str,
 ) -> None:
-    for relative in _ENGINE_VALIDATOR_BUILD_INPUTS:
-        payload = read_bounded_file(
-            source_root / relative,
-            MAX_BBS_BYTES,
-            "engine validator build input",
-        )
-        _write_snapshot_file(snapshot_root / relative, payload)
-    bloodbowl = snapshot_root / "puffer/bloodbowl"
+    """Materialize and rehash the complete dereferenced environment closure."""
+
+    entries = _read_environment_source_entries(source_environment_root)
     try:
-        (bloodbowl / "engine").symlink_to("../../engine/src")
-        (bloodbowl / "bb").symlink_to("../../engine/include/bb")
+        snapshot_environment_root.mkdir(parents=True)
     except OSError as exc:
         _fail(
-            "ENGINE_SOURCE_SNAPSHOT",
-            f"cannot create private validator include aliases: {exc}",
+            "ENVIRONMENT_SOURCE_SNAPSHOT",
+            f"cannot create private environment snapshot: {exc}",
+        )
+    for relative, payload in entries:
+        logical = relative[2:]
+        _write_snapshot_file(
+            snapshot_environment_root / os.fsdecode(logical),
+            payload,
+        )
+    observed_sha256 = environment_source_sha256(snapshot_environment_root)
+    if observed_sha256 != expected_sha256:
+        _fail(
+            "ENVIRONMENT_SOURCE_SNAPSHOT",
+            f"snapshot environment source SHA-256 {observed_sha256} != "
+            f"installed PUFFER_ENV_SOURCE_HASH {expected_sha256}",
         )
 
 
@@ -1692,9 +2052,21 @@ def _run_engine_validator(
     request: Mapping[str, Any],
     fields: Mapping[str, Any],
     contract_identity: str,
+    environment_source_sha256: str,
+    selector_family: str,
+    selector_threshold: int,
 ) -> dict[str, Any]:
     """Build and execute a source-pinned engine-linked validator snapshot."""
 
+    _require_sha256(
+        environment_source_sha256,
+        "installed PUFFER_ENV_SOURCE_HASH",
+    )
+    selector_family, selector_threshold = _require_selector_request(
+        selector_family,
+        selector_threshold,
+        location="engine_validator.selector",
+    )
     with tempfile.TemporaryDirectory(
         prefix="bloodbowl-state-bank-validator-"
     ) as isolated_workspace_name:
@@ -1706,16 +2078,43 @@ def _run_engine_validator(
             isolated_source,
             expected_sha256=str(fields["loader_engine_source_sha256"]),
         )
-        _snapshot_engine_validator_build_inputs(repo_root, isolated_source)
+        _snapshot_environment_source(
+            repo_root / "puffer/bloodbowl",
+            isolated_source / "puffer/bloodbowl",
+            expected_sha256=environment_source_sha256,
+        )
+        _write_snapshot_file(
+            isolated_source / "puffer/bloodbowl/state_bank_build.h",
+            _render_engine_validator_build_header(
+                environment_source_sha256
+            ),
+        )
         try:
+            isolated_build.mkdir(mode=0o700)
             _freeze_snapshot_tree(isolated_source)
+            helper = isolated_build / "state_bank_validate"
+            compiler = _trusted_system_c_compiler()
+            subprocess_environment = (
+                _engine_validator_subprocess_environment(isolated_build)
+            )
             build = subprocess.run(
                 [
-                    "make",
-                    f"BUILD={isolated_build}",
-                    "state-bank-validate",
+                    str(compiler),
+                    *_ENGINE_VALIDATOR_CFLAGS,
+                    "-I",
+                    str(isolated_source / "engine/include"),
+                    "-I",
+                    str(isolated_source / "puffer/bloodbowl"),
+                    str(
+                        isolated_source
+                        / "puffer/bloodbowl/state_bank_validate.c"
+                    ),
+                    "-o",
+                    str(helper),
+                    "-lm",
                 ],
                 cwd=isolated_source,
+                env=subprocess_environment,
                 text=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
@@ -1727,7 +2126,6 @@ def _run_engine_validator(
                     "ENGINE_VALIDATOR_BUILD",
                     "state-bank validator build failed: " f"{build.stdout.strip()}",
                 )
-            helper = isolated_build / "state_bank_validate"
             if (
                 not helper.is_file()
                 or helper.is_symlink()
@@ -1735,7 +2133,7 @@ def _run_engine_validator(
             ):
                 _fail(
                     "ENGINE_VALIDATOR_BUILD",
-                    "isolated make did not produce an executable regular "
+                    "isolated compiler did not produce an executable regular "
                     f"helper at {helper}",
                 )
             command = [
@@ -1762,12 +2160,19 @@ def _run_engine_validator(
                 str(fields["producer_engine_source_sha256"]),
                 "--loader-engine-source-sha256",
                 str(fields["loader_engine_source_sha256"]),
+                "--environment-source-sha256",
+                environment_source_sha256,
                 "--contract-identity",
                 contract_identity,
+                "--selector-family",
+                selector_family,
+                "--selector-threshold",
+                str(selector_threshold),
             ]
             validation = subprocess.run(
                 command,
-                cwd=repo_root,
+                cwd=isolated_source,
+                env=subprocess_environment,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 check=False,
@@ -1810,6 +2215,12 @@ def _run_engine_validator(
             "command_max",
             "legal_actions_min",
             "legal_actions_max",
+            "environment_source_sha256",
+            "strata_schema",
+            "strata_family",
+            "strata_threshold",
+            "strata_eligible_records",
+            "strata_sha256",
         ),
         "engine_validation",
     )
@@ -1828,6 +2239,10 @@ def _run_engine_validator(
         "bbs_version": fields["bbs_version"],
         "match_size": fields["match_size"],
         "engine_fingerprint": fields["engine_fingerprint"],
+        "environment_source_sha256": environment_source_sha256,
+        "strata_schema": STRATA_SCHEMA,
+        "strata_family": selector_family,
+        "strata_threshold": selector_threshold,
     }
     for field, expected_value in expected.items():
         if type(result[field]) is not type(expected_value) or (
@@ -1855,6 +2270,11 @@ def _run_engine_validator(
     legal_max = _require_positive_int(
         result["legal_actions_max"], "engine_validation.legal_actions_max"
     )
+    eligible_records = _require_positive_int(
+        result["strata_eligible_records"],
+        "engine_validation.strata_eligible_records",
+    )
+    _require_sha256(result["strata_sha256"], "engine_validation.strata_sha256")
     if (
         source_min == 0
         or source_min > source_max
@@ -1862,6 +2282,11 @@ def _run_engine_validator(
         or source_max & AUTHORED_SOURCE_MASK == AUTHORED_SOURCE_NAMESPACE
         or command_min > command_max
         or legal_min > legal_max
+        or eligible_records > fields["records"]
+        or (
+            selector_family == "uniform"
+            and eligible_records != fields["records"]
+        )
     ):
         _fail(
             "ENGINE_VALIDATOR",
@@ -1891,6 +2316,9 @@ def _stage_authorized_request_for_test(
         request=request,
         fields=fields,
         contract_identity=str(compiled_fields["contract_identity"]),
+        environment_source_sha256=environment_source_hash,
+        selector_family="uniform",
+        selector_threshold=0,
     )
     bank_payload = read_bounded_file(Path(request["bank_path"]), MAX_BBS_BYTES, "BBS")
     producer_payload = read_bounded_file(
@@ -2189,41 +2617,73 @@ def validate_installed(
     bank_sha256: str,
     producer_manifest_sha256: str,
     training_contract_sha256: str,
+    selector_family: str,
+    selector_threshold: int,
 ) -> dict[str, Any]:
-    fields = show_installed(puffer_root)
+    selector_family, selector_threshold = _require_selector_request(
+        selector_family,
+        selector_threshold,
+        location="validate_installed.selector",
+    )
+    try:
+        puffer_root = Path(puffer_root).resolve(strict=True)
+    except OSError as exc:
+        _fail(
+            "PUFFER_ROOT",
+            f"cannot resolve installed Puffer root {puffer_root!s}: {exc}",
+        )
+    macros = parse_generated_header(
+        puffer_root / "src/exact_action_build_hash.h"
+    )
+    fields = {
+        field: macros[macro] for field, macro in STATE_FIELD_TO_MACRO.items()
+    }
     if fields["kind_value"] == 0:
         _fail("NO_BANK_CONTRACT", "installed Puffer build has no state bank")
-    result = validate_artifact_request(
-        bank_path=puffer_root / str(fields["bank_path"]),
-        bank_sha256=bank_sha256,
-        producer_manifest_path=puffer_root / str(fields["producer_manifest_path"]),
-        producer_manifest_sha256=producer_manifest_sha256,
-        training_contract_path=puffer_root / str(fields["training_contract_path"]),
-        training_contract_sha256=training_contract_sha256,
-        kind=kind,
-        engine_root=Path(__file__).resolve().parents[1],
-    )
-    expected_compiled: dict[str, Any] = dict(result)
-    expected_compiled.update(
-        {
-            "bank_path": "resources/bloodbowl/state_bank.bbs",
-            "producer_manifest_path": "resources/bloodbowl/state_bank.producer.json",
-            "training_contract_path": "resources/bloodbowl/state_bank.contract.json",
-        }
-    )
-    expected_compiled["contract_identity"] = compiled_contract_identity(
-        expected_compiled
-    )
-    expected_compiled = {
-        field: expected_compiled[field] for field in STATE_FIELD_TO_MACRO
+    request = {
+        "bank_path": puffer_root / str(fields["bank_path"]),
+        "bank_sha256": bank_sha256,
+        "producer_manifest_path":
+            puffer_root / str(fields["producer_manifest_path"]),
+        "producer_manifest_sha256": producer_manifest_sha256,
+        "training_contract_path":
+            puffer_root / str(fields["training_contract_path"]),
+        "training_contract_sha256": training_contract_sha256,
+        "kind": kind,
+        "engine_root": Path(__file__).resolve().parents[1],
     }
+    result = validate_artifact_request(**request)
+    expected_compiled = _complete_compiled_fields(result)
     for field, value in expected_compiled.items():
         if fields[field] != value:
             _fail(
                 "COMPILED_CONTRACT_MISMATCH",
                 f"compiled {field} {fields[field]!r} != {value!r}",
             )
-    return {field: result[field] for field in LAUNCHER_CONTRACT_FIELDS}
+    environment_hash = macros["PUFFER_ENV_SOURCE_HASH"]
+    _require_sha256(environment_hash, "installed PUFFER_ENV_SOURCE_HASH")
+    validation = _run_engine_validator(
+        repo_root=Path(request["engine_root"]),
+        request=request,
+        fields=result,
+        contract_identity=str(expected_compiled["contract_identity"]),
+        environment_source_sha256=environment_hash,
+        selector_family=selector_family,
+        selector_threshold=selector_threshold,
+    )
+    launcher_result = dict(result)
+    for field in (
+        "environment_source_sha256",
+        "strata_schema",
+        "strata_family",
+        "strata_threshold",
+        "strata_eligible_records",
+        "strata_sha256",
+    ):
+        launcher_result[field] = validation[field]
+    return {
+        field: launcher_result[field] for field in LAUNCHER_CONTRACT_FIELDS
+    }
 
 
 def _add_request_arguments(parser: argparse.ArgumentParser) -> None:
@@ -2237,6 +2697,14 @@ def _add_request_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--engine-root", type=Path, required=True)
 
 
+def _canonical_cli_uint(raw: str) -> int:
+    if re.fullmatch(r"(?:0|[1-9][0-9]*)", raw) is None:
+        raise argparse.ArgumentTypeError(
+            "must be a canonical nonnegative decimal integer"
+        )
+    return int(raw)
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -2248,6 +2716,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     validate_installed_parser.add_argument("--bank-sha256", required=True)
     validate_installed_parser.add_argument("--producer-manifest-sha256", required=True)
     validate_installed_parser.add_argument("--training-contract-sha256", required=True)
+    validate_installed_parser.add_argument(
+        "--selector-family",
+        choices=tuple(SELECTOR_FAMILY_BOUNDS),
+        action="append",
+        required=True,
+    )
+    validate_installed_parser.add_argument(
+        "--selector-threshold",
+        type=_canonical_cli_uint,
+        action="append",
+        required=True,
+    )
     show_parser = subparsers.add_parser("show-installed")
     show_parser.add_argument("--puffer-root", type=Path, required=True)
     check_parser = subparsers.add_parser("check-no-bank")
@@ -2260,7 +2740,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     install_parser.add_argument("--observation-version", type=int, required=True)
     engine_parser = subparsers.add_parser("engine-source-sha256")
     engine_parser.add_argument("--root", type=Path, required=True)
-    return parser.parse_args(argv)
+    environment_parser = subparsers.add_parser("environment-source-sha256")
+    environment_parser.add_argument("--root", type=Path, required=True)
+    environment_parser.add_argument("--plain", action="store_true")
+    args = parser.parse_args(argv)
+    if args.command == "validate-installed":
+        if len(args.selector_family) != 1 or len(args.selector_threshold) != 1:
+            parser.error(
+                "validate-installed requires exactly one selector family "
+                "and threshold"
+            )
+        args.selector_family = args.selector_family[0]
+        args.selector_threshold = args.selector_threshold[0]
+    return args
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -2284,6 +2776,8 @@ def main(argv: list[str] | None = None) -> int:
                 bank_sha256=args.bank_sha256,
                 producer_manifest_sha256=args.producer_manifest_sha256,
                 training_contract_sha256=args.training_contract_sha256,
+                selector_family=args.selector_family,
+                selector_threshold=args.selector_threshold,
             )
         elif args.command == "show-installed":
             result = show_installed(args.puffer_root)
@@ -2300,6 +2794,12 @@ def main(argv: list[str] | None = None) -> int:
             result = check_no_bank_install(args.puffer_root)
         elif args.command == "engine-source-sha256":
             result = {"engine_source_sha256": engine_source_sha256(args.root)}
+        elif args.command == "environment-source-sha256":
+            environment_hash = environment_source_sha256(args.root)
+            if args.plain:
+                print(environment_hash)
+                return 0
+            result = {"environment_source_sha256": environment_hash}
         else:  # pragma: no cover - argparse owns the command set
             raise AssertionError(args.command)
     except (OSError, StateBankContractError, ValueError) as exc:

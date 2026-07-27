@@ -127,6 +127,12 @@ class CheckpointLineageTests(unittest.TestCase):
             "ladder_state_bank_loader_engine_source_sha256": "9" * 64,
             "ladder_state_bank_records": 3,
             "ladder_state_bank_bytes": 16 + 3 * (12 + 2240),
+            "ladder_state_bank_strata_schema":
+                checkpoint_lineage.STATE_BANK_STRATA_SCHEMA,
+            "ladder_state_bank_strata_family": "uniform",
+            "ladder_state_bank_strata_threshold": 0,
+            "ladder_state_bank_strata_eligible_records": 3,
+            "ladder_state_bank_strata_sha256": "a" * 64,
         })
         self.run_manifest.write_text(
             json.dumps(active, sort_keys=True) + "\n", encoding="utf-8")
@@ -145,6 +151,11 @@ class CheckpointLineageTests(unittest.TestCase):
             "ladder_state_bank_loader_engine_source_sha256",
             "ladder_state_bank_records",
             "ladder_state_bank_bytes",
+            "ladder_state_bank_strata_schema",
+            "ladder_state_bank_strata_family",
+            "ladder_state_bank_strata_threshold",
+            "ladder_state_bank_strata_eligible_records",
+            "ladder_state_bank_strata_sha256",
         )
         for key in active_keys:
             with self.subTest(missing=key):
@@ -163,6 +174,8 @@ class CheckpointLineageTests(unittest.TestCase):
         }
         wrong_types["ladder_state_bank_records"] = "3"
         wrong_types["ladder_state_bank_bytes"] = "6772"
+        wrong_types["ladder_state_bank_strata_threshold"] = "0"
+        wrong_types["ladder_state_bank_strata_eligible_records"] = "3"
         for key, wrong in wrong_types.items():
             with self.subTest(wrong_type=key):
                 changed = dict(active)
@@ -192,6 +205,8 @@ class CheckpointLineageTests(unittest.TestCase):
     ):
         manifest = json.loads(self.run_manifest.read_text(encoding="utf-8"))
         manifest["ladder_reset_pct"] = "0.5"
+        for key in checkpoint_lineage.STATE_BANK_SELECTOR_KEYS:
+            manifest[key] = "0"
         manifest.update({
             "ladder_state_bank_contract_schema":
                 checkpoint_lineage.STATE_BANK_CONTRACT_SCHEMA,
@@ -251,6 +266,58 @@ class CheckpointLineageTests(unittest.TestCase):
                 ):
                     checkpoint_lineage.lineage_from_run_manifest(
                         self.checkpoint, self.run_manifest)
+
+    def test_state_bank_each_family_accepts_its_closed_upper_bound(self):
+        cases = (
+            ("ladder_endzone_maxdist", 25, "endzone-maxdist"),
+            ("ladder_pickup_maxdist", 25, "pickup-maxdist"),
+            ("ladder_postkick_maxturn", 8, "postkick-maxturn"),
+            ("ladder_pass_maxrange", 25, "pass-maxrange"),
+        )
+        for key, threshold, family in cases:
+            with self.subTest(key=key):
+                manifest = self.active_selector_manifest(
+                    selector_key=key,
+                    threshold=threshold,
+                    family=family,
+                )
+                self.run_manifest.write_text(
+                    json.dumps(manifest, sort_keys=True) + "\n",
+                    encoding="utf-8",
+                )
+                checkpoint_lineage.lineage_from_run_manifest(
+                    self.checkpoint, self.run_manifest)
+
+    def test_state_bank_descriptor_reconciles_with_selector_and_population(self):
+        mutations = (
+            ("ladder_state_bank_strata_schema", "unknown", "strata_schema"),
+            ("ladder_state_bank_strata_family", "pickup-maxdist", "family"),
+            ("ladder_state_bank_strata_threshold", 5, "threshold"),
+            ("ladder_state_bank_strata_eligible_records", 4, "eligible"),
+            ("ladder_state_bank_strata_sha256", "A" * 64, "SHA-256"),
+        )
+        for key, wrong, message in mutations:
+            with self.subTest(key=key):
+                manifest = self.active_selector_manifest()
+                manifest[key] = wrong
+                self.run_manifest.write_text(
+                    json.dumps(manifest, sort_keys=True) + "\n",
+                    encoding="utf-8",
+                )
+                with self.assertRaisesRegex(
+                    checkpoint_lineage.LineageError, message
+                ):
+                    checkpoint_lineage.lineage_from_run_manifest(
+                        self.checkpoint, self.run_manifest)
+
+        manifest = self.active_selector_manifest()
+        manifest["ladder_pickup_maxdist"] = "3"
+        self.run_manifest.write_text(
+            json.dumps(manifest, sort_keys=True) + "\n", encoding="utf-8")
+        with self.assertRaisesRegex(
+                checkpoint_lineage.LineageError, "only one"):
+            checkpoint_lineage.lineage_from_run_manifest(
+                self.checkpoint, self.run_manifest)
 
     def test_state_bank_descriptor_counts_are_exact_json_integers(self):
         for key in (

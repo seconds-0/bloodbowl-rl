@@ -5,6 +5,7 @@
 // support. `--unmasked` is a negative fail-closed diagnostic and is expected
 // to terminate as soon as a random tuple falls outside that support.
 #include "bloodbowl.h"
+#include <inttypes.h>
 #include <stdio.h>
 #include <time.h>
 
@@ -635,7 +636,251 @@ static int bbe_r12_selftest(uint64_t seed, int episodes) {
     return st_failures ? 1 : 0;
 }
 
+typedef enum {
+    BBE_STANDALONE_BANK_TOOL_NONE = 0,
+    BBE_STANDALONE_BANK_TOOL_DESCRIPTOR,
+    BBE_STANDALONE_BANK_TOOL_AUDIT,
+} bbe_standalone_bank_tool;
+
+static int bbe_cli_error(const char* message) {
+    fprintf(stderr, "bloodbowl: %s\n", message);
+    return 2;
+}
+
+static int bbe_parse_canonical_u32(
+        const char* text, uint32_t minimum, uint32_t maximum,
+        uint32_t* output) {
+    if (text == NULL || output == NULL || text[0] == '\0' ||
+        (text[0] == '0' && text[1] != '\0')) {
+        return 0;
+    }
+    uint64_t value = 0;
+    for (const unsigned char* cursor = (const unsigned char*)text;
+         *cursor != '\0'; cursor++) {
+        if (*cursor < '0' || *cursor > '9') return 0;
+        value = value * 10u + (uint64_t)(*cursor - '0');
+        if (value > maximum) return 0;
+    }
+    if (value < minimum) return 0;
+    *output = (uint32_t)value;
+    return 1;
+}
+
+static void bbe_set_standalone_selector(
+        Bloodbowl* env, bbe_state_bank_selector_family family,
+        uint32_t threshold) {
+    env->demo_endzone_maxdist = 0;
+    env->demo_pickup_maxdist = 0;
+    env->demo_postkick_maxturn = 0;
+    env->demo_pass_maxrange = 0;
+    env->state_bank_explicit_selector = 1;
+    env->state_bank_explicit_selector_family = (int)family;
+    env->state_bank_explicit_selector_threshold = threshold;
+}
+
+static int bbe_run_state_bank_tool(int argc, char** argv) {
+    bbe_standalone_bank_tool mode = BBE_STANDALONE_BANK_TOOL_NONE;
+    const char* family_text = NULL;
+    const char* threshold_text = NULL;
+    const char* count_text = NULL;
+    const char* bank_kind = NULL;
+    const char* bank_path = NULL;
+    const char* producer_path = NULL;
+    const char* contract_path = NULL;
+    int bank_kind_seen = 0;
+    int bank_path_seen = 0;
+    int producer_path_seen = 0;
+    int contract_path_seen = 0;
+
+    for (int i = 1; i < argc; i++) {
+        const char* argument = argv[i];
+        if (strcmp(argument, "--state-bank-descriptor") == 0) {
+            if (mode != BBE_STANDALONE_BANK_TOOL_NONE) {
+                return bbe_cli_error(
+                    "state-bank tool modes are mutually exclusive and "
+                    "may not be duplicated");
+            }
+            if (i + 2 >= argc) {
+                return bbe_cli_error(
+                    "--state-bank-descriptor requires FAMILY THRESHOLD");
+            }
+            mode = BBE_STANDALONE_BANK_TOOL_DESCRIPTOR;
+            family_text = argv[++i];
+            threshold_text = argv[++i];
+        } else if (strcmp(argument, "--state-bank-audit") == 0) {
+            if (mode != BBE_STANDALONE_BANK_TOOL_NONE) {
+                return bbe_cli_error(
+                    "state-bank tool modes are mutually exclusive and "
+                    "may not be duplicated");
+            }
+            if (i + 3 >= argc) {
+                return bbe_cli_error(
+                    "--state-bank-audit requires FAMILY THRESHOLD COUNT");
+            }
+            mode = BBE_STANDALONE_BANK_TOOL_AUDIT;
+            family_text = argv[++i];
+            threshold_text = argv[++i];
+            count_text = argv[++i];
+        } else if (strcmp(argument, "--bank-kind") == 0) {
+            if (bank_kind_seen) {
+                return bbe_cli_error("--bank-kind may not be duplicated");
+            }
+            if (i + 1 >= argc || argv[i + 1][0] == '\0' ||
+                strncmp(argv[i + 1], "--", 2) == 0) {
+                return bbe_cli_error("--bank-kind requires a value");
+            }
+            bank_kind_seen = 1;
+            bank_kind = argv[++i];
+        } else if (strcmp(argument, "--bank") == 0) {
+            if (bank_path_seen) {
+                return bbe_cli_error("--bank may not be duplicated");
+            }
+            if (i + 1 >= argc || argv[i + 1][0] == '\0' ||
+                strncmp(argv[i + 1], "--", 2) == 0) {
+                return bbe_cli_error("--bank requires a value");
+            }
+            bank_path_seen = 1;
+            bank_path = argv[++i];
+        } else if (strcmp(argument, "--bank-producer-manifest") == 0) {
+            if (producer_path_seen) {
+                return bbe_cli_error(
+                    "--bank-producer-manifest may not be duplicated");
+            }
+            if (i + 1 >= argc || argv[i + 1][0] == '\0' ||
+                strncmp(argv[i + 1], "--", 2) == 0) {
+                return bbe_cli_error(
+                    "--bank-producer-manifest requires a value");
+            }
+            producer_path_seen = 1;
+            producer_path = argv[++i];
+        } else if (strcmp(argument, "--bank-contract") == 0) {
+            if (contract_path_seen) {
+                return bbe_cli_error("--bank-contract may not be duplicated");
+            }
+            if (i + 1 >= argc || argv[i + 1][0] == '\0' ||
+                strncmp(argv[i + 1], "--", 2) == 0) {
+                return bbe_cli_error("--bank-contract requires a value");
+            }
+            contract_path_seen = 1;
+            contract_path = argv[++i];
+        } else {
+            return bbe_cli_error(
+                "unknown or trailing argument in state-bank tool mode");
+        }
+    }
+
+    if (mode == BBE_STANDALONE_BANK_TOOL_NONE) {
+        return bbe_cli_error("missing state-bank tool mode");
+    }
+    if (!bank_kind_seen || !bank_path_seen || !producer_path_seen ||
+        !contract_path_seen) {
+        return bbe_cli_error(
+            "state-bank tool mode requires --bank-kind, --bank, "
+            "--bank-producer-manifest, and --bank-contract");
+    }
+    if (strcmp(bank_kind, "strict-replay") != 0) {
+        return bbe_cli_error(
+            "state-bank tool mode requires --bank-kind strict-replay");
+    }
+
+    bbe_state_bank_selector_family family;
+    if (bbe_state_bank_selector_family_parse(family_text, &family) !=
+        BBE_SB_OK) {
+        return bbe_cli_error("invalid state-bank selector family");
+    }
+    uint32_t threshold = 0;
+    uint32_t maximum = bbe_state_bank_selector_max_threshold(family);
+    if (!bbe_parse_canonical_u32(
+            threshold_text, 0, maximum, &threshold)) {
+        return bbe_cli_error(
+            "state-bank selector threshold is not a canonical in-range "
+            "decimal");
+    }
+    uint32_t count = 0;
+    if (mode == BBE_STANDALONE_BANK_TOOL_AUDIT &&
+        !bbe_parse_canonical_u32(count_text, 1, 1000, &count)) {
+        return bbe_cli_error(
+            "state-bank audit count is not a canonical decimal in "
+            "[1,1000]");
+    }
+
+    bbe_state_bank_set_location_overrides(
+        bank_path, producer_path, contract_path);
+    bbe_state_bank_require_or_abort(BBE_STATE_BANK_STRICT_REPLAY);
+
+    bbe_state_bank_stratum_descriptor descriptor;
+    bbe_state_bank_error descriptor_error =
+        bbe_state_bank_copy_stratum_descriptor(
+            family, threshold, &descriptor);
+    if (descriptor_error != BBE_SB_OK) {
+        fprintf(stderr,
+                "bloodbowl: state-bank descriptor resolution failed: %s\n",
+                bbe_state_bank_error_name(descriptor_error));
+        return 1;
+    }
+
+    if (mode == BBE_STANDALONE_BANK_TOOL_DESCRIPTOR) {
+        printf("{\"schema\":\"%s\",\"family\":\"%s\","
+               "\"threshold\":%" PRIu32 ",\"eligible_records\":%" PRIu32
+               ",\"sha256\":\"%s\"}\n",
+               PUFFER_STATE_BANK_STRATA_SCHEMA,
+               bbe_state_bank_selector_family_name(descriptor.family),
+               descriptor.threshold, descriptor.eligible_records,
+               descriptor.sha256);
+        return 0;
+    }
+
+    static Bloodbowl env;
+    static uint8_t obs[BBE_AGENTS * BBE_OBS_SIZE];
+    static float actions[BBE_AGENTS * 3];
+    static unsigned char mask[BBE_AGENTS * BBE_MASK_SIZE];
+    static float rewards[BBE_AGENTS];
+    static float terminals[BBE_AGENTS];
+    env.num_agents = BBE_AGENTS;
+    env.seed = 42;
+    env.demo_reset_pct = 1.0f;
+    env.state_bank_kind = BBE_STATE_BANK_STRICT_REPLAY;
+    env.exclude_team = -1;
+    env.force_home_team = -1;
+    env.force_away_team = -1;
+    bbe_set_standalone_selector(&env, family, threshold);
+    for (int agent = 0; agent < BBE_AGENTS; agent++) {
+        env.obs_ptr[agent] = obs + agent * BBE_OBS_SIZE;
+        env.action_ptr[agent] = actions + agent * 3;
+        env.action_mask_ptr[agent] = mask + agent * BBE_MASK_SIZE;
+        env.reward_ptr[agent] = rewards + agent;
+        env.terminal_ptr[agent] = terminals + agent;
+    }
+    for (uint32_t reset = 0; reset < count; reset++) {
+        c_reset(&env);
+        if (!env.demo_started ||
+            env.state_bank_record_index_latched >=
+                (uint32_t)bbe_state_bank_n) {
+            fprintf(stderr,
+                    "bloodbowl: state-bank audit reset did not select a "
+                    "valid record\n");
+            return 1;
+        }
+        printf("{\"bank_sha256\":\"%s\",\"record_index\":%" PRIu32
+               ",\"source_id\":%" PRIu32 ",\"command\":%" PRIu32
+               ",\"half\":%u,\"turn\":%u}\n",
+               PUFFER_STATE_BANK_BBS_SHA256,
+               env.state_bank_record_index_latched,
+               env.state_bank_source_id_latched,
+               env.state_bank_source_command_latched,
+               (unsigned)env.state_bank_source_half_latched,
+               (unsigned)env.state_bank_source_turn_latched);
+    }
+    return 0;
+}
+
 int main(int argc, char** argv) {
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--state-bank-descriptor") == 0 ||
+            strcmp(argv[i], "--state-bank-audit") == 0) {
+            return bbe_run_state_bank_tool(argc, argv);
+        }
+    }
     int episodes = 64;
     int unmasked = 0;
     int selftest = 0;
@@ -696,6 +941,7 @@ int main(int argc, char** argv) {
         printf("{\"contract_schema\":\"%s\","
                "\"producer_schema\":\"%s\","
                "\"authorization_schema\":\"%s\","
+               "\"strata_schema\":\"%s\","
                "\"kind_value\":%d,"
                "\"kind\":\"%s\","
                "\"ruleset\":\"%s\","
@@ -716,6 +962,7 @@ int main(int argc, char** argv) {
                PUFFER_STATE_BANK_CONTRACT_SCHEMA,
                PUFFER_STATE_BANK_PRODUCER_SCHEMA,
                PUFFER_STATE_BANK_AUTHORIZATION_SCHEMA,
+               PUFFER_STATE_BANK_STRATA_SCHEMA,
                PUFFER_STATE_BANK_COMPILED_KIND,
                PUFFER_STATE_BANK_KIND_NAME,
                PUFFER_STATE_BANK_RULESET,

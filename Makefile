@@ -31,10 +31,12 @@ PUFFER_STATE_BANK_CONTRACT_DIR := $(BUILD)/test_state_bank_contract
 PUFFER_STATE_BANK_CONTRACT_STAMP := $(PUFFER_STATE_BANK_CONTRACT_DIR)/.generated
 PUFFER_STATE_BANK_CONTRACT_TESTBIN := $(BUILD)/puffer_state_bank_contract_tests
 PUFFER_STANDALONE_TESTBIN := $(BUILD)/bloodbowl_standalone_test
+PUFFER_STATE_BANK_TOOL_TESTBIN := $(BUILD)/bloodbowl_state_bank_tool_test
 STATE_BANK_VALIDATE_BIN := $(BUILD)/state_bank_validate
+STATE_BANK_VALIDATE_ENV_HASH = $(shell python3 tools/state_bank_contract.py environment-source-sha256 --root puffer/bloodbowl --plain)
 PUFFER_OBSERVATION_TESTBIN := $(BUILD)/puffer_observation_tests
 BBP_V6_WRITER_TESTBIN := $(BUILD)/bbp_v6_writer_tests
-PUFFER_TESTBINS := $(PUFFER_REWARD_TESTBIN) $(PUFFER_CONTACT_TESTBIN) $(PUFFER_STATE_BANK_TESTBIN) $(PUFFER_STATE_BANK_CONTRACT_TESTBIN) $(PUFFER_STANDALONE_TESTBIN) $(PUFFER_OBSERVATION_TESTBIN) $(BBP_V6_WRITER_TESTBIN)
+PUFFER_TESTBINS := $(PUFFER_REWARD_TESTBIN) $(PUFFER_CONTACT_TESTBIN) $(PUFFER_STATE_BANK_TESTBIN) $(PUFFER_STATE_BANK_CONTRACT_TESTBIN) $(PUFFER_STANDALONE_TESTBIN) $(PUFFER_STATE_BANK_TOOL_TESTBIN) $(PUFFER_OBSERVATION_TESTBIN) $(BBP_V6_WRITER_TESTBIN)
 
 .PHONY: all test asan fuzz coverage coverage-run lockstep ballstats blockstats human-ball-advancement blockev-mc scenario-scan state-bank-validate clean
 
@@ -75,9 +77,12 @@ $(PUFFER_STATE_BANK_FIXTURE_WRITER): puffer/bloodbowl/state_bank_fixture_writer.
 
 $(PUFFER_STATE_BANK_CONTRACT_STAMP): $(PUFFER_STATE_BANK_FIXTURE_WRITER) tools/generate_state_bank_contract_fixture.py tools/state_bank_contract.py
 	@mkdir -p $(PUFFER_STATE_BANK_CONTRACT_DIR)/immutable
-	$(PUFFER_STATE_BANK_FIXTURE_WRITER) $(PUFFER_STATE_BANK_CONTRACT_DIR)/immutable/state_bank.bbs
+	$(PUFFER_STATE_BANK_FIXTURE_WRITER) \
+		$(PUFFER_STATE_BANK_CONTRACT_DIR)/immutable/state_bank.bbs \
+		$(PUFFER_STATE_BANK_CONTRACT_DIR)/immutable/state_bank.expected.json
 	python3 tools/generate_state_bank_contract_fixture.py \
 		--bbs $(PUFFER_STATE_BANK_CONTRACT_DIR)/immutable/state_bank.bbs \
+		--expectations $(PUFFER_STATE_BANK_CONTRACT_DIR)/immutable/state_bank.expected.json \
 		--out-dir $(PUFFER_STATE_BANK_CONTRACT_DIR)
 	@touch $@
 
@@ -92,9 +97,18 @@ $(PUFFER_STANDALONE_TESTBIN): puffer/bloodbowl/bloodbowl.c puffer/bloodbowl/bloo
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -Ipuffer/bloodbowl -Wno-unused-function $< -o $@ -lm $(LDFLAGS)
 
-$(STATE_BANK_VALIDATE_BIN): puffer/bloodbowl/state_bank_validate.c puffer/bloodbowl/bloodbowl.h puffer/bloodbowl/state_bank_runtime.h puffer/bloodbowl/state_bank_sha256.h puffer/bloodbowl/state_bank_build.h $(SRC) $(ENGINE_HDR)
+$(PUFFER_STATE_BANK_TOOL_TESTBIN): puffer/bloodbowl/bloodbowl.c puffer/bloodbowl/bloodbowl.h puffer/bloodbowl/state_bank_runtime.h puffer/bloodbowl/state_bank_sha256.h $(PUFFER_STATE_BANK_CONTRACT_STAMP) $(SRC) $(ENGINE_HDR)
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) -Ipuffer/bloodbowl -Wno-unused-function $< -o $@ -lm $(LDFLAGS)
+	$(CC) $(CFLAGS) \
+		-DBBE_STATE_BANK_BUILD_HEADER='"state_bank_build.generated.h"' \
+		-I$(PUFFER_STATE_BANK_CONTRACT_DIR) -Ipuffer/bloodbowl \
+		-Wno-unused-function $< -o $@ -lm $(LDFLAGS)
+
+$(STATE_BANK_VALIDATE_BIN): puffer/bloodbowl/state_bank_validate.c puffer/bloodbowl/bloodbowl.h puffer/bloodbowl/state_bank_runtime.h puffer/bloodbowl/state_bank_sha256.h puffer/bloodbowl/state_bank_build.h tools/state_bank_contract.py $(SRC) $(ENGINE_HDR)
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) \
+		-DPUFFER_ENV_SOURCE_HASH='"$(STATE_BANK_VALIDATE_ENV_HASH)"' \
+		-Ipuffer/bloodbowl -Wno-unused-function $< -o $@ -lm $(LDFLAGS)
 
 state-bank-validate: $(STATE_BANK_VALIDATE_BIN)
 	@echo "$(STATE_BANK_VALIDATE_BIN)"
@@ -116,6 +130,9 @@ test: $(TESTBIN) $(PUFFER_TESTBINS)
 	! $(PUFFER_STANDALONE_TESTBIN) --demo --bank >/dev/null 2>&1
 	! $(PUFFER_STANDALONE_TESTBIN) --demo --bank-producer-manifest >/dev/null 2>&1
 	! $(PUFFER_STANDALONE_TESTBIN) --demo --bank-contract >/dev/null 2>&1
+	python3 tools/test_state_bank_standalone.py \
+		--binary $(PUFFER_STATE_BANK_TOOL_TESTBIN) \
+		--fixture-dir $(PUFFER_STATE_BANK_CONTRACT_DIR)
 	$(PUFFER_OBSERVATION_TESTBIN) $(TEST)
 	$(BBP_V6_WRITER_TESTBIN)
 

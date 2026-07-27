@@ -1,5 +1,9 @@
 #include "bloodbowl.h"
 
+#ifndef PUFFER_ENV_SOURCE_HASH
+#error "state-bank validator requires a compiled environment source identity"
+#endif
+
 typedef struct {
     const char* kind;
     const char* bank;
@@ -10,11 +14,15 @@ typedef struct {
     const char* training_contract_sha256;
     const char* producer_engine_source_sha256;
     const char* loader_engine_source_sha256;
+    const char* environment_source_sha256;
     const char* contract_identity;
+    const char* selector_family;
     uint64_t bytes;
     uint64_t records;
+    uint32_t selector_threshold;
     int have_bytes;
     int have_records;
+    int have_selector_threshold;
 } validate_args;
 
 static int state_bank_parse_u64(const char* text, uint64_t* output) {
@@ -27,6 +35,22 @@ static int state_bank_parse_u64(const char* text, uint64_t* output) {
     unsigned long long value = strtoull(text, &end, 10);
     if (errno != 0 || end == text || *end != '\0') return -1;
     *output = (uint64_t)value;
+    return 0;
+}
+
+static int state_bank_parse_u32_canonical(const char* text,
+                                          uint32_t* output) {
+    if (text == NULL || text[0] == '\0') return -1;
+    if (text[0] == '0' && text[1] != '\0') return -1;
+    uint64_t value = 0;
+    for (const unsigned char* p = (const unsigned char*)text;
+         *p != '\0'; p++) {
+        if (*p < '0' || *p > '9') return -1;
+        uint32_t digit = (uint32_t)(*p - '0');
+        if (value > (UINT32_MAX - digit) / 10u) return -1;
+        value = value * 10u + digit;
+    }
+    *output = (uint32_t)value;
     return 0;
 }
 
@@ -57,7 +81,9 @@ static int parse_args(int argc, char** argv, validate_args* args) {
         ARG("--producer-engine-source-sha256",
             producer_engine_source_sha256)
         ARG("--loader-engine-source-sha256", loader_engine_source_sha256)
+        ARG("--environment-source-sha256", environment_source_sha256)
         ARG("--contract-identity", contract_identity)
+        ARG("--selector-family", selector_family)
 #undef ARG
         if (strcmp(option, "--bytes") == 0) {
             if (args->have_bytes ||
@@ -71,6 +97,15 @@ static int parse_args(int argc, char** argv, validate_args* args) {
             args->have_records = 1;
             continue;
         }
+        if (strcmp(option, "--selector-threshold") == 0) {
+            if (args->have_selector_threshold ||
+                state_bank_parse_u32_canonical(
+                    value, &args->selector_threshold) != 0) {
+                return -1;
+            }
+            args->have_selector_threshold = 1;
+            continue;
+        }
         return -1;
     }
     return args->kind != NULL && args->bank != NULL &&
@@ -81,8 +116,11 @@ static int parse_args(int argc, char** argv, validate_args* args) {
            args->training_contract_sha256 != NULL &&
            args->producer_engine_source_sha256 != NULL &&
            args->loader_engine_source_sha256 != NULL &&
+           args->environment_source_sha256 != NULL &&
            args->contract_identity != NULL &&
-           args->have_bytes && args->have_records ? 0 : -1;
+           args->selector_family != NULL &&
+           args->have_bytes && args->have_records &&
+           args->have_selector_threshold ? 0 : -1;
 }
 
 int main(int argc, char** argv) {
@@ -96,7 +134,10 @@ int main(int argc, char** argv) {
                 "--training-contract-sha256 HEX --bytes N --records N "
                 "--producer-engine-source-sha256 HEX "
                 "--loader-engine-source-sha256 HEX "
-                "--contract-identity TEXT\n",
+                "--environment-source-sha256 HEX "
+                "--contract-identity TEXT "
+                "--selector-family FAMILY "
+                "--selector-threshold N\n",
                 argv[0]);
         return 2;
     }
@@ -106,6 +147,26 @@ int main(int argc, char** argv) {
                     strcmp(args.kind, "authored-scenario") == 0
                         ? BBE_SB_REQUEST_AUTHORED_DISABLED
                         : BBE_SB_REQUEST_KIND_UNKNOWN));
+        return 1;
+    }
+    if (!bbe_sha256_valid_hex(args.environment_source_sha256) ||
+        strcmp(args.environment_source_sha256,
+               PUFFER_ENV_SOURCE_HASH) != 0) {
+        fprintf(stderr,
+                "state-bank validation failed: "
+                "environment source sha256 differs from the compiled "
+                "validator source identity\n");
+        return 1;
+    }
+    bbe_state_bank_selector_family selector_family;
+    bbe_state_bank_error error = bbe_state_bank_selector_family_parse(
+        args.selector_family, &selector_family);
+    if (error != BBE_SB_OK ||
+        args.selector_threshold >
+            bbe_state_bank_selector_max_threshold(selector_family)) {
+        if (error == BBE_SB_OK) error = BBE_SB_SELECTOR_THRESHOLD;
+        fprintf(stderr, "state-bank validation failed: %s\n",
+                bbe_state_bank_error_name(error));
         return 1;
     }
     bbe_state_bank_request request = {
@@ -132,11 +193,23 @@ int main(int argc, char** argv) {
         0,
     };
     bbe_state_bank_candidate candidate;
-    bbe_state_bank_error error =
-        bbe_state_bank_load_candidate(&request, &candidate);
+    error = bbe_state_bank_load_candidate(&request, &candidate);
     if (error != BBE_SB_OK) {
         fprintf(stderr, "state-bank validation failed: %s\n",
                 bbe_state_bank_error_name(error));
+        return 1;
+    }
+
+    bbe_state_bank_stratum_descriptor descriptor;
+    error = bbe_state_bank_candidate_stratum_descriptor(
+        &candidate, selector_family, args.selector_threshold, &descriptor);
+    if (error == BBE_SB_OK && descriptor.eligible_records == 0) {
+        error = BBE_SB_SELECTOR_EMPTY;
+    }
+    if (error != BBE_SB_OK) {
+        fprintf(stderr, "state-bank validation failed: %s\n",
+                bbe_state_bank_error_name(error));
+        bbe_state_bank_candidate_close(&candidate);
         return 1;
     }
 
@@ -154,7 +227,7 @@ int main(int argc, char** argv) {
         if (count < legal_min) legal_min = count;
         if (count > legal_max) legal_max = count;
     }
-    printf("{\"schema\":\"bloodbowl-state-bank-validation-v1\","
+    printf("{\"schema\":\"bloodbowl-state-bank-validation-v2\","
            "\"kind\":\"strict-replay\",\"kind_value\":1,"
            "\"bank_sha256\":\"%s\","
            "\"producer_manifest_sha256\":\"%s\","
@@ -167,7 +240,13 @@ int main(int argc, char** argv) {
            "\"engine_fingerprint\":%u,"
            "\"source_id_min\":%u,\"source_id_max\":%u,"
            "\"command_min\":%u,\"command_max\":%u,"
-           "\"legal_actions_min\":%d,\"legal_actions_max\":%d}\n",
+           "\"legal_actions_min\":%d,\"legal_actions_max\":%d,"
+           "\"environment_source_sha256\":\"%s\","
+           "\"strata_schema\":\"%s\","
+           "\"strata_family\":\"%s\","
+           "\"strata_threshold\":%u,"
+           "\"strata_eligible_records\":%u,"
+           "\"strata_sha256\":\"%s\"}\n",
            args.bank_sha256,
            args.producer_manifest_sha256,
            args.training_contract_sha256,
@@ -179,7 +258,13 @@ int main(int argc, char** argv) {
            (unsigned)sizeof(bb_match),
            (unsigned)bbe_state_fingerprint(),
            source_min, source_max, command_min, command_max,
-           legal_min, legal_max);
+           legal_min, legal_max,
+           PUFFER_ENV_SOURCE_HASH,
+           PUFFER_STATE_BANK_STRATA_SCHEMA,
+           bbe_state_bank_selector_family_name(descriptor.family),
+           descriptor.threshold,
+           descriptor.eligible_records,
+           descriptor.sha256);
     bbe_state_bank_candidate_close(&candidate);
     return 0;
 }

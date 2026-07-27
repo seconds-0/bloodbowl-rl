@@ -229,6 +229,7 @@ class ExperimentContractTests(unittest.TestCase):
         )
         for patch in (
             "puffer_standalone_env_include.patch",
+            "puffer_dict_capacity.patch",
             "pufferl_env_dashboard_limit.patch",
             "pufferl_env_json.patch",
             "pufferl_env_json_metadata_upgrade.patch",
@@ -876,6 +877,7 @@ class ExperimentContractTests(unittest.TestCase):
             "state_bank_contract_schema",
             "state_bank_producer_schema",
             "state_bank_authorization_schema",
+            "state_bank_strata_schema",
             "state_bank_kind",
             "state_bank_bbs_sha256",
             "state_bank_producer_manifest_sha256",
@@ -885,6 +887,7 @@ class ExperimentContractTests(unittest.TestCase):
             "state_bank_contract_identity",
         ):
             self.assertIn(field, screen)
+        self.assertIn("bloodbowl-legacy-state-bank-strata-v1", screen)
         # Both must reject a module whose environment digest disagrees with the
         # installed source, which is what catches a mid-screen rebuild.
         self.assertIn("environment_source_sha256", screen)

@@ -41,11 +41,17 @@ class StateBankContractTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.directory = Path(self.temporary.name)
         self.bank_path = self.directory / "bank.bbs"
+        self.fixture_expectations_path = (
+            self.directory / "state_bank.expected.json"
+        )
         self.producer_path = self.directory / "producer.json"
         self.training_path = self.directory / "training.json"
         self.match_size = 4
         self.fingerprint = 0x12345678
         self.engine_hash = contract.engine_source_sha256(ROOT)
+        self.environment_hash = contract.environment_source_sha256(
+            ROOT / "puffer/bloodbowl"
+        )
         self.producer_engine_hash = "a" * 64
         self.write_fixture()
 
@@ -83,11 +89,14 @@ class StateBankContractTests(unittest.TestCase):
             )
             self.assertEqual(magic, b"BBS1")
             self.assertEqual(version, 1)
+        records = (
+            len(bank_payload) - BBS_HEADER.size
+        ) // (BBS_META.size + self.match_size)
         self.bank_path.write_bytes(bank_payload)
         bank = {
             "sha256": self.sha256(bank_payload),
             "bytes": len(bank_payload),
-            "records": 1,
+            "records": records,
             "format": {
                 "magic": "BBS1",
                 "version": 1,
@@ -142,7 +151,11 @@ class StateBankContractTests(unittest.TestCase):
         self.assertEqual(build.returncode, 0, build.stdout)
         writer = ROOT / "build/state_bank_fixture_writer"
         result = subprocess.run(
-            [str(writer), str(self.bank_path)],
+            [
+                str(writer),
+                str(self.bank_path),
+                str(self.fixture_expectations_path),
+            ],
             cwd=ROOT,
             text=True,
             stdout=subprocess.PIPE,
@@ -577,7 +590,7 @@ class StateBankContractTests(unittest.TestCase):
                 puffer,
                 authorized_producer_kind="test-strict-fixture-v1",
                 exact_action_source_hash="b" * 64,
-                environment_source_hash="c" * 64,
+                environment_source_hash=self.environment_hash,
                 observation_abi="obs-v6",
                 observation_version=6,
                 **self.request(),
@@ -623,14 +636,13 @@ class StateBankContractTests(unittest.TestCase):
             live_repo / "puffer/bloodbowl",
             symlinks=True,
         )
-        shutil.copy2(ROOT / "Makefile", live_repo / "Makefile")
         request = self.request()
         request["engine_root"] = live_repo
         destination = self.directory / "snapshot-race-puffer"
         real_run = contract.subprocess.run
         mutated = False
 
-        def mutate_live_source_before_make(
+        def mutate_live_source_before_compile(
             command: object, *args: object, **kwargs: object
         ) -> subprocess.CompletedProcess[object]:
             nonlocal mutated
@@ -638,10 +650,18 @@ class StateBankContractTests(unittest.TestCase):
                 not mutated
                 and isinstance(command, list)
                 and command
-                and command[0] == "make"
-                and "state-bank-validate" in command
+                and any(
+                    str(argument).endswith(
+                        "puffer/bloodbowl/state_bank_validate.c"
+                    )
+                    for argument in command
+                )
             ):
                 mutated = True
+                self.assertEqual(
+                    Path(str(command[0])),
+                    contract._trusted_system_c_compiler(),
+                )
                 build_source = Path(str(kwargs["cwd"]))
                 self.assertNotEqual(build_source, live_repo)
                 self.assertEqual(
@@ -668,13 +688,13 @@ class StateBankContractTests(unittest.TestCase):
         with mock.patch.object(
             contract.subprocess,
             "run",
-            side_effect=mutate_live_source_before_make,
+            side_effect=mutate_live_source_before_compile,
         ):
             result = contract._stage_authorized_request_for_test(
                 destination,
                 authorized_producer_kind="test-strict-fixture-v1",
                 exact_action_source_hash="b" * 64,
-                environment_source_hash="c" * 64,
+                environment_source_hash=self.environment_hash,
                 observation_abi="obs-v6",
                 observation_version=6,
                 **request,
@@ -685,6 +705,238 @@ class StateBankContractTests(unittest.TestCase):
             contract.show_installed(destination)["loader_engine_source_sha256"],
             self.engine_hash,
         )
+
+    def test_private_validator_build_uses_frozen_environment_snapshot(
+        self,
+    ) -> None:
+        self.write_native_fixture()
+        request = self.request()
+        fields = contract._validate_request_for_test(
+            authorized_producer_kind="test-strict-fixture-v1",
+            **request,
+        )
+        compiled = contract._complete_compiled_fields(fields)
+        for relative in (
+            "bloodbowl.h",
+            "state_bank_runtime.h",
+            "state_bank_validate.c",
+        ):
+            with self.subTest(relative=relative):
+                live_repo = self.directory / (
+                    "environment-build-race-" + relative.replace(".", "-")
+                )
+                shutil.copytree(
+                    ROOT / "engine",
+                    live_repo / "engine",
+                    symlinks=True,
+                )
+                shutil.copytree(
+                    ROOT / "puffer/bloodbowl",
+                    live_repo / "puffer/bloodbowl",
+                    symlinks=True,
+                )
+                self.assertEqual(
+                    contract.environment_source_sha256(
+                        live_repo / "puffer/bloodbowl"
+                    ),
+                    self.environment_hash,
+                )
+                real_run = contract.subprocess.run
+                replaced = False
+
+                def replace_live_source_before_compile(
+                    command: object, *args: object, **kwargs: object
+                ) -> subprocess.CompletedProcess[object]:
+                    nonlocal replaced
+                    if (
+                        not replaced
+                        and isinstance(command, list)
+                        and any(
+                            str(argument).endswith(
+                                "puffer/bloodbowl/state_bank_validate.c"
+                            )
+                            for argument in command
+                        )
+                    ):
+                        replaced = True
+                        snapshot = Path(str(kwargs["cwd"]))
+                        self.assertEqual(
+                            contract.environment_source_sha256(
+                                snapshot / "puffer/bloodbowl"
+                            ),
+                            self.environment_hash,
+                        )
+                        frozen = snapshot / "puffer/bloodbowl" / relative
+                        self.assertEqual(
+                            frozen.read_bytes(),
+                            (ROOT / "puffer/bloodbowl" / relative).read_bytes(),
+                        )
+                        live = live_repo / "puffer/bloodbowl" / relative
+                        replacement = live.with_name(live.name + ".replacement")
+                        replacement.write_text(
+                            "#error replaced live environment source\n",
+                            encoding="ascii",
+                        )
+                        os.replace(replacement, live)
+                    return real_run(command, *args, **kwargs)
+
+                with mock.patch.object(
+                    contract.subprocess,
+                    "run",
+                    side_effect=replace_live_source_before_compile,
+                ):
+                    result = contract._run_engine_validator(
+                        repo_root=live_repo,
+                        request=request,
+                        fields=fields,
+                        contract_identity=str(
+                            compiled["contract_identity"]
+                        ),
+                        environment_source_sha256=self.environment_hash,
+                        selector_family="uniform",
+                        selector_threshold=0,
+                    )
+                self.assertTrue(replaced)
+                self.assertEqual(result["strata_family"], "uniform")
+
+    def test_private_validator_ignores_hostile_build_and_loader_environment(
+        self,
+    ) -> None:
+        self.write_native_fixture()
+        request = self.request()
+        fields = contract._validate_request_for_test(
+            authorized_producer_kind="test-strict-fixture-v1",
+            **request,
+        )
+        compiled = contract._complete_compiled_fields(fields)
+        hostile = self.directory / "hostile-build-environment"
+        hostile.mkdir()
+        fake_tool = hostile / "fake-tool"
+        fake_tool.write_text("#!/bin/sh\nexit 97\n", encoding="ascii")
+        fake_tool.chmod(0o755)
+        hostile_makefile = hostile / "injected.mk"
+        hostile_makefile.write_text(
+            "$(error inherited MAKEFILES reached validator build)\n",
+            encoding="ascii",
+        )
+        (hostile / "stdio.h").write_text(
+            "#error inherited CPATH reached validator build\n",
+            encoding="ascii",
+        )
+        poison = {
+            "PATH": str(hostile),
+            "MAKEFILES": str(hostile_makefile),
+            "MAKEFLAGS": "--eval=$(error inherited MAKEFLAGS)",
+            "MFLAGS": "--eval=$(error inherited MFLAGS)",
+            "GNUMAKEFLAGS": "--eval=$(error inherited GNUMAKEFLAGS)",
+            "CC": str(fake_tool),
+            "CFLAGS": "-include /definitely/not/a/validator/header.h",
+            "CPPFLAGS": "-include /definitely/not/a/validator/header.h",
+            "LDFLAGS": "-Wl,/definitely/not/a/validator/linker-script",
+            "CPATH": str(hostile),
+            "C_INCLUDE_PATH": str(hostile),
+            "CPLUS_INCLUDE_PATH": str(hostile),
+            "OBJC_INCLUDE_PATH": str(hostile),
+            "COMPILER_PATH": str(hostile),
+            "GCC_EXEC_PREFIX": str(hostile) + os.sep,
+            "LIBRARY_PATH": str(hostile),
+            "LD_PRELOAD": "/definitely/not/a/validator/preload.so",
+            "LD_LIBRARY_PATH": str(hostile),
+            "DYLD_INSERT_LIBRARIES": "/definitely/not/a/validator/inject.dylib",
+            "DYLD_LIBRARY_PATH": str(hostile),
+            "SDKROOT": "/definitely/not/a/validator/sdk",
+            "MACOSX_DEPLOYMENT_TARGET": "0.0",
+        }
+        with mock.patch.dict(os.environ, poison, clear=False):
+            result = contract._run_engine_validator(
+                repo_root=ROOT,
+                request=request,
+                fields=fields,
+                contract_identity=str(compiled["contract_identity"]),
+                environment_source_sha256=self.environment_hash,
+                selector_family="uniform",
+                selector_threshold=0,
+            )
+        self.assertEqual(result["strata_family"], "uniform")
+        self.assertEqual(result["strata_threshold"], 0)
+        self.assertEqual(result["strata_eligible_records"], fields["records"])
+
+    def test_private_validator_never_compiles_live_excluded_build_header(
+        self,
+    ) -> None:
+        self.write_native_fixture()
+        request = self.request()
+        fields = contract._validate_request_for_test(
+            authorized_producer_kind="test-strict-fixture-v1",
+            **request,
+        )
+        compiled = contract._complete_compiled_fields(fields)
+        live_repo = self.directory / "excluded-header-live-repo"
+        shutil.copytree(ROOT / "engine", live_repo / "engine", symlinks=True)
+        shutil.copytree(
+            ROOT / "puffer/bloodbowl",
+            live_repo / "puffer/bloodbowl",
+            symlinks=True,
+        )
+        live_header = live_repo / "puffer/bloodbowl/state_bank_build.h"
+        live_header.write_text(
+            "#error live excluded build header reached validator compile\n",
+            encoding="ascii",
+        )
+        self.assertEqual(
+            contract.environment_source_sha256(
+                live_repo / "puffer/bloodbowl"
+            ),
+            self.environment_hash,
+        )
+
+        real_run = contract.subprocess.run
+        inspected = False
+
+        def inspect_generated_header(
+            command: object, *args: object, **kwargs: object
+        ) -> subprocess.CompletedProcess[object]:
+            nonlocal inspected
+            if (
+                not inspected
+                and isinstance(command, list)
+                and any(
+                    str(argument).endswith(
+                        "puffer/bloodbowl/state_bank_validate.c"
+                    )
+                    for argument in command
+                )
+            ):
+                inspected = True
+                snapshot = Path(str(kwargs["cwd"]))
+                generated = (
+                    snapshot / "puffer/bloodbowl/state_bank_build.h"
+                )
+                self.assertEqual(
+                    generated.read_bytes(),
+                    contract._render_engine_validator_build_header(
+                        self.environment_hash
+                    ),
+                )
+                self.assertEqual(generated.stat().st_mode & 0o222, 0)
+            return real_run(command, *args, **kwargs)
+
+        with mock.patch.object(
+            contract.subprocess,
+            "run",
+            side_effect=inspect_generated_header,
+        ):
+            result = contract._run_engine_validator(
+                repo_root=live_repo,
+                request=request,
+                fields=fields,
+                contract_identity=str(compiled["contract_identity"]),
+                environment_source_sha256=self.environment_hash,
+                selector_family="uniform",
+                selector_threshold=0,
+            )
+        self.assertTrue(inspected)
+        self.assertEqual(result["environment_source_sha256"], self.environment_hash)
 
     def test_engine_mutation_before_snapshot_fails_before_publication(
         self,
@@ -966,6 +1218,9 @@ class StateBankContractTests(unittest.TestCase):
                 request=request,
                 fields=fields,
                 contract_identity=str(compiled["contract_identity"]),
+                environment_source_sha256=self.environment_hash,
+                selector_family="uniform",
+                selector_threshold=0,
             )
 
     def test_native_fixture_generator_satisfies_shared_python_contract(
@@ -979,6 +1234,8 @@ class StateBankContractTests(unittest.TestCase):
                 str(ROOT / "tools/generate_state_bank_contract_fixture.py"),
                 "--bbs",
                 str(self.bank_path),
+                "--expectations",
+                str(self.fixture_expectations_path),
                 "--out-dir",
                 str(generated),
             ],
@@ -1020,6 +1277,7 @@ class StateBankContractTests(unittest.TestCase):
         )
         compiled = {
             **fields,
+            "strata_schema": contract.STRATA_SCHEMA,
             "bank_path": str(generated / "active/state_bank.bbs"),
             "producer_manifest_path": str(
                 generated / "active/state_bank.producer.json"
@@ -1317,20 +1575,35 @@ class StateBankContractTests(unittest.TestCase):
             authorized_producer_kind="test-strict-fixture-v1",
             **self.request(),
         )
-        compiled: dict[str, object] = dict(validated)
-        compiled.update(
-            {
-                "bank_path": "resources/bloodbowl/state_bank.bbs",
-                "producer_manifest_path": "resources/bloodbowl/state_bank.producer.json",
-                "training_contract_path": "resources/bloodbowl/state_bank.contract.json",
-            }
-        )
-        compiled["contract_identity"] = contract.compiled_contract_identity(compiled)
-        compiled = {field: compiled[field] for field in contract.STATE_FIELD_TO_MACRO}
+        compiled = contract._complete_compiled_fields(validated)
+        base_macros = {
+            "PUFFER_EXACT_ACTION_SOURCE_HASH": "b" * 64,
+            "PUFFER_ENV_SOURCE_HASH": self.environment_hash,
+            "PUFFER_OBSERVATION_ABI": "obs-v6",
+            "PUFFER_OBSERVATION_VERSION": 6,
+            "PUFFER_ACTION_ABI": "exact-joint-v1",
+        }
+        macros = {
+            **base_macros,
+            **{
+                macro: compiled[field]
+                for field, macro in contract.STATE_FIELD_TO_MACRO.items()
+            },
+        }
+        validation = {
+            "environment_source_sha256": self.environment_hash,
+            "strata_schema": contract.STRATA_SCHEMA,
+            "strata_family": "uniform",
+            "strata_threshold": 0,
+            "strata_eligible_records": validated["records"],
+            "strata_sha256": "f" * 64,
+        }
         with mock.patch.object(
-            contract, "show_installed", return_value=compiled
+            contract, "parse_generated_header", return_value=macros
         ), mock.patch.object(
             contract, "validate_artifact_request", return_value=validated
+        ), mock.patch.object(
+            contract, "_run_engine_validator", return_value=validation
         ):
             result = contract.validate_installed(
                 puffer_root=self.directory,
@@ -1342,12 +1615,15 @@ class StateBankContractTests(unittest.TestCase):
                 training_contract_sha256=str(
                     self.request()["training_contract_sha256"]
                 ),
+                selector_family="uniform",
+                selector_threshold=0,
             )
         self.assertEqual(tuple(result), contract.LAUNCHER_CONTRACT_FIELDS)
         self.assertEqual(set(result), set(contract.LAUNCHER_CONTRACT_FIELDS))
 
         for field in (
             "authorization_schema",
+            "strata_schema",
             "bbs_version",
             "match_size",
             "engine_fingerprint",
@@ -1360,8 +1636,18 @@ class StateBankContractTests(unittest.TestCase):
                 drifted = dict(compiled)
                 value = drifted[field]
                 drifted[field] = value + 1 if isinstance(value, int) else "drift"
+                drifted_macros = {
+                    **base_macros,
+                    **{
+                        macro: drifted[state_field]
+                        for state_field, macro
+                        in contract.STATE_FIELD_TO_MACRO.items()
+                    },
+                }
                 with mock.patch.object(
-                    contract, "show_installed", return_value=drifted
+                    contract,
+                    "parse_generated_header",
+                    return_value=drifted_macros,
                 ), mock.patch.object(
                     contract,
                     "validate_artifact_request",
@@ -1381,7 +1667,67 @@ class StateBankContractTests(unittest.TestCase):
                             training_contract_sha256=str(
                                 self.request()["training_contract_sha256"]
                             ),
+                            selector_family="uniform",
+                            selector_threshold=0,
                         )
+
+    def test_validate_installed_returns_native_exact_nonuniform_descriptor(
+        self,
+    ) -> None:
+        self.write_native_fixture()
+        puffer = self.directory / "descriptor-puffer"
+        with mock.patch.object(contract, "_run_engine_validator"):
+            contract._stage_authorized_request_for_test(
+                puffer,
+                authorized_producer_kind="test-strict-fixture-v1",
+                exact_action_source_hash="b" * 64,
+                environment_source_hash=self.environment_hash,
+                observation_abi="obs-v6",
+                observation_version=6,
+                **self.request(),
+            )
+        validated = contract._validate_request_for_test(
+            authorized_producer_kind="test-strict-fixture-v1",
+            **self.request(),
+        )
+        with mock.patch.object(
+            contract,
+            "validate_artifact_request",
+            return_value=validated,
+        ):
+            validation_arguments = {
+                "kind": "strict-replay",
+                "bank_sha256": str(self.request()["bank_sha256"]),
+                "producer_manifest_sha256": str(
+                    self.request()["producer_manifest_sha256"]
+                ),
+                "training_contract_sha256": str(
+                    self.request()["training_contract_sha256"]
+                ),
+                "selector_family": "endzone-maxdist",
+                "selector_threshold": 5,
+            }
+            result = contract.validate_installed(
+                puffer_root=puffer,
+                **validation_arguments,
+            )
+            previous_directory = Path.cwd()
+            try:
+                os.chdir(self.directory)
+                relative_result = contract.validate_installed(
+                    puffer_root=Path("descriptor-puffer"),
+                    **validation_arguments,
+                )
+            finally:
+                os.chdir(previous_directory)
+        self.assertEqual(relative_result, result)
+        self.assertEqual(result["environment_source_sha256"],
+                         self.environment_hash)
+        self.assertEqual(result["strata_schema"], contract.STRATA_SCHEMA)
+        self.assertEqual(result["strata_family"], "endzone-maxdist")
+        self.assertEqual(result["strata_threshold"], 5)
+        self.assertEqual(result["strata_eligible_records"], 3)
+        self.assertRegex(result["strata_sha256"], r"^[0-9a-f]{64}$")
 
     def test_engine_hash_frames_paths_and_allows_only_canonical_alias(self) -> None:
         expected = hashlib.sha256(b"bloodbowl-engine-source-v1\0")
@@ -1452,6 +1798,120 @@ class StateBankContractTests(unittest.TestCase):
             with self.assertRaisesRegex(contract.StateBankContractError, "FILE_OPEN"):
                 contract.engine_source_sha256(raced)
 
+    def test_environment_hash_matches_legacy_safe_name_pipeline(self) -> None:
+        hasher = shutil.which("sha256sum")
+        if hasher is None:
+            self.skipTest("sha256sum is required for legacy-pipeline parity")
+        legacy = subprocess.run(
+            [
+                "bash",
+                "-c",
+                (
+                    "find -L . -type f "
+                    "! -path './.content_hash' "
+                    "! -path './state_bank_build.h' -print0 "
+                    "| LC_ALL=C sort -z "
+                    f"| xargs -0 {hasher} | {hasher} | awk '{{print $1}}'"
+                ),
+            ],
+            cwd=ROOT / "puffer/bloodbowl",
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+        self.assertEqual(legacy.returncode, 0, legacy.stdout)
+        self.assertEqual(
+            contract.environment_source_sha256(ROOT / "puffer/bloodbowl"),
+            legacy.stdout.strip(),
+        )
+
+    def test_environment_snapshot_rejects_post_pin_predicate_mutation(
+        self,
+    ) -> None:
+        source = self.directory / "environment-source"
+        source.mkdir()
+        (source / "bloodbowl.h").write_bytes(b"predicate-v1\n")
+        target = source / "state_bank_runtime.h"
+        target.write_bytes(b"strata-v1\n")
+        (source / "runtime-alias.h").symlink_to(target.name)
+        expected = contract.environment_source_sha256(source)
+        target.write_bytes(b"strata-mutated\n")
+        with self.assertRaisesRegex(
+            contract.StateBankContractError,
+            "ENVIRONMENT_SOURCE_SNAPSHOT.*PUFFER_ENV_SOURCE_HASH",
+        ):
+            contract._snapshot_environment_source(
+                source,
+                self.directory / "environment-snapshot",
+                expected_sha256=expected,
+            )
+
+    def test_validate_installed_selector_cli_is_exact_and_single_use(self) -> None:
+        command = [
+            sys.executable,
+            str(ROOT / "tools/state_bank_contract.py"),
+            "validate-installed",
+            "--puffer-root",
+            str(self.directory),
+            "--kind",
+            "strict-replay",
+            "--bank-sha256",
+            "1" * 64,
+            "--producer-manifest-sha256",
+            "2" * 64,
+            "--training-contract-sha256",
+            "3" * 64,
+        ]
+        valid = subprocess.run(
+            [
+                *command,
+                "--selector-family",
+                "uniform",
+                "--selector-threshold",
+                "0",
+            ],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+        self.assertEqual(valid.returncode, 2)
+        self.assertIn("state-bank contract failed: FILE_OPEN", valid.stdout)
+
+        cases = (
+            (
+                [
+                    "--selector-family", "uniform",
+                    "--selector-family", "uniform",
+                    "--selector-threshold", "0",
+                ],
+                "exactly one selector",
+            ),
+            (
+                [
+                    "--selector-family", "uniform",
+                    "--selector-threshold", "00",
+                ],
+                "canonical nonnegative",
+            ),
+            (
+                ["--selector-family", "uniform"],
+                "required",
+            ),
+        )
+        for arguments, message in cases:
+            with self.subTest(arguments=arguments):
+                result = subprocess.run(
+                    [*command, *arguments],
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 2)
+                self.assertIn(message, result.stdout)
+
     def test_json_limits_and_regular_file_gate(self) -> None:
         link = self.directory / "producer-link.json"
         link.symlink_to(self.producer_path)
@@ -1484,15 +1944,34 @@ class PufferStateBankPatchTests(unittest.TestCase):
         cls.patch = cls.patch_path.read_text(encoding="utf-8")
         cls.installer = INSTALLER.read_text(encoding="utf-8")
 
-    def test_patch_exports_exact_same_twenty_fields_from_cpu_and_cuda(self) -> None:
+    def test_patch_exports_exact_same_twenty_one_fields_from_cpu_and_cuda(
+        self,
+    ) -> None:
         self.assertEqual(self.patch.count("diff --git a/src/bindings"), 2)
         for field, attribute in contract.MODULE_STATE_FIELD_NAMES.items():
             macro = contract.STATE_FIELD_TO_MACRO[field]
-            line = f'm.attr("{attribute}") = '
+            prefix = f'm.attr("{attribute}") = '
+            export_lines = [
+                line for line in self.patch.splitlines() if prefix in line
+            ]
             with self.subTest(attribute=attribute):
-                self.assertEqual(self.patch.count(line), 2)
-                self.assertEqual(self.patch.count(macro), 2)
+                self.assertEqual(len(export_lines), 2)
+                self.assertTrue(all(macro in line for line in export_lines))
         self.assertNotIn("state_bank_compiled_kind", self.patch)
+
+    def test_patch_exports_guarded_stratum_query_from_cpu_and_cuda(self) -> None:
+        self.assertEqual(
+            self.patch.count('m.def("state_bank_stratum_descriptor"'),
+            2,
+        )
+        self.assertGreaterEqual(
+            self.patch.count("PUFFER_HAS_STATE_BANK_STRATUM_QUERY"),
+            2,
+        )
+        self.assertGreaterEqual(
+            self.patch.count("my_state_bank_stratum_descriptor"),
+            2,
+        )
 
     def test_installer_applies_patch_before_backend_digest_and_checks_both(self):
         patch_position = self.installer.index("STATE_BANK_EXPORT_PATCH=")
@@ -1510,8 +1989,15 @@ class PufferStateBankPatchTests(unittest.TestCase):
         validator = source.split("def _run_engine_validator(", 1)[1]
         validator = validator.split("def _stage_authorized_request_for_test(", 1)[0]
         self.assertIn("TemporaryDirectory(", validator)
-        self.assertIn('f"BUILD={isolated_build}"', validator)
+        self.assertIn("_trusted_system_c_compiler()", validator)
+        self.assertIn("*_ENGINE_VALIDATOR_CFLAGS", validator)
+        self.assertIn("env=subprocess_environment", validator)
+        self.assertIn(
+            '"puffer/bloodbowl/state_bank_validate.c"',
+            validator,
+        )
         self.assertIn('isolated_build / "state_bank_validate"', validator)
+        self.assertNotIn('"make"', validator)
         self.assertNotIn('repo_root / "build/state_bank_validate"', validator)
 
     def test_validator_binds_predicate_sources_to_installed_environment_hash(
@@ -1529,6 +2015,7 @@ class PufferStateBankPatchTests(unittest.TestCase):
     def test_backend_hash_closure_contains_both_changed_bindings(self) -> None:
         function = self.installer.split("exact_backend_hash() {", 1)[1]
         function = function.split("\n}", 1)[0]
+        self.assertIn("build.sh", function)
         self.assertIn("src/bindings.cu", function)
         self.assertIn("src/bindings_cpu.cpp", function)
 
@@ -1542,9 +2029,15 @@ class PufferStateBankPatchTests(unittest.TestCase):
     def test_snapshot_hash_excludes_only_out_of_band_exact_paths(self) -> None:
         snapshot = self.installer.split("snapshot_hash() {", 1)[1]
         snapshot = snapshot.split("\n}", 1)[0]
-        self.assertIn("! -path './.content_hash'", snapshot)
-        self.assertIn("! -path './state_bank_build.h'", snapshot)
-        self.assertNotIn("! -name", snapshot)
+        self.assertIn("environment-source-sha256", snapshot)
+        source = (ROOT / "tools/state_bank_contract.py").read_text(
+            encoding="utf-8"
+        )
+        environment_reader = source.split(
+            "def _read_environment_source_entries(", 1
+        )[1].split("\ndef ", 1)[0]
+        self.assertIn('b".content_hash"', environment_reader)
+        self.assertIn('b"state_bank_build.h"', environment_reader)
         for name in (
             "ROOT_SOURCE_HASH",
             "INSTALLED_SOURCE_HASH",

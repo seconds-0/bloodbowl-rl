@@ -193,11 +193,8 @@ else
     SHA256=(shasum -a 256)
 fi
 snapshot_hash() {
-    (cd "$1" && find -L . -type f \
-        ! -path './.content_hash' \
-        ! -path './state_bank_build.h' \
-        -print0 | LC_ALL=C sort -z \
-        | xargs -0 "${SHA256[@]}" | "${SHA256[@]}" | awk '{print $1}')
+    python3 "$ROOT/tools/state_bank_contract.py" \
+        environment-source-sha256 --root "$1" --plain
 }
 
 # Hash every source that defines exact-action transport, sampling, or recurrent
@@ -208,6 +205,7 @@ exact_backend_hash() {
     (
         cd "$PUFFER"
         for rel in \
+            build.sh \
             pufferlib/pufferl.py \
             pufferlib/selfplay.py \
             pufferlib/torch_pufferl.py \
@@ -316,6 +314,7 @@ if [ "$MODE" = "check" ]; then
         "$ROOT/training/puffer_frozen_prio_mask.patch" \
         "$ROOT/training/pufferl_scripted_training_guard.patch" \
         "$ROOT/training/pufferl_warm_start.patch" \
+        "$ROOT/training/puffer_dict_capacity.patch" \
         "$ROOT/training/puffer_state_bank_contract.patch"; do
         if ! git -C "$PUFFER" apply --reverse --check --no-index "$exact_patch"; then
             echo "drift check: installed exact patch is missing or stale: $exact_patch" >&2
@@ -514,15 +513,47 @@ rm -f \
     "$STATE_BANK_PRODUCER_MANIFEST_DST" \
     "$STATE_BANK_CONTRACT_DST"
 
-# Blood Bowl's my_log currently emits 123 keys, and vecenv appends "n" after
-# the env binding returns. Keep the vendored dict allocations comfortably above
-# that so adding telemetry does not resurrect the historical heap overflow.
-for f in "$PUFFER/src/bindings.cu" "$PUFFER/src/bindings_cpu.cpp" "$PUFFER/src/pufferlib.cu"; do
-    [ -f "$f" ] || continue
-    perl -0pi -e \
-        's/create_dict\((32|64|96|128|160)\)(\s*;\s*\/\/ bloodbowl my_log emits )[^\n]*/create_dict(160)$2 123 keys + "n"; keep headroom/g;
-         s/create_dict\((32|64|96|128)\);/create_dict(160);/g' "$f"
-done
+# Blood Bowl emits 152 ordinary keys and vecenv appends "n". The exact patch
+# widens all four reachable dictionaries (native train/eval plus generic
+# CPU/CUDA vector logs) and preserves the release-build capacity abort. It is
+# applied before later overlapping backend patches.
+DICT_CAPACITY_PATCH="$ROOT/training/puffer_dict_capacity.patch"
+if [ ! -f "$DICT_CAPACITY_PATCH" ]; then
+    echo "error: missing $DICT_CAPACITY_PATCH" >&2
+    exit 1
+fi
+if git -C "$PUFFER" apply --reverse --check --no-index \
+        "$DICT_CAPACITY_PATCH" 2>/dev/null; then
+    : # Exact capacity patch is already installed.
+elif git -C "$PUFFER" apply --check --no-index \
+        "$DICT_CAPACITY_PATCH" 2>/dev/null; then
+    git -C "$PUFFER" apply --no-index "$DICT_CAPACITY_PATCH"
+    echo "applied:   exact log-dictionary capacity guard -> Puffer backends"
+else
+    echo "error: dictionary-capacity patch is neither applicable nor installed" >&2
+    exit 1
+fi
+bindings_cuda_capacity_count="$(
+    awk 'index($0, "create_dict(160)") { count++ }
+         END { print count + 0 }' "$PUFFER/src/bindings.cu"
+)"
+bindings_cpu_capacity_count="$(
+    awk 'index($0, "create_dict(160)") { count++ }
+         END { print count + 0 }' "$PUFFER/src/bindings_cpu.cpp"
+)"
+pufferlib_capacity_count="$(
+    awk 'index($0, "create_dict(160)") { count++ }
+         END { print count + 0 }' "$PUFFER/src/pufferlib.cu"
+)"
+if ! git -C "$PUFFER" apply --reverse --check --no-index \
+        "$DICT_CAPACITY_PATCH" || \
+   [ "$bindings_cuda_capacity_count" -ne 2 ] || \
+   [ "$bindings_cpu_capacity_count" -ne 1 ] || \
+   [ "$pufferlib_capacity_count" -ne 1 ] || \
+   ! grep -Fq 'dict_set: capacity %d exceeded' "$PUFFER/src/vecenv.h"; then
+    echo "error: installed dictionary-capacity contract is incomplete" >&2
+    exit 1
+fi
 
 # Apply the match-mode sweep fix to vendored pufferlib/sweep.py (D131). Upstream
 # (PufferAI/PufferLib 4.0, incl. current HEAD) omits the match_* keys from
@@ -541,7 +572,7 @@ if [ -f "$SWEEP_PY" ] && ! grep -q "match_enemy_model_path" "$SWEEP_PY"; then
 fi
 
 # Puffer's stock dashboard truncates environment metrics after 30 keys. Blood
-# Bowl emits 123 plus vecenv's `n`; without this patch, later correctness and
+# Bowl emits 152 plus vecenv's `n`; without this patch, later correctness and
 # behavior telemetry exists in C but never reaches evaluation logs.
 DASHBOARD_PY="$PUFFER/pufferlib/pufferl.py"
 if [ -f "$DASHBOARD_PY" ] && grep -q 'if i == 30:' "$DASHBOARD_PY"; then
@@ -787,8 +818,7 @@ fi
 # because that patch sits in the MIDDLE of a serial stack: adding lines to it
 # shifts pufferl.py's line numbers and breaks every later patch that targets the
 # same file (measured: phase-contract at :179, eval-gate at :189, recurrent
-# eval-state at :289 all failed). Same reasoning as the create_dict transform
-# above. Idempotent: guarded on the marker it installs.
+# eval-state at :289 all failed). Idempotent: guarded on the marker it installs.
 DASHBOARD_PY="$PUFFER/pufferlib/pufferl.py"
 if [ -f "$DASHBOARD_PY" ] && \
    ! grep -Fq 'os.write(sys.stdout.fileno()' "$DASHBOARD_PY"; then
@@ -869,6 +899,7 @@ for binding in "$PUFFER/src/bindings.cu" "$PUFFER/src/bindings_cpu.cpp"; do
         state_bank_contract_schema \
         state_bank_producer_schema \
         state_bank_authorization_schema \
+        state_bank_strata_schema \
         state_bank_kind \
         state_bank_kind_name \
         state_bank_ruleset \
@@ -891,6 +922,11 @@ for binding in "$PUFFER/src/bindings.cu" "$PUFFER/src/bindings_cpu.cpp"; do
             exit 1
         fi
     done
+    if ! grep -Fq 'm.def("state_bank_stratum_descriptor"' "$binding" || \
+       ! grep -Fq 'PUFFER_HAS_STATE_BANK_STRATUM_QUERY' "$binding"; then
+        echo "error: $(basename "$binding") lacks guarded state-bank stratum query" >&2
+        exit 1
+    fi
 done
 
 EXACT_BACKEND_HASH="$(exact_backend_hash)" || {
