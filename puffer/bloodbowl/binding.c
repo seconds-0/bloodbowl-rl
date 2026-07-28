@@ -12,12 +12,14 @@
 #define MY_ACTION_MASK 454
 #define MY_JOINT_ACTION_MAX 4487 // BB_LEGAL_MAX + 391 virtual destinations
 #define PUFFER_HAS_STATE_BANK_STRATUM_QUERY 1
+#define PUFFER_HAS_STRICT_ENV_CONFIG 1
 
 #define MY_VEC_INIT
 #define MY_USES_PERM
 #define MY_USES_TAGS
 #define Env Bloodbowl
 #include "vecenv.h"
+#include "environment_config.h"
 
 _Static_assert(OBS_SIZE == BBE_OBS_SIZE, "OBS_SIZE out of sync with bloodbowl.h");
 _Static_assert(MY_ACTION_MASK == BBE_MASK_SIZE,
@@ -142,25 +144,88 @@ static void bbe_check_act_sizes(void) {
     }
 }
 
-// dict_get aborts on missing keys; tolerate sparse [env] config sections.
-static double kw(Dict* kwargs, const char* key, double fallback) {
-    DictItem* item = dict_get_unsafe(kwargs, key);
-    return item != NULL ? item->value : fallback;
+const char* my_environment_config_schema(void) {
+    return BBE_ENVIRONMENT_CONFIG_SCHEMA;
 }
 
-static bbe_state_bank_config_values bank_kwargs(Dict* kwargs) {
-    bbe_state_bank_config_values values = {
-        kw(kwargs, "demo_reset_pct", 0.0),
-        kw(kwargs, "state_bank_kind", 0.0),
-        kw(kwargs, "demo_endzone_maxdist", 0.0),
-        kw(kwargs, "demo_pickup_maxdist", 0.0),
-        kw(kwargs, "demo_postkick_maxturn", 0.0),
-        kw(kwargs, "demo_pass_maxrange", 0.0),
-        kw(kwargs, "exclude_team", -1.0),
-        kw(kwargs, "force_home_team", -1.0),
-        kw(kwargs, "force_away_team", -1.0),
-    };
-    return values;
+int my_environment_config_key_count(void) {
+    return BBE_ENVIRONMENT_CONFIG_KEY_COUNT;
+}
+
+#ifdef PUFFER_STRICT_ENV_CONFIG_TESTING
+static int bbe_strict_native_stage_counts[BBE_STRICT_NATIVE_STAGE_COUNT];
+static void (*bbe_strict_native_stage_hook)(int stage);
+static int bbe_strict_native_fail_environment_allocation;
+
+void my_environment_config_native_test_record_stage(int stage) {
+    if (stage < 0 || stage >= BBE_STRICT_NATIVE_STAGE_COUNT) abort();
+    bbe_strict_native_stage_counts[stage]++;
+    if (bbe_strict_native_stage_hook != NULL) {
+        bbe_strict_native_stage_hook(stage);
+    }
+}
+
+void my_environment_config_native_test_reset(void) {
+    memset(bbe_strict_native_stage_counts, 0,
+           sizeof bbe_strict_native_stage_counts);
+    bbe_strict_native_stage_hook = NULL;
+    bbe_strict_native_fail_environment_allocation = 0;
+}
+
+int my_environment_config_native_test_stage_count(int stage) {
+    if (stage < 0 || stage >= BBE_STRICT_NATIVE_STAGE_COUNT) return -1;
+    return bbe_strict_native_stage_counts[stage];
+}
+
+void my_environment_config_native_test_set_stage_hook(
+        void (*hook)(int stage)) {
+    bbe_strict_native_stage_hook = hook;
+}
+
+void my_environment_config_native_test_fail_environment_allocation(
+        int fail) {
+    bbe_strict_native_fail_environment_allocation = fail != 0;
+}
+#endif
+
+static Env* bbe_environment_array_allocate(int num_envs) {
+    BBE_STRICT_NATIVE_RECORD_STAGE(
+        BBE_STRICT_NATIVE_STAGE_ENV_ARRAY_ALLOC);
+#ifdef PUFFER_STRICT_ENV_CONFIG_TESTING
+    if (bbe_strict_native_fail_environment_allocation) return NULL;
+#endif
+    return (Env*)calloc((size_t)num_envs, sizeof(Env));
+}
+
+int my_environment_config_preflight(
+        Dict* kwargs, char* diagnostic, size_t diagnostic_capacity) {
+    bbe_environment_config_result result;
+    if (bbe_environment_config_parse_dict(
+            kwargs, PUFFER_STATE_BANK_COMPILED_KIND, NULL, NULL, &result)) {
+        if (diagnostic != NULL && diagnostic_capacity > 0) diagnostic[0] = '\0';
+        return 0;
+    }
+    bbe_environment_config_format_diagnostic(
+        &result, diagnostic, diagnostic_capacity);
+    return (int)result.error;
+}
+
+static void parse_environment_config_or_exit(
+        Dict* kwargs, bbe_environment_config* config,
+        Bloodbowl* applied) {
+    bbe_environment_config_result result;
+    if (bbe_environment_config_parse_dict(
+            kwargs, PUFFER_STATE_BANK_COMPILED_KIND, config, applied,
+            &result)) {
+        return;
+    }
+    char diagnostic[256];
+    bbe_environment_config_format_diagnostic(
+        &result, diagnostic, sizeof diagnostic);
+    fprintf(stderr,
+            "bloodbowl: invalid environment configuration: %s\n",
+            diagnostic);
+    exit(1);
 }
 
 static void validate_bank_kwargs_or_exit(
@@ -179,6 +244,8 @@ static void prepare_bank_kwargs_or_exit(
     validate_bank_kwargs_or_exit(values);
     if (values->reset_pct <= 0.0) return;
 
+    BBE_STRICT_NATIVE_RECORD_STAGE(
+        BBE_STRICT_NATIVE_STAGE_STATE_BANK_REQUIRE);
     bbe_state_bank_require_or_abort((int)values->kind);
     bbe_state_bank_selector_family family;
     uint32_t threshold;
@@ -206,97 +273,6 @@ static void prepare_bank_kwargs_or_exit(
     }
 }
 
-static void apply_kwargs(Env* env, Dict* kwargs) {
-    // Retain and validate original doubles before any float/int conversion.
-    // In particular, 1.5 must not become strict kind 1, and a tiny positive
-    // reset probability must not underflow into an unintended kickoff run.
-    bbe_state_bank_config_values bank_values = bank_kwargs(kwargs);
-    validate_bank_kwargs_or_exit(&bank_values);
-
-    env->reward_td = (float)kw(kwargs, "reward_td", BBE_DEFAULT_REWARD_TD);
-    env->reward_win = (float)kw(kwargs, "reward_win", BBE_DEFAULT_REWARD_WIN);
-    env->reward_draw = (float)kw(kwargs, "reward_draw", BBE_DEFAULT_REWARD_DRAW);
-    env->reward_configured = 1;
-    env->reward_setup_done = (float)kw(kwargs, "reward_setup_done", 0.0);
-    env->reward_setup_autofix = (float)kw(kwargs, "reward_setup_autofix", 0.0);
-    env->reward_ball_gain = (float)kw(kwargs, "reward_ball_gain", 0.0);
-    env->reward_ball_loss = (float)kw(kwargs, "reward_ball_loss", 0.0);
-    env->reward_dist_ball = (float)kw(kwargs, "reward_dist_ball", 0.0);
-    env->reward_dist_endzone = (float)kw(kwargs, "reward_dist_endzone", 0.0);
-    env->reward_dist_pbrs_gamma =
-        (float)kw(kwargs, "reward_dist_pbrs_gamma", 0.0);
-    env->reward_injury_inflicted = (float)kw(kwargs, "reward_injury_inflicted", 0.0);
-    env->reward_injury_taken = (float)kw(kwargs, "reward_injury_taken", 0.0);
-    env->reward_injury_value_scaled = (int)kw(kwargs, "reward_injury_value_scaled", 0.0);
-    env->reward_send_off = (float)kw(kwargs, "reward_send_off", 0.0);
-    env->reward_kickoff_touchback = (float)kw(kwargs, "reward_kickoff_touchback", 0.0);
-    env->reward_surf_taken = (float)kw(kwargs, "reward_surf_taken", 0.0);
-    env->reward_surf_inflicted = (float)kw(kwargs, "reward_surf_inflicted", 0.0);
-    // Profile C exposure-EV + sequencing/net-EV knobs (bb_blockev; spec
-    // defaults when enabled: k_kd 0.06, k_value 0.5, k_ball 0.3, k_seq ~0.02).
-    env->reward_k_kd = (float)kw(kwargs, "reward_k_kd", 0.0);
-    env->reward_k_value = (float)kw(kwargs, "reward_k_value", 0.0);
-    env->reward_k_self_injury = (float)kw(kwargs, "reward_k_self_injury", 0.0);
-    env->reward_k_ball = (float)kw(kwargs, "reward_k_ball", 0.0);
-    env->reward_k_seq = (float)kw(kwargs, "reward_k_seq", 0.0);
-    env->reward_k_turnover = (float)kw(kwargs, "reward_k_turnover", 0.0);
-    // Possession annuity transfer per own-turn-ended-holding (suggested 0.03)
-    env->reward_possession = (float)kw(kwargs, "reward_possession", 0.0);
-    env->reward_k_assist = (float)kw(kwargs, "reward_k_assist", 0.0);
-    // Rush tax per GFI square at declaration (suggested 0.01-0.02)
-    env->reward_rush_cost = (float)kw(kwargs, "reward_rush_cost", 0.0);
-    // R6v1 carrier-exposure penalties, positive magnitudes charged via -=.
-    env->reward_carrier_exposure = (float)kw(kwargs, "reward_carrier_exposure", 0.0);
-    env->reward_carrier_exposure_soft =
-        (float)kw(kwargs, "reward_carrier_exposure_soft", 0.0);
-    env->reward_carrier_threat = (float)kw(kwargs, "reward_carrier_threat", 0.0);
-    // R12v1 defensive scoring-lane threat penalties (D133-A), positive
-    // magnitudes charged via -=. 1-turn (hard) + optional 2-turn (soft) tiers.
-    env->reward_defensive_threat = (float)kw(kwargs, "reward_defensive_threat", 0.0);
-    env->reward_defensive_threat_soft =
-        (float)kw(kwargs, "reward_defensive_threat_soft", 0.0);
-    // Legacy/quarantined D114 stat-matching scale. New complete reward
-    // manifests require 0 because the historical targets are semantically
-    // invalid; retain the kwarg only for artifact reproduction.
-    env->reward_statmatch_scale = (float)kw(kwargs, "reward_statmatch_scale", 0.0);
-    // Validate only after every reward field has been populated. Keeping this
-    // call above the final fields made apply_kwargs' validation incomplete.
-    bbe_validate_reward_config(env);
-    // Exact legacy-predicate curricula: at most one field may be positive.
-    // Startup resolves that family/threshold to a nonempty, hash-pinned prefix
-    // of the immutable process-wide index; reset samples the prefix directly.
-    env->demo_endzone_maxdist = (int)bank_values.endzone_selector;
-    env->demo_pickup_maxdist = (int)bank_values.pickup_selector;
-    env->demo_postkick_maxturn = (int)bank_values.postkick_selector;
-    env->demo_pass_maxrange = (int)bank_values.pass_selector;
-    env->skillup_max_players = (int)kw(kwargs, "skillup_max_players", 4.0);
-    env->skillup_max_each = (int)kw(kwargs, "skillup_max_each", 2.0);
-    env->skillup_secondary_pct = (float)kw(kwargs, "skillup_secondary_pct", 0.0);
-    // v5 path-actions (D82): STEP head = any reachable destination (0 = v4)
-    env->macro_moves = (int)kw(kwargs, "macro_moves", 0.0);
-    env->reach_mover = -1;
-    env->macro_mover = -1;
-    env->demo_reset_pct = (float)bank_values.reset_pct;
-    env->state_bank_kind = (int)bank_values.kind;
-    env->exclude_team = (int)bank_values.exclude_team;
-    env->force_home_team = (int)bank_values.force_home_team;
-    env->force_away_team = (int)bank_values.force_away_team;
-    env->scripted_opponent = (int)kw(kwargs, "scripted_opponent", 0.0);
-    env->scripted_opponent_team = (int)kw(kwargs, "scripted_opponent_team", 1.0);
-    env->scripted_opponent_type = (int)kw(kwargs, "scripted_opponent_type", 0.0);
-    if (env->scripted_opponent_team < 0 || env->scripted_opponent_team > 1) {
-        env->scripted_opponent_team = 1;
-    }
-    if (env->scripted_opponent_type < 0 || env->scripted_opponent_type > 1) {
-        env->scripted_opponent_type = 0;
-    }
-    env->max_decisions = (int)kw(kwargs, "max_decisions", BBE_MAX_DECISIONS);
-    if (env->max_decisions <= 0 || env->max_decisions > BBE_MAX_DECISIONS) {
-        env->max_decisions = BBE_MAX_DECISIONS;
-    }
-    env->render_fps = (int)kw(kwargs, "render_fps", 60.0);
-}
-
 void my_setup_perm(StaticVec* vec, Env* env, int slot_base) {
     size_t obs_elem_size = obs_element_size();
     // Re-pointed obs rows may hold another agent's stale v4 plane bytes.
@@ -314,6 +290,10 @@ void my_setup_perm(StaticVec* vec, Env* env, int slot_base) {
 
 Env* my_vec_init(int* num_envs_out, int* buffer_env_starts, int* buffer_env_counts,
                  Dict* vec_kwargs, Dict* env_kwargs) {
+    bbe_environment_config config;
+    Bloodbowl applied;
+    parse_environment_config_or_exit(env_kwargs, &config, &applied);
+
     bbe_check_act_sizes();
     int total_agents = (int)dict_get(vec_kwargs, "total_agents")->value;
     int num_buffers = (int)dict_get(vec_kwargs, "num_buffers")->value;
@@ -330,20 +310,23 @@ Env* my_vec_init(int* num_envs_out, int* buffer_env_starts, int* buffer_env_coun
         exit(1);
     }
 
-    // Validate the untouched dictionary doubles, then require the immutable
-    // process-wide contract before any worker can be returned.
-    bbe_state_bank_config_values bank_values = bank_kwargs(env_kwargs);
-    prepare_bank_kwargs_or_exit(&bank_values);
+    // Configuration has already passed both pure phases. Only now may bank
+    // resolution or environment-array allocation occur.
+    prepare_bank_kwargs_or_exit(&config.state_bank);
 
     int num_envs = total_agents / BBE_AGENTS;
-    Env* envs = (Env*)calloc(num_envs, sizeof(Env));
-    uint64_t base_seed = (uint64_t)kw(env_kwargs, "seed", 1.0);
+    Env* envs = bbe_environment_array_allocate(num_envs);
+    if (envs == NULL && num_envs > 0) {
+        fprintf(stderr, "bloodbowl: environment array allocation failed\n");
+        exit(1);
+    }
     for (int i = 0; i < num_envs; i++) {
         Env* env = &envs[i];
-        apply_kwargs(env, env_kwargs);
+        bbe_environment_config_copy_applied(env, &applied);
         env->num_agents = BBE_AGENTS;
         // Distinct, deterministic per-env stream; episode counter advances it.
-        env->seed = base_seed + (uint64_t)i;
+        env->seed = bbe_environment_config_vector_seed(
+            &applied, (uint64_t)i);
     }
 
     int buf = 0;
@@ -366,14 +349,16 @@ Env* my_vec_init(int* num_envs_out, int* buffer_env_starts, int* buffer_env_coun
 }
 
 void my_init(Env* env, Dict* kwargs) {
+    bbe_environment_config config;
+    Bloodbowl applied;
+    parse_environment_config_or_exit(kwargs, &config, &applied);
+
     bbe_check_act_sizes();
-    bbe_state_bank_config_values bank_values = bank_kwargs(kwargs);
-    prepare_bank_kwargs_or_exit(&bank_values);
-    apply_kwargs(env, kwargs);
+    prepare_bank_kwargs_or_exit(&config.state_bank);
+    uint64_t existing_seed = env->seed;
+    bbe_environment_config_copy_applied(env, &applied);
     env->num_agents = BBE_AGENTS;
-    if (env->seed == 0) {
-        env->seed = (uint64_t)kw(kwargs, "seed", 1.0);
-    }
+    if (existing_seed != 0) env->seed = existing_seed;
 }
 
 void my_log(Log* log, Dict* out) {

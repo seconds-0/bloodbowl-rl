@@ -582,6 +582,7 @@ runtime, evidence = begin_cuda_runtime_preflight()
 from pufferlib import _C
 evidence = finish_cuda_runtime_preflight(runtime, evidence)
 validate_cuda_runtime_evidence(evidence)
+strict_role = getattr(_C, "strict_env_config_testing", None)
 print(getattr(_C, "env_name", None), int(bool(getattr(_C, "gpu", False))),
       int(_C.precision_bytes),
       getattr(_C, "exact_action_source_hash", "<missing>"),
@@ -589,6 +590,9 @@ print(getattr(_C, "env_name", None), int(bool(getattr(_C, "gpu", False))),
       getattr(_C, "observation_abi", "<missing>"),
       getattr(_C, "observation_version", "<missing>"),
       getattr(_C, "action_abi", "<missing>"),
+      getattr(_C, "environment_config_schema", "<missing>"),
+      ("false" if type(strict_role) is bool and strict_role is False
+       else "<invalid>"),
       pathlib.Path(_C.__file__).resolve(),
       evidence["library"]["resolved_path"],
       evidence["library"]["sha256"],
@@ -597,7 +601,9 @@ PY
 )"
 read -r cenv cgpu precision COMPILED_EXACT_ACTION_SOURCE_HASH \
   COMPILED_ENVIRONMENT_SOURCE_HASH COMPILED_OBSERVATION_ABI \
-  COMPILED_OBSERVATION_VERSION COMPILED_ACTION_ABI MODULE_PATH \
+  COMPILED_OBSERVATION_VERSION COMPILED_ACTION_ABI \
+  COMPILED_ENVIRONMENT_CONFIG_SCHEMA \
+  COMPILED_STRICT_ENV_CONFIG_TESTING MODULE_PATH \
   CUDA_RUNTIME_LIBRARY_PATH CUDA_RUNTIME_LIBRARY_SHA256 \
   CUDA_RUNTIME_DEVICE_COUNT <<< "$probe"
 if [ "$cenv" != "bloodbowl" ] || [ "$cgpu" != "1" ]; then
@@ -607,12 +613,17 @@ if [[ ! "$COMPILED_EXACT_ACTION_SOURCE_HASH" =~ ^[0-9a-f]{64}$ ]] || \
    [ "$COMPILED_ENVIRONMENT_SOURCE_HASH" != "$SOURCE_HASH" ] || \
    [ "$COMPILED_OBSERVATION_ABI" != "obs-v6" ] || \
    [ "$COMPILED_OBSERVATION_VERSION" != "6" ] || \
-   [ "$COMPILED_ACTION_ABI" != "exact-joint-v1" ]; then
+   [ "$COMPILED_ACTION_ABI" != "exact-joint-v1" ] || \
+   [ "$COMPILED_ENVIRONMENT_CONFIG_SCHEMA" != \
+     "bloodbowl-environment-config-v1" ] || \
+   [ "$COMPILED_STRICT_ENV_CONFIG_TESTING" != "false" ]; then
   echo "compiled native module does not satisfy the obs-v6/exact-action contract" >&2
   echo "  exact-action source: ${COMPILED_EXACT_ACTION_SOURCE_HASH:-<missing>}" >&2
   echo "  environment source: ${COMPILED_ENVIRONMENT_SOURCE_HASH:-<missing>} (expected $SOURCE_HASH)" >&2
   echo "  observation: ${COMPILED_OBSERVATION_ABI:-<missing>} / ${COMPILED_OBSERVATION_VERSION:-<missing>}" >&2
   echo "  action: ${COMPILED_ACTION_ABI:-<missing>}" >&2
+  echo "  environment config: ${COMPILED_ENVIRONMENT_CONFIG_SCHEMA:-<missing>}" >&2
+  echo "  strict-config testing role: ${COMPILED_STRICT_ENV_CONFIG_TESTING:-<missing>}" >&2
   exit 1
 fi
 if [ "$LADDER_RESET_ACTIVE" = "1" ] && \
@@ -698,6 +709,8 @@ PATCH_HASH="$({
   patch_bundle_line training/pufferl_scripted_training_guard.patch
   patch_bundle_line training/pufferl_warm_start.patch
   patch_bundle_line training/puffer_state_bank_contract.patch
+  # This overlaps build.sh and both bindings, so it is deliberately last.
+  patch_bundle_line training/puffer_strict_environment_config.patch
 } | sha256sum | awk '{print $1}')"
 if [ -n "$EXPECTED_PUFFER_PATCH_BUNDLE_SHA256" ] && \
    [ "$PATCH_HASH" != "$EXPECTED_PUFFER_PATCH_BUNDLE_SHA256" ]; then
@@ -706,12 +719,12 @@ if [ -n "$EXPECTED_PUFFER_PATCH_BUNDLE_SHA256" ] && \
   exit 1
 fi
 VENDOR_HEAD="$(git rev-parse HEAD 2>/dev/null || printf '%s' '<not-a-git-checkout>')"
-VENDOR_SOURCE_HASH="$({
-  sha256sum build.sh pufferlib/__init__.py pufferlib/pufferl.py \
-    pufferlib/selfplay.py pufferlib/torch_pufferl.py pufferlib/models.py \
-    pufferlib/muon.py src/pufferlib.cu src/bindings.cu \
-    src/bindings_cpu.cpp src/kernels.cu src/vecenv.h
-} | sha256sum | awk '{print $1}')"
+VENDOR_SOURCE_HASH="$(
+  "$PYBIN" "$ROOT/tools/puffer_source_manifest.py" \
+    --root "$ROOT/vendor/PufferLib" \
+    --ledger "$ROOT/training/puffer_vendor_sources.txt" \
+    --expected-count 12 --plain
+)"
 
 if [ "$BOOTSTRAP_MODE" = "lineage-v6" ]; then
   read -r WARM_LINEAGE_HASH POOL_LINEAGE_BUNDLE_HASH < <(
@@ -857,6 +870,8 @@ META_ARGS=(
   compiled_observation_abi "$COMPILED_OBSERVATION_ABI"
   compiled_observation_version "$COMPILED_OBSERVATION_VERSION"
   compiled_action_abi "$COMPILED_ACTION_ABI"
+  compiled_environment_config_schema "$COMPILED_ENVIRONMENT_CONFIG_SCHEMA"
+  compiled_strict_env_config_testing "$COMPILED_STRICT_ENV_CONFIG_TESTING"
   config_tree_sha256 "$CONFIG_TREE_HASH"
   default_config_sha256 "$DEFAULT_CONFIG_HASH"
   compiled_module "$MODULE_PATH" compiled_module_sha256 "$MODULE_HASH"
@@ -899,6 +914,10 @@ for key in (
     "ladder_state_bank_strata_eligible_records",
 ):
     manifest[key] = int(manifest[key])
+if manifest["compiled_strict_env_config_testing"] != "false":
+    raise SystemExit(
+        "compiled_strict_env_config_testing must be canonical false")
+manifest["compiled_strict_env_config_testing"] = False
 manifest.update({
     "schema_version": 1,
     "mode": ("native_fresh_v6_qualification"

@@ -2012,12 +2012,32 @@ class PufferStateBankPatchTests(unittest.TestCase):
         self.assertIn("_run_engine_validator(", installed)
         self.assertIn("PUFFER_ENV_SOURCE_HASH", installed)
 
-    def test_backend_hash_closure_contains_both_changed_bindings(self) -> None:
+    def test_backend_hash_closure_uses_the_canonical_compiled_ledger(self) -> None:
         function = self.installer.split("exact_backend_hash() {", 1)[1]
         function = function.split("\n}", 1)[0]
-        self.assertIn("build.sh", function)
-        self.assertIn("src/bindings.cu", function)
-        self.assertIn("src/bindings_cpu.cpp", function)
+        self.assertIn(
+            '"$INSTALL_PYTHON" "$ROOT/tools/puffer_source_manifest.py"',
+            function,
+        )
+        self.assertIn('--ledger "$COMPILED_BACKEND_LEDGER"', function)
+        self.assertIn("--expected-count 9", function)
+        ledger = (
+            ROOT / "training/puffer_compiled_backend_sources.txt"
+        ).read_text(encoding="utf-8")
+        self.assertEqual(
+            ledger.splitlines(),
+            [
+                "build.sh",
+                "pufferlib/pufferl.py",
+                "pufferlib/selfplay.py",
+                "pufferlib/torch_pufferl.py",
+                "src/bindings.cu",
+                "src/bindings_cpu.cpp",
+                "src/kernels.cu",
+                "src/pufferlib.cu",
+                "src/vecenv.h",
+            ],
+        )
 
     def test_generated_authority_is_written_only_by_shared_publisher(self) -> None:
         self.assertIn('state_bank_contract.py" install-no-bank', self.installer)

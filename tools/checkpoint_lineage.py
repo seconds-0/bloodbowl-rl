@@ -22,6 +22,7 @@ SCHEMA_VERSION = 1
 OBSERVATION_ABI = "obs-v6"
 OBSERVATION_VERSION = 6
 ACTION_ABI = "exact-joint-v1"
+ENVIRONMENT_CONFIG_SCHEMA = "bloodbowl-environment-config-v1"
 POLICY_HIDDEN_SIZE = 512
 POLICY_NUM_LAYERS = 3
 POLICY_EXPANSION_FACTOR = 1
@@ -298,6 +299,18 @@ def lineage_from_run_manifest(checkpoint, run_manifest, *,
     if action_abi != ACTION_ABI:
         raise LineageError(
             f"action_abi must be {ACTION_ABI}, got {action_abi!r}")
+    if (
+        manifest.get("compiled_environment_config_schema")
+        != ENVIRONMENT_CONFIG_SCHEMA
+    ):
+        raise LineageError(
+            "compiled_environment_config_schema must be "
+            f"{ENVIRONMENT_CONFIG_SCHEMA!r}"
+        )
+    if manifest.get("compiled_strict_env_config_testing") is not False:
+        raise LineageError(
+            "compiled_strict_env_config_testing must be JSON false"
+        )
     _validate_state_bank_fields(manifest)
 
     initialization = manifest.get("initialization")

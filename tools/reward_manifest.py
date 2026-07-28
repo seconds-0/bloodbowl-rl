@@ -20,6 +20,7 @@ import hashlib
 import json
 import math
 import shlex
+import struct
 from pathlib import Path
 from typing import Any
 
@@ -109,7 +110,15 @@ def validate_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise ValueError(f"{key} must be numeric")
         value = float(value)
-        if not math.isfinite(value) or abs(value) > 1.0:
+        if key == "reward_dist_pbrs_gamma":
+            if not math.isfinite(value) or value < 0.0 or value > 1.0:
+                raise ValueError(
+                    f"{key}={value!r} must be finite and within [0,1]")
+            narrowed = struct.unpack("=f", struct.pack("=f", value))[0]
+            if value != 0.0 and narrowed == 0.0:
+                raise ValueError(
+                    f"{key}={value!r} must not underflow to float32 zero")
+        elif not math.isfinite(value) or abs(value) > 1.0:
             raise ValueError(
                 f"{key}={value!r} must be finite and within [-1,1]")
         reward[key] = value

@@ -241,15 +241,15 @@ class ExperimentContractTests(unittest.TestCase):
             "pufferl_warm_start.patch",
             "puffer_exact_joint_actions.patch",
             "puffer_state_bank_contract.patch",
+            "puffer_strict_environment_config.patch",
             "selfplay_league.patch",
         ):
             self.assertIn(patch, screen)
             self.assertIn(patch, arm)
-        for source in ("src/bindings_cpu.cpp", "src/kernels.cu"):
-            self.assertIn(source, screen)
-            self.assertIn(source, arm)
+        self.assertIn("training/puffer_vendor_sources.txt", screen)
+        self.assertIn("training/puffer_vendor_sources.txt", arm)
         screen_block = screen.split("patches = [", 1)[1].split(
-            "vendor_sources = [", 1
+            "vendor_sources = read_source_ledger(", 1
         )[0]
         arm_block = arm.split('PATCH_HASH="$({', 1)[1].split(
             '} | sha256sum', 1
@@ -258,6 +258,9 @@ class ExperimentContractTests(unittest.TestCase):
         arm_patches = re.findall(r'training/([^"/]+\.patch)', arm_block)
         self.assertEqual(screen_patches, arm_patches)
         self.assertEqual(screen_patches.count("selfplay_league.patch"), 1)
+        self.assertEqual(
+            screen_patches[-1], "puffer_strict_environment_config.patch"
+        )
         self.assertIn(
             'git -C "$ROOT/vendor/PufferLib" apply --reverse --check --no-index',
             arm,
@@ -351,7 +354,7 @@ class ExperimentContractTests(unittest.TestCase):
             encoding="utf-8"
         )
         screen_block = screen.split("patches = [", 1)[1].split(
-            "vendor_sources = [", 1
+            "vendor_sources = read_source_ledger(", 1
         )[0]
         arm_block = arm.split('PATCH_HASH="$({', 1)[1].split(
             '} | sha256sum', 1
@@ -449,7 +452,7 @@ class ExperimentContractTests(unittest.TestCase):
         arm = (ROOT / "tools/run_reward_ablation.sh").read_text(
             encoding="utf-8")
         screen_block = screen.split("patches = [", 1)[1].split(
-            "vendor_sources = [", 1)[0]
+            "vendor_sources = read_source_ledger(", 1)[0]
         arm_block = arm.split('PATCH_HASH="$({', 1)[1].split(
             '} | sha256sum', 1)[0]
         screen_patches = re.findall(r'training/([^"/]+\.patch)', screen_block)
@@ -848,13 +851,28 @@ class ExperimentContractTests(unittest.TestCase):
             "default_config_sha256",
         ):
             self.assertIn(field, arm)
-        for field in (
-            "pufferlib/__init__.py",
-            "pufferlib/models.py",
-            "pufferlib/muon.py",
-        ):
-            self.assertIn(field, screen)
-            self.assertIn(field, arm)
+        vendor_ledger = (
+            ROOT / "training/puffer_vendor_sources.txt"
+        ).read_text(encoding="utf-8").splitlines()
+        self.assertEqual(
+            vendor_ledger,
+            [
+                "build.sh",
+                "pufferlib/__init__.py",
+                "pufferlib/pufferl.py",
+                "pufferlib/selfplay.py",
+                "pufferlib/torch_pufferl.py",
+                "pufferlib/models.py",
+                "pufferlib/muon.py",
+                "src/pufferlib.cu",
+                "src/bindings.cu",
+                "src/bindings_cpu.cpp",
+                "src/kernels.cu",
+                "src/vecenv.h",
+            ],
+        )
+        self.assertIn("puffer_vendor_sources.txt", screen)
+        self.assertIn("puffer_vendor_sources.txt", arm)
         self.assertIn('"compiled_semantic_contract": compiled_contract', screen)
         # Assert the compiled-module probe by the CHECKS it performs, not by the
         # manifest field names it happens to use. This is the single invariant
@@ -892,6 +910,12 @@ class ExperimentContractTests(unittest.TestCase):
         # installed source, which is what catches a mid-screen rebuild.
         self.assertIn("environment_source_sha256", screen)
         self.assertIn("COMPILED_ENVIRONMENT_SOURCE_HASH", arm)
+        self.assertIn("bloodbowl-environment-config-v1", screen)
+        self.assertIn("bloodbowl-environment-config-v1", arm)
+        self.assertIn("compiled_environment_config_schema", screen)
+        self.assertIn("compiled_environment_config_schema", arm)
+        self.assertIn("compiled_strict_env_config_testing", screen)
+        self.assertIn("compiled_strict_env_config_testing", arm)
 
     def test_exact_pbrs_distance_requires_matching_trainer_gamma(self):
         # beta*(gamma*Phi' - Phi) is only exact at the gamma the trainer really

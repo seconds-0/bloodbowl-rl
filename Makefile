@@ -26,6 +26,8 @@ TESTBIN  := $(BUILD)/bb_tests
 PUFFER_REWARD_TESTBIN := $(BUILD)/puffer_reward_tests
 PUFFER_CONTACT_TESTBIN := $(BUILD)/puffer_contact_bot_tests
 PUFFER_STATE_BANK_TESTBIN := $(BUILD)/puffer_state_bank_tests
+PUFFER_ENV_CONFIG_TESTBIN := $(BUILD)/puffer_environment_config_tests
+PUFFER_ENV_CONFIG_BINDING_TESTBIN := $(BUILD)/puffer_environment_config_binding_tests
 PUFFER_STATE_BANK_FIXTURE_WRITER := $(BUILD)/state_bank_fixture_writer
 PUFFER_STATE_BANK_CONTRACT_DIR := $(BUILD)/test_state_bank_contract
 PUFFER_STATE_BANK_CONTRACT_STAMP := $(PUFFER_STATE_BANK_CONTRACT_DIR)/.generated
@@ -36,7 +38,7 @@ STATE_BANK_VALIDATE_BIN := $(BUILD)/state_bank_validate
 STATE_BANK_VALIDATE_ENV_HASH = $(shell python3 tools/state_bank_contract.py environment-source-sha256 --root puffer/bloodbowl --plain)
 PUFFER_OBSERVATION_TESTBIN := $(BUILD)/puffer_observation_tests
 BBP_V6_WRITER_TESTBIN := $(BUILD)/bbp_v6_writer_tests
-PUFFER_TESTBINS := $(PUFFER_REWARD_TESTBIN) $(PUFFER_CONTACT_TESTBIN) $(PUFFER_STATE_BANK_TESTBIN) $(PUFFER_STATE_BANK_CONTRACT_TESTBIN) $(PUFFER_STANDALONE_TESTBIN) $(PUFFER_STATE_BANK_TOOL_TESTBIN) $(PUFFER_OBSERVATION_TESTBIN) $(BBP_V6_WRITER_TESTBIN)
+PUFFER_TESTBINS := $(PUFFER_REWARD_TESTBIN) $(PUFFER_CONTACT_TESTBIN) $(PUFFER_STATE_BANK_TESTBIN) $(PUFFER_ENV_CONFIG_TESTBIN) $(PUFFER_ENV_CONFIG_BINDING_TESTBIN) $(PUFFER_STATE_BANK_CONTRACT_TESTBIN) $(PUFFER_STANDALONE_TESTBIN) $(PUFFER_STATE_BANK_TOOL_TESTBIN) $(PUFFER_OBSERVATION_TESTBIN) $(BBP_V6_WRITER_TESTBIN)
 
 .PHONY: all test asan fuzz coverage coverage-run lockstep ballstats blockstats human-ball-advancement blockev-mc scenario-scan state-bank-validate clean
 
@@ -70,6 +72,17 @@ $(PUFFER_CONTACT_TESTBIN): puffer/bloodbowl/test_contact_bot.c puffer/bloodbowl/
 
 $(PUFFER_STATE_BANK_TESTBIN): puffer/bloodbowl/test_state_bank.c puffer/bloodbowl/bloodbowl.h puffer/bloodbowl/state_bank_runtime.h puffer/bloodbowl/state_bank_sha256.h puffer/bloodbowl/state_bank_build.h $(AUTHORED_DRILL_SRC) $(AUTHORED_IDENTITY_SRC) tools/authored_drill.h tools/authored_identity_internal.h engine/tests/bb_test.h engine/tests/bb_fixtures.h $(SRC) $(ENGINE_HDR)
 	$(CC) $(CFLAGS) -DBBE_STATE_BANK_TESTING -Iengine/tests -Ipuffer/bloodbowl -Itools -Wno-unused-function $< $(AUTHORED_DRILL_SRC) $(AUTHORED_IDENTITY_SRC) -o $@ -lm $(LDFLAGS)
+
+$(PUFFER_ENV_CONFIG_TESTBIN): puffer/bloodbowl/test_environment_config.c puffer/bloodbowl/environment_config.h puffer/bloodbowl/bloodbowl.h puffer/bloodbowl/state_bank_runtime.h puffer/bloodbowl/state_bank_sha256.h puffer/bloodbowl/state_bank_build.h engine/tests/bb_test.h $(SRC) $(ENGINE_HDR)
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -Iengine/tests -Ipuffer/bloodbowl -Wno-unused-function $< -o $@ -lm $(LDFLAGS)
+
+$(PUFFER_ENV_CONFIG_BINDING_TESTBIN): puffer/bloodbowl/test_environment_config_binding.c puffer/bloodbowl/test_support/vecenv.h puffer/bloodbowl/test_support/state_bank_build_strict_test.h puffer/bloodbowl/binding.c puffer/bloodbowl/environment_config.h puffer/bloodbowl/bloodbowl.h puffer/bloodbowl/state_bank_runtime.h puffer/bloodbowl/state_bank_sha256.h engine/tests/bb_test.h $(SRC) $(ENGINE_HDR)
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -DPUFFER_STRICT_ENV_CONFIG_TESTING -DBBE_STATE_BANK_TESTING \
+		-DBBE_STATE_BANK_BUILD_HEADER='"state_bank_build_strict_test.h"' \
+		-Iengine/tests -Ipuffer/bloodbowl/test_support -Ipuffer/bloodbowl \
+		-Wno-unused-function $< -o $@ -lm $(LDFLAGS)
 
 $(PUFFER_STATE_BANK_FIXTURE_WRITER): puffer/bloodbowl/state_bank_fixture_writer.c puffer/bloodbowl/bloodbowl.h puffer/bloodbowl/state_bank_runtime.h puffer/bloodbowl/state_bank_sha256.h puffer/bloodbowl/state_bank_build.h engine/tests/bb_fixtures.h $(SRC) $(ENGINE_HDR)
 	@mkdir -p $(BUILD)
@@ -124,6 +137,8 @@ test: $(TESTBIN) $(PUFFER_TESTBINS)
 	$(PUFFER_REWARD_TESTBIN) $(TEST)
 	$(PUFFER_CONTACT_TESTBIN) $(TEST)
 	$(PUFFER_STATE_BANK_TESTBIN) $(TEST)
+	$(PUFFER_ENV_CONFIG_TESTBIN) $(TEST)
+	$(PUFFER_ENV_CONFIG_BINDING_TESTBIN) $(TEST)
 	$(PUFFER_STATE_BANK_CONTRACT_TESTBIN)
 	$(PUFFER_STANDALONE_TESTBIN) --state-bank-contract
 	! $(PUFFER_STANDALONE_TESTBIN) --demo --bank-kind >/dev/null 2>&1

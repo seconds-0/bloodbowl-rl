@@ -1,6 +1,10 @@
 # Strict Blood Bowl environment configuration contract
 
-Status: watched red captured; production implementation authorized
+Status: implemented and CPU/Puffer validated; mandatory real-NVIDIA gate
+pending
+
+External-gate status: the real-NVIDIA CUDA constructor-stage artifact is
+mandatory and has not been completed on this local CPU-only validation host.
 
 Base: `96f36e4`
 
@@ -91,8 +95,8 @@ In scope:
   subprocess tests;
 - a Linux clean-pinned-Puffer CPU build/construction CI job;
 - a negative strict-config construction cell in recurrent CUDA qualification;
-- configuration documentation and the comparison-document typo
-  `scripted_opponent_team2`;
+- configuration documentation and the corrected comparison-document spelling
+  `scripted_opponent_team=2`;
 - environment/backend identity updates caused by the actual source closure;
   and
 - optimized, sanitizer, deterministic, clean-install, CPU-module, and
@@ -204,6 +208,54 @@ downstream counter at zero. A zero `create_pufferl_impl` count proves its
 model, stream, worker, warmup, and reset code was never entered. This special
 build supplements rather than replaces rejection tests against the exact
 production CPU module and exact production CUDA qualification module.
+
+The checked-in `tools/qualify_recurrent_cuda.py strict-stage-order` command
+owns this special-build proof. It accepts only a pristine disposable Puffer
+checkout outside this repository, detached at
+`9836f0d2e78889c1aaf189c04d161b6fc61a9386`, with no prior build, installed
+Blood Bowl tree, or native module and with a checkout-local venv. It writes
+an atomic bounded isolation receipt before running the installer. The venv
+directory must be real rather than symlinked. A pre-build probe binds the
+lexical executable, executable bytes, `sys.prefix`, pybind11/NumPy origins,
+Python version, and extension suffix. One sanitized environment with that
+venv first in `PATH` and exact `VIRTUAL_ENV` removes ambient Python controls,
+Bash startup files/options/exported functions, and dynamic-loader injection
+variables. Direct and noninteractive-Bash probes must resolve the same
+recorded Python identity. That environment then drives the absolute-Bash
+installer, CUDA build, and worker. The selected absolute interpreter is also
+passed as `PUFFER_INSTALL_PYTHON`, and every installer Python call uses that
+single quoted command rather than ambient `python3`. It builds only that
+checkout with `PUFFER_STRICT_ENV_CONFIG_TESTING=1` and invokes a hidden worker
+under the same isolated interpreter. Neither this command nor its output may
+target the production vendored checkout.
+
+The worker exercises both CUDA entry points with
+`force_home_team=BB_TEAM_COUNT` crossed with malformed/dangerous `vec`,
+`train`, `policy`, and device inputs. Each case requires exactly one
+normalizer call, exactly one GIL-held observation, and zero
+`create_static_vec`, `cudaGetDeviceCount`, and `create_pufferl_impl` calls.
+Valid controls require `create_vec` to reach `create_static_vec` exactly once
+and `create_pufferl` to reach both CUDA device discovery and its implementation
+handoff exactly once; both results must close safely. The worker then requires
+all counters to be zero after cleanup.
+
+The resulting bounded `STRICT_STAGE_ORDER.json` records the CUDA runtime
+fingerprint; module, environment, backend-source, Puffer-commit, qualifier,
+source-ledger, and strict-patch identities; the full negative matrix; both
+positive controls; and proof that the production identity validator rejects
+the test-role module. CPU fake-backend tests lock the counter semantics and
+failure detection, and a mechanical source test requires the CPU and CUDA
+normalizer/preflight bodies in the patch to be byte-identical. Those CPU
+checks are supporting evidence only: dynamic execution of the actual CUDA
+entry points on real NVIDIA hardware remains a mandatory external release
+gate and is not represented as locally complete.
+
+The retained receipt and final artifact must each be an ordinary nonsymlink
+file no larger than 64 KiB. Revalidation requires exact nested keys, exact
+JSON scalar types, bounded strings and paths, the closed
+hazard-to-malformed-path mapping, `invalid_team` equal to the installed
+generated `BB_TEAM_COUNT`, and the recorded interpreter, dependency, module,
+source, ledger, patch, and extension-suffix identities.
 
 Both bindings always export the exact boolean build-role attribute
 `strict_env_config_testing`. It is `true` only when the named special-build
@@ -663,10 +715,12 @@ the configuration diagnostic must occur first and no later subsystem may be
 observed.
 
 The named special-build stage API proves the ordering dynamically: failed
-preflight must report GIL-held translation and zero vector/impl,
-environment-array, state-bank, and engine-init handoffs. Source-contract
-assertions are supplementary drift alarms, not the ordering proof, and the
-special build cannot substitute for production-module subprocess evidence.
+preflight must report exactly one normalization call, exactly one GIL-held
+translation, and zero named vector/CUDA/implementation handoffs. Native
+seams separately require zero environment-array, state-bank, and engine-init
+handoffs. Source-contract assertions are supplementary drift alarms, not the
+ordering proof, and the special build cannot substitute for
+production-module subprocess evidence.
 
 ## Puffer and Python test matrix
 
@@ -728,6 +782,11 @@ special build cannot substitute for production-module subprocess evidence.
   `strict_env_config_testing=true`; the ordinary CPU/CUDA modules report
   `false`, and every production identity/launcher gate rejects the test-role
   module despite matching source/schema digests;
+- the checked-in isolated stage-order command crosses both CUDA constructors
+  with malformed/dangerous `vec`, `train`, `policy`, and device inputs while
+  the environment is invalid, requires the exact preflight/downstream counter
+  vectors, runs valid reachability/cleanup controls, and writes bounded atomic
+  source/module/patch/isolation evidence;
 - the reward-ablation and reward-screen ordered patch lists produce the same
   strict-patch-inclusive bundle digest;
 - both launchers require, not merely write, the exact config-schema and
@@ -773,7 +832,9 @@ NumPy, Torch, clang, C++ compiler, and OpenMP versions alongside the pinned
 Puffer/Raylib identities.
 
 CUDA remains a real-GPU qualification artifact; CPU CI does not pretend to
-validate device execution.
+validate device execution. The isolated test-role stage-order artifact is
+mandatory external release evidence and is not complete merely because the
+CPU fake-backend and source-lock tests pass.
 
 ## Validation gates
 
@@ -796,10 +857,12 @@ validate device execution.
     sparse configs, plus real subprocess rejection for each domain category,
     malformed/unknown key, and nonnumeric key.
 14. CPU `create_vec`, CUDA `create_vec`, and CUDA `create_pufferl`
-    constructor-order contract tests, plus both recurrent CUDA
+    constructor-order contract tests, plus both recurrent production-CUDA
     expected-negative construction subcells and both positive constructor
-    paths; execute the CUDA qualification on real GPU hardware when available
-    and otherwise record it as an explicit external gate.
+    paths. Before release, execute the isolated
+    `strict-stage-order` command on real NVIDIA hardware and retain its
+    accepted bounded evidence. This is mandatory external evidence; lack of a
+    local GPU leaves this gate incomplete rather than waived or passed.
 15. Unrelated-environment build with the strict marker absent.
 16. Canonical backend/vendor path-ledger reconciliation; exact engine,
     environment, backend, module, standalone, generated-header, config-schema,
@@ -807,6 +870,60 @@ validate device execution.
     identities recorded.
 17. Self-review and independent native plus Python/Puffer adversarial reviews
     close all substantiated P0/P1/P2 findings.
+
+## Implementation validation record
+
+Local and exact-CPU evidence recorded on 2026-07-28:
+
+- optimized `make test` passed the complete native surface: 476 engine,
+  64 reward, 3 contact-bot, 55 state-bank, 22 strict-config, 7 binding,
+  26 observation, BBP-writer, and state-bank integration checks;
+- `make asan` passed the same native surface with ASan/UBSan;
+- two independent default seed-42, 100-episode runs reproduced
+  FNV `ea1d720e69f5a491`, 26,251 steps, and zero illegal actions;
+- the Python tools suite passed 356 tests with 6 expected platform skips;
+- the Python training suite passed 126 tests with 1 expected GPU skip,
+  including 70 focused recurrent/CUDA-qualification contract tests;
+- the exact-pinned strict Puffer source contract passed 7/7 checks;
+- `py_compile`, `ruff check`, relevant new/rewritten-file
+  `ruff format --check`, Bash syntax, `shellcheck --severity=warning`, YAML
+  parsing, and `git diff --check` passed;
+- a fresh Ubuntu 24.04 exact-Puffer checkout at
+  `9836f0d2e78889c1aaf189c04d161b6fc61a9386` installed idempotently, built
+  the unmodified upstream AVX2/FMA CPU module and standalone, and passed the
+  literal installer drift/reverse/source-closure check;
+- that real CPU module constructed/reset/closed the full 51-key, empty,
+  sparse, exact-bool, and scripted-BOTH profiles, then cleanly rejected 44
+  subprocess-isolated invalid cases spanning transport/structure/ordering,
+  every one of the 19 native domain groups, special nonfinite/underflow
+  values, and all three cross-field families;
+- native, exact-Puffer, Python/CI, and overall adversarial reviews closed every
+  substantiated P0/P1/P2 implementation finding; and
+- the actual CUDA special-build command and retained-evidence validator are
+  implemented and locally contract-tested, but their dynamic execution on a
+  real NVIDIA GPU remains gate 14 and is not recorded as passed.
+
+Frozen identities for that evidence:
+
+- environment source/installed snapshot/compiled export:
+  `6e018ac5a6b4b5cce0f004480e92d7708f7a06d6e6144ed81ea9b77e10fba015`;
+- nine-file compiled backend:
+  `56b4129ab362667a5a433cb00616ce661f8dbbd9b99e7f727b4823577023af27`;
+- twelve-file vendor closure:
+  `59e44b3a66e38aa6fe7a4d3bd4facd5ede6e4d4cb4e835513c1f7265f2c45fcd`;
+- strict Puffer patch:
+  `bf4d04e5bca634688662b73aeb5ad653cc0342ddfa1db477abff45630a121cee`;
+- production CPU module:
+  `3d92bc10203443c265bcc6b456ddc07dfc5e0a9a5707accd36e63c452e8b546d`;
+- exact standalone:
+  `36e2ead93dbe58baed8ae03c9eab261e1919d7358de22826d8d92e583fcb1c49`;
+- generated exact-action build header:
+  `a45333da3d22d63417d0c9cc1401e44d422cfc5023a86d6b10d9f32f73f811ad`;
+- final CUDA qualifier:
+  `331676ba18fdae6724ac70466e9fa2ab21bb92eb56f3877608fd2564bec7431c`;
+  and
+- final installer:
+  `cbc51ad25951c5465079c2f0eb6763bdf5aec671f1d477b43a733f7ee482b620`.
 
 Kimi review remains waived only under the user's explicit instruction for this
 goal; it is not silently represented as completed.

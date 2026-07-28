@@ -349,6 +349,10 @@ pool = pathlib.Path(os.environ["POOL"]).resolve() if os.environ["POOL"] else Non
 sys.path.insert(0, str(root / "tools"))
 from reward_manifest import load_manifest
 from live_integrity_guard import HARD_INTEGRITY_KEYS
+from puffer_source_manifest import (
+    read_source_ledger,
+    source_manifest_sha256,
+)
 from screen_manifest_contract import (
     ScreenManifestContractError,
     freeze_screen_manifest,
@@ -401,12 +405,18 @@ print(json.dumps({
     "observation_version": getattr(
         _C, "observation_version", "<missing>"),
     "action_abi": getattr(_C, "action_abi", "<missing>"),
+    "environment_config_schema": getattr(
+        _C, "environment_config_schema", "<missing>"),
+    "strict_env_config_testing": getattr(
+        _C, "strict_env_config_testing", None),
     "state_bank_contract_schema": getattr(
         _C, "state_bank_contract_schema", "<missing>"),
     "state_bank_producer_schema": getattr(
         _C, "state_bank_producer_schema", "<missing>"),
     "state_bank_authorization_schema": getattr(
         _C, "state_bank_authorization_schema", "<missing>"),
+    "state_bank_strata_schema": getattr(
+        _C, "state_bank_strata_schema", "<missing>"),
     "state_bank_kind": int(getattr(_C, "state_bank_kind", -1)),
     "state_bank_kind_name": getattr(
         _C, "state_bank_kind_name", "<missing>"),
@@ -455,6 +465,9 @@ if (
     compiled_contract["observation_abi"] != "obs-v6" or
     compiled_contract["observation_version"] != 6 or
     compiled_contract["action_abi"] != "exact-joint-v1" or
+    compiled_contract["environment_config_schema"] !=
+        "bloodbowl-environment-config-v1" or
+    compiled_contract["strict_env_config_testing"] is not False or
     len(compiled_contract["exact_action_source_sha256"]) != 64 or
     compiled_contract["state_bank_contract_schema"] != "none" or
     compiled_contract["state_bank_producer_schema"] != "none" or
@@ -504,18 +517,16 @@ patches = [
     root / "training/pufferl_scripted_training_guard.patch",
     root / "training/pufferl_warm_start.patch",
     root / "training/puffer_state_bank_contract.patch",
+    # Overlaps build.sh and both bindings; installer and launchers keep it last.
+    root / "training/puffer_strict_environment_config.patch",
 ]
-vendor_sources = [
-    "build.sh", "pufferlib/__init__.py", "pufferlib/pufferl.py",
-    "pufferlib/selfplay.py", "pufferlib/torch_pufferl.py",
-    "pufferlib/models.py", "pufferlib/muon.py", "src/pufferlib.cu",
-    "src/bindings.cu", "src/bindings_cpu.cpp", "src/kernels.cu",
-    "src/vecenv.h",
-]
-vendor_paths = [vendor / relative for relative in vendor_sources]
+vendor_sources = read_source_ledger(
+    root / "training/puffer_vendor_sources.txt",
+    expected_count=12,
+)
 patch_bundle_sha = bundle_sha(
     patches, [path.relative_to(root).as_posix() for path in patches])
-vendor_source_sha = bundle_sha(vendor_paths, vendor_sources)
+vendor_source_sha = source_manifest_sha256(vendor, vendor_sources)
 vendor_head_result = subprocess.run(
     ["git", "-C", str(vendor), "rev-parse", "HEAD"],
     text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=False)
@@ -671,6 +682,10 @@ contract = {
         "source_sha256": source_hash,
         "compiled_module": str(module.resolve()),
         "compiled_module_sha256": sha(module),
+        "compiled_environment_config_schema":
+            compiled_contract["environment_config_schema"],
+        "compiled_strict_env_config_testing":
+            compiled_contract["strict_env_config_testing"],
         "compiled_semantic_contract": compiled_contract,
         "puffer_patch_bundle_sha256": patch_bundle_sha,
         "vendor_head": vendor_head,

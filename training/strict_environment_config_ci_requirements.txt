@@ -1,0 +1,10 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+pip==26.1.2
+setuptools==83.0.0
+wheel==0.47.0
+pybind11==3.0.4
+numpy==2.5.1
+torch==2.9.1+cpu
+rich==15.0.0
+rich-argparse==1.8.0

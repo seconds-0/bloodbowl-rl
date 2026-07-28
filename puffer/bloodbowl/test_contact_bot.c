@@ -160,3 +160,14 @@ BB_TEST(contact_bot_c_step_hook_logs_per_team_and_off_is_inert) {
     BB_CHECK(off_away_side.digest == off_home_side.digest);
     BB_CHECK_EQ((int)off_away_side.n, (int)off_home_side.n);
 }
+
+BB_TEST(contact_bot_c_step_both_mode_dispatches_for_both_teams) {
+    ContactHookStats both = run_contact_hook(
+        1, 2, UINT64_C(0xB07B07), 8);
+    BB_CHECK_EQ(both.completed, 8);
+    BB_CHECK_EQ((int)both.n, 8);
+    BB_CHECK(both.blocks_thrown_t0 > 0.0f);
+    BB_CHECK(both.blocks_thrown_t1 > 0.0f);
+    BB_CHECK(both.blocks_thrown_t0 + both.blocks_thrown_t1 ==
+             both.blocks_thrown);
+}

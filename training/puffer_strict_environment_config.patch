@@ -1,0 +1,638 @@
+diff --git a/build.sh b/build.sh
+index e4baacc4..0c67c8a7 100755
+--- a/build.sh
++++ b/build.sh
+@@ -254,6 +254,23 @@ mkdir -p build
+ STATIC_OBJ="build/libstatic_${ENV}.o"
+ STATIC_LIB="build/libstatic_${ENV}.a"
+ 
++STRICT_ENV_CONFIG_CFLAGS=""
++if [ -f "$BINDING_SRC" ] && \
++        grep -Fxq '#define PUFFER_HAS_STRICT_ENV_CONFIG 1' "$BINDING_SRC"; then
++    STRICT_ENV_CONFIG_CFLAGS="-DPUFFER_STRICT_ENV_CONFIG=1"
++    case "${PUFFER_STRICT_ENV_CONFIG_TESTING:-0}" in
++        0|"") ;;
++        1)
++            STRICT_ENV_CONFIG_CFLAGS="$STRICT_ENV_CONFIG_CFLAGS -DPUFFER_STRICT_ENV_CONFIG_TESTING=1"
++            ;;
++        *)
++            echo "Error: PUFFER_STRICT_ENV_CONFIG_TESTING must be 0 or 1"
++            exit 1
++            ;;
++    esac
++fi
++PRECISION="${PRECISION:-} $STRICT_ENV_CONFIG_CFLAGS"
++
+ if [ ! -f "$BINDING_SRC" ]; then
+     echo "Error: $BINDING_SRC not found"
+     exit 1
+@@ -273,6 +290,7 @@ ${CC:-clang} -c "${CLANG_OPT[@]}" $EXTRA_CFLAGS \
+     -DPLATFORM_DESKTOP \
+     -fno-semantic-interposition -fvisibility=hidden \
+     -fPIC -fopenmp \
++    $STRICT_ENV_CONFIG_CFLAGS \
+     "$BINDING_SRC" -o "$STATIC_OBJ"
+ ar rcs "$STATIC_LIB" "$STATIC_OBJ"
+ 
+diff --git a/src/bindings.cu b/src/bindings.cu
+index 534c6460..73d17ac6 100644
+--- a/src/bindings.cu
++++ b/src/bindings.cu
+@@ -605,6 +605,264 @@ void py_puff_advantage(
+         gamma, lambda, rho_clip, c_clip, num_steps, horizon);
+ }
+ 
++#ifdef PUFFER_STRICT_ENV_CONFIG
++extern "C" {
++const char* my_environment_config_schema(void);
++int my_environment_config_key_count(void);
++int my_environment_config_preflight(
++    Dict* kwargs, char* diagnostic, size_t diagnostic_capacity);
++}
++
++namespace {
++
++static std::string bloodbowl_escape_bytes(
++        const char* bytes, Py_ssize_t length, Py_ssize_t shown_length) {
++    static const char hex[] = "0123456789abcdef";
++    if (shown_length > length) shown_length = length;
++    std::string escaped;
++    escaped.reserve((size_t)shown_length * 4);
++    for (Py_ssize_t index = 0; index < shown_length; index++) {
++        unsigned char byte = (unsigned char)bytes[index];
++        if (byte >= 0x20 && byte <= 0x7e && byte != '\\' && byte != '\'') {
++            escaped.push_back((char)byte);
++        } else if (byte == '\\' || byte == '\'') {
++            escaped.push_back('\\');
++            escaped.push_back((char)byte);
++        } else {
++            escaped.append("\\x");
++            escaped.push_back(hex[byte >> 4]);
++            escaped.push_back(hex[byte & 0x0f]);
++        }
++    }
++    if (shown_length < length) escaped.append("...");
++    return escaped;
++}
++
++static std::string bloodbowl_bounded_type_name(PyObject* object) {
++    const char* name = Py_TYPE(object)->tp_name;
++    if (name == nullptr) return "<unnamed>";
++    size_t length = strnlen(name, 64);
++    return bloodbowl_escape_bytes(name, (Py_ssize_t)length, (Py_ssize_t)length);
++}
++
++[[noreturn]] static void bloodbowl_config_value_error(
++        const std::string& detail) {
++    throw py::value_error(
++        "bloodbowl: invalid environment configuration: " + detail);
++}
++
++class BloodbowlTemporaryDict {
++public:
++    explicit BloodbowlTemporaryDict(int capacity) {
++        dict_.capacity = capacity;
++        if (capacity > 0) {
++            dict_.items = (DictItem*)calloc((size_t)capacity, sizeof(DictItem));
++            if (dict_.items == nullptr) {
++                PyErr_NoMemory();
++                throw py::error_already_set();
++            }
++        }
++    }
++
++    ~BloodbowlTemporaryDict() {
++        free(dict_.items);
++    }
++
++    BloodbowlTemporaryDict(const BloodbowlTemporaryDict&) = delete;
++    BloodbowlTemporaryDict& operator=(const BloodbowlTemporaryDict&) = delete;
++
++    Dict* get() {
++        return &dict_;
++    }
++
++private:
++    Dict dict_ = {};
++};
++
++#ifdef PUFFER_STRICT_ENV_CONFIG_TESTING
++struct BloodbowlStrictEnvConfigStages {
++    unsigned long long normalize_calls;
++    unsigned long long normalize_gil_held_calls;
++    unsigned long long create_static_vec_calls;
++    unsigned long long cuda_get_device_count_calls;
++    unsigned long long create_pufferl_impl_calls;
++};
++
++static BloodbowlStrictEnvConfigStages bloodbowl_strict_stages = {};
++
++#define create_static_vec(...) \
++    (bloodbowl_strict_stages.create_static_vec_calls++, \
++        create_static_vec(__VA_ARGS__))
++#define cudaGetDeviceCount(...) \
++    (bloodbowl_strict_stages.cuda_get_device_count_calls++, \
++        cudaGetDeviceCount(__VA_ARGS__))
++#define create_pufferl_impl(...) \
++    (bloodbowl_strict_stages.create_pufferl_impl_calls++, \
++        create_pufferl_impl(__VA_ARGS__))
++
++static py::dict bloodbowl_strict_env_config_test_stages(bool reset) {
++    BloodbowlStrictEnvConfigStages snapshot = bloodbowl_strict_stages;
++    if (reset) bloodbowl_strict_stages = {};
++    py::dict result;
++    result["normalize_calls"] = snapshot.normalize_calls;
++    result["normalize_gil_held_calls"] = snapshot.normalize_gil_held_calls;
++    result["create_static_vec_calls"] = snapshot.create_static_vec_calls;
++    result["cuda_get_device_count_calls"] =
++        snapshot.cuda_get_device_count_calls;
++    result["create_pufferl_impl_calls"] =
++        snapshot.create_pufferl_impl_calls;
++    return result;
++}
++#endif
++
++static py::dict bloodbowl_normalize_and_preflight_env(py::dict source) {
++#ifdef PUFFER_STRICT_ENV_CONFIG_TESTING
++    bloodbowl_strict_stages.normalize_calls++;
++    if (PyGILState_Check()) {
++        bloodbowl_strict_stages.normalize_gil_held_calls++;
++    }
++#endif
++    if (!PyGILState_Check()) {
++        throw std::runtime_error(
++            "Blood Bowl environment preflight requires the Python GIL");
++    }
++
++    int schema_key_count = my_environment_config_key_count();
++    if (schema_key_count <= 0) {
++        throw std::runtime_error(
++            "Blood Bowl environment schema reported an invalid key count");
++    }
++
++    Py_ssize_t supplied_count = PyDict_Size(source.ptr());
++    if (supplied_count < 0) {
++        PyErr_Clear();
++        bloodbowl_config_value_error(
++            "environment dictionary cardinality could not be read");
++    }
++    if (supplied_count > (Py_ssize_t)schema_key_count) {
++        bloodbowl_config_value_error(
++            "environment dictionary must contain at most " +
++            std::to_string(schema_key_count) + " keys; got " +
++            std::to_string(supplied_count));
++    }
++
++    py::dict normalized;
++    for (auto item : source) {
++        PyObject* key_object = item.first.ptr();
++        if (!PyUnicode_CheckExact(key_object)) {
++            bloodbowl_config_value_error(
++                "environment key must be an exact str; got type '" +
++                bloodbowl_bounded_type_name(key_object) + "'");
++        }
++
++        Py_ssize_t key_length = 0;
++        const char* key_bytes =
++            PyUnicode_AsUTF8AndSize(key_object, &key_length);
++        if (key_bytes == nullptr) {
++            PyErr_Clear();
++            bloodbowl_config_value_error(
++                "environment key could not be encoded as UTF-8");
++        }
++        if (key_length == 0) {
++            bloodbowl_config_value_error(
++                "environment key '' must match [a-z0-9_]+");
++        }
++        if (key_length > 63) {
++            bloodbowl_config_value_error(
++                "environment key '" +
++                bloodbowl_escape_bytes(key_bytes, key_length, 32) +
++                "' must be at most 63 UTF-8 bytes; got " +
++                std::to_string(key_length));
++        }
++        for (Py_ssize_t index = 0; index < key_length; index++) {
++            unsigned char byte = (unsigned char)key_bytes[index];
++            bool valid = (byte >= 'a' && byte <= 'z') ||
++                (byte >= '0' && byte <= '9') || byte == '_';
++            if (!valid) {
++                bloodbowl_config_value_error(
++                    "environment key '" +
++                    bloodbowl_escape_bytes(
++                        key_bytes, key_length, key_length) +
++                    "' must match [a-z0-9_]+");
++            }
++        }
++
++        PyObject* value_object = item.second.ptr();
++        double value = 0.0;
++        if (PyBool_Check(value_object)) {
++            value = value_object == Py_True ? 1.0 : 0.0;
++        } else if (PyLong_CheckExact(value_object)) {
++            int overflow = 0;
++            long long integer =
++                PyLong_AsLongLongAndOverflow(value_object, &overflow);
++            if (overflow != 0 || PyErr_Occurred()) {
++                PyErr_Clear();
++                bloodbowl_config_value_error(
++                    "environment key '" +
++                    bloodbowl_escape_bytes(
++                        key_bytes, key_length, key_length) +
++                    "' integer is outside the exact double transport range");
++            }
++            constexpr long long exact_integer_limit = 9007199254740991LL;
++            if (integer < -exact_integer_limit ||
++                    integer > exact_integer_limit) {
++                bloodbowl_config_value_error(
++                    "environment key '" +
++                    bloodbowl_escape_bytes(
++                        key_bytes, key_length, key_length) +
++                    "' integer is outside the exact double transport range");
++            }
++            value = (double)integer;
++        } else if (PyFloat_CheckExact(value_object)) {
++            value = PyFloat_AS_DOUBLE(value_object);
++        } else {
++            bloodbowl_config_value_error(
++                "environment key '" +
++                bloodbowl_escape_bytes(
++                    key_bytes, key_length, key_length) +
++                "' must have an exact bool, int, or float value; got type '" +
++                bloodbowl_bounded_type_name(value_object) + "'");
++        }
++
++        normalized[item.first] = py::float_(value);
++    }
++
++    BloodbowlTemporaryDict temporary((int)supplied_count);
++    int index = 0;
++    for (auto item : normalized) {
++        Py_ssize_t key_length = 0;
++        const char* key_bytes =
++            PyUnicode_AsUTF8AndSize(item.first.ptr(), &key_length);
++        if (key_bytes == nullptr) {
++            PyErr_Clear();
++            bloodbowl_config_value_error(
++                "normalized environment key could not be encoded as UTF-8");
++        }
++        temporary.get()->items[index].key = key_bytes;
++        temporary.get()->items[index].value =
++            PyFloat_AS_DOUBLE(item.second.ptr());
++        index++;
++    }
++    temporary.get()->size = index;
++
++    char diagnostic[512] = {};
++    if (my_environment_config_preflight(
++            temporary.get(), diagnostic, sizeof(diagnostic)) != 0) {
++        diagnostic[sizeof(diagnostic) - 1] = '\0';
++        size_t diagnostic_length = strnlen(diagnostic, sizeof(diagnostic));
++        if (diagnostic_length == 0) {
++            bloodbowl_config_value_error(
++                "native preflight rejected the configuration");
++        }
++        bloodbowl_config_value_error(
++            std::string(diagnostic, diagnostic_length));
++    }
++    return normalized;
++}
++
++} // namespace
++#endif
++
+ double get_config(py::dict& kwargs, const char* key) {
+     if (!kwargs.contains(key)) {
+         throw std::runtime_error(std::string("Missing config key: ") + key);
+@@ -649,6 +907,9 @@ struct VecEnv {
+ std::unique_ptr<VecEnv> create_vec(py::dict args, int gpu) {
+     py::dict vec_kwargs = args["vec"].cast<py::dict>();
+     py::dict env_kwargs = args["env"].cast<py::dict>();
++#ifdef PUFFER_STRICT_ENV_CONFIG
++    env_kwargs = bloodbowl_normalize_and_preflight_env(env_kwargs);
++#endif
+ 
+     int total_agents = (int)get_config(vec_kwargs, "total_agents");
+     int num_buffers  = (int)get_config(vec_kwargs, "num_buffers");
+@@ -717,9 +978,12 @@ void vec_close(VecEnv& ve) {
+ }
+ 
+ std::unique_ptr<PuffeRL> create_pufferl(py::dict args) {
+-    py::dict train_kwargs = args["train"].cast<py::dict>();
+     py::dict vec_kwargs = args["vec"].cast<py::dict>();
+     py::dict env_kwargs = args["env"].cast<py::dict>();
++#ifdef PUFFER_STRICT_ENV_CONFIG
++    env_kwargs = bloodbowl_normalize_and_preflight_env(env_kwargs);
++#endif
++    py::dict train_kwargs = args["train"].cast<py::dict>();
+     py::dict policy_kwargs = args["policy"].cast<py::dict>();
+ 
+     HypersT hypers;
+@@ -848,6 +1112,17 @@ PYBIND11_MODULE(_C, m) {
+     m.attr("precision_bytes") = (int)sizeof(precision_t);
+     m.attr("env_name") = PUFFER_STRINGIFY(ENV_NAME);
+     m.attr("gpu") = 1;
++#ifdef PUFFER_STRICT_ENV_CONFIG
++    m.attr("environment_config_schema") = my_environment_config_schema();
++#endif
++#ifdef PUFFER_STRICT_ENV_CONFIG_TESTING
++    m.attr("strict_env_config_testing") = true;
++    m.def("strict_env_config_test_stages",
++        &bloodbowl_strict_env_config_test_stages,
++        py::arg("reset") = false);
++#else
++    m.attr("strict_env_config_testing") = false;
++#endif
+     m.attr("exact_action_source_hash") = PUFFER_EXACT_ACTION_SOURCE_HASH;
+     m.attr("environment_source_hash") = PUFFER_ENV_SOURCE_HASH;
+     m.attr("observation_abi") = PUFFER_OBSERVATION_ABI;
+diff --git a/src/bindings_cpu.cpp b/src/bindings_cpu.cpp
+index 5de2d0fd..3b87044d 100644
+--- a/src/bindings_cpu.cpp
++++ b/src/bindings_cpu.cpp
+@@ -111,6 +111,258 @@ static void py_puff_advantage_cpu(
+     }
+ }
+ 
++#ifdef PUFFER_STRICT_ENV_CONFIG
++extern "C" {
++const char* my_environment_config_schema(void);
++int my_environment_config_key_count(void);
++int my_environment_config_preflight(
++    Dict* kwargs, char* diagnostic, size_t diagnostic_capacity);
++}
++
++namespace {
++
++static std::string bloodbowl_escape_bytes(
++        const char* bytes, Py_ssize_t length, Py_ssize_t shown_length) {
++    static const char hex[] = "0123456789abcdef";
++    if (shown_length > length) shown_length = length;
++    std::string escaped;
++    escaped.reserve((size_t)shown_length * 4);
++    for (Py_ssize_t index = 0; index < shown_length; index++) {
++        unsigned char byte = (unsigned char)bytes[index];
++        if (byte >= 0x20 && byte <= 0x7e && byte != '\\' && byte != '\'') {
++            escaped.push_back((char)byte);
++        } else if (byte == '\\' || byte == '\'') {
++            escaped.push_back('\\');
++            escaped.push_back((char)byte);
++        } else {
++            escaped.append("\\x");
++            escaped.push_back(hex[byte >> 4]);
++            escaped.push_back(hex[byte & 0x0f]);
++        }
++    }
++    if (shown_length < length) escaped.append("...");
++    return escaped;
++}
++
++static std::string bloodbowl_bounded_type_name(PyObject* object) {
++    const char* name = Py_TYPE(object)->tp_name;
++    if (name == nullptr) return "<unnamed>";
++    size_t length = strnlen(name, 64);
++    return bloodbowl_escape_bytes(name, (Py_ssize_t)length, (Py_ssize_t)length);
++}
++
++[[noreturn]] static void bloodbowl_config_value_error(
++        const std::string& detail) {
++    throw py::value_error(
++        "bloodbowl: invalid environment configuration: " + detail);
++}
++
++class BloodbowlTemporaryDict {
++public:
++    explicit BloodbowlTemporaryDict(int capacity) {
++        dict_.capacity = capacity;
++        if (capacity > 0) {
++            dict_.items = (DictItem*)calloc((size_t)capacity, sizeof(DictItem));
++            if (dict_.items == nullptr) {
++                PyErr_NoMemory();
++                throw py::error_already_set();
++            }
++        }
++    }
++
++    ~BloodbowlTemporaryDict() {
++        free(dict_.items);
++    }
++
++    BloodbowlTemporaryDict(const BloodbowlTemporaryDict&) = delete;
++    BloodbowlTemporaryDict& operator=(const BloodbowlTemporaryDict&) = delete;
++
++    Dict* get() {
++        return &dict_;
++    }
++
++private:
++    Dict dict_ = {};
++};
++
++#ifdef PUFFER_STRICT_ENV_CONFIG_TESTING
++struct BloodbowlStrictEnvConfigStages {
++    unsigned long long normalize_calls;
++    unsigned long long normalize_gil_held_calls;
++    unsigned long long create_static_vec_calls;
++    unsigned long long cuda_get_device_count_calls;
++    unsigned long long create_pufferl_impl_calls;
++};
++
++static BloodbowlStrictEnvConfigStages bloodbowl_strict_stages = {};
++
++#define create_static_vec(...) \
++    (bloodbowl_strict_stages.create_static_vec_calls++, \
++        create_static_vec(__VA_ARGS__))
++
++static py::dict bloodbowl_strict_env_config_test_stages(bool reset) {
++    BloodbowlStrictEnvConfigStages snapshot = bloodbowl_strict_stages;
++    if (reset) bloodbowl_strict_stages = {};
++    py::dict result;
++    result["normalize_calls"] = snapshot.normalize_calls;
++    result["normalize_gil_held_calls"] = snapshot.normalize_gil_held_calls;
++    result["create_static_vec_calls"] = snapshot.create_static_vec_calls;
++    result["cuda_get_device_count_calls"] =
++        snapshot.cuda_get_device_count_calls;
++    result["create_pufferl_impl_calls"] =
++        snapshot.create_pufferl_impl_calls;
++    return result;
++}
++#endif
++
++static py::dict bloodbowl_normalize_and_preflight_env(py::dict source) {
++#ifdef PUFFER_STRICT_ENV_CONFIG_TESTING
++    bloodbowl_strict_stages.normalize_calls++;
++    if (PyGILState_Check()) {
++        bloodbowl_strict_stages.normalize_gil_held_calls++;
++    }
++#endif
++    if (!PyGILState_Check()) {
++        throw std::runtime_error(
++            "Blood Bowl environment preflight requires the Python GIL");
++    }
++
++    int schema_key_count = my_environment_config_key_count();
++    if (schema_key_count <= 0) {
++        throw std::runtime_error(
++            "Blood Bowl environment schema reported an invalid key count");
++    }
++
++    Py_ssize_t supplied_count = PyDict_Size(source.ptr());
++    if (supplied_count < 0) {
++        PyErr_Clear();
++        bloodbowl_config_value_error(
++            "environment dictionary cardinality could not be read");
++    }
++    if (supplied_count > (Py_ssize_t)schema_key_count) {
++        bloodbowl_config_value_error(
++            "environment dictionary must contain at most " +
++            std::to_string(schema_key_count) + " keys; got " +
++            std::to_string(supplied_count));
++    }
++
++    py::dict normalized;
++    for (auto item : source) {
++        PyObject* key_object = item.first.ptr();
++        if (!PyUnicode_CheckExact(key_object)) {
++            bloodbowl_config_value_error(
++                "environment key must be an exact str; got type '" +
++                bloodbowl_bounded_type_name(key_object) + "'");
++        }
++
++        Py_ssize_t key_length = 0;
++        const char* key_bytes =
++            PyUnicode_AsUTF8AndSize(key_object, &key_length);
++        if (key_bytes == nullptr) {
++            PyErr_Clear();
++            bloodbowl_config_value_error(
++                "environment key could not be encoded as UTF-8");
++        }
++        if (key_length == 0) {
++            bloodbowl_config_value_error(
++                "environment key '' must match [a-z0-9_]+");
++        }
++        if (key_length > 63) {
++            bloodbowl_config_value_error(
++                "environment key '" +
++                bloodbowl_escape_bytes(key_bytes, key_length, 32) +
++                "' must be at most 63 UTF-8 bytes; got " +
++                std::to_string(key_length));
++        }
++        for (Py_ssize_t index = 0; index < key_length; index++) {
++            unsigned char byte = (unsigned char)key_bytes[index];
++            bool valid = (byte >= 'a' && byte <= 'z') ||
++                (byte >= '0' && byte <= '9') || byte == '_';
++            if (!valid) {
++                bloodbowl_config_value_error(
++                    "environment key '" +
++                    bloodbowl_escape_bytes(
++                        key_bytes, key_length, key_length) +
++                    "' must match [a-z0-9_]+");
++            }
++        }
++
++        PyObject* value_object = item.second.ptr();
++        double value = 0.0;
++        if (PyBool_Check(value_object)) {
++            value = value_object == Py_True ? 1.0 : 0.0;
++        } else if (PyLong_CheckExact(value_object)) {
++            int overflow = 0;
++            long long integer =
++                PyLong_AsLongLongAndOverflow(value_object, &overflow);
++            if (overflow != 0 || PyErr_Occurred()) {
++                PyErr_Clear();
++                bloodbowl_config_value_error(
++                    "environment key '" +
++                    bloodbowl_escape_bytes(
++                        key_bytes, key_length, key_length) +
++                    "' integer is outside the exact double transport range");
++            }
++            constexpr long long exact_integer_limit = 9007199254740991LL;
++            if (integer < -exact_integer_limit ||
++                    integer > exact_integer_limit) {
++                bloodbowl_config_value_error(
++                    "environment key '" +
++                    bloodbowl_escape_bytes(
++                        key_bytes, key_length, key_length) +
++                    "' integer is outside the exact double transport range");
++            }
++            value = (double)integer;
++        } else if (PyFloat_CheckExact(value_object)) {
++            value = PyFloat_AS_DOUBLE(value_object);
++        } else {
++            bloodbowl_config_value_error(
++                "environment key '" +
++                bloodbowl_escape_bytes(
++                    key_bytes, key_length, key_length) +
++                "' must have an exact bool, int, or float value; got type '" +
++                bloodbowl_bounded_type_name(value_object) + "'");
++        }
++
++        normalized[item.first] = py::float_(value);
++    }
++
++    BloodbowlTemporaryDict temporary((int)supplied_count);
++    int index = 0;
++    for (auto item : normalized) {
++        Py_ssize_t key_length = 0;
++        const char* key_bytes =
++            PyUnicode_AsUTF8AndSize(item.first.ptr(), &key_length);
++        if (key_bytes == nullptr) {
++            PyErr_Clear();
++            bloodbowl_config_value_error(
++                "normalized environment key could not be encoded as UTF-8");
++        }
++        temporary.get()->items[index].key = key_bytes;
++        temporary.get()->items[index].value =
++            PyFloat_AS_DOUBLE(item.second.ptr());
++        index++;
++    }
++    temporary.get()->size = index;
++
++    char diagnostic[512] = {};
++    if (my_environment_config_preflight(
++            temporary.get(), diagnostic, sizeof(diagnostic)) != 0) {
++        diagnostic[sizeof(diagnostic) - 1] = '\0';
++        size_t diagnostic_length = strnlen(diagnostic, sizeof(diagnostic));
++        if (diagnostic_length == 0) {
++            bloodbowl_config_value_error(
++                "native preflight rejected the configuration");
++        }
++        bloodbowl_config_value_error(
++            std::string(diagnostic, diagnostic_length));
++    }
++    return normalized;
++}
++
++} // namespace
++#endif
++
+ // ============================================================================
+ // Dict helpers (same as bindings.cu)
+ // ============================================================================
+@@ -149,6 +401,9 @@ static std::unique_ptr<VecEnv> create_vec(py::dict args, int gpu = 0) {
+     (void)gpu;
+     py::dict vec_kwargs = args["vec"].cast<py::dict>();
+     py::dict env_kwargs = args["env"].cast<py::dict>();
++#ifdef PUFFER_STRICT_ENV_CONFIG
++    env_kwargs = bloodbowl_normalize_and_preflight_env(env_kwargs);
++#endif
+     int total_agents = (int)get_config(vec_kwargs, "total_agents");
+     int num_buffers = (int)get_config(vec_kwargs, "num_buffers");
+     Dict* vec_dict = py_dict_to_c_dict(vec_kwargs);
+@@ -210,6 +465,17 @@ PYBIND11_MODULE(_C, m) {
+     m.attr("precision_bytes") = 4;
+     m.attr("env_name") = PUFFER_STRINGIFY(ENV_NAME);
+     m.attr("gpu") = 0;
++#ifdef PUFFER_STRICT_ENV_CONFIG
++    m.attr("environment_config_schema") = my_environment_config_schema();
++#endif
++#ifdef PUFFER_STRICT_ENV_CONFIG_TESTING
++    m.attr("strict_env_config_testing") = true;
++    m.def("strict_env_config_test_stages",
++        &bloodbowl_strict_env_config_test_stages,
++        py::arg("reset") = false);
++#else
++    m.attr("strict_env_config_testing") = false;
++#endif
+     m.attr("exact_action_source_hash") = PUFFER_EXACT_ACTION_SOURCE_HASH;
+     m.attr("environment_source_hash") = PUFFER_ENV_SOURCE_HASH;
+     m.attr("observation_abi") = PUFFER_OBSERVATION_ABI;

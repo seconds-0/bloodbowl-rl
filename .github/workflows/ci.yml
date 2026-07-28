@@ -26,11 +26,13 @@ jobs:
             tools.test_analyze_reward_screen \
             tools.test_analyze_reward_transfer \
             tools.test_bbp_behavior_audit \
+            tools.test_ci_strict_environment_config \
             tools.test_experiment_contracts \
             tools.test_experiment_queue \
             tools.test_game_stats \
             tools.test_human_possession \
             tools.test_filter_state_bank \
+            tools.test_puffer_source_manifest \
             tools.test_report_scenario_coverage \
             tools.test_replay_corpus_audit \
             tools.test_reward_manifest \
@@ -38,6 +40,7 @@ jobs:
             tools.test_run_checkpoint_milestone_eval \
             tools.test_run_reward_learned_transfer \
             tools.test_live_integrity_guard \
+            tools.test_strict_environment_config_contract \
             tools.test_checkpoint_lineage
           for manifest in puffer/config/rewards/*.json; do
             python3 tools/reward_manifest.py "$manifest" --json >/dev/null
@@ -63,4 +66,186 @@ jobs:
         run: make test
       - name: ASan/UBSan tests
         run: make asan
+
+  strict-environment-config-cpu:
+    runs-on: ubuntu-24.04
+    env:
+      PUFFER_COMMIT: 9836f0d2e78889c1aaf189c04d161b6fc61a9386
+      RAYLIB_ARCHIVE: raylib-5.5_linux_amd64.tar.gz
+      RAYLIB_SHA256: 3d95ef03d5b38dfa55c0a16ca122d382134b078f0e5b270b52fe7eae0549c000
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install pinned-build system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            build-essential \
+            ca-certificates \
+            clang \
+            curl \
+            git \
+            libgl1-mesa-dev \
+            libomp-dev \
+            libomp5 \
+            libx11-dev \
+            libxcursor-dev \
+            libxi-dev \
+            libxinerama-dev \
+            libxrandr-dev \
+            pkg-config \
+            python3-dev \
+            python3-venv \
+            tar
+      - name: Restore SHA-pinned Raylib archive
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/puffer-assets/raylib-5.5_linux_amd64.tar.gz
+          key: raylib-5.5-linux-amd64-3d95ef03d5b38dfa55c0a16ca122d382134b078f0e5b270b52fe7eae0549c000
+      - name: Fetch and verify Raylib 5.5
+        run: |
+          mkdir -p "$RUNNER_TEMP/puffer-assets"
+          if [ ! -f "$RUNNER_TEMP/puffer-assets/$RAYLIB_ARCHIVE" ]; then
+            curl --fail --location --retry 3 \
+              --output "$RUNNER_TEMP/puffer-assets/$RAYLIB_ARCHIVE" \
+              "https://github.com/raysan5/raylib/releases/download/5.5/$RAYLIB_ARCHIVE"
+          fi
+          (
+            cd "$RUNNER_TEMP/puffer-assets"
+            sha256sum --check \
+              "$GITHUB_WORKSPACE/training/raylib-5.5_linux_amd64.sha256"
+          )
+          test "$(
+            sha256sum "$RUNNER_TEMP/puffer-assets/$RAYLIB_ARCHIVE" |
+              awk '{print $1}'
+          )" = "$RAYLIB_SHA256"
+      - name: Create exact Puffer checkout and isolated toolchain
+        run: |
+          git clone https://github.com/PufferAI/PufferLib.git \
+            "$RUNNER_TEMP/PufferLib"
+          git -C "$RUNNER_TEMP/PufferLib" checkout --detach "$PUFFER_COMMIT"
+          test "$(
+            git -C "$RUNNER_TEMP/PufferLib" rev-parse HEAD
+          )" = "$PUFFER_COMMIT"
+          python3 -m venv "$RUNNER_TEMP/PufferLib/.venv"
+          "$RUNNER_TEMP/PufferLib/.venv/bin/python" -m pip install \
+            --disable-pip-version-check \
+            pip==26.1.2
+          "$RUNNER_TEMP/PufferLib/.venv/bin/python" -m pip install \
+            --disable-pip-version-check \
+            --requirement \
+            "$GITHUB_WORKSPACE/training/strict_environment_config_ci_requirements.txt"
+          tar --extract --gzip \
+            --file "$RUNNER_TEMP/puffer-assets/$RAYLIB_ARCHIVE" \
+            --directory "$RUNNER_TEMP/PufferLib"
+          test -f \
+            "$RUNNER_TEMP/PufferLib/raylib-5.5_linux_amd64/lib/libraylib.a"
+          test -f \
+            "$RUNNER_TEMP/PufferLib/raylib-5.5_linux_amd64/include/raylib.h"
+      - name: Install twice, build CPU and standalone, then drift-check
+        run: |
+          export PATH="$RUNNER_TEMP/PufferLib/.venv/bin:$PATH"
+          export PYTHONPATH="$RUNNER_TEMP/PufferLib"
+          test "$(
+            python -c 'import sys; print(sys.prefix)'
+          )" = "$RUNNER_TEMP/PufferLib/.venv"
+          bash tools/install_puffer_env.sh "$RUNNER_TEMP/PufferLib"
+          bash tools/install_puffer_env.sh "$RUNNER_TEMP/PufferLib"
+          (
+            cd "$RUNNER_TEMP/PufferLib"
+            ./build.sh bloodbowl --cpu
+            ./build.sh bloodbowl --fast
+          )
+          bash tools/install_puffer_env.sh --check "$RUNNER_TEMP/PufferLib"
+          PUFFER_STRICT_TEST_ROOT="$RUNNER_TEMP/PufferLib" \
+            "$RUNNER_TEMP/PufferLib/.venv/bin/python" -m unittest -v \
+            tools.test_strict_environment_config_contract
+      - name: Validate production CPU construction and rejection evidence
+        run: |
+          export PATH="$RUNNER_TEMP/PufferLib/.venv/bin:$PATH"
+          export PYTHONPATH="$RUNNER_TEMP/PufferLib"
+          "$RUNNER_TEMP/PufferLib/.venv/bin/python" \
+            tools/ci_strict_environment_config.py run \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --puffer-root "$RUNNER_TEMP/PufferLib" \
+            --raylib-archive \
+              "$RUNNER_TEMP/puffer-assets/$RAYLIB_ARCHIVE" \
+            --output \
+              "$RUNNER_TEMP/strict-environment-config-cpu.json"
+      - name: Validate isolated strict-config testing role
+        run: |
+          export PATH="$RUNNER_TEMP/PufferLib/.venv/bin:$PATH"
+          export PYTHONPATH="$RUNNER_TEMP/PufferLib"
+          production_module="$(
+            python -c 'from pufferlib import _C; print(_C.__file__)'
+          )"
+          production_module_sha256="$(
+            sha256sum "$production_module" | awk '{print $1}'
+          )"
+
+          git clone https://github.com/PufferAI/PufferLib.git \
+            "$RUNNER_TEMP/PufferLib-strict-test"
+          git -C "$RUNNER_TEMP/PufferLib-strict-test" \
+            checkout --detach "$PUFFER_COMMIT"
+          test "$(
+            git -C "$RUNNER_TEMP/PufferLib-strict-test" rev-parse HEAD
+          )" = "$PUFFER_COMMIT"
+          ln -s "$RUNNER_TEMP/PufferLib/.venv" \
+            "$RUNNER_TEMP/PufferLib-strict-test/.venv"
+          tar --extract --gzip \
+            --file "$RUNNER_TEMP/puffer-assets/$RAYLIB_ARCHIVE" \
+            --directory "$RUNNER_TEMP/PufferLib-strict-test"
+          bash tools/install_puffer_env.sh \
+            "$RUNNER_TEMP/PufferLib-strict-test"
+          (
+            cd "$RUNNER_TEMP/PufferLib-strict-test"
+            PUFFER_STRICT_ENV_CONFIG_TESTING=1 \
+              ./build.sh bloodbowl --cpu
+          )
+          PYTHONPATH="$RUNNER_TEMP/PufferLib-strict-test" \
+            "$RUNNER_TEMP/PufferLib/.venv/bin/python" \
+            tools/ci_strict_environment_config.py test-role \
+            --puffer-root "$RUNNER_TEMP/PufferLib-strict-test" \
+            --output \
+              "$RUNNER_TEMP/strict-environment-config-test-role.json"
+
+          if PYTHONPATH="$RUNNER_TEMP/PufferLib-strict-test" \
+              bash tools/install_puffer_env.sh --check \
+              "$RUNNER_TEMP/PufferLib-strict-test" \
+              >"$RUNNER_TEMP/test-role-installer-check.log" 2>&1; then
+            echo "test-role module passed the production installer gate" >&2
+            exit 1
+          fi
+          grep -Fq \
+            "compiled observation/action/config lineage mismatch" \
+            "$RUNNER_TEMP/test-role-installer-check.log"
+          test "$(
+            sha256sum "$production_module" | awk '{print $1}'
+          )" = "$production_module_sha256"
+      - name: Validate marker-absent environment compatibility
+        run: |
+          export PATH="$RUNNER_TEMP/PufferLib/.venv/bin:$PATH"
+          (
+            cd "$RUNNER_TEMP/PufferLib-strict-test"
+            ./build.sh minimal --cpu
+          )
+          PYTHONPATH="$RUNNER_TEMP/PufferLib-strict-test" \
+            "$RUNNER_TEMP/PufferLib/.venv/bin/python" \
+            tools/ci_strict_environment_config.py \
+            unrelated-environment \
+            --puffer-root "$RUNNER_TEMP/PufferLib-strict-test" \
+            --output \
+              "$RUNNER_TEMP/strict-environment-config-unrelated.json"
+      - name: Upload strict environment evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: strict-environment-config-cpu
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/strict-environment-config-cpu.json
+            ${{ runner.temp }}/strict-environment-config-test-role.json
+            ${{ runner.temp }}/strict-environment-config-unrelated.json
+            ${{ runner.temp }}/test-role-installer-check.log
   # nightly job (long fuzz, replay differential, chi-square) added in Phase 4

@@ -150,6 +150,7 @@ PAIRED_CANDIDATES = ("possession_only", "gain_only", "neither")
 PAIRED_FINAL_SEEDS = (42, 43, 44)
 CONTROL_FINAL_SCHEDULE = (("both", 42), ("both", 43), ("both", 44))
 EXACT_ACTION_CANARY_SCHEDULE = (("both", 42),)
+ENVIRONMENT_CONFIG_SCHEMA = "bloodbowl-environment-config-v1"
 
 # HARD_INTEGRITY_KEYS (imported from live_integrity_guard) is the ONLY
 # hard-integrity registry.  This module used to carry a second, hand-copied
@@ -327,6 +328,61 @@ def _screen_spec(contract: dict[str, Any]) -> dict[str, Any]:
     raise AnalysisError(f"unsupported reward-screen profile: {profile!r}")
 
 
+def _carries_strict_environment_metadata(contract: dict[str, Any]) -> bool:
+    implementation = contract.get("implementation")
+    if not isinstance(implementation, dict):
+        return False
+    if (
+        "compiled_environment_config_schema" in implementation
+        or "compiled_strict_env_config_testing" in implementation
+    ):
+        return True
+    compiled = implementation.get("compiled_semantic_contract")
+    return isinstance(compiled, dict) and (
+        "environment_config_schema" in compiled
+        or "strict_env_config_testing" in compiled
+    )
+
+
+def _validate_strict_environment_metadata(
+    contract: dict[str, Any],
+    profile: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Require the production strict-config identity in a current manifest."""
+
+    implementation = _need_mapping(
+        contract.get("implementation"),
+        f"{profile} implementation",
+    )
+    compiled = _need_mapping(
+        implementation.get("compiled_semantic_contract"),
+        f"{profile} compiled_semantic_contract",
+    )
+    observed_schema = compiled.get("environment_config_schema")
+    if observed_schema != ENVIRONMENT_CONFIG_SCHEMA:
+        raise AnalysisError(
+            f"{profile} compiled environment_config_schema mismatch: "
+            f"{observed_schema!r} != {ENVIRONMENT_CONFIG_SCHEMA!r}"
+        )
+    if compiled.get("strict_env_config_testing") is not False:
+        raise AnalysisError(
+            f"{profile} compiled strict_env_config_testing must be JSON false"
+        )
+    if (
+        implementation.get("compiled_environment_config_schema")
+        != ENVIRONMENT_CONFIG_SCHEMA
+    ):
+        raise AnalysisError(
+            f"{profile} immutable environment-config schema metadata differs "
+            "from the production strict schema"
+        )
+    if implementation.get("compiled_strict_env_config_testing") is not False:
+        raise AnalysisError(
+            f"{profile} immutable strict-config role metadata must be JSON false"
+        )
+    return implementation, compiled
+
+
 def _validate_exact_action_canary_contract(contract: dict[str, Any]) -> None:
     """Check what a qualification canary can get scientifically WRONG.
 
@@ -369,8 +425,10 @@ def _validate_exact_action_canary_contract(contract: dict[str, Any]) -> None:
             "exact-action-canary must be an fp32 build: bf16 behavior "
             "log-probability storage cannot satisfy the qualification gate")
 
-    implementation = _need_mapping(
-        contract.get("implementation"), "exact-action-canary implementation")
+    implementation, compiled = _validate_strict_environment_metadata(
+        contract,
+        "exact-action-canary",
+    )
     source_sha = _need_sha256(
         implementation.get("source_sha256"),
         "exact-action-canary implementation.source_sha256",
@@ -378,10 +436,6 @@ def _validate_exact_action_canary_contract(contract: dict[str, Any]) -> None:
     _need_sha256(
         implementation.get("compiled_module_sha256"),
         "exact-action-canary implementation.compiled_module_sha256",
-    )
-    compiled = _need_mapping(
-        implementation.get("compiled_semantic_contract"),
-        "exact-action-canary compiled_semantic_contract",
     )
     expected_compiled = {
         "env_name": "bloodbowl",
@@ -781,6 +835,8 @@ def analyze_screen(
     spec = _screen_spec(contract)
     if spec["profile"] == "exact-action-canary":
         _validate_exact_action_canary_contract(contract)
+    elif manifest_schema == 2 or _carries_strict_environment_metadata(contract):
+        _validate_strict_environment_metadata(contract, spec["profile"])
     prefix = contract.get("prefix")
     if not isinstance(prefix, str) or not prefix:
         raise AnalysisError("screen contract has no prefix")

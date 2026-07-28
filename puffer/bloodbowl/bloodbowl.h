@@ -187,6 +187,19 @@ enum {
 #define BBE_DEFAULT_REWARD_WIN 0.6f
 #define BBE_DEFAULT_REWARD_DRAW 0.0f
 
+#define BBE_STRICT_NATIVE_STAGE_ENV_ARRAY_ALLOC 0
+#define BBE_STRICT_NATIVE_STAGE_STATE_BANK_REQUIRE 1
+#define BBE_STRICT_NATIVE_STAGE_ENGINE_INIT 2
+#define BBE_STRICT_NATIVE_STAGE_COUNT 3
+
+#ifdef PUFFER_STRICT_ENV_CONFIG_TESTING
+void my_environment_config_native_test_record_stage(int stage);
+#define BBE_STRICT_NATIVE_RECORD_STAGE(stage) \
+    my_environment_config_native_test_record_stage(stage)
+#else
+#define BBE_STRICT_NATIVE_RECORD_STAGE(stage) ((void)0)
+#endif
+
 // Effective emitted-reward taxonomy. Each entry is the signed contribution
 // seen by one agent before the trainer's clamp (a +-8 pathology guard since
 // D234, not a design bound). The block-exposure entry is
@@ -1060,6 +1073,7 @@ static bool bbe_reward_config_scalars_valid(const Bloodbowl* env,
     BBE_CHECK_REWARD_FINITE(reward_ball_loss);
     BBE_CHECK_REWARD_FINITE(reward_dist_ball);
     BBE_CHECK_REWARD_FINITE(reward_dist_endzone);
+    BBE_CHECK_REWARD_FINITE(reward_dist_pbrs_gamma);
     BBE_CHECK_REWARD_FINITE(reward_injury_inflicted);
     BBE_CHECK_REWARD_FINITE(reward_injury_taken);
     BBE_CHECK_REWARD_FINITE(reward_send_off);
@@ -2222,6 +2236,11 @@ static void bbe_state_bank_prepare_env_reset_or_abort(Bloodbowl* env) {
 #ifdef BBE_STATE_BANK_TESTING
     if (!bbe_state_bank_test_publication)
 #endif
+        BBE_STRICT_NATIVE_RECORD_STAGE(
+            BBE_STRICT_NATIVE_STAGE_STATE_BANK_REQUIRE);
+#ifdef BBE_STATE_BANK_TESTING
+    if (!bbe_state_bank_test_publication)
+#endif
         bbe_state_bank_require_or_abort(env->state_bank_kind);
 
     bbe_state_bank_selector_family family;
@@ -2636,6 +2655,8 @@ static void bbe_reset_match(Bloodbowl* env) {
                 env->skillup_max_each,
                 env->skillup_secondary_pct
             };
+            BBE_STRICT_NATIVE_RECORD_STAGE(
+                BBE_STRICT_NATIVE_STAGE_ENGINE_INIT);
             bb_match_init_forced_p(&env->match, &env->procgen,
                                    env->force_home_team, env->force_away_team,
                                    env->exclude_team, &pp);
@@ -2645,6 +2666,8 @@ static void bbe_reset_match(Bloodbowl* env) {
                 env->skillup_max_each,
                 env->skillup_secondary_pct
             };
+            BBE_STRICT_NATIVE_RECORD_STAGE(
+                BBE_STRICT_NATIVE_STAGE_ENGINE_INIT);
             bb_match_init_random_p(&env->match, &env->procgen, &pp);
         }
     }

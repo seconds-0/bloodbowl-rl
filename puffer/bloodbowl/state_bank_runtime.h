@@ -1543,6 +1543,18 @@ static bbe_state_bank_error bbe_state_bank_validate_config_values(
         nonzero += selectors[i] != 0.0;
     }
     if (nonzero > 1) return BBE_SB_CONFIG_MULTIPLE_SELECTORS;
+    const double teams[] = {
+        values->exclude_team,
+        values->force_home_team,
+        values->force_away_team,
+    };
+    for (size_t i = 0; i < sizeof teams / sizeof teams[0]; i++) {
+        if (teams[i] != -1.0 &&
+            !bbe_state_bank_exact_int(
+                teams[i], 0, (int)BB_TEAM_COUNT - 1)) {
+            return BBE_SB_CONFIG_TEAM_SENTINEL;
+        }
+    }
     if (values->reset_pct == 0.0) {
         if (nonzero != 0) return BBE_SB_CONFIG_INERT_SELECTOR;
         if (kind != BBE_STATE_BANK_NONE) return BBE_SB_CONFIG_INERT_KIND;

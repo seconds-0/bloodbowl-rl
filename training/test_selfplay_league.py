@@ -275,6 +275,9 @@ class BuildLeagueTest(unittest.TestCase):
                     'observation_abi': 'obs-v6',
                     'observation_version': '6',
                     'action_abi': 'exact-joint-v1',
+                    'compiled_environment_config_schema':
+                        'bloodbowl-environment-config-v1',
+                    'compiled_strict_env_config_testing': False,
                     'initialization': 'lineage-v6',
                     'qualification_only': '0',
                     'policy_hidden_size': '512',

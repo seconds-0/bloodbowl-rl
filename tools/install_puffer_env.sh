@@ -22,6 +22,11 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+INSTALL_PYTHON="${PUFFER_INSTALL_PYTHON:-python3}"
+[ -n "$INSTALL_PYTHON" ] && command -v "$INSTALL_PYTHON" >/dev/null || {
+    echo "error: installer Python is unavailable: $INSTALL_PYTHON" >&2
+    exit 2
+}
 MODE=install
 PUFFER_ARG=""
 STATE_BANK_KIND=""
@@ -142,7 +147,7 @@ if [ "$BANK_ARGUMENT_COUNT" -eq 7 ]; then
     # This call is deliberately before even validating the destination tree.
     # Its public authorization allowlist is a literal empty frozenset, so a
     # completely valid request still fails before any installation mutation.
-    if python3 "$ROOT/tools/state_bank_contract.py" validate-request \
+    if "$INSTALL_PYTHON" "$ROOT/tools/state_bank_contract.py" validate-request \
         --kind "$STATE_BANK_KIND" \
         --bank "$STATE_BANK_SOURCE" \
         --bank-sha256 "$STATE_BANK_SHA256" \
@@ -168,6 +173,8 @@ PUFFER="$(cd "$PUFFER" && pwd)"
 DST="$PUFFER/ocean/bloodbowl"
 SELFPLAY_LEAGUE_PATCH="$ROOT/training/selfplay_league.patch"
 STANDALONE_INCLUDE_PATCH="$ROOT/training/puffer_standalone_env_include.patch"
+STRICT_ENV_CONFIG_PATCH="$ROOT/training/puffer_strict_environment_config.patch"
+COMPILED_BACKEND_LEDGER="$ROOT/training/puffer_compiled_backend_sources.txt"
 
 # The observation revision is DERIVED from the header, never typed twice. The
 # generated build header and the --check gate both used to carry their own
@@ -187,13 +194,8 @@ SOURCE_OBSERVATION_ABI="obs-v$SOURCE_OBSERVATION_VERSION"
 # engine/ and bb/ links reach into engine/src and engine/include/bb, so any
 # engine change changes the hash). Relative paths keep source and snapshot
 # hashes comparable.
-if command -v sha256sum >/dev/null 2>&1; then
-    SHA256=(sha256sum)
-else
-    SHA256=(shasum -a 256)
-fi
 snapshot_hash() {
-    python3 "$ROOT/tools/state_bank_contract.py" \
+    "$INSTALL_PYTHON" "$ROOT/tools/state_bank_contract.py" \
         environment-source-sha256 --root "$1" --plain
 }
 
@@ -202,22 +204,51 @@ snapshot_hash() {
 # header; both native and CPU extension modules expose the compiled value.
 # --check then compares current sources, generated header, and imported module.
 exact_backend_hash() {
-    (
-        cd "$PUFFER"
-        for rel in \
-            build.sh \
-            pufferlib/pufferl.py \
-            pufferlib/selfplay.py \
-            pufferlib/torch_pufferl.py \
-            src/bindings.cu \
-            src/bindings_cpu.cpp \
-            src/kernels.cu \
-            src/pufferlib.cu \
-            src/vecenv.h; do
-            [ -f "$rel" ] || exit 1
-            "${SHA256[@]}" "$rel"
-        done | "${SHA256[@]}" | awk '{print $1}'
-    )
+    "$INSTALL_PYTHON" "$ROOT/tools/puffer_source_manifest.py" \
+        --root "$PUFFER" \
+        --ledger "$COMPILED_BACKEND_LEDGER" \
+        --expected-count 9 \
+        --plain
+}
+
+strict_environment_config_sources_valid() {
+    local helper_definitions constructor_calls binding
+    grep -Fq '#define PUFFER_HAS_STRICT_ENV_CONFIG 1' \
+        "$DST/binding.c" || return 1
+    grep -Fq \
+        "grep -Fxq '#define PUFFER_HAS_STRICT_ENV_CONFIG 1' \"\$BINDING_SRC\"" \
+        "$PUFFER/build.sh" || return 1
+    grep -Fq 'STRICT_ENV_CONFIG_CFLAGS="-DPUFFER_STRICT_ENV_CONFIG=1"' \
+        "$PUFFER/build.sh" || return 1
+    grep -Fq 'PUFFER_STRICT_ENV_CONFIG_TESTING=1' \
+        "$PUFFER/build.sh" || return 1
+
+    helper_definitions="$(
+        grep -Fh \
+            'static py::dict bloodbowl_normalize_and_preflight_env(py::dict source)' \
+            "$PUFFER/src/bindings.cu" "$PUFFER/src/bindings_cpu.cpp" |
+            wc -l | tr -d ' '
+    )"
+    constructor_calls="$(
+        grep -Fh \
+            'env_kwargs = bloodbowl_normalize_and_preflight_env(env_kwargs);' \
+            "$PUFFER/src/bindings.cu" "$PUFFER/src/bindings_cpu.cpp" |
+            wc -l | tr -d ' '
+    )"
+    [ "$helper_definitions" -eq 2 ] || return 1
+    [ "$constructor_calls" -eq 3 ] || return 1
+
+    for binding in \
+            "$PUFFER/src/bindings.cu" \
+            "$PUFFER/src/bindings_cpu.cpp"; do
+        grep -Fq 'PyUnicode_AsUTF8AndSize' "$binding" || return 1
+        grep -Fq 'my_environment_config_preflight(' "$binding" || return 1
+        grep -Fq 'm.attr("environment_config_schema")' "$binding" || return 1
+        grep -Fq 'm.attr("strict_env_config_testing")' "$binding" || return 1
+    done
+    grep -Fq \
+        'Dict* env_dict = py_dict_to_c_dict(env_kwargs.cast<py::dict>());' \
+        "$PUFFER/src/bindings.cu" || return 1
 }
 
 if [ "$MODE" = "check" ]; then
@@ -233,7 +264,7 @@ if [ "$MODE" = "check" ]; then
         echo "  fix: tools/install_puffer_env.sh $PUFFER" >&2
         exit 1
     fi
-    if ! python3 "$ROOT/tools/state_bank_contract.py" check-no-bank \
+    if ! "$INSTALL_PYTHON" "$ROOT/tools/state_bank_contract.py" check-no-bank \
         --puffer-root "$PUFFER" >/dev/null; then
         echo "drift check: installed no-bank state contract is stale" >&2
         echo "  fix: tools/install_puffer_env.sh $PUFFER" >&2
@@ -304,6 +335,11 @@ if [ "$MODE" = "check" ]; then
             exit 1
         fi
     done
+    if ! strict_environment_config_sources_valid; then
+        echo "drift check: strict Blood Bowl environment boundary is incomplete" >&2
+        echo "  fix: recreate the pinned Puffer tree and reinstall the complete patch stack" >&2
+        exit 1
+    fi
     if ! git -C "$PUFFER" apply --reverse --check --no-index "$STANDALONE_INCLUDE_PATCH"; then
         echo "drift check: installed standalone include patch is missing or stale" >&2
         echo "  fix: recreate the pinned Puffer tree and reinstall the complete patch stack" >&2
@@ -315,7 +351,8 @@ if [ "$MODE" = "check" ]; then
         "$ROOT/training/pufferl_scripted_training_guard.patch" \
         "$ROOT/training/pufferl_warm_start.patch" \
         "$ROOT/training/puffer_dict_capacity.patch" \
-        "$ROOT/training/puffer_state_bank_contract.patch"; do
+        "$ROOT/training/puffer_state_bank_contract.patch" \
+        "$STRICT_ENV_CONFIG_PATCH"; do
         if ! git -C "$PUFFER" apply --reverse --check --no-index "$exact_patch"; then
             echo "drift check: installed exact patch is missing or stale: $exact_patch" >&2
             echo "  fix: recreate the pinned Puffer tree and reinstall the complete patch stack" >&2
@@ -370,11 +407,12 @@ if [ "$MODE" = "check" ]; then
         's/^#define PUFFER_ACTION_ABI "\([^"]*\)"$/\1/p' \
         "$PUFFER/src/exact_action_build_hash.h" 2>/dev/null || true)"
     compiled_contract="$(cd "$PUFFER" && "$PYBIN" -c \
-        'from pufferlib import _C; print(getattr(_C, "exact_action_source_hash", "<missing>"), getattr(_C, "environment_source_hash", "<missing>"), getattr(_C, "observation_abi", "<missing>"), getattr(_C, "observation_version", "<missing>"), getattr(_C, "action_abi", "<missing>"))' \
+        'from pufferlib import _C; print(getattr(_C, "exact_action_source_hash", "<missing>"), getattr(_C, "environment_source_hash", "<missing>"), getattr(_C, "observation_abi", "<missing>"), getattr(_C, "observation_version", "<missing>"), getattr(_C, "action_abi", "<missing>"), getattr(_C, "environment_config_schema", "<missing>"), getattr(_C, "strict_env_config_testing", "<missing>"))' \
         2>/dev/null || true)"
     read -r compiled_backend_hash compiled_environment_hash \
         compiled_observation_abi compiled_observation_version \
-        compiled_action_abi <<< "$compiled_contract"
+        compiled_action_abi compiled_environment_config_schema \
+        compiled_strict_env_config_testing <<< "$compiled_contract"
     if [ "$current_backend_hash" != "$header_backend_hash" ] || \
        [ "$current_backend_hash" != "$compiled_backend_hash" ]; then
         echo "drift check: exact-action source/module digest mismatch" >&2
@@ -391,19 +429,24 @@ if [ "$MODE" = "check" ]; then
        [ "$header_observation_version" != "$SOURCE_OBSERVATION_VERSION" ] || \
        [ "$compiled_observation_version" != "$SOURCE_OBSERVATION_VERSION" ] || \
        [ "$header_action_abi" != "exact-joint-v1" ] || \
-       [ "$compiled_action_abi" != "exact-joint-v1" ]; then
-        echo "drift check: compiled observation/action lineage mismatch" >&2
+       [ "$compiled_action_abi" != "exact-joint-v1" ] || \
+       [ "$compiled_environment_config_schema" != \
+            "bloodbowl-environment-config-v1" ] || \
+       [ "$compiled_strict_env_config_testing" != "False" ]; then
+        echo "drift check: compiled observation/action/config lineage mismatch" >&2
         echo "  environment source: $want" >&2
         echo "  header/module source: ${header_environment_hash:-<missing>} / ${compiled_environment_hash:-<missing>}" >&2
         echo "  source obs: $SOURCE_OBSERVATION_ABI / $SOURCE_OBSERVATION_VERSION" >&2
         echo "  header/module obs ABI: ${header_observation_abi:-<missing>} / ${compiled_observation_abi:-<missing>}" >&2
         echo "  header/module obs: ${header_observation_version:-<missing>} / ${compiled_observation_version:-<missing>}" >&2
         echo "  header/module action: ${header_action_abi:-<missing>} / ${compiled_action_abi:-<missing>}" >&2
+        echo "  module environment config: ${compiled_environment_config_schema:-<missing>}" >&2
+        echo "  module strict test role: ${compiled_strict_env_config_testing:-<missing>}" >&2
         echo "  fix: reinstall, then rebuild PufferLib for bloodbowl" >&2
         exit 1
     fi
     installed_state_contract="$(
-        python3 "$ROOT/tools/state_bank_contract.py" show-installed \
+        "$INSTALL_PYTHON" "$ROOT/tools/state_bank_contract.py" show-installed \
             --puffer-root "$PUFFER"
     )"
     compiled_state_contract="$(cd "$PUFFER" && \
@@ -436,7 +479,7 @@ PY
         exit 1
     fi
     standalone_state_contract="$(
-        "$STANDALONE" --state-bank-contract | python3 -c \
+        "$STANDALONE" --state-bank-contract | "$INSTALL_PYTHON" -c \
             'import json,sys; print(json.dumps(json.load(sys.stdin), sort_keys=True, separators=(",", ":")))'
     )" || {
         echo "drift check: standalone state-bank metadata is malformed" >&2
@@ -929,6 +972,43 @@ for binding in "$PUFFER/src/bindings.cu" "$PUFFER/src/bindings_cpu.cpp"; do
     fi
 done
 
+# Strict Blood Bowl environment normalization is deliberately the final patch
+# that touches build.sh or either extension binding. It is cut against the
+# complete pinned stack above, retains the normalized Python snapshot for the
+# historical downstream converter, and must not invalidate any earlier exact
+# patch that overlaps these three files.
+if [ ! -f "$STRICT_ENV_CONFIG_PATCH" ]; then
+    echo "error: missing $STRICT_ENV_CONFIG_PATCH" >&2
+    exit 1
+fi
+if git -C "$PUFFER" apply --reverse --check --no-index \
+        "$STRICT_ENV_CONFIG_PATCH" 2>/dev/null; then
+    : # Exact strict environment patch is already installed.
+elif git -C "$PUFFER" apply --check --no-index \
+        "$STRICT_ENV_CONFIG_PATCH" 2>/dev/null; then
+    git -C "$PUFFER" apply --no-index "$STRICT_ENV_CONFIG_PATCH"
+    echo "applied:   strict Blood Bowl environment boundary -> CPU/CUDA bindings"
+else
+    echo "error: strict environment patch is neither applicable nor installed" >&2
+    exit 1
+fi
+if ! strict_environment_config_sources_valid; then
+    echo "error: installed strict Blood Bowl environment boundary is incomplete" >&2
+    exit 1
+fi
+for overlapping_patch in \
+        "$STANDALONE_INCLUDE_PATCH" \
+        "$ROOT/training/puffer_dict_capacity.patch" \
+        "$ROOT/training/puffer_recurrent_cuda_qualification.patch" \
+        "$ROOT/training/puffer_state_bank_contract.patch" \
+        "$STRICT_ENV_CONFIG_PATCH"; do
+    if ! git -C "$PUFFER" apply --reverse --check --no-index \
+            "$overlapping_patch"; then
+        echo "error: final strict stack broke exact reverse applicability: $overlapping_patch" >&2
+        exit 1
+    fi
+done
+
 EXACT_BACKEND_HASH="$(exact_backend_hash)" || {
     echo "error: could not hash exact-action backend sources" >&2
     exit 1
@@ -944,7 +1024,7 @@ if [ "$ROOT_SOURCE_HASH" != "$INSTALLED_SOURCE_HASH" ] || \
     echo "  recorded:  $RECORDED_SOURCE_HASH" >&2
     exit 1
 fi
-python3 "$ROOT/tools/state_bank_contract.py" install-no-bank \
+"$INSTALL_PYTHON" "$ROOT/tools/state_bank_contract.py" install-no-bank \
     --puffer-root "$PUFFER" \
     --exact-action-source-hash "$EXACT_BACKEND_HASH" \
     --environment-source-hash "$INSTALLED_SOURCE_HASH" \

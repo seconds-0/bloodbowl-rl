@@ -72,6 +72,17 @@ class RewardScreenAnalysisTests(unittest.TestCase):
             contract["screen_profile"] = profile
         if candidate_arm is not None:
             contract["candidate_arm"] = candidate_arm
+        if manifest_schema == 2:
+            contract["implementation"] = {
+                "compiled_environment_config_schema":
+                    analyze_reward_screen.ENVIRONMENT_CONFIG_SCHEMA,
+                "compiled_strict_env_config_testing": False,
+                "compiled_semantic_contract": {
+                    "environment_config_schema":
+                        analyze_reward_screen.ENVIRONMENT_CONFIG_SCHEMA,
+                    "strict_env_config_testing": False,
+                },
+            }
         manifest_path = root / "SCREEN_MANIFEST.json"
         write_json(
             manifest_path,
@@ -194,12 +205,18 @@ class RewardScreenAnalysisTests(unittest.TestCase):
                 "implementation": {
                     "source_sha256": source_sha,
                     "compiled_module_sha256": digest("compiled-module"),
+                    "compiled_environment_config_schema":
+                        "bloodbowl-environment-config-v1",
+                    "compiled_strict_env_config_testing": False,
                     "compiled_semantic_contract": {
                         "env_name": "bloodbowl",
                         "precision_bytes": 4,
                         "observation_abi": "obs-v6",
                         "observation_version": 6,
                         "action_abi": "exact-joint-v1",
+                        "environment_config_schema":
+                            "bloodbowl-environment-config-v1",
+                        "strict_env_config_testing": False,
                         "environment_source_sha256": source_sha,
                     },
                 },
@@ -259,6 +276,28 @@ class RewardScreenAnalysisTests(unittest.TestCase):
         completion["screen_manifest_sha256"] = manifest_sha
         completion["results"][0]["sha256"] = sha256(result_path)
         write_json(completion_path, completion)
+
+    def rebind_profile_screen(self, root):
+        """Rebind ordinary result/completion hashes after a plan mutation."""
+        root = Path(root)
+        manifest_sha = sha256(root / "SCREEN_MANIFEST.json")
+        result_sha_by_name = {}
+        for result_path in root.glob("*.result.json"):
+            result = json.loads(result_path.read_text(encoding="utf-8"))
+            result["screen_manifest_sha256"] = manifest_sha
+            write_json(result_path, result)
+            result_sha_by_name[result_path.name] = sha256(result_path)
+        completion_path = root / "SCREEN_COMPLETE.json"
+        if completion_path.exists():
+            completion = json.loads(
+                completion_path.read_text(encoding="utf-8")
+            )
+            completion["screen_manifest_sha256"] = manifest_sha
+            for recorded in completion["results"]:
+                recorded["sha256"] = result_sha_by_name[
+                    Path(recorded["path"]).name
+                ]
+            write_json(completion_path, completion)
 
     def test_default_metrics_surface_draw_rate(self):
         self.assertIn("draw_rate", analyze_reward_screen.DEFAULT_METRICS)
@@ -380,6 +419,155 @@ class RewardScreenAnalysisTests(unittest.TestCase):
             ):
                 analyze_reward_screen.analyze_screen(tmp, ("tds",))
 
+    def test_current_noncanary_profiles_reject_strict_metadata_mutations(self):
+        candidate = "gain_only"
+        profiles = (
+            (
+                "distance-possession",
+                None,
+                None,
+                analyze_reward_screen.EXPECTED_SCHEDULE,
+                analyze_reward_screen.CANONICAL_REWARD_SHA256,
+            ),
+            (
+                "possession-gain",
+                "possession-gain",
+                None,
+                analyze_reward_screen.POSSESSION_GAIN_SCHEDULE,
+                None,
+            ),
+            (
+                "paired-confirmation",
+                "paired-confirmation",
+                candidate,
+                (
+                    ("both", 42),
+                    (candidate, 42),
+                    (candidate, 43),
+                    ("both", 43),
+                ),
+                None,
+            ),
+        )
+        mutations = (
+            (
+                "compiled-schema-missing",
+                lambda implementation: implementation[
+                    "compiled_semantic_contract"
+                ].pop("environment_config_schema"),
+                "compiled environment_config_schema mismatch",
+            ),
+            (
+                "compiled-schema",
+                lambda implementation: implementation[
+                    "compiled_semantic_contract"
+                ].__setitem__("environment_config_schema", "other-schema"),
+                "compiled environment_config_schema mismatch",
+            ),
+            (
+                "compiled-role-missing",
+                lambda implementation: implementation[
+                    "compiled_semantic_contract"
+                ].pop("strict_env_config_testing"),
+                "compiled strict_env_config_testing must be JSON false",
+            ),
+            (
+                "compiled-role",
+                lambda implementation: implementation[
+                    "compiled_semantic_contract"
+                ].__setitem__("strict_env_config_testing", True),
+                "compiled strict_env_config_testing must be JSON false",
+            ),
+            (
+                "immutable-schema-missing",
+                lambda implementation: implementation.pop(
+                    "compiled_environment_config_schema"
+                ),
+                "immutable environment-config schema metadata differs",
+            ),
+            (
+                "immutable-schema",
+                lambda implementation: implementation.__setitem__(
+                    "compiled_environment_config_schema",
+                    "other-schema",
+                ),
+                "immutable environment-config schema metadata differs",
+            ),
+            (
+                "immutable-role-missing",
+                lambda implementation: implementation.pop(
+                    "compiled_strict_env_config_testing"
+                ),
+                "immutable strict-config role metadata must be JSON false",
+            ),
+            (
+                "immutable-role",
+                lambda implementation: implementation.__setitem__(
+                    "compiled_strict_env_config_testing",
+                    True,
+                ),
+                "immutable strict-config role metadata must be JSON false",
+            ),
+        )
+        for (
+            profile_label,
+            profile,
+            candidate_arm,
+            schedule,
+            rewards,
+        ) in profiles:
+            for mutation_label, mutate, diagnostic in mutations:
+                with (
+                    self.subTest(
+                        profile=profile_label,
+                        mutation=mutation_label,
+                    ),
+                    tempfile.TemporaryDirectory() as tmp,
+                ):
+                    self.build_profile_screen(
+                        tmp,
+                        prefix=f"{profile_label}-strict-metadata",
+                        profile=profile,
+                        candidate_arm=candidate_arm,
+                        schedule_pairs=schedule,
+                        rewards=rewards,
+                        eval_metrics=lambda _index, _arm, _seed: {
+                            "n": 10_001,
+                            "tds": 1.0,
+                        },
+                        manifest_schema=2,
+                    )
+                    manifest_path = Path(tmp) / "SCREEN_MANIFEST.json"
+                    manifest = json.loads(
+                        manifest_path.read_text(encoding="utf-8")
+                    )
+                    mutate(manifest["contract"]["implementation"])
+                    write_json(manifest_path, manifest)
+                    self.rebind_profile_screen(tmp)
+                    with self.assertRaisesRegex(
+                        analyze_reward_screen.AnalysisError,
+                        diagnostic,
+                    ):
+                        analyze_reward_screen.analyze_screen(tmp, ("tds",))
+
+    def test_historical_schema1_noncanary_without_strict_metadata_is_supported(
+        self,
+    ):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.build_profile_screen(
+                tmp,
+                prefix="historical-possession-gain",
+                profile="possession-gain",
+                schedule_pairs=analyze_reward_screen.POSSESSION_GAIN_SCHEDULE,
+                eval_metrics=lambda _index, _arm, _seed: {
+                    "n": 10_001,
+                    "tds": 1.0,
+                },
+                manifest_schema=1,
+            )
+            report = analyze_reward_screen.analyze_screen(tmp, ("tds",))
+        self.assertEqual(report["screen"]["profile"], "possession-gain")
+
     def test_analyzer_rejects_oversized_symlinked_and_duplicate_evidence(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.build_screen(tmp)
@@ -494,6 +682,32 @@ class RewardScreenAnalysisTests(unittest.TestCase):
                     "compiled_semantic_contract"].__setitem__(
                         "action_abi", "marginal-heads"),
                 "compiled action_abi mismatch",
+            ),
+            (
+                "compiled_environment_config_schema",
+                lambda contract: contract["implementation"][
+                    "compiled_semantic_contract"].__setitem__(
+                        "environment_config_schema", "other-schema"),
+                "compiled environment_config_schema mismatch",
+            ),
+            (
+                "compiled_test_role",
+                lambda contract: contract["implementation"][
+                    "compiled_semantic_contract"].__setitem__(
+                        "strict_env_config_testing", True),
+                "strict_env_config_testing.*JSON false",
+            ),
+            (
+                "immutable_environment_config_schema",
+                lambda contract: contract["implementation"].__setitem__(
+                    "compiled_environment_config_schema", "other-schema"),
+                "immutable environment-config schema metadata differs",
+            ),
+            (
+                "immutable_test_role",
+                lambda contract: contract["implementation"].__setitem__(
+                    "compiled_strict_env_config_testing", True),
+                "immutable strict-config role metadata.*JSON false",
             ),
             (
                 "bf16_build",

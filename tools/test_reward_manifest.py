@@ -143,6 +143,34 @@ class RewardManifestTests(unittest.TestCase):
                 ValueError, "reward_dist_endzone.*must be >= 0"):
             reward_manifest.validate_manifest(manifest)
 
+    def test_exact_pbrs_gamma_matches_the_native_public_domain(self):
+        manifest = {
+            "schema_version": 2,
+            "name": "gamma-domain",
+            "reward": self.complete_reward(),
+        }
+        for valid in (0.0, 0.5, 1.0):
+            with self.subTest(valid=valid):
+                candidate = json.loads(json.dumps(manifest))
+                candidate["reward"]["reward_dist_pbrs_gamma"] = valid
+                reward_manifest.validate_manifest(candidate)
+
+        for invalid in (-0.0001, -1.0, 1.0001, float("nan"),
+                        float("inf"), -float("inf")):
+            with self.subTest(invalid=invalid):
+                candidate = json.loads(json.dumps(manifest))
+                candidate["reward"]["reward_dist_pbrs_gamma"] = invalid
+                with self.assertRaisesRegex(
+                        ValueError,
+                        r"reward_dist_pbrs_gamma.*finite.*\[0,1\]"):
+                    reward_manifest.validate_manifest(candidate)
+
+        candidate = json.loads(json.dumps(manifest))
+        candidate["reward"]["reward_dist_pbrs_gamma"] = 1.0e-50
+        with self.assertRaisesRegex(
+                ValueError, "reward_dist_pbrs_gamma.*underflow.*float32"):
+            reward_manifest.validate_manifest(candidate)
+
     def test_trainer_clamp_constant_agrees_with_the_env_and_the_patch(self):
         """Three copies of one number; drift makes the envelope check a lie."""
         root = Path(__file__).resolve().parents[1]

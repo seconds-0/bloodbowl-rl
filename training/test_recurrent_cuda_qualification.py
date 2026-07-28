@@ -15,6 +15,7 @@ import importlib.util
 import json
 import os
 import pathlib
+import re
 import subprocess
 import tempfile
 import textwrap
@@ -31,9 +32,15 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 PATCH = ROOT / "training" / "puffer_recurrent_cuda_qualification.patch"
 PRIO_PATCH = ROOT / "training" / "puffer_frozen_prio_mask.patch"
 LEAGUE_PATCH = ROOT / "training" / "selfplay_league.patch"
+STRICT_CONFIG_PATCH = (
+    ROOT / "training" / "puffer_strict_environment_config.patch"
+)
 INSTALLER = ROOT / "tools" / "install_puffer_env.sh"
 RUNNER = ROOT / "tools" / "qualify_recurrent_cuda.py"
 CUDA_RUNTIME_WRAPPER = ROOT / "tools" / "puffer_cuda_runtime.py"
+COMPILED_BACKEND_LEDGER = (
+    ROOT / "training" / "puffer_compiled_backend_sources.txt"
+)
 
 
 def cuda_runtime_evidence() -> dict:
@@ -69,6 +76,79 @@ def load_runner():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+class FakeStrictStageVec:
+    def __init__(self, backend):
+        self.backend = backend
+        self.closed = False
+
+    def close(self):
+        self.closed = True
+        self.backend.closed_vecs += 1
+
+
+class FakeStrictStageBackend:
+    """CPU-only behavioral model of the test-role constructor counters."""
+
+    def __init__(self, *, invalid_team=30, leak_constructor=None):
+        self.invalid_team = invalid_team
+        self.leak_constructor = leak_constructor
+        self.counters = {
+            "normalize_calls": 0,
+            "normalize_gil_held_calls": 0,
+            "create_static_vec_calls": 0,
+            "cuda_get_device_count_calls": 0,
+            "create_pufferl_impl_calls": 0,
+        }
+        self.closed_vecs = 0
+        self.closed_pufferls = 0
+
+    def strict_env_config_test_stages(self, reset=False):
+        snapshot = dict(self.counters)
+        if reset:
+            self.counters = dict.fromkeys(self.counters, 0)
+        return snapshot
+
+    def _normalize(self, config, constructor):
+        self.counters["normalize_calls"] += 1
+        self.counters["normalize_gil_held_calls"] += 1
+        if config["env"].get("force_home_team") == self.invalid_team:
+            if self.leak_constructor == constructor:
+                key = (
+                    "create_static_vec_calls"
+                    if constructor == "create_vec"
+                    else "cuda_get_device_count_calls"
+                )
+                self.counters[key] += 1
+            raise ValueError(
+                "force_home_team must be integer -1 or "
+                f"0..BB_TEAM_COUNT-1; got {self.invalid_team}"
+            )
+
+    def create_vec(self, config, *, gpu):
+        self._normalize(config, "create_vec")
+        if gpu != 1 or not isinstance(config["vec"]["total_agents"], int):
+            raise TypeError("dangerous vec input was reached")
+        self.counters["create_static_vec_calls"] += 1
+        return FakeStrictStageVec(self)
+
+    def create_pufferl(self, config):
+        self._normalize(config, "create_pufferl")
+        if not isinstance(config["vec"]["total_agents"], int):
+            raise TypeError("dangerous vec input was reached")
+        if not isinstance(config["train"], dict):
+            raise TypeError("dangerous train input was reached")
+        if not isinstance(config["policy"], dict):
+            raise TypeError("dangerous policy input was reached")
+        if not isinstance(config["gpu_id"], int):
+            raise TypeError("dangerous device input was reached")
+        self.counters["cuda_get_device_count_calls"] += 1
+        self.counters["create_pufferl_impl_calls"] += 1
+        return object()
+
+    def close(self, _pufferl):
+        self.closed_pufferls += 1
 
 
 class QualificationValidatorTests(unittest.TestCase):
@@ -408,7 +488,20 @@ class QualificationValidatorTests(unittest.TestCase):
         )
 
     def test_backend_identity_changes_with_selfplay_and_rejects_its_absence(self):
-        self.assertIn("pufferlib/selfplay.py", self.q.BACKEND_SOURCE_FILES)
+        self.assertEqual(
+            self.q.BACKEND_SOURCE_FILES,
+            (
+                "build.sh",
+                "pufferlib/pufferl.py",
+                "pufferlib/selfplay.py",
+                "pufferlib/torch_pufferl.py",
+                "src/bindings.cu",
+                "src/bindings_cpu.cpp",
+                "src/kernels.cu",
+                "src/pufferlib.cu",
+                "src/vecenv.h",
+            ),
+        )
         with tempfile.TemporaryDirectory() as temporary:
             puffer = pathlib.Path(temporary)
             for index, relative in enumerate(self.q.BACKEND_SOURCE_FILES):
@@ -443,6 +536,9 @@ class QualificationValidatorTests(unittest.TestCase):
                 observation_abi="obs-v6",
                 observation_version=6,
                 action_abi="exact-joint-v1",
+                environment_config_schema=
+                    self.q.ENVIRONMENT_CONFIG_SCHEMA,
+                strict_env_config_testing=False,
                 precision_bytes=4,
                 env_name="bloodbowl",
                 qualification_recurrent_state=object(),
@@ -491,6 +587,8 @@ class QualificationValidatorTests(unittest.TestCase):
             "observation_abi": "obs-v6",
             "observation_version": 6,
             "action_abi": "exact-joint-v1",
+            "environment_config_schema": self.q.ENVIRONMENT_CONFIG_SCHEMA,
+            "strict_env_config_testing": False,
             "precision_bytes": 4,
             "compiled_env": "bloodbowl",
             "qualification_surface": True,
@@ -503,6 +601,9 @@ class QualificationValidatorTests(unittest.TestCase):
             ("observation_abi", "obs-v4"),
             ("observation_version", 4),
             ("action_abi", "marginal"),
+            ("environment_config_schema", "other"),
+            ("strict_env_config_testing", True),
+            ("strict_env_config_testing", 0),
             ("precision_bytes", 2),
             ("environment_sha256", "bad"),
             ("qualification_surface", False),
@@ -511,6 +612,1213 @@ class QualificationValidatorTests(unittest.TestCase):
             with self.subTest(key=key), self.assertRaises(
                     self.q.QualificationError):
                 self.q.validate_module_identity(dict(identity, **{key: value}))
+
+    def test_strict_config_cell_set_has_exact_negative_and_positive_roles(self):
+        self.assertEqual(
+            self.q.STRICT_CONFIG_NEGATIVE_CELL_KINDS,
+            (
+                "strict_negative_create_vec",
+                "strict_negative_create_pufferl",
+            ),
+        )
+        self.assertEqual(
+            self.q.STRICT_CONFIG_POSITIVE_CELL_KINDS,
+            ("strict_positive_full", "strict_positive_sparse"),
+        )
+        self.assertIn("strict_environment_config", self.q.MANDATORY_GATES)
+
+    def test_strict_negative_records_require_exact_valueerror_diagnostic(self):
+        record = {
+            "strict_config_rejection": {
+                "constructor": "create_vec",
+                "exception_type": "ValueError",
+                "field": "force_home_team",
+                "domain": "integer -1 or 0..BB_TEAM_COUNT-1",
+                "value": 30,
+                "message": (
+                    "force_home_team must be integer -1 or "
+                    "0..BB_TEAM_COUNT-1; got 30"
+                ),
+                "expected_rejection": True,
+            }
+        }
+        observed = self.q.validate_strict_rejection_record(
+            record, constructor="create_vec"
+        )
+        self.assertEqual(observed["value"], 30)
+        for field, value in (
+            ("constructor", "create_pufferl"),
+            ("exception_type", "RuntimeError"),
+            ("expected_rejection", False),
+            ("message", "CUDA device discovery failed"),
+        ):
+            with self.subTest(field=field), self.assertRaises(
+                self.q.QualificationError
+            ):
+                changed = {"strict_config_rejection": dict(
+                    record["strict_config_rejection"], **{field: value}
+                )}
+                self.q.validate_strict_rejection_record(
+                    changed, constructor="create_vec"
+                )
+
+    def test_strict_positive_record_requires_both_closed_constructors(self):
+        constructors = {
+            "create_vec": {
+                "constructed": True,
+                "reset": True,
+                "closed": True,
+            },
+            "create_pufferl": {
+                "constructed": True,
+                "rollout": True,
+                "closed": True,
+            },
+        }
+        record = {
+            "strict_config_profile": "sparse",
+            "strict_config_constructors": constructors,
+        }
+        self.assertEqual(
+            self.q.validate_positive_strict_record(
+                record, profile="sparse"
+            ),
+            constructors,
+        )
+        changed = {
+            "strict_config_profile": "sparse",
+            "strict_config_constructors": {
+                **constructors,
+                "create_vec": {
+                    **constructors["create_vec"],
+                    "closed": False,
+                },
+            },
+        }
+        with self.assertRaises(self.q.QualificationError):
+            self.q.validate_positive_strict_record(
+                changed, profile="sparse"
+            )
+
+    def test_negative_constructor_worker_accepts_only_expected_valueerror(self):
+        class Backend:
+            def create_vec(self, config, *, gpu):
+                self.config = config
+                self.gpu = gpu
+                raise ValueError(
+                    "force_home_team must be integer -1 or "
+                    "0..BB_TEAM_COUNT-1; got 30"
+                )
+
+        backend = Backend()
+        config = {"env": {"force_home_team": 30}}
+        record = self.q._exercise_expected_strict_rejection(
+            backend,
+            config,
+            constructor="create_vec",
+            invalid_team=30,
+        )
+        self.assertIs(record["expected_rejection"], True)
+        self.assertEqual(backend.gpu, 1)
+        self.assertIs(backend.config, config)
+
+        backend.create_vec = lambda config, *, gpu: (_ for _ in ()).throw(
+            RuntimeError("CUDA device discovery failed")
+        )
+        with self.assertRaisesRegex(
+            self.q.QualificationError, "unrelated failure"
+        ):
+            self.q._exercise_expected_strict_rejection(
+                backend,
+                config,
+                constructor="create_vec",
+                invalid_team=30,
+            )
+
+    def test_full_and_sparse_strict_profiles_are_closed_and_numeric(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            puffer = pathlib.Path(temporary)
+            config = puffer / "config/bloodbowl.ini"
+            config.parent.mkdir(parents=True)
+            config.write_text(
+                "[env]\n"
+                + "\n".join(
+                    f"key_{index} = {index}"
+                    for index in range(self.q.ENVIRONMENT_CONFIG_KEY_COUNT)
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            observed = self.q._installed_environment_config(puffer)
+            self.assertEqual(
+                len(observed), self.q.ENVIRONMENT_CONFIG_KEY_COUNT
+            )
+            self.assertEqual(observed["key_50"], 50.0)
+
+            config.write_text(
+                "[env]\n"
+                + "\n".join(
+                    (
+                        "seed = nan"
+                        if index == 0
+                        else f"key_{index} = {index}"
+                    )
+                    for index in range(self.q.ENVIRONMENT_CONFIG_KEY_COUNT)
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(
+                self.q.QualificationError, "not finite"
+            ):
+                self.q._installed_environment_config(puffer)
+
+    def test_invalid_team_value_is_derived_from_the_installed_enum(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            puffer = pathlib.Path(temporary)
+            header = puffer / "ocean/bloodbowl/bb/gen_teams.h"
+            header.parent.mkdir(parents=True)
+            header.write_text(
+                "// generated team names include UTF-8: Résumé\n"
+                "typedef enum {\n"
+                "  BB_TEAM_ONE,\n"
+                "  BB_TEAM_TWO,\n"
+                "  BB_TEAM_THREE,\n"
+                "  BB_TEAM_COUNT\n"
+                "} bb_team_id;\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(self.q._installed_team_count(puffer), 3)
+
+    def test_strict_cuda_stage_matrix_rejects_before_every_downstream_stage(self):
+        backend = FakeStrictStageBackend(invalid_team=30)
+        observed = self.q._exercise_strict_cuda_stage_order(
+            backend,
+            seed=123,
+            invalid_team=30,
+        )
+        self.assertEqual(
+            {
+                (record["constructor"], record["hazard"])
+                for record in observed["invalid_cases"]
+            },
+            {
+                (constructor, hazard)
+                for constructor in ("create_vec", "create_pufferl")
+                for hazard in self.q.STRICT_STAGE_HAZARDS
+            },
+        )
+        for record in observed["invalid_cases"]:
+            self.assertEqual(record["stages"], self.q.STRICT_STAGE_REJECTED)
+            self.assertIs(record["constructed"], False)
+        self.assertEqual(
+            observed["positive_controls"]["create_vec"]["stages"],
+            self.q.STRICT_STAGE_POSITIVE["create_vec"],
+        )
+        self.assertEqual(
+            observed["positive_controls"]["create_pufferl"]["stages"],
+            self.q.STRICT_STAGE_POSITIVE["create_pufferl"],
+        )
+        self.assertEqual(observed["cleanup_stages"], self.q.STRICT_STAGE_ZERO)
+        self.assertEqual(backend.closed_vecs, 1)
+        self.assertEqual(backend.closed_pufferls, 1)
+
+    def test_strict_cuda_stage_matrix_detects_one_downstream_leak(self):
+        backend = FakeStrictStageBackend(
+            invalid_team=30,
+            leak_constructor="create_pufferl",
+        )
+        with self.assertRaisesRegex(
+            self.q.QualificationError, "rejection stages differ"
+        ):
+            self.q._exercise_strict_cuda_stage_order(
+                backend,
+                seed=123,
+                invalid_team=30,
+            )
+
+    def test_strict_cuda_stage_counters_have_an_exact_typed_schema(self):
+        clean = dict(self.q.STRICT_STAGE_ZERO)
+        self.q._require_strict_stage_counts(
+            clean,
+            self.q.STRICT_STAGE_ZERO,
+            label="test",
+        )
+        mutations = []
+        missing = dict(clean)
+        missing.pop("normalize_calls")
+        mutations.append(missing)
+        mutations.append({**clean, "unexpected": 0})
+        mutations.append({**clean, "normalize_calls": True})
+        mutations.append({**clean, "normalize_calls": -1})
+        for mutation in mutations:
+            with self.subTest(mutation=mutation), self.assertRaises(
+                self.q.QualificationError
+            ):
+                self.q._require_strict_stage_counts(
+                    mutation,
+                    self.q.STRICT_STAGE_ZERO,
+                    label="test",
+                )
+
+    def _strict_stage_evidence_fixture(self, *, root="/isolated/PufferLib"):
+        digest = "a" * 64
+        identity = {
+            "module": f"{root}/pufferlib/_C.so",
+            "puffer_root": root,
+            "module_sha256": digest,
+            "compiled_backend_sha256": digest,
+            "backend_sources_sha256": digest,
+            "environment_sha256": "b" * 64,
+            "installed_snapshot_sha256": "b" * 64,
+            "observation_abi": "obs-v6",
+            "observation_version": 6,
+            "action_abi": "exact-joint-v1",
+            "environment_config_schema": self.q.ENVIRONMENT_CONFIG_SCHEMA,
+            "strict_env_config_testing": True,
+            "precision_bytes": 4,
+            "compiled_env": "bloodbowl",
+            "qualification_surface": True,
+            "gpu": 1,
+            "strict_stage_surface": True,
+        }
+        receipt = {
+            "schema_version": self.q.STRICT_STAGE_SCHEMA_VERSION,
+            "evidence_kind": self.q.STRICT_STAGE_RECEIPT_KIND,
+            "puffer_root": root,
+            "git_head": self.q.PINNED_PUFFER_COMMIT,
+            "initial_status": "",
+            "initial_status_sha256": hashlib.sha256(b"").hexdigest(),
+            "separate_from_repo_vendor_checkout": True,
+            "confirmed_isolated_test_checkout": True,
+            "build_absent": True,
+            "environment_absent": True,
+            "module_absent": True,
+            "detached_head": True,
+            "interpreter": f"{root}/.venv/bin/python",
+            "interpreter_identity": {
+                "executable": f"{root}/.venv/bin/python",
+                "executable_sha256": "9" * 64,
+                "prefix": f"{root}/.venv",
+                "base_prefix": "/usr/local",
+                "ext_suffix": ".so",
+                "python_version": "3.14.0",
+                "pybind11_path": (
+                    f"{root}/.venv/lib/python/site-packages/"
+                    "pybind11/__init__.py"
+                ),
+                "numpy_path": (
+                    f"{root}/.venv/lib/python/site-packages/"
+                    "numpy/__init__.py"
+                ),
+            },
+            "origin": "https://github.com/PufferAI/PufferLib.git",
+        }
+        invalid_cases = []
+        for constructor in ("create_vec", "create_pufferl"):
+            for hazard in self.q.STRICT_STAGE_HAZARDS:
+                invalid_cases.append(
+                    {
+                        "constructor": constructor,
+                        "hazard": hazard,
+                        "malformed_path": {
+                            "vec": "vec.total_agents",
+                            "train": "train",
+                            "policy": "policy",
+                            "device": "gpu_id",
+                        }[hazard],
+                        "invalid_team": 30,
+                        "exception_type": "ValueError",
+                        "message": (
+                            "force_home_team must be integer -1 or "
+                            "0..BB_TEAM_COUNT-1; got 30"
+                        ),
+                        "expected_rejection": True,
+                        "constructed": False,
+                        "stages": dict(self.q.STRICT_STAGE_REJECTED),
+                    }
+                )
+        return {
+            "schema_version": self.q.STRICT_STAGE_SCHEMA_VERSION,
+            "evidence_kind": self.q.STRICT_STAGE_EVIDENCE_KIND,
+            "qualification_only": True,
+            "mandatory_external_gpu_gate": True,
+            "accepted": True,
+            "identity": identity,
+            "cuda_runtime_preflight": cuda_runtime_evidence(),
+            "isolation": {
+                "receipt": receipt,
+                "receipt_sha256": "c" * 64,
+            },
+            "patch_identity": {
+                "puffer_git_head": self.q.PINNED_PUFFER_COMMIT,
+                "strict_environment_config_patch": {
+                    "path": "/repo/training/puffer_strict_environment_config.patch",
+                    "sha256": "d" * 64,
+                    "reverse_applicable": True,
+                },
+                "qualifier": {
+                    "path": "/repo/tools/qualify_recurrent_cuda.py",
+                    "sha256": "e" * 64,
+                },
+                "compiled_backend_source_ledger": {
+                    "path": "/repo/training/puffer_compiled_backend_sources.txt",
+                    "sha256": "f" * 64,
+                },
+            },
+            "invalid_cases": invalid_cases,
+            "positive_controls": {
+                constructor: {
+                    "constructor": constructor,
+                    "constructed": True,
+                    "closed": True,
+                    "stages": dict(
+                        self.q.STRICT_STAGE_POSITIVE[constructor]
+                    ),
+                }
+                for constructor in ("create_vec", "create_pufferl")
+            },
+            "cleanup_stages": dict(self.q.STRICT_STAGE_ZERO),
+            "production_identity_rejection": {
+                "rejected": True,
+                "exception_type": "QualificationError",
+                "message": (
+                    "compiled strict-config module must have the production role"
+                ),
+            },
+            "host": "gpu-host",
+            "platform": "Linux",
+            "seed": 123,
+        }
+
+    def test_strict_stage_evidence_validator_is_fail_closed(self):
+        evidence = self._strict_stage_evidence_fixture()
+        self.q.validate_strict_stage_evidence(evidence)
+        mutations = (
+            ("schema", lambda value: value.update(schema_version=2)),
+            ("accepted", lambda value: value.update(accepted=False)),
+            (
+                "test role",
+                lambda value: value["identity"].update(
+                    strict_env_config_testing=False
+                ),
+            ),
+            (
+                "counter",
+                lambda value: value["invalid_cases"][0]["stages"].update(
+                    create_static_vec_calls=1
+                ),
+            ),
+            (
+                "patch hash",
+                lambda value: value["patch_identity"]["qualifier"].update(
+                    sha256="bad"
+                ),
+            ),
+            (
+                "production rejection",
+                lambda value: value["production_identity_rejection"].update(
+                    rejected=False
+                ),
+            ),
+        )
+        for label, mutate in mutations:
+            changed = json.loads(json.dumps(evidence))
+            mutate(changed)
+            with self.subTest(label=label), self.assertRaises(
+                self.q.QualificationError
+            ):
+                self.q.validate_strict_stage_evidence(changed)
+
+    def test_strict_stage_identity_requires_exact_integer_scalars_and_keys(self):
+        evidence = self._strict_stage_evidence_fixture()
+        mutations = (
+            (
+                "gpu bool",
+                lambda value: value["identity"].update(gpu=True),
+            ),
+            (
+                "gpu float",
+                lambda value: value["identity"].update(gpu=1.0),
+            ),
+            (
+                "schema float",
+                lambda value: value.update(schema_version=1.0),
+            ),
+            (
+                "observation version float",
+                lambda value: value["identity"].update(
+                    observation_version=6.0
+                ),
+            ),
+            (
+                "precision float",
+                lambda value: value["identity"].update(precision_bytes=4.0),
+            ),
+            (
+                "seed float",
+                lambda value: value.update(seed=123.0),
+            ),
+            (
+                "counter float",
+                lambda value: value["invalid_cases"][0]["stages"].update(
+                    normalize_calls=1.0
+                ),
+            ),
+            (
+                "invalid team float",
+                lambda value: value["invalid_cases"][0].update(
+                    invalid_team=30.0
+                ),
+            ),
+            (
+                "extra identity key",
+                lambda value: value["identity"].update(unexpected=True),
+            ),
+        )
+        for label, mutate in mutations:
+            changed = json.loads(json.dumps(evidence))
+            mutate(changed)
+            with self.subTest(label=label), self.assertRaises(
+                self.q.QualificationError
+            ):
+                self.q.validate_strict_stage_evidence(changed)
+
+    def test_strict_stage_hazard_names_are_bound_to_exact_malformed_paths(self):
+        evidence = self._strict_stage_evidence_fixture()
+        expected = {
+            "vec": "vec.total_agents",
+            "train": "train",
+            "policy": "policy",
+            "device": "gpu_id",
+        }
+        for hazard, wrong_path in (
+            ("vec", expected["train"]),
+            ("train", expected["policy"]),
+            ("policy", expected["device"]),
+            ("device", expected["vec"]),
+        ):
+            changed = json.loads(json.dumps(evidence))
+            record = next(
+                item
+                for item in changed["invalid_cases"]
+                if item["constructor"] == "create_pufferl"
+                and item["hazard"] == hazard
+            )
+            record["malformed_path"] = wrong_path
+            with self.subTest(hazard=hazard), self.assertRaises(
+                self.q.QualificationError
+            ):
+                self.q.validate_strict_stage_evidence(changed)
+
+    def test_strict_stage_invalid_team_matches_installed_bb_team_count(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = (pathlib.Path(temporary) / "PufferLib").resolve()
+            header = root / "ocean/bloodbowl/bb/gen_teams.h"
+            header.parent.mkdir(parents=True)
+            header.write_text(
+                "typedef enum {\n"
+                "  BB_TEAM_ONE,\n"
+                "  BB_TEAM_TWO,\n"
+                "  BB_TEAM_THREE,\n"
+                "  BB_TEAM_COUNT\n"
+                "} bb_team_id;\n",
+                encoding="utf-8",
+            )
+            evidence = self._strict_stage_evidence_fixture(root=str(root))
+            for record in evidence["invalid_cases"]:
+                record["invalid_team"] = 30
+            interpreter = root / ".venv/bin/python"
+            interpreter.parent.mkdir(parents=True)
+            interpreter.write_bytes(b"isolated-python")
+            for key in ("pybind11_path", "numpy_path"):
+                dependency = pathlib.Path(
+                    evidence["isolation"]["receipt"][
+                        "interpreter_identity"
+                    ][key]
+                )
+                dependency.parent.mkdir(parents=True, exist_ok=True)
+                dependency.write_bytes(b"dependency")
+            evidence["isolation"]["receipt"]["interpreter_identity"][
+                "executable_sha256"
+            ] = self.q.sha256(interpreter)
+            with self.assertRaisesRegex(
+                self.q.QualificationError,
+                "BB_TEAM_COUNT|invalid team",
+            ):
+                self.q.validate_strict_stage_evidence(
+                    evidence,
+                    expected_puffer_root=root,
+                    rehash_files=True,
+                )
+
+    def test_strict_stage_evidence_rejects_oversized_strings(self):
+        evidence = self._strict_stage_evidence_fixture()
+        oversized = "x" * (self.q.STRICT_STAGE_MAX_JSON_BYTES + 1)
+        mutations = (
+            ("host", lambda value: value.update(host=oversized)),
+            ("platform", lambda value: value.update(platform=oversized)),
+            (
+                "patch path",
+                lambda value: value["patch_identity"]["qualifier"].update(
+                    path=oversized
+                ),
+            ),
+            (
+                "production rejection",
+                lambda value: value["production_identity_rejection"].update(
+                    message=(
+                        "compiled strict-config module must have the "
+                        "production role " + oversized
+                    )
+                ),
+            ),
+        )
+        for label, mutate in mutations:
+            changed = json.loads(json.dumps(evidence))
+            mutate(changed)
+            with self.subTest(label=label), self.assertRaises(
+                self.q.QualificationError
+            ):
+                self.q.validate_strict_stage_evidence(changed)
+
+    def test_oversized_strict_stage_evidence_is_rejected_before_json_parse(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            evidence = pathlib.Path(temporary) / "STRICT_STAGE_ORDER.json"
+            evidence.write_bytes(
+                b'{"padding":"'
+                + b"x" * self.q.STRICT_STAGE_MAX_JSON_BYTES
+                + b'"}'
+            )
+            with mock.patch.object(
+                self.q.json,
+                "loads",
+                side_effect=AssertionError("oversized JSON was parsed"),
+            ) as loads, self.assertRaisesRegex(
+                self.q.QualificationError,
+                "bytes|large|limit|size",
+            ):
+                self.q._read_json(
+                    evidence,
+                    maximum_bytes=self.q.STRICT_STAGE_MAX_JSON_BYTES,
+                )
+            loads.assert_not_called()
+
+    def test_strict_stage_receipt_and_evidence_symlinks_are_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = pathlib.Path(temporary)
+            target = directory / "target.json"
+            target.write_text("{}\n", encoding="utf-8")
+            for name in ("ISOLATION.json", "STRICT_STAGE_ORDER.json"):
+                artifact = directory / name
+                artifact.symlink_to(target)
+                with self.subTest(name=name), self.assertRaisesRegex(
+                    self.q.QualificationError,
+                    "regular non-symlink",
+                ):
+                    self.q._read_json(
+                        artifact,
+                        maximum_bytes=self.q.STRICT_STAGE_MAX_JSON_BYTES,
+                        require_regular=True,
+                    )
+
+    def test_strict_stage_atomic_json_is_bounded_and_non_destructive(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = pathlib.Path(temporary) / "evidence.json"
+            with self.assertRaisesRegex(
+                self.q.QualificationError, "limit is 64"
+            ):
+                self.q.write_bounded_json_atomic(
+                    output,
+                    {"message": "x" * 100},
+                    maximum_bytes=64,
+                )
+            self.assertFalse(output.exists())
+            self.assertEqual(list(output.parent.glob(".evidence.json.tmp.*")), [])
+
+    def test_strict_stage_cli_requires_explicit_isolation_confirmation(self):
+        common = [
+            "strict-stage-order",
+            "--isolated-puffer-root",
+            "/tmp/PufferLib",
+            "--output",
+            "/tmp/evidence",
+        ]
+        with self.assertRaises(SystemExit):
+            self.q.parse_args(common)
+        parsed = self.q.parse_args(
+            [*common, "--confirm-isolated-test-checkout"]
+        )
+        self.assertEqual(parsed.command, "strict-stage-order")
+        self.assertIs(parsed.confirm_isolated_test_checkout, True)
+        worker = self.q.parse_args(
+            [
+                "strict-stage-worker",
+                "--puffer-root",
+                "/tmp/PufferLib",
+                "--output-json",
+                "/tmp/evidence.json",
+                "--isolation-receipt",
+                "/tmp/receipt.json",
+            ]
+        )
+        self.assertEqual(worker.command, "strict-stage-worker")
+
+    def test_strict_stage_child_environment_strips_shell_and_python_injection(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary) / "PufferLib"
+            interpreter = root / ".venv/bin/python"
+            interpreter.parent.mkdir(parents=True)
+            interpreter.write_bytes(b"python")
+            ambient = {
+                "PATH": "/ambient/bin",
+                "BASH_ENV": "/ambient/bash-env",
+                "BASH_FUNC_python%%": "() { echo ambient-function; }",
+                "ENV": "/ambient/sh-env",
+                "BASHOPTS": "sourcepath",
+                "SHELLOPTS": "braceexpand",
+                "PYTHONHOME": "/ambient/python-home",
+                "PYTHONPATH": "/ambient/python-path",
+                "PYTHONSTARTUP": "/ambient/python-startup.py",
+                "PYTHONINSPECT": "1",
+                "PYTHONUSERBASE": "/ambient/python-user-base",
+                "PYTHONWARNINGS": "error",
+                "PYTHONMALLOC": "debug",
+                "PYTHONHASHSEED": "0",
+                "PYTHONNOUSERSITE": "0",
+                "KEEP_ME": "yes",
+            }
+            with mock.patch.dict(
+                self.q.os.environ,
+                ambient,
+                clear=True,
+            ):
+                environment = self.q._strict_stage_child_environment(
+                    interpreter
+                )
+            for key in (
+                "BASH_ENV",
+                "BASH_FUNC_python%%",
+                "ENV",
+                "BASHOPTS",
+                "SHELLOPTS",
+                "PYTHONHOME",
+                "PYTHONPATH",
+                "PYTHONSTARTUP",
+                "PYTHONINSPECT",
+                "PYTHONUSERBASE",
+                "PYTHONWARNINGS",
+                "PYTHONMALLOC",
+                "PYTHONHASHSEED",
+            ):
+                with self.subTest(key=key):
+                    self.assertNotIn(key, environment)
+            self.assertEqual(environment["PYTHONNOUSERSITE"], "1")
+            self.assertEqual(
+                environment["PUFFER_INSTALL_PYTHON"],
+                str(interpreter.absolute()),
+            )
+            self.assertTrue(
+                pathlib.Path(environment["PUFFER_INSTALL_PYTHON"]).is_absolute()
+            )
+            self.assertEqual(
+                {
+                    key
+                    for key in environment
+                    if key.startswith("PYTHON")
+                },
+                {"PYTHONNOUSERSITE"},
+            )
+            self.assertEqual(environment["KEEP_ME"], "yes")
+
+    def test_strict_stage_sanitized_bash_resolves_checkout_python_not_function(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary) / "PufferLib"
+            interpreter = root / ".venv/bin/python"
+            interpreter.parent.mkdir(parents=True)
+            interpreter.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            interpreter.chmod(0o755)
+            bash_env = pathlib.Path(temporary) / "ambient-bash-env"
+            bash_env.write_text(
+                "python() { printf '%s\\n' ambient-function; }\n"
+                "export -f python\n",
+                encoding="utf-8",
+            )
+            ambient = {
+                "PATH": "/usr/bin:/bin",
+                "BASH_ENV": str(bash_env),
+                "BASH_FUNC_python%%": (
+                    "() { printf '%s\\n' ambient-exported-function; }"
+                ),
+                "ENV": str(bash_env),
+                "BASHOPTS": "sourcepath",
+                "SHELLOPTS": "braceexpand",
+                "PYTHONHOME": "/ambient/python-home",
+                "PYTHONPATH": "/ambient/python-path",
+                "PYTHONSTARTUP": "/ambient/python-startup.py",
+            }
+            with mock.patch.dict(
+                self.q.os.environ,
+                ambient,
+                clear=True,
+            ):
+                environment = self.q._strict_stage_child_environment(
+                    interpreter
+                )
+            completed = subprocess.run(
+                ["/bin/bash", "-c", "command -v python"],
+                env=environment,
+                text=True,
+                capture_output=True,
+                check=True,
+                timeout=10,
+            )
+            self.assertEqual(completed.stdout.strip(), str(interpreter))
+
+    def test_strict_stage_installer_cannot_fall_back_to_python3(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = pathlib.Path(temporary)
+            root = directory / "PufferLib"
+            venv_bin = root / ".venv/bin"
+            ambient_bin = directory / "ambient-bin"
+            venv_bin.mkdir(parents=True)
+            ambient_bin.mkdir()
+            selected_python = venv_bin / "python"
+            ambient_python3 = ambient_bin / "python3"
+            selected_python.write_text(
+                "#!/bin/sh\n"
+                "printf '%s\\n' selected >> \"$ROUTE_LOG\"\n"
+                "exit 37\n",
+                encoding="utf-8",
+            )
+            ambient_python3.write_text(
+                "#!/bin/sh\n"
+                "printf '%s\\n' ambient >> \"$ROUTE_LOG\"\n"
+                "exit 38\n",
+                encoding="utf-8",
+            )
+            selected_python.chmod(0o755)
+            ambient_python3.chmod(0o755)
+            command = [
+                "/bin/bash",
+                str(INSTALLER),
+                "--state-bank-kind",
+                "strict",
+                "--state-bank",
+                str(directory / "bank.bbs"),
+                "--state-bank-sha256",
+                "a" * 64,
+                "--state-bank-producer-manifest",
+                str(directory / "producer.json"),
+                "--state-bank-producer-manifest-sha256",
+                "b" * 64,
+                "--state-bank-contract",
+                str(directory / "contract.json"),
+                "--state-bank-contract-sha256",
+                "c" * 64,
+            ]
+            for variant in ("missing", "divergent"):
+                python3 = venv_bin / "python3"
+                python3.unlink(missing_ok=True)
+                if variant == "divergent":
+                    python3.write_text(
+                        "#!/bin/sh\n"
+                        "printf '%s\\n' divergent >> \"$ROUTE_LOG\"\n"
+                        "exit 39\n",
+                        encoding="utf-8",
+                    )
+                    python3.chmod(0o755)
+                route_log = directory / f"{variant}.log"
+                ambient = {
+                    "PATH": f"{ambient_bin}{os.pathsep}/usr/bin:/bin",
+                    "ROUTE_LOG": str(route_log),
+                }
+                with mock.patch.dict(
+                    self.q.os.environ,
+                    ambient,
+                    clear=True,
+                ):
+                    environment = self.q._strict_stage_child_environment(
+                        selected_python
+                    )
+                completed = subprocess.run(
+                    command,
+                    env=environment,
+                    text=True,
+                    capture_output=True,
+                    timeout=10,
+                )
+                with self.subTest(variant=variant):
+                    self.assertEqual(completed.returncode, 37)
+                    self.assertEqual(
+                        route_log.read_text(encoding="utf-8").splitlines(),
+                        ["selected"],
+                    )
+
+    def test_strict_stage_children_share_one_sanitized_local_venv_environment(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            temporary_path = pathlib.Path(temporary)
+            root = (temporary_path / "PufferLib").resolve()
+            output = temporary_path / "evidence"
+            interpreter = root / ".venv/bin/python"
+            receipt_path = output / "ISOLATION.json"
+            receipt = {"interpreter": str(interpreter)}
+            args = SimpleNamespace(
+                puffer_root=root,
+                output=output,
+                python=None,
+                confirm_isolated_test_checkout=True,
+                install_timeout_seconds=1.0,
+                build_timeout_seconds=1.0,
+                worker_timeout_seconds=1.0,
+                seed=123,
+            )
+            ambient = {
+                "PATH": "/ambient/bin",
+                "VIRTUAL_ENV": "/ambient/venv",
+                "PYTHONHOME": "/ambient/python-home",
+                "PYTHONPATH": "/ambient/python-path",
+                "KEEP_ME": "yes",
+            }
+            expected = {
+                "PATH": f"{interpreter.parent}{os.pathsep}/ambient/bin",
+                "VIRTUAL_ENV": str(interpreter.parent.parent),
+                "PYTHONNOUSERSITE": "1",
+                "PUFFER_STRICT_ENV_CONFIG_TESTING": "1",
+                "PUFFER_INSTALL_PYTHON": str(interpreter),
+                "KEEP_ME": "yes",
+            }
+            with mock.patch.dict(
+                self.q.os.environ,
+                ambient,
+                clear=True,
+            ), mock.patch.object(
+                self.q,
+                "_prepare_strict_stage_isolation",
+                return_value=(
+                    interpreter,
+                    receipt_path,
+                    receipt,
+                    expected,
+                ),
+            ), mock.patch.object(
+                self.q, "write_bounded_json_atomic"
+            ), mock.patch.object(
+                self.q, "_run_strict_stage_command"
+            ) as run, mock.patch.object(
+                self.q,
+                "_git_output",
+                return_value=self.q.PINNED_PUFFER_COMMIT,
+            ), mock.patch.object(
+                self.q, "_require_detached_head"
+            ), mock.patch.object(
+                self.q, "_read_json", return_value={}
+            ), mock.patch.object(
+                self.q, "validate_strict_stage_evidence"
+            ), mock.patch.object(
+                self.q, "_require_strict_patch_reverse_applicable"
+            ), mock.patch("builtins.print"):
+                self.assertEqual(self.q.run_strict_stage_order(args), 0)
+            self.assertEqual(len(run.call_args_list), 3)
+            child_environments = [
+                call.kwargs.get("environment")
+                for call in run.call_args_list
+            ]
+            self.assertEqual(child_environments, [expected, expected, expected])
+            self.assertEqual(run.call_args_list[0].args[0][0], "/bin/bash")
+            for environment in child_environments:
+                self.assertNotIn("PYTHONHOME", environment)
+                self.assertNotIn("PYTHONPATH", environment)
+
+    def test_strict_stage_prebuild_probe_records_exact_interpreter_identity(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            temporary_path = pathlib.Path(temporary)
+            root = (temporary_path / "PufferLib").resolve()
+            output = temporary_path / "evidence"
+            (root / ".git").mkdir(parents=True)
+            (root / "pufferlib").mkdir()
+            (root / "build.sh").write_text("#!/bin/sh\n", encoding="utf-8")
+            venv = root / ".venv"
+            interpreter = venv / "bin/python"
+            interpreter.parent.mkdir(parents=True)
+            interpreter.write_bytes(b"checkout-local-python")
+            interpreter.chmod(0o755)
+            (venv / "pyvenv.cfg").write_text(
+                "home = /usr/local/bin\n",
+                encoding="utf-8",
+            )
+            pybind11_path = (
+                venv / "lib/python/site-packages/pybind11/__init__.py"
+            )
+            numpy_path = venv / "lib/python/site-packages/numpy/__init__.py"
+            pybind11_path.parent.mkdir(parents=True)
+            numpy_path.parent.mkdir(parents=True)
+            pybind11_path.write_text("", encoding="utf-8")
+            numpy_path.write_text("", encoding="utf-8")
+            identity = {
+                "executable": str(interpreter),
+                "executable_sha256": self.q.sha256(interpreter),
+                "prefix": str(venv),
+                "base_prefix": "/usr/local",
+                "ext_suffix": ".cpython-test-x86_64-linux-gnu.so",
+                "python_version": "3.14.0",
+                "pybind11_path": str(pybind11_path),
+                "numpy_path": str(numpy_path),
+            }
+
+            def git_output(_root, *arguments):
+                if arguments == ("rev-parse", "--show-toplevel"):
+                    return str(root)
+                if arguments == ("rev-parse", "HEAD"):
+                    return self.q.PINNED_PUFFER_COMMIT
+                if arguments == (
+                    "status",
+                    "--porcelain=v1",
+                    "--untracked-files=all",
+                ):
+                    return ""
+                if arguments == ("symbolic-ref", "-q", "HEAD"):
+                    return ""
+                if arguments == ("config", "--get", "remote.origin.url"):
+                    return "https://github.com/PufferAI/PufferLib.git"
+                raise AssertionError(arguments)
+
+            completed = mock.Mock(
+                returncode=0,
+                stdout=json.dumps(identity),
+                stderr="",
+            )
+
+            def subprocess_run(command, **_kwargs):
+                if command[:4] == [
+                    "git",
+                    "-C",
+                    str(root),
+                    "symbolic-ref",
+                ]:
+                    return mock.Mock(returncode=1, stdout="", stderr="")
+                if command[:2] == ["python", "-c"]:
+                    return completed
+                if command[:4] == [
+                    "/bin/bash",
+                    "--noprofile",
+                    "--norc",
+                    "-c",
+                ]:
+                    return completed
+                raise AssertionError(command)
+
+            ambient = {
+                "PATH": "/ambient/bin",
+                "VIRTUAL_ENV": "/ambient/venv",
+                "PYTHONHOME": "/ambient/python-home",
+                "PYTHONPATH": "/ambient/python-path",
+            }
+            with mock.patch.dict(
+                self.q.os.environ,
+                ambient,
+                clear=True,
+            ), mock.patch.object(
+                self.q,
+                "_git_output",
+                side_effect=git_output,
+            ), mock.patch.object(
+                self.q.subprocess,
+                "run",
+                side_effect=subprocess_run,
+            ) as probe:
+                selected, _, receipt, child_environment = (
+                    self.q._prepare_strict_stage_isolation(
+                        puffer_root=root,
+                        output=output,
+                        python=None,
+                        confirmed=True,
+                    )
+                )
+            self.assertEqual(selected, interpreter)
+            self.assertEqual(
+                set(receipt["interpreter_identity"]),
+                {
+                    "executable",
+                    "executable_sha256",
+                    "prefix",
+                    "base_prefix",
+                    "ext_suffix",
+                    "python_version",
+                    "pybind11_path",
+                    "numpy_path",
+                },
+            )
+            self.assertEqual(receipt["interpreter_identity"], identity)
+            direct_probe_calls = [
+                call
+                for call in probe.call_args_list
+                if call.args[0][:2] == ["python", "-c"]
+            ]
+            bash_probe_calls = [
+                call
+                for call in probe.call_args_list
+                if call.args[0][:4]
+                == ["/bin/bash", "--noprofile", "--norc", "-c"]
+            ]
+            self.assertEqual(len(direct_probe_calls), 1)
+            self.assertEqual(len(bash_probe_calls), 1)
+            command = direct_probe_calls[0].args[0]
+            self.assertEqual(command[0], "python")
+            for call in (*direct_probe_calls, *bash_probe_calls):
+                self.assertEqual(call.kwargs["env"], child_environment)
+            probe_environment = direct_probe_calls[0].kwargs["env"]
+            self.assertEqual(
+                probe_environment["PATH"].split(os.pathsep)[0],
+                str(interpreter.parent),
+            )
+            self.assertEqual(probe_environment["VIRTUAL_ENV"], str(venv))
+            self.assertNotIn("PYTHONHOME", probe_environment)
+            self.assertNotIn("PYTHONPATH", probe_environment)
+
+    def test_strict_stage_isolation_requires_detached_head(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            temporary_path = pathlib.Path(temporary)
+            root = (temporary_path / "PufferLib").resolve()
+            (root / ".git").mkdir(parents=True)
+            (root / "pufferlib").mkdir()
+            (root / "build.sh").write_text("#!/bin/sh\n", encoding="utf-8")
+            interpreter = root / ".venv/bin/python"
+            interpreter.parent.mkdir(parents=True)
+            interpreter.write_bytes(b"python")
+            (root / ".venv/pyvenv.cfg").write_text("", encoding="utf-8")
+
+            def git_output(_root, *arguments):
+                if arguments == ("rev-parse", "--show-toplevel"):
+                    return str(root)
+                if arguments == ("rev-parse", "HEAD"):
+                    return self.q.PINNED_PUFFER_COMMIT
+                if arguments == (
+                    "status",
+                    "--porcelain=v1",
+                    "--untracked-files=all",
+                ):
+                    return ""
+                if arguments == ("symbolic-ref", "-q", "HEAD"):
+                    return "refs/heads/release"
+                if arguments == ("config", "--get", "remote.origin.url"):
+                    return "https://github.com/PufferAI/PufferLib.git"
+                raise AssertionError(arguments)
+
+            with mock.patch.object(
+                self.q,
+                "_git_output",
+                side_effect=git_output,
+            ), mock.patch.object(
+                self.q.subprocess,
+                "run",
+                return_value=mock.Mock(
+                    returncode=0,
+                    stdout="refs/heads/release\n",
+                    stderr="",
+                ),
+            ), self.assertRaisesRegex(
+                self.q.QualificationError,
+                "detached",
+            ):
+                self.q._prepare_strict_stage_isolation(
+                    puffer_root=root,
+                    output=temporary_path / "evidence",
+                    python=None,
+                    confirmed=True,
+                )
+
+    def test_strict_stage_isolation_rejects_symlinked_dot_venv(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary) / "PufferLib"
+            real_venv = root / "real-venv"
+            interpreter = real_venv / "bin/python"
+            interpreter.parent.mkdir(parents=True)
+            interpreter.write_bytes(b"python")
+            (real_venv / "pyvenv.cfg").write_text("", encoding="utf-8")
+            (root / ".venv").symlink_to(real_venv, target_is_directory=True)
+            with self.assertRaisesRegex(
+                self.q.QualificationError,
+                "symlink|real",
+            ):
+                self.q._strict_stage_interpreter(root, None)
+
+    def test_strict_stage_isolation_requires_exact_dot_venv(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary) / "PufferLib"
+            other_venv = root / "other-venv"
+            other_python = other_venv / "bin/python"
+            other_python.parent.mkdir(parents=True)
+            other_python.write_bytes(b"python")
+            (other_venv / "pyvenv.cfg").write_text("", encoding="utf-8")
+            with self.assertRaisesRegex(
+                self.q.QualificationError,
+                r"\.venv|exact",
+            ):
+                self.q._strict_stage_interpreter(root, other_python)
+
+    def test_strict_stage_worker_rejects_runtime_interpreter_identity_drift(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            temporary_path = pathlib.Path(temporary)
+            root = (temporary_path / "PufferLib").resolve()
+            receipt_path = temporary_path / "ISOLATION.json"
+            output = temporary_path / "STRICT_STAGE_ORDER.json"
+            receipt = self._strict_stage_evidence_fixture(
+                root=str(root)
+            )["isolation"]["receipt"]
+            interpreter = root / ".venv/bin/python"
+            interpreter.parent.mkdir(parents=True)
+            interpreter.write_bytes(b"isolated-python")
+            for key in ("pybind11_path", "numpy_path"):
+                dependency = pathlib.Path(
+                    receipt["interpreter_identity"][key]
+                )
+                dependency.parent.mkdir(parents=True, exist_ok=True)
+                dependency.write_bytes(b"dependency")
+            receipt["interpreter_identity"]["executable_sha256"] = (
+                self.q.sha256(interpreter)
+            )
+            running_identity = dict(receipt["interpreter_identity"])
+            running_identity["python_version"] = "3.13.0"
+            receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+            args = SimpleNamespace(
+                puffer_root=root,
+                isolation_receipt=receipt_path,
+                output_json=output,
+                seed=123,
+            )
+            with mock.patch.object(
+                self.q,
+                "_git_output",
+                return_value=self.q.PINNED_PUFFER_COMMIT,
+            ), mock.patch.object(
+                self.q,
+                "_require_detached_head",
+            ), mock.patch.object(
+                self.q,
+                "_read_json",
+                return_value=receipt,
+            ), mock.patch.object(
+                self.q,
+                "write_bounded_json_atomic",
+            ), mock.patch.object(
+                self.q,
+                "_require_strict_patch_reverse_applicable",
+            ), mock.patch.object(
+                self.q,
+                "_strict_stage_current_interpreter_identity",
+                return_value=running_identity,
+            ), mock.patch.object(
+                self.q,
+                "_load_backend",
+            ) as load_backend, self.assertRaisesRegex(
+                self.q.QualificationError,
+                "active interpreter|running interpreter|"
+                r"sys\.executable|executable differs|"
+                "differs from pre-build probe",
+            ):
+                self.q.run_strict_stage_worker(args)
+            load_backend.assert_not_called()
 
     def test_cells_must_share_one_module_identity(self):
         identity = {"module_sha256": "a" * 64}
@@ -1132,6 +2440,197 @@ class QualificationPatchContractTests(unittest.TestCase):
         self.assertIn("active_output.shape[0] = active_rows", patch)
         self.assertIn('entry["active_rows"] = active_rows', patch)
 
+    def test_strict_config_patch_has_two_helpers_and_three_constructor_calls(self):
+        patch = STRICT_CONFIG_PATCH.read_text(encoding="utf-8")
+        self.assertEqual(
+            re.findall(r"^diff --git a/(\S+) b/\1$", patch, re.MULTILINE),
+            ["build.sh", "src/bindings.cu", "src/bindings_cpu.cpp"],
+        )
+        self.assertEqual(
+            patch.count(
+                "static py::dict bloodbowl_normalize_and_preflight_env("
+                "py::dict source)"
+            ),
+            2,
+        )
+        self.assertEqual(
+            patch.count(
+                "env_kwargs = "
+                "bloodbowl_normalize_and_preflight_env(env_kwargs);"
+            ),
+            3,
+        )
+        self.assertEqual(
+            patch.count('m.attr("environment_config_schema")'),
+            2,
+        )
+        self.assertEqual(
+            patch.count('m.attr("strict_env_config_testing") = true;'),
+            2,
+        )
+        self.assertEqual(
+            patch.count('m.attr("strict_env_config_testing") = false;'),
+            2,
+        )
+        for marker in (
+            "#define PUFFER_HAS_STRICT_ENV_CONFIG 1",
+            "PUFFER_STRICT_ENV_CONFIG=1",
+            "PUFFER_STRICT_ENV_CONFIG_TESTING=1",
+            "#define create_static_vec(...)",
+            "#define cudaGetDeviceCount(...)",
+            "#define create_pufferl_impl(...)",
+            "my_environment_config_preflight(",
+            "PyGILState_Check()",
+        ):
+            with self.subTest(marker=marker):
+                self.assertIn(marker, patch)
+
+    def test_cpu_and_cuda_strict_normalizer_bodies_are_byte_identical(self):
+        patch = STRICT_CONFIG_PATCH.read_text(encoding="utf-8")
+        needle = (
+            "static py::dict bloodbowl_normalize_and_preflight_env("
+            "py::dict source) {"
+        )
+
+        def added_helper(relative):
+            marker = f"diff --git a/{relative} b/{relative}\n"
+            section = patch.split(marker, 1)[1].split("\ndiff --git ", 1)[0]
+            added = "\n".join(
+                line[1:]
+                for line in section.splitlines()
+                if line.startswith("+") and not line.startswith("+++")
+            )
+            start = added.index(needle)
+            helper = added[start:]
+            depth = 0
+            lines = []
+            for line in helper.splitlines():
+                lines.append(line)
+                depth += line.count("{") - line.count("}")
+                if depth == 0:
+                    break
+            self.assertGreater(len(lines), 100)
+            return "\n".join(lines)
+
+        self.assertEqual(
+            added_helper("src/bindings.cu"),
+            added_helper("src/bindings_cpu.cpp"),
+            "CPU and CUDA must execute byte-identical normalization/preflight",
+        )
+
+    def test_strict_stage_driver_locks_isolation_build_and_worker_order(self):
+        source = RUNNER.read_text(encoding="utf-8")
+        prepare = source[
+            source.index("def _prepare_strict_stage_isolation("):
+            source.index("def _run_strict_stage_command(")
+        ]
+        for fragment in (
+            "root.relative_to(REPO_ROOT)",
+            '\"rev-parse\", \"HEAD\"',
+            "PINNED_PUFFER_COMMIT",
+            '\"status\", \"--porcelain=v1\", \"--untracked-files=all\"',
+            'root / \"build\"',
+            'root / \"ocean/bloodbowl\"',
+            "_strict_stage_module_artifacts(root)",
+            "strict-stage evidence output must be outside",
+        ):
+            with self.subTest(fragment=fragment):
+                self.assertIn(fragment, prepare)
+
+        driver = source[
+            source.index("def run_strict_stage_order("):
+            source.index("# ------------------------------------------------------------------------ driver")
+        ]
+        prepared_at = driver.index("_prepare_strict_stage_isolation(")
+        receipt_at = driver.index("write_bounded_json_atomic(receipt_path")
+        installer_at = driver.index("tools/install_puffer_env.sh")
+        build_at = driver.index('[\"./build.sh\", \"bloodbowl\"]')
+        worker_at = driver.index('\"strict-stage-worker\"')
+        validate_at = driver.index("validate_strict_stage_evidence(")
+        self.assertLess(prepared_at, receipt_at)
+        self.assertLess(receipt_at, installer_at)
+        self.assertLess(installer_at, build_at)
+        self.assertLess(build_at, worker_at)
+        self.assertLess(worker_at, validate_at)
+        self.assertEqual(
+            driver.count("environment=test_build_environment"),
+            3,
+            "installer, build, and worker must share the prepared environment",
+        )
+
+        child_environment = source[
+            source.index("def _strict_stage_child_environment("):
+            source.index("def _strict_stage_interpreter_probe(")
+        ]
+        for fragment in (
+            'environment["PUFFER_STRICT_ENV_CONFIG_TESTING"] = "1"',
+            'environment["VIRTUAL_ENV"] = str(venv)',
+            '"BASH",',
+            '"PYTHON",',
+            '"SHELLOPTS",',
+            '"ENV",',
+        ):
+            with self.subTest(fragment=fragment):
+                self.assertIn(fragment, child_environment)
+
+        worker = source[
+            source.index("def run_strict_stage_worker("):
+            source.index("def run_strict_stage_order(")
+        ]
+        test_identity_at = worker.index("validate_strict_stage_module_identity(")
+        production_reject_at = worker.index("validate_module_identity(identity)")
+        exercise_at = worker.index("_exercise_strict_cuda_stage_order(")
+        self.assertLess(test_identity_at, production_reject_at)
+        self.assertLess(production_reject_at, exercise_at)
+        signature = source[
+            source.index("def validate_module_identity("):
+            source.index(") -> dict[str, Any]:", source.index(
+                "def validate_module_identity("
+            ))
+        ]
+        self.assertIn("strict_env_config_testing: bool = False", signature)
+
+    def test_installer_routes_every_python_call_through_one_owned_variable(self):
+        installer = INSTALLER.read_text(encoding="utf-8")
+        assignment = (
+            'INSTALL_PYTHON="${PUFFER_INSTALL_PYTHON:-python3}"'
+        )
+        self.assertEqual(installer.count(assignment), 1)
+        # Seven invocations plus the nonempty/command-availability checks.
+        self.assertEqual(installer.count('"$INSTALL_PYTHON"'), 9)
+        self.assertEqual(installer.count("python3"), 1)
+        for fragment in (
+            (
+                'if "$INSTALL_PYTHON" '
+                '"$ROOT/tools/state_bank_contract.py" validate-request'
+            ),
+            (
+                '"$INSTALL_PYTHON" '
+                '"$ROOT/tools/state_bank_contract.py" \\\n'
+                "        environment-source-sha256"
+            ),
+            (
+                '"$INSTALL_PYTHON" '
+                '"$ROOT/tools/puffer_source_manifest.py"'
+            ),
+            (
+                'if ! "$INSTALL_PYTHON" '
+                '"$ROOT/tools/state_bank_contract.py" check-no-bank'
+            ),
+            (
+                '"$INSTALL_PYTHON" '
+                '"$ROOT/tools/state_bank_contract.py" show-installed'
+            ),
+            ('| "$INSTALL_PYTHON" -c',),
+            (
+                '"$INSTALL_PYTHON" '
+                '"$ROOT/tools/state_bank_contract.py" install-no-bank'
+            ),
+        ):
+            expected = fragment[0] if isinstance(fragment, tuple) else fragment
+            with self.subTest(fragment=expected):
+                self.assertIn(expected, installer)
+
     def test_installer_applies_patch_last_and_hashes_compiled_surfaces(self):
         installer = INSTALLER.read_text(encoding="utf-8")
         self.assertIn("puffer_recurrent_cuda_qualification.patch", installer)
@@ -1145,6 +2644,9 @@ class QualificationPatchContractTests(unittest.TestCase):
         qualification_at = installer.index(
             'echo "applied:   bounded recurrent CUDA qualification evidence'
         )
+        strict_at = installer.index(
+            'echo "applied:   strict Blood Bowl environment boundary'
+        )
         digest_at = installer.index('EXACT_BACKEND_HASH="$(exact_backend_hash)"')
         league_at = installer.index(
             'echo "applied:   training/selfplay_league.patch ->'
@@ -1154,11 +2656,21 @@ class QualificationPatchContractTests(unittest.TestCase):
         self.assertLess(frozen_at, qualification_at)
         self.assertLess(league_at, digest_at)
         self.assertLess(qualification_at, digest_at)
+        self.assertLess(qualification_at, strict_at)
+        self.assertLess(strict_at, digest_at)
         backend_hash = installer[
             installer.index("exact_backend_hash()"):
             installer.index('if [ "$MODE" = "check" ]')
         ]
-        self.assertIn("pufferlib/selfplay.py", backend_hash)
+        self.assertIn("tools/puffer_source_manifest.py", backend_hash)
+        self.assertIn("COMPILED_BACKEND_LEDGER", backend_hash)
+        self.assertIn("--expected-count 9", backend_hash)
+        self.assertIn("strict_environment_config_sources_valid()", installer)
+        self.assertIn('"$STRICT_ENV_CONFIG_PATCH"', installer)
+        self.assertEqual(
+            COMPILED_BACKEND_LEDGER.read_text(encoding="utf-8").splitlines(),
+            list(load_runner().BACKEND_SOURCE_FILES),
+        )
         self.assertIn(
             'git -C "$PUFFER" apply --reverse --check --no-index',
             installer,

@@ -31,6 +31,9 @@ class CheckpointLineageTests(unittest.TestCase):
             "observation_abi": "obs-v6",
             "observation_version": "6",
             "action_abi": "exact-joint-v1",
+            "compiled_environment_config_schema":
+                checkpoint_lineage.ENVIRONMENT_CONFIG_SCHEMA,
+            "compiled_strict_env_config_testing": False,
             "initialization": "fresh",
             "qualification_only": "1",
             "policy_hidden_size": "512",
@@ -83,6 +86,34 @@ class CheckpointLineageTests(unittest.TestCase):
         self.assertTrue(payload["ancestry"]["qualification_only"])
         self.assertEqual(
             sidecar.read_bytes(), checkpoint_lineage.canonical_bytes(payload))
+
+    def test_current_run_requires_production_strict_config_identity(self):
+        base = json.loads(self.run_manifest.read_text(encoding="utf-8"))
+        cases = (
+            ("compiled_environment_config_schema", None),
+            ("compiled_environment_config_schema", "other-schema"),
+            ("compiled_strict_env_config_testing", None),
+            ("compiled_strict_env_config_testing", True),
+            ("compiled_strict_env_config_testing", 0),
+            ("compiled_strict_env_config_testing", "false"),
+        )
+        for key, value in cases:
+            with self.subTest(key=key, value=value):
+                changed = dict(base)
+                if value is None:
+                    del changed[key]
+                else:
+                    changed[key] = value
+                self.run_manifest.write_text(
+                    json.dumps(changed, sort_keys=True) + "\n",
+                    encoding="utf-8",
+                )
+                with self.assertRaisesRegex(
+                    checkpoint_lineage.LineageError, key
+                ):
+                    checkpoint_lineage.lineage_from_run_manifest(
+                        self.checkpoint, self.run_manifest
+                    )
 
     def test_state_bank_inactive_form_is_complete_and_exactly_typed(self):
         base = json.loads(self.run_manifest.read_text(encoding="utf-8"))

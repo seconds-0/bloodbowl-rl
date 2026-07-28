@@ -704,13 +704,17 @@ At minimum:
 
 - `force_home_team`, `force_away_team`, and `exclude_team` must be `-1` or a
   valid team ID before indexing team definitions;
-- `scripted_opponent_team2` must implement and validate the documented
+- `scripted_opponent_team=2` must implement and validate the documented
   0/1/2 enum rather than silently clamping values above one;
 - curriculum percentages and predicate ranges need closed bounds;
 - boolean-like flags should reject values other than 0/1.
 
 The environment should abort before workers start. Silent coercion produces
 plausible-looking experiments with the wrong task.
+
+Implementation note (2026-07-28): this construction boundary is now specified
+and operated in `docs/environment-configuration.md`; the schema validates all
+51 keys before allocation while preserving empty and sparse dictionaries.
 
 ### P0 trainability: no learning-level capability gates
 
