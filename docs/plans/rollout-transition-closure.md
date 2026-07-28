@@ -132,6 +132,16 @@ This is a reviewed part of `tail-bootstrap-v1`, not an incidental rewrite.
 13. Default no-bank builds, state-bank authorization, environment semantics,
     observations, exact joint actions, rewards, and production services remain
     unchanged.
+14. Tail graph ownership must be explicit. Graph-disabled construction and
+    close must not index null rollout/tail graph arrays or destroy an
+    uncaptured train graph; graph-enabled close must destroy every non-null
+    graph handle before activation storage is freed. Every graph pointer,
+    handle, and capture flag is initialized explicitly rather than relying on
+    allocator zeroing. Close synchronizes the device, guards the train handle
+    with both its capture flag and handle value, and guards each rollout/tail
+    array and each member handle independently so partial construction is also
+    safe. This removes the existing qualification workaround that relies on
+    process teardown for graph-off cells.
 
 The causal installer order is explicit:
 
@@ -198,7 +208,9 @@ must be exactly reverse-applicable after installation.
    the meaning of ordinary decoder outputs. Frozen-bank routing must use
    intentionally distinguishable value heads and a heterogeneous-architecture
    cell, then prove correct per-bank tail values, zero frozen advantages, and
-   no frozen priority selection.
+   no frozen priority selection. Add graph-on and graph-off construction/close
+   tests that both call ordinary `_C.close`, so neither path relies on process
+   teardown.
 5. Apply the complete ordered patch stack to a fresh pinned Puffer checkout.
    Build the CPU extension and run the executable tests against the applied
    sources, not merely against patch text.
