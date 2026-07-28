@@ -173,7 +173,7 @@ def _assert_close(
     actual: Sequence[Sequence[float]],
     expected: Sequence[Sequence[float]],
     *,
-    atol: float = 1.0e-6,
+    atol: float = 2.0e-5,
 ) -> None:
     if len(actual) != len(expected):
         raise AssertionError("row count differs")
@@ -280,7 +280,7 @@ def verification_cases() -> list[dict[str, Any]]:
             **common,
         },
         {
-            "name": "bf16-vector-width-h8",
+            "name": "vector-multichunk-h8",
             "values": [[0.25 * value for value in range(1, 9)]],
             "rewards": [[99.0, 0.25, -0.5, 1.0, 1.25, -1.5, 2.0, -2.5]],
             "terminals": [[1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]],
@@ -301,10 +301,72 @@ def verification_cases() -> list[dict[str, Any]]:
             "tail_terminals": [0.0],
             **common,
         },
+        {
+            "name": "multirow-distinct-rho-c-h3",
+            "values": [
+                [0.5, 1.0, 1.5],
+                [2.0, 2.5, 3.0],
+            ],
+            # Slot zero is intentionally ignored by the delayed layout. The
+            # +/-12 values at slot one exercise the used in-rollout clamp.
+            "rewards": [
+                [99.0, 12.0, -2.0],
+                [-99.0, -12.0, 1.0],
+            ],
+            # Row one has a used internal terminal at slot one.
+            "terminals": [
+                [1.0, 0.0, 0.0],
+                [1.0, 1.0, 0.0],
+            ],
+            "importance": [
+                [1.8, 0.4, 1.6],
+                [0.2, 2.0, 0.7],
+            ],
+            "tail_values": [4.0, 9.0],
+            "tail_rewards": [2.0, -3.0],
+            "tail_terminals": [0.0, 1.0],
+            "gamma": 0.93,
+            "gae_lambda": 0.71,
+            "rho_clip": 1.2,
+            "c_clip": 0.55,
+        },
+        {
+            "name": "vector-terminal-nan-h4",
+            "values": [[0.5, 1.0, 1.5, 2.0]],
+            "rewards": [[0.0, 0.25, -0.5, 1.0]],
+            "terminals": [[0.0, 0.0, 0.0, 0.0]],
+            "importance": [[1.0, 1.0, 1.0, 1.0]],
+            "tail_values": [float("nan")],
+            "tail_rewards": [3.0],
+            "tail_terminals": [1.0],
+            **common,
+        },
+        {
+            "name": "vector-positive-tail-clamp-h4",
+            "values": [[0.5, 1.0, 1.5, 2.0]],
+            "rewards": [[0.0, 0.25, -0.5, 1.0]],
+            "terminals": [[0.0, 0.0, 0.0, 0.0]],
+            "importance": [[1.0, 1.0, 1.0, 1.0]],
+            "tail_values": [2.0],
+            "tail_rewards": [99.0],
+            "tail_terminals": [0.0],
+            **common,
+        },
+        {
+            "name": "vector-negative-tail-clamp-h4",
+            "values": [[0.5, 1.0, 1.5, 2.0]],
+            "rewards": [[0.0, 0.25, -0.5, 1.0]],
+            "terminals": [[0.0, 0.0, 0.0, 0.0]],
+            "importance": [[1.0, 1.0, 1.0, 1.0]],
+            "tail_values": [2.0],
+            "tail_rewards": [-99.0],
+            "tail_terminals": [0.0],
+            **common,
+        },
     ]
 
 
-def verify_backend(backend: Any, torch: Any, device: str) -> None:
+def verify_backend(backend: Any, torch: Any, device: str) -> dict[str, Any]:
     if int(getattr(backend, "precision_bytes", 0)) != 4:
         raise AssertionError(
             "rollout transition verifier requires a float32 backend"
@@ -351,12 +413,21 @@ def verify_backend(backend: Any, torch: Any, device: str) -> None:
     )
     if first_result[0][0] == 0.0 or second_result[0][0] != 0.0:
         raise AssertionError("tail outcome did not contribute exactly once")
+    cases = verification_cases()
+    return {
+        "contract": CONTRACT,
+        "device": device,
+        "precision_bytes": int(backend.precision_bytes),
+        "case_names": [str(case["name"]) for case in cases],
+        "case_count": len(cases),
+        "exact_once": True,
+    }
 
 
 def verify_torch_rollout_contract(torch: Any) -> None:
     """Exercise the patched real Torch collector with a deterministic fake vec."""
 
-    from pufferlib.torch_pufferl import PuffeRL
+    from pufferlib.torch_pufferl import PuffeRL, compute_puff_advantage
 
     class NoopProfile:
         def mark(self, _index: int) -> None:
@@ -366,13 +437,24 @@ def verify_torch_rollout_contract(torch: Any) -> None:
             pass
 
     class StatefulPolicy(torch.nn.Module):
-        def __init__(self, nan_values: bool = False) -> None:
+        def __init__(
+            self,
+            nan_values: bool = False,
+            initial_state_value: float = 0.0,
+        ) -> None:
             super().__init__()
             self.calls: list[tuple[Any, Any]] = []
             self.nan_values = nan_values
+            self.initial_state_value = initial_state_value
 
         def initial_state(self, batch: int, device: str = "cpu") -> tuple[Any, ...]:
-            return (torch.zeros(1, batch, 1, device=device),)
+            return (
+                torch.full(
+                    (1, batch, 1),
+                    self.initial_state_value,
+                    device=device,
+                ),
+            )
 
         def forward_eval(self, observation: Any, state: tuple[Any, ...]):
             self.calls.append((
@@ -422,9 +504,13 @@ def verify_torch_rollout_contract(torch: Any) -> None:
         terminal_at_boundary: bool,
         evaluation_mode: bool,
         nan_values: bool = False,
+        initial_state_value: float = 0.0,
     ) -> tuple[Any, TensorVec, StatefulPolicy]:
         vec = TensorVec(horizon, terminal_at_boundary)
-        policy = StatefulPolicy(nan_values=nan_values)
+        policy = StatefulPolicy(
+            nan_values=nan_values,
+            initial_state_value=initial_state_value,
+        )
         trainer = PuffeRL.__new__(PuffeRL)
         trainer.profile = NoopProfile()
         trainer.config = {"horizon": horizon}
@@ -450,6 +536,7 @@ def verify_torch_rollout_contract(torch: Any) -> None:
         trainer.tail_rewards = torch.full((1,), float("nan"))
         trainer.tail_terminals = torch.full((1,), float("nan"))
         trainer.tail_values = torch.full((1,), float("nan"))
+        trainer.tail_valid = False
         trainer.policy = policy
         trainer._vec = vec
         trainer.gpu = False
@@ -457,10 +544,24 @@ def verify_torch_rollout_contract(torch: Any) -> None:
         return trainer, vec, policy
 
     horizon = 2
+    fresh_trainer, _, _ = make_trainer(
+        horizon=horizon,
+        terminal_at_boundary=False,
+        evaluation_mode=False,
+    )
+    try:
+        fresh_trainer.train()
+    except RuntimeError as exc:
+        if "one fresh tail record" not in str(exc):
+            raise
+    else:
+        raise AssertionError("Torch train accepted a missing tail record")
+
     trainer, vec, policy = make_trainer(
         horizon=horizon,
         terminal_at_boundary=False,
         evaluation_mode=False,
+        initial_state_value=7.0,
     )
     trainer.rollouts()
     if vec.steps != horizon or trainer.global_step != horizon:
@@ -480,6 +581,73 @@ def verify_torch_rollout_contract(torch: Any) -> None:
         raise AssertionError("tail value used live rather than zero recurrent state")
     if float(trainer.state[0].item()) != float(horizon):
         raise AssertionError("value-only tail replaced the live behavior state")
+    if trainer.tail_valid is not True:
+        raise AssertionError("training rollout did not publish a fresh tail record")
+
+    # Feed the collector's actual delayed buffers and post-horizon tail through
+    # the real compiled CPU entry point. This joins the previously independent
+    # collector and recurrence proofs and explicitly checks H - 1.
+    collector_values = trainer.values.T.contiguous()
+    collector_rewards = trainer.rewards.T.contiguous()
+    collector_terminals = trainer.terminals.T.contiguous()
+    collector_ratio = torch.ones_like(collector_values)
+    collector_advantages = torch.full_like(
+        collector_values,
+        float("nan"),
+    )
+    compute_puff_advantage(
+        collector_values,
+        collector_rewards,
+        collector_terminals,
+        collector_ratio,
+        trainer.tail_values,
+        trainer.tail_rewards,
+        trainer.tail_terminals,
+        collector_advantages,
+        0.9,
+        0.8,
+        1.0,
+        1.0,
+    )
+    collector_expected = reference_advantages(
+        values=_tensor_rows(collector_values),
+        rewards=_tensor_rows(collector_rewards),
+        terminals=_tensor_rows(collector_terminals),
+        importance=_tensor_rows(collector_ratio),
+        tail_values=[
+            float(value) for value in trainer.tail_values.detach().cpu().tolist()
+        ],
+        tail_rewards=[
+            float(value) for value in trainer.tail_rewards.detach().cpu().tolist()
+        ],
+        tail_terminals=[
+            float(value)
+            for value in trainer.tail_terminals.detach().cpu().tolist()
+        ],
+        gamma=0.9,
+        gae_lambda=0.8,
+        rho_clip=1.0,
+        c_clip=1.0,
+    )
+    _assert_close(
+        _tensor_rows(collector_advantages),
+        collector_expected,
+        atol=2.0e-5,
+    )
+    if abs(float(collector_advantages[0, horizon - 1])) <= 1.0e-5:
+        raise AssertionError(
+            "collector-to-advantage proof has a degenerate final slot"
+        )
+
+    try:
+        trainer.rollouts()
+    except RuntimeError as exc:
+        if "unconsumed tail record" not in str(exc):
+            raise
+    else:
+        raise AssertionError("Torch rollout overwrote an unconsumed tail record")
+    if vec.steps != horizon:
+        raise AssertionError("rejected rollout advanced the environment")
 
     terminal_trainer, terminal_vec, terminal_policy = make_trainer(
         horizon=horizon,

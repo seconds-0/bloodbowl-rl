@@ -141,6 +141,10 @@ class StrictEnvironmentConfigCITests(unittest.TestCase):
         self.assertEqual(strict_ci.EXPECTED_OBSERVATION_ABI, "obs-v6")
         self.assertEqual(strict_ci.EXPECTED_OBSERVATION_VERSION, 6)
         self.assertEqual(strict_ci.EXPECTED_ACTION_ABI, "exact-joint-v1")
+        self.assertEqual(
+            strict_ci.ROLLOUT_TRANSITION_CONTRACT,
+            "tail-bootstrap-v1",
+        )
         self.assertEqual(strict_ci.UNRELATED_ENVIRONMENT, "minimal")
         self.assertEqual(strict_ci.UNRELATED_TOTAL_AGENTS, 8)
         self.assertEqual(

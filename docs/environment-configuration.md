@@ -75,12 +75,42 @@ CUDA qualification remains a separate real-GPU gate:
 ```bash
 tools/qualify_recurrent_cuda.py run \
   --puffer-root vendor/PufferLib \
+  --baseline-throughput /absolute/path/to/previous-qualification.json \
   --output validation/recurrent-cuda-qualification
 ```
 
 That production qualifier accepts only
 `strict_env_config_testing = false`. It deliberately rejects the
-stage-instrumented module.
+stage-instrumented module. The baseline argument is mandatory and must name a
+bounded regular nonsymlink JSON artifact outside the candidate output. The
+runner records and rechecks its byte count and SHA-256 and requires its
+throughput record to match the candidate host, GPU, fp32 precision, complete
+timing configuration, and zero hard-integrity counters.
+
+That is not yet a complete predecessor-lineage proof. The current runner has no
+`capture-throughput`, `validate-construction`, or independent `validate`
+subcommand and does not authenticate who produced the supplied baseline. Until
+the predecessor capture/validation workflow in
+`docs/plans/recurrent-cuda-qualification.md` is implemented and reviewed, an
+otherwise accepted schema-10 qualification is diagnostic evidence only and
+does not complete the CUDA release gate.
+
+Schema 10 binds fresh run/cell nonces, removes fixed-name worker artifacts
+before dispatch, retains the exact worker JSON/NPZ byte identities, and writes
+cell JSON through a bounded exclusive random descriptor so a stale predictable
+temporary symlink cannot redirect a write outside the output. Its
+throughput cell is rollout-only but now matches the production collection
+shape, including H512/L3 and `max_decisions=4096`; it is not an end-to-end
+training-speed measurement. The production entropy schedule is also not yet
+qualified: native graph replay freezes the host-by-value coefficient and the
+Torch trainer currently leaves it constant. That separate trainer-contract
+repair must land before a CUDA training launch can be authorized. Until then,
+the native constructor rejects `cudagraphs >= 0 && anneal_ent_coef` before CUDA
+discovery, and both reward launchers reject executable runs before output/run
+artifact creation. Dry-run and screen-plan modes are explicitly labeled
+`BLOCKED_UNQUALIFIED_ENTROPY_SCHEDULE`; their manifests bind the requested
+graph/anneal/minimum-ratio fields and mark the effective coefficient
+unavailable.
 
 ## Mandatory CUDA constructor-order release gate
 

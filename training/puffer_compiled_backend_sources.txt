@@ -4,6 +4,11 @@ pufferlib/selfplay.py
 pufferlib/torch_pufferl.py
 src/bindings.cu
 src/bindings_cpu.cpp
+src/cudnn_conv2d.cu
 src/kernels.cu
+src/models.cu
+src/muon.cu
+src/ocean.cu
 src/pufferlib.cu
+src/tensor.h
 src/vecenv.h

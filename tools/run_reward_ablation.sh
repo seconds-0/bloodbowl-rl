@@ -268,6 +268,13 @@ FROZEN_BANK_PCT="${FROZEN_BANK_PCT:-0.06}"
 EXPECT_BYTES="${EXPECT_BYTES:-16066560}"
 LR="${LR:-0.00028}"
 ENT_COEF="${ENT_COEF:-0.009}"
+# The pinned native backend currently captures a host entropy coefficient into
+# its training CUDA graph.  Until the device-backed coefficient tranche lands,
+# keep this production recipe explicit and auditable but fail closed below.
+CUDAGRAPHS=10
+ANNEAL_ENT_COEF=1
+MIN_ENT_COEF_RATIO=0.1
+ENTROPY_SCHEDULE_STATUS=blocked_unqualified
 GAMMA="${GAMMA:-0.995}"
 GAE_LAMBDA="${GAE_LAMBDA:-0.85}"
 HORIZON="${HORIZON:-64}"
@@ -278,6 +285,7 @@ CLIP_COEF="${CLIP_COEF:-0.2}"
 VF_COEF="${VF_COEF:-1.0}"
 VF_CLIP_COEF="${VF_CLIP_COEF:-0.5}"
 MAX_GRAD_NORM="${MAX_GRAD_NORM:-1.5}"
+DRY_RUN="${DRY_RUN:-0}"
 DETACH="${DETACH:-1}"
 QUEUE_OWNED="${QUEUE_OWNED:-0}"
 EXPECTED_POOL_HASH="${EXPECTED_POOL_HASH:-}"
@@ -302,6 +310,10 @@ esac
 case "$QUEUE_OWNED" in
   0|1) ;;
   *) echo "QUEUE_OWNED must be 0 or 1" >&2; exit 1 ;;
+esac
+case "$DRY_RUN" in
+  0|1) ;;
+  *) echo "DRY_RUN must be 0 or 1" >&2; exit 1 ;;
 esac
 case "$LIVE_INTEGRITY_MAX_SILENCE:$LIVE_INTEGRITY_POLL_SECONDS" in
   *[!0-9:]*) echo "live-integrity silence and poll budgets must be positive integers" >&2; exit 1 ;;
@@ -361,6 +373,15 @@ FINAL_STEPS=$(( TRAIN_EPOCHS * ROLLOUT_QUANTUM ))
 CHECKPOINT_INTERVAL=$(( (CHECKPOINT_STEPS + ROLLOUT_QUANTUM / 2) / ROLLOUT_QUANTUM ))
 [ "$CHECKPOINT_INTERVAL" -gt 0 ] || CHECKPOINT_INTERVAL=1
 OPP_TIMEOUT=$(( STEPS * 10 ))
+
+# This gate deliberately precedes Python/CUDA discovery, artifact creation,
+# process locks, and checkpoint inspection.  DRY_RUN remains available to
+# inspect the fully bound command, but it is explicitly non-authoritative.
+if [ "$DRY_RUN" != "1" ] && [ "$CUDAGRAPHS" -ge 0 ] && [ "$ANNEAL_ENT_COEF" = "1" ]; then
+  echo "BLOCKED_UNQUALIFIED_ENTROPY_SCHEDULE: cudagraphs=$CUDAGRAPHS anneal_ent_coef=$ANNEAL_ENT_COEF" >&2
+  echo "native graph training captures a stale host coefficient; run the entropy-parity qualification tranche before production training" >&2
+  exit 1
+fi
 
 PYBIN="$ROOT/vendor/PufferLib/.venv/bin/python"
 PUFFER_BIN="$ROOT/vendor/PufferLib/.venv/bin/puffer"
@@ -590,6 +611,7 @@ print(getattr(_C, "env_name", None), int(bool(getattr(_C, "gpu", False))),
       getattr(_C, "observation_abi", "<missing>"),
       getattr(_C, "observation_version", "<missing>"),
       getattr(_C, "action_abi", "<missing>"),
+      getattr(_C, "rollout_transition_contract", "<missing>"),
       getattr(_C, "environment_config_schema", "<missing>"),
       ("false" if type(strict_role) is bool and strict_role is False
        else "<invalid>"),
@@ -602,6 +624,7 @@ PY
 read -r cenv cgpu precision COMPILED_EXACT_ACTION_SOURCE_HASH \
   COMPILED_ENVIRONMENT_SOURCE_HASH COMPILED_OBSERVATION_ABI \
   COMPILED_OBSERVATION_VERSION COMPILED_ACTION_ABI \
+  COMPILED_ROLLOUT_TRANSITION_CONTRACT \
   COMPILED_ENVIRONMENT_CONFIG_SCHEMA \
   COMPILED_STRICT_ENV_CONFIG_TESTING MODULE_PATH \
   CUDA_RUNTIME_LIBRARY_PATH CUDA_RUNTIME_LIBRARY_SHA256 \
@@ -614,14 +637,16 @@ if [[ ! "$COMPILED_EXACT_ACTION_SOURCE_HASH" =~ ^[0-9a-f]{64}$ ]] || \
    [ "$COMPILED_OBSERVATION_ABI" != "obs-v6" ] || \
    [ "$COMPILED_OBSERVATION_VERSION" != "6" ] || \
    [ "$COMPILED_ACTION_ABI" != "exact-joint-v1" ] || \
+   [ "$COMPILED_ROLLOUT_TRANSITION_CONTRACT" != "tail-bootstrap-v1" ] || \
    [ "$COMPILED_ENVIRONMENT_CONFIG_SCHEMA" != \
      "bloodbowl-environment-config-v1" ] || \
    [ "$COMPILED_STRICT_ENV_CONFIG_TESTING" != "false" ]; then
-  echo "compiled native module does not satisfy the obs-v6/exact-action contract" >&2
+  echo "compiled native module does not satisfy the obs-v6/exact-action/tail-bootstrap contract" >&2
   echo "  exact-action source: ${COMPILED_EXACT_ACTION_SOURCE_HASH:-<missing>}" >&2
   echo "  environment source: ${COMPILED_ENVIRONMENT_SOURCE_HASH:-<missing>} (expected $SOURCE_HASH)" >&2
   echo "  observation: ${COMPILED_OBSERVATION_ABI:-<missing>} / ${COMPILED_OBSERVATION_VERSION:-<missing>}" >&2
   echo "  action: ${COMPILED_ACTION_ABI:-<missing>}" >&2
+  echo "  rollout transition: ${COMPILED_ROLLOUT_TRANSITION_CONTRACT:-<missing>}" >&2
   echo "  environment config: ${COMPILED_ENVIRONMENT_CONFIG_SCHEMA:-<missing>}" >&2
   echo "  strict-config testing role: ${COMPILED_STRICT_ENV_CONFIG_TESTING:-<missing>}" >&2
   exit 1
@@ -701,6 +726,7 @@ PATCH_HASH="$({
   patch_bundle_line training/selfplay_league.patch
   patch_bundle_line training/puffer_exact_joint_actions.patch
   patch_bundle_line training/puffer_recurrent_eval_state.patch
+  patch_bundle_line training/puffer_rollout_transition_closure.patch
   patch_bundle_line training/puffer_frozen_prio_mask.patch
   patch_bundle_line training/puffer_recurrent_cuda_qualification.patch
   patch_bundle_line training/puffer_reward_clamp_range.patch
@@ -772,15 +798,15 @@ echo "reward=$REWARD_NAME reward_sha256=$REWARD_HASH"
 echo "pool=$POOL pool_identity_sha256=$POOL_HASH pool_manifest_sha256=$POOL_MANIFEST_HASH banks=$POOL_BANKS pct=$FROZEN_BANK_PCT rows_per_bank=$FROZEN_PER_BANK historical_game_share=$HISTORICAL_GAME_SHARE"
 echo "warm=$WARM warm_sha256=$WARM_HASH"
 echo "source_sha256=$SOURCE_HASH config_sha256=$CONFIG_HASH module_sha256=$MODULE_HASH"
-echo "compiled_exact_action_source_sha256=$COMPILED_EXACT_ACTION_SOURCE_HASH compiled_observation=$COMPILED_OBSERVATION_ABI/$COMPILED_OBSERVATION_VERSION compiled_action=$COMPILED_ACTION_ABI"
+echo "compiled_exact_action_source_sha256=$COMPILED_EXACT_ACTION_SOURCE_HASH compiled_observation=$COMPILED_OBSERVATION_ABI/$COMPILED_OBSERVATION_VERSION compiled_action=$COMPILED_ACTION_ABI rollout_transition=$COMPILED_ROLLOUT_TRANSITION_CONTRACT"
 echo "native_precision_bytes=$precision total_agents=$TOTAL_AGENTS buffers=$NUM_BUFFERS threads=$NUM_THREADS horizon=$HORIZON minibatch=$MINIBATCH_SIZE"
-echo "lr=$LR ent_coef=$ENT_COEF gamma=$GAMMA gae_lambda=$GAE_LAMBDA replay_ratio=$REPLAY_RATIO log=$LOG"
+echo "lr=$LR ent_coef=$ENT_COEF anneal_ent_coef=$ANNEAL_ENT_COEF min_ent_coef_ratio=$MIN_ENT_COEF_RATIO cudagraphs=$CUDAGRAPHS entropy_schedule_status=$ENTROPY_SCHEDULE_STATUS gamma=$GAMMA gae_lambda=$GAE_LAMBDA replay_ratio=$REPLAY_RATIO log=$LOG"
 
 CMD=(env PUFFER_CUDA_RUNTIME_MANIFEST="$RUN_MANIFEST" \
   PUFFER_CUDA_RUNTIME_EVIDENCE="$CUDA_RUNTIME_EVIDENCE" \
   "$PYBIN" "$CUDA_RUNTIME_WRAPPER" train bloodbowl --tag "$TAG" \
   --seed "$SEED" --train.seed "$SEED" --selfplay.seed "$SEED" --env.seed "$SEED" \
-  --train.gpus 1 --eval-episodes 10000 \
+  --train.gpus 1 --cudagraphs "$CUDAGRAPHS" --eval-episodes 10000 \
   --checkpoint-interval "$CHECKPOINT_INTERVAL" \
   --policy.hidden-size 512 --policy.num-layers 3 --policy.expansion-factor 1 \
   --vec.total-agents "$TOTAL_AGENTS" --vec.num-buffers "$NUM_BUFFERS" \
@@ -800,7 +826,8 @@ CMD=(env PUFFER_CUDA_RUNTIME_MANIFEST="$RUN_MANIFEST" \
   --train.replay-ratio "$REPLAY_RATIO" --train.clip-coef "$CLIP_COEF" \
   --train.vf-coef "$VF_COEF" --train.vf-clip-coef "$VF_CLIP_COEF" \
   --train.max-grad-norm "$MAX_GRAD_NORM" \
-  --train.anneal-ent-coef 1 --train.min-ent-coef-ratio 0.1 \
+  --train.anneal-ent-coef "$ANNEAL_ENT_COEF" \
+  --train.min-ent-coef-ratio "$MIN_ENT_COEF_RATIO" \
   --train.update-epochs 1 --train.beta1 0.95 --train.beta2 0.999 \
   --train.eps 0.000000000001)
 
@@ -815,7 +842,8 @@ else
     --load-model-path "$WARM")
 fi
 
-if [ "${DRY_RUN:-0}" = "1" ]; then
+if [ "$DRY_RUN" = "1" ]; then
+  echo "DRY-RUN UNSAFE/BLOCKED: BLOCKED_UNQUALIFIED_ENTROPY_SCHEDULE" >&2
   printf 'DRY-RUN command:'
   printf ' %q' "${CMD[@]}"
   printf '\n'
@@ -870,6 +898,8 @@ META_ARGS=(
   compiled_observation_abi "$COMPILED_OBSERVATION_ABI"
   compiled_observation_version "$COMPILED_OBSERVATION_VERSION"
   compiled_action_abi "$COMPILED_ACTION_ABI"
+  compiled_rollout_transition_contract \
+  "$COMPILED_ROLLOUT_TRANSITION_CONTRACT"
   compiled_environment_config_schema "$COMPILED_ENVIRONMENT_CONFIG_SCHEMA"
   compiled_strict_env_config_testing "$COMPILED_STRICT_ENV_CONFIG_TESTING"
   config_tree_sha256 "$CONFIG_TREE_HASH"
@@ -893,7 +923,10 @@ META_ARGS=(
   num_buffers "$NUM_BUFFERS" num_threads "$NUM_THREADS" horizon "$HORIZON"
   minibatch_size "$MINIBATCH_SIZE" checkpoint_interval "$CHECKPOINT_INTERVAL"
   checkpoint_steps "$CHECKPOINT_STEPS" learning_rate "$LR"
-  ent_coef "$ENT_COEF" gamma "$GAMMA" gae_lambda "$GAE_LAMBDA"
+  ent_coef "$ENT_COEF" anneal_ent_coef "$ANNEAL_ENT_COEF"
+  min_ent_coef_ratio "$MIN_ENT_COEF_RATIO" cudagraphs "$CUDAGRAPHS"
+  entropy_schedule_status "$ENTROPY_SCHEDULE_STATUS"
+  gamma "$GAMMA" gae_lambda "$GAE_LAMBDA"
   replay_ratio "$REPLAY_RATIO" clip_coef "$CLIP_COEF" vf_coef "$VF_COEF"
   vf_clip_coef "$VF_CLIP_COEF" max_grad_norm "$MAX_GRAD_NORM"
   expected_checkpoint_bytes "$EXPECT_BYTES"
@@ -918,8 +951,14 @@ if manifest["compiled_strict_env_config_testing"] != "false":
     raise SystemExit(
         "compiled_strict_env_config_testing must be canonical false")
 manifest["compiled_strict_env_config_testing"] = False
+manifest["cudagraphs"] = int(manifest["cudagraphs"])
+if manifest["anneal_ent_coef"] not in {"0", "1"}:
+    raise SystemExit("anneal_ent_coef must be canonical 0 or 1")
+manifest["anneal_ent_coef"] = manifest["anneal_ent_coef"] == "1"
+manifest["min_ent_coef_ratio"] = float(manifest["min_ent_coef_ratio"])
 manifest.update({
     "schema_version": 1,
+    "entropy_effective_coefficient": "unavailable_blocked",
     "mode": ("native_fresh_v6_qualification"
              if manifest["bootstrap_mode"] == "fresh-v6-qualification"
              else "native_fresh_v6_genesis"
@@ -1005,6 +1044,7 @@ PY
         echo "reward-ablation tag=$TAG"
         echo "reward=$REWARD_NAME sha256=$REWARD_HASH"
         echo "bootstrap=$BOOTSTRAP_MODE qualification_only=$QUALIFICATION_ONLY obs=obs-v6 action=exact-joint-v1"
+        echo "compiled_rollout_transition_contract=$COMPILED_ROLLOUT_TRANSITION_CONTRACT"
         echo "pool=$POOL identity_sha256=$POOL_HASH manifest_sha256=$POOL_MANIFEST_HASH lineage_bundle_sha256=$POOL_LINEAGE_BUNDLE_HASH pct=$FROZEN_BANK_PCT"
         echo "warm=$WARM sha256=$WARM_HASH lineage_sha256=$WARM_LINEAGE_HASH seed=$SEED requested_steps=$STEPS final_steps=$FINAL_STEPS"
         echo "run_manifest_sha256=$(sha256sum "$RUN_MANIFEST" | awk '{print $1}')"

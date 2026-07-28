@@ -1,10 +1,76 @@
 # Recurrent CUDA qualification
 
-Status: D225 same-process CUDA initialization correction, 2026-07-22. This plan does not
-authorize a trainer launch, checkpoint promotion, or reuse of any qualification
-output as training ancestry.
+Status: design record plus a bounded schema-10 diagnostic runner, updated
+2026-07-28. This plan does not authorize a trainer launch, checkpoint
+promotion, or reuse of any qualification output as training ancestry.
 
-The throughput predecessor remains exact commit
+## Current implementation boundary
+
+The complete predecessor-authority workflow described later in this document
+is not implemented. The current `tools/qualify_recurrent_cuda.py` public CLI
+contains `run` and the separate strict-constructor stage command; it does not
+contain the planned `capture-throughput`, `validate-construction`, or
+independent `validate` commands.
+
+`run` now requires `--baseline-throughput`. It preflights one bounded regular
+nonsymlink JSON artifact outside the candidate output, validates its throughput
+record, binds its absolute path, byte count, and SHA-256 into the verdict, and
+reloads the same bytes after all workers finish. Candidate and baseline must
+match on host, GPU, fp32 precision, the complete timing configuration, and
+zero hard-integrity counters. Schema 10 also gives every run and cell a fresh
+parent-generated nonce, removes every fixed-name cell artifact before dispatch,
+binds the exact child JSON/NPZ byte snapshots into the final verdict, writes
+cell JSON through the bounded `mkstemp`/descriptor/fsync/replace path, and
+invalidates a prior verdict when an identifiable `run` invocation fails
+argument parsing. This closes missing-baseline, stale-cell reuse, predictable
+temporary-symlink overwrite, output-overwrite, configuration-drift, and in-run
+byte-drift failures.
+
+The implemented compiled-backend digest is a canonical 14-entry registry:
+`build.sh`, three deliberately selected launcher/trainer Python files, and the
+complete ten-file local include closure of the CPU/CUDA extension roots. The
+manifest reader follows quoted native includes recursively, permits only the
+separately governed generated build-hash header, and hashes the exact
+descriptor-read byte snapshots it inspected. This is not described as the
+complete Python runtime import closure: `pufferlib/__init__.py`,
+`pufferlib/models.py`, `pufferlib/muon.py`, and sweep-only code remain in the
+distinct broader runtime/vendor identity boundary.
+
+It does **not** authenticate that the artifact was produced by the immediately
+preceding exact-action backend, rehash a predecessor module or source checkout,
+or independently validate the final qualification from a clean control
+checkout. Therefore `accepted: true` in the current schema-10 artifact means
+only that the implemented diagnostic gates passed. It is not release
+authority. The target execution order and predecessor wrapper below remain
+normative planned work, and native deployment stays blocked until that work is
+implemented, reviewed, and exercised on the target NVIDIA host.
+
+The rollout-transition extension to the current runner is stronger than a
+source-marker check: each graph-off and graph-on rollout cell executes an
+authenticated 14-case CUDA scalar/vector advantage oracle and then feeds a
+real eight-agent, two-buffer, H=8 heterogeneous rollout through the native
+zero-learning-rate train path. The parent independently reconstructs every
+primary advantage, requires a nonzero final `H-1` advantage, exact-zero frozen
+advantages, fresh tail consumption, and full-tensor plus final-slot graph
+parity. Retained NPZ artifacts are regular-file, size, path, and SHA-256 bound.
+None of those CUDA checks has run on this macOS CPU host.
+
+The current graph parity cell is intentionally a zero-learning-rate,
+zero-entropy transition test. It does not qualify the production entropy
+schedule. Adversarial review found that native CUDA-graph replay captures
+`current_ent_coef` by host value while the Torch trainer does not implement the
+configured entropy anneal at all. Production combines `ent_coef=0.02`,
+`anneal_ent_coef=1`, and CUDA graphs, so graph-training objective parity remains
+a high-priority, separately test-first trainer-contract tranche. The native
+constructor now fails before CUDA discovery for
+`cudagraphs >= 0 && anneal_ent_coef`. The screen and arm launchers bind the
+graph/anneal/minimum-ratio configuration, reject executable runs before their
+respective output/run artifacts, and label plan/dry-run output
+`BLOCKED_UNQUALIFIED_ENTROPY_SCHEDULE`; no effective coefficient is fabricated.
+No diagnostic artifact from this runner authorizes training until that
+cross-backend, multi-epoch schedule gap is fixed and qualified.
+
+The planned throughput predecessor remains exact commit
 `afc8008933548438ca93c41341f5f08fdd294386`. The control runner and candidate
 must use the same newly merged D225 commit in separate clean checkouts.
 
@@ -28,7 +94,7 @@ a failure. There is no tolerated invalid-transition rate.
 
 Add an explicit frozen-row priority mask after the exact-action and recurrent
 patches, then add one qualification-only evidence patch.
-It exposes two bounded operations and no alternate action or reward path:
+It exposes five bounded surfaces and no alternate action or reward path:
 
 1. `qualification_recurrent_state(pufferl, clear=False)` synchronizes and reports every
    primary and frozen bank/buffer by element count, nonzero count, non-finite
@@ -44,6 +110,15 @@ It exposes two bounded operations and no alternate action or reward path:
    `learning_rate=0` object, hashes saved weights before and after the real train
    call, and requires byte-identical weights. Momentum mutation is irrelevant
    because the object is immediately destroyed.
+3. `qualification_policy_weights(pufferl)` returns one bounded, read-only
+   primary/frozen policy descriptor and byte snapshot for donor authentication.
+4. `qualification_graph_execution(pufferl)` synchronizes and reports graph
+   capture flags, handle readiness, and exact graph/eager execution counters.
+5. `qualification_consume_tail(pufferl)` is the one explicit tail-discard
+   operation used by rollout-only integrity and throughput cells. It requires
+   exactly one fresh record per buffer, clears only the validity counters, and
+   returns exact before/after vectors. It cannot mutate rewards, observations,
+   actions, recurrent state, weights, or optimizer state.
 
 Both patches are part of the installed backend hash and compiled-module identity.
 The priority normalizer assigns exactly zero probability to every frozen-bank
@@ -59,11 +134,13 @@ environment state, and RNG state cannot leak between cells. Every cell records
 the imported module path and SHA-256, compiled backend/environment identities,
 observation/action ABIs, effective configuration, seed, precision, elapsed
 time, and output hashes.
-Schema 3 records backend identity on two axes. The role-correct
+The planned predecessor-authority schema records backend identity on two axes.
+This paragraph describes the target workflow, not fields currently emitted by
+schema 10. The role-correct
 `backend_sources_sha256` reproduces the source registry that generated the
 native module's compiled attribute: the immutable predecessor's historical
 registry omits `pufferlib/selfplay.py`, while the candidate's current registry
-includes it. Independently, `runtime_sources_sha256` always hashes the complete
+includes it. Independently, the planned `runtime_sources_sha256` hashes the complete
 current runtime closure, including `selfplay.py`, for both roles. Both are
 mandatory and recomputed from disk on every validation. This authenticates the
 historical module without creating a runtime drift exemption. Each cell also
@@ -158,8 +235,10 @@ turn that limitation into a fail-closed coverage gate.
 
 ### 5. Throughput
 
-Measure a frozen number of warmup and timed rollouts in fresh graph-enabled
-subprocesses using the target production shape. Compare decisions per second to
+Measure a frozen number of warmup and timed **rollouts** in a fresh
+graph-enabled subprocess using the target production collection shape:
+4096 agents, two buffers, 20 threads, horizon 64, H512/L3 policy, and
+`max_decisions=4096`. Compare decisions per second to
 an immutable report from the immediately preceding exact-action backend on the
 same idle host and configuration. The production graph boundary is exact:
 every graph-enabled cell uses `cudagraphs=10`, matching the frozen
@@ -183,6 +262,13 @@ regression fraction. Graph-disabled execution is already exercised by the
 mandatory correctness-parity cell; it is not a substitute for the
 preceding-backend throughput control.
 
+This metric times collection only. It does not time `_C.train`, optimizer
+steps, logging, checkpointing, or end-to-end wall clock, and must be labeled
+`rollout throughput` rather than `training throughput`. An exact-production
+rollout-plus-train performance gate is still a separate proposal; a green
+rollout ratio cannot explain or authorize claims about a two-minute complete
+training run.
+
 ## Output and verdict
 
 Write cell artifacts first, then one atomic `QUALIFICATION.json` containing all
@@ -203,7 +289,12 @@ are permanently rejected. No current checkout is authorized to launch a
 replacement; only a separate reviewed post-qualification change may name its
 exact commit, registry, manifest, unit, and one-shot authority.
 
-## Target execution order
+## Target execution order (planned; not executable in schema 10)
+
+Every command in this section named `capture-throughput`,
+`validate-construction`, or `validate` is a required future authority workflow,
+not a currently available CLI. Operators must not attempt to infer those
+commands from `run`, and `run` alone cannot complete these steps.
 
 The occupied recovery runtime is not the throughput predecessor. It predates
 obs-v5/exact-joint execution, emits nonzero repaired-action telemetry, and its
@@ -238,7 +329,7 @@ as historical experiment evidence, but never pass its module hash to
    worker dispatch, and the baseline/final artifacts bind the same reference.
    The predecessor capture also passes the complete frozen predecessor
    declaration into the timed worker. That same process validates its imported
-   module, compiled backend, complete runtime sources, environment, ABI,
+   module, compiled backend, declared runtime-source closure, environment, ABI,
    precision, role, and Puffer root before backend construction, warmup, or a
    rollout; the parent repeats the identity check after the worker returns.
 4. Use a third clean control-runner checkout at the merged commit containing

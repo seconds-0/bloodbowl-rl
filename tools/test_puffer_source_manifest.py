@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from tools import puffer_source_manifest as source_manifest
 
@@ -21,8 +23,13 @@ EXPECTED_COMPILED = (
     "pufferlib/torch_pufferl.py",
     "src/bindings.cu",
     "src/bindings_cpu.cpp",
+    "src/cudnn_conv2d.cu",
     "src/kernels.cu",
+    "src/models.cu",
+    "src/muon.cu",
+    "src/ocean.cu",
     "src/pufferlib.cu",
+    "src/tensor.h",
     "src/vecenv.h",
 )
 EXPECTED_VENDOR = (
@@ -43,7 +50,10 @@ EXPECTED_VENDOR = (
 
 class PufferSourceManifestTests(unittest.TestCase):
     def test_checked_in_ledgers_have_the_exact_distinct_ordered_closures(self):
-        compiled = source_manifest.read_source_ledger(COMPILED_LEDGER, expected_count=9)
+        compiled = source_manifest.read_source_ledger(
+            COMPILED_LEDGER,
+            expected_count=14,
+        )
         vendor = source_manifest.read_source_ledger(VENDOR_LEDGER, expected_count=12)
         self.assertEqual(compiled, EXPECTED_COMPILED)
         self.assertEqual(vendor, EXPECTED_VENDOR)
@@ -53,6 +63,16 @@ class PufferSourceManifestTests(unittest.TestCase):
                 "pufferlib/__init__.py",
                 "pufferlib/models.py",
                 "pufferlib/muon.py",
+            },
+        )
+        self.assertEqual(
+            set(compiled) - set(vendor),
+            {
+                "src/cudnn_conv2d.cu",
+                "src/models.cu",
+                "src/muon.cu",
+                "src/ocean.cu",
+                "src/tensor.h",
             },
         )
 
@@ -80,6 +100,56 @@ class PufferSourceManifestTests(unittest.TestCase):
                 observed,
                 source_manifest.source_manifest_sha256(root, reversed(sources)),
             )
+
+    def test_native_extension_include_closure_is_recursive_and_fail_closed(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            payloads = {
+                "src/bindings.cu": (
+                    b'#include "pufferlib.cu"\n'
+                    b'#include "exact_action_build_hash.h"\n'
+                ),
+                "src/bindings_cpu.cpp": b'#include "vecenv.h"\n',
+                "src/pufferlib.cu": b'#include "models.cu"\n',
+                "src/models.cu": b'#include "kernels.cu"\n',
+                "src/kernels.cu": b'#include "tensor.h"\n',
+                "src/vecenv.h": b'#include "tensor.h"\n',
+                "src/tensor.h": b"#pragma once\n",
+            }
+            for relative, payload in payloads.items():
+                target = root / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(payload)
+            sources = tuple(payloads)
+            observed = source_manifest.validate_native_extension_include_closure(
+                root,
+                sources,
+            )
+            self.assertEqual(set(observed), set(sources))
+            with mock.patch.object(
+                source_manifest,
+                "_regular_source_bytes",
+                wraps=source_manifest._regular_source_bytes,
+            ) as read:
+                digest = (
+                    source_manifest.native_extension_source_manifest_sha256(
+                        root,
+                        sources,
+                    )
+                )
+            self.assertRegex(digest, r"^[0-9a-f]{64}$")
+            self.assertEqual(read.call_count, len(sources))
+            with self.assertRaisesRegex(
+                source_manifest.PufferSourceManifestError,
+                "unregistered local include",
+            ):
+                source_manifest.validate_native_extension_include_closure(
+                    root,
+                    tuple(
+                        source for source in sources
+                        if source != "src/tensor.h"
+                    ),
+                )
 
     def test_ledger_rejects_open_or_unsafe_path_sets(self):
         cases = {
@@ -118,6 +188,43 @@ class PufferSourceManifestTests(unittest.TestCase):
                 source_manifest.PufferSourceManifestError, "missing"
             ):
                 source_manifest.source_manifest_sha256(root, ("build.sh",))
+
+    def test_descriptor_read_rejects_a_last_component_swap(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "build.sh"
+            replacement = root / "replacement"
+            source.write_bytes(b"validated source")
+            replacement.write_bytes(b"unvalidated replacement")
+            original_open = os.open
+            swapped = False
+
+            def swap_then_open(path, flags, *args, dir_fd=None, **kwargs):
+                nonlocal swapped
+                if path == "build.sh" and dir_fd is not None and not swapped:
+                    swapped = True
+                    source.unlink()
+                    source.symlink_to(replacement.name)
+                return original_open(
+                    path,
+                    flags,
+                    *args,
+                    dir_fd=dir_fd,
+                    **kwargs,
+                )
+
+            with mock.patch.object(
+                source_manifest.os,
+                "open",
+                side_effect=swap_then_open,
+            ), self.assertRaisesRegex(
+                source_manifest.PufferSourceManifestError,
+                "regular non-symlink",
+            ):
+                source_manifest.source_manifest_sha256(
+                    root,
+                    ("build.sh",),
+                )
 
     def test_hash_rejects_a_symlinked_parent_that_escapes_the_root(self):
         with tempfile.TemporaryDirectory() as temporary:

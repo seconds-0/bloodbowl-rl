@@ -1,4 +1,5 @@
 diff --git a/build.sh b/build.sh
+index 11bf7fcc..e4baacc4 100755
 --- a/build.sh
 +++ b/build.sh
 @@ -259,6 +259,12 @@ if [ ! -f "$BINDING_SRC" ]; then
@@ -31,6 +32,7 @@ diff --git a/build.sh b/build.sh
          src/bindings_cpu.cpp -o build/bindings_cpu.o
      LINK_CMD=(
 diff --git a/src/bindings.cu b/src/bindings.cu
+index 60275848..0656ba18 100644
 --- a/src/bindings.cu
 +++ b/src/bindings.cu
 @@ -13,6 +13,51 @@
@@ -85,11 +87,8 @@ diff --git a/src/bindings.cu b/src/bindings.cu
  // Wrapper functions for Python bindings
  pybind11::dict puf_log(pybind11::object pufferl_obj) {
      auto& pufferl = pufferl_obj.cast<PuffeRL&>();
-@@ -808,7 +853,33 @@ PYBIND11_MODULE(_C, m) {
-     m.attr("observation_abi") = PUFFER_OBSERVATION_ABI;
-     m.attr("observation_version") = PUFFER_OBSERVATION_VERSION;
-     m.attr("action_abi") = PUFFER_ACTION_ABI;
--
+@@ -872,2 +917,29 @@ PYBIND11_MODULE(_C, m) {
+     // Core functions
 +    m.attr("state_bank_contract_schema") = PUFFER_STATE_BANK_CONTRACT_SCHEMA;
 +    m.attr("state_bank_producer_schema") = PUFFER_STATE_BANK_PRODUCER_SCHEMA;
 +    m.attr("state_bank_authorization_schema") = PUFFER_STATE_BANK_AUTHORIZATION_SCHEMA;
@@ -117,10 +116,9 @@ diff --git a/src/bindings.cu b/src/bindings.cu
 +          &py_state_bank_stratum_descriptor,
 +          py::arg("family"), py::arg("threshold"));
 +#endif
-     // Core functions
      m.def("log", &puf_log);
-     m.def("eval_log", &puf_eval_log);
 diff --git a/src/bindings_cpu.cpp b/src/bindings_cpu.cpp
+index e627b192..0cbbfbcb 100644
 --- a/src/bindings_cpu.cpp
 +++ b/src/bindings_cpu.cpp
 @@ -13,6 +13,51 @@
@@ -175,10 +173,8 @@ diff --git a/src/bindings_cpu.cpp b/src/bindings_cpu.cpp
  // Stub out CUDA functions that the static lib references (dead code when gpu=0)
  extern "C" {
  typedef int cudaError_t;
-@@ -170,7 +215,33 @@ PYBIND11_MODULE(_C, m) {
-     m.attr("observation_abi") = PUFFER_OBSERVATION_ABI;
-     m.attr("observation_version") = PUFFER_OBSERVATION_VERSION;
-     m.attr("action_abi") = PUFFER_ACTION_ABI;
+@@ -189,2 +234,29 @@ PYBIND11_MODULE(_C, m) {
+     m.def("puff_advantage_cpu", &py_puff_advantage_cpu);
 +    m.attr("state_bank_contract_schema") = PUFFER_STATE_BANK_CONTRACT_SCHEMA;
 +    m.attr("state_bank_producer_schema") = PUFFER_STATE_BANK_PRODUCER_SCHEMA;
 +    m.attr("state_bank_authorization_schema") = PUFFER_STATE_BANK_AUTHORIZATION_SCHEMA;
@@ -200,12 +196,11 @@ diff --git a/src/bindings_cpu.cpp b/src/bindings_cpu.cpp
 +    m.attr("state_bank_bbs_path") = PUFFER_STATE_BANK_BBS_PATH;
 +    m.attr("state_bank_producer_manifest_path") = PUFFER_STATE_BANK_PRODUCER_MANIFEST_PATH;
 +    m.attr("state_bank_training_contract_path") = PUFFER_STATE_BANK_TRAINING_CONTRACT_PATH;
- 
++
 +#ifdef PUFFER_HAS_STATE_BANK_STRATUM_QUERY
 +    m.def("state_bank_stratum_descriptor",
 +          &py_state_bank_stratum_descriptor,
 +          py::arg("family"), py::arg("threshold"));
 +#endif
-     m.def("puff_advantage_cpu", &py_puff_advantage_cpu);
      m.def("create_vec", &create_vec, py::arg("args"), py::arg("gpu") = 0);
  

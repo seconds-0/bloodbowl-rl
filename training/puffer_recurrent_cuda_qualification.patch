@@ -1,18 +1,20 @@
 diff --git a/src/bindings.cu b/src/bindings.cu
-index 3b28c8c..ec09dbf 100644
+index d6d4d435..8acb9938 100644
 --- a/src/bindings.cu
 +++ b/src/bindings.cu
-@@ -3,6 +3,8 @@
+@@ -3,6 +3,10 @@
  #include <pybind11/pybind11.h>
  #include <pybind11/stl.h>
  #include <pybind11/numpy.h>
++#include <algorithm>
 +#include <cmath>
 +#include <cstring>
++#include <limits>
  #include "pufferlib.cu"
  #include "exact_action_build_hash.h"
  
-@@ -186,6 +188,262 @@ void set_evaluation_mode(pybind11::object pufferl_obj, bool enabled) {
-     pufferl.evaluation_mode = enabled;
+@@ -128,6 +132,685 @@ void python_vec_send(pybind11::object pufferl_obj, int buf) {
+     // Not used in static/OMP path
  }
  
 +static constexpr size_t QUALIFICATION_MAX_SNAPSHOT_BYTES = 64ULL << 20;
@@ -62,6 +64,8 @@ index 3b28c8c..ec09dbf 100644
 +    int64_t active_nonzero = 0;
 +    int64_t active_nonfinite = 0;
 +    float active_max_abs = 0.0f;
++    float active_min = std::numeric_limits<float>::infinity();
++    float active_max = -std::numeric_limits<float>::infinity();
 +    int64_t row_width = 1;
 +    for (int dim = 2; dim < ndim(tensor.shape); dim++) {
 +        row_width *= tensor.shape[dim];
@@ -72,14 +76,30 @@ index 3b28c8c..ec09dbf 100644
 +        for (size_t j = 0; j < sizeof(precision_t); j++) any |= raw[j] != 0;
 +        nonzero += any ? 1 : 0;
 +        float value = qualification_precision_value(raw);
-+        if (!std::isfinite(value)) nonfinite++;
-+        max_abs = std::max(max_abs, std::fabs(value));
++        if (!std::isfinite(value)) {
++            nonfinite++;
++        } else {
++            max_abs = std::max(max_abs, std::fabs(value));
++        }
 +        int64_t row = (i / row_width) % tensor.shape[1];
 +        if (row < active_rows) {
 +            active_nonzero += any ? 1 : 0;
-+            if (!std::isfinite(value)) active_nonfinite++;
-+            active_max_abs = std::max(active_max_abs, std::fabs(value));
++            if (!std::isfinite(value)) {
++                active_nonfinite++;
++            } else {
++                active_min = std::min(active_min, value);
++                active_max = std::max(active_max, value);
++                active_max_abs = std::max(active_max_abs, std::fabs(value));
++            }
 +        }
++    }
++    if (nonfinite != 0) max_abs = 0.0f;
++    if (active_nonfinite != 0) {
++        // Keep diagnostic artifacts strict-JSON serializable. The nonfinite
++        // counter remains authoritative; extrema are finite sentinels.
++        active_max_abs = 0.0f;
++        active_min = 0.0f;
++        active_max = 0.0f;
 +    }
 +
 +    py::dict entry;
@@ -97,6 +117,8 @@ index 3b28c8c..ec09dbf 100644
 +    entry["active_nonzero"] = active_nonzero;
 +    entry["active_nonfinite"] = active_nonfinite;
 +    entry["active_max_abs"] = active_max_abs;
++    entry["active_min"] = active_min;
++    entry["active_max"] = active_max;
 +    return entry;
 +}
 +
@@ -145,6 +167,253 @@ index 3b28c8c..ec09dbf 100644
 +    result["agents_per_buffer"] = block_size;
 +    result["bank_layout"] = layout;
 +    result["entries"] = entries;
++    return result;
++}
++
++size_t qualification_checked_multiply(
++        size_t lhs, size_t rhs, const char* label) {
++    if (lhs != 0 && rhs > std::numeric_limits<size_t>::max() / lhs) {
++        throw std::runtime_error(
++            std::string("qualification ") + label + " size overflows");
++    }
++    return lhs * rhs;
++}
++
++py::dict qualification_policy_weights(
++        py::object pufferl_obj, int bank,
++        size_t max_bytes = QUALIFICATION_MAX_SNAPSHOT_BYTES) {
++    if (USE_BF16) {
++        throw std::runtime_error(
++            "qualification policy weight evidence requires fp32");
++    }
++    if (max_bytes == 0 || max_bytes > QUALIFICATION_MAX_SNAPSHOT_BYTES) {
++        throw std::runtime_error(
++            "invalid qualification policy weight byte limit");
++    }
++
++    PuffeRL& pufferl = pufferl_obj.cast<PuffeRL&>();
++    if (pufferl.num_frozen_banks < 0 ||
++            pufferl.num_frozen_banks == std::numeric_limits<int>::max()) {
++        throw std::runtime_error(
++            "qualification policy bank count is invalid");
++    }
++    if (bank < 0 || bank > pufferl.num_frozen_banks) {
++        throw std::runtime_error(
++            "qualification policy bank index is out of range");
++    }
++    if (pufferl.vec == nullptr || pufferl.hypers.num_buffers <= 0 ||
++            pufferl.vec->total_agents <= 0 ||
++            pufferl.vec->total_agents % pufferl.hypers.num_buffers != 0 ||
++            pufferl.hypers.total_agents != pufferl.vec->total_agents ||
++            pufferl.vec->buffers != pufferl.hypers.num_buffers) {
++        throw std::runtime_error(
++            "qualification policy agent/buffer layout is invalid");
++    }
++    int agents_per_buffer =
++        pufferl.vec->total_agents / pufferl.hypers.num_buffers;
++    if (pufferl.num_frozen_banks > agents_per_buffer - 1 ||
++            (pufferl.num_frozen_banks > 0 &&
++                (pufferl.frozen_banks == nullptr ||
++                 pufferl.bank_layout == nullptr))) {
++        throw std::runtime_error(
++            "qualification policy bank layout is invalid");
++    }
++
++    int slice_size = agents_per_buffer;
++    if (pufferl.bank_layout != nullptr) {
++        if (pufferl.bank_layout[0] != 0) {
++            throw std::runtime_error(
++                "qualification policy bank layout must begin at zero");
++        }
++        int previous = 0;
++        for (int candidate = 0;
++                candidate <= pufferl.num_frozen_banks; candidate++) {
++            int end = pufferl.bank_layout[candidate + 1];
++            if (end <= previous || end > agents_per_buffer) {
++                throw std::runtime_error(
++                    "qualification policy bank layout is not strictly bounded");
++            }
++            int candidate_slice = end - previous;
++            if (candidate > 0 &&
++                    pufferl.frozen_banks[candidate - 1].slice_size !=
++                        candidate_slice) {
++                throw std::runtime_error(
++                    "qualification frozen policy slice disagrees with layout");
++            }
++            if (candidate == bank) slice_size = candidate_slice;
++            previous = end;
++        }
++        if (previous != agents_per_buffer) {
++            throw std::runtime_error(
++                "qualification policy bank layout does not cover the buffer");
++        }
++    } else if (pufferl.num_frozen_banks != 0) {
++        throw std::runtime_error(
++            "qualification frozen policy layout is missing");
++    }
++
++    Policy* policy = &pufferl.policy;
++    PolicyWeights* weights = &pufferl.weights;
++    FloatTensor* master = &pufferl.master_weights;
++    PrecisionTensor* params = &pufferl.param_puf;
++    int declared_hidden_size = pufferl.hypers.hidden_size;
++    int declared_num_layers = pufferl.hypers.num_layers;
++    const char* role = "primary";
++    if (bank > 0) {
++        WeightBank* frozen = &pufferl.frozen_banks[bank - 1];
++        policy = &frozen->policy;
++        weights = &frozen->weights;
++        master = &frozen->master_weights;
++        params = &frozen->param_puf;
++        declared_hidden_size = frozen->hidden_size;
++        declared_num_layers = frozen->num_layers;
++        role = "frozen";
++        if (frozen->slice_size != slice_size) {
++            throw std::runtime_error(
++                "qualification frozen policy selected slice is invalid");
++        }
++    }
++
++    if (policy->input_dim <= 0 || policy->hidden_dim <= 0 ||
++            policy->output_dim <= 0 || policy->network.num_layers <= 0 ||
++            declared_hidden_size != policy->hidden_dim ||
++            declared_num_layers != policy->network.num_layers ||
++            policy->encoder.in_dim != policy->input_dim ||
++            policy->encoder.out_dim != policy->hidden_dim ||
++            policy->decoder.hidden_dim != policy->hidden_dim ||
++            policy->decoder.output_dim != policy->output_dim ||
++            policy->network.hidden != policy->hidden_dim) {
++        throw std::runtime_error(
++            "qualification policy architecture metadata is malformed");
++    }
++    if (weights->decoder == nullptr || master->data == nullptr ||
++            params->data == nullptr || ndim(master->shape) != 1 ||
++            ndim(params->shape) != 1 || master->shape[0] <= 0 ||
++            params->shape[0] != master->shape[0] ||
++            reinterpret_cast<void*>(params->data) !=
++                reinterpret_cast<void*>(master->data)) {
++        throw std::runtime_error(
++            "qualification policy flat weight pointers/shapes are malformed");
++    }
++
++    DecoderWeights* decoder =
++        reinterpret_cast<DecoderWeights*>(weights->decoder);
++    if (decoder->weight.data == nullptr ||
++            decoder->hidden_dim != policy->hidden_dim ||
++            decoder->output_dim != policy->output_dim ||
++            decoder->continuous != policy->decoder.continuous ||
++            ndim(decoder->weight.shape) != 2) {
++        throw std::runtime_error(
++            "qualification policy decoder metadata is malformed");
++    }
++    int64_t action_logits = decoder->output_dim;
++    int64_t output_size = action_logits + 1;
++    int64_t hidden_size = decoder->hidden_dim;
++    if (output_size <= action_logits ||
++            decoder->weight.shape[0] != output_size ||
++            decoder->weight.shape[1] != hidden_size) {
++        throw std::runtime_error(
++            "qualification policy decoder shape is malformed");
++    }
++
++    int64_t parameter_count_i64 = master->shape[0];
++    uint64_t parameter_count_u64 =
++        static_cast<uint64_t>(parameter_count_i64);
++    if (parameter_count_u64 >
++            static_cast<uint64_t>(std::numeric_limits<size_t>::max())) {
++        throw std::runtime_error(
++            "qualification policy parameter count is not addressable");
++    }
++    size_t parameter_count = static_cast<size_t>(parameter_count_u64);
++    size_t parameter_bytes = qualification_checked_multiply(
++        parameter_count, sizeof(float), "parameter");
++    if (parameter_bytes > max_bytes) {
++        throw std::runtime_error(
++            "qualification policy weights exceed byte limit");
++    }
++    size_t decoder_elements = qualification_checked_multiply(
++        static_cast<size_t>(output_size),
++        static_cast<size_t>(hidden_size), "decoder");
++    size_t decoder_bytes = qualification_checked_multiply(
++        decoder_elements, sizeof(float), "decoder byte");
++
++    uintptr_t master_address =
++        reinterpret_cast<uintptr_t>(master->data);
++    uintptr_t decoder_address =
++        reinterpret_cast<uintptr_t>(decoder->weight.data);
++    if (master_address % alignof(float) != 0 ||
++            decoder_address % alignof(float) != 0 ||
++            decoder_address < master_address) {
++        throw std::runtime_error(
++            "qualification policy decoder pointer is outside the master bank");
++    }
++    uintptr_t offset_bytes_u = decoder_address - master_address;
++    if (offset_bytes_u >
++            static_cast<uintptr_t>(std::numeric_limits<size_t>::max()) ||
++            offset_bytes_u % sizeof(float) != 0) {
++        throw std::runtime_error(
++            "qualification policy decoder pointer offset is invalid");
++    }
++    size_t offset_bytes = static_cast<size_t>(offset_bytes_u);
++    if (offset_bytes > parameter_bytes ||
++            decoder_bytes > parameter_bytes - offset_bytes) {
++        throw std::runtime_error(
++            "qualification policy decoder range exceeds the master bank");
++    }
++    size_t decoder_offset = offset_bytes / sizeof(float);
++    if (decoder_offset > parameter_count ||
++            decoder_elements > parameter_count - decoder_offset) {
++        throw std::runtime_error(
++            "qualification policy decoder element range is invalid");
++    }
++    size_t value_row_delta = qualification_checked_multiply(
++        static_cast<size_t>(action_logits),
++        static_cast<size_t>(hidden_size), "value row");
++    if (value_row_delta > decoder_elements ||
++            decoder_offset >
++                std::numeric_limits<size_t>::max() - value_row_delta) {
++        throw std::runtime_error(
++            "qualification policy value row offset overflows");
++    }
++    size_t value_row_offset = decoder_offset + value_row_delta;
++    if (value_row_offset > parameter_count ||
++            static_cast<size_t>(hidden_size) >
++                parameter_count - value_row_offset ||
++            static_cast<size_t>(hidden_size) !=
++                decoder_elements - value_row_delta) {
++        throw std::runtime_error(
++            "qualification policy value row exceeds the master bank");
++    }
++
++    if (cudaDeviceSynchronize() != cudaSuccess) {
++        throw std::runtime_error(
++            "qualification policy weight synchronization failed");
++    }
++    std::vector<char> host(parameter_bytes);
++    if (cudaMemcpy(host.data(), master->data, parameter_bytes,
++            cudaMemcpyDeviceToHost) != cudaSuccess) {
++        throw std::runtime_error(
++            "qualification policy master weight copy failed");
++    }
++
++    py::list decoder_shape;
++    decoder_shape.append(output_size);
++    decoder_shape.append(hidden_size);
++    py::dict result;
++    result["bank"] = bank;
++    result["role"] = role;
++    result["slice_size"] = slice_size;
++    result["input_size"] = policy->input_dim;
++    result["hidden_size"] = hidden_size;
++    result["num_layers"] = policy->network.num_layers;
++    result["action_logits"] = action_logits;
++    result["output_size"] = output_size;
++    result["parameter_count"] = parameter_count;
++    result["parameter_bytes"] = parameter_bytes;
++    result["decoder_offset"] = decoder_offset;
++    result["decoder_shape"] = decoder_shape;
++    result["value_row_offset"] = value_row_offset;
++    result["weights"] = py::bytes(host.data(), parameter_bytes);
 +    return result;
 +}
 +
@@ -224,6 +493,16 @@ index 3b28c8c..ec09dbf 100644
 +        "rewards", pufferl.rollouts.rewards, &used, max_bytes);
 +    tensors["terminals"] = qualification_precision_tensor(
 +        "terminals", pufferl.rollouts.terminals, &used, max_bytes);
++    tensors["tail_rewards"] = qualification_precision_tensor(
++        "tail_rewards", pufferl.tail_rewards, &used, max_bytes);
++    tensors["tail_terminals"] = qualification_precision_tensor(
++        "tail_terminals", pufferl.tail_terminals, &used, max_bytes);
++    tensors["tail_values"] = qualification_precision_tensor(
++        "tail_values", pufferl.tail_values, &used, max_bytes);
++    tensors["tail_valid"] = qualification_int_tensor(
++        "tail_valid", pufferl.tail_valid, &used, max_bytes);
++    tensors["advantages"] = qualification_precision_tensor(
++        "advantages", pufferl.advantages_puf, &used, max_bytes);
 +    tensors["action_mask"] = qualification_precision_tensor(
 +        "action_mask", pufferl.rollouts.action_mask, &used, max_bytes);
 +    tensors["mb_ratio"] = qualification_precision_tensor(
@@ -261,6 +540,36 @@ index 3b28c8c..ec09dbf 100644
 +        }
 +    }
 +
++    py::list tail_decoder_outputs;
++    for (int bank = 0; bank < 1 + pufferl.num_frozen_banks; bank++) {
++        PolicyActivations* activations = bank == 0
++            ? pufferl.tail_activations
++            : pufferl.frozen_banks[bank - 1].tail_activations;
++        int bank_start = pufferl.bank_layout == nullptr
++            ? 0 : pufferl.bank_layout[bank];
++        int bank_end = pufferl.bank_layout == nullptr
++            ? block_size : pufferl.bank_layout[bank + 1];
++        for (int buffer = 0; buffer < pufferl.hypers.num_buffers; buffer++) {
++            DecoderActivations* decoder =
++                (DecoderActivations*)activations[buffer].decoder;
++            py::dict entry;
++            entry["bank"] = bank;
++            entry["buffer"] = buffer;
++            int active_rows = bank_end - bank_start;
++            entry["active_rows"] = active_rows;
++            PrecisionTensor active_output = decoder->out;
++            if (ndim(active_output.shape) < 1 || active_rows <= 0 ||
++                    active_rows > active_output.shape[0]) {
++                throw std::runtime_error(
++                    "qualification tail decoder active-row layout is invalid");
++            }
++            active_output.shape[0] = active_rows;
++            entry["tensor"] = qualification_precision_tensor(
++                "tail_decoder_output", active_output, &used, max_bytes);
++            tail_decoder_outputs.append(entry);
++        }
++    }
++
 +    py::dict result;
 +    result["max_bytes"] = max_bytes;
 +    result["used_bytes"] = used;
@@ -268,18 +577,141 @@ index 3b28c8c..ec09dbf 100644
 +    result["num_buffers"] = pufferl.hypers.num_buffers;
 +    result["tensors"] = tensors;
 +    result["decoder_outputs"] = decoder_outputs;
++    result["tail_decoder_outputs"] = tail_decoder_outputs;
 +    return result;
 +}
 +
- pybind11::dict train(pybind11::object pufferl_obj) {
++py::dict qualification_graph_execution(py::object pufferl_obj) {
++    PuffeRL& pufferl = pufferl_obj.cast<PuffeRL&>();
++    if (cudaDeviceSynchronize() != cudaSuccess) {
++        throw std::runtime_error(
++            "qualification graph-execution synchronization failed");
++    }
++
++    bool rollout_handles = pufferl.fused_rollout_cudagraphs != nullptr;
++    if (rollout_handles) {
++        int count = pufferl.hypers.horizon * pufferl.hypers.num_buffers;
++        for (int i = 0; i < count; i++) {
++            if (pufferl.fused_rollout_cudagraphs[i] == nullptr) {
++                rollout_handles = false;
++                break;
++            }
++        }
++    }
++    bool tail_handles = pufferl.tail_rollout_cudagraphs != nullptr;
++    if (tail_handles) {
++        for (int i = 0; i < pufferl.hypers.num_buffers; i++) {
++            if (pufferl.tail_rollout_cudagraphs[i] == nullptr) {
++                tail_handles = false;
++                break;
++            }
++        }
++    }
++
++    py::dict captured;
++    captured["rollout"] = pufferl.rollout_captured;
++    captured["tail"] = pufferl.tail_captured;
++    captured["train"] = pufferl.train_captured;
++    py::dict handles;
++    handles["rollout"] = rollout_handles;
++    handles["tail"] = tail_handles;
++    handles["train"] = pufferl.train_cudagraph != nullptr;
++    py::dict graph_counts;
++    graph_counts["rollout"] =
++        pufferl.qualification_execution_counts[QUAL_GRAPH_ROLLOUT].load(
++            std::memory_order_relaxed);
++    graph_counts["tail"] =
++        pufferl.qualification_execution_counts[QUAL_GRAPH_TAIL].load(
++            std::memory_order_relaxed);
++    graph_counts["train"] =
++        pufferl.qualification_execution_counts[QUAL_GRAPH_TRAIN].load(
++            std::memory_order_relaxed);
++    py::dict eager_counts;
++    eager_counts["rollout"] =
++        pufferl.qualification_execution_counts[QUAL_EAGER_ROLLOUT].load(
++            std::memory_order_relaxed);
++    eager_counts["tail"] =
++        pufferl.qualification_execution_counts[QUAL_EAGER_TAIL].load(
++            std::memory_order_relaxed);
++    eager_counts["train"] =
++        pufferl.qualification_execution_counts[QUAL_EAGER_TRAIN].load(
++            std::memory_order_relaxed);
++
++    py::dict result;
++    result["cudagraphs"] = pufferl.hypers.cudagraphs;
++    result["captured"] = captured;
++    result["handles_ready"] = handles;
++    result["graph_launch_counts"] = graph_counts;
++    result["eager_execution_counts"] = eager_counts;
++    return result;
++}
++
++py::dict qualification_consume_tail(py::object pufferl_obj) {
++    PuffeRL& pufferl = pufferl_obj.cast<PuffeRL&>();
++    if (cudaDeviceSynchronize() != cudaSuccess) {
++        throw std::runtime_error(
++            "qualification tail-consumption synchronization failed");
++    }
++    std::vector<int> before(pufferl.hypers.num_buffers);
++    if (cudaMemcpy(before.data(), pufferl.tail_valid.data,
++            before.size() * sizeof(int),
++            cudaMemcpyDeviceToHost) != cudaSuccess) {
++        throw std::runtime_error(
++            "qualification tail-consumption read failed");
++    }
++    for (int valid : before) {
++        if (valid != 1) {
++            throw std::runtime_error(
++                "qualification tail consumption requires exactly one "
++                "record per rollout buffer");
++        }
++    }
++    if (cudaMemsetAsync(pufferl.tail_valid.data, 0,
++            before.size() * sizeof(int),
++            pufferl.default_stream) != cudaSuccess
++            || cudaStreamSynchronize(pufferl.default_stream) != cudaSuccess) {
++        throw std::runtime_error(
++            "qualification tail-consumption clear failed");
++    }
++    std::vector<int> after(pufferl.hypers.num_buffers);
++    if (cudaMemcpy(after.data(), pufferl.tail_valid.data,
++            after.size() * sizeof(int),
++            cudaMemcpyDeviceToHost) != cudaSuccess) {
++        throw std::runtime_error(
++            "qualification tail-consumption postcondition read failed");
++    }
++    py::list before_result;
++    py::list after_result;
++    for (size_t i = 0; i < before.size(); i++) {
++        if (after[i] != 0) {
++            throw std::runtime_error(
++                "qualification tail-consumption postcondition failed");
++        }
++        before_result.append(before[i]);
++        after_result.append(after[i]);
++    }
++    py::dict result;
++    result["before"] = before_result;
++    result["after"] = after_result;
++    return result;
++}
++
+ void render(pybind11::object pufferl_obj, int env_id) {
      PuffeRL& pufferl = pufferl_obj.cast<PuffeRL&>();
-     if (!pufferl.hypers.reset_state || pufferl.evaluation_mode) {
-@@ -470,9 +728,18 @@ std::unique_ptr<PuffeRL> create_pufferl(py::dict args) {
+     static_vec_render(pufferl.vec, env_id);
+@@ -510,9 +1193,24 @@ std::unique_ptr<PuffeRL> create_pufferl(py::dict args) {
+     // Seed
      hypers.seed = get_config(args, "seed");
  
 -    int device_count = 0;
 -    cudaGetDeviceCount(&device_count);
 -    assert(device_count > 0 && "CUDA is not available");
++    if (hypers.cudagraphs >= 0 && hypers.anneal_ent_coef) {
++        throw std::runtime_error(
++            "CUDA graph training with entropy annealing is disabled until "
++            "the runtime coefficient is device-backed and qualified");
++    }
++
 +    int device_count = -1;
 +    cudaError_t device_status = cudaGetDeviceCount(&device_count);
 +    if (device_status != cudaSuccess || device_count <= 0) {
@@ -295,15 +727,21 @@ index 3b28c8c..ec09dbf 100644
  
      std::string env_name = args["env_name"].cast<std::string>();
      Dict* vec_dict = py_dict_to_c_dict(vec_kwargs.cast<py::dict>());
-     Dict* env_dict = py_dict_to_c_dict(env_kwargs.cast<py::dict>());
-@@ -548,6 +815,10 @@ PYBIND11_MODULE(_C, m) {
-     m.def("render", &render);
-     m.def("rollouts", &rollouts);
-     m.def("set_evaluation_mode", &set_evaluation_mode);
+@@ -601,6 +1299,17 @@ PYBIND11_MODULE(_C, m) {
+     m.def("num_envs", &py_num_envs);
+     m.def("python_vec_recv", &python_vec_recv);
+     m.def("python_vec_send", &python_vec_send);
 +    m.def("qualification_recurrent_state", &qualification_recurrent_state,
 +        py::arg("pufferl"), py::arg("clear") = false);
++    m.def("qualification_policy_weights", &qualification_policy_weights,
++        py::arg("pufferl"), py::arg("bank"),
++        py::arg("max_bytes") = QUALIFICATION_MAX_SNAPSHOT_BYTES);
 +    m.def("qualification_snapshot", &qualification_snapshot,
 +        py::arg("pufferl"), py::arg("max_bytes") = QUALIFICATION_MAX_SNAPSHOT_BYTES);
-     m.def("train", &train);
-     m.def("close", &puf_close);
-     m.def("save_weights", &save_weights);
++    m.def("qualification_graph_execution", &qualification_graph_execution,
++        py::arg("pufferl"));
++    m.def("qualification_consume_tail", &qualification_consume_tail,
++        py::arg("pufferl"));
+     py::class_<Policy>(m, "Policy");
+     py::class_<Muon>(m, "Muon");
+     py::class_<Allocator>(m, "Allocator")

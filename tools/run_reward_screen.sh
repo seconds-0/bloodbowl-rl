@@ -43,6 +43,10 @@ FROZEN_BANK_PCT=0.06
 EXPECT_BYTES=16066560
 LR=0.00028
 ENT_COEF=0.009
+CUDAGRAPHS=10
+ANNEAL_ENT_COEF=1
+MIN_ENT_COEF_RATIO=0.1
+ENTROPY_SCHEDULE_STATUS=blocked_unqualified
 GAMMA=0.995
 # Every arm this screen launches must discount at the SAME gamma its reward
 # manifest claims for exact PBRS, or beta*(gamma*Phi' - Phi) is not exact and the
@@ -185,6 +189,11 @@ if [ "$BOOTSTRAP_MODE" = "lineage-v6" ]; then
     echo "lineage-v6 screen requires the explicit current EXPECTED_POOL_HASH as a lowercase SHA-256 digest" >&2
     exit 1
   }
+fi
+if [ "$PLAN_ONLY" != "1" ] && [ "$CUDAGRAPHS" -ge 0 ] && [ "$ANNEAL_ENT_COEF" = "1" ]; then
+  echo "BLOCKED_UNQUALIFIED_ENTROPY_SCHEDULE: cudagraphs=$CUDAGRAPHS anneal_ent_coef=$ANNEAL_ENT_COEF" >&2
+  echo "the screen cannot create runnable artifacts until entropy graph/Torch parity is qualified" >&2
+  exit 1
 fi
 mkdir -p "$OUT_DIR"
 
@@ -332,6 +341,10 @@ SCREEN_PLAN="$(
       MAX_PANEL_SILENCE_SECONDS="$MAX_PANEL_SILENCE_SECONDS" \
       TOTAL_AGENTS="$TOTAL_AGENTS" HORIZON="$HORIZON" \
       MINIBATCH_SIZE="$MINIBATCH_SIZE" EXPECT_BYTES="$EXPECT_BYTES" \
+      CUDAGRAPHS="$CUDAGRAPHS" \
+      ANNEAL_ENT_COEF="$ANNEAL_ENT_COEF" \
+      MIN_ENT_COEF_RATIO="$MIN_ENT_COEF_RATIO" \
+      ENTROPY_SCHEDULE_STATUS="$ENTROPY_SCHEDULE_STATUS" \
       FROZEN_BANK_PCT="$FROZEN_BANK_PCT" \
       NUM_FROZEN_BANKS="$NUM_FROZEN_BANKS" \
       MIN_TRAIN_GAMES="$MIN_TRAIN_GAMES" MIN_EVAL_GAMES="$MIN_EVAL_GAMES" \
@@ -405,6 +418,8 @@ print(json.dumps({
     "observation_version": getattr(
         _C, "observation_version", "<missing>"),
     "action_abi": getattr(_C, "action_abi", "<missing>"),
+    "rollout_transition_contract": getattr(
+        _C, "rollout_transition_contract", "<missing>"),
     "environment_config_schema": getattr(
         _C, "environment_config_schema", "<missing>"),
     "strict_env_config_testing": getattr(
@@ -465,6 +480,7 @@ if (
     compiled_contract["observation_abi"] != "obs-v6" or
     compiled_contract["observation_version"] != 6 or
     compiled_contract["action_abi"] != "exact-joint-v1" or
+    compiled_contract["rollout_transition_contract"] != "tail-bootstrap-v1" or
     compiled_contract["environment_config_schema"] !=
         "bloodbowl-environment-config-v1" or
     compiled_contract["strict_env_config_testing"] is not False or
@@ -491,7 +507,7 @@ if (
 ):
     raise SystemExit(
         "compiled native module does not satisfy the "
-        "obs-v6/exact-action/no-bank contract")
+        "obs-v6/exact-action/tail-bootstrap/no-bank contract")
 
 # The per-arm launcher recomputes this bundle digest and refuses to train if it
 # drifts, so the screen only has to publish the value it launched with.
@@ -508,6 +524,7 @@ patches = [
     root / "training/selfplay_league.patch",
     root / "training/puffer_exact_joint_actions.patch",
     root / "training/puffer_recurrent_eval_state.patch",
+    root / "training/puffer_rollout_transition_closure.patch",
     root / "training/puffer_frozen_prio_mask.patch",
     root / "training/puffer_recurrent_cuda_qualification.patch",
     root / "training/puffer_reward_clamp_range.patch",
@@ -658,6 +675,10 @@ contract = {
         "policy_hidden_size": "512",
         "policy_num_layers": "3",
         "policy_expansion_factor": "1",
+        "cudagraphs": os.environ["CUDAGRAPHS"],
+        "anneal_ent_coef": os.environ["ANNEAL_ENT_COEF"],
+        "min_ent_coef_ratio": os.environ["MIN_ENT_COEF_RATIO"],
+        "entropy_schedule_status": os.environ["ENTROPY_SCHEDULE_STATUS"],
     },
     "error_budget": {
         "contamination_budget": 0,
@@ -721,6 +742,7 @@ PY
 )"
 read -r SCREEN_MANIFEST_SHA SCREEN_PATCH_BUNDLE_SHA <<<"$SCREEN_PLAN"
 if [ "$PLAN_ONLY" = "1" ]; then
+  echo "SCREEN PLAN UNSAFE/BLOCKED: BLOCKED_UNQUALIFIED_ENTROPY_SCHEDULE" >&2
   echo "SCREEN PLAN VERIFIED: $SCREEN_MANIFEST"
   echo "screen_manifest_sha256=$SCREEN_MANIFEST_SHA"
   exit 0
@@ -845,6 +867,34 @@ try:
         run_manifest_path, screen_manifest_sha)
 except ScreenEvidenceContractError as exc:
     raise SystemExit(str(exc)) from exc
+expected_transition_contract = screen["implementation"][
+    "compiled_semantic_contract"
+]["rollout_transition_contract"]
+if (
+    run_manifest.get("compiled_rollout_transition_contract")
+    != expected_transition_contract
+):
+    raise SystemExit(
+        "run rollout-transition contract differs from the screen plan: "
+        f"{run_manifest.get('compiled_rollout_transition_contract')!r} != "
+        f"{expected_transition_contract!r}"
+    )
+expected_entropy = {
+    "cudagraphs": int(screen["settings"]["cudagraphs"]),
+    "anneal_ent_coef": screen["settings"]["anneal_ent_coef"] == "1",
+    "min_ent_coef_ratio": float(screen["settings"]["min_ent_coef_ratio"]),
+    "entropy_schedule_status": screen["settings"]["entropy_schedule_status"],
+    "entropy_effective_coefficient": "unavailable_blocked",
+}
+observed_entropy = {
+    key: run_manifest.get(key)
+    for key in expected_entropy
+}
+if observed_entropy != expected_entropy:
+    raise SystemExit(
+        "run entropy configuration differs from the screen plan: "
+        f"{observed_entropy!r} != {expected_entropy!r}"
+    )
 _, expected_reward_sha = load_manifest(reward_manifest_path)
 if run_manifest.get("reward_sha256") != expected_reward_sha:
     raise SystemExit(
@@ -1122,6 +1172,10 @@ PY
         TOTAL_AGENTS="$TOTAL_AGENTS" NUM_BUFFERS="$NUM_BUFFERS" \
         NUM_THREADS="$NUM_THREADS" FROZEN_BANK_PCT="$FROZEN_BANK_PCT" \
         EXPECT_BYTES="$EXPECT_BYTES" LR="$LR" ENT_COEF="$ENT_COEF" \
+        CUDAGRAPHS="$CUDAGRAPHS" \
+        ANNEAL_ENT_COEF="$ANNEAL_ENT_COEF" \
+        MIN_ENT_COEF_RATIO="$MIN_ENT_COEF_RATIO" \
+        ENTROPY_SCHEDULE_STATUS="$ENTROPY_SCHEDULE_STATUS" \
         GAMMA="$GAMMA" GAE_LAMBDA="$GAE_LAMBDA" HORIZON="$HORIZON" \
         MINIBATCH_SIZE="$MINIBATCH_SIZE" CHECKPOINT_STEPS="$CHECKPOINT_STEPS" \
         REPLAY_RATIO="$REPLAY_RATIO" CLIP_COEF="$CLIP_COEF" \

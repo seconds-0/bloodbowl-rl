@@ -2020,7 +2020,8 @@ class PufferStateBankPatchTests(unittest.TestCase):
             function,
         )
         self.assertIn('--ledger "$COMPILED_BACKEND_LEDGER"', function)
-        self.assertIn("--expected-count 9", function)
+        self.assertIn("--expected-count 14", function)
+        self.assertIn("--require-native-extension-closure", function)
         ledger = (
             ROOT / "training/puffer_compiled_backend_sources.txt"
         ).read_text(encoding="utf-8")
@@ -2033,8 +2034,13 @@ class PufferStateBankPatchTests(unittest.TestCase):
                 "pufferlib/torch_pufferl.py",
                 "src/bindings.cu",
                 "src/bindings_cpu.cpp",
+                "src/cudnn_conv2d.cu",
                 "src/kernels.cu",
+                "src/models.cu",
+                "src/muon.cu",
+                "src/ocean.cu",
                 "src/pufferlib.cu",
+                "src/tensor.h",
                 "src/vecenv.h",
             ],
         )

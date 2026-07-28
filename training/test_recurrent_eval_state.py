@@ -33,9 +33,12 @@ class RecurrentEvaluationPatchTests(unittest.TestCase):
             self.assertIn(fragment, self.patch)
         zero_at = self.patch.index("for (int bank = 0; bank < 1 + pufferl->num_frozen_banks")
         sync_at = self.patch.index("cudaDeviceSynchronize();", zero_at)
-        epoch_at = self.patch.index("pufferl->epoch = 0;", zero_at)
         self.assertLess(zero_at, sync_at)
-        self.assertLess(sync_at, epoch_at)
+        self.assertNotIn(
+            "pufferl->epoch = 0;",
+            self.patch[zero_at:sync_at],
+            "the recurrent reset must remain wholly before the synchronization",
+        )
 
     def test_native_terminal_reset_is_captured_and_bank_local(self):
         for fragment in (

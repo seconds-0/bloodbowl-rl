@@ -1,7 +1,9 @@
 # Rollout transition closure
 
-Status: planned, 2026-07-28. No implementation or deployment is authorized by
-this document alone.
+Status: implemented; local source/oracle contracts accepted, 2026-07-28.
+Current compiled CPU acceptance remains pending on x86 CI, and native NVIDIA
+deployment-boundary acceptance remains pending. No F5 gate, canary, long run,
+or production deployment is authorized by this document alone.
 
 Base: local strict-environment-config commit
 `c1acdd7d1e94c1d46a930443edbabc8d07732282`.
@@ -101,7 +103,10 @@ This is a reviewed part of `tail-bootstrap-v1`, not an incidental rewrite.
    in-rollout rewards. A terminal tail must contribute exactly zero bootstrap,
    irrespective of the numerical value output by the network. The terminal
    branch must select zero before bootstrap arithmetic so even a nonfinite
-   ignored value cannot contaminate the terminal advantage.
+   ignored value cannot contaminate the terminal advantage. The parity claim
+   covers finite rewards and the reviewed finite clamp boundaries. A `NaN`
+   reward is a hard-integrity failure and is rejected by qualification; this
+   contract does not assign it a cross-language learning semantic.
 7. Torch must take the extra value-only forward pass only during training and
    must pass a fresh initial state. Native must use a dedicated tail
    observation tensor plus per-bank/per-buffer scratch recurrent state and
@@ -220,7 +225,9 @@ must be exactly reverse-applicable after installation.
 
 ## Local acceptance
 
-- The current code fails the red tests for a missing tail contract.
+- The pre-fix implementation is preserved by red regression tests that fail
+  when the tail contract, freshness token, final-slot write, or integrated
+  oracle is removed.
 - A synthetic terminal reward present only after action `horizon - 1` produces
   the oracle advantage at that action; the old implementation produces zero.
 - A nonterminal tail uses `reward_h + gamma * bootstrap_value_h`; a terminal
@@ -236,16 +243,108 @@ must be exactly reverse-applicable after installation.
   behavior decoder output.
 - No rollout executes `horizon + 1` actions, and no evaluation observation is
   forwarded twice.
-- Applied CPU Puffer tests and the existing recurrent, exact-action, strict
-  configuration, state-bank, experiment-contract, and engine tests pass.
+- Repository CPU-side oracle/source contracts and the existing recurrent,
+  exact-action, strict configuration, state-bank, experiment-contract, and
+  engine tests pass. This is not a current compiled Puffer CPU-module claim.
 - Patch application is clean and installer drift checking is idempotent on a
   fresh pinned Puffer tree.
 - The qualifier rejects a missing or wrong `tail-bootstrap-v1`, binds the
   transition patch path and SHA-256 in its evidence, and records the module
   marker; both experiment launchers hash the same ordered bundle; every
   installed patch is exactly reverse-applicable.
-- Self-review and an independent post-implementation review find no unresolved
-  correctness issue.
+- Self-review and independent post-implementation review closed the repository
+  oracle, source, provenance, and exact-patch-stack contract without a
+  remaining transition-specific high- or medium-severity finding. Current x86
+  compiled-module execution, NVIDIA execution, predecessor-lineage authority,
+  and the separately discovered cross-backend entropy-annealing defect remain
+  explicit blockers to production training.
+
+## Local implementation evidence
+
+The implementation is the ordered
+`training/puffer_rollout_transition_closure.patch`, with the surrounding
+installer, qualification, CI, and experiment-provenance changes described
+above. Local acceptance used a new detached checkout of pinned PufferLib
+`9836f0d2e78889c1aaf189c04d161b6fc61a9386`, not an already-patched vendor
+tree.
+
+The local evidence collected earlier on 2026-07-28 was invalidated whenever the
+transition patch, qualification schema, source registry, or patch contexts
+changed. The exact final source/installer evidence is:
+
+- the complete installer ran twice without changing its second-run result;
+- every one of the 13 ordered semantic/qualification patches passed ordinary
+  `git apply --reverse --check --no-index` after the complete stack was
+  installed;
+- the exact rollout-transition patch SHA-256 is
+  `3821202c5db0cf40199d6024c426c8fd457e471a7d6c849e0e3e54c77a2a4f70`;
+- the exact qualification patch SHA-256 is
+  `6ae4e4c0d6c27fba512818996cebb0f6165f618730ff6254c9df1e198cafdcc4`;
+- the recursive 14-entry compiled-backend digest is
+  `591a2d3d1f45a534c101d2facf0482646eea837cc650aaa93bb39869e5d14794`,
+  exactly matching the generated build header; and
+- the installed graph-plus-anneal guard is after complete `Hypers` parsing and
+  before checked `cudaGetDeviceCount`.
+
+Repository validation on the final source state passed 362 tool tests with six
+skips; 197 training tests with one skip under a Torch-capable Puffer virtual
+environment; four validation tests; and 17 stream-backend tests. `make test`
+and the complete `make asan` AddressSanitizer/UndefinedBehaviorSanitizer suite
+both passed. Python byte compilation, shell syntax, Ruff, ShellCheck, and
+`git diff --check` were also clean. These results exercise repository
+oracles, source contracts, launch guards, patch identity, and the native Blood
+Bowl engine; they do not substitute for compiling the final applied Puffer
+extension.
+
+The current exact stack did **not** produce a compiled module on this arm64
+macOS host. Pinned upstream `build.sh` requires OpenMP and forces x86
+`-mavx2 -mfma`; the local standalone attempt stopped at unsupported
+`-fopenmp`, and `install --check` correctly stops without `.venv/_C`. Any
+earlier compiled CPU/verifier counts were intermediate evidence invalidated by
+later patch/source changes. Current compiled CPU acceptance must come from the
+x86 CI job or another exact compatible clean build; NVIDIA acceptance remains
+the separate target gate below.
+
+Adversarial review changed the implementation materially. It rejected the
+original same-architecture/same-weight frozen routing proof as capable of a
+false pass, added authenticated heterogeneous frozen-policy donors and
+parent-side reconstruction, caught the first donor's unconsumed tail record,
+and caught nonfinite state diagnostics that could otherwise mask the intended
+qualification failure during strict JSON serialization. A later adversarial
+pass rejected direct-kernel CUDA evidence as insufficient, identified Torch's
+missing tail-freshness lifecycle, the installer's permissive Puffer `HEAD`,
+marker-only frozen-patch acceptance, unbound NPZ artifacts, and optional
+throughput comparison. Those paths now have mutation tests and fail-closed
+checks. The integrated CUDA gate performs the real native train call,
+independently reconstructs every primary advantage in an eight-agent,
+two-buffer, H=8 heterogeneous rollout, requires a nonzero `H-1` result,
+exact-zero frozen rows, fresh-tail consumption, and graph-on/off full-tensor
+parity.
+
+This evidence does **not** include an NVIDIA build or execution. CUDA
+translation, graph-on/off replay, device-to-host bank authentication, native
+heterogeneous values/actions/state, throughput, and CUDA scalar/vector parity
+remain subject to the mandatory deployment-boundary gate below.
+
+It also does not establish production graph-training objective parity. The
+native train graph captures the host-by-value annealed entropy coefficient,
+while the Torch trainer does not implement the configured anneal. The current
+schema-10 graph parity cell deliberately uses `ent_coef=0`,
+`anneal_ent_coef=false`, and zero learning rate, so it cannot detect that
+production split. This is the next separately test-first trainer-contract
+tranche and blocks a production launch even if every transition diagnostic is
+green. Adversarial post-review made that boundary executable: the native
+constructor rejects graph-plus-anneal before CUDA discovery, both production
+launchers reject executable graph-plus-anneal runs before output/run artifacts,
+and plan/dry-run output is labeled
+`BLOCKED_UNQUALIFIED_ENTROPY_SCHEDULE` with its requested configuration bound.
+The guard is temporary safety, not entropy-parity acceptance.
+
+It is also fp32-only. BF16 cannot inherit these tolerances or the strict
+zero-update ratio claim; it needs a separate quantization-aware contract.
+Likewise, the exact supported Puffer build retains upstream CUDA calls inside
+`assert` expressions. The target gate covers that reviewed build and does not
+qualify a custom `-DNDEBUG` build.
 
 ## Deployment-boundary acceptance
 
@@ -254,12 +353,17 @@ repair is accepted for native training:
 
 - source, module, Puffer commit, ordered patch bundle, and
   `tail-bootstrap-v1` identities match the reviewed evidence;
-- a CUDA synthetic rollout shows a nonzero oracle-matching last-action
-  advantage for both graph-enabled and graph-disabled execution;
+- the authenticated 14-case direct CUDA oracle passes in both graph-enabled
+  and graph-disabled rollout cells;
+- the real eight-agent, two-buffer, H=8 heterogeneous
+  rollout-to-`_C.train` path produces independently reconstructed advantages
+  for every primary slot, a nonzero
+  oracle-matching `H-1` advantage, exact-zero frozen rows, and exactly one
+  consumed tail record in both graph modes;
 - CPU, CUDA scalar, and CUDA vectorized tail advantages agree within the
   existing precision tolerance at both unit and non-unit importance ratios;
 - terminal tails have zero bootstrap contribution, including under deliberately
-  extreme finite bootstrap values;
+  extreme finite and ignored nonfinite bootstrap values;
 - deliberately different primary and frozen value heads, including a
   heterogeneous frozen architecture, produce their expected zero-state tail
   values without changing live state or ordinary decoder diagnostics; frozen
@@ -271,6 +375,14 @@ repair is accepted for native training:
 - throughput regression is measured on the same host/configuration and is no
   more than the explicitly reviewed one-extra-forward-per-horizon budget;
 - every hard-integrity counter, including `illegal_frac`, remains exactly zero.
+
+The current schema-10 runner can execute the transition correctness checks and
+requires a bounded, digest-bound same-host/configuration throughput artifact.
+It does not yet authenticate that artifact as the immediately preceding
+exact-action backend and has no independent final validator. Consequently,
+even a green target run remains diagnostic and cannot authorize deployment
+until the predecessor capture/validation workflow in
+`docs/plans/recurrent-cuda-qualification.md` is implemented and reviewed.
 
 No F5 PPO gate, canary, or long run starts if any deployment-boundary check
 fails.

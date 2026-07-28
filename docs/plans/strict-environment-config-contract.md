@@ -494,8 +494,15 @@ an ordered reverse-unwind is not used to disguise overlapping final state.
 One checked-in ordered compiled-backend ledger replaces the independent lists
 in `tools/install_puffer_env.sh::exact_backend_hash` and
 `tools/qualify_recurrent_cuda.py::BACKEND_SOURCE_FILES`. It includes
-`build.sh` and the same eight existing Python/native compiled-semantics paths,
-contains no duplicates or unsafe paths, and is covered by a contract test.
+`build.sh`, three deliberately selected Python launcher/trainer paths, and the
+complete ten-file local quoted-include closure of the CPU/CUDA extension
+roots. Its 14 entries contain no duplicates or unsafe paths, and the manifest
+reader recursively reconciles native includes while hashing the same
+descriptor-read snapshots. The generated `exact_action_build_hash.h` is the
+single explicit self-reference exception and remains independently checked.
+This compiled registry is intentionally narrower than the complete Python
+import/runtime closure; the separate vendor registry retains that broader
+historical role.
 Installer, CPU integration, and recurrent qualification compute the same
 path-bound digest from it.
 
@@ -907,7 +914,8 @@ Frozen identities for that evidence:
 
 - environment source/installed snapshot/compiled export:
   `6e018ac5a6b4b5cce0f004480e92d7708f7a06d6e6144ed81ea9b77e10fba015`;
-- nine-file compiled backend:
+- historical nine-file compiled backend (superseded by the 14-entry native
+  closure; not valid for new modules):
   `56b4129ab362667a5a433cb00616ce661f8dbbd9b99e7f727b4823577023af27`;
 - twelve-file vendor closure:
   `59e44b3a66e38aa6fe7a4d3bd4facd5ede6e4d4cb4e835513c1f7265f2c45fcd`;

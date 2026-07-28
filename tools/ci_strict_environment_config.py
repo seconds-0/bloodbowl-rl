@@ -26,14 +26,14 @@ from typing import Any, Callable, Mapping
 
 try:
     from puffer_source_manifest import (
+        native_extension_source_manifest_sha256,
         read_source_ledger,
-        source_manifest_sha256,
     )
     from state_bank_contract import environment_source_sha256
 except ModuleNotFoundError:  # Imported as tools.ci_strict_environment_config.
     from tools.puffer_source_manifest import (
+        native_extension_source_manifest_sha256,
         read_source_ledger,
-        source_manifest_sha256,
     )
     from tools.state_bank_contract import environment_source_sha256
 
@@ -59,6 +59,7 @@ EXPECTED_REQUIREMENT_OPTIONS = (
 EXPECTED_OBSERVATION_ABI = "obs-v6"
 EXPECTED_OBSERVATION_VERSION = 6
 EXPECTED_ACTION_ABI = "exact-joint-v1"
+ROLLOUT_TRANSITION_CONTRACT = "tail-bootstrap-v1"
 UNRELATED_ENVIRONMENT = "minimal"
 UNRELATED_TOTAL_AGENTS = 8
 VALID_PROFILE_NAMES = (
@@ -732,6 +733,13 @@ def _load_cpu_backend(
         raise StrictConfigCIError("compiled observation version is missing or stale")
     if getattr(_C, "action_abi", None) != EXPECTED_ACTION_ABI:
         raise StrictConfigCIError("compiled action ABI is missing or stale")
+    if (
+        getattr(_C, "rollout_transition_contract", None)
+        != ROLLOUT_TRANSITION_CONTRACT
+    ):
+        raise StrictConfigCIError(
+            "compiled rollout-transition contract is missing or stale"
+        )
     return _C, module_path
 
 
@@ -1051,6 +1059,7 @@ def _test_role(args: argparse.Namespace) -> int:
         "module": str(module_path),
         "module_sha256": _sha256_file(module_path),
         "environment_config_schema": backend.environment_config_schema,
+        "rollout_transition_contract": backend.rollout_transition_contract,
         "strict_env_config_testing": backend.strict_env_config_testing,
         "production_gate_rejected": production_gate_rejected,
         "initial_stages": before,
@@ -1098,6 +1107,13 @@ def _unrelated_environment(args: argparse.Namespace) -> int:
         raise StrictConfigCIError(
             "marker-absent environment is not in the production role"
         )
+    if (
+        getattr(_C, "rollout_transition_contract", None)
+        != ROLLOUT_TRANSITION_CONTRACT
+    ):
+        raise StrictConfigCIError(
+            "unrelated backend rollout-transition contract is missing or stale"
+        )
     if type(getattr(_C, "gpu", None)) is not int or _C.gpu != 0:
         raise StrictConfigCIError("unrelated-environment check imported a GPU module")
 
@@ -1114,6 +1130,7 @@ def _unrelated_environment(args: argparse.Namespace) -> int:
         "module_sha256": _sha256_file(module_path),
         "env_name": _C.env_name,
         "environment_config_schema_present": hasattr(_C, "environment_config_schema"),
+        "rollout_transition_contract": _C.rollout_transition_contract,
         "strict_env_config_testing": _C.strict_env_config_testing,
         "valid_profile": profile,
     }
@@ -1203,9 +1220,12 @@ def _run(args: argparse.Namespace) -> int:
 
     ledger = read_source_ledger(
         repo_root / COMPILED_LEDGER,
-        expected_count=9,
+        expected_count=14,
     )
-    backend_sources_sha256 = source_manifest_sha256(puffer_root, ledger)
+    backend_sources_sha256 = native_extension_source_manifest_sha256(
+        puffer_root,
+        ledger,
+    )
     compiled_backend_sha256 = getattr(backend, "exact_action_source_hash", None)
     header = puffer_root / "src/exact_action_build_hash.h"
     header_backend_sha256 = _header_macro(header, "PUFFER_EXACT_ACTION_SOURCE_HASH")
@@ -1278,6 +1298,7 @@ def _run(args: argparse.Namespace) -> int:
             "observation_abi": backend.observation_abi,
             "observation_version": backend.observation_version,
             "action_abi": backend.action_abi,
+            "rollout_transition_contract": backend.rollout_transition_contract,
             "compiled_backend_sources": list(ledger),
             "backend_sources_sha256": backend_sources_sha256,
             "compiled_backend_sha256": compiled_backend_sha256,

@@ -77,16 +77,19 @@ eligible for PBRS training.
 
 The highest-leverage next tranche is therefore:
 
-1. repair pass/possession and restored-state PBRS initialization, and make
+1. finish target-GPU validation of rollout-tail closure, then repair and
+   qualify entropy scheduling across native eager, native CUDA-graph, and Torch
+   training;
+2. repair pass/possession and restored-state PBRS initialization, and make
    curriculum input fail-closed;
-2. finish a typed, hash-pinned authored BB2025 scenario bank;
-3. add deterministic one-state and randomized-family PPO trainability gates;
-4. use an explicit pickup → protect → advance → score capability ladder first
+3. finish a typed, hash-pinned authored BB2025 scenario bank;
+4. add deterministic one-state and randomized-family PPO trainability gates;
+5. use an explicit pickup → protect → advance → score capability ladder first
    as a learnability gate, then as a bounded refinement curriculum where the
    transfer evidence supports it;
-5. evaluate only on held-out full games from kickoff, paired on both sides
+6. evaluate only on held-out full games from kickoff, paired on both sides
    against a versioned, style-diverse opponent set;
-6. only after those gates pass, test observation normalization/structure,
+7. only after those gates pass, test observation normalization/structure,
    exact-action performance work, and joint environment/trainer sweeps.
 
 This is not a proposal to make Blood Bowl into Puffer MOBA. The transferable
@@ -716,6 +719,74 @@ Implementation note (2026-07-28): this construction boundary is now specified
 and operated in `docs/environment-configuration.md`; the schema validates all
 51 keys before allocation while preserving empty and sparse dictionaries.
 
+### P0 trainer/environment boundary: the final rollout transition was missing
+
+The pinned Puffer trainer stores delayed rewards and terminals: slot `t`
+contains the outcome of action `t-1`. It nevertheless executed the final action
+in every horizon while CPU and CUDA advantage loops stopped at
+`horizon-2`. Torch discarded the final pending reward/terminal at the next
+training boundary; native copied the same outcome into the next rollout's slot
+zero, which the advantage calculation did not consume. One real transition per
+agent per rollout was therefore absent from the PPO objective.
+
+This is especially destructive for short capability sentinels. An eight-action
+scoring scenario with `horizon=8` emits its only touchdown reward and terminal
+after the eighth action—the exact transition the old trainer dropped. The
+unwritten final advantage remained zero and was then included in advantage
+normalization, so this was not equivalent to omitting that row cleanly.
+
+The same audit found a native V-trace split: CPU/CUDA scalar code weighted only
+the reward by `rho`, while the CUDA vector path weighted the complete temporal
+difference. The closure standardizes every path on
+`rho * (reward + bootstrap - value)`.
+
+Implementation status (2026-07-28): this branch adds `tail-bootstrap-v1` to
+Torch, CPU, and native backends; retains one explicit post-action
+reward/terminal/value record; computes every horizon slot; authenticates the
+compiled contract through installer/launcher/qualification identities; and
+adds an independent 14-case advantage oracle plus a real heterogeneous
+rollout-to-train oracle. The Torch and CPU paths are locally testable. Native
+CUDA compilation, graph replay, and device evidence still require the declared
+fresh NVIDIA deployment-boundary run; no local macOS result is represented as
+that evidence.
+
+### P0 trainer objective: entropy annealing diverges in graph and Torch modes
+
+The current production configuration enables a nonzero entropy coefficient,
+annealing to a minimum ratio, and `cudagraphs=10`. In the pinned native
+trainer, `current_ent_coef` is a host scalar passed while the train graph is
+captured. Later graph replays retain the captured value rather than the
+coefficient for the current epoch. The Torch trainer uses
+`config["ent_coef"]` directly and does not implement the configured anneal.
+Thus three ostensibly equivalent modes—native eager, native graph, and
+Torch—optimize different objectives over time.
+
+The rollout qualifier deliberately uses zero entropy and zero learning rate, so
+it cannot prove this schedule. This is a distinct contract, not a reason to
+weaken the rollout-tail oracle. PufferLib later fixed the native side upstream
+by moving the coefficient to device-backed state and added a multi-epoch
+effective-loss test, corroborating both the defect and the appropriate
+implementation shape. See the official
+[entropy coefficient annealing fix](https://github.com/PufferAI/PufferLib/commit/2753605e).
+
+Interim safety status (2026-07-28):
+
+- the native constructor rejects `cudagraphs >= 0 && anneal_ent_coef` before
+  CUDA discovery or allocation;
+- the production screen and arm launchers bind `cudagraphs`,
+  `anneal_ent_coef`, and `min_ent_coef_ratio` explicitly and block executable
+  runs before creating run artifacts;
+- plan/dry-run modes remain inspectable but emit a machine-visible
+  `BLOCKED_UNQUALIFIED_ENTROPY_SCHEDULE` status;
+- manifests record the requested schedule and label the effective coefficient
+  unavailable rather than inventing telemetry.
+
+The next implementation tranche should backport the device-scalar behavior,
+implement the same cosine schedule in Torch, expose the effective coefficient,
+and compare effective loss identity and weight updates across at least three
+epochs in eager/graph/Torch modes. The temporary guards must not be removed
+until that oracle passes on the target GPU.
+
 ### P0 trainability: no learning-level capability gates
 
 The repository has excellent transition-level tests but no production test that
@@ -877,6 +948,44 @@ Only then implement under a new action/step lineage with trace-equivalence and
 learning canaries.
 
 ## Ranked proposals
+
+### P0-0 — Close the trainer/environment objective contract
+
+Estimated effort: 2–5 engineering days plus target-GPU validation
+
+Expected leverage: mandatory; all later learning evidence depends on it
+
+Evidence class: confirmed source/runtime-contract defects
+
+Deliverables:
+
+1. Complete the fresh NVIDIA install/build and graph-on/graph-off acceptance
+   run for `tail-bootstrap-v1`.
+2. Backport a device-backed entropy coefficient for native graph replay.
+3. Implement the identical configured entropy schedule in Torch.
+4. Emit requested and effective entropy coefficients with epoch/progress
+   provenance.
+5. Add multi-epoch eager/graph/Torch effective-loss and update parity, including
+   a coefficient that actually changes.
+6. Retain the executable graph-plus-anneal guards until all preceding evidence
+   passes.
+
+Acceptance gates:
+
+- every executed action has exactly one independently reconstructed advantage,
+  including `H-1`;
+- CPU, native scalar, and native vector V-trace agree for `rho != 1`;
+- graph/eager transition outputs and graph execution counts match;
+- effective entropy coefficient matches the declared schedule at the first,
+  middle, and final epochs;
+- native eager, native graph, and Torch loss identities agree within declared
+  tolerances for the same frozen tensors;
+- requested/effective schedule provenance is present and finite;
+- the exact-pin installer is idempotent and every ordered patch is reverse
+  applicable after build.
+
+No capability or reward-training result is admissible while this gate is
+blocked.
 
 ### P0-A — Correctness and input-integrity sprint
 
@@ -1116,6 +1225,13 @@ Benchmark separately:
 6. recurrent inference;
 7. PPO update.
 
+The current schema-10 qualification cell times `_C.rollouts` only. It now uses
+the production collection shape—4,096 agents, two buffers, 20 threads,
+H512/L3, `max_decisions=4096`—which makes it a useful rollout regression
+diagnostic, but it is not end-to-end training SPS. Add an adjacent
+rollout-plus-train stage timer before using the number to prioritize environment
+versus optimizer work.
+
 Report:
 
 - meaningful coach decisions/s;
@@ -1185,6 +1301,9 @@ after the environment can generate and recognize reachable scoring sequences.
 
 ### Week 1: correctness closure
 
+- complete target-GPU rollout-tail validation;
+- implement and qualify cross-backend entropy scheduling before removing the
+  executable launch guard;
 - repair pass settlement;
 - add complete pass/interception/catch traces;
 - make config validation strict;

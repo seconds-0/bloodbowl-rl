@@ -61,6 +61,7 @@ jobs:
             training.test_recurrent_cuda_qualification \
             training.test_exact_joint_actions \
             training.test_recurrent_eval_state \
+            training.test_rollout_transition_closure \
             training.test_convert_checkpoint
       - name: Build + unit tests
         run: make test
@@ -161,6 +162,8 @@ jobs:
           PUFFER_STRICT_TEST_ROOT="$RUNNER_TEMP/PufferLib" \
             "$RUNNER_TEMP/PufferLib/.venv/bin/python" -m unittest -v \
             tools.test_strict_environment_config_contract
+          "$RUNNER_TEMP/PufferLib/.venv/bin/python" \
+            training/verify_rollout_transition_closure.py --device cpu
       - name: Validate production CPU construction and rejection evidence
         run: |
           export PATH="$RUNNER_TEMP/PufferLib/.venv/bin:$PATH"

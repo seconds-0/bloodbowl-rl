@@ -6,7 +6,7 @@ initialization order, graph capture, and recurrent state all have to start
 clean. Re-run it whenever you rebuild; it overwrites its own output directory.
 
     tools/qualify_recurrent_cuda.py run --puffer-root <tree> --output <dir>
-        [--baseline-throughput <previous QUALIFICATION.json>]
+        --baseline-throughput <external baseline JSON>
 
 Gates, and the bug each one caught:
 
@@ -14,19 +14,31 @@ Gates, and the bug each one caught:
                       bank/buffer at construction.
   graph_parity        cudagraph-on and cudagraph-off first rollouts agree:
                       bitwise on discrete fields, within fp32 tolerance on
-                      values/logprobs and decoder outputs.
+                      values/logprobs, behavior/tail decoder outputs, and
+                      per-bank post-horizon bootstrap values; both modes close.
+  heterogeneous_frozen_policy
+                      graph-on/off H64/L1 primary versus H32/L2 frozen cells
+                      authenticate two deterministic donor checkpoints, then
+                      prove exact value, state, action, and logprob oracles.
   terminal_reset      state nonzero after a rollout, and the automatic terminal
                       reset matches an explicit all-bank zero control.
   ratio               real PPO calls at learning_rate=0 recompute ratio == 1
-                      over every learner row, never select a frozen row (even
-                      at prio_alpha=0), and leave the weight bytes unchanged.
-  throughput          steps/second on the target GPU, optionally compared
-                      against a previous run's number.
+                      over every learner row, refresh and consume one tail
+                      record per call, keep frozen advantages exactly zero,
+                      never select a frozen row (even at prio_alpha=0), and
+                      leave the weight bytes unchanged.
+  throughput          steps/second on the target GPU, compared against one
+                      bounded, digest-bound same-host/configuration artifact.
 
 Every transition-executing cell must also report all 16 hard-integrity
 counters at exactly zero. Qualification is fp32-only: BF16 rounds the stored
 behavior log probability before recomputation, so the near-unity ratio contract
-does not hold there. These artifacts are diagnostic, never checkpoint ancestry.
+does not hold there. Every subprocess independently authenticates the pinned
+Puffer HEAD and reverse-applicable rollout-transition patch, and the parent
+rehashes/rechecks both. These artifacts are diagnostic, never checkpoint
+ancestry. The current baseline gate binds bytes and same-host/configuration
+fields but does not authenticate the artifact's producer; it is not release
+authority.
 """
 
 from __future__ import annotations
@@ -34,13 +46,17 @@ from __future__ import annotations
 import argparse
 import configparser
 import copy
+import fcntl
+import functools
 import hashlib
+import io
 import json
 import math
 import os
 from pathlib import Path
 import platform
 import re
+import secrets
 import socket
 import stat
 import statistics
@@ -48,19 +64,20 @@ import subprocess
 import sys
 import tempfile
 import time
-from typing import Any, Iterable, Mapping
+import types
+from typing import Any, Iterable, Mapping, NamedTuple
 
 import numpy as np
 
 try:
     from puffer_source_manifest import (
+        native_extension_source_manifest_sha256,
         read_source_ledger,
-        source_manifest_sha256,
     )
 except ModuleNotFoundError:  # Imported as tools.qualify_recurrent_cuda in tests.
     from tools.puffer_source_manifest import (
+        native_extension_source_manifest_sha256,
         read_source_ledger,
-        source_manifest_sha256,
     )
 
 try:
@@ -81,13 +98,16 @@ except ModuleNotFoundError:  # Imported as tools.qualify_recurrent_cuda in tests
     )
 
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 10
 ENVIRONMENT_CONFIG_SCHEMA = "bloodbowl-environment-config-v1"
 ENVIRONMENT_CONFIG_KEY_COUNT = 51
+ROLLOUT_TRANSITION_CONTRACT = "tail-bootstrap-v1"
 MANDATORY_GATES = (
     "strict_environment_config",
     "construction_state",
     "graph_parity",
+    "cuda_advantage_oracle",
+    "heterogeneous_frozen_policy",
     "terminal_reset",
     "ratio",
     "throughput",
@@ -109,6 +129,16 @@ EXACT_SNAPSHOT_FIELDS = (
     "action_mask",
 )
 FLOAT_SNAPSHOT_FIELDS = ("values", "logprobs")
+TAIL_FLOAT_SNAPSHOT_FIELDS = (
+    "tail_rewards",
+    "tail_terminals",
+    "tail_values",
+)
+TAIL_EXACT_SNAPSHOT_FIELDS = (
+    "tail_rewards",
+    "tail_terminals",
+    "tail_valid",
+)
 HARD_INTEGRITY_KEYS = (
     "illegal_frac",
     "reward_clip_frac",
@@ -129,6 +159,9 @@ HARD_INTEGRITY_KEYS = (
 )
 TRANSITION_CELL_KINDS = frozenset(
     {"rollout", "terminal_auto", "terminal_control", "ratio", "throughput"}
+)
+ARRAY_CELL_KINDS = frozenset(
+    {"rollout", "terminal_auto", "terminal_control", "ratio"}
 )
 STRICT_CONFIG_NEGATIVE_CELL_KINDS = (
     "strict_negative_create_vec",
@@ -155,9 +188,60 @@ DEFAULT_MAX_REGRESSION_FRACTION = 0.10
 # the first execution before CUDA lazy initialization; -1 means graphs off.
 DEFAULT_CUDAGRAPH_WARMUP_EPOCHS = 10
 DEFAULT_THROUGHPUT_MINIBATCH_SIZE = 16384
+CELL_MAX_JSON_BYTES = 2 * 1024 * 1024
+CELL_MAX_NPZ_BYTES = 256 * 1024 * 1024
+FINAL_MAX_JSON_BYTES = 16 * 1024 * 1024
+VERIFIER_MAX_SOURCE_BYTES = 2 * 1024 * 1024
+QUALIFICATION_POLICY_MAX_BYTES = 64 * 1024 * 1024
+BLOODBOWL_INPUT_SIZE = 2782
+BLOODBOWL_ACTION_HEAD_SIZES = (30, 33, 391)
+BLOODBOWL_ACTION_LOGITS = sum(BLOODBOWL_ACTION_HEAD_SIZES)
+HETEROGENEOUS_PRIMARY_HIDDEN_SIZE = 64
+HETEROGENEOUS_PRIMARY_NUM_LAYERS = 1
+HETEROGENEOUS_FROZEN_HIDDEN_SIZE = 32
+HETEROGENEOUS_FROZEN_NUM_LAYERS = 2
+HETEROGENEOUS_TOTAL_AGENTS = 8
+HETEROGENEOUS_NUM_BUFFERS = 2
+HETEROGENEOUS_HORIZON = 8
+HETEROGENEOUS_SLICE_SIZE = 2
+HETEROGENEOUS_VALUE_COEFFICIENTS = {
+    "zero_value": 0.0,
+    "positive_value": 0.5,
+}
+HETEROGENEOUS_FROZEN_STATE_SEQUENCE = tuple(
+    0.5 * (1.0 - 0.5 ** (step + 1))
+    for step in range(HETEROGENEOUS_HORIZON)
+)
+HETEROGENEOUS_POSITIVE_VALUE_SEQUENCE = tuple(
+    12.0 * state for state in HETEROGENEOUS_FROZEN_STATE_SEQUENCE
+)
+HETEROGENEOUS_ZERO_PREFIX = "heterogeneous_zero__"
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PINNED_PUFFER_COMMIT = "9836f0d2e78889c1aaf189c04d161b6fc61a9386"
-STRICT_STAGE_SCHEMA_VERSION = 1
+ROLLOUT_TRANSITION_VERIFIER = (
+    REPO_ROOT / "training" / "verify_rollout_transition_closure.py"
+)
+CUDA_ADVANTAGE_ORACLE_SCHEMA_VERSION = 1
+CUDA_ADVANTAGE_ORACLE_CASES = (
+    "terminal-tail-nan-h1",
+    "terminal-tail-posinf-h1",
+    "terminal-tail-neginf-h1",
+    "positive-tail-clamp-h1",
+    "negative-tail-clamp-h1",
+    "all-zero-h1",
+    "nonterminal-tail-h1",
+    "vector-width-h4",
+    "vector-multichunk-h8",
+    "scalar-width-h5",
+    "multirow-distinct-rho-c-h3",
+    "vector-terminal-nan-h4",
+    "vector-positive-tail-clamp-h4",
+    "vector-negative-tail-clamp-h4",
+)
+INTEGRATED_ADVANTAGE_ORACLE_SCHEMA_VERSION = 1
+INTEGRATED_ADVANTAGE_CONTRACT = "zero-lr-rollout-train-v1"
+INTEGRATED_IMPORTANCE_CONTRACT = "first-train-pass-all-ones-v1"
+STRICT_STAGE_SCHEMA_VERSION = 2
 STRICT_STAGE_EVIDENCE_KIND = "bloodbowl-strict-cuda-stage-order"
 STRICT_STAGE_RECEIPT_KIND = "bloodbowl-strict-cuda-stage-isolation"
 STRICT_STAGE_MAX_JSON_BYTES = 64 * 1024
@@ -207,6 +291,7 @@ STRICT_STAGE_MODULE_IDENTITY_KEYS = (
     "observation_abi",
     "observation_version",
     "action_abi",
+    "rollout_transition_contract",
     "environment_config_schema",
     "strict_env_config_testing",
     "precision_bytes",
@@ -226,16 +311,22 @@ STRICT_STAGE_INTERPRETER_IDENTITY_KEYS = (
     "numpy_path",
 )
 STRICT_ENV_CONFIG_PATCH = REPO_ROOT / "training/puffer_strict_environment_config.patch"
+ROLLOUT_TRANSITION_PATCH = (
+    REPO_ROOT / "training/puffer_rollout_transition_closure.patch"
+)
 COMPILED_BACKEND_SOURCE_LEDGER = (
     REPO_ROOT / "training/puffer_compiled_backend_sources.txt"
 )
 BACKEND_SOURCE_FILES = read_source_ledger(
     COMPILED_BACKEND_SOURCE_LEDGER,
-    expected_count=9,
+    expected_count=14,
 )
 QUALIFICATION_SURFACE_BINDINGS = (
     "qualification_recurrent_state",
     "qualification_snapshot",
+    "qualification_policy_weights",
+    "qualification_graph_execution",
+    "qualification_consume_tail",
 )
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 STRICT_INVALID_TEAM_DIAGNOSTIC = (
@@ -245,6 +336,14 @@ STRICT_INVALID_TEAM_DIAGNOSTIC = (
 
 class QualificationError(RuntimeError):
     """A missing, malformed, drifted, or failed qualification predicate."""
+
+
+class ValidatedArtifact(NamedTuple):
+    """One bounded regular-file byte snapshot used for identity and parsing."""
+
+    path: Path
+    encoded: bytes
+    sha256: str
 
 
 def _num(value: Any, label: str) -> float:
@@ -277,18 +376,161 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def write_json_atomic(path: Path, payload: Mapping[str, Any]) -> None:
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.tmp.{os.getpid()}")
+def _load_rollout_transition_verifier() -> tuple[Any, dict[str, Any]]:
+    """Compile and execute the exact bounded source bytes whose digest is returned."""
+
+    path = ROLLOUT_TRANSITION_VERIFIER.resolve()
+    encoded = _read_bounded_regular_bytes(
+        path,
+        maximum_bytes=VERIFIER_MAX_SOURCE_BYTES,
+        label="rollout transition verifier",
+    )
+    module = types.ModuleType("_puffer_rollout_transition_verifier")
+    module.__file__ = str(path)
+    module.__package__ = ""
     try:
-        temporary.write_text(
-            json.dumps(payload, indent=2, sort_keys=True, allow_nan=False) + "\n",
-            encoding="utf-8",
+        code = compile(encoded, str(path), "exec", dont_inherit=True)
+        exec(code, module.__dict__)
+    except Exception as exc:
+        raise QualificationError(
+            f"cannot import rollout transition verifier {path}: {exc}"
+        ) from exc
+    for name in ("reference_advantages", "verification_cases", "verify_backend"):
+        if not callable(getattr(module, name, None)):
+            raise QualificationError(
+                f"rollout transition verifier lacks callable {name}"
+            )
+    return module, {
+        "path": str(path),
+        "sha256": hashlib.sha256(encoded).hexdigest(),
+        "bytes": len(encoded),
+    }
+
+
+def execute_cuda_advantage_oracle(backend: Any) -> dict[str, Any]:
+    """Execute scalar and vector CUDA recurrence fixtures on the loaded module."""
+
+    try:
+        import torch
+    except (ImportError, OSError) as exc:
+        raise QualificationError(
+            f"CUDA advantage oracle cannot import Torch: {exc}"
+        ) from exc
+    if not torch.cuda.is_available():
+        raise QualificationError(
+            "CUDA advantage oracle requires a visible Torch CUDA device"
         )
-        temporary.replace(path)
-    finally:
-        temporary.unlink(missing_ok=True)
+    verifier, verifier_identity = _load_rollout_transition_verifier()
+    try:
+        summary = verifier.verify_backend(backend, torch, "cuda")
+    except Exception as exc:
+        raise QualificationError(f"CUDA advantage oracle failed: {exc}") from exc
+    if not isinstance(summary, Mapping):
+        raise QualificationError("CUDA advantage oracle summary is not a mapping")
+    evidence = {
+        "schema_version": CUDA_ADVANTAGE_ORACLE_SCHEMA_VERSION,
+        **dict(summary),
+        "verifier_path": verifier_identity["path"],
+        "verifier_sha256": verifier_identity["sha256"],
+    }
+    return validate_cuda_advantage_oracle_evidence(
+        evidence,
+        rehash_files=True,
+    )
+
+
+def validate_cuda_advantage_oracle_evidence(
+    evidence: Any,
+    *,
+    rehash_files: bool = False,
+) -> dict[str, Any]:
+    """Validate the closed, authenticated CUDA recurrence-oracle receipt."""
+
+    expected_keys = {
+        "schema_version",
+        "contract",
+        "device",
+        "precision_bytes",
+        "case_names",
+        "case_count",
+        "exact_once",
+        "verifier_path",
+        "verifier_sha256",
+    }
+    if not isinstance(evidence, Mapping):
+        raise QualificationError("CUDA advantage oracle evidence is not a mapping")
+    _require_exact_keys(evidence, expected_keys, "CUDA advantage oracle")
+    if (
+        _require_exact_json_int(
+            evidence.get("schema_version"),
+            "CUDA advantage oracle schema",
+        )
+        != CUDA_ADVANTAGE_ORACLE_SCHEMA_VERSION
+    ):
+        raise QualificationError("CUDA advantage oracle schema differs")
+    if evidence.get("contract") != ROLLOUT_TRANSITION_CONTRACT:
+        raise QualificationError("CUDA advantage oracle contract differs")
+    if evidence.get("device") != "cuda":
+        raise QualificationError("CUDA advantage oracle device differs")
+    if (
+        _require_exact_json_int(
+            evidence.get("precision_bytes"),
+            "CUDA advantage oracle precision",
+            minimum=1,
+        )
+        != 4
+    ):
+        raise QualificationError("CUDA advantage oracle requires fp32")
+    names = evidence.get("case_names")
+    if (
+        not isinstance(names, list)
+        or any(type(name) is not str for name in names)
+        or names != list(CUDA_ADVANTAGE_ORACLE_CASES)
+    ):
+        raise QualificationError("CUDA advantage oracle case set differs")
+    if (
+        _require_exact_json_int(
+            evidence.get("case_count"),
+            "CUDA advantage oracle case count",
+            minimum=1,
+        )
+        != len(CUDA_ADVANTAGE_ORACLE_CASES)
+    ):
+        raise QualificationError("CUDA advantage oracle case count differs")
+    if evidence.get("exact_once") is not True:
+        raise QualificationError(
+            "CUDA advantage oracle did not prove exact-once tail accounting"
+        )
+    verifier_path = _require_bounded_absolute_path(
+        evidence.get("verifier_path"),
+        "CUDA advantage oracle verifier path",
+    )
+    expected_path = ROLLOUT_TRANSITION_VERIFIER.resolve()
+    if verifier_path != expected_path:
+        raise QualificationError("CUDA advantage oracle verifier path differs")
+    verifier_sha = _require_sha256(
+        evidence.get("verifier_sha256"),
+        "CUDA advantage oracle verifier digest",
+    )
+    if rehash_files:
+        current_verifier = _read_bounded_regular_bytes(
+            expected_path,
+            maximum_bytes=VERIFIER_MAX_SOURCE_BYTES,
+            label="CUDA advantage oracle verifier",
+        )
+        if hashlib.sha256(current_verifier).hexdigest() != verifier_sha:
+            raise QualificationError("CUDA advantage oracle verifier bytes drifted")
+    return dict(evidence)
+
+
+def write_json_atomic(path: Path, payload: Mapping[str, Any]) -> None:
+    """Write one bounded cell record through an exclusive random descriptor."""
+
+    write_bounded_json_atomic(
+        path,
+        payload,
+        maximum_bytes=CELL_MAX_JSON_BYTES,
+    )
 
 
 def write_bounded_json_atomic(
@@ -321,6 +563,12 @@ def write_bounded_json_atomic(
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temporary, path)
+        directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+        directory_fd = os.open(path.parent, directory_flags)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
     finally:
         Path(temporary).unlink(missing_ok=True)
 
@@ -360,6 +608,105 @@ def write_npz_atomic(path: Path, arrays: Mapping[str, np.ndarray]) -> None:
         Path(temporary).unlink(missing_ok=True)
 
 
+def _read_bounded_regular_bytes(
+    path: Path,
+    *,
+    maximum_bytes: int,
+    label: str,
+) -> bytes:
+    """Read one non-symlink regular-file snapshot through one checked descriptor."""
+
+    if maximum_bytes <= 0:
+        raise QualificationError(f"{label} byte limit must be positive")
+    artifact = Path(path)
+    try:
+        before = artifact.lstat()
+        if stat.S_ISLNK(before.st_mode) or not stat.S_ISREG(before.st_mode):
+            raise QualificationError(
+                f"{label} is not a regular non-symlink file: {artifact}"
+            )
+        if before.st_size > maximum_bytes:
+            raise QualificationError(
+                f"{label} exceeds {maximum_bytes} bytes: {artifact}"
+            )
+        flags = os.O_RDONLY
+        flags |= getattr(os, "O_CLOEXEC", 0)
+        flags |= getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(artifact, flags)
+        opened_by_file = False
+        try:
+            with os.fdopen(descriptor, "rb", closefd=True) as handle:
+                opened_by_file = True
+                opened = os.fstat(handle.fileno())
+                if (
+                    not stat.S_ISREG(opened.st_mode)
+                    or opened.st_dev != before.st_dev
+                    or opened.st_ino != before.st_ino
+                ):
+                    raise QualificationError(
+                        f"{label} changed type or identity while opening: "
+                        f"{artifact}"
+                    )
+                if opened.st_size > maximum_bytes:
+                    raise QualificationError(
+                        f"{label} exceeds {maximum_bytes} bytes: {artifact}"
+                    )
+                encoded = handle.read(maximum_bytes + 1)
+                after = os.fstat(handle.fileno())
+                if (
+                    after.st_dev != opened.st_dev
+                    or after.st_ino != opened.st_ino
+                    or after.st_size != opened.st_size
+                    or after.st_mtime_ns != opened.st_mtime_ns
+                    or len(encoded) != after.st_size
+                ):
+                    raise QualificationError(
+                        f"{label} changed while being read: {artifact}"
+                    )
+        finally:
+            if not opened_by_file:
+                os.close(descriptor)
+        if len(encoded) > maximum_bytes:
+            raise QualificationError(
+                f"{label} exceeds {maximum_bytes} bytes: {artifact}"
+            )
+        return encoded
+    except QualificationError:
+        raise
+    except OSError as exc:
+        raise QualificationError(f"cannot read {label} {artifact}: {exc}") from exc
+
+
+def _decode_json_object(encoded: bytes, path: Path) -> dict[str, Any]:
+    try:
+        value = json.loads(encoded.decode("utf-8"))
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise QualificationError(f"cannot read JSON artifact {path}: {exc}") from exc
+    if not isinstance(value, dict):
+        raise QualificationError(f"JSON artifact is not an object: {path}")
+    return value
+
+
+def _read_json_artifact(
+    path: Path,
+    *,
+    maximum_bytes: int,
+    label: str,
+) -> tuple[dict[str, Any], ValidatedArtifact]:
+    artifact_path = Path(path)
+    encoded = _read_bounded_regular_bytes(
+        artifact_path,
+        maximum_bytes=maximum_bytes,
+        label=label,
+    )
+    artifact = ValidatedArtifact(
+        path=artifact_path,
+        encoded=encoded,
+        sha256=hashlib.sha256(encoded).hexdigest(),
+    )
+    return _decode_json_object(encoded, artifact_path), artifact
+
+
 def _read_json(
     path: Path,
     *,
@@ -368,59 +715,377 @@ def _read_json(
 ) -> dict[str, Any]:
     artifact = Path(path)
     try:
-        if maximum_bytes is not None:
-            if maximum_bytes <= 0:
-                raise QualificationError("JSON artifact byte limit must be positive")
-            metadata = artifact.lstat()
-            if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
-                raise QualificationError(
-                    f"JSON artifact is not a regular non-symlink file: {artifact}"
-                )
-            if metadata.st_size > maximum_bytes:
-                raise QualificationError(
-                    f"JSON artifact exceeds {maximum_bytes} bytes: {artifact}"
-                )
-        elif require_regular:
-            metadata = artifact.lstat()
-            if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
-                raise QualificationError(
-                    f"JSON artifact is not a regular non-symlink file: {artifact}"
-                )
-
-        if maximum_bytes is None:
-            encoded = artifact.read_bytes()
+        if maximum_bytes is not None or require_regular:
+            encoded = _read_bounded_regular_bytes(
+                artifact,
+                maximum_bytes=(
+                    CELL_MAX_JSON_BYTES
+                    if maximum_bytes is None
+                    else maximum_bytes
+                ),
+                label="JSON artifact",
+            )
         else:
-            with artifact.open("rb") as handle:
-                opened = os.fstat(handle.fileno())
-                if (
-                    not stat.S_ISREG(opened.st_mode)
-                    or opened.st_dev != metadata.st_dev
-                    or opened.st_ino != metadata.st_ino
-                ):
-                    raise QualificationError(
-                        f"JSON artifact changed type while opening: {artifact}"
-                    )
-                encoded = handle.read(maximum_bytes + 1)
-            if len(encoded) > maximum_bytes:
-                raise QualificationError(
-                    f"JSON artifact exceeds {maximum_bytes} bytes: {artifact}"
-                )
-        value = json.loads(encoded.decode("utf-8"))
+            encoded = artifact.read_bytes()
     except QualificationError:
         raise
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+    except OSError as exc:
         raise QualificationError(f"cannot read JSON artifact {path}: {exc}") from exc
-    if not isinstance(value, dict):
-        raise QualificationError(f"JSON artifact is not an object: {path}")
-    return value
+    return _decode_json_object(encoded, artifact)
 
 
-def _read_npz(path: Path) -> dict[str, np.ndarray]:
+def _read_npz(path: Path | ValidatedArtifact) -> dict[str, np.ndarray]:
+    artifact = path.path if isinstance(path, ValidatedArtifact) else Path(path)
     try:
-        with np.load(path, allow_pickle=False) as payload:
+        encoded = (
+            path.encoded
+            if isinstance(path, ValidatedArtifact)
+            else _read_bounded_regular_bytes(
+                artifact,
+                maximum_bytes=CELL_MAX_NPZ_BYTES,
+                label="NPZ artifact",
+            )
+        )
+        with np.load(io.BytesIO(encoded), allow_pickle=False) as payload:
             return {key: payload[key].copy() for key in payload.files}
+    except QualificationError:
+        raise
     except (OSError, ValueError) as exc:
         raise QualificationError(f"cannot read NPZ artifact {path}: {exc}") from exc
+
+
+# ----------------------------------------- frozen-policy weight authentication
+
+
+POLICY_WEIGHT_DESCRIPTOR_KEYS = (
+    "bank",
+    "role",
+    "slice_size",
+    "input_size",
+    "hidden_size",
+    "num_layers",
+    "action_logits",
+    "output_size",
+    "parameter_count",
+    "parameter_bytes",
+    "decoder_offset",
+    "decoder_shape",
+    "value_row_offset",
+    "weights",
+)
+
+
+def validate_policy_weight_descriptor(
+    raw: Mapping[str, Any],
+    *,
+    expected_bank: int,
+    expected_role: str,
+    expected_hidden_size: int,
+    expected_num_layers: int,
+    expected_slice_size: int,
+) -> dict[str, Any]:
+    """Validate the exact bounded fp32 layout returned by the native surface."""
+
+    if not isinstance(raw, Mapping):
+        raise QualificationError("policy-weight descriptor is not a mapping")
+    observed_keys = set(raw)
+    expected_keys = set(POLICY_WEIGHT_DESCRIPTOR_KEYS)
+    if observed_keys != expected_keys:
+        raise QualificationError(
+            "policy-weight descriptor keys differ: "
+            f"missing={sorted(expected_keys - observed_keys)}, "
+            f"extra={sorted(observed_keys - expected_keys)}"
+        )
+    bank = _int(expected_bank, "expected policy bank", minimum=0)
+    hidden = _int(
+        expected_hidden_size, "expected policy hidden size", minimum=1
+    )
+    layers = _int(
+        expected_num_layers, "expected policy layer count", minimum=1
+    )
+    slice_size = _int(
+        expected_slice_size, "expected policy slice size", minimum=1
+    )
+    if expected_role not in {"primary", "frozen"}:
+        raise QualificationError("expected policy role is invalid")
+    if _int(raw.get("bank"), "policy bank", minimum=0) != bank:
+        raise QualificationError("policy-weight descriptor bank differs")
+    if raw.get("role") != expected_role:
+        raise QualificationError("policy-weight descriptor role differs")
+    if _int(raw.get("slice_size"), "policy slice size", minimum=1) != slice_size:
+        raise QualificationError("policy-weight descriptor slice size differs")
+    if (
+        _int(raw.get("input_size"), "policy input size", minimum=1)
+        != BLOODBOWL_INPUT_SIZE
+    ):
+        raise QualificationError("policy-weight input ABI differs")
+    if _int(raw.get("hidden_size"), "policy hidden size", minimum=1) != hidden:
+        raise QualificationError("policy-weight hidden size differs")
+    if _int(raw.get("num_layers"), "policy layer count", minimum=1) != layers:
+        raise QualificationError("policy-weight layer count differs")
+    if (
+        _int(raw.get("action_logits"), "policy action-logit count", minimum=1)
+        != BLOODBOWL_ACTION_LOGITS
+    ):
+        raise QualificationError("policy-weight action ABI differs")
+    output_size = _int(raw.get("output_size"), "policy output size", minimum=1)
+    if output_size != BLOODBOWL_ACTION_LOGITS + 1:
+        raise QualificationError("policy-weight output ABI differs")
+
+    parameter_bytes = _int(
+        raw.get("parameter_bytes"), "policy parameter bytes", minimum=1
+    )
+    if parameter_bytes > QUALIFICATION_POLICY_MAX_BYTES:
+        raise QualificationError(
+            "policy parameter bytes exceed the qualification limit"
+        )
+    parameter_count = _int(
+        raw.get("parameter_count"), "policy parameter count", minimum=1
+    )
+    decoder_offset = _int(
+        raw.get("decoder_offset"), "policy decoder offset", minimum=0
+    )
+    value_row_offset = _int(
+        raw.get("value_row_offset"), "policy value-row offset", minimum=0
+    )
+    expected_decoder_offset = BLOODBOWL_INPUT_SIZE * hidden
+    expected_value_row_offset = (
+        expected_decoder_offset + BLOODBOWL_ACTION_LOGITS * hidden
+    )
+    expected_parameter_count = (
+        expected_decoder_offset
+        + output_size * hidden
+        + layers * 3 * hidden * hidden
+    )
+    if decoder_offset != expected_decoder_offset:
+        raise QualificationError("policy decoder offset differs from architecture")
+    if value_row_offset != expected_value_row_offset:
+        raise QualificationError("policy value-row offset differs from architecture")
+    if parameter_count != expected_parameter_count:
+        raise QualificationError("policy parameter count differs from architecture")
+    if parameter_bytes != 4 * parameter_count:
+        raise QualificationError("policy parameter byte count is not fp32")
+    decoder_shape = raw.get("decoder_shape")
+    if (
+        not isinstance(decoder_shape, list)
+        or len(decoder_shape) != 2
+        or any(type(value) is not int for value in decoder_shape)
+        or decoder_shape != [output_size, hidden]
+    ):
+        raise QualificationError("policy decoder shape differs from architecture")
+    weights = raw.get("weights")
+    if type(weights) is not bytes:
+        raise QualificationError("policy readback weights must be immutable bytes")
+    if len(weights) != parameter_bytes:
+        raise QualificationError("policy readback byte count differs")
+    return dict(raw)
+
+
+def _validated_frozen_weight_descriptor(
+    descriptor: Mapping[str, Any],
+) -> dict[str, Any]:
+    return validate_policy_weight_descriptor(
+        descriptor,
+        expected_bank=1,
+        expected_role="frozen",
+        expected_hidden_size=HETEROGENEOUS_FROZEN_HIDDEN_SIZE,
+        expected_num_layers=HETEROGENEOUS_FROZEN_NUM_LAYERS,
+        expected_slice_size=HETEROGENEOUS_SLICE_SIZE,
+    )
+
+
+def build_heterogeneous_frozen_donor(
+    descriptor: Mapping[str, Any],
+    *,
+    value_coefficient: float,
+) -> bytes:
+    """Build a flat H32/L2 checkpoint with an analytic action/value decoder."""
+
+    layout = _validated_frozen_weight_descriptor(descriptor)
+    coefficient = _num(value_coefficient, "donor value coefficient")
+    if coefficient not in HETEROGENEOUS_VALUE_COEFFICIENTS.values():
+        raise QualificationError("donor value coefficient is not a closed variant")
+    values = np.zeros(layout["parameter_count"], dtype="<f4")
+    hidden = layout["hidden_size"]
+    row = 0
+    for head_size in BLOODBOWL_ACTION_HEAD_SIZES:
+        for local_action in range(head_size):
+            start = layout["decoder_offset"] + row * hidden
+            values[start : start + hidden] = np.float32(hidden * local_action)
+            row += 1
+    value_start = layout["value_row_offset"]
+    values[value_start : value_start + hidden] = np.float32(coefficient)
+    payload = values.tobytes(order="C")
+    if len(payload) != layout["parameter_bytes"]:
+        raise QualificationError("constructed donor byte count differs")
+    return payload
+
+
+def _write_binary_atomic(path: Path, payload: bytes) -> None:
+    if type(payload) is not bytes or not payload:
+        raise QualificationError("binary artifact payload must be nonempty bytes")
+    if len(payload) > QUALIFICATION_POLICY_MAX_BYTES:
+        raise QualificationError("binary artifact exceeds the qualification limit")
+    destination = Path(path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(
+        prefix=f".{destination.name}.tmp.",
+        dir=destination.parent,
+    )
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, destination)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
+
+
+def _policy_weight_summary(descriptor: Mapping[str, Any]) -> dict[str, Any]:
+    weights = descriptor["weights"]
+    hidden = descriptor["hidden_size"]
+    value_start = 4 * descriptor["value_row_offset"]
+    value_stop = value_start + 4 * hidden
+    return {
+        key: copy.deepcopy(value)
+        for key, value in descriptor.items()
+        if key != "weights"
+    } | {
+        "weights_sha256": hashlib.sha256(weights).hexdigest(),
+        "value_row_sha256": hashlib.sha256(
+            weights[value_start:value_stop]
+        ).hexdigest(),
+    }
+
+
+def install_authenticated_frozen_donor(
+    backend: Any,
+    pufferl: Any,
+    directory: Path,
+    descriptor: Mapping[str, Any],
+    *,
+    name: str,
+    value_coefficient: float,
+) -> dict[str, Any]:
+    """Load through production, then require exact native whole-bank readback."""
+
+    layout = _validated_frozen_weight_descriptor(descriptor)
+    if not isinstance(name, str) or re.fullmatch(r"[a-z0-9-]{1,64}", name) is None:
+        raise QualificationError("donor name is invalid")
+    donor = build_heterogeneous_frozen_donor(
+        layout, value_coefficient=value_coefficient
+    )
+    expected_sha256 = hashlib.sha256(donor).hexdigest()
+    path = Path(directory).resolve() / f"frozen-{name}-{os.getpid()}.bin"
+    try:
+        _write_binary_atomic(path, donor)
+        backend.load_frozen_bank(pufferl, 0, str(path))
+        raw_readback = backend.qualification_policy_weights(
+            pufferl, 1, QUALIFICATION_POLICY_MAX_BYTES
+        )
+        readback = _validated_frozen_weight_descriptor(raw_readback)
+        for key in POLICY_WEIGHT_DESCRIPTOR_KEYS:
+            if key == "weights":
+                continue
+            if readback[key] != layout[key]:
+                raise QualificationError(
+                    f"frozen policy readback layout differs after load: {key}"
+                )
+        if readback["weights"] != donor:
+            raise QualificationError(
+                "frozen policy readback bytes differ after production load"
+            )
+        readback_sha256 = hashlib.sha256(readback["weights"]).hexdigest()
+        if readback_sha256 != expected_sha256:
+            raise QualificationError("frozen policy readback digest differs")
+    finally:
+        path.unlink(missing_ok=True)
+    return {
+        "value_coefficient": float(value_coefficient),
+        "expected_sha256": expected_sha256,
+        "readback_sha256": readback_sha256,
+        "changed_float_indices": (
+            0 if value_coefficient == 0.0 else layout["hidden_size"]
+        ),
+        "readback_matches_donor": True,
+    }
+
+
+def consume_heterogeneous_tail_record(
+    backend: Any,
+    pufferl: Any,
+    primary_before: Mapping[str, Any],
+    frozen_before: Mapping[str, Any],
+    *,
+    num_buffers: int,
+    arrays: dict[str, np.ndarray] | None = None,
+) -> dict[str, Any]:
+    """Consume one tail record at lr=0 without changing either policy bank."""
+
+    buffers = _int(
+        num_buffers, "heterogeneous tail-consumption buffers", minimum=1
+    )
+    primary = validate_policy_weight_descriptor(
+        primary_before,
+        expected_bank=0,
+        expected_role="primary",
+        expected_hidden_size=HETEROGENEOUS_PRIMARY_HIDDEN_SIZE,
+        expected_num_layers=HETEROGENEOUS_PRIMARY_NUM_LAYERS,
+        expected_slice_size=HETEROGENEOUS_SLICE_SIZE,
+    )
+    frozen = _validated_frozen_weight_descriptor(frozen_before)
+    backend.train(pufferl)
+    snapshot = decode_snapshot(backend.qualification_snapshot(pufferl))
+    validate_tail_validity(
+        snapshot.get("tail_valid"),
+        num_buffers=buffers,
+        expected=0,
+        label="intervention post-train tail",
+    )
+    if arrays is not None:
+        if not isinstance(arrays, dict):
+            raise QualificationError(
+                "integrated advantage destination must be a dictionary"
+            )
+        advantages_after_train = snapshot.get("advantages")
+        if not isinstance(advantages_after_train, np.ndarray):
+            raise QualificationError(
+                "integrated post-train advantages are missing"
+            )
+        arrays["advantages_after_train"] = advantages_after_train
+        arrays["tail_valid_after_train"] = snapshot["tail_valid"]
+        arrays["selected_rows_after_train"] = snapshot["selected_rows"]
+    primary_after = validate_policy_weight_descriptor(
+        backend.qualification_policy_weights(
+            pufferl, 0, QUALIFICATION_POLICY_MAX_BYTES
+        ),
+        expected_bank=0,
+        expected_role="primary",
+        expected_hidden_size=HETEROGENEOUS_PRIMARY_HIDDEN_SIZE,
+        expected_num_layers=HETEROGENEOUS_PRIMARY_NUM_LAYERS,
+        expected_slice_size=HETEROGENEOUS_SLICE_SIZE,
+    )
+    frozen_after = _validated_frozen_weight_descriptor(
+        backend.qualification_policy_weights(
+            pufferl, 1, QUALIFICATION_POLICY_MAX_BYTES
+        )
+    )
+    if primary_after != primary:
+        raise QualificationError(
+            "zero-learning-rate intervention train changed primary weight bytes"
+        )
+    if frozen_after != frozen:
+        raise QualificationError(
+            "intervention train changed frozen policy weight bytes"
+        )
+    return {
+        "tail_consumed": True,
+        "primary_weights_unchanged": True,
+        "frozen_weights_unchanged": True,
+        "primary_sha256": hashlib.sha256(primary["weights"]).hexdigest(),
+        "frozen_sha256": hashlib.sha256(frozen["weights"]).hexdigest(),
+    }
 
 
 # ---------------------------------------------------------------- state evidence
@@ -540,6 +1205,583 @@ def derive_row_partition(
     return primary, frozen
 
 
+def validate_heterogeneous_rollout_oracle(
+    arrays: Mapping[str, np.ndarray],
+    state_report: Mapping[str, Any],
+    *,
+    total_agents: int,
+    num_buffers: int,
+    horizon: int,
+    value_coefficient: float,
+    atol: float,
+) -> dict[str, Any]:
+    """Prove the H32/L2 frozen bank with independent analytic rollout oracles."""
+
+    agents = _int(total_agents, "heterogeneous total agents", minimum=1)
+    buffers = _int(num_buffers, "heterogeneous buffers", minimum=1)
+    steps = _int(horizon, "heterogeneous horizon", minimum=1)
+    tolerance = _num(atol, "heterogeneous oracle atol")
+    coefficient = _num(value_coefficient, "heterogeneous value coefficient")
+    if (
+        agents != HETEROGENEOUS_TOTAL_AGENTS
+        or buffers != HETEROGENEOUS_NUM_BUFFERS
+        or steps != HETEROGENEOUS_HORIZON
+        or coefficient not in HETEROGENEOUS_VALUE_COEFFICIENTS.values()
+        or tolerance < 0
+    ):
+        raise QualificationError("heterogeneous oracle role is not the closed cell")
+
+    primary_rows, frozen_rows = derive_row_partition(
+        state_report, total_agents=agents
+    )
+    expected_primary = {0, 1, 4, 5}
+    expected_frozen = {2, 3, 6, 7}
+    if primary_rows != expected_primary or frozen_rows != expected_frozen:
+        raise QualificationError("heterogeneous row partition differs")
+
+    required_shapes = {
+        "actions": (steps, agents, len(BLOODBOWL_ACTION_HEAD_SIZES)),
+        "action_mask": (steps, agents, BLOODBOWL_ACTION_LOGITS),
+        "values": (steps, agents),
+        "logprobs": (steps, agents),
+        "tail_terminals": (agents,),
+        "tail_values": (agents,),
+    }
+    for key, shape in required_shapes.items():
+        value = arrays.get(key)
+        if (
+            not isinstance(value, np.ndarray)
+            or value.dtype != np.dtype(np.float32)
+            or value.shape != shape
+            or not np.isfinite(value).all()
+        ):
+            raise QualificationError(
+                f"heterogeneous oracle field {key} is not finite float32 {shape}"
+            )
+    validate_tail_validity(
+        arrays.get("tail_valid"),
+        num_buffers=buffers,
+        expected=1,
+        label="heterogeneous intervention tail",
+    )
+
+    expected_behavior = np.asarray(
+        (
+            (0.0,) * HETEROGENEOUS_HORIZON
+            if coefficient == 0.0
+            else HETEROGENEOUS_POSITIVE_VALUE_SEQUENCE
+        ),
+        dtype=np.float32,
+    )
+    expected_tail = np.float32(0.0 if coefficient == 0.0 else 3.0)
+    frozen_index = sorted(frozen_rows)
+    observed_values = arrays["values"][:, frozen_index]
+    tiled_values = np.repeat(
+        expected_behavior[:, np.newaxis], len(frozen_index), axis=1
+    )
+    if not np.array_equal(observed_values, tiled_values):
+        raise QualificationError(
+            "frozen behavior values differ from the analytic H8 oracle"
+        )
+    if not np.array_equal(
+        arrays["tail_terminals"][frozen_index],
+        np.zeros(len(frozen_index), np.float32),
+    ):
+        raise QualificationError(
+            "heterogeneous frozen tail sentinel must be nonterminal"
+        )
+    if not np.array_equal(
+        arrays["tail_values"][frozen_index],
+        np.full(len(frozen_index), expected_tail, np.float32),
+    ):
+        raise QualificationError(
+            "frozen tail values differ from the fresh-zero analytic oracle"
+        )
+
+    max_abs_logprob = 0.0
+    offsets: list[int] = []
+    offset = 0
+    for head_size in BLOODBOWL_ACTION_HEAD_SIZES:
+        offsets.append(offset)
+        offset += head_size
+    for row in frozen_index:
+        for step in range(steps):
+            logprob = float(arrays["logprobs"][step, row])
+            max_abs_logprob = max(max_abs_logprob, abs(logprob))
+            if abs(logprob) > tolerance:
+                raise QualificationError(
+                    "heterogeneous frozen log probability is not zero"
+                )
+            for head, (head_size, head_offset) in enumerate(
+                zip(BLOODBOWL_ACTION_HEAD_SIZES, offsets)
+            ):
+                mask = arrays["action_mask"][
+                    step, row, head_offset : head_offset + head_size
+                ]
+                if not np.isin(mask, np.array([0.0, 1.0], np.float32)).all():
+                    raise QualificationError(
+                        "heterogeneous frozen conditional mask is not binary"
+                    )
+                enabled = np.flatnonzero(mask == np.float32(1.0))
+                if enabled.size == 0:
+                    raise QualificationError(
+                        "heterogeneous frozen action head has no legal action"
+                    )
+                raw_action = float(arrays["actions"][step, row, head])
+                if not raw_action.is_integer():
+                    raise QualificationError(
+                        "heterogeneous frozen action is not an integer"
+                    )
+                action = int(raw_action)
+                if action < 0 or action >= head_size or mask[action] != 1.0:
+                    raise QualificationError(
+                        "heterogeneous frozen action is mask-disabled"
+                    )
+                if action != int(enabled[-1]):
+                    raise QualificationError(
+                        "heterogeneous frozen action is not maximum legal"
+                    )
+
+    per_buffer = agents // buffers
+    for buffer in range(buffers):
+        start = buffer * per_buffer + HETEROGENEOUS_SLICE_SIZE
+        stop = start + HETEROGENEOUS_SLICE_SIZE
+        for prefix, expected_value in (
+            ("decoder", expected_behavior[-1]),
+            ("tail_decoder", expected_tail),
+        ):
+            key = f"{prefix}_bank_1_buffer_{buffer}"
+            decoder = arrays.get(key)
+            expected_shape = (
+                HETEROGENEOUS_SLICE_SIZE,
+                BLOODBOWL_ACTION_LOGITS + 1,
+            )
+            if (
+                not isinstance(decoder, np.ndarray)
+                or decoder.dtype != np.dtype(np.float32)
+                or decoder.shape != expected_shape
+                or not np.isfinite(decoder).all()
+            ):
+                raise QualificationError(
+                    f"heterogeneous {prefix} evidence is malformed"
+                )
+            if not np.array_equal(
+                decoder[:, -1],
+                np.full(HETEROGENEOUS_SLICE_SIZE, expected_value, np.float32),
+            ):
+                raise QualificationError(
+                    f"heterogeneous {prefix} value oracle differs"
+                )
+            actual = (
+                arrays["values"][-1, start:stop]
+                if prefix == "decoder"
+                else arrays["tail_values"][start:stop]
+            )
+            if not np.array_equal(actual, decoder[:, -1]):
+                raise QualificationError(
+                    f"heterogeneous {prefix} diagnostic differs from rollout data"
+                )
+
+    entries = _state_entries(state_report, banks=2, buffers=buffers)
+    frozen_entries = [entry for entry in entries if entry["bank"] == 1]
+    if len(frozen_entries) != buffers:
+        raise QualificationError("heterogeneous frozen state coverage differs")
+    expected_live_state = HETEROGENEOUS_FROZEN_STATE_SEQUENCE[-1]
+    for entry in frozen_entries:
+        if (
+            entry["shape"]
+            != [
+                HETEROGENEOUS_FROZEN_NUM_LAYERS,
+                HETEROGENEOUS_SLICE_SIZE,
+                HETEROGENEOUS_FROZEN_HIDDEN_SIZE,
+            ]
+            or entry["active_rows"] != HETEROGENEOUS_SLICE_SIZE
+            or _int(
+                entry.get("active_nonzero"),
+                "frozen state active_nonzero",
+                minimum=0,
+            )
+            != _int(
+                entry.get("active_elements"),
+                "frozen state active_elements",
+                minimum=1,
+            )
+            or _int(
+                entry.get("active_nonfinite"),
+                "frozen state active_nonfinite",
+                minimum=0,
+            )
+            != 0
+            or _num(entry.get("active_min"), "frozen state active_min")
+            != expected_live_state
+            or _num(entry.get("active_max"), "frozen state active_max")
+            != expected_live_state
+            or _num(
+                entry.get("active_max_abs"), "frozen state active_max_abs"
+            )
+            != expected_live_state
+        ):
+            raise QualificationError(
+                "heterogeneous frozen live state differs from the exact H8 oracle"
+            )
+
+    return {
+        "frozen_rows": frozen_index,
+        "frozen_behavior_values": [
+            float(value) for value in expected_behavior
+        ],
+        "frozen_tail_value": float(expected_tail),
+        "frozen_live_state": expected_live_state,
+        "all_frozen_actions_max_legal": True,
+        "max_abs_frozen_logprob": max_abs_logprob,
+        "ordinary_decoder_preserved": True,
+        "tail_uses_fresh_zero_state": True,
+    }
+
+
+def _architecture_descriptor(
+    raw: Mapping[str, Any],
+    *,
+    expected_bank: int,
+    expected_role: str,
+    expected_hidden_size: int,
+    expected_num_layers: int,
+    expected_slice_size: int,
+    include_digests: bool,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    architecture_keys = set(POLICY_WEIGHT_DESCRIPTOR_KEYS) - {"weights"}
+    expected_keys = set(architecture_keys)
+    if include_digests:
+        expected_keys.update({"weights_sha256", "value_row_sha256"})
+    if not isinstance(raw, Mapping) or set(raw) != expected_keys:
+        raise QualificationError(
+            f"{expected_role} policy architecture record keys differ"
+        )
+    parameter_bytes = _int(
+        raw.get("parameter_bytes"),
+        f"{expected_role} policy architecture bytes",
+        minimum=1,
+    )
+    if parameter_bytes > QUALIFICATION_POLICY_MAX_BYTES:
+        raise QualificationError(
+            f"{expected_role} policy architecture exceeds the byte limit"
+        )
+    synthetic = {
+        key: copy.deepcopy(raw[key])
+        for key in architecture_keys
+    }
+    synthetic["weights"] = bytes(parameter_bytes)
+    descriptor = validate_policy_weight_descriptor(
+        synthetic,
+        expected_bank=expected_bank,
+        expected_role=expected_role,
+        expected_hidden_size=expected_hidden_size,
+        expected_num_layers=expected_num_layers,
+        expected_slice_size=expected_slice_size,
+    )
+    if include_digests:
+        _require_sha256(
+            raw.get("weights_sha256"),
+            f"{expected_role} policy weight digest",
+        )
+        _require_sha256(
+            raw.get("value_row_sha256"),
+            f"{expected_role} policy value-row digest",
+        )
+    return descriptor, dict(raw)
+
+
+def _heterogeneous_namespace(
+    arrays: Mapping[str, np.ndarray],
+    prefix: str,
+) -> dict[str, np.ndarray]:
+    selected = {
+        key[len(prefix) :]: value
+        for key, value in arrays.items()
+        if key.startswith(prefix)
+    }
+    if not selected:
+        raise QualificationError(
+            f"heterogeneous array namespace is missing: {prefix}"
+        )
+    return selected
+
+
+def validate_heterogeneous_policy_evidence(
+    record: Mapping[str, Any],
+    arrays: Mapping[str, np.ndarray],
+    *,
+    atol: float,
+) -> dict[str, Any]:
+    """Parent-side reconstruction of donor identity and analytic GPU evidence."""
+
+    tolerance = _num(atol, "heterogeneous evidence atol")
+    if tolerance < 0:
+        raise QualificationError("heterogeneous evidence tolerance is negative")
+    config = record.get("config")
+    if not isinstance(config, Mapping):
+        raise QualificationError("heterogeneous cell config is missing")
+    policy_config = config.get("policy")
+    vec_config = config.get("vec")
+    train_config = config.get("train")
+    if (
+        not isinstance(policy_config, Mapping)
+        or not isinstance(vec_config, Mapping)
+        or not isinstance(train_config, Mapping)
+    ):
+        raise QualificationError(
+            "heterogeneous cell architecture/configuration differs"
+        )
+    typed_config = {
+        "primary hidden size": _int(
+            policy_config.get("hidden_size"), "primary hidden size", minimum=1
+        ),
+        "primary layers": _int(
+            policy_config.get("num_layers"), "primary layers", minimum=1
+        ),
+        "total agents": _int(
+            vec_config.get("total_agents"), "total agents", minimum=1
+        ),
+        "buffers": _int(vec_config.get("num_buffers"), "buffers", minimum=1),
+        "frozen banks": _int(
+            vec_config.get("num_frozen_banks"), "frozen banks", minimum=0
+        ),
+        "frozen hidden size": _int(
+            vec_config.get("frozen_bank_hidden_size"),
+            "frozen hidden size",
+            minimum=1,
+        ),
+        "frozen layers": _int(
+            vec_config.get("frozen_bank_num_layers"),
+            "frozen layers",
+            minimum=1,
+        ),
+        "horizon": _int(
+            train_config.get("horizon"), "heterogeneous horizon", minimum=1
+        ),
+        "replay ratio": _int(
+            train_config.get("replay_ratio"),
+            "heterogeneous replay ratio",
+            minimum=1,
+        ),
+        "minibatch size": _int(
+            train_config.get("minibatch_size"),
+            "heterogeneous minibatch size",
+            minimum=1,
+        ),
+    }
+    expected_config = {
+        "primary hidden size": HETEROGENEOUS_PRIMARY_HIDDEN_SIZE,
+        "primary layers": HETEROGENEOUS_PRIMARY_NUM_LAYERS,
+        "total agents": HETEROGENEOUS_TOTAL_AGENTS,
+        "buffers": HETEROGENEOUS_NUM_BUFFERS,
+        "frozen banks": 1,
+        "frozen hidden size": HETEROGENEOUS_FROZEN_HIDDEN_SIZE,
+        "frozen layers": HETEROGENEOUS_FROZEN_NUM_LAYERS,
+        "horizon": HETEROGENEOUS_HORIZON,
+        "replay ratio": 1,
+        "minibatch size": HETEROGENEOUS_TOTAL_AGENTS * HETEROGENEOUS_HORIZON,
+    }
+    frozen_pct = _num(
+        vec_config.get("frozen_bank_pct"), "frozen bank percentage"
+    )
+    learning_rate = _num(
+        train_config.get("learning_rate"),
+        "heterogeneous intervention learning rate",
+    )
+    if (
+        typed_config != expected_config
+        or frozen_pct != 0.5
+        or learning_rate != 0.0
+    ):
+        raise QualificationError(
+            "heterogeneous cell architecture/configuration differs"
+        )
+
+    evidence = record.get("heterogeneous_policy")
+    if not isinstance(evidence, Mapping) or set(evidence) != {
+        "primary_architecture",
+        "frozen_architecture",
+        "donors",
+    }:
+        raise QualificationError("heterogeneous policy evidence is malformed")
+    primary, primary_record = _architecture_descriptor(
+        evidence["primary_architecture"],
+        expected_bank=0,
+        expected_role="primary",
+        expected_hidden_size=HETEROGENEOUS_PRIMARY_HIDDEN_SIZE,
+        expected_num_layers=HETEROGENEOUS_PRIMARY_NUM_LAYERS,
+        expected_slice_size=HETEROGENEOUS_SLICE_SIZE,
+        include_digests=True,
+    )
+    frozen, frozen_record = _architecture_descriptor(
+        evidence["frozen_architecture"],
+        expected_bank=1,
+        expected_role="frozen",
+        expected_hidden_size=HETEROGENEOUS_FROZEN_HIDDEN_SIZE,
+        expected_num_layers=HETEROGENEOUS_FROZEN_NUM_LAYERS,
+        expected_slice_size=HETEROGENEOUS_SLICE_SIZE,
+        include_digests=False,
+    )
+    if (
+        primary["hidden_size"] == frozen["hidden_size"]
+        or primary["num_layers"] == frozen["num_layers"]
+        or primary["parameter_bytes"] == frozen["parameter_bytes"]
+    ):
+        raise QualificationError("primary/frozen policy architectures do not differ")
+
+    donor_records = evidence.get("donors")
+    if not isinstance(donor_records, Mapping) or set(donor_records) != set(
+        HETEROGENEOUS_VALUE_COEFFICIENTS
+    ):
+        raise QualificationError("heterogeneous donor record set differs")
+    reconstructed: dict[str, bytes] = {}
+    validated_donors: dict[str, dict[str, Any]] = {}
+    donor_keys = {
+        "value_coefficient",
+        "expected_sha256",
+        "readback_sha256",
+        "changed_float_indices",
+        "readback_matches_donor",
+    }
+    for name, coefficient in HETEROGENEOUS_VALUE_COEFFICIENTS.items():
+        donor_record = donor_records.get(name)
+        if not isinstance(donor_record, Mapping) or set(donor_record) != donor_keys:
+            raise QualificationError(f"heterogeneous donor record is malformed: {name}")
+        if _num(
+            donor_record.get("value_coefficient"),
+            f"{name} donor coefficient",
+        ) != coefficient:
+            raise QualificationError(f"heterogeneous donor coefficient differs: {name}")
+        donor = build_heterogeneous_frozen_donor(
+            frozen, value_coefficient=coefficient
+        )
+        reconstructed[name] = donor
+        expected_sha256 = hashlib.sha256(donor).hexdigest()
+        if (
+            _require_sha256(
+                donor_record.get("expected_sha256"),
+                f"{name} expected donor digest",
+            )
+            != expected_sha256
+            or _require_sha256(
+                donor_record.get("readback_sha256"),
+                f"{name} readback donor digest",
+            )
+            != expected_sha256
+            or donor_record.get("readback_matches_donor") is not True
+        ):
+            raise QualificationError(
+                f"heterogeneous donor/readback digest differs: {name}"
+            )
+        changed = _int(
+            donor_record.get("changed_float_indices"),
+            f"{name} changed-float count",
+            minimum=0,
+        )
+        expected_changed = (
+            0 if coefficient == 0.0 else HETEROGENEOUS_FROZEN_HIDDEN_SIZE
+        )
+        if changed != expected_changed:
+            raise QualificationError(
+                f"heterogeneous donor value-row mutation count differs: {name}"
+            )
+        validated_donors[name] = dict(donor_record)
+
+    zero_values = np.frombuffer(reconstructed["zero_value"], dtype="<f4")
+    positive_values = np.frombuffer(reconstructed["positive_value"], dtype="<f4")
+    changed_indices = np.flatnonzero(zero_values != positive_values)
+    expected_indices = np.arange(
+        frozen["value_row_offset"],
+        frozen["value_row_offset"] + frozen["hidden_size"],
+    )
+    if not np.array_equal(changed_indices, expected_indices):
+        raise QualificationError(
+            "heterogeneous donors differ outside the exact value row"
+        )
+    value_start = 4 * frozen["value_row_offset"]
+    value_stop = value_start + 4 * frozen["hidden_size"]
+    donor_value_row_digests = {
+        hashlib.sha256(payload[value_start:value_stop]).hexdigest()
+        for payload in reconstructed.values()
+    }
+    if primary_record["value_row_sha256"] in donor_value_row_digests:
+        raise QualificationError(
+            "primary value row is not independent from frozen donors"
+        )
+    donor_digests = {
+        hashlib.sha256(payload).hexdigest() for payload in reconstructed.values()
+    }
+    if primary_record["weights_sha256"] in donor_digests:
+        raise QualificationError(
+            "primary policy bytes are not independent from frozen donors"
+        )
+    consumption = record.get("heterogeneous_zero_tail_consumption")
+    consumption_keys = {
+        "tail_consumed",
+        "primary_weights_unchanged",
+        "frozen_weights_unchanged",
+        "primary_sha256",
+        "frozen_sha256",
+    }
+    if (
+        not isinstance(consumption, Mapping)
+        or set(consumption) != consumption_keys
+        or consumption.get("tail_consumed") is not True
+        or consumption.get("primary_weights_unchanged") is not True
+        or consumption.get("frozen_weights_unchanged") is not True
+        or _require_sha256(
+            consumption.get("primary_sha256"),
+            "intervention primary weight digest",
+        )
+        != primary_record["weights_sha256"]
+        or _require_sha256(
+            consumption.get("frozen_sha256"),
+            "intervention frozen weight digest",
+        )
+        != donor_records["zero_value"]["expected_sha256"]
+    ):
+        raise QualificationError(
+            "heterogeneous zero-tail consumption evidence differs"
+        )
+
+    zero_arrays = _heterogeneous_namespace(
+        arrays, HETEROGENEOUS_ZERO_PREFIX
+    )
+    zero_oracle = validate_heterogeneous_rollout_oracle(
+        zero_arrays,
+        record.get("heterogeneous_zero_state", {}),
+        total_agents=HETEROGENEOUS_TOTAL_AGENTS,
+        num_buffers=HETEROGENEOUS_NUM_BUFFERS,
+        horizon=HETEROGENEOUS_HORIZON,
+        value_coefficient=HETEROGENEOUS_VALUE_COEFFICIENTS["zero_value"],
+        atol=tolerance,
+    )
+    positive_oracle = validate_heterogeneous_rollout_oracle(
+        arrays,
+        record.get("heterogeneous_positive_state", {}),
+        total_agents=HETEROGENEOUS_TOTAL_AGENTS,
+        num_buffers=HETEROGENEOUS_NUM_BUFFERS,
+        horizon=HETEROGENEOUS_HORIZON,
+        value_coefficient=HETEROGENEOUS_VALUE_COEFFICIENTS["positive_value"],
+        atol=tolerance,
+    )
+    if record.get("heterogeneous_zero_oracle") != zero_oracle:
+        raise QualificationError("worker zero-value oracle summary differs")
+    if record.get("heterogeneous_positive_oracle") != positive_oracle:
+        raise QualificationError("worker positive-value oracle summary differs")
+
+    return {
+        "readback_matches_donor": True,
+        "primary_frozen_architectures_differ": True,
+        "primary_architecture": primary_record,
+        "frozen_architecture": frozen_record,
+        "donors": validated_donors,
+        "zero_value": zero_oracle,
+        "positive_value": positive_oracle,
+    }
+
+
 # ------------------------------------------------------- rollout / PPO evidence
 
 
@@ -610,6 +1852,591 @@ def compare_decoder_outputs(
         raise QualificationError("decoder bank/buffer coverage mismatch")
     return {
         key: _max_abs_error(key, left[key], right[key], atol) for key in sorted(keys)
+    }
+
+
+def compare_tail_decoder_outputs(
+    left: Mapping[str, np.ndarray],
+    right: Mapping[str, np.ndarray],
+    *,
+    atol: float,
+) -> dict[str, float]:
+    keys = {key for key in left if key.startswith("tail_decoder_bank_")}
+    if not keys or keys != {
+        key for key in right if key.startswith("tail_decoder_bank_")
+    }:
+        raise QualificationError("tail decoder bank/buffer coverage mismatch")
+    return {
+        key: _max_abs_error(key, left[key], right[key], atol)
+        for key in sorted(keys)
+    }
+
+
+def validate_tail_snapshot(
+    snapshot: Mapping[str, np.ndarray],
+    *,
+    total_agents: int,
+    num_buffers: int,
+) -> dict[str, Any]:
+    """Require one finite post-horizon tail record from every rollout worker."""
+
+    agents = _int(total_agents, "tail snapshot total agents", minimum=1)
+    buffers = _int(num_buffers, "tail snapshot buffers", minimum=1)
+    if agents % buffers:
+        raise QualificationError("tail snapshot agents are not buffer-divisible")
+    missing = [
+        key
+        for key in (*TAIL_FLOAT_SNAPSHOT_FIELDS, "tail_valid")
+        if key not in snapshot
+    ]
+    if missing:
+        raise QualificationError(f"tail snapshot fields are missing: {missing}")
+    for key in TAIL_FLOAT_SNAPSHOT_FIELDS:
+        value = snapshot[key]
+        if not isinstance(value, np.ndarray):
+            raise QualificationError(f"tail snapshot field {key} is not an ndarray")
+        if value.dtype != np.dtype(np.float32):
+            raise QualificationError(f"tail snapshot field {key} is not float32")
+        if value.shape != (agents,):
+            raise QualificationError(
+                f"tail snapshot field {key} shape {value.shape} != {(agents,)}"
+            )
+        if not np.isfinite(value).all():
+            raise QualificationError(
+                f"tail snapshot field {key} contains non-finite values"
+            )
+    terminals = snapshot["tail_terminals"]
+    if not np.isin(terminals, np.array([0.0, 1.0], np.float32)).all():
+        raise QualificationError("tail terminal flags are not binary")
+    terminal_values = snapshot["tail_values"][terminals == 1.0]
+    if not np.array_equal(terminal_values, np.zeros_like(terminal_values)):
+        raise QualificationError("terminal tail values are not exactly zero")
+    valid = validate_tail_validity(
+        snapshot["tail_valid"],
+        num_buffers=buffers,
+        expected=1,
+        label="tail callback",
+    )
+    return {
+        "total_agents": agents,
+        "num_buffers": buffers,
+        "valid_buffers": int(valid.sum()),
+        "terminal_rows": int(np.count_nonzero(terminals)),
+    }
+
+
+def validate_tail_validity(
+    valid: Any,
+    *,
+    num_buffers: int,
+    expected: int,
+    label: str,
+) -> np.ndarray:
+    buffers = _int(num_buffers, f"{label} buffers", minimum=1)
+    expected_value = _int(expected, f"{label} expected validity", minimum=0)
+    if expected_value not in {0, 1}:
+        raise QualificationError(f"{label} expected validity must be zero or one")
+    if not isinstance(valid, np.ndarray) or valid.dtype != np.dtype(np.int32):
+        raise QualificationError(f"{label} validity flags are not int32")
+    if valid.shape != (buffers,):
+        raise QualificationError(
+            f"{label} validity shape {valid.shape} != {(buffers,)}"
+        )
+    expected_array = np.full(buffers, expected_value, dtype=np.int32)
+    if not np.array_equal(valid, expected_array):
+        raise QualificationError(
+            f"{label} validity flags are not all {expected_value}"
+        )
+    return valid
+
+
+def consume_qualification_tail(
+    backend: Any,
+    pufferl: Any,
+    *,
+    num_buffers: int,
+    label: str,
+) -> dict[str, list[int]]:
+    """Explicitly discard one qualification-only tail without allowing overwrite."""
+
+    buffers = _int(num_buffers, f"{label} tail-discard buffers", minimum=1)
+    surface = getattr(backend, "qualification_consume_tail", None)
+    if not callable(surface):
+        raise QualificationError(
+            f"{label} qualification tail-consumption surface is missing"
+        )
+    try:
+        evidence = surface(pufferl)
+    except Exception as exc:
+        raise QualificationError(
+            f"{label} qualification tail consumption failed: {exc}"
+        ) from exc
+    if not isinstance(evidence, Mapping):
+        raise QualificationError(
+            f"{label} qualification tail-consumption evidence is not a mapping"
+        )
+    _require_exact_keys(
+        evidence,
+        ("before", "after"),
+        f"{label} qualification tail-consumption evidence",
+    )
+    expected = {
+        "before": [1] * buffers,
+        "after": [0] * buffers,
+    }
+    result: dict[str, list[int]] = {}
+    for key, wanted in expected.items():
+        value = evidence.get(key)
+        if (
+            not isinstance(value, list)
+            or any(type(item) is not int for item in value)
+            or value != wanted
+        ):
+            raise QualificationError(
+                f"{label} qualification tail {key} counts differ"
+            )
+        result[key] = list(value)
+    return result
+
+
+def compare_tail_snapshots(
+    left: Mapping[str, np.ndarray],
+    right: Mapping[str, np.ndarray],
+    *,
+    total_agents: int,
+    num_buffers: int,
+    atol: float,
+) -> dict[str, float]:
+    """Tail rewards/terminals/validity are exact; bootstrap values are fp32-close."""
+
+    tolerance = _num(atol, "tail snapshot atol")
+    if tolerance < 0:
+        raise QualificationError("tail snapshot atol must be nonnegative")
+    validate_tail_snapshot(
+        left,
+        total_agents=total_agents,
+        num_buffers=num_buffers,
+    )
+    validate_tail_snapshot(
+        right,
+        total_agents=total_agents,
+        num_buffers=num_buffers,
+    )
+    maxima: dict[str, float] = {}
+    for key in TAIL_EXACT_SNAPSHOT_FIELDS:
+        if not np.array_equal(left[key], right[key]):
+            raise QualificationError(f"exact tail snapshot field {key} differs")
+        maxima[key] = 0.0
+    maxima["tail_values"] = _max_abs_error(
+        "tail_values",
+        left["tail_values"],
+        right["tail_values"],
+        tolerance,
+    )
+    return maxima
+
+
+def validate_tail_value_routing(
+    snapshot: Mapping[str, np.ndarray],
+    *,
+    total_agents: int,
+    num_buffers: int,
+    atol: float,
+) -> dict[str, float]:
+    """Each primary/frozen tail segment must come from its own decoder value."""
+
+    agents = _int(total_agents, "tail routing total agents", minimum=1)
+    buffers = _int(num_buffers, "tail routing buffers", minimum=1)
+    tolerance = _num(atol, "tail routing atol")
+    if tolerance < 0 or agents % buffers:
+        raise QualificationError("tail routing dimensions or tolerance are invalid")
+    validate_tail_snapshot(
+        snapshot,
+        total_agents=agents,
+        num_buffers=buffers,
+    )
+    pattern = re.compile(r"tail_decoder_bank_([0-9]+)_buffer_([0-9]+)")
+    decoded: dict[tuple[int, int], np.ndarray] = {}
+    for key, value in snapshot.items():
+        match = pattern.fullmatch(key)
+        if match is None:
+            continue
+        location = (int(match.group(1)), int(match.group(2)))
+        if location in decoded:
+            raise QualificationError(f"duplicate tail decoder snapshot {location}")
+        if not isinstance(value, np.ndarray) or value.dtype != np.dtype(np.float32):
+            raise QualificationError(f"tail decoder snapshot {key} is not float32")
+        if value.ndim < 2 or value.shape[0] <= 0 or value.shape[-1] <= 0:
+            raise QualificationError(f"tail decoder snapshot {key} shape is malformed")
+        if not np.isfinite(value).all():
+            raise QualificationError(
+                f"tail decoder snapshot {key} contains non-finite values"
+            )
+        decoded[location] = value
+    banks = sorted({bank for bank, _ in decoded})
+    if not banks or banks != list(range(len(banks))):
+        raise QualificationError("tail decoder bank coverage is incomplete")
+    expected = {(bank, buffer) for bank in banks for buffer in range(buffers)}
+    if set(decoded) != expected:
+        raise QualificationError("tail decoder bank/buffer coverage is incomplete")
+
+    per_buffer = agents // buffers
+    terminals = snapshot["tail_terminals"]
+    tail_values = snapshot["tail_values"]
+    maxima: dict[str, float] = {}
+    for buffer in range(buffers):
+        decoder_values = np.concatenate(
+            [decoded[(bank, buffer)][:, -1] for bank in banks]
+        ).astype(np.float32, copy=False)
+        if decoder_values.shape != (per_buffer,):
+            raise QualificationError(
+                "tail decoder active-row coverage differs from the agent partition"
+            )
+        start = buffer * per_buffer
+        stop = start + per_buffer
+        expected_values = np.where(
+            terminals[start:stop] == 0.0,
+            decoder_values,
+            np.zeros(per_buffer, dtype=np.float32),
+        ).astype(np.float32, copy=False)
+        maxima[f"tail_decoder_buffer_{buffer}"] = _max_abs_error(
+            f"tail decoder buffer {buffer}",
+            tail_values[start:stop],
+            expected_values,
+            tolerance,
+        )
+    return maxima
+
+
+def validate_frozen_advantages(
+    advantages: Any,
+    *,
+    primary_rows: set[int],
+    frozen_rows: set[int],
+    horizon: int,
+) -> dict[str, Any]:
+    """The native GAE buffer is finite and all frozen rows are exactly zero."""
+
+    steps = _int(horizon, "advantage horizon", minimum=1)
+    if not isinstance(advantages, np.ndarray):
+        raise QualificationError("advantages evidence is not an ndarray")
+    if advantages.dtype != np.dtype(np.float32):
+        raise QualificationError("advantages evidence is not float32")
+    if advantages.ndim != 2 or advantages.shape[1] != steps:
+        raise QualificationError(
+            f"advantages shape {advantages.shape} is not (*, {steps})"
+        )
+    rows = set(range(advantages.shape[0]))
+    if (
+        not primary_rows
+        or not frozen_rows
+        or primary_rows & frozen_rows
+        or primary_rows | frozen_rows != rows
+    ):
+        raise QualificationError("advantage row partition is invalid")
+    if not np.isfinite(advantages).all():
+        raise QualificationError("advantages evidence contains non-finite values")
+    frozen = advantages[sorted(frozen_rows)]
+    if not np.array_equal(frozen, np.zeros_like(frozen)):
+        raise QualificationError("frozen-bank advantages are not exactly zero")
+    primary = advantages[sorted(primary_rows)]
+    return {
+        "shape": list(advantages.shape),
+        "frozen_rows_zero": sorted(frozen_rows),
+        "primary_max_abs": (
+            float(np.max(np.abs(primary))) if primary.size else 0.0
+        ),
+    }
+
+
+def _canonical_float32_sha256(value: np.ndarray) -> str:
+    array = np.asarray(value, dtype="<f4", order="C")
+    return hashlib.sha256(array.tobytes(order="C")).hexdigest()
+
+
+def validate_integrated_advantage_oracle(
+    arrays: Mapping[str, np.ndarray],
+    state_report: Mapping[str, Any],
+    config: Mapping[str, Any],
+    *,
+    atol: float,
+) -> dict[str, Any]:
+    """Reconstruct a real zero-LR rollout→train advantage tensor independently."""
+
+    tolerance = _num(atol, "integrated advantage oracle atol")
+    if tolerance < 0:
+        raise QualificationError(
+            "integrated advantage oracle tolerance is negative"
+        )
+    if not isinstance(config, Mapping):
+        raise QualificationError("integrated advantage config is missing")
+    vec = config.get("vec")
+    train = config.get("train")
+    if not isinstance(vec, Mapping) or not isinstance(train, Mapping):
+        raise QualificationError("integrated advantage config sections are missing")
+    agents = _int(
+        vec.get("total_agents"),
+        "integrated advantage total agents",
+        minimum=1,
+    )
+    buffers = _int(
+        vec.get("num_buffers"),
+        "integrated advantage buffers",
+        minimum=1,
+    )
+    horizon = _int(
+        train.get("horizon"),
+        "integrated advantage horizon",
+        minimum=1,
+    )
+    minibatch = _int(
+        train.get("minibatch_size"),
+        "integrated advantage minibatch",
+        minimum=1,
+    )
+    replay_ratio = _int(
+        train.get("replay_ratio"),
+        "integrated advantage replay ratio",
+        minimum=1,
+    )
+    frozen_banks = _int(
+        vec.get("num_frozen_banks"),
+        "integrated advantage frozen banks",
+        minimum=0,
+    )
+    cudagraphs = _int(
+        config.get("cudagraphs"),
+        "integrated advantage cudagraph setting",
+    )
+    if (
+        agents != HETEROGENEOUS_TOTAL_AGENTS
+        or buffers != HETEROGENEOUS_NUM_BUFFERS
+        or horizon != HETEROGENEOUS_HORIZON
+        or frozen_banks != 1
+        or _num(
+            vec.get("frozen_bank_pct"),
+            "integrated advantage frozen percentage",
+        )
+        != 0.5
+        or minibatch != agents * horizon
+        or replay_ratio != 1
+        or _num(
+            train.get("learning_rate"),
+            "integrated advantage learning rate",
+        )
+        != 0.0
+        or train.get("anneal_lr") is not False
+        or config.get("reset_state") is not True
+        or cudagraphs not in {-1, DEFAULT_CUDAGRAPH_WARMUP_EPOCHS}
+    ):
+        raise QualificationError(
+            "integrated advantage oracle requires the closed zero-LR "
+            "single-full-batch rollout configuration"
+        )
+
+    primary_rows, frozen_rows = derive_row_partition(
+        state_report,
+        total_agents=agents,
+    )
+    float_shapes = {
+        "values": (horizon, agents),
+        "rewards": (horizon, agents),
+        "terminals": (horizon, agents),
+        "tail_values": (agents,),
+        "tail_rewards": (agents,),
+        "tail_terminals": (agents,),
+        "advantages_after_train": (agents, horizon),
+    }
+    normalized: dict[str, np.ndarray] = {}
+    for key, shape in float_shapes.items():
+        value = arrays.get(key)
+        if (
+            not isinstance(value, np.ndarray)
+            or value.dtype != np.dtype(np.float32)
+            or value.shape != shape
+            or not np.isfinite(value).all()
+        ):
+            raise QualificationError(
+                f"integrated advantage field {key} is not finite float32 {shape}"
+            )
+        normalized[key] = value
+    for key in ("terminals", "tail_terminals"):
+        if not np.isin(
+            normalized[key],
+            np.array([0.0, 1.0], dtype=np.float32),
+        ).all():
+            raise QualificationError(
+                f"integrated advantage field {key} is not binary"
+            )
+    validate_tail_validity(
+        arrays.get("tail_valid"),
+        num_buffers=buffers,
+        expected=1,
+        label="integrated pre-train tail",
+    )
+    validate_tail_validity(
+        arrays.get("tail_valid_after_train"),
+        num_buffers=buffers,
+        expected=0,
+        label="integrated post-train tail",
+    )
+    selected_rows = arrays.get("selected_rows_after_train")
+    if (
+        not isinstance(selected_rows, np.ndarray)
+        or selected_rows.dtype != np.dtype(np.int32)
+        or selected_rows.ndim != 1
+        or selected_rows.size == 0
+    ):
+        raise QualificationError(
+            "integrated selected-row evidence is not nonempty int32"
+        )
+    selected_set = {
+        int(value) for value in selected_rows.reshape(-1).tolist()
+    }
+    if not selected_set <= primary_rows or selected_set & frozen_rows:
+        raise QualificationError(
+            "integrated train selected a row outside the learner bank"
+        )
+
+    gamma = _num(train.get("gamma"), "integrated advantage gamma")
+    gae_lambda = _num(
+        train.get("gae_lambda"),
+        "integrated advantage lambda",
+    )
+    rho_clip = _num(
+        train.get("vtrace_rho_clip"),
+        "integrated advantage rho clip",
+    )
+    c_clip = _num(
+        train.get("vtrace_c_clip"),
+        "integrated advantage c clip",
+    )
+    expected_coefficients = (0.995, 0.95, 1.0, 1.0)
+    if (gamma, gae_lambda, rho_clip, c_clip) != expected_coefficients:
+        raise QualificationError(
+            "integrated advantage recurrence coefficients differ from the "
+            "closed production fixture"
+        )
+    verifier, verifier_identity = _load_rollout_transition_verifier()
+    expected = np.asarray(
+        verifier.reference_advantages(
+            values=normalized["values"].T.tolist(),
+            rewards=normalized["rewards"].T.tolist(),
+            terminals=normalized["terminals"].T.tolist(),
+            importance=np.ones((agents, horizon), np.float32).tolist(),
+            tail_values=normalized["tail_values"].tolist(),
+            tail_rewards=normalized["tail_rewards"].tolist(),
+            tail_terminals=normalized["tail_terminals"].tolist(),
+            gamma=gamma,
+            gae_lambda=gae_lambda,
+            rho_clip=rho_clip,
+            c_clip=c_clip,
+        ),
+        dtype=np.float32,
+    )
+    if expected.shape != (agents, horizon) or not np.isfinite(expected).all():
+        raise QualificationError(
+            "integrated independent recurrence produced malformed advantages"
+        )
+    expected[sorted(frozen_rows)] = np.float32(0.0)
+    observed = normalized["advantages_after_train"]
+    validate_frozen_advantages(
+        observed,
+        primary_rows=primary_rows,
+        frozen_rows=frozen_rows,
+        horizon=horizon,
+    )
+    primary_index = sorted(primary_rows)
+    error = np.abs(observed[primary_index] - expected[primary_index])
+    full_error = float(np.max(error)) if error.size else 0.0
+    if full_error > tolerance:
+        raise QualificationError(
+            "integrated production advantages differ from the independent "
+            f"recurrence: {full_error} > {tolerance}"
+        )
+    last_expected = np.abs(expected[primary_index, horizon - 1])
+    nonzero_positions = np.flatnonzero(last_expected > tolerance)
+    if nonzero_positions.size == 0:
+        raise QualificationError(
+            "integrated fixture has no nondegenerate primary last-slot signal"
+        )
+    nonzero_rows = [primary_index[int(index)] for index in nonzero_positions]
+    last_error = float(np.max(error[:, horizon - 1]))
+    return {
+        "schema_version": INTEGRATED_ADVANTAGE_ORACLE_SCHEMA_VERSION,
+        "contract": INTEGRATED_ADVANTAGE_CONTRACT,
+        "importance_contract": INTEGRATED_IMPORTANCE_CONTRACT,
+        "cudagraphs": cudagraphs,
+        "total_agents": agents,
+        "num_buffers": buffers,
+        "horizon": horizon,
+        "gamma": gamma,
+        "gae_lambda": gae_lambda,
+        "rho_clip": rho_clip,
+        "c_clip": c_clip,
+        "verifier_path": verifier_identity["path"],
+        "verifier_sha256": verifier_identity["sha256"],
+        "verifier_bytes": verifier_identity["bytes"],
+        "primary_rows": primary_index,
+        "frozen_rows": sorted(frozen_rows),
+        "expected_advantages_sha256": _canonical_float32_sha256(expected),
+        "observed_advantages_sha256": _canonical_float32_sha256(observed),
+        "selected_rows": [
+            int(value) for value in selected_rows.reshape(-1).tolist()
+        ],
+        "selected_rows_sha256": hashlib.sha256(
+            np.ascontiguousarray(selected_rows.astype("<i4", copy=False)).tobytes()
+        ).hexdigest(),
+        "primary_max_abs_error": full_error,
+        "primary_last_slot_max_abs_error": last_error,
+        "primary_last_slot_max_expected_abs": float(np.max(last_expected)),
+        "nonzero_primary_last_rows": nonzero_rows,
+        "frozen_rows_exact_zero": True,
+        "tail_consumed": True,
+    }
+
+
+def compare_integrated_advantage_parity(
+    left: np.ndarray,
+    right: np.ndarray,
+    *,
+    primary_rows: set[int],
+    horizon: int,
+    atol: float,
+) -> dict[str, float]:
+    """Require graph-off/on parity across the full and final-slot tensors."""
+
+    steps = _int(horizon, "integrated parity horizon", minimum=1)
+    tolerance = _num(atol, "integrated parity atol")
+    if tolerance < 0:
+        raise QualificationError("integrated parity tolerance is negative")
+    left_array, right_array = _validate_array_pair(
+        "integrated advantages",
+        left,
+        right,
+    )
+    if (
+        left_array.ndim != 2
+        or left_array.shape[1] != steps
+        or not primary_rows
+        or not primary_rows <= set(range(left_array.shape[0]))
+    ):
+        raise QualificationError("integrated parity shape/row contract differs")
+    delta = np.abs(left_array - right_array)
+    full = float(np.max(delta)) if delta.size else 0.0
+    last = float(np.max(delta[sorted(primary_rows), steps - 1]))
+    if full > tolerance:
+        raise QualificationError(
+            f"graph-mode full advantage parity error {full} exceeds {tolerance}"
+        )
+    if last > tolerance:
+        raise QualificationError(
+            f"graph-mode last-slot parity error {last} exceeds {tolerance}"
+        )
+    return {
+        "full_max_abs": full,
+        "last_slot_max_abs": last,
+        "atol": tolerance,
     }
 
 
@@ -694,13 +2521,44 @@ def validate_hard_integrity(env: Mapping[str, Any]) -> dict[str, float]:
 
 
 def bind_transition_integrity(
-    backend: Any, pufferl: Any, record: dict[str, Any], *, additional_rollouts: int = 0
+    backend: Any,
+    pufferl: Any,
+    record: dict[str, Any],
+    *,
+    additional_rollouts: int = 0,
+    consume_tail_each: bool = False,
+    num_buffers: int | None = None,
 ) -> dict[str, float]:
     """Finish a bounded telemetry interval and bind its exact-zero verdict."""
-    for _ in range(
-        _int(additional_rollouts, "additional integrity rollouts", minimum=0)
-    ):
+    rollouts = _int(
+        additional_rollouts,
+        "additional integrity rollouts",
+        minimum=0,
+    )
+    if type(consume_tail_each) is not bool:
+        raise QualificationError(
+            "additional integrity tail-consumption flag is not boolean"
+        )
+    if consume_tail_each:
+        buffers = _int(
+            num_buffers,
+            "additional integrity tail-consumption buffers",
+            minimum=1,
+        )
+    else:
+        buffers = 0
+    discards = 0
+    for index in range(rollouts):
         backend.rollouts(pufferl)
+        if consume_tail_each:
+            consume_qualification_tail(
+                backend,
+                pufferl,
+                num_buffers=buffers,
+                label=f"integrity rollout {index}",
+            )
+            discards += 1
+    record["integrity_tail_discards"] = discards
     log = backend.log(pufferl)
     if not isinstance(log, Mapping) or not isinstance(log.get("env"), Mapping):
         raise QualificationError("transition integrity log/env telemetry is missing")
@@ -735,7 +2593,7 @@ def validate_transition_cell_integrity(
 
 
 def _validate_throughput_record(record: Mapping[str, Any], label: str) -> None:
-    for key in ("host", "gpu"):
+    for key in ("host", "gpu", "gpu_uuid"):
         if not isinstance(record.get(key), str) or not record.get(key):
             raise QualificationError(f"{label} throughput {key} is missing")
     if record.get("precision_bytes") not in GRAPH_ATOL_BY_PRECISION:
@@ -756,6 +2614,123 @@ def _validate_throughput_record(record: Mapping[str, Any], label: str) -> None:
     validate_hard_integrity(record.get("hard_integrity", {}))
     if record.get("hard_integrity_zero") is not True:
         raise QualificationError(f"{label} throughput hard-integrity gate is not zero")
+    validate_hard_integrity(record.get("warmup_hard_integrity", {}))
+    if record.get("warmup_hard_integrity_zero") is not True:
+        raise QualificationError(
+            f"{label} throughput warmup hard-integrity gate is not zero"
+        )
+    _int(
+        record.get("tail_records_explicitly_discarded"),
+        f"{label} throughput tail discard count",
+        minimum=1,
+    )
+
+
+def _load_required_throughput_baseline_binding(
+    path: Path,
+    *,
+    output: Path,
+) -> tuple[dict[str, Any], dict[str, Any], bytes]:
+    """Preflight one bounded external baseline and bind its immutable bytes."""
+
+    if path is None:
+        raise QualificationError("baseline throughput artifact is required")
+    baseline_path = Path(path).expanduser().absolute()
+    output_path = Path(output).expanduser().absolute()
+    try:
+        baseline_metadata = baseline_path.lstat()
+    except OSError as exc:
+        raise QualificationError(
+            f"cannot inspect throughput baseline artifact {baseline_path}: {exc}"
+        ) from exc
+    if (
+        stat.S_ISLNK(baseline_metadata.st_mode)
+        or not stat.S_ISREG(baseline_metadata.st_mode)
+    ):
+        raise QualificationError(
+            "throughput baseline artifact is not a regular non-symlink file: "
+            f"{baseline_path}"
+        )
+    try:
+        baseline_path.relative_to(output_path)
+    except ValueError:
+        pass
+    else:
+        raise QualificationError(
+            "baseline throughput artifact must be outside candidate output"
+        )
+    try:
+        canonical_baseline = baseline_path.resolve(strict=True)
+        canonical_metadata = canonical_baseline.lstat()
+    except OSError as exc:
+        raise QualificationError(
+            f"cannot resolve throughput baseline artifact {baseline_path}: {exc}"
+        ) from exc
+    if (
+        not stat.S_ISREG(canonical_metadata.st_mode)
+        or canonical_metadata.st_dev != baseline_metadata.st_dev
+        or canonical_metadata.st_ino != baseline_metadata.st_ino
+    ):
+        raise QualificationError(
+            "throughput baseline artifact changed identity while resolving"
+        )
+    canonical_output = output_path.resolve()
+    try:
+        canonical_baseline.relative_to(canonical_output)
+    except ValueError:
+        pass
+    else:
+        raise QualificationError(
+            "baseline throughput artifact resolves inside candidate output"
+        )
+    encoded = _read_bounded_regular_bytes(
+        canonical_baseline,
+        maximum_bytes=CELL_MAX_JSON_BYTES,
+        label="throughput baseline artifact",
+    )
+    try:
+        final_metadata = baseline_path.lstat()
+    except OSError as exc:
+        raise QualificationError(
+            f"cannot recheck throughput baseline artifact {baseline_path}: {exc}"
+        ) from exc
+    if (
+        final_metadata.st_dev != baseline_metadata.st_dev
+        or final_metadata.st_ino != baseline_metadata.st_ino
+        or final_metadata.st_size != baseline_metadata.st_size
+        or final_metadata.st_mtime_ns != baseline_metadata.st_mtime_ns
+    ):
+        raise QualificationError(
+            "throughput baseline artifact changed while being bound"
+        )
+    baseline_path = canonical_baseline
+    artifact = _decode_json_object(encoded, baseline_path)
+    baseline = artifact.get("throughput")
+    if not isinstance(baseline, Mapping):
+        raise QualificationError(
+            "baseline artifact has no throughput record to compare against"
+        )
+    _validate_throughput_record(baseline, "baseline")
+    identity = {
+        "path": str(baseline_path),
+        "sha256": hashlib.sha256(encoded).hexdigest(),
+        "bytes": len(encoded),
+    }
+    return dict(baseline), identity, encoded
+
+
+def load_required_throughput_baseline(
+    path: Path,
+    *,
+    output: Path,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Public preflight API returning the validated record and byte identity."""
+
+    baseline, identity, _ = _load_required_throughput_baseline_binding(
+        path,
+        output=output,
+    )
+    return baseline, identity
 
 
 def validate_throughput(
@@ -770,7 +2745,7 @@ def validate_throughput(
     limit = _num(max_regression_fraction, "throughput regression fraction")
     if limit < 0 or limit >= 1:
         raise QualificationError("throughput regression fraction must be in [0, 1)")
-    for key in ("host", "gpu", "precision_bytes", "config"):
+    for key in ("host", "gpu", "gpu_uuid", "precision_bytes", "config"):
         if candidate.get(key) != baseline.get(key):
             raise QualificationError(f"throughput identity mismatch for {key}")
     candidate_sps = float(candidate["steps_per_second"])
@@ -836,30 +2811,58 @@ def _decode_tensor(record: Mapping[str, Any]) -> np.ndarray:
 
 
 def decode_snapshot(raw: Mapping[str, Any]) -> dict[str, np.ndarray]:
-    tensors, decoders = raw.get("tensors"), raw.get("decoder_outputs")
-    if not isinstance(tensors, Mapping) or not isinstance(decoders, list):
+    tensors = raw.get("tensors")
+    decoders = raw.get("decoder_outputs")
+    tail_decoders = raw.get("tail_decoder_outputs")
+    if (
+        not isinstance(tensors, Mapping)
+        or not isinstance(decoders, list)
+        or not isinstance(tail_decoders, list)
+    ):
         raise QualificationError("native snapshot structure is malformed")
     banks = _int(raw.get("num_banks"), "snapshot num_banks", minimum=1)
     buffers = _int(raw.get("num_buffers"), "snapshot num_buffers", minimum=1)
     arrays = {str(key): _decode_tensor(value) for key, value in tensors.items()}
-    seen: set[tuple[int, int]] = set()
-    for entry in decoders:
-        if not isinstance(entry, Mapping):
-            raise QualificationError("decoder snapshot entry is malformed")
-        key = (
-            _int(entry.get("bank"), "decoder bank"),
-            _int(entry.get("buffer"), "decoder buffer"),
-        )
-        rows = _int(entry.get("active_rows"), "decoder active rows", minimum=1)
-        if key in seen:
-            raise QualificationError(f"duplicate decoder snapshot {key}")
-        seen.add(key)
-        decoded = _decode_tensor(entry.get("tensor"))
-        if decoded.ndim < 1 or decoded.shape[0] != rows:
-            raise QualificationError("decoder snapshot includes inactive rows")
-        arrays[f"decoder_bank_{key[0]}_buffer_{key[1]}"] = decoded
-    if seen != {(b, f) for b in range(banks) for f in range(buffers)}:
-        raise QualificationError("decoder snapshot bank/buffer coverage is incomplete")
+
+    def bind_decoders(
+        entries: list[Any],
+        *,
+        prefix: str,
+        label: str,
+    ) -> None:
+        seen: set[tuple[int, int]] = set()
+        for entry in entries:
+            if not isinstance(entry, Mapping):
+                raise QualificationError(f"{label} snapshot entry is malformed")
+            key = (
+                _int(entry.get("bank"), f"{label} bank"),
+                _int(entry.get("buffer"), f"{label} buffer"),
+            )
+            rows = _int(
+                entry.get("active_rows"),
+                f"{label} active rows",
+                minimum=1,
+            )
+            if key in seen:
+                raise QualificationError(f"duplicate {label} snapshot {key}")
+            seen.add(key)
+            decoded = _decode_tensor(entry.get("tensor"))
+            if decoded.ndim < 1 or decoded.shape[0] != rows:
+                raise QualificationError(
+                    f"{label} snapshot includes inactive rows"
+                )
+            arrays[f"{prefix}_bank_{key[0]}_buffer_{key[1]}"] = decoded
+        if seen != {(bank, buffer) for bank in range(banks) for buffer in range(buffers)}:
+            raise QualificationError(
+                f"{label} snapshot bank/buffer coverage is incomplete"
+            )
+
+    bind_decoders(decoders, prefix="decoder", label="decoder")
+    bind_decoders(
+        tail_decoders,
+        prefix="tail_decoder",
+        label="tail decoder",
+    )
     return arrays
 
 
@@ -899,6 +2902,8 @@ def qualification_args(
     frozen_banks: int,
     frozen_bank_pct: float,
     learning_rate: float,
+    frozen_hidden_size: int | None = None,
+    frozen_num_layers: int | None = None,
     replay_ratio: int = 1,
     minibatch_size: int | None = None,
 ) -> dict[str, Any]:
@@ -929,8 +2934,16 @@ def qualification_args(
             "num_threads": num_threads,
             "num_frozen_banks": frozen_banks,
             "frozen_bank_pct": frozen_bank_pct if frozen_banks else 0.0,
-            "frozen_bank_hidden_size": hidden_size,
-            "frozen_bank_num_layers": num_layers,
+            "frozen_bank_hidden_size": (
+                hidden_size
+                if frozen_hidden_size is None
+                else frozen_hidden_size
+            ),
+            "frozen_bank_num_layers": (
+                num_layers
+                if frozen_num_layers is None
+                else frozen_num_layers
+            ),
         },
         "env": {"seed": seed, "max_decisions": max_decisions},
         "policy": {"hidden_size": hidden_size, "num_layers": num_layers},
@@ -1002,6 +3015,208 @@ def validate_cell_cudagraph_record(
     return dict(config)
 
 
+def _expected_graph_execution_counts(
+    kind: str,
+    config: Mapping[str, Any],
+    record: Mapping[str, Any],
+    args: argparse.Namespace,
+) -> dict[str, int]:
+    """Derive exact post-construction callback executions for one closed cell."""
+
+    if kind not in TRANSITION_CELL_KINDS:
+        raise QualificationError(
+            f"graph execution counts are undefined for cell kind {kind}"
+        )
+    vec = config.get("vec")
+    train = config.get("train")
+    env = config.get("env")
+    if not isinstance(vec, Mapping) or not isinstance(train, Mapping):
+        raise QualificationError("graph execution config is incomplete")
+    horizon = _int(train.get("horizon"), "graph execution horizon", minimum=1)
+    buffers = _int(vec.get("num_buffers"), "graph execution buffers", minimum=1)
+    agents = _int(vec.get("total_agents"), "graph execution agents", minimum=1)
+
+    if kind == "rollout":
+        if not isinstance(env, Mapping):
+            raise QualificationError("rollout graph execution env config is missing")
+        rollout_calls = 2 + _int(
+            env.get("max_decisions"),
+            "rollout graph integrity calls",
+            minimum=1,
+        )
+        tail_calls = rollout_calls
+        train_calls = 1
+    elif kind in {"terminal_auto", "terminal_control"}:
+        rollout_calls = 2
+        tail_calls = 0
+        train_calls = 0
+    elif kind == "ratio":
+        rollout_calls = _int(
+            record.get("ratio_calls"),
+            "ratio graph execution calls",
+            minimum=1,
+        )
+        tail_calls = rollout_calls
+        train_calls = rollout_calls
+    elif kind == "throughput":
+        warmup = _int(
+            args.throughput_warmup_rollouts,
+            "throughput graph warmup rollouts",
+            minimum=0,
+        )
+        timed = _int(
+            args.throughput_timed_rollouts,
+            "throughput graph timed rollouts",
+            minimum=1,
+        )
+        rollout_calls = warmup + timed
+        tail_calls = rollout_calls
+        train_calls = 0
+    else:  # pragma: no cover - closed by TRANSITION_CELL_KINDS
+        raise AssertionError(kind)
+
+    minibatch_executions = 0
+    if train_calls:
+        batch = agents * horizon
+        minibatch = _int(
+            train.get("minibatch_size"),
+            "graph execution minibatch size",
+            minimum=1,
+        )
+        replay = _int(
+            train.get("replay_ratio"),
+            "graph execution replay ratio",
+            minimum=1,
+        )
+        if batch % minibatch:
+            raise QualificationError(
+                "graph execution batch is not divisible by minibatch size"
+            )
+        minibatch_executions = train_calls * replay * (batch // minibatch)
+    return {
+        "rollout": rollout_calls * horizon * buffers,
+        "tail": tail_calls * buffers,
+        "train": minibatch_executions,
+    }
+
+
+def validate_graph_execution_evidence(
+    evidence: Any,
+    *,
+    expected_cudagraphs: int,
+    expected_workload: str,
+    expected_counts: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Prove graph configuration through capture, handles, and live launches."""
+
+    expected = _int(
+        expected_cudagraphs,
+        "graph-execution expected cudagraph setting",
+    )
+    if expected not in {-1, DEFAULT_CUDAGRAPH_WARMUP_EPOCHS}:
+        raise QualificationError(
+            "graph-execution evidence has an unsupported expected mode"
+        )
+    if (
+        not isinstance(expected_workload, str)
+        or expected_workload not in TRANSITION_CELL_KINDS
+    ):
+        raise QualificationError("graph-execution workload is invalid")
+    if not isinstance(evidence, Mapping):
+        raise QualificationError("graph-execution evidence is not a mapping")
+    _require_exact_keys(
+        evidence,
+        (
+            "workload",
+            "cudagraphs",
+            "captured",
+            "handles_ready",
+            "graph_launch_counts",
+            "eager_execution_counts",
+        ),
+        "graph-execution evidence",
+    )
+    if evidence.get("workload") != expected_workload:
+        raise QualificationError("graph-execution workload differs")
+    if (
+        _require_exact_json_int(
+            evidence.get("cudagraphs"),
+            "graph-execution cudagraph setting",
+        )
+        != expected
+    ):
+        raise QualificationError("graph-execution cudagraph setting differs")
+    roles = ("rollout", "tail", "train")
+    captured = evidence.get("captured")
+    handles = evidence.get("handles_ready")
+    graph_launches = evidence.get("graph_launch_counts")
+    eager_executions = evidence.get("eager_execution_counts")
+    for section, value in (
+        ("captured", captured),
+        ("handles_ready", handles),
+        ("graph_launch_counts", graph_launches),
+        ("eager_execution_counts", eager_executions),
+    ):
+        if not isinstance(value, Mapping):
+            raise QualificationError(
+                f"graph-execution {section} section is missing"
+            )
+        _require_exact_keys(value, roles, f"graph-execution {section}")
+
+    if not isinstance(expected_counts, Mapping):
+        raise QualificationError("graph-execution expected counts are missing")
+    _require_exact_keys(
+        expected_counts,
+        roles,
+        "graph-execution expected counts",
+    )
+    closed_counts = {
+        role: _require_exact_json_int(
+            expected_counts[role],
+            f"graph-execution expected {role} count",
+            minimum=0,
+        )
+        for role in roles
+    }
+    graph_enabled = expected == DEFAULT_CUDAGRAPH_WARMUP_EPOCHS
+    for role in roles:
+        if type(captured[role]) is not bool or type(handles[role]) is not bool:
+            raise QualificationError(
+                f"graph-execution {role} capture/handle evidence is not boolean"
+            )
+        if captured[role] is not graph_enabled:
+            raise QualificationError(
+                f"graph-execution {role} capture flag differs"
+            )
+        if handles[role] is not graph_enabled:
+            raise QualificationError(
+                f"graph-execution {role} handle readiness differs"
+            )
+        graph_count = _require_exact_json_int(
+            graph_launches[role],
+            f"graph-execution {role} graph launch count",
+            minimum=0,
+        )
+        eager_count = _require_exact_json_int(
+            eager_executions[role],
+            f"graph-execution {role} eager count",
+            minimum=0,
+        )
+        expected_graph = closed_counts[role] if graph_enabled else 0
+        expected_eager = 0 if graph_enabled else closed_counts[role]
+        if graph_count != expected_graph:
+            raise QualificationError(
+                f"graph-execution {role} graph count differs: "
+                f"{graph_count} != {expected_graph}"
+            )
+        if eager_count != expected_eager:
+            raise QualificationError(
+                f"graph-execution {role} eager count differs: "
+                f"{eager_count} != {expected_eager}"
+            )
+    return copy.deepcopy(dict(evidence))
+
+
 def _cell_config(
     kind: str, cudagraphs: int, args: argparse.Namespace
 ) -> dict[str, Any]:
@@ -1021,7 +3236,24 @@ def _cell_config(
             frozen_bank_pct=0.0,
             learning_rate=0.0,
         )
-    if kind in {"construction", "rollout", "terminal_auto", "terminal_control"}:
+    if kind == "rollout":
+        return qualification_args(
+            cudagraphs=cudagraphs,
+            seed=args.seed,
+            total_agents=HETEROGENEOUS_TOTAL_AGENTS,
+            num_buffers=HETEROGENEOUS_NUM_BUFFERS,
+            num_threads=HETEROGENEOUS_NUM_BUFFERS,
+            horizon=HETEROGENEOUS_HORIZON,
+            max_decisions=16,
+            hidden_size=HETEROGENEOUS_PRIMARY_HIDDEN_SIZE,
+            num_layers=HETEROGENEOUS_PRIMARY_NUM_LAYERS,
+            frozen_banks=1,
+            frozen_bank_pct=0.5,
+            frozen_hidden_size=HETEROGENEOUS_FROZEN_HIDDEN_SIZE,
+            frozen_num_layers=HETEROGENEOUS_FROZEN_NUM_LAYERS,
+            learning_rate=0.0,
+        )
+    if kind in {"construction", "terminal_auto", "terminal_control"}:
         return qualification_args(
             cudagraphs=cudagraphs,
             seed=args.seed,
@@ -1059,7 +3291,7 @@ def _cell_config(
             num_buffers=args.throughput_buffers,
             num_threads=args.throughput_threads,
             horizon=args.throughput_horizon,
-            max_decisions=64,
+            max_decisions=4096,
             hidden_size=args.throughput_hidden,
             num_layers=args.throughput_layers,
             frozen_banks=1,
@@ -1134,6 +3366,30 @@ def _installed_team_count(puffer_root: Path) -> int:
             f"installed generated team count is implausible: {count}"
         )
     return count
+
+
+def _expected_cell_config(
+    kind: str,
+    cudagraphs: int,
+    args: argparse.Namespace,
+    puffer_root: Path,
+) -> dict[str, Any]:
+    """Reconstruct the exact child configuration, including strict profiles."""
+
+    config = _cell_config(kind, cudagraphs, args)
+    if kind in STRICT_CONFIG_NEGATIVE_CELL_KINDS:
+        config["env"] = {
+            "seed": args.seed,
+            "max_decisions": 16,
+            "force_home_team": _installed_team_count(puffer_root),
+        }
+    elif kind in STRICT_CONFIG_POSITIVE_CELL_KINDS:
+        config["env"] = (
+            _installed_environment_config(puffer_root)
+            if kind == "strict_positive_full"
+            else {"seed": args.seed, "max_decisions": 16}
+        )
+    return config
 
 
 def _close_vec(vec: Any) -> None:
@@ -1320,7 +3576,11 @@ def backend_source_hash(
 ) -> str:
     """Reproduce install_puffer_env.sh's path-bound backend source digest."""
     try:
-        return source_manifest_sha256(puffer_root, source_files)
+        source_files = tuple(source_files)
+        return native_extension_source_manifest_sha256(
+            puffer_root,
+            source_files,
+        )
     except ValueError as exc:
         raise QualificationError(f"backend source manifest failed: {exc}") from exc
 
@@ -1379,6 +3639,7 @@ def _load_backend(puffer_root: Path):
             "train",
             "environment_config_schema",
             "strict_env_config_testing",
+            "rollout_transition_contract",
             *QUALIFICATION_SURFACE_BINDINGS,
         )
         if not hasattr(_C, name)
@@ -1386,6 +3647,10 @@ def _load_backend(puffer_root: Path):
     if missing:
         raise QualificationError(
             f"compiled qualification surface is missing: {missing}"
+        )
+    if _C.rollout_transition_contract != ROLLOUT_TRANSITION_CONTRACT:
+        raise QualificationError(
+            "compiled rollout-transition contract is missing or wrong"
         )
     return _C, module, evidence
 
@@ -1403,6 +3668,7 @@ def _module_identity(_C, module: Path, puffer_root: Path) -> dict[str, Any]:
         "observation_abi": str(_C.observation_abi),
         "observation_version": int(_C.observation_version),
         "action_abi": str(_C.action_abi),
+        "rollout_transition_contract": str(_C.rollout_transition_contract),
         "environment_config_schema": str(_C.environment_config_schema),
         "strict_env_config_testing": _C.strict_env_config_testing,
         "precision_bytes": int(_C.precision_bytes),
@@ -1433,6 +3699,11 @@ def validate_module_identity(
         raise QualificationError("compiled observation lineage is not obs-v6")
     if identity.get("action_abi") != "exact-joint-v1":
         raise QualificationError("compiled action lineage is not exact-joint-v1")
+    if identity.get("rollout_transition_contract") != ROLLOUT_TRANSITION_CONTRACT:
+        raise QualificationError(
+            "compiled rollout-transition contract is not "
+            f"{ROLLOUT_TRANSITION_CONTRACT}"
+        )
     if identity.get("environment_config_schema") != ENVIRONMENT_CONFIG_SCHEMA:
         raise QualificationError(
             "compiled environment-config schema is not " f"{ENVIRONMENT_CONFIG_SCHEMA}"
@@ -1803,6 +4074,7 @@ def validate_strict_stage_module_identity(
         "puffer_root",
         "observation_abi",
         "action_abi",
+        "rollout_transition_contract",
         "environment_config_schema",
         "compiled_env",
     ):
@@ -2183,6 +4455,7 @@ def validate_strict_stage_evidence(
         (
             "puffer_git_head",
             "strict_environment_config_patch",
+            "rollout_transition_patch",
             "qualifier",
             "compiled_backend_source_ledger",
         ),
@@ -2192,25 +4465,27 @@ def validate_strict_stage_evidence(
         raise QualificationError("strict-stage patch identity has the wrong Puffer pin")
     for key in (
         "strict_environment_config_patch",
+        "rollout_transition_patch",
         "qualifier",
         "compiled_backend_source_ledger",
     ):
         record = patch_identity.get(key)
         if not isinstance(record, Mapping):
             raise QualificationError(f"strict-stage patch identity {key} is missing")
+        patch_artifact = key in {
+            "strict_environment_config_patch",
+            "rollout_transition_patch",
+        }
         required = (
             ("path", "sha256", "reverse_applicable")
-            if key == ("strict_environment_config_patch")
+            if patch_artifact
             else ("path", "sha256")
         )
         _require_exact_keys(record, required, f"strict-stage patch identity {key}")
         _require_sha256(record.get("sha256"), f"strict-stage {key} SHA-256")
         _require_bounded_absolute_path(record.get("path"), f"strict-stage {key} path")
-        if (
-            key == "strict_environment_config_patch"
-            and record.get("reverse_applicable") is not True
-        ):
-            raise QualificationError("strict environment patch is not installed")
+        if patch_artifact and record.get("reverse_applicable") is not True:
+            raise QualificationError(f"strict-stage {key} is not installed")
 
     invalid_cases = payload.get("invalid_cases")
     if not isinstance(invalid_cases, list):
@@ -2377,15 +4652,27 @@ def validate_strict_stage_evidence(
             raise QualificationError("strict-stage installed snapshot drifted")
         expected_files = {
             "strict_environment_config_patch": STRICT_ENV_CONFIG_PATCH,
+            "rollout_transition_patch": ROLLOUT_TRANSITION_PATCH,
             "qualifier": Path(__file__).resolve(),
             "compiled_backend_source_ledger": COMPILED_BACKEND_SOURCE_LEDGER,
+        }
+        patch_artifacts = {
+            "strict_environment_config_patch",
+            "rollout_transition_patch",
         }
         for key, path in expected_files.items():
             record = patch_identity[key]
             if Path(str(record["path"])).resolve() != path.resolve():
                 raise QualificationError(f"strict-stage {key} path drifted")
-            if sha256(path) != record["sha256"]:
+            observed_sha = (
+                _required_file_sha256(path, f"strict-stage {key}")
+                if key in patch_artifacts
+                else sha256(path)
+            )
+            if observed_sha != record["sha256"]:
                 raise QualificationError(f"strict-stage {key} bytes drifted")
+        _require_strict_patch_reverse_applicable(root)
+        _require_rollout_transition_patch_reverse_applicable(root)
     return dict(payload)
 
 
@@ -2402,6 +4689,137 @@ def _load_frozen_from_primary(_C, pufferl, directory: Path, banks: int) -> None:
             _C.load_frozen_bank(pufferl, bank, str(weight_path))
     finally:
         weight_path.unlink(missing_ok=True)
+
+
+def _measure_heterogeneous_rollout(
+    _C: Any,
+    pufferl: Any,
+    result: dict[str, Any],
+    directory: Path,
+    config: Mapping[str, Any],
+) -> dict[str, np.ndarray]:
+    total_agents = int(config["vec"]["total_agents"])
+    num_buffers = int(config["vec"]["num_buffers"])
+    horizon = int(config["train"]["horizon"])
+    atol = GRAPH_ATOL_BY_PRECISION[int(_C.precision_bytes)]
+    primary = validate_policy_weight_descriptor(
+        _C.qualification_policy_weights(
+            pufferl, 0, QUALIFICATION_POLICY_MAX_BYTES
+        ),
+        expected_bank=0,
+        expected_role="primary",
+        expected_hidden_size=HETEROGENEOUS_PRIMARY_HIDDEN_SIZE,
+        expected_num_layers=HETEROGENEOUS_PRIMARY_NUM_LAYERS,
+        expected_slice_size=HETEROGENEOUS_SLICE_SIZE,
+    )
+    frozen = _validated_frozen_weight_descriptor(
+        _C.qualification_policy_weights(
+            pufferl, 1, QUALIFICATION_POLICY_MAX_BYTES
+        )
+    )
+    if (
+        primary["parameter_bytes"] == frozen["parameter_bytes"]
+        or primary["hidden_size"] == frozen["hidden_size"]
+        or primary["num_layers"] == frozen["num_layers"]
+    ):
+        raise QualificationError(
+            "qualification primary/frozen policy architectures do not differ"
+        )
+    primary_architecture = _policy_weight_summary(primary)
+    frozen_architecture = {
+        key: copy.deepcopy(value)
+        for key, value in frozen.items()
+        if key != "weights"
+    }
+    donors: dict[str, dict[str, Any]] = {}
+
+    def variant(
+        name: str, coefficient: float
+    ) -> tuple[dict[str, np.ndarray], Mapping[str, Any], dict[str, Any]]:
+        cleared = _C.qualification_recurrent_state(pufferl, True)
+        validate_zero_state(
+            cleared,
+            expected_banks=2,
+            expected_buffers=num_buffers,
+        )
+        donors[name] = install_authenticated_frozen_donor(
+            _C,
+            pufferl,
+            directory,
+            frozen,
+            name=name.replace("_", "-"),
+            value_coefficient=coefficient,
+        )
+        _C.rollouts(pufferl)
+        snapshot = decode_snapshot(_C.qualification_snapshot(pufferl))
+        state = _C.qualification_recurrent_state(pufferl, False)
+        oracle = validate_heterogeneous_rollout_oracle(
+            snapshot,
+            state,
+            total_agents=total_agents,
+            num_buffers=num_buffers,
+            horizon=horizon,
+            value_coefficient=coefficient,
+            atol=atol,
+        )
+        return snapshot, state, oracle
+
+    zero_arrays, zero_state, zero_oracle = variant(
+        "zero_value", HETEROGENEOUS_VALUE_COEFFICIENTS["zero_value"]
+    )
+    zero_frozen = dict(frozen)
+    zero_frozen["weights"] = build_heterogeneous_frozen_donor(
+        frozen,
+        value_coefficient=HETEROGENEOUS_VALUE_COEFFICIENTS["zero_value"],
+    )
+    result["heterogeneous_zero_tail_consumption"] = (
+        consume_heterogeneous_tail_record(
+            _C,
+            pufferl,
+            primary,
+            zero_frozen,
+            num_buffers=num_buffers,
+            arrays=zero_arrays,
+        )
+    )
+    result["integrated_advantage_oracle"] = (
+        validate_integrated_advantage_oracle(
+            zero_arrays,
+            zero_state,
+            config,
+            atol=RATIO_ATOL_BY_PRECISION[int(_C.precision_bytes)],
+        )
+    )
+    positive_arrays, positive_state, positive_oracle = variant(
+        "positive_value",
+        HETEROGENEOUS_VALUE_COEFFICIENTS["positive_value"],
+    )
+    result["heterogeneous_positive_tail_discard"] = (
+        consume_qualification_tail(
+            _C,
+            pufferl,
+            num_buffers=num_buffers,
+            label="heterogeneous positive-value rollout",
+        )
+    )
+    result["heterogeneous_policy"] = {
+        "primary_architecture": primary_architecture,
+        "frozen_architecture": frozen_architecture,
+        "donors": donors,
+    }
+    result["heterogeneous_zero_state"] = zero_state
+    result["heterogeneous_positive_state"] = positive_state
+    result["heterogeneous_zero_oracle"] = zero_oracle
+    result["heterogeneous_positive_oracle"] = positive_oracle
+    arrays = dict(positive_arrays)
+    arrays.update(
+        {
+            f"{HETEROGENEOUS_ZERO_PREFIX}{key}": value
+            for key, value in zero_arrays.items()
+        }
+    )
+    validate_heterogeneous_policy_evidence(result, arrays, atol=atol)
+    return arrays
 
 
 def _measure_ratio(
@@ -2422,8 +4840,6 @@ def _measure_ratio(
         "frozen_rows": sorted(frozen_rows),
         "state_layout": layout,
     }
-    _C.rollouts(pufferl)
-    bind_transition_integrity(_C, pufferl, result)
     before_path = directory / f"ratio-before-{os.getpid()}.bin"
     after_path = directory / f"ratio-after-{os.getpid()}.bin"
     try:
@@ -2432,6 +4848,26 @@ def _measure_ratio(
         covered: set[int] = set()
         calls = 0
         while covered != primary_rows and calls < call_limit:
+            # Native train consumes and clears the one-tail-per-buffer record.
+            # Every replay attempt therefore needs a fresh environment rollout.
+            _C.rollouts(pufferl)
+            before_train = decode_snapshot(_C.qualification_snapshot(pufferl))
+            validate_tail_snapshot(
+                before_train,
+                total_agents=int(config["vec"]["total_agents"]),
+                num_buffers=int(config["vec"]["num_buffers"]),
+            )
+            validate_tail_value_routing(
+                before_train,
+                total_agents=int(config["vec"]["total_agents"]),
+                num_buffers=int(config["vec"]["num_buffers"]),
+                atol=GRAPH_ATOL_BY_PRECISION[int(_C.precision_bytes)],
+            )
+            for key in (*TAIL_FLOAT_SNAPSHOT_FIELDS, "tail_valid"):
+                arrays[f"{key}_{calls}"] = before_train[key]
+            for key, value in before_train.items():
+                if key.startswith("tail_decoder_bank_"):
+                    arrays[f"{key}_attempt_{calls}"] = value
             _C.train(pufferl)
             snapshot = decode_snapshot(_C.qualification_snapshot(pufferl))
             selected = snapshot["selected_rows"].astype(np.int32, copy=False)
@@ -2439,6 +4875,22 @@ def _measure_ratio(
             arrays[f"ratio_{calls}"] = snapshot["mb_ratio"].astype(
                 np.float32, copy=False
             )
+            advantages = snapshot["advantages"]
+            validate_frozen_advantages(
+                advantages,
+                primary_rows=primary_rows,
+                frozen_rows=frozen_rows,
+                horizon=int(config["train"]["horizon"]),
+            )
+            arrays[f"advantages_{calls}"] = advantages
+            consumed = snapshot["tail_valid"]
+            validate_tail_validity(
+                consumed,
+                num_buffers=int(config["vec"]["num_buffers"]),
+                expected=0,
+                label="post-train tail",
+            )
+            arrays[f"tail_valid_after_train_{calls}"] = consumed
             rows = {int(value) for value in selected.reshape(-1).tolist()}
             if rows & frozen_rows:
                 raise QualificationError("PPO selected a frozen-bank row")
@@ -2446,6 +4898,7 @@ def _measure_ratio(
                 raise QualificationError("PPO selected a row outside the bank layout")
             covered.update(rows)
             calls += 1
+        bind_transition_integrity(_C, pufferl, result)
         _C.save_weights(pufferl, str(after_path))
         after = sha256(after_path)
     finally:
@@ -2464,35 +4917,59 @@ def _measure_throughput(
     evidence: Mapping[str, Any],
     args: argparse.Namespace,
 ) -> dict[str, Any]:
+    num_buffers = int(config["vec"]["num_buffers"])
+    tail_discards = 0
     for _ in range(args.throughput_warmup_rollouts):
         _C.rollouts(pufferl)
-    _C.log(pufferl)
+        consume_qualification_tail(
+            _C,
+            pufferl,
+            num_buffers=num_buffers,
+            label="throughput warmup",
+        )
+        tail_discards += 1
+    warmup_log = _C.log(pufferl)
+    if (
+        not isinstance(warmup_log, Mapping)
+        or not isinstance(warmup_log.get("env"), Mapping)
+    ):
+        raise QualificationError("throughput warmup integrity telemetry is missing")
+    warmup_integrity = validate_hard_integrity(warmup_log["env"])
     start_step = int(pufferl.global_step)
     durations: list[float] = []
-    started = time.perf_counter_ns()
     for _ in range(args.throughput_timed_rollouts):
         one = time.perf_counter_ns()
         _C.rollouts(pufferl)
         durations.append((time.perf_counter_ns() - one) / 1.0e9)
-    elapsed = (time.perf_counter_ns() - started) / 1.0e9
+        consume_qualification_tail(
+            _C,
+            pufferl,
+            num_buffers=num_buffers,
+            label="throughput timed rollout",
+        )
+        tail_discards += 1
+    elapsed = sum(durations)
     steps = int(pufferl.global_step) - start_step
     integrity = validate_hard_integrity(dict(_C.log(pufferl)["env"]))
-    gpu = os.environ.get("QUALIFICATION_GPU_NAME", "")
-    if not gpu:
-        gpu = (
-            subprocess.run(
-                ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
-                text=True,
-                capture_output=True,
-                check=True,
-                timeout=10,
-            )
-            .stdout.strip()
-            .splitlines()[0]
+    try:
+        import torch
+
+        logical_device = torch.cuda.current_device()
+        properties = torch.cuda.get_device_properties(logical_device)
+        gpu = str(properties.name).strip()
+        gpu_uuid = str(getattr(properties, "uuid", "")).strip()
+    except (ImportError, OSError, RuntimeError) as exc:
+        raise QualificationError(
+            f"cannot bind throughput to the selected CUDA device: {exc}"
+        ) from exc
+    if not gpu or not gpu_uuid:
+        raise QualificationError(
+            "selected CUDA device has no stable name/UUID identity"
         )
     return {
         "host": socket.gethostname(),
         "gpu": gpu,
+        "gpu_uuid": gpu_uuid,
         "precision_bytes": int(_C.precision_bytes),
         "config": dict(config),
         "steps": steps,
@@ -2502,21 +4979,36 @@ def _measure_throughput(
         "p95_rollout_seconds": float(np.percentile(durations, 95)),
         "hard_integrity_zero": True,
         "hard_integrity": integrity,
+        "warmup_hard_integrity_zero": True,
+        "warmup_hard_integrity": warmup_integrity,
+        "tail_records_explicitly_discarded": tail_discards,
         "utilization": dict(_C.get_utilization(0)),
     }
 
 
 def run_cell(args: argparse.Namespace) -> int:
-    output_json = Path(args.output_json).resolve()
-    output_npz = Path(args.output_npz).resolve() if args.output_npz else None
-    _C, module, evidence = _load_backend(Path(args.puffer_root))
+    run_nonce = _require_sha256(args.run_nonce, "qualification run nonce")
+    cell_nonce = _require_sha256(args.cell_nonce, "qualification cell nonce")
+    raw_output_json = Path(args.output_json).expanduser().absolute()
+    output_json = raw_output_json.parent.resolve() / raw_output_json.name
+    if args.output_npz:
+        raw_output_npz = Path(args.output_npz).expanduser().absolute()
+        output_npz = raw_output_npz.parent.resolve() / raw_output_npz.name
+    else:
+        output_npz = None
+    puffer_root = Path(args.puffer_root).resolve()
+    patch_identity = _rollout_transition_patch_identity(puffer_root)
+    _C, module, evidence = _load_backend(puffer_root)
     config = _cell_config(args.kind, args.cudagraphs, args)
     pufferl = None
     arrays: dict[str, np.ndarray] = {}
     result: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
         "kind": args.kind,
-        "identity": _module_identity(_C, module, Path(args.puffer_root)),
+        "run_nonce": run_nonce,
+        "cell_nonce": cell_nonce,
+        "identity": _module_identity(_C, module, puffer_root),
+        "patch_identity": patch_identity,
         "cuda_runtime_preflight": evidence,
         "config": config,
         "host": socket.gethostname(),
@@ -2526,6 +5018,10 @@ def run_cell(args: argparse.Namespace) -> int:
     }
     validate_module_identity(result["identity"])
     try:
+        if args.kind == "rollout":
+            result["cuda_advantage_oracle"] = (
+                execute_cuda_advantage_oracle(_C)
+            )
         if args.kind in STRICT_CONFIG_NEGATIVE_CELL_KINDS:
             invalid_team = _installed_team_count(Path(args.puffer_root))
             config["env"] = {
@@ -2564,19 +5060,41 @@ def run_cell(args: argparse.Namespace) -> int:
             return 0
 
         pufferl = _C.create_pufferl(config)
-        _load_frozen_from_primary(
-            _C, pufferl, output_json.parent, int(config["vec"]["num_frozen_banks"])
-        )
+        if args.kind != "rollout":
+            _load_frozen_from_primary(
+                _C,
+                pufferl,
+                output_json.parent,
+                int(config["vec"]["num_frozen_banks"]),
+            )
         if args.kind == "construction":
             result["state"] = _C.qualification_recurrent_state(pufferl, False)
             validate_zero_state(result["state"], expected_banks=2, expected_buffers=1)
         elif args.kind == "rollout":
             result["state_before"] = _C.qualification_recurrent_state(pufferl, False)
             validate_zero_state(
-                result["state_before"], expected_banks=2, expected_buffers=1
+                result["state_before"],
+                expected_banks=2,
+                expected_buffers=int(config["vec"]["num_buffers"]),
             )
-            _C.rollouts(pufferl)
-            arrays = decode_snapshot(_C.qualification_snapshot(pufferl))
+            arrays = _measure_heterogeneous_rollout(
+                _C,
+                pufferl,
+                result,
+                output_json.parent,
+                config,
+            )
+            result["tail_snapshot"] = validate_tail_snapshot(
+                arrays,
+                total_agents=int(config["vec"]["total_agents"]),
+                num_buffers=int(config["vec"]["num_buffers"]),
+            )
+            result["tail_value_routing"] = validate_tail_value_routing(
+                arrays,
+                total_agents=int(config["vec"]["total_agents"]),
+                num_buffers=int(config["vec"]["num_buffers"]),
+                atol=GRAPH_ATOL_BY_PRECISION[int(_C.precision_bytes)],
+            )
             # Keep the first-rollout parity snapshot, then deterministically
             # cross max_decisions so at least one complete episode contributes
             # integrity telemetry to this isolated cell.
@@ -2585,6 +5103,8 @@ def run_cell(args: argparse.Namespace) -> int:
                 pufferl,
                 result,
                 additional_rollouts=int(config["env"]["max_decisions"]),
+                consume_tail_each=True,
+                num_buffers=int(config["vec"]["num_buffers"]),
             )
         elif args.kind in {"terminal_auto", "terminal_control"}:
             _C.set_evaluation_mode(pufferl, True)
@@ -2630,11 +5150,36 @@ def run_cell(args: argparse.Namespace) -> int:
             result["throughput"] = _measure_throughput(
                 _C, pufferl, config, evidence, args
             )
+        if args.kind in TRANSITION_CELL_KINDS:
+            raw_execution = _C.qualification_graph_execution(pufferl)
+            if not isinstance(raw_execution, Mapping):
+                raise QualificationError(
+                    "native graph-execution evidence is not a mapping"
+                )
+            bound_execution = dict(raw_execution)
+            bound_execution["workload"] = args.kind
+            result["graph_execution"] = validate_graph_execution_evidence(
+                bound_execution,
+                expected_cudagraphs=int(config["cudagraphs"]),
+                expected_workload=args.kind,
+                expected_counts=_expected_graph_execution_counts(
+                    args.kind,
+                    config,
+                    result,
+                    args,
+                ),
+            )
         if arrays:
             if output_npz is None:
                 raise QualificationError("cell produced arrays without an NPZ path")
             write_npz_atomic(output_npz, arrays)
             result["artifact"] = str(output_npz)
+            result["artifact_bytes"] = output_npz.lstat().st_size
+            result["artifact_sha256"] = sha256(output_npz)
+        if pufferl is not None:
+            constructed = pufferl
+            pufferl = None
+            _C.close(constructed)
         result["accepted"] = True
         write_json_atomic(output_json, result)
         return 0
@@ -2643,11 +5188,7 @@ def run_cell(args: argparse.Namespace) -> int:
         write_json_atomic(output_json, result)
         raise
     finally:
-        if pufferl is not None and int(config["cudagraphs"]) >= 0:
-            # Puffer 4.0's close path dereferences the absent rollout-graph
-            # array when cudagraphs=-1. Graph-off cells are process-isolated,
-            # so let process teardown release that CUDA context rather than
-            # turning a successful parity cell into an unrelated close crash.
+        if pufferl is not None:
             _C.close(pufferl)
 
 
@@ -2682,7 +5223,12 @@ def _git_optional_output(puffer_root: Path, *arguments: str) -> str:
         return ""
 
 
-def _require_strict_patch_reverse_applicable(puffer_root: Path) -> None:
+def _require_patch_reverse_applicable(
+    puffer_root: Path,
+    patch: Path,
+    *,
+    label: str,
+) -> None:
     command = [
         "git",
         "-C",
@@ -2691,7 +5237,7 @@ def _require_strict_patch_reverse_applicable(puffer_root: Path) -> None:
         "--reverse",
         "--check",
         "--no-index",
-        str(STRICT_ENV_CONFIG_PATCH),
+        str(Path(patch).resolve()),
     ]
     try:
         completed = subprocess.run(
@@ -2702,13 +5248,126 @@ def _require_strict_patch_reverse_applicable(puffer_root: Path) -> None:
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise QualificationError(
-            f"strict environment patch check failed: {_bounded_text(exc)}"
+            f"{label} check failed: {_bounded_text(exc)}"
         ) from exc
     if completed.returncode != 0:
         detail = _bounded_text(completed.stderr or completed.stdout)
         raise QualificationError(
-            f"strict environment patch is not reverse-applicable: {detail}"
+            f"{label} is not reverse-applicable: {detail}"
         )
+
+
+def _require_strict_patch_reverse_applicable(puffer_root: Path) -> None:
+    _require_patch_reverse_applicable(
+        puffer_root,
+        STRICT_ENV_CONFIG_PATCH,
+        label="strict environment patch",
+    )
+
+
+def _require_rollout_transition_patch_reverse_applicable(
+    puffer_root: Path,
+) -> None:
+    _require_patch_reverse_applicable(
+        puffer_root,
+        ROLLOUT_TRANSITION_PATCH,
+        label="rollout transition patch",
+    )
+
+
+def _required_file_sha256(path: Path, label: str) -> str:
+    artifact = Path(path)
+    try:
+        metadata = artifact.lstat()
+    except OSError as exc:
+        raise QualificationError(f"{label} is unavailable: {exc}") from exc
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+        raise QualificationError(f"{label} is not a regular non-symlink file")
+    try:
+        return sha256(artifact)
+    except OSError as exc:
+        raise QualificationError(f"{label} cannot be hashed: {exc}") from exc
+
+
+def _rollout_transition_patch_identity(puffer_root: Path) -> dict[str, Any]:
+    root = Path(puffer_root).resolve()
+    head = _git_output(root, "rev-parse", "HEAD")
+    if head != PINNED_PUFFER_COMMIT:
+        raise QualificationError("rollout transition Puffer checkout is not exact-pinned")
+    patch_sha = _required_file_sha256(
+        ROLLOUT_TRANSITION_PATCH,
+        "rollout transition patch",
+    )
+    _require_rollout_transition_patch_reverse_applicable(root)
+    return {
+        "puffer_git_head": head,
+        "rollout_transition_patch": {
+            "path": str(ROLLOUT_TRANSITION_PATCH.resolve()),
+            "sha256": patch_sha,
+            "reverse_applicable": True,
+        },
+    }
+
+
+def validate_rollout_transition_patch_identity(
+    identity: Any,
+    *,
+    expected_puffer_root: Path | None = None,
+    rehash_files: bool = False,
+) -> dict[str, Any]:
+    if not isinstance(identity, Mapping):
+        raise QualificationError("rollout transition patch identity is missing")
+    _require_exact_keys(
+        identity,
+        ("puffer_git_head", "rollout_transition_patch"),
+        "rollout transition patch identity",
+    )
+    if identity.get("puffer_git_head") != PINNED_PUFFER_COMMIT:
+        raise QualificationError("rollout transition patch identity has the wrong pin")
+    record = identity.get("rollout_transition_patch")
+    if not isinstance(record, Mapping):
+        raise QualificationError("rollout transition patch record is missing")
+    _require_exact_keys(
+        record,
+        ("path", "sha256", "reverse_applicable"),
+        "rollout transition patch record",
+    )
+    recorded_path = _require_bounded_absolute_path(
+        record.get("path"),
+        "rollout transition patch path",
+    )
+    recorded_sha = _require_sha256(
+        record.get("sha256"),
+        "rollout transition patch SHA-256",
+    )
+    if record.get("reverse_applicable") is not True:
+        raise QualificationError("rollout transition patch is not installed")
+    if rehash_files:
+        if expected_puffer_root is None:
+            raise QualificationError(
+                "rollout transition patch revalidation requires a Puffer root"
+            )
+        root = Path(expected_puffer_root).resolve()
+        if _git_output(root, "rev-parse", "HEAD") != PINNED_PUFFER_COMMIT:
+            raise QualificationError(
+                "rollout transition Puffer checkout pin drifted"
+            )
+        expected_patch = ROLLOUT_TRANSITION_PATCH.resolve()
+        if recorded_path.resolve() != expected_patch:
+            raise QualificationError("rollout transition patch path drifted")
+        if (
+            _required_file_sha256(
+                expected_patch,
+                "rollout transition patch",
+            )
+            != recorded_sha
+        ):
+            raise QualificationError("rollout transition patch bytes drifted")
+        _require_rollout_transition_patch_reverse_applicable(root)
+    return {
+        "puffer_git_head": identity["puffer_git_head"],
+        "rollout_transition_patch": dict(record),
+    }
 
 
 def _strict_stage_interpreter(puffer_root: Path, requested: Path | None) -> Path:
@@ -3083,6 +5742,7 @@ def run_strict_stage_worker(args: argparse.Namespace) -> int:
             )
         receipt_sha = sha256(receipt_path)
         _require_strict_patch_reverse_applicable(root)
+        _require_rollout_transition_patch_reverse_applicable(root)
         _C, module, cuda_evidence = _load_backend(root)
         identity = _strict_stage_module_identity(_C, module, root)
         validate_strict_stage_module_identity(identity)
@@ -3119,7 +5779,18 @@ def run_strict_stage_worker(args: argparse.Namespace) -> int:
                 "puffer_git_head": PINNED_PUFFER_COMMIT,
                 "strict_environment_config_patch": {
                     "path": str(STRICT_ENV_CONFIG_PATCH.resolve()),
-                    "sha256": sha256(STRICT_ENV_CONFIG_PATCH),
+                    "sha256": _required_file_sha256(
+                        STRICT_ENV_CONFIG_PATCH,
+                        "strict environment patch",
+                    ),
+                    "reverse_applicable": True,
+                },
+                "rollout_transition_patch": {
+                    "path": str(ROLLOUT_TRANSITION_PATCH.resolve()),
+                    "sha256": _required_file_sha256(
+                        ROLLOUT_TRANSITION_PATCH,
+                        "rollout transition patch",
+                    ),
                     "reverse_applicable": True,
                 },
                 "qualifier": {
@@ -3218,6 +5889,7 @@ def run_strict_stage_order(args: argparse.Namespace) -> int:
         rehash_files=True,
     )
     _require_strict_patch_reverse_applicable(root)
+    _require_rollout_transition_patch_reverse_applicable(root)
     print(f"strict CUDA stage-order release gate accepted -> {final_path}")
     return 0
 
@@ -3225,9 +5897,102 @@ def run_strict_stage_order(args: argparse.Namespace) -> int:
 # ------------------------------------------------------------------------ driver
 
 
+def validate_cell_artifact_path(
+    record: Mapping[str, Any],
+    *,
+    kind: str,
+    expected: Path,
+) -> ValidatedArtifact | None:
+    """Bind array-producing cells to the exact parent-selected NPZ path."""
+
+    expected_path = Path(expected)
+    if not expected_path.is_absolute():
+        raise QualificationError("expected cell artifact path must be absolute")
+    required = kind in ARRAY_CELL_KINDS
+    raw = record.get("artifact")
+    if raw is None:
+        if required or any(
+            key in record for key in ("artifact_bytes", "artifact_sha256")
+        ):
+            raise QualificationError(
+                f"qualification cell {kind} omitted its NPZ artifact"
+            )
+        return None
+    if not required:
+        raise QualificationError(
+            f"qualification cell {kind} produced an unexpected NPZ artifact"
+        )
+    observed = _require_bounded_absolute_path(raw, "cell NPZ artifact path")
+    if observed != expected_path:
+        raise QualificationError(
+            "qualification cell redirected its NPZ artifact: "
+            f"{observed} != {expected_path}"
+        )
+    expected_bytes = _require_exact_json_int(
+        record.get("artifact_bytes"),
+        "cell NPZ artifact bytes",
+        minimum=1,
+    )
+    if expected_bytes > CELL_MAX_NPZ_BYTES:
+        raise QualificationError("cell NPZ artifact exceeds its byte limit")
+    expected_sha256 = _require_sha256(
+        record.get("artifact_sha256"),
+        "cell NPZ artifact digest",
+    )
+    encoded = _read_bounded_regular_bytes(
+        observed,
+        maximum_bytes=CELL_MAX_NPZ_BYTES,
+        label="cell NPZ artifact",
+    )
+    if len(encoded) != expected_bytes:
+        raise QualificationError("cell NPZ artifact byte count drifted")
+    observed_sha256 = hashlib.sha256(encoded).hexdigest()
+    if observed_sha256 != expected_sha256:
+        raise QualificationError("cell NPZ artifact bytes drifted")
+    return ValidatedArtifact(
+        path=observed,
+        encoded=encoded,
+        sha256=observed_sha256,
+    )
+
+
+def _invalidate_cell_artifacts(*paths: Path) -> None:
+    """Remove fixed-name artifacts before a child may publish fresh evidence."""
+
+    for path in paths:
+        path = Path(path)
+        try:
+            metadata = path.lstat()
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            raise QualificationError(
+                f"cannot inspect stale qualification cell artifact {path}: {exc}"
+            ) from exc
+        if stat.S_ISDIR(metadata.st_mode):
+            raise QualificationError(
+                f"qualification cell artifact path is a directory: {path}"
+            )
+        try:
+            path.unlink()
+        except OSError as exc:
+            raise QualificationError(
+                f"cannot invalidate stale qualification cell artifact {path}: {exc}"
+            ) from exc
+
+
 def _run_worker(
-    args: argparse.Namespace, *, kind: str, name: str, cudagraphs: int, output: Path
+    args: argparse.Namespace,
+    *,
+    kind: str,
+    name: str,
+    cudagraphs: int,
+    output: Path,
+    run_nonce: str,
+    cell_nonce: str,
 ) -> dict[str, Any]:
+    run_nonce = _require_sha256(run_nonce, "qualification run nonce")
+    cell_nonce = _require_sha256(cell_nonce, "qualification cell nonce")
     python = (
         Path(args.python).expanduser().absolute()
         if args.python
@@ -3236,7 +6001,10 @@ def _run_worker(
     # Absolute, not resolved: resolving a venv's python symlink escapes the venv.
     if not python.is_file():
         raise QualificationError(f"Puffer Python is missing: {python}")
-    json_path = output / f"{name}.json"
+    output_root = Path(output).resolve()
+    json_path = output_root / f"{name}.json"
+    npz_path = output_root / f"{name}.npz"
+    _invalidate_cell_artifacts(json_path, npz_path)
     command = [
         str(python),
         str(Path(__file__).resolve()),
@@ -3249,10 +6017,14 @@ def _run_worker(
         str(cudagraphs),
         "--seed",
         str(args.seed),
+        "--run-nonce",
+        run_nonce,
+        "--cell-nonce",
+        cell_nonce,
         "--output-json",
         str(json_path),
         "--output-npz",
-        str(output / f"{name}.npz"),
+        str(npz_path),
         "--ratio-call-limit",
         str(args.ratio_call_limit),
         "--throughput-agents",
@@ -3284,12 +6056,104 @@ def _run_worker(
     if completed.returncode != 0:
         detail = completed.stderr[-4000:] or completed.stdout[-4000:]
         raise QualificationError(f"qualification cell {name} failed: {detail}")
-    record = _read_json(json_path)
+    record, record_artifact = _read_json_artifact(
+        json_path,
+        maximum_bytes=CELL_MAX_JSON_BYTES,
+        label=f"qualification cell {name} JSON artifact",
+    )
+    reserved_record_keys = {
+        "record_path",
+        "record_bytes",
+        "record_sha256",
+        "_artifact_arrays",
+    }
+    if reserved_record_keys & set(record):
+        raise QualificationError(
+            f"qualification cell {name} spoofed parent-owned record metadata"
+        )
+    if (
+        _require_exact_json_int(
+            record.get("schema_version"),
+            f"qualification cell {name} schema",
+        )
+        != SCHEMA_VERSION
+    ):
+        raise QualificationError(f"qualification cell {name} schema differs")
     if record.get("accepted") is not True:
         raise QualificationError(f"qualification cell {name} is not accepted")
+    if record.get("run_nonce") != run_nonce:
+        raise QualificationError(
+            f"qualification cell {name} run nonce differs"
+        )
+    if record.get("cell_nonce") != cell_nonce:
+        raise QualificationError(
+            f"qualification cell {name} nonce differs"
+        )
+    validate_rollout_transition_patch_identity(
+        record.get("patch_identity"),
+        expected_puffer_root=Path(args.puffer_root),
+        rehash_files=True,
+    )
     validate_cell_cudagraph_record(record, expected=cudagraphs)
+    expected_config = _expected_cell_config(
+        kind,
+        cudagraphs,
+        args,
+        Path(args.puffer_root),
+    )
+    if record.get("config") != expected_config:
+        raise QualificationError(
+            f"qualification cell {name} config differs from parent request"
+        )
     if kind in TRANSITION_CELL_KINDS:
         validate_transition_cell_integrity(record, kind)
+        validate_graph_execution_evidence(
+            record.get("graph_execution"),
+            expected_cudagraphs=cudagraphs,
+            expected_workload=kind,
+            expected_counts=_expected_graph_execution_counts(
+                kind,
+                record["config"],
+                record,
+                args,
+            ),
+        )
+        if kind == "throughput":
+            throughput_payload = record.get("throughput")
+            if not isinstance(throughput_payload, Mapping):
+                raise QualificationError(
+                    "throughput cell payload is missing"
+                )
+            if throughput_payload.get("config") != record["config"]:
+                raise QualificationError(
+                    "throughput payload config differs from parent request"
+                )
+            expected_discards = (
+                _int(
+                    args.throughput_warmup_rollouts,
+                    "throughput warmup rollouts",
+                    minimum=0,
+                )
+                + _int(
+                    args.throughput_timed_rollouts,
+                    "throughput timed rollouts",
+                    minimum=1,
+                )
+            )
+            if (
+                _int(
+                    throughput_payload.get(
+                        "tail_records_explicitly_discarded"
+                    ),
+                    "throughput tail discard count",
+                    minimum=1,
+                )
+                != expected_discards
+            ):
+                raise QualificationError(
+                    "throughput tail discard count differs from executed "
+                    "warmup/timed rollouts"
+                )
     elif kind in STRICT_CONFIG_NEGATIVE_CELL_KINDS:
         validate_strict_rejection_record(
             record,
@@ -3304,7 +6168,59 @@ def _run_worker(
             record,
             profile="full" if kind == "strict_positive_full" else "sparse",
         )
+    artifact_path = validate_cell_artifact_path(
+        record, kind=kind, expected=npz_path
+    )
+    artifact_arrays = (
+        _read_npz(artifact_path) if artifact_path is not None else None
+    )
+    if kind == "rollout":
+        if artifact_arrays is None:  # pragma: no cover - closed by path validator
+            raise QualificationError("rollout cell has no bound NPZ artifact")
+        identity = record.get("identity")
+        if not isinstance(identity, Mapping):
+            raise QualificationError("rollout cell module identity is missing")
+        precision = _int(
+            identity.get("precision_bytes"),
+            "rollout cell precision bytes",
+            minimum=1,
+        )
+        if precision not in GRAPH_ATOL_BY_PRECISION:
+            raise QualificationError("rollout cell precision is unsupported")
+        cuda_oracle = validate_cuda_advantage_oracle_evidence(
+            record.get("cuda_advantage_oracle"),
+            rehash_files=True,
+        )
+        validate_heterogeneous_policy_evidence(
+            record,
+            artifact_arrays,
+            atol=GRAPH_ATOL_BY_PRECISION[precision],
+        )
+        integrated = validate_integrated_advantage_oracle(
+            _heterogeneous_namespace(
+                artifact_arrays,
+                HETEROGENEOUS_ZERO_PREFIX,
+            ),
+            record.get("heterogeneous_zero_state", {}),
+            record.get("config", {}),
+            atol=RATIO_ATOL_BY_PRECISION[precision],
+        )
+        if (
+            integrated["verifier_path"] != cuda_oracle["verifier_path"]
+            or integrated["verifier_sha256"] != cuda_oracle["verifier_sha256"]
+        ):
+            raise QualificationError(
+                "synthetic and integrated advantage oracles used different "
+                "verifier bytes"
+            )
+        if record.get("integrated_advantage_oracle") != integrated:
+            raise QualificationError(
+                "worker integrated advantage oracle summary differs"
+            )
     record["record_path"] = str(json_path)
+    record["record_bytes"] = len(record_artifact.encoded)
+    record["record_sha256"] = record_artifact.sha256
+    record["_artifact_arrays"] = artifact_arrays
     return record
 
 
@@ -3319,6 +6235,22 @@ def _require_same_identity(records: Iterable[Mapping[str, Any]]) -> dict[str, An
         if record.get("identity") != reference:
             raise QualificationError("compiled module identity drifted between cells")
     return validate_module_identity(reference)
+
+
+def _require_same_patch_identity(
+    records: Iterable[Mapping[str, Any]],
+) -> dict[str, Any]:
+    records = list(records)
+    if not records:
+        raise QualificationError("no cell patch identities were supplied")
+    reference = records[0].get("patch_identity")
+    validated = validate_rollout_transition_patch_identity(reference)
+    for record in records[1:]:
+        if record.get("patch_identity") != reference:
+            raise QualificationError(
+                "rollout transition patch identity drifted between cells"
+            )
+    return validated
 
 
 def _require_same_cuda_runtime(records: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
@@ -3339,18 +6271,171 @@ def _require_same_cuda_runtime(records: Iterable[Mapping[str, Any]]) -> dict[str
     return reference
 
 
+def _with_qualification_output_lock(function):
+    """Serialize writers that target the same qualification output directory."""
+
+    @functools.wraps(function)
+    def locked(args: argparse.Namespace) -> int:
+        output = Path(args.output).resolve()
+        if output.exists() and not output.is_dir():
+            raise QualificationError(
+                f"qualification output is not a directory: {output}"
+            )
+        output.mkdir(parents=True, exist_ok=True)
+        lock_path = output / ".qualification.lock"
+        flags = os.O_RDWR | os.O_CREAT
+        flags |= getattr(os, "O_CLOEXEC", 0)
+        flags |= getattr(os, "O_NOFOLLOW", 0)
+        try:
+            descriptor = os.open(lock_path, flags, 0o600)
+        except OSError as exc:
+            raise QualificationError(
+                f"cannot open qualification output lock {lock_path}: {exc}"
+            ) from exc
+        with os.fdopen(descriptor, "r+b", closefd=True) as lock:
+            metadata = os.fstat(lock.fileno())
+            if not stat.S_ISREG(metadata.st_mode):
+                raise QualificationError(
+                    f"qualification output lock is not regular: {lock_path}"
+                )
+            try:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                raise QualificationError(
+                    f"another qualification writer holds {lock_path}"
+                ) from exc
+            try:
+                return function(args)
+            finally:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+    return locked
+
+
+@_with_qualification_output_lock
+def _invalidate_receipt_after_run_parse_failure(args: argparse.Namespace) -> int:
+    """Invalidate an identifiable prior verdict when full CLI parsing fails."""
+
+    output = Path(args.output).resolve()
+    write_bounded_json_atomic(
+        output / "QUALIFICATION.json",
+        {
+            "schema_version": SCHEMA_VERSION,
+            "qualification_only": True,
+            "accepted": False,
+            "status": "argument_parse_failed",
+            "run_nonce": secrets.token_hex(32),
+        },
+        maximum_bytes=FINAL_MAX_JSON_BYTES,
+    )
+    return 0
+
+
+def _unparsed_run_output(argv: Iterable[str]) -> Path | None:
+    """Recover argparse's final explicit run output without parsing other fields."""
+
+    arguments = list(argv)
+    if not arguments or arguments[0] != "run":
+        return None
+    observed: list[str] = []
+    for index, argument in enumerate(arguments[1:], 1):
+        if (
+            argument == "--output"
+            and index + 1 < len(arguments)
+            and not arguments[index + 1].startswith("-")
+        ):
+            observed.append(arguments[index + 1])
+        elif argument.startswith("--output="):
+            observed.append(argument.partition("=")[2])
+    if not observed or not observed[-1]:
+        return None
+    try:
+        return Path(observed[-1])
+    except (TypeError, ValueError):
+        return None
+
+
+@_with_qualification_output_lock
 def run_qualification(args: argparse.Namespace) -> int:
     output = Path(args.output).resolve()
+    final_path = output / "QUALIFICATION.json"
+    run_nonce = secrets.token_hex(32)
+    in_progress = {
+        "schema_version": SCHEMA_VERSION,
+        "qualification_only": True,
+        "accepted": False,
+        "status": "in_progress",
+        "run_nonce": run_nonce,
+    }
+    output_existed = output.exists()
+    if output_existed:
+        if not output.is_dir():
+            raise QualificationError(
+                f"qualification output is not a directory: {output}"
+            )
+        write_bounded_json_atomic(
+            final_path,
+            in_progress,
+            maximum_bytes=FINAL_MAX_JSON_BYTES,
+        )
+    if args.ratio_call_limit <= 0:
+        raise QualificationError("ratio call limit must be positive")
+    if (
+        args.throughput_warmup_rollouts < 0
+        or args.throughput_timed_rollouts <= 0
+    ):
+        raise QualificationError("throughput rollout counts are invalid")
+    validate_throughput_minibatch(
+        args.throughput_agents,
+        args.throughput_horizon,
+        args.throughput_minibatch_size,
+    )
+    limit = _num(
+        args.max_regression_fraction,
+        "throughput regression fraction",
+    )
+    if limit < 0 or limit >= 1:
+        raise QualificationError(
+            "throughput regression fraction must be in [0, 1)"
+        )
+    baseline_throughput, baseline_identity, baseline_encoded = (
+        _load_required_throughput_baseline_binding(
+            args.baseline_throughput,
+            output=output,
+        )
+    )
     output.mkdir(parents=True, exist_ok=True)
+    if not output_existed:
+        write_bounded_json_atomic(
+            final_path,
+            in_progress,
+            maximum_bytes=FINAL_MAX_JSON_BYTES,
+        )
     records: list[dict[str, Any]] = []
 
     def cell(kind: str, name: str, cudagraphs: int = DEFAULT_CUDAGRAPH_WARMUP_EPOCHS):
+        cell_nonce = secrets.token_hex(32)
         record = _run_worker(
-            args, kind=kind, name=name, cudagraphs=cudagraphs, output=output
+            args,
+            kind=kind,
+            name=name,
+            cudagraphs=cudagraphs,
+            output=output,
+            run_nonce=run_nonce,
+            cell_nonce=cell_nonce,
         )
         records.append(record)
         _require_same_identity(records)
+        _require_same_patch_identity(records)
         return record
+
+    def cell_arrays(record: Mapping[str, Any]) -> dict[str, np.ndarray]:
+        arrays = record.get("_artifact_arrays")
+        if not isinstance(arrays, dict) or any(
+            not isinstance(value, np.ndarray) for value in arrays.values()
+        ):
+            raise QualificationError("retained array cell omitted its artifact")
+        return arrays
 
     gates: dict[str, dict[str, Any]] = {}
 
@@ -3404,14 +6489,147 @@ def run_qualification(args: argparse.Namespace) -> int:
     # its own process, so an identity that agrees across cells also rules out a
     # rebuild landing mid-qualification.
     identity = _require_same_identity(records)
+    patch_identity = _require_same_patch_identity(records)
     atol = GRAPH_ATOL_BY_PRECISION[int(identity["precision_bytes"])]
-    off_arrays = _read_npz(Path(graph_off["artifact"]))
-    on_arrays = _read_npz(Path(graph_on["artifact"]))
+    off_arrays = cell_arrays(graph_off)
+    on_arrays = cell_arrays(graph_on)
+    off_zero_arrays = _heterogeneous_namespace(
+        off_arrays, HETEROGENEOUS_ZERO_PREFIX
+    )
+    on_zero_arrays = _heterogeneous_namespace(
+        on_arrays, HETEROGENEOUS_ZERO_PREFIX
+    )
+    graph_total_agents = int(graph_off["config"]["vec"]["total_agents"])
+    graph_buffers = int(graph_off["config"]["vec"]["num_buffers"])
+    off_heterogeneous = validate_heterogeneous_policy_evidence(
+        graph_off, off_arrays, atol=atol
+    )
+    on_heterogeneous = validate_heterogeneous_policy_evidence(
+        graph_on, on_arrays, atol=atol
+    )
+    if graph_off.get("heterogeneous_policy") != graph_on.get(
+        "heterogeneous_policy"
+    ):
+        raise QualificationError(
+            "heterogeneous architecture/donor identity differs across graph modes"
+        )
     gates["graph_parity"] = {
         "accepted": True,
+        "graph_off_execution": graph_off["graph_execution"],
+        "graph_on_execution": graph_on["graph_execution"],
         "atol": atol,
         "snapshot_max_abs": compare_snapshots(off_arrays, on_arrays, atol=atol),
         "decoder_max_abs": compare_decoder_outputs(off_arrays, on_arrays, atol=atol),
+        "tail_snapshot_max_abs": compare_tail_snapshots(
+            off_arrays,
+            on_arrays,
+            total_agents=graph_total_agents,
+            num_buffers=graph_buffers,
+            atol=atol,
+        ),
+        "tail_decoder_max_abs": compare_tail_decoder_outputs(
+            off_arrays,
+            on_arrays,
+            atol=atol,
+        ),
+        "graph_off_tail_routing_max_abs": validate_tail_value_routing(
+            off_arrays,
+            total_agents=graph_total_agents,
+            num_buffers=graph_buffers,
+            atol=atol,
+        ),
+        "graph_on_tail_routing_max_abs": validate_tail_value_routing(
+            on_arrays,
+            total_agents=graph_total_agents,
+            num_buffers=graph_buffers,
+            atol=atol,
+        ),
+        "zero_value_snapshot_max_abs": compare_snapshots(
+            off_zero_arrays, on_zero_arrays, atol=atol
+        ),
+        "zero_value_decoder_max_abs": compare_decoder_outputs(
+            off_zero_arrays, on_zero_arrays, atol=atol
+        ),
+        "zero_value_tail_snapshot_max_abs": compare_tail_snapshots(
+            off_zero_arrays,
+            on_zero_arrays,
+            total_agents=graph_total_agents,
+            num_buffers=graph_buffers,
+            atol=atol,
+        ),
+        "zero_value_tail_decoder_max_abs": compare_tail_decoder_outputs(
+            off_zero_arrays,
+            on_zero_arrays,
+            atol=atol,
+        ),
+        "heterogeneous_donor_identity_equal": True,
+    }
+    off_cuda_oracle = validate_cuda_advantage_oracle_evidence(
+        graph_off.get("cuda_advantage_oracle"),
+        rehash_files=True,
+    )
+    on_cuda_oracle = validate_cuda_advantage_oracle_evidence(
+        graph_on.get("cuda_advantage_oracle"),
+        rehash_files=True,
+    )
+    if off_cuda_oracle != on_cuda_oracle:
+        raise QualificationError(
+            "synthetic CUDA advantage evidence differs across graph cells"
+        )
+    integrated_atol = RATIO_ATOL_BY_PRECISION[
+        int(identity["precision_bytes"])
+    ]
+    off_integrated = validate_integrated_advantage_oracle(
+        off_zero_arrays,
+        graph_off.get("heterogeneous_zero_state", {}),
+        graph_off.get("config", {}),
+        atol=integrated_atol,
+    )
+    on_integrated = validate_integrated_advantage_oracle(
+        on_zero_arrays,
+        graph_on.get("heterogeneous_zero_state", {}),
+        graph_on.get("config", {}),
+        atol=integrated_atol,
+    )
+    if graph_off.get("integrated_advantage_oracle") != off_integrated:
+        raise QualificationError(
+            "graph-off integrated advantage summary differs"
+        )
+    if graph_on.get("integrated_advantage_oracle") != on_integrated:
+        raise QualificationError(
+            "graph-on integrated advantage summary differs"
+        )
+    integrated_primary, _ = derive_row_partition(
+        graph_off.get("heterogeneous_zero_state", {}),
+        total_agents=graph_total_agents,
+    )
+    integrated_parity = compare_integrated_advantage_parity(
+        off_zero_arrays["advantages_after_train"],
+        on_zero_arrays["advantages_after_train"],
+        primary_rows=integrated_primary,
+        horizon=HETEROGENEOUS_HORIZON,
+        atol=integrated_atol,
+    )
+    if not np.array_equal(
+        off_zero_arrays["selected_rows_after_train"],
+        on_zero_arrays["selected_rows_after_train"],
+    ):
+        raise QualificationError(
+            "graph modes selected different learner rows for the integrated train"
+        )
+    gates["cuda_advantage_oracle"] = {
+        "accepted": True,
+        "synthetic": {
+            "graph_off": off_cuda_oracle,
+            "graph_on": on_cuda_oracle,
+            "same_evidence": True,
+        },
+        "integrated": {
+            "graph_off": off_integrated,
+            "graph_on": on_integrated,
+            "graph_mode_parity": integrated_parity,
+            "selected_rows_equal": True,
+        },
     }
 
     auto = cell("terminal_auto", "terminal-auto")
@@ -3422,10 +6640,12 @@ def run_qualification(args: argparse.Namespace) -> int:
     validate_zero_state(
         control["state_after_control_clear"], expected_banks=2, expected_buffers=1
     )
-    auto_arrays = _read_npz(Path(auto["artifact"]))
-    control_arrays = _read_npz(Path(control["artifact"]))
+    auto_arrays = cell_arrays(auto)
+    control_arrays = cell_arrays(control)
     gates["terminal_reset"] = {
         "accepted": True,
+        "automatic_execution": auto["graph_execution"],
+        "control_execution": control["graph_execution"],
         "atol": atol,
         "snapshot_max_abs": compare_snapshots(
             auto_arrays, control_arrays, atol=atol, require_all_terminal=True
@@ -3449,12 +6669,83 @@ def run_qualification(args: argparse.Namespace) -> int:
         "frozen_rows"
     ) != sorted(frozen_rows):
         raise QualificationError("ratio row partition record differs from bank layout")
-    ratio_arrays = _read_npz(Path(ratio["artifact"]))
+    ratio_arrays = cell_arrays(ratio)
     validate_weight_identity(
         ratio["weights_before_sha256"], ratio["weights_after_sha256"]
     )
+    ratio_call_count = _int(
+        ratio.get("ratio_calls"),
+        "ratio call count",
+        minimum=1,
+    )
+    ratio_horizon = _int(
+        ratio["config"]["train"]["horizon"],
+        "ratio horizon",
+        minimum=1,
+    )
+    ratio_total_agents = _int(
+        ratio["config"]["vec"]["total_agents"],
+        "ratio total agents",
+        minimum=1,
+    )
+    ratio_buffers = _int(
+        ratio["config"]["vec"]["num_buffers"],
+        "ratio buffers",
+        minimum=1,
+    )
+    frozen_advantage_evidence: list[dict[str, Any]] = []
+    ratio_tail_evidence: list[dict[str, Any]] = []
+    for index in range(ratio_call_count):
+        tail_snapshot = {
+            key: ratio_arrays[f"{key}_{index}"]
+            for key in (*TAIL_FLOAT_SNAPSHOT_FIELDS, "tail_valid")
+        }
+        suffix = f"_attempt_{index}"
+        for key, value in ratio_arrays.items():
+            if key.startswith("tail_decoder_bank_") and key.endswith(suffix):
+                tail_snapshot[key[: -len(suffix)]] = value
+        tail_summary = validate_tail_snapshot(
+            tail_snapshot,
+            total_agents=ratio_total_agents,
+            num_buffers=ratio_buffers,
+        )
+        routing = validate_tail_value_routing(
+            tail_snapshot,
+            total_agents=ratio_total_agents,
+            num_buffers=ratio_buffers,
+            atol=atol,
+        )
+        validate_tail_validity(
+            ratio_arrays[f"tail_valid_after_train_{index}"],
+            num_buffers=ratio_buffers,
+            expected=0,
+            label="post-train tail",
+        )
+        ratio_tail_evidence.append(
+            {
+                **tail_summary,
+                "routing_max_abs": routing,
+                "consumed_after_train": True,
+            }
+        )
+        frozen_advantage_evidence.append(
+            validate_frozen_advantages(
+                ratio_arrays[f"advantages_{index}"],
+                primary_rows=primary_rows,
+                frozen_rows=frozen_rows,
+                horizon=ratio_horizon,
+            )
+        )
+    if not any(
+        evidence["primary_max_abs"] > 0.0
+        for evidence in frozen_advantage_evidence
+    ):
+        raise QualificationError(
+            "learner advantages are all zero across every ratio attempt"
+        )
     gates["ratio"] = {
         "accepted": True,
+        "graph_execution": ratio["graph_execution"],
         **validate_ratio_calls(
             [
                 {
@@ -3465,60 +6756,127 @@ def run_qualification(args: argparse.Namespace) -> int:
                         np.float32, copy=False
                     ),
                 }
-                for index in range(int(ratio["ratio_calls"]))
+                for index in range(ratio_call_count)
             ],
             primary_rows=primary_rows,
             frozen_rows=frozen_rows,
             atol=RATIO_ATOL_BY_PRECISION[int(identity["precision_bytes"])],
         ),
         "weights_sha256": ratio["weights_before_sha256"],
+        "tail_attempts": ratio_tail_evidence,
+        "frozen_advantages": frozen_advantage_evidence,
+    }
+    if not all(
+        evidence["frozen_rows_zero"] == sorted(frozen_rows)
+        for evidence in frozen_advantage_evidence
+    ):
+        raise QualificationError(
+            "heterogeneous frozen-policy gate is not linked to ratio masking"
+        )
+    gates["heterogeneous_frozen_policy"] = {
+        "accepted": True,
+        "graph_off": off_heterogeneous,
+        "graph_on": on_heterogeneous,
+        "same_donor_bytes_across_graph_modes": True,
+        "ratio_frozen_rows_zero": sorted(frozen_rows),
+        "ratio_attempts": len(frozen_advantage_evidence),
     }
 
-    throughput = cell("throughput", "throughput")["throughput"]
+    throughput_cell = cell("throughput", "throughput")
+    throughput = throughput_cell["throughput"]
     _require_same_cuda_runtime(records)
     _validate_throughput_record(throughput, "candidate")
     gates["throughput"] = {
         "accepted": True,
+        "graph_execution": throughput_cell["graph_execution"],
         "steps_per_second": throughput["steps_per_second"],
+        "baseline_artifact": baseline_identity,
+        **validate_throughput(
+            throughput,
+            baseline_throughput,
+            max_regression_fraction=limit,
+        ),
     }
-    if args.baseline_throughput:
-        baseline = _read_json(Path(args.baseline_throughput)).get("throughput")
-        if not isinstance(baseline, Mapping):
-            raise QualificationError(
-                "baseline artifact has no throughput record to compare against"
-            )
-        gates["throughput"].update(
-            validate_throughput(
-                throughput,
-                baseline,
-                max_regression_fraction=args.max_regression_fraction,
-            )
+    final_baseline_encoded = _read_bounded_regular_bytes(
+        Path(baseline_identity["path"]),
+        maximum_bytes=CELL_MAX_JSON_BYTES,
+        label="throughput baseline artifact final recheck",
+    )
+    if (
+        final_baseline_encoded != baseline_encoded
+        or len(final_baseline_encoded) != baseline_identity["bytes"]
+        or hashlib.sha256(final_baseline_encoded).hexdigest()
+        != baseline_identity["sha256"]
+    ):
+        raise QualificationError(
+            "throughput baseline artifact changed during qualification"
         )
+
+    for record in records:
+        current_record = _read_bounded_regular_bytes(
+            Path(record["record_path"]),
+            maximum_bytes=CELL_MAX_JSON_BYTES,
+            label=f"qualification cell {record['kind']} final JSON recheck",
+        )
+        if (
+            len(current_record) != record["record_bytes"]
+            or hashlib.sha256(current_record).hexdigest()
+            != record["record_sha256"]
+        ):
+            raise QualificationError(
+                f"qualification cell {record['kind']} JSON artifact drifted"
+            )
+        if record.get("artifact") is not None:
+            current_npz = _read_bounded_regular_bytes(
+                Path(record["artifact"]),
+                maximum_bytes=CELL_MAX_NPZ_BYTES,
+                label=f"qualification cell {record['kind']} final NPZ recheck",
+            )
+            if (
+                len(current_npz) != record["artifact_bytes"]
+                or hashlib.sha256(current_npz).hexdigest()
+                != record["artifact_sha256"]
+            ):
+                raise QualificationError(
+                    f"qualification cell {record['kind']} NPZ artifact drifted"
+                )
 
     final = {
         "schema_version": SCHEMA_VERSION,
         "qualification_only": True,
+        "run_nonce": run_nonce,
         "identity": identity,
+        "patch_identity": patch_identity,
         "cuda_runtime_preflight": records[0]["cuda_runtime_preflight"],
         "host": socket.gethostname(),
         "gates": gates,
         "throughput": throughput,
+        "throughput_baseline": baseline_identity,
         "cells": [
             {
                 "name": Path(record["record_path"]).stem,
                 "kind": record["kind"],
+                "cell_nonce": record["cell_nonce"],
                 "record": record["record_path"],
+                "record_bytes": record["record_bytes"],
+                "record_sha256": record["record_sha256"],
                 "artifact": record.get("artifact"),
+                "artifact_bytes": record.get("artifact_bytes"),
+                "artifact_sha256": record.get("artifact_sha256"),
             }
             for record in records
         ],
         **combine_gate_verdicts(gates),
     }
-    write_json_atomic(output / "QUALIFICATION.json", final)
+    write_bounded_json_atomic(
+        final_path,
+        final,
+        maximum_bytes=FINAL_MAX_JSON_BYTES,
+    )
     print(
         f"qualification accepted={final['accepted']} "
         f"steps_per_second={throughput['steps_per_second']:.1f} "
-        f"-> {output / 'QUALIFICATION.json'}"
+        f"-> {final_path}"
     )
     return 0 if final["accepted"] else 1
 
@@ -3536,7 +6894,7 @@ def add_common_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--throughput-threads", type=int, default=20)
     parser.add_argument("--throughput-horizon", type=int, default=64)
     parser.add_argument("--throughput-hidden", type=int, default=512)
-    parser.add_argument("--throughput-layers", type=int, default=1)
+    parser.add_argument("--throughput-layers", type=int, default=3)
     parser.add_argument(
         "--throughput-minibatch-size",
         type=int,
@@ -3556,7 +6914,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     run.add_argument(
         "--baseline-throughput",
         type=Path,
-        help="previous QUALIFICATION.json to compare steps/second against",
+        required=True,
+        help="external bounded JSON throughput artifact (diagnostic only)",
     )
     run.add_argument(
         "--max-regression-fraction",
@@ -3568,6 +6927,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     add_common_arguments(cell)
     cell.add_argument("--kind", required=True, choices=CELL_KINDS)
     cell.add_argument("--cudagraphs", type=int, required=True)
+    cell.add_argument("--run-nonce", required=True)
+    cell.add_argument("--cell-nonce", required=True)
     cell.add_argument("--output-json", required=True, type=Path)
     cell.add_argument("--output-npz", type=Path)
 
@@ -3611,21 +6972,34 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = parse_args(argv)
+    raw_argv = list(sys.argv[1:] if argv is None else argv)
+    try:
+        args = parse_args(raw_argv)
+    except SystemExit as exc:
+        if exc.code not in (None, 0):
+            output = _unparsed_run_output(raw_argv)
+            if output is not None:
+                _invalidate_receipt_after_run_parse_failure(
+                    argparse.Namespace(output=output)
+                )
+        raise
     if args.command == "strict-stage-order":
         return run_strict_stage_order(args)
     if args.command == "strict-stage-worker":
         return run_strict_stage_worker(args)
-    if args.ratio_call_limit <= 0:
-        raise QualificationError("ratio call limit must be positive")
-    if args.throughput_warmup_rollouts < 0 or args.throughput_timed_rollouts <= 0:
-        raise QualificationError("throughput rollout counts are invalid")
-    validate_throughput_minibatch(
-        args.throughput_agents,
-        args.throughput_horizon,
-        args.throughput_minibatch_size,
-    )
     if args.command == "cell":
+        if args.ratio_call_limit <= 0:
+            raise QualificationError("ratio call limit must be positive")
+        if (
+            args.throughput_warmup_rollouts < 0
+            or args.throughput_timed_rollouts <= 0
+        ):
+            raise QualificationError("throughput rollout counts are invalid")
+        validate_throughput_minibatch(
+            args.throughput_agents,
+            args.throughput_horizon,
+            args.throughput_minibatch_size,
+        )
         validate_cell_cudagraphs(args.kind, args.cudagraphs)
         return run_cell(args)
     if args.command == "run":

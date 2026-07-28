@@ -63,6 +63,28 @@ class ExperimentContractTests(unittest.TestCase):
         )
         self.assertNotIn("vendored Python missing", result.stderr)
 
+    def test_reward_launcher_blocks_unqualified_graph_entropy_schedule(self):
+        result = run_script(
+            "tools/run_reward_ablation.sh",
+            env={
+                "TAG": "blocked-entropy-contract-test",
+                "REWARD_MANIFEST": "missing.json",
+                "BOOTSTRAP_MODE": "fresh-v6-qualification",
+                "DRY_RUN": "0",
+            },
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "BLOCKED_UNQUALIFIED_ENTROPY_SCHEDULE",
+            result.stderr,
+        )
+        self.assertIn(
+            "cudagraphs=10 anneal_ent_coef=1",
+            result.stderr,
+        )
+        self.assertNotIn("vendored Python missing", result.stderr)
+        self.assertNotIn("missing reward manifest", result.stderr)
+
     def test_frozen_eval_rejects_trailing_override_before_checkpoint_io(self):
         with tempfile.TemporaryDirectory() as tmp:
             result = run_script(
@@ -133,6 +155,30 @@ class ExperimentContractTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("named environment variables only", result.stderr)
         self.assertNotIn("WARM is required", result.stderr)
+
+    def test_reward_screen_blocks_unqualified_entropy_before_output_creation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "must-not-exist"
+            result = run_script(
+                "tools/run_reward_screen.sh",
+                env={
+                    "STEPS": "50000000",
+                    "SCREEN_PROFILE": "exact-action-canary",
+                    "PLAN_ONLY": "0",
+                    "OUT_DIR": str(output),
+                },
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(
+                "BLOCKED_UNQUALIFIED_ENTROPY_SCHEDULE",
+                result.stderr,
+            )
+            self.assertIn(
+                "cudagraphs=10 anneal_ent_coef=1",
+                result.stderr,
+            )
+            self.assertFalse(output.exists())
+            self.assertNotIn("vendored Python", result.stderr)
 
     def test_reward_screen_freezes_and_revalidates_one_causal_plan(self):
         source = (ROOT / "tools/run_reward_screen.sh").read_text(
@@ -240,6 +286,7 @@ class ExperimentContractTests(unittest.TestCase):
             "pufferl_scripted_training_guard.patch",
             "pufferl_warm_start.patch",
             "puffer_exact_joint_actions.patch",
+            "puffer_rollout_transition_closure.patch",
             "puffer_state_bank_contract.patch",
             "puffer_strict_environment_config.patch",
             "selfplay_league.patch",
@@ -259,6 +306,16 @@ class ExperimentContractTests(unittest.TestCase):
         self.assertEqual(screen_patches, arm_patches)
         self.assertEqual(screen_patches.count("selfplay_league.patch"), 1)
         self.assertEqual(
+            screen_patches.count("puffer_rollout_transition_closure.patch"), 1
+        )
+        recurrent = screen_patches.index("puffer_recurrent_eval_state.patch")
+        transition = screen_patches.index(
+            "puffer_rollout_transition_closure.patch"
+        )
+        frozen = screen_patches.index("puffer_frozen_prio_mask.patch")
+        self.assertLess(recurrent, transition)
+        self.assertLess(transition, frozen)
+        self.assertEqual(
             screen_patches[-1], "puffer_strict_environment_config.patch"
         )
         self.assertIn(
@@ -266,6 +323,167 @@ class ExperimentContractTests(unittest.TestCase):
             arm,
         )
         self.assertIn("Patch copy: training/selfplay_league.patch", arm)
+
+    def test_launchers_fail_closed_on_tail_bootstrap_contract_and_record_it(self):
+        screen = (ROOT / "tools/run_reward_screen.sh").read_text(
+            encoding="utf-8"
+        )
+        arm = (ROOT / "tools/run_reward_ablation.sh").read_text(
+            encoding="utf-8"
+        )
+
+        for source in (screen, arm):
+            self.assertIn("rollout_transition_contract", source)
+            self.assertIn("tail-bootstrap-v1", source)
+
+        self.assertIn(
+            'compiled_contract["rollout_transition_contract"] '
+            '!= "tail-bootstrap-v1"',
+            screen,
+        )
+        self.assertIn(
+            "COMPILED_ROLLOUT_TRANSITION_CONTRACT",
+            arm,
+        )
+        self.assertIn(
+            "compiled_rollout_transition_contract \\\n",
+            arm,
+        )
+        self.assertIn(
+            "compiled_rollout_transition_contract="
+            "$COMPILED_ROLLOUT_TRANSITION_CONTRACT",
+            arm,
+        )
+        self.assertIn(
+            'run_manifest.get("compiled_rollout_transition_contract")',
+            screen,
+        )
+        self.assertIn(
+            "run rollout-transition contract differs from the screen plan",
+            screen,
+        )
+
+        screen_block = screen.split("patches = [", 1)[1].split(
+            "vendor_sources = read_source_ledger(", 1
+        )[0]
+        patch_names = re.findall(
+            r'training/([^"/]+\.patch)', screen_block
+        )
+
+        def bundle_sha(names, transition_bytes=None):
+            entries = []
+            for name in names:
+                payload = (
+                    transition_bytes
+                    if (
+                        name == "puffer_rollout_transition_closure.patch"
+                        and transition_bytes is not None
+                    )
+                    else (ROOT / "training" / name).read_bytes()
+                )
+                entries.append(
+                    hashlib.sha256(payload).hexdigest().encode()
+                    + b"  "
+                    + name.encode()
+                    + b"\n"
+                )
+            return hashlib.sha256(b"".join(entries)).hexdigest()
+
+        full_hash = bundle_sha(patch_names)
+        without_transition = [
+            name
+            for name in patch_names
+            if name != "puffer_rollout_transition_closure.patch"
+        ]
+        self.assertNotEqual(full_hash, bundle_sha(without_transition))
+        self.assertNotEqual(
+            full_hash,
+            bundle_sha(
+                patch_names,
+                transition_bytes=(
+                    ROOT
+                    / "training"
+                    / "puffer_rollout_transition_closure.patch"
+                ).read_bytes()
+                + b"\n# tampered\n",
+            ),
+        )
+
+    def test_launchers_bind_and_publish_blocked_entropy_schedule(self):
+        screen = (ROOT / "tools/run_reward_screen.sh").read_text(
+            encoding="utf-8"
+        )
+        arm = (ROOT / "tools/run_reward_ablation.sh").read_text(
+            encoding="utf-8"
+        )
+
+        for assignment in (
+            "CUDAGRAPHS=10",
+            "ANNEAL_ENT_COEF=1",
+            "MIN_ENT_COEF_RATIO=0.1",
+            "ENTROPY_SCHEDULE_STATUS=blocked_unqualified",
+        ):
+            self.assertIn(assignment, arm)
+        self.assertIn('case "$DRY_RUN" in', arm)
+        self.assertIn(
+            'if [ "$DRY_RUN" != "1" ] && '
+            '[ "$CUDAGRAPHS" -ge 0 ] && '
+            '[ "$ANNEAL_ENT_COEF" = "1" ]; then',
+            arm,
+        )
+        self.assertIn(
+            'if [ "$PLAN_ONLY" != "1" ] && '
+            '[ "$CUDAGRAPHS" -ge 0 ] && '
+            '[ "$ANNEAL_ENT_COEF" = "1" ]; then',
+            screen,
+        )
+        self.assertIn(
+            "DRY-RUN UNSAFE/BLOCKED:"
+            " BLOCKED_UNQUALIFIED_ENTROPY_SCHEDULE",
+            arm,
+        )
+        self.assertIn(
+            "SCREEN PLAN UNSAFE/BLOCKED:"
+            " BLOCKED_UNQUALIFIED_ENTROPY_SCHEDULE",
+            screen,
+        )
+        for flag in (
+            '--cudagraphs "$CUDAGRAPHS"',
+            '--train.anneal-ent-coef "$ANNEAL_ENT_COEF"',
+            '--train.min-ent-coef-ratio "$MIN_ENT_COEF_RATIO"',
+        ):
+            self.assertIn(flag, arm)
+        for field in (
+            'cudagraphs "$CUDAGRAPHS"',
+            'anneal_ent_coef "$ANNEAL_ENT_COEF"',
+            'min_ent_coef_ratio "$MIN_ENT_COEF_RATIO"',
+            'entropy_schedule_status "$ENTROPY_SCHEDULE_STATUS"',
+        ):
+            self.assertIn(field, arm)
+        self.assertIn(
+            '"entropy_effective_coefficient": "unavailable_blocked"',
+            arm,
+        )
+
+        for setting in (
+            '"cudagraphs": os.environ["CUDAGRAPHS"]',
+            '"anneal_ent_coef": os.environ["ANNEAL_ENT_COEF"]',
+            '"min_ent_coef_ratio": os.environ["MIN_ENT_COEF_RATIO"]',
+            '"entropy_schedule_status": '
+            'os.environ["ENTROPY_SCHEDULE_STATUS"]',
+        ):
+            self.assertIn(setting, screen)
+        for variable in (
+            'CUDAGRAPHS="$CUDAGRAPHS"',
+            'ANNEAL_ENT_COEF="$ANNEAL_ENT_COEF"',
+            'MIN_ENT_COEF_RATIO="$MIN_ENT_COEF_RATIO"',
+            'ENTROPY_SCHEDULE_STATUS="$ENTROPY_SCHEDULE_STATUS"',
+        ):
+            self.assertIn(variable, screen)
+        self.assertIn(
+            "run entropy configuration differs from the screen plan",
+            screen,
+        )
 
     def test_standalone_build_owns_the_environment_include_contract(self):
         patch_path = ROOT / "training/puffer_standalone_env_include.patch"

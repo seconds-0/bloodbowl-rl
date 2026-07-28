@@ -120,20 +120,14 @@ index f4d45d9..fa9ab8e 100644
          vec.reset()
          horizon = config['horizon']
          num_atns = vec.num_atns
-@@ -155,6 +251,10 @@ class PuffeRL:
-         self.logprobs = torch.zeros(horizon, total_agents, device=device)
-         self.rewards = torch.zeros(horizon, total_agents, device=device)
+@@ -157,2 +253,6 @@ class PuffeRL:
          self.terminals = torch.zeros(horizon, total_agents, device=device)
 +        self.action_masks = (torch.zeros(
 +            horizon, total_agents, self.mask_size,
 +            dtype=torch.uint8, device=device)
 +            if self.mask_size > 0 else None)
          self.ratio = torch.ones(total_agents, horizon, device=device)
-         self.state = policy.initial_state(total_agents, device=device)
-
-@@ -219,7 +320,26 @@ class PuffeRL:
-             prof.mark(1)
-             with torch.no_grad():
+@@ -221,3 +322,22 @@ class PuffeRL:
                  logits, value, state = self.policy.forward_eval(o_device, self.state)
 -                action, logprob, _ = sample_logits(logits)
 +                if self.vec_joint_actions is not None:
@@ -157,8 +151,6 @@ index f4d45d9..fa9ab8e 100644
 +                    effective_mask = None
 +                    action, logprob, _ = sample_logits(logits)
              prof.mark(2)
-
-             with torch.no_grad():
 @@ -230,6 +348,10 @@ class PuffeRL:
                  self.rewards[t] = torch.as_tensor(r, device=device)
                  self.terminals[t] = torch.as_tensor(d, device=device).float()
@@ -170,15 +162,12 @@ index f4d45d9..fa9ab8e 100644
 
              prof.mark(2)
              actions_flat = _actions_for_vec_step(action)
-@@ -277,6 +399,8 @@ class PuffeRL:
-         lp = self.logprobs.T.contiguous()
-         rew = self.rewards.T.contiguous().clamp(-1, 1)
+@@ -279,3 +401,5 @@ class PuffeRL:
          ter = self.terminals.T.contiguous()
 +        masks = (self.action_masks.transpose(0, 1).contiguous()
 +                 if self.action_masks is not None else None)
 
          P = Profile
-         prof.mark(0)
 @@ -301,9 +425,14 @@ class PuffeRL:
              mb_values = val[idx]
              mb_returns = advantages[idx] + mb_values
@@ -203,18 +192,12 @@ diff --git a/src/bindings.cu b/src/bindings.cu
 index 0f64be1..566ca22 100644
 --- a/src/bindings.cu
 +++ b/src/bindings.cu
-@@ -4,6 +4,7 @@
- #include <pybind11/stl.h>
- #include <pybind11/numpy.h>
+@@ -6,3 +6,4 @@
  #include "pufferlib.cu"
 +#include "exact_action_build_hash.h"
 
  #define _PUFFER_STRINGIFY(x) #x
- #define PUFFER_STRINGIFY(x) _PUFFER_STRINGIFY(x)
-@@ -509,6 +510,11 @@ PYBIND11_MODULE(_C, m) {
-     m.attr("precision_bytes") = (int)sizeof(precision_t);
-     m.attr("env_name") = PUFFER_STRINGIFY(ENV_NAME);
-     m.attr("gpu") = 1;
+@@ -512,2 +518,7 @@ PYBIND11_MODULE(_C, m) {
 +    m.attr("exact_action_source_hash") = PUFFER_EXACT_ACTION_SOURCE_HASH;
 +    m.attr("environment_source_hash") = PUFFER_ENV_SOURCE_HASH;
 +    m.attr("observation_abi") = PUFFER_OBSERVATION_ABI;
@@ -222,7 +205,6 @@ index 0f64be1..566ca22 100644
 +    m.attr("action_abi") = PUFFER_ACTION_ABI;
 
      // Core functions
-     m.def("log", &puf_log);
 @@ -606,10 +612,25 @@ PYBIND11_MODULE(_C, m) {
          .def_property_readonly("gpu_obs_ptr",       [](VecEnv& ve) { return (long long)ve.vec->gpu_observations; })
          .def_property_readonly("gpu_rewards_ptr",   [](VecEnv& ve) { return (long long)ve.vec->gpu_rewards; })
@@ -261,10 +243,7 @@ index 30400be..f946354 100644
 
  namespace py = pybind11;
 
-@@ -164,6 +165,11 @@ PYBIND11_MODULE(_C, m) {
-     m.attr("precision_bytes") = 4;
-     m.attr("env_name") = PUFFER_STRINGIFY(ENV_NAME);
-     m.attr("gpu") = 0;
+@@ -167,2 +173,7 @@ PYBIND11_MODULE(_C, m) {
 +    m.attr("exact_action_source_hash") = PUFFER_EXACT_ACTION_SOURCE_HASH;
 +    m.attr("environment_source_hash") = PUFFER_ENV_SOURCE_HASH;
 +    m.attr("observation_abi") = PUFFER_OBSERVATION_ABI;
@@ -272,7 +251,6 @@ index 30400be..f946354 100644
 +    m.attr("action_abi") = PUFFER_ACTION_ABI;
 
      m.def("puff_advantage_cpu", &py_puff_advantage_cpu);
-     m.def("create_vec", &create_vec, py::arg("args"), py::arg("gpu") = 0);
 @@ -179,6 +185,20 @@ PYBIND11_MODULE(_C, m) {
          .def_property_readonly("obs_ptr", [](VecEnv& ve) { return (long long)ve.vec->observations; })
          .def_property_readonly("rewards_ptr", [](VecEnv& ve) { return (long long)ve.vec->rewards; })
@@ -615,10 +593,7 @@ index 7981b09..fdd68b6 100644
      int total = pufferl->vec->total_agents;
      int num_buffers = pufferl->hypers.num_buffers;
      int buf_size = total / num_buffers;
-@@ -2098,6 +2208,11 @@ std::unique_ptr<PuffeRL> create_pufferl_impl(HypersT& hypers,
-         }
-     }
-
+@@ -2101,3 +2211,8 @@ std::unique_ptr<PuffeRL> create_pufferl_impl(HypersT& hypers,
 +    // Exact-action environments allocate ragged joint metadata outside the
 +    // activations allocator. Populate and upload it before graph warmup calls
 +    // sample_logits; cudaMalloc storage is otherwise uninitialized here.
@@ -627,15 +602,11 @@ index 7981b09..fdd68b6 100644
      // Cudagraph rolluts and entire training step
      if (hypers.cudagraphs >= 0) {
          pufferl->fused_rollout_cudagraphs = (cudaGraphExec_t*)calloc(horizon*num_buffers, sizeof(cudaGraphExec_t));
-@@ -2180,7 +2290,7 @@ std::unique_ptr<PuffeRL> create_pufferl_impl(HypersT& hypers,
-
-     create_static_threads(vec, hypers.num_threads, horizon, pufferl.get(),
-         net_callback_wrapper, thread_init_wrapper);
+@@ -2183,3 +2293,3 @@ std::unique_ptr<PuffeRL> create_pufferl_impl(HypersT& hypers,
 -    static_vec_reset(vec);
 +    if (vec->joint_action_max <= 0) static_vec_reset(vec);
 
      if (hypers.profile) {
-         cudaDeviceSynchronize();
 diff --git a/src/vecenv.h b/src/vecenv.h
 index 42958d3..67cb6e9 100644
 --- a/src/vecenv.h
@@ -689,7 +660,7 @@ index 42958d3..67cb6e9 100644
              clock_gettime(CLOCK_MONOTONIC, &t1);
              my_accum[EVAL_ENV_STEP] += (t1.tv_sec - t0.tv_sec) * 1000.0f + (t1.tv_nsec - t0.tv_nsec) / 1e6f;
 
-@@ -316,6 +337,22 @@ static void* static_omp_threadmanager(void* arg) {
+@@ -316,4 +337,20 @@ static void* static_omp_threadmanager(void* arg) {
                  vec->action_mask     + agent_start * MY_ACTION_MASK,
                  agents_per_buffer * MY_ACTION_MASK * sizeof(unsigned char),
                  cudaMemcpyHostToDevice, stream);
@@ -710,8 +681,6 @@ index 42958d3..67cb6e9 100644
 +                (size_t)vec->joint_buffer_counts[buf] * sizeof(uint32_t),
 +                cudaMemcpyHostToDevice, stream);
  #endif
-         }
-         cudaStreamSynchronize(stream);
 @@ -456,6 +493,34 @@ StaticVec* create_static_vec(int total_agents, int num_buffers, int gpu, Dict* v
          vec->action_mask = (unsigned char*)calloc(total_agents * MY_ACTION_MASK, sizeof(unsigned char));
          vec->gpu_action_mask = vec->action_mask;

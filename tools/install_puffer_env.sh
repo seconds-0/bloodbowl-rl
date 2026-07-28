@@ -22,6 +22,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+PINNED_PUFFER_COMMIT="9836f0d2e78889c1aaf189c04d161b6fc61a9386"
 INSTALL_PYTHON="${PUFFER_INSTALL_PYTHON:-python3}"
 [ -n "$INSTALL_PYTHON" ] && command -v "$INSTALL_PYTHON" >/dev/null || {
     echo "error: installer Python is unavailable: $INSTALL_PYTHON" >&2
@@ -168,11 +169,39 @@ fi
 PUFFER="${PUFFER_ARG:-$ROOT/vendor/PufferLib}"
 
 [ -f "$PUFFER/build.sh" ] || { echo "error: $PUFFER is not a PufferLib tree" >&2; exit 1; }
-PUFFER="$(cd "$PUFFER" && pwd)"
+PUFFER="$(cd "$PUFFER" && pwd -P)"
+if ! PUFFER_GIT_ROOT="$(
+    git -C "$PUFFER" rev-parse --show-toplevel 2>/dev/null
+)"; then
+    echo "error: $PUFFER is not a PufferLib Git worktree" >&2
+    exit 1
+fi
+PUFFER_GIT_ROOT="$(cd "$PUFFER_GIT_ROOT" && pwd -P)"
+if [ "$PUFFER_GIT_ROOT" != "$PUFFER" ]; then
+    echo "error: PufferLib path is not the Git worktree root: $PUFFER" >&2
+    exit 1
+fi
+if ! PUFFER_HEAD="$(
+    git -C "$PUFFER" rev-parse --verify "HEAD^{commit}" 2>/dev/null
+)"; then
+    echo "error: PufferLib HEAD cannot be resolved" >&2
+    exit 1
+fi
+if [ "$PUFFER_HEAD" != "$PINNED_PUFFER_COMMIT" ]; then
+    echo "error: PufferLib HEAD must be $PINNED_PUFFER_COMMIT; found $PUFFER_HEAD" >&2
+    exit 1
+fi
 
 DST="$PUFFER/ocean/bloodbowl"
 SELFPLAY_LEAGUE_PATCH="$ROOT/training/selfplay_league.patch"
 STANDALONE_INCLUDE_PATCH="$ROOT/training/puffer_standalone_env_include.patch"
+EXACT_PATCH="$ROOT/training/puffer_exact_joint_actions.patch"
+RECURRENT_PATCH="$ROOT/training/puffer_recurrent_eval_state.patch"
+ROLLOUT_TRANSITION_PATCH="$ROOT/training/puffer_rollout_transition_closure.patch"
+FROZEN_PRIO_PATCH="$ROOT/training/puffer_frozen_prio_mask.patch"
+QUALIFICATION_PATCH="$ROOT/training/puffer_recurrent_cuda_qualification.patch"
+REWARD_CLAMP_PATCH="$ROOT/training/puffer_reward_clamp_range.patch"
+STATE_BANK_EXPORT_PATCH="$ROOT/training/puffer_state_bank_contract.patch"
 STRICT_ENV_CONFIG_PATCH="$ROOT/training/puffer_strict_environment_config.patch"
 COMPILED_BACKEND_LEDGER="$ROOT/training/puffer_compiled_backend_sources.txt"
 
@@ -207,8 +236,29 @@ exact_backend_hash() {
     "$INSTALL_PYTHON" "$ROOT/tools/puffer_source_manifest.py" \
         --root "$PUFFER" \
         --ledger "$COMPILED_BACKEND_LEDGER" \
-        --expected-count 9 \
+        --expected-count 14 \
+        --require-native-extension-closure \
         --plain
+}
+
+rollout_transition_sources_valid() {
+    grep -Fq 'tail_observation' \
+        "$PUFFER/pufferlib/torch_pufferl.py" || return 1
+    grep -Fq 'tail_callback_wrapper' \
+        "$PUFFER/src/pufferlib.cu" || return 1
+    grep -Fq 'tail_rollout_cudagraphs' \
+        "$PUFFER/src/pufferlib.cu" || return 1
+    grep -Fq 'for (int t = horizon - 1; t >= 0; t--)' \
+        "$PUFFER/src/bindings_cpu.cpp" || return 1
+    grep -Fq 'for (int t = horizon - 1; t >= 0; t--)' \
+        "$PUFFER/src/pufferlib.cu" || return 1
+    for binding in \
+        "$PUFFER/src/bindings.cu" \
+        "$PUFFER/src/bindings_cpu.cpp"; do
+        grep -Fq \
+            'm.attr("rollout_transition_contract") = "tail-bootstrap-v1";' \
+            "$binding" || return 1
+    done
 }
 
 strict_environment_config_sources_valid() {
@@ -324,9 +374,15 @@ if [ "$MODE" = "check" ]; then
             exit 1
         fi
     done
+    if ! rollout_transition_sources_valid; then
+        echo "drift check: rollout-transition closure is incomplete" >&2
+        echo "  fix: recreate the pinned Puffer tree and reinstall the complete patch stack" >&2
+        exit 1
+    fi
     for qualification_marker in \
         'eligible_agents' \
         'qualification_recurrent_state' \
+        'qualification_policy_weights' \
         'qualification_snapshot'; do
         if ! grep -R -Fq "$qualification_marker" \
             "$PUFFER/src/pufferlib.cu" "$PUFFER/src/bindings.cu"; then
@@ -346,12 +402,16 @@ if [ "$MODE" = "check" ]; then
         exit 1
     fi
     for exact_patch in \
-        "$ROOT/training/puffer_recurrent_cuda_qualification.patch" \
-        "$ROOT/training/puffer_frozen_prio_mask.patch" \
+        "$EXACT_PATCH" \
+        "$RECURRENT_PATCH" \
+        "$ROLLOUT_TRANSITION_PATCH" \
+        "$FROZEN_PRIO_PATCH" \
+        "$QUALIFICATION_PATCH" \
+        "$REWARD_CLAMP_PATCH" \
         "$ROOT/training/pufferl_scripted_training_guard.patch" \
         "$ROOT/training/pufferl_warm_start.patch" \
         "$ROOT/training/puffer_dict_capacity.patch" \
-        "$ROOT/training/puffer_state_bank_contract.patch" \
+        "$STATE_BANK_EXPORT_PATCH" \
         "$STRICT_ENV_CONFIG_PATCH"; do
         if ! git -C "$PUFFER" apply --reverse --check --no-index "$exact_patch"; then
             echo "drift check: installed exact patch is missing or stale: $exact_patch" >&2
@@ -365,7 +425,9 @@ if [ "$MODE" = "check" ]; then
     # partial fixture tree. A tree with only one of these
     # trains one path on truncated rewards, and the vendored tree is gitignored
     # so a re-clone drops the edit silently.
-    if ! grep -Fq 'clamp(-8, 8)' "$PUFFER/pufferlib/torch_pufferl.py"; then
+    if ! grep -Fq \
+        'self.rewards.T.contiguous().clamp(-8, 8)' \
+        "$PUFFER/pufferlib/torch_pufferl.py"; then
         echo "drift check: torch backend still clamps rewards to +-1" >&2
         echo "  fix: tools/install_puffer_env.sh $PUFFER" >&2
         exit 1
@@ -407,11 +469,12 @@ if [ "$MODE" = "check" ]; then
         's/^#define PUFFER_ACTION_ABI "\([^"]*\)"$/\1/p' \
         "$PUFFER/src/exact_action_build_hash.h" 2>/dev/null || true)"
     compiled_contract="$(cd "$PUFFER" && "$PYBIN" -c \
-        'from pufferlib import _C; print(getattr(_C, "exact_action_source_hash", "<missing>"), getattr(_C, "environment_source_hash", "<missing>"), getattr(_C, "observation_abi", "<missing>"), getattr(_C, "observation_version", "<missing>"), getattr(_C, "action_abi", "<missing>"), getattr(_C, "environment_config_schema", "<missing>"), getattr(_C, "strict_env_config_testing", "<missing>"))' \
+        'from pufferlib import _C; print(getattr(_C, "exact_action_source_hash", "<missing>"), getattr(_C, "environment_source_hash", "<missing>"), getattr(_C, "observation_abi", "<missing>"), getattr(_C, "observation_version", "<missing>"), getattr(_C, "action_abi", "<missing>"), getattr(_C, "rollout_transition_contract", "<missing>"), getattr(_C, "environment_config_schema", "<missing>"), getattr(_C, "strict_env_config_testing", "<missing>"))' \
         2>/dev/null || true)"
     read -r compiled_backend_hash compiled_environment_hash \
         compiled_observation_abi compiled_observation_version \
-        compiled_action_abi compiled_environment_config_schema \
+        compiled_action_abi compiled_rollout_transition_contract \
+        compiled_environment_config_schema \
         compiled_strict_env_config_testing <<< "$compiled_contract"
     if [ "$current_backend_hash" != "$header_backend_hash" ] || \
        [ "$current_backend_hash" != "$compiled_backend_hash" ]; then
@@ -430,6 +493,7 @@ if [ "$MODE" = "check" ]; then
        [ "$compiled_observation_version" != "$SOURCE_OBSERVATION_VERSION" ] || \
        [ "$header_action_abi" != "exact-joint-v1" ] || \
        [ "$compiled_action_abi" != "exact-joint-v1" ] || \
+       [ "$compiled_rollout_transition_contract" != "tail-bootstrap-v1" ] || \
        [ "$compiled_environment_config_schema" != \
             "bloodbowl-environment-config-v1" ] || \
        [ "$compiled_strict_env_config_testing" != "False" ]; then
@@ -440,6 +504,7 @@ if [ "$MODE" = "check" ]; then
         echo "  header/module obs ABI: ${header_observation_abi:-<missing>} / ${compiled_observation_abi:-<missing>}" >&2
         echo "  header/module obs: ${header_observation_version:-<missing>} / ${compiled_observation_version:-<missing>}" >&2
         echo "  header/module action: ${header_action_abi:-<missing>} / ${compiled_action_abi:-<missing>}" >&2
+        echo "  module rollout transition: ${compiled_rollout_transition_contract:-<missing>}" >&2
         echo "  module environment config: ${compiled_environment_config_schema:-<missing>}" >&2
         echo "  module strict test role: ${compiled_strict_env_config_testing:-<missing>}" >&2
         echo "  fix: reinstall, then rebuild PufferLib for bloodbowl" >&2
@@ -730,68 +795,107 @@ fi
 # turn it into the same selected conditional masks already stored by PPO.
 # Apply after the dashboard/trusted-load patches because the saved patch is
 # based on that fully installed Puffer tree.
-EXACT_PATCH="$ROOT/training/puffer_exact_joint_actions.patch"
-if [ -f "$EXACT_PATCH" ] && \
-   ! grep -q 'sample_joint_logits' "$TORCH_PUFFERL_PY"; then
-    if git -C "$PUFFER" apply "$EXACT_PATCH"; then
-        echo "applied:   exact joint-action sampling -> Puffer native/Torch backends"
-    else
-        echo "error: exact joint-action patch did not apply" >&2
-        exit 1
-    fi
+if [ ! -f "$EXACT_PATCH" ]; then
+    echo "error: missing $EXACT_PATCH" >&2
+    exit 1
+fi
+if git -C "$PUFFER" apply --reverse --check --no-index \
+        "$EXACT_PATCH" 2>/dev/null; then
+    : # Exact joint-action patch is already installed.
+elif git -C "$PUFFER" apply --check --no-index \
+        "$EXACT_PATCH" 2>/dev/null; then
+    git -C "$PUFFER" apply --no-index "$EXACT_PATCH"
+    echo "applied:   exact joint-action sampling -> Puffer native/Torch backends"
+else
+    echo "error: exact joint-action patch is neither applicable nor installed" >&2
+    exit 1
 fi
 if ! grep -q 'sample_joint_logits' "$TORCH_PUFFERL_PY" || \
    ! grep -q 'joint_action_offsets' "$PUFFER/src/vecenv.h" || \
-   ! grep -q 'Exact sequential support' "$PUFFER/src/pufferlib.cu"; then
+   ! grep -q 'Exact sequential support' "$PUFFER/src/pufferlib.cu" || \
+   ! git -C "$PUFFER" apply --reverse --check --no-index "$EXACT_PATCH"; then
     echo "error: exact joint-action backend support is incomplete" >&2
     exit 1
 fi
 
 # Recurrent evaluation contract. Apply only after exact-action support because
 # both patches extend the same native and Torch rollout paths.
-RECURRENT_PATCH="$ROOT/training/puffer_recurrent_eval_state.patch"
-if [ -f "$RECURRENT_PATCH" ] && \
-   ! grep -q 'reset_recurrent_state_rows' "$TORCH_PUFFERL_PY"; then
-    if git -C "$PUFFER" apply "$RECURRENT_PATCH"; then
-        echo "applied:   recurrent evaluation-state boundaries -> Puffer native/Torch backends"
-    else
-        echo "error: recurrent evaluation-state patch did not apply" >&2
-        exit 1
-    fi
+if [ ! -f "$RECURRENT_PATCH" ]; then
+    echo "error: missing $RECURRENT_PATCH" >&2
+    exit 1
+fi
+if git -C "$PUFFER" apply --reverse --check --no-index \
+        "$RECURRENT_PATCH" 2>/dev/null; then
+    : # Exact recurrent evaluation-state patch is already installed.
+elif git -C "$PUFFER" apply --check --no-index \
+        "$RECURRENT_PATCH" 2>/dev/null; then
+    git -C "$PUFFER" apply --no-index "$RECURRENT_PATCH"
+    echo "applied:   recurrent evaluation-state boundaries -> Puffer native/Torch backends"
+else
+    echo "error: recurrent evaluation-state patch is neither applicable nor installed" >&2
+    exit 1
 fi
 if ! grep -q 'reset_recurrent_state_on_terminal' "$PUFFER/src/pufferlib.cu" || \
    ! grep -q 'set_evaluation_mode' "$PUFFER/src/bindings.cu" || \
-   ! grep -q 'pending_terminals' "$TORCH_PUFFERL_PY"; then
+   ! grep -q 'pending_terminals' "$TORCH_PUFFERL_PY" || \
+   ! git -C "$PUFFER" apply --reverse --check --no-index "$RECURRENT_PATCH"; then
     echo "error: recurrent evaluation-state support is incomplete" >&2
+    exit 1
+fi
+
+# Rollout-transition closure. The final post-action observation/reward/terminal
+# must be valued before any PPO update, and its identity is part of the loaded
+# extension contract. This patch is causally after recurrent boundary handling
+# and before frozen-bank routing and qualification.
+if [ ! -f "$ROLLOUT_TRANSITION_PATCH" ]; then
+    echo "error: missing $ROLLOUT_TRANSITION_PATCH" >&2
+    exit 1
+fi
+if git -C "$PUFFER" apply --reverse --check --no-index \
+        "$ROLLOUT_TRANSITION_PATCH" 2>/dev/null; then
+    : # Exact rollout-transition patch is already installed.
+elif git -C "$PUFFER" apply --check --no-index \
+        "$ROLLOUT_TRANSITION_PATCH" 2>/dev/null; then
+    git -C "$PUFFER" apply --no-index "$ROLLOUT_TRANSITION_PATCH"
+    echo "applied:   rollout-transition closure -> Puffer native/Torch backends"
+else
+    echo "error: rollout-transition patch is neither applicable nor installed" >&2
+    exit 1
+fi
+if ! rollout_transition_sources_valid || \
+   ! git -C "$PUFFER" apply --reverse --check --no-index "$ROLLOUT_TRANSITION_PATCH"; then
+    echo "error: installed rollout-transition closure is incomplete" >&2
     exit 1
 fi
 
 # Frozen PPO rows must be mathematically ineligible for priority sampling;
 # zero advantages are insufficient when alpha=0 because pow(0, 0) is one.
-FROZEN_PRIO_PATCH="$ROOT/training/puffer_frozen_prio_mask.patch"
-if [ -f "$FROZEN_PRIO_PATCH" ] && \
-   ! grep -q 'eligible_agents' "$PUFFER/src/pufferlib.cu"; then
-    if git -C "$PUFFER" apply --no-index "$FROZEN_PRIO_PATCH"; then
-        echo "applied:   exact frozen-row exclusion -> prioritized PPO sampler"
-    else
-        echo "error: frozen-row priority-mask patch did not apply" >&2
-        exit 1
-    fi
-elif [ -f "$FROZEN_PRIO_PATCH" ] && \
-     ! git -C "$PUFFER" apply --reverse --check --no-index "$FROZEN_PRIO_PATCH"; then
-    echo "error: installed frozen-row priority-mask patch is stale" >&2
-    echo "  fix: recreate the pinned Puffer tree and reinstall the complete patch stack" >&2
+if [ ! -f "$FROZEN_PRIO_PATCH" ]; then
+    echo "error: missing $FROZEN_PRIO_PATCH" >&2
     exit 1
 fi
-if ! grep -q 'eligible_agents' "$PUFFER/src/pufferlib.cu"; then
-    echo "error: exact frozen-row exclusion is incomplete" >&2
+if git -C "$PUFFER" apply --reverse --check --no-index \
+        "$FROZEN_PRIO_PATCH" 2>/dev/null; then
+    : # Exact frozen-priority patch is already installed.
+elif git -C "$PUFFER" apply --check --no-index "$FROZEN_PRIO_PATCH" \
+        2>/dev/null; then
+    git -C "$PUFFER" apply --no-index "$FROZEN_PRIO_PATCH"
+    echo "applied:   exact frozen-row exclusion -> prioritized PPO sampler"
+else
+    echo "error: frozen-row priority-mask patch is neither applicable nor installed" >&2
+    exit 1
+fi
+if ! grep -Fq 'eligible_agents' "$PUFFER/src/pufferlib.cu" || \
+   ! git -C "$PUFFER" apply --reverse --check --no-index \
+       "$FROZEN_PRIO_PATCH"; then
+    echo "error: installed frozen-row priority-mask patch is incomplete" >&2
     exit 1
 fi
 
-# Read-only CUDA qualification evidence. Apply last: it inspects the exact
-# rollout, recurrent, and PPO tensors produced by the preceding semantic
-# patches, and therefore belongs to the same compiled backend identity.
-QUALIFICATION_PATCH="$ROOT/training/puffer_recurrent_cuda_qualification.patch"
+# Bounded CUDA qualification surfaces. Apply after the semantic patches: most
+# calls are readbacks, while recurrent-state clear and explicit tail
+# consumption are narrow, named qualification mutations whose before/after
+# state is validated. They belong to the same compiled backend identity.
 if [ -f "$QUALIFICATION_PATCH" ] && \
    ! grep -q 'qualification_recurrent_state' "$PUFFER/src/bindings.cu"; then
     if git -C "$PUFFER" apply --no-index "$QUALIFICATION_PATCH"; then
@@ -807,7 +911,10 @@ elif [ -f "$QUALIFICATION_PATCH" ] && \
     exit 1
 fi
 if ! grep -q 'qualification_recurrent_state' "$PUFFER/src/bindings.cu" || \
-   ! grep -q 'qualification_snapshot' "$PUFFER/src/bindings.cu"; then
+   ! grep -q 'qualification_policy_weights' "$PUFFER/src/bindings.cu" || \
+   ! grep -q 'qualification_snapshot' "$PUFFER/src/bindings.cu" || \
+   ! grep -q 'qualification_graph_execution' "$PUFFER/src/bindings.cu" || \
+   ! grep -q 'qualification_consume_tail' "$PUFFER/src/bindings.cu"; then
     echo "error: recurrent CUDA qualification evidence is incomplete" >&2
     exit 1
 fi
@@ -820,27 +927,27 @@ fi
 # on and the CUDA path is what the production screen trains on, so patching one
 # is a half-fix. Applies to both files; touched last because it is a leaf edit
 # on lines no other patch in the stack goes near.
-REWARD_CLAMP_PATCH="$ROOT/training/puffer_reward_clamp_range.patch"
 if [ ! -f "$REWARD_CLAMP_PATCH" ]; then
     echo "error: missing $REWARD_CLAMP_PATCH" >&2
     exit 1
 fi
-if ! grep -Fq 'clamp(-8, 8)' "$TORCH_PUFFERL_PY"; then
-    if git -C "$PUFFER" apply --no-index "$REWARD_CLAMP_PATCH"; then
-        echo "applied:   +-8 trainer reward clamp -> Puffer native/Torch backends"
-    else
-        echo "error: reward-clamp range patch did not apply" >&2
-        exit 1
-    fi
-elif ! git -C "$PUFFER" apply --reverse --check --no-index "$REWARD_CLAMP_PATCH"; then
-    echo "error: installed reward-clamp range patch is stale" >&2
-    echo "  fix: recreate the pinned Puffer tree and reinstall the complete patch stack" >&2
+if git -C "$PUFFER" apply --reverse --check --no-index \
+        "$REWARD_CLAMP_PATCH" 2>/dev/null; then
+    : # Exact two-backend reward clamp is already installed.
+elif git -C "$PUFFER" apply --check --no-index \
+        "$REWARD_CLAMP_PATCH" 2>/dev/null; then
+    git -C "$PUFFER" apply --no-index "$REWARD_CLAMP_PATCH"
+    echo "applied:   +-8 trainer reward clamp -> Puffer native/Torch backends"
+else
+    echo "error: reward-clamp range patch is neither applicable nor installed" >&2
     exit 1
 fi
 # Both backends, checked independently: a one-file install silently trains the
 # torch path on truncated rewards while the CUDA path is correct (or vice
 # versa), and nothing downstream would distinguish the two.
-if ! grep -Fq 'clamp(-8, 8)' "$TORCH_PUFFERL_PY" || \
+if ! grep -Fq \
+        'self.rewards.T.contiguous().clamp(-8, 8)' \
+        "$TORCH_PUFFERL_PY" || \
    ! grep -Fq -- '-8.0f, 8.0f, numel(rollouts.rewards.shape)' \
         "$PUFFER/src/pufferlib.cu"; then
     echo "error: +-8 trainer reward clamp is incomplete (needs BOTH backends)" >&2
@@ -921,7 +1028,6 @@ fi
 # Export every generated state-bank contract field from both extension
 # backends.  This patch is part of exact_backend_hash()'s closure, so a stale
 # one-backend module cannot retain the previous backend digest.
-STATE_BANK_EXPORT_PATCH="$ROOT/training/puffer_state_bank_contract.patch"
 if [ ! -f "$STATE_BANK_EXPORT_PATCH" ]; then
     echo "error: missing $STATE_BANK_EXPORT_PATCH" >&2
     exit 1
@@ -999,8 +1105,12 @@ fi
 for overlapping_patch in \
         "$STANDALONE_INCLUDE_PATCH" \
         "$ROOT/training/puffer_dict_capacity.patch" \
-        "$ROOT/training/puffer_recurrent_cuda_qualification.patch" \
-        "$ROOT/training/puffer_state_bank_contract.patch" \
+        "$EXACT_PATCH" \
+        "$RECURRENT_PATCH" \
+        "$ROLLOUT_TRANSITION_PATCH" \
+        "$FROZEN_PRIO_PATCH" \
+        "$QUALIFICATION_PATCH" \
+        "$STATE_BANK_EXPORT_PATCH" \
         "$STRICT_ENV_CONFIG_PATCH"; do
     if ! git -C "$PUFFER" apply --reverse --check --no-index \
             "$overlapping_patch"; then

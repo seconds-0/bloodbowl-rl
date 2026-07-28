@@ -16,6 +16,7 @@ import json
 import os
 import pathlib
 import re
+import shutil
 import subprocess
 import tempfile
 import textwrap
@@ -35,12 +36,17 @@ LEAGUE_PATCH = ROOT / "training" / "selfplay_league.patch"
 STRICT_CONFIG_PATCH = (
     ROOT / "training" / "puffer_strict_environment_config.patch"
 )
+ROLLOUT_TRANSITION_PATCH = (
+    ROOT / "training" / "puffer_rollout_transition_closure.patch"
+)
 INSTALLER = ROOT / "tools" / "install_puffer_env.sh"
 RUNNER = ROOT / "tools" / "qualify_recurrent_cuda.py"
 CUDA_RUNTIME_WRAPPER = ROOT / "tools" / "puffer_cuda_runtime.py"
 COMPILED_BACKEND_LEDGER = (
     ROOT / "training" / "puffer_compiled_backend_sources.txt"
 )
+TEST_RUN_NONCE = "a" * 64
+TEST_CELL_NONCE = "b" * 64
 
 
 def cuda_runtime_evidence() -> dict:
@@ -76,6 +82,179 @@ def load_runner():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def bound_json_result(module, path, record):
+    encoded = (
+        json.dumps(record, indent=2, sort_keys=True, allow_nan=False) + "\n"
+    ).encode("utf-8")
+    return record, module.ValidatedArtifact(
+        pathlib.Path(path),
+        encoded,
+        hashlib.sha256(encoded).hexdigest(),
+    )
+
+
+def heterogeneous_weight_descriptor(
+    *,
+    bank=1,
+    role="frozen",
+    hidden_size=32,
+    num_layers=2,
+    slice_size=2,
+    weights=None,
+):
+    input_size = 2782
+    action_logits = 454
+    output_size = action_logits + 1
+    decoder_offset = input_size * hidden_size
+    value_row_offset = decoder_offset + action_logits * hidden_size
+    parameter_count = (
+        decoder_offset
+        + output_size * hidden_size
+        + num_layers * 3 * hidden_size * hidden_size
+    )
+    if weights is None:
+        weights = bytes(parameter_count * 4)
+    return {
+        "bank": bank,
+        "role": role,
+        "slice_size": slice_size,
+        "input_size": input_size,
+        "hidden_size": hidden_size,
+        "num_layers": num_layers,
+        "action_logits": action_logits,
+        "output_size": output_size,
+        "parameter_count": parameter_count,
+        "parameter_bytes": parameter_count * 4,
+        "decoder_offset": decoder_offset,
+        "decoder_shape": [output_size, hidden_size],
+        "value_row_offset": value_row_offset,
+        "weights": weights,
+    }
+
+
+def heterogeneous_rollout_fixture(value_coefficient=0.5):
+    horizon = 8
+    total_agents = 8
+    frozen_rows = (2, 3, 6, 7)
+    live_values = (
+        (0.0,) * horizon
+        if value_coefficient == 0.0
+        else (3.0, 4.5, 5.25, 5.625, 5.8125, 5.90625, 5.953125, 5.9765625)
+    )
+    tail_value = 0.0 if value_coefficient == 0.0 else 3.0
+    arrays = {
+        "actions": np.zeros((horizon, total_agents, 3), np.float32),
+        "action_mask": np.ones((horizon, total_agents, 454), np.float32),
+        "values": np.zeros((horizon, total_agents), np.float32),
+        "logprobs": np.zeros((horizon, total_agents), np.float32),
+        "tail_terminals": np.zeros(total_agents, np.float32),
+        "tail_values": np.zeros(total_agents, np.float32),
+        "tail_valid": np.ones(2, np.int32),
+    }
+    arrays["actions"][:, frozen_rows, :] = np.array(
+        [29.0, 32.0, 390.0], np.float32
+    )
+    arrays["values"][:, frozen_rows] = np.asarray(
+        live_values, dtype=np.float32
+    )[:, np.newaxis]
+    arrays["tail_values"][list(frozen_rows)] = np.float32(tail_value)
+    for buffer in range(2):
+        arrays[f"decoder_bank_1_buffer_{buffer}"] = np.zeros(
+            (2, 455), np.float32
+        )
+        arrays[f"decoder_bank_1_buffer_{buffer}"][:, -1] = np.float32(
+            live_values[-1]
+        )
+        arrays[f"tail_decoder_bank_1_buffer_{buffer}"] = np.zeros(
+            (2, 455), np.float32
+        )
+        arrays[f"tail_decoder_bank_1_buffer_{buffer}"][:, -1] = np.float32(
+            tail_value
+        )
+    entries = []
+    for bank, layers, hidden in ((0, 1, 64), (1, 2, 32)):
+        for buffer in range(2):
+            elements = layers * 2 * hidden
+            entry = {
+                "bank": bank,
+                "buffer": buffer,
+                "shape": [layers, 2, hidden],
+                "elements": elements,
+                "active_rows": 2,
+                "active_elements": elements,
+                "nonzero": elements,
+                "nonfinite": 0,
+                "max_abs": 0.498046875,
+                "active_nonzero": elements,
+                "active_nonfinite": 0,
+                "active_max_abs": 0.498046875,
+                "active_min": 0.498046875,
+                "active_max": 0.498046875,
+            }
+            entries.append(entry)
+    state = {
+        "cleared": False,
+        "num_banks": 2,
+        "num_buffers": 2,
+        "agents_per_buffer": 4,
+        "bank_layout": [0, 2, 4],
+        "entries": entries,
+    }
+    return arrays, state
+
+
+def integrated_advantage_fixture(module):
+    """Closed vector-width fixture with a nonzero primary tail signal."""
+
+    arrays, state = heterogeneous_rollout_fixture(value_coefficient=0.0)
+    total_agents = 8
+    horizon = module.HETEROGENEOUS_HORIZON
+    primary_rows = (0, 1, 4, 5)
+    arrays["values"] = np.zeros((horizon, total_agents), np.float32)
+    arrays["logprobs"] = np.zeros((horizon, total_agents), np.float32)
+    tail_rewards = np.zeros(total_agents, np.float32)
+    tail_rewards[list(primary_rows)] = np.array(
+        [2.0, 3.0, 4.0, 5.0],
+        np.float32,
+    )
+    arrays.update(
+        rewards=np.zeros((horizon, total_agents), np.float32),
+        terminals=np.zeros((horizon, total_agents), np.float32),
+        tail_rewards=tail_rewards,
+        tail_terminals=np.ones(total_agents, np.float32),
+        tail_valid_after_train=np.zeros(2, np.int32),
+        selected_rows_after_train=np.array(
+            [0, 1, 4, 5], dtype=np.int32
+        ),
+    )
+    advantages = np.zeros((total_agents, horizon), np.float32)
+    gamma = np.float32(0.995)
+    gae_lambda = np.float32(0.95)
+    for row in primary_rows:
+        accumulator = tail_rewards[row]
+        for timestep in range(horizon - 1, -1, -1):
+            advantages[row, timestep] = accumulator
+            accumulator *= gamma * gae_lambda
+    arrays["advantages_after_train"] = advantages
+    config = module.qualification_args(
+        cudagraphs=-1,
+        seed=123,
+        total_agents=total_agents,
+        num_buffers=2,
+        num_threads=2,
+        horizon=horizon,
+        max_decisions=16,
+        hidden_size=64,
+        num_layers=1,
+        frozen_banks=1,
+        frozen_bank_pct=0.5,
+        frozen_hidden_size=32,
+        frozen_num_layers=2,
+        learning_rate=0.0,
+    )
+    return arrays, state, config
 
 
 class FakeStrictStageVec:
@@ -235,6 +414,554 @@ class QualificationValidatorTests(unittest.TestCase):
                 total_agents=8,
             )
 
+    # -------------------------------------- heterogeneous frozen-policy oracle
+
+    def test_heterogeneous_weight_layout_and_donors_are_exact(self):
+        descriptor = heterogeneous_weight_descriptor()
+        layout = self.q.validate_policy_weight_descriptor(
+            descriptor,
+            expected_bank=1,
+            expected_role="frozen",
+            expected_hidden_size=32,
+            expected_num_layers=2,
+            expected_slice_size=2,
+        )
+        self.assertEqual(layout["decoder_offset"], 89_024)
+        self.assertEqual(layout["value_row_offset"], 103_552)
+        self.assertEqual(layout["parameter_count"], 109_728)
+        self.assertEqual(layout["parameter_bytes"], 438_912)
+
+        zero = self.q.build_heterogeneous_frozen_donor(
+            layout, value_coefficient=0.0
+        )
+        positive = self.q.build_heterogeneous_frozen_donor(
+            layout, value_coefficient=0.5
+        )
+        self.assertEqual(
+            hashlib.sha256(zero).hexdigest(),
+            "d4565fed83a63b06a5db51ed34c03175058dd331a3baf7aaee0ef9fcca41f85c",
+        )
+        self.assertEqual(
+            hashlib.sha256(positive).hexdigest(),
+            "dda4adcadb2c6ab47acec9461d1e54d0f0a196d6c95de45d629c72c6f7b954bf",
+        )
+        zero_values = np.frombuffer(zero, dtype="<f4")
+        positive_values = np.frombuffer(positive, dtype="<f4")
+        changed = np.flatnonzero(zero_values != positive_values)
+        np.testing.assert_array_equal(
+            changed,
+            np.arange(
+                layout["value_row_offset"],
+                layout["value_row_offset"] + 32,
+            ),
+        )
+        self.assertTrue(np.all(positive_values[changed] == np.float32(0.5)))
+        decoder = zero_values[
+            layout["decoder_offset"]:
+            layout["decoder_offset"] + 455 * 32
+        ].reshape(455, 32)
+        for row, expected in (
+            (0, 0.0),
+            (29, 32.0 * 29),
+            (30, 0.0),
+            (62, 32.0 * 32),
+            (63, 0.0),
+            (453, 32.0 * 390),
+        ):
+            self.assertTrue(np.all(decoder[row] == np.float32(expected)))
+
+    def test_heterogeneous_weight_descriptor_is_fail_closed(self):
+        descriptor = heterogeneous_weight_descriptor()
+        cases = {
+            "wrong decoder shape": dict(descriptor, decoder_shape=[455, 64]),
+            "wrong input ABI": dict(descriptor, input_size=2783),
+            "wrong action ABI": dict(descriptor, action_logits=455),
+            "wrong output ABI": dict(descriptor, output_size=454),
+            "wrong count": dict(descriptor, parameter_count=109_729),
+            "wrong bytes": dict(descriptor, parameter_bytes=438_908),
+            "mutable bytes": dict(
+                descriptor, weights=bytearray(descriptor["weights"])
+            ),
+            "wrong bank": dict(descriptor, bank=0),
+            "wrong role": dict(descriptor, role="primary"),
+            "wrong slice": dict(descriptor, slice_size=1),
+            "extra key": dict(descriptor, unexpected=True),
+        }
+        for label, changed in cases.items():
+            with self.subTest(label=label), self.assertRaises(
+                self.q.QualificationError
+            ):
+                self.q.validate_policy_weight_descriptor(
+                    changed,
+                    expected_bank=1,
+                    expected_role="frozen",
+                    expected_hidden_size=32,
+                    expected_num_layers=2,
+                    expected_slice_size=2,
+                )
+        oversized = heterogeneous_weight_descriptor()
+        oversized["parameter_bytes"] = self.q.QUALIFICATION_POLICY_MAX_BYTES + 4
+        oversized["parameter_count"] = oversized["parameter_bytes"] // 4
+        oversized["weights"] = bytes(oversized["parameter_bytes"])
+        with self.assertRaisesRegex(
+            self.q.QualificationError, "limit|oversized|bytes"
+        ):
+            self.q.validate_policy_weight_descriptor(
+                oversized,
+                expected_bank=1,
+                expected_role="frozen",
+                expected_hidden_size=32,
+                expected_num_layers=2,
+                expected_slice_size=2,
+            )
+
+    def test_authenticated_frozen_loader_detects_native_silent_noop(self):
+        descriptor = heterogeneous_weight_descriptor()
+
+        class Backend:
+            def __init__(self, apply_load):
+                self.apply_load = apply_load
+                self.weights = descriptor["weights"]
+                self.paths = []
+
+            def load_frozen_bank(self, _pufferl, bank, path):
+                self.assertions = (bank, pathlib.Path(path).is_file())
+                self.paths.append(path)
+                if self.apply_load:
+                    self.weights = pathlib.Path(path).read_bytes()
+
+            def qualification_policy_weights(self, _pufferl, bank, max_bytes):
+                if max_bytes != 64 * 1024 * 1024:
+                    raise AssertionError(max_bytes)
+                return dict(descriptor, bank=bank, weights=self.weights)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            applied = Backend(True)
+            evidence = self.q.install_authenticated_frozen_donor(
+                applied,
+                object(),
+                pathlib.Path(temporary),
+                descriptor,
+                name="positive-value",
+                value_coefficient=0.5,
+            )
+            self.assertEqual(applied.assertions, (0, True))
+            self.assertTrue(evidence["readback_matches_donor"])
+            self.assertEqual(
+                evidence["expected_sha256"], evidence["readback_sha256"]
+            )
+            self.assertFalse(
+                any(pathlib.Path(path).exists() for path in applied.paths)
+            )
+
+            silent = Backend(False)
+            with self.assertRaisesRegex(
+                self.q.QualificationError, "readback|load|bytes"
+            ):
+                self.q.install_authenticated_frozen_donor(
+                    silent,
+                    object(),
+                    pathlib.Path(temporary),
+                    descriptor,
+                    name="silent-noop",
+                    value_coefficient=0.5,
+                )
+
+    def test_zero_intervention_tail_is_consumed_before_positive_rollout(self):
+        primary = heterogeneous_weight_descriptor(
+            bank=0,
+            role="primary",
+            hidden_size=64,
+            num_layers=1,
+            weights=bytes([7]) * 877_824,
+        )
+        frozen_layout = heterogeneous_weight_descriptor()
+        frozen = dict(
+            frozen_layout,
+            weights=self.q.build_heterogeneous_frozen_donor(
+                frozen_layout, value_coefficient=0.0
+            ),
+        )
+
+        class Backend:
+            def __init__(self, mutate=False):
+                self.mutate = mutate
+                self.train_calls = 0
+
+            def train(self, _pufferl):
+                self.train_calls += 1
+
+            def qualification_snapshot(self, _pufferl):
+                return {}
+
+            def qualification_graph_execution(self, _pufferl):
+                return {
+                    "cudagraphs": -1,
+                    "captured": {
+                        "rollout": False,
+                        "tail": False,
+                        "train": False,
+                    },
+                    "handles_ready": {
+                        "rollout": False,
+                        "tail": False,
+                        "train": False,
+                    },
+                    "graph_launch_counts": {
+                        "rollout": 0,
+                        "tail": 0,
+                        "train": 0,
+                    },
+                    "eager_execution_counts": {
+                        "rollout": 3,
+                        "tail": 3,
+                        "train": 1,
+                    },
+                }
+
+            def qualification_policy_weights(self, _pufferl, bank, _max_bytes):
+                descriptor = primary if bank == 0 else frozen
+                if self.mutate and bank == 0:
+                    changed = bytearray(descriptor["weights"])
+                    changed[0] ^= 1
+                    return dict(descriptor, weights=bytes(changed))
+                return descriptor
+
+        backend = Backend()
+        with mock.patch.object(
+            self.q,
+            "decode_snapshot",
+            return_value={"tail_valid": np.zeros(2, np.int32)},
+        ):
+            evidence = self.q.consume_heterogeneous_tail_record(
+                backend,
+                object(),
+                primary,
+                frozen,
+                num_buffers=2,
+            )
+        self.assertEqual(backend.train_calls, 1)
+        self.assertTrue(evidence["tail_consumed"])
+        self.assertTrue(evidence["primary_weights_unchanged"])
+        self.assertTrue(evidence["frozen_weights_unchanged"])
+
+        with mock.patch.object(
+            self.q,
+            "decode_snapshot",
+            return_value={"tail_valid": np.ones(2, np.int32)},
+        ), self.assertRaisesRegex(
+            self.q.QualificationError, "tail|validity|consum"
+        ):
+            self.q.consume_heterogeneous_tail_record(
+                Backend(),
+                object(),
+                primary,
+                frozen,
+                num_buffers=2,
+            )
+        with mock.patch.object(
+            self.q,
+            "decode_snapshot",
+            return_value={"tail_valid": np.zeros(2, np.int32)},
+        ), self.assertRaisesRegex(
+            self.q.QualificationError, "weight|bytes|changed"
+        ):
+            self.q.consume_heterogeneous_tail_record(
+                Backend(mutate=True),
+                object(),
+                primary,
+                frozen,
+                num_buffers=2,
+            )
+
+        source = RUNNER.read_text(encoding="utf-8")
+        body = source[
+            source.index("def _measure_heterogeneous_rollout("):
+            source.index("def _measure_ratio(")
+        ]
+        zero = body.index('zero_arrays, zero_state, zero_oracle = variant(')
+        consume = body.index("consume_heterogeneous_tail_record(")
+        positive = body.index(
+            "positive_arrays, positive_state, positive_oracle = variant("
+        )
+        self.assertLess(zero, consume)
+        self.assertLess(consume, positive)
+
+    def test_heterogeneous_rollout_oracle_is_exact_and_fail_closed(self):
+        positive, state = heterogeneous_rollout_fixture(0.5)
+        verdict = self.q.validate_heterogeneous_rollout_oracle(
+            positive,
+            state,
+            total_agents=8,
+            num_buffers=2,
+            horizon=self.q.HETEROGENEOUS_HORIZON,
+            value_coefficient=0.5,
+            atol=1.0e-6,
+        )
+        self.assertEqual(
+            verdict["frozen_behavior_values"],
+            list(self.q.HETEROGENEOUS_POSITIVE_VALUE_SEQUENCE),
+        )
+        self.assertEqual(verdict["frozen_tail_value"], 3.0)
+        self.assertEqual(
+            verdict["frozen_live_state"],
+            self.q.HETEROGENEOUS_FROZEN_STATE_SEQUENCE[-1],
+        )
+        self.assertTrue(verdict["all_frozen_actions_max_legal"])
+        self.assertEqual(verdict["max_abs_frozen_logprob"], 0.0)
+        self.assertTrue(verdict["ordinary_decoder_preserved"])
+
+        zero, zero_state = heterogeneous_rollout_fixture(0.0)
+        zero_verdict = self.q.validate_heterogeneous_rollout_oracle(
+            zero,
+            zero_state,
+            total_agents=8,
+            num_buffers=2,
+            horizon=self.q.HETEROGENEOUS_HORIZON,
+            value_coefficient=0.0,
+            atol=1.0e-6,
+        )
+        self.assertEqual(
+            zero_verdict["frozen_behavior_values"],
+            [0.0] * self.q.HETEROGENEOUS_HORIZON,
+        )
+        self.assertEqual(zero_verdict["frozen_tail_value"], 0.0)
+
+        mutations = []
+        changed = {key: value.copy() for key, value in positive.items()}
+        changed["tail_values"][2] = np.float32(4.5)
+        mutations.append(("carried tail state", changed, state))
+        changed = {key: value.copy() for key, value in positive.items()}
+        changed["tail_values"][2] = np.float32(4.5)
+        changed["tail_decoder_bank_1_buffer_0"][0, -1] = np.float32(4.5)
+        mutations.append(("forged tail decoder", changed, state))
+        changed = {key: value.copy() for key, value in positive.items()}
+        changed["decoder_bank_1_buffer_0"][0, -1] = np.float32(3.0)
+        mutations.append(("ordinary decoder clobbered", changed, state))
+        changed = {key: value.copy() for key, value in positive.items()}
+        changed["tail_terminals"][2] = np.float32(1.0)
+        changed["tail_values"][2] = np.float32(0.0)
+        mutations.append(("terminal sentinel", changed, state))
+        changed = {key: value.copy() for key, value in positive.items()}
+        changed["actions"][0, 2, 0] = np.float32(28.0)
+        mutations.append(("non-maximal action", changed, state))
+        changed = {key: value.copy() for key, value in positive.items()}
+        changed["action_mask"][0, 2, 29] = np.float32(0.0)
+        mutations.append(("disabled action", changed, state))
+        changed = {key: value.copy() for key, value in positive.items()}
+        changed["logprobs"][0, 2] = np.float32(1.0e-4)
+        mutations.append(("nonzero logprob", changed, state))
+        changed = {key: value.copy() for key, value in positive.items()}
+        changed["logprobs"][0, 2] = np.float32(np.nan)
+        mutations.append(("nonfinite logprob", changed, state))
+        changed_state = json.loads(json.dumps(state))
+        changed_state["entries"][2]["active_min"] = 0.25
+        mutations.append(("clobbered live state", positive, changed_state))
+
+        for label, changed_arrays, changed_state in mutations:
+            with self.subTest(label=label), self.assertRaises(
+                self.q.QualificationError
+            ):
+                self.q.validate_heterogeneous_rollout_oracle(
+                    changed_arrays,
+                    changed_state,
+                    total_agents=8,
+                    num_buffers=2,
+                    horizon=self.q.HETEROGENEOUS_HORIZON,
+                    value_coefficient=0.5,
+                    atol=1.0e-6,
+                )
+
+    def test_rollout_cell_uses_heterogeneous_architecture_and_vector_horizon(self):
+        args = SimpleNamespace(
+            seed=123,
+            throughput_agents=4096,
+            throughput_buffers=2,
+            throughput_threads=20,
+            throughput_horizon=64,
+            throughput_hidden=512,
+            throughput_layers=1,
+            throughput_minibatch_size=16384,
+        )
+        config = self.q._cell_config("rollout", -1, args)
+        self.assertEqual(
+            config["train"]["horizon"],
+            self.q.HETEROGENEOUS_HORIZON,
+        )
+        self.assertEqual(config["vec"]["total_agents"], 8)
+        self.assertEqual(config["vec"]["num_buffers"], 2)
+        self.assertEqual(
+            config["policy"],
+            {"hidden_size": 64, "num_layers": 1},
+        )
+        self.assertEqual(config["vec"]["frozen_bank_hidden_size"], 32)
+        self.assertEqual(config["vec"]["frozen_bank_num_layers"], 2)
+        self.assertEqual(config["vec"]["frozen_bank_pct"], 0.5)
+
+    def test_parent_reconstructs_heterogeneous_donors_and_oracles(self):
+        primary = heterogeneous_weight_descriptor(
+            bank=0,
+            role="primary",
+            hidden_size=64,
+            num_layers=1,
+            weights=bytes([1]) * 877_824,
+        )
+        frozen = heterogeneous_weight_descriptor()
+
+        def architecture(descriptor, *, digests):
+            result = {
+                key: value
+                for key, value in descriptor.items()
+                if key != "weights"
+            }
+            if digests:
+                start = 4 * descriptor["value_row_offset"]
+                stop = start + 4 * descriptor["hidden_size"]
+                result.update(
+                    weights_sha256=hashlib.sha256(
+                        descriptor["weights"]
+                    ).hexdigest(),
+                    value_row_sha256=hashlib.sha256(
+                        descriptor["weights"][start:stop]
+                    ).hexdigest(),
+                )
+            return result
+
+        zero_bytes = self.q.build_heterogeneous_frozen_donor(
+            frozen, value_coefficient=0.0
+        )
+        positive_bytes = self.q.build_heterogeneous_frozen_donor(
+            frozen, value_coefficient=0.5
+        )
+        zero_arrays, zero_state = heterogeneous_rollout_fixture(0.0)
+        positive_arrays, positive_state = heterogeneous_rollout_fixture(0.5)
+        arrays = dict(positive_arrays)
+        arrays.update({
+            f"{self.q.HETEROGENEOUS_ZERO_PREFIX}{key}": value
+            for key, value in zero_arrays.items()
+        })
+        record = {
+            "config": {
+                "policy": {"hidden_size": 64, "num_layers": 1},
+                "vec": {
+                    "total_agents": 8,
+                    "num_buffers": 2,
+                    "num_frozen_banks": 1,
+                    "frozen_bank_pct": 0.5,
+                    "frozen_bank_hidden_size": 32,
+                    "frozen_bank_num_layers": 2,
+                },
+                "train": {
+                    "horizon": self.q.HETEROGENEOUS_HORIZON,
+                    "learning_rate": 0.0,
+                    "replay_ratio": 1,
+                    "minibatch_size": (
+                        8 * self.q.HETEROGENEOUS_HORIZON
+                    ),
+                },
+            },
+            "heterogeneous_policy": {
+                "primary_architecture": architecture(primary, digests=True),
+                "frozen_architecture": architecture(frozen, digests=False),
+                "donors": {
+                    "zero_value": {
+                        "value_coefficient": 0.0,
+                        "expected_sha256": hashlib.sha256(zero_bytes).hexdigest(),
+                        "readback_sha256": hashlib.sha256(zero_bytes).hexdigest(),
+                        "changed_float_indices": 0,
+                        "readback_matches_donor": True,
+                    },
+                    "positive_value": {
+                        "value_coefficient": 0.5,
+                        "expected_sha256": hashlib.sha256(
+                            positive_bytes
+                        ).hexdigest(),
+                        "readback_sha256": hashlib.sha256(
+                            positive_bytes
+                        ).hexdigest(),
+                        "changed_float_indices": 32,
+                        "readback_matches_donor": True,
+                    },
+                },
+            },
+            "heterogeneous_zero_state": zero_state,
+            "heterogeneous_positive_state": positive_state,
+            "heterogeneous_zero_tail_consumption": {
+                "tail_consumed": True,
+                "primary_weights_unchanged": True,
+                "frozen_weights_unchanged": True,
+                "primary_sha256": hashlib.sha256(
+                    primary["weights"]
+                ).hexdigest(),
+                "frozen_sha256": hashlib.sha256(zero_bytes).hexdigest(),
+            },
+        }
+        record["heterogeneous_zero_oracle"] = (
+            self.q.validate_heterogeneous_rollout_oracle(
+                zero_arrays,
+                zero_state,
+                total_agents=8,
+                num_buffers=2,
+                horizon=self.q.HETEROGENEOUS_HORIZON,
+                value_coefficient=0.0,
+                atol=1.0e-6,
+            )
+        )
+        record["heterogeneous_positive_oracle"] = (
+            self.q.validate_heterogeneous_rollout_oracle(
+                positive_arrays,
+                positive_state,
+                total_agents=8,
+                num_buffers=2,
+                horizon=self.q.HETEROGENEOUS_HORIZON,
+                value_coefficient=0.5,
+                atol=1.0e-6,
+            )
+        )
+        verdict = self.q.validate_heterogeneous_policy_evidence(
+            record, arrays, atol=1.0e-6
+        )
+        self.assertTrue(verdict["readback_matches_donor"])
+        self.assertTrue(verdict["primary_frozen_architectures_differ"])
+        self.assertEqual(
+            verdict["positive_value"]["frozen_behavior_values"],
+            list(self.q.HETEROGENEOUS_POSITIVE_VALUE_SEQUENCE),
+        )
+
+        changed = json.loads(json.dumps(record))
+        changed["heterogeneous_policy"]["donors"]["positive_value"][
+            "expected_sha256"
+        ] = "0" * 64
+        with self.assertRaisesRegex(
+            self.q.QualificationError, "donor|digest|SHA"
+        ):
+            self.q.validate_heterogeneous_policy_evidence(
+                changed, arrays, atol=1.0e-6
+            )
+        changed = json.loads(json.dumps(record))
+        changed["config"]["policy"]["num_layers"] = True
+        with self.assertRaisesRegex(
+            self.q.QualificationError, "architecture|configuration|integer"
+        ):
+            self.q.validate_heterogeneous_policy_evidence(
+                changed, arrays, atol=1.0e-6
+            )
+        changed = json.loads(json.dumps(record))
+        changed["config"]["train"]["learning_rate"] = 1.0e-4
+        with self.assertRaisesRegex(
+            self.q.QualificationError,
+            "learning|zero|configuration|intervention",
+        ):
+            self.q.validate_heterogeneous_policy_evidence(
+                changed, arrays, atol=1.0e-6
+            )
+        changed_arrays = {key: value.copy() for key, value in arrays.items()}
+        changed_arrays["actions"][0, 2, 0] = np.float32(28.0)
+        with self.assertRaises(self.q.QualificationError):
+            self.q.validate_heterogeneous_policy_evidence(
+                record, changed_arrays, atol=1.0e-6
+            )
+
     # ------------------------------------------------- rollout / PPO evidence
 
     def test_snapshot_comparison_is_exact_for_discrete_and_tolerant_for_float(self):
@@ -291,6 +1018,206 @@ class QualificationValidatorTests(unittest.TestCase):
         ):
             self.q.compare_decoder_outputs(left, right, atol=1e-6)
 
+    def test_tail_snapshot_is_typed_complete_valid_and_graph_comparable(self):
+        left = {
+            "tail_rewards": np.array([0.25, -0.5], np.float32),
+            "tail_terminals": np.array([0.0, 1.0], np.float32),
+            "tail_values": np.array([1.25, 0.0], np.float32),
+            "tail_valid": np.array([1], np.int32),
+        }
+        right = {key: value.copy() for key, value in left.items()}
+        right["tail_values"][0] += 5.0e-7
+        verdict = self.q.compare_tail_snapshots(
+            left,
+            right,
+            total_agents=2,
+            num_buffers=1,
+            atol=1.0e-6,
+        )
+        self.assertLessEqual(verdict["tail_values"], 1.0e-6)
+        for label, mutate in (
+            ("missing", lambda value: value.pop("tail_values")),
+            (
+                "wrong shape",
+                lambda value: value.update(
+                    tail_rewards=np.zeros((1, 2), np.float32)
+                ),
+            ),
+            (
+                "wrong float dtype",
+                lambda value: value.update(
+                    tail_values=np.zeros(2, np.float64)
+                ),
+            ),
+            (
+                "nonfinite",
+                lambda value: value["tail_values"].__setitem__(0, np.nan),
+            ),
+            (
+                "nonbinary terminal",
+                lambda value: value["tail_terminals"].__setitem__(0, 0.5),
+            ),
+            (
+                "terminal bootstrap",
+                lambda value: value["tail_values"].__setitem__(1, 1.0),
+            ),
+            (
+                "invalid callback count",
+                lambda value: value["tail_valid"].__setitem__(0, 0),
+            ),
+            (
+                "wrong validity dtype",
+                lambda value: value.update(
+                    tail_valid=np.ones(1, np.float32)
+                ),
+            ),
+        ):
+            changed = {key: array.copy() for key, array in left.items()}
+            mutate(changed)
+            with self.subTest(label=label), self.assertRaises(
+                self.q.QualificationError
+            ):
+                self.q.validate_tail_snapshot(
+                    changed,
+                    total_agents=2,
+                    num_buffers=1,
+                )
+
+    def test_tail_values_match_each_primary_and_frozen_decoder_value(self):
+        snapshot = {
+            "tail_rewards": np.array([0.0, 0.0, 0.0, 0.0], np.float32),
+            "tail_terminals": np.array([0.0, 1.0, 0.0, 0.0], np.float32),
+            "tail_values": np.array([1.5, 0.0, 2.5, 3.5], np.float32),
+            "tail_valid": np.array([1, 1], np.int32),
+            "tail_decoder_bank_0_buffer_0": np.array(
+                [[10.0, 1.5]], np.float32
+            ),
+            "tail_decoder_bank_1_buffer_0": np.array(
+                [[20.0, 99.0]], np.float32
+            ),
+            "tail_decoder_bank_0_buffer_1": np.array(
+                [[30.0, 2.5]], np.float32
+            ),
+            "tail_decoder_bank_1_buffer_1": np.array(
+                [[40.0, 3.5]], np.float32
+            ),
+        }
+        verdict = self.q.validate_tail_value_routing(
+            snapshot,
+            total_agents=4,
+            num_buffers=2,
+            atol=1.0e-6,
+        )
+        self.assertEqual(
+            set(verdict),
+            {
+                "tail_decoder_buffer_0",
+                "tail_decoder_buffer_1",
+            },
+        )
+        changed = {key: value.copy() for key, value in snapshot.items()}
+        changed["tail_values"][3] = -3.5
+        with self.assertRaisesRegex(
+            self.q.QualificationError, "tail decoder"
+        ):
+            self.q.validate_tail_value_routing(
+                changed,
+                total_agents=4,
+                num_buffers=2,
+                atol=1.0e-6,
+            )
+        changed = {key: value.copy() for key, value in snapshot.items()}
+        del changed["tail_decoder_bank_1_buffer_1"]
+        with self.assertRaisesRegex(
+            self.q.QualificationError, "coverage"
+        ):
+            self.q.validate_tail_value_routing(
+                changed,
+                total_agents=4,
+                num_buffers=2,
+                atol=1.0e-6,
+            )
+
+    def test_frozen_advantages_are_finite_exactly_zero_and_shape_locked(self):
+        advantages = np.array(
+            [
+                [1.0, -1.0],
+                [0.0, 0.0],
+                [2.0, -2.0],
+                [0.0, 0.0],
+            ],
+            np.float32,
+        )
+        verdict = self.q.validate_frozen_advantages(
+            advantages,
+            primary_rows={0, 2},
+            frozen_rows={1, 3},
+            horizon=2,
+        )
+        self.assertEqual(verdict["frozen_rows_zero"], [1, 3])
+        for label, changed in (
+            ("nonzero frozen", advantages.copy()),
+            ("nonfinite primary", advantages.copy()),
+            ("wrong shape", advantages[:, :1].copy()),
+            ("wrong dtype", advantages.astype(np.float64)),
+        ):
+            if label == "nonzero frozen":
+                changed[1, 0] = np.float32(1.0e-20)
+            elif label == "nonfinite primary":
+                changed[0, 0] = np.nan
+            with self.subTest(label=label), self.assertRaises(
+                self.q.QualificationError
+            ):
+                self.q.validate_frozen_advantages(
+                    changed,
+                    primary_rows={0, 2},
+                    frozen_rows={1, 3},
+                    horizon=self.q.HETEROGENEOUS_HORIZON,
+                )
+
+    def test_snapshot_decoder_distinguishes_behavior_and_tail_coverage(self):
+        def tensor(value):
+            array = np.asarray(value, dtype="<f4")
+            return {
+                "dtype": "f32",
+                "shape": list(array.shape),
+                "data": array.tobytes(),
+            }
+
+        raw = {
+            "num_banks": 2,
+            "num_buffers": 1,
+            "tensors": {
+                "tail_values": tensor([1.0, 2.0]),
+            },
+            "decoder_outputs": [
+                {
+                    "bank": bank,
+                    "buffer": 0,
+                    "active_rows": 1,
+                    "tensor": tensor([[bank, bank + 1.0]]),
+                }
+                for bank in range(2)
+            ],
+            "tail_decoder_outputs": [
+                {
+                    "bank": bank,
+                    "buffer": 0,
+                    "active_rows": 1,
+                    "tensor": tensor([[bank + 2.0, bank + 3.0]]),
+                }
+                for bank in range(2)
+            ],
+        }
+        arrays = self.q.decode_snapshot(raw)
+        self.assertIn("decoder_bank_1_buffer_0", arrays)
+        self.assertIn("tail_decoder_bank_1_buffer_0", arrays)
+        raw["tail_decoder_outputs"].pop()
+        with self.assertRaisesRegex(
+            self.q.QualificationError, "tail decoder.*coverage"
+        ):
+            self.q.decode_snapshot(raw)
+
     def test_ratio_aggregation_requires_finite_unity_and_complete_primary_coverage(self):
         calls = [
             {"selected_rows": np.array([0, 0], np.int32),
@@ -321,6 +1248,24 @@ class QualificationValidatorTests(unittest.TestCase):
             self.q.validate_ratio_calls(
                 frozen, primary_rows={0}, frozen_rows={2}, atol=1e-6)
 
+    def test_each_ratio_attempt_refreshes_and_consumes_one_tail_record(self):
+        source = RUNNER.read_text(encoding="utf-8")
+        body = source[
+            source.index("def _measure_ratio("):
+            source.index("def _measure_throughput(")
+        ]
+        loop = body[body.index("while covered != primary_rows"):]
+        rollout_at = loop.index("_C.rollouts(pufferl)")
+        train_at = loop.index("_C.train(pufferl)")
+        consumed_at = loop.index('arrays[f"tail_valid_after_train_{calls}"]')
+        integrity_at = loop.index("bind_transition_integrity(")
+        self.assertLess(rollout_at, train_at)
+        self.assertLess(train_at, consumed_at)
+        self.assertLess(consumed_at, integrity_at)
+        self.assertIn('arrays[f"advantages_{calls}"]', loop)
+        self.assertIn("TAIL_FLOAT_SNAPSHOT_FIELDS", loop)
+        self.assertIn('arrays[f"{key}_{calls}"]', loop)
+
     def test_weight_identity_and_throughput_comparison_are_fail_closed(self):
         digest = hashlib.sha256(b"same weights").hexdigest()
         self.q.validate_weight_identity(digest, digest)
@@ -328,7 +1273,8 @@ class QualificationValidatorTests(unittest.TestCase):
             self.q.validate_weight_identity(digest, "0" * 64)
 
         baseline = {
-            "host": "rtx2070", "gpu": "RTX 2070", "precision_bytes": 4,
+            "host": "rtx2070", "gpu": "RTX 2070",
+            "gpu_uuid": "GPU-00000000", "precision_bytes": 4,
             "config": {"cudagraphs": 10, "vec": {"total_agents": 4096}},
             "steps_per_second": 1000.0,
             "hard_integrity_zero": True,
@@ -337,6 +1283,11 @@ class QualificationValidatorTests(unittest.TestCase):
             "hard_integrity": {
                 key: 0.0 for key in self.q.HARD_INTEGRITY_KEYS
             },
+            "warmup_hard_integrity_zero": True,
+            "warmup_hard_integrity": {
+                key: 0.0 for key in self.q.HARD_INTEGRITY_KEYS
+            },
+            "tail_records_explicitly_discarded": 10,
             "utilization": {},
         }
         candidate = dict(baseline, steps=950, steps_per_second=950.0)
@@ -350,6 +1301,7 @@ class QualificationValidatorTests(unittest.TestCase):
         # A faster number measured on a different GPU or config is not a pass.
         for key, value in (
             ("gpu", "different"),
+            ("gpu_uuid", "GPU-different"),
             ("host", "other-host"),
             ("config", {"cudagraphs": 10, "vec": {"total_agents": 512}}),
         ):
@@ -497,8 +1449,13 @@ class QualificationValidatorTests(unittest.TestCase):
                 "pufferlib/torch_pufferl.py",
                 "src/bindings.cu",
                 "src/bindings_cpu.cpp",
+                "src/cudnn_conv2d.cu",
                 "src/kernels.cu",
+                "src/models.cu",
+                "src/muon.cu",
+                "src/ocean.cu",
                 "src/pufferlib.cu",
+                "src/tensor.h",
                 "src/vecenv.h",
             ),
         )
@@ -536,13 +1493,18 @@ class QualificationValidatorTests(unittest.TestCase):
                 observation_abi="obs-v6",
                 observation_version=6,
                 action_abi="exact-joint-v1",
+                rollout_transition_contract=
+                    self.q.ROLLOUT_TRANSITION_CONTRACT,
                 environment_config_schema=
                     self.q.ENVIRONMENT_CONFIG_SCHEMA,
                 strict_env_config_testing=False,
                 precision_bytes=4,
                 env_name="bloodbowl",
                 qualification_recurrent_state=object(),
+                qualification_policy_weights=object(),
                 qualification_snapshot=object(),
+                qualification_graph_execution=object(),
+                qualification_consume_tail=object(),
             )
             identity = self.q._module_identity(backend, module, puffer)
             self.assertIs(identity["qualification_surface"], True)
@@ -587,6 +1549,8 @@ class QualificationValidatorTests(unittest.TestCase):
             "observation_abi": "obs-v6",
             "observation_version": 6,
             "action_abi": "exact-joint-v1",
+            "rollout_transition_contract":
+                self.q.ROLLOUT_TRANSITION_CONTRACT,
             "environment_config_schema": self.q.ENVIRONMENT_CONFIG_SCHEMA,
             "strict_env_config_testing": False,
             "precision_bytes": 4,
@@ -601,6 +1565,7 @@ class QualificationValidatorTests(unittest.TestCase):
             ("observation_abi", "obs-v4"),
             ("observation_version", 4),
             ("action_abi", "marginal"),
+            ("rollout_transition_contract", "other"),
             ("environment_config_schema", "other"),
             ("strict_env_config_testing", True),
             ("strict_env_config_testing", 0),
@@ -626,6 +1591,216 @@ class QualificationValidatorTests(unittest.TestCase):
             ("strict_positive_full", "strict_positive_sparse"),
         )
         self.assertIn("strict_environment_config", self.q.MANDATORY_GATES)
+
+    def test_cuda_advantage_oracle_is_a_mandatory_authenticated_gate(self):
+        self.assertIn("cuda_advantage_oracle", self.q.MANDATORY_GATES)
+        evidence = {
+            "schema_version": self.q.CUDA_ADVANTAGE_ORACLE_SCHEMA_VERSION,
+            "contract": self.q.ROLLOUT_TRANSITION_CONTRACT,
+            "device": "cuda",
+            "precision_bytes": 4,
+            "case_names": list(self.q.CUDA_ADVANTAGE_ORACLE_CASES),
+            "case_count": len(self.q.CUDA_ADVANTAGE_ORACLE_CASES),
+            "exact_once": True,
+            "verifier_path": str(
+                self.q.ROLLOUT_TRANSITION_VERIFIER.resolve()
+            ),
+            "verifier_sha256": self.q.sha256(
+                self.q.ROLLOUT_TRANSITION_VERIFIER
+            ),
+        }
+        accepted = self.q.validate_cuda_advantage_oracle_evidence(
+            evidence,
+            rehash_files=True,
+        )
+        self.assertEqual(
+            accepted["case_names"],
+            list(self.q.CUDA_ADVANTAGE_ORACLE_CASES),
+        )
+        mutations = (
+            ("case_names", list(self.q.CUDA_ADVANTAGE_ORACLE_CASES[:-1])),
+            ("case_count", len(self.q.CUDA_ADVANTAGE_ORACLE_CASES) - 1),
+            ("exact_once", False),
+            ("precision_bytes", 2),
+            ("verifier_sha256", "0" * 64),
+        )
+        for key, value in mutations:
+            with self.subTest(key=key), self.assertRaises(
+                self.q.QualificationError
+            ):
+                self.q.validate_cuda_advantage_oracle_evidence(
+                    dict(evidence, **{key: value}),
+                    rehash_files=True,
+                )
+
+    def test_rollout_cells_execute_cuda_advantage_oracle_before_acceptance(self):
+        source = RUNNER.read_text(encoding="utf-8")
+        body = source[
+            source.index("def run_cell("):
+            source.index("def _git_output(")
+        ]
+        self.assertIn(
+            'if args.kind == "rollout":',
+            body,
+        )
+        self.assertIn(
+            "execute_cuda_advantage_oracle(_C)",
+            body,
+        )
+        parent = source[
+            source.index("def _run_worker("):
+            source.index("def _require_same_identity(")
+        ]
+        self.assertIn(
+            "validate_cuda_advantage_oracle_evidence(",
+            parent,
+        )
+
+    def test_integrated_rollout_train_oracle_reconstructs_every_slot(self):
+        self.assertEqual(
+            self.q.HETEROGENEOUS_HORIZON,
+            8,
+            "the real rollout-to-train oracle must exercise the vector kernel",
+        )
+        arrays, state, config = integrated_advantage_fixture(self.q)
+        accepted = self.q.validate_integrated_advantage_oracle(
+            arrays,
+            state,
+            config,
+            atol=2.0e-5,
+        )
+        self.assertEqual(accepted["nonzero_primary_last_rows"], [0, 1, 4, 5])
+        self.assertTrue(accepted["frozen_rows_exact_zero"])
+        self.assertTrue(accepted["tail_consumed"])
+
+        mutations = []
+        changed = {key: value.copy() for key, value in arrays.items()}
+        changed["advantages_after_train"][0, -1] = np.float32(0.0)
+        mutations.append(("zero final primary slot", changed, state, config))
+        changed = {key: value.copy() for key, value in arrays.items()}
+        changed["advantages_after_train"][0, 0] += np.float32(0.25)
+        mutations.append(("wrong earlier primary slot", changed, state, config))
+        changed = {key: value.copy() for key, value in arrays.items()}
+        changed["advantages_after_train"][2, 0] = np.nextafter(
+            np.float32(0.0),
+            np.float32(1.0),
+        )
+        mutations.append(("nonzero frozen slot", changed, state, config))
+        changed = {key: value.copy() for key, value in arrays.items()}
+        changed["tail_valid_after_train"][0] = np.int32(1)
+        mutations.append(("unconsumed tail", changed, state, config))
+        changed = {key: value.copy() for key, value in arrays.items()}
+        changed["tail_rewards"][0] += np.float32(1.0)
+        mutations.append(("wrong tail wiring", changed, state, config))
+        changed = {key: value.copy() for key, value in arrays.items()}
+        changed["rewards"][1, 0] = np.float32(2.0)
+        mutations.append(("wrong delayed field wiring", changed, state, config))
+
+        for label, changed, changed_state, changed_config in mutations:
+            with self.subTest(label=label), self.assertRaises(
+                self.q.QualificationError
+            ):
+                self.q.validate_integrated_advantage_oracle(
+                    changed,
+                    changed_state,
+                    changed_config,
+                    atol=2.0e-5,
+                )
+
+    def test_integrated_oracle_rejects_degenerate_last_slot_and_open_config(self):
+        arrays, state, config = integrated_advantage_fixture(self.q)
+        degenerate = {key: value.copy() for key, value in arrays.items()}
+        degenerate["tail_rewards"][[0, 1, 4, 5]] = np.float32(0.0)
+        degenerate["advantages_after_train"].fill(np.float32(0.0))
+        with self.assertRaisesRegex(
+            self.q.QualificationError,
+            "nondegenerate|non-degenerate|last",
+        ):
+            self.q.validate_integrated_advantage_oracle(
+                degenerate,
+                state,
+                config,
+                atol=2.0e-5,
+            )
+
+        for path, value in (
+            (("train", "learning_rate"), 1.0e-4),
+            (("train", "replay_ratio"), 2),
+            (("train", "minibatch_size"), 8),
+            (("train", "anneal_lr"), True),
+            (("train", "gamma"), 0.9),
+            (("train", "gae_lambda"), 0.8),
+            (("train", "vtrace_rho_clip"), 0.75),
+            (("train", "vtrace_c_clip"), 0.5),
+            (("reset_state",), False),
+        ):
+            changed = json.loads(json.dumps(config))
+            target = changed
+            for key in path[:-1]:
+                target = target[key]
+            target[path[-1]] = value
+            with self.subTest(path=path), self.assertRaises(
+                self.q.QualificationError
+            ):
+                self.q.validate_integrated_advantage_oracle(
+                    arrays,
+                    state,
+                    changed,
+                    atol=2.0e-5,
+                )
+
+    def test_graph_modes_require_full_and_last_advantage_parity(self):
+        arrays, state, config = integrated_advantage_fixture(self.q)
+        primary_rows, _ = self.q.derive_row_partition(
+            state,
+            total_agents=8,
+        )
+        accepted = self.q.compare_integrated_advantage_parity(
+            arrays["advantages_after_train"],
+            arrays["advantages_after_train"].copy(),
+            primary_rows=primary_rows,
+            horizon=self.q.HETEROGENEOUS_HORIZON,
+            atol=2.0e-5,
+        )
+        self.assertEqual(accepted["full_max_abs"], 0.0)
+        self.assertEqual(accepted["last_slot_max_abs"], 0.0)
+
+        for index in (
+            (0, 0),
+            (0, self.q.HETEROGENEOUS_HORIZON - 1),
+        ):
+            changed = arrays["advantages_after_train"].copy()
+            changed[index] += np.float32(0.25)
+            with self.subTest(index=index), self.assertRaises(
+                self.q.QualificationError
+            ):
+                self.q.compare_integrated_advantage_parity(
+                    arrays["advantages_after_train"],
+                    changed,
+                    primary_rows=primary_rows,
+                    horizon=self.q.HETEROGENEOUS_HORIZON,
+                    atol=2.0e-5,
+                )
+
+    def test_integrated_rollout_train_oracle_is_parent_recomputed(self):
+        source = RUNNER.read_text(encoding="utf-8")
+        consume = source[
+            source.index("def consume_heterogeneous_tail_record("):
+            source.index("# ---------------------------------------------------------------- state evidence")
+        ]
+        self.assertIn("backend.train(pufferl)", consume)
+        self.assertIn("qualification_snapshot", consume)
+        self.assertIn("advantages_after_train", consume)
+        worker = source[
+            source.index("def _run_worker("):
+            source.index("def _require_same_identity(")
+        ]
+        self.assertIn("validate_integrated_advantage_oracle(", worker)
+        driver = source[
+            source.index("def run_qualification("):
+            source.index("def add_common_arguments(")
+        ]
+        self.assertIn("compare_integrated_advantage_parity(", driver)
 
     def test_strict_negative_records_require_exact_valueerror_diagnostic(self):
         record = {
@@ -874,6 +2049,8 @@ class QualificationValidatorTests(unittest.TestCase):
             "observation_abi": "obs-v6",
             "observation_version": 6,
             "action_abi": "exact-joint-v1",
+            "rollout_transition_contract":
+                self.q.ROLLOUT_TRANSITION_CONTRACT,
             "environment_config_schema": self.q.ENVIRONMENT_CONFIG_SCHEMA,
             "strict_env_config_testing": True,
             "precision_bytes": 4,
@@ -957,6 +2134,14 @@ class QualificationValidatorTests(unittest.TestCase):
                     "sha256": "d" * 64,
                     "reverse_applicable": True,
                 },
+                "rollout_transition_patch": {
+                    "path": (
+                        "/repo/training/"
+                        "puffer_rollout_transition_closure.patch"
+                    ),
+                    "sha256": "1" * 64,
+                    "reverse_applicable": True,
+                },
                 "qualifier": {
                     "path": "/repo/tools/qualify_recurrent_cuda.py",
                     "sha256": "e" * 64,
@@ -995,7 +2180,12 @@ class QualificationValidatorTests(unittest.TestCase):
         evidence = self._strict_stage_evidence_fixture()
         self.q.validate_strict_stage_evidence(evidence)
         mutations = (
-            ("schema", lambda value: value.update(schema_version=2)),
+            (
+                "schema",
+                lambda value: value.update(
+                    schema_version=self.q.STRICT_STAGE_SCHEMA_VERSION + 1
+                ),
+            ),
             ("accepted", lambda value: value.update(accepted=False)),
             (
                 "test role",
@@ -1043,7 +2233,9 @@ class QualificationValidatorTests(unittest.TestCase):
             ),
             (
                 "schema float",
-                lambda value: value.update(schema_version=1.0),
+                lambda value: value.update(
+                    schema_version=float(self.q.STRICT_STAGE_SCHEMA_VERSION)
+                ),
             ),
             (
                 "observation version float",
@@ -1222,6 +2414,29 @@ class QualificationValidatorTests(unittest.TestCase):
                         require_regular=True,
                     )
 
+    def test_require_regular_json_rejects_path_swap_while_opening(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = pathlib.Path(temporary)
+            artifact = directory / "cell.json"
+            replacement = directory / "replacement.json"
+            artifact.write_text('{"accepted":true}\n', encoding="utf-8")
+            replacement.write_text('{"accepted":false}\n', encoding="utf-8")
+            original_open = os.open
+
+            def swap_then_open(path, *args, **kwargs):
+                os.replace(replacement, artifact)
+                return original_open(path, *args, **kwargs)
+
+            with mock.patch.object(
+                os,
+                "open",
+                new=swap_then_open,
+            ), self.assertRaisesRegex(
+                self.q.QualificationError,
+                "changed type or identity while opening",
+            ):
+                self.q._read_json(artifact, require_regular=True)
+
     def test_strict_stage_atomic_json_is_bounded_and_non_destructive(self):
         with tempfile.TemporaryDirectory() as temporary:
             output = pathlib.Path(temporary) / "evidence.json"
@@ -1235,6 +2450,29 @@ class QualificationValidatorTests(unittest.TestCase):
                 )
             self.assertFalse(output.exists())
             self.assertEqual(list(output.parent.glob(".evidence.json.tmp.*")), [])
+
+    def test_cell_json_writer_does_not_follow_predictable_temp_symlink(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = pathlib.Path(temporary)
+            output = directory / "cell.json"
+            victim = directory / "external-victim.json"
+            original = b'{"authority":"external"}\n'
+            victim.write_bytes(original)
+            predictable = directory / f".cell.json.tmp.{os.getpid()}"
+            predictable.symlink_to(victim)
+
+            self.q.write_json_atomic(output, {"accepted": True})
+
+            self.assertEqual(victim.read_bytes(), original)
+            self.assertTrue(predictable.is_symlink())
+            self.assertEqual(
+                json.loads(output.read_text(encoding="utf-8")),
+                {"accepted": True},
+            )
+            self.assertLessEqual(
+                output.stat().st_size,
+                self.q.CELL_MAX_JSON_BYTES,
+            )
 
     def test_strict_stage_cli_requires_explicit_isolation_confirmation(self):
         common = [
@@ -1517,6 +2755,9 @@ class QualificationValidatorTests(unittest.TestCase):
                 self.q, "validate_strict_stage_evidence"
             ), mock.patch.object(
                 self.q, "_require_strict_patch_reverse_applicable"
+            ), mock.patch.object(
+                self.q,
+                "_require_rollout_transition_patch_reverse_applicable",
             ), mock.patch("builtins.print"):
                 self.assertEqual(self.q.run_strict_stage_order(args), 0)
             self.assertEqual(len(run.call_args_list), 3)
@@ -1838,6 +3079,157 @@ class QualificationValidatorTests(unittest.TestCase):
                     [{"identity": identity}, {"identity": {"module_sha256": "b" * 64}}]
                 )
 
+    def test_transition_patch_identity_rehashes_pin_patch_and_applied_tree(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = pathlib.Path(temporary)
+            puffer = directory / "PufferLib"
+            puffer.mkdir()
+            subprocess.run(
+                ["git", "init", "-q"],
+                cwd=puffer,
+                check=True,
+            )
+            subprocess.run(
+                ["git", "config", "user.email", "qualification@example.test"],
+                cwd=puffer,
+                check=True,
+            )
+            subprocess.run(
+                ["git", "config", "user.name", "Qualification Test"],
+                cwd=puffer,
+                check=True,
+            )
+            source = puffer / "surface.txt"
+            source.write_text("before\n", encoding="utf-8")
+            subprocess.run(["git", "add", "surface.txt"], cwd=puffer, check=True)
+            subprocess.run(
+                ["git", "commit", "-qm", "baseline"],
+                cwd=puffer,
+                check=True,
+            )
+            head = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=puffer,
+                text=True,
+                capture_output=True,
+                check=True,
+            ).stdout.strip()
+            source.write_text("after\n", encoding="utf-8")
+            patch = directory / "transition.patch"
+            patch.write_text(
+                subprocess.run(
+                    ["git", "diff", "--", "surface.txt"],
+                    cwd=puffer,
+                    text=True,
+                    capture_output=True,
+                    check=True,
+                ).stdout,
+                encoding="utf-8",
+            )
+            with mock.patch.object(
+                self.q, "PINNED_PUFFER_COMMIT", head
+            ), mock.patch.object(
+                self.q, "ROLLOUT_TRANSITION_PATCH", patch
+            ):
+                identity = self.q._rollout_transition_patch_identity(puffer)
+                self.assertEqual(identity["puffer_git_head"], head)
+                self.assertEqual(
+                    identity["rollout_transition_patch"]["sha256"],
+                    self.q.sha256(patch),
+                )
+                self.q.validate_rollout_transition_patch_identity(
+                    identity,
+                    expected_puffer_root=puffer,
+                    rehash_files=True,
+                )
+                source.write_text("drifted\n", encoding="utf-8")
+                with self.assertRaisesRegex(
+                    self.q.QualificationError, "reverse-applicable"
+                ):
+                    self.q.validate_rollout_transition_patch_identity(
+                        identity,
+                        expected_puffer_root=puffer,
+                        rehash_files=True,
+                    )
+
+    def test_cells_must_share_one_transition_patch_identity(self):
+        identity = {
+            "puffer_git_head": self.q.PINNED_PUFFER_COMMIT,
+            "rollout_transition_patch": {
+                "path": str(ROLLOUT_TRANSITION_PATCH),
+                "sha256": "a" * 64,
+                "reverse_applicable": True,
+            },
+        }
+        self.assertEqual(
+            self.q._require_same_patch_identity(
+                [
+                    {"patch_identity": identity},
+                    {"patch_identity": json.loads(json.dumps(identity))},
+                ]
+            ),
+            identity,
+        )
+        changed = json.loads(json.dumps(identity))
+        changed["rollout_transition_patch"]["sha256"] = "b" * 64
+        with self.assertRaisesRegex(
+            self.q.QualificationError, "patch identity drifted"
+        ):
+            self.q._require_same_patch_identity(
+                [
+                    {"patch_identity": identity},
+                    {"patch_identity": changed},
+                ]
+            )
+
+    def test_transition_patch_identity_schema_is_fail_closed(self):
+        identity = {
+            "puffer_git_head": self.q.PINNED_PUFFER_COMMIT,
+            "rollout_transition_patch": {
+                "path": str(ROLLOUT_TRANSITION_PATCH),
+                "sha256": "a" * 64,
+                "reverse_applicable": True,
+            },
+        }
+        self.q.validate_rollout_transition_patch_identity(identity)
+        mutations = (
+            (
+                "head",
+                lambda value: value.update(puffer_git_head="b" * 40),
+            ),
+            (
+                "path",
+                lambda value: value["rollout_transition_patch"].update(
+                    path="relative.patch"
+                ),
+            ),
+            (
+                "hash",
+                lambda value: value["rollout_transition_patch"].update(
+                    sha256="bad"
+                ),
+            ),
+            (
+                "reverse flag",
+                lambda value: value["rollout_transition_patch"].update(
+                    reverse_applicable=False
+                ),
+            ),
+            (
+                "extra key",
+                lambda value: value["rollout_transition_patch"].update(
+                    unbound=True
+                ),
+            ),
+        )
+        for label, mutate in mutations:
+            changed = json.loads(json.dumps(identity))
+            mutate(changed)
+            with self.subTest(label=label), self.assertRaises(
+                self.q.QualificationError
+            ):
+                self.q.validate_rollout_transition_patch_identity(changed)
+
     # ------------------------------------------------------- CUDA init order
 
     def test_backend_load_preflights_cudart_before_importing_the_extension(self):
@@ -1848,6 +3240,7 @@ class QualificationValidatorTests(unittest.TestCase):
         finish = body.index("finish_cuda_runtime_preflight(")
         self.assertLess(begin, imported, "CUDART must initialize before _C import")
         self.assertLess(imported, finish, "device count must be rechecked after import")
+        self.assertIn('"rollout_transition_contract"', body)
 
     def test_cuda_runtime_evidence_is_fail_closed(self):
         evidence = cuda_runtime_evidence()
@@ -2163,6 +3556,8 @@ class QualificationValidatorTests(unittest.TestCase):
             "--puffer-root", "/tmp/puffer",
             "--kind", "throughput",
             "--cudagraphs", "0",
+            "--run-nonce", TEST_RUN_NONCE,
+            "--cell-nonce", TEST_CELL_NONCE,
             "--output-json", "/tmp/throughput.json",
         ]
         with mock.patch.object(self.q, "run_cell") as run_cell, self.assertRaises(
@@ -2190,6 +3585,139 @@ class QualificationValidatorTests(unittest.TestCase):
                 expected=10,
             )
 
+    def test_graph_on_requires_captured_handles_and_real_launches(self):
+        expected_counts = {
+            "rollout": 288,
+            "tail": 36,
+            "train": 1,
+        }
+        graph_on = {
+            "workload": "rollout",
+            "cudagraphs": 10,
+            "captured": {
+                "rollout": True,
+                "tail": True,
+                "train": True,
+            },
+            "handles_ready": {
+                "rollout": True,
+                "tail": True,
+                "train": True,
+            },
+            "graph_launch_counts": {
+                "rollout": 288,
+                "tail": 36,
+                "train": 1,
+            },
+            "eager_execution_counts": {
+                "rollout": 0,
+                "tail": 0,
+                "train": 0,
+            },
+        }
+        accepted = self.q.validate_graph_execution_evidence(
+            graph_on,
+            expected_cudagraphs=10,
+            expected_workload="rollout",
+            expected_counts=expected_counts,
+        )
+        self.assertEqual(accepted, graph_on)
+
+        for section, key, value in (
+            ("captured", "tail", False),
+            ("handles_ready", "rollout", False),
+            ("graph_launch_counts", "rollout", 0),
+            ("graph_launch_counts", "tail", 0),
+            ("graph_launch_counts", "train", 0),
+            ("eager_execution_counts", "rollout", 1),
+        ):
+            changed = json.loads(json.dumps(graph_on))
+            changed[section][key] = value
+            with self.subTest(section=section, key=key), self.assertRaises(
+                self.q.QualificationError
+            ):
+                self.q.validate_graph_execution_evidence(
+                    changed,
+                    expected_cudagraphs=10,
+                    expected_workload="rollout",
+                    expected_counts=expected_counts,
+                )
+
+        graph_off = {
+            "workload": "rollout",
+            "cudagraphs": -1,
+            "captured": {
+                "rollout": False,
+                "tail": False,
+                "train": False,
+            },
+            "handles_ready": {
+                "rollout": False,
+                "tail": False,
+                "train": False,
+            },
+            "graph_launch_counts": {
+                "rollout": 0,
+                "tail": 0,
+                "train": 0,
+            },
+            "eager_execution_counts": {
+                "rollout": 288,
+                "tail": 36,
+                "train": 1,
+            },
+        }
+        self.q.validate_graph_execution_evidence(
+            graph_off,
+            expected_cudagraphs=-1,
+            expected_workload="rollout",
+            expected_counts=expected_counts,
+        )
+        changed = json.loads(json.dumps(graph_off))
+        changed["eager_execution_counts"]["tail"] = 35
+        with self.assertRaises(self.q.QualificationError):
+            self.q.validate_graph_execution_evidence(
+                changed,
+                expected_cudagraphs=-1,
+                expected_workload="rollout",
+                expected_counts=expected_counts,
+            )
+
+    def test_qualification_tail_discard_is_explicit_and_closed(self):
+        backend = SimpleNamespace(
+            qualification_consume_tail=mock.Mock(
+                return_value={
+                    "before": [1, 1],
+                    "after": [0, 0],
+                }
+            )
+        )
+        accepted = self.q.consume_qualification_tail(
+            backend,
+            object(),
+            num_buffers=2,
+            label="throughput",
+        )
+        self.assertEqual(accepted["before"], [1, 1])
+        self.assertEqual(accepted["after"], [0, 0])
+        backend.qualification_consume_tail.assert_called_once()
+
+        for malformed in (
+            {"before": [0, 1], "after": [0, 0]},
+            {"before": [1, 1], "after": [0, 1]},
+            {"before": [1, 1], "after": [0, 0], "extra": True},
+        ):
+            backend.qualification_consume_tail.return_value = malformed
+            with self.subTest(malformed=malformed), self.assertRaises(
+                self.q.QualificationError
+            ):
+                self.q.consume_qualification_tail(
+                    backend,
+                    object(),
+                    num_buffers=2,
+                    label="throughput",
+                )
+
     def test_throughput_minibatch_matches_rollout_quantum(self):
         args = mock.Mock(
             seed=271828,
@@ -2207,17 +3735,28 @@ class QualificationValidatorTests(unittest.TestCase):
         )
         self.assertEqual(config["train"]["minibatch_size"], 16384)
         self.assertEqual(config["cudagraphs"], 10)
+        self.assertEqual(config["env"]["max_decisions"], 4096)
+        self.assertEqual(config["policy"], {
+            "hidden_size": 512,
+            "num_layers": 3,
+        })
         self.assertEqual(self.q.DEFAULT_THROUGHPUT_MINIBATCH_SIZE, 16384)
-        self.assertEqual(
-            self.q.parse_args([
-                "cell",
-                "--puffer-root", "/tmp/puffer",
-                "--kind", "throughput",
-                "--cudagraphs", "10",
-                "--output-json", "/tmp/throughput.json",
-            ]).throughput_minibatch_size,
-            16384,
-        )
+        parsed = self.q.parse_args([
+            "cell",
+            "--puffer-root", "/tmp/puffer",
+            "--kind", "throughput",
+            "--cudagraphs", "10",
+            "--run-nonce", TEST_RUN_NONCE,
+            "--cell-nonce", TEST_CELL_NONCE,
+            "--output-json", "/tmp/throughput.json",
+        ])
+        self.assertEqual(parsed.throughput_minibatch_size, 16384)
+        self.assertEqual(parsed.throughput_agents, 4096)
+        self.assertEqual(parsed.throughput_buffers, 2)
+        self.assertEqual(parsed.throughput_threads, 20)
+        self.assertEqual(parsed.throughput_horizon, 64)
+        self.assertEqual(parsed.throughput_hidden, 512)
+        self.assertEqual(parsed.throughput_layers, 3)
 
     def test_qualification_minibatch_must_fit_rollout_contract(self):
         base = {
@@ -2246,6 +3785,8 @@ class QualificationValidatorTests(unittest.TestCase):
             "--puffer-root", "/tmp/puffer",
             "--kind", "throughput",
             "--cudagraphs", "10",
+            "--run-nonce", TEST_RUN_NONCE,
+            "--cell-nonce", TEST_CELL_NONCE,
             "--output-json", "/tmp/throughput.json",
             "--throughput-agents", "2048",
             "--throughput-horizon", "64",
@@ -2258,6 +3799,179 @@ class QualificationValidatorTests(unittest.TestCase):
         run_cell.assert_not_called()
 
     # ------------------------------------------------------- driver behaviour
+
+    def test_cell_artifact_path_is_exact_and_kind_bound(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary).resolve()
+            expected = root / "graph-off.npz"
+            np.savez(expected, values=np.zeros(1, dtype=np.float32))
+            accepted = {
+                "artifact": str(expected),
+                "artifact_bytes": expected.stat().st_size,
+                "artifact_sha256": hashlib.sha256(
+                    expected.read_bytes()
+                ).hexdigest(),
+            }
+            self.q.validate_cell_artifact_path(
+                accepted,
+                kind="rollout",
+                expected=expected,
+            )
+            expected.write_bytes(b"replaced after worker")
+            with self.assertRaises(self.q.QualificationError):
+                self.q.validate_cell_artifact_path(
+                    accepted,
+                    kind="rollout",
+                    expected=expected,
+                )
+            for record, kind in (
+                ({}, "rollout"),
+                ({"artifact": str(root / "redirected.npz")}, "rollout"),
+                (accepted, "construction"),
+            ):
+                with self.subTest(record=record, kind=kind), self.assertRaises(
+                    self.q.QualificationError
+                ):
+                    self.q.validate_cell_artifact_path(
+                        record,
+                        kind=kind,
+                        expected=expected,
+                    )
+
+    def test_cell_artifact_hash_and_npz_parse_use_one_exact_byte_snapshot(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary).resolve()
+            artifact = root / "cell.npz"
+            replacement = root / "replacement.npz"
+            np.savez(artifact, values=np.array([1.0, 2.0], dtype=np.float32))
+            np.savez(replacement, values=np.array([9.0, 8.0], dtype=np.float32))
+            self.assertEqual(artifact.stat().st_size, replacement.stat().st_size)
+            record = {
+                "artifact": str(artifact),
+                "artifact_bytes": artifact.stat().st_size,
+                "artifact_sha256": hashlib.sha256(
+                    artifact.read_bytes()
+                ).hexdigest(),
+            }
+            validated = self.q.validate_cell_artifact_path(
+                record,
+                kind="rollout",
+                expected=artifact,
+            )
+            os.replace(replacement, artifact)
+            arrays = self.q._read_npz(validated)
+            np.testing.assert_array_equal(
+                arrays["values"],
+                np.array([1.0, 2.0], dtype=np.float32),
+            )
+
+    def test_parent_owns_cell_record_identity_and_nested_throughput_config(self):
+        source = RUNNER.read_text(encoding="utf-8")
+        worker = source[
+            source.index("def _run_worker("):
+            source.index("def _require_same_identity(")
+        ]
+        for fragment in (
+            '"record_path"',
+            '"record_bytes"',
+            '"record_sha256"',
+            "spoofed parent-owned record metadata",
+            'throughput_payload.get("config") != record["config"]',
+            "throughput payload config differs from parent request",
+        ):
+            with self.subTest(fragment=fragment):
+                self.assertIn(fragment, worker)
+
+    def test_worker_cannot_accept_stale_cells_when_child_writes_nothing(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            python = root / "python"
+            python.write_text("binary placeholder\n", encoding="utf-8")
+            stale_json = root / "construction.json"
+            stale_npz = root / "construction.npz"
+            victim_json = root / "outside-victim.json"
+            victim_npz = root / "outside-victim.npz"
+            victim_json.write_text(
+                json.dumps({
+                    "schema_version": self.q.SCHEMA_VERSION,
+                    "accepted": True,
+                    "run_nonce": TEST_RUN_NONCE,
+                    "cell_nonce": TEST_CELL_NONCE,
+                }),
+                encoding="utf-8",
+            )
+            victim_npz.write_bytes(b"stale GPU evidence")
+            stale_json.symlink_to(victim_json)
+            stale_npz.symlink_to(victim_npz)
+            args = mock.Mock(
+                python=python,
+                puffer_root=root,
+                seed=1,
+                ratio_call_limit=64,
+                throughput_agents=2048,
+                throughput_buffers=2,
+                throughput_threads=16,
+                throughput_horizon=64,
+                throughput_hidden=512,
+                throughput_layers=3,
+                throughput_minibatch_size=16384,
+                throughput_warmup_rollouts=2,
+                throughput_timed_rollouts=8,
+                cell_timeout_seconds=1800,
+            )
+            with mock.patch.object(
+                self.q.subprocess,
+                "run",
+                return_value=mock.Mock(returncode=0, stdout="", stderr=""),
+            ), self.assertRaisesRegex(
+                self.q.QualificationError,
+                "missing|cannot read",
+            ):
+                self.q._run_worker(
+                    args,
+                    kind="construction",
+                    name="construction",
+                    cudagraphs=10,
+                    output=root,
+                    run_nonce=TEST_RUN_NONCE,
+                    cell_nonce=TEST_CELL_NONCE,
+                )
+            self.assertFalse(stale_json.exists())
+            self.assertFalse(stale_npz.exists())
+            self.assertTrue(victim_json.is_file())
+            self.assertEqual(victim_npz.read_bytes(), b"stale GPU evidence")
+
+    def test_final_verdict_retains_execution_evidence_and_rechecks_cell_bytes(self):
+        source = RUNNER.read_text(encoding="utf-8")
+        driver = source[
+            source.index("def run_qualification("):
+            source.index("def add_common_arguments(")
+        ]
+        for fragment in (
+            '"graph_off_execution": graph_off["graph_execution"]',
+            '"graph_on_execution": graph_on["graph_execution"]',
+            '"graph_execution": ratio["graph_execution"]',
+            '"graph_execution": throughput_cell["graph_execution"]',
+            '"record_bytes": record["record_bytes"]',
+            '"record_sha256": record["record_sha256"]',
+            "JSON artifact drifted",
+            "NPZ artifact drifted",
+        ):
+            with self.subTest(fragment=fragment):
+                self.assertIn(fragment, driver)
+
+    def test_npz_reader_rejects_symlinks(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            target = root / "target.npz"
+            np.savez(target, values=np.zeros(1, dtype=np.float32))
+            artifact = root / "artifact.npz"
+            artifact.symlink_to(target)
+            with self.assertRaisesRegex(
+                self.q.QualificationError,
+                "regular non-symlink",
+            ):
+                self.q._read_npz(artifact)
 
     def test_worker_preserves_explicit_venv_python_symlink(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -2288,17 +4002,37 @@ class QualificationValidatorTests(unittest.TestCase):
                 cell_timeout_seconds=1800,
             )
             record = {
+                "schema_version": self.q.SCHEMA_VERSION,
                 "accepted": True,
+                "run_nonce": TEST_RUN_NONCE,
+                "cell_nonce": TEST_CELL_NONCE,
                 "config": {"cudagraphs": 10},
                 "cuda_runtime_preflight": cuda_runtime_evidence(),
             }
+            expected_record = bound_json_result(
+                self.q,
+                output / "construction.json",
+                dict(record),
+            )[1]
             with mock.patch.object(
                 self.q.subprocess, "run",
                 return_value=mock.Mock(returncode=0, stdout="", stderr=""),
-            ) as run, mock.patch.object(self.q, "_read_json", return_value=record):
-                self.q._run_worker(
+            ) as run, mock.patch.object(
+                self.q,
+                "_read_json_artifact",
+                side_effect=lambda path, **_kwargs: bound_json_result(
+                    self.q, path, record
+                ),
+            ), mock.patch.object(
+                self.q, "_cell_config", return_value=record["config"]
+            ), mock.patch.object(
+                self.q, "validate_rollout_transition_patch_identity"
+            ):
+                observed = self.q._run_worker(
                     args, kind="construction", name="construction",
                     cudagraphs=10, output=output,
+                    run_nonce=TEST_RUN_NONCE,
+                    cell_nonce=TEST_CELL_NONCE,
                 )
             command = run.call_args.args[0]
             # Resolving the symlink would run the base interpreter, not the venv.
@@ -2308,6 +4042,19 @@ class QualificationValidatorTests(unittest.TestCase):
             self.assertEqual(
                 command[command.index("--throughput-minibatch-size") + 1], "16384"
             )
+            self.assertEqual(
+                observed["record_path"],
+                str((output / "construction.json").resolve()),
+            )
+            self.assertEqual(
+                observed["record_bytes"],
+                len(expected_record.encoded),
+            )
+            self.assertEqual(
+                observed["record_sha256"],
+                expected_record.sha256,
+            )
+            self.assertIsNone(observed["_artifact_arrays"])
 
     def test_worker_rejects_a_cell_that_ran_a_different_graph_mode(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -2323,7 +4070,10 @@ class QualificationValidatorTests(unittest.TestCase):
                 throughput_timed_rollouts=8, cell_timeout_seconds=1800,
             )
             record = {
+                "schema_version": self.q.SCHEMA_VERSION,
                 "accepted": True,
+                "run_nonce": TEST_RUN_NONCE,
+                "cell_nonce": TEST_CELL_NONCE,
                 "config": {"cudagraphs": 10},
                 "cuda_runtime_preflight": cuda_runtime_evidence(),
             }
@@ -2331,28 +4081,627 @@ class QualificationValidatorTests(unittest.TestCase):
                 self.q.subprocess, "run",
                 return_value=mock.Mock(returncode=0, stdout="", stderr=""),
             ), mock.patch.object(
-                self.q, "_read_json", return_value=record
+                self.q,
+                "_read_json_artifact",
+                side_effect=lambda path, **_kwargs: bound_json_result(
+                    self.q, path, record
+                ),
+            ), mock.patch.object(
+                self.q, "validate_rollout_transition_patch_identity"
             ), self.assertRaisesRegex(
                 self.q.QualificationError, "cudagraph warmup"
             ):
                 self.q._run_worker(
                     args, kind="rollout", name="graph-off", cudagraphs=-1,
                     output=root,
+                    run_nonce=TEST_RUN_NONCE,
+                    cell_nonce=TEST_CELL_NONCE,
                 )
 
-    def test_run_is_rerunnable_over_an_existing_output_directory(self):
-        """The harness is a smoke test, not a one-shot notarized event."""
+    def test_parent_rehashes_transition_patch_identity_for_every_worker_record(self):
         with tempfile.TemporaryDirectory() as temporary:
-            output = pathlib.Path(temporary) / "qualification"
+            root = pathlib.Path(temporary)
+            python = root / "python"
+            python.write_text("binary placeholder\n", encoding="utf-8")
+            args = mock.Mock(
+                python=python, puffer_root=root, seed=1, ratio_call_limit=64,
+                throughput_agents=2048, throughput_buffers=2,
+                throughput_threads=16, throughput_horizon=64,
+                throughput_hidden=512, throughput_layers=3,
+                throughput_minibatch_size=16384, throughput_warmup_rollouts=2,
+                throughput_timed_rollouts=8, cell_timeout_seconds=1800,
+            )
+            patch_identity = {
+                "puffer_git_head": self.q.PINNED_PUFFER_COMMIT,
+                "rollout_transition_patch": {
+                    "path": str(ROLLOUT_TRANSITION_PATCH),
+                    "sha256": "a" * 64,
+                    "reverse_applicable": True,
+                },
+            }
+            record = {
+                "schema_version": self.q.SCHEMA_VERSION,
+                "accepted": True,
+                "run_nonce": TEST_RUN_NONCE,
+                "cell_nonce": TEST_CELL_NONCE,
+                "patch_identity": patch_identity,
+                "config": {"cudagraphs": 10},
+                "cuda_runtime_preflight": cuda_runtime_evidence(),
+            }
+            with mock.patch.object(
+                self.q.subprocess,
+                "run",
+                return_value=mock.Mock(returncode=0, stdout="", stderr=""),
+            ), mock.patch.object(
+                self.q,
+                "_read_json_artifact",
+                side_effect=lambda path, **_kwargs: bound_json_result(
+                    self.q, path, record
+                ),
+            ), mock.patch.object(
+                self.q, "_cell_config", return_value=record["config"]
+            ), mock.patch.object(
+                self.q, "validate_rollout_transition_patch_identity"
+            ) as validate:
+                self.q._run_worker(
+                    args,
+                    kind="construction",
+                    name="construction",
+                    cudagraphs=10,
+                    output=root,
+                    run_nonce=TEST_RUN_NONCE,
+                    cell_nonce=TEST_CELL_NONCE,
+                )
+            validate.assert_called_once_with(
+                patch_identity,
+                expected_puffer_root=root,
+                rehash_files=True,
+            )
+
+    def test_parent_rejects_missing_stale_or_noninteger_cell_schema(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            python = root / "python"
+            python.write_text("binary placeholder\n", encoding="utf-8")
+            args = mock.Mock(
+                python=python, puffer_root=root, seed=1, ratio_call_limit=64,
+                throughput_agents=2048, throughput_buffers=2,
+                throughput_threads=16, throughput_horizon=64,
+                throughput_hidden=512, throughput_layers=3,
+                throughput_minibatch_size=16384, throughput_warmup_rollouts=2,
+                throughput_timed_rollouts=8, cell_timeout_seconds=1800,
+            )
+            base = {
+                "accepted": True,
+                "run_nonce": TEST_RUN_NONCE,
+                "cell_nonce": TEST_CELL_NONCE,
+                "config": {"cudagraphs": 10},
+                "cuda_runtime_preflight": cuda_runtime_evidence(),
+            }
+            for label, schema in (
+                ("missing", None),
+                ("stale", self.q.SCHEMA_VERSION - 1),
+                ("float", float(self.q.SCHEMA_VERSION)),
+                ("bool", True),
+            ):
+                record = dict(base)
+                if schema is not None:
+                    record["schema_version"] = schema
+                with mock.patch.object(
+                    self.q.subprocess,
+                    "run",
+                    return_value=mock.Mock(
+                        returncode=0,
+                        stdout="",
+                        stderr="",
+                    ),
+                ), mock.patch.object(
+                    self.q,
+                    "_read_json_artifact",
+                    side_effect=lambda path, **_kwargs: bound_json_result(
+                        self.q, path, record
+                    ),
+                ), mock.patch.object(
+                    self.q, "validate_rollout_transition_patch_identity"
+                ) as validate, self.subTest(label=label), self.assertRaisesRegex(
+                    self.q.QualificationError, "schema"
+                ):
+                    self.q._run_worker(
+                        args,
+                        kind="construction",
+                        name="construction",
+                        cudagraphs=10,
+                        output=root,
+                        run_nonce=TEST_RUN_NONCE,
+                        cell_nonce=TEST_CELL_NONCE,
+                    )
+                validate.assert_not_called()
+
+    def test_graph_off_cell_closes_normally_before_writing_acceptance(self):
+        class Backend:
+            precision_bytes = 4
+
+            def __init__(self, *, close_error=False):
+                self.close_error = close_error
+                self.close_calls = 0
+                self.pufferl = object()
+
+            def create_pufferl(self, _config):
+                return self.pufferl
+
+            def qualification_recurrent_state(self, _pufferl, _clear):
+                return {}
+
+            def rollouts(self, _pufferl):
+                return None
+
+            def qualification_snapshot(self, _pufferl):
+                return {}
+
+            def qualification_graph_execution(self, _pufferl):
+                return {
+                    "cudagraphs": -1,
+                    "captured": {
+                        "rollout": False,
+                        "tail": False,
+                        "train": False,
+                    },
+                    "handles_ready": {
+                        "rollout": False,
+                        "tail": False,
+                        "train": False,
+                    },
+                    "graph_launch_counts": {
+                        "rollout": 0,
+                        "tail": 0,
+                        "train": 0,
+                    },
+                    "eager_execution_counts": {
+                        "rollout": 3,
+                        "tail": 3,
+                        "train": 1,
+                    },
+                }
+
+            def close(self, pufferl):
+                self.close_calls += 1
+                if pufferl is not self.pufferl:
+                    raise AssertionError("wrong trainer closed")
+                if self.close_error:
+                    raise RuntimeError("close failed")
+
+        config = {
+            "cudagraphs": -1,
+            "vec": {
+                "num_frozen_banks": 0,
+                "total_agents": 2,
+                "num_buffers": 1,
+            },
+            "env": {"max_decisions": 1},
+            "train": {
+                "horizon": 1,
+                "minibatch_size": 2,
+                "replay_ratio": 1,
+            },
+        }
+        arrays = {
+            "tail_rewards": np.zeros(2, np.float32),
+            "tail_terminals": np.zeros(2, np.float32),
+            "tail_values": np.zeros(2, np.float32),
+            "tail_valid": np.ones(1, np.int32),
+        }
+        for close_error in (False, True):
+            with self.subTest(close_error=close_error), tempfile.TemporaryDirectory(
+            ) as temporary:
+                root = pathlib.Path(temporary)
+                output_json = root / "cell.json"
+                args = SimpleNamespace(
+                    output_json=output_json,
+                    output_npz=root / "cell.npz",
+                    puffer_root=root,
+                    kind="rollout",
+                    cudagraphs=-1,
+                    seed=1,
+                    run_nonce=TEST_RUN_NONCE,
+                    cell_nonce=TEST_CELL_NONCE,
+                )
+                backend = Backend(close_error=close_error)
+                patches = (
+                    mock.patch.object(
+                        self.q,
+                        "_rollout_transition_patch_identity",
+                        return_value={"verified": True},
+                    ),
+                    mock.patch.object(
+                        self.q,
+                        "_load_backend",
+                        return_value=(backend, root / "_C.so", {}),
+                    ),
+                    mock.patch.object(
+                        self.q, "_cell_config", return_value=config
+                    ),
+                    mock.patch.object(
+                        self.q, "_module_identity", return_value={}
+                    ),
+                    mock.patch.object(
+                        self.q,
+                        "execute_cuda_advantage_oracle",
+                        return_value={"accepted": True},
+                    ),
+                    mock.patch.object(self.q, "validate_module_identity"),
+                    mock.patch.object(self.q, "validate_zero_state"),
+                    mock.patch.object(
+                        self.q,
+                        "_measure_heterogeneous_rollout",
+                        return_value=arrays,
+                    ),
+                    mock.patch.object(
+                        self.q,
+                        "validate_tail_snapshot",
+                        return_value={"valid_buffers": 1},
+                    ),
+                    mock.patch.object(
+                        self.q,
+                        "validate_tail_value_routing",
+                        return_value={},
+                    ),
+                    mock.patch.object(self.q, "bind_transition_integrity"),
+                )
+                with patches[0], patches[1], patches[2], patches[3], patches[
+                    4
+                ], patches[5], patches[6], patches[7], patches[8], patches[
+                    9
+                ], patches[10]:
+                    if close_error:
+                        with self.assertRaisesRegex(RuntimeError, "close failed"):
+                            self.q.run_cell(args)
+                    else:
+                        self.assertEqual(self.q.run_cell(args), 0)
+                self.assertEqual(backend.close_calls, 1)
+                record = json.loads(output_json.read_text(encoding="utf-8"))
+                self.assertIs(record["accepted"], not close_error)
+                if close_error:
+                    self.assertIn("close failed", record["error"])
+
+    def test_run_is_rerunnable_over_an_existing_output_directory(self):
+        """A failed rerun atomically invalidates any prior accepted verdict."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            output = root / "qualification"
             output.mkdir()
             stale = output / "QUALIFICATION.json"
             stale.write_text("stale verdict\n", encoding="utf-8")
-            args = mock.Mock(output=output)
+            baseline = root / "baseline.json"
+            throughput = {
+                "host": "rtx2070",
+                "gpu": "RTX 2070",
+                "gpu_uuid": "GPU-00000000",
+                "precision_bytes": 4,
+                "config": {"cudagraphs": 10},
+                "steps_per_second": 1000.0,
+                "hard_integrity_zero": True,
+                "steps": 1000,
+                "elapsed_seconds": 1.0,
+                "median_rollout_seconds": 0.1,
+                "p95_rollout_seconds": 0.2,
+                "hard_integrity": {
+                    key: 0.0 for key in self.q.HARD_INTEGRITY_KEYS
+                },
+                "warmup_hard_integrity_zero": True,
+                "warmup_hard_integrity": {
+                    key: 0.0 for key in self.q.HARD_INTEGRITY_KEYS
+                },
+                "tail_records_explicitly_discarded": 10,
+                "utilization": {},
+            }
+            baseline.write_text(
+                json.dumps({"throughput": throughput}),
+                encoding="utf-8",
+            )
+            args = mock.Mock(
+                output=output,
+                baseline_throughput=baseline,
+                max_regression_fraction=0.10,
+                ratio_call_limit=64,
+                throughput_warmup_rollouts=2,
+                throughput_timed_rollouts=8,
+                throughput_agents=2048,
+                throughput_horizon=64,
+                throughput_minibatch_size=16384,
+            )
             with mock.patch.object(
                 self.q, "_run_worker", side_effect=RuntimeError("worker reached")
             ) as worker, self.assertRaisesRegex(RuntimeError, "worker reached"):
                 self.q.run_qualification(args)
             worker.assert_called_once()
+            receipt = json.loads(stale.read_text(encoding="utf-8"))
+            self.assertIs(receipt["accepted"], False)
+            self.assertEqual(receipt["status"], "in_progress")
+
+    def test_invalid_run_arguments_also_invalidate_a_stale_verdict(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = pathlib.Path(temporary) / "qualification"
+            output.mkdir()
+            final = output / "QUALIFICATION.json"
+            final.write_text('{"accepted":true}\n', encoding="utf-8")
+            args = mock.Mock(
+                output=output,
+                ratio_call_limit=0,
+                throughput_warmup_rollouts=2,
+                throughput_timed_rollouts=8,
+                throughput_agents=2048,
+                throughput_horizon=64,
+                throughput_minibatch_size=16384,
+            )
+            with self.assertRaisesRegex(
+                self.q.QualificationError,
+                "ratio call limit",
+            ):
+                self.q.run_qualification(args)
+            receipt = json.loads(final.read_text(encoding="utf-8"))
+            self.assertIs(receipt["accepted"], False)
+            self.assertEqual(receipt["status"], "in_progress")
+
+    def test_cli_parse_failure_invalidates_an_identifiable_stale_verdict(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            output = root / "qualification"
+            output.mkdir()
+            final = output / "QUALIFICATION.json"
+            final.write_text(
+                '{"accepted":true,"status":"accepted"}\n',
+                encoding="utf-8",
+            )
+            with self.assertRaises(SystemExit):
+                self.q.main([
+                    "run",
+                    "--puffer-root", str(root / "puffer"),
+                    "--output", str(output),
+                    "--baseline-throughput", str(root / "baseline.json"),
+                    "--max-regression-fraction", "not-a-number",
+                ])
+            receipt = json.loads(final.read_text(encoding="utf-8"))
+            self.assertIs(receipt["accepted"], False)
+            self.assertEqual(receipt["status"], "argument_parse_failed")
+            self.assertRegex(receipt["run_nonce"], r"^[0-9a-f]{64}$")
+
+    def test_cli_help_does_not_invalidate_an_accepted_verdict(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = pathlib.Path(temporary) / "qualification"
+            output.mkdir()
+            final = output / "QUALIFICATION.json"
+            accepted = b'{"accepted":true,"status":"accepted"}\n'
+            final.write_bytes(accepted)
+            with self.assertRaisesRegex(SystemExit, "0"):
+                self.q.main([
+                    "run",
+                    "--output", str(output),
+                    "--help",
+                ])
+            self.assertEqual(final.read_bytes(), accepted)
+
+    def test_run_requires_and_preflights_immutable_throughput_baseline(self):
+        with self.assertRaises(SystemExit):
+            self.q.parse_args([
+                "run",
+                "--puffer-root",
+                "/tmp/puffer",
+                "--output",
+                "/tmp/qualification",
+            ])
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            output = root / "qualification"
+            args = mock.Mock(
+                output=output,
+                baseline_throughput=None,
+                max_regression_fraction=0.10,
+                ratio_call_limit=64,
+                throughput_warmup_rollouts=2,
+                throughput_timed_rollouts=8,
+                throughput_agents=2048,
+                throughput_horizon=64,
+                throughput_minibatch_size=16384,
+            )
+            with mock.patch.object(self.q, "_run_worker") as worker, \
+                    self.assertRaises(self.q.QualificationError):
+                self.q.run_qualification(args)
+            worker.assert_not_called()
+            receipt = json.loads(
+                (output / "QUALIFICATION.json").read_text(encoding="utf-8")
+            )
+            self.assertIs(receipt["accepted"], False)
+            self.assertEqual(receipt["status"], "in_progress")
+
+    def test_throughput_baseline_is_bounded_external_and_digest_bound(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            output = root / "qualification"
+            baseline = root / "baseline.json"
+            throughput = {
+                "host": "rtx2070",
+                "gpu": "RTX 2070",
+                "gpu_uuid": "GPU-00000000",
+                "precision_bytes": 4,
+                "config": {"cudagraphs": 10},
+                "steps_per_second": 1000.0,
+                "hard_integrity_zero": True,
+                "steps": 1000,
+                "elapsed_seconds": 1.0,
+                "median_rollout_seconds": 0.1,
+                "p95_rollout_seconds": 0.2,
+                "hard_integrity": {
+                    key: 0.0 for key in self.q.HARD_INTEGRITY_KEYS
+                },
+                "warmup_hard_integrity_zero": True,
+                "warmup_hard_integrity": {
+                    key: 0.0 for key in self.q.HARD_INTEGRITY_KEYS
+                },
+                "tail_records_explicitly_discarded": 10,
+                "utilization": {},
+            }
+            baseline.write_text(
+                json.dumps({"throughput": throughput}),
+                encoding="utf-8",
+            )
+            observed, identity = self.q.load_required_throughput_baseline(
+                baseline,
+                output=output,
+            )
+            self.assertEqual(observed, throughput)
+            self.assertEqual(identity["path"], str(baseline.resolve()))
+            self.assertEqual(identity["sha256"], self.q.sha256(baseline))
+
+            output.mkdir()
+            internal = output / "baseline.json"
+            internal.write_bytes(baseline.read_bytes())
+            with self.assertRaises(self.q.QualificationError):
+                self.q.load_required_throughput_baseline(
+                    internal,
+                    output=output,
+                )
+            parent_alias = root / "qualification-alias"
+            parent_alias.symlink_to(output, target_is_directory=True)
+            with self.assertRaises(self.q.QualificationError):
+                self.q.load_required_throughput_baseline(
+                    parent_alias / internal.name,
+                    output=output,
+                )
+            symlink = root / "baseline-link.json"
+            symlink.symlink_to(baseline)
+            with self.assertRaises(self.q.QualificationError):
+                self.q.load_required_throughput_baseline(
+                    symlink,
+                    output=output,
+                )
+
+    def test_throughput_baseline_hashes_the_exact_bytes_it_parses(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            output = root / "qualification"
+            baseline = root / "baseline.json"
+            valid = {
+                "host": "rtx2070",
+                "gpu": "RTX 2070",
+                "gpu_uuid": "GPU-00000000",
+                "precision_bytes": 4,
+                "config": {"cudagraphs": 10},
+                "steps_per_second": 1000.0,
+                "hard_integrity_zero": True,
+                "steps": 1000,
+                "elapsed_seconds": 1.0,
+                "median_rollout_seconds": 0.1,
+                "p95_rollout_seconds": 0.2,
+                "hard_integrity": {
+                    key: 0.0 for key in self.q.HARD_INTEGRITY_KEYS
+                },
+                "warmup_hard_integrity_zero": True,
+                "warmup_hard_integrity": {
+                    key: 0.0 for key in self.q.HARD_INTEGRITY_KEYS
+                },
+                "tail_records_explicitly_discarded": 10,
+                "utilization": {},
+            }
+            encoded = json.dumps({"throughput": valid}).encode("utf-8")
+            baseline.write_bytes(b"not the bytes returned by the one-read helper")
+            with mock.patch.object(
+                self.q,
+                "_read_bounded_regular_bytes",
+                return_value=encoded,
+            ) as read_once:
+                observed, identity = (
+                    self.q.load_required_throughput_baseline(
+                        baseline,
+                        output=output,
+                    )
+                )
+            self.assertEqual(observed, valid)
+            self.assertEqual(
+                identity["sha256"],
+                hashlib.sha256(encoded).hexdigest(),
+            )
+            self.assertEqual(identity["bytes"], len(encoded))
+            read_once.assert_called_once()
+
+    def test_throughput_baseline_reads_the_canonical_checked_path(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            real_parent = root / "real-baseline"
+            real_parent.mkdir()
+            alias_parent = root / "baseline-alias"
+            alias_parent.symlink_to(real_parent, target_is_directory=True)
+            aliased = alias_parent / "baseline.json"
+            canonical = real_parent / "baseline.json"
+            canonical.write_text("{}\n", encoding="utf-8")
+            valid = {
+                "host": "rtx2070",
+                "gpu": "RTX 2070",
+                "gpu_uuid": "GPU-00000000",
+                "precision_bytes": 4,
+                "config": {"cudagraphs": 10},
+                "steps_per_second": 1000.0,
+                "hard_integrity_zero": True,
+                "steps": 1000,
+                "elapsed_seconds": 1.0,
+                "median_rollout_seconds": 0.1,
+                "p95_rollout_seconds": 0.2,
+                "hard_integrity": {
+                    key: 0.0 for key in self.q.HARD_INTEGRITY_KEYS
+                },
+                "warmup_hard_integrity_zero": True,
+                "warmup_hard_integrity": {
+                    key: 0.0 for key in self.q.HARD_INTEGRITY_KEYS
+                },
+                "tail_records_explicitly_discarded": 10,
+                "utilization": {},
+            }
+            encoded = json.dumps({"throughput": valid}).encode("utf-8")
+            with mock.patch.object(
+                self.q,
+                "_read_bounded_regular_bytes",
+                return_value=encoded,
+            ) as read:
+                _, identity = self.q.load_required_throughput_baseline(
+                    aliased,
+                    output=root / "candidate",
+                )
+            self.assertEqual(read.call_args.args[0], canonical.resolve())
+            self.assertEqual(identity["path"], str(canonical.resolve()))
+
+    def test_verifier_digest_binds_the_exact_source_bytes_executed(self):
+        source = textwrap.dedent(
+            """
+            def reference_advantages(**kwargs):
+                return [[1.0]]
+
+            def verification_cases():
+                return []
+
+            def verify_backend(backend, torch, device):
+                return {"device": device}
+            """
+        ).encode("utf-8")
+        with tempfile.TemporaryDirectory() as temporary:
+            verifier = pathlib.Path(temporary) / "verifier.py"
+            verifier.write_bytes(source)
+            with mock.patch.object(
+                self.q,
+                "ROLLOUT_TRANSITION_VERIFIER",
+                verifier,
+            ):
+                module, identity = (
+                    self.q._load_rollout_transition_verifier()
+                )
+            verifier.write_text("raise RuntimeError('replacement')\n", encoding="utf-8")
+            self.assertEqual(
+                module.verify_backend(None, None, "cuda"),
+                {"device": "cuda"},
+            )
+            self.assertEqual(
+                identity["sha256"],
+                hashlib.sha256(source).hexdigest(),
+            )
 
     def test_top_level_acceptance_is_and_of_all_named_mandatory_gates(self):
         gates = {name: {"accepted": True} for name in self.q.MANDATORY_GATES}
@@ -2367,20 +4716,65 @@ class QualificationValidatorTests(unittest.TestCase):
 
 
 class QualificationPatchContractTests(unittest.TestCase):
-    """The native evidence patch must expose measurement, not mutation."""
+    """The native patch exposes bounded evidence and explicit tail consumption."""
+
+    def test_native_constructor_blocks_graph_entropy_annealing_before_cuda(self):
+        patch = PATCH.read_text(encoding="utf-8")
+        guard = (
+            "if (hypers.cudagraphs >= 0 && hypers.anneal_ent_coef)"
+        )
+        self.assertIn(guard, patch)
+        self.assertRegex(
+            patch,
+            r'"CUDA graph training with entropy annealing is disabled until "\s*'
+            r'\+\s*"the runtime coefficient is device-backed and qualified"',
+        )
+        guard_at = patch.index(guard)
+        seed_at = patch.rindex(
+            "hypers.seed = get_config(args, \"seed\");",
+            0,
+            guard_at,
+        )
+        discovery_at = patch.index(
+            "cudaError_t device_status = cudaGetDeviceCount(&device_count)",
+            guard_at,
+        )
+        self.assertLess(seed_at, guard_at)
+        self.assertLess(guard_at, discovery_at)
+
+        # The exact conjunction is deliberately broad: graph-on+anneal rejects
+        # even when ent_coef is zero/min-ratio is one, while either graph-off or
+        # a fixed entropy coefficient remains representable.
+        guard_line = next(
+            line for line in patch.splitlines() if guard in line
+        )
+        self.assertNotIn("ent_coef", guard_line.replace("anneal_ent_coef", ""))
+        self.assertNotIn("min_ent_coef_ratio", guard_line)
+        self.assertNotIn("||", guard_line)
 
     def test_native_patch_exposes_only_bounded_evidence_surfaces(self):
         patch = PATCH.read_text(encoding="utf-8")
         for fragment in (
             "qualification_recurrent_state",
             "qualification_snapshot",
+            "qualification_graph_execution",
+            "qualification_consume_tail",
             "QUALIFICATION_MAX_SNAPSHOT_BYTES",
             "snapshot exceeds qualification byte limit",
             'm.def("qualification_recurrent_state"',
             'm.def("qualification_snapshot"',
+            'm.def("qualification_graph_execution"',
+            'm.def("qualification_consume_tail"',
+            "graph_launch_counts",
             "cudaError_t device_status = cudaGetDeviceCount(&device_count)",
             "device_status != cudaSuccess || device_count <= 0",
             "CUDA device discovery failed:",
+            'tensors["tail_rewards"]',
+            'tensors["tail_terminals"]',
+            'tensors["tail_values"]',
+            'tensors["tail_valid"]',
+            'tensors["advantages"]',
+            'result["tail_decoder_outputs"]',
         ):
             self.assertIn(fragment, patch)
         self.assertIn(
@@ -2391,6 +4785,60 @@ class QualificationPatchContractTests(unittest.TestCase):
             "set_rng_state", "set_actions",
         ):
             self.assertNotIn(forbidden, patch)
+
+    def test_policy_weight_surface_is_bounded_fp32_and_read_only(self):
+        patch = PATCH.read_text(encoding="utf-8")
+        start = patch.index("+py::dict qualification_policy_weights(")
+        end = patch.index(
+            "+py::dict qualification_precision_tensor(",
+            start,
+        )
+        body = patch[start:end]
+        for fragment in (
+            "QUALIFICATION_MAX_SNAPSHOT_BYTES = 64ULL << 20",
+            "if (USE_BF16)",
+            "requires fp32",
+            "max_bytes > QUALIFICATION_MAX_SNAPSHOT_BYTES",
+            "cudaDeviceSynchronize()",
+            "cudaMemcpyDeviceToHost",
+            "decoder range exceeds the master bank",
+            "value row exceeds the master bank",
+            'result["slice_size"]',
+            'result["decoder_offset"]',
+            'result["value_row_offset"]',
+            'result["weights"] = py::bytes',
+            'm.def("qualification_policy_weights"',
+            'entry["active_min"]',
+            'entry["active_max"]',
+        ):
+            self.assertIn(fragment, patch if fragment.startswith(
+                ("QUALIFICATION_", 'm.def', 'entry["active_')
+            ) else body)
+        for forbidden in (
+            "cudaMemcpyHostToDevice",
+            "cudaMemset",
+            "puf_zero",
+            "fopen",
+            "ofstream",
+            "load_frozen_bank",
+            "load_weights",
+            "set_weights",
+        ):
+            self.assertNotIn(forbidden, body)
+        for mutation in (r"master->data\s*=(?!=)", r"params->data\s*=(?!=)"):
+            self.assertNotRegex(body, mutation)
+
+    def test_graph_off_and_graph_on_cells_both_use_normal_native_close(self):
+        source = RUNNER.read_text(encoding="utf-8")
+        body = source[
+            source.index("def run_cell("):
+            source.index("# ---------------------------------------- isolated strict-stage")
+        ]
+        finally_body = body[body.index("    finally:"):]
+        self.assertIn("if pufferl is not None:", finally_body)
+        self.assertIn("_C.close(pufferl)", finally_body)
+        self.assertNotIn('config["cudagraphs"]', finally_body)
+        self.assertNotIn("process teardown", finally_body)
 
     def test_state_report_covers_primary_and_every_frozen_bank_buffer(self):
         patch = PATCH.read_text(encoding="utf-8")
@@ -2407,6 +4855,25 @@ class QualificationPatchContractTests(unittest.TestCase):
             "cudaStreamSynchronize(pufferl.default_stream)",
         ):
             self.assertIn(fragment, patch)
+
+    def test_state_nonfinite_diagnostics_are_strict_json_finite_sentinels(self):
+        patch = PATCH.read_text(encoding="utf-8")
+        start = patch.index("+py::dict qualification_state_entry(")
+        end = patch.index("+py::dict qualification_recurrent_state(", start)
+        body = patch[start:end]
+        self.assertIn("std::isfinite(value)", body)
+        self.assertRegex(
+            body,
+            r"if\s*\(nonfinite\s*!=\s*0\)\s*"
+            r"(?:\{\s*)?max_abs\s*=\s*0\.0f;",
+        )
+        self.assertRegex(
+            body,
+            r"if\s*\(active_nonfinite\s*!=\s*0\)\s*\{"
+            r"[^}]*active_max_abs\s*=\s*0\.0f;"
+            r"[^}]*active_min\s*=\s*0\.0f;"
+            r"[^}]*active_max\s*=\s*0\.0f;",
+        )
 
     def test_ratio_report_exposes_selected_rows_and_real_recomputed_tensor(self):
         patch = PATCH.read_text(encoding="utf-8")
@@ -2664,7 +5131,8 @@ class QualificationPatchContractTests(unittest.TestCase):
         ]
         self.assertIn("tools/puffer_source_manifest.py", backend_hash)
         self.assertIn("COMPILED_BACKEND_LEDGER", backend_hash)
-        self.assertIn("--expected-count 9", backend_hash)
+        self.assertIn("--expected-count 14", backend_hash)
+        self.assertIn("--require-native-extension-closure", backend_hash)
         self.assertIn("strict_environment_config_sources_valid()", installer)
         self.assertIn('"$STRICT_ENV_CONFIG_PATCH"', installer)
         self.assertEqual(
@@ -2680,7 +5148,9 @@ class QualificationPatchContractTests(unittest.TestCase):
         self.assertIn("league_preseed", league_patch)
         for marker in (
             "eligible_agents", "qualification_recurrent_state",
-            "qualification_snapshot", "apply --reverse --check --no-index",
+            "qualification_policy_weights", "qualification_snapshot",
+            "qualification_graph_execution", "qualification_consume_tail",
+            "apply --reverse --check --no-index",
             "Patch copy: training/selfplay_league.patch",
         ):
             self.assertIn(marker, installer)
@@ -2849,12 +5319,40 @@ class QualificationPatchContractTests(unittest.TestCase):
                 (puffer / relative).write_text(contents, encoding="utf-8")
 
             def install(*arguments: str) -> subprocess.CompletedProcess[str]:
+                real_git = shutil.which("git")
+                self.assertIsNotNone(real_git)
+                physical_puffer = puffer.resolve()
+                shim_dir = pathlib.Path(temporary) / "git-shim"
+                shim_dir.mkdir(exist_ok=True)
+                shim = shim_dir / "git"
+                shim.write_text(textwrap.dedent(f"""\
+                    #!/bin/sh
+                    if [ "$1" = "-C" ] && [ "$2" = "{physical_puffer}" ] && \
+                       [ "$3" = "rev-parse" ]; then
+                        if [ "$4" = "--show-toplevel" ]; then
+                            printf '%s\\n' "{physical_puffer}"
+                            exit 0
+                        fi
+                        if [ "$4" = "--verify" ] && \
+                           [ "$5" = "HEAD^{{commit}}" ]; then
+                            printf '%s\\n' "{load_runner().PINNED_PUFFER_COMMIT}"
+                            exit 0
+                        fi
+                    fi
+                    exec "{real_git}" "$@"
+                """), encoding="utf-8")
+                shim.chmod(0o755)
+                environment = dict(os.environ)
+                environment["PATH"] = (
+                    str(shim_dir) + os.pathsep + environment.get("PATH", "")
+                )
                 return subprocess.run(
                     [str(INSTALLER), *arguments, str(puffer)],
                     cwd=ROOT,
                     text=True,
                     capture_output=True,
                     timeout=60,
+                    env=environment,
                 )
 
             applicable = subprocess.run(
@@ -2873,7 +5371,10 @@ class QualificationPatchContractTests(unittest.TestCase):
                 first.stdout,
                 first.stderr,
             )
-            self.assertIn("exact joint-action backend support is incomplete", first.stderr)
+            self.assertIn(
+                "exact joint-action patch is neither applicable nor installed",
+                first.stderr,
+            )
             patched = selfplay.read_bytes()
             self.assertIn(b"Patch copy: training/selfplay_league.patch", patched)
             subprocess.run(
