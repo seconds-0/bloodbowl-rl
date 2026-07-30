@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import math
 import os
 import pathlib
 import re
@@ -39,6 +40,9 @@ STRICT_CONFIG_PATCH = (
 ROLLOUT_TRANSITION_PATCH = (
     ROOT / "training" / "puffer_rollout_transition_closure.patch"
 )
+ENTROPY_SCHEDULE_PATCH = (
+    ROOT / "training" / "puffer_entropy_schedule_parity.patch"
+)
 INSTALLER = ROOT / "tools" / "install_puffer_env.sh"
 RUNNER = ROOT / "tools" / "qualify_recurrent_cuda.py"
 CUDA_RUNTIME_WRAPPER = ROOT / "tools" / "puffer_cuda_runtime.py"
@@ -47,6 +51,110 @@ COMPILED_BACKEND_LEDGER = (
 )
 TEST_RUN_NONCE = "a" * 64
 TEST_CELL_NONCE = "b" * 64
+ENTROPY_SCHEDULE_CONTRACT = (
+    "cosine-update-index-over-total-updates-fp32-v1"
+)
+ENTROPY_TELEMETRY_CONTRACT = "direct-device-coefficient-loss-decomposition-v1"
+ENTROPY_SCHEDULE_CELL_KINDS = (
+    "entropy_native_eager_annealed",
+    "entropy_native_graph_annealed",
+    "entropy_native_graph_anneal_disabled",
+    "entropy_torch_annealed",
+    "entropy_torch_anneal_disabled",
+)
+ENTROPY_RAW_ARRAY_FIELDS = (
+    "update_index",
+    "device_coefficient",
+    "host_coefficient",
+    "policy_loss",
+    "value_loss",
+    "entropy",
+    "signed_entropy_term",
+    "total_loss",
+    "loss_count",
+)
+
+
+def entropy_schedule_descriptor(*, enabled: bool = True) -> dict:
+    base = 0.5
+    min_ratio = 0.1
+    total_updates = 20
+    floor = base * min_ratio
+
+    def coefficient(update_index: int) -> float:
+        if not enabled:
+            return base
+        progress = min(1.0, max(0.0, update_index / total_updates))
+        return floor + 0.5 * (base - floor) * (
+            1.0 + math.cos(math.pi * progress)
+        )
+
+    return {
+        "base": base,
+        "enabled": enabled,
+        "min_ratio": min_ratio,
+        "total_updates": total_updates,
+        "first_coefficient": coefficient(0),
+        "last_legal_coefficient": coefficient(total_updates - 1),
+        "floor_coefficient": floor,
+        "contract": ENTROPY_SCHEDULE_CONTRACT,
+    }
+
+
+def entropy_raw_evidence(kind: str) -> tuple[dict, dict[str, np.ndarray]]:
+    enabled = kind not in {
+        "entropy_native_graph_anneal_disabled",
+        "entropy_torch_anneal_disabled",
+    }
+    descriptor = entropy_schedule_descriptor(enabled=enabled)
+    total_updates = descriptor["total_updates"]
+    update_index = np.arange(total_updates, dtype=np.int64)
+    if enabled:
+        floor = descriptor["floor_coefficient"]
+        base = descriptor["base"]
+        coefficients = np.asarray(
+            [
+                floor
+                + 0.5
+                * (base - floor)
+                * (1.0 + math.cos(math.pi * int(index) / total_updates))
+                for index in update_index
+            ],
+            dtype=np.float32,
+        )
+    else:
+        coefficients = np.full(
+            total_updates,
+            descriptor["base"],
+            dtype=np.float32,
+        )
+    entropy = np.linspace(0.75, 1.5, total_updates, dtype=np.float32)
+    policy = np.linspace(0.1, 0.2, total_updates, dtype=np.float32)
+    value = np.linspace(0.2, 0.4, total_updates, dtype=np.float32)
+    vf_coef = np.float32(0.5)
+    signed_entropy = -coefficients * entropy
+    total = policy + vf_coef * value + signed_entropy
+    arrays = {
+        "update_index": update_index,
+        "device_coefficient": coefficients,
+        "host_coefficient": coefficients.copy(),
+        "policy_loss": policy,
+        "value_loss": value,
+        "entropy": entropy,
+        "signed_entropy_term": signed_entropy,
+        "total_loss": total,
+        "loss_count": np.ones(total_updates, dtype=np.int64),
+    }
+    evidence = {
+        "kind": kind,
+        "telemetry_contract": ENTROPY_TELEMETRY_CONTRACT,
+        "schedule": descriptor,
+        "vf_coef": float(vf_coef),
+        "weights_before_sha256": "c" * 64,
+        "weights_after_sha256": "c" * 64,
+        "raw_array_fields": list(ENTROPY_RAW_ARRAY_FIELDS),
+    }
+    return evidence, arrays
 
 
 def cuda_runtime_evidence() -> dict:
@@ -4713,6 +4821,293 @@ class QualificationValidatorTests(unittest.TestCase):
         del gates["throughput"]
         with self.assertRaises(self.q.QualificationError):
             self.q.combine_gate_verdicts(gates)
+
+
+class EntropyScheduleQualificationContractTests(unittest.TestCase):
+    """Red contracts for schema-11 parent-owned objective-parity evidence."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.q = load_runner()
+
+    def test_schema_11_requires_entropy_gate_and_exact_five_cell_matrix(self):
+        self.assertEqual(self.q.SCHEMA_VERSION, 11)
+        self.assertIn("entropy_schedule_parity", self.q.MANDATORY_GATES)
+        self.assertEqual(
+            self.q.ENTROPY_SCHEDULE_CONTRACT,
+            ENTROPY_SCHEDULE_CONTRACT,
+        )
+        self.assertEqual(
+            self.q.ENTROPY_TELEMETRY_CONTRACT,
+            ENTROPY_TELEMETRY_CONTRACT,
+        )
+        self.assertEqual(
+            tuple(self.q.ENTROPY_SCHEDULE_CELL_KINDS),
+            ENTROPY_SCHEDULE_CELL_KINDS,
+        )
+        self.assertEqual(
+            len(set(self.q.ENTROPY_SCHEDULE_CELL_KINDS)),
+            len(ENTROPY_SCHEDULE_CELL_KINDS),
+        )
+        self.assertTrue(
+            set(ENTROPY_SCHEDULE_CELL_KINDS).issubset(self.q.CELL_KINDS)
+        )
+        self.assertTrue(
+            set(ENTROPY_SCHEDULE_CELL_KINDS).issubset(
+                self.q.ARRAY_CELL_KINDS
+            )
+        )
+
+    def test_entropy_patch_and_compiled_contract_are_exact_identity(self):
+        self.assertTrue(
+            ENTROPY_SCHEDULE_PATCH.is_file(),
+            "the entropy schedule must be one exact ordered Puffer patch",
+        )
+        self.assertEqual(
+            pathlib.Path(self.q.ENTROPY_SCHEDULE_PATCH),
+            ENTROPY_SCHEDULE_PATCH,
+        )
+        self.assertIn(
+            "entropy_schedule_contract",
+            self.q.BACKEND_IDENTITY_KEYS,
+        )
+        source = RUNNER.read_text(encoding="utf-8")
+        worker = source[
+            source.index("def _run_worker("):
+            source.index("def _require_same_identity(")
+        ]
+        self.assertIn(
+            "validate_entropy_schedule_patch_identity(",
+            worker,
+        )
+        self.assertIn(
+            '"entropy_schedule_contract"',
+            source[
+                source.index("def _module_identity("):
+                source.index("def validate_module_identity(")
+            ],
+        )
+
+    def test_entropy_patch_identity_schema_rejects_every_mutation(self):
+        validator = getattr(
+            self.q,
+            "validate_entropy_schedule_patch_identity",
+            None,
+        )
+        self.assertTrue(
+            callable(validator),
+            "schema 11 needs a parent-side entropy patch identity validator",
+        )
+        identity = {
+            "puffer_git_head": self.q.PINNED_PUFFER_COMMIT,
+            "entropy_schedule_patch": {
+                "path": str(ENTROPY_SCHEDULE_PATCH.resolve()),
+                "sha256": "a" * 64,
+                "reverse_applicable": True,
+            },
+            "entropy_schedule_contract": ENTROPY_SCHEDULE_CONTRACT,
+        }
+        self.assertEqual(validator(identity), identity)
+        mutations = (
+            (
+                "wrong pin",
+                lambda value: value.update(puffer_git_head="b" * 40),
+            ),
+            (
+                "relative patch path",
+                lambda value: value["entropy_schedule_patch"].update(
+                    path="training/puffer_entropy_schedule_parity.patch"
+                ),
+            ),
+            (
+                "bad patch hash",
+                lambda value: value["entropy_schedule_patch"].update(
+                    sha256="bad"
+                ),
+            ),
+            (
+                "not reverse applicable",
+                lambda value: value["entropy_schedule_patch"].update(
+                    reverse_applicable=False
+                ),
+            ),
+            (
+                "wrong compiled contract",
+                lambda value: value.update(
+                    entropy_schedule_contract="other-contract"
+                ),
+            ),
+            (
+                "unbound extra key",
+                lambda value: value.update(worker_claimed_pass=True),
+            ),
+        )
+        for label, mutate in mutations:
+            changed = json.loads(json.dumps(identity))
+            mutate(changed)
+            with self.subTest(label=label), self.assertRaises(
+                self.q.QualificationError
+            ):
+                validator(changed)
+
+    def test_parent_validates_raw_json_npz_for_all_five_cells(self):
+        validator = getattr(
+            self.q,
+            "validate_entropy_schedule_cell_evidence",
+            None,
+        )
+        self.assertTrue(
+            callable(validator),
+            "schema 11 needs a parent-owned raw entropy evidence validator",
+        )
+        for kind in ENTROPY_SCHEDULE_CELL_KINDS:
+            evidence, arrays = entropy_raw_evidence(kind)
+            with self.subTest(kind=kind):
+                summary = validator(
+                    evidence,
+                    arrays,
+                    expected_kind=kind,
+                    expected_schedule=evidence["schedule"],
+                )
+                self.assertNotIn("accepted", summary)
+                self.assertNotIn("passed", summary)
+                self.assertEqual(summary["kind"], kind)
+                self.assertEqual(
+                    summary["update_count"],
+                    evidence["schedule"]["total_updates"],
+                )
+                self.assertEqual(
+                    summary["schedule"],
+                    evidence["schedule"],
+                )
+
+    def test_parent_rejects_entropy_evidence_mutations_and_worker_verdicts(self):
+        validator = getattr(
+            self.q,
+            "validate_entropy_schedule_cell_evidence",
+            None,
+        )
+        self.assertTrue(
+            callable(validator),
+            "schema 11 needs mutation-rejecting parent validation",
+        )
+        kind = "entropy_native_graph_annealed"
+        evidence, arrays = entropy_raw_evidence(kind)
+        expected_schedule = json.loads(json.dumps(evidence["schedule"]))
+
+        def changed():
+            return (
+                json.loads(json.dumps(evidence)),
+                {key: value.copy() for key, value in arrays.items()},
+            )
+
+        mutations = []
+
+        record, data = changed()
+        record["accepted"] = True
+        mutations.append(("worker-authored verdict", record, data))
+
+        record, data = changed()
+        record["telemetry_contract"] = "telemetry-only"
+        mutations.append(("missing telemetry marker", record, data))
+
+        record, data = changed()
+        record["schedule"]["base"] = 0.25
+        mutations.append(("wrong base", record, data))
+
+        record, data = changed()
+        record["schedule"]["floor_coefficient"] = 0.0
+        mutations.append(("wrong floor", record, data))
+
+        record, data = changed()
+        record["schedule"]["total_updates"] -= 1
+        mutations.append(("wrong denominator", record, data))
+
+        record, data = changed()
+        record["weights_after_sha256"] = "d" * 64
+        mutations.append(("weights changed at zero learning rate", record, data))
+
+        record, data = changed()
+        data["device_coefficient"][:] = data["device_coefficient"][0]
+        mutations.append(("frozen graph coefficient", record, data))
+
+        record, data = changed()
+        data["host_coefficient"][3] = np.nextafter(
+            data["host_coefficient"][3],
+            np.float32(np.inf),
+        )
+        mutations.append(("host/device disagreement", record, data))
+
+        record, data = changed()
+        data["update_index"][4] = 3
+        mutations.append(("duplicate epoch", record, data))
+
+        record, data = changed()
+        data["signed_entropy_term"] *= -1
+        mutations.append(("wrong entropy sign", record, data))
+
+        record, data = changed()
+        data["entropy"][:] = 0.0
+        data["signed_entropy_term"][:] = 0.0
+        data["total_loss"][:] = (
+            data["policy_loss"]
+            + np.float32(record["vf_coef"]) * data["value_loss"]
+        )
+        mutations.append(("zero entropy false pass", record, data))
+
+        record, data = changed()
+        data["total_loss"][5] = np.nan
+        mutations.append(("nonfinite loss", record, data))
+
+        record, data = changed()
+        del data["loss_count"]
+        mutations.append(("missing raw array", record, data))
+
+        for label, record, data in mutations:
+            with self.subTest(label=label), self.assertRaises(
+                self.q.QualificationError
+            ):
+                validator(
+                    record,
+                    data,
+                    expected_kind=kind,
+                    expected_schedule=expected_schedule,
+                )
+
+    def test_driver_retains_raw_entropy_artifacts_and_owns_the_only_gate(self):
+        source = RUNNER.read_text(encoding="utf-8")
+        worker = source[
+            source.index("def _run_worker("):
+            source.index("def _require_same_identity(")
+        ]
+        driver = source[
+            source.index("def run_qualification("):
+            source.index("def add_common_arguments(")
+        ]
+        for fragment in (
+            "ENTROPY_SCHEDULE_CELL_KINDS",
+            "validate_entropy_schedule_cell_evidence(",
+            '"entropy_schedule_parity"',
+            '"qualification_only": True',
+            '"record_bytes": record["record_bytes"]',
+            '"record_sha256": record["record_sha256"]',
+            '"artifact_bytes": record.get("artifact_bytes")',
+            '"artifact_sha256": record.get("artifact_sha256")',
+        ):
+            with self.subTest(fragment=fragment):
+                self.assertIn(fragment, driver)
+        self.assertIn(
+            "ENTROPY_SCHEDULE_CELL_KINDS",
+            worker,
+        )
+        self.assertIn(
+            "worker-authored entropy verdict",
+            worker,
+        )
+        self.assertIn(
+            '"qualification_only": True',
+            driver,
+        )
 
 
 class QualificationPatchContractTests(unittest.TestCase):

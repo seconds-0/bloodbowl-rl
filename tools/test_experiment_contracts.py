@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import hashlib
+import json
 import os
 import re
 import shutil
@@ -484,6 +485,174 @@ class ExperimentContractTests(unittest.TestCase):
             "run entropy configuration differs from the screen plan",
             screen,
         )
+
+    def test_entropy_schedule_descriptor_and_patch_are_bound_in_both_plans(self):
+        screen = (ROOT / "tools/run_reward_screen.sh").read_text(
+            encoding="utf-8"
+        )
+        arm = (ROOT / "tools/run_reward_ablation.sh").read_text(
+            encoding="utf-8"
+        )
+        entropy_patch = (
+            ROOT / "training/puffer_entropy_schedule_parity.patch"
+        )
+        self.assertTrue(
+            entropy_patch.is_file(),
+            "the objective-parity implementation must be one exact patch",
+        )
+        contract = "cosine-update-index-over-total-updates-fp32-v1"
+        for source in (screen, arm):
+            self.assertIn(contract, source)
+            self.assertIn("entropy_schedule_contract", source)
+            self.assertIn('"entropy_schedule"', source)
+            for field in (
+                '"base"',
+                '"enabled"',
+                '"min_ratio"',
+                '"total_updates"',
+                '"first_coefficient"',
+                '"last_legal_coefficient"',
+                '"floor_coefficient"',
+                '"contract"',
+            ):
+                with self.subTest(
+                    launcher=("screen" if source is screen else "arm"),
+                    field=field,
+                ):
+                    self.assertIn(field, source)
+            self.assertNotIn(
+                '"entropy_effective_coefficient": "unavailable_blocked"',
+                source,
+            )
+
+        screen_block = screen.split("patches = [", 1)[1].split(
+            "vendor_sources = read_source_ledger(", 1
+        )[0]
+        arm_block = arm.split('PATCH_HASH="$({', 1)[1].split(
+            "} | sha256sum", 1
+        )[0]
+        screen_patches = re.findall(
+            r'training/([^"/]+\.patch)',
+            screen_block,
+        )
+        arm_patches = re.findall(
+            r'training/([^"/]+\.patch)',
+            arm_block,
+        )
+        self.assertEqual(screen_patches, arm_patches)
+        self.assertEqual(
+            screen_patches.count("puffer_entropy_schedule_parity.patch"),
+            1,
+        )
+        frozen = screen_patches.index("puffer_frozen_prio_mask.patch")
+        entropy = screen_patches.index(
+            "puffer_entropy_schedule_parity.patch"
+        )
+        qualification = screen_patches.index(
+            "puffer_recurrent_cuda_qualification.patch"
+        )
+        self.assertLess(frozen, entropy)
+        self.assertLess(entropy, qualification)
+
+    def test_schema_11_receipt_cannot_bypass_guards_or_publish_lineage(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            receipt = directory / "QUALIFICATION.json"
+            receipt_payload = {
+                "schema_version": 11,
+                "qualification_only": True,
+                "accepted": True,
+                "mandatory_gates": ["entropy_schedule_parity"],
+                "gates": {
+                    "entropy_schedule_parity": {"accepted": True},
+                },
+            }
+            original = (
+                json.dumps(receipt_payload, sort_keys=True) + "\n"
+            )
+            receipt.write_text(original, encoding="utf-8")
+            receipt_environment = {
+                "ENTROPY_SCHEDULE_QUALIFICATION_RECEIPT": str(receipt),
+                "RECURRENT_CUDA_QUALIFICATION_RECEIPT": str(receipt),
+                "QUALIFICATION_RECEIPT": str(receipt),
+            }
+
+            arm = run_script(
+                "tools/run_reward_ablation.sh",
+                env={
+                    **receipt_environment,
+                    "TAG": "synthetic-schema-11-must-not-authorize",
+                    "REWARD_MANIFEST": "missing.json",
+                    "BOOTSTRAP_MODE": "fresh-v6-qualification",
+                    "DRY_RUN": "0",
+                },
+            )
+            self.assertNotEqual(arm.returncode, 0)
+            self.assertIn(
+                "BLOCKED_UNQUALIFIED_ENTROPY_SCHEDULE",
+                arm.stderr,
+            )
+            self.assertNotIn("missing reward manifest", arm.stderr)
+
+            output = directory / "must-not-exist"
+            screen = run_script(
+                "tools/run_reward_screen.sh",
+                env={
+                    **receipt_environment,
+                    "STEPS": "50000000",
+                    "SCREEN_PROFILE": "exact-action-canary",
+                    "PLAN_ONLY": "0",
+                    "OUT_DIR": str(output),
+                },
+            )
+            self.assertNotEqual(screen.returncode, 0)
+            self.assertIn(
+                "BLOCKED_UNQUALIFIED_ENTROPY_SCHEDULE",
+                screen.stderr,
+            )
+            self.assertFalse(output.exists())
+            self.assertEqual(receipt.read_text(encoding="utf-8"), original)
+
+        arm_source = (
+            ROOT / "tools/run_reward_ablation.sh"
+        ).read_text(encoding="utf-8")
+        screen_source = (
+            ROOT / "tools/run_reward_screen.sh"
+        ).read_text(encoding="utf-8")
+        lineage_source = (
+            ROOT / "tools/checkpoint_lineage.py"
+        ).read_text(encoding="utf-8")
+        arm_guard = arm_source.index(
+            'if [ "$DRY_RUN" != "1" ] && '
+            '[ "$CUDAGRAPHS" -ge 0 ] && '
+            '[ "$ANNEAL_ENT_COEF" = "1" ]; then'
+        )
+        self.assertLess(arm_guard, arm_source.index('META_ARGS=('))
+        self.assertLess(
+            arm_guard,
+            arm_source.index(
+                '"$PYBIN" "$CUDA_RUNTIME_WRAPPER" train bloodbowl'
+            ),
+        )
+        screen_guard = screen_source.index(
+            'if [ "$PLAN_ONLY" != "1" ] && '
+            '[ "$CUDAGRAPHS" -ge 0 ] && '
+            '[ "$ANNEAL_ENT_COEF" = "1" ]; then'
+        )
+        self.assertLess(screen_guard, screen_source.index('mkdir -p "$OUT_DIR"'))
+        self.assertLess(
+            screen_guard,
+            screen_source.index("allow_eligible_publication=True"),
+        )
+        for forbidden in (
+            "ENTROPY_SCHEDULE_QUALIFICATION_RECEIPT",
+            "RECURRENT_CUDA_QUALIFICATION_RECEIPT",
+            "QUALIFICATION_RECEIPT",
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, arm_source)
+                self.assertNotIn(forbidden, screen_source)
+                self.assertNotIn(forbidden, lineage_source)
 
     def test_standalone_build_owns_the_environment_include_contract(self):
         patch_path = ROOT / "training/puffer_standalone_env_include.patch"
