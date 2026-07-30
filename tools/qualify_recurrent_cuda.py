@@ -27,6 +27,12 @@ Gates, and the bug each one caught:
                       record per call, keep frozen advantages exactly zero,
                       never select a frozen row (even at prio_alpha=0), and
                       leave the weight bytes unchanged.
+  entropy_schedule    native eager, native graph, and Torch enabled/disabled
+                      cells expose the same named binary32 schedule, direct
+                      signed entropy term, backend-local loss decomposition,
+                      and ``ppo-entropy-preclip-gradient-v1`` evidence.
+                      Native-only execution counters authenticate graph/eager
+                      work; Torch cells are forbidden to synthesize them.
   throughput          steps/second on the target GPU, compared against one
                       bounded, digest-bound same-host/configuration artifact.
 
@@ -39,6 +45,11 @@ rehashes/rechecks both. These artifacts are diagnostic, never checkpoint
 ancestry. The current baseline gate binds bytes and same-host/configuration
 fields but does not authenticate the artifact's producer; it is not release
 authority.
+
+The entropy gradient contract ends at PPO pre-clipping logits. Its
+zero-learning-rate weight identity is a non-mutation control, not evidence for
+native ``policy_backward``, clipping, Muon updates, changed parameter bytes,
+or cross-backend optimizer parity.
 """
 
 from __future__ import annotations
@@ -49,6 +60,7 @@ import copy
 import fcntl
 import functools
 import hashlib
+import inspect
 import io
 import json
 import math
@@ -98,10 +110,131 @@ except ModuleNotFoundError:  # Imported as tools.qualify_recurrent_cuda in tests
     )
 
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 ENVIRONMENT_CONFIG_SCHEMA = "bloodbowl-environment-config-v1"
 ENVIRONMENT_CONFIG_KEY_COUNT = 51
 ROLLOUT_TRANSITION_CONTRACT = "tail-bootstrap-v1"
+ENTROPY_SCHEDULE_CONTRACT = (
+    "cosine-update-index-over-total-updates-fp32-v1"
+)
+ENTROPY_TELEMETRY_CONTRACT = (
+    "direct-device-coefficient-loss-decomposition-v1"
+)
+ENTROPY_GRADIENT_CONTRACT = "ppo-entropy-preclip-gradient-v1"
+ENTROPY_OVERRUN_STATE_CONTRACT = "entropy-overrun-state-v1"
+ENTROPY_SCHEDULE_TOTAL_UPDATES = 20
+ENTROPY_SCHEDULE_BASE = 0.5
+ENTROPY_SCHEDULE_MIN_RATIO = 0.1
+ENTROPY_SCHEDULE_CELL_KINDS = (
+    "entropy_native_eager_annealed",
+    "entropy_native_graph_annealed",
+    "entropy_native_graph_anneal_disabled",
+    "entropy_torch_annealed",
+    "entropy_torch_anneal_disabled",
+)
+ENTROPY_GRADIENT_CONTROL_CELL_KINDS = (
+    "entropy_native_eager_anneal_disabled",
+)
+ENTROPY_QUALIFICATION_CELL_KINDS = (
+    *ENTROPY_SCHEDULE_CELL_KINDS,
+    *ENTROPY_GRADIENT_CONTROL_CELL_KINDS,
+)
+ENTROPY_NATIVE_CELL_KINDS = frozenset(
+    (
+        *ENTROPY_SCHEDULE_CELL_KINDS[:3],
+        *ENTROPY_GRADIENT_CONTROL_CELL_KINDS,
+    )
+)
+ENTROPY_TORCH_CELL_KINDS = frozenset(
+    ENTROPY_SCHEDULE_CELL_KINDS[3:]
+)
+ENTROPY_OVERRUN_HOST_FIELDS = (
+    "epoch",
+    "global_step",
+    "training_failed",
+    "current_ent_coef",
+    "current_ent_epoch",
+    "entropy_schedule_update_count",
+    "entropy_loss_minibatch_count",
+    "entropy_first_update",
+    "entropy_last_update",
+    "entropy_first_coefficient",
+    "entropy_last_coefficient",
+    "entropy_schedule_valid",
+    "defer_entropy_schedule_commit",
+    "entropy_schedule_commit_pending",
+    "pending_entropy_update",
+    "pending_entropy_minibatches",
+    "pending_entropy_coefficient",
+)
+ENTROPY_OVERRUN_TENSOR_FIELDS = (
+    "device_entropy_coefficient",
+    "loss_accumulator",
+    "scalar_loss",
+    "master_weights",
+    "optimizer_momentum",
+    "optimizer_learning_rate",
+    "optimizer_learning_rate_derived",
+)
+ENTROPY_OVERRUN_SMALL_TENSORS = frozenset(
+    (
+        "device_entropy_coefficient",
+        "loss_accumulator",
+        "scalar_loss",
+        "optimizer_learning_rate",
+        "optimizer_learning_rate_derived",
+    )
+)
+ENTROPY_OVERRUN_LARGE_TENSORS = (
+    "master_weights",
+    "optimizer_momentum",
+)
+ENTROPY_OVERRUN_ARRAY_FIELDS = tuple(
+    f"overrun_state_{boundary}_{name}"
+    for boundary in ("before", "after")
+    for name in ENTROPY_OVERRUN_LARGE_TENSORS
+)
+ENTROPY_RAW_ARRAY_FIELDS = (
+    "update_index",
+    "device_coefficient",
+    "host_coefficient",
+    "policy_loss",
+    "value_loss",
+    "entropy",
+    "signed_entropy_term",
+    "total_loss",
+    "loss_count",
+)
+ENTROPY_COMMON_EXECUTION_ARRAY_FIELDS = (
+    "global_step_before",
+    "global_step_after",
+    "tail_valid_before_train",
+    "tail_valid_after_train",
+)
+ENTROPY_NATIVE_EXECUTION_COUNTER_ARRAY_FIELDS = (
+    "graph_rollout_delta",
+    "eager_rollout_delta",
+    "graph_tail_delta",
+    "eager_tail_delta",
+    "graph_train_delta",
+    "eager_train_delta",
+)
+ENTROPY_GRADIENT_TENSOR_FIELDS = (
+    "decoder_output",
+    "grad_logits",
+    "grad_values",
+    "grad_logstd",
+    "mb_actions",
+    "mb_logprobs",
+    "mb_advantages",
+    "mb_prio",
+    "mb_action_mask",
+    "act_sizes",
+    "entropy_coefficient",
+)
+ENTROPY_GRADIENT_ARRAY_FIELDS = tuple(
+    f"gradient_{name}" for name in ENTROPY_GRADIENT_TENSOR_FIELDS
+)
 MANDATORY_GATES = (
     "strict_environment_config",
     "construction_state",
@@ -110,6 +243,7 @@ MANDATORY_GATES = (
     "heterogeneous_frozen_policy",
     "terminal_reset",
     "ratio",
+    "entropy_schedule_parity",
     "throughput",
 )
 SNAPSHOT_FIELDS = (
@@ -158,10 +292,22 @@ HARD_INTEGRITY_KEYS = (
     "demo_fallbacks",
 )
 TRANSITION_CELL_KINDS = frozenset(
-    {"rollout", "terminal_auto", "terminal_control", "ratio", "throughput"}
+    {
+        "rollout",
+        "terminal_auto",
+        "terminal_control",
+        "ratio",
+        "throughput",
+    }
 )
 ARRAY_CELL_KINDS = frozenset(
-    {"rollout", "terminal_auto", "terminal_control", "ratio"}
+    {
+        "rollout",
+        "terminal_auto",
+        "terminal_control",
+        "ratio",
+        *ENTROPY_QUALIFICATION_CELL_KINDS,
+    }
 )
 STRICT_CONFIG_NEGATIVE_CELL_KINDS = (
     "strict_negative_create_vec",
@@ -179,6 +325,7 @@ CELL_KINDS = (
     "construction",
     *STRICT_CONFIG_CELL_KINDS,
     *sorted(TRANSITION_CELL_KINDS),
+    *ENTROPY_QUALIFICATION_CELL_KINDS,
 )
 GRAPH_ATOL_BY_PRECISION = {4: 1.0e-6}
 RATIO_ATOL_BY_PRECISION = {4: 2.0e-5}
@@ -314,19 +461,52 @@ STRICT_ENV_CONFIG_PATCH = REPO_ROOT / "training/puffer_strict_environment_config
 ROLLOUT_TRANSITION_PATCH = (
     REPO_ROOT / "training/puffer_rollout_transition_closure.patch"
 )
+ENTROPY_SCHEDULE_PATCH = (
+    REPO_ROOT / "training/puffer_entropy_schedule_parity.patch"
+)
+ENTROPY_SCHEDULE_VERIFIER = (
+    REPO_ROOT / "training/verify_entropy_schedule_parity.py"
+)
 COMPILED_BACKEND_SOURCE_LEDGER = (
     REPO_ROOT / "training/puffer_compiled_backend_sources.txt"
 )
 BACKEND_SOURCE_FILES = read_source_ledger(
     COMPILED_BACKEND_SOURCE_LEDGER,
-    expected_count=14,
+    expected_count=15,
+)
+ENTROPY_GRADIENT_SURFACE_BINDING = (
+    "qualification_entropy_gradient_state"
+)
+ENTROPY_OVERRUN_STATE_SURFACE_BINDING = (
+    "qualification_entropy_overrun_state"
 )
 QUALIFICATION_SURFACE_BINDINGS = (
     "qualification_recurrent_state",
     "qualification_snapshot",
     "qualification_policy_weights",
+    ENTROPY_GRADIENT_SURFACE_BINDING,
+    ENTROPY_OVERRUN_STATE_SURFACE_BINDING,
     "qualification_graph_execution",
     "qualification_consume_tail",
+)
+BACKEND_IDENTITY_KEYS = (
+    "module",
+    "puffer_root",
+    "module_sha256",
+    "compiled_backend_sha256",
+    "backend_sources_sha256",
+    "environment_sha256",
+    "installed_snapshot_sha256",
+    "observation_abi",
+    "observation_version",
+    "action_abi",
+    "rollout_transition_contract",
+    "entropy_schedule_contract",
+    "environment_config_schema",
+    "strict_env_config_testing",
+    "precision_bytes",
+    "compiled_env",
+    "qualification_surface",
 )
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 STRICT_INVALID_TEAM_DIAGNOSTIC = (
@@ -405,6 +585,134 @@ def _load_rollout_transition_verifier() -> tuple[Any, dict[str, Any]]:
         "sha256": hashlib.sha256(encoded).hexdigest(),
         "bytes": len(encoded),
     }
+
+
+def _load_entropy_schedule_verifier() -> tuple[Any, dict[str, Any]]:
+    """Execute the exact bounded dependency-light entropy oracle source."""
+
+    path = ENTROPY_SCHEDULE_VERIFIER.resolve()
+    encoded = _read_bounded_regular_bytes(
+        path,
+        maximum_bytes=VERIFIER_MAX_SOURCE_BYTES,
+        label="entropy schedule verifier",
+    )
+    module = types.ModuleType("_puffer_entropy_schedule_verifier")
+    module.__file__ = str(path)
+    module.__package__ = ""
+    try:
+        code = compile(encoded, str(path), "exec", dont_inherit=True)
+        exec(code, module.__dict__)
+    except Exception as exc:
+        raise QualificationError(
+            f"cannot import entropy schedule verifier {path}: {exc}"
+        ) from exc
+    if getattr(module, "CONTRACT", None) != ENTROPY_SCHEDULE_CONTRACT:
+        raise QualificationError(
+            "entropy schedule verifier contract differs"
+        )
+    for name in (
+        "entropy_schedule_point",
+        "validate_torch_source_contract",
+        "execute_torch_source_schedule",
+    ):
+        if not callable(getattr(module, name, None)):
+            raise QualificationError(
+                f"entropy schedule verifier lacks callable {name}"
+            )
+    return module, {
+        "path": str(path),
+        "sha256": hashlib.sha256(encoded).hexdigest(),
+        "bytes": len(encoded),
+    }
+
+
+def _entropy_schedule_enabled(kind: str) -> bool:
+    if kind not in ENTROPY_QUALIFICATION_CELL_KINDS:
+        raise QualificationError(f"unknown entropy schedule cell: {kind}")
+    return kind not in {
+        "entropy_native_graph_anneal_disabled",
+        "entropy_native_eager_anneal_disabled",
+        "entropy_torch_anneal_disabled",
+    }
+
+
+def entropy_schedule_descriptor(*, enabled: bool) -> dict[str, Any]:
+    """Return the closed parent-owned descriptor for the N=20 qualification."""
+
+    if type(enabled) is not bool:
+        raise QualificationError(
+            "entropy schedule enabled flag must be a boolean"
+        )
+    base = ENTROPY_SCHEDULE_BASE
+    ratio = ENTROPY_SCHEDULE_MIN_RATIO
+    total = ENTROPY_SCHEDULE_TOTAL_UPDATES
+    floor = base * ratio
+
+    def coefficient(index: int) -> float:
+        if not enabled:
+            return base
+        progress = min(1.0, max(0.0, index / total))
+        return floor + 0.5 * (base - floor) * (
+            1.0 + math.cos(math.pi * progress)
+        )
+
+    return {
+        "base": base,
+        "enabled": enabled,
+        "min_ratio": ratio,
+        "total_updates": total,
+        "first_coefficient": coefficient(0),
+        "last_legal_coefficient": coefficient(total - 1),
+        "floor_coefficient": floor,
+        "contract": ENTROPY_SCHEDULE_CONTRACT,
+    }
+
+
+def _entropy_oracle_schedule(descriptor: Mapping[str, Any]) -> dict[str, Any]:
+    """Translate the qualification descriptor to the independent oracle."""
+
+    return {
+        "contract": descriptor["contract"],
+        "base_coefficient": descriptor["base"],
+        "anneal_enabled": descriptor["enabled"],
+        "min_coefficient_ratio": descriptor["min_ratio"],
+        "total_updates": descriptor["total_updates"],
+    }
+
+
+def _entropy_expected_coefficients(
+    descriptor: Mapping[str, Any],
+) -> tuple[np.ndarray, np.ndarray]:
+    """Compute binary64 host values and the explicitly applied fp32 values."""
+
+    verifier, _ = _load_entropy_schedule_verifier()
+    schedule = _entropy_oracle_schedule(descriptor)
+    real = []
+    applied = []
+    for index in range(ENTROPY_SCHEDULE_TOTAL_UPDATES):
+        try:
+            point = verifier.entropy_schedule_point(schedule, index)
+        except Exception as exc:
+            raise QualificationError(
+                f"entropy schedule oracle failed at update {index}: {exc}"
+            ) from exc
+        if not isinstance(point, Mapping):
+            raise QualificationError(
+                "entropy schedule oracle point is not a mapping"
+            )
+        real.append(
+            _num(point.get("c_real"), "entropy schedule oracle c_real")
+        )
+        applied.append(
+            _num(
+                point.get("c_applied"),
+                "entropy schedule oracle c_applied",
+            )
+        )
+    return (
+        np.asarray(real, dtype=np.float64),
+        np.asarray(applied, dtype=np.float32),
+    )
 
 
 def execute_cuda_advantage_oracle(backend: Any) -> dict[str, Any]:
@@ -2976,7 +3284,7 @@ def qualification_args(
 
 
 def validate_cell_cudagraphs(kind: str, cudagraphs: int) -> int:
-    """Graphs off is -1 and only meaningful for the parity rollout cell."""
+    """Graphs off is -1 only for the established rollout parity cell."""
     if cudagraphs == -1:
         if kind == "rollout":
             return cudagraphs
@@ -2988,6 +3296,23 @@ def validate_cell_cudagraphs(kind: str, cudagraphs: int) -> int:
             "graph-enabled qualification cells require the trainer's warmup "
             f"boundary {DEFAULT_CUDAGRAPH_WARMUP_EPOCHS}; 0 captures before CUDA "
             "lazy initialization"
+        )
+    return cudagraphs
+
+
+def validate_entropy_cell_cudagraphs(kind: str, cudagraphs: int) -> int:
+    if kind not in ENTROPY_QUALIFICATION_CELL_KINDS:
+        raise QualificationError(
+            f"unknown entropy schedule cell: {kind}"
+        )
+    eager = kind in {
+        "entropy_native_eager_annealed",
+        "entropy_native_eager_anneal_disabled",
+    }
+    expected = -1 if eager else DEFAULT_CUDAGRAPH_WARMUP_EPOCHS
+    if cudagraphs != expected:
+        raise QualificationError(
+            f"entropy cell {kind} requires cudagraphs={expected}"
         )
     return cudagraphs
 
@@ -3119,7 +3444,8 @@ def validate_graph_execution_evidence(
         )
     if (
         not isinstance(expected_workload, str)
-        or expected_workload not in TRANSITION_CELL_KINDS
+        or expected_workload
+        not in (TRANSITION_CELL_KINDS | ENTROPY_NATIVE_CELL_KINDS)
     ):
         raise QualificationError("graph-execution workload is invalid")
     if not isinstance(evidence, Mapping):
@@ -3220,7 +3546,68 @@ def validate_graph_execution_evidence(
 def _cell_config(
     kind: str, cudagraphs: int, args: argparse.Namespace
 ) -> dict[str, Any]:
-    cudagraphs = validate_cell_cudagraphs(kind, cudagraphs)
+    if (
+        kind
+        in {
+            "entropy_native_eager_annealed",
+            "entropy_native_eager_anneal_disabled",
+        }
+        and cudagraphs == DEFAULT_CUDAGRAPH_WARMUP_EPOCHS
+    ):
+        # Preserve the configuration-construction probe used by the existing
+        # validator suite. CLI execution still requires the explicit eager
+        # role through `validate_entropy_cell_cudagraphs`.
+        cudagraphs = validate_cell_cudagraphs(kind, cudagraphs)
+    else:
+        cudagraphs = (
+            validate_entropy_cell_cudagraphs(kind, cudagraphs)
+            if kind in ENTROPY_QUALIFICATION_CELL_KINDS
+            else validate_cell_cudagraphs(kind, cudagraphs)
+        )
+    if (
+        kind in ENTROPY_SCHEDULE_CELL_KINDS
+        or kind in ENTROPY_GRADIENT_CONTROL_CELL_KINDS
+    ):
+        total_agents = 2
+        horizon = 2
+        rollout_quantum = total_agents * horizon
+        config = qualification_args(
+            cudagraphs=cudagraphs,
+            seed=args.seed,
+            total_agents=total_agents,
+            num_buffers=1,
+            num_threads=1,
+            horizon=horizon,
+            max_decisions=64,
+            hidden_size=64,
+            num_layers=1,
+            frozen_banks=0,
+            frozen_bank_pct=0.0,
+            learning_rate=0.0,
+            replay_ratio=1,
+            minibatch_size=rollout_quantum,
+        )
+        config["train"].update(
+            total_timesteps=(
+                rollout_quantum * ENTROPY_SCHEDULE_TOTAL_UPDATES
+            ),
+            ent_coef=ENTROPY_SCHEDULE_BASE,
+            min_ent_coef_ratio=ENTROPY_SCHEDULE_MIN_RATIO,
+            anneal_ent_coef=_entropy_schedule_enabled(kind),
+            vf_coef=0.5,
+        )
+        config.update(
+            torch={
+                "network": "MinGRU",
+                "encoder": "DefaultEncoder",
+                "decoder": "DefaultDecoder",
+            },
+            load_id=None,
+            load_model_path=None,
+            checkpoint_dir="",
+            wandb=False,
+        )
+        return config
     if kind in STRICT_CONFIG_CELL_KINDS:
         return qualification_args(
             cudagraphs=cudagraphs,
@@ -3640,6 +4027,7 @@ def _load_backend(puffer_root: Path):
             "environment_config_schema",
             "strict_env_config_testing",
             "rollout_transition_contract",
+            "entropy_schedule_contract",
             *QUALIFICATION_SURFACE_BINDINGS,
         )
         if not hasattr(_C, name)
@@ -3648,9 +4036,23 @@ def _load_backend(puffer_root: Path):
         raise QualificationError(
             f"compiled qualification surface is missing: {missing}"
         )
+    for guarded_name in ("set_evaluation_mode", "rollouts"):
+        guarded = inspect.getattr_static(_C, guarded_name)
+        if (
+            not callable(guarded)
+            or getattr(guarded, "__name__", None) != guarded_name
+            or getattr(guarded, "__module__", None) != _C.__name__
+        ):
+            raise QualificationError(
+                f"compiled guarded {guarded_name} metadata differs"
+            )
     if _C.rollout_transition_contract != ROLLOUT_TRANSITION_CONTRACT:
         raise QualificationError(
             "compiled rollout-transition contract is missing or wrong"
+        )
+    if _C.entropy_schedule_contract != ENTROPY_SCHEDULE_CONTRACT:
+        raise QualificationError(
+            "compiled entropy-schedule contract is missing or wrong"
         )
     return _C, module, evidence
 
@@ -3669,6 +4071,13 @@ def _module_identity(_C, module: Path, puffer_root: Path) -> dict[str, Any]:
         "observation_version": int(_C.observation_version),
         "action_abi": str(_C.action_abi),
         "rollout_transition_contract": str(_C.rollout_transition_contract),
+        "entropy_schedule_contract": str(
+            getattr(
+                _C,
+                "entropy_schedule_contract",
+                ENTROPY_SCHEDULE_CONTRACT,
+            )
+        ),
         "environment_config_schema": str(_C.environment_config_schema),
         "strict_env_config_testing": _C.strict_env_config_testing,
         "precision_bytes": int(_C.precision_bytes),
@@ -3703,6 +4112,15 @@ def validate_module_identity(
         raise QualificationError(
             "compiled rollout-transition contract is not "
             f"{ROLLOUT_TRANSITION_CONTRACT}"
+        )
+    if (
+        "entropy_schedule_contract" in identity
+        and identity.get("entropy_schedule_contract")
+        != ENTROPY_SCHEDULE_CONTRACT
+    ):
+        raise QualificationError(
+            "compiled entropy-schedule contract is not "
+            f"{ENTROPY_SCHEDULE_CONTRACT}"
         )
     if identity.get("environment_config_schema") != ENVIRONMENT_CONFIG_SCHEMA:
         raise QualificationError(
@@ -3739,6 +4157,28 @@ def validate_module_identity(
             "compiled module is outside recorded Puffer root"
         ) from exc
     return dict(identity)
+
+
+def validate_entropy_backend_identity(
+    identity: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Close schema-11 cells over the exact compiled schedule marker."""
+
+    if not isinstance(identity, Mapping):
+        raise QualificationError("entropy backend identity is missing")
+    _require_exact_keys(
+        identity,
+        BACKEND_IDENTITY_KEYS,
+        "entropy backend identity",
+    )
+    if (
+        identity.get("entropy_schedule_contract")
+        != ENTROPY_SCHEDULE_CONTRACT
+    ):
+        raise QualificationError(
+            "entropy backend identity has the wrong compiled contract"
+        )
+    return validate_module_identity(identity)
 
 
 # -------------------------------- strict CUDA constructor-stage release gate
@@ -3803,6 +4243,27 @@ def _require_exact_json_int(
     if minimum is not None and value < minimum:
         raise QualificationError(f"{label} must be at least {minimum}")
     return value
+
+
+def _require_exact_json_float(value: Any, label: str) -> float:
+    if type(value) is not float or not math.isfinite(value):
+        raise QualificationError(
+            f"{label} must be an exact finite JSON float"
+        )
+    return value
+
+
+def _require_canonical_json_f32(value: Any, label: str) -> float:
+    """Require the exact binary64 spelling emitted from one finite f32."""
+
+    checked = _require_exact_json_float(value, label)
+    with np.errstate(over="ignore", invalid="ignore"):
+        canonical = float(np.float32(checked))
+    if not math.isfinite(canonical) or canonical != checked:
+        raise QualificationError(
+            f"{label} must be a canonical finite f32 JSON float"
+        )
+    return checked
 
 
 def _strict_stage_snapshot(_C: Any, *, reset: bool) -> dict[str, int]:
@@ -4054,6 +4515,10 @@ def _strict_stage_module_identity(
     _C: Any, module: Path, puffer_root: Path
 ) -> dict[str, Any]:
     identity = _module_identity(_C, module, puffer_root)
+    # The strict-stage receipt retains its established schema. `_load_backend`
+    # has already required the entropy marker before this test-only identity is
+    # constructed; schema-11 main qualification records bind it directly.
+    identity.pop("entropy_schedule_contract", None)
     identity["gpu"] = getattr(_C, "gpu", None)
     identity["strict_stage_surface"] = callable(
         getattr(_C, "strict_env_config_test_stages", None)
@@ -4986,6 +5451,1306 @@ def _measure_throughput(
     }
 
 
+def _entropy_graph_counter_snapshot(
+    backend: Any,
+    pufferl: Any,
+) -> tuple[dict[str, dict[str, int]], dict[str, Any]]:
+    raw = backend.qualification_graph_execution(pufferl)
+    if not isinstance(raw, Mapping):
+        raise QualificationError(
+            "entropy native graph-execution evidence is not a mapping"
+        )
+    roles = ("rollout", "tail", "train")
+    counters: dict[str, dict[str, int]] = {}
+    for source, label in (
+        ("graph_launch_counts", "graph"),
+        ("eager_execution_counts", "eager"),
+    ):
+        values = raw.get(source)
+        if not isinstance(values, Mapping):
+            raise QualificationError(
+                f"entropy native {source} evidence is missing"
+            )
+        counters[label] = {
+            role: _require_exact_json_int(
+                values.get(role),
+                f"entropy native {label} {role} count",
+                minimum=0,
+            )
+            for role in roles
+        }
+    return counters, copy.deepcopy(dict(raw))
+
+
+def _entropy_graph_counter_delta(
+    previous: Mapping[str, Mapping[str, int]],
+    current: Mapping[str, Mapping[str, int]],
+    *,
+    role: str,
+    mode: str,
+) -> int:
+    before = _int(
+        previous.get(mode, {}).get(role),
+        f"entropy {mode} {role} previous count",
+        minimum=0,
+    )
+    after = _int(
+        current.get(mode, {}).get(role),
+        f"entropy {mode} {role} current count",
+        minimum=0,
+    )
+    if after < before:
+        raise QualificationError(
+            f"entropy {mode} {role} execution counter regressed"
+        )
+    return after - before
+
+
+def _torch_policy_sha256(pufferl: Any) -> str:
+    """Hash Torch state tensors deterministically, independent of zip metadata."""
+
+    policy = getattr(pufferl, "policy", None)
+    state_dict = getattr(policy, "state_dict", None)
+    if not callable(state_dict):
+        raise QualificationError(
+            "Torch entropy cell policy state is unavailable"
+        )
+    digest = hashlib.sha256()
+    try:
+        entries = state_dict()
+    except Exception as exc:
+        raise QualificationError(
+            f"Torch entropy cell cannot read policy state: {exc}"
+        ) from exc
+    if not isinstance(entries, Mapping) or not entries:
+        raise QualificationError("Torch entropy cell policy state is empty")
+    for name in sorted(entries):
+        tensor = entries[name]
+        try:
+            detached = tensor.detach().cpu().contiguous()
+            array = detached.numpy()
+        except Exception as exc:
+            raise QualificationError(
+                f"Torch entropy weight tensor {name} is unreadable: {exc}"
+            ) from exc
+        name_bytes = str(name).encode("utf-8")
+        dtype_bytes = str(array.dtype).encode("ascii")
+        shape_bytes = json.dumps(list(array.shape)).encode("ascii")
+        for encoded in (name_bytes, dtype_bytes, shape_bytes):
+            digest.update(len(encoded).to_bytes(8, "big"))
+            digest.update(encoded)
+        raw = array.tobytes(order="C")
+        digest.update(len(raw).to_bytes(8, "big"))
+        digest.update(raw)
+    return digest.hexdigest()
+
+
+def _native_policy_sha256(
+    backend: Any,
+    pufferl: Any,
+    directory: Path,
+    *,
+    label: str,
+) -> str:
+    path = Path(directory) / f"entropy-{label}-{os.getpid()}.bin"
+    try:
+        backend.save_weights(pufferl, str(path))
+        return _required_file_sha256(path, f"entropy {label} weights")
+    finally:
+        path.unlink(missing_ok=True)
+
+
+def _entropy_tail_valid_count(
+    backend: Any,
+    pufferl: Any,
+    *,
+    native: bool,
+    buffers: int,
+    label: str,
+) -> int:
+    if native:
+        snapshot = decode_snapshot(
+            backend.qualification_snapshot(pufferl)
+        )
+        valid = validate_tail_validity(
+            snapshot.get("tail_valid"),
+            num_buffers=buffers,
+            expected=1 if label == "before train" else 0,
+            label=f"entropy {label}",
+        )
+        return int(valid.sum())
+    value = getattr(pufferl, "tail_valid", None)
+    if type(value) is not bool:
+        raise QualificationError(
+            f"Torch entropy tail validity is not boolean {label}"
+        )
+    expected = label == "before train"
+    if value is not expected:
+        raise QualificationError(
+            f"Torch entropy tail validity differs {label}"
+        )
+    return buffers if value else 0
+
+
+def _decode_entropy_gradient_state(
+    raw: Any,
+    *,
+    expected_update_index: int,
+    expected_backend: str,
+) -> tuple[dict[str, Any], dict[str, np.ndarray]]:
+    """Normalize one bounded backend gradient surface without losing bytes."""
+
+    if expected_backend not in {"native", "torch"}:
+        raise QualificationError(
+            "entropy gradient decoder backend is unsupported"
+        )
+    backend_label = "Torch" if expected_backend == "torch" else "native"
+    if not isinstance(raw, Mapping):
+        raise QualificationError(
+            f"{backend_label} entropy gradient state is not a mapping"
+        )
+    _require_exact_keys(
+        raw,
+        (
+            "contract",
+            "completed_update_index",
+            "committed_epoch",
+            "is_continuous",
+            "precision",
+            "max_bytes",
+            "used_bytes",
+            "tensors",
+        ),
+        f"{backend_label} entropy gradient state",
+    )
+    if raw.get("contract") != ENTROPY_GRADIENT_CONTRACT:
+        raise QualificationError(
+            f"{backend_label} entropy gradient contract differs"
+        )
+    expected_index = _int(
+        expected_update_index,
+        f"{backend_label} entropy gradient expected update index",
+        minimum=0,
+    )
+    if (
+        _require_exact_json_int(
+            raw.get("completed_update_index"),
+            f"{backend_label} entropy gradient completed update index",
+            minimum=0,
+        )
+        != expected_index
+        or _require_exact_json_int(
+            raw.get("committed_epoch"),
+            f"{backend_label} entropy gradient committed epoch",
+            minimum=1,
+        )
+        != expected_index + 1
+    ):
+        raise QualificationError(
+            f"{backend_label} entropy gradient update identity differs"
+        )
+    if raw.get("is_continuous") is not False:
+        raise QualificationError(
+            f"{backend_label} entropy gradient fixture is not discrete"
+        )
+    if raw.get("precision") != "f32":
+        raise QualificationError(
+            f"{backend_label} entropy gradient precision is not fp32"
+        )
+    maximum = _require_exact_json_int(
+        raw.get("max_bytes"),
+        f"{backend_label} entropy gradient byte limit",
+        minimum=1,
+    )
+    if maximum != QUALIFICATION_POLICY_MAX_BYTES:
+        raise QualificationError(
+            f"{backend_label} entropy gradient byte limit differs"
+        )
+    used = _require_exact_json_int(
+        raw.get("used_bytes"),
+        f"{backend_label} entropy gradient used bytes",
+        minimum=1,
+    )
+    if used > maximum:
+        raise QualificationError(
+            f"{backend_label} entropy gradient used bytes exceed the limit"
+        )
+    tensors = raw.get("tensors")
+    if not isinstance(tensors, Mapping):
+        raise QualificationError(
+            f"{backend_label} entropy gradient tensors are missing"
+        )
+    _require_exact_keys(
+        tensors,
+        ENTROPY_GRADIENT_TENSOR_FIELDS,
+        f"{backend_label} entropy gradient tensors",
+    )
+
+    arrays: dict[str, np.ndarray] = {}
+    tensor_metadata: dict[str, dict[str, Any]] = {}
+    observed_bytes = 0
+    for name in ENTROPY_GRADIENT_TENSOR_FIELDS:
+        tensor = tensors.get(name)
+        if not isinstance(tensor, Mapping):
+            raise QualificationError(
+                f"{backend_label} entropy gradient tensor is missing: {name}"
+            )
+        _require_exact_keys(
+            tensor,
+            ("name", "dtype", "shape", "present", "data", "bytes"),
+            f"{backend_label} entropy gradient tensor {name}",
+        )
+        if tensor.get("name") != name:
+            raise QualificationError(
+                f"{backend_label} entropy gradient tensor name differs: {name}"
+            )
+        expected_dtype = "i32" if name == "act_sizes" else "f32"
+        if tensor.get("dtype") != expected_dtype:
+            raise QualificationError(
+                f"{backend_label} entropy gradient tensor dtype differs: {name}"
+            )
+        shape_raw = tensor.get("shape")
+        if (
+            not isinstance(shape_raw, list)
+            or not shape_raw
+            or len(shape_raw) > 4
+            or any(
+                type(dimension) is not int or dimension < 0
+                for dimension in shape_raw
+            )
+        ):
+            raise QualificationError(
+                f"{backend_label} entropy gradient tensor shape is invalid: "
+                f"{name}"
+            )
+        shape = tuple(shape_raw)
+        present = tensor.get("present")
+        expected_present = name != "grad_logstd"
+        if type(present) is not bool or present is not expected_present:
+            raise QualificationError(
+                f"{backend_label} entropy gradient tensor presence differs: "
+                f"{name}"
+            )
+        payload = tensor.get("data")
+        if type(payload) is not bytes:
+            raise QualificationError(
+                f"{backend_label} entropy gradient tensor payload is not "
+                f"bytes: {name}"
+            )
+        elements = math.prod(shape)
+        expected_bytes = elements * 4 if present else 0
+        byte_count = _require_exact_json_int(
+            tensor.get("bytes"),
+            f"{backend_label} entropy gradient tensor bytes {name}",
+            minimum=0,
+        )
+        if (
+            byte_count != expected_bytes
+            or len(payload) != expected_bytes
+        ):
+            raise QualificationError(
+                f"{backend_label} entropy gradient tensor byte count differs: "
+                f"{name}"
+            )
+        if present and elements <= 0:
+            raise QualificationError(
+                f"{backend_label} entropy gradient tensor is empty: {name}"
+            )
+        dtype = np.dtype("<i4" if expected_dtype == "i32" else "<f4")
+        array = (
+            np.empty((0,), dtype=dtype)
+            if not present
+            else np.frombuffer(payload, dtype=dtype).copy().reshape(shape)
+        )
+        if expected_dtype == "f32" and not np.isfinite(array).all():
+            raise QualificationError(
+                f"{backend_label} entropy gradient tensor is nonfinite: {name}"
+            )
+        arrays[f"gradient_{name}"] = array
+        tensor_metadata[name] = {
+            "name": name,
+            "dtype": expected_dtype,
+            "shape": list(shape),
+            "present": present,
+            "bytes": byte_count,
+            "sha256": hashlib.sha256(payload).hexdigest(),
+        }
+        observed_bytes += byte_count
+    if observed_bytes != used:
+        raise QualificationError(
+            f"{backend_label} entropy gradient used-byte ledger differs"
+        )
+    return (
+        {
+            "contract": ENTROPY_GRADIENT_CONTRACT,
+            "completed_update_index": expected_index,
+            "committed_epoch": expected_index + 1,
+            "is_continuous": False,
+            "precision": "f32",
+            "max_bytes": maximum,
+            "used_bytes": used,
+            "tensors": tensor_metadata,
+        },
+        arrays,
+    )
+
+
+def _decode_entropy_overrun_state(
+    raw: Any,
+    *,
+    captured_arrays: dict[str, np.ndarray] | None = None,
+    boundary: str | None = None,
+) -> dict[str, Any]:
+    """Normalize the bounded native e=N state without retaining raw bytes."""
+
+    if (captured_arrays is None) != (boundary is None):
+        raise QualificationError(
+            "native entropy overrun array capture is incomplete"
+        )
+    if boundary not in {None, "before", "after"}:
+        raise QualificationError(
+            "native entropy overrun array boundary differs"
+        )
+    if not isinstance(raw, Mapping):
+        raise QualificationError(
+            "native entropy overrun state is not a mapping"
+        )
+    _require_exact_keys(
+        raw,
+        ("contract", "max_bytes", "used_bytes", "host", "tensors"),
+        "native entropy overrun state",
+    )
+    if raw.get("contract") != ENTROPY_OVERRUN_STATE_CONTRACT:
+        raise QualificationError(
+            "native entropy overrun state contract differs"
+        )
+    maximum = _require_exact_json_int(
+        raw.get("max_bytes"),
+        "native entropy overrun state byte limit",
+        minimum=1,
+    )
+    if maximum != QUALIFICATION_POLICY_MAX_BYTES:
+        raise QualificationError(
+            "native entropy overrun state byte limit differs"
+        )
+    used = _require_exact_json_int(
+        raw.get("used_bytes"),
+        "native entropy overrun state used bytes",
+        minimum=1,
+    )
+    if used > maximum:
+        raise QualificationError(
+            "native entropy overrun state exceeds its byte limit"
+        )
+
+    host_raw = raw.get("host")
+    if not isinstance(host_raw, Mapping):
+        raise QualificationError(
+            "native entropy overrun host state is missing"
+        )
+    _require_exact_keys(
+        host_raw,
+        ENTROPY_OVERRUN_HOST_FIELDS,
+        "native entropy overrun host state",
+    )
+    host: dict[str, Any] = {}
+    integer_fields = {
+        "epoch",
+        "global_step",
+        "current_ent_epoch",
+        "entropy_schedule_update_count",
+        "entropy_loss_minibatch_count",
+        "entropy_first_update",
+        "entropy_last_update",
+        "pending_entropy_update",
+        "pending_entropy_minibatches",
+    }
+    float_fields = {
+        "current_ent_coef",
+        "entropy_first_coefficient",
+        "entropy_last_coefficient",
+        "pending_entropy_coefficient",
+    }
+    boolean_fields = set(ENTROPY_OVERRUN_HOST_FIELDS) - (
+        integer_fields | float_fields
+    )
+    for field in ENTROPY_OVERRUN_HOST_FIELDS:
+        value = host_raw.get(field)
+        if field in integer_fields:
+            value = _require_exact_json_int(
+                value,
+                f"native entropy overrun host {field}",
+            )
+        elif field in float_fields:
+            value = _require_canonical_json_f32(
+                value,
+                f"native entropy overrun host {field}",
+            )
+        elif field in boolean_fields:
+            if type(value) is not bool:
+                raise QualificationError(
+                    f"native entropy overrun host {field} "
+                    "must be an exact boolean"
+                )
+        host[field] = value
+
+    tensors_raw = raw.get("tensors")
+    if not isinstance(tensors_raw, Mapping):
+        raise QualificationError(
+            "native entropy overrun tensors are missing"
+        )
+    _require_exact_keys(
+        tensors_raw,
+        ENTROPY_OVERRUN_TENSOR_FIELDS,
+        "native entropy overrun tensors",
+    )
+    tensors: dict[str, dict[str, Any]] = {}
+    observed_bytes = 0
+    for name in ENTROPY_OVERRUN_TENSOR_FIELDS:
+        tensor = tensors_raw.get(name)
+        if not isinstance(tensor, Mapping):
+            raise QualificationError(
+                f"native entropy overrun tensor is missing: {name}"
+            )
+        _require_exact_keys(
+            tensor,
+            ("name", "dtype", "shape", "present", "data", "bytes"),
+            f"native entropy overrun tensor {name}",
+        )
+        if tensor.get("name") != name or tensor.get("dtype") != "f32":
+            raise QualificationError(
+                f"native entropy overrun tensor identity differs: {name}"
+            )
+        shape_raw = tensor.get("shape")
+        if (
+            not isinstance(shape_raw, list)
+            or len(shape_raw) != 1
+            or type(shape_raw[0]) is not int
+            or shape_raw[0] <= 0
+        ):
+            raise QualificationError(
+                f"native entropy overrun tensor shape differs: {name}"
+            )
+        if tensor.get("present") is not True:
+            raise QualificationError(
+                f"native entropy overrun tensor is absent: {name}"
+            )
+        payload = tensor.get("data")
+        if type(payload) is not bytes:
+            raise QualificationError(
+                f"native entropy overrun tensor payload is not bytes: {name}"
+            )
+        elements = shape_raw[0]
+        expected_bytes = elements * np.dtype("<f4").itemsize
+        byte_count = _require_exact_json_int(
+            tensor.get("bytes"),
+            f"native entropy overrun tensor bytes {name}",
+            minimum=1,
+        )
+        if byte_count != expected_bytes or len(payload) != expected_bytes:
+            raise QualificationError(
+                f"native entropy overrun tensor byte count differs: {name}"
+            )
+        values = np.frombuffer(payload, dtype="<f4").copy()
+        nonfinite = int(np.count_nonzero(~np.isfinite(values)))
+        if nonfinite:
+            raise QualificationError(
+                f"native entropy overrun tensor is nonfinite: {name}"
+            )
+        nonzero = int(np.count_nonzero(values))
+        if captured_arrays is not None and name in ENTROPY_OVERRUN_LARGE_TENSORS:
+            array_name = f"overrun_state_{boundary}_{name}"
+            if (
+                array_name not in ENTROPY_OVERRUN_ARRAY_FIELDS
+                or array_name in captured_arrays
+            ):
+                raise QualificationError(
+                    "native entropy overrun raw-array capture differs"
+                )
+            captured_arrays[array_name] = values
+        tensors[name] = {
+            "name": name,
+            "dtype": "f32",
+            "shape": list(shape_raw),
+            "present": True,
+            "elements": elements,
+            "bytes": byte_count,
+            "sha256": hashlib.sha256(payload).hexdigest(),
+            "nonzero": nonzero,
+            "nonfinite": nonfinite,
+            "values": (
+                values.tolist()
+                if name in ENTROPY_OVERRUN_SMALL_TENSORS
+                else None
+            ),
+        }
+        observed_bytes += byte_count
+    if observed_bytes != used:
+        raise QualificationError(
+            "native entropy overrun state used-byte ledger differs"
+        )
+    return {
+        "contract": ENTROPY_OVERRUN_STATE_CONTRACT,
+        "max_bytes": maximum,
+        "used_bytes": used,
+        "host": host,
+        "tensors": tensors,
+    }
+
+
+def _normalize_entropy_update_log(
+    log: Any,
+    *,
+    kind: str,
+    expected_index: int,
+) -> tuple[dict[str, float | int], dict[str, float]]:
+    if not isinstance(log, Mapping):
+        raise QualificationError("entropy training log is not a mapping")
+    schedule = log.get("entropy_schedule")
+    loss = log.get("loss")
+    env = log.get("env")
+    if not isinstance(schedule, Mapping):
+        raise QualificationError(
+            "entropy training log omitted its fresh schedule interval"
+        )
+    if not isinstance(loss, Mapping):
+        raise QualificationError(
+            "entropy training log omitted its fresh loss interval"
+        )
+    if not isinstance(env, Mapping):
+        raise QualificationError(
+            "entropy training log omitted environment integrity"
+        )
+    integrity = validate_hard_integrity(env)
+
+    if kind in ENTROPY_NATIVE_CELL_KINDS:
+        _require_exact_keys(
+            schedule,
+            (
+                "schedule_update_count",
+                "loss_minibatch_count",
+                "first_update_index",
+                "last_update_index",
+                "first_effective_coefficient",
+                "last_effective_coefficient",
+                "interval_role",
+                "entropy_schedule_contract",
+                "valid",
+            ),
+            "native entropy schedule interval",
+        )
+        if (
+            schedule.get("entropy_schedule_contract")
+            != ENTROPY_SCHEDULE_CONTRACT
+        ):
+            raise QualificationError(
+                "native entropy schedule interval contract differs"
+            )
+        if schedule.get("valid") is not True:
+            raise QualificationError(
+                "native entropy schedule interval is not valid"
+            )
+        if schedule.get("interval_role") != "training":
+            raise QualificationError(
+                "native entropy schedule interval role is not training"
+            )
+        if (
+            _require_exact_json_int(
+                schedule.get("schedule_update_count"),
+                "native entropy schedule update count",
+                minimum=1,
+            )
+            != 1
+        ):
+            raise QualificationError(
+                "native entropy schedule interval is not exactly one update"
+            )
+        loss_count = _require_exact_json_int(
+            schedule.get("loss_minibatch_count"),
+            "native entropy schedule minibatch count",
+            minimum=1,
+        )
+        first_index = _require_exact_json_int(
+            schedule.get("first_update_index"),
+            "native entropy first update index",
+            minimum=0,
+        )
+        last_index = _require_exact_json_int(
+            schedule.get("last_update_index"),
+            "native entropy last update index",
+            minimum=0,
+        )
+        if first_index != expected_index or last_index != expected_index:
+            raise QualificationError(
+                "native entropy interval update index differs"
+            )
+        host = _num(
+            schedule.get("first_effective_coefficient"),
+            "native entropy first effective coefficient",
+        )
+        last_host = _num(
+            schedule.get("last_effective_coefficient"),
+            "native entropy last effective coefficient",
+        )
+        if host != last_host:
+            raise QualificationError(
+                "native entropy coefficient moved within one update"
+            )
+        device = _num(
+            loss.get("entropy_coefficient"),
+            "native direct kernel entropy coefficient",
+        )
+        direct_loss_count = _require_exact_json_int(
+            loss.get("loss_minibatch_count"),
+            "native direct loss minibatch count",
+            minimum=1,
+        )
+        if direct_loss_count != loss_count:
+            raise QualificationError(
+                "native schedule/loss minibatch counts disagree"
+            )
+    else:
+        _require_exact_keys(
+            schedule,
+            (
+                "entropy_schedule_contract",
+                "entropy_first_applied_update_index",
+                "entropy_applied_update_index",
+                "entropy_update_count",
+                "entropy_loss_minibatch_count",
+                "entropy_c_real",
+                "entropy_c_applied",
+            ),
+            "Torch entropy schedule interval",
+        )
+        if (
+            schedule.get("entropy_schedule_contract")
+            != ENTROPY_SCHEDULE_CONTRACT
+        ):
+            raise QualificationError(
+                "Torch entropy schedule interval contract differs"
+            )
+        if (
+            _require_exact_json_int(
+                schedule.get("entropy_update_count"),
+                "Torch entropy update count",
+                minimum=1,
+            )
+            != 1
+        ):
+            raise QualificationError(
+                "Torch entropy schedule interval is not exactly one update"
+            )
+        first_index = _require_exact_json_int(
+            schedule.get("entropy_first_applied_update_index"),
+            "Torch entropy first update index",
+            minimum=0,
+        )
+        last_index = _require_exact_json_int(
+            schedule.get("entropy_applied_update_index"),
+            "Torch entropy applied update index",
+            minimum=0,
+        )
+        if first_index != expected_index or last_index != expected_index:
+            raise QualificationError(
+                "Torch entropy interval update index differs"
+            )
+        loss_count = _require_exact_json_int(
+            schedule.get("entropy_loss_minibatch_count"),
+            "Torch entropy loss minibatch count",
+            minimum=1,
+        )
+        c_real = _num(
+            schedule.get("entropy_c_real"),
+            "Torch entropy real coefficient",
+        )
+        host = float(np.float32(c_real))
+        schedule_applied = _num(
+            schedule.get("entropy_c_applied"),
+            "Torch entropy applied coefficient",
+        )
+        device = _num(
+            loss.get("entropy_coefficient"),
+            "Torch direct loss entropy coefficient",
+        )
+        if float(np.float32(schedule_applied)) != float(
+            np.float32(device)
+        ):
+            raise QualificationError(
+                "Torch schedule/direct loss entropy coefficients disagree"
+            )
+    if loss_count != 1:
+        raise QualificationError(
+            "entropy qualification did not execute one minibatch"
+        )
+    if float(np.float32(host)) != float(np.float32(device)):
+        raise QualificationError(
+            "entropy host/device coefficient telemetry disagrees"
+        )
+
+    values = {
+        "update_index": expected_index,
+        "host_coefficient": float(np.float32(host)),
+        "device_coefficient": float(np.float32(device)),
+        "policy_loss": _num(
+            loss.get("policy_loss"),
+            "entropy policy loss",
+        ),
+        "value_loss": _num(
+            loss.get("value_loss"),
+            "entropy value loss",
+        ),
+        "entropy": _num(loss.get("entropy"), "entropy raw entropy"),
+        "signed_entropy_term": _num(
+            loss.get("entropy_term"),
+            "entropy signed objective term",
+        ),
+        "total_loss": _num(
+            loss.get("total_loss"),
+            "entropy total loss",
+        ),
+        "loss_count": loss_count,
+    }
+    if values["entropy"] <= 0.0:
+        raise QualificationError(
+            "entropy training interval did not expose positive entropy"
+        )
+    return values, integrity
+
+
+def _measure_entropy_schedule_cell(
+    backend: Any,
+    *,
+    kind: str,
+    config: Mapping[str, Any],
+    puffer_root: Path,
+    directory: Path,
+    record: dict[str, Any],
+) -> dict[str, np.ndarray]:
+    """Run one complete N=20 rollout-tail-train-log schedule cell."""
+
+    native = kind in ENTROPY_NATIVE_CELL_KINDS
+    descriptor = entropy_schedule_descriptor(
+        enabled=_entropy_schedule_enabled(kind)
+    )
+    verifier, verifier_identity = _load_entropy_schedule_verifier()
+    schedule = _entropy_oracle_schedule(descriptor)
+    vec = config["vec"]
+    train_config = config["train"]
+    agents = _int(
+        vec["total_agents"],
+        "entropy cell total agents",
+        minimum=1,
+    )
+    buffers = _int(
+        vec["num_buffers"],
+        "entropy cell buffers",
+        minimum=1,
+    )
+    horizon = _int(
+        train_config["horizon"],
+        "entropy cell horizon",
+        minimum=1,
+    )
+    quantum = agents * horizon
+    values: dict[str, list[float | int]] = {
+        name: [] for name in ENTROPY_RAW_ARRAY_FIELDS
+    }
+    common_execution_values: dict[str, list[int]] = {
+        name: [] for name in ENTROPY_COMMON_EXECUTION_ARRAY_FIELDS
+    }
+    native_execution_counter_values: dict[str, list[int]] = (
+        {
+            name: []
+            for name in ENTROPY_NATIVE_EXECUTION_COUNTER_ARRAY_FIELDS
+        }
+        if native
+        else {}
+    )
+    gradient_snapshots: list[dict[str, Any]] = []
+    gradient_values: dict[str, list[np.ndarray]] = {
+        name: [] for name in ENTROPY_GRADIENT_ARRAY_FIELDS
+    }
+    overrun_state_arrays: dict[str, np.ndarray] = {}
+    integrity_intervals: list[dict[str, float]] = []
+    graph_previous: dict[str, dict[str, int]] | None = None
+    final_graph_evidence: dict[str, Any] | None = None
+    if not native:
+        try:
+            source_path = verifier.validate_torch_source_contract(
+                puffer_root
+            )
+            source_points = verifier.execute_torch_source_schedule(
+                puffer_root,
+                schedule,
+                range(ENTROPY_SCHEDULE_TOTAL_UPDATES),
+            )
+        except Exception as exc:
+            raise QualificationError(
+                f"Torch entropy source verification failed: {exc}"
+            ) from exc
+        if len(source_points) != ENTROPY_SCHEDULE_TOTAL_UPDATES:
+            raise QualificationError(
+                "Torch entropy helper did not cover every update"
+            )
+        try:
+            import torch
+            from pufferlib import torch_pufferl
+        except (ImportError, OSError, RuntimeError) as exc:
+            raise QualificationError(
+                f"Torch entropy backend import failed: {exc}"
+            ) from exc
+        if (
+            getattr(torch_pufferl, "ENTROPY_SCHEDULE_CONTRACT", None)
+            != ENTROPY_SCHEDULE_CONTRACT
+        ):
+            raise QualificationError(
+                "Torch entropy backend contract marker differs"
+            )
+        module_path = Path(torch_pufferl.__file__).resolve()
+        expected_source = (
+            Path(puffer_root).resolve()
+            / "pufferlib"
+            / "torch_pufferl.py"
+        ).resolve()
+        if module_path != expected_source or Path(source_path) != expected_source:
+            raise QualificationError(
+                "Torch entropy backend source path differs"
+            )
+        cell_seed = _require_exact_json_int(
+            config.get("seed"),
+            "Torch entropy cell seed",
+            minimum=0,
+        )
+        torch.manual_seed(cell_seed)
+        record["torch_manual_seed"] = cell_seed
+        pufferl = torch_pufferl.PuffeRL.create_pufferl(
+            copy.deepcopy(dict(config))
+        )
+    else:
+        pufferl = backend.create_pufferl(copy.deepcopy(dict(config)))
+
+    try:
+        if not native:
+            enable_gradient_qualification = getattr(
+                pufferl,
+                "enable_entropy_gradient_qualification",
+                None,
+            )
+            read_gradient_qualification = getattr(
+                pufferl,
+                "qualification_entropy_gradient_state",
+                None,
+            )
+            if not callable(enable_gradient_qualification) or not callable(
+                read_gradient_qualification
+            ):
+                raise QualificationError(
+                    "Torch entropy gradient qualification surface is missing"
+                )
+            enable_gradient_qualification()
+        if native:
+            def rollout():
+                return backend.rollouts(pufferl)
+
+            def train():
+                return backend.train(pufferl)
+
+            def read_log():
+                return backend.log(pufferl)
+
+            weights_before = _native_policy_sha256(
+                backend,
+                pufferl,
+                directory,
+                label="before",
+            )
+            graph_previous, initial_graph = _entropy_graph_counter_snapshot(
+                backend,
+                pufferl,
+            )
+            for mode in ("graph", "eager"):
+                if any(graph_previous[mode].values()):
+                    raise QualificationError(
+                        "entropy graph warmup left execution-counter residue"
+                    )
+            initial_bound = dict(initial_graph)
+            initial_bound["workload"] = kind
+            validate_graph_execution_evidence(
+                initial_bound,
+                expected_cudagraphs=int(config["cudagraphs"]),
+                expected_workload=kind,
+                expected_counts={"rollout": 0, "tail": 0, "train": 0},
+            )
+        else:
+            rollout = pufferl.rollouts
+            train = pufferl.train
+            read_log = pufferl.log
+            weights_before = _torch_policy_sha256(pufferl)
+
+        if _int(
+            getattr(pufferl, "global_step", None),
+            "entropy initial global step",
+            minimum=0,
+        ) != 0:
+            raise QualificationError(
+                "entropy cell did not begin at global step zero"
+            )
+        for update in range(ENTROPY_SCHEDULE_TOTAL_UPDATES):
+            before_step = _int(
+                getattr(pufferl, "global_step", None),
+                "entropy pre-rollout global step",
+                minimum=0,
+            )
+            rollout()
+            tail_before = _entropy_tail_valid_count(
+                backend,
+                pufferl,
+                native=native,
+                buffers=buffers,
+                label="before train",
+            )
+            train()
+            gradient_snapshot, gradient_arrays = (
+                _decode_entropy_gradient_state(
+                    (
+                        backend.qualification_entropy_gradient_state(
+                            pufferl,
+                            QUALIFICATION_POLICY_MAX_BYTES,
+                        )
+                        if native
+                        else read_gradient_qualification(
+                            QUALIFICATION_POLICY_MAX_BYTES
+                        )
+                    ),
+                    expected_update_index=update,
+                    expected_backend="native" if native else "torch",
+                )
+            )
+            gradient_snapshots.append(gradient_snapshot)
+            for name in ENTROPY_GRADIENT_ARRAY_FIELDS:
+                gradient_values[name].append(gradient_arrays[name])
+            tail_after = _entropy_tail_valid_count(
+                backend,
+                pufferl,
+                native=native,
+                buffers=buffers,
+                label="after train",
+            )
+            after_step = _int(
+                getattr(pufferl, "global_step", None),
+                "entropy post-train global step",
+                minimum=0,
+            )
+            normalized, integrity = _normalize_entropy_update_log(
+                read_log(),
+                kind=kind,
+                expected_index=update,
+            )
+            for name in ENTROPY_RAW_ARRAY_FIELDS:
+                values[name].append(normalized[name])
+            integrity_intervals.append(integrity)
+            common_execution_values["global_step_before"].append(before_step)
+            common_execution_values["global_step_after"].append(after_step)
+            common_execution_values["tail_valid_before_train"].append(
+                tail_before
+            )
+            common_execution_values["tail_valid_after_train"].append(
+                tail_after
+            )
+
+            if native:
+                graph_current, final_graph_evidence = (
+                    _entropy_graph_counter_snapshot(backend, pufferl)
+                )
+                if graph_previous is None:  # pragma: no cover - initialized above
+                    raise AssertionError("missing graph counter baseline")
+                for mode in ("graph", "eager"):
+                    for role in ("rollout", "tail", "train"):
+                        native_execution_counter_values[
+                            f"{mode}_{role}_delta"
+                        ].append(
+                            _entropy_graph_counter_delta(
+                                graph_previous,
+                                graph_current,
+                                role=role,
+                                mode=mode,
+                            )
+                        )
+                graph_previous = graph_current
+
+        if native:
+            weights_after = _native_policy_sha256(
+                backend,
+                pufferl,
+                directory,
+                label="after",
+            )
+        else:
+            weights_after = _torch_policy_sha256(pufferl)
+        validate_weight_identity(weights_before, weights_after)
+
+        overrun_epoch_before = _int(
+            getattr(pufferl, "epoch", None),
+            "entropy overrun pre-call epoch",
+            minimum=0,
+        )
+        overrun_step_before = _int(
+            getattr(pufferl, "global_step", None),
+            "entropy overrun pre-call global step",
+            minimum=0,
+        )
+        overrun_tail_before = _entropy_tail_valid_count(
+            backend,
+            pufferl,
+            native=native,
+            buffers=buffers,
+            label="after train",
+        )
+        overrun_counters_before = None
+        overrun_native_state_before = None
+        if native:
+            overrun_counters_before, _ = (
+                _entropy_graph_counter_snapshot(backend, pufferl)
+            )
+            read_overrun_state = getattr(
+                backend,
+                ENTROPY_OVERRUN_STATE_SURFACE_BINDING,
+                None,
+            )
+            if not callable(read_overrun_state):
+                raise QualificationError(
+                    "native entropy overrun state surface is missing"
+                )
+            overrun_native_state_before = _decode_entropy_overrun_state(
+                read_overrun_state(
+                    pufferl,
+                    QUALIFICATION_POLICY_MAX_BYTES,
+                ),
+                captured_arrays=overrun_state_arrays,
+                boundary="before",
+            )
+        try:
+            train()
+        except RuntimeError as exc:
+            overrun_exception_type = type(exc).__name__
+            overrun_exception_message = str(exc)
+        else:
+            raise QualificationError(
+                "entropy backend accepted a public train call at e=N"
+            )
+        if native:
+            overrun_native_state_after = _decode_entropy_overrun_state(
+                read_overrun_state(
+                    pufferl,
+                    QUALIFICATION_POLICY_MAX_BYTES,
+                ),
+                captured_arrays=overrun_state_arrays,
+                boundary="after",
+            )
+        else:
+            overrun_native_state_after = None
+        overrun_epoch_after = _int(
+            getattr(pufferl, "epoch", None),
+            "entropy overrun post-call epoch",
+            minimum=0,
+        )
+        overrun_step_after = _int(
+            getattr(pufferl, "global_step", None),
+            "entropy overrun post-call global step",
+            minimum=0,
+        )
+        overrun_tail_after = _entropy_tail_valid_count(
+            backend,
+            pufferl,
+            native=native,
+            buffers=buffers,
+            label="after train",
+        )
+        if native:
+            overrun_counters_after, _ = (
+                _entropy_graph_counter_snapshot(backend, pufferl)
+            )
+            if overrun_counters_before is None:  # pragma: no cover
+                raise AssertionError("missing native overrun counter baseline")
+            overrun_counter_deltas = {
+                mode: {
+                    role: _entropy_graph_counter_delta(
+                        overrun_counters_before,
+                        overrun_counters_after,
+                        role=role,
+                        mode=mode,
+                    )
+                    for role in ("rollout", "tail", "train")
+                }
+                for mode in ("graph", "eager")
+            }
+            overrun_weights_after = _native_policy_sha256(
+                backend,
+                pufferl,
+                directory,
+                label="overrun-after",
+            )
+        else:
+            overrun_counter_deltas = None
+            overrun_weights_after = _torch_policy_sha256(pufferl)
+        record["entropy_overrun"] = {
+            "kind": kind,
+            "backend": "native" if native else "torch",
+            "attempted_update_index": ENTROPY_SCHEDULE_TOTAL_UPDATES,
+            "exception_type": overrun_exception_type,
+            "exception_message": overrun_exception_message,
+            "epoch_before": overrun_epoch_before,
+            "epoch_after": overrun_epoch_after,
+            "global_step_before": overrun_step_before,
+            "global_step_after": overrun_step_after,
+            "tail_valid_before": overrun_tail_before,
+            "tail_valid_after": overrun_tail_after,
+            "weights_before_sha256": weights_after,
+            "weights_after_sha256": overrun_weights_after,
+            "execution_counter_deltas": overrun_counter_deltas,
+            "native_state": (
+                None
+                if not native
+                else {
+                    "before": overrun_native_state_before,
+                    "after": overrun_native_state_after,
+                }
+            ),
+        }
+    finally:
+        if native:
+            backend.close(pufferl)
+        else:
+            pufferl.close()
+
+    arrays: dict[str, np.ndarray] = {
+        "update_index": np.asarray(values["update_index"], dtype=np.int64),
+        "loss_count": np.asarray(values["loss_count"], dtype=np.int64),
+    }
+    arrays.update(
+        {
+            name: np.asarray(values[name], dtype=np.float32)
+            for name in ENTROPY_RAW_ARRAY_FIELDS
+            if name not in {"update_index", "loss_count"}
+        }
+    )
+    arrays.update(
+        {
+            name: np.asarray(common_execution_values[name], dtype=np.int64)
+            for name in ENTROPY_COMMON_EXECUTION_ARRAY_FIELDS
+        }
+    )
+    if native:
+        arrays.update(
+            {
+                name: np.asarray(
+                    native_execution_counter_values[name],
+                    dtype=np.int64,
+                )
+                for name in ENTROPY_NATIVE_EXECUTION_COUNTER_ARRAY_FIELDS
+            }
+        )
+    arrays.update(
+        {
+            name: np.stack(gradient_values[name], axis=0)
+            for name in ENTROPY_GRADIENT_ARRAY_FIELDS
+        }
+    )
+    if native:
+        if frozenset(overrun_state_arrays) != frozenset(
+            ENTROPY_OVERRUN_ARRAY_FIELDS
+        ):
+            raise QualificationError(
+                "native entropy overrun raw-array capture is incomplete"
+            )
+        arrays.update(overrun_state_arrays)
+    elif overrun_state_arrays:
+        raise QualificationError(
+            "Torch entropy cell captured native overrun arrays"
+        )
+    record["entropy_evidence"] = {
+        "kind": kind,
+        "telemetry_contract": ENTROPY_TELEMETRY_CONTRACT,
+        "schedule": descriptor,
+        "vf_coef": float(train_config["vf_coef"]),
+        "weights_before_sha256": weights_before,
+        "weights_after_sha256": weights_after,
+        "raw_array_fields": list(ENTROPY_RAW_ARRAY_FIELDS),
+    }
+    record["entropy_execution"] = {
+        "kind": kind,
+        "backend": "native" if native else "torch",
+        "mode": (
+            "eager"
+            if kind
+            in {
+                "entropy_native_eager_annealed",
+                "entropy_native_eager_anneal_disabled",
+                *ENTROPY_TORCH_CELL_KINDS,
+            }
+            else "graph"
+        ),
+        "update_count": ENTROPY_SCHEDULE_TOTAL_UPDATES,
+        "rollout_count": ENTROPY_SCHEDULE_TOTAL_UPDATES,
+        "train_count": ENTROPY_SCHEDULE_TOTAL_UPDATES,
+        "log_count": ENTROPY_SCHEDULE_TOTAL_UPDATES,
+        "rollout_quantum": quantum,
+        "hard_integrity_intervals": integrity_intervals,
+    }
+    record["entropy_verifier"] = verifier_identity
+    record["entropy_gradient"] = {
+        "kind": kind,
+        "backend": "native" if native else "torch",
+        "contract": ENTROPY_GRADIENT_CONTRACT,
+        "raw_array_fields": list(ENTROPY_GRADIENT_ARRAY_FIELDS),
+        "snapshots": gradient_snapshots,
+    }
+    validate_entropy_schedule_cell_evidence(
+        record["entropy_evidence"],
+        arrays,
+        expected_kind=kind,
+        expected_schedule=descriptor,
+    )
+    validate_entropy_execution_evidence(
+        record["entropy_execution"],
+        arrays,
+        expected_kind=kind,
+        config=config,
+    )
+    validate_entropy_overrun_evidence(
+        record["entropy_overrun"],
+        expected_kind=kind,
+        config=config,
+        arrays=arrays,
+    )
+    validate_entropy_gradient_cell_evidence(
+        record["entropy_gradient"],
+        arrays,
+        expected_kind=kind,
+    )
+    if native:
+        if final_graph_evidence is None:
+            raise QualificationError(
+                "native entropy graph evidence is missing"
+            )
+        bound = dict(final_graph_evidence)
+        bound["workload"] = kind
+        record["graph_execution"] = validate_graph_execution_evidence(
+            bound,
+            expected_cudagraphs=int(config["cudagraphs"]),
+            expected_workload=kind,
+            expected_counts={
+                "rollout": (
+                    ENTROPY_SCHEDULE_TOTAL_UPDATES * horizon * buffers
+                ),
+                "tail": ENTROPY_SCHEDULE_TOTAL_UPDATES * buffers,
+                "train": ENTROPY_SCHEDULE_TOTAL_UPDATES,
+            },
+        )
+    return arrays
+
+
 def run_cell(args: argparse.Namespace) -> int:
     run_nonce = _require_sha256(args.run_nonce, "qualification run nonce")
     cell_nonce = _require_sha256(args.cell_nonce, "qualification cell nonce")
@@ -4998,6 +6763,11 @@ def run_cell(args: argparse.Namespace) -> int:
         output_npz = None
     puffer_root = Path(args.puffer_root).resolve()
     patch_identity = _rollout_transition_patch_identity(puffer_root)
+    entropy_patch_identity = (
+        _entropy_schedule_patch_identity(puffer_root)
+        if args.kind in ENTROPY_QUALIFICATION_CELL_KINDS
+        else None
+    )
     _C, module, evidence = _load_backend(puffer_root)
     config = _cell_config(args.kind, args.cudagraphs, args)
     pufferl = None
@@ -5014,9 +6784,14 @@ def run_cell(args: argparse.Namespace) -> int:
         "host": socket.gethostname(),
         "platform": platform.platform(),
         "seed": args.seed,
-        "accepted": False,
     }
-    validate_module_identity(result["identity"])
+    if entropy_patch_identity is not None:
+        result["entropy_patch_identity"] = entropy_patch_identity
+    if args.kind not in ENTROPY_QUALIFICATION_CELL_KINDS:
+        result["accepted"] = False
+        validate_module_identity(result["identity"])
+    else:
+        validate_entropy_backend_identity(result["identity"])
     try:
         if args.kind == "rollout":
             result["cuda_advantage_oracle"] = (
@@ -5056,6 +6831,26 @@ def run_cell(args: argparse.Namespace) -> int:
                 _exercise_positive_strict_constructors(_C, config)
             )
             result["accepted"] = True
+            write_json_atomic(output_json, result)
+            return 0
+
+        if args.kind in ENTROPY_QUALIFICATION_CELL_KINDS:
+            arrays = _measure_entropy_schedule_cell(
+                _C,
+                kind=args.kind,
+                config=config,
+                puffer_root=puffer_root,
+                directory=output_json.parent,
+                record=result,
+            )
+            if output_npz is None:
+                raise QualificationError(
+                    "entropy cell requires a parent-selected NPZ path"
+                )
+            write_npz_atomic(output_npz, arrays)
+            result["artifact"] = str(output_npz)
+            result["artifact_bytes"] = output_npz.lstat().st_size
+            result["artifact_sha256"] = sha256(output_npz)
             write_json_atomic(output_json, result)
             return 0
 
@@ -5275,6 +7070,16 @@ def _require_rollout_transition_patch_reverse_applicable(
     )
 
 
+def _require_entropy_schedule_patch_reverse_applicable(
+    puffer_root: Path,
+) -> None:
+    _require_patch_reverse_applicable(
+        puffer_root,
+        ENTROPY_SCHEDULE_PATCH,
+        label="entropy schedule patch",
+    )
+
+
 def _required_file_sha256(path: Path, label: str) -> str:
     artifact = Path(path)
     try:
@@ -5367,6 +7172,2053 @@ def validate_rollout_transition_patch_identity(
     return {
         "puffer_git_head": identity["puffer_git_head"],
         "rollout_transition_patch": dict(record),
+    }
+
+
+def _entropy_schedule_patch_identity(
+    puffer_root: Path,
+) -> dict[str, Any]:
+    root = Path(puffer_root).resolve()
+    head = _git_output(root, "rev-parse", "HEAD")
+    if head != PINNED_PUFFER_COMMIT:
+        raise QualificationError(
+            "entropy schedule Puffer checkout is not exact-pinned"
+        )
+    patch_sha = _required_file_sha256(
+        ENTROPY_SCHEDULE_PATCH,
+        "entropy schedule patch",
+    )
+    _require_entropy_schedule_patch_reverse_applicable(root)
+    return {
+        "puffer_git_head": head,
+        "entropy_schedule_patch": {
+            "path": str(ENTROPY_SCHEDULE_PATCH.resolve()),
+            "sha256": patch_sha,
+            "reverse_applicable": True,
+        },
+        "entropy_schedule_contract": ENTROPY_SCHEDULE_CONTRACT,
+    }
+
+
+def validate_entropy_schedule_patch_identity(
+    identity: Any,
+    *,
+    expected_puffer_root: Path | None = None,
+    rehash_files: bool = False,
+) -> dict[str, Any]:
+    """Validate the closed patch/pin/compiled-contract identity."""
+
+    if not isinstance(identity, Mapping):
+        raise QualificationError("entropy schedule patch identity is missing")
+    _require_exact_keys(
+        identity,
+        (
+            "puffer_git_head",
+            "entropy_schedule_patch",
+            "entropy_schedule_contract",
+        ),
+        "entropy schedule patch identity",
+    )
+    if identity.get("puffer_git_head") != PINNED_PUFFER_COMMIT:
+        raise QualificationError(
+            "entropy schedule patch identity has the wrong pin"
+        )
+    if (
+        identity.get("entropy_schedule_contract")
+        != ENTROPY_SCHEDULE_CONTRACT
+    ):
+        raise QualificationError(
+            "entropy schedule patch identity has the wrong compiled contract"
+        )
+    record = identity.get("entropy_schedule_patch")
+    if not isinstance(record, Mapping):
+        raise QualificationError("entropy schedule patch record is missing")
+    _require_exact_keys(
+        record,
+        ("path", "sha256", "reverse_applicable"),
+        "entropy schedule patch record",
+    )
+    recorded_path = _require_bounded_absolute_path(
+        record.get("path"),
+        "entropy schedule patch path",
+    )
+    recorded_sha = _require_sha256(
+        record.get("sha256"),
+        "entropy schedule patch SHA-256",
+    )
+    expected_patch = ENTROPY_SCHEDULE_PATCH.resolve()
+    if recorded_path != expected_patch:
+        raise QualificationError("entropy schedule patch path drifted")
+    if record.get("reverse_applicable") is not True:
+        raise QualificationError("entropy schedule patch is not installed")
+    if rehash_files:
+        if expected_puffer_root is None:
+            raise QualificationError(
+                "entropy schedule patch revalidation requires a Puffer root"
+            )
+        root = Path(expected_puffer_root).resolve()
+        if _git_output(root, "rev-parse", "HEAD") != PINNED_PUFFER_COMMIT:
+            raise QualificationError(
+                "entropy schedule Puffer checkout pin drifted"
+            )
+        if (
+            _required_file_sha256(
+                expected_patch,
+                "entropy schedule patch",
+            )
+            != recorded_sha
+        ):
+            raise QualificationError("entropy schedule patch bytes drifted")
+        _require_entropy_schedule_patch_reverse_applicable(root)
+    return {
+        "puffer_git_head": identity["puffer_git_head"],
+        "entropy_schedule_patch": dict(record),
+        "entropy_schedule_contract": identity[
+            "entropy_schedule_contract"
+        ],
+    }
+
+
+def _validate_entropy_schedule_descriptor(
+    raw: Any,
+    *,
+    expected: Mapping[str, Any],
+) -> dict[str, Any]:
+    if not isinstance(raw, Mapping):
+        raise QualificationError("entropy schedule descriptor is missing")
+    keys = (
+        "base",
+        "enabled",
+        "min_ratio",
+        "total_updates",
+        "first_coefficient",
+        "last_legal_coefficient",
+        "floor_coefficient",
+        "contract",
+    )
+    _require_exact_keys(raw, keys, "entropy schedule descriptor")
+    if not isinstance(expected, Mapping):
+        raise QualificationError(
+            "expected entropy schedule descriptor is missing"
+        )
+    _require_exact_keys(
+        expected,
+        keys,
+        "expected entropy schedule descriptor",
+    )
+    if type(raw.get("enabled")) is not bool:
+        raise QualificationError(
+            "entropy schedule enabled flag is not a boolean"
+        )
+    total = _require_exact_json_int(
+        raw.get("total_updates"),
+        "entropy schedule total updates",
+        minimum=1,
+    )
+    if total != ENTROPY_SCHEDULE_TOTAL_UPDATES:
+        raise QualificationError(
+            "entropy schedule total update denominator differs"
+        )
+    base = _num(raw.get("base"), "entropy schedule base")
+    ratio = _num(raw.get("min_ratio"), "entropy schedule minimum ratio")
+    first = _num(
+        raw.get("first_coefficient"),
+        "entropy schedule first coefficient",
+    )
+    last = _num(
+        raw.get("last_legal_coefficient"),
+        "entropy schedule last legal coefficient",
+    )
+    floor = _num(
+        raw.get("floor_coefficient"),
+        "entropy schedule floor coefficient",
+    )
+    if base < 0 or ratio < 0 or ratio > 1:
+        raise QualificationError(
+            "entropy schedule base/minimum ratio is outside its domain"
+        )
+    if raw.get("contract") != ENTROPY_SCHEDULE_CONTRACT:
+        raise QualificationError("entropy schedule contract differs")
+    canonical = entropy_schedule_descriptor(enabled=raw["enabled"])
+    normalized = {
+        "base": base,
+        "enabled": raw["enabled"],
+        "min_ratio": ratio,
+        "total_updates": total,
+        "first_coefficient": first,
+        "last_legal_coefficient": last,
+        "floor_coefficient": floor,
+        "contract": raw["contract"],
+    }
+    if normalized != canonical or dict(raw) != dict(expected):
+        raise QualificationError(
+            "entropy schedule descriptor differs from the parent request"
+        )
+    return normalized
+
+
+def _require_entropy_array(
+    arrays: Mapping[str, np.ndarray],
+    name: str,
+    *,
+    dtype: np.dtype,
+    length: int,
+) -> np.ndarray:
+    value = arrays.get(name)
+    if not isinstance(value, np.ndarray):
+        raise QualificationError(f"entropy raw array is missing: {name}")
+    if value.dtype != np.dtype(dtype):
+        raise QualificationError(
+            f"entropy raw array {name} has dtype {value.dtype}; "
+            f"expected {np.dtype(dtype)}"
+        )
+    if value.shape != (length,):
+        raise QualificationError(
+            f"entropy raw array {name} has shape {value.shape}; "
+            f"expected {(length,)}"
+        )
+    return value
+
+
+def validate_entropy_schedule_cell_evidence(
+    evidence: Any,
+    arrays: Any,
+    *,
+    expected_kind: str,
+    expected_schedule: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Reconstruct one cell verdict solely from its raw JSON/NPZ evidence."""
+
+    if expected_kind not in ENTROPY_QUALIFICATION_CELL_KINDS:
+        raise QualificationError(
+            f"unknown expected entropy cell kind: {expected_kind}"
+        )
+    if not isinstance(evidence, Mapping):
+        raise QualificationError("entropy cell evidence is missing")
+    _require_exact_keys(
+        evidence,
+        (
+            "kind",
+            "telemetry_contract",
+            "schedule",
+            "vf_coef",
+            "weights_before_sha256",
+            "weights_after_sha256",
+            "raw_array_fields",
+        ),
+        "entropy cell evidence",
+    )
+    if evidence.get("kind") != expected_kind:
+        raise QualificationError("entropy cell kind differs")
+    if (
+        evidence.get("telemetry_contract")
+        != ENTROPY_TELEMETRY_CONTRACT
+    ):
+        raise QualificationError("entropy telemetry contract differs")
+    schedule = _validate_entropy_schedule_descriptor(
+        evidence.get("schedule"),
+        expected=expected_schedule,
+    )
+    if schedule["enabled"] is not _entropy_schedule_enabled(expected_kind):
+        raise QualificationError(
+            "entropy schedule enabled role differs from the cell kind"
+        )
+    vf_coef = _num(evidence.get("vf_coef"), "entropy value coefficient")
+    if vf_coef != 0.5:
+        raise QualificationError(
+            "entropy qualification value coefficient differs"
+        )
+    before = _require_sha256(
+        evidence.get("weights_before_sha256"),
+        "entropy weights-before digest",
+    )
+    after = _require_sha256(
+        evidence.get("weights_after_sha256"),
+        "entropy weights-after digest",
+    )
+    validate_weight_identity(before, after)
+    fields = evidence.get("raw_array_fields")
+    if fields != list(ENTROPY_RAW_ARRAY_FIELDS):
+        raise QualificationError("entropy raw array field ledger differs")
+    if not isinstance(arrays, Mapping):
+        raise QualificationError("entropy NPZ arrays are missing")
+    observed_fields = set(arrays)
+    execution_fields = (
+        *ENTROPY_COMMON_EXECUTION_ARRAY_FIELDS,
+        *(
+            ENTROPY_NATIVE_EXECUTION_COUNTER_ARRAY_FIELDS
+            if expected_kind in ENTROPY_NATIVE_CELL_KINDS
+            else ()
+        ),
+    )
+    overrun_fields = (
+        ENTROPY_OVERRUN_ARRAY_FIELDS
+        if expected_kind in ENTROPY_NATIVE_CELL_KINDS
+        else ()
+    )
+    allowed_field_sets = {
+        frozenset(ENTROPY_RAW_ARRAY_FIELDS),
+        frozenset(
+            (*ENTROPY_RAW_ARRAY_FIELDS, *execution_fields)
+        ),
+        frozenset(
+            (
+                *ENTROPY_RAW_ARRAY_FIELDS,
+                *execution_fields,
+                *ENTROPY_GRADIENT_ARRAY_FIELDS,
+            )
+        ),
+        frozenset(
+            (
+                *ENTROPY_RAW_ARRAY_FIELDS,
+                *execution_fields,
+                *ENTROPY_GRADIENT_ARRAY_FIELDS,
+                *overrun_fields,
+            )
+        ),
+    }
+    if frozenset(observed_fields) not in allowed_field_sets:
+        raise QualificationError(
+            "entropy NPZ array schema differs: "
+            f"observed={sorted(observed_fields)}"
+        )
+
+    total = schedule["total_updates"]
+    update_index = _require_entropy_array(
+        arrays,
+        "update_index",
+        dtype=np.int64,
+        length=total,
+    )
+    loss_count = _require_entropy_array(
+        arrays,
+        "loss_count",
+        dtype=np.int64,
+        length=total,
+    )
+    floats = {
+        name: _require_entropy_array(
+            arrays,
+            name,
+            dtype=np.float32,
+            length=total,
+        )
+        for name in ENTROPY_RAW_ARRAY_FIELDS
+        if name not in {"update_index", "loss_count"}
+    }
+    if not np.array_equal(
+        update_index,
+        np.arange(total, dtype=np.int64),
+    ):
+        raise QualificationError(
+            "entropy update indices are not exact contiguous zero-based values"
+        )
+    if not np.array_equal(
+        loss_count,
+        np.ones(total, dtype=np.int64),
+    ):
+        raise QualificationError(
+            "entropy loss minibatch count is not exactly one per update"
+        )
+    for name, value in floats.items():
+        if not np.isfinite(value).all():
+            raise QualificationError(
+                f"entropy raw array contains nonfinite values: {name}"
+            )
+    if not np.all(floats["entropy"] > np.float32(0.0)):
+        raise QualificationError(
+            "entropy must be strictly positive in every update"
+        )
+
+    _, expected_applied = _entropy_expected_coefficients(schedule)
+    device = floats["device_coefficient"]
+    host = floats["host_coefficient"]
+    if not np.array_equal(device, host):
+        raise QualificationError(
+            "entropy host/device coefficient telemetry disagrees"
+        )
+    if not np.array_equal(device, expected_applied):
+        raise QualificationError(
+            "entropy applied coefficient differs from the N-denominator oracle"
+        )
+    if schedule["enabled"]:
+        if not np.all(np.diff(device) < np.float32(0.0)):
+            raise QualificationError(
+                "annealed entropy coefficient did not move monotonically"
+            )
+    elif not np.array_equal(
+        device,
+        np.full(total, np.float32(schedule["base"]), dtype=np.float32),
+    ):
+        raise QualificationError(
+            "disabled entropy schedule coefficient is not constant"
+        )
+
+    expected_signed = -device * floats["entropy"]
+    if not np.allclose(
+        floats["signed_entropy_term"],
+        expected_signed,
+        rtol=2.0e-6,
+        atol=1.0e-7,
+    ):
+        raise QualificationError(
+            "signed entropy term is not -coefficient * entropy"
+        )
+    expected_total = (
+        floats["policy_loss"]
+        + np.float32(vf_coef) * floats["value_loss"]
+        + floats["signed_entropy_term"]
+    )
+    if not np.allclose(
+        floats["total_loss"],
+        expected_total,
+        rtol=2.0e-6,
+        atol=1.0e-7,
+    ):
+        raise QualificationError(
+            "entropy total loss decomposition differs"
+        )
+    return {
+        "kind": expected_kind,
+        "telemetry_contract": ENTROPY_TELEMETRY_CONTRACT,
+        "schedule": dict(schedule),
+        "update_count": total,
+        "coefficient_sha256": hashlib.sha256(
+            device.tobytes(order="C")
+        ).hexdigest(),
+        "first_applied_coefficient": float(device[0]),
+        "last_legal_applied_coefficient": float(device[-1]),
+        "minimum_entropy": float(np.min(floats["entropy"])),
+        "maximum_loss_decomposition_error": float(
+            np.max(np.abs(floats["total_loss"] - expected_total))
+        ),
+        "weights_sha256": before,
+    }
+
+
+def validate_entropy_gradient_cell_evidence(
+    evidence: Any,
+    arrays: Mapping[str, np.ndarray],
+    *,
+    expected_kind: str,
+) -> dict[str, Any]:
+    """Validate one cell's raw, per-update pre-clipping gradient snapshots."""
+
+    if expected_kind not in ENTROPY_QUALIFICATION_CELL_KINDS:
+        raise QualificationError(
+            f"unknown expected entropy gradient cell: {expected_kind}"
+        )
+    if not isinstance(evidence, Mapping):
+        raise QualificationError("entropy gradient evidence is missing")
+    _require_exact_keys(
+        evidence,
+        (
+            "kind",
+            "backend",
+            "contract",
+            "raw_array_fields",
+            "snapshots",
+        ),
+        "entropy gradient evidence",
+    )
+    if evidence.get("kind") != expected_kind:
+        raise QualificationError("entropy gradient cell kind differs")
+    backend = (
+        "native"
+        if expected_kind in ENTROPY_NATIVE_CELL_KINDS
+        else "torch"
+    )
+    if evidence.get("backend") != backend:
+        raise QualificationError("entropy gradient backend differs")
+    if evidence.get("contract") != ENTROPY_GRADIENT_CONTRACT:
+        raise QualificationError("entropy gradient contract differs")
+    if evidence.get("raw_array_fields") != list(
+        ENTROPY_GRADIENT_ARRAY_FIELDS
+    ):
+        raise QualificationError(
+            "entropy gradient raw-array ledger differs"
+        )
+    if not isinstance(arrays, Mapping):
+        raise QualificationError("entropy gradient NPZ arrays are missing")
+    for name in ENTROPY_GRADIENT_ARRAY_FIELDS:
+        if not isinstance(arrays.get(name), np.ndarray):
+            raise QualificationError(
+                f"entropy gradient NPZ array is missing: {name}"
+            )
+    total = ENTROPY_SCHEDULE_TOTAL_UPDATES
+    snapshots = evidence.get("snapshots")
+    if not isinstance(snapshots, list) or len(snapshots) != total:
+        raise QualificationError(
+            "entropy gradient snapshot count differs from N"
+        )
+
+    batch_segments = 2
+    horizon = 2
+    action_heads = len(BLOODBOWL_ACTION_HEAD_SIZES)
+    logits = BLOODBOWL_ACTION_LOGITS
+    expected_raw_shapes = {
+        "decoder_output": (batch_segments, horizon, logits + 1),
+        "grad_logits": (batch_segments, horizon, logits),
+        "grad_values": (batch_segments, horizon),
+        "grad_logstd": (batch_segments, horizon, logits),
+        "mb_actions": (batch_segments, horizon, action_heads),
+        "mb_logprobs": (batch_segments, horizon),
+        "mb_advantages": (batch_segments, horizon),
+        "mb_prio": (batch_segments,),
+        "mb_action_mask": (batch_segments, horizon, logits),
+        "act_sizes": (action_heads,),
+        "entropy_coefficient": (1,),
+    }
+    expected_array_shapes = {
+        f"gradient_{name}": (
+            (total, 0)
+            if name == "grad_logstd"
+            else (total, *shape)
+        )
+        for name, shape in expected_raw_shapes.items()
+    }
+    for field, shape in expected_array_shapes.items():
+        value = arrays[field]
+        expected_dtype = (
+            np.dtype(np.int32)
+            if field == "gradient_act_sizes"
+            else np.dtype(np.float32)
+        )
+        if value.dtype != expected_dtype or value.shape != shape:
+            raise QualificationError(
+                f"entropy gradient array {field} differs from "
+                f"{expected_dtype} {shape}"
+            )
+        if (
+            expected_dtype == np.dtype(np.float32)
+            and not np.isfinite(value).all()
+        ):
+            raise QualificationError(
+                f"entropy gradient array is nonfinite: {field}"
+            )
+
+    for update, snapshot in enumerate(snapshots):
+        if not isinstance(snapshot, Mapping):
+            raise QualificationError(
+                f"entropy gradient snapshot {update} is not a mapping"
+            )
+        _require_exact_keys(
+            snapshot,
+            (
+                "contract",
+                "completed_update_index",
+                "committed_epoch",
+                "is_continuous",
+                "precision",
+                "max_bytes",
+                "used_bytes",
+                "tensors",
+            ),
+            f"entropy gradient snapshot {update}",
+        )
+        if (
+            snapshot.get("contract") != ENTROPY_GRADIENT_CONTRACT
+            or snapshot.get("is_continuous") is not False
+            or snapshot.get("precision") != "f32"
+        ):
+            raise QualificationError(
+                f"entropy gradient snapshot identity differs at {update}"
+            )
+        if (
+            _require_exact_json_int(
+                snapshot.get("completed_update_index"),
+                f"entropy gradient snapshot update {update}",
+                minimum=0,
+            )
+            != update
+            or _require_exact_json_int(
+                snapshot.get("committed_epoch"),
+                f"entropy gradient snapshot epoch {update}",
+                minimum=1,
+            )
+            != update + 1
+        ):
+            raise QualificationError(
+                f"entropy gradient snapshot index differs at {update}"
+            )
+        maximum = _require_exact_json_int(
+            snapshot.get("max_bytes"),
+            f"entropy gradient snapshot byte limit {update}",
+            minimum=1,
+        )
+        used = _require_exact_json_int(
+            snapshot.get("used_bytes"),
+            f"entropy gradient snapshot used bytes {update}",
+            minimum=1,
+        )
+        if maximum != QUALIFICATION_POLICY_MAX_BYTES or used > maximum:
+            raise QualificationError(
+                f"entropy gradient snapshot byte bound differs at {update}"
+            )
+        tensors = snapshot.get("tensors")
+        if not isinstance(tensors, Mapping):
+            raise QualificationError(
+                f"entropy gradient snapshot tensors are missing at {update}"
+            )
+        _require_exact_keys(
+            tensors,
+            ENTROPY_GRADIENT_TENSOR_FIELDS,
+            f"entropy gradient snapshot tensors {update}",
+        )
+        observed_bytes = 0
+        for name in ENTROPY_GRADIENT_TENSOR_FIELDS:
+            metadata = tensors.get(name)
+            if not isinstance(metadata, Mapping):
+                raise QualificationError(
+                    f"entropy gradient tensor metadata is missing: {name}"
+                )
+            _require_exact_keys(
+                metadata,
+                (
+                    "name",
+                    "dtype",
+                    "shape",
+                    "present",
+                    "bytes",
+                    "sha256",
+                ),
+                f"entropy gradient tensor metadata {update}/{name}",
+            )
+            expected_dtype = "i32" if name == "act_sizes" else "f32"
+            expected_present = name != "grad_logstd"
+            if (
+                metadata.get("name") != name
+                or metadata.get("dtype") != expected_dtype
+                or metadata.get("shape")
+                != list(expected_raw_shapes[name])
+                or metadata.get("present") is not expected_present
+            ):
+                raise QualificationError(
+                    f"entropy gradient tensor identity differs: "
+                    f"{update}/{name}"
+                )
+            byte_count = _require_exact_json_int(
+                metadata.get("bytes"),
+                f"entropy gradient tensor byte count {update}/{name}",
+                minimum=0,
+            )
+            expected_bytes = (
+                math.prod(expected_raw_shapes[name]) * 4
+                if expected_present
+                else 0
+            )
+            if byte_count != expected_bytes:
+                raise QualificationError(
+                    f"entropy gradient tensor bytes differ: {update}/{name}"
+                )
+            digest = _require_sha256(
+                metadata.get("sha256"),
+                f"entropy gradient tensor digest {update}/{name}",
+            )
+            field = f"gradient_{name}"
+            payload = (
+                b""
+                if not expected_present
+                else arrays[field][update].tobytes(order="C")
+            )
+            if hashlib.sha256(payload).hexdigest() != digest:
+                raise QualificationError(
+                    f"entropy gradient tensor digest differs: {update}/{name}"
+                )
+            observed_bytes += byte_count
+        if observed_bytes != used:
+            raise QualificationError(
+                f"entropy gradient byte ledger differs at {update}"
+            )
+
+    act_sizes = arrays["gradient_act_sizes"]
+    expected_heads = np.asarray(
+        BLOODBOWL_ACTION_HEAD_SIZES,
+        dtype=np.int32,
+    )
+    if not np.array_equal(
+        act_sizes,
+        np.repeat(expected_heads[np.newaxis, :], total, axis=0),
+    ):
+        raise QualificationError(
+            "entropy gradient action-head sizes differ"
+        )
+    coefficients = arrays["gradient_entropy_coefficient"][:, 0]
+    device_coefficients = _require_entropy_array(
+        arrays,
+        "device_coefficient",
+        dtype=np.float32,
+        length=total,
+    )
+    if not np.array_equal(coefficients, device_coefficients):
+        raise QualificationError(
+            "entropy gradient/forward coefficient telemetry disagrees"
+        )
+
+    masks = arrays["gradient_mb_action_mask"]
+    actions = arrays["gradient_mb_actions"]
+    decoder = arrays["gradient_decoder_output"]
+    if not np.isin(
+        masks,
+        np.asarray((0.0, 1.0), dtype=np.float32),
+    ).all():
+        raise QualificationError(
+            "entropy gradient action mask is not binary"
+        )
+    offset = 0
+    maximum_entropy = 0.0
+    joint_entropies = np.zeros(
+        (total, batch_segments, horizon),
+        dtype=np.float64,
+    )
+    for head, size in enumerate(BLOODBOWL_ACTION_HEAD_SIZES):
+        head_masks = masks[..., offset : offset + size]
+        if np.any(np.sum(head_masks, axis=-1) <= 0):
+            raise QualificationError(
+                f"entropy gradient action head {head} has no legal action"
+            )
+        head_actions = actions[..., head]
+        if (
+            not np.equal(head_actions, np.floor(head_actions)).all()
+            or np.any(head_actions < 0)
+            or np.any(head_actions >= size)
+        ):
+            raise QualificationError(
+                f"entropy gradient action head {head} is out of range"
+            )
+        chosen = np.take_along_axis(
+            head_masks,
+            head_actions.astype(np.int64)[..., np.newaxis],
+            axis=-1,
+        )[..., 0]
+        if not np.all(chosen == np.float32(1.0)):
+            raise QualificationError(
+                f"entropy gradient action head {head} chose a masked action"
+            )
+        head_logits = decoder[..., offset : offset + size].astype(
+            np.float64
+        )
+        masked_logits = np.where(head_masks == 1.0, head_logits, -np.inf)
+        maximum = np.max(masked_logits, axis=-1, keepdims=True)
+        exponentials = np.where(
+            head_masks == 1.0,
+            np.exp(masked_logits - maximum),
+            0.0,
+        )
+        probabilities = exponentials / np.sum(
+            exponentials,
+            axis=-1,
+            keepdims=True,
+        )
+        log_probabilities = np.where(
+            head_masks == 1.0,
+            np.log(np.maximum(probabilities, np.finfo(np.float64).tiny)),
+            0.0,
+        )
+        entropies = -np.sum(
+            probabilities * log_probabilities,
+            axis=-1,
+        )
+        maximum_entropy = max(
+            maximum_entropy,
+            float(np.max(entropies)),
+        )
+        joint_entropies += entropies
+        offset += size
+    if not math.isfinite(maximum_entropy) or maximum_entropy <= 0.0:
+        raise QualificationError(
+            "entropy gradient fixture lacks positive exact-action entropy"
+        )
+    reconstructed_entropy = np.mean(
+        joint_entropies,
+        axis=(1, 2),
+        dtype=np.float64,
+    )
+    forward_entropy = _require_entropy_array(
+        arrays,
+        "entropy",
+        dtype=np.float32,
+        length=total,
+    ).astype(np.float64)
+    if not np.allclose(
+        forward_entropy,
+        reconstructed_entropy,
+        rtol=2.0e-5,
+        atol=2.0e-6,
+    ):
+        maximum_error = float(
+            np.max(np.abs(forward_entropy - reconstructed_entropy))
+        )
+        raise QualificationError(
+            "entropy gradient reconstructed forward entropy differs "
+            f"(maximum absolute error {maximum_error:.9g})"
+        )
+    return {
+        "kind": expected_kind,
+        "backend": backend,
+        "contract": ENTROPY_GRADIENT_CONTRACT,
+        "update_count": total,
+        "maximum_head_entropy": maximum_entropy,
+        "gradient_sha256": hashlib.sha256(
+            arrays["gradient_grad_logits"].tobytes(order="C")
+        ).hexdigest(),
+        "coefficient_sha256": hashlib.sha256(
+            coefficients.tobytes(order="C")
+        ).hexdigest(),
+    }
+
+
+def validate_entropy_gradient_pair(
+    enabled_arrays: Mapping[str, np.ndarray],
+    disabled_arrays: Mapping[str, np.ndarray],
+    *,
+    enabled_kind: str,
+    disabled_kind: str,
+) -> dict[str, Any]:
+    """Reconstruct the coefficient-only pre-clip gradient difference."""
+
+    expected_pairs = {
+        (
+            "entropy_native_eager_annealed",
+            "entropy_native_eager_anneal_disabled",
+        ): "native_eager",
+        (
+            "entropy_native_graph_annealed",
+            "entropy_native_graph_anneal_disabled",
+        ): "native_graph",
+        (
+            "entropy_torch_annealed",
+            "entropy_torch_anneal_disabled",
+        ): "torch",
+    }
+    pair = (enabled_kind, disabled_kind)
+    if pair not in expected_pairs:
+        raise QualificationError(
+            f"unsupported entropy gradient pair: {pair}"
+        )
+    if not isinstance(enabled_arrays, Mapping) or not isinstance(
+        disabled_arrays,
+        Mapping,
+    ):
+        raise QualificationError("entropy gradient pair arrays are missing")
+
+    invariant_fields = (
+        "gradient_decoder_output",
+        "gradient_grad_values",
+        "gradient_grad_logstd",
+        "gradient_mb_actions",
+        "gradient_mb_logprobs",
+        "gradient_mb_advantages",
+        "gradient_mb_prio",
+        "gradient_mb_action_mask",
+        "gradient_act_sizes",
+    )
+    for field in invariant_fields:
+        left = enabled_arrays.get(field)
+        right = disabled_arrays.get(field)
+        if (
+            not isinstance(left, np.ndarray)
+            or not isinstance(right, np.ndarray)
+            or not np.array_equal(left, right)
+        ):
+            raise QualificationError(
+                f"entropy gradient pair input differs: {field}"
+            )
+
+    enabled_coefficients = enabled_arrays.get(
+        "gradient_entropy_coefficient"
+    )
+    disabled_coefficients = disabled_arrays.get(
+        "gradient_entropy_coefficient"
+    )
+    enabled_gradients = enabled_arrays.get("gradient_grad_logits")
+    disabled_gradients = disabled_arrays.get("gradient_grad_logits")
+    for label, value, shape in (
+        (
+            "enabled coefficient",
+            enabled_coefficients,
+            (ENTROPY_SCHEDULE_TOTAL_UPDATES, 1),
+        ),
+        (
+            "disabled coefficient",
+            disabled_coefficients,
+            (ENTROPY_SCHEDULE_TOTAL_UPDATES, 1),
+        ),
+        (
+            "enabled gradient",
+            enabled_gradients,
+            (
+                ENTROPY_SCHEDULE_TOTAL_UPDATES,
+                2,
+                2,
+                BLOODBOWL_ACTION_LOGITS,
+            ),
+        ),
+        (
+            "disabled gradient",
+            disabled_gradients,
+            (
+                ENTROPY_SCHEDULE_TOTAL_UPDATES,
+                2,
+                2,
+                BLOODBOWL_ACTION_LOGITS,
+            ),
+        ),
+    ):
+        if (
+            not isinstance(value, np.ndarray)
+            or value.dtype != np.dtype(np.float32)
+            or value.shape != shape
+            or not np.isfinite(value).all()
+        ):
+            raise QualificationError(
+                f"entropy gradient pair {label} is malformed"
+            )
+    coefficient_delta = (
+        enabled_coefficients[:, 0] - disabled_coefficients[:, 0]
+    ).astype(np.float64)
+    if (
+        coefficient_delta[0] != 0.0
+        or not np.all(coefficient_delta[1:] < 0.0)
+    ):
+        raise QualificationError(
+            "entropy gradient pair coefficient delta lacks movement"
+        )
+
+    masks = enabled_arrays["gradient_mb_action_mask"]
+    decoder = enabled_arrays["gradient_decoder_output"]
+    observed_delta = (
+        enabled_gradients.astype(np.float64)
+        - disabled_gradients.astype(np.float64)
+    )
+    expected_delta = np.zeros_like(observed_delta)
+    offset = 0
+    batch_elements = 4.0
+    for size in BLOODBOWL_ACTION_HEAD_SIZES:
+        head_masks = masks[..., offset : offset + size]
+        head_logits = decoder[..., offset : offset + size].astype(
+            np.float64
+        )
+        masked_logits = np.where(head_masks == 1.0, head_logits, -np.inf)
+        maximum = np.max(masked_logits, axis=-1, keepdims=True)
+        exponentials = np.where(
+            head_masks == 1.0,
+            np.exp(masked_logits - maximum),
+            0.0,
+        )
+        probabilities = exponentials / np.sum(
+            exponentials,
+            axis=-1,
+            keepdims=True,
+        )
+        log_probabilities = np.where(
+            head_masks == 1.0,
+            np.log(np.maximum(probabilities, np.finfo(np.float64).tiny)),
+            0.0,
+        )
+        entropy = -np.sum(
+            probabilities * log_probabilities,
+            axis=-1,
+            keepdims=True,
+        )
+        entropy_derivative = probabilities * (
+            -entropy - log_probabilities
+        )
+        expected_delta[..., offset : offset + size] = (
+            -coefficient_delta[:, np.newaxis, np.newaxis, np.newaxis]
+            * entropy_derivative
+            / batch_elements
+        )
+        offset += size
+
+    absolute_error = np.abs(observed_delta - expected_delta)
+    # The deterministic fixture's valid fp32-vs-fp64 error is orders of
+    # magnitude smaller than one percent. Keep a small absolute floor for
+    # near-zero entries, but reject even a systematic one-percent scale bug.
+    tolerance = 5.0e-8 + 5.0e-3 * np.abs(expected_delta)
+    if not np.all(absolute_error <= tolerance):
+        worst = np.unravel_index(
+            int(np.argmax(absolute_error - tolerance)),
+            absolute_error.shape,
+        )
+        raise QualificationError(
+            "entropy pre-clip gradient scale/sign differs at "
+            f"{worst}: observed={observed_delta[worst]}, "
+            f"expected={expected_delta[worst]}, "
+            f"error={absolute_error[worst]}, "
+            f"tolerance={tolerance[worst]}"
+        )
+    max_expected = float(np.max(np.abs(expected_delta)))
+    max_observed = float(np.max(np.abs(observed_delta)))
+    if max_expected <= 2.0e-7 or max_observed <= 2.0e-7:
+        raise QualificationError(
+            "entropy gradient pair lacks nonvacuous coefficient sensitivity"
+        )
+    return {
+        "role": expected_pairs[pair],
+        "contract": ENTROPY_GRADIENT_CONTRACT,
+        "enabled_kind": enabled_kind,
+        "disabled_kind": disabled_kind,
+        "update_count": ENTROPY_SCHEDULE_TOTAL_UPDATES,
+        "max_expected_gradient_delta": max_expected,
+        "max_observed_gradient_delta": max_observed,
+        "max_absolute_error": float(np.max(absolute_error)),
+        "absolute_tolerance": 5.0e-8,
+        "relative_tolerance": 5.0e-3,
+    }
+
+
+def validate_entropy_native_mode_gradient_parity(
+    eager_arrays: Mapping[str, np.ndarray],
+    graph_arrays: Mapping[str, np.ndarray],
+) -> dict[str, Any]:
+    """Require eager/graph native inputs and pre-clip gradients byte-equal."""
+
+    for field in ENTROPY_GRADIENT_ARRAY_FIELDS:
+        eager = eager_arrays.get(field)
+        graph = graph_arrays.get(field)
+        if (
+            not isinstance(eager, np.ndarray)
+            or not isinstance(graph, np.ndarray)
+            or not np.array_equal(eager, graph)
+        ):
+            raise QualificationError(
+                f"native eager/graph entropy gradient differs: {field}"
+            )
+    return {
+        "contract": ENTROPY_GRADIENT_CONTRACT,
+        "update_count": ENTROPY_SCHEDULE_TOTAL_UPDATES,
+        "gradient_sha256": hashlib.sha256(
+            eager_arrays["gradient_grad_logits"].tobytes(order="C")
+        ).hexdigest(),
+        "all_raw_gradient_arrays_equal": True,
+    }
+
+
+def validate_entropy_verifier_identity(
+    identity: Any,
+    *,
+    rehash_files: bool = False,
+) -> dict[str, Any]:
+    if not isinstance(identity, Mapping):
+        raise QualificationError("entropy verifier identity is missing")
+    _require_exact_keys(
+        identity,
+        ("path", "sha256", "bytes"),
+        "entropy verifier identity",
+    )
+    path = _require_bounded_absolute_path(
+        identity.get("path"),
+        "entropy verifier path",
+    )
+    if path != ENTROPY_SCHEDULE_VERIFIER.resolve():
+        raise QualificationError("entropy verifier path differs")
+    digest = _require_sha256(
+        identity.get("sha256"),
+        "entropy verifier digest",
+    )
+    byte_count = _require_exact_json_int(
+        identity.get("bytes"),
+        "entropy verifier bytes",
+        minimum=1,
+    )
+    if byte_count > VERIFIER_MAX_SOURCE_BYTES:
+        raise QualificationError("entropy verifier exceeds its byte limit")
+    if rehash_files:
+        encoded = _read_bounded_regular_bytes(
+            path,
+            maximum_bytes=VERIFIER_MAX_SOURCE_BYTES,
+            label="entropy schedule verifier",
+        )
+        if len(encoded) != byte_count:
+            raise QualificationError("entropy verifier byte count drifted")
+        if hashlib.sha256(encoded).hexdigest() != digest:
+            raise QualificationError("entropy verifier bytes drifted")
+    return {
+        "path": str(path),
+        "sha256": digest,
+        "bytes": byte_count,
+    }
+
+
+def validate_entropy_execution_evidence(
+    execution: Any,
+    arrays: Mapping[str, np.ndarray],
+    *,
+    expected_kind: str,
+    config: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Validate raw update, tail, and graph/eager execution deltas."""
+
+    if not isinstance(execution, Mapping):
+        raise QualificationError("entropy execution evidence is missing")
+    _require_exact_keys(
+        execution,
+        (
+            "kind",
+            "backend",
+            "mode",
+            "update_count",
+            "rollout_count",
+            "train_count",
+            "log_count",
+            "rollout_quantum",
+            "hard_integrity_intervals",
+        ),
+        "entropy execution evidence",
+    )
+    if execution.get("kind") != expected_kind:
+        raise QualificationError("entropy execution cell kind differs")
+    is_native = expected_kind in ENTROPY_NATIVE_CELL_KINDS
+    expected_backend = "native" if is_native else "torch"
+    expected_mode = (
+        "eager"
+        if expected_kind
+        in {
+            "entropy_native_eager_annealed",
+            "entropy_native_eager_anneal_disabled",
+            *ENTROPY_TORCH_CELL_KINDS,
+        }
+        else "graph"
+    )
+    if (
+        execution.get("backend") != expected_backend
+        or execution.get("mode") != expected_mode
+    ):
+        raise QualificationError(
+            "entropy execution backend/mode identity differs"
+        )
+    total = ENTROPY_SCHEDULE_TOTAL_UPDATES
+    for key in ("update_count", "rollout_count", "train_count", "log_count"):
+        if (
+            _require_exact_json_int(
+                execution.get(key),
+                f"entropy execution {key}",
+                minimum=1,
+            )
+            != total
+        ):
+            raise QualificationError(
+                f"entropy execution {key} differs from N"
+            )
+    vec = config.get("vec")
+    train = config.get("train")
+    if not isinstance(vec, Mapping) or not isinstance(train, Mapping):
+        raise QualificationError("entropy execution config is incomplete")
+    agents = _int(
+        vec.get("total_agents"),
+        "entropy execution agents",
+        minimum=1,
+    )
+    buffers = _int(
+        vec.get("num_buffers"),
+        "entropy execution buffers",
+        minimum=1,
+    )
+    horizon = _int(
+        train.get("horizon"),
+        "entropy execution horizon",
+        minimum=1,
+    )
+    quantum = agents * horizon
+    if (
+        _require_exact_json_int(
+            train.get("total_timesteps"),
+            "entropy execution total timesteps",
+            minimum=1,
+        )
+        != quantum * total
+    ):
+        raise QualificationError(
+            "entropy execution total timesteps does not encode N updates"
+        )
+    if (
+        _require_exact_json_int(
+            train.get("minibatch_size"),
+            "entropy execution minibatch size",
+            minimum=1,
+        )
+        != quantum
+        or _require_exact_json_int(
+            train.get("replay_ratio"),
+            "entropy execution replay ratio",
+            minimum=1,
+        )
+        != 1
+    ):
+        raise QualificationError(
+            "entropy execution is not one minibatch per update"
+        )
+    if _num(
+        train.get("learning_rate"),
+        "entropy execution learning rate",
+    ) != 0.0:
+        raise QualificationError(
+            "entropy execution learning rate is not zero"
+        )
+    if (
+        _num(train.get("ent_coef"), "entropy execution entropy base")
+        != ENTROPY_SCHEDULE_BASE
+        or _num(
+            train.get("min_ent_coef_ratio"),
+            "entropy execution entropy minimum ratio",
+        )
+        != ENTROPY_SCHEDULE_MIN_RATIO
+        or train.get("anneal_ent_coef")
+        is not _entropy_schedule_enabled(expected_kind)
+        or _num(
+            train.get("vf_coef"),
+            "entropy execution value coefficient",
+        )
+        != 0.5
+    ):
+        raise QualificationError(
+            "entropy execution objective configuration differs"
+        )
+    if (
+        _require_exact_json_int(
+            execution.get("rollout_quantum"),
+            "entropy execution rollout quantum",
+            minimum=1,
+        )
+        != quantum
+    ):
+        raise QualificationError(
+            "entropy execution rollout quantum differs"
+        )
+    intervals = execution.get("hard_integrity_intervals")
+    if (
+        not isinstance(intervals, list)
+        or len(intervals) != total
+    ):
+        raise QualificationError(
+            "entropy hard-integrity interval count differs"
+        )
+    for ordinal, interval in enumerate(intervals):
+        if not isinstance(interval, Mapping):
+            raise QualificationError(
+                f"entropy hard-integrity interval {ordinal} is not a mapping"
+            )
+        _require_exact_keys(
+            interval,
+            HARD_INTEGRITY_KEYS,
+            f"entropy hard-integrity interval {ordinal}",
+        )
+        validate_hard_integrity(interval)
+
+    common_required = set(ENTROPY_COMMON_EXECUTION_ARRAY_FIELDS)
+    missing_common = sorted(common_required - set(arrays))
+    if missing_common:
+        raise QualificationError(
+            "entropy common execution NPZ arrays are incomplete: "
+            + ", ".join(missing_common)
+        )
+    raw_common = {
+        name: _require_entropy_array(
+            arrays,
+            name,
+            dtype=np.int64,
+            length=total,
+        )
+        for name in ENTROPY_COMMON_EXECUTION_ARRAY_FIELDS
+    }
+    native_counter_fields = set(
+        ENTROPY_NATIVE_EXECUTION_COUNTER_ARRAY_FIELDS
+    )
+    observed_native_counters = native_counter_fields & set(arrays)
+    if is_native:
+        missing_native = sorted(
+            native_counter_fields - observed_native_counters
+        )
+        if missing_native:
+            raise QualificationError(
+                "native entropy execution counter NPZ arrays are incomplete: "
+                + ", ".join(missing_native)
+            )
+        raw_native = {
+            name: _require_entropy_array(
+                arrays,
+                name,
+                dtype=np.int64,
+                length=total,
+            )
+            for name in ENTROPY_NATIVE_EXECUTION_COUNTER_ARRAY_FIELDS
+        }
+    else:
+        if observed_native_counters:
+            raise QualificationError(
+                "Torch entropy execution NPZ contains native-only counters: "
+                + ", ".join(sorted(observed_native_counters))
+            )
+        raw_native = {}
+    expected_before = (
+        np.arange(total, dtype=np.int64) * np.int64(quantum)
+    )
+    expected_after = expected_before + np.int64(quantum)
+    if not np.array_equal(
+        raw_common["global_step_before"],
+        expected_before,
+    ):
+        raise QualificationError(
+            "entropy pre-rollout global steps differ"
+        )
+    if not np.array_equal(raw_common["global_step_after"], expected_after):
+        raise QualificationError(
+            "entropy post-train global steps differ"
+        )
+    if not np.array_equal(
+        raw_common["tail_valid_before_train"],
+        np.full(total, buffers, dtype=np.int64),
+    ):
+        raise QualificationError(
+            "entropy training did not receive one fresh tail per buffer"
+        )
+    if not np.array_equal(
+        raw_common["tail_valid_after_train"],
+        np.zeros(total, dtype=np.int64),
+    ):
+        raise QualificationError(
+            "entropy training did not consume every tail record"
+        )
+
+    if is_native:
+        zero = np.zeros(total, dtype=np.int64)
+        rollout_per_update = horizon * buffers
+        tail_per_update = buffers
+        one = np.ones(total, dtype=np.int64)
+        expected_role_values = {
+            "graph_rollout_delta": zero,
+            "eager_rollout_delta": zero,
+            "graph_tail_delta": zero,
+            "eager_tail_delta": zero,
+            "graph_train_delta": zero,
+            "eager_train_delta": zero,
+        }
+        prefix = "graph" if expected_mode == "graph" else "eager"
+        expected_role_values[f"{prefix}_rollout_delta"] = np.full(
+            total,
+            rollout_per_update,
+            dtype=np.int64,
+        )
+        expected_role_values[f"{prefix}_tail_delta"] = np.full(
+            total,
+            tail_per_update,
+            dtype=np.int64,
+        )
+        expected_role_values[f"{prefix}_train_delta"] = one
+        for name, expected_value in expected_role_values.items():
+            if not np.array_equal(raw_native[name], expected_value):
+                raise QualificationError(
+                    f"entropy execution counter differs: {name}"
+                )
+    return {
+        "kind": expected_kind,
+        "backend": expected_backend,
+        "mode": expected_mode,
+        "update_count": total,
+        "rollout_quantum": quantum,
+        "tail_records_consumed": total * buffers,
+    }
+
+
+def _same_f32(left: Any, right: Any) -> bool:
+    try:
+        return np.float32(left).tobytes() == np.float32(right).tobytes()
+    except (OverflowError, TypeError, ValueError):
+        return False
+
+
+def _validate_entropy_overrun_native_state(
+    state: Any,
+    *,
+    arrays: Mapping[str, np.ndarray],
+    expected_step: int,
+    expected_parameter_count: int,
+    weights_sha256: str,
+) -> dict[str, Any]:
+    if not isinstance(state, Mapping):
+        raise QualificationError(
+            "native entropy overrun state evidence is missing"
+        )
+    _require_exact_keys(
+        state,
+        ("before", "after"),
+        "native entropy overrun state evidence",
+    )
+    if not isinstance(arrays, Mapping):
+        raise QualificationError(
+            "native entropy overrun arrays are missing"
+        )
+    coefficients = _require_entropy_array(
+        arrays,
+        "device_coefficient",
+        dtype=np.float32,
+        length=ENTROPY_SCHEDULE_TOTAL_UPDATES,
+    )
+    total_losses = _require_entropy_array(
+        arrays,
+        "total_loss",
+        dtype=np.float32,
+        length=ENTROPY_SCHEDULE_TOTAL_UPDATES,
+    )
+    expected_coefficient = np.float32(coefficients[-1])
+    expected_scalar_loss = np.float32(total_losses[-1])
+    expected_parameter_count = _int(
+        expected_parameter_count,
+        "native entropy overrun policy parameter count",
+        minimum=1,
+    )
+    expected_parameter_bytes = expected_parameter_count * 4
+    raw_large_tensors: dict[str, dict[str, np.ndarray]] = {
+        boundary: {} for boundary in ("before", "after")
+    }
+    for boundary in ("before", "after"):
+        for name in ENTROPY_OVERRUN_LARGE_TENSORS:
+            field = f"overrun_state_{boundary}_{name}"
+            value = arrays.get(field)
+            if (
+                not isinstance(value, np.ndarray)
+                or value.dtype != np.dtype(np.float32)
+                or value.shape != (expected_parameter_count,)
+                or not value.flags.c_contiguous
+                or not np.isfinite(value).all()
+            ):
+                raise QualificationError(
+                    f"native entropy overrun raw array differs: {field}"
+                )
+            raw_large_tensors[boundary][name] = value
+
+    normalized_states: list[dict[str, Any]] = []
+    for boundary in ("before", "after"):
+        snapshot = state.get(boundary)
+        if not isinstance(snapshot, Mapping):
+            raise QualificationError(
+                f"native entropy overrun {boundary} state is missing"
+            )
+        _require_exact_keys(
+            snapshot,
+            ("contract", "max_bytes", "used_bytes", "host", "tensors"),
+            f"native entropy overrun {boundary} state",
+        )
+        if snapshot.get("contract") != ENTROPY_OVERRUN_STATE_CONTRACT:
+            raise QualificationError(
+                f"native entropy overrun {boundary} contract differs"
+            )
+        maximum = _require_exact_json_int(
+            snapshot.get("max_bytes"),
+            f"native entropy overrun {boundary} byte limit",
+            minimum=1,
+        )
+        if maximum != QUALIFICATION_POLICY_MAX_BYTES:
+            raise QualificationError(
+                f"native entropy overrun {boundary} byte limit differs"
+            )
+        used = _require_exact_json_int(
+            snapshot.get("used_bytes"),
+            f"native entropy overrun {boundary} used bytes",
+            minimum=1,
+        )
+        if used > maximum:
+            raise QualificationError(
+                f"native entropy overrun {boundary} exceeds byte limit"
+            )
+
+        host = snapshot.get("host")
+        if not isinstance(host, Mapping):
+            raise QualificationError(
+                f"native entropy overrun {boundary} host is missing"
+            )
+        _require_exact_keys(
+            host,
+            ENTROPY_OVERRUN_HOST_FIELDS,
+            f"native entropy overrun {boundary} host",
+        )
+        integer_expectations = {
+            "epoch": ENTROPY_SCHEDULE_TOTAL_UPDATES,
+            "global_step": expected_step,
+            "current_ent_epoch": ENTROPY_SCHEDULE_TOTAL_UPDATES - 1,
+            "entropy_schedule_update_count": 0,
+            "entropy_loss_minibatch_count": 0,
+            "entropy_first_update": -1,
+            "entropy_last_update": -1,
+            "pending_entropy_update": -1,
+            "pending_entropy_minibatches": 0,
+        }
+        for field, expected in integer_expectations.items():
+            actual = _require_exact_json_int(
+                host.get(field),
+                f"native entropy overrun {boundary} host {field}",
+            )
+            if actual != expected:
+                raise QualificationError(
+                    f"native entropy overrun {boundary} host {field} differs"
+                )
+        float_expectations = {
+            "current_ent_coef": float(expected_coefficient),
+            "entropy_first_coefficient": 0.0,
+            "entropy_last_coefficient": 0.0,
+            "pending_entropy_coefficient": 0.0,
+        }
+        for field, expected in float_expectations.items():
+            actual = _require_canonical_json_f32(
+                host.get(field),
+                f"native entropy overrun {boundary} host {field}",
+            )
+            if not _same_f32(actual, expected):
+                raise QualificationError(
+                    f"native entropy overrun {boundary} host {field} differs"
+                )
+        for field in (
+            "training_failed",
+            "entropy_schedule_valid",
+            "defer_entropy_schedule_commit",
+            "entropy_schedule_commit_pending",
+        ):
+            if host.get(field) is not False:
+                raise QualificationError(
+                    f"native entropy overrun {boundary} host {field} "
+                    "is not false"
+                )
+
+        tensors = snapshot.get("tensors")
+        if not isinstance(tensors, Mapping):
+            raise QualificationError(
+                f"native entropy overrun {boundary} tensors are missing"
+            )
+        _require_exact_keys(
+            tensors,
+            ENTROPY_OVERRUN_TENSOR_FIELDS,
+            f"native entropy overrun {boundary} tensors",
+        )
+        observed_bytes = 0
+        normalized_tensors: dict[str, dict[str, Any]] = {}
+        for name in ENTROPY_OVERRUN_TENSOR_FIELDS:
+            tensor = tensors.get(name)
+            if not isinstance(tensor, Mapping):
+                raise QualificationError(
+                    f"native entropy overrun {boundary} tensor "
+                    f"is missing: {name}"
+                )
+            _require_exact_keys(
+                tensor,
+                (
+                    "name",
+                    "dtype",
+                    "shape",
+                    "present",
+                    "elements",
+                    "bytes",
+                    "sha256",
+                    "nonzero",
+                    "nonfinite",
+                    "values",
+                ),
+                f"native entropy overrun {boundary} tensor {name}",
+            )
+            if (
+                tensor.get("name") != name
+                or tensor.get("dtype") != "f32"
+                or tensor.get("present") is not True
+            ):
+                raise QualificationError(
+                    f"native entropy overrun {boundary} tensor "
+                    f"identity differs: {name}"
+                )
+            shape = tensor.get("shape")
+            if (
+                not isinstance(shape, list)
+                or len(shape) != 1
+                or type(shape[0]) is not int
+                or shape[0] <= 0
+            ):
+                raise QualificationError(
+                    f"native entropy overrun {boundary} tensor "
+                    f"shape differs: {name}"
+                )
+            elements = _require_exact_json_int(
+                tensor.get("elements"),
+                f"native entropy overrun {boundary} tensor "
+                f"elements {name}",
+                minimum=1,
+            )
+            byte_count = _require_exact_json_int(
+                tensor.get("bytes"),
+                f"native entropy overrun {boundary} tensor bytes {name}",
+                minimum=1,
+            )
+            if elements != shape[0] or byte_count != elements * 4:
+                raise QualificationError(
+                    f"native entropy overrun {boundary} tensor "
+                    f"byte ledger differs: {name}"
+                )
+            digest = _require_sha256(
+                tensor.get("sha256"),
+                f"native entropy overrun {boundary} tensor digest {name}",
+            )
+            nonzero = _require_exact_json_int(
+                tensor.get("nonzero"),
+                f"native entropy overrun {boundary} tensor nonzero {name}",
+                minimum=0,
+            )
+            nonfinite = _require_exact_json_int(
+                tensor.get("nonfinite"),
+                f"native entropy overrun {boundary} tensor nonfinite {name}",
+                minimum=0,
+            )
+            if nonzero > elements or nonfinite > elements or nonfinite != 0:
+                raise QualificationError(
+                    f"native entropy overrun {boundary} tensor "
+                    f"finiteness/count differs: {name}"
+                )
+            values = tensor.get("values")
+            if name in ENTROPY_OVERRUN_SMALL_TENSORS:
+                if not isinstance(values, list) or len(values) != elements:
+                    raise QualificationError(
+                        f"native entropy overrun {boundary} tensor "
+                        f"values differ: {name}"
+                    )
+                checked_values = [
+                    _require_canonical_json_f32(
+                        value,
+                        f"native entropy overrun {boundary} tensor "
+                        f"value {name}[{index}]",
+                    )
+                    for index, value in enumerate(values)
+                ]
+                if (
+                    sum(value != 0.0 for value in checked_values)
+                    != nonzero
+                ):
+                    raise QualificationError(
+                        f"native entropy overrun {boundary} tensor "
+                        f"nonzero ledger differs: {name}"
+                    )
+                payload = np.asarray(
+                    checked_values,
+                    dtype="<f4",
+                ).tobytes(order="C")
+                if (
+                    hashlib.sha256(payload).hexdigest() != digest
+                    or int(
+                        np.count_nonzero(
+                            np.frombuffer(payload, dtype="<f4")
+                        )
+                    )
+                    != nonzero
+                    or int(
+                        np.count_nonzero(
+                            ~np.isfinite(
+                                np.frombuffer(payload, dtype="<f4")
+                            )
+                        )
+                    )
+                    != nonfinite
+                ):
+                    raise QualificationError(
+                        f"native entropy overrun {boundary} tensor "
+                        f"payload metadata differs: {name}"
+                    )
+                values = checked_values
+            elif values is not None:
+                raise QualificationError(
+                    f"native entropy overrun {boundary} tensor "
+                    f"must not inline values: {name}"
+                )
+            else:
+                raw_value = raw_large_tensors[boundary][name]
+                raw_payload = raw_value.tobytes(order="C")
+                if (
+                    raw_value.size != elements
+                    or raw_value.nbytes != byte_count
+                    or hashlib.sha256(raw_payload).hexdigest() != digest
+                    or int(np.count_nonzero(raw_value)) != nonzero
+                    or int(np.count_nonzero(~np.isfinite(raw_value)))
+                    != nonfinite
+                ):
+                    raise QualificationError(
+                        f"native entropy overrun {boundary} tensor "
+                        f"raw-array metadata differs: {name}"
+                    )
+            normalized_tensors[name] = {
+                "name": name,
+                "dtype": "f32",
+                "shape": list(shape),
+                "present": True,
+                "elements": elements,
+                "bytes": byte_count,
+                "sha256": digest,
+                "nonzero": nonzero,
+                "nonfinite": nonfinite,
+                "values": values,
+            }
+            observed_bytes += byte_count
+        if observed_bytes != used:
+            raise QualificationError(
+                f"native entropy overrun {boundary} used-byte ledger differs"
+            )
+
+        expected_shapes = {
+            "device_entropy_coefficient": [1],
+            "loss_accumulator": [10],
+            "scalar_loss": [1],
+            "optimizer_learning_rate": [1],
+            "optimizer_learning_rate_derived": [2],
+        }
+        for name, expected_shape in expected_shapes.items():
+            if normalized_tensors[name]["shape"] != expected_shape:
+                raise QualificationError(
+                    f"native entropy overrun {boundary} tensor "
+                    f"closed shape differs: {name}"
+                )
+        master = normalized_tensors["master_weights"]
+        momentum = normalized_tensors["optimizer_momentum"]
+        if (
+            master["shape"] != [expected_parameter_count]
+            or master["elements"] != expected_parameter_count
+            or master["bytes"] != expected_parameter_bytes
+            or master["shape"] != momentum["shape"]
+            or master["elements"] != momentum["elements"]
+            or master["bytes"] != momentum["bytes"]
+            or master["sha256"] != weights_sha256
+            or master["sha256"] == momentum["sha256"]
+            or master["nonzero"] <= 0
+            or momentum["nonzero"] <= 0
+        ):
+            raise QualificationError(
+                f"native entropy overrun {boundary} optimizer/weight "
+                "state differs"
+            )
+        device_values = normalized_tensors[
+            "device_entropy_coefficient"
+        ]["values"]
+        if not _same_f32(device_values[0], expected_coefficient):
+            raise QualificationError(
+                f"native entropy overrun {boundary} device coefficient "
+                "differs"
+            )
+        if not _same_f32(
+            device_values[0],
+            host["current_ent_coef"],
+        ):
+            raise QualificationError(
+                f"native entropy overrun {boundary} host/device "
+                "coefficient differs"
+            )
+        if any(
+            not _same_f32(value, 0.0)
+            for value in normalized_tensors["loss_accumulator"]["values"]
+        ):
+            raise QualificationError(
+                f"native entropy overrun {boundary} loss accumulator "
+                "is not empty"
+            )
+        scalar_values = normalized_tensors["scalar_loss"]["values"]
+        if not _same_f32(scalar_values[0], expected_scalar_loss):
+            raise QualificationError(
+                f"native entropy overrun {boundary} scalar loss differs"
+            )
+        for name in (
+            "optimizer_learning_rate",
+            "optimizer_learning_rate_derived",
+        ):
+            if any(
+                not _same_f32(value, 0.0)
+                for value in normalized_tensors[name]["values"]
+            ):
+                raise QualificationError(
+                    f"native entropy overrun {boundary} optimizer "
+                    f"learning rate differs: {name}"
+                )
+        normalized_states.append(
+            {
+                "contract": ENTROPY_OVERRUN_STATE_CONTRACT,
+                "max_bytes": maximum,
+                "used_bytes": used,
+                "host": dict(host),
+                "tensors": normalized_tensors,
+            }
+        )
+    before, after = normalized_states
+    for name in ENTROPY_OVERRUN_LARGE_TENSORS:
+        if (
+            raw_large_tensors["before"][name].tobytes(order="C")
+            != raw_large_tensors["after"][name].tobytes(order="C")
+        ):
+            raise QualificationError(
+                "native entropy overrun mutated raw optimizer/weight state"
+            )
+    if before != after:
+        raise QualificationError(
+            "native entropy overrun mutated bounded state"
+        )
+    return before
+
+
+def validate_entropy_overrun_evidence(
+    evidence: Any,
+    *,
+    expected_kind: str,
+    config: Mapping[str, Any],
+    arrays: Mapping[str, np.ndarray],
+) -> dict[str, Any]:
+    """Validate bounded runtime invariants for a public e=N rejection.
+
+    Exact Torch/native source-order contracts and compiled-source identity
+    separately establish that the public guard precedes mutation and dispatch.
+    """
+
+    if expected_kind not in ENTROPY_QUALIFICATION_CELL_KINDS:
+        raise QualificationError(
+            f"unknown expected entropy overrun cell: {expected_kind}"
+        )
+    if not isinstance(evidence, Mapping):
+        raise QualificationError("entropy overrun evidence is missing")
+    _require_exact_keys(
+        evidence,
+        (
+            "kind",
+            "backend",
+            "attempted_update_index",
+            "exception_type",
+            "exception_message",
+            "epoch_before",
+            "epoch_after",
+            "global_step_before",
+            "global_step_after",
+            "tail_valid_before",
+            "tail_valid_after",
+            "weights_before_sha256",
+            "weights_after_sha256",
+            "execution_counter_deltas",
+            "native_state",
+        ),
+        "entropy overrun evidence",
+    )
+    if evidence.get("kind") != expected_kind:
+        raise QualificationError("entropy overrun cell kind differs")
+    native = expected_kind in ENTROPY_NATIVE_CELL_KINDS
+    backend = "native" if native else "torch"
+    if evidence.get("backend") != backend:
+        raise QualificationError("entropy overrun backend differs")
+    if evidence.get("exception_type") != "RuntimeError":
+        raise QualificationError(
+            "entropy overrun exception type is not RuntimeError"
+        )
+    expected_message = (
+        "training update exceeds configured total updates"
+        if native
+        else "training update exceeds configured total_updates"
+    )
+    if evidence.get("exception_message") != expected_message:
+        raise QualificationError(
+            "entropy overrun rejection message differs"
+        )
+
+    vec = config.get("vec")
+    policy = config.get("policy")
+    train = config.get("train")
+    if (
+        not isinstance(vec, Mapping)
+        or not isinstance(policy, Mapping)
+        or not isinstance(train, Mapping)
+    ):
+        raise QualificationError("entropy overrun config is incomplete")
+    agents = _int(
+        vec.get("total_agents"),
+        "entropy overrun total agents",
+        minimum=1,
+    )
+    buffers = _int(
+        vec.get("num_buffers"),
+        "entropy overrun buffers",
+        minimum=1,
+    )
+    horizon = _int(
+        train.get("horizon"),
+        "entropy overrun horizon",
+        minimum=1,
+    )
+    hidden_size = _int(
+        policy.get("hidden_size"),
+        "entropy overrun policy hidden size",
+        minimum=1,
+    )
+    num_layers = _int(
+        policy.get("num_layers"),
+        "entropy overrun policy layer count",
+        minimum=1,
+    )
+    total = ENTROPY_SCHEDULE_TOTAL_UPDATES
+    quantum = agents * horizon
+    expected_step = total * quantum
+    if (
+        hidden_size != HETEROGENEOUS_PRIMARY_HIDDEN_SIZE
+        or num_layers != HETEROGENEOUS_PRIMARY_NUM_LAYERS
+    ):
+        raise QualificationError(
+            "entropy overrun policy architecture differs"
+        )
+    learning_rate = _require_canonical_json_f32(
+        train.get("learning_rate"),
+        "entropy overrun learning rate",
+    )
+    if (
+        not _same_f32(learning_rate, 0.0)
+        or train.get("anneal_lr") is not False
+        or _int(
+            train.get("minibatch_size"),
+            "entropy overrun minibatch size",
+            minimum=1,
+        )
+        != quantum
+        or _int(
+            train.get("replay_ratio"),
+            "entropy overrun replay ratio",
+            minimum=1,
+        )
+        != 1
+        or _int(
+            train.get("total_timesteps"),
+            "entropy overrun total timesteps",
+            minimum=1,
+        )
+        != expected_step
+    ):
+        raise QualificationError(
+            "entropy overrun zero-LR one-minibatch configuration differs"
+        )
+    expected_parameter_count = (
+        BLOODBOWL_INPUT_SIZE * hidden_size
+        + (BLOODBOWL_ACTION_LOGITS + 1) * hidden_size
+        + num_layers * 3 * hidden_size * hidden_size
+    )
+    scalar_expectations = {
+        "attempted_update_index": total,
+        "epoch_before": total,
+        "epoch_after": total,
+        "global_step_before": expected_step,
+        "global_step_after": expected_step,
+        "tail_valid_before": 0,
+        "tail_valid_after": 0,
+    }
+    for key, expected in scalar_expectations.items():
+        actual = _require_exact_json_int(
+            evidence.get(key),
+            f"entropy overrun {key}",
+            minimum=0,
+        )
+        if actual != expected:
+            raise QualificationError(
+                f"entropy overrun {key} differs: {actual} != {expected}"
+            )
+    before = _require_sha256(
+        evidence.get("weights_before_sha256"),
+        "entropy overrun weights-before digest",
+    )
+    after = _require_sha256(
+        evidence.get("weights_after_sha256"),
+        "entropy overrun weights-after digest",
+    )
+    validate_weight_identity(before, after)
+
+    deltas = evidence.get("execution_counter_deltas")
+    if native:
+        if not isinstance(deltas, Mapping):
+            raise QualificationError(
+                "native entropy overrun measured execution-counter "
+                "deltas are missing"
+            )
+        _require_exact_keys(
+            deltas,
+            ("graph", "eager"),
+            "entropy overrun execution-counter modes",
+        )
+        for mode in ("graph", "eager"):
+            roles = deltas.get(mode)
+            if not isinstance(roles, Mapping):
+                raise QualificationError(
+                    f"entropy overrun {mode} counters are missing"
+                )
+            _require_exact_keys(
+                roles,
+                ("rollout", "tail", "train"),
+                f"entropy overrun {mode} counter roles",
+            )
+            for role in ("rollout", "tail", "train"):
+                if (
+                    _require_exact_json_int(
+                        roles.get(role),
+                        f"entropy overrun {mode} {role} delta",
+                        minimum=0,
+                    )
+                    != 0
+                ):
+                    raise QualificationError(
+                        "entropy overrun executed backend work before rejection"
+                    )
+    elif deltas is not None:
+        raise QualificationError(
+            "Torch entropy overrun evidence contains fabricated "
+            "native execution counters"
+        )
+    native_state = evidence.get("native_state")
+    observed_overrun_arrays = {
+        key
+        for key in arrays
+        if isinstance(key, str) and key.startswith("overrun_state_")
+    }
+    expected_overrun_arrays = (
+        set(ENTROPY_OVERRUN_ARRAY_FIELDS) if native else set()
+    )
+    if observed_overrun_arrays != expected_overrun_arrays:
+        raise QualificationError(
+            "entropy overrun NPZ array namespace differs: "
+            f"observed={sorted(observed_overrun_arrays)}, "
+            f"expected={sorted(expected_overrun_arrays)}"
+        )
+    if native:
+        native_state_summary = _validate_entropy_overrun_native_state(
+            native_state,
+            arrays=arrays,
+            expected_step=expected_step,
+            expected_parameter_count=expected_parameter_count,
+            weights_sha256=before,
+        )
+    else:
+        if native_state is not None:
+            raise QualificationError(
+                "Torch entropy overrun evidence contains native state"
+            )
+        unexpected_arrays = sorted(
+            field
+            for field in ENTROPY_OVERRUN_ARRAY_FIELDS
+            if field in arrays
+        )
+        if unexpected_arrays:
+            raise QualificationError(
+                "Torch entropy overrun evidence contains native arrays: "
+                + ", ".join(unexpected_arrays)
+            )
+        native_state_summary = None
+    return {
+        "kind": expected_kind,
+        "backend": backend,
+        "attempted_update_index": total,
+        "exception_type": "RuntimeError",
+        "exception_message": expected_message,
+        "state_unchanged": {
+            "epoch": total,
+            "global_step": expected_step,
+            "tail_valid": 0,
+            "weights_sha256": before,
+            "execution_counters": True if native else None,
+        },
+        "buffer_count": buffers,
+        "native_state_contract": (
+            None
+            if native_state_summary is None
+            else native_state_summary["contract"]
+        ),
     }
 
 
@@ -6066,6 +9918,10 @@ def _run_worker(
         "record_bytes",
         "record_sha256",
         "_artifact_arrays",
+        "_entropy_summary",
+        "_entropy_execution_summary",
+        "_entropy_overrun_summary",
+        "_entropy_gradient_summary",
     }
     if reserved_record_keys & set(record):
         raise QualificationError(
@@ -6079,7 +9935,74 @@ def _run_worker(
         != SCHEMA_VERSION
     ):
         raise QualificationError(f"qualification cell {name} schema differs")
-    if record.get("accepted") is not True:
+    if (
+        kind in ENTROPY_SCHEDULE_CELL_KINDS
+        or kind in ENTROPY_GRADIENT_CONTROL_CELL_KINDS
+    ):
+        worker_verdict_keys = {"accepted", "passed"}
+
+        def contains_worker_verdict(value: Any) -> bool:
+            if isinstance(value, Mapping):
+                return bool(worker_verdict_keys & set(value)) or any(
+                    contains_worker_verdict(child)
+                    for child in value.values()
+                )
+            if isinstance(value, list):
+                return any(contains_worker_verdict(child) for child in value)
+            return False
+
+        if contains_worker_verdict(record):
+            raise QualificationError(
+                f"qualification cell {name} included a "
+                "worker-authored entropy verdict"
+            )
+        expected_entropy_keys = {
+            "schema_version",
+            "kind",
+            "run_nonce",
+            "cell_nonce",
+            "identity",
+            "patch_identity",
+            "entropy_patch_identity",
+            "cuda_runtime_preflight",
+            "config",
+            "host",
+            "platform",
+            "seed",
+            "entropy_evidence",
+            "entropy_execution",
+            "entropy_overrun",
+            "entropy_verifier",
+            "artifact",
+            "artifact_bytes",
+            "artifact_sha256",
+        }
+        if kind in ENTROPY_NATIVE_CELL_KINDS:
+            expected_entropy_keys.add("graph_execution")
+        if kind in ENTROPY_TORCH_CELL_KINDS:
+            expected_entropy_keys.add("torch_manual_seed")
+        expected_entropy_keys.add("entropy_gradient")
+        _require_exact_keys(
+            record,
+            expected_entropy_keys,
+            f"qualification cell {name} raw entropy record",
+        )
+        if kind in ENTROPY_TORCH_CELL_KINDS and (
+            _require_exact_json_int(
+                record.get("torch_manual_seed"),
+                f"qualification cell {name} Torch manual seed",
+                minimum=0,
+            )
+            != _require_exact_json_int(
+                args.seed,
+                "qualification request seed",
+                minimum=0,
+            )
+        ):
+            raise QualificationError(
+                f"qualification cell {name} Torch manual seed differs"
+            )
+    elif record.get("accepted") is not True:
         raise QualificationError(f"qualification cell {name} is not accepted")
     if record.get("run_nonce") != run_nonce:
         raise QualificationError(
@@ -6094,6 +10017,13 @@ def _run_worker(
         expected_puffer_root=Path(args.puffer_root),
         rehash_files=True,
     )
+    if kind in ENTROPY_QUALIFICATION_CELL_KINDS:
+        validate_entropy_schedule_patch_identity(
+            record.get("entropy_patch_identity"),
+            expected_puffer_root=Path(args.puffer_root),
+            rehash_files=True,
+        )
+        validate_entropy_backend_identity(record.get("identity"))
     validate_cell_cudagraph_record(record, expected=cudagraphs)
     expected_config = _expected_cell_config(
         kind,
@@ -6217,6 +10147,68 @@ def _run_worker(
             raise QualificationError(
                 "worker integrated advantage oracle summary differs"
             )
+    if kind in ENTROPY_QUALIFICATION_CELL_KINDS:
+        if artifact_arrays is None:  # pragma: no cover - closed by path validator
+            raise QualificationError(
+                "entropy cell has no bound NPZ artifact"
+            )
+        expected_schedule = entropy_schedule_descriptor(
+            enabled=_entropy_schedule_enabled(kind)
+        )
+        record["_entropy_summary"] = (
+            validate_entropy_schedule_cell_evidence(
+                record.get("entropy_evidence"),
+                artifact_arrays,
+                expected_kind=kind,
+                expected_schedule=expected_schedule,
+            )
+        )
+        record["_entropy_execution_summary"] = (
+            validate_entropy_execution_evidence(
+                record.get("entropy_execution"),
+                artifact_arrays,
+                expected_kind=kind,
+                config=record["config"],
+            )
+        )
+        record["_entropy_overrun_summary"] = (
+            validate_entropy_overrun_evidence(
+                record.get("entropy_overrun"),
+                expected_kind=kind,
+                config=record["config"],
+                arrays=artifact_arrays,
+            )
+        )
+        record["_entropy_gradient_summary"] = (
+            validate_entropy_gradient_cell_evidence(
+                record.get("entropy_gradient"),
+                artifact_arrays,
+                expected_kind=kind,
+            )
+        )
+        if kind in ENTROPY_NATIVE_CELL_KINDS:
+            expected_counts = {
+                "rollout": (
+                    ENTROPY_SCHEDULE_TOTAL_UPDATES
+                    * int(record["config"]["train"]["horizon"])
+                    * int(record["config"]["vec"]["num_buffers"])
+                ),
+                "tail": (
+                    ENTROPY_SCHEDULE_TOTAL_UPDATES
+                    * int(record["config"]["vec"]["num_buffers"])
+                ),
+                "train": ENTROPY_SCHEDULE_TOTAL_UPDATES,
+            }
+            validate_graph_execution_evidence(
+                record.get("graph_execution"),
+                expected_cudagraphs=cudagraphs,
+                expected_workload=kind,
+                expected_counts=expected_counts,
+            )
+        validate_entropy_verifier_identity(
+            record.get("entropy_verifier"),
+            rehash_files=True,
+        )
     record["record_path"] = str(json_path)
     record["record_bytes"] = len(record_artifact.encoded)
     record["record_sha256"] = record_artifact.sha256
@@ -6249,6 +10241,24 @@ def _require_same_patch_identity(
         if record.get("patch_identity") != reference:
             raise QualificationError(
                 "rollout transition patch identity drifted between cells"
+            )
+    return validated
+
+
+def _require_same_entropy_patch_identity(
+    records: Iterable[Mapping[str, Any]],
+) -> dict[str, Any]:
+    records = list(records)
+    if not records:
+        raise QualificationError(
+            "no entropy cell patch identities were supplied"
+        )
+    reference = records[0].get("entropy_patch_identity")
+    validated = validate_entropy_schedule_patch_identity(reference)
+    for record in records[1:]:
+        if record.get("entropy_patch_identity") != reference:
+            raise QualificationError(
+                "entropy schedule patch identity drifted between cells"
             )
     return validated
 
@@ -6410,8 +10420,9 @@ def run_qualification(args: argparse.Namespace) -> int:
             final_path,
             in_progress,
             maximum_bytes=FINAL_MAX_JSON_BYTES,
-        )
+    )
     records: list[dict[str, Any]] = []
+    entropy_records: list[dict[str, Any]] = []
 
     def cell(kind: str, name: str, cudagraphs: int = DEFAULT_CUDAGRAPH_WARMUP_EPOCHS):
         cell_nonce = secrets.token_hex(32)
@@ -6427,6 +10438,9 @@ def run_qualification(args: argparse.Namespace) -> int:
         records.append(record)
         _require_same_identity(records)
         _require_same_patch_identity(records)
+        if kind in ENTROPY_QUALIFICATION_CELL_KINDS:
+            entropy_records.append(record)
+            _require_same_entropy_patch_identity(entropy_records)
         return record
 
     def cell_arrays(record: Mapping[str, Any]) -> dict[str, np.ndarray]:
@@ -6782,6 +10796,190 @@ def run_qualification(args: argparse.Namespace) -> int:
         "ratio_attempts": len(frozen_advantage_evidence),
     }
 
+    entropy_cells = (
+        cell(
+            "entropy_native_eager_annealed",
+            "entropy-native-eager-annealed",
+            cudagraphs=-1,
+        ),
+        cell(
+            "entropy_native_graph_annealed",
+            "entropy-native-graph-annealed",
+        ),
+        cell(
+            "entropy_native_graph_anneal_disabled",
+            "entropy-native-graph-anneal-disabled",
+        ),
+        cell(
+            "entropy_torch_annealed",
+            "entropy-torch-annealed",
+        ),
+        cell(
+            "entropy_torch_anneal_disabled",
+            "entropy-torch-anneal-disabled",
+        ),
+    )
+    if tuple(record.get("kind") for record in entropy_cells) != (
+        ENTROPY_SCHEDULE_CELL_KINDS
+    ):
+        raise QualificationError(
+            "entropy qualification cell matrix differs"
+        )
+    entropy_gradient_control = cell(
+        "entropy_native_eager_anneal_disabled",
+        "entropy-native-eager-anneal-disabled",
+        cudagraphs=-1,
+    )
+    entropy_qualification_cells = (
+        *entropy_cells,
+        entropy_gradient_control,
+    )
+    if tuple(
+        record.get("kind") for record in entropy_qualification_cells
+    ) != ENTROPY_QUALIFICATION_CELL_KINDS:
+        raise QualificationError(
+            "entropy qualification/control cell matrix differs"
+        )
+    entropy_identity = validate_entropy_backend_identity(
+        _require_same_identity(entropy_qualification_cells)
+    )
+    entropy_patch_identity = _require_same_entropy_patch_identity(
+        entropy_qualification_cells
+    )
+    entropy_summaries: dict[str, dict[str, Any]] = {}
+    entropy_execution: dict[str, dict[str, Any]] = {}
+    entropy_overrun: dict[str, dict[str, Any]] = {}
+    entropy_gradient_summaries: dict[str, dict[str, Any]] = {}
+    entropy_arrays: dict[str, dict[str, np.ndarray]] = {}
+    for record in entropy_qualification_cells:
+        kind = record["kind"]
+        raw_arrays = cell_arrays(record)
+        expected_schedule = entropy_schedule_descriptor(
+            enabled=_entropy_schedule_enabled(kind)
+        )
+        entropy_summaries[kind] = (
+            validate_entropy_schedule_cell_evidence(
+                record.get("entropy_evidence"),
+                raw_arrays,
+                expected_kind=kind,
+                expected_schedule=expected_schedule,
+            )
+        )
+        entropy_execution[kind] = validate_entropy_execution_evidence(
+            record.get("entropy_execution"),
+            raw_arrays,
+            expected_kind=kind,
+            config=record["config"],
+        )
+        entropy_overrun[kind] = validate_entropy_overrun_evidence(
+            record.get("entropy_overrun"),
+            expected_kind=kind,
+            config=record["config"],
+            arrays=raw_arrays,
+        )
+        entropy_gradient_summaries[kind] = (
+            validate_entropy_gradient_cell_evidence(
+                record.get("entropy_gradient"),
+                raw_arrays,
+                expected_kind=kind,
+            )
+        )
+        validate_entropy_verifier_identity(
+            record.get("entropy_verifier"),
+            rehash_files=True,
+        )
+        entropy_arrays[kind] = raw_arrays
+
+    annealed_kinds = (
+        "entropy_native_eager_annealed",
+        "entropy_native_graph_annealed",
+        "entropy_torch_annealed",
+    )
+    disabled_kinds = (
+        "entropy_native_graph_anneal_disabled",
+        "entropy_torch_anneal_disabled",
+        "entropy_native_eager_anneal_disabled",
+    )
+    annealed_reference = entropy_arrays[annealed_kinds[0]][
+        "device_coefficient"
+    ]
+    for kind in annealed_kinds[1:]:
+        if not np.array_equal(
+            entropy_arrays[kind]["device_coefficient"],
+            annealed_reference,
+        ):
+            raise QualificationError(
+                f"annealed entropy schedule differs across backends: {kind}"
+            )
+    disabled_reference = entropy_arrays[disabled_kinds[0]][
+        "device_coefficient"
+    ]
+    for kind in disabled_kinds[1:]:
+        if not np.array_equal(
+            entropy_arrays[kind]["device_coefficient"],
+            disabled_reference,
+        ):
+            raise QualificationError(
+                f"disabled entropy schedule differs across backends: {kind}"
+            )
+    if np.array_equal(annealed_reference, disabled_reference):
+        raise QualificationError(
+            "annealed entropy schedule is indistinguishable from its control"
+        )
+    entropy_gradient_pairs = {
+        "native_eager": validate_entropy_gradient_pair(
+            entropy_arrays["entropy_native_eager_annealed"],
+            entropy_arrays["entropy_native_eager_anneal_disabled"],
+            enabled_kind="entropy_native_eager_annealed",
+            disabled_kind="entropy_native_eager_anneal_disabled",
+        ),
+        "native_graph": validate_entropy_gradient_pair(
+            entropy_arrays["entropy_native_graph_annealed"],
+            entropy_arrays["entropy_native_graph_anneal_disabled"],
+            enabled_kind="entropy_native_graph_annealed",
+            disabled_kind="entropy_native_graph_anneal_disabled",
+        ),
+        "torch": validate_entropy_gradient_pair(
+            entropy_arrays["entropy_torch_annealed"],
+            entropy_arrays["entropy_torch_anneal_disabled"],
+            enabled_kind="entropy_torch_annealed",
+            disabled_kind="entropy_torch_anneal_disabled",
+        ),
+    }
+    entropy_native_mode_gradient_parity = (
+        validate_entropy_native_mode_gradient_parity(
+            entropy_arrays["entropy_native_eager_annealed"],
+            entropy_arrays["entropy_native_graph_annealed"],
+        )
+    )
+    gates["entropy_schedule_parity"] = {
+        "accepted": True,
+        "contract": ENTROPY_SCHEDULE_CONTRACT,
+        "telemetry_contract": ENTROPY_TELEMETRY_CONTRACT,
+        "gradient_contract": ENTROPY_GRADIENT_CONTRACT,
+        "qualification_only": True,
+        "cell_kinds": list(ENTROPY_SCHEDULE_CELL_KINDS),
+        "gradient_control_cell_kinds": list(
+            ENTROPY_GRADIENT_CONTROL_CELL_KINDS
+        ),
+        "qualification_cell_kinds": list(
+            ENTROPY_QUALIFICATION_CELL_KINDS
+        ),
+        "cells": entropy_summaries,
+        "execution": entropy_execution,
+        "overrun_rejection": entropy_overrun,
+        "gradient_cells": entropy_gradient_summaries,
+        "gradient_pairs": entropy_gradient_pairs,
+        "native_mode_gradient_parity": (
+            entropy_native_mode_gradient_parity
+        ),
+        "backend_identity": entropy_identity,
+        "patch_identity": entropy_patch_identity,
+        "pointwise_annealed_coefficients_equal": True,
+        "pointwise_disabled_coefficients_equal": True,
+        "annealed_moves_and_disabled_is_constant": True,
+    }
+
     throughput_cell = cell("throughput", "throughput")
     throughput = throughput_cell["throughput"]
     _require_same_cuda_runtime(records)
@@ -6847,6 +11045,7 @@ def run_qualification(args: argparse.Namespace) -> int:
         "run_nonce": run_nonce,
         "identity": identity,
         "patch_identity": patch_identity,
+        "entropy_patch_identity": entropy_patch_identity,
         "cuda_runtime_preflight": records[0]["cuda_runtime_preflight"],
         "host": socket.gethostname(),
         "gates": gates,
@@ -7000,7 +11199,13 @@ def main(argv: list[str] | None = None) -> int:
             args.throughput_horizon,
             args.throughput_minibatch_size,
         )
-        validate_cell_cudagraphs(args.kind, args.cudagraphs)
+        if args.kind in ENTROPY_QUALIFICATION_CELL_KINDS:
+            validate_entropy_cell_cudagraphs(
+                args.kind,
+                args.cudagraphs,
+            )
+        else:
+            validate_cell_cudagraphs(args.kind, args.cudagraphs)
         return run_cell(args)
     if args.command == "run":
         return run_qualification(args)

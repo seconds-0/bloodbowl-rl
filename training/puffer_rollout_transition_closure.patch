@@ -1,11 +1,9 @@
 diff --git a/pufferlib/torch_pufferl.py b/pufferlib/torch_pufferl.py
-index 77d098b9..4155e67d 100644
+index 4b32293..6a5baa1 100644
 --- a/pufferlib/torch_pufferl.py
 +++ b/pufferlib/torch_pufferl.py
-@@ -287,6 +287,13 @@ class PuffeRL:
-         self.batch_size = total_agents * horizon
-         self.minibatch_segments = config['minibatch_size'] // horizon
-         self.total_epochs = max(1, config['total_timesteps'] // self.batch_size)
+@@ -298,2 +298,10 @@ class PuffeRL:
+ 
 +        self.tail_rewards = torch.zeros(
 +            total_agents, dtype=torch.float32, device=device)
 +        self.tail_terminals = torch.zeros(
@@ -13,22 +11,14 @@ index 77d098b9..4155e67d 100644
 +        self.tail_values = torch.zeros(
 +            total_agents, dtype=torch.float32, device=device)
 +        self.tail_valid = False
- 
-         self.policy = policy
-         self.optimizer = Muon(
-@@ -338,6 +345,9 @@ class PuffeRL:
-         self.evaluation_mode = enabled
- 
-     def rollouts(self):
++
+         self.args = args
+@@ -344 +352,4 @@ class PuffeRL:
 +        if self.tail_valid:
 +            raise RuntimeError(
 +                'rollout would overwrite an unconsumed tail record')
          prof = self.profile
-         config = self.config
-         device = self.device
-@@ -404,6 +414,25 @@ class PuffeRL:
- 
-             o, r, d = self.vec_obs, self.vec_rewards, self.vec_terminals
+@@ -409,2 +420,21 @@ class PuffeRL:
              prof.mark(3)
 +            if (t == horizon - 1 and self.reset_state
 +                    and not self.evaluation_mode):
@@ -50,47 +40,33 @@ index 77d098b9..4155e67d 100644
 +                    ))
 +                    self.tail_valid = True
              prof.elapsed(P.EVAL_GPU, 1, 2)
-             prof.elapsed(P.EVAL_ENV, 2, 3)
- 
-@@ -423,6 +452,9 @@ class PuffeRL:
-         losses = defaultdict(float)
-         config = self.config
+@@ -428,2 +458,5 @@ class PuffeRL:
          device = self.device
 +        if not self.tail_valid:
 +            raise RuntimeError(
 +                'training requires one fresh tail record')
  
-         b0 = config['prio_beta0']
-         a = config['prio_alpha']
-@@ -450,12 +482,16 @@ class PuffeRL:
+@@ -450,6 +483,9 @@ class PuffeRL:
+         ter = self.terminals.T.contiguous()
+         masks = (self.action_masks.transpose(0, 1).contiguous()
+                  if self.action_masks is not None else None)
  
          P = Profile
-         prof.mark(0)
 +        tail_val = self.tail_values
 +        tail_rew = self.tail_rewards.clamp(-8, 8)
 +        tail_ter = self.tail_terminals
-         num_minibatches = int(config['replay_ratio'] * self.batch_size / config['minibatch_size'])
-         for mb in range(num_minibatches):
-             shape = val.shape
-             advantages = torch.zeros(shape, device=device)
+         prof.mark(0)
+@@ -460,3 +496,4 @@ class PuffeRL:
              advantages = compute_puff_advantage(val, rew,
 -                ter, self.ratio, advantages, config['gamma'],
 +                ter, self.ratio, tail_val, tail_rew, tail_ter,
 +                advantages, config['gamma'],
                  config['gae_lambda'], config['vtrace_rho_clip'], config['vtrace_c_clip'])
- 
-             adv = advantages.abs().sum(axis=1)
-@@ -535,6 +571,7 @@ class PuffeRL:
- 
-         self.losses = losses
-         self.epoch += 1
+@@ -532,2 +569,3 @@ class PuffeRL:
+         prof.elapsed(P.TRAIN, 0, 1)
 +        self.tail_valid = False
  
-     def log(self):
-         P = Profile
-@@ -606,13 +643,15 @@ class PuffeRL:
- 
-         return cls(args, vec, policy)
+@@ -616,4 +654,5 @@ class PuffeRL:
  
 -def compute_puff_advantage(values, rewards, terminals,
 -        ratio, advantages, gamma, gae_lambda, vtrace_rho_clip, vtrace_c_clip):
@@ -98,23 +74,56 @@ index 77d098b9..4155e67d 100644
 +        tail_values, tail_rewards, tail_terminals,
 +        advantages, gamma, gae_lambda, vtrace_rho_clip, vtrace_c_clip):
      num_steps, horizon = values.shape
-     fn = _C.puff_advantage if values.is_cuda else _C.puff_advantage_cpu
-     fn(
+@@ -622,3 +661,4 @@ def compute_puff_advantage(values, rewards, terminals,
          values.data_ptr(), rewards.data_ptr(), terminals.data_ptr(),
 -        ratio.data_ptr(), advantages.data_ptr(),
 +        ratio.data_ptr(), tail_values.data_ptr(), tail_rewards.data_ptr(),
 +        tail_terminals.data_ptr(), advantages.data_ptr(),
          num_steps, horizon,
-         gamma, gae_lambda, vtrace_rho_clip, vtrace_c_clip)
-     return advantages
 diff --git a/src/bindings.cu b/src/bindings.cu
-index 7b8a5336..d6d4d435 100644
+index fdc86ab..93f4fce 100644
 --- a/src/bindings.cu
 +++ b/src/bindings.cu
-@@ -135,6 +135,19 @@ void render(pybind11::object pufferl_obj, int env_id) {
+@@ -13,2 +13,38 @@ namespace py = pybind11;
  
- void rollouts(pybind11::object pufferl_obj) {
-     PuffeRL& pufferl = pufferl_obj.cast<PuffeRL&>();
++static void require_fresh_training_tail(PuffeRL& pufferl) {
++    std::vector<int> tail_valid(pufferl.hypers.num_buffers);
++    cudaError_t status = cudaMemcpy(
++        tail_valid.data(),
++        pufferl.tail_valid.data,
++        tail_valid.size() * sizeof(int),
++        cudaMemcpyDeviceToHost);
++    if (status != cudaSuccess) {
++        pufferl.training_failed = true;
++        throw std::runtime_error(
++            "training could not read tail-record validity");
++    }
++    for (int valid : tail_valid) {
++        if (valid != 1) {
++            throw std::runtime_error(
++                "training requires one valid tail record per rollout buffer");
++        }
++    }
++}
++
++static void consume_training_tail(PuffeRL& pufferl) {
++    cudaError_t status = cudaMemsetAsync(
++        pufferl.tail_valid.data,
++        0,
++        pufferl.hypers.num_buffers * sizeof(int),
++        pufferl.default_stream);
++    if (status == cudaSuccess) {
++        status = cudaStreamSynchronize(pufferl.default_stream);
++    }
++    if (status != cudaSuccess) {
++        pufferl.training_failed = true;
++        throw std::runtime_error(
++            "training could not clear consumed tail records");
++    }
++}
++
+ static void require_public_training_mode(PuffeRL& pufferl) {
+@@ -145 +181,14 @@ void rollouts(pybind11::object pufferl_obj) {
 +    std::vector<int> tail_valid(pufferl.hypers.num_buffers);
 +    if (cudaMemcpy(tail_valid.data(), pufferl.tail_valid.data,
 +            tail_valid.size() * sizeof(int),
@@ -129,96 +138,54 @@ index 7b8a5336..d6d4d435 100644
 +        }
 +    }
      pybind11::gil_scoped_release no_gil;
-     double t0 = wall_clock();
+@@ -161,3 +210,8 @@ void rollouts(pybind11::object pufferl_obj) {
  
-@@ -151,6 +164,9 @@ void rollouts(pybind11::object pufferl_obj) {
-             }
-         }
-     }
+-    static_vec_omp_step(pufferl.vec);
 +    if (cudaStreamSynchronize(pufferl.default_stream) != cudaSuccess) {
 +        throw std::runtime_error("rollout CUDA execution failed");
 +    }
- 
-     static_vec_omp_step(pufferl.vec);
++
++    static_vec_omp_step(
++        pufferl.vec);
      float sec = (float)(wall_clock() - t0);
-@@ -192,9 +208,29 @@ pybind11::dict train(pybind11::object pufferl_obj) {
-             "training requires reset_state=True and evaluation_mode=False");
-     }
-     {
-+        std::vector<int> tail_valid(pufferl.hypers.num_buffers);
-+        if (cudaMemcpy(tail_valid.data(), pufferl.tail_valid.data,
-+                tail_valid.size() * sizeof(int),
-+                cudaMemcpyDeviceToHost) != cudaSuccess) {
-+            throw std::runtime_error(
-+                "training could not read tail-record validity");
-+        }
-+        for (int valid : tail_valid) {
-+            if (valid != 1) {
-+                throw std::runtime_error(
-+                    "training requires one valid tail record per rollout buffer");
-+            }
-+        }
+@@ -177 +231,2 @@ pybind11::dict train(pybind11::object pufferl_obj) {
++        require_fresh_training_tail(pufferl);
          pybind11::gil_scoped_release no_gil;
+@@ -178,2 +233,3 @@ pybind11::dict train(pybind11::object pufferl_obj) {
          train_impl(pufferl);
++        consume_training_tail(pufferl);
      }
-+    if (cudaMemsetAsync(pufferl.tail_valid.data, 0,
-+            pufferl.hypers.num_buffers * sizeof(int),
-+            pufferl.default_stream) != cudaSuccess
-+            || cudaStreamSynchronize(pufferl.default_stream) != cudaSuccess) {
-+        throw std::runtime_error(
-+            "training could not clear consumed tail records");
-+    }
-     pybind11::dict losses;
-     return losses;
- }
-@@ -289,6 +325,8 @@ int py_num_envs(py::object pufferl_obj) {
- void py_puff_advantage(
-         long long values_ptr, long long rewards_ptr,
+@@ -295,2 +351,4 @@ void py_puff_advantage(
          long long dones_ptr,  long long importance_ptr,
 +        long long tail_values_ptr, long long tail_rewards_ptr,
 +        long long tail_dones_ptr,
          long long advantages_ptr,
-         int num_steps, int horizon,
-         float gamma, float lambda, float rho_clip, float c_clip) {
-@@ -298,6 +336,9 @@ void py_puff_advantage(
-     kernel<<<blocks, 256>>>(
-         (const precision_t*)values_ptr, (const precision_t*)rewards_ptr,
+@@ -304,2 +362,5 @@ void py_puff_advantage(
          (const precision_t*)dones_ptr,  (const precision_t*)importance_ptr,
 +        (const precision_t*)tail_values_ptr,
 +        (const precision_t*)tail_rewards_ptr,
 +        (const precision_t*)tail_dones_ptr,
          (precision_t*)advantages_ptr,
-         gamma, lambda, rho_clip, c_clip, num_steps, horizon);
- }
-@@ -677,4 +718,5 @@ PYBIND11_MODULE(_C, m) {
-         .def("num_params", [](PuffeRL& self) -> int64_t {
-             return numel(self.master_weights.shape);
+@@ -683,2 +744,3 @@ PYBIND11_MODULE(_C, m) {
          });
 +    m.attr("rollout_transition_contract") = "tail-bootstrap-v1";
  }
 diff --git a/src/bindings_cpu.cpp b/src/bindings_cpu.cpp
-index e7215b60..e627b192 100644
+index e7215b6..e627b19 100644
 --- a/src/bindings_cpu.cpp
 +++ b/src/bindings_cpu.cpp
-@@ -39,6 +39,8 @@ const char* cudaGetErrorString(cudaError_t) { return "stub"; }
- static void py_puff_advantage_cpu(
-         long long values_ptr, long long rewards_ptr,
+@@ -41,2 +41,4 @@ static void py_puff_advantage_cpu(
          long long dones_ptr, long long importance_ptr,
 +        long long tail_values_ptr, long long tail_rewards_ptr,
 +        long long tail_dones_ptr,
          long long advantages_ptr,
-         int num_steps, int horizon,
-         float gamma, float lambda, float rho_clip, float c_clip) {
-@@ -46,22 +48,35 @@ static void py_puff_advantage_cpu(
-     const float* rewards = (const float*)rewards_ptr;
-     const float* dones = (const float*)dones_ptr;
+@@ -48,2 +50,5 @@ static void py_puff_advantage_cpu(
      const float* importance = (const float*)importance_ptr;
 +    const float* tail_values = (const float*)tail_values_ptr;
 +    const float* tail_rewards = (const float*)tail_rewards_ptr;
 +    const float* tail_dones = (const float*)tail_dones_ptr;
      float* advantages = (float*)advantages_ptr;
-     for (int row = 0; row < num_steps; row++) {
-         int off = row * horizon;
+@@ -52,5 +57,8 @@ static void py_puff_advantage_cpu(
          float lastpufferlam = 0;
 -        for (int t = horizon - 2; t >= 0; t--) {
 -            int t_next = t + 1;
@@ -230,7 +197,7 @@ index e7215b60..e627b192 100644
 +        for (int t = horizon - 1; t >= 0; t--) {
 +            bool nextnonterminal = next_done == 0.0f;
              float imp = importance[off + t];
-             float rho_t = imp < rho_clip ? imp : rho_clip;
+@@ -58,8 +66,15 @@ static void py_puff_advantage_cpu(
              float c_t = imp < c_clip ? imp : c_clip;
 -            float r_nxt = rewards[off + t_next];
              float v = values[off + t];
@@ -250,36 +217,40 @@ index e7215b60..e627b192 100644
 +                (reward > 8.0f ? 8.0f : reward);
 +            next_done = dones[off + t];
          }
-     }
- }
-@@ -204,4 +219,5 @@ PYBIND11_MODULE(_C, m) {
-         .def("render", [](VecEnv& ve, int env_id) { static_vec_render(ve.vec, env_id); })
-         .def("log", &vec_log)
+@@ -206,2 +221,3 @@ PYBIND11_MODULE(_C, m) {
          .def("close", &vec_close);
 +    m.attr("rollout_transition_contract") = "tail-bootstrap-v1";
  }
 diff --git a/src/pufferlib.cu b/src/pufferlib.cu
-index 1b65f5ed..24ac0b6d 100644
+index 424f022..0ff9179 100644
 --- a/src/pufferlib.cu
 +++ b/src/pufferlib.cu
-@@ -3,6 +3,7 @@
- #include <nvtx3/nvToolsExt.h>
- #include <nvml.h>
+@@ -5,2 +5,7 @@
  #include <nccl.h>
 +#include <atomic>
++#include <cmath>
++#include <limits>
++#include <stdexcept>
++#include <string>
  #include <vector>
+@@ -19,2 +24,11 @@ static double wall_clock() {
  
- #include <time.h>
-@@ -361,11 +362,23 @@ typedef struct {
-     FloatTensor master_weights;
-     PrecisionTensor* buffer_states;         // [num_buffers]
++inline void require_cuda_success(cudaError_t status, const char* operation) {
++    if (status != cudaSuccess) {
++        throw std::runtime_error(
++            std::string(operation) + ": "
++            + cudaGetErrorName(status) + ": "
++            + cudaGetErrorString(status));
++    }
++}
++
+ enum LossIdx {
+@@ -363,2 +377,4 @@ typedef struct {
      PolicyActivations* buffer_activations;  // [num_buffers]
 +    PrecisionTensor* tail_states;           // [num_buffers], fresh zero state
 +    PolicyActivations* tail_activations;    // [num_buffers], value-only scratch
      int slice_size;  // # agents per buffer this bank owns; sets activation/state batch dim
-     int hidden_size;
-     int num_layers;
- } WeightBank;
+@@ -368,2 +384,12 @@ typedef struct {
  
 +enum QualificationExecutionCounter {
 +    QUAL_GRAPH_ROLLOUT = 0,
@@ -292,19 +263,11 @@ index 1b65f5ed..24ac0b6d 100644
 +};
 +
  typedef struct {
-     Policy policy;
-     PolicyWeights weights;       // current precision_t weights (structured)
-@@ -373,6 +386,7 @@ typedef struct {
-     Allocator params_alloc;
-     Allocator grads_alloc;
+@@ -375,2 +401,3 @@ typedef struct {
      Allocator activations_alloc;
 +    Allocator tail_acts_alloc;
      StaticVec* vec;
-     Muon muon;
-     ncclComm_t nccl_comm;  // NCCL communicator for multi-GPU
-@@ -380,12 +394,20 @@ typedef struct {
-     bool is_continuous;  // True if all action dimensions are continuous (size==1)
-     PrecisionTensor* buffer_states;  // Per-buffer states for contiguous access
+@@ -382,2 +409,9 @@ typedef struct {
      PolicyActivations* buffer_activations;  // Per-buffer inference activations
 +    PrecisionTensor* tail_states;  // Per-buffer zero-state bootstrap scratch
 +    PolicyActivations* tail_activations;  // Dedicated value-only activations
@@ -314,35 +277,24 @@ index 1b65f5ed..24ac0b6d 100644
 +    PrecisionTensor tail_values;        // (agents,), zero-state bootstrap value
 +    IntTensor tail_valid;                // Tail callback counts, one per buffer
      RolloutBuf rollouts;
-     RolloutBuf train_rollouts;  // Pre-allocated transposed copy for train_impl
-     EnvBuf env;
-     TrainGraph train_buf;
-     PrecisionTensor advantages_puf;  // Pre-allocated for train_impl (B, T)
+@@ -388,2 +422,3 @@ typedef struct {
      cudaGraphExec_t* fused_rollout_cudagraphs;  // [horizon][num_buffers]
 +    cudaGraphExec_t* tail_rollout_cudagraphs;   // [num_buffers]
      cudaGraphExec_t train_cudagraph;
-     cudaStream_t* streams;  // per-buffer raw CUDA streams
-     cudaStream_t default_stream;  // main-thread stream (captured once at init)
-@@ -409,6 +431,7 @@ typedef struct {
-     bool evaluation_mode;
-     int* evaluation_mode_puf;
+@@ -405,2 +440,3 @@ typedef struct {
+     double last_log_time;
++    bool training_failed;
+     long last_log_step;
+@@ -411,2 +447,3 @@ typedef struct {
      bool train_captured;
 +    bool tail_captured;
      ulong seed;
-     curandStatePhilox4_32_10_t** rng_states;  // per-buffer persistent RNG states [num_buffers]
-     // Optional frozen weight banks for match / league.
-@@ -421,6 +444,8 @@ typedef struct {
-     // worker thread only writes inside its own physical chunk.
-     // Bank 0 = primary (learner). NULL = no layout set (primary owns full chunk).
+@@ -423,2 +460,4 @@ typedef struct {
      int* bank_layout;
 +    std::atomic<unsigned long long>
 +        qualification_execution_counts[NUM_QUAL_EXECUTION_COUNTERS];
  } PuffeRL;
- 
- __global__ void reset_recurrent_state_on_terminal(
-@@ -678,8 +703,13 @@ extern "C" void net_callback_wrapper(void* ctx, int buf, int t) {
- 
-     cudaStream_t current_stream = tl_stream;
+@@ -680,4 +719,9 @@ extern "C" void net_callback_wrapper(void* ctx, int buf, int t) {
      if (pufferl->rollout_captured) {
 -        assert(cudaGraphLaunch(pufferl->fused_rollout_cudagraphs[graph], current_stream) == cudaSuccess
 -                && "cudaGraphLaunch failed");
@@ -354,18 +306,14 @@ index 1b65f5ed..24ac0b6d 100644
 +        pufferl->qualification_execution_counts[QUAL_GRAPH_ROLLOUT].fetch_add(
 +            1, std::memory_order_relaxed);
          profile_end(hypers.profile);
-         return;
-     }
-@@ -805,9 +835,115 @@ extern "C" void net_callback_wrapper(void* ctx, int buf, int t) {
-         assert(cudaGraphDestroy(_graph) == cudaSuccess && "cudaGraphDestroy failed");
-         cudaDeviceSynchronize();
+@@ -807,2 +851,6 @@ extern "C" void net_callback_wrapper(void* ctx, int buf, int t) {
      }
 +    if (!capturing) {
 +        pufferl->qualification_execution_counts[QUAL_EAGER_ROLLOUT].fetch_add(
 +            1, std::memory_order_relaxed);
 +    }
      profile_end(hypers.profile);
- }
+@@ -810,2 +858,104 @@ extern "C" void net_callback_wrapper(void* ctx, int buf, int t) {
  
 +__global__ void copy_tail_decoder_values(
 +        PrecisionTensor decoder, precision_t* tail_values,
@@ -470,11 +418,7 @@ index 1b65f5ed..24ac0b6d 100644
 +}
 +
  
- __device__ __forceinline__ float load_logit(
-         const precision_t* __restrict__ logits, int logits_base,
-@@ -1364,23 +1500,37 @@ void prio_replay_cuda(PrecisionTensor& advantages, float prio_alpha,
- 
- // Experience the puffer advantage! Generalized advantage estimation + V-Trace
+@@ -1366,10 +1516,19 @@ void prio_replay_cuda(PrecisionTensor& advantages, float prio_alpha,
  // importance sampling correction in a single streamlined operation
 +__device__ __forceinline__ float clamp_advantage_reward(float reward) {
 +    return fminf(fmaxf(reward, -8.0f), 8.0f);
@@ -498,7 +442,7 @@ index 1b65f5ed..24ac0b6d 100644
 +    for (int t = horizon - 1; t >= 0; t--) {
 +        bool nextnonterminal = next_done == 0.0f;
          float imp = to_float(importance[t]);
-         float rho_t = fminf(imp, rho_clip);
+@@ -1377,8 +1536,13 @@ __device__ void puff_advantage_row_scalar(
          float c_t = fminf(imp, c_clip);
 -        float r_nxt = to_float(rewards[t_next]);
          float v = to_float(values[t]);
@@ -516,11 +460,7 @@ index 1b65f5ed..24ac0b6d 100644
 +        next_reward = clamp_advantage_reward(to_float(rewards[t]));
 +        next_done = to_float(dones[t]);
      }
- }
- 
-@@ -1415,16 +1565,19 @@ __device__ __forceinline__ void adv_vec_store(__nv_bfloat16* ptr, const float* v
- 
- __device__ __forceinline__ void puff_advantage_row_vec(
+@@ -1417,3 +1581,6 @@ __device__ __forceinline__ void puff_advantage_row_vec(
          const precision_t* values, const precision_t* rewards, const precision_t* dones,
 -        const precision_t* importance, precision_t* advantages, float gamma, float lambda,
 +        const precision_t* importance,
@@ -528,10 +468,7 @@ index 1b65f5ed..24ac0b6d 100644
 +        const precision_t* tail_dones,
 +        precision_t* advantages, float gamma, float lambda,
          float rho_clip, float c_clip, int horizon) {
-     constexpr int N = 16 / sizeof(precision_t);
- 
-     float lastpufferlam = 0.0f;
-     int num_chunks = horizon / N;
+@@ -1424,5 +1591,5 @@ __device__ __forceinline__ void puff_advantage_row_vec(
  
 -    float next_value = to_float(values[horizon - 1]);
 -    float next_done = to_float(dones[horizon - 1]);
@@ -540,11 +477,7 @@ index 1b65f5ed..24ac0b6d 100644
 +    float next_done = to_float(tail_dones[0]);
 +    float next_reward = clamp_advantage_reward(to_float(tail_rewards[0]));
  
-     for (int chunk = num_chunks - 1; chunk >= 0; chunk--) {
-         int base = chunk * N;
-@@ -1436,19 +1589,21 @@ __device__ __forceinline__ void puff_advantage_row_vec(
-         adv_vec_load(importance + base, imp);
- 
+@@ -1438,11 +1605,13 @@ __device__ __forceinline__ void puff_advantage_row_vec(
          float adv[N] = {0};
 -        int start_idx = (chunk == num_chunks - 1) ? (N - 2) : (N - 1);
 -
@@ -564,16 +497,12 @@ index 1b65f5ed..24ac0b6d 100644
 +            lastpufferlam = delta + (nextnonterminal
 +                ? gamma * lambda * c_t * lastpufferlam : 0.0f);
              adv[i] = lastpufferlam;
-             next_value = v[i];
+@@ -1450,3 +1619,3 @@ __device__ __forceinline__ void puff_advantage_row_vec(
              next_done = d[i];
 -            next_reward = r[i];
 +            next_reward = clamp_advantage_reward(r[i]);
          }
- 
-         adv_vec_store(advantages + base, adv);
-@@ -1456,7 +1611,10 @@ __device__ __forceinline__ void puff_advantage_row_vec(
- }
- 
+@@ -1458,3 +1627,6 @@ __device__ __forceinline__ void puff_advantage_row_vec(
  __global__ void puff_advantage(const precision_t* values, const precision_t* rewards,
 -        const precision_t* dones, const precision_t* importance, precision_t* advantages, float gamma,
 +        const precision_t* dones, const precision_t* importance,
@@ -581,18 +510,14 @@ index 1b65f5ed..24ac0b6d 100644
 +        const precision_t* tail_dones,
 +        precision_t* advantages, float gamma,
          float lambda, float rho_clip, float c_clip, int num_steps, int horizon) {
-     int row = blockIdx.x*blockDim.x + threadIdx.x;
-     if (row >= num_steps) {
-@@ -1464,11 +1622,16 @@ __global__ void puff_advantage(const precision_t* values, const precision_t* rew
-     }
-     int offset = row*horizon;
+@@ -1466,3 +1638,5 @@ __global__ void puff_advantage(const precision_t* values, const precision_t* rew
      puff_advantage_row_vec(values + offset, rewards + offset, dones + offset,
 -        importance + offset, advantages + offset, gamma, lambda, rho_clip, c_clip, horizon);
 +        importance + offset, tail_values + row, tail_rewards + row,
 +        tail_dones + row, advantages + offset,
 +        gamma, lambda, rho_clip, c_clip, horizon);
  }
- 
+@@ -1470,3 +1644,6 @@ __global__ void puff_advantage(const precision_t* values, const precision_t* rew
  __global__ void puff_advantage_scalar(const precision_t* values, const precision_t* rewards,
 -        const precision_t* dones, const precision_t* importance, precision_t* advantages, float gamma,
 +        const precision_t* dones, const precision_t* importance,
@@ -600,48 +525,32 @@ index 1b65f5ed..24ac0b6d 100644
 +        const precision_t* tail_dones,
 +        precision_t* advantages, float gamma,
          float lambda, float rho_clip, float c_clip, int num_steps, int horizon) {
-     int row = blockIdx.x*blockDim.x + threadIdx.x;
-     if (row >= num_steps) {
-@@ -1476,11 +1639,15 @@ __global__ void puff_advantage_scalar(const precision_t* values, const precision
-     }
-     int offset = row*horizon;
+@@ -1478,3 +1655,5 @@ __global__ void puff_advantage_scalar(const precision_t* values, const precision
      puff_advantage_row_scalar(values + offset, rewards + offset, dones + offset,
 -        importance + offset, advantages + offset, gamma, lambda, rho_clip, c_clip, horizon);
 +        importance + offset, tail_values + row, tail_rewards + row,
 +        tail_dones + row, advantages + offset,
 +        gamma, lambda, rho_clip, c_clip, horizon);
  }
- 
+@@ -1482,3 +1661,5 @@ __global__ void puff_advantage_scalar(const precision_t* values, const precision
  void puff_advantage_cuda(PrecisionTensor& values, PrecisionTensor& rewards,
 -        PrecisionTensor& dones, PrecisionTensor& importance, PrecisionTensor& advantages,
 +        PrecisionTensor& dones, PrecisionTensor& importance,
 +        PrecisionTensor& tail_values, PrecisionTensor& tail_rewards,
 +        PrecisionTensor& tail_dones, PrecisionTensor& advantages,
          float gamma, float lambda, float rho_clip, float c_clip, cudaStream_t stream) {
-     int num_steps = values.shape[0], horizon = values.shape[1];
-     int blocks = grid_size(num_steps);
-@@ -1488,6 +1655,7 @@ void puff_advantage_cuda(PrecisionTensor& values, PrecisionTensor& rewards,
-     auto kernel = (horizon % N == 0) ? puff_advantage : puff_advantage_scalar;
-     kernel<<<blocks, 256, 0, stream>>>(
+@@ -1490,2 +1671,3 @@ void puff_advantage_cuda(PrecisionTensor& values, PrecisionTensor& rewards,
          values.data, rewards.data, dones.data, importance.data,
 +        tail_values.data, tail_rewards.data, tail_dones.data,
          advantages.data, gamma, lambda, rho_clip, c_clip, num_steps, horizon);
- }
- 
-@@ -1681,7 +1849,9 @@ void train_impl(PuffeRL& pufferl) {
- 
-         profile_begin("compute_advantage", hypers.profile);
+@@ -1683,3 +1865,5 @@ void train_impl(PuffeRL& pufferl) {
          puff_advantage_cuda(rollouts.values, rollouts.rewards, rollouts.terminals,
 -            rollouts.ratio, advantages_puf, hypers.gamma, hypers.gae_lambda,
 +            rollouts.ratio, pufferl.tail_values, pufferl.tail_rewards,
 +            pufferl.tail_terminals, advantages_puf,
 +            hypers.gamma, hypers.gae_lambda,
              hypers.vtrace_rho_clip, hypers.vtrace_c_clip, train_stream);
-         if (pufferl.num_frozen_banks > 0 && pufferl.bank_layout != NULL) {
-             int apb = hypers.total_agents / hypers.num_buffers;
-@@ -1714,7 +1884,12 @@ void train_impl(PuffeRL& pufferl) {
-         cudaEventRecord(pufferl.profile.events[3]);  // end misc / start forward
-         profile_begin("train_forward_backward", hypers.profile);
+@@ -1716,3 +1900,8 @@ void train_impl(PuffeRL& pufferl) {
          if (pufferl.train_captured) {
 -            cudaGraphLaunch(pufferl.train_cudagraph, train_stream);
 +            if (cudaGraphLaunch(
@@ -651,41 +560,28 @@ index 1b65f5ed..24ac0b6d 100644
 +            pufferl.qualification_execution_counts[QUAL_GRAPH_TRAIN].fetch_add(
 +                1, std::memory_order_relaxed);
          } else {
-             bool capturing = pufferl.train_warmup == hypers.cudagraphs;
-             if (capturing) {
-@@ -1759,6 +1934,10 @@ void train_impl(PuffeRL& pufferl) {
-                 cudaDeviceSynchronize();
-                 pufferl.train_captured = true;
+@@ -1761,2 +1950,6 @@ void train_impl(PuffeRL& pufferl) {
              }
 +            if (!capturing) {
 +                pufferl.qualification_execution_counts[
 +                    QUAL_EAGER_TRAIN].fetch_add(1, std::memory_order_relaxed);
 +            }
              pufferl.train_warmup++;
-         }
-         profile_end(hypers.profile);
-@@ -1783,7 +1962,9 @@ void train_impl(PuffeRL& pufferl) {
-     }
-     pufferl.epoch += 1;
+@@ -1785,3 +1978,5 @@ void train_impl(PuffeRL& pufferl) {
  
 -    cudaStreamSynchronize(pufferl.default_stream);
 +    if (cudaStreamSynchronize(train_stream) != cudaSuccess) {
 +        throw std::runtime_error("training CUDA execution failed");
 +    }
  
-     if (total_minibatches > 0) {
-         float ms;
-@@ -1878,10 +2059,20 @@ static void weight_bank_create_for_pufferl(WeightBank* bank, PuffeRL* pufferl,
-     bank->weights = policy_weights_create(&bank->policy, params);
-     bank->buffer_activations = (PolicyActivations*)calloc(num_buffers, sizeof(PolicyActivations));
+@@ -1880,2 +2075,6 @@ static void weight_bank_create_for_pufferl(WeightBank* bank, PuffeRL* pufferl,
      bank->buffer_states = (PrecisionTensor*)calloc(num_buffers, sizeof(PrecisionTensor));
 +    bank->tail_activations = (PolicyActivations*)calloc(
 +        num_buffers, sizeof(PolicyActivations));
 +    bank->tail_states = (PrecisionTensor*)calloc(
 +        num_buffers, sizeof(PrecisionTensor));
      for (int i = 0; i < num_buffers; i++) {
-         bank->buffer_activations[i] = policy_reg_rollout(&bank->policy, bank->weights, acts, slice_size);
-         bank->buffer_states[i] = {.shape = {num_layers, slice_size, hidden_size}};
+@@ -1884,2 +2083,8 @@ static void weight_bank_create_for_pufferl(WeightBank* bank, PuffeRL* pufferl,
          alloc_register(acts, &bank->buffer_states[i]);
 +        bank->tail_activations[i] = policy_reg_rollout(
 +            &bank->policy, bank->weights, acts, slice_size);
@@ -694,21 +590,18 @@ index 1b65f5ed..24ac0b6d 100644
 +        };
 +        alloc_register(acts, &bank->tail_states[i]);
      }
- 
-     alloc_create(params);
-@@ -1894,6 +2085,9 @@ static void weight_bank_create_for_pufferl(WeightBank* bank, PuffeRL* pufferl,
+@@ -1894,3 +2099,9 @@ static void weight_bank_create_for_pufferl(WeightBank* bank, PuffeRL* pufferl,
      } else {
-         bank->master_weights = {.data = (float*)bank->param_puf.data, .shape = {params->total_elems}};
-     }
+-        bank->master_weights = {.data = (float*)bank->param_puf.data, .shape = {params->total_elems}};
++        bank->master_weights = {
++            .data = (float*)bank->param_puf.data,
++            .shape = {params->total_elems},
++        };
++    }
 +    for (int i = 0; i < num_buffers; i++) {
 +        puf_zero(&bank->tail_states[i], pufferl->default_stream);
-+    }
- }
- 
- // Mirror of weight_bank_create_for_pufferl. Frees the bank's weights, per-buffer
-@@ -1908,7 +2102,14 @@ static void weight_bank_destroy(WeightBank* bank, PuffeRL* pufferl) {
-         }
-         free(bank->buffer_activations);
+     }
+@@ -1910,3 +2121,10 @@ static void weight_bank_destroy(WeightBank* bank, PuffeRL* pufferl) {
      }
 +    if (bank->tail_activations != NULL) {
 +        for (int i = 0; i < num_buffers; i++) {
@@ -719,11 +612,7 @@ index 1b65f5ed..24ac0b6d 100644
      free(bank->buffer_states);
 +    free(bank->tail_states);
      alloc_free(&bank->params_alloc);
-     alloc_free(&bank->acts_alloc);
-     if (USE_BF16 && bank->master_weights.data != NULL) {
-@@ -1916,11 +2117,70 @@ static void weight_bank_destroy(WeightBank* bank, PuffeRL* pufferl) {
-     }
- }
+@@ -1918,2 +2136,54 @@ static void weight_bank_destroy(WeightBank* bank, PuffeRL* pufferl) {
  
 +static bool primary_tail_storage_create(PuffeRL* pufferl, int primary_slice,
 +        int input_size, int hidden_size, int num_layers) {
@@ -778,9 +667,7 @@ index 1b65f5ed..24ac0b6d 100644
 +}
 +
  // Append a fresh frozen bank with the given per-buffer slice size; returns its
- // index. Rebuilds bank_layout sequentially (primary first, then frozen banks in
- // add order). Must be called BEFORE cudagraph capture (pointers get baked in).
- extern "C" int pufferl_add_frozen_bank(PuffeRL* pufferl, int slice_size,
+@@ -1923,2 +2193,9 @@ extern "C" int pufferl_add_frozen_bank(PuffeRL* pufferl, int slice_size,
          int hidden_size, int num_layers) {
 +    if (pufferl->tail_observations.data != nullptr ||
 +            pufferl->rollout_captured || pufferl->tail_captured) {
@@ -790,15 +677,12 @@ index 1b65f5ed..24ac0b6d 100644
 +        return -1;
 +    }
      int idx = pufferl->num_frozen_banks;
-     pufferl->frozen_banks = (WeightBank*)realloc(
-         pufferl->frozen_banks, (idx + 1) * sizeof(WeightBank));
-@@ -2042,6 +2302,23 @@ std::unique_ptr<PuffeRL> create_pufferl_impl(HypersT& hypers,
-     pufferl->nccl_comm = nullptr;
-     pufferl->default_stream = 0;
+@@ -2044,2 +2321,20 @@ std::unique_ptr<PuffeRL> create_pufferl_impl(HypersT& hypers,
      pufferl->env_name = env_name;
 +    pufferl->train_cudagraph = nullptr;
 +    pufferl->fused_rollout_cudagraphs = nullptr;
 +    pufferl->tail_rollout_cudagraphs = nullptr;
++    pufferl->training_failed = false;
 +    pufferl->train_captured = false;
 +    pufferl->rollout_captured = false;
 +    pufferl->tail_captured = false;
@@ -814,20 +698,12 @@ index 1b65f5ed..24ac0b6d 100644
 +            0, std::memory_order_relaxed);
 +    }
  
-     cudaSetDevice(hypers.gpu_id);
- 
-@@ -2201,6 +2478,8 @@ std::unique_ptr<PuffeRL> create_pufferl_impl(HypersT& hypers,
-     // Post-create initialization
-     cudaMemcpy(pufferl->act_sizes_puf.data, raw_act_sizes, num_action_heads * sizeof(int), cudaMemcpyHostToDevice);
+@@ -2203,2 +2498,4 @@ std::unique_ptr<PuffeRL> create_pufferl_impl(HypersT& hypers,
      cudaMemset(pufferl->losses_puf.data, 0, NUM_LOSSES * sizeof(float));
 +    cudaMemset(pufferl->rng_offset_puf.data, 0,
 +        (num_buffers + 1) * sizeof(long));
      float one = 1.0f;
-     cudaMemcpy(pufferl->ppo_bufs_puf.grad_loss.data, &one, sizeof(float), cudaMemcpyHostToDevice);
-     muon_post_create(&pufferl->muon);
-@@ -2233,6 +2512,16 @@ std::unique_ptr<PuffeRL> create_pufferl_impl(HypersT& hypers,
-         }
-     }
+@@ -2235,2 +2532,15 @@ std::unique_ptr<PuffeRL> create_pufferl_impl(HypersT& hypers,
  
 +    int primary_slice = pufferl->bank_layout
 +        ? pufferl->bank_layout[1] : agents_per_buf;
@@ -837,14 +713,13 @@ index 1b65f5ed..24ac0b6d 100644
 +            "create_pufferl: failed to allocate primary tail bootstrap storage\n");
 +        return nullptr;
 +    }
-+    cudaStreamSynchronize(pufferl->default_stream);
++    if (cudaStreamSynchronize(pufferl->default_stream) != cudaSuccess) {
++        throw std::runtime_error(
++            "post-create CUDA initialization failed");
++    }
 +
      // Exact-action environments allocate ragged joint metadata outside the
-     // activations allocator. Populate and upload it before graph warmup calls
-     // sample_logits; cudaMalloc storage is otherwise uninitialized here.
-@@ -2241,6 +2530,14 @@ std::unique_ptr<PuffeRL> create_pufferl_impl(HypersT& hypers,
-     // Cudagraph rolluts and entire training step
-     if (hypers.cudagraphs >= 0) {
+@@ -2243,2 +2553,10 @@ std::unique_ptr<PuffeRL> create_pufferl_impl(HypersT& hypers,
          pufferl->fused_rollout_cudagraphs = (cudaGraphExec_t*)calloc(horizon*num_buffers, sizeof(cudaGraphExec_t));
 +        pufferl->tail_rollout_cudagraphs = (cudaGraphExec_t*)calloc(
 +            num_buffers, sizeof(cudaGraphExec_t));
@@ -855,42 +730,47 @@ index 1b65f5ed..24ac0b6d 100644
 +            pufferl->tail_rollout_cudagraphs[i] = nullptr;
 +        }
          pufferl->train_warmup = 0;
- 
-         // Snapshot weights + optimizer state before init-time capture
-@@ -2276,6 +2573,30 @@ std::unique_ptr<PuffeRL> create_pufferl_impl(HypersT& hypers,
-         }
-         pufferl->rollout_captured = true;
+@@ -2278,2 +2596,39 @@ std::unique_ptr<PuffeRL> create_pufferl_impl(HypersT& hypers,
  
 +        for (int buf = 0; buf < num_buffers; buf++) {
 +            cudaStream_t stream = pufferl->streams[buf];
 +            tl_stream = stream;
 +            for (int warmup = 0; warmup < hypers.cudagraphs; warmup++) {
 +                tail_forward_impl(pufferl.get(), buf, stream);
-+                cudaStreamSynchronize(stream);
++                require_cuda_success(
++                    cudaStreamSynchronize(stream),
++                    "graph tail warmup synchronization failed");
 +            }
 +            cudaGraph_t tail_graph = nullptr;
-+            assert(cudaStreamBeginCapture(
-+                stream, cudaStreamCaptureModeGlobal) == cudaSuccess
-+                && "tail cudaStreamBeginCapture failed");
++            require_cuda_success(
++                cudaStreamBeginCapture(
++                    stream, cudaStreamCaptureModeGlobal),
++                "tail cudaStreamBeginCapture failed");
 +            tail_forward_impl(pufferl.get(), buf, stream);
-+            assert(cudaStreamEndCapture(stream, &tail_graph) == cudaSuccess
-+                && "tail cudaStreamEndCapture failed");
-+            assert(cudaGraphInstantiate(
++            require_cuda_success(
++                cudaStreamEndCapture(stream, &tail_graph),
++                "tail cudaStreamEndCapture failed");
++            cudaError_t tail_instantiate_status = cudaGraphInstantiate(
 +                &pufferl->tail_rollout_cudagraphs[buf],
-+                tail_graph, 0) == cudaSuccess
-+                && "tail cudaGraphInstantiate failed");
-+            assert(cudaGraphDestroy(tail_graph) == cudaSuccess
-+                && "tail cudaGraphDestroy failed");
-+            cudaStreamSynchronize(stream);
++                tail_graph,
++                0);
++            if (tail_instantiate_status != cudaSuccess) {
++                cudaGraphDestroy(tail_graph);
++                require_cuda_success(
++                    tail_instantiate_status,
++                    "tail cudaGraphInstantiate failed");
++            }
++            require_cuda_success(
++                cudaGraphDestroy(tail_graph),
++                "tail cudaGraphDestroy failed");
++            require_cuda_success(
++                cudaStreamSynchronize(stream),
++                "graph tail capture synchronization failed");
 +        }
 +        pufferl->tail_captured = true;
 +
          tl_stream = warmup_stream;
-         for (int i = 0; i <= hypers.cudagraphs; i++) {
-             train_impl(*pufferl);
-@@ -2313,6 +2634,26 @@ std::unique_ptr<PuffeRL> create_pufferl_impl(HypersT& hypers,
-         cudaDeviceSynchronize();
- 
+@@ -2318,2 +2673,47 @@ std::unique_ptr<PuffeRL> create_pufferl_impl(HypersT& hypers,
          pufferl->epoch = 0;
 +        for (int bank = 0; bank < 1 + pufferl->num_frozen_banks; bank++) {
 +            PrecisionTensor* tail_states = (bank == 0)
@@ -904,39 +784,57 @@ index 1b65f5ed..24ac0b6d 100644
 +        puf_zero(&pufferl->tail_rewards, pufferl->default_stream);
 +        puf_zero(&pufferl->tail_terminals, pufferl->default_stream);
 +        puf_zero(&pufferl->tail_values, pufferl->default_stream);
-+        cudaMemsetAsync(pufferl->tail_valid.data, 0,
-+            num_buffers * sizeof(int), pufferl->default_stream);
-+        cudaMemsetAsync(pufferl->rng_offset_puf.data, 0,
-+            (num_buffers + 1) * sizeof(long), pufferl->default_stream);
-+        cudaMemsetAsync(pufferl->losses_puf.data, 0,
-+            NUM_LOSSES * sizeof(float), pufferl->default_stream);
++        require_cuda_success(
++            cudaMemsetAsync(
++                pufferl->tail_valid.data,
++                0,
++                num_buffers * sizeof(int),
++                pufferl->default_stream),
++            "post-warmup tail-valid reset failed");
++        require_cuda_success(
++            cudaMemsetAsync(
++                pufferl->rng_offset_puf.data,
++                0,
++                (num_buffers + 1) * sizeof(long),
++                pufferl->default_stream),
++            "post-warmup RNG-offset reset failed");
++        require_cuda_success(
++            cudaMemsetAsync(
++                pufferl->losses_puf.data,
++                0,
++                NUM_LOSSES * sizeof(float),
++                pufferl->default_stream),
++            "post-warmup loss-accumulator reset failed");
++        require_cuda_success(
++            cudaMemsetAsync(
++                pufferl->ppo_bufs_puf.loss_output.data,
++                0,
++                sizeof(float),
++                pufferl->default_stream),
++            "post-warmup scalar-loss reset failed");
 +        memset(pufferl->profile.accum, 0, sizeof(pufferl->profile.accum));
-+        cudaDeviceSynchronize();
++        if (cudaDeviceSynchronize() != cudaSuccess) {
++            throw std::runtime_error(
++                "post-warmup entropy/loss state restoration failed");
++        }
          pufferl->global_step = 0;
-     }
- 
-@@ -2326,13 +2667,17 @@ std::unique_ptr<PuffeRL> create_pufferl_impl(HypersT& hypers,
-     }
- 
-     create_static_threads(vec, hypers.num_threads, horizon, pufferl.get(),
--        net_callback_wrapper, thread_init_wrapper);
-+        net_callback_wrapper, tail_callback_wrapper, thread_init_wrapper);
-     if (vec->joint_action_max <= 0) static_vec_reset(vec);
- 
-     if (hypers.profile) {
-         cudaDeviceSynchronize();
-         cudaProfilerStart();
+@@ -2339,7 +2739,12 @@ std::unique_ptr<PuffeRL> create_pufferl_impl(HypersT& hypers,
      }
 +    for (int i = 0; i < NUM_QUAL_EXECUTION_COUNTERS; i++) {
 +        pufferl->qualification_execution_counts[i].store(
 +            0, std::memory_order_relaxed);
 +    }
  
-     double now = wall_clock();
-     pufferl->start_time = now;
-@@ -2348,11 +2693,32 @@ void close_impl(PuffeRL& pufferl) {
-         cudaProfilerStop();
-     }
+-    double now = wall_clock();
+-    pufferl->start_time = now;
+-    pufferl->last_log_time = now;
++    double construction_complete_time = wall_clock();
++    pufferl->start_time = construction_complete_time;
++    pufferl->last_log_time = construction_complete_time;
+     pufferl->last_log_step = 0;
++    vec->rollout_tail_callback = tail_callback_wrapper;
+ 
+@@ -2354,7 +2759,28 @@ void close_impl(PuffeRL& pufferl) {
  
 -    cudaGraphExecDestroy(pufferl.train_cudagraph);
 -    for (int i = 0; i < pufferl.hypers.horizon * pufferl.hypers.num_buffers; i++) {
@@ -952,14 +850,14 @@ index 1b65f5ed..24ac0b6d 100644
 +                cudaGraphExecDestroy(pufferl.fused_rollout_cudagraphs[i]);
 +            }
 +        }
-     }
++    }
 +    if (pufferl.tail_rollout_cudagraphs != nullptr) {
 +        for (int i = 0; i < pufferl.hypers.num_buffers; i++) {
 +            if (pufferl.tail_rollout_cudagraphs[i] != nullptr) {
 +                cudaGraphExecDestroy(pufferl.tail_rollout_cudagraphs[i]);
 +            }
 +        }
-+    }
+     }
 +    free(pufferl.fused_rollout_cudagraphs);
 +    free(pufferl.tail_rollout_cudagraphs);
  
@@ -968,103 +866,27 @@ index 1b65f5ed..24ac0b6d 100644
 +            &pufferl.policy, pufferl.tail_activations[buf]);
 +    }
      policy_weights_free(&pufferl.policy, &pufferl.weights);
-     policy_activations_free(&pufferl.policy, pufferl.train_activations);
-     for (int buf = 0; buf < pufferl.hypers.num_buffers; buf++) {
-@@ -2371,6 +2737,7 @@ void close_impl(PuffeRL& pufferl) {
-     alloc_free(&pufferl.params_alloc);
-     alloc_free(&pufferl.grads_alloc);
+@@ -2377,2 +2803,3 @@ void close_impl(PuffeRL& pufferl) {
      alloc_free(&pufferl.activations_alloc);
 +    alloc_free(&pufferl.tail_acts_alloc);
  
-     for (int i = 0; i < pufferl.hypers.num_buffers; i++) {
-         cudaStreamDestroy(pufferl.streams[i]);
-@@ -2384,7 +2751,8 @@ void close_impl(PuffeRL& pufferl) {
- 
-     free(pufferl.buffer_states);
+@@ -2390,3 +2817,4 @@ void close_impl(PuffeRL& pufferl) {
      free(pufferl.buffer_activations);
 -    free(pufferl.fused_rollout_cudagraphs);
 +    free(pufferl.tail_states);
 +    free(pufferl.tail_activations);
      free(pufferl.streams);
- 
-     for (int b = 0; b < pufferl.num_frozen_banks; b++) {
 diff --git a/src/vecenv.h b/src/vecenv.h
-index 3c112ef5..88fb103e 100644
+index 3c112ef..519db98 100644
 --- a/src/vecenv.h
 +++ b/src/vecenv.h
-@@ -124,6 +124,7 @@ typedef struct StaticVec {
- 
- // Callback types
- typedef void (*net_callback_fn)(void* ctx, int buf, int t);
-+typedef void (*rollout_tail_callback_fn)(void* ctx, int buf);
- typedef void (*thread_init_fn)(void* ctx, int buf);
- typedef void (*step_fn)(void* env);
- 
-@@ -140,7 +141,8 @@ void static_vec_close(StaticVec* vec);
- void static_vec_log(StaticVec* vec, Dict* out);
- void static_vec_eval_log(StaticVec* vec, Dict* out);
- void create_static_threads(StaticVec* vec, int num_threads, int horizon,
--    void* ctx, net_callback_fn net_callback, thread_init_fn thread_init);
-+    void* ctx, net_callback_fn net_callback,
-+    rollout_tail_callback_fn tail_callback, thread_init_fn thread_init);
- void static_vec_omp_step(StaticVec* vec);
- void static_vec_seq_step(StaticVec* vec);
- void static_vec_render(StaticVec* vec, int env_id);
-@@ -260,6 +262,7 @@ typedef struct StaticOMPArg {
-     int horizon;
-     void* ctx;
-     net_callback_fn net_callback;
-+    rollout_tail_callback_fn tail_callback;
-     thread_init_fn thread_init;
- } StaticOMPArg;
- 
-@@ -272,6 +275,7 @@ static void* static_omp_threadmanager(void* arg) {
-     int horizon = worker_arg->horizon;
-     void* ctx = worker_arg->ctx;
-     net_callback_fn net_callback = worker_arg->net_callback;
-+    rollout_tail_callback_fn tail_callback = worker_arg->tail_callback;
-     thread_init_fn thread_init = worker_arg->thread_init;
- 
-     if (thread_init != NULL) {
-@@ -365,6 +369,9 @@ static void* static_omp_threadmanager(void* arg) {
-                 cudaMemcpyHostToDevice, stream);
- #endif
+@@ -115,2 +115,3 @@ typedef struct StaticVec {
+     StaticThreading* threading;
++    void (*rollout_tail_callback)(void* ctx, int buf);
+     int obs_size;
+@@ -367,2 +368,5 @@ static void* static_omp_threadmanager(void* arg) {
          }
-+        if (tail_callback != NULL) {
-+            tail_callback(ctx, buf);
++        if (vec->rollout_tail_callback != NULL) {
++            vec->rollout_tail_callback(ctx, buf);
 +        }
          cudaStreamSynchronize(stream);
-         atomic_store(&buffer_states[buf], OMP_WAITING);
-     }
-@@ -689,7 +696,8 @@ void static_vec_reset(StaticVec* vec) {
- }
- 
- void create_static_threads(StaticVec* vec, int num_threads, int horizon,
--        void* ctx, net_callback_fn net_callback, thread_init_fn thread_init) {
-+        void* ctx, net_callback_fn net_callback,
-+        rollout_tail_callback_fn tail_callback, thread_init_fn thread_init) {
-     vec->threading = (StaticThreading*)calloc(1, sizeof(StaticThreading));
-     vec->threading->num_threads = num_threads;
-     vec->threading->num_buffers = vec->buffers;
-@@ -707,6 +715,7 @@ void create_static_threads(StaticVec* vec, int num_threads, int horizon,
-         args[i].horizon = horizon;
-         args[i].ctx = ctx;
-         args[i].net_callback = net_callback;
-+        args[i].tail_callback = tail_callback;
-         args[i].thread_init = thread_init;
-         pthread_create(&vec->threading->threads[i], NULL, static_omp_threadmanager, &args[i]);
-     }
-diff --git a/tests/profile_kernels.cu b/tests/profile_kernels.cu
-index 02337b3f..454c5d59 100644
---- a/tests/profile_kernels.cu
-+++ b/tests/profile_kernels.cu
-@@ -633,7 +633,8 @@ EnvSpeedArgs* create_envspeed(int total_agents, int num_buffers, int num_threads
-         cudaStreamCreateWithFlags(&vec->streams[i], cudaStreamNonBlocking);
- 
-     printf("Created %d envs (%s) for %d total_agents\n", vec->size, TOSTRING(ENV_NAME), total_agents);
--    create_static_threads(vec, num_threads, horizon, nullptr, empty_net_callback, empty_thread_init);
-+    create_static_threads(vec, num_threads, horizon, nullptr,
-+        empty_net_callback, nullptr, empty_thread_init);
-     static_vec_reset(vec);
-     cudaDeviceSynchronize();
- 

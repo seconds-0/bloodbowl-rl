@@ -1,9 +1,10 @@
 # Rollout transition closure
 
-Status: implemented; local source/oracle contracts accepted, 2026-07-28.
-Current compiled CPU acceptance remains pending on x86 CI, and native NVIDIA
-deployment-boundary acceptance remains pending. No F5 gate, canary, long run,
-or production deployment is authorized by this document alone.
+Status: implemented; exact applied source, local oracle, and available
+macOS/ARM compiled CPU contracts accepted, 2026-07-29. Exact-pin x86 CI and
+native NVIDIA deployment-boundary acceptance remain pending. No F5 gate,
+canary, long run, or production deployment is authorized by this document
+alone.
 
 Base: local strict-environment-config commit
 `c1acdd7d1e94c1d46a930443edbabc8d07732282`.
@@ -155,15 +156,18 @@ puffer_exact_joint_actions.patch
 -> puffer_recurrent_eval_state.patch
 -> puffer_rollout_transition_closure.patch
 -> puffer_frozen_prio_mask.patch
+-> puffer_entropy_schedule_parity.patch
 -> puffer_recurrent_cuda_qualification.patch
 -> puffer_reward_clamp_range.patch
--> later scripted/warm-start/other patches
+-> pufferl_scripted_training_guard.patch
+-> pufferl_warm_start.patch
 -> puffer_state_bank_contract.patch
 -> puffer_strict_environment_config.patch
 ```
 
-Strict configuration remains last. Every patch, including transition closure,
-must be exactly reverse-applicable after installation.
+Strict configuration remains last. Every patch in this selected 11-patch
+causal set, including transition closure, must be exactly reverse-applicable
+after installation.
 
 ## Test-first slices
 
@@ -245,19 +249,21 @@ must be exactly reverse-applicable after installation.
   forwarded twice.
 - Repository CPU-side oracle/source contracts and the existing recurrent,
   exact-action, strict configuration, state-bank, experiment-contract, and
-  engine tests pass. This is not a current compiled Puffer CPU-module claim.
+  engine tests pass. The transition verifier also passes against the compiled
+  CPU module from the final exact applied tree on the available macOS/ARM host.
+  Exact-pin x86 CI and native NVIDIA execution remain pending.
 - Patch application is clean and installer drift checking is idempotent on a
   fresh pinned Puffer tree.
 - The qualifier rejects a missing or wrong `tail-bootstrap-v1`, binds the
   transition patch path and SHA-256 in its evidence, and records the module
   marker; both experiment launchers hash the same ordered bundle; every
-  installed patch is exactly reverse-applicable.
+  selected exact causal patch is exactly reverse-applicable.
 - Self-review and independent post-implementation review closed the repository
   oracle, source, provenance, and exact-patch-stack contract without a
-  remaining transition-specific high- or medium-severity finding. Current x86
-  compiled-module execution, NVIDIA execution, predecessor-lineage authority,
-  and the separately discovered cross-backend entropy-annealing defect remain
-  explicit blockers to production training.
+  remaining transition-specific high- or medium-severity finding. Exact-pin
+  x86 CI, NVIDIA execution, predecessor-lineage authority, and NVIDIA
+  qualification of the implemented entropy-schedule repair remain explicit
+  blockers to production training.
 
 ## Local implementation evidence
 
@@ -268,42 +274,45 @@ above. Local acceptance used a new detached checkout of pinned PufferLib
 `9836f0d2e78889c1aaf189c04d161b6fc61a9386`, not an already-patched vendor
 tree.
 
-The local evidence collected earlier on 2026-07-28 was invalidated whenever the
-transition patch, qualification schema, source registry, or patch contexts
-changed. The exact final source/installer evidence is:
+The following evidence was collected on 2026-07-28 for the pre-entropy patch
+stack. It is retained only as historical transition-tranche evidence and is
+superseded for current source identity, patch identity, build status, schema,
+and trainer parity:
 
-- the complete installer ran twice without changing its second-run result;
-- every one of the 13 ordered semantic/qualification patches passed ordinary
+- the then-complete installer ran twice without changing its second-run result;
+- every one of the then-13 ordered semantic/qualification patches passed ordinary
   `git apply --reverse --check --no-index` after the complete stack was
   installed;
-- the exact rollout-transition patch SHA-256 is
+- the then-current rollout-transition patch SHA-256 was
   `3821202c5db0cf40199d6024c426c8fd457e471a7d6c849e0e3e54c77a2a4f70`;
-- the exact qualification patch SHA-256 is
+- the then-current qualification patch SHA-256 was
   `6ae4e4c0d6c27fba512818996cebb0f6165f618730ff6254c9df1e198cafdcc4`;
-- the recursive 14-entry compiled-backend digest is
+- the then-current recursive 14-entry compiled-backend digest was
   `591a2d3d1f45a534c101d2facf0482646eea837cc650aaa93bb39869e5d14794`,
   exactly matching the generated build header; and
-- the installed graph-plus-anneal guard is after complete `Hypers` parsing and
-  before checked `cudaGetDeviceCount`.
+- the then-installed temporary graph-plus-anneal constructor guard followed
+  complete `Hypers` parsing and preceded checked `cudaGetDeviceCount`.
 
-Repository validation on the final source state passed 362 tool tests with six
-skips; 197 training tests with one skip under a Torch-capable Puffer virtual
-environment; four validation tests; and 17 stream-backend tests. `make test`
-and the complete `make asan` AddressSanitizer/UndefinedBehaviorSanitizer suite
-both passed. Python byte compilation, shell syntax, Ruff, ShellCheck, and
-`git diff --check` were also clean. These results exercise repository
-oracles, source contracts, launch guards, patch identity, and the native Blood
-Bowl engine; they do not substitute for compiling the final applied Puffer
-extension.
+That historical source state passed 362 tool tests with six skips, 197 training
+tests with one skip under a Torch-capable Puffer virtual environment, four
+validation tests, and 17 stream-backend tests. Its `make test`, complete
+`make asan` AddressSanitizer/UndefinedBehaviorSanitizer suite, Python byte
+compilation, shell syntax, Ruff, ShellCheck, and `git diff --check` also passed.
+Those counts are not current entropy-tranche acceptance evidence.
 
-The current exact stack did **not** produce a compiled module on this arm64
-macOS host. Pinned upstream `build.sh` requires OpenMP and forces x86
-`-mavx2 -mfma`; the local standalone attempt stopped at unsupported
-`-fopenmp`, and `install --check` correctly stops without `.venv/_C`. Any
-earlier compiled CPU/verifier counts were intermediate evidence invalidated by
-later patch/source changes. Current compiled CPU acceptance must come from the
-x86 CI job or another exact compatible clean build; NVIDIA acceptance remains
-the separate target gate below.
+The 2026-07-30 entropy tranche supersedes that current-state record. The current
+rollout-transition patch SHA-256 is
+`c73dc50ad4b027ff2475065e78a188228e58dd9dd78639edbc36a2dbe85305c7`;
+the current qualification patch SHA-256 is
+`736d0af8b4a616a21f6afe1b1300b8b0897678b5a57b2acbb49136234a5d5b3b`.
+The current registry has 15 entries and the diagnostic runner is schema 11.
+A fresh detached checkout of the pinned Puffer source accepted the final stack
+twice, produced the compiled CPU extension on the available macOS/ARM host, and
+passed the selected compiled transition verifier and exact-tree tests. The
+complete current fingerprints, test counts, patch-matrix results, and build
+limitations are authoritative in
+`docs/plans/entropy-schedule-parity.md`. Exact-pin x86 CI and all native NVIDIA
+execution remain pending.
 
 Adversarial review changed the implementation materially. It rejected the
 original same-architecture/same-weight frozen routing proof as capable of a
@@ -326,19 +335,20 @@ translation, graph-on/off replay, device-to-host bank authentication, native
 heterogeneous values/actions/state, throughput, and CUDA scalar/vector parity
 remain subject to the mandatory deployment-boundary gate below.
 
-It also does not establish production graph-training objective parity. The
-native train graph captures the host-by-value annealed entropy coefficient,
-while the Torch trainer does not implement the configured anneal. The current
-schema-10 graph parity cell deliberately uses `ent_coef=0`,
-`anneal_ent_coef=false`, and zero learning rate, so it cannot detect that
-production split. This is the next separately test-first trainer-contract
-tranche and blocks a production launch even if every transition diagnostic is
-green. Adversarial post-review made that boundary executable: the native
-constructor rejects graph-plus-anneal before CUDA discovery, both production
-launchers reject executable graph-plus-anneal runs before output/run artifacts,
-and plan/dry-run output is labeled
-`BLOCKED_UNQUALIFIED_ENTROPY_SCHEDULE` with its requested configuration bound.
-The guard is temporary safety, not entropy-parity acceptance.
+The transition-parity cells still use zero entropy and therefore do not, by
+themselves, establish production graph-training objective parity. Schema 11
+separately defines five primary entropy cells:
+`entropy_native_eager_annealed`, `entropy_native_graph_annealed`,
+`entropy_native_graph_anneal_disabled`, `entropy_torch_annealed`, and
+`entropy_torch_anneal_disabled`, plus the mandatory
+`entropy_native_eager_anneal_disabled` gradient control. The stable native
+device scalar and matching Torch schedule are implemented, and the temporary
+native constructor guard has been removed so qualification can execute. No
+schema-11 target-NVIDIA entropy cell—native eager, native graph, or Torch—has
+run. Both production launcher guards remain unconditional, plan/dry-run output
+remains blocked, and entropy status is `implemented_pending_nvidia`. The
+current source contract and pending target gate are authoritative in
+`docs/plans/entropy-schedule-parity.md`.
 
 It is also fp32-only. BF16 cannot inherit these tolerances or the strict
 zero-update ratio claim; it needs a separate quantization-aware contract.
@@ -376,7 +386,7 @@ repair is accepted for native training:
   more than the explicitly reviewed one-extra-forward-per-horizon budget;
 - every hard-integrity counter, including `illegal_frac`, remains exactly zero.
 
-The current schema-10 runner can execute the transition correctness checks and
+The current schema-11 runner can execute the transition correctness checks and
 requires a bounded, digest-bound same-host/configuration throughput artifact.
 It does not yet authenticate that artifact as the immediately preceding
 exact-action backend and has no independent final validator. Consequently,

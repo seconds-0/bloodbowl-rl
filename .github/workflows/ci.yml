@@ -60,6 +60,9 @@ jobs:
             training.test_bc_pretrain_streaming \
             training.test_recurrent_cuda_qualification \
             training.test_exact_joint_actions \
+            training.test_entropy_schedule_parity \
+            training.test_entropy_schedule_verifier \
+            training.test_torch_entropy_objective_verifier \
             training.test_recurrent_eval_state \
             training.test_rollout_transition_closure \
             training.test_convert_checkpoint
@@ -164,6 +167,16 @@ jobs:
             tools.test_strict_environment_config_contract
           "$RUNNER_TEMP/PufferLib/.venv/bin/python" \
             training/verify_rollout_transition_closure.py --device cpu
+          PUFFER_ENTROPY_TEST_ROOT="$RUNNER_TEMP/PufferLib" \
+            PUFFER_TORCH_TEST_PYTHON="$RUNNER_TEMP/PufferLib/.venv/bin/python" \
+            "$RUNNER_TEMP/PufferLib/.venv/bin/python" -m unittest -v \
+            training.test_entropy_schedule_parity \
+            training.test_entropy_schedule_verifier \
+            training.test_torch_entropy_objective_verifier
+          "$RUNNER_TEMP/PufferLib/.venv/bin/python" \
+            training/verify_torch_entropy_objective.py \
+            --puffer-root "$RUNNER_TEMP/PufferLib" \
+            >"$RUNNER_TEMP/torch-entropy-objective.json"
       - name: Validate production CPU construction and rejection evidence
         run: |
           export PATH="$RUNNER_TEMP/PufferLib/.venv/bin:$PATH"
@@ -251,4 +264,11 @@ jobs:
             ${{ runner.temp }}/strict-environment-config-test-role.json
             ${{ runner.temp }}/strict-environment-config-unrelated.json
             ${{ runner.temp }}/test-role-installer-check.log
+      - name: Upload Torch entropy objective evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: torch-entropy-objective-cpu
+          if-no-files-found: warn
+          path: ${{ runner.temp }}/torch-entropy-objective.json
   # nightly job (long fuzz, replay differential, chi-square) added in Phase 4

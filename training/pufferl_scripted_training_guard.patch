@@ -1,8 +1,8 @@
+diff --git a/pufferlib/pufferl.py b/pufferlib/pufferl.py
+index 328fd911d440270ffbe979e6bf8e9ecf57f68b86..7104532ac43900d65e80c305f77933037657d473 100644
 --- a/pufferlib/pufferl.py
 +++ b/pufferlib/pufferl.py
-@@ -204,6 +204,26 @@
-     assert minibatch_size <= horizon * total_agents, \
-         f'minibatch_size {minibatch_size} > total_agents {total_agents} * horizon {horizon}'
+@@ -365,2 +365,22 @@ def validate_config(args):
  
 +def guard_scripted_training(args):
 +    env = args.get('env', {})
@@ -25,29 +25,15 @@
 +            'learning_rate <= 1e-9 for frozen eval.')
 +
  def require_training_state_reset(args):
-     if not args['reset_state']:
-         raise ValueError('training requires reset_state=True')
-@@ -219,6 +239,7 @@
- 
- def _train_worker(args):
-     require_training_state_reset(args)
+@@ -381,2 +401,3 @@ def _train_worker(args):
      backend = _resolve_backend(args)
 +    guard_scripted_training(args)
-     pufferl = backend.create_pufferl(args)
-     args.pop('nccl_id', None)
-@@ -231,6 +252,7 @@
- def _train(env_name, args, sweep_obj=None, result_queue=None, verbose=False):
-     '''Single-GPU training worker. Process target for both DDP ranks and sweep trials.'''
-     require_training_state_reset(args)
+     entropy_config = validate_entropy_schedule_config(args)
+@@ -394,2 +415,3 @@ def _train(env_name, args, sweep_obj=None, result_queue=None, verbose=False):
      backend = _resolve_backend(args)
 +    guard_scripted_training(args)
      rank = args['rank']
-     run_id = str(int(1000*time.time()))
-@@ -453,6 +475,7 @@
- def train(env_name, args=None, gpus=None, **kwargs):
-     args = args or load_config(env_name)
-     require_training_state_reset(args)
+@@ -616,2 +638,3 @@ def train(env_name, args=None, gpus=None, **kwargs):
      validate_config(args)
 +    guard_scripted_training(args)
  
-     subprocess = gpus is not None

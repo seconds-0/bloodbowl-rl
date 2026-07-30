@@ -1,21 +1,243 @@
+diff --git a/pufferlib/torch_pufferl.py b/pufferlib/torch_pufferl.py
+index b26b2465fa33a620a044cdf46c8e90dc2b392ec4..2b9557e78c682a732d460e4fdaeed060989b7b71 100644
+--- a/pufferlib/torch_pufferl.py
++++ b/pufferlib/torch_pufferl.py
+@@ -376,2 +376,4 @@ class PuffeRL:
+         self.model_size = sum(p.numel() for p in policy.parameters() if p.requires_grad)
++        self._entropy_gradient_qualification_enabled = False
++        self._entropy_gradient_qualification_state = None
+         if verbose:
+@@ -403,2 +405,96 @@ class PuffeRL:
+ 
++    def enable_entropy_gradient_qualification(self):
++        if self._training_failed:
++            raise RuntimeError(
++                'training object is unavailable during or after an incomplete update')
++        if self.num_minibatches != 1:
++            raise RuntimeError(
++                'entropy gradient qualification requires exactly one minibatch')
++        if self.config['minibatch_size'] != self.batch_size:
++            raise RuntimeError(
++                'entropy gradient qualification requires a full-batch minibatch')
++        if self.action_masks is None:
++            raise RuntimeError(
++                'entropy gradient qualification requires an exact action mask')
++        if not self.act_sizes_list:
++            raise RuntimeError(
++                'entropy gradient qualification requires discrete action heads')
++        self._entropy_gradient_qualification_enabled = True
++        self._entropy_gradient_qualification_state = None
++
++    @staticmethod
++    def _qualification_tensor_descriptor(name, tensor, max_bytes):
++        if tensor is None:
++            raise RuntimeError(
++                f'entropy gradient qualification tensor {name} is missing')
++        value = tensor.detach().contiguous().to(device='cpu')
++        dtype_names = {
++            torch.float32: 'f32',
++            torch.int32: 'i32',
++        }
++        if value.dtype not in dtype_names:
++            raise RuntimeError(
++                f'entropy gradient qualification tensor {name} has '
++                f'unsupported dtype {value.dtype}')
++        data = value.numpy().tobytes(order='C')
++        if len(data) > max_bytes:
++            raise RuntimeError(
++                'entropy gradient evidence exceeds qualification byte limit')
++        return {
++            'name': name,
++            'dtype': dtype_names[value.dtype],
++            'shape': list(value.shape),
++            'present': True,
++            'data': data,
++            'bytes': len(data),
++        }
++
++    def qualification_entropy_gradient_state(self, max_bytes=64 << 20):
++        if self._training_failed:
++            raise RuntimeError(
++                'training object is unavailable during or after an incomplete update')
++        if type(max_bytes) is not int or max_bytes <= 0 or max_bytes > 64 << 20:
++            raise ValueError(
++                'invalid entropy gradient evidence byte limit')
++        state = self._entropy_gradient_qualification_state
++        if state is None:
++            raise RuntimeError(
++                'entropy gradient qualification has no completed update')
++        if (state['completed_update_index'] < 0
++                or state['committed_epoch']
++                    != state['completed_update_index'] + 1
++                or self.epoch != state['committed_epoch']):
++            raise RuntimeError(
++                'entropy gradient qualification state is stale')
++
++        tensors = {}
++        used_bytes = 0
++        for name in (
++                'decoder_output', 'grad_logits', 'grad_values',
++                'mb_actions', 'mb_logprobs', 'mb_advantages', 'mb_prio',
++                'mb_action_mask', 'act_sizes', 'entropy_coefficient'):
++            descriptor = self._qualification_tensor_descriptor(
++                name, state['tensors'][name], max_bytes - used_bytes)
++            used_bytes += descriptor['bytes']
++            tensors[name] = descriptor
++        grad_logits = tensors['grad_logits']
++        tensors['grad_logstd'] = {
++            'name': 'grad_logstd',
++            'dtype': 'f32',
++            'shape': list(grad_logits['shape']),
++            'present': False,
++            'data': b'',
++            'bytes': 0,
++        }
++        return {
++            'contract': 'ppo-entropy-preclip-gradient-v1',
++            'completed_update_index': state['completed_update_index'],
++            'committed_epoch': state['committed_epoch'],
++            'is_continuous': False,
++            'precision': 'f32',
++            'max_bytes': max_bytes,
++            'used_bytes': used_bytes,
++            'tensors': tensors,
++        }
++
+     def set_evaluation_mode(self, enabled):
+@@ -554,2 +650,5 @@ class PuffeRL:
+         clip_coef = config['clip_coef']
++        if self._entropy_gradient_qualification_enabled:
++            self._entropy_gradient_qualification_state = None
++        qualification_pending = None
+         vf_clip = config['vf_clip_coef']
+@@ -616,2 +715,41 @@ class PuffeRL:
+ 
++            qualification_raw_logits = None
++            qualification_raw_value = None
++            if self._entropy_gradient_qualification_enabled:
++                if self.num_minibatches != 1 or mb != 0:
++                    raise RuntimeError(
++                        'entropy gradient qualification requires one minibatch')
++                if mb_masks is None:
++                    raise RuntimeError(
++                        'entropy gradient qualification requires exact masks')
++                if isinstance(logits, torch.Tensor):
++                    raw_logits = (logits,)
++                elif isinstance(logits, (tuple, list)):
++                    raw_logits = tuple(logits)
++                else:
++                    raise RuntimeError(
++                        'entropy gradient qualification requires '
++                        'discrete logits')
++                if (len(raw_logits) != len(self.act_sizes_list)
++                        or any(not isinstance(part, torch.Tensor)
++                            for part in raw_logits)
++                        or any(part.dtype != torch.float32
++                            for part in raw_logits)
++                        or newvalue.dtype != torch.float32):
++                    raise RuntimeError(
++                        'entropy gradient qualification requires '
++                        'fp32 action heads and values')
++                expected_rows = self.minibatch_segments * config['horizon']
++                if (any(part.numel() != expected_rows * size
++                        for part, size
++                        in zip(raw_logits, self.act_sizes_list))
++                        or newvalue.numel() != expected_rows):
++                    raise RuntimeError(
++                        'entropy gradient qualification tensor shape mismatch')
++                for part in raw_logits:
++                    part.retain_grad()
++                newvalue.retain_grad()
++                qualification_raw_logits = raw_logits
++                qualification_raw_value = newvalue
++
+             newlogprob = newlogprob.reshape(mb_logprobs.shape)
+@@ -656,2 +794,65 @@ class PuffeRL:
+             loss.backward()
++            if self._entropy_gradient_qualification_enabled:
++                if (qualification_raw_logits is None
++                        or qualification_raw_value is None
++                        or qualification_raw_value.grad is None
++                        or any(part.grad is None
++                            for part in qualification_raw_logits)):
++                    raise RuntimeError(
++                        'entropy gradient qualification did not observe '
++                        'pre-clipping gradients')
++                rows = self.minibatch_segments
++                horizon = config['horizon']
++                fused_logits = torch.cat([
++                    part.detach().reshape(-1, size)
++                    for part, size
++                    in zip(
++                        qualification_raw_logits,
++                        self.act_sizes_list)
++                ], dim=1)
++                fused_grad_logits = torch.cat([
++                    part.grad.detach().reshape(-1, size)
++                    for part, size
++                    in zip(
++                        qualification_raw_logits,
++                        self.act_sizes_list)
++                ], dim=1)
++                raw_value = qualification_raw_value.detach().reshape(-1, 1)
++                qualification_pending = {
++                    'tensors': {
++                        'decoder_output': torch.cat(
++                            (fused_logits, raw_value), dim=1
++                        ).reshape(rows, horizon, -1).clone(),
++                        'grad_logits': fused_grad_logits.reshape(
++                            rows, horizon, -1).clone(),
++                        'grad_values': (
++                            qualification_raw_value.grad.detach()
++                            .reshape(rows, horizon).clone()
++                        ),
++                        'mb_actions': (
++                            mb_actions.detach().to(torch.float32).clone()
++                        ),
++                        'mb_logprobs': (
++                            mb_logprobs.detach().to(torch.float32).clone()
++                        ),
++                        'mb_advantages': (
++                            mb_advantages.detach().to(torch.float32).clone()
++                        ),
++                        'mb_prio': (
++                            mb_prio.detach().reshape(rows)
++                            .to(torch.float32).clone()
++                        ),
++                        'mb_action_mask': (
++                            mb_masks.detach().to(torch.float32).clone()
++                        ),
++                        'act_sizes': torch.tensor(
++                            self.act_sizes_list,
++                            dtype=torch.int32,
++                            device=device,
++                        ),
++                        'entropy_coefficient': (
++                            current_ent_coef.detach().reshape(1).clone()
++                        ),
++                    },
++                }
+             torch.nn.utils.clip_grad_norm_(self.policy.parameters(), config['max_grad_norm'])
+@@ -671,2 +872,6 @@ class PuffeRL:
+ 
++        if (self._entropy_gradient_qualification_enabled
++                and qualification_pending is None):
++            raise RuntimeError(
++                'entropy gradient qualification evidence is incomplete')
+         logged_losses, train_log_interval = \
+@@ -674,2 +879,7 @@ class PuffeRL:
+         self.epoch += 1
++        if self._entropy_gradient_qualification_enabled:
++            qualification_pending['completed_update_index'] = \
++                entropy_point['update_index']
++            qualification_pending['committed_epoch'] = self.epoch
++            self._entropy_gradient_qualification_state = qualification_pending
+ 
 diff --git a/src/bindings.cu b/src/bindings.cu
-index d6d4d435..8acb9938 100644
+index 1632cf7ffce6ed8894a7ce0b7f95e9cf319c7c23..4f3e77d0b07a2df866450c56f6da079a947b7e97 100644
 --- a/src/bindings.cu
 +++ b/src/bindings.cu
-@@ -3,6 +3,10 @@
- #include <pybind11/pybind11.h>
- #include <pybind11/stl.h>
- #include <pybind11/numpy.h>
-+#include <algorithm>
-+#include <cmath>
-+#include <cstring>
-+#include <limits>
- #include "pufferlib.cu"
- #include "exact_action_build_hash.h"
- 
-@@ -128,6 +132,685 @@ void python_vec_send(pybind11::object pufferl_obj, int buf) {
-     // Not used in static/OMP path
- }
+@@ -353,2 +353,998 @@ void python_vec_send(pybind11::object pufferl_obj, int buf) {
  
 +static constexpr size_t QUALIFICATION_MAX_SNAPSHOT_BYTES = 64ULL << 20;
 +
@@ -125,6 +347,7 @@ index d6d4d435..8acb9938 100644
 +py::dict qualification_recurrent_state(
 +        py::object pufferl_obj, bool clear = false) {
 +    PuffeRL& pufferl = pufferl_obj.cast<PuffeRL&>();
++    require_idle_entropy_transaction(pufferl);
 +    if (cudaDeviceSynchronize() != cudaSuccess) {
 +        throw std::runtime_error("qualification pre-state synchronization failed");
 +    }
@@ -182,6 +405,8 @@ index d6d4d435..8acb9938 100644
 +py::dict qualification_policy_weights(
 +        py::object pufferl_obj, int bank,
 +        size_t max_bytes = QUALIFICATION_MAX_SNAPSHOT_BYTES) {
++    PuffeRL& pufferl = pufferl_obj.cast<PuffeRL&>();
++    require_idle_entropy_transaction(pufferl);
 +    if (USE_BF16) {
 +        throw std::runtime_error(
 +            "qualification policy weight evidence requires fp32");
@@ -191,7 +416,6 @@ index d6d4d435..8acb9938 100644
 +            "invalid qualification policy weight byte limit");
 +    }
 +
-+    PuffeRL& pufferl = pufferl_obj.cast<PuffeRL&>();
 +    if (pufferl.num_frozen_banks < 0 ||
 +            pufferl.num_frozen_banks == std::numeric_limits<int>::max()) {
 +        throw std::runtime_error(
@@ -430,7 +654,17 @@ index d6d4d435..8acb9938 100644
 +        result["bytes"] = 0;
 +        return result;
 +    }
-+    size_t nbytes = (size_t)numel(tensor.shape) * sizeof(precision_t);
++    int64_t elements = numel(tensor.shape);
++    if (elements <= 0 ||
++            static_cast<uint64_t>(elements) >
++                static_cast<uint64_t>(
++                    std::numeric_limits<size_t>::max())) {
++        throw std::runtime_error(
++            "qualification precision tensor shape is invalid");
++    }
++    size_t nbytes = qualification_checked_multiply(
++        static_cast<size_t>(elements), sizeof(precision_t),
++        "precision tensor byte");
 +    if (nbytes > max_bytes || *used_bytes > max_bytes - nbytes) {
 +        throw std::runtime_error("snapshot exceeds qualification byte limit");
 +    }
@@ -453,8 +687,17 @@ index d6d4d435..8acb9938 100644
 +    result["dtype"] = "i32";
 +    result["shape"] = qualification_shape(tensor.shape);
 +    result["present"] = tensor.data != nullptr;
-+    size_t nbytes = tensor.data == nullptr
-+        ? 0 : (size_t)numel(tensor.shape) * sizeof(int);
++    int64_t elements = tensor.data == nullptr ? 0 : numel(tensor.shape);
++    if (elements < 0 ||
++            static_cast<uint64_t>(elements) >
++                static_cast<uint64_t>(
++                    std::numeric_limits<size_t>::max())) {
++        throw std::runtime_error(
++            "qualification integer tensor shape is invalid");
++    }
++    size_t nbytes = qualification_checked_multiply(
++        static_cast<size_t>(elements), sizeof(int),
++        "integer tensor byte");
 +    if (nbytes > max_bytes || *used_bytes > max_bytes - nbytes) {
 +        throw std::runtime_error("snapshot exceeds qualification byte limit");
 +    }
@@ -469,13 +712,157 @@ index d6d4d435..8acb9938 100644
 +    return result;
 +}
 +
++py::dict qualification_float_tensor(
++        const char* name, FloatTensor& tensor,
++        size_t* used_bytes, size_t max_bytes) {
++    py::dict result;
++    result["name"] = name;
++    result["dtype"] = "f32";
++    result["shape"] = qualification_shape(tensor.shape);
++    result["present"] = tensor.data != nullptr;
++    if (tensor.data == nullptr) {
++        result["data"] = py::bytes();
++        result["bytes"] = 0;
++        return result;
++    }
++    int64_t elements = numel(tensor.shape);
++    if (elements <= 0 ||
++            static_cast<uint64_t>(elements) >
++                static_cast<uint64_t>(
++                    std::numeric_limits<size_t>::max())) {
++        throw std::runtime_error(
++            "qualification float tensor shape is invalid");
++    }
++    size_t nbytes = qualification_checked_multiply(
++        static_cast<size_t>(elements), sizeof(float),
++        "float tensor byte");
++    if (nbytes > max_bytes || *used_bytes > max_bytes - nbytes) {
++        throw std::runtime_error(
++            "entropy gradient evidence exceeds qualification byte limit");
++    }
++    std::vector<char> host(nbytes);
++    if (cudaMemcpy(host.data(), tensor.data, nbytes,
++            cudaMemcpyDeviceToHost) != cudaSuccess) {
++        throw std::runtime_error(
++            "qualification float tensor copy failed");
++    }
++    *used_bytes += nbytes;
++    result["data"] = py::bytes(host.data(), nbytes);
++    result["bytes"] = nbytes;
++    return result;
++}
++
++void qualification_require_flat_float_tensor(
++        const char* name, const FloatTensor& tensor) {
++    if (tensor.data == nullptr) {
++        throw std::runtime_error(
++            std::string("entropy overrun tensor is absent: ") + name);
++    }
++    if (ndim(tensor.shape) != 1 || tensor.shape[0] <= 0) {
++        throw std::runtime_error(
++            std::string("entropy overrun tensor is not a non-empty vector: ")
++            + name);
++    }
++}
++
++py::dict qualification_entropy_overrun_state(
++        py::object pufferl_obj,
++        size_t max_bytes = QUALIFICATION_MAX_SNAPSHOT_BYTES) {
++    PuffeRL& pufferl = pufferl_obj.cast<PuffeRL&>();
++    require_idle_entropy_transaction(pufferl);
++    if (max_bytes == 0 || max_bytes > QUALIFICATION_MAX_SNAPSHOT_BYTES) {
++        throw std::runtime_error(
++            "invalid entropy overrun state byte limit");
++    }
++    if (cudaDeviceSynchronize() != cudaSuccess) {
++        throw std::runtime_error(
++            "entropy overrun state synchronization failed");
++    }
++
++    qualification_require_flat_float_tensor(
++        "device_entropy_coefficient", pufferl.ppo_bufs_puf.ent_coef);
++    qualification_require_flat_float_tensor(
++        "loss_accumulator", pufferl.losses_puf);
++    qualification_require_flat_float_tensor(
++        "scalar_loss", pufferl.ppo_bufs_puf.loss_output);
++    qualification_require_flat_float_tensor(
++        "master_weights", pufferl.master_weights);
++    qualification_require_flat_float_tensor(
++        "optimizer_momentum", pufferl.muon.mb_puf);
++    qualification_require_flat_float_tensor(
++        "optimizer_learning_rate", pufferl.muon.lr_puf);
++    qualification_require_flat_float_tensor(
++        "optimizer_learning_rate_derived", pufferl.muon.lr_derived_puf);
++
++    size_t used = 0;
++    py::dict tensors;
++    tensors["device_entropy_coefficient"] = qualification_float_tensor(
++        "device_entropy_coefficient", pufferl.ppo_bufs_puf.ent_coef,
++        &used, max_bytes);
++    tensors["loss_accumulator"] = qualification_float_tensor(
++        "loss_accumulator", pufferl.losses_puf,
++        &used, max_bytes);
++    tensors["scalar_loss"] = qualification_float_tensor(
++        "scalar_loss", pufferl.ppo_bufs_puf.loss_output,
++        &used, max_bytes);
++    tensors["master_weights"] = qualification_float_tensor(
++        "master_weights", pufferl.master_weights,
++        &used, max_bytes);
++    tensors["optimizer_momentum"] = qualification_float_tensor(
++        "optimizer_momentum", pufferl.muon.mb_puf,
++        &used, max_bytes);
++    tensors["optimizer_learning_rate"] = qualification_float_tensor(
++        "optimizer_learning_rate", pufferl.muon.lr_puf,
++        &used, max_bytes);
++    tensors["optimizer_learning_rate_derived"] =
++        qualification_float_tensor(
++            "optimizer_learning_rate_derived",
++            pufferl.muon.lr_derived_puf, &used, max_bytes);
++
++    py::dict host;
++    host["epoch"] = pufferl.epoch;
++    host["global_step"] = pufferl.global_step;
++    host["training_failed"] = pufferl.training_failed;
++    host["current_ent_coef"] = pufferl.current_ent_coef;
++    host["current_ent_epoch"] = pufferl.current_ent_epoch;
++    host["entropy_schedule_update_count"] =
++        pufferl.entropy_schedule_update_count;
++    host["entropy_loss_minibatch_count"] =
++        pufferl.entropy_loss_minibatch_count;
++    host["entropy_first_update"] = pufferl.entropy_first_update;
++    host["entropy_last_update"] = pufferl.entropy_last_update;
++    host["entropy_first_coefficient"] =
++        pufferl.entropy_first_coefficient;
++    host["entropy_last_coefficient"] =
++        pufferl.entropy_last_coefficient;
++    host["entropy_schedule_valid"] = pufferl.entropy_schedule_valid;
++    host["defer_entropy_schedule_commit"] =
++        pufferl.defer_entropy_schedule_commit;
++    host["entropy_schedule_commit_pending"] =
++        pufferl.entropy_schedule_commit_pending;
++    host["pending_entropy_update"] = pufferl.pending_entropy_update;
++    host["pending_entropy_minibatches"] =
++        pufferl.pending_entropy_minibatches;
++    host["pending_entropy_coefficient"] =
++        pufferl.pending_entropy_coefficient;
++
++    py::dict result;
++    result["contract"] = "entropy-overrun-state-v1";
++    result["max_bytes"] = max_bytes;
++    result["used_bytes"] = used;
++    result["host"] = host;
++    result["tensors"] = tensors;
++    return result;
++}
++
 +py::dict qualification_snapshot(
 +        py::object pufferl_obj,
 +        size_t max_bytes = QUALIFICATION_MAX_SNAPSHOT_BYTES) {
++    PuffeRL& pufferl = pufferl_obj.cast<PuffeRL&>();
++    require_idle_entropy_transaction(pufferl);
 +    if (max_bytes == 0 || max_bytes > QUALIFICATION_MAX_SNAPSHOT_BYTES) {
 +        throw std::runtime_error("invalid qualification snapshot byte limit");
 +    }
-+    PuffeRL& pufferl = pufferl_obj.cast<PuffeRL&>();
 +    if (cudaDeviceSynchronize() != cudaSuccess) {
 +        throw std::runtime_error("qualification snapshot synchronization failed");
 +    }
@@ -581,8 +968,159 @@ index d6d4d435..8acb9938 100644
 +    return result;
 +}
 +
++py::dict qualification_entropy_gradient_state(
++        py::object pufferl_obj,
++        size_t max_bytes = QUALIFICATION_MAX_SNAPSHOT_BYTES) {
++    PuffeRL& pufferl = pufferl_obj.cast<PuffeRL&>();
++    require_idle_entropy_transaction(pufferl);
++    if (max_bytes == 0 || max_bytes > QUALIFICATION_MAX_SNAPSHOT_BYTES) {
++        throw std::runtime_error(
++            "invalid entropy gradient evidence byte limit");
++    }
++    if (USE_BF16 || pufferl.is_continuous) {
++        throw std::runtime_error(
++            "entropy gradient evidence requires a discrete fp32 policy");
++    }
++    if (pufferl.training_failed ||
++            pufferl.defer_entropy_schedule_commit ||
++            pufferl.entropy_schedule_commit_pending) {
++        throw std::runtime_error(
++            "entropy gradient evidence requires a successful committed update");
++    }
++    if (pufferl.current_ent_epoch < 0 ||
++            pufferl.current_ent_epoch ==
++                std::numeric_limits<long>::max() ||
++            pufferl.epoch != pufferl.current_ent_epoch + 1 ||
++            pufferl.entropy_schedule_update_count != 1 ||
++            pufferl.entropy_loss_minibatch_count != 1 ||
++            !pufferl.entropy_schedule_valid) {
++        throw std::runtime_error(
++            "entropy gradient evidence requires one unread public update");
++    }
++    if (pufferl.hypers.total_agents <= 0 ||
++            pufferl.hypers.horizon <= 0 ||
++            pufferl.hypers.total_agents >
++                std::numeric_limits<int>::max()
++                    / pufferl.hypers.horizon) {
++        throw std::runtime_error(
++            "entropy gradient evidence has an invalid batch shape");
++    }
++    int full_batch =
++        pufferl.hypers.total_agents * pufferl.hypers.horizon;
++    if (pufferl.hypers.minibatch_size != full_batch) {
++        throw std::runtime_error(
++            "entropy gradient evidence requires a full-batch minibatch");
++    }
++    double minibatches_real =
++        static_cast<double>(pufferl.hypers.replay_ratio)
++        * static_cast<double>(full_batch)
++        / static_cast<double>(pufferl.hypers.minibatch_size);
++    if (!std::isfinite(minibatches_real) ||
++            std::floor(minibatches_real) != 1.0) {
++        throw std::runtime_error(
++            "entropy gradient evidence requires exactly one minibatch");
++    }
++    if (pufferl.train_activations.decoder == nullptr) {
++        throw std::runtime_error(
++            "entropy gradient decoder activation is unavailable");
++    }
++    DecoderActivations* decoder =
++        reinterpret_cast<DecoderActivations*>(
++            pufferl.train_activations.decoder);
++    if (decoder->out.data == nullptr ||
++            pufferl.ppo_bufs_puf.grad_logits.data == nullptr ||
++            pufferl.ppo_bufs_puf.grad_values.data == nullptr ||
++            pufferl.train_buf.mb_actions.data == nullptr ||
++            pufferl.train_buf.mb_logprobs.data == nullptr ||
++            pufferl.train_buf.mb_advantages.data == nullptr ||
++            pufferl.train_buf.mb_prio.data == nullptr ||
++            pufferl.train_buf.mb_action_mask.data == nullptr ||
++            pufferl.act_sizes_puf.data == nullptr ||
++            pufferl.ppo_bufs_puf.ent_coef.data == nullptr) {
++        throw std::runtime_error(
++            "entropy gradient evidence tensors are incomplete");
++    }
++    if (cudaDeviceSynchronize() != cudaSuccess) {
++        throw std::runtime_error(
++            "entropy gradient evidence synchronization failed");
++    }
++
++    if (ndim(decoder->out.shape) != 2 ||
++            decoder->out.shape[0] != full_batch ||
++            decoder->out.shape[1] <= 1 ||
++            ndim(pufferl.ppo_bufs_puf.grad_values.shape) != 3 ||
++            pufferl.ppo_bufs_puf.grad_values.shape[0] !=
++                pufferl.hypers.total_agents ||
++            pufferl.ppo_bufs_puf.grad_values.shape[1] !=
++                pufferl.hypers.horizon ||
++            pufferl.ppo_bufs_puf.grad_values.shape[2] != 1) {
++        throw std::runtime_error(
++            "entropy gradient evidence has an invalid logical shape");
++    }
++    PrecisionTensor decoder_output = {
++        .data = decoder->out.data,
++        .shape = {
++            pufferl.hypers.total_agents,
++            pufferl.hypers.horizon,
++            decoder->out.shape[1],
++        },
++    };
++    FloatTensor grad_values = {
++        .data = pufferl.ppo_bufs_puf.grad_values.data,
++        .shape = {
++            pufferl.hypers.total_agents,
++            pufferl.hypers.horizon,
++        },
++    };
++
++    size_t used = 0;
++    py::dict tensors;
++    tensors["decoder_output"] = qualification_precision_tensor(
++        "decoder_output", decoder_output, &used, max_bytes);
++    tensors["grad_logits"] = qualification_float_tensor(
++        "grad_logits", pufferl.ppo_bufs_puf.grad_logits,
++        &used, max_bytes);
++    tensors["grad_values"] = qualification_float_tensor(
++        "grad_values", grad_values, &used, max_bytes);
++    tensors["grad_logstd"] = qualification_float_tensor(
++        "grad_logstd", pufferl.ppo_bufs_puf.grad_logstd,
++        &used, max_bytes);
++    tensors["mb_actions"] = qualification_precision_tensor(
++        "mb_actions", pufferl.train_buf.mb_actions,
++        &used, max_bytes);
++    tensors["mb_logprobs"] = qualification_precision_tensor(
++        "mb_logprobs", pufferl.train_buf.mb_logprobs,
++        &used, max_bytes);
++    tensors["mb_advantages"] = qualification_precision_tensor(
++        "mb_advantages", pufferl.train_buf.mb_advantages,
++        &used, max_bytes);
++    tensors["mb_prio"] = qualification_precision_tensor(
++        "mb_prio", pufferl.train_buf.mb_prio,
++        &used, max_bytes);
++    tensors["mb_action_mask"] = qualification_precision_tensor(
++        "mb_action_mask", pufferl.train_buf.mb_action_mask,
++        &used, max_bytes);
++    tensors["act_sizes"] = qualification_int_tensor(
++        "act_sizes", pufferl.act_sizes_puf, &used, max_bytes);
++    tensors["entropy_coefficient"] = qualification_float_tensor(
++        "entropy_coefficient", pufferl.ppo_bufs_puf.ent_coef,
++        &used, max_bytes);
++
++    py::dict result;
++    result["contract"] = "ppo-entropy-preclip-gradient-v1";
++    result["completed_update_index"] = pufferl.current_ent_epoch;
++    result["committed_epoch"] = pufferl.epoch;
++    result["is_continuous"] = pufferl.is_continuous;
++    result["precision"] = "f32";
++    result["max_bytes"] = max_bytes;
++    result["used_bytes"] = used;
++    result["tensors"] = tensors;
++    return result;
++}
++
 +py::dict qualification_graph_execution(py::object pufferl_obj) {
 +    PuffeRL& pufferl = pufferl_obj.cast<PuffeRL&>();
++    require_idle_entropy_transaction(pufferl);
 +    if (cudaDeviceSynchronize() != cudaSuccess) {
 +        throw std::runtime_error(
 +            "qualification graph-execution synchronization failed");
@@ -648,6 +1186,7 @@ index d6d4d435..8acb9938 100644
 +
 +py::dict qualification_consume_tail(py::object pufferl_obj) {
 +    PuffeRL& pufferl = pufferl_obj.cast<PuffeRL&>();
++    require_idle_entropy_transaction(pufferl);
 +    if (cudaDeviceSynchronize() != cudaSuccess) {
 +        throw std::runtime_error(
 +            "qualification tail-consumption synchronization failed");
@@ -697,21 +1236,11 @@ index d6d4d435..8acb9938 100644
 +}
 +
  void render(pybind11::object pufferl_obj, int env_id) {
-     PuffeRL& pufferl = pufferl_obj.cast<PuffeRL&>();
-     static_vec_render(pufferl.vec, env_id);
-@@ -510,9 +1193,24 @@ std::unique_ptr<PuffeRL> create_pufferl(py::dict args) {
-     // Seed
-     hypers.seed = get_config(args, "seed");
+@@ -907,5 +1903,14 @@ std::unique_ptr<PuffeRL> create_pufferl(py::dict args) {
  
 -    int device_count = 0;
 -    cudaGetDeviceCount(&device_count);
 -    assert(device_count > 0 && "CUDA is not available");
-+    if (hypers.cudagraphs >= 0 && hypers.anneal_ent_coef) {
-+        throw std::runtime_error(
-+            "CUDA graph training with entropy annealing is disabled until "
-+            "the runtime coefficient is device-backed and qualified");
-+    }
-+
 +    int device_count = -1;
 +    cudaError_t device_status = cudaGetDeviceCount(&device_count);
 +    if (device_status != cudaSuccess || device_count <= 0) {
@@ -725,11 +1254,7 @@ index d6d4d435..8acb9938 100644
 +            "configured CUDA device index is outside the discovered range");
 +    }
  
-     std::string env_name = args["env_name"].cast<std::string>();
-     Dict* vec_dict = py_dict_to_c_dict(vec_kwargs.cast<py::dict>());
-@@ -601,6 +1299,17 @@ PYBIND11_MODULE(_C, m) {
-     m.def("num_envs", &py_num_envs);
-     m.def("python_vec_recv", &python_vec_recv);
+@@ -1007,2 +2012,21 @@ PYBIND11_MODULE(_C, m) {
      m.def("python_vec_send", &python_vec_send);
 +    m.def("qualification_recurrent_state", &qualification_recurrent_state,
 +        py::arg("pufferl"), py::arg("clear") = false);
@@ -738,10 +1263,16 @@ index d6d4d435..8acb9938 100644
 +        py::arg("max_bytes") = QUALIFICATION_MAX_SNAPSHOT_BYTES);
 +    m.def("qualification_snapshot", &qualification_snapshot,
 +        py::arg("pufferl"), py::arg("max_bytes") = QUALIFICATION_MAX_SNAPSHOT_BYTES);
++    m.def("qualification_entropy_overrun_state",
++        &qualification_entropy_overrun_state,
++        py::arg("pufferl"),
++        py::arg("max_bytes") = QUALIFICATION_MAX_SNAPSHOT_BYTES);
++    m.def("qualification_entropy_gradient_state",
++        &qualification_entropy_gradient_state,
++        py::arg("pufferl"),
++        py::arg("max_bytes") = QUALIFICATION_MAX_SNAPSHOT_BYTES);
 +    m.def("qualification_graph_execution", &qualification_graph_execution,
 +        py::arg("pufferl"));
 +    m.def("qualification_consume_tail", &qualification_consume_tail,
 +        py::arg("pufferl"));
      py::class_<Policy>(m, "Policy");
-     py::class_<Muon>(m, "Muon");
-     py::class_<Allocator>(m, "Allocator")

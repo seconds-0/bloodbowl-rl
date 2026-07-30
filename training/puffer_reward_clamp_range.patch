@@ -1,9 +1,8 @@
 diff --git a/pufferlib/torch_pufferl.py b/pufferlib/torch_pufferl.py
+index 2b9557e78c682a732d460e4fdaeed060989b7b71..b26e8c60987073231b6f4eac9b0cc8fbed7ca93a 100644
 --- a/pufferlib/torch_pufferl.py
 +++ b/pufferlib/torch_pufferl.py
-@@ -443,7 +443,19 @@
-         act = self.actions.transpose(0, 1).contiguous()
-         val = self.values.T.contiguous()
+@@ -669,3 +669,15 @@ class PuffeRL:
          lp = self.logprobs.T.contiguous()
 -        rew = self.rewards.T.contiguous().clamp(-1, 1)
 +        # LOCAL PATCH (bloodbowl-rl, D234): this bound was -1, 1, which
@@ -20,14 +19,11 @@ diff --git a/pufferlib/torch_pufferl.py b/pufferlib/torch_pufferl.py
 +        # (bbe_reward_clip_threshold), which stays far below this bound.
 +        rew = self.rewards.T.contiguous().clamp(-8, 8)
          ter = self.terminals.T.contiguous()
-         masks = (self.action_masks.transpose(0, 1).contiguous()
-                  if self.action_masks is not None else None)
 diff --git a/src/pufferlib.cu b/src/pufferlib.cu
+index 15b23931809aa07db9109c9eeae1436186bcfbc2..ea124d2681f20438c70916a11909153fa6677440 100644
 --- a/src/pufferlib.cu
 +++ b/src/pufferlib.cu
-@@ -1652,8 +1652,12 @@
-     }
- 
+@@ -2060,4 +2060,8 @@ void train_impl(PuffeRL& pufferl) {
      // We hard-clamp rewards to -1, 1. Our envs are mostly designed to respect this range
 -    clamp_precision_kernel<<<grid_size(numel(rollouts.rewards.shape)), BLOCK_SIZE, 0, train_stream>>>(
 -        rollouts.rewards.data, -1.0f, 1.0f, numel(rollouts.rewards.shape));
@@ -38,5 +34,3 @@ diff --git a/src/pufferlib.cu b/src/pufferlib.cu
 +clamp_precision_kernel<<<grid_size(numel(rollouts.rewards.shape)), BLOCK_SIZE, 0, train_stream>>>(
 +        rollouts.rewards.data, -8.0f, 8.0f, numel(rollouts.rewards.shape));
  
-     // Set importance weights to 1.0
-     fill_precision_kernel<<<grid_size(numel(rollouts.ratio.shape)), BLOCK_SIZE, 0, train_stream>>>(

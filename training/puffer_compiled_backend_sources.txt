@@ -1,6 +1,7 @@
 build.sh
 pufferlib/pufferl.py
 pufferlib/selfplay.py
+pufferlib/sweep.py
 pufferlib/torch_pufferl.py
 src/bindings.cu
 src/bindings_cpu.cpp

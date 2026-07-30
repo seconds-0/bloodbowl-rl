@@ -208,23 +208,26 @@ class RolloutTransitionPlanTests(unittest.TestCase):
             "cudaStreamSynchronize(train_stream)",
         ):
             self.assertIn(fragment, transition)
+        train_at = full_patch.index("train_impl(pufferl);")
+        consume_at = full_patch.index(
+            "consume_training_tail(pufferl);",
+            train_at,
+        )
         self.assertLess(
-            full_patch.index("         train_impl(pufferl);"),
-            full_patch.index("+    if (cudaMemsetAsync(pufferl.tail_valid.data"),
+            train_at,
+            consume_at,
             "the binding may consume the tail only after checked training completion",
         )
 
     def test_native_capture_warmup_does_not_leak_loss_or_profile_state(self):
         patch = self._patch_text()
-        rng_at = patch.rindex(
-            "+        cudaMemsetAsync(pufferl->rng_offset_puf.data"
-        )
+        rng_at = patch.rindex("pufferl->rng_offset_puf.data")
         losses_at = patch.index(
-            "+        cudaMemsetAsync(pufferl->losses_puf.data",
+            "pufferl->losses_puf.data",
             rng_at,
         )
         profile_at = patch.index(
-            "+        memset(pufferl->profile.accum",
+            "memset(pufferl->profile.accum",
             losses_at,
         )
         global_step_at = patch.index(
@@ -276,6 +279,9 @@ class RolloutTransitionPlanTests(unittest.TestCase):
             "evaluation policy forward count",
             "fresh zero recurrent state",
             "post-final-action observation",
+            "trainer.epoch = 0",
+            "trainer.total_epochs = 1",
+            "trainer._entropy_gradient_qualification_enabled = False",
         ):
             self.assertIn(fragment, verifier)
 
@@ -540,14 +546,27 @@ class RolloutTransitionPlanTests(unittest.TestCase):
 
     def test_scripted_guard_recut_preserves_existing_error_precedence(self):
         patch = SCRIPTED_GUARD_PATCH.read_text(encoding="utf-8")
-        for function in ("_train_worker", "_train(", "train("):
-            block = patch.split(f" def {function}", 1)[1].split(
-                "@@", 1
-            )[0]
+        cases = (
+            ("def _train_worker", "backend = _resolve_backend(args)"),
+            ("def _train(", "backend = _resolve_backend(args)"),
+            ("def train(", "validate_config(args)"),
+        )
+        for function, validated_anchor in cases:
+            matching_hunks = [
+                block
+                for block in patch.split("@@")
+                if function in block and "guard_scripted_training(args)" in block
+            ]
+            self.assertEqual(
+                len(matching_hunks),
+                1,
+                f"{function} must own one scripted guard hunk",
+            )
+            block = matching_hunks[0]
             self.assertLess(
-                block.index("require_training_state_reset(args)"),
+                block.index(validated_anchor),
                 block.index("guard_scripted_training(args)"),
-                f"{function} guard order drifted while recutting patches",
+                f"{function} guard moved before its existing validated anchor",
             )
 
 

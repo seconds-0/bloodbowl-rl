@@ -35,7 +35,7 @@ index 69d042760e1ccfd04661c1827d7701dec1ba9bd0..a23109c899659f0d86c7ec691957b91b
 +    backend.set_evaluation_mode(pufferl, True)
  
 diff --git a/pufferlib/torch_pufferl.py b/pufferlib/torch_pufferl.py
-index 45901031a9e5a7556dacfec0cc28d3a6985f5fef..68a481a05616aa8afd7f17ec08f00cba57f80246 100644
+index dab7fb638e435d89ba1ff90f9ad60c6cfd8678c1..4b322936799fd1bbb756eb9f2e30a90463935ddd 100644
 --- a/pufferlib/torch_pufferl.py
 +++ b/pufferlib/torch_pufferl.py
 @@ -191,2 +191,23 @@ def _cpu_tensor(ptr, shape, dtype):
@@ -69,7 +69,7 @@ index 45901031a9e5a7556dacfec0cc28d3a6985f5fef..68a481a05616aa8afd7f17ec08f00cba
 +        self.pending_rewards = torch.zeros(total_agents, device=device)
 +        self.pending_terminals = torch.zeros(total_agents, device=device)
  
-@@ -303,2 +328,13 @@ class PuffeRL:
+@@ -303,2 +328,16 @@ class PuffeRL:
  
 +    def set_evaluation_mode(self, enabled):
 +        enabled = bool(enabled)
@@ -77,13 +77,16 @@ index 45901031a9e5a7556dacfec0cc28d3a6985f5fef..68a481a05616aa8afd7f17ec08f00cba
 +            return
 +        if enabled and self.global_step > 0:
 +            self._vec.reset()
++        if enabled:
++            self.losses = {}
++            self._train_log_interval = None
 +        self.state = tuple(torch.zeros_like(s) for s in self.state)
 +        self.pending_rewards.zero_()
 +        self.pending_terminals.zero_()
 +        self.evaluation_mode = enabled
 +
      def rollouts(self):
-@@ -309,6 +345,6 @@ class PuffeRL:
+@@ -309,6 +348,6 @@ class PuffeRL:
  
 -        self.state = tuple(torch.zeros_like(s) for s in self.state) if self.state else ()
 +        self.state, r, d = prepare_recurrent_rollout(
@@ -93,33 +96,46 @@ index 45901031a9e5a7556dacfec0cc28d3a6985f5fef..68a481a05616aa8afd7f17ec08f00cba
 -        r = torch.zeros(self.total_agents, device=device)
 -        d = torch.zeros(self.total_agents, device=device)
  
-@@ -321,2 +357,4 @@ class PuffeRL:
+@@ -321,2 +360,4 @@ class PuffeRL:
              with torch.no_grad():
 +                if self.evaluation_mode:
 +                    self.state = reset_recurrent_state_rows(self.state, d)
                  logits, value, state = self.policy.forward_eval(o_device, self.state)
-@@ -371,2 +409,5 @@ class PuffeRL:
+@@ -371,2 +412,5 @@ class PuffeRL:
  
 +        self.pending_rewards = torch.as_tensor(r, device=device).clone()
 +        self.pending_terminals = torch.as_tensor(d, device=device).clone()
 +
          prof.mark(1)
-@@ -377,2 +418,5 @@ class PuffeRL:
-     def train(self):
+@@ -378,2 +422,5 @@ class PuffeRL:
 +        if not self.reset_state or self.evaluation_mode:
 +            raise RuntimeError(
 +                'training requires reset_state=True and evaluation_mode=False')
          prof = self.profile
+         losses = defaultdict(float)
 diff --git a/src/bindings.cu b/src/bindings.cu
-index 1dc6d92b4e8d0f66a0854bf26290b7d653d5586b..7b8a5336f4ede958ca7e2323648ba706f9de4382 100644
+index 1dc6d92b4e8d0f66a0854bf26290b7d653d5586b..fdc86ab869db86684ec122a32136f4fccd8f37ee 100644
 --- a/src/bindings.cu
 +++ b/src/bindings.cu
-@@ -143,3 +143,3 @@ void rollouts(pybind11::object pufferl_obj) {
+@@ -13,2 +13,9 @@ namespace py = pybind11;
+ 
++static void require_public_training_mode(PuffeRL& pufferl) {
++    if (!pufferl.hypers.reset_state || pufferl.evaluation_mode) {
++        throw std::runtime_error(
++            "training requires reset_state=True and evaluation_mode=False");
++    }
++}
++
+ // Wrapper functions for Python bindings
+@@ -143,3 +150,3 @@ void rollouts(pybind11::object pufferl_obj) {
      // primary resets, giving primary an unfair in-distribution advantage).
 -    if (pufferl.hypers.reset_state) {
 +    if (pufferl.hypers.reset_state && !pufferl.evaluation_mode) {
          for (int i = 0; i < pufferl.hypers.num_buffers; i++) {
-@@ -165,4 +165,30 @@ void rollouts(pybind11::object pufferl_obj) {
+@@ -168 +175,2 @@ pybind11::dict train(pybind11::object pufferl_obj) {
++    require_public_training_mode(pufferl);
+     {
+@@ -220,2 +228,24 @@ void load_weights(pybind11::object pufferl_obj, const std::string& path) {
  
 +void set_evaluation_mode(pybind11::object pufferl_obj, bool enabled) {
 +    PuffeRL& pufferl = pufferl_obj.cast<PuffeRL&>();
@@ -143,22 +159,17 @@ index 1dc6d92b4e8d0f66a0854bf26290b7d653d5586b..7b8a5336f4ede958ca7e2323648ba706
 +    pufferl.evaluation_mode = enabled;
 +}
 +
- pybind11::dict train(pybind11::object pufferl_obj) {
-     PuffeRL& pufferl = pufferl_obj.cast<PuffeRL&>();
-+    if (!pufferl.hypers.reset_state || pufferl.evaluation_mode) {
-+        throw std::runtime_error(
-+            "training requires reset_state=True and evaluation_mode=False");
-+    }
-     {
-@@ -523,2 +549,3 @@ PYBIND11_MODULE(_C, m) {
+ int py_add_frozen_bank(py::object pufferl_obj, int slice_size,
+@@ -523,2 +553,3 @@ PYBIND11_MODULE(_C, m) {
      m.def("rollouts", &rollouts);
 +    m.def("set_evaluation_mode", &set_evaluation_mode);
      m.def("train", &train);
 diff --git a/src/pufferlib.cu b/src/pufferlib.cu
-index 1bc1b2612d9f29def07f8099d263680ce4fa99a4..1b65f5ede0561589be5277aad8678a8c502b1c73 100644
+index 218d830fbc3b98e3dee2395e68320d1619d1d97e..424f0229fd648383aa2552262eeb3fb1230624f8 100644
 --- a/src/pufferlib.cu
 +++ b/src/pufferlib.cu
-@@ -409 +409,3 @@ typedef struct {
+@@ -408,2 +408,4 @@ typedef struct {
+     bool rollout_captured;
 +    bool evaluation_mode;
 +    int* evaluation_mode_puf;
      bool train_captured;
@@ -194,8 +205,9 @@ index 1bc1b2612d9f29def07f8099d263680ce4fa99a4..1b65f5ede0561589be5277aad8678a8c
 +    cudaMalloc(&pufferl->evaluation_mode_puf, sizeof(int));
 +    cudaMemset(pufferl->evaluation_mode_puf, 0, sizeof(int));
      for (int i = 0; i < num_buffers; i++) {
-@@ -2280,2 +2305,9 @@ std::unique_ptr<PuffeRL> create_pufferl_impl(HypersT& hypers,
+@@ -2280,3 +2305,13 @@ std::unique_ptr<PuffeRL> create_pufferl_impl(HypersT& hypers,
          }
+-        cudaDeviceSynchronize();
 +        for (int bank = 0; bank < 1 + pufferl->num_frozen_banks; bank++) {
 +            PrecisionTensor* bs = (bank == 0) ? pufferl->buffer_states
 +                : pufferl->frozen_banks[bank - 1].buffer_states;
@@ -203,8 +215,12 @@ index 1bc1b2612d9f29def07f8099d263680ce4fa99a4..1b65f5ede0561589be5277aad8678a8c
 +                puf_zero(&bs[b], pufferl->default_stream);
 +            }
 +        }
-         cudaDeviceSynchronize();
-@@ -2362,2 +2394,3 @@ void close_impl(PuffeRL& pufferl) {
++        if (cudaDeviceSynchronize() != cudaSuccess) {
++            throw std::runtime_error(
++                "recurrent warmup state restoration failed");
++        }
+ 
+@@ -2363,2 +2398,3 @@ void close_impl(PuffeRL& pufferl) {
      free(pufferl.bank_layout);
 +    cudaFree(pufferl.evaluation_mode_puf);
  

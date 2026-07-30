@@ -19,6 +19,37 @@ Official experiment release commit:
 Historical documentation audit base:
 `6c53e15d840f8a0ef55583545b724c33dc8bc0ef`
 
+Implementation addendum, 2026-07-30:
+
+- `tail-bootstrap-v1` remains implemented and locally validated, with its
+  fresh target-NVIDIA acceptance run still pending.
+- Entropy schedule/objective parity is now implemented in the pinned native
+  eager, native graph, and Torch source stack under
+  `cosine-update-index-over-total-updates-fp32-v1`.
+- A primary fresh exact-pin macOS/ARM checkout installed twice and an
+  independent fresh checkout installed three times. Both reproduced the same
+  six installed source/contract identities, built real CPU extensions and
+  standalones, passed the schema-3 compiled-extension Torch objective verifier
+  and final installer drift guard, and authenticated the selected 11-patch
+  causal trainer/binding audit set. The selected exact tree passed 92/92
+  entropy/Torch tests, 179/179 combined
+  qualification/exact/recurrent/rollout tests, and 7/7 strict-source tests;
+  all five valid environment profiles constructed while all 44 malformed
+  profiles were rejected. Repository discovery passed 364 tools tests with
+  six skips and, with the selected exact root enabled, 309 training tests with
+  one expected GPU skip; `make test` and the leak-disabled ASan/UBSan run also
+  passed. The complete identity and endpoint ledger is in the entropy plan.
+- The exact-pin x86 CI job is configured but has not run. Schema-11 NVIDIA
+  eager/graph/Torch evidence has not run. Both production launchers therefore
+  remain literally and unconditionally fail-closed with status
+  `implemented_pending_nvidia`.
+
+The immediate evidence sequence is now: finish target-GPU rollout-tail
+validation, execute the exact-pin x86 job, then execute and independently
+review the schema-11 NVIDIA matrix. Those are evidence-collection and release
+gates for implemented code; they are not permission to start a production
+training run.
+
 ## Executive verdict
 
 The premise needs one important correction: I found no official open-source
@@ -75,11 +106,11 @@ The pass defect must be fixed before pass curricula or another reward screen.
 The reset-baseline defect must be fixed before nested authored states are
 eligible for PBRS training.
 
-The highest-leverage next tranche is therefore:
+The highest-leverage execution order is therefore:
 
-1. finish target-GPU validation of rollout-tail closure, then repair and
-   qualify entropy scheduling across native eager, native CUDA-graph, and Torch
-   training;
+1. finish target-GPU validation of rollout-tail closure, run exact-pin x86
+   validation, and qualify the implemented entropy schedule across native
+   eager, native CUDA-graph, and Torch training on NVIDIA;
 2. repair pass/possession and restored-state PBRS initialization, and make
    curriculum input fail-closed;
 3. finish a typed, hash-pinned authored BB2025 scenario bank;
@@ -750,42 +781,118 @@ CUDA compilation, graph replay, and device evidence still require the declared
 fresh NVIDIA deployment-boundary run; no local macOS result is represented as
 that evidence.
 
-### P0 trainer objective: entropy annealing diverges in graph and Torch modes
+### P0 trainer objective: historical entropy divergence repaired in source; NVIDIA qualification pending
 
-The current production configuration enables a nonzero entropy coefficient,
-annealing to a minimum ratio, and `cudagraphs=10`. In the pinned native
-trainer, `current_ent_coef` is a host scalar passed while the train graph is
-captured. Later graph replays retain the captured value rather than the
-coefficient for the current epoch. The Torch trainer uses
-`config["ent_coef"]` directly and does not implement the configured anneal.
-Thus three ostensibly equivalent modes—native eager, native graph, and
-Torch—optimize different objectives over time.
+Before the 2026-07-29 entropy tranche, the production configuration enabled a
+nonzero entropy coefficient, annealing to a minimum ratio, and
+`cudagraphs=10`, but the audited pinned trainers did not apply that request
+consistently. Native `current_ent_coef` was a host scalar passed while the
+train graph was captured, so later graph replays retained the captured value
+rather than the coefficient for the current update. Torch used
+`config["ent_coef"]` directly and did not implement the configured anneal.
+Native eager, native graph, and Torch therefore optimized different objectives
+over time. This paragraph records the historical source defect; it does not
+describe the repaired source stack below.
 
-The rollout qualifier deliberately uses zero entropy and zero learning rate, so
-it cannot prove this schedule. This is a distinct contract, not a reason to
-weaken the rollout-tail oracle. PufferLib later fixed the native side upstream
-by moving the coefficient to device-backed state and added a multi-epoch
-effective-loss test, corroborating both the defect and the appropriate
-implementation shape. See the official
+The transition-parity cells deliberately retain zero entropy and zero learning
+rate, so they cannot prove the entropy schedule and are not repurposed to do
+so. Schema 11 instead requires a separate nonzero entropy matrix: the five
+primary artifacts
+`entropy_native_eager_annealed`,
+`entropy_native_graph_annealed`,
+`entropy_native_graph_anneal_disabled`,
+`entropy_torch_annealed`, and
+`entropy_torch_anneal_disabled`, plus the mandatory sixth
+`entropy_native_eager_anneal_disabled` gradient control. PufferLib later fixed
+the native issue upstream by moving the coefficient to device-backed state
+and added a multi-epoch effective-loss test, corroborating both the defect and
+the appropriate implementation shape. See the official
 [entropy coefficient annealing fix](https://github.com/PufferAI/PufferLib/commit/2753605e).
 
-Interim safety status (2026-07-28):
+Implementation status (2026-07-30):
 
-- the native constructor rejects `cudagraphs >= 0 && anneal_ent_coef` before
-  CUDA discovery or allocation;
-- the production screen and arm launchers bind `cudagraphs`,
-  `anneal_ent_coef`, and `min_ent_coef_ratio` explicitly and block executable
-  runs before creating run artifacts;
-- plan/dry-run modes remain inspectable but emit a machine-visible
-  `BLOCKED_UNQUALIFIED_ENTROPY_SCHEDULE` status;
-- manifests record the requested schedule and label the effective coefficient
-  unavailable rather than inventing telemetry.
+- `training/puffer_entropy_schedule_parity.patch` implements the named
+  `cosine-update-index-over-total-updates-fp32-v1` contract.
+- Native source owns a stable binary32 device coefficient and one
+  kernel-local value for gradient scaling, signed entropy term, total loss,
+  and telemetry. Torch computes the same applied binary32 coefficient once per
+  public update and reuses it across minibatches.
+- Both public update paths reject negative update indices and exhausted indices
+  (`e < 0` or `e >= N`) before PPO work or schedule-state mutation.
+- Once either trainer may have partially mutated model, optimizer, or RNG
+  state, it fails closed for its remaining lifetime. Native uses a
+  dispatch-aware RAII transaction and Torch a pessimistic latch. Every
+  supported trainer-bound callable rejects a poisoned object before domain
+  validation, I/O, environment/CUDA work, mutation, or publication; `close()`
+  is the sole cleanup exception after the failed update has unwound.
+  Distributed recovery is a whole-job restart from trusted state, not an
+  in-process retry.
+- Native exact-coefficient telemetry is a direct reduction: global index zero
+  contributes the raw binary32 coefficient and every other lane contributes
+  zero. An interval mean remains useful operational telemetry, but is not
+  accepted as bit-exact proof of the coefficient applied by the kernel.
+- Both compiled bindings export the contract. Installer, launch manifests,
+  patch bundles, exact-source identity, and the schema-11 qualifier bind it.
+- Schema 11 requires the six named artifacts above and compares
+  first/middle/final schedule points, applied coefficient, signed objective
+  term, and
+  `ppo-entropy-preclip-gradient-v1`. Native graph/eager counters are genuinely
+  measured native-only arrays; Torch is required to omit them rather than
+  fabricate zero counters.
+- A standalone CPU verifier executes selected Torch `PuffeRL.train` through
+  backward, Torch's real gradient clip, and the following recording-optimizer
+  step. Its active-clipping control proves the optimizer observes the clipped
+  gradient. The ordinary schedule/gradient cells deliberately keep weights
+  unchanged; separate injected incomplete-update cases intentionally mutate
+  model/optimizer state before failing, then prove the trainer fails closed
+  rather than presenting that object as retryable.
+- A primary fresh exact-pin macOS/ARM checkout installed twice and an
+  independent checkout installed three times; all five runs preserved the
+  same six installed source/contract identities. Both checkouts built real CPU
+  extensions and standalones and passed the compiled-extension verifier and
+  installer `--check`. The selected patch-only chain passed all causal endpoint
+  and final reverse/forward tree checks under independent review.
+- On the selected exact trees, the entropy/Torch slice passed 92/92, the
+  combined qualification/exact/recurrent/rollout slice passed 179/179, and the
+  strict source contract passed 7/7. All five valid environment profiles
+  constructed and all 44 malformed profiles were rejected. Full discovery
+  passed 364 tools tests with six skips and 309 training tests with one
+  expected GPU skip; `make test` and the leak-disabled ASan/UBSan run passed.
 
-The next implementation tranche should backport the device-scalar behavior,
-implement the same cosine schedule in Torch, expose the effective coefficient,
-and compare effective loss identity and weight updates across at least three
-epochs in eager/graph/Torch modes. The temporary guards must not be removed
-until that oracle passes on the target GPU.
+The fatal-first boundary is a supported-callable, single-threaded trainer
+contract. Construction, factories, stateless helpers, direct mutable
+attributes, and deliberate Python closure/code/global reflection, class
+monkeypatching, or manual latch mutation are outside it. Torch preserves the
+normal public name, qualified name, module, and exact signature without
+publishing a standard `__wrapped__` alias, and its executable proof shows that
+a poisoned evaluation-mode call rejects before the raw `bool(enabled)`
+conversion. Native begins its guarantee after successful pybind argument
+binding: the trainer cast is immediately followed by the fatal guard, before
+raw delegation and every trainer-state, CUDA, environment, or I/O action.
+Python arity errors and typed pybind conversion failures that occur before C++
+body entry are outside the boundary. No method—including `close()`—is
+supported concurrently with `train()`; cleanup remains available only after
+the failed call has unwound and never clears the fatal latch.
+
+The proof boundary is intentionally narrower than “optimizer parity.” Native
+gradient evidence ends at raw PPO pre-clipping logits. Zero learning rate
+proves unchanged weight bytes only; it does not prove native
+`policy_backward`, clipping, Muon, parameter updates, or cross-backend
+weight-update identity.
+
+Remaining external evidence:
+
+- run the configured exact-pin x86 CI job and retain its CPU evidence artifact;
+- compile the final native source on the target NVIDIA toolchain;
+- execute schema 11 for native eager, native graph, and Torch, including real
+  graph handles/launches and the overrun guard; and
+- independently review that target evidence before a separate
+  release-authority change.
+
+Both production launchers still bind the full requested schedule, report
+`implemented_pending_nvidia`, and reject graph-plus-anneal execution before
+creating a training run. Local CPU/source evidence cannot satisfy or bypass
+those guards.
 
 ### P0 trainability: no learning-level capability gates
 
@@ -949,26 +1056,52 @@ learning canaries.
 
 ## Ranked proposals
 
-### P0-0 — Close the trainer/environment objective contract
+### P0-0 — Validate the implemented trainer/environment objective contract
 
-Estimated effort: 2–5 engineering days plus target-GPU validation
+Estimated effort: target evidence collection and review, plus any defects it
+uncovers
 
 Expected leverage: mandatory; all later learning evidence depends on it
 
-Evidence class: confirmed source/runtime-contract defects
+Evidence class: locally implemented source/CPU/schema contract with target
+execution still pending
 
-Deliverables:
+Implemented locally:
+
+1. `tail-bootstrap-v1` closes the final transition and standardizes the
+   V-trace temporal difference in Torch, CPU, and native source.
+2. The native entropy coefficient is device-backed with stable storage, and
+   Torch implements the same checked update-index schedule. Both public paths
+   reject `e < 0` and `e >= N` before PPO work or schedule-state mutation.
+3. Requested schedule provenance and direct applied coefficient/signed-term
+   telemetry are closed over installer, module, launcher, and qualification
+   identities. The native raw coefficient comes from global index zero while
+   all other lanes contribute zero; an interval mean is not treated as
+   bit-exact raw proof.
+4. The independent CPU Torch verifier covers first/middle/final, disabled,
+   zero-base, real clipping, active clipping, and fail-closed negative and
+   exhausted-index cases. It also injects second-minibatch and post-loop
+   failures after mutation, then proves the epoch/evidence stays uncommitted,
+   the object cannot be retried, and state, RNG, and filesystem publication do
+   not advance through rejected surfaces.
+5. Two fresh exact-pin installer runs preserve all six recorded
+   source/contract identities; the available CPU surface is buildable and
+   drift-checked, and the selected causal trainer/binding audit set is 11/11
+   reverse-applicable.
+6. Schema 11 requires five primary entropy artifacts—native eager annealed,
+   native graph annealed/disabled, and Torch annealed/disabled—plus the
+   mandatory native eager disabled gradient control.
+7. The executable graph-plus-anneal guards remain literal and unconditional.
+
+Remaining external deliverables:
 
 1. Complete the fresh NVIDIA install/build and graph-on/graph-off acceptance
    run for `tail-bootstrap-v1`.
-2. Backport a device-backed entropy coefficient for native graph replay.
-3. Implement the identical configured entropy schedule in Torch.
-4. Emit requested and effective entropy coefficients with epoch/progress
-   provenance.
-5. Add multi-epoch eager/graph/Torch effective-loss and update parity, including
-   a coefficient that actually changes.
-6. Retain the executable graph-plus-anneal guards until all preceding evidence
-   passes.
+2. Run and retain the configured exact-pin x86 CPU job.
+3. Run schema 11 on the target NVIDIA backend for native eager, native graph,
+   and Torch with a coefficient that materially changes.
+4. Independently review the raw target artifacts and only then plan a separate
+   release-authority tranche.
 
 Acceptance gates:
 
@@ -978,14 +1111,34 @@ Acceptance gates:
 - graph/eager transition outputs and graph execution counts match;
 - effective entropy coefficient matches the declared schedule at the first,
   middle, and final epochs;
-- native eager, native graph, and Torch loss identities agree within declared
-  tolerances for the same frozen tensors;
+- negative and exhausted public update indices are rejected without state
+  mutation or PPO work;
+- after any post-latch Torch or post-dispatch native failure, the epoch and
+  evidence remain uncommitted and the object permanently rejects all
+  supported trainer-bound callables before validation, I/O, environment/CUDA
+  work, mutation, or publication; only `close()` remains callable after the
+  failed update has fully unwound, and a distributed run recovers only by
+  restarting the whole job from trusted state;
+- native eager, native graph, and Torch agree pointwise on the named schedule
+  and applied binary32 coefficient;
+- each backend independently satisfies its signed entropy-term and total-loss
+  decomposition;
+- native and Torch satisfy the declared pre-clipping entropy-gradient contract
+  on their own captured logits/masks;
 - requested/effective schedule provenance is present and finite;
-- the exact-pin installer is idempotent and every ordered patch is reverse
+- all six recorded source/contract identities are stable across repeated
+  exact-pin installation, and the selected exact causal patch set is reverse
   applicable after build.
 
-No capability or reward-training result is admissible while this gate is
-blocked.
+These gates do not require or claim native `policy_backward`, clipping, Muon,
+parameter-update, or cross-backend optimizer parity. The schema-11
+entropy-gradient diagnostic uses zero learning rate; unchanged weights in
+those cells prove non-mutation only. Separate CPU failure-injection diagnostics
+intentionally mutate model/optimizer state before proving fail-closed
+behavior.
+
+No capability or reward-training result is admissible while the target
+rollout/entropy and release-authority gates remain blocked.
 
 ### P0-A — Correctness and input-integrity sprint
 
@@ -1225,12 +1378,12 @@ Benchmark separately:
 6. recurrent inference;
 7. PPO update.
 
-The current schema-10 qualification cell times `_C.rollouts` only. It now uses
-the production collection shape—4,096 agents, two buffers, 20 threads,
-H512/L3, `max_decisions=4096`—which makes it a useful rollout regression
-diagnostic, but it is not end-to-end training SPS. Add an adjacent
-rollout-plus-train stage timer before using the number to prioritize environment
-versus optimizer work.
+The current schema-11 qualification cell retains the rollout-timing design
+introduced in schema 10 and times `_C.rollouts` only. It uses the production
+collection shape—4,096 agents, two buffers, 20 threads, H512/L3,
+`max_decisions=4096`—which makes it a useful rollout regression diagnostic,
+but it is not end-to-end training SPS. Add an adjacent rollout-plus-train stage
+timer before using the number to prioritize environment versus optimizer work.
 
 Report:
 
@@ -1302,8 +1455,11 @@ after the environment can generate and recognize reachable scoring sequences.
 ### Week 1: correctness closure
 
 - complete target-GPU rollout-tail validation;
-- implement and qualify cross-backend entropy scheduling before removing the
-  executable launch guard;
+- run the configured exact-pin x86 job;
+- execute and independently review schema-11 NVIDIA evidence for the
+  implemented cross-backend entropy schedule;
+- retain both executable launch guards; removing them, if justified by the
+  target evidence, is a separate release-authority tranche;
 - repair pass settlement;
 - add complete pass/interception/catch traces;
 - make config validation strict;
@@ -1311,7 +1467,9 @@ after the environment can generate and recognize reachable scoring sequences.
 - choose strict/authored bank identities and fail-closed loading;
 - reconcile obs-v6 lineage artifacts.
 
-Exit gate: every P0-A acceptance test passes on a clean install.
+Exit gate: target rollout/entropy evidence is accepted without overstating
+optimizer parity, both launchers remain fail-closed absent separate authority,
+and every P0-A acceptance test passes on a clean install.
 
 ### Week 2: trainability harness
 

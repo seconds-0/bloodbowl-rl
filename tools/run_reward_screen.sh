@@ -46,7 +46,7 @@ ENT_COEF=0.009
 CUDAGRAPHS=10
 ANNEAL_ENT_COEF=1
 MIN_ENT_COEF_RATIO=0.1
-ENTROPY_SCHEDULE_STATUS=blocked_unqualified
+ENTROPY_SCHEDULE_STATUS=implemented_pending_nvidia
 GAMMA=0.995
 # Every arm this screen launches must discount at the SAME gamma its reward
 # manifest claims for exact PBRS, or beta*(gamma*Phi' - Phi) is not exact and the
@@ -341,6 +341,7 @@ SCREEN_PLAN="$(
       MAX_PANEL_SILENCE_SECONDS="$MAX_PANEL_SILENCE_SECONDS" \
       TOTAL_AGENTS="$TOTAL_AGENTS" HORIZON="$HORIZON" \
       MINIBATCH_SIZE="$MINIBATCH_SIZE" EXPECT_BYTES="$EXPECT_BYTES" \
+      ENT_COEF="$ENT_COEF" \
       CUDAGRAPHS="$CUDAGRAPHS" \
       ANNEAL_ENT_COEF="$ANNEAL_ENT_COEF" \
       MIN_ENT_COEF_RATIO="$MIN_ENT_COEF_RATIO" \
@@ -349,7 +350,7 @@ SCREEN_PLAN="$(
       NUM_FROZEN_BANKS="$NUM_FROZEN_BANKS" \
       MIN_TRAIN_GAMES="$MIN_TRAIN_GAMES" MIN_EVAL_GAMES="$MIN_EVAL_GAMES" \
       "$PYBIN" - "$SCREEN_MANIFEST" <<'PY'
-import hashlib, json, os, pathlib, subprocess, sys, sysconfig
+import hashlib, json, math, os, pathlib, struct, subprocess, sys, sysconfig
 
 destination = pathlib.Path(sys.argv[1])
 root = pathlib.Path(os.environ["ROOT"]).resolve()
@@ -420,6 +421,8 @@ print(json.dumps({
     "action_abi": getattr(_C, "action_abi", "<missing>"),
     "rollout_transition_contract": getattr(
         _C, "rollout_transition_contract", "<missing>"),
+    "entropy_schedule_contract": getattr(
+        _C, "entropy_schedule_contract", "<missing>"),
     "environment_config_schema": getattr(
         _C, "environment_config_schema", "<missing>"),
     "strict_env_config_testing": getattr(
@@ -481,6 +484,8 @@ if (
     compiled_contract["observation_version"] != 6 or
     compiled_contract["action_abi"] != "exact-joint-v1" or
     compiled_contract["rollout_transition_contract"] != "tail-bootstrap-v1" or
+    compiled_contract["entropy_schedule_contract"] !=
+        "cosine-update-index-over-total-updates-fp32-v1" or
     compiled_contract["environment_config_schema"] !=
         "bloodbowl-environment-config-v1" or
     compiled_contract["strict_env_config_testing"] is not False or
@@ -526,6 +531,7 @@ patches = [
     root / "training/puffer_recurrent_eval_state.patch",
     root / "training/puffer_rollout_transition_closure.patch",
     root / "training/puffer_frozen_prio_mask.patch",
+    root / "training/puffer_entropy_schedule_parity.patch",
     root / "training/puffer_recurrent_cuda_qualification.patch",
     root / "training/puffer_reward_clamp_range.patch",
     # Keep every remaining installer patch in the ordered causal bundle so the
@@ -570,6 +576,60 @@ train_epochs = int(os.environ["STEPS"]) // rollout_quantum
 if train_epochs <= 0:
     raise SystemExit("screen STEPS is smaller than one rollout quantum")
 final_steps = train_epochs * rollout_quantum
+
+entropy_schedule_contract = (
+    "cosine-update-index-over-total-updates-fp32-v1"
+)
+entropy_telemetry_contract = (
+    "direct-device-coefficient-loss-decomposition-v1"
+)
+
+
+def entropy_binary32(value):
+    value = float(value)
+    if not math.isfinite(value):
+        raise SystemExit("entropy schedule produced a non-finite coefficient")
+    try:
+        applied = struct.unpack("<f", struct.pack("<f", value))[0]
+    except OverflowError as exc:
+        raise SystemExit(
+            "entropy schedule coefficient is not finite binary32"
+        ) from exc
+    if not math.isfinite(applied):
+        raise SystemExit("entropy schedule coefficient is not finite binary32")
+    return applied
+
+
+entropy_base = float(os.environ["ENT_COEF"])
+entropy_min_ratio = float(os.environ["MIN_ENT_COEF_RATIO"])
+entropy_enabled = os.environ["ANNEAL_ENT_COEF"] == "1"
+entropy_floor_real = entropy_base * entropy_min_ratio
+
+
+def entropy_coefficient(update_index):
+    if entropy_enabled:
+        progress = min(max(update_index / train_epochs, 0.0), 1.0)
+        real = entropy_floor_real + 0.5 * (
+            entropy_base - entropy_floor_real
+        ) * (1.0 + math.cos(math.pi * progress))
+    else:
+        real = entropy_base
+    return entropy_binary32(real)
+
+
+entropy_schedule = {
+    "base": entropy_base,
+    "enabled": entropy_enabled,
+    "min_ratio": entropy_min_ratio,
+    "total_updates": train_epochs,
+    "first_coefficient": entropy_coefficient(0),
+    "last_legal_coefficient": entropy_coefficient(train_epochs - 1),
+    "floor_coefficient": entropy_coefficient(train_epochs),
+    "contract": entropy_schedule_contract,
+    "telemetry_contract": entropy_telemetry_contract,
+    "denominator_rule": "floor(total_timesteps/(total_agents*horizon))",
+    "graph_warmup": int(os.environ["CUDAGRAPHS"]),
+}
 
 warm_identity = None
 pool_identity = None
@@ -679,6 +739,7 @@ contract = {
         "anneal_ent_coef": os.environ["ANNEAL_ENT_COEF"],
         "min_ent_coef_ratio": os.environ["MIN_ENT_COEF_RATIO"],
         "entropy_schedule_status": os.environ["ENTROPY_SCHEDULE_STATUS"],
+        "entropy_schedule": entropy_schedule,
     },
     "error_budget": {
         "contamination_budget": 0,
@@ -879,12 +940,24 @@ if (
         f"{run_manifest.get('compiled_rollout_transition_contract')!r} != "
         f"{expected_transition_contract!r}"
     )
+expected_entropy_contract = screen["implementation"][
+    "compiled_semantic_contract"
+]["entropy_schedule_contract"]
+if (
+    run_manifest.get("compiled_entropy_schedule_contract")
+    != expected_entropy_contract
+):
+    raise SystemExit(
+        "run entropy-schedule contract differs from the screen plan: "
+        f"{run_manifest.get('compiled_entropy_schedule_contract')!r} != "
+        f"{expected_entropy_contract!r}"
+    )
 expected_entropy = {
     "cudagraphs": int(screen["settings"]["cudagraphs"]),
     "anneal_ent_coef": screen["settings"]["anneal_ent_coef"] == "1",
     "min_ent_coef_ratio": float(screen["settings"]["min_ent_coef_ratio"]),
     "entropy_schedule_status": screen["settings"]["entropy_schedule_status"],
-    "entropy_effective_coefficient": "unavailable_blocked",
+    "entropy_schedule": screen["settings"]["entropy_schedule"],
 }
 observed_entropy = {
     key: run_manifest.get(key)

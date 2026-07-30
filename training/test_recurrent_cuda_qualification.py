@@ -55,12 +55,21 @@ ENTROPY_SCHEDULE_CONTRACT = (
     "cosine-update-index-over-total-updates-fp32-v1"
 )
 ENTROPY_TELEMETRY_CONTRACT = "direct-device-coefficient-loss-decomposition-v1"
+ENTROPY_GRADIENT_CONTRACT = "ppo-entropy-preclip-gradient-v1"
+ENTROPY_OVERRUN_STATE_CONTRACT = "entropy-overrun-state-v1"
 ENTROPY_SCHEDULE_CELL_KINDS = (
     "entropy_native_eager_annealed",
     "entropy_native_graph_annealed",
     "entropy_native_graph_anneal_disabled",
     "entropy_torch_annealed",
     "entropy_torch_anneal_disabled",
+)
+ENTROPY_GRADIENT_CONTROL_CELL_KINDS = (
+    "entropy_native_eager_anneal_disabled",
+)
+ENTROPY_QUALIFICATION_CELL_KINDS = (
+    *ENTROPY_SCHEDULE_CELL_KINDS,
+    *ENTROPY_GRADIENT_CONTROL_CELL_KINDS,
 )
 ENTROPY_RAW_ARRAY_FIELDS = (
     "update_index",
@@ -105,6 +114,7 @@ def entropy_raw_evidence(kind: str) -> tuple[dict, dict[str, np.ndarray]]:
     enabled = kind not in {
         "entropy_native_graph_anneal_disabled",
         "entropy_torch_anneal_disabled",
+        *ENTROPY_GRADIENT_CONTROL_CELL_KINDS,
     }
     descriptor = entropy_schedule_descriptor(enabled=enabled)
     total_updates = descriptor["total_updates"]
@@ -155,6 +165,504 @@ def entropy_raw_evidence(kind: str) -> tuple[dict, dict[str, np.ndarray]]:
         "raw_array_fields": list(ENTROPY_RAW_ARRAY_FIELDS),
     }
     return evidence, arrays
+
+
+def entropy_execution_evidence(
+    runner,
+    kind: str,
+) -> tuple[dict, dict, dict[str, np.ndarray]]:
+    """Build ordinary execution evidence with backend-owned NPZ fields."""
+
+    native = kind in runner.ENTROPY_NATIVE_CELL_KINDS
+    total = runner.ENTROPY_SCHEDULE_TOTAL_UPDATES
+    total_agents = 2
+    buffers = 1
+    horizon = 2
+    quantum = total_agents * horizon
+    config = {
+        "vec": {
+            "total_agents": total_agents,
+            "num_buffers": buffers,
+        },
+        "train": {
+            "horizon": horizon,
+            "total_timesteps": total * quantum,
+            "minibatch_size": quantum,
+            "replay_ratio": 1,
+            "learning_rate": 0.0,
+            "ent_coef": runner.ENTROPY_SCHEDULE_BASE,
+            "min_ent_coef_ratio": runner.ENTROPY_SCHEDULE_MIN_RATIO,
+            "anneal_ent_coef": runner._entropy_schedule_enabled(kind),
+            "vf_coef": 0.5,
+        },
+    }
+    mode = (
+        "eager"
+        if kind
+        in {
+            "entropy_native_eager_annealed",
+            "entropy_native_eager_anneal_disabled",
+            *runner.ENTROPY_TORCH_CELL_KINDS,
+        }
+        else "graph"
+    )
+    execution = {
+        "kind": kind,
+        "backend": "native" if native else "torch",
+        "mode": mode,
+        "update_count": total,
+        "rollout_count": total,
+        "train_count": total,
+        "log_count": total,
+        "rollout_quantum": quantum,
+        "hard_integrity_intervals": [
+            {key: 0.0 for key in runner.HARD_INTEGRITY_KEYS}
+            for _ in range(total)
+        ],
+    }
+    before = np.arange(total, dtype=np.int64) * np.int64(quantum)
+    arrays = {
+        "global_step_before": before,
+        "global_step_after": before + np.int64(quantum),
+        "tail_valid_before_train": np.full(
+            total,
+            buffers,
+            dtype=np.int64,
+        ),
+        "tail_valid_after_train": np.zeros(total, dtype=np.int64),
+    }
+    if native:
+        arrays.update(
+            {
+                name: np.zeros(total, dtype=np.int64)
+                for name in runner.ENTROPY_NATIVE_EXECUTION_COUNTER_ARRAY_FIELDS
+            }
+        )
+        prefix = "graph" if mode == "graph" else "eager"
+        arrays[f"{prefix}_rollout_delta"][:] = horizon * buffers
+        arrays[f"{prefix}_tail_delta"][:] = buffers
+        arrays[f"{prefix}_train_delta"][:] = 1
+    return execution, config, arrays
+
+
+def entropy_overrun_evidence(
+    runner,
+    kind: str,
+) -> tuple[dict, dict, dict[str, np.ndarray]]:
+    """Build closed evidence for a rejected public train call at e=N."""
+
+    native = kind in runner.ENTROPY_NATIVE_CELL_KINDS
+    _, arrays = entropy_raw_evidence(kind)
+    total = runner.ENTROPY_SCHEDULE_TOTAL_UPDATES
+    total_agents = 2
+    horizon = 3
+    config = {
+        "vec": {
+            "total_agents": total_agents,
+            "num_buffers": 2,
+        },
+        "policy": {
+            "hidden_size": runner.HETEROGENEOUS_PRIMARY_HIDDEN_SIZE,
+            "num_layers": runner.HETEROGENEOUS_PRIMARY_NUM_LAYERS,
+        },
+        "train": {
+            "horizon": horizon,
+            "learning_rate": 0.0,
+            "anneal_lr": False,
+            "minibatch_size": total_agents * horizon,
+            "replay_ratio": 1,
+            "total_timesteps": total * total_agents * horizon,
+        },
+    }
+    hidden = config["policy"]["hidden_size"]
+    layers = config["policy"]["num_layers"]
+    output_size = runner.BLOODBOWL_ACTION_LOGITS + 1
+    parameter_count = (
+        runner.BLOODBOWL_INPUT_SIZE * hidden
+        + output_size * hidden
+        + layers * 3 * hidden * hidden
+    )
+    master = np.linspace(
+        -1.0,
+        1.0,
+        parameter_count,
+        dtype=np.float32,
+    )
+    momentum = (master * np.float32(0.5) + np.float32(0.125)).astype(
+        np.float32
+    )
+
+    def tensor_metadata(name, value, *, expose_values):
+        value = np.asarray(value, dtype=np.float32)
+        payload = value.tobytes(order="C")
+        return {
+            "name": name,
+            "dtype": "f32",
+            "shape": list(value.shape),
+            "present": True,
+            "elements": int(value.size),
+            "bytes": len(payload),
+            "sha256": hashlib.sha256(payload).hexdigest(),
+            "nonzero": int(np.count_nonzero(value)),
+            "nonfinite": int(np.count_nonzero(~np.isfinite(value))),
+            "values": value.tolist() if expose_values else None,
+        }
+
+    native_snapshot = None
+    weights_digest = "a" * 64
+    if native:
+        applied = np.float32(arrays["device_coefficient"][-1])
+        last_loss = np.float32(arrays["total_loss"][-1])
+        tensors = {
+            "device_entropy_coefficient": tensor_metadata(
+                "device_entropy_coefficient",
+                np.asarray((applied,), dtype=np.float32),
+                expose_values=True,
+            ),
+            "loss_accumulator": tensor_metadata(
+                "loss_accumulator",
+                np.zeros(10, dtype=np.float32),
+                expose_values=True,
+            ),
+            "scalar_loss": tensor_metadata(
+                "scalar_loss",
+                np.asarray((last_loss,), dtype=np.float32),
+                expose_values=True,
+            ),
+            "master_weights": tensor_metadata(
+                "master_weights",
+                master,
+                expose_values=False,
+            ),
+            "optimizer_momentum": tensor_metadata(
+                "optimizer_momentum",
+                momentum,
+                expose_values=False,
+            ),
+            "optimizer_learning_rate": tensor_metadata(
+                "optimizer_learning_rate",
+                np.zeros(1, dtype=np.float32),
+                expose_values=True,
+            ),
+            "optimizer_learning_rate_derived": tensor_metadata(
+                "optimizer_learning_rate_derived",
+                np.zeros(2, dtype=np.float32),
+                expose_values=True,
+            ),
+        }
+        used = sum(tensor["bytes"] for tensor in tensors.values())
+        state = {
+            "contract": ENTROPY_OVERRUN_STATE_CONTRACT,
+            "max_bytes": runner.QUALIFICATION_POLICY_MAX_BYTES,
+            "used_bytes": used,
+            "host": {
+                "epoch": total,
+                "global_step": total * total_agents * horizon,
+                "training_failed": False,
+                "current_ent_coef": float(applied),
+                "current_ent_epoch": total - 1,
+                "entropy_schedule_update_count": 0,
+                "entropy_loss_minibatch_count": 0,
+                "entropy_first_update": -1,
+                "entropy_last_update": -1,
+                "entropy_first_coefficient": 0.0,
+                "entropy_last_coefficient": 0.0,
+                "entropy_schedule_valid": False,
+                "defer_entropy_schedule_commit": False,
+                "entropy_schedule_commit_pending": False,
+                "pending_entropy_update": -1,
+                "pending_entropy_minibatches": 0,
+                "pending_entropy_coefficient": 0.0,
+            },
+            "tensors": tensors,
+        }
+        native_snapshot = {
+            "before": state,
+            "after": json.loads(json.dumps(state)),
+        }
+        for boundary in ("before", "after"):
+            arrays[f"overrun_state_{boundary}_master_weights"] = (
+                master.copy()
+            )
+            arrays[f"overrun_state_{boundary}_optimizer_momentum"] = (
+                momentum.copy()
+            )
+        weights_digest = tensors["master_weights"]["sha256"]
+
+    evidence = {
+        "kind": kind,
+        "backend": "native" if native else "torch",
+        "attempted_update_index": total,
+        "exception_type": "RuntimeError",
+        "exception_message": (
+            "training update exceeds configured total updates"
+            if native
+            else "training update exceeds configured total_updates"
+        ),
+        "epoch_before": total,
+        "epoch_after": total,
+        "global_step_before": total * total_agents * horizon,
+        "global_step_after": total * total_agents * horizon,
+        "tail_valid_before": 0,
+        "tail_valid_after": 0,
+        "weights_before_sha256": weights_digest,
+        "weights_after_sha256": weights_digest,
+        "execution_counter_deltas": (
+            {
+                mode: {
+                    role: 0 for role in ("rollout", "tail", "train")
+                }
+                for mode in ("graph", "eager")
+            }
+            if native
+            else None
+        ),
+        "native_state": native_snapshot,
+    }
+    return evidence, config, arrays
+
+
+def entropy_gradient_pair_evidence(
+    runner,
+    *,
+    enabled_kind: str,
+    disabled_kind: str,
+) -> tuple[
+    tuple[dict, dict[str, np.ndarray]],
+    tuple[dict, dict[str, np.ndarray]],
+]:
+    """Build closed raw gradient evidence with an analytic entropy delta."""
+
+    total = runner.ENTROPY_SCHEDULE_TOTAL_UPDATES
+    agents = 2
+    horizon = 2
+    logits_count = runner.BLOODBOWL_ACTION_LOGITS
+    action_heads = tuple(runner.BLOODBOWL_ACTION_HEAD_SIZES)
+    _, enabled_raw = entropy_raw_evidence(enabled_kind)
+    _, disabled_raw = entropy_raw_evidence(disabled_kind)
+
+    one_decoder = np.zeros(
+        (agents, horizon, logits_count + 1),
+        dtype=np.float32,
+    )
+    one_decoder[..., :logits_count] = np.linspace(
+        -0.35,
+        0.4,
+        logits_count,
+        dtype=np.float32,
+    )
+    one_decoder[..., logits_count] = np.float32(0.125)
+    decoder = np.repeat(one_decoder[np.newaxis, ...], total, axis=0)
+    masks = np.ones(
+        (total, agents, horizon, logits_count),
+        dtype=np.float32,
+    )
+    actions = np.zeros(
+        (total, agents, horizon, len(action_heads)),
+        dtype=np.float32,
+    )
+    coefficient_delta = (
+        enabled_raw["device_coefficient"]
+        - disabled_raw["device_coefficient"]
+    ).astype(np.float64)
+    expected_delta = np.zeros(
+        (total, agents, horizon, logits_count),
+        dtype=np.float64,
+    )
+    joint_entropy = np.zeros(
+        (total, agents, horizon),
+        dtype=np.float64,
+    )
+    offset = 0
+    for size in action_heads:
+        head_masks = masks[..., offset : offset + size]
+        head_logits = decoder[
+            ..., offset : offset + size
+        ].astype(np.float64)
+        masked_logits = np.where(
+            head_masks == np.float32(1.0),
+            head_logits,
+            -np.inf,
+        )
+        maximum = np.max(masked_logits, axis=-1, keepdims=True)
+        exponentials = np.where(
+            head_masks == np.float32(1.0),
+            np.exp(masked_logits - maximum),
+            0.0,
+        )
+        probabilities = exponentials / np.sum(
+            exponentials,
+            axis=-1,
+            keepdims=True,
+        )
+        log_probabilities = np.where(
+            head_masks == np.float32(1.0),
+            np.log(
+                np.maximum(
+                    probabilities,
+                    np.finfo(np.float64).tiny,
+                )
+            ),
+            0.0,
+        )
+        entropy = -np.sum(
+            probabilities * log_probabilities,
+            axis=-1,
+            keepdims=True,
+        )
+        joint_entropy += entropy[..., 0]
+        entropy_derivative = probabilities * (
+            -entropy - log_probabilities
+        )
+        expected_delta[..., offset : offset + size] = (
+            -coefficient_delta[:, np.newaxis, np.newaxis, np.newaxis]
+            * entropy_derivative
+            / float(agents * horizon)
+        )
+        offset += size
+
+    forward_entropy = np.mean(
+        joint_entropy,
+        axis=(1, 2),
+        dtype=np.float64,
+    ).astype(np.float32)
+    for raw in (enabled_raw, disabled_raw):
+        raw["entropy"] = forward_entropy.copy()
+        raw["signed_entropy_term"] = (
+            -raw["device_coefficient"] * raw["entropy"]
+        ).astype(np.float32)
+        raw["total_loss"] = (
+            raw["policy_loss"]
+            + np.float32(0.5) * raw["value_loss"]
+            + raw["signed_entropy_term"]
+        ).astype(np.float32)
+
+    common = {
+        "gradient_decoder_output": decoder,
+        "gradient_grad_values": np.zeros(
+            (total, agents, horizon),
+            dtype=np.float32,
+        ),
+        "gradient_grad_logstd": np.empty(
+            (total, 0),
+            dtype=np.float32,
+        ),
+        "gradient_mb_actions": actions,
+        "gradient_mb_logprobs": np.zeros(
+            (total, agents, horizon),
+            dtype=np.float32,
+        ),
+        "gradient_mb_advantages": np.zeros(
+            (total, agents, horizon),
+            dtype=np.float32,
+        ),
+        "gradient_mb_prio": np.ones(
+            (total, agents),
+            dtype=np.float32,
+        ),
+        "gradient_mb_action_mask": masks,
+        "gradient_act_sizes": np.repeat(
+            np.asarray(action_heads, dtype=np.int32)[np.newaxis, :],
+            total,
+            axis=0,
+        ),
+    }
+    disabled_arrays = {
+        **disabled_raw,
+        **{key: value.copy() for key, value in common.items()},
+        "gradient_grad_logits": np.zeros(
+            (total, agents, horizon, logits_count),
+            dtype=np.float32,
+        ),
+        "gradient_entropy_coefficient": disabled_raw[
+            "device_coefficient"
+        ][:, np.newaxis].copy(),
+    }
+    enabled_arrays = {
+        **enabled_raw,
+        **{key: value.copy() for key, value in common.items()},
+        "gradient_grad_logits": expected_delta.astype(np.float32),
+        "gradient_entropy_coefficient": enabled_raw[
+            "device_coefficient"
+        ][:, np.newaxis].copy(),
+    }
+
+    declared_shapes = {
+        "decoder_output": (agents, horizon, logits_count + 1),
+        "grad_logits": (agents, horizon, logits_count),
+        "grad_values": (agents, horizon),
+        "grad_logstd": (agents, horizon, logits_count),
+        "mb_actions": (agents, horizon, len(action_heads)),
+        "mb_logprobs": (agents, horizon),
+        "mb_advantages": (agents, horizon),
+        "mb_prio": (agents,),
+        "mb_action_mask": (agents, horizon, logits_count),
+        "act_sizes": (len(action_heads),),
+        "entropy_coefficient": (1,),
+    }
+
+    def gradient_record(
+        kind: str,
+        arrays: dict[str, np.ndarray],
+    ) -> dict:
+        snapshots = []
+        for update in range(total):
+            tensors = {}
+            used_bytes = 0
+            for name in runner.ENTROPY_GRADIENT_TENSOR_FIELDS:
+                present = name != "grad_logstd"
+                payload = (
+                    b""
+                    if not present
+                    else arrays[f"gradient_{name}"][update].tobytes(
+                        order="C"
+                    )
+                )
+                tensors[name] = {
+                    "name": name,
+                    "dtype": "i32" if name == "act_sizes" else "f32",
+                    "shape": list(declared_shapes[name]),
+                    "present": present,
+                    "bytes": len(payload),
+                    "sha256": hashlib.sha256(payload).hexdigest(),
+                }
+                used_bytes += len(payload)
+            snapshots.append(
+                {
+                    "contract": ENTROPY_GRADIENT_CONTRACT,
+                    "completed_update_index": update,
+                    "committed_epoch": update + 1,
+                    "is_continuous": False,
+                    "precision": "f32",
+                    "max_bytes": runner.QUALIFICATION_POLICY_MAX_BYTES,
+                    "used_bytes": used_bytes,
+                    "tensors": tensors,
+                }
+            )
+        return {
+            "kind": kind,
+            "backend": (
+                "native"
+                if kind in runner.ENTROPY_NATIVE_CELL_KINDS
+                else "torch"
+            ),
+            "contract": ENTROPY_GRADIENT_CONTRACT,
+            "raw_array_fields": list(
+                runner.ENTROPY_GRADIENT_ARRAY_FIELDS
+            ),
+            "snapshots": snapshots,
+        }
+
+    return (
+        (
+            gradient_record(enabled_kind, enabled_arrays),
+            enabled_arrays,
+        ),
+        (
+            gradient_record(disabled_kind, disabled_arrays),
+            disabled_arrays,
+        ),
+    )
 
 
 def cuda_runtime_evidence() -> dict:
@@ -1554,6 +2062,7 @@ class QualificationValidatorTests(unittest.TestCase):
                 "build.sh",
                 "pufferlib/pufferl.py",
                 "pufferlib/selfplay.py",
+                "pufferlib/sweep.py",
                 "pufferlib/torch_pufferl.py",
                 "src/bindings.cu",
                 "src/bindings_cpu.cpp",
@@ -1611,6 +2120,8 @@ class QualificationValidatorTests(unittest.TestCase):
                 qualification_recurrent_state=object(),
                 qualification_policy_weights=object(),
                 qualification_snapshot=object(),
+                qualification_entropy_gradient_state=object(),
+                qualification_entropy_overrun_state=object(),
                 qualification_graph_execution=object(),
                 qualification_consume_tail=object(),
             )
@@ -4842,6 +5353,10 @@ class EntropyScheduleQualificationContractTests(unittest.TestCase):
             ENTROPY_TELEMETRY_CONTRACT,
         )
         self.assertEqual(
+            self.q.ENTROPY_OVERRUN_STATE_CONTRACT,
+            ENTROPY_OVERRUN_STATE_CONTRACT,
+        )
+        self.assertEqual(
             tuple(self.q.ENTROPY_SCHEDULE_CELL_KINDS),
             ENTROPY_SCHEDULE_CELL_KINDS,
         )
@@ -4849,14 +5364,1180 @@ class EntropyScheduleQualificationContractTests(unittest.TestCase):
             len(set(self.q.ENTROPY_SCHEDULE_CELL_KINDS)),
             len(ENTROPY_SCHEDULE_CELL_KINDS),
         )
-        self.assertTrue(
-            set(ENTROPY_SCHEDULE_CELL_KINDS).issubset(self.q.CELL_KINDS)
+        self.assertEqual(
+            tuple(self.q.ENTROPY_GRADIENT_CONTROL_CELL_KINDS),
+            ENTROPY_GRADIENT_CONTROL_CELL_KINDS,
+        )
+        self.assertEqual(
+            tuple(self.q.ENTROPY_QUALIFICATION_CELL_KINDS),
+            ENTROPY_QUALIFICATION_CELL_KINDS,
         )
         self.assertTrue(
-            set(ENTROPY_SCHEDULE_CELL_KINDS).issubset(
+            set(ENTROPY_QUALIFICATION_CELL_KINDS).issubset(
+                self.q.CELL_KINDS
+            )
+        )
+        self.assertTrue(
+            set(ENTROPY_QUALIFICATION_CELL_KINDS).issubset(
                 self.q.ARRAY_CELL_KINDS
             )
         )
+
+    def test_entropy_gate_omission_is_always_fatal(self):
+        gates = {
+            name: {"accepted": True}
+            for name in self.q.MANDATORY_GATES
+        }
+        self.assertTrue(self.q.combine_gate_verdicts(gates)["accepted"])
+        del gates["entropy_schedule_parity"]
+        with self.assertRaisesRegex(
+            self.q.QualificationError,
+            "mandatory gate set mismatch",
+        ):
+            self.q.combine_gate_verdicts(gates)
+
+    def test_ordinary_entropy_execution_npz_schema_is_backend_owned(self):
+        common_fields = set(
+            self.q.ENTROPY_COMMON_EXECUTION_ARRAY_FIELDS
+        )
+        native_counter_fields = set(
+            self.q.ENTROPY_NATIVE_EXECUTION_COUNTER_ARRAY_FIELDS
+        )
+        fixtures = {}
+        for kind in (
+            "entropy_native_graph_annealed",
+            "entropy_torch_annealed",
+        ):
+            execution, config, arrays = entropy_execution_evidence(
+                self.q,
+                kind,
+            )
+            fixtures[kind] = (execution, config, arrays)
+            native = kind in self.q.ENTROPY_NATIVE_CELL_KINDS
+            expected_fields = (
+                common_fields | native_counter_fields
+                if native
+                else common_fields
+            )
+            with self.subTest(kind=kind, mutation="none"):
+                self.assertEqual(set(arrays), expected_fields)
+                summary = self.q.validate_entropy_execution_evidence(
+                    execution,
+                    arrays,
+                    expected_kind=kind,
+                    config=config,
+                )
+                self.assertEqual(
+                    summary["backend"],
+                    "native" if native else "torch",
+                )
+
+            raw_evidence, raw_arrays = entropy_raw_evidence(kind)
+            complete_arrays = {
+                **raw_arrays,
+                **arrays,
+            }
+            with self.subTest(kind=kind, schema="complete"):
+                self.q.validate_entropy_schedule_cell_evidence(
+                    raw_evidence,
+                    complete_arrays,
+                    expected_kind=kind,
+                    expected_schedule=raw_evidence["schedule"],
+                )
+
+            for field in common_fields:
+                changed = {
+                    name: value.copy()
+                    for name, value in arrays.items()
+                    if name != field
+                }
+                with self.subTest(
+                    kind=kind,
+                    mutation=f"missing common {field}",
+                ), self.assertRaisesRegex(
+                    self.q.QualificationError,
+                    "common execution NPZ arrays are incomplete",
+                ):
+                    self.q.validate_entropy_execution_evidence(
+                        execution,
+                        changed,
+                        expected_kind=kind,
+                        config=config,
+                    )
+
+        native_kind = "entropy_native_graph_annealed"
+        native_execution, native_config, native_arrays = fixtures[
+            native_kind
+        ]
+        native_raw_evidence, native_raw_arrays = entropy_raw_evidence(
+            native_kind
+        )
+        for field in native_counter_fields:
+            changed = {
+                name: value.copy()
+                for name, value in native_arrays.items()
+                if name != field
+            }
+            with self.subTest(
+                kind=native_kind,
+                mutation=f"missing native counter {field}",
+            ), self.assertRaisesRegex(
+                self.q.QualificationError,
+                "native entropy execution counter NPZ arrays are incomplete",
+            ):
+                self.q.validate_entropy_execution_evidence(
+                    native_execution,
+                    changed,
+                    expected_kind=native_kind,
+                    config=native_config,
+                )
+            with self.subTest(
+                kind=native_kind,
+                schema=f"missing native counter {field}",
+            ), self.assertRaisesRegex(
+                self.q.QualificationError,
+                "entropy NPZ array schema differs",
+            ):
+                self.q.validate_entropy_schedule_cell_evidence(
+                    native_raw_evidence,
+                    {
+                        **native_raw_arrays,
+                        **changed,
+                    },
+                    expected_kind=native_kind,
+                    expected_schedule=native_raw_evidence["schedule"],
+                )
+
+        changed_native = {
+            name: value.copy()
+            for name, value in native_arrays.items()
+        }
+        changed_native["graph_train_delta"][7] += np.int64(1)
+        with self.assertRaisesRegex(
+            self.q.QualificationError,
+            "entropy execution counter differs",
+        ):
+            self.q.validate_entropy_execution_evidence(
+                native_execution,
+                changed_native,
+                expected_kind=native_kind,
+                config=native_config,
+            )
+
+        torch_kind = "entropy_torch_annealed"
+        torch_execution, torch_config, torch_arrays = fixtures[torch_kind]
+        torch_raw_evidence, torch_raw_arrays = entropy_raw_evidence(
+            torch_kind
+        )
+        for field in native_counter_fields:
+            injected = {
+                name: value.copy()
+                for name, value in torch_arrays.items()
+            }
+            injected[field] = np.zeros(
+                self.q.ENTROPY_SCHEDULE_TOTAL_UPDATES,
+                dtype=np.int64,
+            )
+            with self.subTest(
+                kind=torch_kind,
+                mutation=f"fabricated native counter {field}",
+            ), self.assertRaisesRegex(
+                self.q.QualificationError,
+                "Torch entropy execution NPZ contains native-only counters",
+            ):
+                self.q.validate_entropy_execution_evidence(
+                    torch_execution,
+                    injected,
+                    expected_kind=torch_kind,
+                    config=torch_config,
+                )
+            with self.subTest(
+                kind=torch_kind,
+                schema=f"fabricated native counter {field}",
+            ), self.assertRaisesRegex(
+                self.q.QualificationError,
+                "entropy NPZ array schema differs",
+            ):
+                self.q.validate_entropy_schedule_cell_evidence(
+                    torch_raw_evidence,
+                    {
+                        **torch_raw_arrays,
+                        **injected,
+                    },
+                    expected_kind=torch_kind,
+                    expected_schedule=torch_raw_evidence["schedule"],
+                )
+
+    def test_worker_never_synthesizes_torch_native_execution_counters(self):
+        source = RUNNER.read_text(encoding="utf-8")
+        worker = source[
+            source.index("def _measure_entropy_schedule_cell("):
+            source.index("def run_cell(")
+        ]
+        self.assertIn("common_execution_values", worker)
+        self.assertIn("native_execution_counter_values", worker)
+        self.assertNotIn(
+            'execution_values[f"{mode}_{role}_delta"].append(0)',
+            worker,
+        )
+        self.assertNotIn(
+            "native_execution_counter_values"
+            '[f"{mode}_{role}_delta"].append(0)',
+            worker,
+        )
+
+    def test_all_gradient_pairs_and_native_mode_parity_are_mandatory(self):
+        pairs = (
+            (
+                "entropy_native_eager_annealed",
+                "entropy_native_eager_anneal_disabled",
+                "native_eager",
+            ),
+            (
+                "entropy_native_graph_annealed",
+                "entropy_native_graph_anneal_disabled",
+                "native_graph",
+            ),
+            (
+                "entropy_torch_annealed",
+                "entropy_torch_anneal_disabled",
+                "torch",
+            ),
+        )
+        enabled_by_kind = {}
+        for enabled_kind, disabled_kind, expected_role in pairs:
+            (enabled, disabled) = entropy_gradient_pair_evidence(
+                self.q,
+                enabled_kind=enabled_kind,
+                disabled_kind=disabled_kind,
+            )
+            enabled_evidence, enabled_arrays = enabled
+            disabled_evidence, disabled_arrays = disabled
+            enabled_by_kind[enabled_kind] = enabled_arrays
+            with self.subTest(pair=expected_role, evidence="enabled"):
+                self.q.validate_entropy_gradient_cell_evidence(
+                    enabled_evidence,
+                    enabled_arrays,
+                    expected_kind=enabled_kind,
+                )
+            with self.subTest(pair=expected_role, evidence="disabled"):
+                self.q.validate_entropy_gradient_cell_evidence(
+                    disabled_evidence,
+                    disabled_arrays,
+                    expected_kind=disabled_kind,
+                )
+            with self.subTest(pair=expected_role, mutation="none"):
+                summary = self.q.validate_entropy_gradient_pair(
+                    enabled_arrays,
+                    disabled_arrays,
+                    enabled_kind=enabled_kind,
+                    disabled_kind=disabled_kind,
+                )
+                self.assertEqual(summary["role"], expected_role)
+                self.assertGreater(
+                    summary["max_observed_gradient_delta"],
+                    2.0e-7,
+                )
+            corrupted = {
+                key: value.copy()
+                for key, value in enabled_arrays.items()
+            }
+            corrupted["gradient_grad_logits"][10, 0, 0, 0] += np.float32(
+                0.25
+            )
+            with self.subTest(
+                pair=expected_role,
+                mutation="gradient",
+            ), self.assertRaisesRegex(
+                self.q.QualificationError,
+                "gradient scale/sign",
+            ):
+                self.q.validate_entropy_gradient_pair(
+                    corrupted,
+                    disabled_arrays,
+                    enabled_kind=enabled_kind,
+                    disabled_kind=disabled_kind,
+                )
+
+        parity = self.q.validate_entropy_native_mode_gradient_parity(
+            enabled_by_kind["entropy_native_eager_annealed"],
+            enabled_by_kind["entropy_native_graph_annealed"],
+        )
+        self.assertIs(parity["all_raw_gradient_arrays_equal"], True)
+        corrupted_graph = {
+            key: value.copy()
+            for key, value in enabled_by_kind[
+                "entropy_native_graph_annealed"
+            ].items()
+        }
+        corrupted_graph["gradient_grad_values"][3, 0, 0] = np.float32(
+            1.0
+        )
+        with self.assertRaisesRegex(
+            self.q.QualificationError,
+            "native eager/graph entropy gradient differs",
+        ):
+            self.q.validate_entropy_native_mode_gradient_parity(
+                enabled_by_kind["entropy_native_eager_annealed"],
+                corrupted_graph,
+            )
+
+    def test_entropy_gradient_pair_rejects_systematic_scale_error(self):
+        pairs = (
+            (
+                "entropy_native_eager_annealed",
+                "entropy_native_eager_anneal_disabled",
+            ),
+            (
+                "entropy_native_graph_annealed",
+                "entropy_native_graph_anneal_disabled",
+            ),
+            (
+                "entropy_torch_annealed",
+                "entropy_torch_anneal_disabled",
+            ),
+        )
+        for enabled_kind, disabled_kind in pairs:
+            (enabled, disabled) = entropy_gradient_pair_evidence(
+                self.q,
+                enabled_kind=enabled_kind,
+                disabled_kind=disabled_kind,
+            )
+            _, enabled_arrays = enabled
+            _, disabled_arrays = disabled
+            baseline = disabled_arrays["gradient_grad_logits"]
+            delta = (
+                enabled_arrays["gradient_grad_logits"] - baseline
+            )
+            for scale in (np.float32(0.971), np.float32(0.99)):
+                changed = {
+                    key: value.copy()
+                    for key, value in enabled_arrays.items()
+                }
+                changed["gradient_grad_logits"] = (
+                    baseline + scale * delta
+                ).astype(np.float32)
+                with self.subTest(
+                    enabled_kind=enabled_kind,
+                    scale=float(scale),
+                ), self.assertRaisesRegex(
+                    self.q.QualificationError,
+                    "gradient scale/sign",
+                ):
+                    self.q.validate_entropy_gradient_pair(
+                        changed,
+                        disabled_arrays,
+                        enabled_kind=enabled_kind,
+                        disabled_kind=disabled_kind,
+                    )
+
+    def test_entropy_gradient_cell_rejects_coordinated_forward_entropy_offset(
+        self,
+    ):
+        kind = "entropy_native_eager_annealed"
+        (enabled, _) = entropy_gradient_pair_evidence(
+            self.q,
+            enabled_kind=kind,
+            disabled_kind="entropy_native_eager_anneal_disabled",
+        )
+        evidence, arrays = enabled
+        changed = {
+            key: value.copy()
+            for key, value in arrays.items()
+        }
+        for offset in (np.float32(1.0), np.float32(1.0e-3)):
+            corrupted = {
+                key: value.copy()
+                for key, value in changed.items()
+            }
+            corrupted["entropy"] += offset
+            corrupted["signed_entropy_term"] = (
+                -corrupted["device_coefficient"] * corrupted["entropy"]
+            ).astype(np.float32)
+            corrupted["total_loss"] = (
+                corrupted["policy_loss"]
+                + np.float32(0.5) * corrupted["value_loss"]
+                + corrupted["signed_entropy_term"]
+            ).astype(np.float32)
+            with self.subTest(offset=float(offset)), self.assertRaisesRegex(
+                self.q.QualificationError,
+                "forward entropy",
+            ):
+                self.q.validate_entropy_gradient_cell_evidence(
+                    evidence,
+                    corrupted,
+                    expected_kind=kind,
+                )
+
+    def test_parent_validates_native_and_torch_overrun_evidence(self):
+        for kind in (
+            "entropy_native_graph_annealed",
+            "entropy_torch_annealed",
+        ):
+            evidence, config, arrays = entropy_overrun_evidence(self.q, kind)
+            with self.subTest(kind=kind):
+                summary = self.q.validate_entropy_overrun_evidence(
+                    evidence,
+                    expected_kind=kind,
+                    config=config,
+                    arrays=arrays,
+                )
+                self.assertEqual(summary["kind"], kind)
+                self.assertEqual(
+                    summary["attempted_update_index"],
+                    self.q.ENTROPY_SCHEDULE_TOTAL_UPDATES,
+                )
+                self.assertIs(
+                    summary["state_unchanged"]["execution_counters"],
+                    (
+                        True
+                        if kind.startswith("entropy_native_")
+                        else None
+                    ),
+                )
+                self.assertNotIn("accepted", summary)
+                self.assertNotIn("passed", summary)
+                if kind.startswith("entropy_native_"):
+                    snapshot = evidence["native_state"]["before"]
+                    self.assertEqual(
+                        snapshot["tensors"]["master_weights"]["elements"],
+                        219_456,
+                    )
+                    self.assertEqual(
+                        snapshot["tensors"]["master_weights"]["bytes"],
+                        877_824,
+                    )
+                    self.assertEqual(
+                        snapshot["used_bytes"],
+                        1_755_708,
+                    )
+
+    def test_parent_rejects_every_overrun_evidence_mutation(self):
+        for kind in (
+            "entropy_native_graph_annealed",
+            "entropy_torch_annealed",
+        ):
+            evidence, config, arrays = entropy_overrun_evidence(self.q, kind)
+
+            def reject(label, changed, changed_config=None):
+                with self.subTest(kind=kind, mutation=label), self.assertRaises(
+                    self.q.QualificationError
+                ):
+                    self.q.validate_entropy_overrun_evidence(
+                        changed,
+                        expected_kind=kind,
+                        config=(
+                            config
+                            if changed_config is None
+                            else changed_config
+                        ),
+                        arrays=arrays,
+                    )
+
+            for key in tuple(evidence):
+                changed = json.loads(json.dumps(evidence))
+                del changed[key]
+                reject(f"missing top-level key {key}", changed)
+            for extra in ("accepted", "passed", "worker_verdict"):
+                changed = json.loads(json.dumps(evidence))
+                changed[extra] = True
+                reject(f"extra top-level key {extra}", changed)
+
+            for key, value in (
+                ("kind", "entropy_native_eager_annealed"),
+                (
+                    "backend",
+                    "torch" if evidence["backend"] == "native" else "native",
+                ),
+                ("exception_type", "ValueError"),
+                ("exception_message", "rejected"),
+            ):
+                changed = json.loads(json.dumps(evidence))
+                changed[key] = value
+                reject(f"wrong {key}", changed)
+
+            for key in (
+                "attempted_update_index",
+                "epoch_before",
+                "epoch_after",
+                "global_step_before",
+                "global_step_after",
+                "tail_valid_before",
+                "tail_valid_after",
+            ):
+                changed = json.loads(json.dumps(evidence))
+                changed[key] += 1
+                reject(f"wrong {key}", changed)
+                changed = json.loads(json.dumps(evidence))
+                changed[key] = float(changed[key])
+                reject(f"float impostor {key}", changed)
+            for key in ("tail_valid_before", "tail_valid_after"):
+                changed = json.loads(json.dumps(evidence))
+                changed[key] = False
+                reject(f"boolean impostor {key}", changed)
+
+            changed = json.loads(json.dumps(evidence))
+            changed["weights_before_sha256"] = "malformed"
+            reject("malformed before digest", changed)
+            changed = json.loads(json.dumps(evidence))
+            changed["weights_after_sha256"] = "b" * 64
+            reject("changed weights digest", changed)
+
+            if evidence["backend"] == "native":
+                for mode in ("graph", "eager"):
+                    changed = json.loads(json.dumps(evidence))
+                    del changed["execution_counter_deltas"][mode]
+                    reject(f"missing mode {mode}", changed)
+                changed = json.loads(json.dumps(evidence))
+                changed["execution_counter_deltas"]["other"] = {}
+                reject("extra execution mode", changed)
+
+                for mode in ("graph", "eager"):
+                    for role in ("rollout", "tail", "train"):
+                        changed = json.loads(json.dumps(evidence))
+                        del changed["execution_counter_deltas"][mode][role]
+                        reject(f"missing role {mode}/{role}", changed)
+                        changed = json.loads(json.dumps(evidence))
+                        changed["execution_counter_deltas"][mode]["other"] = 0
+                        reject(f"extra role {mode}", changed)
+                        for value in (1, -1, 0.0, False):
+                            changed = json.loads(json.dumps(evidence))
+                            changed["execution_counter_deltas"][mode][role] = value
+                            reject(
+                                f"counter {mode}/{role}={value!r}",
+                                changed,
+                            )
+            else:
+                changed = json.loads(json.dumps(evidence))
+                changed["execution_counter_deltas"] = {
+                    mode: {
+                        role: 0
+                        for role in ("rollout", "tail", "train")
+                    }
+                    for mode in ("graph", "eager")
+                }
+                reject("fabricated Torch execution counters", changed)
+
+            for section, key in (
+                ("vec", "total_agents"),
+                ("vec", "num_buffers"),
+                ("train", "horizon"),
+            ):
+                changed_config = json.loads(json.dumps(config))
+                changed_config[section][key] = float(
+                    changed_config[section][key]
+                )
+                reject(
+                    f"float config impostor {section}/{key}",
+                    evidence,
+                    changed_config,
+                )
+
+    def test_parent_rejects_native_overrun_state_mutations(self):
+        kind = "entropy_native_graph_annealed"
+        evidence, config, arrays = entropy_overrun_evidence(self.q, kind)
+
+        def changed():
+            return json.loads(json.dumps(evidence))
+
+        def reject(label, record, changed_arrays=None):
+            with self.subTest(mutation=label), self.assertRaises(
+                self.q.QualificationError
+            ):
+                self.q.validate_entropy_overrun_evidence(
+                    record,
+                    expected_kind=kind,
+                    config=config,
+                    arrays=(
+                        arrays
+                        if changed_arrays is None
+                        else changed_arrays
+                    ),
+                )
+
+        record = changed()
+        record["native_state"] = None
+        reject("native state absent", record)
+
+        for key in ("before", "after"):
+            record = changed()
+            del record["native_state"][key]
+            reject(f"missing native-state boundary {key}", record)
+        record = changed()
+        record["native_state"]["worker_verdict"] = True
+        reject("extra native-state verdict", record)
+
+        for boundary in ("before", "after"):
+            snapshot = evidence["native_state"][boundary]
+            for key in tuple(snapshot):
+                record = changed()
+                del record["native_state"][boundary][key]
+                reject(f"missing snapshot {boundary}/{key}", record)
+            record = changed()
+            record["native_state"][boundary]["accepted"] = True
+            reject(f"extra snapshot verdict {boundary}", record)
+
+            for field, original in snapshot["host"].items():
+                record = changed()
+                host = record["native_state"][boundary]["host"]
+                if type(original) is bool:
+                    host[field] = not original
+                elif type(original) is int:
+                    host[field] = original + 1
+                else:
+                    host[field] = float(
+                        np.nextafter(
+                            np.float32(original),
+                            np.float32(np.inf),
+                        )
+                    )
+                reject(f"changed host {boundary}/{field}", record)
+
+                record = changed()
+                host = record["native_state"][boundary]["host"]
+                if type(original) is bool:
+                    host[field] = int(original)
+                elif type(original) is int:
+                    host[field] = float(original)
+                else:
+                    host[field] = int(original)
+                reject(f"type impostor host {boundary}/{field}", record)
+
+            record = changed()
+            del record["native_state"][boundary]["host"]["epoch"]
+            reject(f"missing host field {boundary}", record)
+            record = changed()
+            record["native_state"][boundary]["host"]["other"] = 0
+            reject(f"extra host field {boundary}", record)
+
+            for tensor_name, tensor in snapshot["tensors"].items():
+                record = changed()
+                del record["native_state"][boundary]["tensors"][
+                    tensor_name
+                ]
+                reject(
+                    f"missing tensor {boundary}/{tensor_name}",
+                    record,
+                )
+                metadata_mutations = {
+                    "name": "other",
+                    "dtype": "f64",
+                    "shape": [tensor["shape"][0] + 1],
+                    "present": False,
+                    "elements": tensor["elements"] + 1,
+                    "bytes": tensor["bytes"] + 4,
+                    "sha256": "b" * 64,
+                    "nonzero": tensor["elements"] + 1,
+                    "nonfinite": 1,
+                    "values": (
+                        []
+                        if tensor["values"] is None
+                        else [
+                            float(
+                                np.nextafter(
+                                    np.float32(tensor["values"][0]),
+                                    np.float32(np.inf),
+                                )
+                            ),
+                            *tensor["values"][1:],
+                        ]
+                    ),
+                }
+                for field, value in metadata_mutations.items():
+                    record = changed()
+                    record["native_state"][boundary]["tensors"][
+                        tensor_name
+                    ][field] = value
+                    reject(
+                        f"tensor metadata {boundary}/{tensor_name}/{field}",
+                        record,
+                    )
+                record = changed()
+                record["native_state"][boundary]["tensors"][
+                    tensor_name
+                ]["worker_verdict"] = True
+                reject(
+                    f"extra tensor metadata {boundary}/{tensor_name}",
+                    record,
+                )
+
+            record = changed()
+            record["native_state"][boundary]["tensors"]["other"] = {}
+            reject(f"extra tensor {boundary}", record)
+
+        record = changed()
+        record["native_state"]["before"]["max_bytes"] -= 1
+        reject("wrong snapshot byte limit", record)
+        record = changed()
+        record["native_state"]["before"]["used_bytes"] += 4
+        reject("wrong snapshot byte ledger", record)
+
+        changed_arrays = {
+            key: value.copy() for key, value in arrays.items()
+        }
+        changed_arrays["device_coefficient"][-1] = np.nextafter(
+            changed_arrays["device_coefficient"][-1],
+            np.float32(np.inf),
+        )
+        reject("snapshot coefficient differs from NPZ", evidence, changed_arrays)
+        changed_arrays = {
+            key: value.copy() for key, value in arrays.items()
+        }
+        changed_arrays["total_loss"][-1] = np.nextafter(
+            changed_arrays["total_loss"][-1],
+            np.float32(np.inf),
+        )
+        reject("snapshot scalar loss differs from NPZ", evidence, changed_arrays)
+
+        torch_kind = "entropy_torch_annealed"
+        torch_evidence, torch_config, torch_arrays = entropy_overrun_evidence(
+            self.q,
+            torch_kind,
+        )
+        torch_evidence["native_state"] = evidence["native_state"]
+        with self.assertRaisesRegex(
+            self.q.QualificationError,
+            "contains native state",
+        ):
+            self.q.validate_entropy_overrun_evidence(
+                torch_evidence,
+                expected_kind=torch_kind,
+                config=torch_config,
+                arrays=torch_arrays,
+            )
+
+    def test_parent_rejects_coordinated_native_overrun_claims(self):
+        kind = "entropy_native_graph_annealed"
+        evidence, config, arrays = entropy_overrun_evidence(self.q, kind)
+
+        def record_copy():
+            return json.loads(json.dumps(evidence))
+
+        def arrays_copy():
+            return {
+                key: value.copy()
+                for key, value in arrays.items()
+            }
+
+        def reject(
+            label,
+            record=None,
+            changed_config=None,
+            changed_arrays=None,
+        ):
+            with self.subTest(mutation=label), self.assertRaises(
+                self.q.QualificationError
+            ):
+                self.q.validate_entropy_overrun_evidence(
+                    evidence if record is None else record,
+                    expected_kind=kind,
+                    config=(
+                        config
+                        if changed_config is None
+                        else changed_config
+                    ),
+                    arrays=(
+                        arrays
+                        if changed_arrays is None
+                        else changed_arrays
+                    ),
+                )
+
+        record = record_copy()
+        for boundary in ("before", "after"):
+            snapshot = record["native_state"][boundary]
+            removed = 0
+            for name in ("master_weights", "optimizer_momentum"):
+                tensor = snapshot["tensors"][name]
+                removed += tensor["bytes"] - 4
+                tensor["shape"] = [1]
+                tensor["elements"] = 1
+                tensor["bytes"] = 4
+                tensor["nonzero"] = 1
+            snapshot["used_bytes"] -= removed
+        reject("coordinated large-tensor shrink", record=record)
+
+        record = record_copy()
+        for boundary in ("before", "after"):
+            record["native_state"][boundary]["tensors"][
+                "optimizer_momentum"
+            ]["sha256"] = "b" * 64
+        reject("coordinated arbitrary momentum digest", record=record)
+
+        record = record_copy()
+        for boundary in ("before", "after"):
+            tensors = record["native_state"][boundary]["tensors"]
+            tensors["optimizer_momentum"]["sha256"] = tensors[
+                "master_weights"
+            ]["sha256"]
+            tensors["optimizer_momentum"]["nonzero"] = tensors[
+                "master_weights"
+            ]["nonzero"]
+        reject("momentum aliases master weights", record=record)
+
+        for name in self.q.ENTROPY_OVERRUN_SMALL_TENSORS:
+            record = record_copy()
+            for boundary in ("before", "after"):
+                record["native_state"][boundary]["tensors"][name][
+                    "sha256"
+                ] = "b" * 64
+            reject(
+                f"coordinated small-tensor digest {name}",
+                record=record,
+            )
+
+        for name in ("master_weights", "optimizer_momentum"):
+            record = record_copy()
+            for boundary in ("before", "after"):
+                record["native_state"][boundary]["tensors"][name][
+                    "nonzero"
+                ] = 1
+            reject(
+                f"coordinated false nonzero count {name}",
+                record=record,
+            )
+
+        record = record_copy()
+        for boundary in ("before", "after"):
+            host = record["native_state"][boundary]["host"]
+            host["current_ent_coef"] += 1.0e-12
+        reject("noncanonical host f32 alias", record=record)
+
+        record = record_copy()
+        for boundary in ("before", "after"):
+            values = record["native_state"][boundary]["tensors"][
+                "device_entropy_coefficient"
+            ]["values"]
+            values[0] += 1.0e-12
+        reject("noncanonical tensor f32 alias", record=record)
+
+        for section, key, value in (
+            ("train", "learning_rate", 0.5),
+            ("train", "anneal_lr", True),
+            ("train", "minibatch_size", 1),
+            ("train", "replay_ratio", 9),
+            ("train", "total_timesteps", 1),
+            ("policy", "hidden_size", 32),
+            ("policy", "num_layers", 2),
+        ):
+            changed_config = json.loads(json.dumps(config))
+            changed_config[section][key] = value
+            reject(
+                f"configuration drift {section}/{key}",
+                changed_config=changed_config,
+            )
+
+        for label, value in (
+            ("integer zero", 0),
+            ("boolean false", False),
+            ("negative zero", -0.0),
+            ("sub-f32 epsilon", 1.0e-12),
+        ):
+            changed_config = json.loads(json.dumps(config))
+            changed_config["train"]["learning_rate"] = value
+            reject(
+                f"learning-rate spelling {label}",
+                changed_config=changed_config,
+            )
+
+        changed_arrays = arrays_copy()
+        changed_arrays[
+            "overrun_state_after_optimizer_momentum"
+        ][0] = np.nextafter(
+            changed_arrays[
+                "overrun_state_after_optimizer_momentum"
+            ][0],
+            np.float32(np.inf),
+        )
+        reject(
+            "raw momentum differs after rejection",
+            changed_arrays=changed_arrays,
+        )
+
+        changed_arrays = arrays_copy()
+        changed_arrays["overrun_state_extra"] = np.zeros(
+            1,
+            dtype=np.float32,
+        )
+        reject(
+            "extra overrun NPZ namespace field",
+            changed_arrays=changed_arrays,
+        )
+
+        torch_kind = "entropy_torch_annealed"
+        torch_evidence, torch_config, torch_arrays = (
+            entropy_overrun_evidence(self.q, torch_kind)
+        )
+        torch_arrays["overrun_state_extra"] = np.zeros(
+            1,
+            dtype=np.float32,
+        )
+        with self.assertRaisesRegex(
+            self.q.QualificationError,
+            "NPZ array namespace differs",
+        ):
+            self.q.validate_entropy_overrun_evidence(
+                torch_evidence,
+                expected_kind=torch_kind,
+                config=torch_config,
+                arrays=torch_arrays,
+            )
+
+    def test_native_overrun_raw_state_decoder_is_closed_and_bounded(self):
+        evidence, _, arrays = entropy_overrun_evidence(
+            self.q,
+            "entropy_native_graph_annealed",
+        )
+        expected = evidence["native_state"]["before"]
+        raw_values = {
+            "device_entropy_coefficient": np.asarray(
+                expected["tensors"]["device_entropy_coefficient"]["values"],
+                dtype=np.float32,
+            ),
+            "loss_accumulator": np.asarray(
+                expected["tensors"]["loss_accumulator"]["values"],
+                dtype=np.float32,
+            ),
+            "scalar_loss": np.asarray(
+                expected["tensors"]["scalar_loss"]["values"],
+                dtype=np.float32,
+            ),
+            "master_weights": arrays[
+                "overrun_state_before_master_weights"
+            ],
+            "optimizer_momentum": arrays[
+                "overrun_state_before_optimizer_momentum"
+            ],
+            "optimizer_learning_rate": np.zeros(1, dtype=np.float32),
+            "optimizer_learning_rate_derived": np.zeros(
+                2,
+                dtype=np.float32,
+            ),
+        }
+        raw = {
+            "contract": ENTROPY_OVERRUN_STATE_CONTRACT,
+            "max_bytes": self.q.QUALIFICATION_POLICY_MAX_BYTES,
+            "used_bytes": sum(value.nbytes for value in raw_values.values()),
+            "host": json.loads(json.dumps(expected["host"])),
+            "tensors": {
+                name: {
+                    "name": name,
+                    "dtype": "f32",
+                    "shape": list(value.shape),
+                    "present": True,
+                    "data": value.tobytes(order="C"),
+                    "bytes": value.nbytes,
+                }
+                for name, value in raw_values.items()
+            },
+        }
+        captured = {}
+        self.assertEqual(
+            self.q._decode_entropy_overrun_state(
+                raw,
+                captured_arrays=captured,
+                boundary="before",
+            ),
+            expected,
+        )
+        self.assertEqual(
+            set(captured),
+            {
+                "overrun_state_before_master_weights",
+                "overrun_state_before_optimizer_momentum",
+            },
+        )
+        self.assertTrue(
+            np.array_equal(
+                captured["overrun_state_before_master_weights"],
+                raw_values["master_weights"],
+            )
+        )
+        self.assertTrue(
+            np.array_equal(
+                captured["overrun_state_before_optimizer_momentum"],
+                raw_values["optimizer_momentum"],
+            )
+        )
+
+        mutations = []
+        changed = json.loads(
+            json.dumps(raw, default=lambda value: value.hex())
+        )
+        # Reconstitute payloads after the JSON structural copy.
+        for name, tensor in changed["tensors"].items():
+            tensor["data"] = bytes.fromhex(tensor["data"])
+        changed["used_bytes"] += 4
+        mutations.append(("used-byte ledger", changed))
+
+        changed = {
+            **raw,
+            "host": dict(raw["host"]),
+            "tensors": {
+                name: dict(tensor)
+                for name, tensor in raw["tensors"].items()
+            },
+        }
+        changed["host"]["epoch"] = float(changed["host"]["epoch"])
+        mutations.append(("integer impostor", changed))
+
+        changed = {
+            **raw,
+            "host": dict(raw["host"]),
+            "tensors": {
+                name: dict(tensor)
+                for name, tensor in raw["tensors"].items()
+            },
+        }
+        changed["tensors"]["scalar_loss"]["data"] = np.asarray(
+            (np.nan,),
+            dtype=np.float32,
+        ).tobytes()
+        mutations.append(("nonfinite tensor", changed))
+
+        changed = {
+            **raw,
+            "host": dict(raw["host"]),
+            "tensors": {
+                name: dict(tensor)
+                for name, tensor in raw["tensors"].items()
+            },
+        }
+        changed["tensors"]["master_weights"]["data"] = b"\x00"
+        mutations.append(("truncated tensor", changed))
+
+        for label, changed in mutations:
+            with self.subTest(mutation=label), self.assertRaises(
+                self.q.QualificationError
+            ):
+                self.q._decode_entropy_overrun_state(changed)
+
+    def test_discrete_absent_grad_logstd_retains_declared_shape(self):
+        (enabled, _) = entropy_gradient_pair_evidence(
+            self.q,
+            enabled_kind="entropy_native_eager_annealed",
+            disabled_kind="entropy_native_eager_anneal_disabled",
+        )
+        evidence, arrays = enabled
+        summary = self.q.validate_entropy_gradient_cell_evidence(
+            evidence,
+            arrays,
+            expected_kind="entropy_native_eager_annealed",
+        )
+        self.assertEqual(
+            arrays["gradient_grad_logstd"].shape,
+            (self.q.ENTROPY_SCHEDULE_TOTAL_UPDATES, 0),
+        )
+        metadata = evidence["snapshots"][0]["tensors"]["grad_logstd"]
+        self.assertEqual(
+            metadata["shape"],
+            [2, 2, self.q.BLOODBOWL_ACTION_LOGITS],
+        )
+        self.assertIs(metadata["present"], False)
+        self.assertEqual(metadata["bytes"], 0)
+        self.assertEqual(
+            metadata["sha256"],
+            hashlib.sha256(b"").hexdigest(),
+        )
+        self.assertEqual(
+            summary["contract"],
+            ENTROPY_GRADIENT_CONTRACT,
+        )
+
+        update = 4
+        snapshot = evidence["snapshots"][update]
+        raw_tensors = {}
+        for name in self.q.ENTROPY_GRADIENT_TENSOR_FIELDS:
+            metadata = snapshot["tensors"][name]
+            raw_tensors[name] = {
+                key: metadata[key]
+                for key in (
+                    "name",
+                    "dtype",
+                    "shape",
+                    "present",
+                    "bytes",
+                )
+            }
+            raw_tensors[name]["data"] = (
+                b""
+                if not metadata["present"]
+                else arrays[f"gradient_{name}"][update].tobytes(
+                    order="C"
+                )
+            )
+        raw_state = {
+            key: snapshot[key]
+            for key in (
+                "contract",
+                "completed_update_index",
+                "committed_epoch",
+                "is_continuous",
+                "precision",
+                "max_bytes",
+                "used_bytes",
+            )
+        }
+        raw_state["tensors"] = raw_tensors
+        normalized, decoded = self.q._decode_entropy_gradient_state(
+            raw_state,
+            expected_update_index=update,
+            expected_backend="torch",
+        )
+        self.assertEqual(
+            normalized["tensors"]["grad_logstd"]["shape"],
+            [2, 2, self.q.BLOODBOWL_ACTION_LOGITS],
+        )
+        self.assertEqual(decoded["gradient_grad_logstd"].shape, (0,))
+        for name in self.q.ENTROPY_GRADIENT_TENSOR_FIELDS:
+            if name == "grad_logstd":
+                continue
+            np.testing.assert_array_equal(
+                decoded[f"gradient_{name}"],
+                arrays[f"gradient_{name}"][update],
+            )
+
+        malformed = json.loads(json.dumps(evidence))
+        malformed["snapshots"][0]["tensors"]["grad_logstd"]["shape"] = [0]
+        with self.assertRaisesRegex(
+            self.q.QualificationError,
+            "tensor identity differs",
+        ):
+            self.q.validate_entropy_gradient_cell_evidence(
+                malformed,
+                arrays,
+                expected_kind="entropy_native_eager_annealed",
+            )
+
+        coefficient_evidence = json.loads(json.dumps(evidence))
+        coefficient_arrays = {
+            key: value.copy() for key, value in arrays.items()
+        }
+        coefficient_arrays["gradient_entropy_coefficient"][
+            7, 0
+        ] = np.nextafter(
+            coefficient_arrays["gradient_entropy_coefficient"][7, 0],
+            np.float32(np.inf),
+        )
+        coefficient_payload = coefficient_arrays[
+            "gradient_entropy_coefficient"
+        ][7].tobytes(order="C")
+        coefficient_metadata = coefficient_evidence["snapshots"][7][
+            "tensors"
+        ]["entropy_coefficient"]
+        coefficient_metadata["bytes"] = len(coefficient_payload)
+        coefficient_metadata["sha256"] = hashlib.sha256(
+            coefficient_payload
+        ).hexdigest()
+        with self.assertRaisesRegex(
+            self.q.QualificationError,
+            "gradient/forward coefficient telemetry disagrees",
+        ):
+            self.q.validate_entropy_gradient_cell_evidence(
+                coefficient_evidence,
+                coefficient_arrays,
+                expected_kind="entropy_native_eager_annealed",
+            )
 
     def test_entropy_patch_and_compiled_contract_are_exact_identity(self):
         self.assertTrue(
@@ -4887,6 +6568,24 @@ class EntropyScheduleQualificationContractTests(unittest.TestCase):
                 source.index("def validate_module_identity(")
             ],
         )
+
+    def test_torch_gradient_capture_surface_is_bound_into_qualification_patch(
+        self,
+    ):
+        patch = PATCH.read_text(encoding="utf-8")
+        for fragment in (
+            "def enable_entropy_gradient_qualification(self):",
+            "def qualification_entropy_gradient_state(",
+            "part.retain_grad()",
+            "newvalue.retain_grad()",
+            "qualification_pending",
+            "'grad_logits'",
+            "'grad_values'",
+            "'grad_logstd'",
+            ENTROPY_GRADIENT_CONTRACT,
+        ):
+            with self.subTest(fragment=fragment):
+                self.assertIn(fragment, patch)
 
     def test_entropy_patch_identity_schema_rejects_every_mutation(self):
         validator = getattr(
@@ -5080,6 +6779,10 @@ class EntropyScheduleQualificationContractTests(unittest.TestCase):
             source.index("def _run_worker("):
             source.index("def _require_same_identity(")
         ]
+        measurement = source[
+            source.index("def _measure_entropy_schedule_cell("):
+            source.index("def run_cell(")
+        ]
         driver = source[
             source.index("def run_qualification("):
             source.index("def add_common_arguments(")
@@ -5087,6 +6790,7 @@ class EntropyScheduleQualificationContractTests(unittest.TestCase):
         for fragment in (
             "ENTROPY_SCHEDULE_CELL_KINDS",
             "validate_entropy_schedule_cell_evidence(",
+            "validate_entropy_gradient_cell_evidence(",
             '"entropy_schedule_parity"',
             '"qualification_only": True',
             '"record_bytes": record["record_bytes"]',
@@ -5108,56 +6812,99 @@ class EntropyScheduleQualificationContractTests(unittest.TestCase):
             '"qualification_only": True',
             driver,
         )
+        for fragment in (
+            '"enable_entropy_gradient_qualification"',
+            '"qualification_entropy_gradient_state"',
+            "ENTROPY_OVERRUN_STATE_SURFACE_BINDING",
+            "_decode_entropy_overrun_state(",
+            "captured_arrays=overrun_state_arrays",
+            'boundary="before"',
+            'boundary="after"',
+            "ENTROPY_OVERRUN_ARRAY_FIELDS",
+            '"native_state"',
+            '"Torch entropy cell seed"',
+            "torch.manual_seed(cell_seed)",
+            'record["torch_manual_seed"] = cell_seed',
+        ):
+            with self.subTest(measurement_fragment=fragment):
+                self.assertIn(fragment, measurement)
+        self.assertLess(
+            measurement.index("torch.manual_seed(cell_seed)"),
+            measurement.index("PuffeRL.create_pufferl("),
+            "Torch RNG must be seeded before policy construction so the "
+            "enabled/disabled subprocess cells share identical baselines",
+        )
+        self.assertIn(
+            'expected_entropy_keys.add("torch_manual_seed")',
+            worker,
+        )
+        self.assertIn(
+            "Torch manual seed differs",
+            worker,
+        )
+        self.assertEqual(
+            driver.count("validate_entropy_gradient_pair("),
+            3,
+        )
+        self.assertEqual(
+            driver.count(
+                "validate_entropy_native_mode_gradient_parity("
+            ),
+            1,
+        )
 
 
 class QualificationPatchContractTests(unittest.TestCase):
     """The native patch exposes bounded evidence and explicit tail consumption."""
 
-    def test_native_constructor_blocks_graph_entropy_annealing_before_cuda(self):
+    def test_native_constructor_supports_graph_entropy_annealing_after_repair(self):
+        runner = load_runner()
         patch = PATCH.read_text(encoding="utf-8")
         guard = (
             "if (hypers.cudagraphs >= 0 && hypers.anneal_ent_coef)"
         )
-        self.assertIn(guard, patch)
-        self.assertRegex(
-            patch,
-            r'"CUDA graph training with entropy annealing is disabled until "\s*'
-            r'\+\s*"the runtime coefficient is device-backed and qualified"',
+        stale_message = (
+            "CUDA graph training with entropy annealing is disabled until "
+            "the runtime coefficient is device-backed and qualified"
         )
-        guard_at = patch.index(guard)
-        seed_at = patch.rindex(
-            "hypers.seed = get_config(args, \"seed\");",
-            0,
-            guard_at,
+        self.assertNotIn(guard, patch)
+        self.assertNotIn(stale_message, patch)
+        self.assertEqual(
+            runner.validate_entropy_cell_cudagraphs(
+                "entropy_native_graph_annealed",
+                runner.DEFAULT_CUDAGRAPH_WARMUP_EPOCHS,
+            ),
+            runner.DEFAULT_CUDAGRAPH_WARMUP_EPOCHS,
         )
-        discovery_at = patch.index(
-            "cudaError_t device_status = cudaGetDeviceCount(&device_count)",
-            guard_at,
+        entropy_patch = ENTROPY_SCHEDULE_PATCH.read_text(encoding="utf-8")
+        for fragment in (
+            "FloatTensor ent_coef;",
+            "float current_ent_coef;",
+            "cudaMemcpyAsync(",
+            "pufferl.ppo_bufs_puf.ent_coef.data",
+        ):
+            with self.subTest(fragment=fragment):
+                self.assertIn(fragment, entropy_patch)
+        self.assertIn(
+            "entropy_native_graph_annealed",
+            RUNNER.read_text(encoding="utf-8"),
         )
-        self.assertLess(seed_at, guard_at)
-        self.assertLess(guard_at, discovery_at)
-
-        # The exact conjunction is deliberately broad: graph-on+anneal rejects
-        # even when ent_coef is zero/min-ratio is one, while either graph-off or
-        # a fixed entropy coefficient remains representable.
-        guard_line = next(
-            line for line in patch.splitlines() if guard in line
-        )
-        self.assertNotIn("ent_coef", guard_line.replace("anneal_ent_coef", ""))
-        self.assertNotIn("min_ent_coef_ratio", guard_line)
-        self.assertNotIn("||", guard_line)
 
     def test_native_patch_exposes_only_bounded_evidence_surfaces(self):
         patch = PATCH.read_text(encoding="utf-8")
         for fragment in (
             "qualification_recurrent_state",
             "qualification_snapshot",
+            "qualification_entropy_gradient_state",
+            "qualification_entropy_overrun_state",
             "qualification_graph_execution",
             "qualification_consume_tail",
             "QUALIFICATION_MAX_SNAPSHOT_BYTES",
             "snapshot exceeds qualification byte limit",
             'm.def("qualification_recurrent_state"',
             'm.def("qualification_snapshot"',
+            'm.def("qualification_entropy_gradient_state"',
+            'm.def("qualification_entropy_overrun_state"',
             'm.def("qualification_graph_execution"',
             'm.def("qualification_consume_tail"',
             "graph_launch_counts",
@@ -5180,6 +6927,41 @@ class QualificationPatchContractTests(unittest.TestCase):
             "set_rng_state", "set_actions",
         ):
             self.assertNotIn(forbidden, patch)
+
+    def test_native_overrun_surface_maps_every_claimed_tensor_locally(self):
+        patch = PATCH.read_text(encoding="utf-8")
+        start = patch.index(
+            "+py::dict qualification_entropy_overrun_state("
+        )
+        end = patch.index(
+            "+py::dict qualification_snapshot(",
+            start,
+        )
+        body = patch[start:end]
+        mappings = {
+            "device_entropy_coefficient": (
+                "pufferl.ppo_bufs_puf.ent_coef"
+            ),
+            "loss_accumulator": "pufferl.losses_puf",
+            "scalar_loss": "pufferl.ppo_bufs_puf.loss_output",
+            "master_weights": "pufferl.master_weights",
+            "optimizer_momentum": "pufferl.muon.mb_puf",
+            "optimizer_learning_rate": "pufferl.muon.lr_puf",
+            "optimizer_learning_rate_derived": (
+                "pufferl.muon.lr_derived_puf"
+            ),
+        }
+        for name, source in mappings.items():
+            with self.subTest(tensor=name):
+                assignment = f'tensors["{name}"]'
+                self.assertEqual(body.count(assignment), 1)
+                at = body.index(assignment)
+                local = body[at : at + 300]
+                self.assertIn(
+                    f'"{name}"',
+                    local,
+                )
+                self.assertIn(source, local)
 
     def test_policy_weight_surface_is_bounded_fp32_and_read_only(self):
         patch = PATCH.read_text(encoding="utf-8")
@@ -5526,7 +7308,15 @@ class QualificationPatchContractTests(unittest.TestCase):
         ]
         self.assertIn("tools/puffer_source_manifest.py", backend_hash)
         self.assertIn("COMPILED_BACKEND_LEDGER", backend_hash)
-        self.assertIn("--expected-count 14", backend_hash)
+        expected_source_count = len(
+            COMPILED_BACKEND_LEDGER.read_text(
+                encoding="utf-8"
+            ).splitlines()
+        )
+        self.assertIn(
+            f"--expected-count {expected_source_count}",
+            backend_hash,
+        )
         self.assertIn("--require-native-extension-closure", backend_hash)
         self.assertIn("strict_environment_config_sources_valid()", installer)
         self.assertIn('"$STRICT_ENV_CONFIG_PATCH"', installer)
@@ -5544,6 +7334,7 @@ class QualificationPatchContractTests(unittest.TestCase):
         for marker in (
             "eligible_agents", "qualification_recurrent_state",
             "qualification_policy_weights", "qualification_snapshot",
+            "qualification_entropy_gradient_state",
             "qualification_graph_execution", "qualification_consume_tail",
             "apply --reverse --check --no-index",
             "Patch copy: training/selfplay_league.patch",

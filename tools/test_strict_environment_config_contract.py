@@ -11,6 +11,7 @@ import configparser
 import os
 import re
 import subprocess
+import sys
 import unittest
 from pathlib import Path
 
@@ -317,7 +318,11 @@ class PinnedPufferStrictEnvironmentBoundaryTests(unittest.TestCase):
         )
         self.assertLess(
             cuda_pufferl.index("bloodbowl_normalize_and_preflight_env"),
-            cuda_pufferl.index('get_config(vec_kwargs, "total_agents")'),
+            cuda_pufferl.index(
+                "validate_entropy_training_config(train_kwargs, vec_kwargs)"
+            ),
+            "strict environment preflight must precede the entropy tranche's "
+            "checked training/layout validation",
         )
         self.assertLess(
             cuda_pufferl.index("bloodbowl_normalize_and_preflight_env"),
@@ -328,8 +333,9 @@ class PinnedPufferStrictEnvironmentBoundaryTests(unittest.TestCase):
             cuda_pufferl,
         )
 
-    def test_build_marker_propagates_strict_and_test_roles(self) -> None:
-        build = (self._root() / "build.sh").read_text(encoding="utf-8")
+    def test_build_marker_and_selected_sweep_dependency_closure(self) -> None:
+        root = self._root()
+        build = (root / "build.sh").read_text(encoding="utf-8")
         self.assertIn(
             "grep -Fxq '#define PUFFER_HAS_STRICT_ENV_CONFIG 1' " '"$BINDING_SRC"',
             build,
@@ -343,6 +349,28 @@ class PinnedPufferStrictEnvironmentBoundaryTests(unittest.TestCase):
             build.count("$STRICT_ENV_CONFIG_CFLAGS"),
             3,
         )
+
+        probe = subprocess.run(
+            [
+                sys.executable,
+                "-I",
+                "-c",
+                (
+                    "import sys; "
+                    "sys.path.insert(0, sys.argv[1]); "
+                    "from pufferlib.sweep import Hyperparameters; "
+                    "print(Hyperparameters.__module__)"
+                ),
+                str(root),
+            ],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=60,
+        )
+        self.assertEqual(probe.returncode, 0, probe.stdout)
+        self.assertEqual(probe.stdout.strip(), "pufferlib.sweep")
 
 
 if __name__ == "__main__":

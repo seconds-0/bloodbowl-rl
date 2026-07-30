@@ -92,25 +92,35 @@ That is not yet a complete predecessor-lineage proof. The current runner has no
 subcommand and does not authenticate who produced the supplied baseline. Until
 the predecessor capture/validation workflow in
 `docs/plans/recurrent-cuda-qualification.md` is implemented and reviewed, an
-otherwise accepted schema-10 qualification is diagnostic evidence only and
+otherwise accepted schema-11 qualification is diagnostic evidence only and
 does not complete the CUDA release gate.
 
-Schema 10 binds fresh run/cell nonces, removes fixed-name worker artifacts
+Schema 11 binds fresh run/cell nonces, removes fixed-name worker artifacts
 before dispatch, retains the exact worker JSON/NPZ byte identities, and writes
 cell JSON through a bounded exclusive random descriptor so a stale predictable
 temporary symlink cannot redirect a write outside the output. Its
 throughput cell is rollout-only but now matches the production collection
 shape, including H512/L3 and `max_decisions=4096`; it is not an end-to-end
-training-speed measurement. The production entropy schedule is also not yet
-qualified: native graph replay freezes the host-by-value coefficient and the
-Torch trainer currently leaves it constant. That separate trainer-contract
-repair must land before a CUDA training launch can be authorized. Until then,
-the native constructor rejects `cudagraphs >= 0 && anneal_ent_coef` before CUDA
-discovery, and both reward launchers reject executable runs before output/run
-artifact creation. Dry-run and screen-plan modes are explicitly labeled
-`BLOCKED_UNQUALIFIED_ENTROPY_SCHEDULE`; their manifests bind the requested
-graph/anneal/minimum-ratio fields and mark the effective coefficient
-unavailable.
+training-speed measurement.
+
+The entropy source repair is implemented under
+`cosine-update-index-over-total-updates-fp32-v1`: native eager and graph
+training use a stable device coefficient, and Torch uses the same checked
+update-index schedule. Schema 11 defines five primary entropy artifacts:
+`entropy_native_eager_annealed`, `entropy_native_graph_annealed`,
+`entropy_native_graph_anneal_disabled`, `entropy_torch_annealed`, and
+`entropy_torch_anneal_disabled`, plus the mandatory
+`entropy_native_eager_anneal_disabled` gradient control. No schema-11
+target-NVIDIA entropy cell—native eager, native graph, or Torch—has executed,
+and predecessor/release authority remains incomplete. The temporary native
+graph-plus-anneal constructor guard has therefore been removed so the
+diagnostic matrix can run, while both reward launcher guards remain literal
+and unconditional with
+`entropy_schedule_status=implemented_pending_nvidia`. Executable runs still
+reject before output/run artifact creation. Dry-run and screen-plan modes
+remain explicitly labeled `BLOCKED_UNQUALIFIED_ENTROPY_SCHEDULE`; their
+manifests bind the requested schedule descriptor and mark a runtime effective
+coefficient unavailable because no training update is authorized.
 
 ## Mandatory CUDA constructor-order release gate
 
@@ -182,6 +192,11 @@ build validation established that `python3-dev`, `python3-venv`, and `git` are
 also required in addition to the C/C++/OpenMP/graphics packages: the Python
 extension build needs `Python.h`, the isolated dependency set needs a venv,
 and the pinned source checkout needs Git.
+
+That exact-pin x86 job is configured but has not executed against the current
+entropy-stack branch. Earlier Ubuntu evidence belongs to the predecessor
+strict-environment tranche and is historical; it is not current entropy
+acceptance evidence.
 
 The job installs twice, builds the production CPU module and standalone,
 runs installer drift checking, exercises full/empty/sparse/exact-bool/BOTH

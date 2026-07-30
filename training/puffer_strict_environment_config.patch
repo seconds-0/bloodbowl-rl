@@ -1,10 +1,8 @@
 diff --git a/build.sh b/build.sh
-index e4baacc4..0c67c8a7 100755
+index e4baacc483debe215d2110288abddcbdcbf32e4b..0c67c8a74f53bd96635d3816c99a8ff46499445a 100755
 --- a/build.sh
 +++ b/build.sh
-@@ -254,6 +254,23 @@ mkdir -p build
- STATIC_OBJ="build/libstatic_${ENV}.o"
- STATIC_LIB="build/libstatic_${ENV}.a"
+@@ -256,2 +256,19 @@ STATIC_LIB="build/libstatic_${ENV}.a"
  
 +STRICT_ENV_CONFIG_CFLAGS=""
 +if [ -f "$BINDING_SRC" ] && \
@@ -24,23 +22,15 @@ index e4baacc4..0c67c8a7 100755
 +PRECISION="${PRECISION:-} $STRICT_ENV_CONFIG_CFLAGS"
 +
  if [ ! -f "$BINDING_SRC" ]; then
-     echo "Error: $BINDING_SRC not found"
-     exit 1
-@@ -273,6 +290,7 @@ ${CC:-clang} -c "${CLANG_OPT[@]}" $EXTRA_CFLAGS \
-     -DPLATFORM_DESKTOP \
-     -fno-semantic-interposition -fvisibility=hidden \
+@@ -275,2 +292,3 @@ ${CC:-clang} -c "${CLANG_OPT[@]}" $EXTRA_CFLAGS \
      -fPIC -fopenmp \
 +    $STRICT_ENV_CONFIG_CFLAGS \
      "$BINDING_SRC" -o "$STATIC_OBJ"
- ar rcs "$STATIC_LIB" "$STATIC_OBJ"
- 
 diff --git a/src/bindings.cu b/src/bindings.cu
-index 534c6460..73d17ac6 100644
+index 056bc9b96dab7a2b2c9eccce92c0ecd6928b16bb..0f99b92ca49f16565468a00af8dcfb1de6704768 100644
 --- a/src/bindings.cu
 +++ b/src/bindings.cu
-@@ -605,6 +605,264 @@ void py_puff_advantage(
-         gamma, lambda, rho_clip, c_clip, num_steps, horizon);
- }
+@@ -1605,2 +1605,260 @@ void py_puff_advantage(
  
 +#ifdef PUFFER_STRICT_ENV_CONFIG
 +extern "C" {
@@ -301,21 +291,13 @@ index 534c6460..73d17ac6 100644
 +#endif
 +
  double get_config(py::dict& kwargs, const char* key) {
-     if (!kwargs.contains(key)) {
-         throw std::runtime_error(std::string("Missing config key: ") + key);
-@@ -649,6 +907,9 @@ struct VecEnv {
- std::unique_ptr<VecEnv> create_vec(py::dict args, int gpu) {
-     py::dict vec_kwargs = args["vec"].cast<py::dict>();
+@@ -1820,2 +2078,5 @@ std::unique_ptr<VecEnv> create_vec(py::dict args, int gpu) {
      py::dict env_kwargs = args["env"].cast<py::dict>();
 +#ifdef PUFFER_STRICT_ENV_CONFIG
 +    env_kwargs = bloodbowl_normalize_and_preflight_env(env_kwargs);
 +#endif
  
-     int total_agents = (int)get_config(vec_kwargs, "total_agents");
-     int num_buffers  = (int)get_config(vec_kwargs, "num_buffers");
-@@ -717,9 +978,12 @@ void vec_close(VecEnv& ve) {
- }
- 
+@@ -1888,5 +2149,8 @@ void vec_close(VecEnv& ve) {
  std::unique_ptr<PuffeRL> create_pufferl(py::dict args) {
 -    py::dict train_kwargs = args["train"].cast<py::dict>();
      py::dict vec_kwargs = args["vec"].cast<py::dict>();
@@ -325,12 +307,8 @@ index 534c6460..73d17ac6 100644
 +#endif
 +    py::dict train_kwargs = args["train"].cast<py::dict>();
      py::dict policy_kwargs = args["policy"].cast<py::dict>();
- 
-     HypersT hypers;
-@@ -848,6 +1112,17 @@ PYBIND11_MODULE(_C, m) {
-     m.attr("precision_bytes") = (int)sizeof(precision_t);
+@@ -2024,2 +2288,13 @@ PYBIND11_MODULE(_C, m) {
      m.attr("env_name") = PUFFER_STRINGIFY(ENV_NAME);
-     m.attr("gpu") = 1;
 +#ifdef PUFFER_STRICT_ENV_CONFIG
 +    m.attr("environment_config_schema") = my_environment_config_schema();
 +#endif
@@ -342,16 +320,12 @@ index 534c6460..73d17ac6 100644
 +#else
 +    m.attr("strict_env_config_testing") = false;
 +#endif
-     m.attr("exact_action_source_hash") = PUFFER_EXACT_ACTION_SOURCE_HASH;
-     m.attr("environment_source_hash") = PUFFER_ENV_SOURCE_HASH;
-     m.attr("observation_abi") = PUFFER_OBSERVATION_ABI;
+     m.attr("gpu") = 1;
 diff --git a/src/bindings_cpu.cpp b/src/bindings_cpu.cpp
-index 5de2d0fd..3b87044d 100644
+index 78d7ae974c0461a7b632bd2f2bdc8fd0ec9fc607..a60f7c772571ac571da572d5b8e6f11ca23a598b 100644
 --- a/src/bindings_cpu.cpp
 +++ b/src/bindings_cpu.cpp
-@@ -111,6 +111,258 @@ static void py_puff_advantage_cpu(
-     }
- }
+@@ -128,2 +128,254 @@ static void py_puff_advantage_cpu(
  
 +#ifdef PUFFER_STRICT_ENV_CONFIG
 +extern "C" {
@@ -606,22 +580,14 @@ index 5de2d0fd..3b87044d 100644
 +#endif
 +
  // ============================================================================
- // Dict helpers (same as bindings.cu)
- // ============================================================================
-@@ -149,6 +401,9 @@ static std::unique_ptr<VecEnv> create_vec(py::dict args, int gpu = 0) {
-     (void)gpu;
-     py::dict vec_kwargs = args["vec"].cast<py::dict>();
+@@ -166,2 +418,5 @@ static std::unique_ptr<VecEnv> create_vec(py::dict args, int gpu = 0) {
      py::dict env_kwargs = args["env"].cast<py::dict>();
 +#ifdef PUFFER_STRICT_ENV_CONFIG
 +    env_kwargs = bloodbowl_normalize_and_preflight_env(env_kwargs);
 +#endif
      int total_agents = (int)get_config(vec_kwargs, "total_agents");
-     int num_buffers = (int)get_config(vec_kwargs, "num_buffers");
-     Dict* vec_dict = py_dict_to_c_dict(vec_kwargs);
-@@ -210,6 +465,17 @@ PYBIND11_MODULE(_C, m) {
-     m.attr("precision_bytes") = 4;
+@@ -227,2 +482,13 @@ PYBIND11_MODULE(_C, m) {
      m.attr("env_name") = PUFFER_STRINGIFY(ENV_NAME);
-     m.attr("gpu") = 0;
 +#ifdef PUFFER_STRICT_ENV_CONFIG
 +    m.attr("environment_config_schema") = my_environment_config_schema();
 +#endif
@@ -633,6 +599,4 @@ index 5de2d0fd..3b87044d 100644
 +#else
 +    m.attr("strict_env_config_testing") = false;
 +#endif
-     m.attr("exact_action_source_hash") = PUFFER_EXACT_ACTION_SOURCE_HASH;
-     m.attr("environment_source_hash") = PUFFER_ENV_SOURCE_HASH;
-     m.attr("observation_abi") = PUFFER_OBSERVATION_ABI;
+     m.attr("gpu") = 0;

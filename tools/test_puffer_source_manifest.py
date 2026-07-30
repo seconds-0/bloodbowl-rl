@@ -20,6 +20,7 @@ EXPECTED_COMPILED = (
     "build.sh",
     "pufferlib/pufferl.py",
     "pufferlib/selfplay.py",
+    "pufferlib/sweep.py",
     "pufferlib/torch_pufferl.py",
     "src/bindings.cu",
     "src/bindings_cpu.cpp",
@@ -52,7 +53,7 @@ class PufferSourceManifestTests(unittest.TestCase):
     def test_checked_in_ledgers_have_the_exact_distinct_ordered_closures(self):
         compiled = source_manifest.read_source_ledger(
             COMPILED_LEDGER,
-            expected_count=14,
+            expected_count=len(EXPECTED_COMPILED),
         )
         vendor = source_manifest.read_source_ledger(VENDOR_LEDGER, expected_count=12)
         self.assertEqual(compiled, EXPECTED_COMPILED)
@@ -68,6 +69,7 @@ class PufferSourceManifestTests(unittest.TestCase):
         self.assertEqual(
             set(compiled) - set(vendor),
             {
+                "pufferlib/sweep.py",
                 "src/cudnn_conv2d.cu",
                 "src/models.cu",
                 "src/muon.cu",

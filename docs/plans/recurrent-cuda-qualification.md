@@ -1,8 +1,10 @@
 # Recurrent CUDA qualification
 
-Status: design record plus a bounded schema-10 diagnostic runner, updated
-2026-07-28. This plan does not authorize a trainer launch, checkpoint
-promotion, or reuse of any qualification output as training ancestry.
+Status: design record plus a bounded schema-11 diagnostic runner, updated
+2026-07-30. The entropy-schedule source repair is implemented, but no
+schema-11 target-NVIDIA entropy cell—native eager, native graph, or Torch—has
+executed. This plan does not authorize a trainer launch, checkpoint promotion,
+or reuse of any qualification output as training ancestry.
 
 ## Current implementation boundary
 
@@ -17,8 +19,8 @@ nonsymlink JSON artifact outside the candidate output, validates its throughput
 record, binds its absolute path, byte count, and SHA-256 into the verdict, and
 reloads the same bytes after all workers finish. Candidate and baseline must
 match on host, GPU, fp32 precision, the complete timing configuration, and
-zero hard-integrity counters. Schema 10 also gives every run and cell a fresh
-parent-generated nonce, removes every fixed-name cell artifact before dispatch,
+zero hard-integrity counters. Schema 11 retains a fresh parent-generated nonce
+for every run and cell, removes every fixed-name cell artifact before dispatch,
 binds the exact child JSON/NPZ byte snapshots into the final verdict, writes
 cell JSON through the bounded `mkstemp`/descriptor/fsync/replace path, and
 invalidates a prior verdict when an identifiable `run` invocation fails
@@ -26,20 +28,20 @@ argument parsing. This closes missing-baseline, stale-cell reuse, predictable
 temporary-symlink overwrite, output-overwrite, configuration-drift, and in-run
 byte-drift failures.
 
-The implemented compiled-backend digest is a canonical 14-entry registry:
-`build.sh`, three deliberately selected launcher/trainer Python files, and the
+The implemented compiled-backend digest is a canonical 15-entry registry:
+`build.sh`, four deliberately selected launcher/trainer/sweep Python files, and the
 complete ten-file local include closure of the CPU/CUDA extension roots. The
 manifest reader follows quoted native includes recursively, permits only the
 separately governed generated build-hash header, and hashes the exact
 descriptor-read byte snapshots it inspected. This is not described as the
 complete Python runtime import closure: `pufferlib/__init__.py`,
-`pufferlib/models.py`, `pufferlib/muon.py`, and sweep-only code remain in the
+`pufferlib/models.py`, and `pufferlib/muon.py` remain in the
 distinct broader runtime/vendor identity boundary.
 
 It does **not** authenticate that the artifact was produced by the immediately
 preceding exact-action backend, rehash a predecessor module or source checkout,
 or independently validate the final qualification from a clean control
-checkout. Therefore `accepted: true` in the current schema-10 artifact means
+checkout. Therefore `accepted: true` in the current schema-11 artifact means
 only that the implemented diagnostic gates passed. It is not release
 authority. The target execution order and predecessor wrapper below remain
 normative planned work, and native deployment stays blocked until that work is
@@ -55,20 +57,20 @@ advantages, fresh tail consumption, and full-tensor plus final-slot graph
 parity. Retained NPZ artifacts are regular-file, size, path, and SHA-256 bound.
 None of those CUDA checks has run on this macOS CPU host.
 
-The current graph parity cell is intentionally a zero-learning-rate,
-zero-entropy transition test. It does not qualify the production entropy
-schedule. Adversarial review found that native CUDA-graph replay captures
-`current_ent_coef` by host value while the Torch trainer does not implement the
-configured entropy anneal at all. Production combines `ent_coef=0.02`,
-`anneal_ent_coef=1`, and CUDA graphs, so graph-training objective parity remains
-a high-priority, separately test-first trainer-contract tranche. The native
-constructor now fails before CUDA discovery for
-`cudagraphs >= 0 && anneal_ent_coef`. The screen and arm launchers bind the
-graph/anneal/minimum-ratio configuration, reject executable runs before their
-respective output/run artifacts, and label plan/dry-run output
-`BLOCKED_UNQUALIFIED_ENTROPY_SCHEDULE`; no effective coefficient is fabricated.
-No diagnostic artifact from this runner authorizes training until that
-cross-backend, multi-epoch schedule gap is fixed and qualified.
+The transition-parity cells remain intentional zero-learning-rate,
+zero-entropy tests. They do not qualify the production entropy schedule.
+Schema 11 adds five primary entropy cells:
+`entropy_native_eager_annealed`, `entropy_native_graph_annealed`,
+`entropy_native_graph_anneal_disabled`, `entropy_torch_annealed`, and
+`entropy_torch_anneal_disabled`. It also requires the sixth
+`entropy_native_eager_anneal_disabled` gradient control. The source repair now
+uses a stable native device scalar and the same configured update-index
+schedule in Torch. The temporary native graph-plus-anneal constructor guard is
+removed so those diagnostic cells can execute. No schema-11 target-NVIDIA
+entropy cell—native eager, native graph, or Torch—has executed; both production
+launcher guards remain unconditional, and their status remains
+`implemented_pending_nvidia`. A schema-11 artifact remains diagnostic and
+cannot authorize training.
 
 The planned throughput predecessor remains exact commit
 `afc8008933548438ca93c41341f5f08fdd294386`. The control runner and candidate
@@ -94,7 +96,7 @@ a failure. There is no tolerated invalid-transition rate.
 
 Add an explicit frozen-row priority mask after the exact-action and recurrent
 patches, then add one qualification-only evidence patch.
-It exposes five bounded surfaces and no alternate action or reward path:
+It exposes seven bounded surfaces and no alternate action or reward path:
 
 1. `qualification_recurrent_state(pufferl, clear=False)` synchronizes and reports every
    primary and frozen bank/buffer by element count, nonzero count, non-finite
@@ -119,6 +121,16 @@ It exposes five bounded surfaces and no alternate action or reward path:
    exactly one fresh record per buffer, clears only the validity counters, and
    returns exact before/after vectors. It cannot mutate rewards, observations,
    actions, recurrent state, weights, or optimizer state.
+6. `qualification_entropy_overrun_state(pufferl)` returns a bounded, read-only
+   snapshot of host schedule state and the device coefficient, loss, weight,
+   momentum, and learning-rate tensors used to prove fail-closed overrun
+   behavior.
+7. `qualification_entropy_gradient_state(pufferl)` returns one bounded,
+   read-only fp32 discrete-policy snapshot of the completed update's schedule
+   coefficient, objective inputs, and pre-clipping gradients.
+
+The two entropy surfaces reject reads during an active training transaction,
+while an entropy commit is pending, or after a failed training transaction.
 
 Both patches are part of the installed backend hash and compiled-module identity.
 The priority normalizer assigns exactly zero probability to every frozen-bank
@@ -136,7 +148,7 @@ observation/action ABIs, effective configuration, seed, precision, elapsed
 time, and output hashes.
 The planned predecessor-authority schema records backend identity on two axes.
 This paragraph describes the target workflow, not fields currently emitted by
-schema 10. The role-correct
+schema 11. The role-correct
 `backend_sources_sha256` reproduces the source registry that generated the
 native module's compiled attribute: the immutable predecessor's historical
 registry omits `pufferlib/selfplay.py`, while the candidate's current registry
@@ -289,7 +301,7 @@ are permanently rejected. No current checkout is authorized to launch a
 replacement; only a separate reviewed post-qualification change may name its
 exact commit, registry, manifest, unit, and one-shot authority.
 
-## Target execution order (planned; not executable in schema 10)
+## Target execution order (planned; not executable in schema 11)
 
 Every command in this section named `capture-throughput`,
 `validate-construction`, or `validate` is a required future authority workflow,
@@ -369,8 +381,9 @@ as historical experiment evidence, but never pass its module hash to
 3. Implement the frozen-row priority mask, qualification patch, and exact
    reverse-applicability installer checks so marker-only stale patches fail.
 4. Implement the subprocess runner and independent artifact validator.
-5. Apply the exact-action, recurrent-state, frozen-priority, and qualification
-   patches to a fresh pinned Puffer tree; compile and run the
+5. Apply the complete ordered patch stack, including exact-action,
+   recurrent-state, rollout-transition, frozen-priority, entropy-schedule, and
+   qualification patches, to a fresh pinned Puffer tree; compile and run the
    CPU/source suites locally.
 6. After the immutable live boundary only, build in a fresh isolated checkout
    on the RTX 2070, capture the preceding-backend throughput control, and run

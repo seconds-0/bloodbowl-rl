@@ -3,7 +3,7 @@
 
 The repository has two deliberately different source closures:
 
-* the fourteen files that define the compiled backend identity; and
+* the fifteen files that define the compiled backend identity; and
 * the historical twelve-file launcher/vendor identity.
 
 Both are checked-in, ordered ledgers.  Consumers must read those ledgers

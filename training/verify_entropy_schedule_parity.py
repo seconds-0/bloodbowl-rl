@@ -289,9 +289,9 @@ def minibatches_per_update(
     """Compute floor(replay_ratio_fp32 * batch_size / minibatch_size).
 
     The configuration ratio is narrowed once to finite IEEE binary32, matching
-    the trainer configuration boundary. The remaining arithmetic is exact over
-    that binary32 value so a near-integer boundary cannot depend on Python,
-    C++, or CUDA intermediate precision.
+    the trainer configuration boundary. The multiply and divide then execute
+    in binary64, in the same left-to-right operation order as the Python and
+    native trainers.
     """
 
     ratio = _exact_ratio(replay_ratio, "replay_ratio")
@@ -302,19 +302,24 @@ def minibatches_per_update(
     if not math.isfinite(ratio_real):
         _fail("replay_ratio is outside binary64 range")
     ratio_fp32 = _binary32(ratio_real, "replay_ratio")
-    narrowed_ratio = Fraction.from_float(ratio_fp32)
     batch = _require_int(batch_size, "batch_size", minimum=1)
     minibatch = _require_int(minibatch_size, "minibatch_size", minimum=1)
-    numerator = narrowed_ratio.numerator * batch
-    denominator = narrowed_ratio.denominator * minibatch
-    result = numerator // denominator
+    minibatches_real = (
+        float(ratio_fp32)
+        * float(batch)
+        / float(minibatch)
+    )
+    if (
+        not math.isfinite(minibatches_real)
+        or minibatches_real > MAX_SAFE_INTEGER
+    ):
+        _fail("minibatches_per_update exceeds the exact integer range")
+    result = math.floor(minibatches_real)
     if result <= 0:
         _fail(
             "training has zero minibatches per update; increase replay_ratio "
             "or batch_size, or decrease minibatch_size"
         )
-    if result > MAX_SAFE_INTEGER:
-        _fail("minibatches_per_update exceeds the exact integer range")
     return result
 
 

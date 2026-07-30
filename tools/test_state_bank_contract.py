@@ -2020,7 +2020,12 @@ class PufferStateBankPatchTests(unittest.TestCase):
             function,
         )
         self.assertIn('--ledger "$COMPILED_BACKEND_LEDGER"', function)
-        self.assertIn("--expected-count 14", function)
+        expected_count = len(
+            (
+                ROOT / "training/puffer_compiled_backend_sources.txt"
+            ).read_text(encoding="utf-8").splitlines()
+        )
+        self.assertIn(f"--expected-count {expected_count}", function)
         self.assertIn("--require-native-extension-closure", function)
         ledger = (
             ROOT / "training/puffer_compiled_backend_sources.txt"
@@ -2031,6 +2036,7 @@ class PufferStateBankPatchTests(unittest.TestCase):
                 "build.sh",
                 "pufferlib/pufferl.py",
                 "pufferlib/selfplay.py",
+                "pufferlib/sweep.py",
                 "pufferlib/torch_pufferl.py",
                 "src/bindings.cu",
                 "src/bindings_cpu.cpp",

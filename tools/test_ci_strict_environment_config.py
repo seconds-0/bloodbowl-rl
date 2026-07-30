@@ -151,6 +151,23 @@ class StrictEnvironmentConfigCITests(unittest.TestCase):
             strict_ci.EXPECTED_REQUIREMENT_OPTIONS,
             ("--extra-index-url https://download.pytorch.org/whl/cpu",),
         )
+        self.assertEqual(
+            {
+                package: strict_ci.EXPECTED_REQUIREMENTS[package]
+                for package in (
+                    "scipy",
+                    "scikit-learn",
+                    "linear-operator",
+                    "gpytorch",
+                )
+            },
+            {
+                "scipy": "1.18.0",
+                "scikit-learn": "1.9.0",
+                "linear-operator": "0.6.1",
+                "gpytorch": "1.15.2",
+            },
+        )
 
     def test_full_installed_config_requires_51_finite_numeric_values(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -301,6 +318,10 @@ class StrictEnvironmentConfigCITests(unittest.TestCase):
             "git",
             'PUFFER_STRICT_TEST_ROOT="$RUNNER_TEMP/PufferLib"',
             "tools.test_strict_environment_config_contract",
+            'PUFFER_ENTROPY_TEST_ROOT="$RUNNER_TEMP/PufferLib"',
+            "training.test_entropy_schedule_parity",
+            "training.test_entropy_schedule_verifier",
+            "training.test_torch_entropy_objective_verifier",
         ):
             with self.subTest(fragment=fragment):
                 self.assertIn(fragment, job)

@@ -521,6 +521,11 @@ def verify_torch_rollout_contract(torch: Any) -> None:
         trainer.pending_terminals = torch.zeros(1)
         trainer.reset_state = True
         trainer.evaluation_mode = evaluation_mode
+        trainer.epoch = 0
+        trainer.total_epochs = 1
+        trainer._entropy_gradient_qualification_enabled = False
+        trainer._entropy_gradient_qualification_state = None
+        trainer._training_failed = False
         trainer.vec_obs = vec.observations
         trainer.vec_rewards = vec.rewards
         trainer.vec_terminals = vec.terminals

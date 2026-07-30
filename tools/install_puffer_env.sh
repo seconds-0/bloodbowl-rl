@@ -199,6 +199,7 @@ EXACT_PATCH="$ROOT/training/puffer_exact_joint_actions.patch"
 RECURRENT_PATCH="$ROOT/training/puffer_recurrent_eval_state.patch"
 ROLLOUT_TRANSITION_PATCH="$ROOT/training/puffer_rollout_transition_closure.patch"
 FROZEN_PRIO_PATCH="$ROOT/training/puffer_frozen_prio_mask.patch"
+ENTROPY_SCHEDULE_PATCH="$ROOT/training/puffer_entropy_schedule_parity.patch"
 QUALIFICATION_PATCH="$ROOT/training/puffer_recurrent_cuda_qualification.patch"
 REWARD_CLAMP_PATCH="$ROOT/training/puffer_reward_clamp_range.patch"
 STATE_BANK_EXPORT_PATCH="$ROOT/training/puffer_state_bank_contract.patch"
@@ -236,7 +237,7 @@ exact_backend_hash() {
     "$INSTALL_PYTHON" "$ROOT/tools/puffer_source_manifest.py" \
         --root "$PUFFER" \
         --ledger "$COMPILED_BACKEND_LEDGER" \
-        --expected-count 14 \
+        --expected-count 15 \
         --require-native-extension-closure \
         --plain
 }
@@ -259,6 +260,128 @@ rollout_transition_sources_valid() {
             'm.attr("rollout_transition_contract") = "tail-bootstrap-v1";' \
             "$binding" || return 1
     done
+}
+
+entropy_schedule_sources_valid() {
+    local idle_call_count defer_line pending_line failed_line guard_marker
+    grep -Fq \
+        'ENTROPY_SCHEDULE_CONTRACT = "cosine-update-index-over-total-updates-fp32-v1"' \
+        "$PUFFER/pufferlib/torch_pufferl.py" || return 1
+    grep -Fq 'def entropy_schedule_point(' \
+        "$PUFFER/pufferlib/torch_pufferl.py" || return 1
+    grep -Fq \
+        'if self.epoch < 0 or self.epoch >= self.total_epochs:' \
+        "$PUFFER/pufferlib/torch_pufferl.py" || return 1
+    grep -Fq 'self._training_failed = True' \
+        "$PUFFER/pufferlib/torch_pufferl.py" || return 1
+    grep -Fq \
+        'training object is unavailable during or after an incomplete update' \
+        "$PUFFER/pufferlib/torch_pufferl.py" || return 1
+    for guard_marker in \
+        'def _copy_public_callable_metadata(guarded, method):' \
+        'def _reject_incomplete_update_set_evaluation_mode(method):' \
+        'def _reject_incomplete_update_rollouts(method):' \
+        'PuffeRL.set_evaluation_mode =' \
+        'PuffeRL.rollouts = _reject_incomplete_update_rollouts(PuffeRL.rollouts)'; do
+        [ "$(
+            grep -Fc "$guard_marker" "$PUFFER/pufferlib/torch_pufferl.py"
+        )" -eq 1 ] || return 1
+    done
+    if grep -Fq 'guarded.__wrapped__' \
+            "$PUFFER/pufferlib/torch_pufferl.py" ||
+            grep -Fq 'functools.wraps(' \
+                "$PUFFER/pufferlib/torch_pufferl.py"; then
+        return 1
+    fi
+    grep -Fq 'if isinstance(value, np.generic):' \
+        "$PUFFER/pufferlib/sweep.py" || return 1
+    grep -Fq 'value = value.item()' \
+        "$PUFFER/pufferlib/sweep.py" || return 1
+    grep -Fq 'params[name] = value' \
+        "$PUFFER/pufferlib/sweep.py" || return 1
+    if grep -Fq \
+            'params[name] = spaces[name].unnormalize(flat_sample[idx])' \
+            "$PUFFER/pufferlib/sweep.py"; then
+        return 1
+    fi
+    grep -Fq \
+        'static void require_idle_entropy_transaction(PuffeRL& pufferl) {' \
+        "$PUFFER/src/bindings.cu" || return 1
+    for guard_marker in \
+        'if (pufferl.training_failed) {' \
+        'if (pufferl.defer_entropy_schedule_commit) {' \
+        'if (pufferl.entropy_schedule_commit_pending) {'; do
+        [ "$(
+            grep -Fc "$guard_marker" "$PUFFER/src/bindings.cu"
+        )" -eq 1 ] || return 1
+    done
+    defer_line="$(
+        grep -Fn 'if (pufferl.defer_entropy_schedule_commit) {' \
+            "$PUFFER/src/bindings.cu" | cut -d: -f1
+    )"
+    pending_line="$(
+        grep -Fn 'if (pufferl.entropy_schedule_commit_pending) {' \
+            "$PUFFER/src/bindings.cu" | cut -d: -f1
+    )"
+    failed_line="$(
+        grep -Fn 'if (pufferl.training_failed) {' \
+            "$PUFFER/src/bindings.cu" | cut -d: -f1
+    )"
+    [ "$failed_line" -lt "$defer_line" ] || return 1
+    [ "$defer_line" -lt "$pending_line" ] || return 1
+    idle_call_count="$(
+        grep -Fc 'require_idle_entropy_transaction(pufferl' \
+            "$PUFFER/src/bindings.cu"
+    )"
+    case "$idle_call_count" in
+        18|25) ;;
+        *) return 1 ;;
+    esac
+    for guard_marker in \
+        'void guarded_set_evaluation_mode(' \
+        'void guarded_rollouts(pybind11::object pufferl_obj)' \
+        'm.attr("set_evaluation_mode") = py::cpp_function(' \
+        'm.attr("rollouts") = py::cpp_function(' \
+        'py::name("set_evaluation_mode"), py::scope(m),' \
+        'py::name("rollouts"), py::scope(m),'; do
+        [ "$(
+            grep -Fc "$guard_marker" "$PUFFER/src/bindings.cu"
+        )" -eq 1 ] || return 1
+    done
+    grep -Fq 'FloatTensor ent_coef' \
+        "$PUFFER/src/pufferlib.cu" || return 1
+    grep -Fq 'const float* ent_coef' \
+        "$PUFFER/src/pufferlib.cu" || return 1
+    grep -Fq \
+        'block_losses[LOSS_ENT_COEF][tid] = idx == 0 ? ent_coef : 0.0f;' \
+        "$PUFFER/src/pufferlib.cu" || return 1
+    if grep -Fq \
+            'block_losses[LOSS_ENT_COEF][tid] = ent_coef * inv_NT;' \
+            "$PUFFER/src/pufferlib.cu"; then
+        return 1
+    fi
+    grep -Fq 'LOSS_ENT_COEF' \
+        "$PUFFER/src/pufferlib.cu" || return 1
+    grep -Fq 'LOSS_ENT_TERM' \
+        "$PUFFER/src/pufferlib.cu" || return 1
+    for binding in \
+        "$PUFFER/src/bindings.cu" \
+        "$PUFFER/src/bindings_cpu.cpp"; do
+        grep -Fq \
+            'm.attr("entropy_schedule_contract") = "cosine-update-index-over-total-updates-fp32-v1";' \
+            "$binding" || return 1
+    done
+}
+
+entropy_qualification_guards_valid() {
+    # The entropy patch closes every base trainer-bound callable surface; the
+    # causally later qualification patch closes all seven bounded evidence
+    # surfaces. This exact full-stack count is therefore required only after
+    # both patches have been applied.
+    [ "$(
+        grep -Fc 'require_idle_entropy_transaction(pufferl' \
+            "$PUFFER/src/bindings.cu"
+    )" -eq 25 ]
 }
 
 strict_environment_config_sources_valid() {
@@ -379,11 +502,18 @@ if [ "$MODE" = "check" ]; then
         echo "  fix: recreate the pinned Puffer tree and reinstall the complete patch stack" >&2
         exit 1
     fi
+    if ! entropy_schedule_sources_valid; then
+        echo "drift check: entropy-schedule objective parity is incomplete" >&2
+        echo "  fix: recreate the pinned Puffer tree and reinstall the complete patch stack" >&2
+        exit 1
+    fi
     for qualification_marker in \
         'eligible_agents' \
         'qualification_recurrent_state' \
         'qualification_policy_weights' \
-        'qualification_snapshot'; do
+        'qualification_snapshot' \
+        'qualification_entropy_gradient_state' \
+        'qualification_entropy_overrun_state'; do
         if ! grep -R -Fq "$qualification_marker" \
             "$PUFFER/src/pufferlib.cu" "$PUFFER/src/bindings.cu"; then
             echo "drift check: recurrent CUDA qualification marker missing: $qualification_marker" >&2
@@ -391,6 +521,11 @@ if [ "$MODE" = "check" ]; then
             exit 1
         fi
     done
+    if ! entropy_qualification_guards_valid; then
+        echo "drift check: entropy qualification entry-point guards are incomplete" >&2
+        echo "  fix: recreate the pinned Puffer tree and reinstall the complete patch stack" >&2
+        exit 1
+    fi
     if ! strict_environment_config_sources_valid; then
         echo "drift check: strict Blood Bowl environment boundary is incomplete" >&2
         echo "  fix: recreate the pinned Puffer tree and reinstall the complete patch stack" >&2
@@ -406,6 +541,7 @@ if [ "$MODE" = "check" ]; then
         "$RECURRENT_PATCH" \
         "$ROLLOUT_TRANSITION_PATCH" \
         "$FROZEN_PRIO_PATCH" \
+        "$ENTROPY_SCHEDULE_PATCH" \
         "$QUALIFICATION_PATCH" \
         "$REWARD_CLAMP_PATCH" \
         "$ROOT/training/pufferl_scripted_training_guard.patch" \
@@ -469,11 +605,12 @@ if [ "$MODE" = "check" ]; then
         's/^#define PUFFER_ACTION_ABI "\([^"]*\)"$/\1/p' \
         "$PUFFER/src/exact_action_build_hash.h" 2>/dev/null || true)"
     compiled_contract="$(cd "$PUFFER" && "$PYBIN" -c \
-        'from pufferlib import _C; print(getattr(_C, "exact_action_source_hash", "<missing>"), getattr(_C, "environment_source_hash", "<missing>"), getattr(_C, "observation_abi", "<missing>"), getattr(_C, "observation_version", "<missing>"), getattr(_C, "action_abi", "<missing>"), getattr(_C, "rollout_transition_contract", "<missing>"), getattr(_C, "environment_config_schema", "<missing>"), getattr(_C, "strict_env_config_testing", "<missing>"))' \
+        'from pufferlib import _C; print(getattr(_C, "exact_action_source_hash", "<missing>"), getattr(_C, "environment_source_hash", "<missing>"), getattr(_C, "observation_abi", "<missing>"), getattr(_C, "observation_version", "<missing>"), getattr(_C, "action_abi", "<missing>"), getattr(_C, "rollout_transition_contract", "<missing>"), getattr(_C, "entropy_schedule_contract", "<missing>"), getattr(_C, "environment_config_schema", "<missing>"), getattr(_C, "strict_env_config_testing", "<missing>"))' \
         2>/dev/null || true)"
     read -r compiled_backend_hash compiled_environment_hash \
         compiled_observation_abi compiled_observation_version \
         compiled_action_abi compiled_rollout_transition_contract \
+        compiled_entropy_schedule_contract \
         compiled_environment_config_schema \
         compiled_strict_env_config_testing <<< "$compiled_contract"
     if [ "$current_backend_hash" != "$header_backend_hash" ] || \
@@ -494,6 +631,8 @@ if [ "$MODE" = "check" ]; then
        [ "$header_action_abi" != "exact-joint-v1" ] || \
        [ "$compiled_action_abi" != "exact-joint-v1" ] || \
        [ "$compiled_rollout_transition_contract" != "tail-bootstrap-v1" ] || \
+       [ "$compiled_entropy_schedule_contract" != \
+            "cosine-update-index-over-total-updates-fp32-v1" ] || \
        [ "$compiled_environment_config_schema" != \
             "bloodbowl-environment-config-v1" ] || \
        [ "$compiled_strict_env_config_testing" != "False" ]; then
@@ -505,6 +644,7 @@ if [ "$MODE" = "check" ]; then
         echo "  header/module obs: ${header_observation_version:-<missing>} / ${compiled_observation_version:-<missing>}" >&2
         echo "  header/module action: ${header_action_abi:-<missing>} / ${compiled_action_abi:-<missing>}" >&2
         echo "  module rollout transition: ${compiled_rollout_transition_contract:-<missing>}" >&2
+        echo "  module entropy schedule: ${compiled_entropy_schedule_contract:-<missing>}" >&2
         echo "  module environment config: ${compiled_environment_config_schema:-<missing>}" >&2
         echo "  module strict test role: ${compiled_strict_env_config_testing:-<missing>}" >&2
         echo "  fix: reinstall, then rebuild PufferLib for bloodbowl" >&2
@@ -892,6 +1032,32 @@ if ! grep -Fq 'eligible_agents' "$PUFFER/src/pufferlib.cu" || \
     exit 1
 fi
 
+# Entropy-schedule objective parity. Both training backends use the same
+# update-index-over-total-updates cosine contract and an explicitly rounded
+# float32 coefficient. The native scalar has stable device storage so CUDA
+# graph replay observes the coefficient copied for the current public update.
+if [ ! -f "$ENTROPY_SCHEDULE_PATCH" ]; then
+    echo "error: missing $ENTROPY_SCHEDULE_PATCH" >&2
+    exit 1
+fi
+if git -C "$PUFFER" apply --reverse --check --no-index \
+        "$ENTROPY_SCHEDULE_PATCH" 2>/dev/null; then
+    : # Exact entropy-schedule parity patch is already installed.
+elif git -C "$PUFFER" apply --check --no-index \
+        "$ENTROPY_SCHEDULE_PATCH" 2>/dev/null; then
+    git -C "$PUFFER" apply --no-index "$ENTROPY_SCHEDULE_PATCH"
+    echo "applied:   entropy-schedule objective parity -> Puffer native/Torch backends"
+else
+    echo "error: entropy-schedule parity patch is neither applicable nor installed" >&2
+    exit 1
+fi
+if ! entropy_schedule_sources_valid || \
+   ! git -C "$PUFFER" apply --reverse --check --no-index \
+       "$ENTROPY_SCHEDULE_PATCH"; then
+    echo "error: installed entropy-schedule objective parity is incomplete" >&2
+    exit 1
+fi
+
 # Bounded CUDA qualification surfaces. Apply after the semantic patches: most
 # calls are readbacks, while recurrent-state clear and explicit tail
 # consumption are narrow, named qualification mutations whose before/after
@@ -913,8 +1079,11 @@ fi
 if ! grep -q 'qualification_recurrent_state' "$PUFFER/src/bindings.cu" || \
    ! grep -q 'qualification_policy_weights' "$PUFFER/src/bindings.cu" || \
    ! grep -q 'qualification_snapshot' "$PUFFER/src/bindings.cu" || \
+   ! grep -q 'qualification_entropy_gradient_state' "$PUFFER/src/bindings.cu" || \
+   ! grep -q 'qualification_entropy_overrun_state' "$PUFFER/src/bindings.cu" || \
    ! grep -q 'qualification_graph_execution' "$PUFFER/src/bindings.cu" || \
-   ! grep -q 'qualification_consume_tail' "$PUFFER/src/bindings.cu"; then
+   ! grep -q 'qualification_consume_tail' "$PUFFER/src/bindings.cu" || \
+   ! entropy_qualification_guards_valid; then
     echo "error: recurrent CUDA qualification evidence is incomplete" >&2
     exit 1
 fi
@@ -1109,6 +1278,7 @@ for overlapping_patch in \
         "$RECURRENT_PATCH" \
         "$ROLLOUT_TRANSITION_PATCH" \
         "$FROZEN_PRIO_PATCH" \
+        "$ENTROPY_SCHEDULE_PATCH" \
         "$QUALIFICATION_PATCH" \
         "$STATE_BANK_EXPORT_PATCH" \
         "$STRICT_ENV_CONFIG_PATCH"; do

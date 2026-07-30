@@ -190,6 +190,27 @@ class EntropyScheduleOracleTests(unittest.TestCase):
                 "0.09999999403953552", 10, 1
             )
 
+    def test_minibatch_helper_matches_runtime_binary64_operation_order(
+        self,
+    ) -> None:
+        ratio = struct.unpack("!f", bytes.fromhex("3f47ea21"))[0]
+        batch_size = 1_386_466_366
+        minibatch_size = 1_082_714_148
+        runtime_value = (
+            float(ratio)
+            * float(batch_size)
+            / float(minibatch_size)
+        )
+        self.assertEqual(runtime_value, 1.0)
+        self.assertEqual(
+            verifier.minibatches_per_update(
+                repr(ratio),
+                batch_size,
+                minibatch_size,
+            ),
+            1,
+        )
+
     def test_helpers_reject_zero_loop_counts_and_boolean_counts(self) -> None:
         with self.assertRaisesRegex(verifier.VerificationError, "zero complete"):
             verifier.total_updates(15, 4, 4)

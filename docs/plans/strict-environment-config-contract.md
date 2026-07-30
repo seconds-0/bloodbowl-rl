@@ -494,12 +494,14 @@ an ordered reverse-unwind is not used to disguise overlapping final state.
 One checked-in ordered compiled-backend ledger replaces the independent lists
 in `tools/install_puffer_env.sh::exact_backend_hash` and
 `tools/qualify_recurrent_cuda.py::BACKEND_SOURCE_FILES`. It includes
-`build.sh`, three deliberately selected Python launcher/trainer paths, and the
-complete ten-file local quoted-include closure of the CPU/CUDA extension
-roots. Its 14 entries contain no duplicates or unsafe paths, and the manifest
-reader recursively reconciles native includes while hashing the same
-descriptor-read snapshots. The generated `exact_action_build_hash.h` is the
-single explicit self-reference exception and remains independently checked.
+`build.sh`, the four deliberately selected Python paths
+`pufferlib/pufferl.py`, `pufferlib/selfplay.py`, `pufferlib/sweep.py`, and
+`pufferlib/torch_pufferl.py`, and the complete ten-file local quoted-include
+closure of the CPU/CUDA extension roots. Its 15 entries contain no duplicates
+or unsafe paths, and the manifest reader recursively reconciles native includes
+while hashing the same descriptor-read snapshots. The generated
+`exact_action_build_hash.h` is the single explicit self-reference exception
+and remains independently checked.
 This compiled registry is intentionally narrower than the complete Python
 import/runtime closure; the separate vendor registry retains that broader
 historical role.
@@ -810,12 +812,16 @@ The Linux CI job pins `runs-on: ubuntu-24.04` and installs
 `libx11-dev`, `libxrandr-dev`, `libxi-dev`, `libxcursor-dev`, and
 `libxinerama-dev`. It creates a temporary venv with an
 exact-version CI requirements file covering `pip`, `setuptools`, `wheel`,
-`pybind11`, `numpy`, CPU `torch`, `rich`, and `rich-argparse`. It does not run
-PEP-517 or install the Puffer project package; the exact checked-out source is
-used through an explicitly asserted `PYTHONPATH`, avoiding a hidden
-build-isolation dependency fetch. It prefetches the versioned Raylib 5.5 Linux
-amd64 archive, verifies a checked-in SHA-256, and extracts it into the clone
-before `build.sh`; cache keys include that digest.
+`pybind11`, `numpy`, CPU `torch`, `rich`, `rich-argparse`, `scipy`,
+`scikit-learn`, `linear-operator`, and `gpytorch`. The latter four close the
+eager import dependencies of the selected `pufferlib.sweep` path; an isolated
+selected-root import probe prevents a rich developer environment from masking
+their absence. CI does not run PEP-517 or install the Puffer project package;
+the exact checked-out source is used through an explicitly asserted
+`PYTHONPATH`, avoiding a hidden build-isolation dependency fetch. It prefetches
+the versioned Raylib 5.5 Linux amd64 archive, verifies a checked-in SHA-256,
+and extracts it into the clone before `build.sh`; cache keys include that
+digest.
 
 Inside that isolated venv/tree, CI:
 
@@ -829,14 +835,17 @@ Inside that isolated venv/tree, CI:
    `_C.__file__` resolves beneath that clone, `_C.env_name == "bloodbowl"`,
    the config-schema export is exact, the testing-role attribute is false, and
    compiled/on-disk backend and environment digests agree;
-5. constructs, resets, and always closes a valid full config and the exact
-   sparse qualification config; and
-6. subprocess-checks representative transport, schema, integer, team, reward,
-   and gamma failures during construction, with fatal direct-C cases isolated.
+5. imports the selected sweep implementation in an isolated interpreter and
+   runs the selected-source entropy/Torch and strict-source suites;
+6. constructs, resets, and always closes all five valid configuration profiles;
+   and
+7. subprocess-checks all 44 malformed transport, schema, integer, team, reward,
+   gamma, and cross-field cases during construction, with fatal direct-C cases
+   isolated.
 
 The CPU evidence records exact Python, pip, setuptools, wheel, pybind11,
-NumPy, Torch, clang, C++ compiler, and OpenMP versions alongside the pinned
-Puffer/Raylib identities.
+NumPy, Torch, Rich, SciPy, scikit-learn, linear-operator, GPyTorch, clang, C++
+compiler, and OpenMP versions alongside the pinned Puffer/Raylib identities.
 
 CUDA remains a real-GPU qualification artifact; CPU CI does not pretend to
 validate device execution. The isolated test-role stage-order artifact is
@@ -914,7 +923,7 @@ Frozen identities for that evidence:
 
 - environment source/installed snapshot/compiled export:
   `6e018ac5a6b4b5cce0f004480e92d7708f7a06d6e6144ed81ea9b77e10fba015`;
-- historical nine-file compiled backend (superseded by the 14-entry native
+- historical nine-file compiled backend (superseded by the 15-entry native
   closure; not valid for new modules):
   `56b4129ab362667a5a433cb00616ce661f8dbbd9b99e7f727b4823577023af27`;
 - twelve-file vendor closure:
@@ -932,6 +941,21 @@ Frozen identities for that evidence:
   and
 - final installer:
   `cbc51ad25951c5465079c2f0eb6763bdf5aec671f1d477b43a733f7ee482b620`.
+
+Current-stack integration note, 2026-07-30: the entropy tranche recut the
+strict artifact to
+`a75bf6b57a1d6d2e50af0cd89adc9f40d9c54deb7b880d21925d3287593d7679`
+without changing the strict configuration semantics. Two fresh exact-pin
+macOS/ARM checkouts independently passed the 7/7 strict source contract, five
+valid constructor profiles, and all 44 isolated invalid-case rejections. The
+complete installed 15-entry compiled-source closure is now
+`20934ecd87c9e23fa5943ba903ec15a1c76f22bcda59d486dce1680804264dff`,
+and the generated header is
+`774636bd5cd717b98e0925a52a083d5f07b1084a1becee5fd77912a8a434f507`.
+This local rerun does not replace the historical Ubuntu evidence above and
+does not satisfy the still-mandatory x86 CI or real-NVIDIA stage-order gate.
+The full current identity and endpoint ledger is in
+`docs/plans/entropy-schedule-parity.md`.
 
 Kimi review remains waived only under the user's explicit instruction for this
 goal; it is not silently represented as completed.

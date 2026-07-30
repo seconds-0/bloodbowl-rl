@@ -1,63 +1,44 @@
 diff --git a/src/pufferlib.cu b/src/pufferlib.cu
+index 0ff9179387b71cb8bcb2bcbbc971a88c31b09d79..dcf61bb09c468b62d3561b40410c69543cc62f09 100644
 --- a/src/pufferlib.cu
 +++ b/src/pufferlib.cu
-@@ -1245,7 +1245,8 @@ __global__ void compute_prio_adv_reduction(
-     }
- }
+@@ -1400,3 +1400,4 @@ __global__ void compute_prio_adv_reduction(
  
 -__global__ void compute_prio_normalize(float* prio_weights, int length) {
 +__global__ void compute_prio_normalize(float* prio_weights, int length,
 +        int agents_per_buffer, int primary_per_buffer) {
      __shared__ float shmem[PRIO_NUM_WARPS];
-     __shared__ float block_sum;
- 
-@@ -1256,7 +1257,9 @@ __global__ void compute_prio_normalize(float* prio_weights, int length) {
- 
-     float local_sum = 0.0f;
+@@ -1411,3 +1412,5 @@ __global__ void compute_prio_normalize(float* prio_weights, int length) {
      for (int t = tx; t < length; t += blockDim.x) {
 -        local_sum += prio_weights[t];
 +        if (t % agents_per_buffer < primary_per_buffer) {
 +            local_sum += prio_weights[t];
 +        }
      }
-     for (int s = PRIO_WARP_SIZE / 2; s >= 1; s /= 2) {
-         local_sum += __shfl_down_sync(PRIO_FULL_MASK, local_sum, s);
-@@ -1272,13 +1275,15 @@ __global__ void compute_prio_normalize(float* prio_weights, int length) {
-             val += __shfl_down_sync(PRIO_FULL_MASK, val, s);
-         }
+@@ -1427,3 +1430,4 @@ __global__ void compute_prio_normalize(float* prio_weights, int length) {
          if (tx == 0) {
 -            block_sum = val + eps;
 +            int buffers = length / agents_per_buffer;
 +            block_sum = val + eps * (buffers * primary_per_buffer);
          }
-     }
-     __syncthreads();
- 
+@@ -1433,3 +1437,4 @@ __global__ void compute_prio_normalize(float* prio_weights, int length) {
      for (int t = tx; t < length; t += blockDim.x) {
 -        prio_weights[t] = (prio_weights[t] + eps) / block_sum;
 +        bool primary = t % agents_per_buffer < primary_per_buffer;
 +        prio_weights[t] = primary ? (prio_weights[t] + eps) / block_sum : 0.0f;
      }
- }
- 
-@@ -1300,11 +1305,12 @@ __global__ void compute_prio_imp_weights(
- }
- 
+@@ -1451,3 +1456,4 @@ __global__ void compute_prio_imp_weights(
  __global__ void build_cdf(
 -    float* __restrict__ cdf, const float* __restrict__ probs, int B) {
 +    float* __restrict__ cdf, const float* __restrict__ probs, int B,
 +        int last_eligible) {
      if (blockIdx.x == 0 && threadIdx.x == 0) {
-         float cum = 0.0f;
+@@ -1455,3 +1461,3 @@ __global__ void build_cdf(
          for (int i = 0; i < B; i++) {
 -            cum += probs[i];
 +            cum = i == last_eligible ? 1.0f : cum + probs[i];
              cdf[i] = cum;
-         }
-     }
-@@ -1341,25 +1347,37 @@ __global__ void multinomial_sample(int* __restrict__ out_idx, const float* __res
- // The values of alpha and beta found by sweeps will tell you
- // whether it is important for your task
+@@ -1493,5 +1499,11 @@ __global__ void multinomial_sample(int* __restrict__ out_idx, const float* __res
  void prio_replay_cuda(PrecisionTensor& advantages, float prio_alpha,
 -        int minibatch_segments, int total_agents, float anneal_beta,
 -        PrioBuffers& bufs, ulong seed, long* offset_ptr, cudaStream_t stream) {
@@ -71,7 +52,7 @@ diff --git a/src/pufferlib.cu b/src/pufferlib.cu
 +        throw std::runtime_error("invalid prioritized replay row layout");
 +    }
      compute_prio_adv_reduction<<<B, PRIO_WARP_SIZE, 0, stream>>>(
-         advantages.data, bufs.prio_probs.data, prio_alpha, T);
+@@ -1499,5 +1511,10 @@ void prio_replay_cuda(PrecisionTensor& advantages, float prio_alpha,
      compute_prio_normalize<<<1, PRIO_BLOCK_SIZE, 0, stream>>>(
 -        bufs.prio_probs.data, B);
 +        bufs.prio_probs.data, B, agents_per_buffer, primary_per_buffer);
@@ -84,11 +65,7 @@ diff --git a/src/pufferlib.cu b/src/pufferlib.cu
 +    build_cdf<<<1, 1, 0, stream>>>(
 +        bufs.cdf.data, bufs.prio_probs.data, B, last_eligible);
      int threads = 256;
-     int blocks = (minibatch_segments + threads - 1) / threads;
-     multinomial_sample<<<blocks, threads, 0, stream>>>(
-         bufs.idx.data, bufs.cdf.data, B, minibatch_segments, seed, offset_ptr);
-     advance_rng_offset<<<1, 1, 0, stream>>>(offset_ptr, (int64_t)minibatch_segments);
- 
+@@ -1509,5 +1526,6 @@ void prio_replay_cuda(PrecisionTensor& advantages, float prio_alpha,
      int p3_blocks = (minibatch_segments + PRIO_BLOCK_SIZE - 1) / PRIO_BLOCK_SIZE;
 +    int eligible_agents = (B / agents_per_buffer) * primary_per_buffer;
      compute_prio_imp_weights<<<p3_blocks, PRIO_BLOCK_SIZE, 0, stream>>>(
@@ -96,11 +73,7 @@ diff --git a/src/pufferlib.cu b/src/pufferlib.cu
 -        bufs.mb_prio.data, total_agents, anneal_beta, minibatch_segments);
 +        bufs.mb_prio.data, eligible_agents, anneal_beta, minibatch_segments);
  }
- 
- // Experience the puffer advantage! Generalized advantage estimation + V-Trace
-@@ -1693,8 +1711,11 @@ void train_impl(PuffeRL& pufferl) {
-         profile_begin("compute_prio", hypers.profile);
-         // Use the training RNG offset slot (last slot, index num_buffers)
+@@ -1879,4 +1897,7 @@ void train_impl(PuffeRL& pufferl) {
          long* train_rng_offset = pufferl.rng_offset_puf.data + hypers.num_buffers;
 +        int agents_per_buffer = hypers.total_agents / hypers.num_buffers;
 +        int primary_per_buffer = pufferl.bank_layout == NULL
@@ -109,5 +82,3 @@ diff --git a/src/pufferlib.cu b/src/pufferlib.cu
 -            hypers.total_agents, anneal_beta,
 +            anneal_beta, agents_per_buffer, primary_per_buffer,
              pufferl.prio_bufs, pufferl.seed, train_rng_offset, train_stream);
-         profile_end(hypers.profile);
- 

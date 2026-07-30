@@ -52,6 +52,10 @@ EXPECTED_REQUIREMENTS = {
     "torch": "2.9.1+cpu",
     "rich": "15.0.0",
     "rich-argparse": "1.8.0",
+    "scipy": "1.18.0",
+    "scikit-learn": "1.9.0",
+    "linear-operator": "0.6.1",
+    "gpytorch": "1.15.2",
 }
 EXPECTED_REQUIREMENT_OPTIONS = (
     "--extra-index-url https://download.pytorch.org/whl/cpu",
@@ -1220,7 +1224,7 @@ def _run(args: argparse.Namespace) -> int:
 
     ledger = read_source_ledger(
         repo_root / COMPILED_LEDGER,
-        expected_count=14,
+        expected_count=15,
     )
     backend_sources_sha256 = native_extension_source_manifest_sha256(
         puffer_root,

@@ -32,7 +32,7 @@ class RecurrentEvaluationPatchTests(unittest.TestCase):
         ):
             self.assertIn(fragment, self.patch)
         zero_at = self.patch.index("for (int bank = 0; bank < 1 + pufferl->num_frozen_banks")
-        sync_at = self.patch.index("cudaDeviceSynchronize();", zero_at)
+        sync_at = self.patch.index("cudaDeviceSynchronize()", zero_at)
         self.assertLess(zero_at, sync_at)
         self.assertNotIn(
             "pufferl->epoch = 0;",

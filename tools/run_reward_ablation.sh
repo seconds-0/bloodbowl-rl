@@ -268,13 +268,13 @@ FROZEN_BANK_PCT="${FROZEN_BANK_PCT:-0.06}"
 EXPECT_BYTES="${EXPECT_BYTES:-16066560}"
 LR="${LR:-0.00028}"
 ENT_COEF="${ENT_COEF:-0.009}"
-# The pinned native backend currently captures a host entropy coefficient into
-# its training CUDA graph.  Until the device-backed coefficient tranche lands,
-# keep this production recipe explicit and auditable but fail closed below.
+# The repaired native backend owns a stable device entropy coefficient. This
+# recipe remains fail-closed until the dedicated NVIDIA qualification is run
+# and reviewed; local implementation status is descriptive, not authority.
 CUDAGRAPHS=10
 ANNEAL_ENT_COEF=1
 MIN_ENT_COEF_RATIO=0.1
-ENTROPY_SCHEDULE_STATUS=blocked_unqualified
+ENTROPY_SCHEDULE_STATUS=implemented_pending_nvidia
 GAMMA="${GAMMA:-0.995}"
 GAE_LAMBDA="${GAE_LAMBDA:-0.85}"
 HORIZON="${HORIZON:-64}"
@@ -379,7 +379,7 @@ OPP_TIMEOUT=$(( STEPS * 10 ))
 # inspect the fully bound command, but it is explicitly non-authoritative.
 if [ "$DRY_RUN" != "1" ] && [ "$CUDAGRAPHS" -ge 0 ] && [ "$ANNEAL_ENT_COEF" = "1" ]; then
   echo "BLOCKED_UNQUALIFIED_ENTROPY_SCHEDULE: cudagraphs=$CUDAGRAPHS anneal_ent_coef=$ANNEAL_ENT_COEF" >&2
-  echo "native graph training captures a stale host coefficient; run the entropy-parity qualification tranche before production training" >&2
+  echo "NVIDIA graph/eager/Torch entropy evidence is not yet accepted; run and review the entropy-parity qualification before production training" >&2
   exit 1
 fi
 
@@ -612,6 +612,7 @@ print(getattr(_C, "env_name", None), int(bool(getattr(_C, "gpu", False))),
       getattr(_C, "observation_version", "<missing>"),
       getattr(_C, "action_abi", "<missing>"),
       getattr(_C, "rollout_transition_contract", "<missing>"),
+      getattr(_C, "entropy_schedule_contract", "<missing>"),
       getattr(_C, "environment_config_schema", "<missing>"),
       ("false" if type(strict_role) is bool and strict_role is False
        else "<invalid>"),
@@ -625,6 +626,7 @@ read -r cenv cgpu precision COMPILED_EXACT_ACTION_SOURCE_HASH \
   COMPILED_ENVIRONMENT_SOURCE_HASH COMPILED_OBSERVATION_ABI \
   COMPILED_OBSERVATION_VERSION COMPILED_ACTION_ABI \
   COMPILED_ROLLOUT_TRANSITION_CONTRACT \
+  COMPILED_ENTROPY_SCHEDULE_CONTRACT \
   COMPILED_ENVIRONMENT_CONFIG_SCHEMA \
   COMPILED_STRICT_ENV_CONFIG_TESTING MODULE_PATH \
   CUDA_RUNTIME_LIBRARY_PATH CUDA_RUNTIME_LIBRARY_SHA256 \
@@ -638,6 +640,8 @@ if [[ ! "$COMPILED_EXACT_ACTION_SOURCE_HASH" =~ ^[0-9a-f]{64}$ ]] || \
    [ "$COMPILED_OBSERVATION_VERSION" != "6" ] || \
    [ "$COMPILED_ACTION_ABI" != "exact-joint-v1" ] || \
    [ "$COMPILED_ROLLOUT_TRANSITION_CONTRACT" != "tail-bootstrap-v1" ] || \
+   [ "$COMPILED_ENTROPY_SCHEDULE_CONTRACT" != \
+     "cosine-update-index-over-total-updates-fp32-v1" ] || \
    [ "$COMPILED_ENVIRONMENT_CONFIG_SCHEMA" != \
      "bloodbowl-environment-config-v1" ] || \
    [ "$COMPILED_STRICT_ENV_CONFIG_TESTING" != "false" ]; then
@@ -647,6 +651,7 @@ if [[ ! "$COMPILED_EXACT_ACTION_SOURCE_HASH" =~ ^[0-9a-f]{64}$ ]] || \
   echo "  observation: ${COMPILED_OBSERVATION_ABI:-<missing>} / ${COMPILED_OBSERVATION_VERSION:-<missing>}" >&2
   echo "  action: ${COMPILED_ACTION_ABI:-<missing>}" >&2
   echo "  rollout transition: ${COMPILED_ROLLOUT_TRANSITION_CONTRACT:-<missing>}" >&2
+  echo "  entropy schedule: ${COMPILED_ENTROPY_SCHEDULE_CONTRACT:-<missing>}" >&2
   echo "  environment config: ${COMPILED_ENVIRONMENT_CONFIG_SCHEMA:-<missing>}" >&2
   echo "  strict-config testing role: ${COMPILED_STRICT_ENV_CONFIG_TESTING:-<missing>}" >&2
   exit 1
@@ -728,6 +733,7 @@ PATCH_HASH="$({
   patch_bundle_line training/puffer_recurrent_eval_state.patch
   patch_bundle_line training/puffer_rollout_transition_closure.patch
   patch_bundle_line training/puffer_frozen_prio_mask.patch
+  patch_bundle_line training/puffer_entropy_schedule_parity.patch
   patch_bundle_line training/puffer_recurrent_cuda_qualification.patch
   patch_bundle_line training/puffer_reward_clamp_range.patch
   # Keep every remaining installer patch in the ordered causal bundle so the
@@ -798,7 +804,7 @@ echo "reward=$REWARD_NAME reward_sha256=$REWARD_HASH"
 echo "pool=$POOL pool_identity_sha256=$POOL_HASH pool_manifest_sha256=$POOL_MANIFEST_HASH banks=$POOL_BANKS pct=$FROZEN_BANK_PCT rows_per_bank=$FROZEN_PER_BANK historical_game_share=$HISTORICAL_GAME_SHARE"
 echo "warm=$WARM warm_sha256=$WARM_HASH"
 echo "source_sha256=$SOURCE_HASH config_sha256=$CONFIG_HASH module_sha256=$MODULE_HASH"
-echo "compiled_exact_action_source_sha256=$COMPILED_EXACT_ACTION_SOURCE_HASH compiled_observation=$COMPILED_OBSERVATION_ABI/$COMPILED_OBSERVATION_VERSION compiled_action=$COMPILED_ACTION_ABI rollout_transition=$COMPILED_ROLLOUT_TRANSITION_CONTRACT"
+echo "compiled_exact_action_source_sha256=$COMPILED_EXACT_ACTION_SOURCE_HASH compiled_observation=$COMPILED_OBSERVATION_ABI/$COMPILED_OBSERVATION_VERSION compiled_action=$COMPILED_ACTION_ABI rollout_transition=$COMPILED_ROLLOUT_TRANSITION_CONTRACT entropy_schedule=$COMPILED_ENTROPY_SCHEDULE_CONTRACT"
 echo "native_precision_bytes=$precision total_agents=$TOTAL_AGENTS buffers=$NUM_BUFFERS threads=$NUM_THREADS horizon=$HORIZON minibatch=$MINIBATCH_SIZE"
 echo "lr=$LR ent_coef=$ENT_COEF anneal_ent_coef=$ANNEAL_ENT_COEF min_ent_coef_ratio=$MIN_ENT_COEF_RATIO cudagraphs=$CUDAGRAPHS entropy_schedule_status=$ENTROPY_SCHEDULE_STATUS gamma=$GAMMA gae_lambda=$GAE_LAMBDA replay_ratio=$REPLAY_RATIO log=$LOG"
 
@@ -900,6 +906,8 @@ META_ARGS=(
   compiled_action_abi "$COMPILED_ACTION_ABI"
   compiled_rollout_transition_contract \
   "$COMPILED_ROLLOUT_TRANSITION_CONTRACT"
+  compiled_entropy_schedule_contract \
+  "$COMPILED_ENTROPY_SCHEDULE_CONTRACT"
   compiled_environment_config_schema "$COMPILED_ENVIRONMENT_CONFIG_SCHEMA"
   compiled_strict_env_config_testing "$COMPILED_STRICT_ENV_CONFIG_TESTING"
   config_tree_sha256 "$CONFIG_TREE_HASH"
@@ -933,7 +941,7 @@ META_ARGS=(
   screen_manifest_sha256 "$SCREEN_MANIFEST_SHA256"
 )
 "$PYBIN" - "$RUN_MANIFEST" "${META_ARGS[@]}" -- "${CMD[@]}" <<'PY'
-import json, pathlib, sys
+import json, math, pathlib, struct, sys
 path = pathlib.Path(sys.argv[1])
 split = sys.argv.index("--", 2)
 pairs = sys.argv[2:split]
@@ -956,9 +964,65 @@ if manifest["anneal_ent_coef"] not in {"0", "1"}:
     raise SystemExit("anneal_ent_coef must be canonical 0 or 1")
 manifest["anneal_ent_coef"] = manifest["anneal_ent_coef"] == "1"
 manifest["min_ent_coef_ratio"] = float(manifest["min_ent_coef_ratio"])
+entropy_schedule_contract = (
+    "cosine-update-index-over-total-updates-fp32-v1"
+)
+entropy_telemetry_contract = (
+    "direct-device-coefficient-loss-decomposition-v1"
+)
+
+
+def entropy_binary32(value):
+    value = float(value)
+    if not math.isfinite(value):
+        raise SystemExit("entropy schedule produced a non-finite coefficient")
+    try:
+        applied = struct.unpack("<f", struct.pack("<f", value))[0]
+    except OverflowError as exc:
+        raise SystemExit(
+            "entropy schedule coefficient is not finite binary32"
+        ) from exc
+    if not math.isfinite(applied):
+        raise SystemExit("entropy schedule coefficient is not finite binary32")
+    return applied
+
+
+entropy_base = float(manifest["ent_coef"])
+entropy_ratio = manifest["min_ent_coef_ratio"]
+entropy_enabled = manifest["anneal_ent_coef"]
+entropy_updates = (
+    int(manifest["final_steps"]) // int(manifest["rollout_quantum"])
+)
+entropy_floor_real = entropy_base * entropy_ratio
+
+
+def entropy_coefficient(update_index):
+    if entropy_enabled:
+        progress = min(max(update_index / entropy_updates, 0.0), 1.0)
+        real = entropy_floor_real + 0.5 * (
+            entropy_base - entropy_floor_real
+        ) * (1.0 + math.cos(math.pi * progress))
+    else:
+        real = entropy_base
+    return entropy_binary32(real)
+
+
+entropy_schedule = {
+    "base": entropy_base,
+    "enabled": entropy_enabled,
+    "min_ratio": entropy_ratio,
+    "total_updates": entropy_updates,
+    "first_coefficient": entropy_coefficient(0),
+    "last_legal_coefficient": entropy_coefficient(entropy_updates - 1),
+    "floor_coefficient": entropy_coefficient(entropy_updates),
+    "contract": entropy_schedule_contract,
+    "telemetry_contract": entropy_telemetry_contract,
+    "denominator_rule": "floor(total_timesteps/(total_agents*horizon))",
+    "graph_warmup": manifest["cudagraphs"],
+}
 manifest.update({
     "schema_version": 1,
-    "entropy_effective_coefficient": "unavailable_blocked",
+    "entropy_schedule": entropy_schedule,
     "mode": ("native_fresh_v6_qualification"
              if manifest["bootstrap_mode"] == "fresh-v6-qualification"
              else "native_fresh_v6_genesis"
@@ -1045,6 +1109,7 @@ PY
         echo "reward=$REWARD_NAME sha256=$REWARD_HASH"
         echo "bootstrap=$BOOTSTRAP_MODE qualification_only=$QUALIFICATION_ONLY obs=obs-v6 action=exact-joint-v1"
         echo "compiled_rollout_transition_contract=$COMPILED_ROLLOUT_TRANSITION_CONTRACT"
+        echo "compiled_entropy_schedule_contract=$COMPILED_ENTROPY_SCHEDULE_CONTRACT"
         echo "pool=$POOL identity_sha256=$POOL_HASH manifest_sha256=$POOL_MANIFEST_HASH lineage_bundle_sha256=$POOL_LINEAGE_BUNDLE_HASH pct=$FROZEN_BANK_PCT"
         echo "warm=$WARM sha256=$WARM_HASH lineage_sha256=$WARM_LINEAGE_HASH seed=$SEED requested_steps=$STEPS final_steps=$FINAL_STEPS"
         echo "run_manifest_sha256=$(sha256sum "$RUN_MANIFEST" | awk '{print $1}')"

@@ -410,7 +410,9 @@ class ExperimentContractTests(unittest.TestCase):
             ),
         )
 
-    def test_launchers_bind_and_publish_blocked_entropy_schedule(self):
+    def test_launchers_bind_implemented_but_still_blocked_entropy_schedule(
+        self,
+    ):
         screen = (ROOT / "tools/run_reward_screen.sh").read_text(
             encoding="utf-8"
         )
@@ -422,7 +424,7 @@ class ExperimentContractTests(unittest.TestCase):
             "CUDAGRAPHS=10",
             "ANNEAL_ENT_COEF=1",
             "MIN_ENT_COEF_RATIO=0.1",
-            "ENTROPY_SCHEDULE_STATUS=blocked_unqualified",
+            "ENTROPY_SCHEDULE_STATUS=implemented_pending_nvidia",
         ):
             self.assertIn(assignment, arm)
         self.assertIn('case "$DRY_RUN" in', arm)
@@ -461,7 +463,7 @@ class ExperimentContractTests(unittest.TestCase):
             'entropy_schedule_status "$ENTROPY_SCHEDULE_STATUS"',
         ):
             self.assertIn(field, arm)
-        self.assertIn(
+        self.assertNotIn(
             '"entropy_effective_coefficient": "unavailable_blocked"',
             arm,
         )

@@ -1,10 +1,8 @@
 diff --git a/build.sh b/build.sh
-index 11bf7fcc..e4baacc4 100755
+index 11bf7fcc92329f7ee7493fb9ea8f85d7ab3dd127..e4baacc483debe215d2110288abddcbdcbf32e4b 100755
 --- a/build.sh
 +++ b/build.sh
-@@ -259,6 +259,12 @@ if [ ! -f "$BINDING_SRC" ]; then
-     exit 1
- fi
+@@ -261,2 +261,8 @@ fi
  
 +STATE_BANK_STRATUM_QUERY_CFLAG=""
 +if grep -Fxq '#define PUFFER_HAS_STATE_BANK_STRATUM_QUERY 1' \
@@ -13,31 +11,19 @@ index 11bf7fcc..e4baacc4 100755
 +fi
 +
  echo "Compiling static library for $ENV..."
- ${CC:-clang} -c "${CLANG_OPT[@]}" $EXTRA_CFLAGS \
-     -I. -Isrc -I$SRC_DIR -Ivendor \
-@@ -290,6 +296,7 @@ if [ -z "$MODE" ]; then
-         -Xcompiler=-fopenmp \
-         -DOBS_TENSOR_T=$OBS_TENSOR_T \
+@@ -292,2 +298,3 @@ if [ -z "$MODE" ]; then
          -DENV_NAME=$ENV \
 +        $STATE_BANK_STRATUM_QUERY_CFLAG \
          $PRECISION $NVCC_OPT \
-         src/bindings.cu -o build/bindings.o
- 
-@@ -317,6 +324,7 @@ elif [ "$MODE" = "cpu" ]; then
-         -I$PYTHON_INCLUDE -I$PYBIND_INCLUDE \
-         -DOBS_TENSOR_T=$OBS_TENSOR_T \
+@@ -319,2 +326,3 @@ elif [ "$MODE" = "cpu" ]; then
          -DENV_NAME=$ENV \
 +        $STATE_BANK_STRATUM_QUERY_CFLAG \
          $PRECISION $LINK_OPT \
-         src/bindings_cpu.cpp -o build/bindings_cpu.o
-     LINK_CMD=(
 diff --git a/src/bindings.cu b/src/bindings.cu
-index 60275848..0656ba18 100644
+index 4f3e77d0b07a2df866450c56f6da079a947b7e97..056bc9b96dab7a2b2c9eccce92c0ecd6928b16bb 100644
 --- a/src/bindings.cu
 +++ b/src/bindings.cu
-@@ -13,6 +13,51 @@
- 
- namespace py = pybind11;
+@@ -19,2 +19,47 @@ namespace py = pybind11;
  
 +#ifdef PUFFER_HAS_STATE_BANK_STRATUM_QUERY
 +extern "C" int my_state_bank_stratum_descriptor(
@@ -84,10 +70,8 @@ index 60275848..0656ba18 100644
 +}
 +#endif
 +
- // Wrapper functions for Python bindings
- pybind11::dict puf_log(pybind11::object pufferl_obj) {
-     auto& pufferl = pufferl_obj.cast<PuffeRL&>();
-@@ -872,2 +917,29 @@ PYBIND11_MODULE(_C, m) {
+ static void require_idle_entropy_transaction(PuffeRL& pufferl) {
+@@ -1987,2 +2032,29 @@ PYBIND11_MODULE(_C, m) {
      // Core functions
 +    m.attr("state_bank_contract_schema") = PUFFER_STATE_BANK_CONTRACT_SCHEMA;
 +    m.attr("state_bank_producer_schema") = PUFFER_STATE_BANK_PRODUCER_SCHEMA;
@@ -118,12 +102,10 @@ index 60275848..0656ba18 100644
 +#endif
      m.def("log", &puf_log);
 diff --git a/src/bindings_cpu.cpp b/src/bindings_cpu.cpp
-index e627b192..0cbbfbcb 100644
+index 6a2bf094fa78a894bc97f0e6d47003f1612b8126..78d7ae974c0461a7b632bd2f2bdc8fd0ec9fc607 100644
 --- a/src/bindings_cpu.cpp
 +++ b/src/bindings_cpu.cpp
-@@ -13,6 +13,51 @@
- 
- namespace py = pybind11;
+@@ -15,2 +15,47 @@ namespace py = pybind11;
  
 +#ifdef PUFFER_HAS_STATE_BANK_STRATUM_QUERY
 +extern "C" int my_state_bank_stratum_descriptor(
@@ -171,9 +153,7 @@ index e627b192..0cbbfbcb 100644
 +#endif
 +
  // Stub out CUDA functions that the static lib references (dead code when gpu=0)
- extern "C" {
- typedef int cudaError_t;
-@@ -189,2 +234,29 @@ PYBIND11_MODULE(_C, m) {
+@@ -190,2 +235,29 @@ PYBIND11_MODULE(_C, m) {
      m.def("puff_advantage_cpu", &py_puff_advantage_cpu);
 +    m.attr("state_bank_contract_schema") = PUFFER_STATE_BANK_CONTRACT_SCHEMA;
 +    m.attr("state_bank_producer_schema") = PUFFER_STATE_BANK_PRODUCER_SCHEMA;
@@ -203,4 +183,3 @@ index e627b192..0cbbfbcb 100644
 +          py::arg("family"), py::arg("threshold"));
 +#endif
      m.def("create_vec", &create_vec, py::arg("args"), py::arg("gpu") = 0);
- 
