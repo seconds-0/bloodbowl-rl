@@ -1,6 +1,6 @@
 # F5 recurrent Torch PPO pilot
 
-Status: accepted protocol; implementation not started.
+Status: accepted protocol amendment; implementation not started.
 
 Base:
 `fc315d6454cc2975cdf295ed49098d904dd46799`
@@ -288,6 +288,40 @@ stale bytecode in `pufferlib/__pycache__`, a sourceless `.pyc` beside the
 package, and bytecode beside the Blood Bowl protocol helper; every case must
 fail in the outer preflight before model construction.
 
+The implementation manifest's path set is frozen to exactly:
+
+```text
+.github/workflows/ci.yml
+docs/plans/f5-recurrent-ppo-pilot.md
+tools/f5_recurrent_ppo_protocol.py
+tools/run_f5_recurrent_ppo_pilot.py
+tools/test_f5_recurrent_ppo_pilot.py
+tools/verify_f5_recurrent_ppo_pilot.py
+training/f5_recurrent_ppo_pilot.json
+```
+
+Each must be a tracked regular single-link file at the clean runtime source
+commit. Paths obey the same ASCII/no-empty/no-dot/no-traversal/no-backslash/
+no-NUL/no-newline rules as the Puffer source manifest and are ordered by UTF-8
+bytes. The canonical entry array has exactly seven objects with exactly
+`bytes`, `path`, and `sha256`, encoded with the pinned canonical JSON serializer
+and one final LF. Its semantic digest is:
+
+```text
+SHA256(
+    ASCII "bloodbowl-f5-implementation-manifest-v1\0"
+    || canonical seven-entry array bytes
+)
+```
+
+The runtime digest is not embedded in any of those seven source files; it is
+recorded only in `identity.json`, avoiding self-reference. The outer
+controller and verifier derive it independently from the exact clean Git
+commit and exact path set. The worker audit allowlist is mechanically derived
+from the same seven entries and may not add a caller-selected source. Missing,
+extra, reordered, linked, worktree-dirty, Git-blob-mismatched, or byte-mutated
+entries fail before a model or artifact is created.
+
 The controller then launches the worker with the exact prepared interpreter
 and `-B -s -P`. `-I` is forbidden for the worker because it implies `-E` and
 silently ignores `PYTHONHASHSEED`. The first worker receipt must show `isolated=0`,
@@ -346,12 +380,20 @@ probe is called.
 Only after that runtime postcheck may the worker dynamically import NumPy,
 Torch, Puffer, or the compiled module. The controller and independent verifier
 repeat all startup, tree, and site-packages hashes after each worker exits.
-This closes continuity against ordinary mutation; it assumes no adversarial
-concurrent filesystem mutation between the outer preflight and `exec`.
-Watched negative fixtures add a second executable `.pth`, alter the allowed
-`.pth`, inject `sitecustomize.py`, alter `sys.path`, and mutate an installed
-package file, source-root bytecode, and sourceless bytecode, and must all fail
-before model construction.
+This detects ordinary drift that persists across a validation boundary; it is
+not an immutable source snapshot. From the first outer preflight through every
+controller/verifier worker import and file use, every postflight, both
+publication commits, and the final consumer's last stored-evidence read, the
+protocol explicitly assumes no hostile concurrent filesystem mutation by the
+same UID or another principal with write access. In particular, a
+mutate/use/restore ABA between endpoint hashes is outside the evidence claim.
+Protocol-owned namespaces separately require the zero-ACL private modes below,
+but those modes do not protect against their owning UID. Watched ordinary
+mutation fixtures add a second executable `.pth`, alter the allowed `.pth`,
+inject `sitecustomize.py`, alter `sys.path`, and mutate an installed package
+file, source-root bytecode, and sourceless bytecode, and must all fail before
+model construction or at the next postflight; adversarial ABA is a named trust
+boundary, not a tested exclusion.
 
 The runner must independently inspect module metadata and hashes for the pilot;
 it must not import or execute the foundation reference checker. The evidence
@@ -425,8 +467,9 @@ Instead, actual-sequence rollout alignment is a hard pre-update gate:
    episodes, no error, no illegal action or projection collision, and no second
    episode from an early autoreset.
 6. Any mismatch aborts before the optimizer is entered, invalidates the whole
-   run, writes only an `integrity-abort` receipt to the incomplete directory,
-   and leaves no checkpoint from that rollout.
+   run, attempts only an `integrity-abort` receipt in the incomplete
+   container, and leaves no checkpoint from that rollout; receipt failure does
+   not weaken the abort.
 
 Evaluation applies the identical first-seven-zero/eighth-one check before
 accepting any success bitset. Evaluation mode already resets recurrent rows on
@@ -645,6 +688,256 @@ model/vector under the evaluation-construction seed, loads one frozen raw
 NumPy, and Torch with the declared evaluation action seed. Throwaway
 construction therefore cannot shift the evaluation action stream.
 
+### Exact identity and RNG digest preimages
+
+Every `source.status_sha256` and `puffer.status_sha256` value uses the raw
+stdout bytes from exactly:
+
+```text
+env -i PATH=/usr/bin:/bin LANG=C LC_ALL=C \
+  git -C <root> status --porcelain=v1 --untracked-files=all
+```
+
+The command must exit zero, write an empty stderr, use LF line endings only,
+and emit no NUL or carriage-return byte. The digest is:
+
+```text
+SHA256(ASCII "bloodbowl-f5-git-status-v1\0" || raw stdout bytes)
+```
+
+The final Blood Bowl source status is exactly empty and therefore has the
+literal digest
+`d57a6da845e01509ea868319ed03d107dcf81a5bd5cd323775eb7399b18600fa`.
+The prepared Puffer root has exactly 3,437 status bytes and the literal digest
+`60ff30fe6d00bd26ff2e7b2c041b44db2f1cade0dc3577c13e070dc7a7de57f2`.
+The protocol owns both expected digests. Splitting lines, decoding/re-encoding,
+sorting, stripping the terminal LF, or hashing a JSON projection is forbidden.
+
+`startup.worker_environment_sha256` hashes the normalized exact twenty-key
+`startup.worker_environment` map, including the three literal
+`<private-runtime-scratch>` values, serialized with the canonical JSON
+serializer and one LF:
+
+```text
+SHA256(
+    ASCII "bloodbowl-f5-worker-environment-v1\0"
+    || canonical normalized worker-environment bytes
+)
+```
+
+Its prospectively frozen digest is
+`de1e11609f4c0bec54a69894149f0200a3a41d94352fac3eb529b1290a0015da`.
+Resolved scratch paths appear only in the separately typed
+`startup.scratch_paths.resolved` map and never enter this digest.
+
+`audit.opened_paths` is precisely the Python audit hook's open-*attempt* set,
+not an OS-wide successful-open trace. A script-level hook cannot observe
+CPython reads before script execution. Its explicitly excluded pre-hook phase
+is native loader/interpreter bootstrap, encoding and standard-library startup
+imports, `pyvenv.cfg`, site initialization and exact `.pth` processing,
+sitecustomize probes, and loading/decoding the already outer-authenticated
+worker script itself. Those accesses are bounded instead by the frozen
+interpreter/stdlib trust boundary, executable/runtime hashes, closed
+site-packages manifest, exact `.pth`, zero-sitecustomize preflight, exact
+implementation manifest, and startup receipt.
+
+The committed worker has one statically frozen minimal bootstrap prefix:
+obtain the already loaded built-in `sys` module, create in-memory receipt
+state, define the hook, and call `sys.addaudithook`; it performs no filesystem,
+network, dynamic import, model, or environment access. The hook is active at
+the first possible subsequent script-controlled operation, before importing
+the protocol helper, NumPy, Torch, Puffer, or the compiled module. A watched
+exact-interpreter subprocess proves both sides of this boundary: named
+bootstrap/site sentinels are already in `sys.modules` before the prefix:
+`encodings` at the exact Homebrew
+`lib/python3.12/encodings/__init__.py` origin and `os`, `site`, and
+`_sitebuiltins` with literal origin `"frozen"`. The first post-install marker
+open and every subsequent Python open attempt must then be captured. No test
+or claim retroactively attributes pre-hook reads to `audit.opened_paths`.
+
+The hook records exactly events whose name is `"open"`, including attempts
+that later fail. CPython applies `PyOS_FSPath` before emitting this event, so
+the contract applies to the post-coercion event value and cannot identify the
+caller's original type. The event argument tuple must have length three: its
+post-coercion path must be an absolute ASCII `str`; mode must be `None`, `"r"`,
+or `"rb"`; and flags must be a non-Boolean integer whose `O_ACCMODE` is
+`O_RDONLY` with none of `O_WRONLY`, `O_RDWR`, `O_APPEND`, `O_CREAT`, `O_TRUNC`,
+or `O_EXCL`. An original `PathLike` returning an accepted `str` is therefore
+indistinguishable from and treated exactly like that `str`; a `PathLike`
+returning `bytes` reaches the hook as `bytes` and rejects. Relative strings,
+post-coercion `bytes`, integer file descriptors, writable modes/flags, and
+malformed event tuples abort. Accepted workers do not open filesystem output;
+they return typed bytes/records to the stdlib supervisor, which alone owns
+evidence writes.
+
+The worker cwd is the descriptor-proved prepared Puffer root and may never
+change; any `os.chdir` or `os.fchdir` audit event aborts. Requiring every
+`"open"` path itself to be absolute makes a hidden `dir_fd` irrelevant for an
+accepted event and rejects the relative-path case whose base the Python audit
+event does not expose. Before tokenization, the absolute string must begin
+with `/`, contain only printable ASCII bytes `0x20` through `0x7e`, contain no
+backslash, empty interior, `"."`, or `".."` component, and equal
+`os.path.realpath(path, strict=False)`. Thus NUL/C0/DEL controls, lexical
+traversal, repeated separators, and symlink components reject even for a
+failed open attempt.
+
+The only accepted physical paths are under these independently
+descriptor-proved roots, substituted by longest component-boundary match:
+
+```text
+exact Blood Bowl worktree root       -> <bloodbowl-source>
+exact completed/build artifact root  -> <artifact>
+exact prepared Puffer root           -> <prepared-puffer-root>
+exact private runtime scratch root   -> <private-runtime-scratch>
+exact Homebrew Python 3.12.12 prefix -> <prepared-python-prefix>
+```
+
+The root itself becomes exactly its token; a descendant becomes
+`<token>/<POSIX-relative-suffix>`. The sole outside-root literal exception is
+the pinned Torch platform probe `/proc/self/maps`, normalized exactly to
+`<absent-linux-proc-self-maps>`; on Darwin it is an allowed failed read probe,
+not an allowed source of bytes. Every other outside-root attempt aborts. The
+result is deduplicated and sorted by ASCII/UTF-8 bytes. The access allowlist
+owns the exact allowed normalized paths/prefixes and rejects any reference,
+BC, alternate artifact, network credential, or unmanifested source path.
+
+The hook counts any event whose name starts with `"socket."` as a Python
+network attempt and raises before the operation; a completed worker therefore
+has exactly zero. It also rejects `subprocess.Popen`, `os.system`,
+`os.posix_spawn`, and `pty.spawn`. `audit.opened_paths` and
+`audit.network_attempts` make claims only about Python audit events. Direct
+`libc` file or network operations inside a native extension are not surfaced
+by this receipt and remain bounded only by the fixed module/dependency
+identities, static forbidden-input checks, endpoint hashes, and the declared
+full-lifetime no-hostile-ABA trust boundary.
+
+Every prepared-Python worker installs this same hook and returns a separately
+validated canonical audit receipt with its typed result. The training receipt
+schema is `bloodbowl-f5-training-worker-audit-v1` and has exactly:
+
+```text
+network_attempts, opened_paths, opened_paths_sha256, schema, worker_kind
+```
+
+with `worker_kind = "training"`. The evaluation receipt schema is
+`bloodbowl-f5-evaluation-worker-audit-v1` and has exactly:
+
+```text
+action_seed, checkpoint_update, network_attempts, opened_paths,
+opened_paths_sha256, repeat_flag, schema, seed_index, worker_kind
+```
+
+with `worker_kind = "evaluation"` and the exact checkpoint/seed/repeat tuple
+for that process. Each receipt owns its own sorted unique path array and digest
+under the domain below; `network_attempts` must be zero. The tracked protocol's
+`execution.audit` object freezes both schemas, the pre-hook exclusion, exact
+normalization rules, worker populations, and aggregation.
+
+The controller population is exactly 57 receipts: one training worker, 48
+primary workers for six checkpoints by eight action seeds, and eight
+checkpoint-zero-repeat workers. `identity.audit.opened_paths` is the sorted set
+union across all 57 arrays, `identity.audit.opened_paths_sha256` frames that
+union, `identity.audit.network_attempts` is their exact integer sum and must be
+zero, and `identity.audit.worker_count` is exactly `57`. Missing, duplicate,
+mislabelled, or out-of-order checkpoint/seed/repeat worker identities abort
+before the evidence manifest.
+
+The independent verifier population is exactly 56 fresh replay workers: 48
+primary plus eight checkpoint-zero-repeat workers. The same aggregation is
+stored under `verdict.audit`, with `worker_count = 56`; its exact fields are
+`network_attempts`, `opened_paths`, `opened_paths_sha256`, and `worker_count`.
+The canonical verdict bytes and precommit expected-verdict digest therefore
+bind the verifier-side access receipt after the immutable evidence manifest
+has closed. Neither aggregate includes the separately bounded pre-hook phase,
+and neither silently combines controller and verifier workers.
+
+`audit.opened_paths_sha256` is:
+
+```text
+SHA256(
+    ASCII "bloodbowl-f5-opened-paths-v1\0"
+    || canonical opened-path array bytes
+)
+```
+
+The independently constructed empty-array framing vector uses raw canonical
+bytes `[]\n` and has digest
+`82389ddf7c174161292ce15048b160bef0afd11ac5c57653cdda67883918333d`.
+An independent four-root vector serializes exactly:
+
+```text
+["<artifact>/checkpoints/a.f5w","<bloodbowl-source>/tools/a.py","<prepared-puffer-root>/pufferlib/z.py","<private-runtime-scratch>/tmp/q"]
+```
+
+with one final LF and hashes to
+`0d634cba84675ce881906cb3ddc0e8f0064ceb198d08f9ef20d75e907e2598c6`.
+The real accepted array is nonempty and is closed by the protocol's exact
+access allowlist. Tests construct normalization without the production helper
+and own absolute, root-boundary, root-itself, longest-prefix, duplicate,
+ordering, missing-path, `/proc/self/maps`, relative, `bytes`, path-like,
+integer-fd, symlink, traversal, repeated-separator, writable, cwd-change, and
+outside-allowlist vectors. The path-like vector is an end-to-end exact-CPython
+test that proves a `PathLike` returning `str` reaches the hook as that `str`
+and one returning `bytes` reaches it as rejected `bytes`; it does not claim
+that caller-origin type remains observable.
+
+The six training RNG digest fields use these exact state extractions and
+preimages:
+
+```text
+Python:
+  random.getstate() must be a three-tuple
+    (3, state_tuple, gauss_next)
+  state_tuple has exactly 625 integers: the first 624 are uint32 and the
+    final element is an index in [0,624]
+  gauss_next is null or a finite binary64 number
+  canonical object:
+    {"gauss":gauss_next,"state":[625 integers],"version":3}
+  digest:
+    SHA256("bloodbowl-f5-rng-python-v1\0" || canonical object bytes)
+
+NumPy:
+  numpy.random.get_state() must be the legacy global MT19937 five-tuple
+  canonical object:
+    {"cached_gaussian":finite binary64,"has_gauss":0-or-1,
+     "keys":[624 uint32 integers],"name":"MT19937",
+     "position":integer in [0,624]}
+  digest:
+    SHA256("bloodbowl-f5-rng-numpy-v1\0" || canonical object bytes)
+
+Torch CPU:
+  torch.get_rng_state() must be a CPU, contiguous, one-dimensional uint8
+  tensor of exactly 5,056 bytes under frozen Torch 2.9.1
+  raw_state is its bytes in index order
+  digest:
+    SHA256(
+        "bloodbowl-f5-rng-torch-cpu-v1\0"
+        || uint64-be 5056
+        || raw_state
+    )
+```
+
+No pickle, `repr`, platform-native integer encoding, CUDA RNG state, or
+implementation-object serialization enters these digests. The `*_before`
+states are captured after duplicate initialization and all construction:
+Python and NumPy immediately before the first rollout, and Torch immediately
+after reseeding to the training action/priority seed and before the first
+action sample. All three `*_after` states are captured immediately after the
+2,956th optimizer update and before checkpoint serialization, evaluation,
+receipt serialization, or any further RNG call.
+
+Independent tests build the following valid synthetic states without invoking
+the production encoders: Python version 3 with `gauss = null` and state
+`[0] * 624 + [624]` hashes to
+`65918343143ac8d1b8c708a1c705efd2431c29e7b56ee5f33c1df29d36d0182b`;
+NumPy MT19937 with 624 zero keys, position 624, `has_gauss = 0`, and
+`cached_gaussian = 0.0` hashes to
+`bc7557b8a4e8458765492ffa4e0d9c3517e303d317491c58ef7550ad9926bbe8`;
+and 5,056 zero Torch bytes hash to
+`2242b0ac30660da076a50b062f42c88e3378b0793aeda276b15d3b4398ffcd5c`.
+The tests also mutate every framing domain, length, type, range, order, and
+terminal LF independently.
+
 ## Frozen exposure budget
 
 The foundation enumerated a safe zero-dice masked-uniform scoring subset with
@@ -685,11 +978,23 @@ choose a later checkpoint based on results.
 
 A 120-minute monotonic training cap and 180-minute whole-controller cap protect
 the host. The training cap is checked only at update boundaries and is
-independent of success. Hitting either cap produces `resource-truncated`
-failure receipt in the clearly named incomplete staging directory, not a final
-evidence directory, not an accepted completed experiment, and not a learning
-failure. There is no resume path; an interrupted run restarts from update zero
-under a new empty artifact directory.
+independent of success. A training-cap or whole-controller expiry, handled
+signal, or caught exception before the controller root-rename commit point
+attempts a canonical `resource-truncated` or `integrity-abort` receipt only in
+the clearly named private incomplete container. Receipt creation/publication
+can itself fail. An uncatchable process termination—including `SIGKILL` or a
+process-runtime crash—may leave only that incomplete container and, if already
+durable, an unchanged prospective intent. Absence or truncation of a failure
+receipt never promotes, completes, or validates the run. None of these states
+is a final evidence directory, accepted completed experiment, or learning
+failure. The controller rechecks its whole-run deadline immediately before its
+durable external publication-intent receipt and again immediately before root
+rename. Expiry, signal, or exception after root rename is
+`publication-indeterminate`: it never rolls back the destination, and the
+read-only external validation path decides whether the complete directory is
+usable. There is no resume path; a precommit interrupted run restarts from
+update zero under a new empty artifact path, while an indeterminate committed
+path is consumed or rejected, never reused.
 
 The independent verifier has its own prospective 180-minute monotonic cap.
 Its workload is only source/runtime validation plus the same six-checkpoint
@@ -697,11 +1002,20 @@ post-training evaluation workload already inside the controller's
 training-plus-evaluation 180-minute envelope, so this is conservative relative
 to the measured local stack. The stdlib-only outer verifier monitors the total
 deadline and gives each child only the remaining allowance; on expiry it
-terminates and reaps the child, writes a `verifier-resource-truncated` receipt
-only in a new sibling `<artifact>.verify-incomplete.<nonce>` directory, and
-leaves the closed evidence directory byte-for-byte unchanged with no verdict.
-Verifier expiry is an execution failure, not a learning outcome, and has no
-resume or partial-acceptance path.
+terminates and reaps the child and attempts a
+`verifier-resource-truncated` receipt only in a new sibling
+`<artifact>.verify-incomplete.<nonce>` directory. Receipt failure or an
+uncatchable outer-verifier termination may leave only an incomplete scratch
+directory. The verifier leaves the closed evidence directory byte-for-byte
+unchanged with no verdict only when termination precedes the verdict-rename
+commit point; lack of a failure receipt never makes an artifact acceptable.
+The verifier rechecks the deadline immediately before durably publishing the
+prospective verdict digest outside evidence and again immediately before
+verdict rename. Expiry, signal, or exception after that rename never removes
+the verdict and is `verifier-publication-indeterminate`; the final consumer
+decides from the prepublished expected digest and immutable artifact. Verifier
+expiry is an execution failure, not a learning outcome, and has no resume or
+partial acceptance path.
 
 ## Checkpoints and training trace
 
@@ -717,9 +1031,17 @@ Each checkpoint is one fixed-schema `.f5w` file containing exactly 879,900
 bytes: the seven prospectively named float32 tensors above, encoded
 little-endian, C-contiguous, without a header, in lexicographic tensor-name
 order. Files are written temporary-file-first, flushed, fsynced, renamed, and
-hashed. They contain policy tensors only because exact resume is explicitly
-unsupported. The manifest records both the raw file SHA-256 and the canonical
-sorted-tensor digest.
+hashed. Each checkpoint destination is new-only and is published through the
+same watched exclusive no-clobber primitive specified below, using the pinned
+checkpoint-directory descriptor and single-component temporary/destination
+names. Exclusive rename is the checkpoint commit point. The destination is
+then reopened relative to the same descriptor and its device/inode/mode/link
+count/size/hash identity is proved before the checkpoint directory is fsynced.
+An existing or racing destination is never overwritten or removed. A
+post-commit identity/fsync failure aborts the still-private artifact build and
+never tries to remove the complete checkpoint. They contain policy tensors
+only because exact resume is explicitly unsupported. The manifest records both
+the raw file SHA-256 and the canonical sorted-tensor digest.
 
 The semantic digest uses `f5-canonical-tensors-v1` and has this exact binary
 preimage, with no final newline or implicit padding:
@@ -857,7 +1179,8 @@ has closed. Evaluation cannot consume or perturb training RNG.
 
 For each of the six fixed checkpoints:
 
-- evaluate all eight declared action seeds;
+- evaluate all eight declared action seeds in exactly eight fresh worker
+  processes, one checkpoint/action-seed pair per process;
 - run exactly 32,768 episodes/seed;
 - run exactly 16 vector rollouts/seed;
 - collect 262,144 episodes/checkpoint;
@@ -866,10 +1189,12 @@ For each of the six fixed checkpoints:
 - record exact `k/n` and a two-sided 95% Wilson interval; and
 - retain per-seed counts as well as the aggregate.
 
-Checkpoint zero is evaluated a second time in another fresh process and every
-bitset digest must match byte-for-byte. The independent verifier later
-reconstructs checkpoint zero from the model-init seed, loads every checkpoint
-through the fixed raw schema, reruns every evaluation seed, and requires
+Checkpoint zero is evaluated a second time in exactly eight additional fresh
+worker processes, one per declared action seed, and every repeat bitset digest
+must match its corresponding primary bitset byte-for-byte. The independent
+verifier later reconstructs checkpoint zero from the model-init seed, loads
+every checkpoint through the fixed raw schema, reruns every evaluation seed
+with the same 48-primary-plus-eight-repeat process topology, and requires
 identical bitsets and summaries.
 
 The sole pre-named learning contrast is final checkpoint `2956` versus
@@ -934,10 +1259,13 @@ and the compiled binary is permitted. Loading the reference trace or reference
 actions into Python, policy initialization, sampling, loss construction,
 evaluation, or acceptance is not.
 
-The worker installs a fail-closed audit hook for file and network access,
-records the normalized opened-file set, and rejects forbidden Blood Bowl
-reference/BC paths and all network connections. Static tests also scan pilot
-implementation surfaces for reference-action constants and forbidden imports.
+Every controller and verifier worker installs the fail-closed Python audit
+hook above, returns its exact normalized open-attempt set, and rejects
+forbidden Blood Bowl reference/BC paths and every Python socket event. The
+controller's 57-worker union is bound in `identity.json`; the verifier's
+56-worker union is bound in `verdict.json`. Neither is represented as an
+OS-wide native-open tracer. Static tests also scan pilot implementation
+surfaces for reference-action constants and forbidden imports.
 
 Calibration performed before this plan was limited to stack correctness,
 determinism, memory, and throughput. It did not observe or tune an acceptance
@@ -954,7 +1282,8 @@ The accepted implementation is expected to add:
 - `tools/run_f5_recurrent_ppo_pilot.py` — public controller plus isolated
   train/evaluation worker entry points;
 - `tools/verify_f5_recurrent_ppo_pilot.py` — independent closed-artifact and
-  live checkpoint evaluator/verdict writer;
+  live checkpoint evaluator/verdict writer plus its disjoint read-only final
+  consumer mode;
 - `tools/test_f5_recurrent_ppo_pilot.py` — watched unit/negative/integration
   tests; and
 - this plan's implementation-status appendix, completed before the exact source
@@ -968,23 +1297,745 @@ review.
 
 ## Closed evidence contract
 
-The controller builds a sibling staging directory and atomically renames it to
-the requested new artifact directory only after a complete status manifest is
-fsynced. It refuses an existing output path. Signals or unexpected exceptions
-leave a clearly named incomplete staging directory that the verifier rejects.
-Resource-cap and integrity failures add only a canonical failure receipt to
-that incomplete directory. They never manufacture a shorter instance of the
-completed evidence schema.
+The controller opens and pins the requested artifact parent as an ordinary
+non-symlink directory and validates that the requested artifact basename is
+one canonical ASCII component with enough `NAME_MAX` headroom for every
+protocol-owned suffix. It initially requires that basename to be absent by a
+no-follow descriptor-relative lookup, while treating the final exclusive
+rename—not that check—as the no-clobber authority. Relative to the pinned
+parent it exclusively creates a new private `0700`
+`<artifact-basename>.incomplete.<32-lowercase-hex-nonce>` container, opens and
+pins it, and creates one `0700` child named exactly `artifact`. The nonce is
+exactly `os.urandom(16).hex()`; a collision or nonexclusive creation fails
+closed rather than selecting or reusing an existing object. That child is the
+exact completed directory inode eventually published at the requested name.
+No payload or incomplete-run receipt is ever a sibling in the target parent.
 
-Before verification, the closed directory contains only:
+Before publication the controller reopens and fsyncs every one of the 67
+payloads and the evidence manifest, verifies their descriptor/path identities,
+then fsyncs all nine subdirectories leaf-to-root, the `artifact` child, its
+private container, and the pinned target parent. Only that bottom-up durable
+closure may be published. A precommit failure receipt is written only in the
+private container root when the process can publish one, never inside the
+`artifact` child, so no failure path can turn the child into a shortened
+version of the completed schema.
 
-- canonical protocol and effective-config receipts;
-- source, runtime, dependency, Puffer, and module receipts;
-- the 2,956-row canonical training trace;
-- the six fixed 879,900-byte raw policy tensor files;
-- fixed evaluation bitsets and summaries;
-- one evidence manifest listing every payload path, byte count, SHA-256, and
-  semantic digest.
+Every one of the 67 payloads and the evidence manifest is first written as a
+new regular single-link temporary file in its final containing directory,
+flushed and file-fsynced, then published under its validated
+single-component basename using that directory's pinned descriptor and the
+exclusive wrapper. The destination is reopened without following links and
+must match the held temporary descriptor's device/inode/mode/link-count,
+expected size, raw hash, and semantic hash before the containing directory is
+fsynced. Existing/racing leaves and post-rename identity/fsync failures abort
+the private artifact build. They never overwrite or remove an unproved object,
+and the artifact root is never published after such an abort.
+
+Every new-only publication uses Darwin
+`renameatx_np(source_dirfd, source_basename, destination_dirfd,
+destination_basename, RENAME_EXCL)`, with `RENAME_EXCL = 0x00000004`, through
+a watched fail-closed wrapper. `AT_FDCWD`, absolute/multi-component operands,
+and ordinary `os.rename`/`os.replace` after an absence check are forbidden:
+they leave ancestor-substitution or check-to-rename clobber races. Each parent
+descriptor's device/inode/mode identity—including both distinct source and
+destination parents for a cross-directory publication—is proved against its
+expected path immediately before and after publication. Immediately before
+the native call, the source basename is reopened/lstat'd relative to the
+pinned source descriptor without following links and must match the
+already-held source object's device/inode/mode/link-count/size/hash identity;
+the root-directory case binds the complete `artifact` child inode and the file
+cases bind the complete fsynced temporary inode. An unavailable API,
+source-name swap, cross-device path, pre-existing destination of any
+filesystem type, replaced parent, or racing creator fails without reading
+destination file contents, unlinking, rewriting, replacing, or changing the
+destination.
+Every operand is nonempty canonical ASCII and contains no slash, backslash,
+NUL, newline, `"."`, or `".."`. No unvalidated, absolute, or multi-component
+caller-controlled path is passed to the native publication call. The sole
+caller-derived native operand is the requested artifact basename after it is
+proved to be one canonical ASCII component with the required `NAME_MAX`
+headroom; all source names and every other destination name are frozen
+protocol literals.
+
+The production binding is exactly `ctypes.CDLL(None, use_errno=True)` with
+`renameatx_np.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int,
+ctypes.c_char_p, ctypes.c_uint]` and `renameatx_np.restype = ctypes.c_int`.
+It sets ctypes errno to zero immediately before the call, snapshots errno
+immediately after a nonzero return, and maps that saved value without making
+another libc call first. A missing symbol, a nonzero return with zero errno, or
+any errno other than an explicitly classified failure is an integrity abort;
+an error/collision fixture also fails if its injected or native call
+unexpectedly succeeds.
+
+Portable CI exercises an injected fake native binding, the unavailable-symbol
+path, exact ABI arguments, operation order, and the complete return/errno
+matrix. Separately, a mandatory non-skipped frozen-macOS pre-pilot integration
+uses the real `renameatx_np` symbol and APFS directories. It covers same- and
+cross-directory regular-file publication, checkpoint publication, directory
+root publication from the private container, cross-directory verdict
+publication, source-name substitution before the syscall, actual directory
+fsync, and `EEXIST` preservation for every locally constructible destination:
+regular file, directory, symlink, hardlink, FIFO, and Unix-domain socket. Each
+collision test proves the source and destination object identities, bytes
+where applicable, and metadata are unchanged.
+
+The wrapper closes the declared destination-clobber and
+ancestor-substitution classes under this threat boundary, but it is not a
+transactional source-inode binding primitive. A hostile same-UID process able
+to mutate protocol-owned private `0700` source namespaces in the interval
+between the final source check and the native syscall is explicitly outside
+the threat model. Watched pre-syscall substitution tests remain mandatory. A
+source or destination identity mismatch detected after the syscall is never
+described as cryptographically eliminated: private payload/checkpoint
+publication aborts before root publication, while a committed root or verdict
+is left untouched and rejected by the final consumer unless it is the expected
+complete object.
+
+All uses of “durable,” “fsynced,” and ordered publication in this plan are
+scoped to child/supervisor process death and signals while the OS, APFS volume,
+storage device, and controller remain operational. Ordinary Darwin `fsync`
+does not supply a strict power/OS-loss ordering barrier. Kernel panic, OS
+crash, device/controller failure, and power loss may independently lose or
+reorder an incomplete container, intent, supervisor handoff, root/verdict
+rename, or directory metadata and are explicitly outside this tranche. The
+protocol makes no `F_FULLFSYNC` claim. After such an event, any artifact
+without a separately retained trusted expected verdict digest is rejected;
+even with one, the final consumer must revalidate every surviving byte and
+path.
+
+Root and verdict commit syscalls run in a short-lived internal publication
+child, not in the public CLI process. The public controller/verifier remains
+the publication supervisor and sole public CLI surface. It creates two
+dedicated close-on-exec pipes, deliberately passes only their publication-child
+ends plus the already validated descriptors, and invokes the same committed
+script in a fixed internal mode. That mode is not a public override: direct
+invocation without the supervisor-created one-shot descriptor capability and
+exact inherited identity aborts before opening an artifact. The supervisor
+owns the child process, pipe endpoints, target-parent descriptor, deadline, and
+external handoff directory.
+
+After durably publishing its on-disk prospective intent receipt, the child
+sends exactly one length-prefixed canonical precommit handoff record to the
+supervisor:
+
+```text
+uint32-be canonical_record_byte_count
+canonical ASCII JSON record bytes, including exactly one LF
+EOF on the child-to-supervisor record pipe
+```
+
+The record is at most 4,096 bytes. A short/long record, a second frame, trailing
+bytes, noncanonical JSON, exhausted remaining whole-run monotonic deadline, or
+binding mismatch aborts before ACK; no independent timeout is invented. The
+controller record has schema
+`bloodbowl-f5-controller-precommit-handoff-v1` and exactly:
+
+```text
+artifact_basename, evidence_manifest_sha256, external_handoff_path,
+intent_receipt_path, intent_receipt_sha256, protocol_sha256, schema,
+source_commit, status
+```
+
+The verifier record has schema
+`bloodbowl-f5-verdict-precommit-handoff-v1` and the same keys plus
+`expected_verdict_sha256`. Both statuses are exactly `"prospective"`.
+`intent_receipt_path` is the nonce-qualified canonical sibling-relative path
+to the already durable intent `receipt.json`, respectively exactly
+`<artifact-basename>.publish-intent.<32-lowercase-hex>/receipt.json` or
+`<artifact-basename>.verify-publication.<32-lowercase-hex>/receipt.json`;
+`intent_receipt_sha256` is its raw digest. `external_handoff_path` is
+respectively the deterministic, new-only sibling path:
+
+```text
+<artifact-basename>.controller-handoff/record.json
+<artifact-basename>.verdict-handoff/record.json
+```
+
+Both records are closed canonical JSON objects. Artifact basenames are
+validated single components; both paths are canonical ASCII relative paths;
+commit/digest/schema fields use the exact formats already defined; and no
+nullable or extension field exists. The tracked protocol's
+`execution.publication` object freezes the six intent/handoff/result schema
+IDs, their exact ordered field-name sets and field formats, both deterministic
+external paths, the frame limit, and ACK literal. They are intentionally not
+roots in `artifact.schemas` because they live outside the completed artifact;
+independent validators and watched literal objects own them.
+
+Before ACK, the supervisor independently opens the named intent receipt
+relative to its pinned target parent, without following links; validates its
+descriptor identity, zero ACL, mode, link count, raw digest, canonical schema,
+and all record/evidence bindings; and publishes the exact received handoff
+record temporary-file-first into a new `0700` zero-ACL deterministic handoff
+directory. It fsyncs the `0600` zero-ACL record, handoff directory, and target
+parent. Pre-existing handoff paths of any type fail without mutation. Only
+after that durable capture does the supervisor write this exact
+acknowledgement and close its ACK pipe:
+
+```text
+ASCII "bloodbowl-f5-publication-ack-v1 "
+|| lowercase-hex SHA256(canonical handoff record bytes)
+|| LF
+```
+
+The child requires that one exact ACK, with no extra byte, before its final
+deadline and identity rechecks and commit syscall. EOF, exhausted remaining
+whole-run deadline, hash mismatch, or supervisor death before a complete ACK
+aborts precommit. Therefore a child killed at the first instruction after
+successful rename cannot strand the
+expected verdict digest: the supervisor already has the exact in-memory record
+and a durably fsynced copy. If the supervisor itself dies after ACK, the record
+is still at its deterministic external path; recovery requires the caller to
+explicitly authenticate/trust and supply that record, never an automatic scan
+or consumer default.
+
+On normal success or a child postcommit failure, the supervisor returns the
+external handoff path, its raw SHA-256, the publication classification, and,
+for a verdict, the expected verdict SHA-256 on its caller-owned result channel.
+That channel emits exactly one canonical JSON object and EOF. The controller
+result schema is `bloodbowl-f5-controller-publication-result-v1` with exactly
+`artifact_path`, `external_handoff_path`, `external_handoff_sha256`,
+`publication_status`, and `schema`. The verifier result schema is
+`bloodbowl-f5-verdict-publication-result-v1` with those keys plus
+`expected_verdict_sha256`. `publication_status` is exactly `"published"` or
+`"publication-indeterminate"`; a precommit failure emits no success-channel
+object and exits nonzero. The artifact path is the independently resolved
+absolute destination, and all other values must match the durable record and
+observed destination.
+The outer handoff directory and supervised pipe establish precommit process
+lineage and durability under the declared full-lifetime filesystem trust
+boundary; they are not a digital signature and do not establish authorship
+against the owning UID. The final consumer may receive the expected digest
+directly from this supervisor state or from an explicitly trusted copy of the
+known handoff record, but its API never reads that record itself.
+
+After the completed child is closed, but before the root publication, the
+controller publication child exclusively creates a second new sibling `0700`
+directory named
+`<artifact-basename>.publish-intent.<32-lowercase-hex-nonce>`. It publishes one
+canonical ASCII `0600` `receipt.json` temporary-file-first and new-only, then
+fsyncs the receipt file, intent directory, and pinned target parent. The
+receipt has schema `bloodbowl-f5-controller-publication-intent-v1` and exactly
+these keys:
+
+```text
+artifact_basename, evidence_manifest_sha256, protocol_sha256, schema,
+source_commit, status
+```
+
+`status` is exactly `"prospective"`. The other values bind the requested
+single-component destination and the already closed child. Receipt publication
+and the supervisor's durable handoff ACK must succeed before the final deadline
+recheck and root rename. Presence of a prospective receipt or handoff is not
+proof that the root commit occurred, and neither is edited into a retrospective
+success claim.
+
+Exclusive
+`renameatx_np(container_dirfd, "artifact", target_parent_dirfd,
+artifact_basename, RENAME_EXCL)` is the controller commit point. Signals,
+resource-cap failures, integrity failures, and unexpected exceptions before it
+leave only the clearly named private incomplete container and external
+prospective intent; failure receipts go only in the container root and never
+manufacture a shorter completed schema. After the commit point, the controller
+reopens the final name relative to the same pinned target parent, proves it is
+the held child directory by descriptor/path/device/inode/mode identity, and
+fsyncs the destination root, now-empty source container, and target parent. It
+may remove only its own proven-empty source container after those checks and a
+further parent fsync; it never removes an unproved or nonempty object. A
+post-commit identity/fsync failure never removes, rolls back, chmods, or moves
+the final destination; the durable prospective receipt, ACKed supervisor
+handoff, and observed destination classify it as
+`publication-indeterminate`. The final consumer—not controller process status
+or receipt/handoff presence—decides whether the complete artifact is valid.
+
+Every outer and worker process observes an arbitrary inherited umask only
+through the return value of its first `os.umask(0o077)` call, before any
+filesystem creation; that value is available to watched test instrumentation
+but is excluded from evidence because it cannot affect output. The process
+then applies and verifies explicit modes with descriptor-based `fchmod`;
+behavior may not depend on the inherited umask.
+
+POSIX modes alone do not establish privacy on Darwin because `fchmod` does not
+remove an inherited extended ACL. Before creating any protocol-owned namespace,
+the controller/verifier pins and requires no extended ACL object on its
+caller-selected target parent and private-runtime-scratch creation parent.
+Every protocol-created directory and regular file is then ACL-checked on its
+held descriptor immediately after creation/fchmod, after every publication,
+and during final consumption. The protocol never attempts to sanitize or
+inherit a caller ACL; a parent or created object with any extended ACL fails
+closed before trusted contents or a publication ACK enter it.
+
+The frozen check uses the same `ctypes.CDLL(None, use_errno=True)` libc handle,
+`ACL_TYPE_EXTENDED = 0x00000100`, and exactly:
+
+```text
+acl_get_fd_np.argtypes = [ctypes.c_int, ctypes.c_int]
+acl_get_fd_np.restype = ctypes.c_void_p
+acl_free.argtypes = [ctypes.c_void_p]
+acl_free.restype = ctypes.c_int
+```
+
+It sets errno to zero immediately before
+`acl_get_fd_np(fd, ACL_TYPE_EXTENDED)`. On the frozen APFS host, the sole
+accepted no-ACL result is a null pointer with saved errno `ENOENT`. A non-null
+ACL pointer is always freed successfully and then rejected, even if it
+describes an empty or deny-only ACL; a null pointer with any other errno,
+failure to free, a missing symbol, or unsupported filesystem is an integrity
+abort. Portable fake-binding tests and the non-skipped Darwin test own those
+exact return/errno/free cases and an inheritable `everyone` allow-ACL fixture
+that remains after `fchmod`.
+
+Completed artifact, private source-container, incomplete,
+controller/verifier-publication-intent, publication-supervisor-handoff,
+verifier-scratch, runtime-scratch, checkpoint, evaluation, and evaluation-leaf
+directories are mode `0700`. Every payload, evidence manifest, verdict,
+handoff record, intent/failure receipt, and temporary file is mode `0600`. All
+have no extended ACL object, and all regular files have link count one. On the
+frozen APFS layout, completed-directory link counts are induced exactly by the
+closed tree: artifact root `4`, `checkpoints/` `2`, `evaluation/` `9`, and
+each of the seven evaluation leaves `2`. Failure to set the process mask,
+chmod drift, unexpected link count, any extended ACL, or unsupported
+filesystem type fails closed.
+
+### Exact completed layout
+
+The completed directory has exactly these nine ordinary, non-linked
+subdirectories:
+
+```text
+checkpoints/
+evaluation/
+evaluation/update-000000/
+evaluation/update-000512/
+evaluation/update-001024/
+evaluation/update-001536/
+evaluation/update-002048/
+evaluation/update-002956/
+evaluation/update-000000-repeat/
+```
+
+Its 67 payload files are exactly:
+
+```text
+protocol.json
+effective-config.json
+identity.json
+training-trace.jsonl
+results.json
+
+checkpoints/update-000000.f5w
+checkpoints/update-000512.f5w
+checkpoints/update-001024.f5w
+checkpoints/update-001536.f5w
+checkpoints/update-002048.f5w
+checkpoints/update-002956.f5w
+
+evaluation/update-NNNNNN/seed-II.bits
+    for NNNNNN in {000000,000512,001024,001536,002048,002956}
+    and II in {00,01,02,03,04,05,06,07}
+
+evaluation/update-000000-repeat/seed-II.bits
+    for II in {00,01,02,03,04,05,06,07}
+```
+
+That is five root payloads, six checkpoints, 48 primary bitsets, and eight
+checkpoint-zero repeat bitsets. Each `.f5w` is exactly 879,900 bytes. Each
+`.bits` contains exactly 32,768 little-bit-order success bits and is exactly
+4,096 bytes. `identity.json` consolidates the source, runtime, dependency,
+Puffer, module, startup, RNG, and access-audit subreceipts; `results.json`
+consolidates the training summary, all evaluation summaries, repeat comparison,
+paired final-versus-initial counts, and learning outcome.
+
+`evidence-manifest.json` is a structural file, not one of its own payloads.
+There are therefore exactly 68 regular single-link files before verification.
+`verdict.json` must be absent then; it is the only permitted later addition,
+giving exactly 69 regular single-link files after verification. Empty, extra,
+linked, or differently named directories or files are rejected.
+
+### Exact completed schemas
+
+Every JSON document is ASCII, duplicate-key-free, finite-number-only,
+canonical with sorted keys and separators `(",", ":")`, and terminated by
+exactly one LF. Integer fields require `type(value) is int`; Python booleans
+cannot satisfy them. Every object is closed recursively. The only serializer
+is:
+
+```text
+json.dumps(
+    value,
+    ensure_ascii=True,
+    allow_nan=False,
+    sort_keys=True,
+    separators=(",", ":"),
+) encoded as ASCII, followed by exactly one LF
+```
+
+The pinned CPython 3.9.6 and 3.12.12 runtimes must emit identical shortest
+round-trippable binary64 float spelling for every watched literal vector,
+including lowercase `e` and Python's required `e+` spelling for a positive
+exponent. Verification parses and then requires byte equality with reserialized
+canonical bytes.
+
+`protocol.json` is validated only by byte identity with the tracked manifest,
+so it does not recursively describe itself. Its `artifact.schemas` registry
+covers exactly `effective-config.json`, `identity.json`, one
+`training-trace.jsonl` line, `results.json`, `evidence-manifest.json`,
+`verdict.json`, and the reusable `wilson95` tuple. The registry has schema
+`bloodbowl-f5-schema-registry-v1` and exactly `definitions`, `roots`, and
+`schema`. `roots` maps those seven literal names to reference nodes;
+`definitions` is a closed map of unique canonical ASCII names to nodes.
+
+The finite node DSL permits only these exact tagged forms:
+
+```text
+{"kind":"boolean"}
+{"kind":"null"}
+{"kind":"literal","value":<finite JSON scalar>}
+{"kind":"enum","values":[<unique finite JSON scalars>...]}
+{"kind":"integer","maximum":<integer-or-null>,"minimum":<integer-or-null>}
+{"finite":true,"kind":"number","maximum":<number-or-null>,
+ "minimum":<number-or-null>}
+{"format":<frozen-format-name>,"kind":"string"}
+{"items":<node>,"kind":"array","maximum_length":<integer>,
+ "minimum_length":<integer>,"ordered":true}
+{"items":[<node>...],"kind":"tuple"}
+{"closed":true,"fields":{<ASCII-field-name>:<node>...},"kind":"object"}
+{"kind":"union","options":[<node>...]}
+{"kind":"ref","name":<definition-name>}
+```
+
+Frozen string formats are exactly `absolute-path`, `ascii`, `git-object`,
+`relative-path`, `schema-id`, and `sha256`. References must resolve, the graph
+must be acyclic, and unreferenced definitions, duplicate union/enum members,
+empty unions, extra descriptor keys, Boolean-as-integer values, and wider
+schemas are rejected. The registry encodes every scalar/container type,
+nullability, literal/enum set, numeric range, fixed/allowed list length and
+order, item schema, and nested object key set specified below. Watched tests
+own the entire finite registry object and reject any omitted or permissive
+node.
+
+`protocol.json` is byte-identical to the tracked
+`training/f5_recurrent_ppo_pilot.json`. Its schema is
+`bloodbowl-f5-recurrent-ppo-pilot-v1` and its exact root keys are:
+
+```text
+artifact, budget, checkpoints, environment, evaluation, execution, optimizer,
+plan_commit, policy, puffer, runtime, schema, seeds, source
+```
+
+`plan_commit` is the full commit that contains the accepted plan amendment and
+is frozen in the manifest and watched tests immediately after that plan-only
+commit. Every nested value is exact-equality data, including the full Puffer
+arguments, 51-key environment, tensor schema, environment allowlists, seed
+domains, budgets, schedules, layout, and schema identifiers. There is no
+permissive extension mapping.
+
+`effective-config.json` has schema `bloodbowl-f5-effective-config-v1` and exact
+root keys:
+
+```text
+arguments, environment, protocol_sha256, schema
+```
+
+`environment` has exactly `mapping`, `path`, and `sha256`; it contains the
+exact raw 51-key mapping, tracked path, and frozen config digest. `arguments`
+is the complete effective nested Puffer argument object, not selected leaves.
+
+`identity.json` has schema `bloodbowl-f5-runtime-identity-v1` and exact root
+keys:
+
+```text
+audit, dependencies, module, protocol_sha256, puffer, rng, runtime, schema,
+source, startup
+```
+
+Its exact nested key sets are:
+
+```text
+source:
+  commit, implementation_manifest_sha256, status_sha256, tree, zero_bytecode
+runtime:
+  architecture, cpu_dependencies, host_model, kernel, macos,
+  python_executable_sha256, python_version, torch_config_sha256,
+  torch_git_revision, torch_version
+dependencies:
+  distributions_json_sha256, distributions_sha256_file_sha256, pyvenv_sha256,
+  requirements_sha256, site_packages_directories, site_packages_files,
+  site_packages_manifest_sha256, site_packages_regular_bytes,
+  site_packages_symlinks
+puffer:
+  commit, source_file_count, source_manifest_sha256, status_sha256, tree,
+  version
+module:
+  fixture_enabled, fixture_role, gpu_flag, path, sha256, state_bank_kind
+startup:
+  outer_environment, scratch_paths, worker_environment,
+  worker_environment_sha256, worker_flags, worker_sys_path
+rng:
+  numpy_after, numpy_before, python_after, python_before, torch_after,
+  torch_before
+audit:
+  network_attempts, opened_paths, opened_paths_sha256, worker_count
+```
+
+All source/Puffer Git commits and trees are respectively lowercase 40-hex
+strings; every SHA-256 field is lowercase 64-hex. `zero_bytecode`,
+`fixture_enabled`, and every RNG `*_before`/`*_after` field are respectively a
+Boolean and digest strings. Runtime identity leaves are exact strings except
+`cpu_dependencies`, which is the fixed ordered string array
+`["Accelerate LAPACK/BLAS","OpenMP"]`. Dependency counts/bytes, Puffer
+`source_file_count`, module `gpu_flag`/`state_bank_kind`, and
+`audit.network_attempts`/`worker_count` are nonnegative JSON integers; their
+accepted values are frozen literals, including zero network attempts, exactly
+57 controller worker receipts, and zero symlinks.
+`audit.opened_paths` is the ordered unique array of canonical normalized ASCII
+Python `"open"` attempt tokens defined above—not a successful/native-open
+list—and its digest frames that exact canonical array.
+
+`startup.outer_environment` and `startup.worker_environment` are the exact
+closed nine-key and normalized twenty-key string maps declared above.
+`startup.worker_flags` is exactly `["-B","-s","-P"]`;
+`startup.worker_sys_path` is the ordered five-string array declared above.
+`startup.scratch_paths` has exactly `normalized` and `resolved`; each contains
+exactly `cache`, `home`, `root`, and `tmp`. Normalized values are the four
+literal `<private-runtime-scratch>` paths, while resolved values are absolute
+canonical strings proven to name the same new `0700` directory tree outside
+evidence. No receipt list or map admits an untyped additional item.
+
+`training-trace.jsonl` contains exactly 2,956 canonical JSON objects, one per
+LF-terminated line and no header/footer. Each line has schema
+`bloodbowl-f5-training-update-v1` and exact root keys:
+
+```text
+committed_epoch, episodes, global_agent_step, losses, objective, parameters,
+profile, rollout, schedule, schema, update_index
+```
+
+For line `i`, `update_index = i`, `committed_epoch = i + 1`, and
+`global_agent_step = (i + 1) * 32,768`. Nested keys are exact:
+
+```text
+episodes:
+  cumulative, this_update
+objective:
+  cumulative_events, cumulative_successful_episodes, events, first_update,
+  successful_episodes
+rollout:
+  integrity, reward_contract, tail_consumed, td_log_crosscheck,
+  terminal_contract
+schedule:
+  entropy_coefficient, learning_rate
+losses:
+  approx_kl, clip_fraction, entropy, explained_variance, importance, policy,
+  total, value
+parameters:
+  canonical_sha256, checkpoint_update, drift_from_initial, norm,
+  pre_objective_sha256
+profile:
+  rollout_seconds, sps, train_seconds
+```
+
+`rollout.integrity` has exactly:
+
+```text
+away_touchdowns, completed_episodes, config_unchanged,
+demo_endzone_episodes, demo_episodes, demo_fallbacks, demo_pass_episodes,
+demo_pickup_episodes, demo_postkick_episodes,
+demo_selector_eligible_configured, demo_selector_threshold_configured,
+demo_uniform_episodes, environment_unchanged, error_episodes,
+illegal_fraction, mean_episode_length, module_unchanged,
+projection_collisions, reward_clip_episodes, reward_clip_excess,
+reward_clip_nonterminal_samples, reward_clip_terminal_samples,
+reward_clipped_samples, reward_component_mismatch_samples,
+reward_component_nonfinite_samples, reward_component_residual,
+reward_components, reward_nonfinite_episodes, reward_nonfinite_samples,
+reward_postclip_return, reward_samples_per_episode,
+reward_terminal_suppressed_abs, reward_terminal_suppressed_signed,
+seed_unchanged, source_unchanged, state_bank_config_episodes
+```
+
+Its `reward_components` object has exactly:
+
+```text
+ball_gain, ball_loss, block_assist, block_exposure, block_self_injury,
+block_sequence, block_turnover, carrier_exposure, carrier_exposure_soft,
+carrier_threat, defensive_threat, defensive_threat_soft, distance_ball,
+distance_endzone, injury_inflicted, injury_taken, possession, result_draw,
+result_winloss, rush, send_off, setup_autofix, setup_done, statmatch,
+surf_inflicted, surf_taken, touchback, touchdown
+```
+
+All episode/update/step/objective fields are nonnegative JSON integers.
+`objective.first_update` is null exactly while cumulative objective events are
+zero; beginning with the first event-bearing line it is the same zero-based
+update integer forever. `rollout.reward_contract`,
+`rollout.tail_consumed`, `rollout.td_log_crosscheck`, and
+`rollout.terminal_contract` are literal `true`, not strings or nested
+extension maps.
+
+Within `rollout.integrity`, the five `*_unchanged` fields are literal Booleans.
+All fields ending in `_episodes` or `_samples`, plus
+`away_touchdowns`, `completed_episodes`, `projection_collisions`, and both
+configured selector fields, are normalized exact nonnegative integers after
+proving their native float receipts are integral. `illegal_fraction`,
+`mean_episode_length`, clip/excess/residual/return/suppression values, and each
+reward component are finite JSON numbers with prospectively frozen ranges;
+every hard-integrity value is exact zero/valid except
+`completed_episodes = 2048`, `mean_episode_length = 8.0`,
+`reward_samples_per_episode = 16`, and the reconciled
+`touchdown` count.
+
+Schedule values, non-null losses, parameter norm/drift, and profile values are
+finite JSON numbers; norm/drift/profile values are nonnegative. Parameter hash
+fields are lowercase 64-hex or, for `pre_objective_sha256`, null under the rule
+above. `checkpoint_update` is a Boolean. Profile telemetry remains inside the
+raw training-trace bytes and its `f5-training-trace-v1` semantic digest.
+“Excluded from deterministic equality digests” means only that duplicate-run
+reproducibility assertions project out the three profile values; it never
+means those bytes are omitted from artifact integrity.
+
+Among loss fields, only `explained_variance` may be null, and only for a zero
+denominator. The only other nullable trace-row fields are
+`objective.first_update` and `parameters.pre_objective_sha256` under their
+rules above. `pre_objective_sha256` is non-null only on the first
+objective-bearing rollout.
+`checkpoint_update` is true exactly after updates
+`512, 1024, 1536, 2048, 2956`; checkpoint zero precedes the trace. `profile`
+values are finite nonnegative telemetry and excluded from deterministic
+equality digests. Only the reward map's `touchdown` component may be nonzero
+and it must reconcile with the exact reward vectors.
+
+`results.json` has schema `bloodbowl-f5-results-v1` and exact root keys:
+
+```text
+checkpoint_zero_repeat, evaluations, learning_outcome,
+paired_final_vs_initial, protocol_sha256, schema, training
+```
+
+`training` contains exactly:
+
+```text
+agent_steps, completed_budget, episodes, first_objective_update,
+home_decisions, objective_events, successful_episodes, updates
+```
+
+`evaluations` is the ordered six-record checkpoint list. Each record has
+exactly `episodes`, `seeds`, `successes`, `update`, and `wilson95`; each of its
+eight ordered seed records has exactly:
+
+```text
+action_seed, bitset_path, bitset_semantic_sha256, bitset_sha256, episodes,
+seed_index, successes, wilson95
+```
+
+Every `wilson95` is exactly a two-element JSON array `[lower,upper]` of finite
+binary64 numbers satisfying `0.0 <= lower <= successes / episodes <= upper <=
+1.0`. With `z = 1.959963984540054`, compute in this exact binary64 order:
+
+```text
+p = successes / episodes
+d = 1.0 + z*z/episodes
+c = (p + z*z/(2.0*episodes)) / d
+m = z*sqrt(p*(1.0-p)/episodes
+           + z*z/(4.0*episodes*episodes)) / d
+lower = max(0.0, c-m)
+upper = min(1.0, c+m)
+```
+
+The independent literal vector `successes = 0`, `episodes = 32768` must
+serialize exactly as:
+
+```text
+[0.0,0.00011721827793903778]
+```
+
+`checkpoint_zero_repeat` has exactly `episodes`, `matches_primary`, `seeds`,
+`successes`, and `wilson95`, using the same seed-record schema and repeat
+paths. `matches_primary` is true only after all eight raw bitsets match.
+`paired_final_vs_initial` has exactly `both`, `episodes`, `final_only`,
+`initial_only`, `neither`, and `net_final_only`. `results.json` has no
+`accepted`, `passed`, promotion, or verifier field.
+
+All result counts, updates, seeds, and action seeds are nonnegative JSON
+integers; `completed_budget` and `matches_primary` are Booleans; all paths are
+exact canonical relative strings and all digests lowercase 64-hex.
+`first_objective_update` follows the same null-or-zero-based-integer rule as
+the trace. `net_final_only` is the one signed integer field. Evaluation,
+repeat, and paired count equations are exact, and `learning_outcome` is exactly
+one of the three predeclared strings with no fourth value.
+
+`evidence-manifest.json` has schema
+`bloodbowl-f5-evidence-manifest-v1` and exact root keys:
+
+```text
+completed_budget, execution_status, payload_count, payloads, protocol_sha256,
+reserved_post_manifest_path, schema
+```
+
+The literals are `completed_budget = true`, `execution_status = "completed"`,
+`payload_count = 67`, and
+`reserved_post_manifest_path = "verdict.json"`. The 67 entries are sorted by
+path UTF-8 bytes and each has exactly `bytes`, `path`, `semantic_sha256`, and
+`sha256`. Every semantic digest is a lowercase 64-character string:
+
+```text
+canonical JSON:
+  SHA256("f5-canonical-json-v1\0" || raw canonical bytes)
+training trace:
+  SHA256("f5-training-trace-v1\0" || raw JSONL bytes)
+checkpoint:
+  the specified f5-canonical-tensors-v1 digest
+bitset:
+  SHA256(
+      "f5-success-bitset-v1\0"
+      || uint32-be checkpoint_update
+      || uint32-be seed_index
+      || uint32-be action_seed
+      || uint64-be episode_count
+      || uint8 repeat_flag
+      || raw bitset bytes
+  )
+```
+
+`repeat_flag` is the literal byte `0x00` for every primary checkpoint bitset,
+including primary checkpoint zero, and `0x01` only for paths under
+`evaluation/update-000000-repeat/`. No other byte is valid.
+
+The evidence manifest may not contain `accepted`, `passed`, or
+`learning_outcome`.
+
+`verdict.json` has schema `bloodbowl-f5-verdict-v1` and exact root keys:
+
+```text
+accepted, audit, completed_budget, evidence_manifest_sha256,
+execution_status, learning_outcome, limitation, module_sha256,
+protocol_sha256, puffer_commit, replay, schema, source_commit
+```
+
+The literals are `accepted = true`, `completed_budget = true`, and
+`execution_status = "completed"`. `replay` has exactly
+`all_bitsets_reproduced`, `checkpoint_zero_raw_sha256`,
+`checkpoint_zero_tensor_sha256`, `final_checkpoint_raw_sha256`,
+`final_checkpoint_tensor_sha256`, and `initialization_reproduced`. The four
+hash fields bind respectively the raw `.f5w` bytes and
+`f5-canonical-tensors-v1` semantic digest for checkpoints zero and 2956; the
+two other replay fields are literal `true`.
+
+`audit` has exactly `network_attempts`, `opened_paths`,
+`opened_paths_sha256`, and `worker_count`. It is the validated verifier-only
+set-union/sum over the exact 56 replay-worker receipts defined above:
+`network_attempts = 0`, `worker_count = 56`, canonical ordered unique attempt
+tokens, and their exact domain-framed digest.
+
+`limitation` is exactly this ASCII string:
+
+```text
+The verifier independently authenticated source/module, initialization, checkpoint tensors, and checkpoint behavior but did not retrain the 2,956 historical updates.
+```
+
+Each valid learning outcome can coexist with `accepted = true`; there is no
+`passed`, `learned`, or promotion Boolean. Every commit/tree/digest/module
+identity has the exact lowercase-hex type already defined; all verdict strings
+are frozen literals or the three-outcome enum.
 
 The evidence manifest closes every payload and itself is never changed. It
 also reserves exactly one non-payload path, `verdict.json`, which must be absent
@@ -996,24 +2047,102 @@ newline-terminated, duplicate-key-free, finite-number-only, and closed-schema.
 Binary bitsets and checkpoints have exact expected sizes/types and separate
 semantic digests.
 
-After all checks and replay evaluations pass, the verifier writes canonical
-`verdict.json` temporary-file-first, flushes and fsyncs it, atomically renames
-it into that reserved path, and fsyncs the directory. The verdict contains the
-immutable evidence-manifest SHA-256 and repeats the exact source, module,
-protocol, and learning-outcome identities. A final consumer validates the
-payload set against the evidence manifest, requires exactly that one additional
-regular single-link verdict path, validates its closed schema, and requires its
-embedded evidence-manifest digest to match before accepting it. A pre-existing,
-mutated, linked, or second verdict is rejected. The external run handoff
-records the verdict file SHA-256 because no file can recursively authenticate
-its own bytes.
+After all checks and replay evaluations pass, the verifier supervisor creates
+canonical `verdict.json` bytes in a new private sibling verifier-scratch
+directory on the artifact filesystem, flushes and fsyncs the temporary regular
+single-link file, computes its raw SHA-256, and passes only the validated
+descriptors to its publication child. Before any verdict commit, that child
+exclusively creates a separate sibling `0700`
+`<artifact-basename>.verify-publication.<32-lowercase-hex-nonce>` directory
+relative to the already pinned target parent. It publishes one canonical ASCII
+`0600` `receipt.json` temporary-file-first and new-only, then fsyncs the receipt
+file, publication-intent directory, and target parent. The receipt has schema
+`bloodbowl-f5-verdict-publication-intent-v1` and exactly:
+
+```text
+artifact_basename, evidence_manifest_sha256, expected_verdict_sha256,
+protocol_sha256, schema, source_commit, status
+```
+
+`status` is exactly `"prospective"` and `expected_verdict_sha256` is the raw
+digest of the already fsynced canonical verdict temporary. The receipt is
+outside the evidence tree and its 67/68/69-file cardinalities. Failure to
+publish and durably close this receipt forbids verdict publication. The same
+unchanged prospective receipt supplies the record that the supervisor
+authenticates over its owned pipe and durably captures before ACK; no
+postcommit receipt creation or status rewrite is required. Presence of the
+receipt alone does not say whether the verdict rename occurred or authenticate
+the digest to a caller.
+
+After the intent is durable, the child sends the exact verifier precommit
+handoff and waits for the supervisor's durable-capture ACK. Only after the ACK
+does it immediately revalidate the complete evidence snapshot, the prospective
+deadline, the absence of the reserved destination, and every
+source/destination descriptor identity. It pins separate descriptors for the
+scratch directory and artifact root, proves both against their expected paths,
+and publishes the single-component temporary name to the single-component
+reserved name with exactly the watched dirfd-relative Darwin exclusive wrapper
+above. `EEXIST` or any other pre-commit publication failure is fail-closed: the
+verifier never unlinks, truncates, rewrites, replaces, chmods, or otherwise
+changes the destination. Cleanup is limited to its own temporary object after
+proving the expected device/inode identity. A pre-existing or racing
+destination of any type (regular file, directory, symlink, hardlink, FIFO,
+socket, or device) remains the same object with the same contents and metadata.
+
+After exclusive publication, the verifier reopens the destination relative to
+the pinned artifact descriptor without following links, proves its
+descriptor/path/device/inode/link-count/size/hash identity, and fsyncs both the
+artifact and verifier-scratch directories. A crash or injected failure before
+exclusive publication leaves no verdict in the evidence directory. Exclusive
+rename is the verdict commit point: a later identity/fsync failure never
+attempts to remove the destination and may leave only the complete
+prevalidated canonical verdict, never partially written bytes; the verifier
+reports that failure externally and does not claim its own run succeeded.
+
+The named recovery/acceptance surface is
+`validate_final_evidence(artifact_root, expected_verdict_sha256)` in
+`tools/f5_recurrent_ppo_protocol.py`, also exposed by the independent
+verifier's exact
+`--consume-final --artifact-dir <completed-artifact>
+--expected-verdict-sha256 <lowercase-64-hex>` mode. That expected raw verdict
+digest is a mandatory trusted external input from the supervisor's
+precommit-captured state/result channel or an explicitly caller-authenticated
+copy of the deterministic verifier handoff record. The consumer itself may
+not derive it from the candidate `verdict.json`, scan sibling directories,
+read the evidence manifest as a default, or invent any fallback. The handoff
+is an explicit trust boundary, not a digital signature: the artifact, intent
+receipt, and handoff file alone cannot prove who authored the verdict or when
+replay occurred. The mode is read-only and disjoint from ordinary
+verification:
+`--puffer-root <prepared-root> --artifact-dir <unverified-artifact>` always
+rejects any pre-existing verdict, while `--consume-final` requires one. The
+final consumer never trusts verifier process status. It independently pins the
+artifact root, validates every payload against the immutable manifest,
+requires exactly one additional regular single-link verdict, validates its
+closed schema and evidence-manifest binding, requires its raw digest to equal
+the supplied expected digest, and accepts only if the complete canonical
+verdict and every immutable evidence gate still pass. An absent,
+digest-mismatched, mutated, linked, second, schema-invalid, binding-invalid, or
+evidence-drifted verdict is rejected. Whether a byte-identical verdict existed
+before some claimed verifier invocation is not inferable by consumer mode and
+is not one of its claims; ordinary writer mode owns and enforces the
+pre-existing-verdict rejection. The verdict contains the immutable
+evidence-manifest SHA-256 and repeats the exact source, module, protocol, and
+learning-outcome identities. The external run handoff invokes this
+final-consumer surface and records the verdict file SHA-256 because no file can
+recursively authenticate its own bytes. Consumer mode authenticates all
+immutable stored evidence, formulas, identities, and exact externally expected
+verdict bytes but does not rerun the expensive live checkpoint behavior
+replay; that replay remains a verification-time claim conveyed across the
+explicitly trusted external handoff.
 
 The verifier:
 
 1. requires a clean exact Blood Bowl source commit and the same live prepared
    Puffer root;
-2. validates every path, mode, link count, size, hash, schema, count, formula,
-   source identity, runtime identity, module role, and config invariant;
+2. validates every path, mode, ACL state, link count, size, hash, schema,
+   count, formula, source identity, runtime identity, module role, and config
+   invariant;
 3. rejects a pre-existing verdict;
 4. reconstructs the frozen initialization twice and checks its canonical
    digest against checkpoint zero;
@@ -1023,13 +2152,18 @@ The verifier:
 6. recomputes training totals, first-event classification, fixed schedules,
    intervals, bit counts, paired comparisons, and outcome classification;
 7. reruns every fixed checkpoint evaluation under every fixed action seed and
-   compares exact bitsets;
+   compares exact bitsets, requiring and aggregating all 56 typed replay-worker
+   audit receipts into the verdict;
 8. distinguishes independently replayed checkpoint behavior from the
    worker-authored historical training trace;
 9. enforces its independently monitored 180-minute cap without writing inside
    the evidence directory on failure;
-10. writes a canonical verdict atomically into the sole reserved path only
-    after every gate passes; and
+10. sends the exact prospective verdict digest to its supervisor, waits for
+    the independently validated/durably captured handoff ACK, revalidates
+    evidence and deadline immediately before exclusively publishing the
+    canonical verdict into the sole reserved path, never clobbers or removes a
+    pre-existing or racing object, then proves the published descriptor/path
+    identity and fsyncs both affected directories; and
 11. reports `accepted`, `completed_budget`, and `learning_outcome` as separate
     fields.
 
@@ -1055,7 +2189,18 @@ watch at least:
 - eight-step recurrence, one complete episode/rollout, exact tail consumption,
   and one real prioritized minibatch/update;
 - explicit RNG call order, deterministic/thread settings, RNG-state digests,
-  duplicate-init tensor digest, and seed-domain separation;
+  duplicate-init tensor digest, seed-domain separation, the exact
+  Python/NumPy/Torch state encodings, and independent literal framing vectors;
+- raw Git-status, normalized worker-environment, and opened-path digest
+  preimages, their exact domains/literal vectors, and rejection of line
+  projection, reordering, decoding/re-encoding, or missing-LF alternatives;
+- exact Python `"open"` event capture and physical/token normalization,
+  explicit pre-hook bootstrap/site exclusions and exact-interpreter boundary
+  canary, post-`PyOS_FSPath`/`PathLike` behavior, failed-attempt inclusion,
+  read-only enforcement, deduplication/order, all five roots and the sole
+  `/proc/self/maps` exception, explicit rejection vectors for every observable
+  invalid event/path class, and a test that the receipt never claims
+  native-open coverage;
 - exact delayed-row plus tail Home/Away reward/terminal parsing, deliberate
   exclusion of rollout row 0, early-TD fixtures, bit packing, aggregate TD
   cross-checks, and every malformed reward/terminal combination;
@@ -1063,23 +2208,71 @@ watch at least:
   checkpoints;
 - training continuation after first TD and exact final update count;
 - fixed post-training evaluation ordering, seed count, episode count,
-  checkpoint-zero repeat, Wilson intervals, and paired discordance math;
+  checkpoint-zero repeat, exact Wilson representation/arithmetic/literal bytes,
+  and paired discordance math;
 - nullable zero-denominator explained variance but rejection of non-finite
   objective losses or tensors;
 - every hard-integrity counter mutation and impossible outcome classification;
 - static and dynamic rejection of reference, BC, demo, forcing, shaped reward,
   alternate-seed, and network access;
-- atomic new-directory behavior, incomplete/resource-truncated/integrity-abort
-  semantics, controller and verifier wall-cap expiry, external verifier failure
-  receipts, and no resume;
+- separately typed audit receipts for exactly 57 controller workers and 56
+  verifier workers, rejection of a missing/duplicate/mislabelled receipt,
+  exact union/sum/digest/worker-count aggregation, controller binding in
+  `identity.json`, verifier binding in `verdict.json`, and mutations of either
+  closed audit object;
+- private-container plus exact-child construction, atomic new-directory
+  behavior, incomplete/resource-truncated/integrity-abort semantics, controller
+  and verifier wall-cap expiry, durable controller/verdict prospective intent
+  receipts, exact supervisor frame/validation/persistence/ACK, child or
+  supervisor EOF/timeout/hash/trailing-byte faults, child kill at the first
+  instruction after each successful rename, uncatchable precommit termination
+  with no promised failure receipt, external verifier failure receipts, and no
+  resume;
 - checkpoint truncation/trailing bytes, wrong exact size, non-finite raw
   tensors, attempted legacy Torch/pickle/ZIP containers, file-hash drift, and
   canonical-tensor-digest drift;
 - evidence missing/extra/truncated/trailing/noncanonical files, wrong
   counts/hashes, traversal names, symlinks, hardlinks, and pre-existing or
-  mutated verdicts; the sole reserved post-manifest verdict addition and its
-  evidence-manifest binding receive positive and negative coverage;
-- source/Puffer/module/interpreter/dependency/config/role drift;
+  mutated verdicts; tests own the exact 67 payload paths, nine subdirectories,
+  68-file pre-verdict and 69-file post-verdict cardinalities, every closed
+  root/nested field set, and independent literal semantic-digest vectors;
+  the sole reserved post-manifest verdict addition, evidence-manifest binding,
+  and Darwin exclusive-publication operation ordering receive positive and
+  negative coverage;
+- the exact seven-path implementation manifest, canonical framing, Git-blob
+  binding, audit-hook derivation, and rejection of any missing/extra/reordered/
+  linked/dirty/mutated entry;
+- mode/zero-ACL/link-count closure under hostile inherited umasks and
+  inheritable allow ACLs; exact `umask`/`fchmod`/`acl_get_fd_np`/`acl_free`
+  ordering and return/errno handling for every completed, temporary, scratch,
+  intent, handoff, incomplete, and failure-receipt object;
+- for payload/checkpoint, controller-root, and verdict publication alike,
+  pre-existing destinations of every constructible filesystem type and a
+  publication-boundary racing creator remain object-, byte-, and
+  metadata-identical; directory-ancestor substitution and path/descriptor
+  mismatches fail closed; source-basename substitution is injected separately
+  for payload, checkpoint, controller-root, and verdict publication; injected
+  failures at temporary creation, write, flush, file fsync, intent receipt
+  creation/publication/fsync, exclusive dirfd-relative rename,
+  descriptor/path revalidation, and each directory fsync never clobber another
+  creator or leave an acceptably partial result;
+- post-commit controller/verdict failures never roll back their destinations;
+  writer mode still rejects an existing verdict, while the read-only final
+  consumer requires the externally supplied raw verdict digest, never derives
+  or defaults it from candidate/storage state, accepts a complete bound
+  artifact, and rejects every digest/byte/path/schema/binding/evidence
+  mutation;
+- portable fake-binding CI for the native ABI/unavailable-symbol/errno matrix,
+  plus the mandatory non-skipped real-Darwin/APFS integration for file,
+  directory-root, cross-directory verdict, collision preservation, inherited
+  ACL rejection, and directory-fsync behavior;
+- a root-publication native-call probe that receives exactly the validated
+  caller-derived artifact basename and rejects empty, dot, traversal, slash,
+  backslash, NUL, newline, non-ASCII, and insufficient-`NAME_MAX` variants
+  before entering the native wrapper;
+- source/Puffer/module/interpreter/dependency/config/role drift at every
+  endpoint, with hostile same-UID mutate/use/restore ABA explicitly asserted
+  as an unproved full-lifetime trust boundary rather than a passing test;
 - `accepted` remaining independent of all three valid learning outcomes; and
 - a short real-stack smoke replay that produces identical initial and
   post-update tensor digests twice under the frozen seed/thread contract.
@@ -1092,14 +2285,17 @@ unit test.
 1. Obtain independent adversarial acceptance of this exact plan and resolve
    every substantiated P0/P1/P2 finding.
 2. Commit the accepted plan by itself.
-3. Add and commit the watched-red tests; show that they fail because the
-   protocol implementation is absent, not because existing tests regressed.
+3. Add and commit the watched-red tests, including explicit enumeration in the
+   repository CI unittest command; show that they fail because the protocol
+   implementation is absent, not because existing tests regressed.
 4. Implement the smallest dedicated protocol without changing Puffer or the
    environment.
 5. Prove with watched injected-terminal tests and a real-stack smoke that the
    rollout-alignment gate executes before every optimizer update.
 6. Run focused tests, deterministic duplicate smoke runs, repository tests,
-   sanitizer checks where relevant, lint, and source-cleanliness checks.
+   portable fake-native tests, the non-skipped frozen-host real Darwin/APFS
+   publication integration, sanitizer checks where relevant, lint, and
+   source-cleanliness checks.
 7. Perform a line-by-line self-review against this plan.
 8. Obtain fresh independent adversarial post-implementation review and resolve
    every substantiated finding.
@@ -1107,10 +2303,11 @@ unit test.
 10. From that exact clean commit, run the full uninterrupted pilot into an
    external artifact directory.
 11. Run the independent evaluator/verifier against the exact live Puffer root,
-    archive the evidence/verdict hashes and outcome in the external receipt,
-    and leave the source commit exact and clean. The user-facing handoff may
-    summarize that receipt, but no post-result source commit is part of this
-    tranche.
+    run the read-only final consumer with the external raw verdict digest,
+    archive the supervisor-handoff/evidence/verdict hashes and outcome in the
+    external receipt, and leave the source commit exact and clean. The
+    user-facing handoff may summarize that receipt, but no post-result source
+    commit is part of this tranche.
 12. Use the predeclared outcome—not retrospective PPO tuning—to select the next
     independently reviewed environment tranche.
 
@@ -1120,27 +2317,38 @@ Implementation is complete only when:
 
 1. a fresh adversarial reviewer accepts the plan after revisions;
 2. watched-red provenance is preserved;
-3. the public CLI has no protocol overrides;
-4. the canonical manifest and all arithmetic are exact;
-5. the live prepared Puffer/module/environment/source identities match;
-6. every accepted training and evaluation rollout proves zero episode
+3. the portable native-wrapper suite and mandatory non-skipped real
+   Darwin/APFS ABI/zero-ACL integration both pass on their declared hosts;
+4. the public CLI has no protocol overrides;
+5. the canonical manifest and all arithmetic are exact;
+6. the live prepared Puffer/module/environment/source identities match at all
+   declared endpoints and the report names hostile full-lifetime filesystem
+   ABA as out of scope;
+7. every accepted training and evaluation rollout proves zero episode
    terminals through decision 7 and dual terminal on decision 8 before any
    corresponding optimizer update or bitset acceptance;
-7. model initialization and the short real-stack run reproduce canonical
+8. model initialization and the short real-stack run reproduce canonical
    tensor digests;
-8. the real eight-step recurrent collector and PPO update run without
+9. the real eight-step recurrent collector and PPO update run without
    reference or shaping access;
-9. every hard-integrity check remains zero/valid;
-10. training completes exactly 2,956 updates independent of objective events;
-11. only the six fixed checkpoints exist;
-12. every fixed evaluation and checkpoint-zero repeat completes;
-13. the independent verifier reproduces every checkpoint bitset;
-14. the verdict accurately separates protocol acceptance from learning
-    outcome and names its historical-training trust boundary;
-15. focused, full, lint, syntax, sanitizer-relevant, mutation, and clean-source
+10. every hard-integrity check remains zero/valid;
+11. training completes exactly 2,956 updates independent of objective events;
+12. only the six fixed checkpoints exist;
+13. every fixed evaluation and checkpoint-zero repeat completes;
+14. the independent verifier reproduces every checkpoint bitset;
+15. the verdict accurately separates protocol acceptance from learning
+   outcome and names its historical-training trust boundary;
+16. both prospective publication intents and exact supervisor handoff records
+    are fsynced before ACK, survive every injected immediate-postcommit child
+    process-crash window while the OS/storage remain operational, and are
+    never interpreted as proof of commit or power-loss ordering;
+17. the read-only final consumer validates the exact 69-file artifact against
+    the mandatory trusted externally supplied raw verdict digest, never
+    derives that digest from storage, and does not rerun behavior;
+18. focused, full, lint, syntax, sanitizer-relevant, mutation, and clean-source
     checks pass;
-16. a fresh adversarial post-review has no unresolved P0/P1/P2 finding; and
-17. no push, PR, merge, deployment, production role change, or external spend
+19. a fresh adversarial post-review has no unresolved P0/P1/P2 finding; and
+20. no push, PR, merge, deployment, production role change, or external spend
     occurs.
 
 ## Explicitly out of scope
@@ -1157,6 +2365,7 @@ Implementation is complete only when:
 - production 512x3 architecture equivalence;
 - production authored state-bank publication or launcher authorization;
 - exact interruption resume;
+- OS-crash, power-loss, or storage/controller-failure durability ordering;
 - native/CUDA optimizer parity or target NVIDIA performance;
 - Linux x86 runtime qualification;
 - full-match kickoff transfer, opponent anchors, league admission, or paired
