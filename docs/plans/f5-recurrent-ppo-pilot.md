@@ -771,6 +771,91 @@ terminalizes only ERROR, empty legal support, `MATCH_OVER`, or
 `decisions >= max_decisions`, while a rules-level touchdown does not itself
 terminalize the F5 episode.
 
+The runtime transaction distinguishes the learner's volatile
+`global_step`, the session's accepted global-agent-step counter, and its
+append-only accepted trace-row ledger. `rollouts()` may advance only the first.
+Only after rollout validation succeeds, the optimizer update completes, and
+the complete trace row passes schema and semantic validation may the row be
+appended and accepted progress advance; an optional fixed-schedule checkpoint
+follows that accepted-update commit. A rejected rollout never appears in the
+accepted ledger.
+
+An integrity failure marks the session discarded before attempting a receipt,
+closes or makes the learner/vector unreachable, and rejects every later
+same-session operation before another rollout. Receipt failure cannot undo the
+discard. The real watched early-terminal matrix uses seven independent fresh
+sessions. Each first commits one real update, requiring epoch one, accepted
+step 32,768, one accepted trace row, the frozen one-update raw/canonical
+parameter digests, and seven nonempty real Muon momentum buffers totaling
+879,900 bytes. The one-update raw `.f5w` digest is exactly
+`0eff42539736bc01d67282e1c98a864f4e76a4ef91951d9f4749d3251b60a9b8`;
+the canonical tensor digest is exactly
+`bd1410bd0725f4074d6fd63fd4e59b78ab77dbcf8dceea72261c948283a889d4`.
+It then injects exactly one Home/Away terminal pair at each delayed row 1
+through 7 for match zero, flat agent rows exactly `[0,1]`, through a test-owned
+wrapper around the real compiled `cpu_step`.
+The test installs no-I/O tripwires at optimizer dispatch, accepted-commit
+dispatch, fixed-checkpoint schedule dispatch *before* its update-membership
+filter, and worker success-frame emission. This makes the checkpoint assertion
+nonvacuous even though rejected update index one is not a fixed checkpoint.
+It requires: volatile step 65,536; accepted step and epoch still 32,768/one;
+byte-identical model, optimizer, accepted ledger, and in-memory checkpoint
+serialization inputs; zero tripwire calls after the poisoned gate; a discarded
+learner; a canonical rollout-alignment receipt derived from the production
+error rather than the injected input; and same-session reuse rejected before
+another rollout. A paired supervisor test starts from empty private spool and
+destination topology, accepts only the sole failure frame, and proves no
+success-frame temporary or final leaf is created. The seven real cases run
+serially in one prepared-Python process, with one learner live at a time, a
+90-second hard test timeout, and an expected duration below 60 seconds.
+
+“Byte-identical optimizer state” is an exhaustive test-owned Muon snapshot,
+not a comparison of momentum buffers alone. The live optimizer must be exactly
+class `pufferlib.muon.Muon`, with exactly one parameter group; `defaults` and
+that group have exactly `lr`, `weight_decay`, `momentum`, and `eps` (plus
+`params` in the group); the parameter objects map bijectively to the seven
+named policy tensors; and `state` has exactly those seven parameter keys, each
+with only `momentum_buffer`. Defaults and group scalars are encoded as the 16
+lowercase hex characters of `struct.pack(">d", float(value))`; group `params`
+are exactly this ordered tensor-name array, preserving the live
+`Policy.parameters()`/Muon construction order rather than checkpoint
+lexicographic order:
+
+```text
+encoder.encoder.weight
+encoder.encoder.bias
+decoder.decoder.weight
+decoder.decoder.bias
+decoder.value_function.weight
+decoder.value_function.bias
+network.layers.0.weight
+```
+
+State rows are independently sorted by UTF-8 tensor name and close each CPU
+strided contiguous float32 momentum tensor over exact name, dtype, shape,
+stride, storage offset, element count, byte count, requires-grad flag, raw
+SHA-256, and raw little-endian C-order bytes.
+
+The snapshot frame is:
+
+```text
+ASCII "bloodbowl-f5-muon-snapshot-v1\0"
+uint64-be canonical_metadata_byte_count
+canonical ASCII JSON metadata bytes with one LF
+for each state row in metadata order:
+    uint64-be raw_momentum_byte_count
+    exact raw momentum bytes
+```
+
+The metadata schema/name, exact class, defaults, group, state descriptors, and
+row order are closed. The watched serializer is independent of production,
+and its mutation matrix proves that every scalar, parameter order/membership,
+state key, tensor metadata field, and tensor byte changes the framed bytes.
+The before/after test also compares the exact raw `.f5w` model bytes, canonical
+accepted-ledger JSONL bytes, and in-memory fixed-checkpoint serialization input.
+Thus a poisoned gate cannot mutate learning rate, defaults, parameter groups,
+or an unobserved optimizer field while leaving only seven buffers unchanged.
+
 This is an empirical integrity guarantee over every one of the 6,053,888
 training episodes and every fixed evaluation episode actually used by the
 pilot. It is not a theorem about every possible legal F5 transcript. If a
@@ -1122,14 +1207,27 @@ site-packages manifest, exact `.pth`, zero-sitecustomize preflight, exact
 implementation manifest, and startup receipt.
 
 The committed worker has one statically frozen minimal bootstrap prefix:
-obtain the already loaded built-in `sys` module, create in-memory receipt
-state, define the hook, and call `sys.addaudithook`; it performs no filesystem,
-network, dynamic import, model, or environment access. The hook is active at
-the first possible subsequent script-controlled operation, before importing
-the protocol helper, NumPy, Torch, Puffer, or the compiled module. A watched
-exact-interpreter subprocess proves both sides of this boundary: named
-bootstrap/site sentinels are already in `sys.modules` before the prefix:
-`encodings` at the exact Homebrew
+obtain the already loaded built-in `sys` module, obtain the already loaded
+built-in `posix` module from `sys.modules`, call `posix.umask(0o077)` as the
+first process-state protocol operation and never restore it, and obtain the
+already loaded built-in `_signal` module. It blocks
+`SIGHUP/SIGINT/SIGQUIT/SIGTERM`, requires none was inherited blocked, requires
+the prior dispositions to be `SIG_DFL`, Python's `default_int_handler`,
+`SIG_DFL`, and `SIG_DFL` in that numeric order, resets all four to `SIG_DFL`,
+and restores the inherited mask. It then obtains the already loaded frozen
+`os` module from `sys.modules`, creates in-memory receipt state, defines the
+hook, and calls `sys.addaudithook`. The previous umask is exposed only to watched
+instrumentation and is never evidence. Apart from the exact umask/signal
+process-state calls, this prefix performs no filesystem, network, dynamic
+import, model, or environment access.
+The signal normalization is the only other pre-hook process-state mutation and
+ensures every supervisor- or externally delivered signal death is silent:
+there is no Python `KeyboardInterrupt` traceback to race stderr classification.
+The hook is active at the first possible subsequent script-controlled
+operation, before importing the protocol helper, NumPy, Torch, Puffer, or the
+compiled module. A watched exact-interpreter subprocess proves both sides of
+this boundary: named bootstrap/site sentinels are already in `sys.modules`
+before the prefix: `encodings` at the exact Homebrew
 `lib/python3.12/encodings/__init__.py` origin and `os`, `site`, and
 `_sitebuiltins` with literal origin `"frozen"`. The first post-install marker
 open and every subsequent Python open attempt must then be captured. No test
@@ -1185,13 +1283,17 @@ at most `65,535` unique normalized paths. This is a prospective, result-blind
 resource cap, not a claim about the observed cardinality or a substitute for
 the exact allowlist. The audit recorder rejects the 65,536th distinct
 per-worker token before the attempted operation and before producing a
-receipt. The controller and verifier each build their union incrementally and
-reject the 65,536th distinct aggregate token before materializing or returning
-an accepted aggregate. Either overflow is an `integrity-abort`, not a
-resource-truncation or learning outcome. The `opened_paths` schema therefore
-freezes `minimum_length = 1` and `maximum_length = 65535`; the semantic
-validator separately requires ASCII byte ordering, uniqueness, token grammar,
-exact root/prefix allowlisting, and the framed digest.
+receipt. Independently, before adding each new token, it prospectively requires
+that the canonical ASCII JSON opened-path array bytes, including their one
+final LF, remain at most `3,145,728` bytes; this bound makes the four-mebibyte
+typed-result limit below enforceable. The
+controller and verifier each build their union incrementally and apply both
+limits before materializing or returning an accepted aggregate. Either
+overflow is an `integrity-abort`, not a resource-truncation or learning
+outcome. The `opened_paths` schema therefore freezes `minimum_length = 1` and
+`maximum_length = 65535`; the semantic validator separately requires ASCII
+byte ordering, uniqueness, token grammar, exact root/prefix allowlisting, the
+3,145,728-byte canonical limit, and the framed digest.
 
 The hook counts any event whose name starts with `"socket."` as a Python
 network attempt and raises before the operation; a completed worker therefore
@@ -1242,6 +1344,358 @@ The canonical verdict bytes and precommit expected-verdict digest therefore
 bind the verifier-side access receipt after the immutable evidence manifest
 has closed. Neither aggregate includes the separately bounded pre-hook phase,
 and neither silently combines controller and verifier workers.
+
+### Bounded supervisor/worker IPC
+
+At script entry, each committed script's minimal bootstrap imports only the
+built-in `sys` module and reads an in-memory copy of `sys.argv[1:]` to select a
+mode; neither operation opens a Python source file or mutates process state. A
+first token equal to `--internal-f5-worker` selects internal-worker mode, whose
+closed grammar requires no remaining token. The exact private
+publication-child token
+`--internal-f5-controller-publication-child` or
+`--internal-f5-verdict-publication-child`, when it is the first token, selects
+the corresponding publication child. Each internal branch validates its
+remaining closed grammar and rejects a mismatch as an internal integrity
+failure; an internal token is never reinterpreted by a public parser.
+Otherwise the runner selects its public writer parser. The verifier selects
+final-consumer mode only when the first argument is exactly
+`"--consume-final"` and selects its writer parser otherwise; either parser
+rejects mixed or extra mode tokens. Outside native interpreter/committed-script
+loading and the exact built-in `sys`/`posix` cases below, no environment read,
+dynamic import, clock, filesystem read/write/creation, network, native call,
+or subprocess precedes the selected branch's one `posix.umask(0o077)` call.
+
+Obtaining the mask primitive is mode- and runtime-exact. Both frozen
+interpreters preload the built-in `posix` module. The bootstrap obtains
+`sys.modules["posix"]`, requires literal origin `"built-in"` and the watched
+runtime identity, calls `posix.umask(0o077)` exactly once, and never restores
+the previous value. Interpreter/script loading and the built-in `sys` import
+are the complete pre-mask read/import boundary; no repository-local or
+third-party module, environment value, or protocol-owned path is touched.
+The `posix.umask(0o077)` call remains the first process-state mutation and
+occurs before every protocol-owned creation or write. All remaining imports
+for the selected mode—including Xcode CPython 3.9's stdlib `os` import—occur
+afterward. Prepared CPython 3.12 worker mode later obtains its already loaded
+frozen `os` module from `sys.modules` without import.
+
+Writer branches then capture their one whole-run start/deadline before public
+argument parsing. The read-only final-consumer branch also applies the one
+umask call, parses its exact arguments, and constructs no whole-run deadline.
+An internal-worker branch applies its one umask call, installs and later seals
+the audit hook as specified below, constructs its fixed worker operations once,
+and reaches its owning script's `_run_internal_worker` exactly once. A
+publication-child branch applies its one umask call, performs the same blocked
+four-signal reset to `SIG_DFL`, validates its closed private grammar,
+constructs its fixed construction-only publication operations once, and
+reaches its named publication-child driver once; it does not install the
+prepared-worker audit hook. No internal token is admitted by a public parser.
+
+Prepared Python workers never write evidence files. Each is invoked exactly as
+the prepared Python executable with `-B -s -P`, its absolute committed owning
+writer path, and the fixed internal token `--internal-f5-worker`. The
+controller's training and evaluation workers use the runner path; the
+verifier's replay workers use the verifier path. The token is intercepted by
+each owning script's bootstrap and is never accepted by either public
+`parse_args`.
+Standard input is the one-shot job channel, standard output is the result
+stream, and standard error is captured separately. The spawn uses
+`close_fds=True`, `start_new_session=True`, the exact twenty-key environment,
+and the descriptor-proved prepared-Puffer cwd. No additional descriptor is
+inherited. Direct internal invocation without pipe-shaped standard
+descriptors, a canonical one-shot job, exact source/runtime identities, and a
+matching live supervisor PID aborts before an artifact or checkpoint is
+opened.
+
+The job channel is exactly:
+
+```text
+uint32-be canonical_job_byte_count
+canonical ASCII JSON job bytes, including exactly one LF
+EOF
+```
+
+There is exactly one record and at most 4,096 job bytes. Short or long input,
+a second frame, trailing bytes, noncanonical/duplicate-key/non-ASCII JSON,
+missing LF, a Boolean integer, or an oversized declared length rejects. Every
+job path is canonical printable absolute ASCII and at most 1,024 bytes. A job
+nonce is exactly `os.urandom(16).hex()`. Deadlines are type-strict integers in
+`[1, 2^63 - 1]`; the supervisor PID is in `[1, 2^31 - 1]`. The job digest is:
+
+```text
+SHA256(
+    ASCII "bloodbowl-f5-worker-job-v1\0"
+    || complete canonical job bytes
+)
+```
+
+The training job schema is
+`bloodbowl-f5-training-worker-job-v1`, with exactly:
+
+```text
+artifact_root, implementation_manifest_sha256, nonce, protocol_sha256,
+puffer_root, schema, source_commit, source_root, supervisor_pid,
+training_deadline_monotonic_ns, whole_deadline_monotonic_ns, worker_kind
+```
+
+`worker_kind` is exactly `"training"` and the training deadline does not
+exceed the whole deadline. No checkpoint, resume state, retry number, seed,
+budget, device, or output override exists. The evaluation job schema is
+`bloodbowl-f5-evaluation-worker-job-v1`, with exactly:
+
+```text
+action_seed, artifact_root, checkpoint_raw_sha256,
+checkpoint_tensor_sha256, checkpoint_update,
+implementation_manifest_sha256, nonce, population, protocol_sha256,
+puffer_root, repeat_flag, schema, seed_index, source_commit, source_root,
+supervisor_pid, whole_deadline_monotonic_ns, worker_kind
+```
+
+`worker_kind` is exactly `"evaluation"`; `population` is `"controller"` or
+`"verifier"`; and the checkpoint/update/seed/repeat/action tuple must be the
+next exact member of that population's manifest-owned ordered list. The
+checkpoint path is derived from `artifact_root` and `checkpoint_update`, never
+supplied.
+
+Every worker result frame is:
+
+```text
+uint32-be canonical_header_byte_count
+canonical ASCII JSON header bytes, including exactly one LF
+exact payload bytes declared by the header
+```
+
+The closed header schema is
+`bloodbowl-f5-worker-payload-header-v1`, with exactly:
+
+```text
+bytes, frame_index, job_sha256, kind, logical_name, nonce, raw_sha256,
+schema, semantic_sha256
+```
+
+A header is at most 4,096 bytes. The supervisor validates the next expected
+index/kind/name and a safe payload cap before reading the payload, then drains
+and hashes it incrementally in chunks no larger than 65,536 bytes into its own
+private temporary file. It never allocates from an unchecked worker length.
+The raw digest covers the exact payload. Semantic digests use the already
+frozen trace, checkpoint, and bitset domains, or
+`f5-canonical-json-v1` for typed JSON result/failure payloads. Job digest and
+nonce must equal the request. Standard output and standard error are drained
+concurrently; `wait()` or `communicate()` before both pipes are drained is
+forbidden.
+
+Header and binding leaf types are closed. `bytes` and `frame_index` are
+type-strict nonnegative JSON integers, with `bytes` bounded by the
+kind-specific limit and `frame_index` equal to the next expected index.
+`job_sha256`, `raw_sha256`, and `semantic_sha256` are exactly 64 lowercase
+hexadecimal characters; `nonce` is exactly the authenticated 32-character
+lowercase hexadecimal job nonce. `kind`, `logical_name`, and `schema` are
+exact ASCII literals from the expected sequence. A frame binding repeats the
+same observed integer/digest/name values and admits no additional field.
+Evaluation `successful_episodes` is a type-strict integer in `[0,32768]`;
+all job and result seed/update/count fields are type-strict integers within
+their already frozen seed/update/population ranges and reject Booleans.
+
+A successful training stream has exactly eight frames and EOF, in this order:
+
+```text
+0  training-trace   training-trace.jsonl                    1..16,777,216
+1  checkpoint       checkpoints/update-000000.f5w           879,900
+2  checkpoint       checkpoints/update-000512.f5w           879,900
+3  checkpoint       checkpoints/update-001024.f5w           879,900
+4  checkpoint       checkpoints/update-001536.f5w           879,900
+5  checkpoint       checkpoints/update-002048.f5w           879,900
+6  checkpoint       checkpoints/update-002956.f5w           879,900
+7  training-result  <training-result>                       1..4,194,304
+```
+
+Training payload bytes are capped at 33,554,432 and total wire bytes at
+33,587,232. A successful evaluation stream has exactly two frames and EOF:
+index zero is one 4,096-byte `evaluation-bitset` at the derived exact `.bits`
+path, and index one is a 1..4,194,304-byte `evaluation-result` named
+`<evaluation-result>`. Evaluation payload bytes are capped at 8,388,608 and
+wire bytes at 8,396,808. Captured stderr is capped at 65,536 bytes and must be
+empty for every typed success or failure.
+
+The aggregate payload/wire ceilings are deliberately redundant derived
+defense-in-depth limits for these closed sequences, not independently binding
+accepted-stream boundaries: the sum of all training per-kind maxima is
+26,250,920 bytes and the sum of both evaluation maxima is 4,198,400 bytes,
+both below their aggregate payload ceilings, and the closed canonical headers
+cannot bridge the corresponding wire gaps. Production still maintains and
+checks both counters on every increment. Watched coverage proves the exact
+arithmetic and statically proves the two checks are reachable in each drain
+loop; it does not claim an impossible otherwise-valid closed stream whose
+first failure is an aggregate/wire ceiling.
+
+Typed result records refer to streamed payloads only through a closed frame
+binding with exactly `bytes`, `frame_index`, `logical_name`, `raw_sha256`, and
+`semantic_sha256`. The training result schema is
+`bloodbowl-f5-training-worker-result-v1`, with exactly:
+
+```text
+audit, checkpoint_frames, effective_config, initial_parameter_sha256,
+initial_reconstruction_sha256, job_sha256, nonce, rng, schema, startup,
+trace_frame, training, worker_kind
+```
+
+It contains the exact training audit, effective-config, RNG, startup, and
+training-results records already defined; its six checkpoint bindings and one
+trace binding equal the independently streamed frames; both initialization
+hashes equal the frozen initial canonical hash; and `worker_kind` is
+`"training"`. The evaluation result schema is
+`bloodbowl-f5-evaluation-worker-result-v1`, with exactly:
+
+```text
+action_seed, audit, bitset_frame, checkpoint_raw_sha256,
+checkpoint_tensor_sha256, checkpoint_update,
+construction_parameter_sha256, episode_count, job_sha256,
+loaded_parameter_sha256, nonce, population, repeat_flag, schema, seed_index,
+successful_episodes, worker_kind
+```
+
+It binds the exact evaluation audit/job/bitset, requires
+`episode_count = 32768`, requires the construction hash to equal the frozen
+initial hash and the loaded hash to equal the checkpoint tensor hash, and
+requires the supervisor's independent bit count to equal
+`successful_episodes`.
+
+The worker failure schema is `bloodbowl-f5-worker-failure-v1`, with exactly:
+
+```text
+cause, job_sha256, nonce, phase, progress, schema, status, worker_kind
+```
+
+`phase` is one of `bootstrap`, `training`, `evaluation`, or `serialization`.
+Cause membership is worker-kind-specific. A training worker's
+`integrity-abort` cause is one of `job-contract`, `runtime-contract`,
+`training-contract`, `rollout-alignment`, or `unexpected-exception`; an
+evaluation worker's is one of `job-contract`, `runtime-contract`,
+`evaluation-contract`, or `unexpected-exception`. `rollout-alignment` is
+training-only. A training worker's `resource-truncated` cause is
+`training-deadline` or `worker-resource`; an evaluation worker's is
+`worker-resource`. Whole-run deadlines, handled signals, and supervisor loss
+can never be accepted from a typed worker failure. The otherwise identical
+evaluation rollout gate maps every terminal/log mismatch to
+`evaluation-contract`.
+
+`progress` is null for every evaluation worker and for a training worker
+before learner construction. After training-learner construction, every
+caught typed training failure returns one closed `progress` object with
+exactly:
+
+```text
+accepted_global_agent_step, attempted_update_index, committed_epoch,
+learner_disposition, rollout, volatile_global_agent_step
+```
+
+`learner_disposition` is always `"discarded"`.
+`committed_epoch` is in `[0,2956]`;
+`accepted_global_agent_step = committed_epoch * 32768`; and
+`volatile_global_agent_step` is either the accepted step or exactly 32,768
+greater. `attempted_update_index` is null or equals `committed_epoch` in
+`[0,2955]`. It is non-null exactly while an update attempt has begun. When it
+is null, volatile equals accepted. A rollout-alignment failure requires a
+non-null attempted index and volatile equal to accepted plus 32,768.
+
+`rollout` is non-null only for a training `rollout-alignment` failure and has
+exactly:
+
+```text
+agent_row_count, agent_rows_bitset_hex, check, delayed_row, mode
+```
+
+`mode` is `"training"`. `agent_rows_bitset_hex` is exactly 1,024 lowercase
+hexadecimal characters encoding a 512-byte, little-bit-order bitset over rows
+0 through 4,095; `agent_row_count` is the type-strict integer popcount in
+`[0,4096]`. This bounded representation, not an unbounded row array, owns the
+complete offending-row set. `check` is one of `row-zero-canary`,
+`early-terminal`, `tail-terminal`, or `home-away-terminal-asymmetry`.
+The first three require a positive row count and delayed row exactly zero,
+in `[1,7]`, or exactly eight respectively. The asymmetry check requires a
+positive row count and delayed row in `[0,8]`. ERROR, empty-legal,
+episode-count, episode-length, autoreset, and other flat-log failures use
+`training-contract` with `rollout = null`.
+
+Multi-fault selection is deterministic. The gate first scans delayed rows
+zero through eight for Home/Away asymmetry in ascending row then match order.
+If any exists, it selects the lowest bad delayed row and the bitset contains
+both members of every asymmetric pair at that selected row. Otherwise it
+checks the row-zero canary, then early-terminal rows one through seven in
+ascending order, then the tail at row eight. For a selected row-value check,
+the bitset contains every agent row at that one delayed row whose terminal
+differs from the required value. Later row/topology/log faults do not alter
+the selected `check`, row, or bitset. Only after all terminal-topology checks
+pass does the gate validate ERROR, empty-legal, episode/autoreset counts,
+length, and remaining flat-log invariants in their manifest-owned projection
+order.
+
+The watched early-terminal cases require exactly
+`committed_epoch = 1`, `accepted_global_agent_step = 32768`,
+`attempted_update_index = 1`, `volatile_global_agent_step = 65536`,
+`check = "early-terminal"`, delayed row equal to the injected row, row count
+two, and exactly the injected Home/Away row bits.
+
+The valid `(worker_kind, status, phase, cause, progress)` combinations are
+closed rather than independently mixed:
+
+```text
+training  integrity-abort     bootstrap      job-contract|runtime-contract|
+                                            unexpected-exception       null
+training  resource-truncated bootstrap      worker-resource            null
+training  integrity-abort     training       training-contract|
+                                            rollout-alignment|
+                                            runtime-contract|
+                                            unexpected-exception       object
+training  resource-truncated training       training-deadline|
+                                            worker-resource            object
+training  integrity-abort     serialization  runtime-contract|
+                                            unexpected-exception       object
+training  resource-truncated serialization  worker-resource            object
+evaluation integrity-abort    bootstrap      job-contract|runtime-contract|
+                                            unexpected-exception       null
+evaluation resource-truncated bootstrap      worker-resource            null
+evaluation integrity-abort    evaluation     evaluation-contract|
+                                            runtime-contract|
+                                            unexpected-exception       null
+evaluation resource-truncated evaluation     worker-resource            null
+evaluation integrity-abort    serialization  runtime-contract|
+                                            unexpected-exception       null
+evaluation resource-truncated serialization  worker-resource            null
+```
+
+No training worker uses phase `evaluation`; no evaluation worker uses phase
+`training`; and no other combination validates. Any audit-hook rejection,
+forbidden process/cwd/network attempt, sealed-audit violation, or runtime
+identity/security-contract failure maps deterministically to
+`runtime-contract` in the phase where it occurs, never to the domain contract
+or generic unexpected-exception cause.
+
+A failure payload is at most 4,096 canonical bytes and is the sole index-zero
+`worker-failure` frame with logical name exactly `<worker-failure>`, followed
+by EOF; no failure frame is permitted after any success frame. Before a
+canonical job digest and nonce have been authenticated, a failure exits 70
+without attempting an unbound failure frame.
+
+Internal worker exits are exactly `0` for success, `70` for
+`integrity-abort`, and `75` for `resource-truncated`. Success requires the
+exact request, complete ordered stream and EOF, empty stderr, matching exit
+zero, all byte/semantic/schema bindings, and source/runtime postflight. A
+typed failure requires one valid failure frame and EOF when emission was
+possible, empty stderr, and the matching 70/75 exit. Any stderr byte, byte
+65,537, partial/reordered/extra/oversized frame, trailing output, mismatched
+exit/record, any other exit, unrequested signal death, or postflight drift is
+an integrity failure. A crash, broken pipe, serialization failure, or
+`SIGKILL` may prevent a typed failure frame; its absence never makes a worker
+acceptable. For a success path, every source/runtime postflight and every
+operation that may open a file occurs before the typed result is serialized.
+The worker then serializes the result containing the current audit receipt in
+memory, atomically seals the audit recorder, and emits the already serialized
+final frame. Once sealed, the hook rejects every later `open`, `socket.*`,
+forbidden process, `os.chdir`, or `os.fchdir` audit event; no import,
+postflight, model operation, or filesystem access follows the seal. Only
+bounded writes to the already inherited stdout descriptor and process exit are
+permitted. Thus an allowed late open cannot escape the final receipt.
 
 `audit.opened_paths_sha256` is:
 
@@ -1381,46 +1835,450 @@ Training always runs all 2,956 updates. It may not stop on the first
 touchdown, continue until a touchdown, retry a seed, extend the budget, or
 choose a later checkpoint based on results.
 
-A 120-minute monotonic training cap and 180-minute whole-controller cap protect
-the host. The training cap is checked only at update boundaries and is
-independent of success. A training-cap or whole-controller expiry, handled
-signal, or caught exception before the controller root-rename commit point
-attempts a canonical `resource-truncated` or `integrity-abort` receipt only in
-the clearly named private incomplete container. Receipt creation/publication
-can itself fail. An uncatchable process termination—including `SIGKILL` or a
-process-runtime crash—may leave only that incomplete container and, if already
-durable, an unchanged prospective intent. Absence or truncation of a failure
-receipt never promotes, completes, or validates the run. None of these states
-is a final evidence directory, accepted completed experiment, or learning
-failure. The controller rechecks its whole-run deadline immediately before its
-durable external publication-intent receipt and again immediately before root
-rename. Expiry, signal, or exception after root rename is
-`publication-indeterminate`: it never rolls back the destination, and the
-read-only external validation path decides whether the complete directory is
-usable. There is no resume path; a precommit interrupted run restarts from
-update zero under a new empty artifact path, while an indeterminate committed
-path is consumed or rejected, never reused.
+Writer signal coverage begins with one exact post-umask bootstrap, before
+argument parsing, deadline capture, factory construction, or preflight. Using
+the already loaded built-in `_signal` module, it:
 
-The independent verifier has its own prospective 180-minute monotonic cap.
-Its workload is only source/runtime validation plus the same six-checkpoint
-post-training evaluation workload already inside the controller's
-training-plus-evaluation 180-minute envelope, so this is conservative relative
-to the measured local stack. The stdlib-only outer verifier monitors the total
-deadline and gives each child only the remaining allowance; on expiry it
-terminates and reaps the child and attempts a
-`verifier-resource-truncated` receipt only in a new sibling
-`<artifact>.verify-incomplete.<nonce>` directory. Receipt failure or an
-uncatchable outer-verifier termination may leave only an incomplete scratch
-directory. The verifier leaves the closed evidence directory byte-for-byte
-unchanged with no verdict only when termination precedes the verdict-rename
-commit point; lack of a failure receipt never makes an artifact acceptable.
-The verifier rechecks the deadline immediately before durably publishing the
-prospective verdict digest outside evidence and again immediately before
-verdict rename. Expiry, signal, or exception after that rename never removes
-the verdict and is `verifier-publication-indeterminate`; the final consumer
-decides from the prepublished expected digest and immutable artifact. Verifier
-expiry is an execution failure, not a learning outcome, and has no resume or
-partial acceptance path.
+1. calls `_signal.pthread_sigmask(SIG_BLOCK, {SIGHUP,SIGINT,SIGQUIT,SIGTERM})`;
+2. requires the returned inherited mask to contain none of those four signals;
+3. creates an in-memory first-signal latch, pre-latched as
+   `"pre-handler-pending"` if `_signal.sigpending()` intersects the set;
+4. installs one non-raising, latch-only handler in numeric order `SIGHUP`,
+   `SIGINT`, `SIGQUIT`, `SIGTERM`, requiring the previous dispositions to be
+   exactly `_signal.SIG_DFL`, `_signal.default_int_handler`,
+   `_signal.SIG_DFL`, and `_signal.SIG_DFL` in that order; and
+5. restores the exact inherited mask with `SIG_SETMASK`.
+
+The handlers remain installed through every writer phase and public result
+write; they are never restored. Repeated signals cannot replace the first
+latch. Every child/pipe/selector/reap and public-output user-space wait uses
+nonblocking descriptors or a nonblocking child poll. No `communicate()`,
+unbounded `wait()`, blocking pipe read/write, or whole-deadline-sized
+`select()` is allowed. Each loop checks signal then deadline immediately
+before and after a wait, and every selector/poll sleep is capped at exactly
+50,000,000 monotonic nanoseconds even when more time remains. This literal
+`signal_response_poll_nanoseconds` cap prevents PEP 475 restart of a
+non-raising handler from hiding a signal until the three-hour deadline.
+
+Nonblocking public output is temporary and, when restoration succeeds, does
+not leak through a caller's duplicate of the inherited open-file description.
+Before the first writer operation on stdout or failure stderr, the writer
+snapshots that descriptor's exact `F_GETFL` file-status flags, applies
+`F_SETFL(saved | O_NONBLOCK)`, and verifies the result. In an unconditional
+`finally` after complete, short, failed, or expired output, it applies
+`F_SETFL(saved)` and verifies exact restoration before process exit; it never
+closes the inherited descriptor before this restoration attempt. A setup
+failure emits no partial bytes. A restoration failure preserves the already
+selected precommit classification, or follows the postcommit
+caller-channel-failure rule, and can make no receipt or status claim that
+rewrites that origin. Because `F_SETFL` acts on the shared open-file
+description, a failed restoration may unavoidably leave the caller's duplicate
+nonblocking; this is an explicitly detected OS/output failure, not a no-leak
+claim. Watched subprocess tests retain a duplicate of the same pipe write end
+in the caller, prove exact before/after flags for every path whose restoration
+succeeds, and separately inject restoration failure to prove its detection,
+classification, and explicit residual-flag non-claim.
+
+A latched signal with no live child and before an exact/possible publication
+commit stops before the next side effect, maps to that phase's
+`handled-signal`, and attempts a receipt only when its private receipt
+namespace is already valid. With a prepared or publication child, the
+corresponding bounded terminate/reap state machine below applies. After an
+exact/possible publication commit, the dedicated result-emission rule below
+overrides this precommit rule. A signal delivered before the initial
+successful `SIG_BLOCK` is outside the receipt guarantee, just as an
+uncatchable pre-bootstrap kill. Watched hard-timed no-output child fixtures
+deliver each handled signal during prepared-worker and publication-child
+waits, require the first TERM decision within 500,000,000 monotonic
+nanoseconds, and also cover signals in runtime preflight, runtime setup,
+training, evaluation, artifact/verdict assembly, both publication boundaries,
+and result emission.
+
+All deadlines use type-strict `time.monotonic_ns()` values. Every selected
+public or internal mode calls `posix.umask(0o077)` once; each public writer then
+immediately records its start before parsing or preflight, while the read-only
+final consumer creates no whole-run deadline. Controller and verifier whole
+deadlines are start plus 10,800 seconds. Immediately before training-worker
+spawn, the controller sets the
+training deadline to the lesser of the whole deadline and current monotonic
+time plus 7,200 seconds. Only the training worker checks that training deadline
+at update boundaries; the outer supervisor hard-enforces the whole deadline.
+The protocol budget also freezes `worker_stream_completion_seconds = 60` and
+`termination_grace_seconds = 5`,
+`signal_response_poll_nanoseconds = 50000000`, and
+`public_output_completion_seconds = 5`; these begin only at the
+stream/termination/output events defined below. They never extend the deadline
+for accepted work or change its classification, but bounded termination/reap
+or public failure/result delivery may consume up to five seconds after an
+already expired whole-run deadline. Those are independent grace intervals: a
+path that must first terminate/reap a child and then attempt public output may
+consume at most ten seconds after expiry, while a path using only one interval
+may consume at most five. Neither interval permits additional accepted work.
+The controller and verifier recheck their whole deadlines immediately before
+their durable external prospective intent and immediately before the
+root/verdict rename.
+
+There is at most one live prepared worker. The controller launches one
+training worker and then its 56 evaluation workers serially in the exact
+controller audit-population order; the verifier launches its 56 replay workers
+serially in the verifier order. Worker and job retries are zero. A failure
+forbids the next worker. No prior incomplete path, receipt, partial stream, or
+checkpoint is opened as training input, and training jobs contain no resume
+input. A new invocation always starts from update zero in a newly created
+private child. Checkpoint-zero repeat evaluation is a declared evaluation, not
+a retry.
+
+The handled signal set is exactly `SIGHUP`, `SIGINT`, `SIGTERM`, and
+`SIGQUIT`; the first signal is latched. On a whole/verifier deadline or
+handled signal, the supervisor closes worker input, sends `SIGTERM` to the
+worker process group, and sets a grace deadline to exactly the current
+monotonic value plus five seconds. It continues concurrently draining both
+pipes until the child is reaped or that deadline expires; it does not wait out
+unused grace after a clean reap. At expiry it sends `SIGKILL` if the group is
+still alive, reaps unconditionally, rejects all worker output, attempts its
+resource failure receipt, and never retries. A worker checks
+`os.getppid() == supervisor_pid` at startup and every update/evaluation-batch
+boundary; supervisor loss makes the worker exit 75 without a typed frame
+because no authenticated supervisor remains to accept one. An unrequested
+worker signal with a live supervisor is
+`integrity-abort / worker-signal`; a supervisor-initiated kill retains the
+originating resource classification. `SIGKILL` of the public supervisor
+promises no receipt. No orphan worker can publish evidence.
+
+The exact resource errno set is `EDQUOT`, `EFBIG`, `EMFILE`, `ENFILE`,
+`ENOMEM`, and `ENOSPC`. A caught member from any supervisor-owned OS/resource
+operation in any phase—including open/stat/create/write/fsync, pipe creation,
+descriptor duplication, or process spawn—is the historically named
+`filesystem-resource`; the same errno from an attempted failure-receipt write
+does not replace an already selected origin. The sole explicit override is the
+closed postcommit public-result delivery continuation after exact/possible
+commit plus durable handoff: its output descriptor setup, write, poll, or
+flag-restoration errno cannot retroactively create a precommit origin and
+follows the exit-zero caller-channel-failure rule below.
+A caught member in a worker maps to its typed `worker-resource` cause. Every
+other errno/OS failure follows the phase's integrity mapping. Training,
+whole-controller, and verifier deadlines,
+handled signals, filesystem-resource, and a valid worker resource failure are
+`resource-truncated`; protocol/integrity failures, invalid IPC, unexpected
+worker exit/signal, runtime drift, artifact drift, publication-precommit
+failure, and caught unexpected exceptions are `integrity-abort`. Neither
+status is a learning outcome.
+
+Supervisor classification precedence is exact and first-origin-latched.
+For each readiness turn, the supervisor first checks its signal latch, then
+samples `monotonic_ns`, then observes child status once without blocking, and
+only then services ready stderr and stdout descriptors. A previously latched
+handled signal wins, otherwise an already expired whole-run deadline wins.
+An observed unrequested signal death becomes `worker-signal` before any pipe
+fault that was first visible in that same readiness turn. A normal exit is
+remembered but is not itself classified until the stream/exit table can be
+applied. Ready descriptors are then drained without blocking in fixed logical
+order—stderr before stdout—through the currently available bytes/EOF and
+validated incrementally. If no earlier origin exists, the first conclusive
+IPC/cap/stream fault becomes the immutable origin. Thus invalid stdout that
+was conclusively observed on an earlier turn remains `ipc-contract` if the
+worker later dies, while an invalid header already buffered when a previously
+unobserved `SIGSEGV` death first becomes ready is `worker-signal`. Once an
+origin is selected, a later signal, deadline, postflight result, child record,
+or kill outcome never replaces it; the bounded termination path preserves it.
+
+Only when both pipes reach EOF and the child is reaped without an earlier
+origin does the supervisor repeat signal-then-deadline, perform the
+independently authenticated outer source/runtime/worker postflight, and repeat
+signal-then-deadline once more before examining typed records or exit status.
+A supervisor-owned condition at either check rejects all worker output and
+selects `handled-signal`, `whole-deadline`, or `verifier-deadline`. Otherwise
+an outer postflight identity/hash/status mismatch selects `runtime-drift`; one
+of the exact resource errnos during postflight selects
+`filesystem-resource`; and any other caught postflight exception selects
+`unexpected-exception`. Outer postflight therefore wins over a worker's own
+`runtime-contract` report for the same mutation when no earlier origin was
+latched. Only after a successful outer postflight may child status be
+classified.
+
+For a complete authenticated typed worker failure, mapping is closed:
+training `training-deadline` maps to controller `training-deadline`;
+training or evaluation `worker-resource` maps to public `worker-resource`;
+training `rollout-alignment` maps to controller `rollout-alignment`; and every
+other valid typed integrity cause maps to public `worker-contract`. Evaluation
+`evaluation-contract`, including its rollout-gate failures, never maps to
+`rollout-alignment`. Transport faults—length/header canonicality, sequence,
+index, kind/name/job/nonce binding, declared size, raw digest, EOF/trailing
+bytes, stderr, or a wire/stream cap—map to `ipc-contract`. A well-framed
+typed-JSON schema/field/range/frame-binding/semantic-equation fault, or a
+semantic fault in a streamed trace/checkpoint/bitset before supervisor
+publication, maps to `worker-contract`. A well-framed record/exit mismatch
+maps to `worker-exit`, and an unrequested signal death maps to
+`worker-signal`. `artifact-integrity` is reserved for supervisor-owned
+materialized or already stored artifact bytes/topology, not prospective worker
+stream semantics.
+
+EOF/exit mapping is exhaustive after the precedence checks:
+
+```text
+unrequested signal death, any stdout prefix, no prior origin -> worker-signal
+zero frames + any normal exit code                    -> ipc-contract
+partial frame or nonfinal proper frame prefix + exit  -> ipc-contract
+complete success sequence + exit 0                    -> candidate success
+complete success sequence + any other normal exit     -> worker-exit
+one complete failure frame + matching exit 70 or 75   -> mapped typed failure
+one complete failure frame + any other normal exit    -> worker-exit
+```
+
+An unauthenticated-job exit 70 with no frame is therefore `ipc-contract`,
+never an accepted typed failure. A previously latched stderr, cap,
+stream-deadline, or framing origin remains authoritative over the later exit
+row.
+
+The same bounded termination primitive applies to every early integrity or
+resource decision while a worker may still be live, including a wrong header,
+an exceeded cap, the first stderr byte, incomplete or invalid payload,
+postflight drift, and a typed failure whose EOF/exit does not arrive. It
+preserves the already chosen originating classification, closes input, sends
+group `SIGTERM`, drains only until clean reap or the exact five-second grace
+deadline, sends group `SIGKILL` if still alive, and reaps unconditionally.
+The first stdout byte starts one fixed stream-completion deadline exactly 60
+seconds later; it never slides on progress. The complete final success or
+failure frame must arrive before that deadline. After that complete final
+frame, the supervisor starts the separate five-second completion deadline
+while awaiting required EOF and exit; clean EOF/reap before it sends no
+signal. Either overrun is `integrity-abort / ipc-contract`, triggers bounded
+termination, and cannot hang until the three-hour whole deadline.
+
+The canonical controller failure-receipt schema is
+`bloodbowl-f5-controller-failure-receipt-v1`, with exactly:
+
+```text
+accepted_global_agent_step, artifact_basename, attempted_update_index, cause,
+committed_epoch, learner_disposition, phase, protocol_sha256, resume_allowed,
+rollout, schema, source_commit, status, volatile_global_agent_step,
+worker_job_sha256
+```
+
+`resume_allowed` is literal `false`. Non-null progress values obey the exact
+worker constraints above: epoch in `[0,2956]`, accepted step equal to epoch
+times 32,768, attempted index equal to epoch in `[0,2955]`, and volatile step
+equal to accepted or accepted plus 32,768 with the corresponding nullability.
+`worker_job_sha256` names only the currently failing worker job: it is
+non-null in `training-worker`, `controller-evaluation-worker`, or
+`verifier-evaluation-worker` phase exactly after the supervisor has completed
+and independently self-validated the canonical job bytes and derived their
+domain-framed digest, before pipe creation/spawn. It is therefore non-null for
+a later spawn or job-pipe failure even if the worker never parses the job. It
+is null before that supervisor transition and in every non-worker phase; worker
+acknowledgement is not the transition. It never names the most recently
+accepted or any historical job. Progress provenance is closed:
+
+- before a training job, all four progress integers and `rollout` are null and
+  `learner_disposition` is `"not-created"`;
+- after a training job fails without a complete authenticated worker-progress
+  object, all four progress integers and `rollout` remain null and disposition
+  is `"unknown-discarded"`; the killed/reaped worker is never reused;
+- after a complete authenticated typed training failure whose mapped worker
+  cause remains the selected public origin after all precedence checks, the
+  four progress integers, disposition `"discarded"`, and nullable `rollout`
+  are copied exactly from that worker record;
+- if any other public origin instead wins during the training job—including a
+  framing/stream fault, worker-exit/signal mismatch, or outer
+  signal/deadline/postflight fault—the worker telemetry is not promoted: all
+  four progress integers and `rollout` are null and disposition is
+  `"unknown-discarded"`; and
+- after a successful training worker has been accepted, later failures record
+  accepted and volatile step `96862208`, committed epoch `2956`, null attempted
+  update and rollout, and disposition `"completed"`.
+
+For rollout alignment, `cause` is `"rollout-alignment"`,
+`attempted_update_index` is the zero-based rejected update, and `rollout` is
+the exact five-field bounded worker rollout object above. Other failures have
+null rollout. The controller never promotes unauthenticated worker telemetry
+into its receipt.
+
+Controller phases are exactly `runtime-preflight`, `runtime-setup`,
+`training-worker`, `controller-evaluation-worker`, `artifact-assembly`, and
+`root-publication-precommit`. Controller resource causes are
+`training-deadline`, `whole-deadline`, `handled-signal`,
+`filesystem-resource`, and `worker-resource`; integrity causes are
+`ipc-contract`, `worker-contract`, `worker-exit`, `worker-signal`,
+`runtime-drift`, `artifact-integrity`, `publication-precommit`,
+`rollout-alignment`, and `unexpected-exception`.
+
+The verifier failure-receipt schema is
+`bloodbowl-f5-verifier-failure-receipt-v1`, with exactly:
+
+```text
+artifact_basename, cause, phase, protocol_sha256, schema, source_commit,
+status, worker_job_sha256
+```
+
+Verifier phases are exactly `runtime-preflight`, `evidence-preflight`,
+`verifier-evaluation-worker`, `verdict-assembly`, and
+`verdict-publication-precommit`. Its resource causes are
+`verifier-deadline`, `handled-signal`, `filesystem-resource`, and
+`worker-resource`; its integrity causes are the controller integrity set
+without `rollout-alignment`.
+
+Public phase/cause compatibility is closed. The following are the only allowed
+causes in each phase; status is then fixed by the resource/integrity sets
+above:
+
+```text
+controller runtime-preflight:
+  whole-deadline, handled-signal, filesystem-resource, runtime-drift,
+  unexpected-exception
+controller runtime-setup:
+  whole-deadline, handled-signal, filesystem-resource, runtime-drift,
+  unexpected-exception
+controller training-worker:
+  training-deadline, whole-deadline, handled-signal, filesystem-resource,
+  worker-resource, ipc-contract, worker-contract, worker-exit, worker-signal,
+  runtime-drift, rollout-alignment, unexpected-exception
+controller controller-evaluation-worker:
+  whole-deadline, handled-signal, filesystem-resource, worker-resource,
+  ipc-contract, worker-contract, worker-exit, worker-signal, runtime-drift,
+  unexpected-exception
+controller artifact-assembly:
+  whole-deadline, handled-signal, filesystem-resource, runtime-drift,
+  artifact-integrity, unexpected-exception
+controller root-publication-precommit:
+  whole-deadline, handled-signal, filesystem-resource, runtime-drift,
+  artifact-integrity, publication-precommit, unexpected-exception
+
+verifier runtime-preflight:
+  verifier-deadline, handled-signal, filesystem-resource, runtime-drift,
+  unexpected-exception
+verifier evidence-preflight:
+  verifier-deadline, handled-signal, filesystem-resource, runtime-drift,
+  artifact-integrity, unexpected-exception
+verifier verifier-evaluation-worker:
+  verifier-deadline, handled-signal, filesystem-resource, worker-resource,
+  ipc-contract, worker-contract, worker-exit, worker-signal, runtime-drift,
+  unexpected-exception
+verifier verdict-assembly:
+  verifier-deadline, handled-signal, filesystem-resource, runtime-drift,
+  artifact-integrity, unexpected-exception
+verifier verdict-publication-precommit:
+  verifier-deadline, handled-signal, filesystem-resource, runtime-drift,
+  artifact-integrity, publication-precommit, unexpected-exception
+```
+
+Worker-only causes never appear outside a worker phase; `training-deadline`
+and `rollout-alignment` are training-worker-only; and publication causes are
+publication-phase-only.
+
+Each receipt is at most 4,096 canonical bytes, is named exactly `receipt.json`,
+and is published temporary-file-first, exclusive/new-only, mode `0600`,
+single-link, and zero-ACL. A controller receipt is not promised until the
+private container and its sole `artifact/` child have both been created,
+pinned, mode/ACL checked, and the receipt temporary has not yet been created.
+It is written only at
+`<artifact-basename>.incomplete.<32-lowercase-hex>/receipt.json`. After
+successful receipt publication, the controller container's exact immediate
+path set is `["artifact","receipt.json"]`, its mode is `0700`, its ACL is
+empty, and its APFS link count is four. Partial paths below the incomplete
+`artifact/` do not alter that immediate closure. Runtime scratch is a separate
+private root and never a child of the publication container.
+
+The verifier writes only in a newly created
+`<artifact-basename>.verify-incomplete.<32-lowercase-hex>/receipt.json`
+sibling. After successful receipt publication its directory has exact path set
+`["receipt.json"]`, mode `0700`, zero ACL, and APFS link count three. In both
+cases the writer fsyncs the receipt, its immediate incomplete directory, and
+the pinned target parent in that order.
+
+Every 32-lowercase-hex namespace suffix in this protocol has the same
+generation rule rather than merely a shape rule. Each worker job, controller
+incomplete container, verifier incomplete receipt directory, controller
+publication-intent directory, and verifier publication-intent directory uses
+one fresh independent `os.urandom(16).hex()` call exactly once for that
+object. The returned value is required to be exactly 32 lowercase hexadecimal
+characters before path construction. A collision, short/invalid result, or
+nonexclusive creation fails closed with no regeneration, counter, timestamp,
+PID, deterministic fallback, or retry. An owning invocation never
+intentionally reuses a nonce already retained in its in-memory job/object
+ledger, and an actual name collision in an exclusive filesystem namespace
+fails as above. No global or cross-process nonce-uniqueness claim is made:
+independent controller and verifier invocations do not share a persisted nonce
+ledger.
+
+Receipt failure never changes the classification or permits continuation.
+Before authenticated source and the corresponding fully validated private
+failure namespace exist, no receipt is promised. No failure receipt is created
+after root/verdict commit: the shared result literal is
+`publication-indeterminate`, no destination is rolled back, and the final
+consumer decides usability.
+
+For public writer modes, a published or indeterminate publication result is
+one canonical result object on stdout, empty stderr, and exit zero. A caught
+precommit failure has empty stdout, exit `70` for integrity or `75` for
+resource, and exactly one stderr line:
+
+```text
+bloodbowl-f5-controller-failure-v1 <status>
+bloodbowl-f5-verifier-failure-v1 <status>
+```
+
+including exactly one LF. Argparse misuse remains exit two. Exit zero for an
+indeterminate result authenticates only delivery of the external publication
+result, never final evidence acceptance.
+
+Precommit failure-stderr delivery uses the same temporary-nonblocking flag
+transaction and one exact total bound. From its first write attempt, it has at
+most five monotonic seconds, in 50,000,000-nanosecond poll slices, to emit the
+already serialized one-line byte string. Later signal/deadline state,
+`EAGAIN`, or short writes cannot replace the latched failure origin. With a
+responsive channel, the exact line, flag restoration, stderr close/EOF, empty
+stdout, and original 70/75 exit are required. On `EPIPE`, another hard
+setup/write/poll/restoration error, caller closure, or five-second expiry, the
+writer leaves partial stderr untouched, attempts no additional receipt or
+alternate output, restores flags when possible, closes stderr, and exits with
+the same original 70/75 code. A full-pipe watched fixture exercises every
+partial offset, perpetual `EAGAIN`, hard error, signal, and expiry and proves
+bounded exit plus unchanged classification.
+
+Postcommit result emission is a closed continuation, not another precommit
+failure boundary. The in-memory canonical result, including its one final LF,
+must be at most 4,096 bytes. Immediately before its first stdout byte, the
+writer checks signal then whole/verifier deadline once more. A newly latched
+signal or expired deadline changes `publication_status` to
+`"publication-indeterminate"` and the writer reserializes before emitting; it
+does not attempt a receipt or select a nonzero precommit exit. Once any stdout
+byte has been written, the serialized byte string is immutable: a later
+signal/deadline can neither change status bytes nor switch to failure output.
+The writer continues the same nonblocking offset-tracked write using the
+50,000,000-nanosecond poll slices for up to exactly five seconds from the
+first write attempt, then closes stdout.
+
+With a responsive captured channel, exact flag restoration, the complete
+object and EOF are required and the process exits zero with empty stderr. A
+hard stdout setup/write/poll/flag-restoration error, caller closure, or
+five-second delivery expiry after an exact/possible commit cannot be repaired
+by the evidence protocol: the writer emits no stderr, attempts no receipt,
+exits zero, and leaves any partial stdout bytes untouched. In that explicit
+caller-channel-failure case the missing/noncanonical result channel is not
+accepted as success; recovery requires the already durable external handoff
+record and explicit trust path. Watched tests inject a signal and a
+deadline immediately before byte zero and after every possible partial-write
+offset, prove that any emitted suffix comes from the same frozen object, and
+exercise `EAGAIN`, short writes, `EPIPE`, exact resource errnos, and output
+expiry. This postcommit exception never applies when commit is ruled out or
+when an exact/possible commit lacks a durable handoff; those cases retain the
+precommit and no-handoff rules above.
+
+The tracked canonical protocol manifest is the closed machine-readable owner
+of these non-artifact contracts. `execution.entrypoints` owns bootstrap,
+factory, reachability, and driver order; `execution.worker_ipc` owns invocation,
+all job/header/binding/result/failure schemas, compatibility matrices, frame
+sequences, semantic domains, and caps; `execution.supervision` owns deadlines,
+precedence, population order, termination, resource errnos, and no-resume;
+`execution.failure_receipts` owns both public receipt schemas, phase/cause
+matrices, topology, publication, and output behavior; and
+`execution.security.umask` owns the process mask rule. They do not enter
+`artifact.schemas` because they are transport/control records outside the
+completed evidence tree, but watched tests independently validate every
+literal and cross-reference rather than trusting only the manifest hash.
+`execution.rollout.transaction` and `execution.smoke.early_terminal_abort`
+own the accepted/volatile transaction and watched real fault oracle;
+`optimizer.parameter_telemetry` owns the exact norm/drift arithmetic.
 
 ## Checkpoints and training trace
 
@@ -1497,7 +2355,8 @@ For every update, the append-only canonical training trace records:
 - entropy coefficient and learning rate actually applied;
 - finite policy, value, entropy, total, KL, clip, and importance diagnostics;
 - nullable explained variance when its denominator is exactly zero;
-- parameter norm and drift summaries at fixed checkpoints;
+- the post-update parameter digest, norm, and drift on every committed row,
+  with an independent raw-checkpoint cross-check on fixed checkpoint rows;
 - profile times and observed SPS as descriptive, non-deterministic telemetry;
   and
 - every hard-integrity value.
@@ -1510,10 +2369,14 @@ Parameter movement before any objective event must be visible in the trace.
 It is expected that random critic values and the entropy/value objectives can
 move parameters before the first TD; such movement is not evidence that the
 task reward was discovered. On the first objective-bearing rollout only, the
-worker records the pre-update canonical parameter digest and distance from
-initialization without writing an event-triggered checkpoint or changing RNG.
-If no objective event occurs, the fixed final checkpoint bounds the
-no-objective drift.
+worker records the pre-update canonical parameter digest without writing an
+event-triggered checkpoint or changing RNG. That digest must equal the
+previous committed row's post-update digest, or the frozen initial digest when
+the first objective is on update index zero. The corresponding pre-update
+distance is not a second row field: it is exactly the previous committed row's
+post-update `drift_from_initial`, or binary64 positive zero at update index
+zero. If no objective event occurs, the post-update values on every row and
+the fixed final checkpoint bound the no-objective drift.
 
 ## Exact success authority and integrity gates
 
@@ -1701,6 +2564,169 @@ artifact is planned. If the real stack cannot satisfy the protocol without one
 of those changes, implementation pauses and the plan returns to adversarial
 review.
 
+The production entrypoint and operating-system seams are also frozen so the
+public CLIs cannot be stubs over dead helpers. The runner exposes one concrete
+`_ControllerOsOperations` implementation,
+`_make_controller_os_operations(*, puffer_root, artifact_dir, deadline_ns)`,
+and `_run_controller(operations, *, puffer_root, artifact_dir)`. The verifier
+writer analogues are `_VerifierOsOperations`,
+`_make_verifier_os_operations(*, puffer_root, artifact_dir, deadline_ns)`, and
+`_run_verifier_writer(operations, *, puffer_root, artifact_dir)`. Each public
+writer bootstrap calls `posix.umask(0o077)` exactly once as its first
+process-state protocol operation, installs the exact blocked signal/latch/
+handler state machine above, captures exactly one whole-run start and derives
+exactly one whole-run deadline, parses the fixed public arguments, calls its
+corresponding factory exactly once with that deadline, and passes that exact
+returned object to its driver. The driver neither calls `umask`, replaces
+handlers, nor recomputes the whole deadline. Verifier final-consumer mode analogously
+constructs its fixed final-consumer operations and must reach the already
+frozen `_consume_final` chain. No public argument, environment key, plugin, or
+collaborator override selects an operations implementation.
+
+The verifier final consumer concretely uses `_FinalConsumerOsOperations` and
+`_make_final_consumer_os_operations(*, artifact_dir,
+expected_verdict_sha256)`. Its selected public branch calls that factory
+exactly once and passes the exact object to
+`_consume_final(operations, *, artifact_dir, expected_verdict_sha256)`.
+
+Each owning script also exposes one concrete `_PreparedWorkerOsOperations`,
+`_make_internal_worker_os_operations(*, request_fd, result_fd)`, and
+`_run_internal_worker(operations, *, request_fd, result_fd)`. After the worker
+umask/audit bootstrap, the exact-token branch calls its worker factory exactly
+once with request descriptor zero and result descriptor one and passes that
+same returned object and the same descriptor integers to
+`_run_internal_worker` exactly once. The runner worker admits only training
+and controller-evaluation jobs; the verifier worker admits only
+verifier-evaluation jobs. No parallel token branch, alternate worker helper,
+or dead-code-only seam is permitted.
+
+Publication-child entrypoints are equally concrete. The runner exposes
+`_ControllerPublicationChildOsOperations` and
+`_make_controller_publication_child_os_operations(*, handoff_write_fd,
+ack_read_fd, container_dir_fd, artifact_dir_fd, target_parent_dir_fd)`; its
+private branch passes that exact one factory result to the already frozen
+`_run_controller_publication_child(operations, *, deadline,
+artifact_basename, evidence_manifest_sha256, protocol_sha256,
+source_commit)` exactly once. The verifier exposes
+`_VerdictPublicationChildOsOperations` and
+`_make_verdict_publication_child_os_operations(*, handoff_write_fd,
+ack_read_fd, artifact_dir_fd, scratch_dir_fd, target_parent_dir_fd)`; its
+private branch passes that exact one factory result to
+`_run_verdict_publication_child(operations, *, deadline, artifact_basename,
+evidence_manifest_sha256, expected_verdict_sha256, protocol_sha256,
+source_commit)` exactly once. In both branches `deadline` is the type-strict
+integer parsed from `--deadline-monotonic-ns`, and every other driver keyword
+is the exact parsed/authenticated private-argv value; dropping, defaulting,
+deriving, reordering, or substituting a value is forbidden and watched.
+
+The controller child internal argv is exactly the token followed in this order
+by `--deadline-monotonic-ns <decimal>`, `--artifact-basename <component>`,
+`--evidence-manifest-sha256 <64-lowercase-hex>`,
+`--protocol-sha256 <64-lowercase-hex>`, and
+`--source-commit <40-lowercase-hex>`. Its inherited descriptors are exactly
+`3 = handoff-write`, `4 = ACK-read`, `5 = container-directory`,
+`6 = artifact-directory`, and `7 = target-parent-directory`. The verdict
+child grammar adds
+`--expected-verdict-sha256 <64-lowercase-hex>` after the evidence-manifest
+digest. Its descriptors are exactly `3 = handoff-write`, `4 = ACK-read`,
+`5 = artifact-directory`, `6 = verifier-scratch-directory`, and
+`7 = target-parent-directory`. Deadlines are type-strict decimal integers in
+`[1,2^63-1]`; all other values obey their already frozen formats. Both spawns
+use `close_fds=True` and the exact five-element `pass_fds` set; no descriptor
+number or field is caller-selectable. Each driver descriptor-proves every
+capability and value before opening or publishing an artifact path. A
+malformed private grammar or missing/wrong descriptor exits integrity failure
+before the factory result reaches the commit state machine and is never
+reinterpreted as a public CLI.
+
+The fixed numbers are produced by one exact parent-side staging transaction,
+not assumed from incidental open order and not remapped by `preexec_fn`.
+Immediately before `Popen`, in a supervisor that has created no thread, the
+driver duplicates all five desired source capabilities to distinct descriptors
+at or above 64 with `fcntl.F_DUPFD_CLOEXEC`. It then probes each target 3
+through 7 with `F_GETFD`; every existing occupant is likewise saved at or
+above 64 together with its exact close-on-exec/inheritable state, while
+`EBADF` means absent and any other result aborts. Using only the safe desired
+copies, it applies cycle-independent `dup2` mappings to 3 through 7 and marks
+exactly those five targets inheritable. The `Popen` call receives literal
+`pass_fds=(3,4,5,6,7)`. In an unconditional `finally` immediately after spawn
+success or failure, each prior occupant is restored to the same number with
+its saved inheritable state, each originally absent target is closed, and all
+safe copies are closed. Identity checks prove the supervisor's original
+capabilities and unrelated occupants are unchanged.
+
+No parent-side staged target remains after that `finally`; the child sees
+exactly 0/1/2 plus 3 through 7 after `close_fds`. A handled signal during the
+short staging window is only latched, restoration completes first, and the
+normal precommit or live-child state machine then handles it. Exact resource
+errnos use `filesystem-resource`; all other staging/proof failures are
+`publication-precommit`. Watched real-subprocess tests preoccupy all five
+target numbers with distinct objects, use desired descriptors whose original
+numbers form cycles through that range, inject failure at every duplication,
+mapping, spawn, and restoration boundary, and prove exact parent restoration,
+child capability identity, no extra inherited descriptor, and no
+`preexec_fn`.
+
+Each publication child is spawned exactly as the authenticated
+`/usr/bin/python3 -B -I -S <absolute-owning-script> <private-argv...>` with the
+exact four-key `Popen(env=...)` input (`PATH=/usr/bin:/bin`, `LANG=C`,
+`LC_ALL=C`, `TMPDIR=/private/tmp`) and the authenticated Blood Bowl source root
+as cwd. After the protected launcher transformation, the child requires the
+same exact observed nine-key outer process environment frozen above; four-key
+spawn input and nine-key observed state are distinct authorities. It uses
+`start_new_session=True`, and the supervisor proves the child
+PID is the distinct process-group ID before any handoff; every TERM/KILL target
+after that proof is that group. If the proof itself fails, the supervisor
+never calls `killpg` on the unproved numeric value: it closes the capability
+pipes and uses bounded direct-PID `SIGTERM`, then direct-PID `SIGKILL` if
+needed, to reap the exact `Popen` child. Standard input is `/dev/null`;
+standard output and error are
+separate concurrently drained capture pipes, each capped at 4,096 bytes and
+required empty for every valid child result. The handoff/ACK capability pipes
+are distinct from stdio. Site/user initialization, an environment extension,
+an extra inherited descriptor, any stdout/stderr byte, a wrong process group,
+or any exit outside exact `0`, `70`, or `75` is an integrity failure. Mandatory
+real-branch tests deliver a handled signal before ACK and at the
+ACK-to-rename boundary, prove the supervisor survives, prove bounded group
+TERM/KILL/reap, and exercise both absent and committed destinations.
+
+Every operations-factory implementation is construction-only. It may store
+validated argument values and bind already imported stdlib callables, but may
+not read
+the environment or clock; open, stat, create, rename, or fsync a path; load a
+native library; validate source/protocol semantics; install a signal handler;
+open a pipe; spawn a process; access the network; or write output. Every such
+effect belongs to the watched driver order after the exact factory object has
+been passed. Factory construction itself is observed by reachability tests.
+
+Prepared-worker supervision is owned by
+`_supervise_prepared_worker(operations, *, job, expected_sequence,
+deadline_ns)` in each writer. Failure-receipt
+attempts are owned respectively by
+`_attempt_controller_failure_receipt(operations, *, failure)` and
+`_attempt_verifier_failure_receipt(operations, *, failure)`. These are
+testable internal seams, not additional public modes. Watched reachability
+tests invoke both public writer modes with production-shaped spy operations;
+frozen-host integration instantiates the concrete OS operations on APFS
+temporary directories and exercises the high-level leaf, root, and verdict
+state machines rather than only the native rename wrapper.
+
+After the public bootstrap's mask/deadline/factory sequence, the controller
+driver order is exact: outer source/runtime/target-parent preflight; private
+container, artifact child, and runtime scratch; one training worker;
+validation/publication of its trace and six checkpoints; 56 serial controller
+evaluation workers; validation of every bitset/result/audit receipt;
+57-receipt aggregation; effective-config, identity, results, protocol, and
+evidence-manifest assembly; durable closure of the 68-file pre-verdict tree;
+supervised root publication; and one public publication result. After its
+corresponding bootstrap sequence, the verifier writer order is exact:
+source/runtime/artifact preflight; absent-verdict check; immutable evidence
+validation; 56 serial verifier evaluation workers; bitset replay comparison
+and receipt validation; 56-receipt aggregation; verdict construction;
+supervised exclusive verdict publication; and one public result. Missing,
+reordered, repeated, concurrent, or dead-code-only stages are watched
+failures.
+
 ## Closed evidence contract
 
 The controller opens and pins the requested artifact parent as an ordinary
@@ -1818,7 +2844,12 @@ script in a fixed internal mode. That mode is not a public override: direct
 invocation without the supervisor-created one-shot descriptor capability and
 exact inherited identity aborts before opening an artifact. The supervisor
 owns the child process, pipe endpoints, target-parent descriptor, deadline, and
-external handoff directory.
+external handoff directory. The exact tokens, ordered internal argv, fixed
+descriptor numbers, construction-only factories, and one-call reachability
+from bootstrap to `_run_*_publication_child` are the entrypoint contract above.
+The mandatory real-APFS integration invokes each actual same-script private
+subprocess branch end to end; calling the child helper directly is additional
+unit coverage, not a substitute.
 
 After durably publishing its on-disk prospective intent receipt, the child
 sends exactly one length-prefixed canonical precommit handoff record to the
@@ -1894,6 +2925,85 @@ is still at its deterministic external path; recovery requires the caller to
 explicitly authenticate/trust and supply that record, never an automatic scan
 or consumer default.
 
+Every non-clean publication-child event or outcome uses one commit-aware
+watched state machine because ACK and rename can race with any failure, not
+only a signal or deadline. Each readiness turn uses the same fixed order:
+first-signal latch, monotonic deadline, one nonblocking child-status
+observation, then nonblocking ready descriptors in logical order `stderr`,
+`stdout`, handoff-record pipe, and ACK-write endpoint. An unexpected signal
+death is conclusive at the child-status step. A normal exit is only remembered;
+after every descriptor ready in that turn has been drained through its
+currently available bytes/EOF and validated, a still-unclassified exit `70`
+or `75` becomes the corresponding publication origin and exit zero remains a
+candidate clean completion. Therefore a malformed handoff or any stdio byte
+buffered when exit 75 first becomes ready deterministically wins as
+`publication-precommit`; a malformed handoff conclusively seen on an earlier
+turn likewise remains authoritative. A zero-byte handoff EOF is deferred until
+normal-exit classification: with valid-empty stdio plus exit 75 it is the
+legitimate child resource report for failure before intent/handoff creation
+and maps to `filesystem-resource`; with exit zero or 70 it maps to
+`publication-precommit`. Any nonempty partial, noncanonical, extra, or
+semantically invalid handoff beats every normal exit as
+`publication-precommit`. The closed origin mapping is:
+
+- the first handled signal or expired whole/verifier deadline retains its
+  corresponding resource cause;
+- an exact resource errno from a supervisor-owned publication operation is
+  `filesystem-resource`;
+- an authenticated outer source/runtime identity drift is `runtime-drift`;
+- a supervisor-owned source artifact, verdict, parent, or topology identity
+  mismatch before a possible commit is `artifact-integrity`;
+- child process-group/environment/runtime/descriptor/private-grammar,
+  handoff/intent/ACK, stdout/stderr/cap, framing/binding/identity, unexpected
+  signal, and unexpected/incorrect normal-exit behavior is
+  `publication-precommit`; a normal child exit `70` also has that cause;
+- a normal child exit `75` is the child's closed precommit resource report and
+  maps to `filesystem-resource`; and
+- any remaining caught supervisor exception is `unexpected-exception`.
+
+An event in a later bullet cannot replace an earlier latched origin. On every
+such non-clean event, including any stdout/stderr byte, cap overrun, malformed
+or incomplete handoff, wrong process group, child exit/signal, supervisor
+resource error, runtime/identity drift, handled signal, or deadline, the
+supervisor closes any unwritten ACK endpoint, sends `SIGTERM` to a still-live
+publication-child process group after its PID-equals-PGID proof, or to the
+exact child PID if that proof is the fault, concurrently drains both stdio
+pipes only until a clean reap or the exact five-second grace deadline, sends
+`SIGKILL` to the same proved target if still alive, and reaps unconditionally.
+An already reaped child is not signalled, and an unproved group identifier is
+never a signal target. Only after that bounded close does it
+descriptor-inspect both the validated source inode/name and destination name
+relative to their pinned parents before choosing public status:
+
+- if the exact source still exists and the destination is absent or is a
+  separately proved unchanged collision object, root/verdict commit did not
+  occur under the declared trust boundary; the latched origin remains
+  authoritative, exit is 75 for a resource cause or 70 for an integrity
+  cause, and the appropriate failure receipt may be attempted;
+- if the source is absent and the destination is the exact expected inode with
+  its complete byte/topology identity, commit occurred; when the handoff was
+  durably captured the supervisor emits the shared
+  `publication-indeterminate` result with exit zero and creates no failure
+  receipt; and
+- any source/destination identity combination that cannot prove either state
+  uses `publication-indeterminate` only when the handoff was durably captured,
+  never rolls back or writes a precommit receipt, and leaves usability to the
+  final consumer.
+
+The child contract makes rename impossible before durable handoff plus ACK. If
+an exact/possible commit is nevertheless observed without a durably captured
+handoff, the child violated that contract and the required success-result
+fields do not exist: the supervisor emits no success object, exits 70 with the
+normal integrity stderr line, writes no failure receipt because commit cannot
+be ruled out, and leaves the destination untouched for explicit final
+consumption with separately trusted inputs.
+
+This inspection rule applies both before and after a durable ACK. ACK proves
+handoff durability, not commit; lack of observed clean child completion never
+by itself selects precommit failure. No abnormal child or supervisor outcome
+racing a successful rename can therefore emit a misleading precommit failure
+receipt after an exact or possible commit.
+
 On normal success or a child postcommit failure, the supervisor returns the
 external handoff path, its raw SHA-256, the publication classification, and,
 for a verdict, the expected verdict SHA-256 on its caller-owned result channel.
@@ -1954,7 +3064,7 @@ handoff, and observed destination classify it as
 or receipt/handoff presence—decides whether the complete artifact is valid.
 
 Every outer and worker process observes an arbitrary inherited umask only
-through the return value of its first `os.umask(0o077)` call, before any
+through the return value of its first `posix.umask(0o077)` call, before any
 filesystem creation; that value is available to watched test instrumentation
 but is excluded from evidence because it cannot affect output. The process
 then applies and verifies explicit modes with descriptor-based `fchmod`;
@@ -2328,11 +3438,35 @@ raw training-trace bytes and its `f5-training-trace-v1` semantic digest.
 reproducibility assertions project out the three profile values; it never
 means those bytes are omitted from artifact integrity.
 
+Parameter telemetry covers exactly the seven trainable policy tensors in
+UTF-8 tensor-name order and every C-order element within each tensor; no
+optimizer buffer or nontrainable buffer participates. Each stored binary32
+value is converted exactly to binary64. `parameters.norm` starts with binary64
+`0.0`, performs one left-to-right binary64 multiply and add
+`sum = sum + value * value` per element without fusion, and applies one
+binary64 `sqrt` after the final addition. `parameters.drift_from_initial` uses
+the same order and accumulation, with each delta computed as the binary64
+subtraction of the current and frozen-initial converted binary32 values before
+squaring. Both are absolute L2 values, not means or normalized ratios. Watched
+tiny vectors own the exact binary64 results and mutation order. On every row,
+`parameters.canonical_sha256`, `parameters.norm`, and
+`parameters.drift_from_initial` are computed from the live policy tensors
+after that row's optimizer update has completed and before row validation and
+accepted-ledger append. They are never null and are never carried forward from
+a prior row. On a fixed checkpoint row, the same post-update tensors are
+serialized into the prospective raw `.f5w` bytes without another optimizer
+operation; after the accepted row append and fixed-schedule checkpoint
+publication, an independent parse of the stored raw payload must reproduce all
+three values exactly. A mismatch aborts the still-private artifact rather than
+editing or removing the already appended row.
+
 Among loss fields, only `explained_variance` may be null, and only for a zero
 denominator. The only other nullable trace-row fields are
 `objective.first_update` and `parameters.pre_objective_sha256` under their
 rules above. `pre_objective_sha256` is non-null only on the first
-objective-bearing rollout.
+objective-bearing rollout, is sampled after rollout validation and before the
+optimizer update, and equals the previous committed row's post-update
+`canonical_sha256` or the frozen initial digest on update index zero.
 `checkpoint_update` is true exactly after updates
 `512, 1024, 1536, 2048, 2956`; checkpoint zero precedes the trace. `profile`
 values are finite nonnegative telemetry and excluded from deterministic
@@ -2682,7 +3816,10 @@ watch at least:
   nested test-double receipt bypasses the adapter before `train()` or bitset
   acceptance;
 - fixed checkpoint-only behavior and rejection of event-triggered or extra
-  checkpoints;
+  checkpoints; every committed row independently computes post-update
+  canonical digest/norm/drift, fixed rows cross-check the stored raw
+  checkpoint, and the first-objective pre-update digest equals the prior
+  committed digest or frozen initialization;
 - training continuation after first TD and exact final update count;
 - fixed post-training evaluation ordering, seed count, episode count,
   checkpoint-zero repeat, exact Wilson representation/arithmetic/literal bytes,
@@ -2697,6 +3834,37 @@ watch at least:
   exact union/sum/digest/worker-count aggregation, controller binding in
   `identity.json`, verifier binding in `verdict.json`, and mutations of either
   closed audit object;
+- exact in-memory mode dispatch, one-umask ordering, one deadline capture for
+  writer modes, construction-only operations factories, exact factory-object
+  identity, and one-call reachability from both public writers, the final
+  consumer, both owning internal-worker token branches, and both real
+  publication-child subprocess token branches through every ordered stage;
+  exact CPython prior signal dispositions, private grammar/descriptor
+  mutations, cycle-safe fixed-fd staging/restoration with preoccupied 3..7,
+  factory side effects, and no-op/dead-helper counterexamples reject;
+- one-shot job framing and the complete eight-frame training/two-frame
+  evaluation streams, including a 12-plus-megabyte concurrent stdout/stderr
+  drain, incremental hashing/spooling, every length/header/order/name/hash/
+  nonce/schema/semantic/EOF/trailing-byte mutation, kind/stderr cap boundary,
+  exact redundant aggregate/wire arithmetic plus reachable drain-loop checks,
+  exit/record mismatch, fixed 60-second first-byte stream
+  deadline, five-second clean-completion deadline, early integrity termination,
+  TERM/grace/KILL/reap order, zero retries, and no orphan or partial-stream
+  acceptance;
+- exact worker-kind/status/phase/cause/progress cross-products, deterministic
+  supervisor signal/deadline/postflight/child precedence, public phase/cause
+  cross-products, current-job-only digest provenance, all failure receipt
+  field/range/equation/nullability rules, bounded rollout bitset and multi-fault
+  selection, simultaneous-ready child/stderr/stdout/handoff/exit vectors,
+  50,000,000-nanosecond PEP-475-safe poll slices, audit sealing with a late
+  allowed-open counterexample, and exact public stdout/stderr/70/75 behavior;
+- the seven-case mandatory prepared-Puffer early-terminal transaction at
+  delayed rows one through seven for agent rows `[0,1]`, exact one-update raw
+  and canonical digests, exhaustive Muon defaults/group/live-parameter-order/
+  state/tensor-byte snapshots and mutation vectors, volatile-versus-accepted
+  ledger split, no-I/O dispatch tripwires before checkpoint schedule filtering,
+  failure-only IPC, unchanged supervisor spool/destination topology, discard,
+  receipt derivation, and pre-rollout same-session reuse rejection;
 - private-container plus exact-child construction, atomic new-directory
   behavior, incomplete/resource-truncated/integrity-abort semantics, controller
   and verifier wall-cap expiry, durable controller/verdict prospective intent
@@ -2734,6 +3902,13 @@ watch at least:
   descriptor/path revalidation, and each directory fsync never clobber another
   creator or leave an acceptably partial result;
 - post-commit controller/verdict failures never roll back their destinations;
+  signal/deadline before result byte zero selects the indeterminate object,
+  signal/deadline after each partial-write offset finishes only the frozen
+  object, and EAGAIN/short-write/EPIPE/resource/output-expiry cases never
+  manufacture a postcommit failure receipt; retained caller duplicates prove
+  exact `F_GETFL`/temporary-`O_NONBLOCK`/unconditional-restore behavior for
+  stdout and failure stderr when restoration succeeds, while injected restore
+  failure proves the explicit detected residual-flag non-claim;
   writer mode still rejects an existing verdict, while the read-only final
   consumer requires the externally supplied raw verdict digest, never derives
   or defaults it from candidate/storage state, accepts a complete bound
