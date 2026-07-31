@@ -1995,12 +1995,27 @@ controller/verifier-publication-intent, publication-supervisor-handoff,
 verifier-scratch, runtime-scratch, checkpoint, evaluation, and evaluation-leaf
 directories are mode `0700`. Every payload, evidence manifest, verdict,
 handoff record, intent/failure receipt, and temporary file is mode `0600`. All
-have no extended ACL object, and all regular files have link count one. On the
-frozen APFS layout, completed-directory link counts are induced exactly by the
-closed tree: artifact root `4`, `checkpoints/` `2`, `evaluation/` `9`, and
-each of the seven evaluation leaves `2`. Failure to set the process mask,
-chmod drift, unexpected link count, any extended ACL, or unsupported
-filesystem type fails closed.
+have no extended ACL object, and all regular files have link count one.
+
+On the frozen APFS host, a directory's `st_nlink` is two plus its immediate
+entry count, including ordinary files as well as subdirectories. The completed
+tree therefore has two exact phase-specific link-count maps. Before
+`verdict.json` publication, the artifact root is `10`, `checkpoints/` is `8`,
+`evaluation/` is `9`, and each of the seven evaluation leaves is `10`. After
+`verdict.json` publication, only the artifact root changes, to `11`; all other
+directory counts remain the same. The protocol manifest records these as the
+two closed maps `artifact.directory_link_counts.pre_verdict` and
+`artifact.directory_link_counts.post_verdict`. The outer map has exactly those
+two keys. Each phase map has exactly the ten path keys `.` plus every member of
+`artifact.directories`, with type-strict integer values. Every protocol load
+schema-validates both complete maps, independent of the current artifact
+phase. Controller closure and verifier-writer preflight/precommit compare live
+directories only with `pre_verdict`; immediately after the exclusive
+`verdict.json` rename, the verifier writer compares the whole live tree only
+with `post_verdict`; the authenticated final consumer also compares only with
+`post_verdict`. Failure to set the process mask, chmod drift, unexpected
+phase-specific link count, any extended ACL, or unsupported filesystem type
+fails closed.
 
 ### Exact completed layout
 
