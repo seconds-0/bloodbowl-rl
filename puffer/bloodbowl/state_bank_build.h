@@ -28,4 +28,24 @@
 #define PUFFER_STATE_BANK_PRODUCER_MANIFEST_PATH "unused"
 #define PUFFER_STATE_BANK_TRAINING_CONTRACT_PATH "unused"
 
+/*
+ * Qualification fixtures are a separate compile-time role, not a state-bank
+ * kind.  Repository-native and ordinary installed builds are intentionally
+ * inert.  The dedicated F5 installer replaces these literals in its generated
+ * build authority; no runtime configuration can enable the role.
+ */
+#define PUFFER_QUALIFICATION_FIXTURE_ENABLED 0
+#define PUFFER_QUALIFICATION_FIXTURE_ROLE "none"
+#define PUFFER_QUALIFICATION_FIXTURE_SCHEMA "none"
+#define PUFFER_QUALIFICATION_FIXTURE_QUALIFICATION_ONLY 0
+#define PUFFER_QUALIFICATION_FIXTURE_MATCH_SHA256 "unused"
+#define PUFFER_QUALIFICATION_FIXTURE_BBS_SHA256 "unused"
+#define PUFFER_QUALIFICATION_FIXTURE_BUNDLE_SHA256 "unused"
+#define PUFFER_QUALIFICATION_FIXTURE_BBS_SOURCE_ID UINT32_C(0)
+#define PUFFER_QUALIFICATION_FIXTURE_AUTHORED_SOURCE_ID UINT32_C(0)
+#define PUFFER_QUALIFICATION_FIXTURE_MAX_DECISIONS 0
+#define PUFFER_QUALIFICATION_FIXTURE_REWARD_CONTRACT "none"
+#define PUFFER_QUALIFICATION_FIXTURE_REFERENCE_TRACE_SCHEMA "none"
+#define PUFFER_QUALIFICATION_FIXTURE_REFERENCE_TRACE_SHA256 "unused"
+
 #endif

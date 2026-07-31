@@ -2199,6 +2199,7 @@ void (*bbe_feed_hook)(const Bloodbowl* env, int kind, int a, int b) = 0;
 // generated authority through state_bank_build.h. Loading is exact,
 // hash-pinned, all-or-nothing, and process-global; see the focused header.
 #include "state_bank_runtime.h"
+#include "f5_trainability.h"
 
 static bbe_state_bank_config_values bbe_state_bank_env_config(
         const Bloodbowl* env) {
@@ -2552,7 +2553,22 @@ static void bbe_reset_match(Bloodbowl* env) {
     // cross-attributing — see bb_stall.h.
     bb_stall_reset(&env->ep_stall);
     bb_stall_attach(&env->ep_stall);
+#if PUFFER_QUALIFICATION_FIXTURE_ENABLED
+    /*
+     * The qualification role replaces match selection only.  This copy is
+     * after the ordinary state-bank preflight and before either RNG stream or
+     * any post-selection baseline.  There is deliberately no procgen/bank
+     * fallback in this compiled role.
+     */
+    if (bbe_f5_trainability_copy_match(&env->match) != 0) {
+        fprintf(stderr,
+                "bloodbowl: sealed F5 qualification fixture identity "
+                "mismatch\n");
+        abort();
+    }
+#else
     bb_rng_seed(&env->procgen, env->seed * 2654435761u + env->episode, 11);
+#endif
     // Typed state-bank curriculum: the process-global contract was required
     // before this point. The probability draw is the only valid route from an
     // active contract to procgen; an invalid drawn record is corruption, not
@@ -2561,6 +2577,7 @@ static void bbe_reset_match(Bloodbowl* env) {
     env->macro_len = env->macro_pos = 0;
     env->macro_mover = -1;
     env->demo_started = 0;
+#if !PUFFER_QUALIFICATION_FIXTURE_ENABLED
     if (env->demo_reset_pct > 0.0f) {
         if (bbe_state_bank_status != BBE_SB_READY ||
             bbe_state_bank_loaded_kind != env->state_bank_kind ||
@@ -2671,18 +2688,30 @@ static void bbe_reset_match(Bloodbowl* env) {
             bb_match_init_random_p(&env->match, &env->procgen, &pp);
         }
     }
+#endif
     // Fresh in-match dice stream either way; a resumed state replays under
     // new dice. bb_advance is a no-op for a banked state (already at a
     // DECISION) and runs procgen kickoffs to their first decision.
     bb_rng_seed(&env->rng, env->seed + env->episode * 7919u, 1);
     bb_advance(&env->match, &env->rng);
     bbe_refresh_legal(env);
-    if (env->demo_started &&
+    if (
+#if PUFFER_QUALIFICATION_FIXTURE_ENABLED
+        1 &&
+#else
+        env->demo_started &&
+#endif
         (env->match.status != BB_STATUS_DECISION ||
          env->match.stack_top == 0 ||
          env->n_legal <= 0 || env->n_legal > BB_LEGAL_MAX)) {
+#if PUFFER_QUALIFICATION_FIXTURE_ENABLED
+        fprintf(stderr,
+                "bloodbowl: F5 fixture reset lost its legal decision "
+                "surface\n");
+#else
         fprintf(stderr,
                 "bloodbowl: banked reset lost its legal decision surface\n");
+#endif
         abort();
     }
     env->decisions = 0; // max_decisions budgets from the resume point
@@ -2819,11 +2848,22 @@ static void bbe_reset_match(Bloodbowl* env) {
 }
 
 static void c_reset(Bloodbowl* env) {
+#if PUFFER_QUALIFICATION_FIXTURE_ENABLED
+    const char* qualification_config_error =
+        bbe_f5_trainability_runtime_config_error(env);
+    if (qualification_config_error != NULL) {
+        fprintf(stderr,
+                "bloodbowl: F5 qualification configuration mismatch: %s\n",
+                qualification_config_error);
+        abort();
+    }
+#endif
     // Force a full v4-plane clear on the first encode of a (re)pointed obs
     // buffer (my_setup_perm also sets these — vecenv re-points obs_ptr
     // without a reset).
     env->v4_dirty[0] = 1;
     env->v4_dirty[1] = 1;
+#if !PUFFER_QUALIFICATION_FIXTURE_ENABLED
     // Defaults for callers that skip apply_kwargs (standalone driver, tests).
     if (env->max_decisions <= 0) env->max_decisions = BBE_MAX_DECISIONS;
     if (!env->reward_configured) {
@@ -2831,6 +2871,7 @@ static void c_reset(Bloodbowl* env) {
         env->reward_win = BBE_DEFAULT_REWARD_WIN;
         env->reward_draw = BBE_DEFAULT_REWARD_DRAW;
     }
+#endif
     bbe_validate_reward_config(env);
     bbe_reset_match(env);
     bbe_emit_all(env);

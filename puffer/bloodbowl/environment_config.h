@@ -598,6 +598,16 @@ static int bbe_environment_config_validate_cross_fields(
             "within the trainer reward clamp",
             (double)bbe_reward_clip_threshold(applied), 1);
     }
+#if PUFFER_QUALIFICATION_FIXTURE_ENABLED
+    const char* qualification_error =
+        bbe_f5_trainability_config_error(applied);
+    if (qualification_error != NULL) {
+        return bbe_environment_config_fail(
+            result, BBE_ENV_CONFIG_CROSS_FIELD, qualification_error,
+            "match the sealed f5-fixed-state-v1 qualification contract",
+            0.0, 0);
+    }
+#endif
     return 1;
 }
 

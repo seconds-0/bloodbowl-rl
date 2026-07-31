@@ -1,0 +1,9 @@
+--index-url https://pypi.org/simple
+--extra-index-url https://download.pytorch.org/whl/cpu
+--only-binary=:all:
+
+numpy==2.5.1
+torch==2.9.1 ; sys_platform == "darwin"
+torch==2.9.1+cpu ; sys_platform == "linux"
+rich==15.0.0
+rich-argparse==1.8.0

@@ -1,0 +1,78 @@
+diff --git a/src/bindings.cu b/src/bindings.cu
+index 0f99b92c..3744f599 100644
+--- a/src/bindings.cu
++++ b/src/bindings.cu
+@@ -2303,6 +2303,34 @@ PYBIND11_MODULE(_C, m) {
+     m.attr("observation_abi") = PUFFER_OBSERVATION_ABI;
+     m.attr("observation_version") = PUFFER_OBSERVATION_VERSION;
+     m.attr("action_abi") = PUFFER_ACTION_ABI;
++    m.attr("qualification_fixture_enabled") =
++        (bool)PUFFER_QUALIFICATION_FIXTURE_ENABLED;
++    m.attr("qualification_fixture_role") =
++        PUFFER_QUALIFICATION_FIXTURE_ROLE;
++    m.attr("qualification_fixture_schema") =
++        PUFFER_QUALIFICATION_FIXTURE_SCHEMA;
++    m.attr("qualification_fixture_qualification_only") =
++        (bool)PUFFER_QUALIFICATION_FIXTURE_QUALIFICATION_ONLY;
++    m.attr("qualification_fixture_environment_source_sha256") =
++        PUFFER_ENV_SOURCE_HASH;
++    m.attr("qualification_fixture_match_sha256") =
++        PUFFER_QUALIFICATION_FIXTURE_MATCH_SHA256;
++    m.attr("qualification_fixture_bbs_sha256") =
++        PUFFER_QUALIFICATION_FIXTURE_BBS_SHA256;
++    m.attr("qualification_fixture_bundle_sha256") =
++        PUFFER_QUALIFICATION_FIXTURE_BUNDLE_SHA256;
++    m.attr("qualification_fixture_bbs_source_id") =
++        (unsigned long long)PUFFER_QUALIFICATION_FIXTURE_BBS_SOURCE_ID;
++    m.attr("qualification_fixture_authored_source_id") =
++        (unsigned long long)PUFFER_QUALIFICATION_FIXTURE_AUTHORED_SOURCE_ID;
++    m.attr("qualification_fixture_reference_trace_schema") =
++        PUFFER_QUALIFICATION_FIXTURE_REFERENCE_TRACE_SCHEMA;
++    m.attr("qualification_fixture_reference_trace_sha256") =
++        PUFFER_QUALIFICATION_FIXTURE_REFERENCE_TRACE_SHA256;
++    m.attr("qualification_fixture_max_decisions") =
++        PUFFER_QUALIFICATION_FIXTURE_MAX_DECISIONS;
++    m.attr("qualification_fixture_reward_contract") =
++        PUFFER_QUALIFICATION_FIXTURE_REWARD_CONTRACT;
+ 
+     // Core functions
+     m.attr("state_bank_contract_schema") = PUFFER_STATE_BANK_CONTRACT_SCHEMA;
+diff --git a/src/bindings_cpu.cpp b/src/bindings_cpu.cpp
+index a60f7c77..3f672afc 100644
+--- a/src/bindings_cpu.cpp
++++ b/src/bindings_cpu.cpp
+@@ -497,6 +497,34 @@ PYBIND11_MODULE(_C, m) {
+     m.attr("observation_abi") = PUFFER_OBSERVATION_ABI;
+     m.attr("observation_version") = PUFFER_OBSERVATION_VERSION;
+     m.attr("action_abi") = PUFFER_ACTION_ABI;
++    m.attr("qualification_fixture_enabled") =
++        (bool)PUFFER_QUALIFICATION_FIXTURE_ENABLED;
++    m.attr("qualification_fixture_role") =
++        PUFFER_QUALIFICATION_FIXTURE_ROLE;
++    m.attr("qualification_fixture_schema") =
++        PUFFER_QUALIFICATION_FIXTURE_SCHEMA;
++    m.attr("qualification_fixture_qualification_only") =
++        (bool)PUFFER_QUALIFICATION_FIXTURE_QUALIFICATION_ONLY;
++    m.attr("qualification_fixture_environment_source_sha256") =
++        PUFFER_ENV_SOURCE_HASH;
++    m.attr("qualification_fixture_match_sha256") =
++        PUFFER_QUALIFICATION_FIXTURE_MATCH_SHA256;
++    m.attr("qualification_fixture_bbs_sha256") =
++        PUFFER_QUALIFICATION_FIXTURE_BBS_SHA256;
++    m.attr("qualification_fixture_bundle_sha256") =
++        PUFFER_QUALIFICATION_FIXTURE_BUNDLE_SHA256;
++    m.attr("qualification_fixture_bbs_source_id") =
++        (unsigned long long)PUFFER_QUALIFICATION_FIXTURE_BBS_SOURCE_ID;
++    m.attr("qualification_fixture_authored_source_id") =
++        (unsigned long long)PUFFER_QUALIFICATION_FIXTURE_AUTHORED_SOURCE_ID;
++    m.attr("qualification_fixture_reference_trace_schema") =
++        PUFFER_QUALIFICATION_FIXTURE_REFERENCE_TRACE_SCHEMA;
++    m.attr("qualification_fixture_reference_trace_sha256") =
++        PUFFER_QUALIFICATION_FIXTURE_REFERENCE_TRACE_SHA256;
++    m.attr("qualification_fixture_max_decisions") =
++        PUFFER_QUALIFICATION_FIXTURE_MAX_DECISIONS;
++    m.attr("qualification_fixture_reward_contract") =
++        PUFFER_QUALIFICATION_FIXTURE_REWARD_CONTRACT;
+ 
+     m.def("puff_advantage_cpu", &py_puff_advantage_cpu);
+     m.attr("state_bank_contract_schema") = PUFFER_STATE_BANK_CONTRACT_SCHEMA;

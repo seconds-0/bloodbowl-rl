@@ -25,6 +25,7 @@ LAUNCH_CWD="$PWD"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 : "${STEPS:?STEPS is required (explicit experiment budget)}"
 : "${SCREEN_PROFILE:?SCREEN_PROFILE is required (distance-possession, possession-gain, possession-gain-exact, exact-action-canary, genesis, genesis-pool, paired-confirmation, paired-final, or control-final)}"
+
 CANDIDATE_ARM="${CANDIDATE_ARM:-}"
 TRANSFER_COMPLETE="${TRANSFER_COMPLETE:-}"
 EXPECTED_TRANSFER_SHA256="${EXPECTED_TRANSFER_SHA256:-}"
@@ -193,6 +194,26 @@ fi
 if [ "$PLAN_ONLY" != "1" ] && [ "$CUDAGRAPHS" -ge 0 ] && [ "$ANNEAL_ENT_COEF" = "1" ]; then
   echo "BLOCKED_UNQUALIFIED_ENTROPY_SCHEDULE: cudagraphs=$CUDAGRAPHS anneal_ent_coef=$ANNEAL_ENT_COEF" >&2
   echo "the screen cannot create runnable artifacts until entropy graph/Torch parity is qualified" >&2
+  exit 1
+fi
+
+# Preserve all established profile/budget/entropy/input guards above. A
+# visibly staged qualification role is then rejected through the actual
+# ordinary installer subprocess before output creation, flock, or Puffer/GPU
+# discovery. Ordinary and absent trees retain the historical full check below.
+EARLY_AUTHORITY="$ROOT/vendor/PufferLib/src/exact_action_build_hash.h"
+EARLY_FIXTURE_ENABLED="$(sed -n \
+  's/^#define PUFFER_QUALIFICATION_FIXTURE_ENABLED \([0-9][0-9]*\)$/\1/p' \
+  "$EARLY_AUTHORITY" 2>/dev/null || true)"
+EARLY_FIXTURE_ROLE="$(sed -n \
+  's/^#define PUFFER_QUALIFICATION_FIXTURE_ROLE "\([^"]*\)"$/\1/p' \
+  "$EARLY_AUTHORITY" 2>/dev/null || true)"
+if [ "$EARLY_FIXTURE_ENABLED" = "1" ] || \
+   { [ -n "$EARLY_FIXTURE_ROLE" ] && \
+     [ "$EARLY_FIXTURE_ROLE" != "none" ]; }; then
+  /bin/bash "$ROOT/tools/install_puffer_env.sh" \
+    --check "$ROOT/vendor/PufferLib" || true
+  echo "production reward screen requires an ordinary role-none Puffer build" >&2
   exit 1
 fi
 mkdir -p "$OUT_DIR"
@@ -427,6 +448,8 @@ print(json.dumps({
         _C, "environment_config_schema", "<missing>"),
     "strict_env_config_testing": getattr(
         _C, "strict_env_config_testing", None),
+    "qualification_fixture_role": getattr(
+        _C, "qualification_fixture_role", "<missing>"),
     "state_bank_contract_schema": getattr(
         _C, "state_bank_contract_schema", "<missing>"),
     "state_bank_producer_schema": getattr(
@@ -489,6 +512,7 @@ if (
     compiled_contract["environment_config_schema"] !=
         "bloodbowl-environment-config-v1" or
     compiled_contract["strict_env_config_testing"] is not False or
+    compiled_contract["qualification_fixture_role"] != "none" or
     len(compiled_contract["exact_action_source_sha256"]) != 64 or
     compiled_contract["state_bank_contract_schema"] != "none" or
     compiled_contract["state_bank_producer_schema"] != "none" or
@@ -512,12 +536,16 @@ if (
 ):
     raise SystemExit(
         "compiled native module does not satisfy the "
-        "obs-v6/exact-action/tail-bootstrap/no-bank contract")
+        "obs-v6/exact-action/tail-bootstrap/no-bank contract; production "
+        "rejects every qualification_fixture_role other than none, including "
+        "f5-fixed-state-v1")
 
 # The per-arm launcher recomputes this bundle digest and refuses to train if it
 # drifts, so the screen only has to publish the value it launched with.
 patches = [
     root / "training/puffer_standalone_env_include.patch",
+    root / "training/puffer_portable_simd_flags.patch",
+    root / "training/puffer_raylib_pin.patch",
     root / "training/puffer_dict_capacity.patch",
     root / "training/pufferl_env_dashboard_limit.patch",
     root / "training/pufferl_env_json.patch",
@@ -540,8 +568,10 @@ patches = [
     root / "training/pufferl_scripted_training_guard.patch",
     root / "training/pufferl_warm_start.patch",
     root / "training/puffer_state_bank_contract.patch",
-    # Overlaps build.sh and both bindings; installer and launchers keep it last.
     root / "training/puffer_strict_environment_config.patch",
+    # Metadata-only and cut against the complete semantic binding/build.sh
+    # stack.
+    root / "training/puffer_f5_trainability_role.patch",
 ]
 vendor_sources = read_source_ledger(
     root / "training/puffer_vendor_sources.txt",

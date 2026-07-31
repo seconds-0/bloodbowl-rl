@@ -703,9 +703,9 @@ class EntropySchedulePatchStackTests(unittest.TestCase):
                 names.index("puffer_recurrent_cuda_qualification.patch"),
             )
 
-        final_reverse = installer.split(
-            "for overlapping_patch in", 1
-        )[1].split("; do", 1)[0]
+        final_reverse = installer.rsplit(
+            "if ! exact_patch_stack_valid_beneath_fixture_exports", 1
+        )[1].split("; then", 1)[0]
         self.assertIn('"$ENTROPY_SCHEDULE_PATCH"', final_reverse)
 
     def test_compiled_source_registry_already_closes_over_changed_sources(

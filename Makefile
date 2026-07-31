@@ -15,6 +15,7 @@ SAN_FLAGS = -fsanitize=address,undefined -fno-omit-frame-pointer -O1
 
 SRC      := $(wildcard engine/src/*.c)
 ENGINE_HDR := $(wildcard engine/include/bb/*.h)
+PUFFER_BLOODBOWL_HDR := $(wildcard puffer/bloodbowl/*.h)
 OBJ      := $(SRC:engine/src/%.c=$(BUILD)/obj/%.o)
 TEST_SRC := $(wildcard engine/tests/test_*.c)
 SCENARIO_SRC := tools/bank_scenario_predicates.c
@@ -39,6 +40,8 @@ STATE_BANK_VALIDATE_ENV_HASH = $(shell python3 tools/state_bank_contract.py envi
 PUFFER_OBSERVATION_TESTBIN := $(BUILD)/puffer_observation_tests
 BBP_V6_WRITER_TESTBIN := $(BUILD)/bbp_v6_writer_tests
 PUFFER_F5_TRAINABILITY_TESTBIN := $(BUILD)/puffer_f5_trainability_tests
+F5_TRAINABILITY_FOUNDATION_BIN := $(BUILD)/f5_trainability_foundation
+F5_TRAINABILITY_DIAGNOSTICS_BIN := $(BUILD)/f5_trainability_diagnostics
 PUFFER_TESTBINS := $(PUFFER_REWARD_TESTBIN) $(PUFFER_CONTACT_TESTBIN) $(PUFFER_STATE_BANK_TESTBIN) $(PUFFER_ENV_CONFIG_TESTBIN) $(PUFFER_ENV_CONFIG_BINDING_TESTBIN) $(PUFFER_STATE_BANK_CONTRACT_TESTBIN) $(PUFFER_STANDALONE_TESTBIN) $(PUFFER_STATE_BANK_TOOL_TESTBIN) $(PUFFER_OBSERVATION_TESTBIN) $(PUFFER_F5_TRAINABILITY_TESTBIN) $(BBP_V6_WRITER_TESTBIN)
 
 .PHONY: all test asan fuzz coverage coverage-run lockstep ballstats blockstats human-ball-advancement blockev-mc scenario-scan state-bank-validate clean
@@ -130,12 +133,26 @@ state-bank-validate: $(STATE_BANK_VALIDATE_BIN)
 $(PUFFER_OBSERVATION_TESTBIN): puffer/bloodbowl/test_observation.c puffer/bloodbowl/bloodbowl.h engine/tests/bb_test.h $(SRC) $(ENGINE_HDR)
 	$(CC) $(CFLAGS) -Iengine/tests -Ipuffer/bloodbowl -Wno-unused-function $< -o $@ -lm $(LDFLAGS)
 
-$(PUFFER_F5_TRAINABILITY_TESTBIN): puffer/bloodbowl/test_f5_trainability.c puffer/bloodbowl/bloodbowl.h puffer/bloodbowl/f5_trainability.h puffer/bloodbowl/f5_trainability_fixture.generated.h puffer/bloodbowl/test_support/state_bank_build_f5_trainability_test.h $(AUTHORED_DRILL_SRC) $(AUTHORED_IDENTITY_SRC) tools/authored_drill.h tools/authored_identity_internal.h engine/tests/bb_test.h $(SRC) $(ENGINE_HDR)
+$(PUFFER_F5_TRAINABILITY_TESTBIN): puffer/bloodbowl/test_f5_trainability.c $(PUFFER_BLOODBOWL_HDR) puffer/bloodbowl/test_support/vecenv.h puffer/bloodbowl/test_support/state_bank_build_f5_trainability_test.h $(AUTHORED_DRILL_SRC) $(AUTHORED_IDENTITY_SRC) tools/authored_drill.h tools/authored_identity_internal.h engine/tests/bb_test.h $(SRC) $(ENGINE_HDR)
+	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) \
 		-DBBE_STATE_BANK_BUILD_HEADER='"state_bank_build_f5_trainability_test.h"' \
 		-Iengine/tests -Ipuffer/bloodbowl/test_support -Ipuffer/bloodbowl -Itools \
 		-Wno-unused-function $< $(AUTHORED_DRILL_SRC) $(AUTHORED_IDENTITY_SRC) \
 		-o $@ -lm $(LDFLAGS)
+
+$(F5_TRAINABILITY_FOUNDATION_BIN): tools/f5_trainability_foundation.c $(AUTHORED_DRILL_SRC) $(AUTHORED_IDENTITY_SRC) tools/authored_drill.h tools/authored_identity_internal.h tools/authored_identity_ledger.def tools/authored_identity_legacy_proof.def puffer/bloodbowl/state_bank_sha256.h $(OBJ) $(ENGINE_HDR)
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -Ipuffer/bloodbowl -Itools \
+		$< $(AUTHORED_DRILL_SRC) $(AUTHORED_IDENTITY_SRC) $(OBJ) \
+		-o $@ -lm $(LDFLAGS)
+
+$(F5_TRAINABILITY_DIAGNOSTICS_BIN): tools/f5_trainability_diagnostics.c $(PUFFER_BLOODBOWL_HDR) puffer/bloodbowl/test_support/state_bank_build_f5_trainability_test.h $(SRC) $(ENGINE_HDR)
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) \
+		-DBBE_STATE_BANK_BUILD_HEADER='"state_bank_build_f5_trainability_test.h"' \
+		-Iengine/tests -Ipuffer/bloodbowl/test_support -Ipuffer/bloodbowl \
+		-Wno-unused-function $< -o $@ -lm $(LDFLAGS)
 
 $(BBP_V6_WRITER_TESTBIN): tools/test_bbp_v6_writer.c tools/bb_lockstep.c puffer/bloodbowl/bloodbowl.h $(SRC) $(ENGINE_HDR)
 	$(CC) $(CFLAGS) -Ipuffer/bloodbowl -Itools -Wno-unused-function $< -o $@ -lm $(LDFLAGS)

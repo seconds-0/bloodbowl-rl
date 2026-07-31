@@ -1404,6 +1404,10 @@ class StateBankContractTests(unittest.TestCase):
         self.assertTrue((resources / "keep.txt").is_file())
         observed = contract.check_no_bank_install(puffer)
         self.assertEqual(observed, contract.NO_BANK_STATE_FIELDS)
+        self.assertEqual(
+            contract.show_qualification_fixture(puffer),
+            contract.ORDINARY_QUALIFICATION_FIXTURE_FIELDS,
+        )
         bridge = puffer / "ocean/bloodbowl/state_bank_build.h"
         self.assertEqual(
             bridge.read_text(encoding="ascii"),
@@ -1425,6 +1429,22 @@ class StateBankContractTests(unittest.TestCase):
 
         (resources / "state_bank.bbs").unlink()
         authority = puffer / "src/exact_action_build_hash.h"
+        ordinary_authority = authority.read_text(encoding="ascii")
+        authority.write_text(
+            ordinary_authority.replace(
+                "#define PUFFER_QUALIFICATION_FIXTURE_ENABLED 0",
+                "#define PUFFER_QUALIFICATION_FIXTURE_ENABLED 1",
+            ).replace(
+                '#define PUFFER_QUALIFICATION_FIXTURE_ROLE "none"',
+                '#define PUFFER_QUALIFICATION_FIXTURE_ROLE "mutated-role"',
+            ),
+            encoding="ascii",
+        )
+        with self.assertRaisesRegex(
+            contract.StateBankContractError, "QUALIFICATION_FIXTURE_ROLE"
+        ):
+            contract.check_no_bank_install(puffer)
+        authority.write_text(ordinary_authority, encoding="ascii")
         authority.write_text(
             authority.read_text(encoding="ascii") + "#undef PUFFER_ACTION_ABI\n",
             encoding="ascii",
@@ -1433,6 +1453,41 @@ class StateBankContractTests(unittest.TestCase):
             contract.StateBankContractError, "unrecognized build-header line"
         ):
             contract.check_no_bank_install(puffer)
+
+    def test_native_and_generated_ordinary_roles_are_exactly_inert(self) -> None:
+        rendered = contract.render_no_bank_header(
+            exact_action_source_hash="b" * 64,
+            environment_source_hash="c" * 64,
+            observation_abi="obs-v6",
+            observation_version=6,
+        ).decode("ascii")
+        native = (
+            ROOT / "puffer/bloodbowl/state_bank_build.h"
+        ).read_text(encoding="ascii")
+
+        def macro_values(source: str, macro: str) -> list[str]:
+            return re.findall(
+                rf"^#define {re.escape(macro)}[ \t]+(.+)$",
+                source,
+                flags=re.MULTILINE,
+            )
+
+        def semantic_value(value: str) -> str:
+            typed_integer = re.fullmatch(r"UINT32_C\((\d+)\)", value)
+            return typed_integer.group(1) if typed_integer else value
+
+        for macro in contract.QUALIFICATION_FIXTURE_MACROS:
+            expected = macro_values(rendered, macro)
+            actual = macro_values(native, macro)
+            with self.subTest(macro=macro):
+                self.assertEqual(len(expected), 1)
+                self.assertEqual(len(actual), 1)
+                self.assertEqual(
+                    semantic_value(actual[0]),
+                    semantic_value(expected[0]),
+                )
+        self.assertNotIn("f5-fixed-state-v1", rendered)
+        self.assertNotIn("bloodbowl-trainability-task-v1", rendered)
 
     def test_no_bank_authority_publish_swap_restores_previous_contract(
         self,
@@ -2016,7 +2071,10 @@ class PufferStateBankPatchTests(unittest.TestCase):
         function = self.installer.split("exact_backend_hash() {", 1)[1]
         function = function.split("\n}", 1)[0]
         self.assertIn(
-            '"$INSTALL_PYTHON" "$ROOT/tools/puffer_source_manifest.py"',
+            (
+                '"$INSTALL_PYTHON" -B -I -S '
+                '"$ROOT/tools/puffer_source_manifest.py"'
+            ),
             function,
         )
         self.assertIn('--ledger "$COMPILED_BACKEND_LEDGER"', function)

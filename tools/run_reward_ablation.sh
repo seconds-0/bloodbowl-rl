@@ -446,22 +446,6 @@ for artifact in "$LOG" "$RUN_MANIFEST" "$STATUS_FILE" "$RUN_DIR_FILE" \
   }
 done
 
-command -v flock >/dev/null 2>&1 || {
-  echo "flock is required for the one-trainer contract" >&2; exit 1; }
-exec 9>/tmp/bloodbowl-rl-reward-ablation.lock
-if ! flock -n 9; then
-  echo "another reward-ablation launcher or inherited trainer holds the host lock" >&2
-  exit 1
-fi
-
-if pgrep -f '[p]uffer_cuda_runtime.py train|[p]uffer train' >/dev/null; then
-  echo "a puffer trainer is already live on this host" >&2
-  pgrep -af '[p]uffer_cuda_runtime.py train|[p]uffer train' >&2 || true
-  exit 1
-fi
-command -v nvidia-smi >/dev/null 2>&1 || {
-  echo "no nvidia-smi; run this launcher on a CUDA host" >&2; exit 1; }
-
 cd "$ROOT/vendor/PufferLib"
 
 REWARD_ARGS=()
@@ -567,10 +551,46 @@ PY
   fi
 fi
 
+# Preserve all established pure input/checkpoint/pool validation above. If a
+# dedicated role is visibly staged, exercise the actual ordinary installer as
+# a subprocess and reject before lock/GPU mutation. Ordinary and absent trees
+# retain the historical full drift-check behavior immediately afterward.
+EARLY_AUTHORITY="$ROOT/vendor/PufferLib/src/exact_action_build_hash.h"
+EARLY_FIXTURE_ENABLED="$(sed -n \
+  's/^#define PUFFER_QUALIFICATION_FIXTURE_ENABLED \([0-9][0-9]*\)$/\1/p' \
+  "$EARLY_AUTHORITY" 2>/dev/null || true)"
+EARLY_FIXTURE_ROLE="$(sed -n \
+  's/^#define PUFFER_QUALIFICATION_FIXTURE_ROLE "\([^"]*\)"$/\1/p' \
+  "$EARLY_AUTHORITY" 2>/dev/null || true)"
+if [ "$EARLY_FIXTURE_ENABLED" = "1" ] || \
+   { [ -n "$EARLY_FIXTURE_ROLE" ] && \
+     [ "$EARLY_FIXTURE_ROLE" != "none" ]; }; then
+  /bin/bash "$ROOT/tools/install_puffer_env.sh" \
+    --check "$ROOT/vendor/PufferLib" || true
+  echo "production reward launcher requires an ordinary role-none Puffer build" >&2
+  exit 1
+fi
 if ! /bin/bash "$ROOT/tools/install_puffer_env.sh" --check; then
   echo "installed Blood Bowl snapshot is stale; install and rebuild before launch" >&2
   exit 1
 fi
+
+command -v flock >/dev/null 2>&1 || {
+  echo "flock is required for the one-trainer contract" >&2; exit 1; }
+exec 9>/tmp/bloodbowl-rl-reward-ablation.lock
+if ! flock -n 9; then
+  echo "another reward-ablation launcher or inherited trainer holds the host lock" >&2
+  exit 1
+fi
+
+if pgrep -f '[p]uffer_cuda_runtime.py train|[p]uffer train' >/dev/null; then
+  echo "a puffer trainer is already live on this host" >&2
+  pgrep -af '[p]uffer_cuda_runtime.py train|[p]uffer train' >&2 || true
+  exit 1
+fi
+command -v nvidia-smi >/dev/null 2>&1 || {
+  echo "no nvidia-smi; run this launcher on a CUDA host" >&2; exit 1; }
+
 SOURCE_HASH="$(cat ocean/bloodbowl/.content_hash)"
 grep -q '^league_preseed' config/bloodbowl.ini || {
   echo "installed config lacks league_preseed" >&2; exit 1; }
@@ -604,6 +624,11 @@ from pufferlib import _C
 evidence = finish_cuda_runtime_preflight(runtime, evidence)
 validate_cuda_runtime_evidence(evidence)
 strict_role = getattr(_C, "strict_env_config_testing", None)
+fixture_role = getattr(_C, "qualification_fixture_role", "<missing>")
+if fixture_role != "none":
+    raise SystemExit(
+        "production reward launcher rejects qualification_fixture_role="
+        f"{fixture_role!r}, including f5-fixed-state-v1")
 print(getattr(_C, "env_name", None), int(bool(getattr(_C, "gpu", False))),
       int(_C.precision_bytes),
       getattr(_C, "exact_action_source_hash", "<missing>"),
@@ -720,6 +745,8 @@ patch_bundle_line() {
 }
 PATCH_HASH="$({
   patch_bundle_line training/puffer_standalone_env_include.patch
+  patch_bundle_line training/puffer_portable_simd_flags.patch
+  patch_bundle_line training/puffer_raylib_pin.patch
   patch_bundle_line training/puffer_dict_capacity.patch
   patch_bundle_line training/pufferl_env_dashboard_limit.patch
   patch_bundle_line training/pufferl_env_json.patch
@@ -741,8 +768,9 @@ PATCH_HASH="$({
   patch_bundle_line training/pufferl_scripted_training_guard.patch
   patch_bundle_line training/pufferl_warm_start.patch
   patch_bundle_line training/puffer_state_bank_contract.patch
-  # This overlaps build.sh and both bindings, so it is deliberately last.
   patch_bundle_line training/puffer_strict_environment_config.patch
+  # Metadata-only and cut against the complete semantic binding stack.
+  patch_bundle_line training/puffer_f5_trainability_role.patch
 } | sha256sum | awk '{print $1}')"
 if [ -n "$EXPECTED_PUFFER_PATCH_BUNDLE_SHA256" ] && \
    [ "$PATCH_HASH" != "$EXPECTED_PUFFER_PATCH_BUNDLE_SHA256" ]; then

@@ -7245,29 +7245,33 @@ class QualificationPatchContractTests(unittest.TestCase):
         self.assertEqual(installer.count("python3"), 1)
         for fragment in (
             (
-                'if "$INSTALL_PYTHON" '
+                'if "$INSTALL_PYTHON" -B -I -S \\\n'
+                '            '
                 '"$ROOT/tools/state_bank_contract.py" validate-request'
             ),
             (
-                '"$INSTALL_PYTHON" '
+                '"$INSTALL_PYTHON" -B -I -S '
                 '"$ROOT/tools/state_bank_contract.py" \\\n'
                 "        environment-source-sha256"
             ),
             (
-                '"$INSTALL_PYTHON" '
+                '"$INSTALL_PYTHON" -B -I -S '
                 '"$ROOT/tools/puffer_source_manifest.py"'
             ),
             (
-                'if ! "$INSTALL_PYTHON" '
+                'if ! "$INSTALL_PYTHON" -B -I -S \\\n'
+                '            '
                 '"$ROOT/tools/state_bank_contract.py" check-no-bank'
             ),
             (
-                '"$INSTALL_PYTHON" '
+                '"$INSTALL_PYTHON" -B -I -S \\\n'
+                '            '
                 '"$ROOT/tools/state_bank_contract.py" show-installed'
             ),
-            ('| "$INSTALL_PYTHON" -c',),
+            ('"$INSTALL_PYTHON" -B -I -S -c',),
             (
-                '"$INSTALL_PYTHON" '
+                '"$INSTALL_PYTHON" -B -I -S \\\n'
+                '    '
                 '"$ROOT/tools/state_bank_contract.py" install-no-bank'
             ),
         ):

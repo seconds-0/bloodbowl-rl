@@ -276,6 +276,8 @@ class ExperimentContractTests(unittest.TestCase):
         )
         for patch in (
             "puffer_standalone_env_include.patch",
+            "puffer_portable_simd_flags.patch",
+            "puffer_raylib_pin.patch",
             "puffer_dict_capacity.patch",
             "pufferl_env_dashboard_limit.patch",
             "pufferl_env_json.patch",
@@ -317,7 +319,11 @@ class ExperimentContractTests(unittest.TestCase):
         self.assertLess(recurrent, transition)
         self.assertLess(transition, frozen)
         self.assertEqual(
-            screen_patches[-1], "puffer_strict_environment_config.patch"
+            screen_patches[-2:],
+            [
+                "puffer_strict_environment_config.patch",
+                "puffer_f5_trainability_role.patch",
+            ],
         )
         self.assertIn(
             'git -C "$ROOT/vendor/PufferLib" apply --reverse --check --no-index',

@@ -1,0 +1,108 @@
+diff --git a/build.sh b/build.sh
+index 5a7c94d..37ad85b 100755
+--- a/build.sh
++++ b/build.sh
+@@ -53,14 +53,20 @@ fi
+ # Linux/mac
+ PLATFORM="$(uname -s)"
+ if [ "$PLATFORM" = "Linux" ]; then
+     RAYLIB_NAME='raylib-5.5_linux_amd64'
+     OMP_LIB=-lomp5
++    CPU_OMP_COMPILE_FLAGS=(-fopenmp)
++    CPU_OMP_LINK_FLAGS=(-fopenmp "$OMP_LIB")
++    STANDALONE_OMP_LINK_FLAGS=(-fopenmp)
+     SANITIZE_FLAGS=(-fsanitize=address,undefined,bounds,pointer-overflow,leak -fno-omit-frame-pointer)
+     STANDALONE_LDFLAGS=(-lGL)
+     SHARED_LDFLAGS=(-Bsymbolic-functions)
+ else
+     RAYLIB_NAME='raylib-5.5_macos'
+     OMP_LIB=-lomp
++    CPU_OMP_COMPILE_FLAGS=()
++    CPU_OMP_LINK_FLAGS=()
++    STANDALONE_OMP_LINK_FLAGS=()
+     SANITIZE_FLAGS=()
+     STANDALONE_LDFLAGS=(-framework Cocoa -framework IOKit -framework CoreVideo -framework OpenGL)
+     SHARED_LDFLAGS=(-framework Cocoa -framework OpenGL -framework IOKit -undefined dynamic_lookup)
+@@ -140,10 +146,23 @@ else
+ 
+ OUTPUT_NAME=${OUTPUT_NAME:-$ENV}
+ 
+-# Standalone environment build
+-# -mavx2 enables AVX2 intrinsics (__m256, _mm256_*) which drive.h and
+-# src/bf16.h use directly. x86_64 only — strip if porting to ARM/Apple Silicon.
+-SIMD_FLAGS=(-mavx2 -mfma)
++# Static environment and standalone builds share CLANG_OPT. Keep the upstream
++# AVX2/FMA acceleration on the one sealed x86_64 platform, but never pass
++# x86-only flags to the native arm64 compiler used by the CPython extension.
++# Unknown architectures fail closed instead of silently choosing a build ABI.
++MACHINE="$(uname -m)"
++case "$PLATFORM:$MACHINE" in
++    Linux:x86_64)
++        SIMD_FLAGS=(-mavx2 -mfma)
++        ;;
++    Darwin:arm64)
++        SIMD_FLAGS=()
++        ;;
++    *)
++        echo "Error: unsupported Blood Bowl build platform $PLATFORM/$MACHINE"
++        exit 1
++        ;;
++esac
+ if [ -n "$DEBUG" ] || [ "$MODE" = "local" ]; then
+     CLANG_OPT=(-g -O0 "${CLANG_WARN[@]}" "${SANITIZE_FLAGS[@]}" "${SIMD_FLAGS[@]}")
+     NVCC_OPT="-O0 -g"
+@@ -161,7 +180,7 @@ if [ "$MODE" = "local" ] || [ "$MODE" = "fast" ]; then
+         "${LINK_ARCHIVES[@]}"
+         "${EXTRA_LDFLAGS[@]}"
+         "${STANDALONE_LDFLAGS[@]}"
+-        -lm -lpthread -fopenmp
++        -lm -lpthread "${STANDALONE_OMP_LINK_FLAGS[@]}"
+         -DPLATFORM_DESKTOP
+     )
+     echo "Compiling $ENV..."
+@@ -289,7 +308,7 @@ ${CC:-clang} -c "${CLANG_OPT[@]}" $EXTRA_CFLAGS \
+     -I./$RAYLIB_NAME/include -I$CUDA_HOME/include \
+     -DPLATFORM_DESKTOP \
+     -fno-semantic-interposition -fvisibility=hidden \
+-    -fPIC -fopenmp \
++    -fPIC "${CPU_OMP_COMPILE_FLAGS[@]}" \
+     $STRICT_ENV_CONFIG_CFLAGS \
+     "$BINDING_SRC" -o "$STATIC_OBJ"
+ ar rcs "$STATIC_LIB" "$STATIC_OBJ"
+@@ -334,8 +353,8 @@ if [ -z "$MODE" ]; then
+     echo "Built: $OUTPUT"
+ 
+ elif [ "$MODE" = "cpu" ]; then
+     echo "Compiling CPU training backend..."
+-    ${CXX:-g++} -c -fPIC -fopenmp \
++    ${CXX:-g++} -c -fPIC "${CPU_OMP_COMPILE_FLAGS[@]}" \
+         -D_GLIBCXX_USE_CXX11_ABI=1 \
+         -DPLATFORM_DESKTOP \
+         -std=c++17 \
+@@ -346,10 +365,10 @@ elif [ "$MODE" = "cpu" ]; then
+         $PRECISION $LINK_OPT \
+         src/bindings_cpu.cpp -o build/bindings_cpu.o
+     LINK_CMD=(
+-        ${CXX:-g++} -shared -fPIC -fopenmp
++        ${CXX:-g++} -shared -fPIC
+         build/bindings_cpu.o "$STATIC_LIB" "$RAYLIB_A"
+         "${EXTRA_LDFLAGS[@]}"
+-        -lm -lpthread $OMP_LIB $LINK_OPT
++        -lm -lpthread "${CPU_OMP_LINK_FLAGS[@]}" $LINK_OPT
+         "${SHARED_LDFLAGS[@]}"
+         -o "$OUTPUT"
+     )
+diff --git a/src/vecenv.h b/src/vecenv.h
+index 519db98..4ab766f 100644
+--- a/src/vecenv.h
++++ b/src/vecenv.h
+@@ -197,7 +197,9 @@ static inline size_t obs_element_size(void) {
+ #define  STRINGIFY(x)  _STRINGIFY(x)
+ const char dtype_symbol[] = STRINGIFY(OBS_TENSOR_T);
+ 
++#ifdef _OPENMP
+ #include <omp.h>
++#endif
+ #include <stdatomic.h>
+ #include <pthread.h>
+ #include <stdbool.h>

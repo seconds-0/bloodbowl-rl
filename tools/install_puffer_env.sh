@@ -148,7 +148,8 @@ if [ "$BANK_ARGUMENT_COUNT" -eq 7 ]; then
     # This call is deliberately before even validating the destination tree.
     # Its public authorization allowlist is a literal empty frozenset, so a
     # completely valid request still fails before any installation mutation.
-    if "$INSTALL_PYTHON" "$ROOT/tools/state_bank_contract.py" validate-request \
+    if "$INSTALL_PYTHON" -B -I -S \
+            "$ROOT/tools/state_bank_contract.py" validate-request \
         --kind "$STATE_BANK_KIND" \
         --bank "$STATE_BANK_SOURCE" \
         --bank-sha256 "$STATE_BANK_SHA256" \
@@ -195,6 +196,8 @@ fi
 DST="$PUFFER/ocean/bloodbowl"
 SELFPLAY_LEAGUE_PATCH="$ROOT/training/selfplay_league.patch"
 STANDALONE_INCLUDE_PATCH="$ROOT/training/puffer_standalone_env_include.patch"
+PORTABLE_SIMD_PATCH="$ROOT/training/puffer_portable_simd_flags.patch"
+RAYLIB_PIN_PATCH="$ROOT/training/puffer_raylib_pin.patch"
 EXACT_PATCH="$ROOT/training/puffer_exact_joint_actions.patch"
 RECURRENT_PATCH="$ROOT/training/puffer_recurrent_eval_state.patch"
 ROLLOUT_TRANSITION_PATCH="$ROOT/training/puffer_rollout_transition_closure.patch"
@@ -204,6 +207,7 @@ QUALIFICATION_PATCH="$ROOT/training/puffer_recurrent_cuda_qualification.patch"
 REWARD_CLAMP_PATCH="$ROOT/training/puffer_reward_clamp_range.patch"
 STATE_BANK_EXPORT_PATCH="$ROOT/training/puffer_state_bank_contract.patch"
 STRICT_ENV_CONFIG_PATCH="$ROOT/training/puffer_strict_environment_config.patch"
+F5_TRAINABILITY_ROLE_PATCH="$ROOT/training/puffer_f5_trainability_role.patch"
 COMPILED_BACKEND_LEDGER="$ROOT/training/puffer_compiled_backend_sources.txt"
 
 # The observation revision is DERIVED from the header, never typed twice. The
@@ -225,7 +229,7 @@ SOURCE_OBSERVATION_ABI="obs-v$SOURCE_OBSERVATION_VERSION"
 # engine change changes the hash). Relative paths keep source and snapshot
 # hashes comparable.
 snapshot_hash() {
-    "$INSTALL_PYTHON" "$ROOT/tools/state_bank_contract.py" \
+    "$INSTALL_PYTHON" -B -I -S "$ROOT/tools/state_bank_contract.py" \
         environment-source-sha256 --root "$1" --plain
 }
 
@@ -234,7 +238,7 @@ snapshot_hash() {
 # header; both native and CPU extension modules expose the compiled value.
 # --check then compares current sources, generated header, and imported module.
 exact_backend_hash() {
-    "$INSTALL_PYTHON" "$ROOT/tools/puffer_source_manifest.py" \
+    "$INSTALL_PYTHON" -B -I -S "$ROOT/tools/puffer_source_manifest.py" \
         --root "$PUFFER" \
         --ledger "$COMPILED_BACKEND_LEDGER" \
         --expected-count 15 \
@@ -424,6 +428,154 @@ strict_environment_config_sources_valid() {
         "$PUFFER/src/bindings.cu" || return 1
 }
 
+qualification_fixture_exports_valid() {
+    local attribute binding
+    for binding in \
+            "$PUFFER/src/bindings.cu" \
+            "$PUFFER/src/bindings_cpu.cpp"; do
+        for attribute in \
+            qualification_fixture_enabled \
+            qualification_fixture_role \
+            qualification_fixture_schema \
+            qualification_fixture_qualification_only \
+            qualification_fixture_environment_source_sha256 \
+            qualification_fixture_match_sha256 \
+            qualification_fixture_bbs_sha256 \
+            qualification_fixture_bundle_sha256 \
+            qualification_fixture_bbs_source_id \
+            qualification_fixture_authored_source_id \
+            qualification_fixture_reference_trace_schema \
+            qualification_fixture_reference_trace_sha256 \
+            qualification_fixture_max_decisions \
+            qualification_fixture_reward_contract; do
+            grep -Fq "m.attr(\"$attribute\")" "$binding" || return 1
+        done
+    done
+}
+
+exact_patch_stack_valid_beneath_fixture_exports() {
+    local index_dir index_path exact_patch status
+    index_dir="$(mktemp -d "${TMPDIR:-/tmp}/puffer-patch-index.XXXXXX")" || \
+        return 1
+    index_path="$index_dir/index"
+    status=0
+    GIT_INDEX_FILE="$index_path" git -C "$PUFFER" read-tree HEAD || status=1
+    if [ "$status" -eq 0 ]; then
+        GIT_INDEX_FILE="$index_path" git -C "$PUFFER" add -A || status=1
+    fi
+    if [ "$status" -eq 0 ]; then
+        GIT_INDEX_FILE="$index_path" git -C "$PUFFER" apply \
+            --cached --reverse --check "$F5_TRAINABILITY_ROLE_PATCH" || \
+            status=1
+    fi
+    if [ "$status" -eq 0 ]; then
+        GIT_INDEX_FILE="$index_path" git -C "$PUFFER" apply \
+            --cached --reverse "$F5_TRAINABILITY_ROLE_PATCH" || status=1
+    fi
+    if [ "$status" -eq 0 ]; then
+        GIT_INDEX_FILE="$index_path" git -C "$PUFFER" apply \
+            --cached --reverse --check "$RAYLIB_PIN_PATCH" || status=1
+    fi
+    if [ "$status" -eq 0 ]; then
+        GIT_INDEX_FILE="$index_path" git -C "$PUFFER" apply \
+            --cached --reverse "$RAYLIB_PIN_PATCH" || status=1
+    fi
+    if [ "$status" -eq 0 ]; then
+        GIT_INDEX_FILE="$index_path" git -C "$PUFFER" apply \
+            --cached --reverse --check "$PORTABLE_SIMD_PATCH" || status=1
+    fi
+    if [ "$status" -eq 0 ]; then
+        GIT_INDEX_FILE="$index_path" git -C "$PUFFER" apply \
+            --cached --reverse "$PORTABLE_SIMD_PATCH" || status=1
+    fi
+    if [ "$status" -eq 0 ]; then
+        for exact_patch in "$@"; do
+            if ! GIT_INDEX_FILE="$index_path" git -C "$PUFFER" apply \
+                    --cached --reverse --check "$exact_patch"; then
+                echo "exact patch beneath qualification exports is stale: $exact_patch" >&2
+                status=1
+                break
+            fi
+        done
+    fi
+    rm -f "$index_path" "$index_path.lock"
+    rmdir "$index_dir" 2>/dev/null || true
+    return "$status"
+}
+
+F5_EXPORT_PATCH_REMOVED=0
+PORTABLE_SIMD_PATCH_REMOVED=0
+RAYLIB_PIN_PATCH_REMOVED=0
+restore_leaf_patches_on_exit() {
+    if [ "$F5_EXPORT_PATCH_REMOVED" -eq 1 ]; then
+        if ! git -C "$PUFFER" apply --no-index \
+                "$F5_TRAINABILITY_ROLE_PATCH" >/dev/null 2>&1; then
+            echo "error: could not restore F5 module exports after failed install" >&2
+        fi
+    fi
+    if [ "$PORTABLE_SIMD_PATCH_REMOVED" -eq 1 ]; then
+        if ! git -C "$PUFFER" apply --no-index \
+                "$PORTABLE_SIMD_PATCH" >/dev/null 2>&1; then
+            echo "error: could not restore portable build flags after failed install" >&2
+        fi
+    fi
+    if [ "$RAYLIB_PIN_PATCH_REMOVED" -eq 1 ]; then
+        if ! git -C "$PUFFER" apply --no-index \
+                "$RAYLIB_PIN_PATCH" >/dev/null 2>&1; then
+            echo "error: could not restore pinned Raylib build input after failed install" >&2
+        fi
+    fi
+}
+trap restore_leaf_patches_on_exit EXIT
+
+require_ordinary_qualification_role() {
+    local generated_authority installed_fixture_enabled installed_fixture_role
+    generated_authority="$PUFFER/src/exact_action_build_hash.h"
+    # A pristine pinned checkout has no generated authority yet and is the
+    # ordinary installer's one allowed pre-install state. Once an authority
+    # exists, both install and --check reject every active qualification role
+    # before snapshot, build, CUDA, or launcher preflight work.
+    [ -f "$generated_authority" ] || return 0
+    installed_fixture_enabled="$(sed -n \
+        's/^#define PUFFER_QUALIFICATION_FIXTURE_ENABLED \([0-9][0-9]*\)$/\1/p' \
+        "$generated_authority")"
+    installed_fixture_role="$(sed -n \
+        's/^#define PUFFER_QUALIFICATION_FIXTURE_ROLE "\([^"]*\)"$/\1/p' \
+        "$generated_authority")"
+    if [ "$installed_fixture_enabled" = "1" ] || \
+       { [ -n "$installed_fixture_role" ] && \
+         [ "$installed_fixture_role" != "none" ]; }; then
+        echo "error: ordinary Puffer lifecycle rejects qualification_fixture_role=${installed_fixture_role:-<missing>} (enabled=${installed_fixture_enabled:-<missing>})" >&2
+        return 1
+    fi
+}
+
+require_ordinary_qualification_role
+
+if [ "$MODE" = "install" ]; then
+    # The Raylib pin is the final build.sh leaf. Remove it, then the portability
+    # leaf, before older overlapping recipes are refreshed; publish both last.
+    if git -C "$PUFFER" apply --reverse --check --no-index \
+            "$RAYLIB_PIN_PATCH" 2>/dev/null; then
+        git -C "$PUFFER" apply --reverse --no-index "$RAYLIB_PIN_PATCH"
+        RAYLIB_PIN_PATCH_REMOVED=1
+    fi
+    if git -C "$PUFFER" apply --reverse --check --no-index \
+            "$PORTABLE_SIMD_PATCH" 2>/dev/null; then
+        git -C "$PUFFER" apply --reverse --no-index "$PORTABLE_SIMD_PATCH"
+        PORTABLE_SIMD_PATCH_REMOVED=1
+    fi
+    # This metadata-only patch overlaps the historical context of earlier
+    # binding patches. Remove it transactionally before refreshing those
+    # patches, then reapply it at the one canonical final position below.
+    if git -C "$PUFFER" apply --reverse --check --no-index \
+            "$F5_TRAINABILITY_ROLE_PATCH" 2>/dev/null; then
+        git -C "$PUFFER" apply --reverse --no-index \
+            "$F5_TRAINABILITY_ROLE_PATCH"
+        F5_EXPORT_PATCH_REMOVED=1
+    fi
+fi
+
 if [ "$MODE" = "check" ]; then
     [ -d "$DST" ] || { echo "drift check: $DST not installed — run tools/install_puffer_env.sh" >&2; exit 1; }
     want="$(snapshot_hash "$ROOT/puffer/bloodbowl")"
@@ -437,7 +589,8 @@ if [ "$MODE" = "check" ]; then
         echo "  fix: tools/install_puffer_env.sh $PUFFER" >&2
         exit 1
     fi
-    if ! "$INSTALL_PYTHON" "$ROOT/tools/state_bank_contract.py" check-no-bank \
+    if ! "$INSTALL_PYTHON" -B -I -S \
+            "$ROOT/tools/state_bank_contract.py" check-no-bank \
         --puffer-root "$PUFFER" >/dev/null; then
         echo "drift check: installed no-bank state contract is stale" >&2
         echo "  fix: tools/install_puffer_env.sh $PUFFER" >&2
@@ -531,12 +684,24 @@ if [ "$MODE" = "check" ]; then
         echo "  fix: recreate the pinned Puffer tree and reinstall the complete patch stack" >&2
         exit 1
     fi
+    if ! qualification_fixture_exports_valid; then
+        echo "drift check: qualification-fixture module exports are incomplete" >&2
+        echo "  fix: recreate the pinned Puffer tree and reinstall the complete patch stack" >&2
+        exit 1
+    fi
     if ! git -C "$PUFFER" apply --reverse --check --no-index "$STANDALONE_INCLUDE_PATCH"; then
         echo "drift check: installed standalone include patch is missing or stale" >&2
         echo "  fix: recreate the pinned Puffer tree and reinstall the complete patch stack" >&2
         exit 1
     fi
-    for exact_patch in \
+    if [ ! -f "$RAYLIB_PIN_PATCH" ] || \
+       ! git -C "$PUFFER" apply --reverse --check --no-index \
+           "$RAYLIB_PIN_PATCH"; then
+        echo "drift check: pinned Raylib build-input patch is missing or stale" >&2
+        echo "  fix: recreate the pinned Puffer tree and reinstall the complete patch stack" >&2
+        exit 1
+    fi
+    if ! exact_patch_stack_valid_beneath_fixture_exports \
         "$EXACT_PATCH" \
         "$RECURRENT_PATCH" \
         "$ROLLOUT_TRANSITION_PATCH" \
@@ -548,13 +713,11 @@ if [ "$MODE" = "check" ]; then
         "$ROOT/training/pufferl_warm_start.patch" \
         "$ROOT/training/puffer_dict_capacity.patch" \
         "$STATE_BANK_EXPORT_PATCH" \
-        "$STRICT_ENV_CONFIG_PATCH"; do
-        if ! git -C "$PUFFER" apply --reverse --check --no-index "$exact_patch"; then
-            echo "drift check: installed exact patch is missing or stale: $exact_patch" >&2
-            echo "  fix: recreate the pinned Puffer tree and reinstall the complete patch stack" >&2
-            exit 1
-        fi
-    done
+        "$STRICT_ENV_CONFIG_PATCH"; then
+        echo "drift check: installed exact patch stack is missing or stale" >&2
+        echo "  fix: recreate the pinned Puffer tree and reinstall the complete patch stack" >&2
+        exit 1
+    fi
     # D234: BOTH backends, checked separately, and ordered LAST among the
     # marker checks -- the earlier ones carry message-ordering contracts
     # that training/test_recurrent_cuda_qualification.py asserts against a
@@ -580,7 +743,9 @@ if [ "$MODE" = "check" ]; then
         exit 1
     fi
     current_module="$(cd "$PUFFER" && \
-        "$PYBIN" -c 'from pufferlib import _C; print(_C.__file__)')"
+        "$PYBIN" -B -I -c \
+            'import sys; sys.path.insert(0, sys.argv[1]); from pufferlib import _C; print(_C.__file__)' \
+            "$PUFFER")"
     if [ ! -f "$current_module" ]; then
         echo "drift check: imported pufferlib/_C module is missing: $current_module" >&2
         exit 1
@@ -604,8 +769,9 @@ if [ "$MODE" = "check" ]; then
     header_action_abi="$(sed -n \
         's/^#define PUFFER_ACTION_ABI "\([^"]*\)"$/\1/p' \
         "$PUFFER/src/exact_action_build_hash.h" 2>/dev/null || true)"
-    compiled_contract="$(cd "$PUFFER" && "$PYBIN" -c \
-        'from pufferlib import _C; print(getattr(_C, "exact_action_source_hash", "<missing>"), getattr(_C, "environment_source_hash", "<missing>"), getattr(_C, "observation_abi", "<missing>"), getattr(_C, "observation_version", "<missing>"), getattr(_C, "action_abi", "<missing>"), getattr(_C, "rollout_transition_contract", "<missing>"), getattr(_C, "entropy_schedule_contract", "<missing>"), getattr(_C, "environment_config_schema", "<missing>"), getattr(_C, "strict_env_config_testing", "<missing>"))' \
+    compiled_contract="$(cd "$PUFFER" && "$PYBIN" -B -I -c \
+        'import sys; sys.path.insert(0, sys.argv[1]); from pufferlib import _C; print(getattr(_C, "exact_action_source_hash", "<missing>"), getattr(_C, "environment_source_hash", "<missing>"), getattr(_C, "observation_abi", "<missing>"), getattr(_C, "observation_version", "<missing>"), getattr(_C, "action_abi", "<missing>"), getattr(_C, "rollout_transition_contract", "<missing>"), getattr(_C, "entropy_schedule_contract", "<missing>"), getattr(_C, "environment_config_schema", "<missing>"), getattr(_C, "strict_env_config_testing", "<missing>"))' \
+        "$PUFFER" \
         2>/dev/null || true)"
     read -r compiled_backend_hash compiled_environment_hash \
         compiled_observation_abi compiled_observation_version \
@@ -651,16 +817,18 @@ if [ "$MODE" = "check" ]; then
         exit 1
     fi
     installed_state_contract="$(
-        "$INSTALL_PYTHON" "$ROOT/tools/state_bank_contract.py" show-installed \
+        "$INSTALL_PYTHON" -B -I -S \
+            "$ROOT/tools/state_bank_contract.py" show-installed \
             --puffer-root "$PUFFER"
     )"
     compiled_state_contract="$(cd "$PUFFER" && \
-        "$PYBIN" - "$ROOT/tools" <<'PY'
+        "$PYBIN" -B -I - "$ROOT/tools" "$PUFFER" <<'PY'
 import json
 import sys
 
 sys.path.insert(0, sys.argv[1])
 import state_bank_contract
+sys.path.insert(0, sys.argv[2])
 from pufferlib import _C
 
 print(json.dumps(
@@ -677,6 +845,46 @@ PY
         echo "  fix: reinstall, then rebuild PufferLib for bloodbowl" >&2
         exit 1
     fi
+    installed_qualification_contract="$(cd "$PUFFER" && \
+        "$PYBIN" -B -I - "$ROOT/tools" <<'PY'
+import json
+import sys
+
+sys.path.insert(0, sys.argv[1])
+import state_bank_contract
+
+print(json.dumps(
+    state_bank_contract.show_qualification_fixture("."),
+    sort_keys=True,
+    separators=(",", ":"),
+))
+PY
+    )"
+    compiled_qualification_contract="$(cd "$PUFFER" && \
+        "$PYBIN" -B -I - "$ROOT/tools" "$PUFFER" <<'PY'
+import json
+import sys
+
+sys.path.insert(0, sys.argv[1])
+import state_bank_contract
+sys.path.insert(0, sys.argv[2])
+from pufferlib import _C
+
+print(json.dumps(
+    state_bank_contract.qualification_fixture_from_module(_C),
+    sort_keys=True,
+    separators=(",", ":"),
+))
+PY
+    )"
+    if [ "$installed_qualification_contract" != \
+            "$compiled_qualification_contract" ]; then
+        echo "drift check: compiled qualification fixture differs from generated authority" >&2
+        echo "  header: $installed_qualification_contract" >&2
+        echo "  module: $compiled_qualification_contract" >&2
+        echo "  fix: reinstall, then rebuild PufferLib for bloodbowl" >&2
+        exit 1
+    fi
     STANDALONE="$PUFFER/bloodbowl"
     if [ ! -x "$STANDALONE" ]; then
         echo "drift check: installed standalone is missing: $STANDALONE" >&2
@@ -684,7 +892,8 @@ PY
         exit 1
     fi
     standalone_state_contract="$(
-        "$STANDALONE" --state-bank-contract | "$INSTALL_PYTHON" -c \
+        "$STANDALONE" --state-bank-contract | \
+            "$INSTALL_PYTHON" -B -I -S -c \
             'import json,sys; print(json.dumps(json.load(sys.stdin), sort_keys=True, separators=(",", ":")))'
     )" || {
         echo "drift check: standalone state-bank metadata is malformed" >&2
@@ -743,7 +952,8 @@ fi
 # Stage FFB spectator art (optional — needs vendor/ffb and a python with yaml;
 # training and the fallback circle renderer work fine without it).
 if [ -d "$ROOT/vendor/ffb" ] && [ -x "$PUFFER/.venv/bin/python" ]; then
-    "$PUFFER/.venv/bin/python" "$ROOT/tools/stage_spectator_art.py" || \
+    "$PUFFER/.venv/bin/python" -B -I \
+        "$ROOT/tools/stage_spectator_art.py" || \
         echo "warning: spectator art staging failed (renderer falls back to circles)"
 fi
 
@@ -1247,11 +1457,10 @@ for binding in "$PUFFER/src/bindings.cu" "$PUFFER/src/bindings_cpu.cpp"; do
     fi
 done
 
-# Strict Blood Bowl environment normalization is deliberately the final patch
-# that touches build.sh or either extension binding. It is cut against the
-# complete pinned stack above, retains the normalized Python snapshot for the
-# historical downstream converter, and must not invalidate any earlier exact
-# patch that overlaps these three files.
+# Strict Blood Bowl environment normalization is the final semantic patch that
+# touches build.sh or either extension binding. It is cut against the complete
+# pinned stack above. The qualification export patch applied immediately after
+# it is metadata-only and is cut against this exact final semantic state.
 if [ ! -f "$STRICT_ENV_CONFIG_PATCH" ]; then
     echo "error: missing $STRICT_ENV_CONFIG_PATCH" >&2
     exit 1
@@ -1271,7 +1480,86 @@ if ! strict_environment_config_sources_valid; then
     echo "error: installed strict Blood Bowl environment boundary is incomplete" >&2
     exit 1
 fi
-for overlapping_patch in \
+
+# Export the sealed qualification-fixture identity from both extension
+# backends. The ordinary generated authority always leaves the role disabled
+# and named "none"; the separate qualification installer may stage the one
+# reviewed role only after this complete ordinary install passes its own check.
+if [ ! -f "$F5_TRAINABILITY_ROLE_PATCH" ]; then
+    echo "error: missing $F5_TRAINABILITY_ROLE_PATCH" >&2
+    exit 1
+fi
+if git -C "$PUFFER" apply --reverse --check --no-index \
+        "$F5_TRAINABILITY_ROLE_PATCH" 2>/dev/null; then
+    : # Exact qualification-fixture export patch is already installed.
+elif git -C "$PUFFER" apply --check --no-index \
+        "$F5_TRAINABILITY_ROLE_PATCH" 2>/dev/null; then
+    git -C "$PUFFER" apply --no-index "$F5_TRAINABILITY_ROLE_PATCH"
+    echo "applied:   sealed F5 qualification identity -> CPU/CUDA bindings"
+else
+    echo "error: F5 qualification export patch is neither applicable nor installed" >&2
+    exit 1
+fi
+F5_EXPORT_PATCH_REMOVED=0
+if ! qualification_fixture_exports_valid; then
+    echo "error: installed F5 qualification exports are incomplete" >&2
+    exit 1
+fi
+
+# The pinned build script applies AVX2/FMA and OpenMP flags to both the static
+# environment object used by the CPU extension and the standalone executable.
+# Native Darwin arm64 accepts neither the x86 flags nor Apple's unsupported
+# -fopenmp, and linking a second libomp beside Torch is unsafe. Apply this leaf
+# build-recipe patch after every older build.sh patch: Linux x86_64 retains the
+# upstream flags; Darwin arm64 removes only those host-incompatible flags.
+if [ ! -f "$PORTABLE_SIMD_PATCH" ]; then
+    echo "error: missing $PORTABLE_SIMD_PATCH" >&2
+    exit 1
+fi
+if git -C "$PUFFER" apply --reverse --check --no-index \
+        "$PORTABLE_SIMD_PATCH" 2>/dev/null; then
+    : # Exact host-architecture build boundary is already installed.
+elif git -C "$PUFFER" apply --check --no-index \
+        "$PORTABLE_SIMD_PATCH" 2>/dev/null; then
+    git -C "$PUFFER" apply --no-index "$PORTABLE_SIMD_PATCH"
+    echo "applied:   host-architecture SIMD/OpenMP flags -> build.sh"
+else
+    echo "error: portable SIMD/OpenMP patch is neither applicable nor installed" >&2
+    exit 1
+fi
+if ! git -C "$PUFFER" apply --reverse --check --no-index \
+        "$PORTABLE_SIMD_PATCH"; then
+    echo "error: installed portable SIMD/OpenMP patch is stale or incomplete" >&2
+    exit 1
+fi
+PORTABLE_SIMD_PATCH_REMOVED=0
+
+# Raylib is statically linked into both standalone and CPU module builds. Pin
+# both the release archive and extracted library after the portable build leaf
+# so an existing gitignored directory and a fresh download are checked alike.
+if [ ! -f "$RAYLIB_PIN_PATCH" ]; then
+    echo "error: missing $RAYLIB_PIN_PATCH" >&2
+    exit 1
+fi
+if git -C "$PUFFER" apply --reverse --check --no-index \
+        "$RAYLIB_PIN_PATCH" 2>/dev/null; then
+    : # Exact Raylib input boundary is already installed.
+elif git -C "$PUFFER" apply --check --no-index \
+        "$RAYLIB_PIN_PATCH" 2>/dev/null; then
+    git -C "$PUFFER" apply --no-index "$RAYLIB_PIN_PATCH"
+    echo "applied:   pinned Raylib archive/library inputs -> build.sh"
+else
+    echo "error: Raylib input pin patch is neither applicable nor installed" >&2
+    exit 1
+fi
+if ! git -C "$PUFFER" apply --reverse --check --no-index \
+        "$RAYLIB_PIN_PATCH"; then
+    echo "error: installed Raylib input pin patch is stale or incomplete" >&2
+    exit 1
+fi
+RAYLIB_PIN_PATCH_REMOVED=0
+
+if ! exact_patch_stack_valid_beneath_fixture_exports \
         "$STANDALONE_INCLUDE_PATCH" \
         "$ROOT/training/puffer_dict_capacity.patch" \
         "$EXACT_PATCH" \
@@ -1281,13 +1569,10 @@ for overlapping_patch in \
         "$ENTROPY_SCHEDULE_PATCH" \
         "$QUALIFICATION_PATCH" \
         "$STATE_BANK_EXPORT_PATCH" \
-        "$STRICT_ENV_CONFIG_PATCH"; do
-    if ! git -C "$PUFFER" apply --reverse --check --no-index \
-            "$overlapping_patch"; then
-        echo "error: final strict stack broke exact reverse applicability: $overlapping_patch" >&2
-        exit 1
-    fi
-done
+        "$STRICT_ENV_CONFIG_PATCH"; then
+    echo "error: final patch stack is not exactly reverse applicable beneath F5 exports" >&2
+    exit 1
+fi
 
 EXACT_BACKEND_HASH="$(exact_backend_hash)" || {
     echo "error: could not hash exact-action backend sources" >&2
@@ -1304,7 +1589,8 @@ if [ "$ROOT_SOURCE_HASH" != "$INSTALLED_SOURCE_HASH" ] || \
     echo "  recorded:  $RECORDED_SOURCE_HASH" >&2
     exit 1
 fi
-"$INSTALL_PYTHON" "$ROOT/tools/state_bank_contract.py" install-no-bank \
+"$INSTALL_PYTHON" -B -I -S \
+    "$ROOT/tools/state_bank_contract.py" install-no-bank \
     --puffer-root "$PUFFER" \
     --exact-action-source-hash "$EXACT_BACKEND_HASH" \
     --environment-source-hash "$INSTALLED_SOURCE_HASH" \

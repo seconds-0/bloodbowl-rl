@@ -85,6 +85,62 @@ BASE_BUILD_MACROS = (
     "PUFFER_ACTION_ABI",
 )
 
+QUALIFICATION_FIXTURE_MACROS = (
+    "PUFFER_QUALIFICATION_FIXTURE_ENABLED",
+    "PUFFER_QUALIFICATION_FIXTURE_ROLE",
+    "PUFFER_QUALIFICATION_FIXTURE_SCHEMA",
+    "PUFFER_QUALIFICATION_FIXTURE_QUALIFICATION_ONLY",
+    "PUFFER_QUALIFICATION_FIXTURE_MATCH_SHA256",
+    "PUFFER_QUALIFICATION_FIXTURE_BBS_SHA256",
+    "PUFFER_QUALIFICATION_FIXTURE_BUNDLE_SHA256",
+    "PUFFER_QUALIFICATION_FIXTURE_BBS_SOURCE_ID",
+    "PUFFER_QUALIFICATION_FIXTURE_AUTHORED_SOURCE_ID",
+    "PUFFER_QUALIFICATION_FIXTURE_REFERENCE_TRACE_SCHEMA",
+    "PUFFER_QUALIFICATION_FIXTURE_REFERENCE_TRACE_SHA256",
+    "PUFFER_QUALIFICATION_FIXTURE_MAX_DECISIONS",
+    "PUFFER_QUALIFICATION_FIXTURE_REWARD_CONTRACT",
+)
+
+ORDINARY_QUALIFICATION_FIXTURE_FIELDS: dict[str, str | int] = {
+    "enabled": 0,
+    "role": "none",
+    "schema": "none",
+    "qualification_only": 0,
+    "match_sha256": "unused",
+    "bbs_sha256": "unused",
+    "bundle_sha256": "unused",
+    "bbs_source_id": 0,
+    "authored_source_id": 0,
+    "reference_trace_schema": "none",
+    "reference_trace_sha256": "unused",
+    "max_decisions": 0,
+    "reward_contract": "none",
+}
+
+QUALIFICATION_FIELD_TO_MACRO = {
+    "enabled": "PUFFER_QUALIFICATION_FIXTURE_ENABLED",
+    "role": "PUFFER_QUALIFICATION_FIXTURE_ROLE",
+    "schema": "PUFFER_QUALIFICATION_FIXTURE_SCHEMA",
+    "qualification_only": "PUFFER_QUALIFICATION_FIXTURE_QUALIFICATION_ONLY",
+    "match_sha256": "PUFFER_QUALIFICATION_FIXTURE_MATCH_SHA256",
+    "bbs_sha256": "PUFFER_QUALIFICATION_FIXTURE_BBS_SHA256",
+    "bundle_sha256": "PUFFER_QUALIFICATION_FIXTURE_BUNDLE_SHA256",
+    "bbs_source_id": "PUFFER_QUALIFICATION_FIXTURE_BBS_SOURCE_ID",
+    "authored_source_id":
+        "PUFFER_QUALIFICATION_FIXTURE_AUTHORED_SOURCE_ID",
+    "reference_trace_schema":
+        "PUFFER_QUALIFICATION_FIXTURE_REFERENCE_TRACE_SCHEMA",
+    "reference_trace_sha256":
+        "PUFFER_QUALIFICATION_FIXTURE_REFERENCE_TRACE_SHA256",
+    "max_decisions": "PUFFER_QUALIFICATION_FIXTURE_MAX_DECISIONS",
+    "reward_contract": "PUFFER_QUALIFICATION_FIXTURE_REWARD_CONTRACT",
+}
+
+MODULE_QUALIFICATION_FIELD_NAMES = {
+    field: f"qualification_fixture_{field}"
+    for field in ORDINARY_QUALIFICATION_FIXTURE_FIELDS
+}
+
 NO_BANK_STATE_FIELDS: dict[str, str | int] = {
     "contract_schema": "none",
     "producer_schema": "none",
@@ -1694,6 +1750,12 @@ def render_no_bank_header(
         f"#define PUFFER_OBSERVATION_VERSION {observation_version}",
         '#define PUFFER_ACTION_ABI "exact-joint-v1"',
     ]
+    for field, macro in QUALIFICATION_FIELD_TO_MACRO.items():
+        value = ORDINARY_QUALIFICATION_FIXTURE_FIELDS[field]
+        if isinstance(value, str):
+            lines.append(f'#define {macro} "{value}"')
+        else:
+            lines.append(f"#define {macro} {value}")
     for field, macro in STATE_FIELD_TO_MACRO.items():
         value = NO_BANK_STATE_FIELDS[field]
         if isinstance(value, str):
@@ -1729,6 +1791,12 @@ def _render_bank_header_for_test(
         f"#define PUFFER_OBSERVATION_VERSION {observation_version}",
         '#define PUFFER_ACTION_ABI "exact-joint-v1"',
     ]
+    for field, macro in QUALIFICATION_FIELD_TO_MACRO.items():
+        value = ORDINARY_QUALIFICATION_FIXTURE_FIELDS[field]
+        if isinstance(value, str):
+            lines.append(f'#define {macro} "{value}"')
+        else:
+            lines.append(f"#define {macro} {value}")
     for field, macro in STATE_FIELD_TO_MACRO.items():
         value = state_fields[field]
         if isinstance(value, str):
@@ -2534,7 +2602,9 @@ def parse_generated_header(path: str | Path) -> dict[str, str | int]:
         if name in macros:
             _fail("BUILD_HEADER", f"duplicate build macro {name}")
         macros[name] = value
-    expected = set(BASE_BUILD_MACROS + STATE_BANK_MACROS)
+    expected = set(
+        BASE_BUILD_MACROS + QUALIFICATION_FIXTURE_MACROS + STATE_BANK_MACROS
+    )
     missing = sorted(expected - set(macros))
     unknown = sorted(set(macros) - expected)
     if missing or unknown:
@@ -2549,6 +2619,17 @@ def show_installed(puffer_root: str | Path) -> dict[str, str | int]:
     root = Path(puffer_root)
     macros = parse_generated_header(root / "src/exact_action_build_hash.h")
     return {field: macros[macro] for field, macro in STATE_FIELD_TO_MACRO.items()}
+
+
+def show_qualification_fixture(
+    puffer_root: str | Path,
+) -> dict[str, str | int]:
+    root = Path(puffer_root)
+    macros = parse_generated_header(root / "src/exact_action_build_hash.h")
+    return {
+        field: macros[macro]
+        for field, macro in QUALIFICATION_FIELD_TO_MACRO.items()
+    }
 
 
 def contract_from_module(module: Any) -> dict[str, str | int]:
@@ -2571,6 +2652,42 @@ def contract_from_module(module: Any) -> dict[str, str | int]:
             if not isinstance(value, str):
                 _fail(
                     "MODULE_CONTRACT",
+                    f"compiled module {attribute} must be a string",
+                )
+            result[field] = value
+    return result
+
+
+def qualification_fixture_from_module(module: Any) -> dict[str, str | int]:
+    """Read the sealed qualification-role surface exported by Puffer ``_C``."""
+
+    result: dict[str, str | int] = {}
+    for field, attribute in MODULE_QUALIFICATION_FIELD_NAMES.items():
+        if not hasattr(module, attribute):
+            _fail(
+                "MODULE_QUALIFICATION_FIXTURE",
+                f"compiled module lacks {attribute}",
+            )
+        value = getattr(module, attribute)
+        expected = ORDINARY_QUALIFICATION_FIXTURE_FIELDS[field]
+        if field in ("enabled", "qualification_only"):
+            if not isinstance(value, bool):
+                _fail(
+                    "MODULE_QUALIFICATION_FIXTURE",
+                    f"compiled module {attribute} must be a boolean",
+                )
+            result[field] = int(value)
+        elif isinstance(expected, int):
+            if isinstance(value, bool) or not isinstance(value, int):
+                _fail(
+                    "MODULE_QUALIFICATION_FIXTURE",
+                    f"compiled module {attribute} must be an integer",
+                )
+            result[field] = int(value)
+        else:
+            if not isinstance(value, str):
+                _fail(
+                    "MODULE_QUALIFICATION_FIXTURE",
                     f"compiled module {attribute} must be a string",
                 )
             result[field] = value
@@ -2606,6 +2723,13 @@ def check_no_bank_install(puffer_root: str | Path) -> dict[str, str | int]:
         _fail(
             "BUILD_HEADER",
             f"installed state-bank contract is not NONE: {observed!r}",
+        )
+    qualification = show_qualification_fixture(root)
+    if qualification != ORDINARY_QUALIFICATION_FIXTURE_FIELDS:
+        _fail(
+            "QUALIFICATION_FIXTURE_ROLE",
+            "ordinary install does not carry the exact disabled "
+            f"qualification contract: {qualification!r}",
         )
     return observed
 

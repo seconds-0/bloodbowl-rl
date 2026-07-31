@@ -1,7 +1,7 @@
 # F5 trainability foundation
 
-Status: accepted implementation plan after adversarial revision, 2026-07-29.
-Implementation and local qualification are pending.
+Status: implementation and local qualification complete, 2026-07-30.
+Clean authoritative evidence is the immediate post-commit gate.
 
 Base:
 `24eccda6fafdef26d237ee85ef4e2c6819dd4fa9`
@@ -475,11 +475,11 @@ python3 -m unittest -v \
   tools.test_f5_trainability_foundation \
   training.test_f5_trainability_role
 
-python3 tools/run_f5_trainability_foundation.py \
+python3 -B -I -S tools/run_f5_trainability_foundation.py \
   --artifact-dir build/f5-trainability/evidence \
   --random-episodes 100000
 
-python3 tools/verify_f5_trainability_foundation.py \
+python3 -B -I -S tools/verify_f5_trainability_foundation.py \
   build/f5-trainability/evidence
 
 make test
@@ -487,8 +487,33 @@ ASAN_OPTIONS=detect_leaks=0 make asan
 git diff --check
 ```
 
-Fresh exact-install validation uses a new isolated Puffer checkout/venv. It
-must not mutate or rely on a pre-existing shared vendor tree.
+Fresh exact-install validation uses a new isolated Puffer checkout and a newly
+prepared CPython 3.12 venv. The outer verifier independently reconstructs the
+ordinary Puffer source checkout and native build from the pinned commit, while
+sharing that lifecycle's sealed prepared venv as an explicit trusted dependency
+layer. It does not rely on or mutate a pre-existing repository vendor tree.
+
+The prepared venv is closed against automatic Python startup injection: its
+directory chain and `pyvenv.cfg` are sealed, default editable/distutils hooks
+are removed, venv customization modules are rejected, and one exact two-line
+bootstrap/path hook is admitted. Its executable line preloads a sentinel for
+`sitecustomize` before its path line admits the pinned Puffer root. A real
+`-B -I` startup probe must then prove that the sentinel remains installed,
+user-site loading is disabled, the Puffer root and venv site-packages each
+occur exactly once, and every other `sys.path` entry remains under the trusted
+base stdlib. The foundation runner and verifier themselves, and every
+installer-owned base-interpreter probe, run with `-B -I -S`.
+
+Installed dependency distribution names and versions are snapshotted, but
+wheel origin, `RECORD`/file bytes, and loose installed package bytes are not
+independently reconstructed or hash-pinned. Those package bytes, the base
+CPython executable, and its standard-library bytes remain a trusted external
+input to both the worker and independent ordinary-source replay; execution of
+the base installation's `sitecustomize.py` is explicitly blocked.
+Accordingly, "independent" here means independent source checkout, patching,
+native build, ordinary module import, and module/authority hash binding over
+that declared prepared-toolchain layer—not independent dependency/toolchain
+supply-chain reproduction.
 
 ### Required negative coverage
 
@@ -515,6 +540,51 @@ At minimum:
 - autoreset mismatch;
 - worker/evidence/verdict hash or count mutation; and
 - production launcher given the role module.
+
+## Implementation result
+
+The accepted foundation was implemented test-first on
+`tranche/f5-trainability-foundation`. The resulting qualification role remains
+compile-time-only, retains state-bank kind NONE, accepts no caller-selected
+fixture input, and is rejected by the ordinary installer and both production
+reward launchers.
+
+Local qualification established:
+
+- byte-identical regeneration and verification of the 26-record proof bundle,
+  extracted F5 BBS, raw match, generated fixture header, task descriptor, and
+  eight-action trace at all watched hashes;
+- exact reference execution through the real support/decoder/`c_step` path:
+  zero dice, reward, touchdown, or terminal on decisions 1–7; Home touchdown,
+  `(+1,-1)`, dual terminal, and episode length eight on decision 8; then exact
+  autoreset;
+- real-environment negative routes for wrong player, wrong declaration,
+  altered square, seven-action truncation, and the putative ninth action, plus
+  the closed config/artifact/evidence mutation matrices;
+- exact enumeration of 721 safe zero-dice scoring trajectories with probability
+  `4567 / 9227468800`, and the frozen seed-245 100,000-episode masked-uniform
+  baseline with zero successes, 472,158 dice, and 11,396 TEST windows;
+- recurrent Torch CPU collector-tail closure with eight environment steps,
+  nine policy forwards, exact terminal bootstrap, recurrent-state reset, and
+  no ninth environment action;
+- a new pinned Puffer checkout and newly prepared CPython 3.12 venv completing
+  the 14-step pristine → ordinary CPU/standalone → dedicated F5 CPU lifecycle;
+  its starting Git status was empty;
+- live startup closure on the affected Homebrew host: ordinary `-B -I`
+  startup retained only base-stdlib paths, the exact venv site-packages path,
+  and the exact pinned Puffer root, while `sitecustomize is sys` proved the
+  base customization module never executed;
+- 53 focused Python contract tests, the full native `make test` suite,
+  `ASAN_OPTIONS=detect_leaks=0 make asan`, relevant Ruff checks, shell syntax
+  checks, patch apply/reverse checks, and `git diff --check`; and
+- independent adversarial post-review with no unresolved P0, P1, or P2
+  findings after the startup-boundary fix.
+
+The fresh development evidence intentionally records the repository as dirty,
+so the strict verifier rejects it rather than conferring authority. After this
+implementation commit, the runner must produce evidence from the clean tree
+and the verifier must independently reconstruct the ordinary source/build,
+bind its module, authority, and exact Git status, and publish the verdict.
 
 ## Validation boundary
 
@@ -647,4 +717,3 @@ the pending x86/NVIDIA gates without launcher changes.
 - league, opponent, paired-side promotion, or checkpoint admission;
 - GPU provisioning or external spend;
 - PR creation, push, merge, deployment, or production launcher release.
-
