@@ -1,6 +1,7 @@
 # F5 recurrent Torch PPO pilot
 
-Status: accepted protocol amendment; implementation not started.
+Status: accepted runtime-threading protocol correction; implementation not
+started.
 
 Base:
 `fc315d6454cc2975cdf295ed49098d904dd46799`
@@ -515,12 +516,26 @@ total agent rows            4,096
 agent rows per match        2, identity ordered [Home, Away]
 matches / episodes/update   2,048
 vector buffers              1
-vector threads              20
+Puffer vec.num_threads      20 (inert compatibility input on pinned CPU binding)
+CPU-step OpenMP request     OMP_NUM_THREADS=4, OMP_DYNAMIC=FALSE
 frozen banks                0
 frozen-bank percentage      0.0
 horizon                     8
 recurrent reset             true
 ```
+
+The configured `vec.num_threads=20` is retained because it is part of the
+frozen effective Puffer argument mapping, but it is not an execution-thread
+claim. In the pinned CPU binding, `create_vec` consumes `total_agents` and
+`num_buffers` but does not consume `num_threads`; synchronous `cpu_vec_step`
+reaches `_static_vec_env_step`, whose
+`#pragma omp parallel for schedule(static)` has no `num_threads` clause.
+Consequently, CPU step parallelism is requested by the already-frozen process
+environment (`OMP_NUM_THREADS=4`, `OMP_DYNAMIC=FALSE`), not by the inert
+Puffer field. Evidence must record both values and their distinct meanings and
+must reject any claim that the literal `20` governed the CPU OpenMP team. The
+pilot claims only the authenticated OpenMP request, not that the runtime
+necessarily formed four workers on every loop.
 
 The eight-step horizon is semantic, not a throughput tuning knob: one rollout
 contains exactly one complete F5 episode per match, recurrence spans the full
@@ -2191,6 +2206,10 @@ watch at least:
 - explicit RNG call order, deterministic/thread settings, RNG-state digests,
   duplicate-init tensor digest, seed-domain separation, the exact
   Python/NumPy/Torch state encodings, and independent literal framing vectors;
+- the inert configured `vec.num_threads=20` value versus the authoritative
+  `OMP_NUM_THREADS=4`, `OMP_DYNAMIC=FALSE` CPU-step request, including
+  rejection of receipts or prose that represent the former as actual CPU
+  execution parallelism;
 - raw Git-status, normalized worker-environment, and opened-path digest
   preimages, their exact domains/literal vectors, and rejection of line
   projection, reordering, decoding/re-encoding, or missing-LF alternatives;
