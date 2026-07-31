@@ -1,7 +1,7 @@
 # F5 recurrent Torch PPO pilot
 
-Status: accepted runtime-threading protocol correction; implementation not
-started.
+Status: accepted effective-argument, comparator, and construction-order
+correction; implementation not started.
 
 Base:
 `fc315d6454cc2975cdf295ed49098d904dd46799`
@@ -556,6 +556,34 @@ state tensors               7 float32 tensors / 879,900 raw bytes
 precision                   float32
 ```
 
+Seeded construction order is part of the policy definition. The worker must
+use four separate statements in the pinned `torch_pufferl.load_policy` order:
+
+```text
+network = MinGRU(...)
+encoder = DefaultEncoder(...)
+decoder = DefaultDecoder(...)
+policy = Policy(encoder, decoder, network)
+```
+
+Python left-to-right construction of `Policy(DefaultEncoder(...),
+DefaultDecoder(...), MinGRU(...))` is not equivalent because it consumes the
+Torch initialization stream in encoder/decoder/network order. A watched
+wrong-order counterfixture must produce a different canonical tensor digest
+and fail before checkpoint zero is published. Under model seed `1937413891`,
+the correct order has canonical tensor SHA-256
+`61e509fc5759940cedf557ea773d3d89bff35d2897082916c80a2f65c88c8882`
+and raw `.f5w` SHA-256
+`7d1a0e03f06b2f5e6142159b41a42bc07e01dca5400d8c4084ca6ea455e16007`.
+The encoder/decoder/network wrong-order counterfixture instead has canonical
+SHA-256
+`97caeec26dcfefd621f9c51ea94c71254b650f66cfbbaa508fdae5dfd1514d60`
+and must be rejected. The watched real-stack one-update smoke, which retains
+the full 2,956-update schedule and merely stops after the first completed
+update, must reproduce post-update canonical SHA-256
+`bd1410bd0725f4074d6fd63fd4e59b78ab77dbcf8dceea72261c948283a889d4`
+twice.
+
 The manifest freezes this exact lexicographically sorted state schema:
 
 ```text
@@ -594,8 +622,10 @@ priority alpha              0.8
 priority beta0              0.2
 V-trace rho/c clips         1.0 / 1.0
 Muon momentum/beta1         0.95
+Muon weight decay           0.0 (pinned constructor default)
 beta2 compatibility field   0.999
 Muon eps compatibility field 1e-12
+Newton-Schulz norm floor    1e-7 (pinned hard-coded helper default)
 ```
 
 With a batch of `4,096 * 8 = 32,768` agent rows,
@@ -620,11 +650,73 @@ authoritative training Torch seed;
 `selfplay.seed = 0` while self-play is disabled; `rank = 0`,
 `world_size = 1`, `gpu_id = 0`, `train.gpus = 0`, `slowly = true`,
 `reset_state = true`, `wandb = false`, `load_id = null`,
-`load_model_path = null`, and `frozen_enemy_path = ""`. The canonical
-manifest contains and hashes the full effective nested argument mapping,
-including unused compatibility fields. The runner rejects a missing, extra, or
-changed effective field rather than letting generic defaults become an
-unrecorded input.
+`load_model_path = null`, and `train.frozen_enemy_path = ""`.
+
+The canonical manifest contains and hashes one dedicated minimal direct-API
+argument mapping. It is not the result of serializing generic
+`load_config("bloodbowl")` defaults. Its root has exactly these 16 keys:
+
+```text
+env, env_name, gpu_id, load_id, load_model_path, policy, rank, reset_state,
+seed, selfplay, slowly, torch, train, vec, wandb, world_size
+```
+
+`env` is exact-equal, including types and all 51 keys, to the tracked canonical
+`training/f5_trainability_env.json` object. The other scalar root values are
+exactly:
+
+```text
+env_name="bloodbowl"  gpu_id=0  load_id=null  load_model_path=null
+rank=0                reset_state=true        seed=267803525
+slowly=true           wandb=false             world_size=1
+```
+
+The five remaining nested objects have exactly these canonical JSON values:
+
+```json
+{"expansion_factor":1,"hidden_size":64,"num_layers":1}
+```
+
+for `policy`;
+
+```json
+{"decoder":"DefaultDecoder","encoder":"DefaultEncoder","network":"MinGRU"}
+```
+
+for `torch`;
+
+```json
+{"enabled":false,"seed":0}
+```
+
+for `selfplay`;
+
+```json
+{"frozen_bank_pct":0.0,"num_buffers":1,"num_frozen_banks":0,
+ "num_threads":20,"total_agents":4096}
+```
+
+for `vec`; and:
+
+```json
+{"anneal_ent_coef":true,"anneal_lr":true,"beta1":0.95,"beta2":0.999,
+ "clip_coef":0.2,"ent_coef":0.02,"eps":1e-12,"frozen_enemy_path":"",
+ "gae_lambda":0.85,"gamma":0.995,"gpus":0,"horizon":8,
+ "learning_rate":0.0006,"max_grad_norm":1.5,
+ "min_ent_coef_ratio":0.1,"min_lr_ratio":0.1,"minibatch_size":8192,
+ "prio_alpha":0.8,"prio_beta0":0.2,"replay_ratio":0.25,
+ "seed":267803525,"total_timesteps":96862208,"vf_clip_coef":0.5,
+ "vf_coef":1.0,"vtrace_c_clip":1.0,"vtrace_rho_clip":1.0}
+```
+
+for `train`. Whitespace in these explanatory blocks is not data; the tracked
+manifest uses the canonical serializer. The runner rejects a missing, extra,
+or changed root or nested field rather than letting generic defaults become an
+unrecorded input. In particular, generic loader-only checkpoint/log/eval,
+render, W&B, sweep, BC, `update_epochs`, enemy-load, or asset-path keys are
+absent and an attempted addition is fatal. A one-update smoke uses this same
+mapping and stops after one manually driven update; it does not shorten
+`total_timesteps` or alter either schedule.
 
 The pinned Muon implementation uses `beta1` as momentum. It stores but does not
 currently consume the configured `eps`, and the Torch trainer does not pass
@@ -960,7 +1052,8 @@ per-episode probability:
 
 ```text
 p = 4567 / 9,227,468,800
-  = 4.949352957985618e-7
+  = 4.9493529579856178977272...e-7 mathematically
+  = 4.949352957985617e-7 as the nearest CPython binary64
 ```
 
 For independent masked-uniform episodes, the first episode count giving at
@@ -980,6 +1073,18 @@ reported agent steps        96,862,208
 total_timesteps             96,862,208
 masked-uniform comparator   0.9500275582 probability of >=1 safe event
 ```
+
+The comparator's authoritative manifest fields are integer numerator `4567`,
+integer denominator `9227468800`, integer minimum episode count `6052775`,
+and binary64 `probability_at_budget_rounded_10 = 0.9500275582`. Helpers derive
+the binary64 minimum with
+`ceil(log(0.05) / log1p(-numerator / denominator))` and the budget probability
+with
+`-expm1(episodes * log1p(-numerator / denominator))`, then test Python
+ten-decimal rounding. The repeating per-episode decimal above is explanatory
+and is never stored or compared as an exact manifest number. At the frozen
+6,053,888-episode budget, the higher precision probability is
+`0.9500275581996988870896248120710698...`.
 
 This is a comparator, not a guarantee. The neural policy is not uniformly
 distributed over conditional support, its trajectory probabilities change
