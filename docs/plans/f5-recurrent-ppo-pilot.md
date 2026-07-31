@@ -1,7 +1,7 @@
 # F5 recurrent Torch PPO pilot
 
-Status: accepted effective-argument, comparator, and construction-order
-correction; implementation not started.
+Status: accepted final-consumer import-phase and Puffer-log normalization
+amendment; implementation not started.
 
 Base:
 `fc315d6454cc2975cdf295ed49098d904dd46799`
@@ -84,6 +84,220 @@ Two independent read-only audits of the live staged stack also found:
 
 No audit result is itself admissible learning evidence. It only fixes the
 protocol below before the result seed is consumed.
+
+The protocol helper therefore owns one explicit, closed normalization boundary
+between the pinned flat `_vec.log()` result and an accepted rollout-integrity
+object. The controller's training worker, every controller evaluation worker,
+and every verifier replay worker must invoke the same adapter after each
+rollout and before respectively `train()` or bitset acceptance; no population
+has an already-normalized bypass. For each such training or evaluation
+rollout, the adapter first requires the native completed count
+`n` to be exactly the finite integral value `2048.0`. Every native
+episode-total accumulator divided by `n` (including touchdown counts, reward
+component totals, and Home post-clip return) is multiplied by `n`. A
+count-valued result must be exactly integral before conversion to a
+non-Boolean JSON integer; signed reward totals remain finite binary64 values.
+Native rates and per-episode means remain in their declared units:
+`episode_length` must be exactly `8.0` and
+`reward_samples_per_episode` must be exactly the integral value `16`, not
+`16 * n`. In particular, `tds_t0`, `tds_t1`, `episode_length`,
+`reward_component_touchdown`, `reward_postclip_return`, and
+`reward_samples_per_episode` are independently normalized and reconciled with
+the accepted delayed-row-plus-tail reward and terminal vectors. A
+one-Home-touchdown update therefore normalizes
+`tds_t0 = 1/2048`, `tds_t1 = 0.0`,
+`reward_component_touchdown = 1/2048`, and
+`reward_postclip_return = 1/2048` to one Home objective, zero Away objectives,
+one touchdown component, and one post-clip Home return. The accepted raw map
+has exactly the pinned binding's 152 literal `my_log` keys plus the
+vector-appended `n`. Sorting those 153 unique strings by UTF-8 bytes and
+serializing the array with the canonical JSON serializer yields SHA-256
+`6eb55b0fab1fe6c33ff41b8268c39783c583b7b762164b0216882b946193c497`;
+watched tests own the independent literal string tuple as well as that digest,
+without parsing the production binding at test time. Every consumed native
+scalar, including `n`, must satisfy `type(value) is float` and
+`math.isfinite(value)` before any comparison, multiplication, or conversion;
+integer and Boolean test doubles are rejected even when numerically equal.
+Missing or extra native keys, a nonintegral scaled count, a
+one-float32-unit perturbation that breaks the exact count reconciliation, any
+Away touchdown, an endpoint identity failure, or disagreement with the
+accepted reward vectors aborts before `train()` or bitset acceptance. The
+one-unit mutation is specifically adjacent IEEE-754 binary32, not binary64
+`math.nextafter`: little-endian bit patterns `0x39ffffff`, `0x3a000000`, and
+`0x3a000001` decode respectively to
+`0.00048828122089616954`, `0.00048828125`, and
+`0.0004882813082076609`; watched tests construct those bits independently.
+After type, finiteness, operation, and semantic validation, every projected
+numeric result equal to zero is canonicalized to the positive `0.0` literal
+before evidence construction (integer projections remain integer `0`).
+Negative-zero inputs therefore cannot create a second accepted JSON spelling;
+watched tests exercise `-0.0` in every numeric-operation family. The
+stored `projection_collisions = 0` leaf is explicitly a derived invariant—not
+claimed native telemetry—established only from the authenticated fixed
+module/role, successful closed rollout, zero illegal fraction, and accepted
+exact conditional-joint-action path. Neither the flat native log nor a
+test-only already-nested `env_logs["integrity"]` object is accepted as stored
+evidence without passing this adapter.
+
+The tracked manifest—not helper code—is the unit/projection authority. Its
+`execution.rollout_log` object has exactly `derived`, `native_keys`,
+`native_keys_sha256`, `projections`, and `validated_unretained`.
+`native_keys` is the sorted literal 153-string array above and
+`native_keys_sha256` is its frozen digest. `projections` is ordered by native
+key and each closed record has exactly `native`, `operation`, and `target`.
+The only operation literals are `completed-count`,
+`scale-nonnegative-integer`, `scale-finite-number`,
+`retain-nonnegative-integer`, `retain-finite-number`, and `require-zero`.
+`validated_unretained` is the sorted literal array of every remaining native
+key; each of those values is still required to be a finite exact Python
+`float`, but it enters no evidence claim. Every native key occurs exactly once
+as either one projection's `native` value or one
+`validated_unretained` member, and their union must equal `native_keys`.
+Duplicate, omitted, reclassified, retargeted, or extra keys reject the
+manifest. The projection table below contains exactly 83 unique native keys;
+the resulting 70-string sorted `validated_unretained` array, serialized with
+the canonical JSON serializer, has SHA-256
+`67167fd2e3ea29dadc26e3bf0e5ac35b0732a2d022fef5434ec163cb373e36a4`.
+Watched tests own that independent literal array and digest.
+
+The exact projected native-to-target groups are:
+
+```text
+completed-count:
+  n -> integrity.completed_episodes
+
+scale-nonnegative-integer:
+  demo_endzone_episode_frac_all -> integrity.demo_endzone_episodes
+  demo_episodes -> integrity.demo_episodes
+  demo_fallbacks -> integrity.demo_fallbacks
+  demo_pass_episode_frac_all -> integrity.demo_pass_episodes
+  demo_pickup_episode_frac_all -> integrity.demo_pickup_episodes
+  demo_postkick_episode_frac_all -> integrity.demo_postkick_episodes
+  demo_uniform_episode_frac_all -> integrity.demo_uniform_episodes
+  error_episodes -> integrity.error_episodes
+  reward_clip_episodes -> integrity.reward_clip_episodes
+  reward_clip_nonterminal_samples_per_episode
+    -> integrity.reward_clip_nonterminal_samples
+  reward_clip_terminal_samples_per_episode
+    -> integrity.reward_clip_terminal_samples
+  reward_clipped_samples_per_episode -> integrity.reward_clipped_samples
+  reward_component_mismatch_samples_per_episode
+    -> integrity.reward_component_mismatch_samples
+  reward_component_nonfinite_samples_per_episode
+    -> integrity.reward_component_nonfinite_samples
+  reward_nonfinite_episodes -> integrity.reward_nonfinite_episodes
+  reward_nonfinite_samples_per_episode
+    -> integrity.reward_nonfinite_samples
+  state_bank_config_episode_frac_all
+    -> integrity.state_bank_config_episodes
+  tds -> validation.total_touchdowns
+  tds_t0 -> objective.events
+  tds_t1 -> integrity.away_touchdowns
+
+scale-finite-number:
+  episode_return -> validation.home_episode_return
+  reward_clip_excess -> integrity.reward_clip_excess
+  reward_component_ball_gain -> integrity.reward_components.ball_gain
+  reward_component_ball_loss -> integrity.reward_components.ball_loss
+  reward_component_block_assist -> integrity.reward_components.block_assist
+  reward_component_block_exposure
+    -> integrity.reward_components.block_exposure
+  reward_component_block_self_injury
+    -> integrity.reward_components.block_self_injury
+  reward_component_block_sequence
+    -> integrity.reward_components.block_sequence
+  reward_component_block_turnover
+    -> integrity.reward_components.block_turnover
+  reward_component_carrier_exposure
+    -> integrity.reward_components.carrier_exposure
+  reward_component_carrier_exposure_soft
+    -> integrity.reward_components.carrier_exposure_soft
+  reward_component_carrier_threat
+    -> integrity.reward_components.carrier_threat
+  reward_component_defensive_threat
+    -> integrity.reward_components.defensive_threat
+  reward_component_defensive_threat_soft
+    -> integrity.reward_components.defensive_threat_soft
+  reward_component_distance_ball -> integrity.reward_components.distance_ball
+  reward_component_distance_endzone
+    -> integrity.reward_components.distance_endzone
+  reward_component_injury_inflicted
+    -> integrity.reward_components.injury_inflicted
+  reward_component_injury_taken
+    -> integrity.reward_components.injury_taken
+  reward_component_possession -> integrity.reward_components.possession
+  reward_component_residual -> integrity.reward_component_residual
+  reward_component_result_draw -> integrity.reward_components.result_draw
+  reward_component_result_winloss
+    -> integrity.reward_components.result_winloss
+  reward_component_rush -> integrity.reward_components.rush
+  reward_component_send_off -> integrity.reward_components.send_off
+  reward_component_setup_autofix
+    -> integrity.reward_components.setup_autofix
+  reward_component_setup_done -> integrity.reward_components.setup_done
+  reward_component_statmatch -> integrity.reward_components.statmatch
+  reward_component_surf_inflicted
+    -> integrity.reward_components.surf_inflicted
+  reward_component_surf_taken -> integrity.reward_components.surf_taken
+  reward_component_touchback -> integrity.reward_components.touchback
+  reward_component_touchdown -> integrity.reward_components.touchdown
+  reward_postclip_return -> integrity.reward_postclip_return
+  reward_terminal_suppressed_abs
+    -> integrity.reward_terminal_suppressed_abs
+  reward_terminal_suppressed_signed
+    -> integrity.reward_terminal_suppressed_signed
+  score_diff -> validation.score_diff
+
+retain-nonnegative-integer:
+  demo_selector_eligible_mean_configured
+    -> integrity.demo_selector_eligible_configured
+  demo_selector_threshold_mean_configured
+    -> integrity.demo_selector_threshold_configured
+  reward_samples_per_episode -> integrity.reward_samples_per_episode
+
+retain-finite-number:
+  episode_length -> integrity.mean_episode_length
+  illegal_frac -> integrity.illegal_fraction
+  reward_episode_abs_max_mean -> validation.reward_episode_abs_max_mean
+
+require-zero:
+  hist_n_bank_0 -> validation.hist_n_bank_0
+  hist_n_bank_1 -> validation.hist_n_bank_1
+  hist_n_bank_2 -> validation.hist_n_bank_2
+  hist_n_bank_3 -> validation.hist_n_bank_3
+  hist_n_bank_4 -> validation.hist_n_bank_4
+  hist_n_bank_5 -> validation.hist_n_bank_5
+  hist_n_bank_6 -> validation.hist_n_bank_6
+  hist_n_bank_7 -> validation.hist_n_bank_7
+  hist_score_bank_0 -> validation.hist_score_bank_0
+  hist_score_bank_1 -> validation.hist_score_bank_1
+  hist_score_bank_2 -> validation.hist_score_bank_2
+  hist_score_bank_3 -> validation.hist_score_bank_3
+  hist_score_bank_4 -> validation.hist_score_bank_4
+  hist_score_bank_5 -> validation.hist_score_bank_5
+  hist_score_bank_6 -> validation.hist_score_bank_6
+  hist_score_bank_7 -> validation.hist_score_bank_7
+  reward_clip_frac -> validation.reward_clip_frac
+  reward_clip_frac_nonzero -> validation.reward_clip_frac_nonzero
+  reward_clip_signed_delta -> validation.reward_clip_signed_delta
+  reward_nonfinite_frac -> validation.reward_nonfinite_frac
+  statmatch_term -> validation.statmatch_term
+```
+
+The semantic adapter separately requires completed count `2048`, mean length
+`8.0`, samples per episode `16`, all `require-zero` values and all hard
+integrity targets except the reconciled touchdown/Home-return fields to be
+zero, total touchdowns to equal Home plus Away touchdowns, score difference
+to equal Home minus Away touchdowns, and Home episode return,
+`reward_component_touchdown`, and `reward_postclip_return` to equal the Home
+objective-event count. `reward_episode_abs_max_mean` equals successful
+episodes divided by `2048`, preserving the distinction between event count
+and the any-event success bit when a policy scores more than once in one
+eight-decision episode. Every other reward component is zero. `derived` is
+exactly one closed record with target `integrity.projection_collisions`, value
+`0`, and the ordered basis
+`["fixture_role","module_identity","rollout_closed","illegal_fraction",
+"exact_joint_action"]`; all five bases must validate before the leaf exists.
 
 ## Claims and non-claims
 
@@ -242,9 +456,68 @@ its resolved Xcode CPython 3.9.6 executable is
 `/Applications/Xcode.app/Contents/Developer/usr/bin/python3`, SHA-256
 `e7276a0ac27acdd53135450bd3038e8a6d77aad9df9ee06b05ef311ce9955db9`.
 The outer process requires `isolated=1`, `ignore_environment=1`, `no_site=1`,
-and a three-entry Xcode standard-library-only `sys.path`; it imports no local
-or third-party module. Its complete environment is the exact nine-key map
-produced by that command on the frozen host:
+and a three-entry Xcode standard-library-only `sys.path`. Before completing
+the source, implementation-manifest, Git-blob, zero-bytecode, and helper-file
+identity preflight below, it imports no repository-local or third-party
+module. Controller mode and ordinary verifier-writer mode retain that
+restriction for their full outer-process lifetimes and delegate all
+repository-local semantic work to capability-gated audited workers.
+
+Final-consumer mode has one narrower post-preflight exception. After the outer
+process has independently authenticated the exact clean source commit, all
+seven implementation-manifest entries, their Git blobs and live descriptor
+identities, the empty source status, and zero bytecode, it may load exactly
+`tools/f5_recurrent_ppo_protocol.py` from the regular single-link
+`O_NOFOLLOW` descriptor that the preflight already holds; it must not hand the
+content read back to a pathname importer. It rechecks the descriptor's
+device/inode/mode/link-count/size and raw Git-blob bytes/hash immediately
+before and after the complete bounded read, compiles those authenticated bytes
+with the frozen absolute source path as the diagnostic filename, executes
+them in one `types.ModuleType` named exactly
+`f5_recurrent_ppo_protocol_authenticated`, and calls that module's named
+`validate_final_evidence` implementation. The module's `__file__` is set to
+the frozen authenticated path, but that string is not treated as the content
+identity proof. It may load no other repository-local module, may not extend
+`sys.path`, and may not import a third-party module. The helper remains
+standard-library-only at module import time. Preflight is allowed to
+descriptor-open and bounded-read the helper only to establish its file/blob
+identity; before the preflight success marker it may not compile, execute,
+register, or pathname-import those bytes. A preflight failure, early helper
+execution/registration/path import, different local module,
+descriptor/path/source-name substitution, changed helper bytes or identity,
+or third-party import fails before any artifact payload is opened. This
+explicit exception avoids a second final-evidence validator and does not widen
+controller or writer mode.
+
+The verifier freezes these private, non-CLI test seams:
+
+```text
+_run_final_consumer_preflight(
+    operations, *, artifact_dir, expected_verdict_sha256
+) -> context
+_load_authenticated_protocol_helper(
+    operations, *, context
+) -> module
+_run_final_consumer_postflight(
+    operations, *, context
+) -> None
+_consume_final(
+    operations, *, artifact_dir, expected_verdict_sha256
+) -> validated_result
+```
+
+`_consume_final` has exactly one call to each of the first three functions and
+one call to the authenticated module's `validate_final_evidence`, in this
+order: preflight; `operations.mark_preflight_complete(context)`; authenticated
+held-descriptor load; evidence validation; postflight; return. A thrown
+exception skips all later phases. `operations` is an internal fixed
+collaborator constructed by the committed verifier, never a public argument,
+environment value, plugin, or internal-mode caller override. The opaque
+context owns the already validated source snapshot and still-held helper
+descriptor; no later phase re-resolves it from caller data.
+
+The complete outer environment is the exact nine-key map produced by that
+command on the frozen host:
 
 ```text
 CPATH=/usr/local/include
@@ -1257,10 +1530,11 @@ Away reward == -1
 A non-objective transition has both rewards `0`. Any other reward pair aborts.
 Terminals for decisions 1–7 must both be `0`; decision 8 terminals must both be
 `1`. An episode-success bit is `1` if any of its eight Home transition rewards
-is `+1`. The exact objective-event count and successful-episode bit count are
-authoritative and must reconcile with rounded `env/tds_t0 * env/n`, objective
-reward-component totals, and the episode-return cross-check.
-`env/tds_t1` must remain zero.
+is `+1`. The exact objective-event count equals the adapter-normalized
+`tds_t0`, touchdown-component total, Home episode-return total, and Home
+post-clip-return total. The successful-episode count equals
+`reward_episode_abs_max_mean * 2048`. Both equalities are exact; no rounding or
+tolerance is permitted. `tds_t1` must remain exactly zero.
 
 The known safe subset scores on decision 8, but the policy is allowed to find a
 different legal route that scores earlier. A natural Blood Bowl touchdown does
@@ -2236,8 +2510,17 @@ replay occurred. The mode is read-only and disjoint from ordinary
 verification:
 `--puffer-root <prepared-root> --artifact-dir <unverified-artifact>` always
 rejects any pre-existing verdict, while `--consume-final` requires one. The
-final consumer never trusts verifier process status. It independently pins the
-artifact root, validates every payload against the immutable manifest,
+final-consumer outer first performs the exact stdlib-only source preflight and
+then uses only the post-preflight authenticated-helper exception above to call
+that one protocol implementation; it has no parallel JSON serializer, schema
+registry, or artifact validator in the verifier script. A watched import/open
+probe permits the preflight's descriptor open/read but proves that the helper
+is not compiled, executed, registered in `sys.modules`, or pathname-imported
+before the source preflight success marker; it also proves the authenticated
+descriptor/path/blob binding and that no other repository-local or third-party
+module is loaded. The final consumer never trusts verifier process
+status. It independently pins the artifact root, validates every payload
+against the immutable manifest,
 requires exactly one additional regular single-link verdict, validates its
 closed schema and evidence-manifest binding, requires its raw digest to equal
 the supplied expected digest, and accepts only if the complete canonical
@@ -2255,6 +2538,27 @@ immutable stored evidence, formulas, identities, and exact externally expected
 verdict bytes but does not rerun the expensive live checkpoint behavior
 replay; that replay remains a verification-time claim conveyed across the
 explicitly trusted external handoff.
+
+Immediately after the last `validate_final_evidence` payload read and before
+returning acceptance, final-consumer mode repeats the clean raw Git-status
+check, zero-bytecode scan, exact seven-entry implementation-manifest/Git-blob/
+live descriptor identities, and the held protocol-helper descriptor's
+device/inode/mode/link-count/size/bytes identity. Persistent ordinary source
+or bytecode drift during validation therefore fails at the promised final
+postflight; same-UID mutate/use/restore ABA between checks remains the already
+declared full-lifetime trust boundary.
+
+This authenticated helper is executed by the frozen Xcode CPython `3.9.6`,
+whereas prepared Puffer workers use CPython `3.12.12`. The protocol helper
+must therefore be syntactically and semantically compatible with both exact
+runtimes and may not use a later-only construct such as PEP 604 `X | Y` type
+unions, structural `match`, `zip(strict=True)`, or a later-only standard-library
+API. Before the canonical pilot, a mandatory non-skipped exact-host subprocess
+invokes `/usr/bin/python3 -B -I -S`, exercises the descriptor-authenticated
+module load, positively consumes one complete valid 69-file fixture, and
+rejects representative helper/source, verdict-digest, schema, and payload
+mutations. Portable CI may skip only when the frozen Darwin/Xcode host identity
+is absent; the declared host run may not skip.
 
 The verifier:
 
@@ -2328,6 +2632,14 @@ watch at least:
 - exact delayed-row plus tail Home/Away reward/terminal parsing, deliberate
   exclusion of rollout row 0, early-TD fixtures, bit packing, aggregate TD
   cross-checks, and every malformed reward/terminal combination;
+- exact normalization of the real flat averaged `_vec.log()` map, including
+  `n = 2048.0`, count-average scaling and integral conversion, the
+  one-touchdown `1/2048` TD/component/post-clip-return vector, rejection of
+  one-float32-unit and nonintegral perturbations, exact native key closure,
+  the manifest-owned exhaustive 83-projection/70-unretained partition and
+  operation/target mutation matrix, endpoint bindings, and proof that no
+  nested test-double receipt bypasses the adapter before `train()` or bitset
+  acceptance;
 - fixed checkpoint-only behavior and rejection of event-triggered or extra
   checkpoints;
 - training continuation after first TD and exact final update count;
@@ -2386,6 +2698,27 @@ watch at least:
   or defaults it from candidate/storage state, accepts a complete bound
   artifact, and rejects every digest/byte/path/schema/binding/evidence
   mutation;
+- final-consumer import-phase tests prove that stdlib-only source preflight
+  may descriptor-open/read the protocol helper only for identity/hash, but
+  succeeds before those bytes are compiled, executed, registered, or
+  pathname-imported; execution rereads only the same held no-follow descriptor
+  with before/after device/inode/mode/link/size/Git-blob checks,
+  path/source-name substitution never executes, the fixed authenticated module
+  name is used, exactly that one repository-local source is allowed afterward,
+  no third-party import or `sys.path` extension occurs, and controller/writer
+  outer modes retain the zero-repository-local-import rule;
+- spy-operation tests own all four private final-consumer signatures, require
+  exactly one `preflight -> marker -> helper load -> validator -> postflight`
+  call sequence and returned-result object identity, and inject an exception
+  at every boundary to prove that no later phase is called;
+- final-consumer endpoint tests mutate each source/status/bytecode/
+  implementation-manifest/helper identity after preflight and require the
+  final postflight to reject after stored-evidence validation, while retaining
+  the explicit same-UID ABA non-claim;
+- an exact-host `/usr/bin/python3 -B -I -S` positive 69-file consumption test
+  and negative helper/verdict/schema/payload vectors prove the protocol helper
+  really runs under frozen CPython 3.9.6 as well as 3.12.12; static tests reject
+  later-only syntax and APIs from the helper;
 - portable fake-binding CI for the native ABI/unavailable-symbol/errno matrix,
   plus the mandatory non-skipped real-Darwin/APFS integration for file,
   directory-root, cross-directory verdict, collision preservation, inherited
