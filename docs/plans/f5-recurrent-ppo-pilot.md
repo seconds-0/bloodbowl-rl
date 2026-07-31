@@ -1180,6 +1180,18 @@ not an allowed source of bytes. Every other outside-root attempt aborts. The
 result is deduplicated and sorted by ASCII/UTF-8 bytes. The access allowlist
 owns the exact allowed normalized paths/prefixes and rejects any reference,
 BC, alternate artifact, network credential, or unmanifested source path.
+Each individual worker receipt and each controller/verifier aggregate contains
+at most `65,535` unique normalized paths. This is a prospective, result-blind
+resource cap, not a claim about the observed cardinality or a substitute for
+the exact allowlist. The audit recorder rejects the 65,536th distinct
+per-worker token before the attempted operation and before producing a
+receipt. The controller and verifier each build their union incrementally and
+reject the 65,536th distinct aggregate token before materializing or returning
+an accepted aggregate. Either overflow is an `integrity-abort`, not a
+resource-truncation or learning outcome. The `opened_paths` schema therefore
+freezes `minimum_length = 1` and `maximum_length = 65535`; the semantic
+validator separately requires ASCII byte ordering, uniqueness, token grammar,
+exact root/prefix allowlisting, and the framed digest.
 
 The hook counts any event whose name starts with `"socket."` as a Python
 network attempt and raises before the operation; a completed worker therefore
@@ -2106,6 +2118,20 @@ nullability, literal/enum set, numeric range, fixed/allowed list length and
 order, item schema, and nested object key set specified below. Watched tests
 own the entire finite registry object and reject any omitted or permissive
 node.
+
+The DSL's scalar types are disjoint. An `integer` accepts only
+`type(value) is int`; a `number` accepts only `type(value) is float`, a finite
+IEEE-754 binary64 value, and positive sign for zero. Neither accepts a Boolean,
+and an integral JSON spelling such as `0` cannot satisfy a `number` node whose
+artifact value is floating telemetry. No accepted artifact floating field may
+store `-0.0`: evidence construction recursively canonicalizes every floating
+zero to positive `0.0`, and validation rejects a negative-zero wire value in
+loss, profile, interval, schedule, rollout, result, or other numeric evidence.
+Literal and enum comparison is type-strict. Float members additionally compare
+their exact binary64 bit patterns, so `-0.0` cannot satisfy a literal `0.0`
+even though Python numeric equality considers them equal. Nullable-number
+unions apply the same exact-float, finiteness, and positive-zero rules in their
+numeric branch.
 
 `protocol.json` is byte-identical to the tracked
 `training/f5_recurrent_ppo_pilot.json`. Its schema is
