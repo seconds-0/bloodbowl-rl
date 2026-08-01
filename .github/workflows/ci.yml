@@ -29,6 +29,7 @@ jobs:
             tools.test_ci_strict_environment_config \
             tools.test_experiment_contracts \
             tools.test_experiment_queue \
+            tools.test_f5_recurrent_ppo_pilot \
             tools.test_game_stats \
             tools.test_human_possession \
             tools.test_filter_state_bank \
