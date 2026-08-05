@@ -1484,6 +1484,17 @@ nonce must equal the request. Standard output and standard error are drained
 concurrently; `wait()` or `communicate()` before both pipes are drained is
 forbidden.
 
+Because the public writer process keeps its full-lifetime prohibition on
+repository-local imports, its supervisor performs framing through the
+script-local operations parser rather than importing a protocol parser class.
+Canonical request binding is explicit and begins a fresh parser session for
+each worker supervision. That session retains bounded partial-header state and
+the active frame's spool and incremental hasher across arbitrary stdout
+fragmentation. Frame finalization occurs only after the final payload chunk has
+passed its aggregate check, updated the hasher, and reached the private spool;
+stdout finalization occurs only after a zero-byte read has actually observed
+descriptor EOF, never after EAGAIN or loop exhaustion.
+
 Header and binding leaf types are closed. `bytes` and `frame_index` are
 type-strict nonnegative JSON integers, with `bytes` bounded by the
 kind-specific limit and `frame_index` equal to the next expected index.

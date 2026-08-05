@@ -5,9 +5,7 @@ from __future__ import annotations
 
 import argparse
 import ast
-import builtins
 import collections
-import contextlib
 import copy
 import ctypes
 import errno
@@ -29,7 +27,6 @@ import struct
 import subprocess
 import sys
 import tempfile
-import threading
 import time
 import types
 import unittest
@@ -4570,4365 +4567,80 @@ def _ast_call_name(call):
     return ".".join(reversed(parts))
 
 
-_STREAM_CAP_MUTATION_LABELS = (
-    "wrong-training-payload-cap",
-    "wrong-training-wire-cap",
-    "wrong-evaluation-payload-cap",
-    "wrong-evaluation-wire-cap",
-    "wrong-stderr-cap",
-    "literal-only-checked-add",
-    "dead-checked-add-helper",
-    "end-only-wire-check",
-    "payload-check-after-spool",
-    "stderr-check-after-retention",
-    "missing-wire-increment",
-    "missing-payload-increment",
-    "missing-stderr-increment",
-    "wire-omits-prefix",
-    "wire-omits-header",
-    "training-selects-evaluation-payload-cap",
-    "training-selects-evaluation-wire-cap",
-    "evaluation-selects-training-payload-cap",
-    "evaluation-selects-training-wire-cap",
-    "payload-wire-counter-alias",
-    "nonzero-wire-initialization",
-    "nonzero-payload-initialization",
-    "nonzero-stderr-initialization",
-    "reset-wire-per-frame",
-    "reset-payload-per-frame",
-    "unchecked-declared-allocation",
-)
-
-_STREAM_CAP_CLOSURE_MUTATION_LABELS = (
-    "supervisor-module-rebind",
-    "helper-module-rebind",
-    "helper-local-shadow",
-    "len-local-shadow",
-    "side-effecting-value-error",
-    "job-method-mutation",
-    "job-tuple-alias-mutation",
-    "worker-kind-tuple-overwrite",
-    "cap-for-target-overwrite",
-    "counter-tuple-reset",
-    "stdout-tuple-alias-before-check",
-    "stderr-tuple-alias-before-check",
-    "discard-tuple-alias-retention",
-    "header-method-mutation",
-    "header-tuple-alias-mutation",
-    "declared-tuple-alias-allocation",
-    "payload-mutation-after-check",
-    "nested-unowned-stdout-read",
-    "read-callable-tuple-alias",
-    "read-callable-getattr",
-    "nested-unowned-payload-write",
-    "spool-callable-tuple-alias",
-    "spool-callable-getattr",
-    "runtime-globals-len-rebind",
-    "cloned-supervisor-globals",
-    "dead-cap-selector",
-    "deceptive-stdout-endpoint",
-    "dead-validation-expression",
-    "wrong-validation-context",
-    "wrong-payload-predicate",
-    "wrong-payload-buffer",
-    "wrong-header-buffer",
-    "dead-stdout-loop",
-    "hidden-helper-chunk-branch",
-    "stdout-buffer-subscript-mutation",
-    "bytearray-module-rebind",
-    "operations-parameter-rebind",
-    "expected-sequence-rebind",
-    "stdout-descriptor-rebind",
-    "shadow-read-receiver",
-    "shadow-spool-receiver",
-    "shadow-parser-receiver",
-    "early-return-before-drain",
-    "named-false-drain",
-    "empty-tuple-drain",
-    "false-compare-drain",
-    "break-before-read",
-    "return-chunk-before-check",
-    "stdout-augassign-retention",
-    "discard-augassign-retention",
-    "declared-augassign-allocation",
-    "header-augassign-alias",
-    "job-augassign-alias",
-    "declared-standalone-repetition",
-    "unowned-job-identity-call",
-    "job-dict-subscript-alias",
-    "job-tuple-subscript-alias",
-    "header-dict-subscript-alias",
-    "stderr-buffer-dict-subscript-alias",
-    "job-method-callable-alias",
-    "stderr-buffer-method-callable-alias",
-    "job-nested-iterator-alias",
-    "job-starred-list-subscript-alias",
-    "job-deceptive-encode-result-mutation",
-    "job-owned-encode-result-mutation",
-    "expected-sequence-method-mutation",
-    "expected-sequence-dict-subscript-alias",
-    "expected-sequence-entry-mutation",
-    "module-global-endpoint-alias",
-    "nested-job-helper-mutation",
-    "opaque-job-serializer-mutation",
-    "unvalidated-parser-receiver",
-    "module-defined-worker-frame-parser",
-    "infinite-while-before-selection",
-    "try-return-before-selection",
-    "match-return-before-selection",
-    "try-break-before-read",
-    "try-continue-before-read",
-    "declared-left-shift-allocation",
-    "declared-power-allocation",
-    "dead-local-endpoint-bindings",
-    "late-local-endpoint-bindings",
-    "with-return-before-selection",
-    "literal-for-return-before-selection",
-    "literal-for-raise-before-selection",
-    "job-binary-operator-mutation",
-    "try-return-except-pass-before-selection",
-    "dead-break-infinite-while-before-selection",
-    "dead-match-stdout-pipeline",
-    "module-assigned-worker-frame-parser",
-    "declared-format-width-allocation",
-    "with-nested-constant-if-return",
-    "literal-for-nested-constant-if-return",
-    "try-nested-return-except-pass",
-    "try-pass-else-return",
-    "infinite-while-break-hidden-after-nested-with-continue",
-    "match-sequence-pattern-return",
-    "match-mapping-pattern-return",
-    "dead-sequence-match-stdout-pipeline",
-    "trystar-nested-return-except-pass",
-    "dead-lexical-assignment-hides-return",
-    "unsupported-yield-turns-supervisor-into-generator",
-    "empty-literal-for-dead-stdout-pipeline",
-    "nonraising-try-dead-except-stdout-pipeline",
-    "literal-assignment-try-dead-except-stdout-pipeline",
-    "literal-for-break-dead-else-stdout-pipeline",
-    "bound-local-return-before-selection",
-    "uncaught-keyboardinterrupt-before-selection",
-    "literal-comparison-infinite-loop-before-selection",
-    "dead-try-else-stdout-pipeline",
-    "bound-literal-comparison-return-except-pass",
-    "constant-boolop-return-except-pass",
-    "constant-not-return-except-pass",
-    "bound-tuple-return-except-pass",
-    "mutable-literal-mutated-before-return",
-    "non-singleton-identity-return-before-selection",
-    "top-level-delete-before-condition",
-    "true-branch-delete-before-condition",
-    "unknown-branch-delete-disjunction",
-    "nested-generator-local-shadow",
-    "nested-generator-parameter-shadow",
-    "local-runtimeerror-is-keyboardinterrupt",
-    "local-keyboardinterrupt-is-runtimeerror-unsupported",
-    "local-baseexception-is-exception",
-    "local-handler-tuple-is-exception",
-    "keyboardinterrupt-raised-from-none",
-    "keyboardinterrupt-empty-star-args",
-    "try-constant-expression-dead-handler",
-    "try-bound-delete-dead-handler",
-    "for-unpack-failure-dead-body",
-    "for-unpack-failure-dead-else",
-    "for-noniterable-dead-body",
-    "unknown-branch-truthy-rebind",
-    "keyboardinterrupt-empty-keyword-unpack",
-    "literal-for-target-truth-return",
-    "nested-class-local-shadow-unsupported",
-    "constant-binop-return-before-selection",
-    "mutable-constructor-mutated-before-return",
-    "direct-mutable-literal-return-before-selection",
-    "unknown-branch-terminal-rebind",
-)
-
-_STREAM_CAP_IMPLEMENTABLE_VARIANT_LABELS = (
-    "authenticated-job-wire",
-    "outer-postflight",
-    "spool-lifecycle",
-    "incremental-payload-hash",
-    "bounded-stderr-capture",
-    "bound-frame-parser",
-)
-
-_STREAM_CAP_REACHABILITY_CONTROL_LABELS = (
-    "with-raise-may-be-suppressed",
-    "empty-literal-for-return",
-    "nonempty-literal-for-break",
-    "try-caught-raise-falls-through",
-    "while-reachable-break",
-    "match-nonmatching-return",
-    "opaque-call-may-reach-handler",
-    "opaque-return-may-reach-handler",
-    "keyboardinterrupt-caught-by-baseexception",
-    "nested-generator-does-not-change-supervisor",
-)
-
-
-def _test_stream_cap_names(node):
-    return {
-        child.id
-        for child in ast.walk(node)
-        if isinstance(child, ast.Name)
-    }
-
-
-def _test_stream_cap_load_nodes(root, name):
-    return tuple(
-        node
-        for node in ast.walk(root)
-        if isinstance(node, ast.Name)
-        and isinstance(node.ctx, ast.Load)
-        and node.id == name
-    )
-
-
-def _test_stream_cap_statement_ancestors(function):
-    parents = {}
-    blocks = {}
-
-    def visit(node):
-        for _field, value in ast.iter_fields(node):
-            if isinstance(value, list):
-                statements = [item for item in value if isinstance(item, ast.stmt)]
-                positions = {
-                    id(item): index
-                    for index, item in enumerate(statements)
-                }
-                for item in value:
-                    if not isinstance(item, ast.AST):
-                        continue
-                    if id(item) in positions:
-                        blocks[item] = (
-                            statements,
-                            positions[id(item)],
-                        )
-                    parents[item] = node
-                    visit(item)
-            elif isinstance(value, ast.AST):
-                parents[value] = node
-                visit(value)
-
-    visit(function)
-    return parents, blocks
-
-
-def _test_stream_cap_ancestor(node, parents, node_type):
-    current = node
-    while current in parents:
-        current = parents[current]
-        if isinstance(current, node_type):
-            return current
-    return None
-
-
-def _test_stream_cap_enclosing_statement(node, parents):
-    current = node
-    while current in parents and not isinstance(current, ast.stmt):
-        current = parents[current]
-    return current if isinstance(current, ast.stmt) else None
-
-
-def _test_stream_cap_same_block_precedes(left, right, parents, blocks):
-    left_statement = _test_stream_cap_enclosing_statement(left, parents)
-    right_statement = _test_stream_cap_enclosing_statement(right, parents)
-    if left_statement not in blocks or right_statement not in blocks:
-        return False
-    left_block, left_index = blocks[left_statement]
-    right_block, right_index = blocks[right_statement]
-    return left_block is right_block and left_index < right_index
-
-
-def _test_stream_cap_same_block_dominates(
-    left,
-    right,
-    parents,
-    blocks,
-):
-    left_statement = _test_stream_cap_enclosing_statement(left, parents)
-    right_statement = _test_stream_cap_enclosing_statement(right, parents)
-    if left_statement not in blocks or right_statement not in blocks:
-        return False
-    left_block, left_index = blocks[left_statement]
-    right_block, right_index = blocks[right_statement]
-    if left_block is not right_block or left_index >= right_index:
-        return False
-    terminating = (
-        ast.Break,
-        ast.Continue,
-        ast.Raise,
-        ast.Return,
-    )
-    return not any(
-        isinstance(node, terminating)
-        for statement in left_block[left_index + 1 : right_index]
-        for node in ast.walk(statement)
-    )
-
-
-class _TestStreamCapAssignments(list):
-    def __init__(self, values, *, supervisor, parents, blocks):
-        super().__init__(values)
-        self.supervisor = supervisor
-        self.parents = parents
-        self.blocks = blocks
-
-
-_STREAM_CAP_BOUND_UNKNOWN = object()
-_STREAM_CAP_UNBOUND = object()
-_STREAM_CAP_UNKNOWN_VALUE = object()
-
-
-def _test_stream_cap_top_level_statement(node, assignments):
-    if not isinstance(assignments, _TestStreamCapAssignments):
-        return None
-    current = node
-    while current in assignments.parents:
-        block = (
-            assignments.blocks[current][0]
-            if current in assignments.blocks
-            else ()
-        )
-        if (
-            isinstance(current, ast.stmt)
-            and current in assignments.blocks
-            and len(block) == len(assignments.supervisor.body)
-            and all(
-                left is right
-                for left, right in zip(
-                    block,
-                    assignments.supervisor.body,
-                    strict=True,
-                )
-            )
-        ):
-            return current
-        current = assignments.parents[current]
-    return None
-
-
-def _test_stream_cap_deeply_immutable(value):
-    if value is None or type(value) in {
-        bool,
-        bytes,
-        complex,
-        float,
-        int,
-        str,
-    }:
-        return True
-    return type(value) is tuple and all(
-        _test_stream_cap_deeply_immutable(item)
-        for item in value
-    )
-
-
-def _test_stream_cap_exact_literal_value(node):
-    try:
-        value = ast.literal_eval(node)
-    except (TypeError, ValueError):
-        return _STREAM_CAP_UNKNOWN_VALUE
-    return (
-        value
-        if _test_stream_cap_deeply_immutable(value)
-        else _STREAM_CAP_UNKNOWN_VALUE
-    )
-
-
-def _test_stream_cap_flow_binding_nodes(root, name):
-    bindings = []
-
-    class Visitor(ast.NodeVisitor):
-        def visit_Name(self, node):
-            if (
-                node.id == name
-                and isinstance(node.ctx, (ast.Store, ast.Del))
-            ):
-                bindings.append(node)
-
-        def visit_FunctionDef(self, node):
-            if node.name == name:
-                bindings.append(node)
-            self._visit_definition_expressions(node)
-
-        visit_AsyncFunctionDef = visit_FunctionDef
-
-        def visit_ClassDef(self, node):
-            if node.name == name:
-                bindings.append(node)
-            for expression in (
-                *node.decorator_list,
-                *node.bases,
-                *(keyword.value for keyword in node.keywords),
-                *getattr(node, "type_params", ()),
-            ):
-                self.visit(expression)
-
-        def visit_Lambda(self, node):
-            self._visit_arguments(node.args)
-
-        def visit_ListComp(self, node):
-            return None
-
-        visit_SetComp = visit_ListComp
-        visit_DictComp = visit_ListComp
-        visit_GeneratorExp = visit_ListComp
-
-        def visit_ExceptHandler(self, node):
-            if node.name == name:
-                bindings.append(node)
-            for statement in node.body:
-                self.visit(statement)
-            if node.type is not None:
-                self.visit(node.type)
-
-        def visit_alias(self, node):
-            bound = (
-                node.asname
-                if node.asname is not None
-                else node.name.split(".", 1)[0]
-            )
-            if bound == name:
-                bindings.append(node)
-
-        def visit_Global(self, node):
-            if name in node.names:
-                bindings.append(node)
-
-        visit_Nonlocal = visit_Global
-
-        def visit_MatchAs(self, node):
-            if node.name == name:
-                bindings.append(node)
-            if node.pattern is not None:
-                self.visit(node.pattern)
-
-        def visit_MatchStar(self, node):
-            if node.name == name:
-                bindings.append(node)
-
-        def visit_MatchMapping(self, node):
-            if node.rest == name:
-                bindings.append(node)
-            self.generic_visit(node)
-
-        def _visit_arguments(self, arguments):
-            for expression in (
-                *arguments.defaults,
-                *(
-                    default
-                    for default in arguments.kw_defaults
-                    if default is not None
-                ),
-                *(
-                    argument.annotation
-                    for argument in (
-                        *arguments.posonlyargs,
-                        *arguments.args,
-                        *arguments.kwonlyargs,
-                    )
-                    if argument.annotation is not None
-                ),
-            ):
-                self.visit(expression)
-            for argument in (arguments.vararg, arguments.kwarg):
-                if argument is not None and argument.annotation is not None:
-                    self.visit(argument.annotation)
-
-        def _visit_definition_expressions(self, node):
-            self._visit_arguments(node.args)
-            for expression in (
-                *node.decorator_list,
-                *(
-                    (node.returns,)
-                    if node.returns is not None
-                    else ()
-                ),
-                *getattr(node, "type_params", ()),
-            ):
-                self.visit(expression)
-
-    Visitor().visit(root)
-    return tuple(bindings)
-
-
-def _test_stream_cap_outer_runtime_nodes(supervisor):
-    nodes = []
-
-    class Visitor(ast.NodeVisitor):
-        def generic_visit(self, node):
-            nodes.append(node)
-            super().generic_visit(node)
-
-        def visit_FunctionDef(self, node):
-            nodes.append(node)
-            self._visit_definition_expressions(node)
-
-        visit_AsyncFunctionDef = visit_FunctionDef
-
-        def visit_ClassDef(self, node):
-            nodes.append(node)
-            for expression in (
-                *node.decorator_list,
-                *node.bases,
-                *(keyword.value for keyword in node.keywords),
-                *getattr(node, "type_params", ()),
-            ):
-                self.visit(expression)
-
-        def visit_Lambda(self, node):
-            nodes.append(node)
-            self._visit_arguments(node.args)
-
-        def visit_ListComp(self, node):
-            nodes.append(node)
-
-        visit_SetComp = visit_ListComp
-        visit_DictComp = visit_ListComp
-        visit_GeneratorExp = visit_ListComp
-
-        def _visit_arguments(self, arguments):
-            for expression in (
-                *arguments.defaults,
-                *(
-                    default
-                    for default in arguments.kw_defaults
-                    if default is not None
-                ),
-                *(
-                    argument.annotation
-                    for argument in (
-                        *arguments.posonlyargs,
-                        *arguments.args,
-                        *arguments.kwonlyargs,
-                    )
-                    if argument.annotation is not None
-                ),
-            ):
-                self.visit(expression)
-            for argument in (arguments.vararg, arguments.kwarg):
-                if argument is not None and argument.annotation is not None:
-                    self.visit(argument.annotation)
-
-        def _visit_definition_expressions(self, node):
-            self._visit_arguments(node.args)
-            for expression in (
-                *node.decorator_list,
-                *(
-                    (node.returns,)
-                    if node.returns is not None
-                    else ()
-                ),
-                *getattr(node, "type_params", ()),
-            ):
-                self.visit(expression)
-
-    visitor = Visitor()
-    for statement in supervisor.body:
-        visitor.visit(statement)
-    return tuple(nodes)
-
-
-def _test_stream_cap_literal_binding(
-    node,
-    assignments,
-    resolving,
-):
-    if node is None:
-        return _STREAM_CAP_BOUND_UNKNOWN
-    known, value, raise_effects = _test_stream_cap_expression_facts(
-        node,
-        assignments,
-        resolving,
-    )
-    if known and not raise_effects:
-        return value
-    return _STREAM_CAP_BOUND_UNKNOWN
-
-
-def _test_stream_cap_flow_binding(
-    statements,
-    name,
-    state,
-    assignments,
-    resolving,
-):
-    for statement in statements:
-        parts = _test_stream_cap_assignment_parts(statement)
-        if parts is not None and parts[0] == name:
-            state = frozenset(
-                {
-                    _test_stream_cap_literal_binding(
-                        parts[1],
-                        assignments,
-                        resolving,
-                    )
-                }
-            )
-            continue
-        if isinstance(statement, ast.If):
-            truth = _test_stream_cap_static_truth(
-                statement.test,
-                assignments,
-                resolving,
-            )
-            if truth is True:
-                state = _test_stream_cap_flow_binding(
-                    statement.body,
-                    name,
-                    state,
-                    assignments,
-                    resolving,
-                )
-                continue
-            if truth is False:
-                state = _test_stream_cap_flow_binding(
-                    statement.orelse,
-                    name,
-                    state,
-                    assignments,
-                    resolving,
-                )
-                continue
-            body_state = _test_stream_cap_flow_binding(
-                statement.body,
-                name,
-                state,
-                assignments,
-                resolving,
-            )
-            else_state = _test_stream_cap_flow_binding(
-                statement.orelse,
-                name,
-                state,
-                assignments,
-                resolving,
-            )
-            state = frozenset()
-            if "normal" in _test_stream_cap_sequence_effects(
-                statement.body,
-                assignments,
-            ):
-                state = state | body_state
-            if "normal" in _test_stream_cap_sequence_effects(
-                statement.orelse,
-                assignments,
-            ):
-                state = state | else_state
-            continue
-        if (
-            isinstance(statement, ast.Delete)
-            and _test_stream_cap_flow_binding_nodes(statement, name)
-        ):
-            state = frozenset({_STREAM_CAP_UNBOUND})
-            continue
-        if _test_stream_cap_flow_binding_nodes(statement, name):
-            state = frozenset({_STREAM_CAP_BOUND_UNKNOWN})
-    return state
-
-
-def _test_stream_cap_resolve_name_states(
-    node,
-    assignments,
-    resolving=frozenset(),
-):
-    if (
-        not isinstance(node, ast.Name)
-        or node.id in resolving
-        or not isinstance(assignments, _TestStreamCapAssignments)
-    ):
-        return None
-    top_level = _test_stream_cap_top_level_statement(
-        node,
-        assignments,
-    )
-    if top_level is None:
-        return None
-    try:
-        index = assignments.supervisor.body.index(top_level)
-    except ValueError:
-        return None
-    parameter_names = {
-        argument.arg
-        for argument in (
-            *assignments.supervisor.args.posonlyargs,
-            *assignments.supervisor.args.args,
-            *assignments.supervisor.args.kwonlyargs,
-        )
-    }
-    state = _test_stream_cap_flow_binding(
-        assignments.supervisor.body[:index],
-        node.id,
-        frozenset(
-            {
-                (
-                    _STREAM_CAP_BOUND_UNKNOWN
-                    if node.id in parameter_names
-                    else _STREAM_CAP_UNBOUND
-                )
-            }
-        ),
-        assignments,
-        resolving | {node.id},
-    )
-    return state
-
-
-def _test_stream_cap_apply_comparison(operation, left, right):
-    if isinstance(operation, ast.Eq):
-        return left == right
-    if isinstance(operation, ast.NotEq):
-        return left != right
-    if isinstance(operation, ast.Lt):
-        return left < right
-    if isinstance(operation, ast.LtE):
-        return left <= right
-    if isinstance(operation, ast.Gt):
-        return left > right
-    if isinstance(operation, ast.GtE):
-        return left >= right
-    if isinstance(operation, ast.Is):
-        return left is right
-    if isinstance(operation, ast.IsNot):
-        return left is not right
-    return _STREAM_CAP_UNKNOWN_VALUE
-
-
-def _test_stream_cap_expression_facts(
-    node,
-    assignments=(),
-    resolving=frozenset(),
-):
-    if node is None:
-        return True, None, frozenset()
-    literal = _test_stream_cap_exact_literal_value(node)
-    if literal is not _STREAM_CAP_UNKNOWN_VALUE:
-        return True, literal, frozenset()
-    if isinstance(node, ast.Name) and node.id not in resolving:
-        states = _test_stream_cap_resolve_name_states(
-            node,
-            assignments,
-            resolving,
-        )
-        if states is None:
-            return False, _STREAM_CAP_UNKNOWN_VALUE, frozenset(
-                {"raise"}
-            )
-        raise_effects = (
-            frozenset({"raise"})
-            if _STREAM_CAP_UNBOUND in states
-            else frozenset()
-        )
-        exact = states - {
-            _STREAM_CAP_BOUND_UNKNOWN,
-            _STREAM_CAP_UNBOUND,
-        }
-        if (
-            _STREAM_CAP_BOUND_UNKNOWN not in states
-            and _STREAM_CAP_UNBOUND not in states
-            and len(exact) == 1
-        ):
-            return True, next(iter(exact)), raise_effects
-        return False, _STREAM_CAP_UNKNOWN_VALUE, raise_effects
-    if isinstance(node, ast.Tuple) and not any(
-        isinstance(element, ast.Starred)
-        for element in node.elts
-    ):
-        observed = [
-            _test_stream_cap_expression_facts(
-                element,
-                assignments,
-                resolving,
-            )
-            for element in node.elts
-        ]
-        raises = frozenset(
-            effect
-            for _known, _value, effects in observed
-            for effect in effects
-        )
-        if all(known for known, _value, _effects in observed):
-            return (
-                True,
-                tuple(value for _known, value, _effects in observed),
-                raises,
-            )
-        return False, _STREAM_CAP_UNKNOWN_VALUE, raises
-    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
-        known, value, raises = _test_stream_cap_expression_facts(
-            node.operand,
-            assignments,
-            resolving,
-        )
-        if not known:
-            return False, _STREAM_CAP_UNKNOWN_VALUE, raises
-        return True, not value, raises
-    if isinstance(node, ast.BoolOp):
-        raises = set()
-        for value_node in node.values:
-            known, value, effects = _test_stream_cap_expression_facts(
-                value_node,
-                assignments,
-                resolving,
-            )
-            raises.update(effects)
-            if not known:
-                return (
-                    False,
-                    _STREAM_CAP_UNKNOWN_VALUE,
-                    frozenset(raises | {"raise"}),
-                )
-            if isinstance(node.op, ast.And) and not value:
-                return True, value, frozenset(raises)
-            if isinstance(node.op, ast.Or) and value:
-                return True, value, frozenset(raises)
-        return True, value, frozenset(raises)
-    if (
-        isinstance(node, ast.Compare)
-        and len(node.ops) == 1
-        and len(node.comparators) == 1
-    ):
-        left = _test_stream_cap_expression_facts(
-            node.left,
-            assignments,
-            resolving,
-        )
-        right = _test_stream_cap_expression_facts(
-            node.comparators[0],
-            assignments,
-            resolving,
-        )
-        raises = frozenset((*left[2], *right[2]))
-        if not left[0] or not right[0]:
-            return (
-                False,
-                _STREAM_CAP_UNKNOWN_VALUE,
-                frozenset((*raises, "raise")),
-            )
-        try:
-            value = _test_stream_cap_apply_comparison(
-                node.ops[0],
-                left[1],
-                right[1],
-            )
-        except (TypeError, ValueError):
-            return (
-                False,
-                _STREAM_CAP_UNKNOWN_VALUE,
-                frozenset((*raises, "raise")),
-            )
-        if value is _STREAM_CAP_UNKNOWN_VALUE:
-            return (
-                False,
-                _STREAM_CAP_UNKNOWN_VALUE,
-                frozenset((*raises, "raise")),
-            )
-        return True, value, raises
-    return (
-        False,
-        _STREAM_CAP_UNKNOWN_VALUE,
-        frozenset({"raise"}),
-    )
-
-
-def _test_stream_cap_static_truth(
-    node,
-    assignments=(),
-    resolving=frozenset(),
-):
-    if isinstance(node, ast.Name) and node.id not in resolving:
-        states = _test_stream_cap_resolve_name_states(
-            node,
-            assignments,
-            resolving,
-        )
-        if (
-            states is not None
-            and _STREAM_CAP_BOUND_UNKNOWN not in states
-        ):
-            exact_states = states - {_STREAM_CAP_UNBOUND}
-            truths = {bool(value) for value in exact_states}
-            if len(truths) == 1:
-                return next(iter(truths))
-    known, value, _raises = _test_stream_cap_expression_facts(
-        node,
-        assignments,
-        resolving,
-    )
-    return bool(value) if known else None
-
-
-def _test_stream_cap_is_statically_false(node, assignments=()):
-    return _test_stream_cap_static_truth(node, assignments) is False
-
-
-def _test_stream_cap_expression_may_raise(
-    node,
-    assignments=(),
-):
-    return bool(
-        _test_stream_cap_expression_facts(
-            node,
-            assignments,
-        )[2]
-    )
-
-
-def _test_stream_cap_condition_may_raise(
-    node,
-    assignments=(),
-):
-    known, _value, raises = _test_stream_cap_expression_facts(
-        node,
-        assignments,
-    )
-    return bool(raises) or not known
-
-
-def _test_stream_cap_condition_cannot_complete(
-    node,
-    assignments=(),
-):
-    if not isinstance(node, ast.Name):
-        return False
-    states = _test_stream_cap_resolve_name_states(
-        node,
-        assignments,
-    )
-    return states == frozenset({_STREAM_CAP_UNBOUND})
-
-
-def _test_stream_cap_literal_iterable_values(node):
-    try:
-        value = ast.literal_eval(node)
-    except (TypeError, ValueError):
-        return None
-    if type(value) is dict:
-        return tuple(value)
-    if type(value) in {bytes, list, set, str, tuple}:
-        return tuple(value)
-    return None
-
-
-def _test_stream_cap_static_pattern_match(pattern, value):
-    if isinstance(pattern, ast.MatchValue):
-        try:
-            return ast.literal_eval(pattern.value) == value
-        except (TypeError, ValueError):
-            return None
-    if isinstance(pattern, ast.MatchSingleton):
-        return pattern.value is value
-    if isinstance(pattern, ast.MatchOr):
-        observed = [
-            _test_stream_cap_static_pattern_match(item, value)
-            for item in pattern.patterns
-        ]
-        if True in observed:
-            return True
-        return False if all(item is False for item in observed) else None
-    if isinstance(pattern, ast.MatchAs):
-        if pattern.pattern is None:
-            return True
-        return _test_stream_cap_static_pattern_match(
-            pattern.pattern,
-            value,
-        )
-    if isinstance(pattern, ast.MatchStar):
-        return True
-    if isinstance(pattern, ast.MatchSequence):
-        if type(value) not in {list, tuple}:
-            return False
-        star_positions = [
-            index
-            for index, item in enumerate(pattern.patterns)
-            if isinstance(item, ast.MatchStar)
-        ]
-        if len(star_positions) > 1:
-            return None
-        if not star_positions:
-            if len(pattern.patterns) != len(value):
-                return False
-            pairs = zip(pattern.patterns, value, strict=True)
-        else:
-            star_index = star_positions[0]
-            minimum = len(pattern.patterns) - 1
-            if len(value) < minimum:
-                return False
-            suffix_count = len(pattern.patterns) - star_index - 1
-            pairs = (
-                *zip(
-                    pattern.patterns[:star_index],
-                    value[:star_index],
-                    strict=True,
-                ),
-                *zip(
-                    pattern.patterns[star_index + 1 :],
-                    (
-                        value[len(value) - suffix_count :]
-                        if suffix_count
-                        else ()
-                    ),
-                    strict=True,
-                ),
-            )
-        observed = [
-            _test_stream_cap_static_pattern_match(item, item_value)
-            for item, item_value in pairs
-        ]
-        if False in observed:
-            return False
-        return True if all(item is True for item in observed) else None
-    if isinstance(pattern, ast.MatchMapping):
-        if type(value) is not dict:
-            return False
-        observed = []
-        for key_node, item_pattern in zip(
-            pattern.keys,
-            pattern.patterns,
-            strict=True,
-        ):
-            try:
-                key = ast.literal_eval(key_node)
-            except (TypeError, ValueError):
-                return None
-            try:
-                item_value = value[key]
-            except KeyError:
-                return False
-            except TypeError:
-                return None
-            observed.append(
-                _test_stream_cap_static_pattern_match(
-                    item_pattern,
-                    item_value,
-                )
-            )
-        if False in observed:
-            return False
-        return True if all(item is True for item in observed) else None
-    return None
-
-
-def _test_stream_cap_sequence_effects(statements, assignments):
-    effects = {"normal"}
-    for statement in statements:
-        if "normal" not in effects:
-            break
-        effects.remove("normal")
-        effects.update(
-            _test_stream_cap_statement_effects(
-                statement,
-                assignments,
-            )
-        )
-    return frozenset(effects)
-
-
-def _test_stream_cap_unknown_match_effects(cases, assignments):
-    effects = {"normal", "raise"}
-    for case in cases:
-        effects.update(
-            _test_stream_cap_sequence_effects(
-                case.body,
-                assignments,
-            )
-        )
-    return frozenset(effects)
-
-
-def _test_stream_cap_match_effects(statement, assignments):
-    try:
-        subject = ast.literal_eval(statement.subject)
-    except (TypeError, ValueError):
-        return _test_stream_cap_unknown_match_effects(
-            statement.cases,
-            assignments,
-        )
-    possible_effects = set()
-    for index, case in enumerate(statement.cases):
-        matches = _test_stream_cap_static_pattern_match(
-            case.pattern,
-            subject,
-        )
-        if matches is False:
-            continue
-        if matches is None:
-            possible_effects.update(
-                _test_stream_cap_unknown_match_effects(
-                    statement.cases[index:],
-                    assignments,
-                )
-            )
-            return frozenset(possible_effects)
-        if case.guard is not None:
-            if _test_stream_cap_condition_cannot_complete(
-                case.guard,
-                assignments,
-            ):
-                possible_effects.add("raise")
-                return frozenset(possible_effects)
-            guard_truth = _test_stream_cap_static_truth(
-                case.guard,
-                assignments,
-            )
-            if _test_stream_cap_condition_may_raise(
-                case.guard,
-                assignments,
-            ):
-                possible_effects.add("raise")
-            if guard_truth is False:
-                continue
-            if guard_truth is not True:
-                possible_effects.update(
-                    _test_stream_cap_unknown_match_effects(
-                        statement.cases[index:],
-                        assignments,
-                    )
-                )
-                return frozenset(possible_effects)
-        possible_effects.update(
-            _test_stream_cap_sequence_effects(
-                case.body,
-                assignments,
-            )
-        )
-        return frozenset(possible_effects)
-    possible_effects.add("normal")
-    return frozenset(possible_effects)
-
-
-_STREAM_CAP_EXACT_BUILTIN_EXCEPTION_NAMES = {
-    "BaseException",
-    "Exception",
-    "GeneratorExit",
-    "KeyboardInterrupt",
-    "RuntimeError",
-    "SystemExit",
-}
-
-
-def _test_stream_cap_is_raise_effect(effect):
-    return effect == "raise" or effect.startswith("raise:")
-
-
-def _test_stream_cap_raise_effects(statement, assignments):
-    if statement.cause is not None or statement.exc is None:
-        return frozenset({"raise"})
-    exception_name = None
-    if isinstance(statement.exc, ast.Name):
-        exception_name = statement.exc.id
-    elif (
-        isinstance(statement.exc, ast.Call)
-        and isinstance(statement.exc.func, ast.Name)
-        and not statement.exc.keywords
-        and not any(
-            isinstance(argument, ast.Starred)
-            or _test_stream_cap_expression_may_raise(
-                argument,
-                assignments,
-            )
-            for argument in statement.exc.args
-        )
-    ):
-        exception_name = statement.exc.func.id
-    if (
-        exception_name
-        in _STREAM_CAP_EXACT_BUILTIN_EXCEPTION_NAMES
-    ):
-        return frozenset({"raise:" + exception_name})
-    return frozenset({"raise"})
-
-
-def _test_stream_cap_handler_exception_names(node):
-    if isinstance(node, ast.Name):
-        if node.id in _STREAM_CAP_EXACT_BUILTIN_EXCEPTION_NAMES:
-            return (node.id,)
-        return None
-    if isinstance(node, ast.Tuple):
-        names = []
-        for element in node.elts:
-            observed = _test_stream_cap_handler_exception_names(
-                element
-            )
-            if observed is None:
-                return None
-            names.extend(observed)
-        return tuple(names)
-    return None
-
-
-def _test_stream_cap_handler_match(effect, handler):
-    if handler.type is None:
-        return True
-    if effect == "raise":
-        return None
-    if not effect.startswith("raise:"):
-        return False
-    raised_name = effect.split(":", 1)[1]
-    handler_names = _test_stream_cap_handler_exception_names(
-        handler.type
-    )
-    if handler_names is None:
-        return None
-    raised_type = getattr(builtins, raised_name)
-    return any(
-        issubclass(raised_type, getattr(builtins, handler_name))
-        for handler_name in handler_names
-    )
-
-
-def _test_stream_cap_route_raise(
-    effect,
-    handlers,
-    assignments,
-):
-    outcomes = set()
-    pending = True
-    for handler in handlers:
-        if not pending:
-            break
-        matches = _test_stream_cap_handler_match(
-            effect,
-            handler,
-        )
-        if matches is False:
-            continue
-        outcomes.update(
-            _test_stream_cap_sequence_effects(
-                handler.body,
-                assignments,
-            )
-        )
-        if matches is True:
-            pending = False
-    if pending:
-        outcomes.add(effect)
-    return frozenset(outcomes)
-
-
-def _test_stream_cap_try_effects(statement, assignments):
-    body_effects = _test_stream_cap_sequence_effects(
-        statement.body,
-        assignments,
-    )
-    effects = set()
-    for effect in body_effects:
-        if effect == "normal":
-            effects.update(
-                _test_stream_cap_sequence_effects(
-                    statement.orelse,
-                    assignments,
-                )
-            )
-        elif _test_stream_cap_is_raise_effect(effect):
-            effects.update(
-                _test_stream_cap_route_raise(
-                    effect,
-                    statement.handlers,
-                    assignments,
-                )
-            )
-        else:
-            effects.add(effect)
-    if not statement.finalbody:
-        return frozenset(effects)
-    final_effects = _test_stream_cap_sequence_effects(
-        statement.finalbody,
-        assignments,
-    )
-    completed = set()
-    for incoming in effects:
-        if incoming == "diverge":
-            completed.add(incoming)
-            continue
-        for final_effect in final_effects:
-            completed.add(
-                incoming
-                if final_effect == "normal"
-                else final_effect
-            )
-    return frozenset(completed)
-
-
-def _test_stream_cap_statement_effects(statement, assignments):
-    if isinstance(statement, ast.Pass):
-        return frozenset({"normal"})
-    if isinstance(statement, ast.Expr):
-        if not _test_stream_cap_expression_may_raise(
-            statement.value,
-            assignments,
-        ):
-            return frozenset({"normal"})
-        return frozenset({"normal", "raise"})
-    if isinstance(statement, ast.Delete):
-        normal = True
-        may_raise = False
-        for target in statement.targets:
-            if not isinstance(target, ast.Name):
-                may_raise = True
-                continue
-            states = _test_stream_cap_resolve_name_states(
-                target,
-                assignments,
-            )
-            if states is None:
-                may_raise = True
-                continue
-            may_raise = may_raise or _STREAM_CAP_UNBOUND in states
-            normal = normal and bool(
-                states - {_STREAM_CAP_UNBOUND}
-            )
-        effects = set()
-        if normal:
-            effects.add("normal")
-        if may_raise:
-            effects.add("raise")
-        return frozenset(effects)
-    if (
-        isinstance(statement, ast.Assign)
-        and len(statement.targets) == 1
-        and isinstance(statement.targets[0], ast.Name)
-        and not _test_stream_cap_expression_may_raise(
-            statement.value,
-            assignments,
-        )
-    ):
-        return frozenset({"normal"})
-    if isinstance(statement, ast.Return):
-        effects = {"return"}
-        if _test_stream_cap_expression_may_raise(
-            statement.value,
-            assignments,
-        ):
-            effects.add("raise")
-        return frozenset(effects)
-    if isinstance(statement, ast.Raise):
-        return _test_stream_cap_raise_effects(
-            statement,
-            assignments,
-        )
-    if isinstance(statement, ast.Break):
-        return frozenset({"break"})
-    if isinstance(statement, ast.Continue):
-        return frozenset({"continue"})
-    if isinstance(statement, ast.Assert):
-        if _test_stream_cap_condition_cannot_complete(
-            statement.test,
-            assignments,
-        ):
-            return frozenset({"raise"})
-        truth = _test_stream_cap_static_truth(
-            statement.test,
-            assignments,
-        )
-        if truth is False:
-            return frozenset({"raise"})
-        effects = {"normal"}
-        if (
-            truth is not True
-            or _test_stream_cap_condition_may_raise(
-                statement.test,
-                assignments,
-            )
-        ):
-            effects.add("raise")
-        return frozenset(effects)
-    if isinstance(statement, ast.If):
-        if _test_stream_cap_condition_cannot_complete(
-            statement.test,
-            assignments,
-        ):
-            return frozenset({"raise"})
-        truth = _test_stream_cap_static_truth(
-            statement.test,
-            assignments,
-        )
-        if truth is True:
-            effects = set(
-                _test_stream_cap_sequence_effects(
-                    statement.body,
-                    assignments,
-                )
-            )
-        elif truth is False:
-            effects = set(
-                _test_stream_cap_sequence_effects(
-                    statement.orelse,
-                    assignments,
-                )
-            )
-        else:
-            effects = set(
-                _test_stream_cap_sequence_effects(
-                    statement.body,
-                    assignments,
-                )
-            )
-            effects.update(
-                _test_stream_cap_sequence_effects(
-                    statement.orelse,
-                    assignments,
-                )
-            )
-        if _test_stream_cap_condition_may_raise(
-            statement.test,
-            assignments,
-        ):
-            effects.add("raise")
-        return frozenset(effects)
-    if isinstance(statement, ast.While):
-        if _test_stream_cap_condition_cannot_complete(
-            statement.test,
-            assignments,
-        ):
-            return frozenset({"raise"})
-        truth = _test_stream_cap_static_truth(
-            statement.test,
-            assignments,
-        )
-        condition_may_raise = (
-            _test_stream_cap_condition_may_raise(
-                statement.test,
-                assignments,
-            )
-        )
-        if truth is False:
-            effects = set(
-                _test_stream_cap_sequence_effects(
-                    statement.orelse,
-                    assignments,
-                )
-            )
-        else:
-            body_effects = _test_stream_cap_sequence_effects(
-                statement.body,
-                assignments,
-            )
-            effects = {
-                effect
-                for effect in body_effects
-                if effect in {"diverge", "return"}
-                or _test_stream_cap_is_raise_effect(effect)
-            }
-            if "break" in body_effects:
-                effects.add("normal")
-            if (
-                "normal" in body_effects
-                or "continue" in body_effects
-            ):
-                effects.add("diverge")
-            if truth is not True:
-                effects.update(
-                    _test_stream_cap_sequence_effects(
-                        statement.orelse,
-                        assignments,
-                    )
-                )
-        if condition_may_raise:
-            effects.add("raise")
-        return frozenset(effects)
-    if isinstance(statement, ast.For):
-        values = _test_stream_cap_literal_iterable_values(
-            statement.iter
-        )
-        body_effects = _test_stream_cap_sequence_effects(
-            statement.body,
-            assignments,
-        )
-        if values is None:
-            effects = {"normal", "raise"}
-            effects.update(
-                effect
-                for effect in body_effects
-                if effect in {"diverge", "return"}
-                or _test_stream_cap_is_raise_effect(effect)
-            )
-            return frozenset(effects)
-        effects = set()
-        active = True
-        broke = False
-        for _value in values:
-            if not active:
-                break
-            effects.update(
-                effect
-                for effect in body_effects
-                if effect in {"diverge", "return"}
-                or _test_stream_cap_is_raise_effect(effect)
-            )
-            broke = broke or "break" in body_effects
-            active = (
-                "normal" in body_effects
-                or "continue" in body_effects
-            )
-        if broke:
-            effects.add("normal")
-        if active:
-            effects.update(
-                _test_stream_cap_sequence_effects(
-                    statement.orelse,
-                    assignments,
-                )
-            )
-        if not isinstance(statement.target, ast.Name):
-            effects.add("raise")
-        return frozenset(effects)
-    if isinstance(statement, (ast.With, ast.AsyncWith)):
-        effects = set(
-            _test_stream_cap_sequence_effects(
-                statement.body,
-                assignments,
-            )
-        )
-        for _item in reversed(statement.items):
-            wrapped = {"raise"}
-            for effect in effects:
-                if (
-                    effect == "normal"
-                    or _test_stream_cap_is_raise_effect(effect)
-                ):
-                    wrapped.update({"normal", "raise"})
-                elif effect == "diverge":
-                    wrapped.add("diverge")
-                else:
-                    wrapped.update({effect, "raise"})
-            effects = wrapped
-        return frozenset(effects)
-    if isinstance(statement, ast.Try):
-        return _test_stream_cap_try_effects(
-            statement,
-            assignments,
-        )
-    if isinstance(statement, ast.Match):
-        return _test_stream_cap_match_effects(
-            statement,
-            assignments,
-        )
-    if isinstance(statement, (ast.Global, ast.Nonlocal)):
-        return frozenset({"normal"})
-    return frozenset({"normal", "raise"})
-
-
-def _test_stream_cap_sequence_terminates(statements, assignments):
-    return "normal" not in _test_stream_cap_sequence_effects(
-        statements,
-        assignments,
-    )
-
-
-def _test_stream_cap_prefix_terminates(
-    node,
-    parents,
-    blocks,
-    assignments,
-):
-    statement = _test_stream_cap_enclosing_statement(node, parents)
-    visited = set()
-    while statement is not None and statement not in visited:
-        visited.add(statement)
-        if statement in blocks:
-            block, index = blocks[statement]
-            if _test_stream_cap_sequence_terminates(
-                block[:index],
-                assignments,
-            ):
-                return True
-        parent = parents.get(statement)
-        statement = (
-            _test_stream_cap_enclosing_statement(parent, parents)
-            if parent is not None
-            else None
-        )
-    return False
-
-
-def _test_stream_cap_match_case_is_statically_dead(
-    match_node,
-    target_case,
-    assignments,
-):
-    try:
-        subject = ast.literal_eval(match_node.subject)
-    except (TypeError, ValueError):
-        return False
-    for case in match_node.cases:
-        matches = _test_stream_cap_static_pattern_match(
-            case.pattern,
-            subject,
-        )
-        if matches is False:
-            if case is target_case:
-                return True
-            continue
-        if matches is None:
-            return False
-        if case.guard is not None:
-            guard_truth = _test_stream_cap_static_truth(
-                case.guard,
-                assignments,
-            )
-            if guard_truth is False:
-                if case is target_case:
-                    return True
-                continue
-            if guard_truth is not True:
-                return False
-        return case is not target_case
-    return True
-
-
-def _test_stream_cap_for_else_may_run(loop, assignments):
-    values = _test_stream_cap_literal_iterable_values(loop.iter)
-    if values is None:
-        return True
-    body_effects = _test_stream_cap_sequence_effects(
-        loop.body,
-        assignments,
-    )
-    active = True
-    for _value in values:
-        if not active:
-            return False
-        active = (
-            "normal" in body_effects
-            or "continue" in body_effects
-        )
-    return active
-
-
-def _test_stream_cap_try_handler_may_run(
-    statement,
-    target_handler,
-    assignments,
-):
-    body_effects = _test_stream_cap_sequence_effects(
-        statement.body,
-        assignments,
-    )
-    for effect in body_effects:
-        if not _test_stream_cap_is_raise_effect(effect):
-            continue
-        pending = True
-        for handler in statement.handlers:
-            if not pending:
-                break
-            matches = _test_stream_cap_handler_match(
-                effect,
-                handler,
-            )
-            if handler is target_handler and matches is not False:
-                return True
-            if matches is True:
-                pending = False
-    return False
-
-
-def _test_stream_cap_has_statically_dead_ancestor(
-    node,
-    parents,
-    assignments=(),
-):
-    current = node
-    while current in parents:
-        parent = parents[current]
-        if isinstance(parent, (ast.If, ast.While)):
-            if (
-                current in parent.body
-                and _test_stream_cap_is_statically_false(
-                    parent.test,
-                    assignments,
-                )
-            ):
-                return True
-            if (
-                current in parent.orelse
-                and _test_stream_cap_static_truth(
-                    parent.test,
-                    assignments,
-                )
-                is True
-            ):
-                return True
-        if isinstance(parent, ast.For):
-            values = _test_stream_cap_literal_iterable_values(
-                parent.iter
-            )
-            if current in parent.body and values == ():
-                return True
-            if (
-                current in parent.orelse
-                and not _test_stream_cap_for_else_may_run(
-                    parent,
-                    assignments,
-                )
-            ):
-                return True
-        if isinstance(parent, ast.ExceptHandler):
-            try_node = parents.get(parent)
-            if (
-                isinstance(try_node, ast.Try)
-                and current in parent.body
-                and not _test_stream_cap_try_handler_may_run(
-                    try_node,
-                    parent,
-                    assignments,
-                )
-            ):
-                return True
-        if (
-            isinstance(parent, ast.Try)
-            and current in parent.orelse
-            and "normal"
-            not in _test_stream_cap_sequence_effects(
-                parent.body,
-                assignments,
-            )
-        ):
-            return True
-        if isinstance(parent, ast.match_case):
-            match_node = parents.get(parent)
-            if (
-                isinstance(match_node, ast.Match)
-                and current in parent.body
-                and _test_stream_cap_match_case_is_statically_dead(
-                    match_node,
-                    parent,
-                    assignments,
-                )
-            ):
-                return True
-        current = parent
-    return False
-
-
-def _test_stream_cap_binding_nodes(root, name):
-    bindings = []
-    for node in ast.walk(root):
-        if (
-            isinstance(node, ast.Name)
-            and isinstance(node.ctx, (ast.Store, ast.Del))
-            and node.id == name
-        ):
-            bindings.append(node)
-        elif (
-            isinstance(node, ast.arg)
-            and node.arg == name
-        ):
-            bindings.append(node)
-        elif (
-            isinstance(
-                node,
-                (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef),
-            )
-            and node is not root
-            and node.name == name
-        ):
-            bindings.append(node)
-        elif (
-            isinstance(node, ast.ExceptHandler)
-            and node.name == name
-        ):
-            bindings.append(node)
-        elif isinstance(node, ast.alias):
-            bound = (
-                node.asname
-                if node.asname is not None
-                else node.name.split(".", 1)[0]
-            )
-            if bound == name:
-                bindings.append(node)
-        elif (
-            isinstance(node, (ast.Global, ast.Nonlocal))
-            and name in node.names
-        ):
-            bindings.append(node)
-        elif (
-            isinstance(node, (ast.MatchAs, ast.MatchStar))
-            and node.name == name
-        ):
-            bindings.append(node)
-        elif (
-            isinstance(node, ast.MatchMapping)
-            and node.rest == name
-        ):
-            bindings.append(node)
-    return tuple(bindings)
-
-
-def _test_stream_cap_require_exact_bindings(
-    root,
-    name,
-    allowed,
-    *,
-    label,
-):
-    observed = _test_stream_cap_binding_nodes(root, name)
-    if {id(node) for node in observed} != {
-        id(node) for node in allowed
-    }:
-        raise AssertionError(label)
-
-
-def _test_stream_cap_binding_sources(root):
-    """Return every expression whose value can be captured by a new name."""
-    sources = []
-    for node in ast.walk(root):
-        if isinstance(node, ast.Assign):
-            sources.append((node, node.value))
-        elif isinstance(node, ast.AnnAssign) and node.value is not None:
-            sources.append((node, node.value))
-        elif isinstance(node, ast.AugAssign):
-            sources.append((node, node.value))
-        elif isinstance(node, ast.NamedExpr):
-            sources.append((node, node.value))
-        elif isinstance(node, (ast.For, ast.AsyncFor, ast.comprehension)):
-            sources.append((node, node.iter))
-        elif isinstance(node, ast.withitem) and node.optional_vars is not None:
-            sources.append((node, node.context_expr))
-        elif isinstance(node, ast.Match):
-            sources.append((node, node.subject))
-        elif isinstance(
-            node,
-            (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda),
-        ):
-            for value in (
-                *node.args.defaults,
-                *(
-                    default
-                    for default in node.args.kw_defaults
-                    if default is not None
-                ),
-            ):
-                sources.append((node, value))
-    return tuple(sources)
-
-
-def _test_stream_cap_reject_unowned_aliases(
-    root,
-    protected_names,
-    allowed_owners,
-    *,
-    label,
-):
-    for owner, source in _test_stream_cap_binding_sources(root):
-        if (
-            owner not in allowed_owners
-            and _test_stream_cap_names(source) & protected_names
-        ):
-            raise AssertionError(label)
-
-
-def _test_stream_cap_expression_retains_reference(
-    node,
-    protected_names,
-):
-    if isinstance(node, ast.Name):
-        return node.id in protected_names
-    if isinstance(node, ast.Attribute):
-        return _test_stream_cap_expression_retains_reference(
-            node.value,
-            protected_names,
-        )
-    if isinstance(node, ast.Subscript):
-        if (
-            isinstance(node.value, ast.Name)
-            and node.value.id in protected_names
-        ):
-            return False
-        return _test_stream_cap_expression_retains_reference(
-            node.value,
-            protected_names,
-        )
-    if isinstance(node, (ast.NamedExpr, ast.Starred)):
-        return _test_stream_cap_expression_retains_reference(
-            node.value,
-            protected_names,
-        )
-    if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
-        return any(
-            _test_stream_cap_expression_retains_reference(
-                element,
-                protected_names,
-            )
-            for element in node.elts
-        )
-    if isinstance(node, ast.Dict):
-        return any(
-            _test_stream_cap_expression_retains_reference(
-                value,
-                protected_names,
-            )
-            for value in (
-                *(
-                    key
-                    for key in node.keys
-                    if key is not None
-                ),
-                *node.values,
-            )
-        )
-    if isinstance(node, (ast.BoolOp, ast.IfExp, ast.BinOp)):
-        return any(
-            _test_stream_cap_expression_retains_reference(
-                child,
-                protected_names,
-            )
-            for child in ast.iter_child_nodes(node)
-        )
-    if isinstance(node, ast.Lambda):
-        return _test_stream_cap_expression_retains_reference(
-            node.body,
-            protected_names,
-        )
-    if isinstance(
-        node,
-        (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp),
-    ):
-        return any(
-            _test_stream_cap_expression_retains_reference(
-                child,
-                protected_names,
-            )
-            for child in ast.iter_child_nodes(node)
-        )
-    if isinstance(node, ast.Call):
-        operands = (
-            node.func,
-            *node.args,
-            *(keyword.value for keyword in node.keywords),
-        )
-        return any(
-            not (
-                isinstance(operand, ast.Name)
-                and operand.id in protected_names
-            )
-            and _test_stream_cap_expression_retains_reference(
-                operand,
-                protected_names,
-            )
-            for operand in operands
-        )
-    return False
-
-
-def _test_stream_cap_code_fingerprint(code):
-    return (
-        code.co_argcount,
-        code.co_posonlyargcount,
-        code.co_kwonlyargcount,
-        code.co_nlocals,
-        code.co_stacksize,
-        code.co_flags,
-        code.co_code,
-        tuple(
-            (
-                "code",
-                _test_stream_cap_code_fingerprint(constant),
-            )
-            if isinstance(constant, types.CodeType)
-            else ("constant", constant)
-            for constant in code.co_consts
-        ),
-        code.co_names,
-        code.co_varnames,
-        code.co_freevars,
-        code.co_cellvars,
-        code.co_name,
-        code.co_qualname,
-        code.co_linetable,
-        code.co_exceptiontable,
-    )
-
-
-def _test_stream_cap_bind_runtime_function(
-    namespace,
-    module_code,
-    function_node,
-    *,
-    filename,
-):
-    function = namespace.get(function_node.name)
-    if (
-        not isinstance(function, types.FunctionType)
-        or function.__globals__ is not namespace
-        or function.__name__ != function_node.name
-        or function.__qualname__ != function_node.name
-        or function.__defaults__ is not None
-        or function.__kwdefaults__ is not None
-        or function.__closure__ is not None
-        or function.__code__.co_filename != filename
-        or function.__code__.co_firstlineno != function_node.lineno
-    ):
-        raise AssertionError(
-            function_node.name + "-runtime-source-binding"
-        )
-    compiled = [
-        constant
-        for constant in module_code.co_consts
-        if isinstance(constant, types.CodeType)
-        and constant.co_name == function_node.name
-        and constant.co_firstlineno == function_node.lineno
-    ]
-    if (
-        len(compiled) != 1
-        or _test_stream_cap_code_fingerprint(function.__code__)
-        != _test_stream_cap_code_fingerprint(compiled[0])
-    ):
-        raise AssertionError(
-            function_node.name + "-runtime-code-binding"
-        )
-    return function
-
-
-def _test_stream_cap_require_builtin_identity(
-    function,
-    name,
-    expected,
-):
-    if name in function.__globals__:
-        raise AssertionError(name + "-module-rebinding")
-    namespace = function.__builtins__
-    observed = (
-        namespace.get(name)
-        if isinstance(namespace, dict)
-        else getattr(namespace, name, None)
-    )
-    if observed is not expected:
-        raise AssertionError(name + "-runtime-builtin-binding")
-
-
-def _test_stream_cap_assignment_parts(node):
-    if (
-        isinstance(node, ast.Assign)
-        and len(node.targets) == 1
-        and isinstance(node.targets[0], ast.Name)
-    ):
-        return node.targets[0].id, node.value
-    if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
-        return node.target.id, node.value
-    return None
-
-
-def _test_stream_cap_assignment_target(node):
-    if (
-        isinstance(node, ast.Assign)
-        and len(node.targets) == 1
-        and isinstance(node.targets[0], ast.Name)
-    ):
-        return node.targets[0]
-    if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
-        return node.target
-    return None
-
-
-def _test_stream_cap_is_int_constant(node, expected):
-    return (
-        isinstance(node, ast.Constant)
-        and type(node.value) is int
-        and node.value == expected
-    )
-
-
-def _test_stream_cap_checked_assignment(node):
-    parts = _test_stream_cap_assignment_parts(node)
-    if parts is None:
-        return None
-    target, value = parts
-    if not isinstance(value, ast.Call) or len(value.args) != 3 or value.keywords:
-        return None
-    if not isinstance(value.args[0], ast.Name) or value.args[0].id != target:
-        return None
-    increment = value.args[1]
-    if (
-        not isinstance(increment, ast.Call)
-        or _ast_call_name(increment) != "len"
-        or len(increment.args) != 1
-        or increment.keywords
-        or not isinstance(increment.args[0], ast.Name)
-    ):
-        return None
-    cap = value.args[2]
-    if not isinstance(cap, ast.Name):
-        return None
-    return {
-        "node": node,
-        "counter": target,
-        "chunk": increment.args[0].id,
-        "cap": cap.id,
-        "helper": _ast_call_name(value),
-    }
-
-
-def _test_stream_cap_helper_contract(helper, helper_name):
-    problems = []
-    arguments = helper.args
-    positional = [*arguments.posonlyargs, *arguments.args]
-    if (
-        len(positional) != 3
-        or arguments.vararg is not None
-        or arguments.kwarg is not None
-        or arguments.kwonlyargs
-        or arguments.defaults
-        or arguments.kw_defaults
-        or helper.decorator_list
-    ):
-        problems.append("helper-signature")
-        return problems, None
-    total, increment, cap = [argument.arg for argument in positional]
-    if (
-        len(helper.body) != 5
-        or not isinstance(helper.body[0], ast.If)
-        or not isinstance(helper.body[1], ast.If)
-        or _test_stream_cap_assignment_parts(helper.body[2]) is None
-        or not isinstance(helper.body[3], ast.If)
-        or not isinstance(helper.body[4], ast.Return)
-        or sum(isinstance(node, ast.If) for node in ast.walk(helper))
-        != 3
-        or sum(isinstance(node, ast.Raise) for node in ast.walk(helper))
-        != 3
-        or sum(isinstance(node, ast.Return) for node in ast.walk(helper))
-        != 1
-    ):
-        problems.append("helper-control-flow-not-exact")
-    for index in (0, 1, 3):
-        if index >= len(helper.body):
-            continue
-        rejection = helper.body[index]
-        if not isinstance(rejection, ast.If):
-            continue
-        if (
-            rejection.orelse
-            or len(rejection.body) != 1
-            or not isinstance(rejection.body[0], ast.Raise)
-            or rejection.body[0].cause is not None
-            or not isinstance(rejection.body[0].exc, ast.Call)
-            or _ast_call_name(rejection.body[0].exc) != "ValueError"
-            or len(rejection.body[0].exc.args) != 1
-            or rejection.body[0].exc.keywords
-            or not isinstance(
-                rejection.body[0].exc.args[0],
-                ast.Constant,
-            )
-            or type(rejection.body[0].exc.args[0].value) is not str
-        ):
-            problems.append("helper-rejection-not-inert-value-error")
-    forbidden = (
-        ast.Global,
-        ast.Nonlocal,
-        ast.Import,
-        ast.ImportFrom,
-        ast.Lambda,
-        ast.Yield,
-        ast.YieldFrom,
-        ast.Await,
-        ast.AsyncFunctionDef,
-    )
-    if any(isinstance(node, forbidden) for node in ast.walk(helper)):
-        problems.append("helper-not-pure")
-    if any(
-        isinstance(node, (ast.Attribute, ast.Subscript))
-        for node in ast.walk(helper)
-    ) or any(
-        isinstance(node, (ast.AugAssign, ast.Delete, ast.NamedExpr))
-        for node in ast.walk(helper)
-    ):
-        problems.append("helper-not-pure")
-
-    assigned = []
-    prospective = None
-    for node in ast.walk(helper):
-        parts = _test_stream_cap_assignment_parts(node)
-        if parts is None:
-            continue
-        target, value = parts
-        assigned.append(target)
-        if (
-            isinstance(value, ast.BinOp)
-            and isinstance(value.op, ast.Add)
-            and isinstance(value.left, ast.Name)
-            and value.left.id == total
-            and isinstance(value.right, ast.Name)
-            and value.right.id == increment
-        ):
-            prospective = target
-    if prospective is None or assigned != [prospective]:
-        problems.append("helper-prospective-add")
-    allowed_stores = {prospective} if prospective is not None else set()
-    if any(
-        isinstance(node, ast.Name)
-        and isinstance(node.ctx, ast.Store)
-        and node.id not in allowed_stores
-        for node in ast.walk(helper)
-    ):
-        problems.append("helper-not-pure")
-
-    strict_type_guarded = set()
-    nonnegative_guarded = set()
-    for node in ast.walk(helper):
-        if isinstance(node, ast.Compare) and len(node.ops) == 1:
-            if (
-                isinstance(node.ops[0], ast.IsNot)
-                and isinstance(node.left, ast.Call)
-                and _ast_call_name(node.left) == "type"
-                and len(node.left.args) == 1
-                and isinstance(node.left.args[0], ast.Name)
-                and len(node.comparators) == 1
-                and isinstance(node.comparators[0], ast.Name)
-                and node.comparators[0].id == "int"
-            ):
-                strict_type_guarded.add(node.left.args[0].id)
-            if (
-                isinstance(node.ops[0], ast.Lt)
-                and isinstance(node.left, ast.Name)
-                and len(node.comparators) == 1
-                and _test_stream_cap_is_int_constant(node.comparators[0], 0)
-            ):
-                nonnegative_guarded.add(node.left.id)
-    parameters = {total, increment, cap}
-    if strict_type_guarded != parameters:
-        problems.append("helper-strict-integers")
-    if nonnegative_guarded != parameters:
-        problems.append("helper-nonnegative")
-
-    overflow_guard = False
-    returned = False
-    if prospective is not None:
-        for node in ast.walk(helper):
-            if (
-                isinstance(node, ast.If)
-                and isinstance(node.test, ast.Compare)
-                and len(node.test.ops) == 1
-                and isinstance(node.test.ops[0], ast.Gt)
-                and isinstance(node.test.left, ast.Name)
-                and node.test.left.id == prospective
-                and len(node.test.comparators) == 1
-                and isinstance(node.test.comparators[0], ast.Name)
-                and node.test.comparators[0].id == cap
-                and any(isinstance(child, ast.Raise) for child in ast.walk(node))
-            ):
-                overflow_guard = True
-            if (
-                isinstance(node, ast.Return)
-                and isinstance(node.value, ast.Name)
-                and node.value.id == prospective
-            ):
-                returned = True
-    if not overflow_guard:
-        problems.append("helper-overflow-guard")
-    if not returned:
-        problems.append("helper-return")
-
-    for node in ast.walk(helper):
-        if not isinstance(node, ast.Call):
-            continue
-        name = _ast_call_name(node)
-        if name in {"type", "ValueError"}:
-            continue
-        problems.append("helper-not-pure")
-        break
-    allowed_loads = {
-        total,
-        increment,
-        cap,
-        prospective,
-        "ValueError",
-        "int",
-        "type",
-    }
-    if any(
-        isinstance(node, ast.Name)
-        and isinstance(node.ctx, ast.Load)
-        and node.id not in allowed_loads
-        for node in ast.walk(helper)
-    ):
-        problems.append("helper-external-read")
-    parameter_mapping = {
-        total: "checked_total",
-        increment: "checked_increment",
-        cap: "checked_cap",
-    }
-    if prospective is not None:
-        parameter_mapping[prospective] = "checked_prospective"
-
-    class SemanticNormalizer(ast.NodeTransformer):
-        def visit_Name(self, node):
-            replacement = parameter_mapping.get(node.id)
-            if replacement is None:
-                return self.generic_visit(node)
-            return ast.copy_location(
-                ast.Name(id=replacement, ctx=node.ctx),
-                node,
-            )
-
-        def visit_Raise(self, node):
-            return ast.copy_location(
-                ast.Raise(
-                    exc=ast.Constant(value="checked-add-rejection"),
-                    cause=None,
-                ),
-                node,
-            )
-
-    normalized = SemanticNormalizer().visit(
-        copy.deepcopy(ast.Module(body=helper.body, type_ignores=[]))
-    )
-    fingerprint = ast.dump(
-        normalized,
-        annotate_fields=True,
-        include_attributes=False,
-    )
-    return problems, fingerprint
-
-
-def _test_stream_cap_dynamic_checked_add_contract(helper, caps):
-    before = dict(getattr(helper, "__dict__", {}))
-    for cap in caps:
-        accepted = (
-            (0, 0, 0),
-            (0, cap, cap),
-            (cap, 0, cap),
-            (cap - 1, 1, cap),
-        )
-        for total, increment, expected in accepted:
-            observed = helper(total, increment, cap)
-            if type(observed) is not int or observed != expected:
-                raise AssertionError("checked-add-boundary-acceptance")
-        rejected = (
-            (cap, 1, cap),
-            (0, cap + 1, cap),
-            (-1, 0, cap),
-            (0, -1, cap),
-            (0, 0, -1),
-            (False, 0, cap),
-            (0, False, cap),
-            (0, 0, False),
-        )
-        for total, increment, selected_cap in rejected:
-            try:
-                helper(total, increment, selected_cap)
-            except BaseException as error:
-                if (
-                    not isinstance(error, Exception)
-                    or isinstance(error, AssertionError)
-                ):
-                    raise
-            else:
-                raise AssertionError("checked-add-boundary-rejection")
-    if dict(getattr(helper, "__dict__", {})) != before:
-        raise AssertionError("checked-add-mutated-function-state")
-
-
-def _test_stream_cap_is_direct_singleton(node):
-    return isinstance(node, ast.Constant) and (
-        node.value is None or type(node.value) is bool
-    )
-
-
-def _test_stream_cap_truth_converted_names(node):
-    if isinstance(node, ast.Name):
-        return {node.id}
-    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
-        return _test_stream_cap_truth_converted_names(node.operand)
-    if isinstance(node, ast.BoolOp):
-        return set().union(
-            *(
-                _test_stream_cap_truth_converted_names(value)
-                for value in node.values
-            )
-        )
-    if isinstance(node, ast.Tuple):
-        return set().union(
-            *(
-                _test_stream_cap_truth_converted_names(element)
-                for element in node.elts
-            ),
-            set(),
-        )
-    return set()
-
-
-def _test_stream_cap_reject_unsupported_syntax(
-    supervisor,
-    assignments,
-):
-    outer_nodes = _test_stream_cap_outer_runtime_nodes(supervisor)
-    for node in outer_nodes:
-        if isinstance(node, ast.Raise):
-            exact = (
-                node.cause is None
-                and node.exc is not None
-                and (
-                    (
-                        isinstance(node.exc, ast.Name)
-                        and node.exc.id
-                        in _STREAM_CAP_EXACT_BUILTIN_EXCEPTION_NAMES
-                    )
-                    or (
-                        isinstance(node.exc, ast.Call)
-                        and isinstance(node.exc.func, ast.Name)
-                        and node.exc.func.id
-                        in _STREAM_CAP_EXACT_BUILTIN_EXCEPTION_NAMES
-                        and not node.exc.keywords
-                        and not any(
-                            isinstance(argument, ast.Starred)
-                            or _test_stream_cap_expression_may_raise(
-                                argument,
-                                assignments,
-                            )
-                            for argument in node.exc.args
-                        )
-                    )
-                )
-            )
-            if not exact:
-                raise AssertionError("unsupported-supervisor-raise")
-    if any(
-        isinstance(
-            node,
-            (
-                ast.ClassDef,
-                ast.DictComp,
-                ast.GeneratorExp,
-                ast.Global,
-                ast.ListComp,
-                ast.NamedExpr,
-                ast.Nonlocal,
-                ast.SetComp,
-            ),
-        )
-        for node in outer_nodes
-    ):
-        raise AssertionError("unsupported-supervisor-scope-effect")
-    if any(
-        isinstance(node, (ast.Dict, ast.List, ast.Set))
-        for node in outer_nodes
-    ):
-        raise AssertionError("unsupported-supervisor-mutable-literal")
-    for node in outer_nodes:
-        if not isinstance(node, ast.Compare) or not any(
-            isinstance(operation, (ast.Is, ast.IsNot))
-            for operation in node.ops
-        ):
-            continue
-        operands = (node.left, *node.comparators)
-        if (
-            len(node.ops) != 1
-            or len(node.comparators) != 1
-            or not all(
-                _test_stream_cap_is_direct_singleton(operand)
-                for operand in operands
-            )
-        ):
-            raise AssertionError(
-                "unsupported-supervisor-identity-comparison"
-            )
-    condition_nodes = []
-    for node in outer_nodes:
-        if isinstance(node, (ast.If, ast.While, ast.Assert)):
-            condition_nodes.append(node.test)
-        elif isinstance(node, ast.match_case) and node.guard is not None:
-            condition_nodes.append(node.guard)
-    if any(
-        isinstance(part, ast.BinOp)
-        for condition in condition_nodes
-        for part in ast.walk(condition)
-    ):
-        raise AssertionError("unsupported-supervisor-condition-operator")
-    truth_names = set().union(
-        *(
-            _test_stream_cap_truth_converted_names(condition)
-            for condition in condition_nodes
-        ),
-        set(),
-    )
-    for node in outer_nodes:
-        parts = _test_stream_cap_assignment_parts(node)
-        if parts is None or parts[0] not in truth_names:
-            continue
-        value = parts[1]
-        if (
-            isinstance(value, ast.Call)
-            and isinstance(value.func, ast.Name)
-            and value.func.id in {"bytearray", "dict", "list", "set"}
-        ):
-            raise AssertionError(
-                "unsupported-supervisor-mutable-truth-binding"
-            )
-    for exception_name in _STREAM_CAP_EXACT_BUILTIN_EXCEPTION_NAMES:
-        if _test_stream_cap_binding_nodes(
-            supervisor,
-            exception_name,
-        ):
-            raise AssertionError(
-                exception_name + "-local-exception-rebinding"
-            )
-    for node in outer_nodes:
-        if (
-            isinstance(node, ast.ExceptHandler)
-            and (
-                node.name is not None
-                or (
-                    node.type is not None
-                    and _test_stream_cap_handler_exception_names(
-                        node.type
-                    )
-                    is None
-                )
-            )
-        ):
-            raise AssertionError("unsupported-supervisor-except-handler")
-        if not isinstance(node, ast.For):
-            continue
-        values = _test_stream_cap_literal_iterable_values(node.iter)
-        if (
-            not isinstance(node.target, ast.Name)
-            or values is None
-            or any(
-                _test_stream_cap_load_nodes(statement, node.target.id)
-                for statement in (*node.body, *node.orelse)
-            )
-        ):
-            raise AssertionError("unsupported-supervisor-for")
-
-
-def _test_stream_cap_source_contract(
+def _test_stream_cap_namespace(
     source,
     *,
-    expected_kind,
-    namespace,
-    source_path=None,
+    filename="<stream-cap-synthetic>",
 ):
-    """Validate one authenticated supervisor kind; return helper fingerprint."""
-    if expected_kind not in {"training", "evaluation"}:
-        raise AssertionError("unowned stream-cap owner")
-    filename = (
-        "<stream-cap-synthetic>"
-        if source_path is None
-        else str(pathlib.Path(source_path).resolve())
-    )
-    module_code = compile(source, filename, "exec")
+    _test_stream_cap_reject_module_global_mutation(source)
+    namespace = {}
+    exec(compile(source, filename, "exec"), namespace)
+    return namespace
+
+
+def _test_stream_cap_reject_module_global_mutation(source):
     tree = ast.parse(source)
-    functions = [
-        node
-        for node in tree.body
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-        and node.name == "_supervise_prepared_worker"
-    ]
-    if len(functions) != 1 or isinstance(functions[0], ast.AsyncFunctionDef):
-        raise AssertionError("supervisor-definition")
-    supervisor = functions[0]
-    if any(
-        isinstance(node, ast.TryStar)
-        for node in ast.walk(supervisor)
-    ):
-        raise AssertionError("unsupported-supervisor-trystar")
-    runtime_supervisor = _test_stream_cap_bind_runtime_function(
-        namespace,
-        module_code,
-        supervisor,
-        filename=filename,
-    )
-    unsupported_code_flags = (
-        inspect.CO_ASYNC_GENERATOR
-        | inspect.CO_COROUTINE
-        | inspect.CO_GENERATOR
-    )
-    if runtime_supervisor.__code__.co_flags & unsupported_code_flags:
-        raise AssertionError("unsupported-supervisor-code-flags")
-    for builtin_name, expected_builtin in (
-        ("BaseException", builtins.BaseException),
-        ("Exception", builtins.Exception),
-        ("GeneratorExit", builtins.GeneratorExit),
-        ("KeyboardInterrupt", builtins.KeyboardInterrupt),
-        ("RuntimeError", builtins.RuntimeError),
-        ("SystemExit", builtins.SystemExit),
-        ("bytearray", builtins.bytearray),
-        ("bytes", builtins.bytes),
-        ("len", builtins.len),
-    ):
-        _test_stream_cap_require_builtin_identity(
-            runtime_supervisor,
-            builtin_name,
-            expected_builtin,
-        )
-    self_rebindings = []
-    for statement in tree.body:
-        if statement is supervisor:
-            continue
-        self_rebindings.extend(
-            _test_stream_cap_binding_nodes(
-                statement,
-                "_supervise_prepared_worker",
-            )
-        )
-    if self_rebindings:
-        raise AssertionError("supervisor-module-rebinding")
-    parents, blocks = _test_stream_cap_statement_ancestors(supervisor)
-    forbidden_dispatch_calls = {
-        "__import__",
-        "compile",
-        "eval",
-        "exec",
-        "getattr",
-        "globals",
-        "locals",
-        "setattr",
-        "vars",
-    }
-    forbidden_dispatch_attributes = {
-        "__builtins__",
-        "__class__",
-        "__dict__",
-        "__getattribute__",
-        "__globals__",
-        "__setattr__",
-    }
-    sensitive_dispatch_literals = {
-        "len",
-        "measured_add",
-        "read_nonblocking",
-        "take_header",
-        "take_payload",
-        "write_private_spool",
-    }
-    if any(
-        isinstance(node, ast.Call)
-        and (_ast_call_name(node) or "").rsplit(".", 1)[-1]
-        in forbidden_dispatch_calls
-        for node in ast.walk(supervisor)
-    ) or any(
-        isinstance(node, ast.Attribute)
-        and node.attr in forbidden_dispatch_attributes
-        for node in ast.walk(supervisor)
-    ) or any(
-        isinstance(node, ast.Constant)
-        and node.value in sensitive_dispatch_literals
-        for node in ast.walk(supervisor)
-    ):
-        raise AssertionError("dynamic-dispatch-or-namespace-mutation")
-    assignments = _TestStreamCapAssignments(
-        [
-            node
-            for node in ast.walk(supervisor)
-            if isinstance(node, (ast.Assign, ast.AnnAssign))
-        ],
-        supervisor=supervisor,
-        parents=parents,
-        blocks=blocks,
-    )
-    _test_stream_cap_reject_unsupported_syntax(
-        supervisor,
-        assignments,
-    )
-    supervisor_arguments = (
-        *supervisor.args.posonlyargs,
-        *supervisor.args.args,
-        *supervisor.args.kwonlyargs,
-    )
-    for trusted_parameter in (
-        "operations",
-        "expected_sequence",
-    ):
-        parameter_arguments = [
-            argument
-            for argument in supervisor_arguments
-            if argument.arg == trusted_parameter
-        ]
-        if len(parameter_arguments) != 1:
-            raise AssertionError(
-                trusted_parameter + "-trusted-parameter"
-            )
-        _test_stream_cap_require_exact_bindings(
-            supervisor,
-            trusted_parameter,
-            (parameter_arguments[0],),
-            label=trusted_parameter + "-protected-binding",
-        )
-    checked = [
-        observed
-        for node in assignments
-        if (observed := _test_stream_cap_checked_assignment(node)) is not None
-    ]
+    parent = {}
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            parent[child] = node
 
-    reads = []
-    for node in assignments:
-        parts = _test_stream_cap_assignment_parts(node)
-        if parts is None:
-            continue
-        target, value = parts
-        if not isinstance(value, ast.Call) or not (
-            (_ast_call_name(value) or "").endswith(".read_nonblocking")
-        ):
-            continue
-        if (
-            len(value.args) != 2
-            or value.keywords
-            or not isinstance(value.func, ast.Attribute)
-            or not isinstance(value.func.value, ast.Name)
-            or value.func.value.id != "operations"
-            or not isinstance(value.args[0], ast.Name)
-            or not _test_stream_cap_is_int_constant(
-                value.args[1],
-                65_536,
-            )
-        ):
-            raise AssertionError("noncanonical-read-nonblocking-call")
-        endpoint_text = value.args[0].id.lower()
-        role = None
-        if "stdout" in endpoint_text and "stderr" not in endpoint_text:
-            role = "stdout"
-        elif "stderr" in endpoint_text and "stdout" not in endpoint_text:
-            role = "stderr"
-        if role is None:
-            raise AssertionError("descriptor-role-not-static")
-        expected_endpoint = (
-            "stdout_read" if role == "stdout" else "stderr_read"
-        )
-        if value.args[0].id != expected_endpoint:
-            raise AssertionError("descriptor-role-not-exact")
-        reads.append(
-            {
-                "call": value,
-                "node": node,
-                "chunk": target,
-                "role": role,
-            }
-        )
-    all_read_calls = [
-        call
-        for call in ast.walk(supervisor)
-        if isinstance(call, ast.Call)
-        and (_ast_call_name(call) or "").endswith(
-            ".read_nonblocking"
-        )
-    ]
-    if (
-        len(all_read_calls) != len(reads)
-        or set(all_read_calls)
-        != {read["call"] for read in reads}
-    ):
-        raise AssertionError("unowned-read-nonblocking-call")
-    read_attributes = [
-        node
-        for node in ast.walk(supervisor)
-        if isinstance(node, ast.Attribute)
-        and node.attr == "read_nonblocking"
-    ]
-    if (
-        len(read_attributes) != len(all_read_calls)
-        or {id(node) for node in read_attributes}
-        != {id(call.func) for call in all_read_calls}
-    ):
-        raise AssertionError("read-nonblocking-callable-alias")
-    if any(
-        isinstance(value, ast.Attribute)
-        and value.attr == "read_nonblocking"
-        for node in assignments
-        if (parts := _test_stream_cap_assignment_parts(node)) is not None
-        for value in (parts[1],)
-    ):
-        raise AssertionError("read-nonblocking-callable-alias")
-    for endpoint_name, endpoint_role in (
-        ("stdout_read", "stdout"),
-        ("stderr_read", "stderr"),
-    ):
-        endpoint_bindings = _test_stream_cap_binding_nodes(
-            supervisor,
-            endpoint_name,
-        )
-        if not endpoint_bindings:
-            raise AssertionError(
-                endpoint_role + "-descriptor-protected-binding"
-            )
-        if (
-            len(endpoint_bindings) != 1
-            or not isinstance(endpoint_bindings[0], ast.Name)
-            or not isinstance(endpoint_bindings[0].ctx, ast.Store)
-        ):
-            raise AssertionError(
-                endpoint_role + "-descriptor-protected-binding"
-            )
-        endpoint_statement = _test_stream_cap_enclosing_statement(
-            endpoint_bindings[0],
-            parents,
-        )
-        endpoint_value = (
-            endpoint_statement.value
-            if isinstance(endpoint_statement, ast.Assign)
-            else None
-        )
-        endpoint_target = (
-            endpoint_statement.targets[0]
-            if isinstance(endpoint_statement, ast.Assign)
-            and len(endpoint_statement.targets) == 1
-            else None
-        )
-        expected_write_endpoint = endpoint_role + "_write"
-        if (
-            not isinstance(endpoint_target, (ast.List, ast.Tuple))
-            or len(endpoint_target.elts) != 2
-            or not isinstance(endpoint_target.elts[0], ast.Name)
-            or endpoint_target.elts[0].id != endpoint_name
-            or not isinstance(endpoint_target.elts[1], ast.Name)
-            or endpoint_target.elts[1].id
-            != expected_write_endpoint
-            or not isinstance(endpoint_value, ast.Call)
-            or _ast_call_name(endpoint_value)
-            != "operations.make_pipe"
-            or len(endpoint_value.args) != 1
-            or endpoint_value.keywords
-            or not isinstance(
-                endpoint_value.args[0],
-                ast.Constant,
-            )
-            or endpoint_value.args[0].value != endpoint_role
-        ):
-            raise AssertionError(
-                endpoint_role + "-descriptor-source"
-            )
-        if (
-            endpoint_statement not in supervisor.body
-            or any(
-                endpoint_statement.lineno >= read["node"].lineno
-                for read in reads
-                if read["role"] == endpoint_role
-            )
-        ):
-            raise AssertionError(
-                endpoint_role + "-descriptor-reachability"
-            )
-    if not any(item["role"] == "stdout" for item in reads):
-        raise AssertionError("stdout-read-reachability")
-    if not any(item["role"] == "stderr" for item in reads):
-        raise AssertionError("stderr-read-reachability")
-    if any(
-        _test_stream_cap_has_statically_dead_ancestor(
-            item["node"],
-            parents,
-            assignments,
-        )
-        or _test_stream_cap_prefix_terminates(
-            item["node"],
-            parents,
-            blocks,
-            assignments,
-        )
-        for item in reads
-    ):
-        raise AssertionError("stream-read-statically-unreachable")
-    stdout_reads = [
-        item for item in reads if item["role"] == "stdout"
-    ]
-    if len(stdout_reads) != 1:
-        raise AssertionError("stdout-read-site-not-unique")
-    read_chunk_names = {read["chunk"] for read in reads}
-    if len(read_chunk_names) != len(reads):
-        raise AssertionError("read-chunk-alias")
-    for read in reads:
-        _test_stream_cap_require_exact_bindings(
-            supervisor,
-            read["chunk"],
-            (_test_stream_cap_assignment_target(read["node"]),),
-            label=read["role"] + "-chunk-protected-binding",
-        )
-    for node in assignments:
-        parts = _test_stream_cap_assignment_parts(node)
-        if parts is None:
-            continue
-        target, value = parts
-        if (
-            target not in read_chunk_names
-            and _test_stream_cap_names(value) & read_chunk_names
-            and _test_stream_cap_checked_assignment(node) is None
-        ):
-            raise AssertionError("read-chunk-copy-alias")
-
-    spool_writes = [
-        call
-        for call in ast.walk(supervisor)
-        if isinstance(call, ast.Call)
-        and (_ast_call_name(call) or "").endswith(".write_private_spool")
-    ]
-    if (
-        len(spool_writes) != 1
-        or len(spool_writes[0].args) != 2
-        or spool_writes[0].keywords
-        or not isinstance(spool_writes[0].func, ast.Attribute)
-        or not isinstance(
-            spool_writes[0].func.value,
-            ast.Name,
-        )
-        or spool_writes[0].func.value.id != "operations"
-        or not isinstance(spool_writes[0].args[0], ast.Name)
-        or not isinstance(spool_writes[0].args[1], ast.Name)
-    ):
-        raise AssertionError("payload-spool-reachability")
-    spool_write_attributes = [
-        node
-        for node in ast.walk(supervisor)
-        if isinstance(node, ast.Attribute)
-        and node.attr == "write_private_spool"
-    ]
-    if (
-        len(spool_write_attributes) != 1
-        or spool_write_attributes[0] is not spool_writes[0].func
-    ):
-        raise AssertionError("payload-spool-callable-alias")
-    if any(
-        isinstance(value, ast.Attribute)
-        and value.attr == "write_private_spool"
-        for node in assignments
-        if (parts := _test_stream_cap_assignment_parts(node)) is not None
-        for value in (parts[1],)
-    ):
-        raise AssertionError("payload-spool-callable-alias")
-    payload_chunks = {call.args[1].id for call in spool_writes}
-    spool_name = spool_writes[0].args[0].id
-    spool_bindings = [
-        node
-        for node in assignments
-        if (
-            (parts := _test_stream_cap_assignment_parts(node))
-            is not None
-        )
-        and parts[0] == spool_name
-    ]
-    if len(spool_bindings) != 1:
-        raise AssertionError("private-spool-binding")
-    spool_value = _test_stream_cap_assignment_parts(
-        spool_bindings[0]
-    )[1]
-    if (
-        not isinstance(spool_value, ast.Call)
-        or not (_ast_call_name(spool_value) or "").endswith(
-            ".create_private_spool"
-        )
-        or not isinstance(spool_value.func, ast.Attribute)
-        or not isinstance(spool_value.func.value, ast.Name)
-        or spool_value.func.value.id != "operations"
-    ):
-        raise AssertionError("private-spool-source")
-    all_spool_creates = [
-        call
-        for call in ast.walk(supervisor)
-        if isinstance(call, ast.Call)
-        and (_ast_call_name(call) or "").endswith(
-            ".create_private_spool"
-        )
-    ]
-    if all_spool_creates != [spool_value]:
-        raise AssertionError("unowned-private-spool-create")
-    spool_create_attributes = [
-        node
-        for node in ast.walk(supervisor)
-        if isinstance(node, ast.Attribute)
-        and node.attr == "create_private_spool"
-    ]
-    if (
-        len(spool_create_attributes) != 1
-        or spool_create_attributes[0] is not spool_value.func
-    ):
-        raise AssertionError("private-spool-callable-alias")
-    _test_stream_cap_require_exact_bindings(
-        supervisor,
-        spool_name,
-        (
-            _test_stream_cap_assignment_target(
-                spool_bindings[0]
-            ),
-        ),
-        label="private-spool-protected-binding",
-    )
-    stdout_chunks = {
-        item["chunk"] for item in reads if item["role"] == "stdout"
-    }
-
-    def stderr_retention_calls(read):
-        enclosing_loop = _test_stream_cap_ancestor(
-            read["node"], parents, (ast.For, ast.While)
-        )
-        if enclosing_loop is None:
-            return []
-        retained = []
-        for call in ast.walk(enclosing_loop):
-            if not isinstance(call, ast.Call) or call.lineno <= read["node"].lineno:
-                continue
-            leaf = (_ast_call_name(call) or "").rsplit(".", 1)[-1]
-            if leaf not in {"append", "extend", "update", "write"}:
-                continue
-            direct_names = {
-                argument.id
-                for argument in [
-                    *call.args,
-                    *(keyword.value for keyword in call.keywords),
-                ]
-                if isinstance(argument, ast.Name)
-            }
-            if read["chunk"] in direct_names:
-                retained.append(call)
-        return retained
-
-    retained_stderr_reads = [
-        item
-        for item in reads
-        if item["role"] == "stderr" and stderr_retention_calls(item)
-    ]
-    if not retained_stderr_reads:
-        raise AssertionError("retained-stderr-read-reachability")
-    if len(retained_stderr_reads) != 1:
-        raise AssertionError("retained-stderr-read-site-not-unique")
-    discarded_stderr_reads = [
-        item
-        for item in reads
-        if item["role"] == "stderr"
-        and item not in retained_stderr_reads
-    ]
-    if len(discarded_stderr_reads) != 1:
-        raise AssertionError("discarded-stderr-read-site-not-unique")
-    for read in discarded_stderr_reads:
-        enclosing_loop = _test_stream_cap_ancestor(
-            read["node"],
-            parents,
-            (ast.For, ast.While),
-        )
-        if enclosing_loop is None:
-            raise AssertionError("discarded-stderr-read-not-in-loop")
-        consumers = [
-            call
-            for call in ast.walk(enclosing_loop)
-            if isinstance(call, ast.Call)
-            and call is not read["call"]
-            and read["chunk"]
-            in {
-                name
-                for argument in [
-                    *call.args,
-                    *(keyword.value for keyword in call.keywords),
-                ]
-                for name in _test_stream_cap_names(argument)
-            }
-        ]
-        if consumers:
-            raise AssertionError("termination-discard-has-consumer")
-    owned_retention_sinks = {}
-    for read in (*stdout_reads, *retained_stderr_reads):
-        enclosing_loop = _test_stream_cap_ancestor(
-            read["node"],
-            parents,
-            (ast.For, ast.While),
-        )
-        direct_sinks = [
-            call
-            for call in ast.walk(enclosing_loop)
-            if isinstance(call, ast.Call)
-            and call.lineno > read["node"].lineno
-            and (_ast_call_name(call) or "") != "len"
-            and any(
-                isinstance(argument, ast.Name)
-                and argument.id == read["chunk"]
-                for argument in [
-                    *call.args,
-                    *(keyword.value for keyword in call.keywords),
-                ]
-            )
-        ]
-        if (
-            len(direct_sinks) != 1
-            or not isinstance(direct_sinks[0].func, ast.Attribute)
-            or direct_sinks[0].func.attr != "extend"
-            or len(direct_sinks[0].args) != 1
-            or direct_sinks[0].keywords
-            or not isinstance(direct_sinks[0].args[0], ast.Name)
-            or direct_sinks[0].args[0].id != read["chunk"]
-        ):
-            raise AssertionError(
-                read["role"] + "-owned-retention-sink"
-            )
-        owned_retention_sinks[read["chunk"]] = direct_sinks[0]
-    stderr_chunks = {item["chunk"] for item in retained_stderr_reads}
-
-    by_role = {
-        "wire": [item for item in checked if item["chunk"] in stdout_chunks],
-        "payload": [item for item in checked if item["chunk"] in payload_chunks],
-        "stderr": [item for item in checked if item["chunk"] in stderr_chunks],
-    }
-    if any(len(items) != 1 for items in by_role.values()):
-        raise AssertionError(
-            "checked-add-role-reachability:" + repr(
-                {role: len(items) for role, items in by_role.items()}
-            )
-        )
-    if any(
-        _test_stream_cap_has_statically_dead_ancestor(
-            item["node"],
-            parents,
-            assignments,
-        )
-        or _test_stream_cap_prefix_terminates(
-            item["node"],
-            parents,
-            blocks,
-            assignments,
-        )
-        for items in by_role.values()
-        for item in items
-    ):
-        raise AssertionError("checked-add-statically-unreachable")
-    helper_names = {
-        item["helper"]
-        for items in by_role.values()
-        for item in items
-    }
-    if len(helper_names) != 1 or None in helper_names:
-        raise AssertionError("checked-add-helper-uniqueness")
-    helper_name = next(iter(helper_names))
-    if any(item["helper"] != helper_name for item in checked):
-        raise AssertionError("alternate-checked-add-helper")
-    direct_helper_calls = [
-        call
-        for call in ast.walk(supervisor)
-        if isinstance(call, ast.Call) and _ast_call_name(call) == helper_name
-    ]
-    checked_calls = [
-        _test_stream_cap_assignment_parts(item["node"])[1]
-        for items in by_role.values()
-        for item in items
-    ]
-    if len(direct_helper_calls) != 3 or set(direct_helper_calls) != set(
-        checked_calls
-    ):
-        raise AssertionError("checked-add-not-direct-live-call-sites")
-
-    counter_names = {
-        role: items[0]["counter"] for role, items in by_role.items()
-    }
-    if len(set(counter_names.values())) != 3:
-        raise AssertionError("counter-alias")
-    counter_name_set = set(counter_names.values())
-    for node in assignments:
-        parts = _test_stream_cap_assignment_parts(node)
-        if parts is None:
-            continue
-        target, value = parts
-        if (
-            target not in counter_name_set
-            and _test_stream_cap_names(value) & counter_name_set
-        ):
-            raise AssertionError("counter-copy-alias")
-    direct_body = set(supervisor.body)
-    for role, counter in counter_names.items():
-        writes = [
-            node
-            for node in assignments
-            if (parts := _test_stream_cap_assignment_parts(node)) is not None
-            and parts[0] == counter
-        ]
-        initializers = [
-            node
-            for node in writes
-            if (parts := _test_stream_cap_assignment_parts(node)) is not None
-            and _test_stream_cap_is_int_constant(parts[1], 0)
-        ]
-        role_checked = [item["node"] for item in by_role[role]]
-        if len(initializers) != 1 or initializers[0] not in direct_body:
-            raise AssertionError(role + "-counter-zero-once")
-        if initializers[0].lineno >= min(item.lineno for item in role_checked):
-            raise AssertionError(role + "-counter-initialization-order")
-        if set(writes) != {initializers[0], *role_checked}:
-            raise AssertionError(role + "-counter-reset-or-write")
-        _test_stream_cap_require_exact_bindings(
-            supervisor,
-            counter,
-            tuple(
-                _test_stream_cap_assignment_target(node)
-                for node in (initializers[0], *role_checked)
-            ),
-            label=role + "-counter-protected-binding",
-        )
-
-    for role, items in by_role.items():
-        selected = items[0]
-        if _test_stream_cap_ancestor(selected["node"], parents, (ast.For, ast.While)) is None:
-            raise AssertionError(role + "-check-not-in-drain-loop")
-
-    accounted_reads = [
-        item
-        for item in reads
-        if item["role"] == "stdout" or item in retained_stderr_reads
-    ]
-    for read in accounted_reads:
-        role = "wire" if read["role"] == "stdout" else "stderr"
-        selected = by_role[role][0]
-        read_loop = _test_stream_cap_ancestor(read["node"], parents, (ast.For, ast.While))
-        checked_loop = _test_stream_cap_ancestor(
-            selected["node"], parents, (ast.For, ast.While)
-        )
-        if read_loop is not checked_loop or selected["node"].lineno <= read["node"].lineno:
-            raise AssertionError(role + "-check-not-per-read")
-        consumers = []
-        for call in ast.walk(read_loop):
-            if not isinstance(call, ast.Call) or call.lineno <= read["node"].lineno:
-                continue
-            name = _ast_call_name(call)
-            if name in {helper_name, "len"} or name is None:
-                continue
-            if read["chunk"] in {
-                name
-                for argument in [*call.args, *(keyword.value for keyword in call.keywords)]
-                for name in _test_stream_cap_names(argument)
-            }:
-                consumers.append(call)
-        if not consumers:
-            raise AssertionError(role + "-check-after-retention-or-parse")
-        first_consumer = min(consumers, key=lambda call: call.lineno)
-        if not _test_stream_cap_same_block_dominates(
-            selected["node"], first_consumer, parents, blocks
-        ):
-            raise AssertionError(role + "-check-after-retention-or-parse")
-        if read["role"] == "stderr":
-            for retention_call in stderr_retention_calls(read):
-                if not _test_stream_cap_same_block_dominates(
-                    selected["node"], retention_call, parents, blocks
-                ):
-                    raise AssertionError(
-                        "stderr-check-after-retention-or-parse"
-                    )
-
-    payload_checked = by_role["payload"][0]
-    for call in spool_writes:
-        write_loop = _test_stream_cap_ancestor(call, parents, (ast.For, ast.While))
-        check_loop = _test_stream_cap_ancestor(
-            payload_checked["node"], parents, (ast.For, ast.While)
-        )
-        if (
-            write_loop is not check_loop
-            or payload_checked["chunk"] != call.args[1].id
-            or not _test_stream_cap_same_block_dominates(
-                payload_checked["node"], call, parents, blocks
-            )
-        ):
-            raise AssertionError("payload-check-after-spool")
-
-    job_arguments = [
-        argument
-        for argument in (
-            *supervisor.args.posonlyargs,
-            *supervisor.args.args,
-            *supervisor.args.kwonlyargs,
-        )
-        if argument.arg == "job"
-    ]
-    if len(job_arguments) != 1:
-        raise AssertionError("authenticated-job-parameter")
-    _test_stream_cap_require_exact_bindings(
-        supervisor,
-        "job",
-        (job_arguments[0],),
-        label="authenticated-job-protected-binding",
-    )
-    if any(
-        isinstance(node, (ast.Attribute, ast.Subscript))
-        and isinstance(node.ctx, (ast.Store, ast.Del))
-        and "job" in _test_stream_cap_names(node)
-        for node in ast.walk(supervisor)
-    ):
-        raise AssertionError("authenticated-job-mutation")
-
-    kind_aliases = []
-    for node in supervisor.body:
-        parts = _test_stream_cap_assignment_parts(node)
-        if parts is None:
-            continue
-        target, value = parts
-        if (
-            isinstance(value, ast.Subscript)
-            and isinstance(value.value, ast.Name)
-            and value.value.id == "job"
-            and isinstance(value.slice, ast.Constant)
-            and value.slice.value == "worker_kind"
-        ):
-            kind_aliases.append((target, node))
-    if len(kind_aliases) != 1:
-        raise AssertionError("authenticated-job-kind-selector")
-    kind_alias, kind_binding = kind_aliases[0]
-    _test_stream_cap_require_exact_bindings(
-        supervisor,
-        kind_alias,
-        (_test_stream_cap_assignment_target(kind_binding),),
-        label="authenticated-job-kind-protected-binding",
-    )
-    for node in assignments:
-        if node is kind_binding:
-            continue
-        parts = _test_stream_cap_assignment_parts(node)
-        if (
-            parts is not None
-            and _test_stream_cap_expression_retains_reference(
-                parts[1],
-                {"job"},
-            )
-        ):
-            raise AssertionError("authenticated-job-copy-alias")
-    job_transform_bindings = {}
-    job_owned_calls = set()
-    for call in ast.walk(supervisor):
-        if not isinstance(call, ast.Call):
-            continue
-        direct_job_arguments = [
-            argument
-            for argument in [
-                *call.args,
-                *(keyword.value for keyword in call.keywords),
-            ]
-            if isinstance(argument, ast.Name)
-            and argument.id == "job"
-        ]
-        if not direct_job_arguments:
-            continue
-        leaf = (_ast_call_name(call) or "").rsplit(".", 1)[-1]
-        if leaf == "run_outer_worker_postflight":
-            if (
-                _ast_call_name(call)
-                != "operations.run_outer_worker_postflight"
-                or call.args
-                or len(call.keywords) != 1
-                or call.keywords[0].arg != "job"
-                or call.keywords[0].value is not direct_job_arguments[0]
+    def is_module_scoped(node):
+        while node in parent:
+            node = parent[node]
+            if isinstance(
+                node,
+                (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda),
             ):
-                raise AssertionError(
-                    "authenticated-job-postflight-call"
-                )
-            job_owned_calls.add(call)
+                return False
+        return True
+
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Attribute, ast.Subscript)) or not isinstance(
+            node.ctx, (ast.Store, ast.Del)
+        ):
             continue
+        root = node.value
+        while isinstance(root, (ast.Attribute, ast.Subscript)):
+            root = root.value
         if (
-            _ast_call_name(call) != "operations.encode_job"
-            or len(call.args) != 1
-            or call.args[0] is not direct_job_arguments[0]
-            or call.keywords
+            isinstance(root, ast.Name)
+            and root.id in {"errno", "hashlib"}
+            and is_module_scoped(node)
         ):
-            raise AssertionError("unowned-authenticated-job-call")
-        call_owner = parents.get(call)
-        call_owner_parts = _test_stream_cap_assignment_parts(
-            call_owner
-        )
-        if (
-            call_owner_parts is None
-            or call_owner_parts[1] is not call
-            or call_owner_parts[0] in job_transform_bindings
-        ):
-            raise AssertionError(
-                "authenticated-job-transform-capture"
-            )
-        job_transform_bindings[
-            call_owner_parts[0]
-        ] = call_owner
-        job_owned_calls.add(call)
-    for target, binding in job_transform_bindings.items():
-        _test_stream_cap_require_exact_bindings(
-            supervisor,
-            target,
-            (_test_stream_cap_assignment_target(binding),),
-            label="authenticated-job-transform-protected-binding",
-        )
-    kind_value = _test_stream_cap_assignment_parts(kind_binding)[1]
-    allowed_job_loads = {kind_value.value}
-    for call in job_owned_calls:
-        allowed_job_loads.update(
-            argument
+            raise AssertionError("module-global-attribute-mutation")
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not is_module_scoped(node):
+            continue
+        loaded_arguments = {
+            child.id
             for argument in (
-                *call.args,
-                *(keyword.value for keyword in call.keywords),
+                list(node.args)
+                + [keyword.value for keyword in node.keywords]
             )
-            if isinstance(argument, ast.Name)
-            and argument.id == "job"
-        )
-    if {
-        id(node)
-        for node in _test_stream_cap_load_nodes(supervisor, "job")
-    } != {id(node) for node in allowed_job_loads}:
-        raise AssertionError("unowned-authenticated-job-load")
-    branches = {}
-    branch_nodes = {}
-    for node in ast.walk(supervisor):
-        if not isinstance(node, ast.If) or not isinstance(node.test, ast.Compare):
-            continue
-        test = node.test
-        if (
-            len(test.ops) == 1
-            and isinstance(test.ops[0], ast.Eq)
-            and isinstance(test.left, ast.Name)
-            and test.left.id == kind_alias
-            and len(test.comparators) == 1
-            and isinstance(test.comparators[0], ast.Constant)
-            and test.comparators[0].value in {"training", "evaluation"}
-        ):
-            kind = test.comparators[0].value
-            if kind in branches:
-                raise AssertionError("duplicate-job-kind-cap-selector")
-            branches[kind] = node.body
-            branch_nodes[kind] = node
-    if set(branches) != {"training", "evaluation"}:
-        raise AssertionError("closed-job-kind-cap-selector")
-    if (
-        kind_binding not in supervisor.body
-        or any(
-            node not in supervisor.body
-            or node.orelse
-            or len(node.body) != 2
-            for node in branch_nodes.values()
-        )
-    ):
-        raise AssertionError("job-kind-cap-selector-reachability")
-    direct_positions = {
-        id(node): index
-        for index, node in enumerate(supervisor.body)
-    }
+            for child in ast.walk(argument)
+            if isinstance(child, ast.Name)
+            and isinstance(child.ctx, ast.Load)
+        }
+        if loaded_arguments & {"errno", "hashlib"}:
+            raise AssertionError("module-global-call-argument")
     if any(
-        direct_positions[id(kind_binding)]
-        >= direct_positions[id(node)]
-        for node in branch_nodes.values()
+        isinstance(node, ast.Name)
+        and isinstance(node.ctx, ast.Load)
+        and node.id in {"errno", "hashlib"}
+        and is_module_scoped(node)
+        for node in ast.walk(tree)
     ):
-        raise AssertionError("job-kind-cap-selector-order")
-    expected_caps = {
-        "training": {"payload": 33_554_432, "wire": 33_587_232},
-        "evaluation": {"payload": 8_388_608, "wire": 8_396_808},
-    }
-    cap_names = {
-        role: by_role[role][0]["cap"] for role in ("payload", "wire", "stderr")
-    }
-    if len(set(cap_names.values())) != 3:
-        raise AssertionError("cap-alias")
-    cap_name_set = set(cap_names.values())
-    checked_assignment_nodes = {
-        item["node"] for item in checked
-    }
-    for node in assignments:
-        parts = _test_stream_cap_assignment_parts(node)
-        if parts is None:
-            continue
-        target, value = parts
-        if (
-            node not in checked_assignment_nodes
-            and
-            target not in cap_name_set
-            and _test_stream_cap_names(value) & cap_name_set
-        ):
-            raise AssertionError("cap-copy-alias")
-    owned_cap_assignments = {"payload": [], "wire": []}
-    for kind, body in branches.items():
-        observed = {}
-        owned_for_kind = []
-        for node in body:
-            parts = _test_stream_cap_assignment_parts(node)
-            if parts is None:
-                continue
-            target, value = parts
-            for role in ("payload", "wire"):
-                if target == cap_names[role] and isinstance(value, ast.Constant):
-                    observed[role] = value.value
-                    owned_cap_assignments[role].append(node)
-                    owned_for_kind.append(node)
-        if observed != expected_caps[kind]:
-            raise AssertionError(kind + "-cap-family")
-        if set(owned_for_kind) != set(body):
-            raise AssertionError(kind + "-cap-branch-not-exact")
-    for role in ("payload", "wire"):
-        all_writes = [
-            node
-            for node in assignments
-            if (
-                (parts := _test_stream_cap_assignment_parts(node))
-                is not None
-            )
-            and parts[0] == cap_names[role]
-        ]
-        if (
-            len(owned_cap_assignments[role]) != 2
-            or set(all_writes) != set(owned_cap_assignments[role])
-        ):
-            raise AssertionError(role + "-cap-selection-overwrite")
-        _test_stream_cap_require_exact_bindings(
-            supervisor,
-            cap_names[role],
-            tuple(
-                _test_stream_cap_assignment_target(node)
-                for node in owned_cap_assignments[role]
-            ),
-            label=role + "-cap-protected-binding",
-        )
-    stderr_assignment_nodes = [
-        node
-        for node in assignments
-        if _test_stream_cap_assignment_parts(node) is not None
-        and _test_stream_cap_assignment_parts(node)[0] == cap_names["stderr"]
-    ]
-    stderr_assignments = [
-        _test_stream_cap_assignment_parts(node)[1]
-        for node in stderr_assignment_nodes
-    ]
-    if (
-        len(stderr_assignments) != 1
-        or not _test_stream_cap_is_int_constant(
-            stderr_assignments[0], 65_536
-        )
-        or not any(
-            _test_stream_cap_assignment_parts(node) is not None
-            and _test_stream_cap_assignment_parts(node)[0]
-            == cap_names["stderr"]
-            for node in supervisor.body
-        )
-    ):
-        raise AssertionError("stderr-cap")
-    _test_stream_cap_require_exact_bindings(
-        supervisor,
-        cap_names["stderr"],
-        (
-            _test_stream_cap_assignment_target(
-                stderr_assignment_nodes[0]
-            ),
-        ),
-        label="stderr-cap-protected-binding",
-    )
-
-    stdout_chunk = stdout_reads[0]["chunk"]
-    stdout_retention = owned_retention_sinks[stdout_chunk]
-    if not isinstance(stdout_retention.func.value, ast.Name):
-        raise AssertionError("stdout-buffer-lineage")
-    stdout_buffer_name = stdout_retention.func.value.id
-
-    declared_bindings = []
-    for node in assignments:
-        parts = _test_stream_cap_assignment_parts(node)
-        if parts is None:
-            continue
-        target, value = parts
-        if (
-            isinstance(value, ast.Subscript)
-            and isinstance(value.value, ast.Name)
-            and isinstance(value.slice, ast.Constant)
-            and value.slice.value == "bytes"
-        ):
-            declared_bindings.append(
-                (target, value.value.id, node)
-            )
-    if len(declared_bindings) != 1:
-        raise AssertionError("declared-payload-size-not-bound")
-    declared_name, header_name, declared_binding = (
-        declared_bindings[0]
-    )
-    _test_stream_cap_require_exact_bindings(
-        supervisor,
-        declared_name,
-        (_test_stream_cap_assignment_target(declared_binding),),
-        label="declared-payload-size-protected-binding",
-    )
-    header_bindings = [
-        node
-        for node in assignments
-        if (
-            (parts := _test_stream_cap_assignment_parts(node))
-            is not None
-        )
-        and parts[0] == header_name
-    ]
-    if len(header_bindings) != 1:
-        raise AssertionError("validated-header-binding")
-    header_value = _test_stream_cap_assignment_parts(
-        header_bindings[0]
-    )[1]
-    if (
-        not isinstance(header_value, ast.Call)
-        or not (_ast_call_name(header_value) or "").endswith(
-            ".take_header"
-        )
-        or len(header_value.args) != 1
-        or header_value.keywords
-        or not isinstance(header_value.args[0], ast.Name)
-        or header_value.args[0].id != stdout_buffer_name
-    ):
-        raise AssertionError("validated-header-source")
-    all_header_reads = [
-        call
-        for call in ast.walk(supervisor)
-        if isinstance(call, ast.Call)
-        and (_ast_call_name(call) or "").endswith(".take_header")
-    ]
-    if all_header_reads != [header_value]:
-        raise AssertionError("unowned-header-read")
-    header_read_attributes = [
-        node
-        for node in ast.walk(supervisor)
-        if isinstance(node, ast.Attribute)
-        and node.attr == "take_header"
-    ]
-    if (
-        len(header_read_attributes) != 1
-        or header_read_attributes[0] is not header_value.func
-    ):
-        raise AssertionError("header-read-callable-alias")
-    header_ready_calls = [
-        call
-        for call in ast.walk(supervisor)
-        if isinstance(call, ast.Call)
-        and (_ast_call_name(call) or "").endswith(".header_ready")
-    ]
-    if (
-        len(header_ready_calls) != 1
-        or len(header_ready_calls[0].args) != 1
-        or header_ready_calls[0].keywords
-        or not isinstance(header_ready_calls[0].args[0], ast.Name)
-        or header_ready_calls[0].args[0].id != stdout_buffer_name
-        or not isinstance(parents.get(header_ready_calls[0]), ast.If)
-        or parents[header_ready_calls[0]].test
-        is not header_ready_calls[0]
-        or header_bindings[0]
-        not in parents[header_ready_calls[0]].body
-    ):
-        raise AssertionError("header-read-guard-lineage")
-    header_ready_attributes = [
-        node
-        for node in ast.walk(supervisor)
-        if isinstance(node, ast.Attribute)
-        and node.attr == "header_ready"
-    ]
-    if (
-        len(header_ready_attributes) != 1
-        or header_ready_attributes[0]
-        is not header_ready_calls[0].func
-    ):
-        raise AssertionError("header-ready-callable-alias")
-    _test_stream_cap_require_exact_bindings(
-        supervisor,
-        header_name,
-        (
-            _test_stream_cap_assignment_target(
-                header_bindings[0]
-            ),
-        ),
-        label="validated-header-protected-binding",
-    )
-    if any(
-        isinstance(node, (ast.Attribute, ast.Subscript))
-        and isinstance(node.ctx, (ast.Store, ast.Del))
-        and _test_stream_cap_names(node)
-        & {header_name, declared_name}
-        for node in ast.walk(supervisor)
-    ):
-        raise AssertionError("validated-header-or-size-mutation")
-    spool_identity_keywords = {
-        keyword.arg: keyword.value
-        for keyword in spool_value.keywords
-        if keyword.arg is not None
-    }
-    if (
-        spool_value.args
-        or len(spool_value.keywords) != 3
-        or set(spool_identity_keywords)
-        != {"frame_index", "kind", "logical_name"}
-    ):
-        raise AssertionError("private-spool-identity-binding")
-    for field, value in spool_identity_keywords.items():
-        if (
-            not isinstance(value, ast.Subscript)
-            or not isinstance(value.value, ast.Name)
-            or value.value.id != header_name
-            or not isinstance(value.slice, ast.Constant)
-            or value.slice.value != field
-        ):
-            raise AssertionError(
-                "private-spool-identity-binding"
-            )
-
-    if len(payload_chunks) != 1:
-        raise AssertionError("payload-chunk-not-unique")
-    payload_chunk = next(iter(payload_chunks))
-    payload_sources = [
-        node
-        for node in assignments
-        if (parts := _test_stream_cap_assignment_parts(node)) is not None
-        and parts[0] == payload_chunk
-    ]
-    if len(payload_sources) != 1:
-        raise AssertionError("payload-read-not-reachable")
-    payload_source = payload_sources[0]
-    payload_value = _test_stream_cap_assignment_parts(
-        payload_source
-    )[1]
-    if (
-        not isinstance(payload_value, ast.Call)
-        or not (_ast_call_name(payload_value) or "").endswith(
-            ".take_payload"
-        )
-        or len(payload_value.args) != 2
-        or payload_value.keywords
-        or not isinstance(payload_value.args[0], ast.Name)
-        or payload_value.args[0].id != stdout_buffer_name
-        or not isinstance(payload_value.args[1], ast.Name)
-        or payload_value.args[1].id != declared_name
-    ):
-        raise AssertionError("payload-read-not-declared-size-bounded")
-    all_payload_reads = [
-        call
-        for call in ast.walk(supervisor)
-        if isinstance(call, ast.Call)
-        and (_ast_call_name(call) or "").endswith(".take_payload")
-    ]
-    if all_payload_reads != [payload_value]:
-        raise AssertionError("unowned-payload-read")
-    payload_read_attributes = [
-        node
-        for node in ast.walk(supervisor)
-        if isinstance(node, ast.Attribute)
-        and node.attr == "take_payload"
-    ]
-    if (
-        len(payload_read_attributes) != 1
-        or payload_read_attributes[0] is not payload_value.func
-    ):
-        raise AssertionError("payload-read-callable-alias")
-    _test_stream_cap_require_exact_bindings(
-        supervisor,
-        payload_chunk,
-        (_test_stream_cap_assignment_target(payload_source),),
-        label="payload-chunk-protected-binding",
-    )
-    payload_loop = _test_stream_cap_ancestor(
-        payload_source,
-        parents,
-        (ast.For, ast.While),
-    )
-    payload_remaining_calls = [
-        call
-        for call in ast.walk(supervisor)
-        if isinstance(call, ast.Call)
-        and (_ast_call_name(call) or "").endswith(
-            ".payload_remaining"
-        )
-    ]
-    if (
-        not isinstance(payload_loop, ast.While)
-        or payload_source not in payload_loop.body
-        or len(payload_remaining_calls) != 1
-        or payload_loop.test is not payload_remaining_calls[0]
-        or len(payload_remaining_calls[0].args) != 1
-        or payload_remaining_calls[0].keywords
-        or not isinstance(
-            payload_remaining_calls[0].args[0],
-            ast.Name,
-        )
-        or payload_remaining_calls[0].args[0].id != declared_name
-        or not _test_stream_cap_same_block_dominates(
-            declared_binding,
-            payload_loop,
-            parents,
-            blocks,
-        )
-        or not _test_stream_cap_same_block_dominates(
-            payload_source,
-            payload_checked["node"],
-            parents,
-            blocks,
-        )
-    ):
-        raise AssertionError("payload-read-dominance")
-    payload_remaining_attributes = [
-        node
-        for node in ast.walk(supervisor)
-        if isinstance(node, ast.Attribute)
-        and node.attr == "payload_remaining"
-    ]
-    if (
-        len(payload_remaining_attributes) != 1
-        or payload_remaining_attributes[0]
-        is not payload_remaining_calls[0].func
-    ):
-        raise AssertionError("payload-remaining-callable-alias")
-    allowed_declared_loads = {
-        payload_value.args[1],
-        payload_remaining_calls[0].args[0],
-    }
-    if {
-        id(node)
-        for node in _test_stream_cap_load_nodes(
-            supervisor,
-            declared_name,
-        )
-    } != {id(node) for node in allowed_declared_loads}:
-        raise AssertionError("unowned-declared-size-load")
-
-    header_validations = [
-        call
-        for call in ast.walk(supervisor)
-        if isinstance(call, ast.Call)
-        and (_ast_call_name(call) or "").endswith(
-            ".validate_declared_frame"
-        )
-    ]
-    if (
-        len(header_validations) != 1
-        or len(header_validations[0].args) != 2
-        or header_validations[0].keywords
-        or not isinstance(header_validations[0].args[0], ast.Name)
-        or header_validations[0].args[0].id != header_name
-        or not isinstance(header_validations[0].args[1], ast.Name)
-        or header_validations[0].args[1].id
-        != "expected_sequence"
-        or not isinstance(parents.get(header_validations[0]), ast.Expr)
-        or parents[header_validations[0]].value
-        is not header_validations[0]
-        or not _test_stream_cap_same_block_dominates(
-            header_bindings[0],
-            header_validations[0],
-            parents,
-            blocks,
-        )
-        or not _test_stream_cap_same_block_dominates(
-            header_validations[0],
-            declared_binding,
-            parents,
-            blocks,
-        )
-    ):
-        raise AssertionError("declared-kind-size-validation-order")
-    header_validation_attributes = [
-        node
-        for node in ast.walk(supervisor)
-        if isinstance(node, ast.Attribute)
-        and node.attr == "validate_declared_frame"
-    ]
-    if (
-        len(header_validation_attributes) != 1
-        or header_validation_attributes[0]
-        is not header_validations[0].func
-    ):
-        raise AssertionError("header-validation-callable-alias")
-    parser_calls = (
-        *header_ready_calls,
-        *all_header_reads,
-        *header_validations,
-        *payload_remaining_calls,
-        *all_payload_reads,
-    )
-    parser_receivers = []
-    for call in parser_calls:
-        if (
-            not isinstance(call.func, ast.Attribute)
-            or not isinstance(call.func.value, ast.Name)
-        ):
-            raise AssertionError("frame-parser-receiver-shape")
-        parser_receivers.append(call.func.value.id)
-    if len(set(parser_receivers)) != 1:
-        raise AssertionError("frame-parser-receiver-divergence")
-    parser_receiver = parser_receivers[0]
-    parser_binding_node = None
-    if parser_receiver != "operations":
-        parser_bindings = [
-            node
-            for node in assignments
-            if (
-                (parts := _test_stream_cap_assignment_parts(node))
-                is not None
-            )
-            and parts[0] == parser_receiver
-        ]
-        if len(parser_bindings) != 1:
-            raise AssertionError("frame-parser-binding")
-        parser_binding_node = parser_bindings[0]
-        parser_value = _test_stream_cap_assignment_parts(
-            parser_bindings[0]
-        )[1]
-        if (
-            not isinstance(parser_value, ast.Call)
-            or _ast_call_name(parser_value) != "WorkerFrameParser"
-            or parser_value.args
-            or parser_value.keywords
-        ):
-            raise AssertionError("frame-parser-source")
-        supervisor_parser_bindings = _test_stream_cap_binding_nodes(
-            supervisor,
-            "WorkerFrameParser",
-        )
-        if supervisor_parser_bindings:
-            raise AssertionError("frame-parser-local-definition")
-        module_parser_bindings = tuple(
-            binding
-            for statement in tree.body
-            if statement is not supervisor
-            for binding in (
-                *(
-                    (statement,)
-                    if isinstance(
-                        statement,
-                        (
-                            ast.AsyncFunctionDef,
-                            ast.ClassDef,
-                            ast.FunctionDef,
-                        ),
-                    )
-                    and statement.name == "WorkerFrameParser"
-                    else ()
-                ),
-                *_test_stream_cap_binding_nodes(
-                    statement,
-                    "WorkerFrameParser",
-                ),
-            )
-        )
-        if source_path is None and module_parser_bindings:
-            raise AssertionError("frame-parser-module-binding")
-        if source_path is not None:
-            parser_class = runtime_supervisor.__globals__.get(
-                "WorkerFrameParser"
-            )
-            protocol_module = _protocol()
-            protocol_file = getattr(protocol_module, "__file__", None)
-            expected_parser_class = getattr(
-                protocol_module,
-                "WorkerFrameParser",
-                None,
-            )
-            if (
-                not isinstance(parser_class, type)
-                or parser_class is not expected_parser_class
-                or protocol_file is None
-                or pathlib.Path(protocol_file).resolve()
-                != (
-                    ROOT
-                    / "tools/f5_recurrent_ppo_protocol.py"
-                ).resolve()
-            ):
-                raise AssertionError(
-                    "frame-parser-runtime-source-binding"
-                )
-        _test_stream_cap_require_exact_bindings(
-            supervisor,
-            parser_receiver,
-            (
-                _test_stream_cap_assignment_target(
-                    parser_bindings[0]
-                ),
-            ),
-            label="frame-parser-protected-binding",
-        )
-    security_critical_nodes = (
-        *spool_writes,
-        header_bindings[0],
-        header_ready_calls[0],
-        header_validations[0],
-        declared_binding,
-        payload_loop,
-        payload_source,
-        payload_checked["node"],
-        payload_remaining_calls[0],
-    )
-    if any(
-        _test_stream_cap_has_statically_dead_ancestor(
-            node,
-            parents,
-            assignments,
-        )
-        or _test_stream_cap_prefix_terminates(
-            node,
-            parents,
-            blocks,
-            assignments,
-        )
-        for node in security_critical_nodes
-    ):
-        raise AssertionError("payload-path-statically-unreachable")
-
-    retention_buffer_names = set()
-    for sink in owned_retention_sinks.values():
-        if not isinstance(sink.func.value, ast.Name):
-            raise AssertionError("retention-buffer-lineage")
-        buffer_name = sink.func.value.id
-        retention_buffer_names.add(buffer_name)
-        bindings = [
-            node
-            for node in assignments
-            if (
-                (parts := _test_stream_cap_assignment_parts(node))
-                is not None
-            )
-            and parts[0] == buffer_name
-        ]
-        if len(bindings) != 1:
-            raise AssertionError("retention-buffer-binding")
-        value = _test_stream_cap_assignment_parts(bindings[0])[1]
-        if (
-            not isinstance(value, ast.Call)
-            or _ast_call_name(value) != "bytearray"
-            or value.args
-            or value.keywords
-        ):
-            raise AssertionError("retention-buffer-source")
-        _test_stream_cap_require_exact_bindings(
-            supervisor,
-            buffer_name,
-            (
-                _test_stream_cap_assignment_target(
-                    bindings[0]
-                ),
-            ),
-            label="retention-buffer-protected-binding",
-        )
-    if len(retention_buffer_names) != 2:
-        raise AssertionError("retention-buffer-alias")
-    stderr_buffer_name = (
-        owned_retention_sinks[
-            retained_stderr_reads[0]["chunk"]
-        ].func.value.id
-    )
-    stderr_capture_calls = [
-        call
-        for call in ast.walk(supervisor)
-        if isinstance(call, ast.Call)
-        and _ast_call_name(call) == "bytes"
-        and len(call.args) == 1
-        and not call.keywords
-        and isinstance(call.args[0], ast.Name)
-        and call.args[0].id == stderr_buffer_name
-    ]
-
-    protected_state_names = {
-        "job",
-        *job_transform_bindings,
-        "expected_sequence",
-        kind_alias,
-        helper_name,
-        "len",
-        *cap_names.values(),
-        *counter_names.values(),
-        *read_chunk_names,
-        header_name,
-        declared_name,
-        payload_chunk,
-        spool_name,
-        *retention_buffer_names,
-    }
-    tainted_copy_names = {
-        kind_alias,
-        *job_transform_bindings,
-        "expected_sequence",
-        helper_name,
-        "len",
-        *cap_names.values(),
-        *counter_names.values(),
-        *read_chunk_names,
-        declared_name,
-        payload_chunk,
-        stdout_buffer_name,
-    }
-    allowed_lineage_assignments = {
-        kind_binding,
-        *checked_assignment_nodes,
-        header_bindings[0],
-        declared_binding,
-        payload_source,
-        *(
-            (parser_binding_node,)
-            if parser_binding_node is not None
-            else ()
-        ),
-    }
-    _test_stream_cap_reject_unowned_aliases(
-        supervisor,
-        tainted_copy_names,
-        allowed_lineage_assignments,
-        label="protected-stream-state-copy-alias",
-    )
-    for owner, source in _test_stream_cap_binding_sources(
-        supervisor
-    ):
-        if (
-            owner not in allowed_lineage_assignments
-            and _test_stream_cap_expression_retains_reference(
-                source,
-                {
-                    "job",
-                    *job_transform_bindings,
-                    header_name,
-                    stderr_buffer_name,
-                },
-            )
-        ):
-            raise AssertionError(
-                "protected-object-reference-alias"
-            )
-
-    payload_hash_updates = [
-        call
-        for call in ast.walk(supervisor)
-        if isinstance(call, ast.Call)
-        and isinstance(call.func, ast.Attribute)
-        and call.func.attr == "update"
-        and len(call.args) == 1
-        and not call.keywords
-        and isinstance(call.args[0], ast.Name)
-        and call.args[0].id == payload_chunk
-    ]
-    for update in payload_hash_updates:
-        if (
-            not isinstance(update.func.value, ast.Name)
-            or _test_stream_cap_ancestor(
-                update,
-                parents,
-                (ast.For, ast.While),
-            )
-            is not payload_loop
-            or not _test_stream_cap_same_block_dominates(
-                payload_checked["node"],
-                update,
-                parents,
-                blocks,
-            )
-            or not _test_stream_cap_same_block_dominates(
-                update,
-                spool_writes[0],
-                parents,
-                blocks,
-            )
-        ):
-            raise AssertionError("payload-hash-update-order")
-        hasher_name = update.func.value.id
-        hasher_bindings = [
-            node
-            for node in assignments
-            if (
-                (parts := _test_stream_cap_assignment_parts(node))
-                is not None
-            )
-            and parts[0] == hasher_name
-        ]
-        if len(hasher_bindings) != 1:
-            raise AssertionError("payload-hasher-binding")
-        hasher_value = _test_stream_cap_assignment_parts(
-            hasher_bindings[0]
-        )[1]
-        if (
-            not isinstance(hasher_value, ast.Call)
-            or (_ast_call_name(hasher_value) or "")
-            not in {"hashlib.sha256", "sha256"}
-            or hasher_value.args
-            or hasher_value.keywords
-        ):
-            raise AssertionError("payload-hasher-source")
-
-    allowed_chunk_loads = {
-        name: set()
-        for name in {*read_chunk_names, payload_chunk}
-    }
-    for node in ast.walk(supervisor):
-        if not isinstance(node, ast.If):
-            continue
-        guarded = None
-        if isinstance(node.test, ast.Name):
-            guarded = node.test
-        elif (
-            isinstance(node.test, ast.UnaryOp)
-            and isinstance(node.test.op, ast.Not)
-            and isinstance(node.test.operand, ast.Name)
-        ):
-            guarded = node.test.operand
-        if (
-            guarded is not None
-            and guarded.id in allowed_chunk_loads
-        ):
-            allowed_chunk_loads[guarded.id].add(guarded)
-    for items in by_role.values():
-        selected_call = _test_stream_cap_assignment_parts(
-            items[0]["node"]
-        )[1]
-        chunk_load = selected_call.args[1].args[0]
-        allowed_chunk_loads[chunk_load.id].add(chunk_load)
-    for read in (*stdout_reads, *retained_stderr_reads):
-        sink_load = owned_retention_sinks[
-            read["chunk"]
-        ].args[0]
-        allowed_chunk_loads[read["chunk"]].add(sink_load)
-    allowed_chunk_loads[payload_chunk].add(
-        spool_writes[0].args[1]
-    )
-    for update in payload_hash_updates:
-        allowed_chunk_loads[payload_chunk].add(update.args[0])
-    for chunk_name, allowed_loads in allowed_chunk_loads.items():
-        if {
-            id(node)
-            for node in _test_stream_cap_load_nodes(
-                supervisor,
-                chunk_name,
-            )
-        } != {id(node) for node in allowed_loads}:
-            raise AssertionError(
-                chunk_name + "-unowned-load-or-retention"
-            )
-
-    allowed_protected_calls = {
-        *job_owned_calls,
-        *checked_calls,
-        *(
-            call.args[1]
-            for call in checked_calls
-            if isinstance(call.args[1], ast.Call)
-        ),
-        *owned_retention_sinks.values(),
-        spool_value,
-        *spool_writes,
-        *header_ready_calls,
-        *all_header_reads,
-        *header_validations,
-        *payload_remaining_calls,
-        *all_payload_reads,
-        *payload_hash_updates,
-        *stderr_capture_calls,
-    }
-    strict_call_names = {
-        "job",
-        "expected_sequence",
-        *read_chunk_names,
-        header_name,
-        declared_name,
-        payload_chunk,
-        *retention_buffer_names,
-    }
-    for call in ast.walk(supervisor):
-        if (
-            isinstance(call, ast.Call)
-            and _test_stream_cap_names(call) & strict_call_names
-            and call not in allowed_protected_calls
-        ):
-            raise AssertionError("unowned-protected-stream-state-call")
-    if any(
-        isinstance(call, ast.Call)
-        and isinstance(call.func, ast.Attribute)
-        and _test_stream_cap_names(call.func.value)
-        & protected_state_names
-        and call not in allowed_protected_calls
-        for call in ast.walk(supervisor)
-    ):
-        raise AssertionError("protected-stream-state-method-mutation")
-    if any(
-        isinstance(node, (ast.Attribute, ast.Subscript))
-        and isinstance(node.ctx, (ast.Store, ast.Del))
-        and _test_stream_cap_names(node) & protected_state_names
-        for node in ast.walk(supervisor)
-    ):
-        raise AssertionError("protected-stream-state-direct-mutation")
-
-    forbidden_allocators = {"bytes", "bytearray", "memoryview", "list"}
-    if any(
-        isinstance(node, ast.BinOp)
-        and isinstance(node.op, (ast.LShift, ast.Mult, ast.Pow))
-        and declared_name in _test_stream_cap_names(node)
-        for node in ast.walk(supervisor)
-    ):
-        raise AssertionError("unchecked-declared-repetition")
-    allocator_aliases = {
-        target
-        for node in assignments
-        if (parts := _test_stream_cap_assignment_parts(node)) is not None
-        for target, value in (parts,)
-        if (
-            isinstance(value, ast.Name)
-            and value.id in forbidden_allocators
-        )
-        or (
-            isinstance(value, ast.Attribute)
-            and value.attr in {"read", "readinto"}
-        )
-    }
-    for call in ast.walk(supervisor):
-        if not isinstance(call, ast.Call):
-            continue
-        name = (_ast_call_name(call) or "").rsplit(".", 1)[-1]
-        if name in {"read", "readinto"}:
-            raise AssertionError("alternate-unbounded-read")
-        if name in allocator_aliases:
-            name = "aliased-allocator"
-        if name not in forbidden_allocators | {"aliased-allocator"}:
-            continue
-        if any(
-            _test_stream_cap_names(argument) & {declared_name}
-            for argument in [
-                *call.args,
-                *(keyword.value for keyword in call.keywords),
-            ]
-        ):
-            raise AssertionError("unchecked-declared-allocation")
-
-    helper_definitions = [
-        node
-        for node in tree.body
-        if isinstance(node, ast.FunctionDef) and node.name == helper_name
-    ]
-    if len(helper_definitions) != 1:
-        raise AssertionError("checked-add-helper-definition")
-    problems, fingerprint = _test_stream_cap_helper_contract(
-        helper_definitions[0], helper_name
-    )
-    if problems:
-        raise AssertionError(";".join(sorted(set(problems))))
-    helper_rebindings = []
-    for statement in tree.body:
-        if statement is helper_definitions[0]:
-            continue
-        helper_rebindings.extend(
-            _test_stream_cap_binding_nodes(
-                statement,
-                helper_name,
-            )
-        )
-    if helper_rebindings:
-        raise AssertionError("checked-add-helper-module-rebinding")
-    if _test_stream_cap_binding_nodes(supervisor, helper_name):
-        raise AssertionError("checked-add-helper-local-rebinding")
-    if _test_stream_cap_binding_nodes(tree, "len"):
-        raise AssertionError("checked-add-len-rebinding")
-    for builtin_name in ("bytearray", "bytes"):
-        if _test_stream_cap_binding_nodes(
-            supervisor,
-            builtin_name,
-        ):
-            raise AssertionError(
-                builtin_name + "-local-rebinding"
-            )
-    helper = _test_stream_cap_bind_runtime_function(
-        namespace,
-        module_code,
-        helper_definitions[0],
-        filename=filename,
-    )
-    if (
-        runtime_supervisor.__globals__ is not helper.__globals__
-        or runtime_supervisor.__globals__.get(helper_name) is not helper
-    ):
-        raise AssertionError("supervisor-live-helper-binding")
-    for builtin_name, expected_builtin in (
-        ("ValueError", builtins.ValueError),
-        ("int", builtins.int),
-        ("type", builtins.type),
-    ):
-        _test_stream_cap_require_builtin_identity(
-            helper,
-            builtin_name,
-            expected_builtin,
-        )
-    _test_stream_cap_dynamic_checked_add_contract(
-        helper,
-        (33_554_432, 33_587_232, 8_388_608, 8_396_808, 65_536),
-    )
-    return {
-        "helper_name": helper_name,
-        "helper_fingerprint": fingerprint,
-        "counters": counter_names,
-        "caps": cap_names,
-        "expected_kind": expected_kind,
-        "reachability": "three-direct-supervisor-call-sites",
-        "runtime_supervisor": runtime_supervisor.__name__,
-    }
+        raise AssertionError("module-global-authority-alias")
 
 
+# This contract models a resumable frame across descriptor reads and keeps the
+# parser on the script-local operations adapter required by the outer-process
+# import boundary.
 _STREAM_CAP_REFERENCE_SOURCE = '''\
+import errno
+import hashlib
+
 def measured_add(total, increment, cap):
     if type(total) is not int or type(increment) is not int or type(cap) is not int:
         raise ValueError("strict integer")
@@ -8942,6 +4654,8 @@ def measured_add(total, increment, cap):
 def _supervise_prepared_worker(operations, *, job, expected_sequence, deadline_ns):
     stdout_read, stdout_write = operations.make_pipe("stdout")
     stderr_read, stderr_write = operations.make_pipe("stderr")
+    job_wire = operations.encode_job(job)
+    operations.bind_request(job_wire)
     worker_kind = job["worker_kind"]
     if worker_kind == "training":
         payload_cap = 33554432
@@ -8955,1967 +4669,3543 @@ def _supervise_prepared_worker(operations, *, job, expected_sequence, deadline_n
     stderr_total = 0
     stdout_buffer = bytearray()
     stderr_retained = bytearray()
+    active_frame = False
+    declared_payload_bytes = 0
+    spool = None
+    raw_hasher = None
+    stdout_eof = False
     while operations.more_stdout():
-        stdout_chunk = operations.read_nonblocking(stdout_read, 65536)
-        if stdout_chunk:
+        try:
+            stdout_chunk = operations.read_nonblocking(stdout_read, 65536)
+        except BlockingIOError as error:
+            if error.errno != errno.EAGAIN:
+                raise
+            continue
+        if not stdout_chunk:
+            operations.finish_stdout()
+            stdout_eof = True
+            break
+        try:
             wire_total = measured_add(wire_total, len(stdout_chunk), wire_cap)
             stdout_buffer.extend(stdout_chunk)
-            if operations.header_ready(stdout_buffer):
-                header = operations.take_header(stdout_buffer)
-                operations.validate_declared_frame(header, expected_sequence)
-                declared_payload_bytes = header["bytes"]
-                spool = operations.create_private_spool(
-                    frame_index=header["frame_index"],
-                    kind=header["kind"],
-                    logical_name=header["logical_name"],
-                )
-                while operations.payload_remaining(declared_payload_bytes):
+            while True:
+                if not active_frame:
+                    if not operations.header_ready(stdout_buffer):
+                        break
+                    header = operations.take_header(stdout_buffer)
+                    operations.validate_declared_frame(header, expected_sequence)
+                    declared_payload_bytes = header["bytes"]
+                    spool = operations.create_private_spool(
+                        frame_index=header["frame_index"],
+                        kind=header["kind"],
+                        logical_name=header["logical_name"],
+                    )
+                    raw_hasher = hashlib.sha256()
+                    active_frame = True
+                while stdout_buffer and operations.payload_remaining(declared_payload_bytes):
                     payload_chunk = operations.take_payload(stdout_buffer, declared_payload_bytes)
+                    if not payload_chunk:
+                        raise RuntimeError("payload parser made no progress")
                     payload_total = measured_add(payload_total, len(payload_chunk), payload_cap)
+                    raw_hasher.update(payload_chunk)
                     operations.write_private_spool(spool, payload_chunk)
+                if operations.payload_remaining(declared_payload_bytes):
+                    break
+                operations.finish_frame(declared_payload_bytes, raw_hasher.hexdigest())
+                active_frame = False
+                declared_payload_bytes = 0
+                spool = None
+                raw_hasher = None
+                if not stdout_buffer:
+                    break
+        except Exception:
+            while operations.terminating_with_discard():
+                try:
+                    discarded_stdout_chunk = operations.read_nonblocking(stdout_read, 65536)
+                except BlockingIOError as drain_error:
+                    if drain_error.errno == errno.EAGAIN:
+                        continue
+                    break
+                except Exception:
+                    break
+                if not discarded_stdout_chunk:
+                    break
+            raise
+    if not stdout_eof:
+        raise RuntimeError("stdout ended without descriptor EOF")
     while operations.more_stderr():
-        stderr_chunk = operations.read_nonblocking(stderr_read, 65536)
-        if stderr_chunk:
-            stderr_total = measured_add(stderr_total, len(stderr_chunk), stderr_cap)
-            stderr_retained.extend(stderr_chunk)
+        try:
+            stderr_chunk = operations.read_nonblocking(stderr_read, 65536)
+        except BlockingIOError as error:
+            if error.errno != errno.EAGAIN:
+                raise
+            continue
+        if not stderr_chunk:
+            break
+        stderr_total = measured_add(stderr_total, len(stderr_chunk), stderr_cap)
+        stderr_retained.extend(stderr_chunk)
     while operations.terminating_with_discard():
-        discarded_stderr_chunk = operations.read_nonblocking(stderr_read, 65536)
+        try:
+            discarded_stderr_chunk = operations.read_nonblocking(stderr_read, 65536)
+        except BlockingIOError as error:
+            if error.errno != errno.EAGAIN:
+                raise
+            continue
         if not discarded_stderr_chunk:
             break
     return wire_total, payload_total, stderr_total
 '''
 
 
-def _test_stream_cap_namespace(
+_STREAM_CAP_MUTATION_LABELS = (
+    "missing-bind",
+    "late-bind",
+    "duplicate-bind",
+    "bound-parser-receiver",
+    "header-readiness-delayed",
+    "active-reset-per-read",
+    "unguarded-payload-loop",
+    "missing-empty-chunk-guard",
+    "finish-before-spool-write",
+    "wrong-finish-digest",
+    "missing-finish-frame",
+    "missing-finish-stdout",
+    "finish-stdout-before-eof",
+    "eagain-finalizes-stdout",
+    "second-spool-per-frame",
+    "unchecked-declared-allocation",
+    "wrong-training-payload-cap",
+    "wrong-training-wire-cap",
+    "wrong-evaluation-payload-cap",
+    "wrong-evaluation-wire-cap",
+    "wrong-stderr-cap",
+    "payload-check-after-hash",
+    "payload-check-after-spool",
+    "wire-counter-missing",
+    "payload-counter-missing",
+    "stderr-counter-missing",
+    "checked-add-helper-bypass",
+    "counter-reset-per-read",
+    "counter-alias",
+    "alternate-descriptor-read",
+    "mutable-buffer-alias",
+    "expected-sequence-mutation",
+    "whole-payload-retention",
+    "dead-training-cap-selector",
+    "operations-callable-alias",
+    "spool-before-validation",
+    "dead-validation",
+    "stdout-chunk-overwrite",
+    "spawn-before-bind",
+    "dead-bind",
+    "dead-wire-check",
+    "dead-payload-check",
+    "dead-payload-hash",
+    "dead-spool-write",
+    "dead-finish-frame",
+    "custom-descriptor-read",
+    "spool-reset-per-read",
+    "declared-reset-per-read",
+    "missing-parser-error-drain",
+    "outer-dead-training-cap-selector",
+    "dead-parser-error-drain-body",
+    "dead-progress-raise",
+    "inverted-remaining-break",
+    "swapped-active-state",
+    "wrong-declared-source",
+    "wrong-hasher-binding",
+    "wrong-encode-argument",
+    "wrong-bind-argument",
+    "wrong-header-ready-argument",
+    "wrong-take-header-argument",
+    "wrong-validate-argument",
+    "wrong-loop-remaining-argument",
+    "wrong-final-remaining-argument",
+    "wrong-take-payload-argument",
+    "wrong-create-spool-argument",
+    "wrong-write-spool-argument",
+    "wrong-wire-increment",
+    "wrong-payload-increment",
+    "wrong-stderr-increment",
+    "wrong-hash-chunk",
+    "wrong-stdout-append",
+    "stdout-append-before-check",
+    "wrong-stderr-append",
+    "stderr-append-before-check",
+    "wrong-wire-initializer",
+    "wrong-payload-initializer",
+    "wrong-stderr-initializer",
+    "wrong-worker-kind-source",
+    "inverted-active-guard",
+    "missing-header-break",
+    "nested-finish-stdout",
+    "missing-eagain-continue",
+    "wrong-stdout-eof-initializer",
+    "dead-final-eof-guard",
+    "wrong-spool-initializer",
+    "wrong-spool-reset",
+    "dead-stdout-loop",
+    "nonempty-stdout-buffer-initializer",
+    "stdout-buffer-reset-per-read",
+    "stdout-buffer-clear",
+    "nonempty-stderr-buffer-initializer",
+    "stderr-buffer-reset-per-read",
+    "early-stdout-loop-break",
+    "early-stdout-loop-continue",
+    "return-before-eof-guard",
+    "return-before-cap-selectors",
+    "early-progress-loop-break",
+    "delete-stdout-buffer-slice",
+    "assign-stdout-buffer-slice",
+    "delete-stderr-buffer-slice",
+    "assign-stderr-buffer-slice",
+    "unconditional-return-entry",
+    "raise-before-bind",
+    "continue-progress-loop",
+    "break-payload-loop",
+    "continue-payload-loop",
+    "return-payload-loop",
+    "stdout-read-extra-keyword",
+    "stdout-read-keyword-expansion",
+    "hexdigest-extra-keyword",
+    "dead-stderr-loop",
+    "return-before-stderr-loop",
+    "break-stderr-loop",
+    "bad-job-wire-rebind",
+    "job-rebind",
+    "expected-sequence-rebind",
+    "operations-rebind",
+    "measured-add-shadow",
+    "dead-encode-boolop",
+    "dead-take-header-ifexp",
+    "dead-take-payload-ifexp",
+    "dead-create-spool-boolop",
+    "bypass-wire-add-ifexp",
+    "bypass-payload-add-ifexp",
+    "bypass-stderr-add-ifexp",
+    "stderr-read-wrong-descriptor",
+    "stderr-drain-wrong-descriptor",
+    "parser-drain-read-keyword-expansion",
+    "stderr-read-extra-keyword",
+    "stderr-drain-keyword-expansion",
+    "mutate-job-call",
+    "operations-mutate-job-call",
+    "operator-setitem-job-call",
+    "mutate-expected-sequence-call",
+    "stderr-eagain-inverted",
+    "stderr-eagain-constant",
+    "parser-drain-eagain-break",
+    "parser-drain-eof-continue",
+    "processing-finally-raise",
+    "top-level-if-true-raise",
+    "top-level-assert-false",
+    "top-level-infinite-loop",
+    "parser-drain-terminating-keyword",
+    "parser-drain-eagain-inverted",
+    "parser-drain-generic-reraise",
+    "parser-drain-eof-pass",
+    "parser-drain-eof-inverted",
+    "parser-drain-read-finally-raise",
+    "processing-else-raise",
+    "mutate-stdout-buffer-call",
+    "mutate-stderr-buffer-call",
+    "supervisor-lambda-rebind",
+    "supervisor-delete",
+    "helper-lambda-rebind",
+    "errno-rebind",
+    "hashlib-rebind",
+    "bytearray-rebind",
+    "len-rebind",
+    "supervisor-decorator",
+    "operations-attribute-assign",
+    "operations-attribute-delete",
+    "operations-dict-mutation",
+    "setattr-operations-call",
+    "operations-direct-alias",
+    "operations-container-alias",
+    "for-operations-alias",
+    "for-job-alias",
+    "default-operations-capture",
+    "default-job-capture",
+    "yield-supervisor",
+    "yield-from-supervisor",
+    "dead-termination-stderr-loop",
+    "early-termination-stderr-break",
+    "termination-stderr-keyword",
+    "termination-stderr-eagain-inverted",
+    "termination-stderr-eof-inverted",
+    "wrong-stdout-pipe-role",
+    "wrong-stderr-pipe-role",
+    "stdout-pipe-extra-keyword",
+    "descriptor-read-swap",
+    "job-annotation-capture",
+    "operations-annotation-capture",
+    "job-container-store",
+    "expected-sequence-container-store",
+    "stdout-buffer-container-store",
+    "stderr-buffer-container-store",
+    "errno-attribute-set",
+    "errno-attribute-delete",
+    "errno-setattr-call",
+    "errno-direct-alias",
+    "errno-container-alias",
+)
+_STREAM_CAP_CLOSURE_MUTATION_LABELS = ()
+_STREAM_CAP_IMPLEMENTABLE_VARIANT_LABELS = ()
+_STREAM_CAP_REACHABILITY_CONTROL_LABELS = ()
+
+
+def _test_stream_cap_v2_call_name(call):
+    node = call.func
+    parts = []
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    if not isinstance(node, ast.Name):
+        return None
+    parts.append(node.id)
+    return ".".join(reversed(parts))
+
+
+def _test_stream_cap_source_contract(
     source,
     *,
-    filename="<stream-cap-synthetic>",
+    expected_kind,
+    namespace,
+    source_path=None,
 ):
-    namespace = {}
-    exec(compile(source, filename, "exec"), namespace)
-    return namespace
+    """Check the resumable, operations-owned public stream contract."""
+    del source_path
+    if expected_kind not in {"training", "evaluation"}:
+        raise AssertionError("unowned-stream-kind")
+    if type(namespace) is not dict:
+        raise AssertionError("module-namespace")
+    _test_stream_cap_reject_module_global_mutation(source)
+    compile(source, "<stream-cap-v2>", "exec")
+    tree = ast.parse(source)
+    module_parent = {}
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            module_parent[child] = node
 
+    def has_module_scope(node):
+        while node in module_parent:
+            node = module_parent[node]
+            if isinstance(
+                node,
+                (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda),
+            ):
+                return False
+        return True
 
-def _replace_once(source, before, after):
-    if source.count(before) != 1:
-        raise AssertionError((before, source.count(before)))
-    return source.replace(before, after, 1)
+    protected_global_names = {
+        "_supervise_prepared_worker",
+        "measured_add",
+        "errno",
+        "hashlib",
+        "bytearray",
+        "len",
+    }
+    if any(
+        isinstance(node, ast.Name)
+        and isinstance(node.ctx, (ast.Store, ast.Del))
+        and node.id in protected_global_names
+        and has_module_scope(node)
+        for node in ast.walk(tree)
+    ):
+        raise AssertionError("module-closure-rebinding")
+    supervisors = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "_supervise_prepared_worker"
+    ]
+    if len(supervisors) != 1:
+        raise AssertionError("supervisor-definition")
+    supervisor = supervisors[0]
+    if supervisor.decorator_list:
+        raise AssertionError("supervisor-decorator")
+    bound_supervisor = namespace.get("_supervise_prepared_worker")
+    if not (
+        inspect.isfunction(bound_supervisor)
+        and bound_supervisor.__name__ == "_supervise_prepared_worker"
+        and bound_supervisor.__qualname__ == "_supervise_prepared_worker"
+        and bound_supervisor.__globals__ is namespace
+        and bound_supervisor.__code__.co_firstlineno == supervisor.lineno
+        and namespace.get("errno") is errno
+        and namespace.get("hashlib") is hashlib
+        and "bytearray" not in namespace
+        and "len" not in namespace
+    ):
+        raise AssertionError("module-closure-binding")
+    supervisor_source = ast.get_source_segment(source, supervisor)
+    if type(supervisor_source) is not str:
+        raise AssertionError("supervisor-source")
+    positional = [argument.arg for argument in supervisor.args.args]
+    keyword_only = [argument.arg for argument in supervisor.args.kwonlyargs]
+    if positional != ["operations"] or keyword_only != [
+        "job",
+        "expected_sequence",
+        "deadline_ns",
+    ]:
+        raise AssertionError("supervisor-signature")
+    if "WorkerFrameParser" in supervisor_source or "getattr(" in supervisor_source:
+        raise AssertionError("parser-receiver")
+
+    calls = [
+        node
+        for node in ast.walk(supervisor)
+        if isinstance(node, ast.Call)
+    ]
+    by_name = collections.defaultdict(list)
+    for call in calls:
+        by_name[_test_stream_cap_v2_call_name(call)].append(call)
+    exact_counts = {
+        "operations.encode_job": 1,
+        "operations.bind_request": 1,
+        "operations.header_ready": 1,
+        "operations.take_header": 1,
+        "operations.validate_declared_frame": 1,
+        "operations.take_payload": 1,
+        "operations.create_private_spool": 1,
+        "operations.write_private_spool": 1,
+        "operations.finish_frame": 1,
+        "operations.finish_stdout": 1,
+        "hashlib.sha256": 1,
+    }
+    for name, expected in exact_counts.items():
+        if len(by_name[name]) != expected:
+            raise AssertionError("call-count:" + name)
+    if len(by_name["operations.payload_remaining"]) != 2:
+        raise AssertionError("payload-remaining-call-count")
+    if any(
+        name is not None
+        and name.endswith(
+            (
+                ".bind_request",
+                ".header_ready",
+                ".take_header",
+                ".validate_declared_frame",
+                ".payload_remaining",
+                ".take_payload",
+                ".finish_frame",
+                ".finish_stdout",
+            )
+        )
+        and not name.startswith("operations.")
+        for name in by_name
+    ):
+        raise AssertionError("parser-receiver")
+
+    encode_line = by_name["operations.encode_job"][0].lineno
+    bind_line = by_name["operations.bind_request"][0].lineno
+    read_lines = [
+        call.lineno for call in by_name["operations.read_nonblocking"]
+    ]
+    if not read_lines or not encode_line < bind_line < min(read_lines):
+        raise AssertionError("request-bind-order")
+    if supervisor_source.count("active_frame = False") != 2:
+        raise AssertionError("active-frame-reset")
+    if supervisor_source.count("active_frame = True") != 1:
+        raise AssertionError("active-frame-establishment")
+
+    payload_loops = []
+    for node in ast.walk(supervisor):
+        if not isinstance(node, ast.While) or not isinstance(
+            node.test, ast.BoolOp
+        ):
+            continue
+        names = {
+            child.id
+            for child in ast.walk(node.test)
+            if isinstance(child, ast.Name)
+        }
+        call_names = {
+            _test_stream_cap_v2_call_name(child)
+            for child in ast.walk(node.test)
+            if isinstance(child, ast.Call)
+        }
+        if (
+            "stdout_buffer" in names
+            and "operations.payload_remaining" in call_names
+        ):
+            payload_loops.append(node)
+    if len(payload_loops) != 1:
+        raise AssertionError("bounded-payload-loop")
+    payload_loop = payload_loops[0]
+    if not (
+        isinstance(payload_loop.test, ast.BoolOp)
+        and isinstance(payload_loop.test.op, ast.And)
+        and len(payload_loop.test.values) == 2
+        and isinstance(payload_loop.test.values[0], ast.Name)
+        and payload_loop.test.values[0].id == "stdout_buffer"
+        and isinstance(payload_loop.test.values[1], ast.Call)
+        and _test_stream_cap_v2_call_name(payload_loop.test.values[1])
+        == "operations.payload_remaining"
+    ):
+        raise AssertionError("bounded-payload-loop-shape")
+    loop_calls = [
+        child
+        for child in ast.walk(payload_loop)
+        if isinstance(child, ast.Call)
+    ]
+    loop_by_name = collections.defaultdict(list)
+    for call in loop_calls:
+        loop_by_name[_test_stream_cap_v2_call_name(call)].append(call)
+    for required in (
+        "operations.take_payload",
+        "measured_add",
+        "raw_hasher.update",
+        "operations.write_private_spool",
+    ):
+        if len(loop_by_name[required]) != 1:
+            raise AssertionError("payload-stage:" + required)
+    stage_lines = [
+        loop_by_name["operations.take_payload"][0].lineno,
+        loop_by_name["measured_add"][0].lineno,
+        loop_by_name["raw_hasher.update"][0].lineno,
+        loop_by_name["operations.write_private_spool"][0].lineno,
+        by_name["operations.finish_frame"][0].lineno,
+    ]
+    if stage_lines != sorted(stage_lines) or len(set(stage_lines)) != 5:
+        raise AssertionError("payload-stage-order")
+    if "if not payload_chunk:" not in supervisor_source:
+        raise AssertionError("payload-progress-guard")
+
+    parent = {}
+    for node in ast.walk(supervisor):
+        for child in ast.iter_child_nodes(node):
+            parent[child] = node
+
+    def nearest_ancestor(node, node_type):
+        while node in parent:
+            node = parent[node]
+            if isinstance(node, node_type):
+                return node
+        return None
+
+    def has_statically_dead_ancestor(node):
+        while node in parent:
+            node = parent[node]
+            if (
+                isinstance(node, (ast.If, ast.While))
+                and isinstance(node.test, ast.Constant)
+                and node.test.value is False
+            ):
+                return True
+        return False
+
+    critical_names = {
+        "measured_add",
+        "operations.bind_request",
+        "operations.finish_frame",
+        "operations.finish_stdout",
+        "operations.header_ready",
+        "operations.take_header",
+        "operations.take_payload",
+        "operations.validate_declared_frame",
+        "operations.write_private_spool",
+        "raw_hasher.update",
+    }
+    if any(
+        has_statically_dead_ancestor(call)
+        for name in critical_names
+        for call in by_name[name]
+    ):
+        raise AssertionError("dead-critical-stage")
+
+    bind_call = by_name["operations.bind_request"][0]
+    bind_statement = parent.get(bind_call)
+    encode_call = by_name["operations.encode_job"][0]
+    encode_statement = nearest_ancestor(encode_call, ast.Assign)
+    if not (
+        isinstance(bind_statement, ast.Expr)
+        and isinstance(encode_statement, ast.Assign)
+        and encode_statement.value is encode_call
+        and parent.get(bind_statement) is supervisor
+        and parent.get(encode_statement) is supervisor
+        and supervisor.body.index(encode_statement)
+        < supervisor.body.index(bind_statement)
+    ):
+        raise AssertionError("request-bind-reachability")
+    if not (
+        len(encode_call.args) == 1
+        and isinstance(encode_call.args[0], ast.Name)
+        and encode_call.args[0].id == "job"
+        and not encode_call.keywords
+        and len(bind_call.args) == 1
+        and isinstance(bind_call.args[0], ast.Name)
+        and bind_call.args[0].id == "job_wire"
+        and not bind_call.keywords
+    ):
+        raise AssertionError("request-bind-chain")
+    make_pipe_calls = by_name["operations.make_pipe"]
+    if len(make_pipe_calls) != 2:
+        raise AssertionError("pipe-construction-count")
+    observed_pipes = set()
+    for make_pipe_call in make_pipe_calls:
+        pipe_assignment = nearest_ancestor(make_pipe_call, ast.Assign)
+        if not (
+            len(make_pipe_call.args) == 1
+            and isinstance(make_pipe_call.args[0], ast.Constant)
+            and type(make_pipe_call.args[0].value) is str
+            and make_pipe_call.args[0].value in {"stdout", "stderr"}
+            and not make_pipe_call.keywords
+            and isinstance(pipe_assignment, ast.Assign)
+            and pipe_assignment.value is make_pipe_call
+            and len(pipe_assignment.targets) == 1
+            and isinstance(pipe_assignment.targets[0], ast.Tuple)
+            and len(pipe_assignment.targets[0].elts) == 2
+            and all(
+                isinstance(element, ast.Name)
+                for element in pipe_assignment.targets[0].elts
+            )
+            and parent.get(pipe_assignment) is supervisor
+        ):
+            raise AssertionError("pipe-construction-shape")
+        role = make_pipe_call.args[0].value
+        observed_pipes.add(
+            (
+                role,
+                tuple(
+                    element.id
+                    for element in pipe_assignment.targets[0].elts
+                ),
+            )
+        )
+    if observed_pipes != {
+        ("stdout", ("stdout_read", "stdout_write")),
+        ("stderr", ("stderr_read", "stderr_write")),
+    }:
+        raise AssertionError("pipe-construction-role")
+
+    protected_store_counts = {
+        "active_frame": 3,
+        "declared_payload_bytes": 3,
+        "discarded_stderr_chunk": 1,
+        "discarded_stdout_chunk": 1,
+        "header": 1,
+        "job_wire": 1,
+        "payload_cap": 2,
+        "payload_total": 2,
+        "raw_hasher": 3,
+        "spool": 3,
+        "stderr_cap": 1,
+        "stderr_chunk": 1,
+        "stderr_retained": 1,
+        "stderr_read": 1,
+        "stderr_total": 2,
+        "stderr_write": 1,
+        "stdout_buffer": 1,
+        "stdout_chunk": 1,
+        "stdout_read": 1,
+        "stdout_write": 1,
+        "wire_cap": 2,
+        "wire_total": 2,
+    }
+    for name, expected_count in protected_store_counts.items():
+        observed_count = sum(
+            1
+            for node in ast.walk(supervisor)
+            if isinstance(node, ast.Name)
+            and isinstance(node.ctx, (ast.Store, ast.Del))
+            and node.id == name
+        )
+        if observed_count != expected_count:
+            raise AssertionError("protected-binding:" + name)
+    if any(
+        isinstance(node, ast.Name)
+        and isinstance(node.ctx, (ast.Store, ast.Del))
+        and node.id
+        in {"job", "expected_sequence", "operations", "measured_add"}
+        for node in ast.walk(supervisor)
+    ):
+        raise AssertionError("authority-rebinding")
+    protected_alias_sources = {
+        "operations",
+        "job",
+        "expected_sequence",
+        "header",
+        "stdout_buffer",
+        "stderr_retained",
+    }
+
+    def loaded_names(node):
+        return {
+            child.id
+            for child in ast.walk(node)
+            if isinstance(child, ast.Name)
+            and isinstance(child.ctx, ast.Load)
+        }
+
+    for node in ast.walk(supervisor):
+        if isinstance(node, (ast.For, ast.AsyncFor)):
+            alias_source = node.iter
+        elif isinstance(node, ast.comprehension):
+            alias_source = node.iter
+        else:
+            continue
+        if loaded_names(alias_source) & protected_alias_sources:
+            raise AssertionError("authority-iteration-alias")
+    for node in ast.walk(supervisor):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            continue
+        defaults = list(node.args.defaults) + [
+            default
+            for default in node.args.kw_defaults
+            if default is not None
+        ]
+        if any(
+            loaded_names(default) & protected_alias_sources
+            for default in defaults
+        ):
+            raise AssertionError("authority-default-capture")
+        annotations = [
+            argument.annotation
+            for argument in (
+                list(node.args.posonlyargs)
+                + list(node.args.args)
+                + list(node.args.kwonlyargs)
+                + ([node.args.vararg] if node.args.vararg is not None else [])
+                + ([node.args.kwarg] if node.args.kwarg is not None else [])
+            )
+            if argument.annotation is not None
+        ]
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if node.returns is not None:
+                annotations.append(node.returns)
+        if any(
+            loaded_names(annotation) & protected_alias_sources
+            for annotation in annotations
+        ):
+            raise AssertionError("authority-annotation-capture")
+    if any(
+        isinstance(node, (ast.Yield, ast.YieldFrom))
+        for node in ast.walk(supervisor)
+    ):
+        raise AssertionError("supervisor-generator")
+
+    protected_references = {
+        "expected_sequence",
+        "header",
+        "job",
+        "payload_chunk",
+        "payload_cap",
+        "payload_total",
+        "raw_hasher",
+        "spool",
+        "stderr_cap",
+        "stderr_retained",
+        "stderr_total",
+        "stdout_buffer",
+        "wire_cap",
+        "wire_total",
+    }
+    allowed_reference_targets = {
+        "declared_payload_bytes",
+        "header",
+        "job_wire",
+        "payload_chunk",
+        "payload_total",
+        "spool",
+        "stderr_total",
+        "wire_total",
+        "worker_kind",
+    }
+    for assignment in (
+        node
+        for node in ast.walk(supervisor)
+        if isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr))
+    ):
+        targets = (
+            assignment.targets
+            if isinstance(assignment, ast.Assign)
+            else [assignment.target]
+        )
+        target_names = {
+            child.id
+            for target in targets
+            for child in ast.walk(target)
+            if isinstance(child, ast.Name)
+            and isinstance(child.ctx, ast.Store)
+        }
+        value = assignment.value
+        loaded = {
+            child.id
+            for child in ast.walk(value)
+            if isinstance(child, ast.Name)
+            and isinstance(child.ctx, ast.Load)
+        }
+        if loaded & protected_references and (
+            not target_names
+            or not target_names <= allowed_reference_targets
+        ):
+            immutable_stderr_copy = (
+                target_names
+                and isinstance(value, ast.Call)
+                and _test_stream_cap_v2_call_name(value) == "bytes"
+                and loaded & protected_references == {"stderr_retained"}
+            )
+            if not immutable_stderr_copy:
+                raise AssertionError("mutable-trusted-alias")
+        for loaded_operations in (
+            child
+            for child in ast.walk(value)
+            if isinstance(child, ast.Name)
+            and isinstance(child.ctx, ast.Load)
+            and child.id == "operations"
+        ):
+            receiver = parent.get(loaded_operations)
+            while isinstance(receiver, ast.Attribute):
+                next_receiver = parent.get(receiver)
+                if not isinstance(next_receiver, ast.Attribute):
+                    break
+                receiver = next_receiver
+            owning_call = parent.get(receiver)
+            if not (
+                isinstance(receiver, ast.Attribute)
+                and isinstance(owning_call, ast.Call)
+                and owning_call.func is receiver
+            ):
+                raise AssertionError("operations-authority-alias")
+        if isinstance(value, ast.Attribute):
+            root = value.value
+            while isinstance(root, ast.Attribute):
+                root = root.value
+            if isinstance(root, ast.Name) and root.id == "operations":
+                raise AssertionError("operations-callable-alias")
+
+    for node in ast.walk(supervisor):
+        if not isinstance(node, ast.Subscript) or not isinstance(
+            node.ctx, (ast.Store, ast.Del)
+        ):
+            continue
+        root = node.value
+        while isinstance(root, (ast.Attribute, ast.Subscript)):
+            root = root.value
+        if isinstance(root, ast.Name) and root.id in {
+            "expected_sequence",
+            "header",
+            "job",
+        }:
+            raise AssertionError("trusted-input-mutation")
+        if isinstance(root, ast.Name) and root.id in {
+            "stdout_buffer",
+            "stderr_retained",
+        }:
+            raise AssertionError("retained-buffer-slice-mutation")
+        if isinstance(root, ast.Name) and root.id in {
+            "operations",
+            "hashlib",
+            "errno",
+        }:
+            raise AssertionError("authority-subscript-mutation")
+    for node in ast.walk(supervisor):
+        if not isinstance(node, ast.Attribute) or not isinstance(
+            node.ctx, (ast.Store, ast.Del)
+        ):
+            continue
+        root = node.value
+        while isinstance(root, (ast.Attribute, ast.Subscript)):
+            root = root.value
+        if isinstance(root, ast.Name) and root.id in {
+            "operations",
+            "hashlib",
+            "errno",
+        }:
+            raise AssertionError("authority-attribute-mutation")
+    protected_argument_calls = {
+        "job": {"operations.encode_job"},
+        "expected_sequence": {
+            "operations.validate_declared_frame",
+        },
+        "header": {
+            "operations.create_private_spool",
+            "operations.validate_declared_frame",
+        },
+        "stdout_buffer": {
+            "operations.header_ready",
+            "operations.take_header",
+            "operations.take_payload",
+        },
+        "stderr_retained": set(),
+        "operations": set(),
+    }
+    for call in calls:
+        name = _test_stream_cap_v2_call_name(call)
+        if name is None:
+            continue
+        leaf = name.rsplit(".", 1)[-1]
+        if (
+            (leaf.startswith("read") or leaf.endswith("_read"))
+            and name
+            not in {
+                "operations.read_nonblocking",
+                "operations.read_private_spool",
+            }
+        ) or leaf in {"recv", "recv_into"}:
+            raise AssertionError("alternate-descriptor-read")
+        receiver = call.func
+        while isinstance(receiver, ast.Attribute):
+            receiver = receiver.value
+        if isinstance(receiver, ast.Name) and receiver.id in {
+            "expected_sequence",
+            "header",
+            "job",
+        }:
+            raise AssertionError("trusted-input-method")
+        loaded_arguments = {
+            child.id
+            for argument in (
+                list(call.args)
+                + [keyword.value for keyword in call.keywords]
+            )
+            for child in ast.walk(argument)
+            if isinstance(child, ast.Name)
+            and isinstance(child.ctx, ast.Load)
+        }
+        for protected_name, allowed_calls in protected_argument_calls.items():
+            if protected_name in loaded_arguments and name not in allowed_calls:
+                raise AssertionError(
+                    "protected-call-argument:" + protected_name
+                )
+        if (
+            isinstance(receiver, ast.Name)
+            and receiver.id in {"stdout_buffer", "stderr_retained"}
+            and name
+            not in {
+                "stdout_buffer.extend",
+                "stderr_retained.extend",
+            }
+        ):
+            raise AssertionError("retained-buffer-method")
+        if any(
+            isinstance(child, ast.Name)
+            and child.id == "payload_chunk"
+            for argument in call.args
+            for child in ast.walk(argument)
+        ) and name not in {
+            "len",
+            "measured_add",
+            "operations.write_private_spool",
+            "raw_hasher.update",
+        }:
+            raise AssertionError("unowned-payload-retention")
+
+    header_ready_call = by_name["operations.header_ready"][0]
+    header_parent = parent.get(header_ready_call)
+    header_if = parent.get(header_parent)
+    frame_open_if = parent.get(header_if)
+    if not (
+        isinstance(header_parent, ast.UnaryOp)
+        and isinstance(header_parent.op, ast.Not)
+        and isinstance(header_if, ast.If)
+        and header_if.test is header_parent
+        and len(header_if.body) == 1
+        and isinstance(header_if.body[0], ast.Break)
+        and not header_if.orelse
+        and isinstance(frame_open_if, ast.If)
+        and isinstance(frame_open_if.test, ast.UnaryOp)
+        and isinstance(frame_open_if.test.op, ast.Not)
+        and isinstance(frame_open_if.test.operand, ast.Name)
+        and frame_open_if.test.operand.id == "active_frame"
+        and header_if in frame_open_if.body
+    ):
+        raise AssertionError("header-readiness-direct-guard")
+
+    validate_call = by_name["operations.validate_declared_frame"][0]
+    validate_statement = parent.get(validate_call)
+    create_call = by_name["operations.create_private_spool"][0]
+    create_statement = nearest_ancestor(create_call, ast.Assign)
+    header_call = by_name["operations.take_header"][0]
+    header_statement = nearest_ancestor(header_call, ast.Assign)
+    if not (
+        isinstance(validate_statement, ast.Expr)
+        and isinstance(create_statement, ast.Assign)
+        and isinstance(header_statement, ast.Assign)
+        and create_statement.value is create_call
+        and header_statement.value is header_call
+        and parent.get(validate_statement) is parent.get(create_statement)
+        and parent.get(header_statement) is parent.get(validate_statement)
+    ):
+        raise AssertionError("validate-spool-control-flow")
+    declaration_block = parent[validate_statement].body
+    if not (
+        declaration_block.index(header_statement)
+        < declaration_block.index(validate_statement)
+        < declaration_block.index(create_statement)
+    ):
+        raise AssertionError("validate-before-spool")
+
+    payload_take_statement = nearest_ancestor(
+        loop_by_name["operations.take_payload"][0], ast.Assign
+    )
+    payload_add_statement = nearest_ancestor(
+        loop_by_name["measured_add"][0], ast.Assign
+    )
+    payload_hash_statement = parent.get(
+        loop_by_name["raw_hasher.update"][0]
+    )
+    payload_write_statement = parent.get(
+        loop_by_name["operations.write_private_spool"][0]
+    )
+    payload_statements = (
+        payload_take_statement,
+        payload_add_statement,
+        payload_hash_statement,
+        payload_write_statement,
+    )
+    if not (
+        isinstance(payload_take_statement, ast.Assign)
+        and isinstance(payload_add_statement, ast.Assign)
+        and payload_take_statement.value
+        is loop_by_name["operations.take_payload"][0]
+        and payload_add_statement.value is loop_by_name["measured_add"][0]
+        and isinstance(payload_hash_statement, ast.Expr)
+        and isinstance(payload_write_statement, ast.Expr)
+        and all(
+            parent.get(statement) is payload_loop
+            for statement in payload_statements
+        )
+        and [payload_loop.body.index(statement) for statement in payload_statements]
+        == sorted(
+            payload_loop.body.index(statement)
+            for statement in payload_statements
+        )
+    ):
+        raise AssertionError("payload-stage-reachability")
+
+    progress_guards = [
+        statement
+        for statement in payload_loop.body
+        if isinstance(statement, ast.If)
+        and isinstance(statement.test, ast.UnaryOp)
+        and isinstance(statement.test.op, ast.Not)
+        and isinstance(statement.test.operand, ast.Name)
+        and statement.test.operand.id == "payload_chunk"
+    ]
+    if not (
+        len(progress_guards) == 1
+        and payload_loop.body.index(progress_guards[0])
+        == payload_loop.body.index(payload_take_statement) + 1
+        and len(progress_guards[0].body) == 1
+        and isinstance(progress_guards[0].body[0], ast.Raise)
+        and progress_guards[0].body[0].exc is not None
+        and not progress_guards[0].orelse
+    ):
+        raise AssertionError("payload-progress-guard-shape")
+    if payload_loop.body != [
+        payload_take_statement,
+        progress_guards[0],
+        payload_add_statement,
+        payload_hash_statement,
+        payload_write_statement,
+    ]:
+        raise AssertionError("payload-loop-direct-body")
+
+    finish_frame_call = by_name["operations.finish_frame"][0]
+    finish_frame_statement = parent.get(finish_frame_call)
+    progress_loop = nearest_ancestor(finish_frame_call, ast.While)
+    if not (
+        isinstance(finish_frame_statement, ast.Expr)
+        and progress_loop is not None
+        and parent.get(finish_frame_statement) is progress_loop
+        and isinstance(progress_loop.test, ast.Constant)
+        and progress_loop.test.value is True
+    ):
+        raise AssertionError("finish-frame-reachability")
+    remaining_guards = [
+        statement
+        for statement in progress_loop.body
+        if isinstance(statement, ast.If)
+        and isinstance(statement.test, ast.Call)
+        and _test_stream_cap_v2_call_name(statement.test)
+        == "operations.payload_remaining"
+    ]
+    if not (
+        len(remaining_guards) == 1
+        and len(remaining_guards[0].test.args) == 1
+        and isinstance(remaining_guards[0].test.args[0], ast.Name)
+        and remaining_guards[0].test.args[0].id
+        == "declared_payload_bytes"
+        and not remaining_guards[0].test.keywords
+        and len(remaining_guards[0].body) == 1
+        and isinstance(remaining_guards[0].body[0], ast.Break)
+        and not remaining_guards[0].orelse
+        and progress_loop.body.index(remaining_guards[0]) + 1
+        == progress_loop.body.index(finish_frame_statement)
+    ):
+        raise AssertionError("payload-fragmentation-guard")
+
+    def direct_name_assignment(statement, name, value_predicate):
+        return (
+            isinstance(statement, ast.Assign)
+            and len(statement.targets) == 1
+            and isinstance(statement.targets[0], ast.Name)
+            and statement.targets[0].id == name
+            and value_predicate(statement.value)
+        )
+
+    def constant_false(value):
+        return isinstance(value, ast.Constant) and value.value is False
+
+    def constant_true(value):
+        return isinstance(value, ast.Constant) and value.value is True
+
+    def constant_zero(value):
+        return (
+            isinstance(value, ast.Constant)
+            and type(value.value) is int
+            and value.value == 0
+        )
+
+    def constant_none(value):
+        return isinstance(value, ast.Constant) and value.value is None
+
+    def declared_from_header(value):
+        return (
+            isinstance(value, ast.Subscript)
+            and isinstance(value.value, ast.Name)
+            and value.value.id == "header"
+            and isinstance(value.slice, ast.Constant)
+            and value.slice.value == "bytes"
+        )
+
+    def sha256_call(value):
+        return (
+            isinstance(value, ast.Call)
+            and _test_stream_cap_v2_call_name(value) == "hashlib.sha256"
+            and not value.args
+            and not value.keywords
+        )
+
+    def empty_bytearray_call(value):
+        return (
+            isinstance(value, ast.Call)
+            and _test_stream_cap_v2_call_name(value) == "bytearray"
+            and not value.args
+            and not value.keywords
+        )
+
+    def assignments_to(name):
+        return sorted(
+            (
+                node
+                for node in ast.walk(supervisor)
+                if isinstance(node, ast.Assign)
+                and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+                and node.targets[0].id == name
+            ),
+            key=lambda item: item.lineno,
+        )
+
+    active_by_line = assignments_to("active_frame")
+    declared_by_line = assignments_to("declared_payload_bytes")
+    hasher_by_line = assignments_to("raw_hasher")
+    spool_by_line = assignments_to("spool")
+    worker_kind_by_line = assignments_to("worker_kind")
+    declaration_owner = parent.get(validate_statement)
+    if not (
+        len(active_by_line) == 3
+        and direct_name_assignment(
+            active_by_line[0], "active_frame", constant_false
+        )
+        and parent.get(active_by_line[0]) is supervisor
+        and direct_name_assignment(
+            active_by_line[1], "active_frame", constant_true
+        )
+        and parent.get(active_by_line[1]) is declaration_owner
+        and direct_name_assignment(
+            active_by_line[2], "active_frame", constant_false
+        )
+        and parent.get(active_by_line[2]) is progress_loop
+        and progress_loop.body.index(finish_frame_statement)
+        < progress_loop.body.index(active_by_line[2])
+    ):
+        raise AssertionError("active-frame-state-machine")
+    if not (
+        len(declared_by_line) == 3
+        and direct_name_assignment(
+            declared_by_line[0], "declared_payload_bytes", constant_zero
+        )
+        and parent.get(declared_by_line[0]) is supervisor
+        and direct_name_assignment(
+            declared_by_line[1],
+            "declared_payload_bytes",
+            declared_from_header,
+        )
+        and parent.get(declared_by_line[1]) is declaration_owner
+        and declaration_block.index(validate_statement)
+        < declaration_block.index(declared_by_line[1])
+        < declaration_block.index(create_statement)
+        and direct_name_assignment(
+            declared_by_line[2], "declared_payload_bytes", constant_zero
+        )
+        and parent.get(declared_by_line[2]) is progress_loop
+        and progress_loop.body.index(finish_frame_statement)
+        < progress_loop.body.index(declared_by_line[2])
+    ):
+        raise AssertionError("declared-payload-state-machine")
+    if not (
+        len(hasher_by_line) == 3
+        and direct_name_assignment(
+            hasher_by_line[0], "raw_hasher", constant_none
+        )
+        and parent.get(hasher_by_line[0]) is supervisor
+        and direct_name_assignment(
+            hasher_by_line[1], "raw_hasher", sha256_call
+        )
+        and parent.get(hasher_by_line[1]) is declaration_owner
+        and declaration_block.index(create_statement)
+        < declaration_block.index(hasher_by_line[1])
+        < declaration_block.index(active_by_line[1])
+        and direct_name_assignment(
+            hasher_by_line[2], "raw_hasher", constant_none
+        )
+        and parent.get(hasher_by_line[2]) is progress_loop
+        and progress_loop.body.index(finish_frame_statement)
+        < progress_loop.body.index(hasher_by_line[2])
+    ):
+        raise AssertionError("raw-hasher-state-machine")
+    if not (
+        len(spool_by_line) == 3
+        and direct_name_assignment(
+            spool_by_line[0], "spool", constant_none
+        )
+        and parent.get(spool_by_line[0]) is supervisor
+        and spool_by_line[1] is create_statement
+        and parent.get(spool_by_line[1]) is declaration_owner
+        and direct_name_assignment(
+            spool_by_line[2], "spool", constant_none
+        )
+        and parent.get(spool_by_line[2]) is progress_loop
+        and progress_loop.body.index(finish_frame_statement)
+        < progress_loop.body.index(spool_by_line[2])
+    ):
+        raise AssertionError("spool-state-machine")
+    if not (
+        parent.get(frame_open_if) is progress_loop
+        and frame_open_if.body
+        == [
+            header_if,
+            header_statement,
+            validate_statement,
+            declared_by_line[1],
+            create_statement,
+            hasher_by_line[1],
+            active_by_line[1],
+        ]
+        and not frame_open_if.orelse
+    ):
+        raise AssertionError("frame-declaration-direct-body")
+    progress_tail = progress_loop.body[-1]
+    if not (
+        isinstance(progress_tail, ast.If)
+        and isinstance(progress_tail.test, ast.UnaryOp)
+        and isinstance(progress_tail.test.op, ast.Not)
+        and isinstance(progress_tail.test.operand, ast.Name)
+        and progress_tail.test.operand.id == "stdout_buffer"
+        and len(progress_tail.body) == 1
+        and isinstance(progress_tail.body[0], ast.Break)
+        and not progress_tail.orelse
+        and progress_loop.body
+        == [
+            frame_open_if,
+            payload_loop,
+            remaining_guards[0],
+            finish_frame_statement,
+            active_by_line[2],
+            declared_by_line[2],
+            spool_by_line[2],
+            hasher_by_line[2],
+            progress_tail,
+        ]
+    ):
+        raise AssertionError("progress-loop-direct-body")
+    for buffer_name in ("stdout_buffer", "stderr_retained"):
+        buffer_assignments = assignments_to(buffer_name)
+        if not (
+            len(buffer_assignments) == 1
+            and direct_name_assignment(
+                buffer_assignments[0],
+                buffer_name,
+                empty_bytearray_call,
+            )
+            and parent.get(buffer_assignments[0]) is supervisor
+        ):
+            raise AssertionError("retained-buffer-initializer:" + buffer_name)
+    for counter_name in ("wire_total", "payload_total", "stderr_total"):
+        counter_assignments = assignments_to(counter_name)
+        if not (
+            len(counter_assignments) == 2
+            and direct_name_assignment(
+                counter_assignments[0], counter_name, constant_zero
+            )
+            and parent.get(counter_assignments[0]) is supervisor
+        ):
+            raise AssertionError("counter-initializer:" + counter_name)
+    if not (
+        len(worker_kind_by_line) == 1
+        and direct_name_assignment(
+            worker_kind_by_line[0],
+            "worker_kind",
+            lambda value: (
+                isinstance(value, ast.Subscript)
+                and isinstance(value.value, ast.Name)
+                and value.value.id == "job"
+                and isinstance(value.slice, ast.Constant)
+                and value.slice.value == "worker_kind"
+            ),
+        )
+        and parent.get(worker_kind_by_line[0]) is supervisor
+        and supervisor.body.index(bind_statement)
+        < supervisor.body.index(worker_kind_by_line[0])
+    ):
+        raise AssertionError("worker-kind-source")
+
+    stdout_assignments = [
+        node
+        for node in ast.walk(supervisor)
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and node.targets[0].id == "stdout_chunk"
+    ]
+    if len(stdout_assignments) != 1:
+        raise AssertionError("stdout-read-binding")
+    stdout_value = stdout_assignments[0].value
+    if (
+        not isinstance(stdout_value, ast.Call)
+        or _test_stream_cap_v2_call_name(stdout_value)
+        != "operations.read_nonblocking"
+        or len(stdout_value.args) != 2
+        or not isinstance(stdout_value.args[0], ast.Name)
+        or stdout_value.args[0].id != "stdout_read"
+        or not isinstance(stdout_value.args[1], ast.Constant)
+        or stdout_value.args[1].value != 65_536
+        or stdout_value.keywords
+    ):
+        raise AssertionError("stdout-read-provenance")
+    for chunk_name, descriptor_name in (
+        ("stdout_chunk", "stdout_read"),
+        ("discarded_stdout_chunk", "stdout_read"),
+        ("stderr_chunk", "stderr_read"),
+        ("discarded_stderr_chunk", "stderr_read"),
+    ):
+        chunk_assignments = assignments_to(chunk_name)
+        if len(chunk_assignments) != 1:
+            raise AssertionError("descriptor-read-binding:" + chunk_name)
+        read_value = chunk_assignments[0].value
+        if not (
+            isinstance(read_value, ast.Call)
+            and _test_stream_cap_v2_call_name(read_value)
+            == "operations.read_nonblocking"
+            and len(read_value.args) == 2
+            and isinstance(read_value.args[0], ast.Name)
+            and read_value.args[0].id == descriptor_name
+            and isinstance(read_value.args[1], ast.Constant)
+            and read_value.args[1].value == 65_536
+            and not read_value.keywords
+        ):
+            raise AssertionError("descriptor-read-provenance:" + chunk_name)
+    more_stdout_calls = by_name["operations.more_stdout"]
+    stdout_read_try = nearest_ancestor(stdout_assignments[0], ast.Try)
+    if not (
+        len(more_stdout_calls) == 1
+        and not more_stdout_calls[0].args
+        and not more_stdout_calls[0].keywords
+        and isinstance(parent.get(more_stdout_calls[0]), ast.While)
+        and parent.get(more_stdout_calls[0]).test is more_stdout_calls[0]
+        and parent.get(parent.get(more_stdout_calls[0])) is supervisor
+        and isinstance(stdout_read_try, ast.Try)
+        and parent.get(stdout_read_try)
+        is parent.get(more_stdout_calls[0])
+        and stdout_read_try.body == [stdout_assignments[0]]
+        and len(stdout_read_try.handlers) == 1
+        and not stdout_read_try.orelse
+        and not stdout_read_try.finalbody
+    ):
+        raise AssertionError("stdout-read-loop-shape")
+    stdout_loop = parent.get(more_stdout_calls[0])
+    eagain_handler = stdout_read_try.handlers[0]
+    if not (
+        isinstance(eagain_handler.type, ast.Name)
+        and eagain_handler.type.id == "BlockingIOError"
+        and eagain_handler.name == "error"
+        and len(eagain_handler.body) == 2
+        and isinstance(eagain_handler.body[0], ast.If)
+        and isinstance(eagain_handler.body[1], ast.Continue)
+        and isinstance(eagain_handler.body[0].test, ast.Compare)
+        and isinstance(eagain_handler.body[0].test.left, ast.Attribute)
+        and isinstance(eagain_handler.body[0].test.left.value, ast.Name)
+        and eagain_handler.body[0].test.left.value.id == "error"
+        and eagain_handler.body[0].test.left.attr == "errno"
+        and len(eagain_handler.body[0].test.ops) == 1
+        and isinstance(eagain_handler.body[0].test.ops[0], ast.NotEq)
+        and len(eagain_handler.body[0].test.comparators) == 1
+        and _test_stream_cap_v2_call_name(
+            ast.Call(
+                func=eagain_handler.body[0].test.comparators[0],
+                args=[],
+                keywords=[],
+            )
+        )
+        == "errno.EAGAIN"
+        and len(eagain_handler.body[0].body) == 1
+        and isinstance(eagain_handler.body[0].body[0], ast.Raise)
+        and eagain_handler.body[0].body[0].exc is None
+        and not eagain_handler.body[0].orelse
+    ):
+        raise AssertionError("stdout-eagain-shape")
+
+    wire_add_call = next(
+        call
+        for call in by_name["measured_add"]
+        if isinstance(call.args[0], ast.Name)
+        and call.args[0].id == "wire_total"
+    )
+    wire_add_statement = nearest_ancestor(wire_add_call, ast.Assign)
+    processing_try = parent.get(wire_add_statement)
+    if not (
+        isinstance(wire_add_statement, ast.Assign)
+        and isinstance(processing_try, ast.Try)
+        and wire_add_statement in processing_try.body
+        and len(processing_try.handlers) == 1
+    ):
+        raise AssertionError("wire-stage-reachability")
+    stdout_extend_calls = by_name["stdout_buffer.extend"]
+    stderr_extend_calls = by_name["stderr_retained.extend"]
+    if not (
+        len(stdout_extend_calls) == 1
+        and len(stderr_extend_calls) == 1
+        and len(stdout_extend_calls[0].args) == 1
+        and isinstance(stdout_extend_calls[0].args[0], ast.Name)
+        and stdout_extend_calls[0].args[0].id == "stdout_chunk"
+        and not stdout_extend_calls[0].keywords
+        and len(stderr_extend_calls[0].args) == 1
+        and isinstance(stderr_extend_calls[0].args[0], ast.Name)
+        and stderr_extend_calls[0].args[0].id == "stderr_chunk"
+        and not stderr_extend_calls[0].keywords
+    ):
+        raise AssertionError("bounded-retention-argument")
+    stdout_extend_statement = parent.get(stdout_extend_calls[0])
+    stderr_extend_statement = parent.get(stderr_extend_calls[0])
+    stderr_add_call = next(
+        call
+        for call in by_name["measured_add"]
+        if isinstance(call.args[0], ast.Name)
+        and call.args[0].id == "stderr_total"
+    )
+    stderr_add_statement = nearest_ancestor(stderr_add_call, ast.Assign)
+    stderr_loop = parent.get(stderr_add_statement)
+    if not (
+        isinstance(stdout_extend_statement, ast.Expr)
+        and parent.get(stdout_extend_statement) is processing_try
+        and processing_try.body.index(wire_add_statement)
+        < processing_try.body.index(stdout_extend_statement)
+        and processing_try.body
+        == [wire_add_statement, stdout_extend_statement, progress_loop]
+        and isinstance(stderr_extend_statement, ast.Expr)
+        and isinstance(stderr_loop, ast.While)
+        and parent.get(stderr_extend_statement) is stderr_loop
+        and stderr_loop.body.index(stderr_add_statement)
+        < stderr_loop.body.index(stderr_extend_statement)
+    ):
+        raise AssertionError("bounded-retention-order")
+    more_stderr_calls = by_name["operations.more_stderr"]
+    stderr_chunk_assignment = assignments_to("stderr_chunk")[0]
+    stderr_read_try = nearest_ancestor(stderr_chunk_assignment, ast.Try)
+    stderr_eof_guards = [
+        statement
+        for statement in stderr_loop.body
+        if isinstance(statement, ast.If)
+        and isinstance(statement.test, ast.UnaryOp)
+        and isinstance(statement.test.op, ast.Not)
+        and isinstance(statement.test.operand, ast.Name)
+        and statement.test.operand.id == "stderr_chunk"
+    ]
+    if not (
+        len(more_stderr_calls) == 1
+        and not more_stderr_calls[0].args
+        and not more_stderr_calls[0].keywords
+        and parent.get(more_stderr_calls[0]) is stderr_loop
+        and stderr_loop.test is more_stderr_calls[0]
+        and parent.get(stderr_loop) is supervisor
+        and isinstance(stderr_read_try, ast.Try)
+        and stderr_read_try.body == [stderr_chunk_assignment]
+        and len(stderr_read_try.handlers) == 1
+        and not stderr_read_try.orelse
+        and not stderr_read_try.finalbody
+        and len(stderr_eof_guards) == 1
+        and len(stderr_eof_guards[0].body) == 1
+        and isinstance(stderr_eof_guards[0].body[0], ast.Break)
+        and not stderr_eof_guards[0].orelse
+        and stderr_loop.body
+        == [
+            stderr_read_try,
+            stderr_eof_guards[0],
+            stderr_add_statement,
+            stderr_extend_statement,
+        ]
+    ):
+        raise AssertionError("stderr-loop-direct-body")
+    stderr_eagain_handler = stderr_read_try.handlers[0]
+    if not (
+        isinstance(stderr_eagain_handler.type, ast.Name)
+        and stderr_eagain_handler.type.id == "BlockingIOError"
+        and stderr_eagain_handler.name == "error"
+        and len(stderr_eagain_handler.body) == 2
+        and isinstance(stderr_eagain_handler.body[0], ast.If)
+        and isinstance(stderr_eagain_handler.body[1], ast.Continue)
+        and isinstance(stderr_eagain_handler.body[0].test, ast.Compare)
+        and isinstance(
+            stderr_eagain_handler.body[0].test.left, ast.Attribute
+        )
+        and isinstance(
+            stderr_eagain_handler.body[0].test.left.value, ast.Name
+        )
+        and stderr_eagain_handler.body[0].test.left.value.id == "error"
+        and stderr_eagain_handler.body[0].test.left.attr == "errno"
+        and len(stderr_eagain_handler.body[0].test.ops) == 1
+        and isinstance(
+            stderr_eagain_handler.body[0].test.ops[0], ast.NotEq
+        )
+        and len(stderr_eagain_handler.body[0].test.comparators) == 1
+        and _test_stream_cap_v2_call_name(
+            ast.Call(
+                func=stderr_eagain_handler.body[0].test.comparators[0],
+                args=[],
+                keywords=[],
+            )
+        )
+        == "errno.EAGAIN"
+        and len(stderr_eagain_handler.body[0].body) == 1
+        and isinstance(stderr_eagain_handler.body[0].body[0], ast.Raise)
+        and stderr_eagain_handler.body[0].body[0].exc is None
+        and not stderr_eagain_handler.body[0].orelse
+    ):
+        raise AssertionError("stderr-eagain-shape")
+    error_handler = processing_try.handlers[0]
+    if not (
+        not processing_try.orelse
+        and not processing_try.finalbody
+        and isinstance(error_handler.type, ast.Name)
+        and error_handler.type.id == "Exception"
+        and len(error_handler.body) == 2
+        and isinstance(error_handler.body[0], ast.While)
+        and isinstance(error_handler.body[1], ast.Raise)
+        and error_handler.body[1].exc is None
+        and isinstance(error_handler.body[0].test, ast.Call)
+        and _test_stream_cap_v2_call_name(error_handler.body[0].test)
+        == "operations.terminating_with_discard"
+        and not error_handler.body[0].test.args
+        and not error_handler.body[0].test.keywords
+    ):
+        raise AssertionError("parser-error-drain-shape")
+    drain_loop = error_handler.body[0]
+    if len(drain_loop.body) != 2:
+        raise AssertionError("parser-error-drain-body")
+    drain_try = drain_loop.body[0]
+    drain_eof_if = drain_loop.body[1]
+    if not (
+        isinstance(drain_try, ast.Try)
+        and isinstance(drain_eof_if, ast.If)
+        and len(drain_try.body) == 1
+        and isinstance(drain_try.body[0], ast.Assign)
+        and len(drain_try.handlers) == 2
+        and not drain_try.orelse
+        and not drain_try.finalbody
+        and isinstance(drain_eof_if.test, ast.UnaryOp)
+        and isinstance(drain_eof_if.test.op, ast.Not)
+        and isinstance(drain_eof_if.test.operand, ast.Name)
+        and drain_eof_if.test.operand.id == "discarded_stdout_chunk"
+        and len(drain_eof_if.body) == 1
+        and isinstance(drain_eof_if.body[0], ast.Break)
+        and not drain_eof_if.orelse
+    ):
+        raise AssertionError("parser-error-drain-body")
+    drain_eagain_handler = drain_try.handlers[0]
+    drain_generic_handler = drain_try.handlers[1]
+    if not (
+        isinstance(drain_eagain_handler.type, ast.Name)
+        and drain_eagain_handler.type.id == "BlockingIOError"
+        and drain_eagain_handler.name == "drain_error"
+        and len(drain_eagain_handler.body) == 2
+        and isinstance(drain_eagain_handler.body[0], ast.If)
+        and isinstance(drain_eagain_handler.body[1], ast.Break)
+        and isinstance(drain_eagain_handler.body[0].test, ast.Compare)
+        and isinstance(
+            drain_eagain_handler.body[0].test.left, ast.Attribute
+        )
+        and isinstance(
+            drain_eagain_handler.body[0].test.left.value, ast.Name
+        )
+        and drain_eagain_handler.body[0].test.left.value.id
+        == "drain_error"
+        and drain_eagain_handler.body[0].test.left.attr == "errno"
+        and len(drain_eagain_handler.body[0].test.ops) == 1
+        and isinstance(drain_eagain_handler.body[0].test.ops[0], ast.Eq)
+        and len(drain_eagain_handler.body[0].test.comparators) == 1
+        and _test_stream_cap_v2_call_name(
+            ast.Call(
+                func=drain_eagain_handler.body[0].test.comparators[0],
+                args=[],
+                keywords=[],
+            )
+        )
+        == "errno.EAGAIN"
+        and len(drain_eagain_handler.body[0].body) == 1
+        and isinstance(
+            drain_eagain_handler.body[0].body[0], ast.Continue
+        )
+        and not drain_eagain_handler.body[0].orelse
+        and isinstance(drain_generic_handler.type, ast.Name)
+        and drain_generic_handler.type.id == "Exception"
+        and len(drain_generic_handler.body) == 1
+        and isinstance(drain_generic_handler.body[0], ast.Break)
+    ):
+        raise AssertionError("parser-error-drain-handlers")
+    drain_reads = [
+        call
+        for call in ast.walk(error_handler.body[0])
+        if isinstance(call, ast.Call)
+        and _test_stream_cap_v2_call_name(call)
+        == "operations.read_nonblocking"
+    ]
+    if (
+        len(drain_reads) != 1
+        or len(drain_reads[0].args) != 2
+        or not isinstance(drain_reads[0].args[0], ast.Name)
+        or drain_reads[0].args[0].id != "stdout_read"
+        or not isinstance(drain_reads[0].args[1], ast.Constant)
+        or drain_reads[0].args[1].value != 65_536
+        or nearest_ancestor(drain_reads[0], ast.Assign)
+        is not drain_try.body[0]
+        or drain_reads[0].keywords
+    ):
+        raise AssertionError("parser-error-drain-read")
+
+    termination_calls = by_name["operations.terminating_with_discard"]
+    termination_stderr_loops = [
+        nearest_ancestor(call, ast.While)
+        for call in termination_calls
+        if parent.get(nearest_ancestor(call, ast.While)) is supervisor
+    ]
+    if len(termination_calls) != 2 or len(termination_stderr_loops) != 1:
+        raise AssertionError("termination-stderr-loop-count")
+    termination_stderr_loop = termination_stderr_loops[0]
+    termination_stderr_call = termination_stderr_loop.test
+    discarded_stderr_assignment = assignments_to(
+        "discarded_stderr_chunk"
+    )[0]
+    termination_stderr_try = nearest_ancestor(
+        discarded_stderr_assignment, ast.Try
+    )
+    termination_stderr_eof = termination_stderr_loop.body[1]
+    if not (
+        isinstance(termination_stderr_call, ast.Call)
+        and _test_stream_cap_v2_call_name(termination_stderr_call)
+        == "operations.terminating_with_discard"
+        and not termination_stderr_call.args
+        and not termination_stderr_call.keywords
+        and len(termination_stderr_loop.body) == 2
+        and isinstance(termination_stderr_try, ast.Try)
+        and termination_stderr_try.body
+        == [discarded_stderr_assignment]
+        and len(termination_stderr_try.handlers) == 1
+        and not termination_stderr_try.orelse
+        and not termination_stderr_try.finalbody
+        and isinstance(termination_stderr_eof, ast.If)
+        and isinstance(termination_stderr_eof.test, ast.UnaryOp)
+        and isinstance(termination_stderr_eof.test.op, ast.Not)
+        and isinstance(termination_stderr_eof.test.operand, ast.Name)
+        and termination_stderr_eof.test.operand.id
+        == "discarded_stderr_chunk"
+        and len(termination_stderr_eof.body) == 1
+        and isinstance(termination_stderr_eof.body[0], ast.Break)
+        and not termination_stderr_eof.orelse
+        and termination_stderr_loop.body
+        == [termination_stderr_try, termination_stderr_eof]
+    ):
+        raise AssertionError("termination-stderr-loop-shape")
+    termination_stderr_handler = termination_stderr_try.handlers[0]
+    if not (
+        isinstance(termination_stderr_handler.type, ast.Name)
+        and termination_stderr_handler.type.id == "BlockingIOError"
+        and termination_stderr_handler.name == "error"
+        and len(termination_stderr_handler.body) == 2
+        and isinstance(termination_stderr_handler.body[0], ast.If)
+        and isinstance(termination_stderr_handler.body[1], ast.Continue)
+        and isinstance(
+            termination_stderr_handler.body[0].test, ast.Compare
+        )
+        and isinstance(
+            termination_stderr_handler.body[0].test.left, ast.Attribute
+        )
+        and isinstance(
+            termination_stderr_handler.body[0].test.left.value, ast.Name
+        )
+        and termination_stderr_handler.body[0].test.left.value.id == "error"
+        and termination_stderr_handler.body[0].test.left.attr == "errno"
+        and len(termination_stderr_handler.body[0].test.ops) == 1
+        and isinstance(
+            termination_stderr_handler.body[0].test.ops[0], ast.NotEq
+        )
+        and len(
+            termination_stderr_handler.body[0].test.comparators
+        )
+        == 1
+        and _test_stream_cap_v2_call_name(
+            ast.Call(
+                func=(
+                    termination_stderr_handler.body[0]
+                    .test.comparators[0]
+                ),
+                args=[],
+                keywords=[],
+            )
+        )
+        == "errno.EAGAIN"
+        and len(termination_stderr_handler.body[0].body) == 1
+        and isinstance(
+            termination_stderr_handler.body[0].body[0], ast.Raise
+        )
+        and termination_stderr_handler.body[0].body[0].exc is None
+        and not termination_stderr_handler.body[0].orelse
+    ):
+        raise AssertionError("termination-stderr-handler")
+
+    finish_stdout = by_name["operations.finish_stdout"][0]
+    finish_stdout_statement = parent.get(finish_stdout)
+    stdout_eof_if = parent.get(finish_stdout_statement)
+    stdout_eof_assignments = assignments_to("stdout_eof")
+    if not (
+        isinstance(finish_stdout_statement, ast.Expr)
+        and isinstance(stdout_eof_if, ast.If)
+        and parent.get(stdout_eof_if) is stdout_loop
+        and isinstance(stdout_eof_if.test, ast.UnaryOp)
+        and isinstance(stdout_eof_if.test.op, ast.Not)
+        and isinstance(stdout_eof_if.test.operand, ast.Name)
+        and stdout_eof_if.test.operand.id == "stdout_chunk"
+        and len(stdout_eof_if.body) == 3
+        and stdout_eof_if.body[0] is finish_stdout_statement
+        and len(stdout_eof_assignments) == 2
+        and direct_name_assignment(
+            stdout_eof_assignments[0], "stdout_eof", constant_false
+        )
+        and parent.get(stdout_eof_assignments[0]) is supervisor
+        and direct_name_assignment(
+            stdout_eof_assignments[1], "stdout_eof", constant_true
+        )
+        and stdout_eof_if.body[1] is stdout_eof_assignments[1]
+        and isinstance(stdout_eof_if.body[2], ast.Break)
+        and not stdout_eof_if.orelse
+    ):
+        raise AssertionError("stdout-finalization-origin")
+    if stdout_loop.body != [
+        stdout_read_try,
+        stdout_eof_if,
+        processing_try,
+    ]:
+        raise AssertionError("stdout-loop-direct-body")
+    final_eof_guards = [
+        statement
+        for statement in supervisor.body
+        if isinstance(statement, ast.If)
+        and isinstance(statement.test, ast.UnaryOp)
+        and isinstance(statement.test.op, ast.Not)
+        and isinstance(statement.test.operand, ast.Name)
+        and statement.test.operand.id == "stdout_eof"
+    ]
+    if not (
+        len(final_eof_guards) == 1
+        and supervisor.body.index(stdout_loop)
+        < supervisor.body.index(final_eof_guards[0])
+        and len(final_eof_guards[0].body) == 1
+        and isinstance(final_eof_guards[0].body[0], ast.Raise)
+        and final_eof_guards[0].body[0].exc is not None
+        and not final_eof_guards[0].orelse
+    ):
+        raise AssertionError("stdout-eof-latch")
+    supervisor_returns = [
+        node for node in ast.walk(supervisor) if isinstance(node, ast.Return)
+    ]
+
+    def statically_unconditional_barrier(statement):
+        if isinstance(
+            statement, (ast.Return, ast.Raise, ast.Break, ast.Continue)
+        ):
+            return True
+        if (
+            isinstance(statement, ast.Assert)
+            and isinstance(statement.test, ast.Constant)
+            and not bool(statement.test.value)
+        ):
+            return True
+        if (
+            isinstance(statement, ast.If)
+            and isinstance(statement.test, ast.Constant)
+            and bool(statement.test.value)
+        ):
+            return any(
+                statically_unconditional_barrier(child)
+                for child in statement.body
+            )
+        if (
+            isinstance(statement, ast.While)
+            and isinstance(statement.test, ast.Constant)
+            and bool(statement.test.value)
+            and not any(
+                isinstance(child, ast.Break)
+                for child in ast.walk(statement)
+            )
+        ):
+            return True
+        return False
+
+    if any(
+        statically_unconditional_barrier(statement)
+        for statement in supervisor.body[:-1]
+    ):
+        raise AssertionError("top-level-unconditional-barrier")
+    if any(isinstance(statement, ast.Raise) for statement in supervisor.body):
+        raise AssertionError("top-level-early-raise")
+    if not (
+        len(supervisor_returns) == 1
+        and supervisor.body[-1] is supervisor_returns[0]
+        and isinstance(supervisor_returns[0].value, ast.Tuple)
+        and [
+            element.id
+            for element in supervisor_returns[0].value.elts
+            if isinstance(element, ast.Name)
+        ]
+        == ["wire_total", "payload_total", "stderr_total"]
+        and all(
+            isinstance(element, ast.Name)
+            for element in supervisor_returns[0].value.elts
+        )
+    ):
+        raise AssertionError("supervisor-final-return")
+    for call in calls:
+        name = _test_stream_cap_v2_call_name(call)
+        if name in {
+            "operations.spawn_prepared_worker",
+            "operations.write_nonblocking",
+        } and call.lineno < bind_line:
+            raise AssertionError("request-bind-before-worker-io")
+    for handler in (
+        node
+        for node in ast.walk(supervisor)
+        if isinstance(node, ast.ExceptHandler)
+    ):
+        if any(
+            _test_stream_cap_v2_call_name(node) == "operations.finish_stdout"
+            for node in ast.walk(handler)
+            if isinstance(node, ast.Call)
+        ):
+            raise AssertionError("eagain-finalization")
+
+    literals = {
+        33_554_432,
+        33_587_232,
+        8_388_608,
+        8_396_808,
+        65_536,
+    }
+    observed_literals = {
+        node.value
+        for node in ast.walk(supervisor)
+        if isinstance(node, ast.Constant) and type(node.value) is int
+    }
+    if not literals <= observed_literals:
+        raise AssertionError("stream-cap-literals")
+    for assignment in (
+        "payload_cap = 33554432",
+        "wire_cap = 33587232",
+        "payload_cap = 8388608",
+        "wire_cap = 8396808",
+        "stderr_cap = 65536",
+    ):
+        if supervisor_source.count(assignment) != 1:
+            raise AssertionError("stream-cap-assignment:" + assignment)
+    cap_bindings = set()
+    for assignment in (
+        node
+        for node in ast.walk(supervisor)
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and node.targets[0].id
+        in {"payload_cap", "wire_cap", "stderr_cap"}
+    ):
+        if not isinstance(assignment.value, ast.Constant) or type(
+            assignment.value.value
+        ) is not int:
+            raise AssertionError("stream-cap-value")
+        owner = None
+        condition = nearest_ancestor(assignment, ast.If)
+        if condition is not None and isinstance(condition.test, ast.Compare):
+            comparison = condition.test
+            if (
+                isinstance(comparison.left, ast.Name)
+                and comparison.left.id == "worker_kind"
+                and len(comparison.ops) == 1
+                and isinstance(comparison.ops[0], ast.Eq)
+                and len(comparison.comparators) == 1
+                and isinstance(comparison.comparators[0], ast.Constant)
+                and type(comparison.comparators[0].value) is str
+            ):
+                owner = comparison.comparators[0].value
+        if assignment.targets[0].id == "stderr_cap":
+            if parent.get(assignment) is not supervisor:
+                raise AssertionError("stream-cap-reachability")
+        elif condition is None or parent.get(condition) is not supervisor:
+            raise AssertionError("stream-cap-reachability")
+        cap_bindings.add(
+            (
+                assignment.targets[0].id,
+                assignment.value.value,
+                owner,
+            )
+        )
+    if cap_bindings != {
+        ("payload_cap", 33_554_432, "training"),
+        ("wire_cap", 33_587_232, "training"),
+        ("payload_cap", 8_388_608, "evaluation"),
+        ("wire_cap", 8_396_808, "evaluation"),
+        ("stderr_cap", 65_536, None),
+    }:
+        raise AssertionError("stream-cap-owner")
+    measured_calls = by_name["measured_add"]
+    if len(measured_calls) != 3:
+        raise AssertionError("checked-add-count")
+    roles = set()
+    expected_increment_chunks = {
+        "wire_total": "stdout_chunk",
+        "payload_total": "payload_chunk",
+        "stderr_total": "stderr_chunk",
+    }
+    for call in measured_calls:
+        if len(call.args) != 3 or not all(
+            isinstance(argument, ast.Name)
+            for argument in (call.args[0], call.args[2])
+        ):
+            raise AssertionError("checked-add-shape")
+        increment = call.args[1]
+        expected_chunk = expected_increment_chunks.get(call.args[0].id)
+        if not (
+            not call.keywords
+            and expected_chunk is not None
+            and isinstance(increment, ast.Call)
+            and _test_stream_cap_v2_call_name(increment) == "len"
+            and len(increment.args) == 1
+            and isinstance(increment.args[0], ast.Name)
+            and increment.args[0].id == expected_chunk
+            and not increment.keywords
+        ):
+            raise AssertionError("checked-add-increment")
+        roles.add((call.args[0].id, call.args[2].id))
+        assignment = nearest_ancestor(call, ast.Assign)
+        if (
+            assignment is None
+            or len(assignment.targets) != 1
+            or not isinstance(assignment.targets[0], ast.Name)
+            or assignment.targets[0].id != call.args[0].id
+            or assignment.value is not call
+        ):
+            raise AssertionError("checked-add-assignment")
+    if roles != {
+        ("wire_total", "wire_cap"),
+        ("payload_total", "payload_cap"),
+        ("stderr_total", "stderr_cap"),
+    }:
+        raise AssertionError("checked-add-role")
+    for call in by_name["operations.read_nonblocking"]:
+        if (
+            len(call.args) != 2
+            or not isinstance(call.args[1], ast.Constant)
+            or call.args[1].value != 65_536
+            or call.keywords
+        ):
+            raise AssertionError("read-bound")
+    declared_allocations = []
+    for call in calls:
+        name = _test_stream_cap_v2_call_name(call)
+        if name not in {
+            "array",
+            "bytearray",
+            "bytes",
+            "list",
+            "memoryview",
+            "range",
+        }:
+            continue
+        if any(
+            isinstance(child, ast.Name)
+            and child.id == "declared_payload_bytes"
+            for child in ast.walk(call)
+        ):
+            declared_allocations.append(call)
+    if declared_allocations:
+        raise AssertionError("unchecked-declared-allocation")
+    if any(
+        isinstance(node, ast.BinOp)
+        and any(
+            isinstance(child, ast.Name)
+            and child.id == "declared_payload_bytes"
+            for child in ast.walk(node)
+        )
+        for node in ast.walk(supervisor)
+    ):
+        raise AssertionError("unchecked-declared-expression")
+    finish_call = by_name["operations.finish_frame"][0]
+    if (
+        len(finish_call.args) != 2
+        or not isinstance(finish_call.args[0], ast.Name)
+        or finish_call.args[0].id != "declared_payload_bytes"
+        or not isinstance(finish_call.args[1], ast.Call)
+        or _test_stream_cap_v2_call_name(finish_call.args[1])
+        != "raw_hasher.hexdigest"
+        or finish_call.args[1].args
+        or finish_call.args[1].keywords
+        or finish_call.keywords
+    ):
+        raise AssertionError("finish-frame-raw-digest")
+
+    def exact_name_arguments(call, expected_names):
+        return (
+            len(call.args) == len(expected_names)
+            and not call.keywords
+            and all(
+                isinstance(argument, ast.Name)
+                and argument.id == expected_name
+                for argument, expected_name in zip(
+                    call.args, expected_names
+                )
+            )
+        )
+
+    def header_field(value, field):
+        return (
+            isinstance(value, ast.Subscript)
+            and isinstance(value.value, ast.Name)
+            and value.value.id == "header"
+            and isinstance(value.slice, ast.Constant)
+            and value.slice.value == field
+        )
+
+    loop_remaining_call = loop_by_name["operations.payload_remaining"][0]
+    final_remaining_call = remaining_guards[0].test
+    api_shapes = (
+        (by_name["operations.header_ready"][0], ("stdout_buffer",)),
+        (by_name["operations.take_header"][0], ("stdout_buffer",)),
+        (
+            by_name["operations.validate_declared_frame"][0],
+            ("header", "expected_sequence"),
+        ),
+        (loop_remaining_call, ("declared_payload_bytes",)),
+        (final_remaining_call, ("declared_payload_bytes",)),
+        (
+            by_name["operations.take_payload"][0],
+            ("stdout_buffer", "declared_payload_bytes"),
+        ),
+        (
+            by_name["operations.write_private_spool"][0],
+            ("spool", "payload_chunk"),
+        ),
+        (by_name["operations.finish_stdout"][0], ()),
+    )
+    if any(
+        not exact_name_arguments(call, arguments)
+        for call, arguments in api_shapes
+    ):
+        raise AssertionError("operations-api-arguments")
+    if not exact_name_arguments(
+        loop_by_name["raw_hasher.update"][0], ("payload_chunk",)
+    ):
+        raise AssertionError("payload-hash-argument")
+    create_keywords = by_name["operations.create_private_spool"][0].keywords
+    if not (
+        not create_call.args
+        and len(create_keywords) == 3
+        and {keyword.arg for keyword in create_keywords}
+        == {"frame_index", "kind", "logical_name"}
+        and all(
+            header_field(keyword.value, keyword.arg)
+            for keyword in create_keywords
+        )
+    ):
+        raise AssertionError("spool-creation-arguments")
+    helpers = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "measured_add"
+    ]
+    reference_helpers = [
+        node
+        for node in ast.parse(_STREAM_CAP_REFERENCE_SOURCE).body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "measured_add"
+    ]
+    if (
+        len(helpers) != 1
+        or len(reference_helpers) != 1
+        or ast.dump(helpers[0], include_attributes=False)
+        != ast.dump(reference_helpers[0], include_attributes=False)
+    ):
+        raise AssertionError("checked-add-helper")
+    bound_helper = namespace.get("measured_add")
+    if not (
+        inspect.isfunction(bound_helper)
+        and bound_helper.__name__ == "measured_add"
+        and bound_helper.__qualname__ == "measured_add"
+        and bound_helper.__globals__ is namespace
+        and bound_helper.__code__.co_firstlineno == helpers[0].lineno
+    ):
+        raise AssertionError("checked-add-helper-binding")
+    helper_dump = ast.dump(
+        helpers[0], annotate_fields=True, include_attributes=False
+    )
+    return {
+        "helper_fingerprint": hashlib.sha256(
+            helper_dump.encode("ascii")
+        ).hexdigest(),
+        "reachability": "resumable-operations-parser-v2",
+        "worker_kind": expected_kind,
+    }
 
 
 def _test_stream_cap_mutants():
     reference = _STREAM_CAP_REFERENCE_SOURCE
+    replacements = (
+        ("missing-bind", "    operations.bind_request(job_wire)\n", ""),
+        (
+            "late-bind",
+            "    operations.bind_request(job_wire)\n",
+            "    late_bind = job_wire\n",
+        ),
+        (
+            "duplicate-bind",
+            "    operations.bind_request(job_wire)\n",
+            "    operations.bind_request(job_wire)\n    operations.bind_request(job_wire)\n",
+        ),
+        (
+            "bound-parser-receiver",
+            "operations.header_ready(stdout_buffer)",
+            "frame_parser.header_ready(stdout_buffer)",
+        ),
+        (
+            "header-readiness-delayed",
+            "if not operations.header_ready(stdout_buffer):",
+            "if len(stdout_buffer) < 65536 or not operations.header_ready(stdout_buffer):",
+        ),
+        (
+            "active-reset-per-read",
+            "        try:\n            stdout_chunk",
+            "        active_frame = False\n        try:\n            stdout_chunk",
+        ),
+        (
+            "unguarded-payload-loop",
+            "while stdout_buffer and operations.payload_remaining(declared_payload_bytes):",
+            "while operations.payload_remaining(declared_payload_bytes):",
+        ),
+        (
+            "missing-empty-chunk-guard",
+            "                    if not payload_chunk:\n                        raise RuntimeError(\"payload parser made no progress\")\n",
+            "",
+        ),
+        (
+            "finish-before-spool-write",
+            "                    operations.write_private_spool(spool, payload_chunk)\n",
+            "                    operations.finish_frame(declared_payload_bytes, raw_hasher.hexdigest())\n                    operations.write_private_spool(spool, payload_chunk)\n",
+        ),
+        (
+            "wrong-finish-digest",
+            "raw_hasher.hexdigest())",
+            "header[\"raw_sha256\"])",
+        ),
+        (
+            "missing-finish-frame",
+            "                operations.finish_frame(declared_payload_bytes, raw_hasher.hexdigest())\n",
+            "",
+        ),
+        (
+            "missing-finish-stdout",
+            "            operations.finish_stdout()\n",
+            "",
+        ),
+        (
+            "finish-stdout-before-eof",
+            "        try:\n            stdout_chunk",
+            "        operations.finish_stdout()\n        try:\n            stdout_chunk",
+        ),
+        (
+            "eagain-finalizes-stdout",
+            "    while operations.more_stdout():\n        try:\n            stdout_chunk = operations.read_nonblocking(stdout_read, 65536)\n        except BlockingIOError as error:\n            if error.errno",
+            "    while operations.more_stdout():\n        try:\n            stdout_chunk = operations.read_nonblocking(stdout_read, 65536)\n        except BlockingIOError as error:\n            operations.finish_stdout()\n            if error.errno",
+        ),
+        (
+            "second-spool-per-frame",
+            "                    raw_hasher = hashlib.sha256()\n",
+            "                    duplicate_spool = operations.create_private_spool(frame_index=header[\"frame_index\"], kind=header[\"kind\"], logical_name=header[\"logical_name\"])\n                    raw_hasher = hashlib.sha256()\n",
+        ),
+        (
+            "unchecked-declared-allocation",
+            "                    raw_hasher = hashlib.sha256()\n",
+            "                    payload_copy = bytearray(declared_payload_bytes)\n                    raw_hasher = hashlib.sha256()\n",
+        ),
+        ("wrong-training-payload-cap", "payload_cap = 33554432", "payload_cap = 33554431"),
+        ("wrong-training-wire-cap", "wire_cap = 33587232", "wire_cap = 33587231"),
+        ("wrong-evaluation-payload-cap", "payload_cap = 8388608", "payload_cap = 8388607"),
+        ("wrong-evaluation-wire-cap", "wire_cap = 8396808", "wire_cap = 8396807"),
+        ("wrong-stderr-cap", "stderr_cap = 65536", "stderr_cap = 65535"),
+        (
+            "payload-check-after-hash",
+            "                    payload_total = measured_add(payload_total, len(payload_chunk), payload_cap)\n                    raw_hasher.update(payload_chunk)",
+            "                    raw_hasher.update(payload_chunk)\n                    payload_total = measured_add(payload_total, len(payload_chunk), payload_cap)",
+        ),
+        (
+            "payload-check-after-spool",
+            "                    payload_total = measured_add(payload_total, len(payload_chunk), payload_cap)\n                    raw_hasher.update(payload_chunk)\n                    operations.write_private_spool(spool, payload_chunk)",
+            "                    raw_hasher.update(payload_chunk)\n                    operations.write_private_spool(spool, payload_chunk)\n                    payload_total = measured_add(payload_total, len(payload_chunk), payload_cap)",
+        ),
+        (
+            "wire-counter-missing",
+            "            wire_total = measured_add(wire_total, len(stdout_chunk), wire_cap)\n",
+            "",
+        ),
+        (
+            "payload-counter-missing",
+            "                    payload_total = measured_add(payload_total, len(payload_chunk), payload_cap)\n",
+            "",
+        ),
+        (
+            "stderr-counter-missing",
+            "        stderr_total = measured_add(stderr_total, len(stderr_chunk), stderr_cap)\n",
+            "",
+        ),
+        (
+            "checked-add-helper-bypass",
+            "    prospective = total + increment\n",
+            "    prospective = total\n",
+        ),
+        (
+            "counter-reset-per-read",
+            "            stdout_buffer.extend(stdout_chunk)\n",
+            "            stdout_buffer.extend(stdout_chunk)\n            wire_total = 0\n",
+        ),
+        (
+            "counter-alias",
+            "            stdout_buffer.extend(stdout_chunk)\n",
+            "            stdout_buffer.extend(stdout_chunk)\n            counter_alias = wire_total\n",
+        ),
+        (
+            "alternate-descriptor-read",
+            "    while operations.more_stdout():\n",
+            "    while operations.more_stdout():\n        alternate_chunk = os.read(stdout_read, 65536)\n",
+        ),
+        (
+            "mutable-buffer-alias",
+            "    stdout_buffer = bytearray()\n",
+            "    stdout_buffer = bytearray()\n    retained_alias = stdout_buffer\n",
+        ),
+        (
+            "expected-sequence-mutation",
+            "    operations.bind_request(job_wire)\n",
+            "    operations.bind_request(job_wire)\n    expected_sequence.append({})\n",
+        ),
+        (
+            "whole-payload-retention",
+            "                    payload_chunk = operations.take_payload(stdout_buffer, declared_payload_bytes)\n",
+            "                    payload_chunk = operations.take_payload(stdout_buffer, declared_payload_bytes)\n                    whole_payload.extend(payload_chunk)\n",
+        ),
+        (
+            "dead-training-cap-selector",
+            "    if worker_kind == \"training\":\n",
+            "    if False and worker_kind == \"training\":\n",
+        ),
+        (
+            "operations-callable-alias",
+            "    operations.bind_request(job_wire)\n",
+            "    operations.bind_request(job_wire)\n    reader = operations.read_nonblocking\n",
+        ),
+        (
+            "spool-before-validation",
+            "                    operations.validate_declared_frame(header, expected_sequence)\n                    declared_payload_bytes = header[\"bytes\"]\n                    spool = operations.create_private_spool(\n                        frame_index=header[\"frame_index\"],\n                        kind=header[\"kind\"],\n                        logical_name=header[\"logical_name\"],\n                    )\n",
+            "                    declared_payload_bytes = header[\"bytes\"]\n                    spool = operations.create_private_spool(\n                        frame_index=header[\"frame_index\"],\n                        kind=header[\"kind\"],\n                        logical_name=header[\"logical_name\"],\n                    )\n                    operations.validate_declared_frame(header, expected_sequence)\n",
+        ),
+        (
+            "dead-validation",
+            "                    operations.validate_declared_frame(header, expected_sequence)\n",
+            "                    if False:\n                        operations.validate_declared_frame(header, expected_sequence)\n",
+        ),
+        (
+            "stdout-chunk-overwrite",
+            "            stdout_chunk = operations.read_nonblocking(stdout_read, 65536)\n",
+            "            stdout_chunk = operations.read_nonblocking(stdout_read, 65536)\n            stdout_chunk = b\"\"\n",
+        ),
+        (
+            "spawn-before-bind",
+            "    operations.bind_request(job_wire)\n",
+            "    operations.spawn_prepared_worker()\n    operations.bind_request(job_wire)\n",
+        ),
+        (
+            "dead-bind",
+            "    operations.bind_request(job_wire)\n",
+            "    if False:\n        operations.bind_request(job_wire)\n",
+        ),
+        (
+            "dead-wire-check",
+            "            wire_total = measured_add(wire_total, len(stdout_chunk), wire_cap)\n",
+            "            if False:\n                wire_total = measured_add(wire_total, len(stdout_chunk), wire_cap)\n",
+        ),
+        (
+            "dead-payload-check",
+            "                    payload_total = measured_add(payload_total, len(payload_chunk), payload_cap)\n",
+            "                    if False:\n                        payload_total = measured_add(payload_total, len(payload_chunk), payload_cap)\n",
+        ),
+        (
+            "dead-payload-hash",
+            "                    raw_hasher.update(payload_chunk)\n",
+            "                    if False:\n                        raw_hasher.update(payload_chunk)\n",
+        ),
+        (
+            "dead-spool-write",
+            "                    operations.write_private_spool(spool, payload_chunk)\n",
+            "                    if False:\n                        operations.write_private_spool(spool, payload_chunk)\n",
+        ),
+        (
+            "dead-finish-frame",
+            "                operations.finish_frame(declared_payload_bytes, raw_hasher.hexdigest())\n",
+            "                if False:\n                    operations.finish_frame(declared_payload_bytes, raw_hasher.hexdigest())\n",
+        ),
+        (
+            "custom-descriptor-read",
+            "            stdout_chunk = operations.read_nonblocking(stdout_read, 65536)\n",
+            "            custom_read(stdout_read, 65536)\n            stdout_chunk = operations.read_nonblocking(stdout_read, 65536)\n",
+        ),
+        (
+            "spool-reset-per-read",
+            "    while operations.more_stdout():\n        try:\n",
+            "    while operations.more_stdout():\n        spool = None\n        try:\n",
+        ),
+        (
+            "declared-reset-per-read",
+            "    while operations.more_stdout():\n        try:\n",
+            "    while operations.more_stdout():\n        declared_payload_bytes = 0\n        try:\n",
+        ),
+        (
+            "missing-parser-error-drain",
+            "        except Exception:\n            while operations.terminating_with_discard():\n",
+            "        except Exception:\n            while False and operations.terminating_with_discard():\n",
+        ),
+        (
+            "outer-dead-training-cap-selector",
+            "    if worker_kind == \"training\":\n        payload_cap = 33554432\n        wire_cap = 33587232\n",
+            "    if False:\n        if worker_kind == \"training\":\n            payload_cap = 33554432\n            wire_cap = 33587232\n",
+        ),
+        (
+            "dead-parser-error-drain-body",
+            "            while operations.terminating_with_discard():\n                try:\n                    discarded_stdout_chunk = operations.read_nonblocking(stdout_read, 65536)\n                except BlockingIOError as drain_error:\n                    if drain_error.errno == errno.EAGAIN:\n                        continue\n                    break\n                except Exception:\n                    break\n                if not discarded_stdout_chunk:\n                    break\n",
+            "            while operations.terminating_with_discard():\n                if False:\n                    try:\n                        discarded_stdout_chunk = operations.read_nonblocking(stdout_read, 65536)\n                    except BlockingIOError as drain_error:\n                        if drain_error.errno == errno.EAGAIN:\n                            continue\n                        break\n                    except Exception:\n                        break\n                    if not discarded_stdout_chunk:\n                        break\n",
+        ),
+        (
+            "dead-progress-raise",
+            "                    if not payload_chunk:\n                        raise RuntimeError(\"payload parser made no progress\")\n",
+            "                    if not payload_chunk:\n                        if False:\n                            raise RuntimeError(\"payload parser made no progress\")\n",
+        ),
+        (
+            "inverted-remaining-break",
+            "                if operations.payload_remaining(declared_payload_bytes):\n                    break\n",
+            "                if not operations.payload_remaining(declared_payload_bytes):\n                    break\n",
+        ),
+        (
+            "swapped-active-state",
+            reference,
+            reference.replace(
+                "    active_frame = False\n",
+                "    active_frame = True\n",
+                1,
+            ).replace(
+                "                    active_frame = True\n",
+                "                    active_frame = False\n",
+                1,
+            ),
+        ),
+        (
+            "wrong-declared-source",
+            "                    declared_payload_bytes = header[\"bytes\"]\n",
+            "                    declared_payload_bytes = 0\n",
+        ),
+        (
+            "wrong-hasher-binding",
+            "                    raw_hasher = hashlib.sha256()\n",
+            "                    ignored_hasher = hashlib.sha256()\n                    raw_hasher = None\n",
+        ),
+        (
+            "wrong-encode-argument",
+            "    job_wire = operations.encode_job(job)\n",
+            "    job_wire = operations.encode_job({})\n",
+        ),
+        (
+            "wrong-bind-argument",
+            "    operations.bind_request(job_wire)\n",
+            "    operations.bind_request(b\"\")\n",
+        ),
+        (
+            "wrong-header-ready-argument",
+            "operations.header_ready(stdout_buffer)",
+            "operations.header_ready(bytearray())",
+        ),
+        (
+            "wrong-take-header-argument",
+            "operations.take_header(stdout_buffer)",
+            "operations.take_header(bytearray())",
+        ),
+        (
+            "wrong-validate-argument",
+            "operations.validate_declared_frame(header, expected_sequence)",
+            "operations.validate_declared_frame(header, [])",
+        ),
+        (
+            "wrong-loop-remaining-argument",
+            "while stdout_buffer and operations.payload_remaining(declared_payload_bytes):",
+            "while stdout_buffer and operations.payload_remaining(0):",
+        ),
+        (
+            "wrong-final-remaining-argument",
+            "if operations.payload_remaining(declared_payload_bytes):",
+            "if operations.payload_remaining(0):",
+        ),
+        (
+            "wrong-take-payload-argument",
+            "operations.take_payload(stdout_buffer, declared_payload_bytes)",
+            "operations.take_payload(bytearray(), declared_payload_bytes)",
+        ),
+        (
+            "wrong-create-spool-argument",
+            "frame_index=header[\"frame_index\"]",
+            "frame_index=0",
+        ),
+        (
+            "wrong-write-spool-argument",
+            "operations.write_private_spool(spool, payload_chunk)",
+            "operations.write_private_spool(None, payload_chunk)",
+        ),
+        (
+            "wrong-wire-increment",
+            "measured_add(wire_total, len(stdout_chunk), wire_cap)",
+            "measured_add(wire_total, 0, wire_cap)",
+        ),
+        (
+            "wrong-payload-increment",
+            "measured_add(payload_total, len(payload_chunk), payload_cap)",
+            "measured_add(payload_total, 0, payload_cap)",
+        ),
+        (
+            "wrong-stderr-increment",
+            "measured_add(stderr_total, len(stderr_chunk), stderr_cap)",
+            "measured_add(stderr_total, 0, stderr_cap)",
+        ),
+        (
+            "wrong-hash-chunk",
+            "raw_hasher.update(payload_chunk)",
+            "raw_hasher.update(b\"\")",
+        ),
+        (
+            "wrong-stdout-append",
+            "stdout_buffer.extend(stdout_chunk)",
+            "stdout_buffer.extend(b\"\")",
+        ),
+        (
+            "stdout-append-before-check",
+            "            wire_total = measured_add(wire_total, len(stdout_chunk), wire_cap)\n            stdout_buffer.extend(stdout_chunk)\n",
+            "            stdout_buffer.extend(stdout_chunk)\n            wire_total = measured_add(wire_total, len(stdout_chunk), wire_cap)\n",
+        ),
+        (
+            "wrong-stderr-append",
+            "stderr_retained.extend(stderr_chunk)",
+            "stderr_retained.extend(b\"\")",
+        ),
+        (
+            "stderr-append-before-check",
+            "        stderr_total = measured_add(stderr_total, len(stderr_chunk), stderr_cap)\n        stderr_retained.extend(stderr_chunk)\n",
+            "        stderr_retained.extend(stderr_chunk)\n        stderr_total = measured_add(stderr_total, len(stderr_chunk), stderr_cap)\n",
+        ),
+        (
+            "wrong-wire-initializer",
+            "    wire_total = 0\n",
+            "    wire_total = -1\n",
+        ),
+        (
+            "wrong-payload-initializer",
+            "    payload_total = 0\n",
+            "    payload_total = -1\n",
+        ),
+        (
+            "wrong-stderr-initializer",
+            "    stderr_total = 0\n",
+            "    stderr_total = -1\n",
+        ),
+        (
+            "wrong-worker-kind-source",
+            "    worker_kind = job[\"worker_kind\"]\n",
+            "    worker_kind = \"evaluation\"\n",
+        ),
+        (
+            "inverted-active-guard",
+            "                if not active_frame:\n",
+            "                if active_frame:\n",
+        ),
+        (
+            "missing-header-break",
+            "                    if not operations.header_ready(stdout_buffer):\n                        break\n",
+            "                    if not operations.header_ready(stdout_buffer):\n                        pass\n",
+        ),
+        (
+            "nested-finish-stdout",
+            "            operations.finish_stdout()\n",
+            "            if stdout_chunk:\n                operations.finish_stdout()\n",
+        ),
+        (
+            "missing-eagain-continue",
+            "            continue\n        if not stdout_chunk:\n",
+            "            pass\n        if not stdout_chunk:\n",
+        ),
+        (
+            "wrong-stdout-eof-initializer",
+            "    stdout_eof = False\n",
+            "    stdout_eof = True\n",
+        ),
+        (
+            "dead-final-eof-guard",
+            "    if not stdout_eof:\n        raise RuntimeError(\"stdout ended without descriptor EOF\")\n",
+            "    if False and not stdout_eof:\n        raise RuntimeError(\"stdout ended without descriptor EOF\")\n",
+        ),
+        (
+            "wrong-spool-initializer",
+            "    declared_payload_bytes = 0\n    spool = None\n    raw_hasher = None\n",
+            "    declared_payload_bytes = 0\n    spool = True\n    raw_hasher = None\n",
+        ),
+        (
+            "wrong-spool-reset",
+            "                spool = None\n",
+            "                spool = True\n",
+        ),
+        (
+            "dead-stdout-loop",
+            "    while operations.more_stdout():\n",
+            "    while False and operations.more_stdout():\n",
+        ),
+        (
+            "nonempty-stdout-buffer-initializer",
+            "    stdout_buffer = bytearray()\n",
+            "    stdout_buffer = bytearray(b\"x\")\n",
+        ),
+        (
+            "stdout-buffer-reset-per-read",
+            "    while operations.more_stdout():\n",
+            "    while operations.more_stdout():\n        stdout_buffer = bytearray()\n",
+        ),
+        (
+            "stdout-buffer-clear",
+            "            stdout_buffer.extend(stdout_chunk)\n",
+            "            stdout_buffer.extend(stdout_chunk)\n            stdout_buffer.clear()\n",
+        ),
+        (
+            "nonempty-stderr-buffer-initializer",
+            "    stderr_retained = bytearray()\n",
+            "    stderr_retained = bytearray(b\"x\")\n",
+        ),
+        (
+            "stderr-buffer-reset-per-read",
+            "    while operations.more_stderr():\n",
+            "    while operations.more_stderr():\n        stderr_retained = bytearray()\n",
+        ),
+        (
+            "early-stdout-loop-break",
+            "    while operations.more_stdout():\n        try:\n",
+            "    while operations.more_stdout():\n        break\n        try:\n",
+        ),
+        (
+            "early-stdout-loop-continue",
+            "        if not stdout_chunk:\n",
+            "        continue\n        if not stdout_chunk:\n",
+        ),
+        (
+            "return-before-eof-guard",
+            "    if not stdout_eof:\n",
+            "    return wire_total, payload_total, stderr_total\n    if not stdout_eof:\n",
+        ),
+        (
+            "return-before-cap-selectors",
+            "    worker_kind = job[\"worker_kind\"]\n",
+            "    worker_kind = job[\"worker_kind\"]\n    return 0, 0, 0\n",
+        ),
+        (
+            "early-progress-loop-break",
+            "            while True:\n                if not active_frame:\n",
+            "            while True:\n                break\n                if not active_frame:\n",
+        ),
+        (
+            "delete-stdout-buffer-slice",
+            "            stdout_buffer.extend(stdout_chunk)\n",
+            "            stdout_buffer.extend(stdout_chunk)\n            del stdout_buffer[:]\n",
+        ),
+        (
+            "assign-stdout-buffer-slice",
+            "            stdout_buffer.extend(stdout_chunk)\n",
+            "            stdout_buffer.extend(stdout_chunk)\n            stdout_buffer[:] = b\"\"\n",
+        ),
+        (
+            "delete-stderr-buffer-slice",
+            "        stderr_retained.extend(stderr_chunk)\n",
+            "        stderr_retained.extend(stderr_chunk)\n        del stderr_retained[:]\n",
+        ),
+        (
+            "assign-stderr-buffer-slice",
+            "        stderr_retained.extend(stderr_chunk)\n",
+            "        stderr_retained.extend(stderr_chunk)\n        stderr_retained[:] = b\"\"\n",
+        ),
+        (
+            "unconditional-return-entry",
+            "def _supervise_prepared_worker(operations, *, job, expected_sequence, deadline_ns):\n",
+            "def _supervise_prepared_worker(operations, *, job, expected_sequence, deadline_ns):\n    return None\n",
+        ),
+        (
+            "raise-before-bind",
+            "    operations.bind_request(job_wire)\n",
+            "    raise RuntimeError(\"early\")\n    operations.bind_request(job_wire)\n",
+        ),
+        (
+            "continue-progress-loop",
+            "            while True:\n                if not active_frame:\n",
+            "            while True:\n                continue\n                if not active_frame:\n",
+        ),
+        (
+            "break-payload-loop",
+            "                while stdout_buffer and operations.payload_remaining(declared_payload_bytes):\n                    payload_chunk",
+            "                while stdout_buffer and operations.payload_remaining(declared_payload_bytes):\n                    break\n                    payload_chunk",
+        ),
+        (
+            "continue-payload-loop",
+            "                while stdout_buffer and operations.payload_remaining(declared_payload_bytes):\n                    payload_chunk",
+            "                while stdout_buffer and operations.payload_remaining(declared_payload_bytes):\n                    continue\n                    payload_chunk",
+        ),
+        (
+            "return-payload-loop",
+            "                while stdout_buffer and operations.payload_remaining(declared_payload_bytes):\n                    payload_chunk",
+            "                while stdout_buffer and operations.payload_remaining(declared_payload_bytes):\n                    return None\n                    payload_chunk",
+        ),
+        (
+            "stdout-read-extra-keyword",
+            "operations.read_nonblocking(stdout_read, 65536)\n        except BlockingIOError as error:",
+            "operations.read_nonblocking(stdout_read, 65536, unexpected=True)\n        except BlockingIOError as error:",
+        ),
+        (
+            "stdout-read-keyword-expansion",
+            "operations.read_nonblocking(stdout_read, 65536)\n        except BlockingIOError as error:",
+            "operations.read_nonblocking(stdout_read, 65536, **{})\n        except BlockingIOError as error:",
+        ),
+        (
+            "hexdigest-extra-keyword",
+            "raw_hasher.hexdigest())",
+            "raw_hasher.hexdigest(extra=True))",
+        ),
+        (
+            "dead-stderr-loop",
+            "    while operations.more_stderr():\n",
+            "    while False and operations.more_stderr():\n",
+        ),
+        (
+            "return-before-stderr-loop",
+            "    while operations.more_stderr():\n",
+            "    return wire_total, payload_total, stderr_total\n    while operations.more_stderr():\n",
+        ),
+        (
+            "break-stderr-loop",
+            "    while operations.more_stderr():\n        try:\n",
+            "    while operations.more_stderr():\n        break\n        try:\n",
+        ),
+        (
+            "bad-job-wire-rebind",
+            "    job_wire = operations.encode_job(job)\n",
+            "    job_wire = operations.encode_job(job)\n    job_wire = b\"bad\"\n",
+        ),
+        (
+            "job-rebind",
+            "    worker_kind = job[\"worker_kind\"]\n",
+            "    job = {}\n    worker_kind = job[\"worker_kind\"]\n",
+        ),
+        (
+            "expected-sequence-rebind",
+            "    operations.bind_request(job_wire)\n",
+            "    operations.bind_request(job_wire)\n    expected_sequence = []\n",
+        ),
+        (
+            "operations-rebind",
+            "    operations.bind_request(job_wire)\n",
+            "    operations.bind_request(job_wire)\n    operations = None\n",
+        ),
+        (
+            "measured-add-shadow",
+            "    operations.bind_request(job_wire)\n",
+            "    operations.bind_request(job_wire)\n    measured_add = lambda total, increment, cap: total\n",
+        ),
+        (
+            "dead-encode-boolop",
+            "    job_wire = operations.encode_job(job)\n",
+            "    job_wire = b\"bad\" or operations.encode_job(job)\n",
+        ),
+        (
+            "dead-take-header-ifexp",
+            "                    header = operations.take_header(stdout_buffer)\n",
+            "                    header = None if True else operations.take_header(stdout_buffer)\n",
+        ),
+        (
+            "dead-take-payload-ifexp",
+            "                    payload_chunk = operations.take_payload(stdout_buffer, declared_payload_bytes)\n",
+            "                    payload_chunk = b\"\" if True else operations.take_payload(stdout_buffer, declared_payload_bytes)\n",
+        ),
+        (
+            "dead-create-spool-boolop",
+            "                    spool = operations.create_private_spool(\n",
+            "                    spool = object() or operations.create_private_spool(\n",
+        ),
+        (
+            "bypass-wire-add-ifexp",
+            "            wire_total = measured_add(wire_total, len(stdout_chunk), wire_cap)\n",
+            "            wire_total = wire_total if True else measured_add(wire_total, len(stdout_chunk), wire_cap)\n",
+        ),
+        (
+            "bypass-payload-add-ifexp",
+            "                    payload_total = measured_add(payload_total, len(payload_chunk), payload_cap)\n",
+            "                    payload_total = payload_total if True else measured_add(payload_total, len(payload_chunk), payload_cap)\n",
+        ),
+        (
+            "bypass-stderr-add-ifexp",
+            "        stderr_total = measured_add(stderr_total, len(stderr_chunk), stderr_cap)\n",
+            "        stderr_total = stderr_total if True else measured_add(stderr_total, len(stderr_chunk), stderr_cap)\n",
+        ),
+        (
+            "stderr-read-wrong-descriptor",
+            "            stderr_chunk = operations.read_nonblocking(stderr_read, 65536)\n",
+            "            stderr_chunk = operations.read_nonblocking(stdout_read, 65536)\n",
+        ),
+        (
+            "stderr-drain-wrong-descriptor",
+            "            discarded_stderr_chunk = operations.read_nonblocking(stderr_read, 65536)\n",
+            "            discarded_stderr_chunk = operations.read_nonblocking(stdout_read, 65536)\n",
+        ),
+        (
+            "parser-drain-read-keyword-expansion",
+            "                    discarded_stdout_chunk = operations.read_nonblocking(stdout_read, 65536)\n",
+            "                    discarded_stdout_chunk = operations.read_nonblocking(stdout_read, 65536, **{})\n",
+        ),
+        (
+            "stderr-read-extra-keyword",
+            "            stderr_chunk = operations.read_nonblocking(stderr_read, 65536)\n",
+            "            stderr_chunk = operations.read_nonblocking(stderr_read, 65536, unexpected=True)\n",
+        ),
+        (
+            "stderr-drain-keyword-expansion",
+            "            discarded_stderr_chunk = operations.read_nonblocking(stderr_read, 65536)\n",
+            "            discarded_stderr_chunk = operations.read_nonblocking(stderr_read, 65536, **{})\n",
+        ),
+        (
+            "mutate-job-call",
+            "    operations.bind_request(job_wire)\n",
+            "    operations.bind_request(job_wire)\n    mutate(job)\n",
+        ),
+        (
+            "operations-mutate-job-call",
+            "    operations.bind_request(job_wire)\n",
+            "    operations.bind_request(job_wire)\n    operations.mutate(job)\n",
+        ),
+        (
+            "operator-setitem-job-call",
+            "    operations.bind_request(job_wire)\n",
+            "    operations.bind_request(job_wire)\n    operator.setitem(job, \"worker_kind\", \"evaluation\")\n",
+        ),
+        (
+            "mutate-expected-sequence-call",
+            "    operations.bind_request(job_wire)\n",
+            "    operations.bind_request(job_wire)\n    mutate(expected_sequence)\n",
+        ),
+        (
+            "stderr-eagain-inverted",
+            "            stderr_chunk = operations.read_nonblocking(stderr_read, 65536)\n        except BlockingIOError as error:\n            if error.errno != errno.EAGAIN:\n",
+            "            stderr_chunk = operations.read_nonblocking(stderr_read, 65536)\n        except BlockingIOError as error:\n            if error.errno == errno.EAGAIN:\n",
+        ),
+        (
+            "stderr-eagain-constant",
+            "            stderr_chunk = operations.read_nonblocking(stderr_read, 65536)\n        except BlockingIOError as error:\n            if error.errno != errno.EAGAIN:\n",
+            "            stderr_chunk = operations.read_nonblocking(stderr_read, 65536)\n        except BlockingIOError as error:\n            if True:\n",
+        ),
+        (
+            "parser-drain-eagain-break",
+            "                    if drain_error.errno == errno.EAGAIN:\n                        continue\n",
+            "                    if drain_error.errno == errno.EAGAIN:\n                        break\n",
+        ),
+        (
+            "parser-drain-eof-continue",
+            "                if not discarded_stdout_chunk:\n                    break\n",
+            "                if not discarded_stdout_chunk:\n                    continue\n",
+        ),
+        (
+            "processing-finally-raise",
+            "            raise\n    if not stdout_eof:\n",
+            "            raise\n        finally:\n            raise RuntimeError(\"replacement-origin\")\n    if not stdout_eof:\n",
+        ),
+        (
+            "top-level-if-true-raise",
+            "    operations.bind_request(job_wire)\n",
+            "    if True:\n        raise RuntimeError(\"early\")\n    operations.bind_request(job_wire)\n",
+        ),
+        (
+            "top-level-assert-false",
+            "    operations.bind_request(job_wire)\n",
+            "    assert False\n    operations.bind_request(job_wire)\n",
+        ),
+        (
+            "top-level-infinite-loop",
+            "    operations.bind_request(job_wire)\n",
+            "    while True:\n        continue\n    operations.bind_request(job_wire)\n",
+        ),
+        (
+            "parser-drain-terminating-keyword",
+            "            while operations.terminating_with_discard():\n",
+            "            while operations.terminating_with_discard(extra=True):\n",
+        ),
+        (
+            "parser-drain-eagain-inverted",
+            "                    if drain_error.errno == errno.EAGAIN:\n",
+            "                    if drain_error.errno != errno.EAGAIN:\n",
+        ),
+        (
+            "parser-drain-generic-reraise",
+            "                except Exception:\n                    break\n",
+            "                except Exception:\n                    raise\n",
+        ),
+        (
+            "parser-drain-eof-pass",
+            "                if not discarded_stdout_chunk:\n                    break\n",
+            "                if not discarded_stdout_chunk:\n                    pass\n",
+        ),
+        (
+            "parser-drain-eof-inverted",
+            "                if not discarded_stdout_chunk:\n                    break\n",
+            "                if discarded_stdout_chunk:\n                    break\n",
+        ),
+        (
+            "parser-drain-read-finally-raise",
+            "                except Exception:\n                    break\n                if not discarded_stdout_chunk:\n",
+            "                except Exception:\n                    break\n                finally:\n                    raise RuntimeError(\"replacement-origin\")\n                if not discarded_stdout_chunk:\n",
+        ),
+        (
+            "processing-else-raise",
+            "            raise\n    if not stdout_eof:\n",
+            "            raise\n        else:\n            raise RuntimeError(\"replacement-origin\")\n    if not stdout_eof:\n",
+        ),
+        (
+            "mutate-stdout-buffer-call",
+            "    stdout_buffer = bytearray()\n",
+            "    stdout_buffer = bytearray()\n    mutate(stdout_buffer)\n",
+        ),
+        (
+            "mutate-stderr-buffer-call",
+            "    stderr_retained = bytearray()\n",
+            "    stderr_retained = bytearray()\n    mutate(stderr_retained)\n",
+        ),
+        (
+            "supervisor-lambda-rebind",
+            reference,
+            reference
+            + "\n_supervise_prepared_worker = lambda operations, *, job, expected_sequence, deadline_ns: (0, 0, 0)\n",
+        ),
+        (
+            "supervisor-delete",
+            reference,
+            reference + "\ndel _supervise_prepared_worker\n",
+        ),
+        (
+            "helper-lambda-rebind",
+            reference,
+            reference + "\nmeasured_add = lambda total, increment, cap: total\n",
+        ),
+        (
+            "errno-rebind",
+            reference,
+            reference + "\nerrno = None\n",
+        ),
+        (
+            "hashlib-rebind",
+            reference,
+            reference + "\nhashlib = None\n",
+        ),
+        (
+            "bytearray-rebind",
+            reference,
+            reference + "\nbytearray = lambda *args, **kwargs: None\n",
+        ),
+        (
+            "len-rebind",
+            reference,
+            reference + "\nlen = lambda value: 0\n",
+        ),
+        (
+            "supervisor-decorator",
+            "def _supervise_prepared_worker(operations, *, job, expected_sequence, deadline_ns):\n",
+            "def _replace_supervisor(function):\n    del function\n    return lambda operations, *, job, expected_sequence, deadline_ns: (0, 0, 0)\n\n@_replace_supervisor\ndef _supervise_prepared_worker(operations, *, job, expected_sequence, deadline_ns):\n",
+        ),
+        (
+            "operations-attribute-assign",
+            "    operations.bind_request(job_wire)\n",
+            "    operations.bind_request = lambda wire: None\n    operations.bind_request(job_wire)\n",
+        ),
+        (
+            "operations-attribute-delete",
+            "    operations.bind_request(job_wire)\n",
+            "    del operations.bind_request\n    operations.bind_request(job_wire)\n",
+        ),
+        (
+            "operations-dict-mutation",
+            "    operations.bind_request(job_wire)\n",
+            "    operations.__dict__[\"bind_request\"] = lambda wire: None\n    operations.bind_request(job_wire)\n",
+        ),
+        (
+            "setattr-operations-call",
+            "    operations.bind_request(job_wire)\n",
+            "    setattr(operations, \"bind_request\", lambda wire: None)\n    operations.bind_request(job_wire)\n",
+        ),
+        (
+            "operations-direct-alias",
+            "    operations.bind_request(job_wire)\n",
+            "    operations_alias = operations\n    operations_alias.bind_request = lambda wire: None\n    operations.bind_request(job_wire)\n",
+        ),
+        (
+            "operations-container-alias",
+            "    operations.bind_request(job_wire)\n",
+            "    operations_alias = [operations]\n    operations_alias[0].bind_request = lambda wire: None\n    operations.bind_request(job_wire)\n",
+        ),
+        (
+            "for-operations-alias",
+            "    operations.bind_request(job_wire)\n",
+            "    for operations_alias in (operations,):\n        operations_alias.bind_request = lambda wire: None\n    operations.bind_request(job_wire)\n",
+        ),
+        (
+            "for-job-alias",
+            "    worker_kind = job[\"worker_kind\"]\n",
+            "    for job_alias in (job,):\n        job_alias[\"worker_kind\"] = \"evaluation\"\n    worker_kind = job[\"worker_kind\"]\n",
+        ),
+        (
+            "default-operations-capture",
+            "    operations.bind_request(job_wire)\n",
+            "    def sabotage(target=operations):\n        target.bind_request = lambda wire: None\n    sabotage()\n    operations.bind_request(job_wire)\n",
+        ),
+        (
+            "default-job-capture",
+            "    worker_kind = job[\"worker_kind\"]\n",
+            "    def sabotage(target=job):\n        target[\"worker_kind\"] = \"evaluation\"\n    sabotage()\n    worker_kind = job[\"worker_kind\"]\n",
+        ),
+        (
+            "yield-supervisor",
+            "def _supervise_prepared_worker(operations, *, job, expected_sequence, deadline_ns):\n",
+            "def _supervise_prepared_worker(operations, *, job, expected_sequence, deadline_ns):\n    if False:\n        yield None\n",
+        ),
+        (
+            "yield-from-supervisor",
+            "def _supervise_prepared_worker(operations, *, job, expected_sequence, deadline_ns):\n",
+            "def _supervise_prepared_worker(operations, *, job, expected_sequence, deadline_ns):\n    if False:\n        yield from ()\n",
+        ),
+        (
+            "dead-termination-stderr-loop",
+            "        stderr_retained.extend(stderr_chunk)\n    while operations.terminating_with_discard():\n",
+            "        stderr_retained.extend(stderr_chunk)\n    while False and operations.terminating_with_discard():\n",
+        ),
+        (
+            "early-termination-stderr-break",
+            "        stderr_retained.extend(stderr_chunk)\n    while operations.terminating_with_discard():\n        try:\n",
+            "        stderr_retained.extend(stderr_chunk)\n    while operations.terminating_with_discard():\n        break\n        try:\n",
+        ),
+        (
+            "termination-stderr-keyword",
+            "        stderr_retained.extend(stderr_chunk)\n    while operations.terminating_with_discard():\n",
+            "        stderr_retained.extend(stderr_chunk)\n    while operations.terminating_with_discard(extra=True):\n",
+        ),
+        (
+            "termination-stderr-eagain-inverted",
+            "            discarded_stderr_chunk = operations.read_nonblocking(stderr_read, 65536)\n        except BlockingIOError as error:\n            if error.errno != errno.EAGAIN:\n",
+            "            discarded_stderr_chunk = operations.read_nonblocking(stderr_read, 65536)\n        except BlockingIOError as error:\n            if error.errno == errno.EAGAIN:\n",
+        ),
+        (
+            "termination-stderr-eof-inverted",
+            "        if not discarded_stderr_chunk:\n            break\n",
+            "        if discarded_stderr_chunk:\n            break\n",
+        ),
+        (
+            "wrong-stdout-pipe-role",
+            "    stdout_read, stdout_write = operations.make_pipe(\"stdout\")\n",
+            "    stdout_read, stdout_write = operations.make_pipe(\"stderr\")\n",
+        ),
+        (
+            "wrong-stderr-pipe-role",
+            "    stderr_read, stderr_write = operations.make_pipe(\"stderr\")\n",
+            "    stderr_read, stderr_write = operations.make_pipe(\"stdout\")\n",
+        ),
+        (
+            "stdout-pipe-extra-keyword",
+            "    stdout_read, stdout_write = operations.make_pipe(\"stdout\")\n",
+            "    stdout_read, stdout_write = operations.make_pipe(\"stdout\", extra=True)\n",
+        ),
+        (
+            "descriptor-read-swap",
+            "    stderr_read, stderr_write = operations.make_pipe(\"stderr\")\n",
+            "    stderr_read, stderr_write = operations.make_pipe(\"stderr\")\n    stdout_read, stderr_read = stderr_read, stdout_read\n",
+        ),
+        (
+            "job-annotation-capture",
+            "    worker_kind = job[\"worker_kind\"]\n",
+            "    def holder(value: job):\n        pass\n    job_alias = holder.__annotations__[\"value\"]\n    job_alias[\"worker_kind\"] = \"evaluation\"\n    worker_kind = job[\"worker_kind\"]\n",
+        ),
+        (
+            "operations-annotation-capture",
+            "    operations.bind_request(job_wire)\n",
+            "    def holder(value: operations):\n        pass\n    operations_alias = holder.__annotations__[\"value\"]\n    operations_alias.bind_request = lambda wire: None\n    operations.bind_request(job_wire)\n",
+        ),
+        (
+            "job-container-store",
+            "    worker_kind = job[\"worker_kind\"]\n",
+            "    alias_box = {}\n    alias_box[\"value\"] = job\n    recovered = alias_box[\"value\"]\n    recovered[\"worker_kind\"] = \"evaluation\"\n    worker_kind = job[\"worker_kind\"]\n",
+        ),
+        (
+            "expected-sequence-container-store",
+            "    operations.bind_request(job_wire)\n",
+            "    operations.bind_request(job_wire)\n    alias_box = {}\n    alias_box[\"value\"] = expected_sequence\n    recovered = alias_box[\"value\"]\n    recovered.clear()\n",
+        ),
+        (
+            "stdout-buffer-container-store",
+            "    stdout_buffer = bytearray()\n",
+            "    stdout_buffer = bytearray()\n    alias_box = {}\n    alias_box[\"value\"] = stdout_buffer\n    recovered = alias_box[\"value\"]\n    recovered.extend(b\"x\")\n",
+        ),
+        (
+            "stderr-buffer-container-store",
+            "    stderr_retained = bytearray()\n",
+            "    stderr_retained = bytearray()\n    alias_box = {}\n    alias_box[\"value\"] = stderr_retained\n    recovered = alias_box[\"value\"]\n    recovered.extend(b\"x\")\n",
+        ),
+        (
+            "errno-attribute-set",
+            reference,
+            reference + "\nerrno.EAGAIN = -999\n",
+        ),
+        (
+            "errno-attribute-delete",
+            reference,
+            reference + "\ndel errno.EAGAIN\n",
+        ),
+        (
+            "errno-setattr-call",
+            reference,
+            reference + "\nsetattr(errno, \"EAGAIN\", -999)\n",
+        ),
+        (
+            "errno-direct-alias",
+            reference,
+            reference
+            + "\nerrno_alias = errno\nerrno_alias.EAGAIN = -999\n",
+        ),
+        (
+            "errno-container-alias",
+            reference,
+            reference
+            + "\nerrno_box = [errno]\nerrno_box[0].EAGAIN = -999\n",
+        ),
+    )
     mutants = []
-
-    def add(label, source, kind):
-        mutants.append((label, source, kind))
-
-    add(
-        "wrong-training-payload-cap",
-        _replace_once(reference, "payload_cap = 33554432", "payload_cap = 33554431"),
-        "training",
-    )
-    add(
-        "wrong-training-wire-cap",
-        _replace_once(reference, "wire_cap = 33587232", "wire_cap = 33587231"),
-        "training",
-    )
-    add(
-        "wrong-evaluation-payload-cap",
-        _replace_once(reference, "payload_cap = 8388608", "payload_cap = 8388607"),
-        "evaluation",
-    )
-    add(
-        "wrong-evaluation-wire-cap",
-        _replace_once(reference, "wire_cap = 8396808", "wire_cap = 8396807"),
-        "evaluation",
-    )
-    add(
-        "wrong-stderr-cap",
-        _replace_once(reference, "stderr_cap = 65536", "stderr_cap = 65535"),
-        "training",
-    )
-    literal_only = reference.replace(
-        "wire_total = measured_add(wire_total, len(stdout_chunk), wire_cap)",
-        "wire_total += len(stdout_chunk)",
-    ).replace(
-        "payload_total = measured_add(payload_total, len(payload_chunk), payload_cap)",
-        "payload_total += len(payload_chunk)",
-    ).replace(
-        "stderr_total = measured_add(stderr_total, len(stderr_chunk), stderr_cap)",
-        "stderr_total += len(stderr_chunk)",
-    )
-    add("literal-only-checked-add", literal_only, "training")
-    dead = _replace_once(
-        reference,
-        "def _supervise_prepared_worker",
-        '''def unchecked_add(total, increment, cap):
-    return total + increment
-
-def _supervise_prepared_worker''',
-    ).replace(" = measured_add(", " = unchecked_add(")
-    add("dead-checked-add-helper", dead, "training")
-    end_only = _replace_once(
-        reference,
-        "            wire_total = measured_add(wire_total, len(stdout_chunk), wire_cap)\n",
-        "",
-    )
-    end_only = _replace_once(
-        end_only,
-        "    while operations.more_stderr():",
-        "    wire_total = measured_add(wire_total, len(stdout_chunk), wire_cap)\n    while operations.more_stderr():",
-    )
-    add("end-only-wire-check", end_only, "training")
-    add(
-        "payload-check-after-spool",
-        _replace_once(
-            reference,
-            "                    payload_total = measured_add(payload_total, len(payload_chunk), payload_cap)\n                    operations.write_private_spool(spool, payload_chunk)",
-            "                    operations.write_private_spool(spool, payload_chunk)\n                    payload_total = measured_add(payload_total, len(payload_chunk), payload_cap)",
-        ),
-        "training",
-    )
-    add(
-        "stderr-check-after-retention",
-        _replace_once(
-            reference,
-            "            stderr_total = measured_add(stderr_total, len(stderr_chunk), stderr_cap)\n            stderr_retained.extend(stderr_chunk)",
-            "            stderr_retained.extend(stderr_chunk)\n            stderr_total = measured_add(stderr_total, len(stderr_chunk), stderr_cap)",
-        ),
-        "training",
-    )
-    add(
-        "missing-wire-increment",
-        _replace_once(reference, "            wire_total = measured_add(wire_total, len(stdout_chunk), wire_cap)\n", ""),
-        "training",
-    )
-    add(
-        "missing-payload-increment",
-        _replace_once(reference, "                    payload_total = measured_add(payload_total, len(payload_chunk), payload_cap)\n", ""),
-        "training",
-    )
-    add(
-        "missing-stderr-increment",
-        _replace_once(reference, "            stderr_total = measured_add(stderr_total, len(stderr_chunk), stderr_cap)\n", ""),
-        "training",
-    )
-    add(
-        "wire-omits-prefix",
-        _replace_once(reference, "len(stdout_chunk), wire_cap", "len(stdout_chunk) - 4, wire_cap"),
-        "training",
-    )
-    add(
-        "wire-omits-header",
-        _replace_once(reference, "len(stdout_chunk), wire_cap", "len(stdout_chunk) - len(header_wire), wire_cap"),
-        "training",
-    )
-    add(
-        "training-selects-evaluation-payload-cap",
-        _replace_once(reference, "payload_cap = 33554432", "payload_cap = 8388608"),
-        "training",
-    )
-    add(
-        "training-selects-evaluation-wire-cap",
-        _replace_once(reference, "wire_cap = 33587232", "wire_cap = 8396808"),
-        "training",
-    )
-    add(
-        "evaluation-selects-training-payload-cap",
-        _replace_once(reference, "payload_cap = 8388608", "payload_cap = 33554432"),
-        "evaluation",
-    )
-    add(
-        "evaluation-selects-training-wire-cap",
-        _replace_once(reference, "wire_cap = 8396808", "wire_cap = 33587232"),
-        "evaluation",
-    )
-    add(
-        "payload-wire-counter-alias",
-        _replace_once(
-            reference,
-            "payload_total = measured_add(payload_total, len(payload_chunk), payload_cap)",
-            "wire_total = measured_add(wire_total, len(payload_chunk), payload_cap)",
-        ),
-        "training",
-    )
-    add(
-        "nonzero-wire-initialization",
-        _replace_once(reference, "    wire_total = 0", "    wire_total = 1"),
-        "training",
-    )
-    add(
-        "nonzero-payload-initialization",
-        _replace_once(reference, "    payload_total = 0", "    payload_total = 1"),
-        "training",
-    )
-    add(
-        "nonzero-stderr-initialization",
-        _replace_once(reference, "    stderr_total = 0", "    stderr_total = 1"),
-        "training",
-    )
-    add(
-        "reset-wire-per-frame",
-        _replace_once(
-            reference,
-            "            if operations.header_ready(stdout_buffer):\n                header =",
-            "            if operations.header_ready(stdout_buffer):\n                wire_total = 0\n                header =",
-        ),
-        "training",
-    )
-    add(
-        "reset-payload-per-frame",
-        _replace_once(
-            reference,
-            "                spool = operations.create_private_spool(",
-            "                payload_total = 0\n"
-            "                spool = operations.create_private_spool(",
-        ),
-        "training",
-    )
-    add(
-        "unchecked-declared-allocation",
-        _replace_once(
-            reference,
-            "                spool = operations.create_private_spool(",
-            "                payload_buffer = "
-            "bytearray(declared_payload_bytes)\n"
-            "                spool = operations.create_private_spool(",
-        ),
-        "training",
-    )
+    for label, before, after in replacements:
+        if reference.count(before) != 1:
+            raise AssertionError((label, reference.count(before)))
+        mutants.append(
+            (label, reference.replace(before, after, 1), "training")
+        )
     return tuple(mutants)
 
 
 def _test_stream_cap_closure_mutants():
-    reference = _STREAM_CAP_REFERENCE_SOURCE
-    mutants = []
-
-    def add(label, source):
-        mutants.append((label, source, "training"))
-
-    add(
-        "supervisor-module-rebind",
-        reference
-        + "\ndef unsafe_supervisor(*args, **kwargs):\n"
-        + "    return None\n"
-        + "_supervise_prepared_worker = unsafe_supervisor\n",
-    )
-    add(
-        "helper-module-rebind",
-        reference
-        + "\nmeasured_add = "
-        + "lambda total, increment, cap: total + increment\n",
-    )
-    add(
-        "helper-local-shadow",
-        _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    measured_add = operations.unchecked_add\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "len-local-shadow",
-        _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    len = lambda chunk: 0\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "side-effecting-value-error",
-        "events = []\n"
-        "class SideEffectValueError(Exception):\n"
-        "    def __init__(self, message):\n"
-        "        events.append(message)\n"
-        "        super().__init__(message)\n"
-        "ValueError = SideEffectValueError\n"
-        + reference,
-    )
-    add(
-        "job-method-mutation",
-        _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            '    job.update({"worker_kind": "evaluation"})\n'
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "job-tuple-alias-mutation",
-        _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    job_alias, = (job,)\n"
-            '    job_alias.update({"worker_kind": "evaluation"})\n'
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "worker-kind-tuple-overwrite",
-        _replace_once(
-            reference,
-            '    if worker_kind == "training":\n',
-            '    worker_kind, ignored = "evaluation", None\n'
-            '    if worker_kind == "training":\n',
-        ),
-    )
-    add(
-        "cap-for-target-overwrite",
-        _replace_once(
-            reference,
-            "    stderr_cap = 65536\n",
-            "    for payload_cap in (10**12,):\n"
-            "        pass\n"
-            "    stderr_cap = 65536\n",
-        ),
-    )
-    add(
-        "counter-tuple-reset",
-        _replace_once(
-            reference,
-            "            if operations.header_ready(stdout_buffer):\n",
-            "            wire_total, ignored = 0, None\n"
-            "            if operations.header_ready(stdout_buffer):\n",
-        ),
-    )
-    add(
-        "stdout-tuple-alias-before-check",
-        _replace_once(
-            reference,
-            "        if stdout_chunk:\n",
-            "        stdout_alias, = (stdout_chunk,)\n"
-            "        operations.unowned_sink(stdout_alias)\n"
-            "        if stdout_chunk:\n",
-        ),
-    )
-    add(
-        "stderr-tuple-alias-before-check",
-        _replace_once(
-            reference,
-            "        if stderr_chunk:\n",
-            "        stderr_alias, = (stderr_chunk,)\n"
-            "        stderr_retained.extend(stderr_alias)\n"
-            "        if stderr_chunk:\n",
-        ),
-    )
-    add(
-        "discard-tuple-alias-retention",
-        _replace_once(
-            reference,
-            "        if not discarded_stderr_chunk:\n",
-            "        discarded_alias, = (discarded_stderr_chunk,)\n"
-            "        stderr_retained.extend(discarded_alias)\n"
-            "        if not discarded_stderr_chunk:\n",
-        ),
-    )
-    add(
-        "header-method-mutation",
-        _replace_once(
-            reference,
-            '                declared_payload_bytes = header["bytes"]\n',
-            '                header.update({"bytes": 2**40})\n'
-            '                declared_payload_bytes = header["bytes"]\n',
-        ),
-    )
-    add(
-        "header-tuple-alias-mutation",
-        _replace_once(
-            reference,
-            "                operations.validate_declared_frame("
-            "header, expected_sequence)\n",
-            "                operations.validate_declared_frame("
-            "header, expected_sequence)\n"
-            "                header_alias, = (header,)\n"
-            '                header_alias.update({"bytes": 2**40})\n',
-        ),
-    )
-    add(
-        "declared-tuple-alias-allocation",
-        _replace_once(
-            reference,
-            "                spool = operations.create_private_spool(\n",
-            "                allocation_size, = "
-            "(declared_payload_bytes,)\n"
-            "                payload_buffer = "
-            "bytearray(allocation_size)\n"
-            "                spool = operations.create_private_spool(\n",
-        ),
-    )
-    add(
-        "payload-mutation-after-check",
-        _replace_once(
-            reference,
-            "                    operations.write_private_spool("
-            "spool, payload_chunk)\n",
-            "                    payload_chunk.extend(b'x' * 1048576)\n"
-            "                    operations.write_private_spool("
-            "spool, payload_chunk)\n",
-        ),
-    )
-    add(
-        "nested-unowned-stdout-read",
-        _replace_once(
-            reference,
-            "            stdout_buffer.extend(stdout_chunk)\n",
-            "            stdout_buffer.extend(stdout_chunk)\n"
-            "            stdout_buffer.extend("
-            "operations.read_nonblocking(stdout_read, 65536))\n",
-        ),
-    )
-    add(
-        "read-callable-tuple-alias",
-        _replace_once(
-            reference,
-            "    while operations.more_stdout():\n",
-            "    reader, = (operations.read_nonblocking,)\n"
-            "    while operations.more_stdout():\n"
-            "        reader(stdout_read, 65536)\n",
-        ),
-    )
-    add(
-        "read-callable-getattr",
-        _replace_once(
-            reference,
-            "    while operations.more_stdout():\n",
-            "    while operations.more_stdout():\n"
-            "        getattr(operations, 'read_nonblocking')("
-            "stdout_read, 65536)\n",
-        ),
-    )
-    add(
-        "nested-unowned-payload-write",
-        _replace_once(
-            reference,
-            "                    operations.write_private_spool("
-            "spool, payload_chunk)\n",
-            "                    operations.write_private_spool("
-            "spool, payload_chunk)\n"
-            "                    operations.write_private_spool("
-            "spool, operations.take_payload("
-            "stdout_buffer, declared_payload_bytes))\n",
-        ),
-    )
-    add(
-        "spool-callable-tuple-alias",
-        _replace_once(
-            reference,
-            "                    payload_total = measured_add("
-            "payload_total, len(payload_chunk), payload_cap)\n",
-            "                    writer, = "
-            "(operations.write_private_spool,)\n"
-            "                    writer(spool, payload_chunk)\n"
-            "                    payload_total = measured_add("
-            "payload_total, len(payload_chunk), payload_cap)\n",
-        ),
-    )
-    add(
-        "spool-callable-getattr",
-        _replace_once(
-            reference,
-            "                    payload_total = measured_add("
-            "payload_total, len(payload_chunk), payload_cap)\n",
-            "                    getattr("
-            "operations, 'write_private_spool')("
-            "spool, payload_chunk)\n"
-            "                    payload_total = measured_add("
-            "payload_total, len(payload_chunk), payload_cap)\n",
-        ),
-    )
-    add(
-        "runtime-globals-len-rebind",
-        _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    globals()['len'] = lambda chunk: 0\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "cloned-supervisor-globals",
-        reference
-        + "\nimport types\n"
-        + "alternate_globals = dict(globals())\n"
-        + "alternate_globals['measured_add'] = "
-        + "lambda total, increment, cap: total + increment\n"
-        + "_supervise_prepared_worker = types.FunctionType("
-        + "_supervise_prepared_worker.__code__, alternate_globals)\n",
-    )
-    add(
-        "dead-cap-selector",
-        _replace_once(
-            reference,
-            '    if worker_kind == "training":\n'
-            "        payload_cap = 33554432\n"
-            "        wire_cap = 33587232\n"
-            '    if worker_kind == "evaluation":\n'
-            "        payload_cap = 8388608\n"
-            "        wire_cap = 8396808\n",
-            "    if False:\n"
-            '        if worker_kind == "training":\n'
-            "            payload_cap = 33554432\n"
-            "            wire_cap = 33587232\n"
-            '        if worker_kind == "evaluation":\n'
-            "            payload_cap = 8388608\n"
-            "            wire_cap = 8396808\n",
-        ),
-    )
-    add(
-        "deceptive-stdout-endpoint",
-        _replace_once(
-            reference,
-            "    while operations.more_stdout():\n"
-            "        stdout_chunk = operations.read_nonblocking("
-            "stdout_read, 65536)\n",
-            "    accounted_stdout = stderr_read\n"
-            "    while operations.more_stdout():\n"
-            "        stdout_chunk = operations.read_nonblocking("
-            "accounted_stdout, 65536)\n",
-        ),
-    )
-    add(
-        "dead-validation-expression",
-        _replace_once(
-            reference,
-            "                operations.validate_declared_frame("
-            "header, expected_sequence)\n",
-            "                False and "
-            "operations.validate_declared_frame("
-            "header, expected_sequence)\n",
-        ),
-    )
-    add(
-        "wrong-validation-context",
-        _replace_once(
-            reference,
-            "operations.validate_declared_frame("
-            "header, expected_sequence)",
-            "operations.validate_declared_frame(header, deadline_ns)",
-        ),
-    )
-    add(
-        "wrong-payload-predicate",
-        _replace_once(
-            reference,
-            "while operations.payload_remaining("
-            "declared_payload_bytes):",
-            "while operations.payload_remaining(0):",
-        ),
-    )
-    add(
-        "wrong-payload-buffer",
-        _replace_once(
-            reference,
-            "operations.take_payload("
-            "stdout_buffer, declared_payload_bytes)",
-            "operations.take_payload("
-            "stderr_retained, declared_payload_bytes)",
-        ),
-    )
-    add(
-        "wrong-header-buffer",
-        _replace_once(
-            reference,
-            "operations.take_header(stdout_buffer)",
-            "operations.take_header(stderr_retained)",
-        ),
-    )
-    add(
-        "dead-stdout-loop",
-        _replace_once(
-            reference,
-            "while operations.more_stdout():",
-            "while False:",
-        ),
-    )
-    add(
-        "hidden-helper-chunk-branch",
-        _replace_once(
-            reference,
-            "    prospective = total + increment\n",
-            "    if increment == 32768:\n"
-            "        return 0\n"
-            "    prospective = total + increment\n",
-        ),
-    )
-    add(
-        "stdout-buffer-subscript-mutation",
-        _replace_once(
-            reference,
-            "            if operations.header_ready(stdout_buffer):\n",
-            "            stdout_buffer[:0] = b'forged'\n"
-            "            if operations.header_ready(stdout_buffer):\n",
-        ),
-    )
-    add(
-        "bytearray-module-rebind",
-        "bytearray = lambda: []\n" + reference,
-    )
-    add(
-        "operations-parameter-rebind",
-        _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    operations = unsafe_operations\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "expected-sequence-rebind",
-        _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    expected_sequence = ()\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "stdout-descriptor-rebind",
-        _replace_once(
-            reference,
-            "    while operations.more_stdout():\n",
-            "    stdout_read = stderr_read\n"
-            "    while operations.more_stdout():\n",
-        ),
-    )
-    add(
-        "shadow-read-receiver",
-        _replace_once(
-            reference,
-            "operations.read_nonblocking(stdout_read, 65536)",
-            "shadow.read_nonblocking(stdout_read, 65536)",
-        ),
-    )
-    add(
-        "shadow-spool-receiver",
-        _replace_once(
-            reference,
-            "operations.write_private_spool(spool, payload_chunk)",
-            "shadow.write_private_spool(spool, payload_chunk)",
-        ),
-    )
-    add(
-        "shadow-parser-receiver",
-        _replace_once(
-            reference,
-            "operations.validate_declared_frame("
-            "header, expected_sequence)",
-            "shadow.validate_declared_frame("
-            "header, expected_sequence)",
-        ),
-    )
-    add(
-        "early-return-before-drain",
-        _replace_once(
-            reference,
-            '    if worker_kind == "training":\n',
-            "    return None\n"
-            '    if worker_kind == "training":\n',
-        ),
-    )
-    add(
-        "named-false-drain",
-        _replace_once(
-            reference,
-            "    while operations.more_stdout():\n",
-            "    drain_enabled = False\n"
-            "    while drain_enabled:\n",
-        ),
-    )
-    add(
-        "empty-tuple-drain",
-        _replace_once(
-            reference,
-            "while operations.more_stdout():",
-            "while ():",
-        ),
-    )
-    add(
-        "false-compare-drain",
-        _replace_once(
-            reference,
-            "while operations.more_stdout():",
-            "while 0 == 1:",
-        ),
-    )
-    add(
-        "break-before-read",
-        _replace_once(
-            reference,
-            "    while operations.more_stdout():\n",
-            "    while operations.more_stdout():\n"
-            "        break\n",
-        ),
-    )
-    add(
-        "return-chunk-before-check",
-        _replace_once(
-            reference,
-            "            wire_total = measured_add("
-            "wire_total, len(stdout_chunk), wire_cap)\n",
-            "            return stdout_chunk\n"
-            "            wire_total = measured_add("
-            "wire_total, len(stdout_chunk), wire_cap)\n",
-        ),
-    )
-    add(
-        "stdout-augassign-retention",
-        _replace_once(
-            reference,
-            "        if stdout_chunk:\n",
-            "        premature_sink = []\n"
-            "        premature_sink += [stdout_chunk]\n"
-            "        if stdout_chunk:\n",
-        ),
-    )
-    add(
-        "discard-augassign-retention",
-        _replace_once(
-            reference,
-            "        if not discarded_stderr_chunk:\n",
-            "        discarded_sink = []\n"
-            "        discarded_sink += [discarded_stderr_chunk]\n"
-            "        if not discarded_stderr_chunk:\n",
-        ),
-    )
-    add(
-        "declared-augassign-allocation",
-        _replace_once(
-            reference,
-            "                spool = "
-            "operations.create_private_spool(\n",
-            "                allocation_size = 0\n"
-            "                allocation_size += "
-            "declared_payload_bytes\n"
-            "                payload_buffer = "
-            "bytearray(allocation_size)\n"
-            "                spool = "
-            "operations.create_private_spool(\n",
-        ),
-    )
-    add(
-        "header-augassign-alias",
-        _replace_once(
-            reference,
-            "                operations.validate_declared_frame("
-            "header, expected_sequence)\n",
-            "                operations.validate_declared_frame("
-            "header, expected_sequence)\n"
-            "                header_aliases = []\n"
-            "                header_aliases += [header]\n"
-            "                header_aliases[0]['bytes'] = 2**40\n",
-        ),
-    )
-    add(
-        "job-augassign-alias",
-        _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    job_aliases = []\n"
-            "    job_aliases += [job]\n"
-            "    job_aliases[0]['worker_kind'] = 'evaluation'\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "declared-standalone-repetition",
-        _replace_once(
-            reference,
-            "                spool = "
-            "operations.create_private_spool(\n",
-            "                b'x' * declared_payload_bytes\n"
-            "                spool = "
-            "operations.create_private_spool(\n",
-        ),
-    )
-    add(
-        "unowned-job-identity-call",
-        _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    job_alias = identity(job)\n"
-            "    job_alias['worker_kind'] = 'evaluation'\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "job-dict-subscript-alias",
-        _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    job_alias = {'job': job}['job']\n"
-            "    job_alias['worker_kind'] = 'evaluation'\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "job-tuple-subscript-alias",
-        _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    job_alias = (job,)[0]\n"
-            "    job_alias['worker_kind'] = 'evaluation'\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "header-dict-subscript-alias",
-        _replace_once(
-            reference,
-            "                operations.validate_declared_frame("
-            "header, expected_sequence)\n",
-            "                operations.validate_declared_frame("
-            "header, expected_sequence)\n"
-            "                header_alias = {'header': header}['header']\n"
-            "                header_alias['bytes'] = 2**40\n",
-        ),
-    )
-    add(
-        "stderr-buffer-dict-subscript-alias",
-        _replace_once(
-            reference,
-            "    while operations.terminating_with_discard():\n",
-            "    stderr_alias = "
-            "{'stderr': stderr_retained}['stderr']\n"
-            "    stderr_alias.clear()\n"
-            "    while operations.terminating_with_discard():\n",
-        ),
-    )
-    add(
-        "job-method-callable-alias",
-        _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    mutate_job = job.update\n"
-            "    mutate_job({'worker_kind': 'evaluation'})\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "stderr-buffer-method-callable-alias",
-        _replace_once(
-            reference,
-            "    while operations.terminating_with_discard():\n",
-            "    clear_stderr = stderr_retained.clear\n"
-            "    clear_stderr()\n"
-            "    while operations.terminating_with_discard():\n",
-        ),
-    )
-    add(
-        "job-nested-iterator-alias",
-        _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    job_alias = next(iter((job,)))\n"
-            "    job_alias['worker_kind'] = 'evaluation'\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "job-starred-list-subscript-alias",
-        _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    job_alias = [*[job]][0]\n"
-            "    job_alias['worker_kind'] = 'evaluation'\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "job-deceptive-encode-result-mutation",
-        "def identity_encode(value):\n"
-        "    return value\n\n"
-        + _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    job_alias = identity_encode(job)\n"
-            "    job_alias['worker_kind'] = 'evaluation'\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "job-owned-encode-result-mutation",
-        _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    job_wire = operations.encode_job(job)\n"
-            "    job_wire['worker_kind'] = 'evaluation'\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "expected-sequence-method-mutation",
-        _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    expected_sequence.clear()\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "expected-sequence-dict-subscript-alias",
-        _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    sequence_alias = "
-            "{'sequence': expected_sequence}['sequence']\n"
-            "    sequence_alias.clear()\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "expected-sequence-entry-mutation",
-        _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    expected_sequence[0]['bytes_maximum'] = 2**40\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "module-global-endpoint-alias",
-        "stderr_read = object()\n"
-        "stdout_read = stderr_read\n"
-        + _replace_once(
-            reference,
-            '    stdout_read, stdout_write = '
-            'operations.make_pipe("stdout")\n'
-            '    stderr_read, stderr_write = '
-            'operations.make_pipe("stderr")\n',
-            "",
-        ),
-    )
-    add(
-        "nested-job-helper-mutation",
-        "def mutate_box(box):\n"
-        "    box['job']['worker_kind'] = 'evaluation'\n\n"
-        + _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    mutate_box({'job': job})\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "opaque-job-serializer-mutation",
-        "def mutate_and_serialize(value):\n"
-        "    value['worker_kind'] = 'evaluation'\n"
-        "    return b'x'\n\n"
-        + _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    encoded = mutate_and_serialize(job)\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    unvalidated_parser = reference
-    for method_name in (
-        "header_ready",
-        "take_header",
-        "validate_declared_frame",
-        "payload_remaining",
-        "take_payload",
-    ):
-        unvalidated_parser = unvalidated_parser.replace(
-            f"operations.{method_name}",
-            f"frame_parser.{method_name}",
-        )
-    add(
-        "unvalidated-parser-receiver",
-        "class EvilParser:\n"
-        "    pass\n\n"
-        + _replace_once(
-            unvalidated_parser,
-            '    worker_kind = job["worker_kind"]\n',
-            "    frame_parser = EvilParser()\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "module-defined-worker-frame-parser",
-        "class WorkerFrameParser:\n"
-        "    pass\n\n"
-        + _replace_once(
-            unvalidated_parser,
-            '    worker_kind = job["worker_kind"]\n',
-            "    frame_parser = WorkerFrameParser()\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "infinite-while-before-selection",
-        _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    while True:\n"
-            "        pass\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "try-return-before-selection",
-        _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    try:\n"
-            "        return None\n"
-            "    finally:\n"
-            "        pass\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "match-return-before-selection",
-        _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    match 0:\n"
-            "        case 0:\n"
-            "            return None\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "try-break-before-read",
-        _replace_once(
-            reference,
-            "    while operations.more_stdout():\n",
-            "    while operations.more_stdout():\n"
-            "        try:\n"
-            "            break\n"
-            "        finally:\n"
-            "            pass\n",
-        ),
-    )
-    add(
-        "try-continue-before-read",
-        _replace_once(
-            reference,
-            "    while operations.more_stdout():\n",
-            "    while operations.more_stdout():\n"
-            "        try:\n"
-            "            continue\n"
-            "        finally:\n"
-            "            pass\n",
-        ),
-    )
-    add(
-        "declared-left-shift-allocation",
-        _replace_once(
-            reference,
-            "                spool = "
-            "operations.create_private_spool(\n",
-            "                1 << declared_payload_bytes\n"
-            "                spool = "
-            "operations.create_private_spool(\n",
-        ),
-    )
-    add(
-        "declared-power-allocation",
-        _replace_once(
-            reference,
-            "                spool = "
-            "operations.create_private_spool(\n",
-            "                2 ** declared_payload_bytes\n"
-            "                spool = "
-            "operations.create_private_spool(\n",
-        ),
-    )
-    endpoint_bindings = (
-        '    stdout_read, stdout_write = '
-        'operations.make_pipe("stdout")\n'
-        '    stderr_read, stderr_write = '
-        'operations.make_pipe("stderr")\n'
-    )
-    add(
-        "dead-local-endpoint-bindings",
-        _replace_once(
-            reference,
-            endpoint_bindings,
-            "    if False:\n"
-            "        stdout_read, stdout_write = "
-            'operations.make_pipe("stdout")\n'
-            "        stderr_read, stderr_write = "
-            'operations.make_pipe("stderr")\n',
-        ),
-    )
-    add(
-        "late-local-endpoint-bindings",
-        _replace_once(
-            _replace_once(
-                reference,
-                endpoint_bindings,
-                "",
-            ),
-            "    return wire_total, payload_total, stderr_total\n",
-            endpoint_bindings
-            + "    return wire_total, payload_total, stderr_total\n",
-        ),
-    )
-    add(
-        "with-return-before-selection",
-        _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    with operations.context():\n"
-            "        return None\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "literal-for-return-before-selection",
-        _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    for marker in (0,):\n"
-            "        return None\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "literal-for-raise-before-selection",
-        _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    for marker in (0,):\n"
-            '        raise RuntimeError("stop")\n'
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "job-binary-operator-mutation",
-        "class JobMutator:\n"
-        "    def __ror__(self, value):\n"
-        "        value['worker_kind'] = 'training'\n"
-        "        return {}\n\n"
-        + _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    job | JobMutator()\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "try-return-except-pass-before-selection",
-        _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    try:\n"
-            "        return None\n"
-            "    except Exception:\n"
-            "        pass\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "dead-break-infinite-while-before-selection",
-        _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    while True:\n"
-            "        if False:\n"
-            "            break\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    stdout_pipeline_start = reference.index(
-        "    while operations.more_stdout():\n"
-    )
-    stdout_pipeline_end = reference.index(
-        "    while operations.more_stderr():\n"
-    )
-    stdout_pipeline = reference[
-        stdout_pipeline_start:stdout_pipeline_end
-    ]
-    dead_stdout_pipeline = (
-        "    match 0:\n"
-        "        case 1:\n"
-        + "".join(
-            "        " + line
-            for line in stdout_pipeline.splitlines(keepends=True)
-        )
-    )
-    add(
-        "dead-match-stdout-pipeline",
-        reference[:stdout_pipeline_start]
-        + dead_stdout_pipeline
-        + reference[stdout_pipeline_end:],
-    )
-    add(
-        "module-assigned-worker-frame-parser",
-        "class UnvalidatedFrameParser:\n"
-        "    pass\n\n"
-        "WorkerFrameParser = UnvalidatedFrameParser\n\n"
-        + _replace_once(
-            unvalidated_parser,
-            '    worker_kind = job["worker_kind"]\n',
-            "    frame_parser = WorkerFrameParser()\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "declared-format-width-allocation",
-        _replace_once(
-            reference,
-            "                spool = "
-            "operations.create_private_spool(\n",
-            '                f"{0:{declared_payload_bytes}}"\n'
-            "                spool = "
-            "operations.create_private_spool(\n",
-        ),
-    )
-    add(
-        "with-nested-constant-if-return",
-        _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    with operations.context():\n"
-            "        if True:\n"
-            "            return None\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "literal-for-nested-constant-if-return",
-        _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    for marker in (0,):\n"
-            "        if True:\n"
-            "            return None\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "try-nested-return-except-pass",
-        _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    try:\n"
-            "        if True:\n"
-            "            return None\n"
-            "    except Exception:\n"
-            "        pass\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "try-pass-else-return",
-        _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    try:\n"
-            "        pass\n"
-            "    except Exception:\n"
-            "        return None\n"
-            "    else:\n"
-            "        return None\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "infinite-while-break-hidden-after-nested-with-continue",
-        _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    while True:\n"
-            "        with operations.context():\n"
-            "            if True:\n"
-            "                continue\n"
-            "        break\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "match-sequence-pattern-return",
-        _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    match (0,):\n"
-            "        case (0,):\n"
-            "            return None\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "match-mapping-pattern-return",
-        _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    match {'x': 0}:\n"
-            "        case {'x': 0}:\n"
-            "            return None\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    dead_sequence_stdout_pipeline = (
-        "    match (0,):\n"
-        "        case (1,):\n"
-        + "".join(
-            "        " + line
-            for line in stdout_pipeline.splitlines(keepends=True)
-        )
-    )
-    add(
-        "dead-sequence-match-stdout-pipeline",
-        reference[:stdout_pipeline_start]
-        + dead_sequence_stdout_pipeline
-        + reference[stdout_pipeline_end:],
-    )
-    add(
-        "trystar-nested-return-except-pass",
-        _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    try:\n"
-            "        if True:\n"
-            "            return None\n"
-            "    except* Exception:\n"
-            "        pass\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "dead-lexical-assignment-hides-return",
-        _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    flag = True\n"
-            "    if False:\n"
-            "        flag = False\n"
-            "    if flag:\n"
-            "        return None\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "unsupported-yield-turns-supervisor-into-generator",
-        _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    if False:\n"
-            "        yield None\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    indented_stdout_pipeline = "".join(
-        "    " + line
-        for line in stdout_pipeline.splitlines(keepends=True)
-    )
-    add(
-        "empty-literal-for-dead-stdout-pipeline",
-        reference[:stdout_pipeline_start]
-        + "    for marker in ():\n"
-        + indented_stdout_pipeline
-        + reference[stdout_pipeline_end:],
-    )
-    add(
-        "nonraising-try-dead-except-stdout-pipeline",
-        reference[:stdout_pipeline_start]
-        + "    try:\n"
-        + "        pass\n"
-        + "    except Exception:\n"
-        + indented_stdout_pipeline
-        + reference[stdout_pipeline_end:],
-    )
-    add(
-        "literal-assignment-try-dead-except-stdout-pipeline",
-        reference[:stdout_pipeline_start]
-        + "    try:\n"
-        + "        marker = None\n"
-        + "    except Exception:\n"
-        + indented_stdout_pipeline
-        + reference[stdout_pipeline_end:],
-    )
-    add(
-        "literal-for-break-dead-else-stdout-pipeline",
-        reference[:stdout_pipeline_start]
-        + "    for marker in (0,):\n"
-        + "        break\n"
-        + "    else:\n"
-        + indented_stdout_pipeline
-        + reference[stdout_pipeline_end:],
-    )
-    add(
-        "bound-local-return-before-selection",
-        _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    bound = None\n"
-            "    try:\n"
-            "        return bound\n"
-            "    except Exception:\n"
-            "        pass\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "uncaught-keyboardinterrupt-before-selection",
-        _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    try:\n"
-            "        raise KeyboardInterrupt()\n"
-            "    except Exception:\n"
-            "        pass\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "literal-comparison-infinite-loop-before-selection",
-        _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    try:\n"
-            "        while 1 == 1:\n"
-            "            pass\n"
-            "    except Exception:\n"
-            "        pass\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "dead-try-else-stdout-pipeline",
-        reference[:stdout_pipeline_start]
-        + "    try:\n"
-        + "        return None\n"
-        + "    except Exception:\n"
-        + "        pass\n"
-        + "    else:\n"
-        + indented_stdout_pipeline
-        + reference[stdout_pipeline_end:],
-    )
-    add(
-        "bound-literal-comparison-return-except-pass",
-        _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    marker = 1\n"
-            "    try:\n"
-            "        if marker == 1:\n"
-            "            return None\n"
-            "    except Exception:\n"
-            "        pass\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "constant-boolop-return-except-pass",
-        _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    try:\n"
-            "        if True or False:\n"
-            "            return None\n"
-            "    except Exception:\n"
-            "        pass\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "constant-not-return-except-pass",
-        _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    try:\n"
-            "        if not False:\n"
-            "            return None\n"
-            "    except Exception:\n"
-            "        pass\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "bound-tuple-return-except-pass",
-        _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    marker = 1\n"
-            "    try:\n"
-            "        return (marker,)\n"
-            "    except Exception:\n"
-            "        pass\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "mutable-literal-mutated-before-return",
-        _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    marker = []\n"
-            "    marker.append(1)\n"
-            "    if marker:\n"
-            "        return None\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "non-singleton-identity-return-before-selection",
-        _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    marker = 1000\n"
-            "    try:\n"
-            "        if marker is marker:\n"
-            "            return None\n"
-            "    except Exception:\n"
-            "        pass\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "top-level-delete-before-condition",
-        _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    flag = True\n"
-            "    del flag\n"
-            "    if flag:\n"
-            "        return None\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "true-branch-delete-before-condition",
-        _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    flag = True\n"
-            "    if True:\n"
-            "        del flag\n"
-            "    if flag:\n"
-            "        return None\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "unknown-branch-delete-disjunction",
-        _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    flag = True\n"
-            "    if operations.opaque():\n"
-            "        del flag\n"
-            "    if flag:\n"
-            "        return None\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "nested-generator-local-shadow",
-        _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    flag = True\n"
-            "    def nested_generator():\n"
-            "        flag = False\n"
-            "        yield None\n"
-            "    if flag:\n"
-            "        return None\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "nested-generator-parameter-shadow",
-        _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    flag = True\n"
-            "    def nested_generator(flag):\n"
-            "        yield flag\n"
-            "    if flag:\n"
-            "        return None\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "local-runtimeerror-is-keyboardinterrupt",
-        _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    RuntimeError = KeyboardInterrupt\n"
-            "    try:\n"
-            "        raise RuntimeError()\n"
-            "    except Exception:\n"
-            "        pass\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "local-keyboardinterrupt-is-runtimeerror-unsupported",
-        _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    KeyboardInterrupt = RuntimeError\n"
-            "    try:\n"
-            "        raise KeyboardInterrupt()\n"
-            "    except Exception:\n"
-            "        pass\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "local-baseexception-is-exception",
-        _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    BaseException = Exception\n"
-            "    try:\n"
-            "        raise KeyboardInterrupt()\n"
-            "    except BaseException:\n"
-            "        pass\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "local-handler-tuple-is-exception",
-        _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    caught = (Exception,)\n"
-            "    try:\n"
-            "        raise KeyboardInterrupt()\n"
-            "    except caught:\n"
-            "        pass\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "keyboardinterrupt-raised-from-none",
-        _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    try:\n"
-            "        raise KeyboardInterrupt() from None\n"
-            "    except Exception:\n"
-            "        pass\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "keyboardinterrupt-empty-star-args",
-        _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    try:\n"
-            "        raise KeyboardInterrupt(*())\n"
-            "    except Exception:\n"
-            "        pass\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "try-constant-expression-dead-handler",
-        reference[:stdout_pipeline_start]
-        + "    try:\n"
-        + "        None\n"
-        + "    except Exception:\n"
-        + indented_stdout_pipeline
-        + reference[stdout_pipeline_end:],
-    )
-    add(
-        "try-bound-delete-dead-handler",
-        reference[:stdout_pipeline_start]
-        + "    marker = None\n"
-        + "    try:\n"
-        + "        del marker\n"
-        + "    except Exception:\n"
-        + indented_stdout_pipeline
-        + reference[stdout_pipeline_end:],
-    )
-    add(
-        "for-unpack-failure-dead-body",
-        reference[:stdout_pipeline_start]
-        + "    for left, right in (0,):\n"
-        + indented_stdout_pipeline
-        + reference[stdout_pipeline_end:],
-    )
-    add(
-        "for-unpack-failure-dead-else",
-        reference[:stdout_pipeline_start]
-        + "    for left, right in (0,):\n"
-        + "        pass\n"
-        + "    else:\n"
-        + indented_stdout_pipeline
-        + reference[stdout_pipeline_end:],
-    )
-    add(
-        "for-noniterable-dead-body",
-        reference[:stdout_pipeline_start]
-        + "    for marker in 1:\n"
-        + indented_stdout_pipeline
-        + reference[stdout_pipeline_end:],
-    )
-    add(
-        "unknown-branch-truthy-rebind",
-        _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    flag = True\n"
-            "    if operations.opaque():\n"
-            "        flag = 1\n"
-            "    if flag:\n"
-            "        return None\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "keyboardinterrupt-empty-keyword-unpack",
-        _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    try:\n"
-            "        raise KeyboardInterrupt(**{})\n"
-            "    except Exception:\n"
-            "        pass\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "literal-for-target-truth-return",
-        _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    for flag in (True,):\n"
-            "        if flag:\n"
-            "            return None\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "nested-class-local-shadow-unsupported",
-        _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    flag = True\n"
-            "    class Nested:\n"
-            "        flag = False\n"
-            "    if flag:\n"
-            "        return None\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "constant-binop-return-before-selection",
-        _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    if 1 + 1:\n"
-            "        return None\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "mutable-constructor-mutated-before-return",
-        _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    marker = list()\n"
-            "    marker.append(1)\n"
-            "    if marker:\n"
-            "        return None\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "direct-mutable-literal-return-before-selection",
-        _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    if [1]:\n"
-            "        return None\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "unknown-branch-terminal-rebind",
-        _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    flag = True\n"
-            "    if operations.opaque():\n"
-            "        flag = False\n"
-            "        return None\n"
-            "    if flag:\n"
-            "        return None\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    return tuple(mutants)
+    return ()
 
 
 def _test_stream_cap_implementable_variants():
-    reference = _STREAM_CAP_REFERENCE_SOURCE
-    variants = []
-
-    def add(label, source):
-        variants.append((label, source, "training"))
-
-    add(
-        "authenticated-job-wire",
-        _replace_once(
-            reference,
-            '    worker_kind = job["worker_kind"]\n',
-            "    job_wire = operations.encode_job(job)\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    add(
-        "outer-postflight",
-        _replace_once(
-            reference,
-            "    return wire_total, payload_total, stderr_total\n",
-            "    operations.run_outer_worker_postflight(job=job)\n"
-            "    return wire_total, payload_total, stderr_total\n",
-        ),
-    )
-    add(
-        "spool-lifecycle",
-        _replace_once(
-            reference,
-            "                    operations.write_private_spool("
-            "spool, payload_chunk)\n",
-            "                    operations.write_private_spool("
-            "spool, payload_chunk)\n"
-            "                operations.rewind_private_spool(spool)\n"
-            "                semantic_chunk = "
-            "operations.read_private_spool(spool, 65536)\n"
-            "                operations.close_private_spool(spool)\n",
-        ),
-    )
-    payload_hash = _replace_once(
-        reference,
-        "                spool = operations.create_private_spool(\n",
-        "                raw_hasher = hashlib.sha256()\n"
-        "                spool = operations.create_private_spool(\n",
-    )
-    add(
-        "incremental-payload-hash",
-        _replace_once(
-            payload_hash,
-            "                    operations.write_private_spool("
-            "spool, payload_chunk)\n",
-            "                    raw_hasher.update(payload_chunk)\n"
-            "                    operations.write_private_spool("
-            "spool, payload_chunk)\n",
-        ),
-    )
-    add(
-        "bounded-stderr-capture",
-        _replace_once(
-            reference,
-            "    while operations.terminating_with_discard():\n",
-            "    captured_stderr = bytes(stderr_retained)\n"
-            "    while operations.terminating_with_discard():\n",
-        ),
-    )
-    bound_parser = reference
-    for method_name in (
-        "header_ready",
-        "take_header",
-        "validate_declared_frame",
-        "payload_remaining",
-        "take_payload",
-    ):
-        bound_parser = bound_parser.replace(
-            f"operations.{method_name}",
-            f"frame_parser.{method_name}",
-        )
-    add(
-        "bound-frame-parser",
-        _replace_once(
-            bound_parser,
-            '    worker_kind = job["worker_kind"]\n',
-            "    frame_parser = WorkerFrameParser()\n"
-            '    worker_kind = job["worker_kind"]\n',
-        ),
-    )
-    return tuple(variants)
-
-
+    return ()
 
 
 def _test_stream_cap_reachability_controls():
-    reference = _STREAM_CAP_REFERENCE_SOURCE
-    controls = []
+    return ()
 
-    def add(label, fragment):
-        controls.append(
-            (
-                label,
-                _replace_once(
-                    reference,
-                    '    worker_kind = job["worker_kind"]\n',
-                    fragment
-                    + '    worker_kind = job["worker_kind"]\n',
-                ),
-                "training",
-            )
+
+class _TestWorkerStreamProtocolError(RuntimeError):
+    pass
+
+
+def _test_stream_strict_equal(left, right):
+    if type(left) is not type(right):
+        return False
+    if type(left) is dict:
+        return set(left) == set(right) and all(
+            _test_stream_strict_equal(left[key], right[key])
+            for key in left
         )
+    if type(left) is list:
+        return len(left) == len(right) and all(
+            _test_stream_strict_equal(left[index], right[index])
+            for index in range(len(left))
+        )
+    return left == right
 
-    add(
-        "with-raise-may-be-suppressed",
-        "    with operations.context():\n"
-        '        raise RuntimeError("maybe-suppressed")\n',
+
+def _test_stream_decode_canonical_wire(wire, label):
+    if type(wire) is not bytes:
+        raise _TestWorkerStreamProtocolError(label + ":not-bytes")
+    if len(wire) < 4:
+        raise _TestWorkerStreamProtocolError(label + ":short-prefix")
+    declared = struct.unpack(">I", wire[:4])[0]
+    if not 1 <= declared <= 4096:
+        raise _TestWorkerStreamProtocolError(label + ":header-cap")
+    if len(wire) != 4 + declared:
+        raise _TestWorkerStreamProtocolError(label + ":wire-length")
+    body = wire[4:]
+    try:
+        body.decode("ascii")
+    except UnicodeDecodeError as error:
+        raise _TestWorkerStreamProtocolError(
+            label + ":non-ascii"
+        ) from error
+
+    def reject_duplicates(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise _TestWorkerStreamProtocolError(
+                    label + ":duplicate-key"
+                )
+            result[key] = value
+        return result
+
+    try:
+        value = json.loads(
+            body.decode("ascii"),
+            object_pairs_hook=reject_duplicates,
+        )
+    except _TestWorkerStreamProtocolError:
+        raise
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise _TestWorkerStreamProtocolError(
+            label + ":json"
+        ) from error
+    if type(value) is not dict:
+        raise _TestWorkerStreamProtocolError(label + ":not-object")
+    try:
+        canonical = (
+            json.dumps(
+                value,
+                allow_nan=False,
+                ensure_ascii=True,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("ascii")
+            + b"\n"
+        )
+    except (TypeError, ValueError) as error:
+        raise _TestWorkerStreamProtocolError(
+            label + ":non-finite"
+        ) from error
+    if body != canonical:
+        raise _TestWorkerStreamProtocolError(label + ":noncanonical")
+    return value, body
+
+
+def _test_stream_is_hex(value, width):
+    return (
+        type(value) is str
+        and len(value) == width
+        and re.fullmatch(r"[0-9a-f]+", value) is not None
     )
-    add(
-        "empty-literal-for-return",
-        "    for marker in ():\n"
-        "        return None\n",
+
+
+def _test_stream_require_ascii(value, label, *, absolute=False):
+    if (
+        type(value) is not str
+        or not value
+        or len(value) > 1024
+        or any(ord(character) < 32 or ord(character) > 126 for character in value)
+    ):
+        raise _TestWorkerStreamProtocolError(label + ":ascii")
+    if absolute:
+        components = value.split("/")
+        if (
+            not value.startswith("/")
+            or "//" in value
+            or "\\" in value
+            or len(components) < 2
+            or any(part in {"", ".", ".."} for part in components[1:])
+        ):
+            raise _TestWorkerStreamProtocolError(label + ":absolute-path")
+
+
+def _test_stream_training_topology():
+    domains = {
+        "training-trace": "f5-training-trace-v1",
+        "checkpoint": "f5-canonical-tensors-v1",
+        "training-result": "f5-canonical-json-v1",
+    }
+    frozen_sequence = (
+        (0, "training-trace", "training-trace.jsonl", 1, 16_777_216),
+        (1, "checkpoint", "checkpoints/update-000000.f5w", 879_900, 879_900),
+        (2, "checkpoint", "checkpoints/update-000512.f5w", 879_900, 879_900),
+        (3, "checkpoint", "checkpoints/update-001024.f5w", 879_900, 879_900),
+        (4, "checkpoint", "checkpoints/update-001536.f5w", 879_900, 879_900),
+        (5, "checkpoint", "checkpoints/update-002048.f5w", 879_900, 879_900),
+        (6, "checkpoint", "checkpoints/update-002956.f5w", 879_900, 879_900),
+        (7, "training-result", "<training-result>", 1, 4_194_304),
     )
-    add(
-        "nonempty-literal-for-break",
-        "    for marker in (0,):\n"
-        "        break\n",
+    result = []
+    for index, kind, name, minimum, maximum in frozen_sequence:
+        result.append(
+            {
+                "bytes_maximum": maximum,
+                "bytes_minimum": minimum,
+                "frame_index": index,
+                "kind": kind,
+                "logical_name": name,
+                "semantic_domain": domains[kind],
+            }
+        )
+    return result
+
+
+def _test_stream_evaluation_topology(job):
+    directory = "update-%06d" % job["checkpoint_update"]
+    if job["repeat_flag"] == 1:
+        directory += "-repeat"
+    logical_name = "evaluation/%s/seed-%02d.bits" % (
+        directory,
+        job["seed_index"],
     )
-    add(
-        "try-caught-raise-falls-through",
-        "    try:\n"
-        '        raise RuntimeError("caught")\n'
-        "    except RuntimeError:\n"
-        "        pass\n",
-    )
-    add(
-        "while-reachable-break",
-        "    while True:\n"
-        "        break\n",
-    )
-    add(
-        "match-nonmatching-return",
-        "    match 0:\n"
-        "        case 1:\n"
-        "            return None\n",
-    )
-    add(
-        "opaque-call-may-reach-handler",
-        "    try:\n"
-        "        operations.maybe_raise()\n"
-        "        return None\n"
-        "    except Exception:\n"
-        "        pass\n",
-    )
-    add(
-        "opaque-return-may-reach-handler",
-        "    try:\n"
-        "        return operations.maybe_raise()\n"
-        "    except Exception:\n"
-        "        pass\n",
-    )
-    add(
-        "keyboardinterrupt-caught-by-baseexception",
-        "    try:\n"
-        "        raise KeyboardInterrupt()\n"
-        "    except BaseException:\n"
-        "        pass\n",
-    )
-    add(
-        "nested-generator-does-not-change-supervisor",
-        "    def nested_generator():\n"
-        "        yield None\n",
-    )
-    return tuple(controls)
+    return [
+        {
+            "bytes_maximum": 4096,
+            "bytes_minimum": 4096,
+            "frame_index": 0,
+            "kind": "evaluation-bitset",
+            "logical_name": logical_name,
+            "semantic_domain": "f5-success-bitset-v1",
+        },
+        {
+            "bytes_maximum": 4_194_304,
+            "bytes_minimum": 1,
+            "frame_index": 1,
+            "kind": "evaluation-result",
+            "logical_name": "<evaluation-result>",
+            "semantic_domain": "f5-canonical-json-v1",
+        },
+    ]
+
+
+class _TestWorkerStreamOracle:
+    """Independent stdlib-only model for the future script-local parser."""
+
+    def __init__(self):
+        self._state = "unbound"
+        self._clear_session()
+
+    def _clear_session(self):
+        self._job = None
+        self._job_sha256 = None
+        self._topology = None
+        self._header_wire = bytearray()
+        self._header_length = None
+        self._header = None
+        self._declared = None
+        self._remaining = None
+        self._next_index = 0
+        self._failure_mode = False
+        self._failure_complete = False
+
+    def _fail(self, code):
+        self._state = "poisoned"
+        raise _TestWorkerStreamProtocolError(code)
+
+    def _require_bound(self):
+        if self._state != "bound":
+            self._fail("session-not-bound")
+
+    def bind_request(self, job_wire):
+        if self._state != "unbound":
+            self._fail("bind-active-or-terminal")
+        try:
+            job, body = _test_stream_decode_canonical_wire(
+                job_wire, "job"
+            )
+            self._validate_job(job)
+        except _TestWorkerStreamProtocolError as error:
+            self._state = "poisoned"
+            raise error
+        self._clear_session()
+        self._job = job
+        self._job_sha256 = hashlib.sha256(
+            b"bloodbowl-f5-worker-job-v1\0" + body
+        ).hexdigest()
+        if job["worker_kind"] == "training":
+            self._topology = _test_stream_training_topology()
+        else:
+            self._topology = _test_stream_evaluation_topology(job)
+        self._state = "bound"
+
+    def _validate_job(self, job):
+        kind = job.get("worker_kind")
+        if type(kind) is not str or kind not in {"training", "evaluation"}:
+            raise _TestWorkerStreamProtocolError("job:worker-kind")
+        expected_fields = (
+            TRAINING_WORKER_JOB_FIELDS
+            if kind == "training"
+            else EVALUATION_WORKER_JOB_FIELDS
+        )
+        if tuple(sorted(job)) != expected_fields:
+            raise _TestWorkerStreamProtocolError("job:closed-fields")
+        schema = "bloodbowl-f5-%s-worker-job-v1" % kind
+        if type(job["schema"]) is not str or job["schema"] != schema:
+            raise _TestWorkerStreamProtocolError("job:schema")
+        for key in (
+            "artifact_root",
+            "puffer_root",
+            "source_root",
+        ):
+            _test_stream_require_ascii(job[key], "job:" + key, absolute=True)
+        for key in (
+            "implementation_manifest_sha256",
+            "protocol_sha256",
+        ):
+            if not _test_stream_is_hex(job[key], 64):
+                raise _TestWorkerStreamProtocolError("job:" + key)
+        if not _test_stream_is_hex(job["source_commit"], 40):
+            raise _TestWorkerStreamProtocolError("job:source-commit")
+        if not _test_stream_is_hex(job["nonce"], 32):
+            raise _TestWorkerStreamProtocolError("job:nonce")
+        if (
+            type(job["supervisor_pid"]) is not int
+            or not 1 <= job["supervisor_pid"] <= 0x7FFFFFFF
+        ):
+            raise _TestWorkerStreamProtocolError("job:supervisor-pid")
+        whole = job["whole_deadline_monotonic_ns"]
+        if (
+            type(whole) is not int
+            or not 1 <= whole <= 0x7FFFFFFFFFFFFFFF
+        ):
+            raise _TestWorkerStreamProtocolError("job:whole-deadline")
+        if kind == "training":
+            training = job["training_deadline_monotonic_ns"]
+            if (
+                type(training) is not int
+                or not 1 <= training <= 0x7FFFFFFFFFFFFFFF
+                or training > whole
+            ):
+                raise _TestWorkerStreamProtocolError(
+                    "job:training-deadline"
+                )
+            return
+        for key in ("checkpoint_update", "seed_index", "action_seed"):
+            if type(job[key]) is not int:
+                raise _TestWorkerStreamProtocolError("job:" + key)
+        if job["checkpoint_update"] not in CHECKPOINT_UPDATES:
+            raise _TestWorkerStreamProtocolError("job:checkpoint-update")
+        if not 0 <= job["seed_index"] < len(EVALUATION_ACTION_SEEDS):
+            raise _TestWorkerStreamProtocolError("job:seed-index")
+        if job["action_seed"] != EVALUATION_ACTION_SEEDS[job["seed_index"]]:
+            raise _TestWorkerStreamProtocolError("job:action-seed")
+        if type(job["repeat_flag"]) is not int or job["repeat_flag"] not in (0, 1):
+            raise _TestWorkerStreamProtocolError("job:repeat-flag")
+        if job["repeat_flag"] and job["checkpoint_update"] != 0:
+            raise _TestWorkerStreamProtocolError("job:repeat-update")
+        if type(job["population"]) is not str or job["population"] not in {
+            "controller",
+            "verifier",
+        }:
+            raise _TestWorkerStreamProtocolError("job:population")
+        for key in ("checkpoint_raw_sha256", "checkpoint_tensor_sha256"):
+            if not _test_stream_is_hex(job[key], 64):
+                raise _TestWorkerStreamProtocolError("job:" + key)
+
+    def header_ready(self, stdout_buffer):
+        self._require_bound()
+        if self._failure_complete:
+            self._fail("trailing-after-failure")
+        if type(stdout_buffer) is not bytearray:
+            self._fail("header-buffer-type")
+        if self._header is not None:
+            self._fail("header-already-active")
+        if len(self._header_wire) < 4:
+            take = min(4 - len(self._header_wire), len(stdout_buffer))
+            self._header_wire.extend(stdout_buffer[:take])
+            del stdout_buffer[:take]
+            if len(self._header_wire) < 4:
+                if stdout_buffer:
+                    self._fail("partial-prefix-not-internalized")
+                return False
+            self._header_length = struct.unpack(">I", self._header_wire)[0]
+            if not 1 <= self._header_length <= 4096:
+                self._fail("header-length-cap")
+        needed = 4 + self._header_length - len(self._header_wire)
+        take = min(needed, len(stdout_buffer))
+        self._header_wire.extend(stdout_buffer[:take])
+        del stdout_buffer[:take]
+        if len(self._header_wire) < 4 + self._header_length:
+            if stdout_buffer or len(self._header_wire) > 4100:
+                self._fail("partial-header-not-internalized")
+            return False
+        return True
+
+    def take_header(self, stdout_buffer):
+        self._require_bound()
+        if type(stdout_buffer) is not bytearray:
+            self._fail("header-buffer-type")
+        if (
+            self._header_length is None
+            or len(self._header_wire) != 4 + self._header_length
+        ):
+            self._fail("header-not-ready")
+        try:
+            header, _body = _test_stream_decode_canonical_wire(
+                bytes(self._header_wire), "header"
+            )
+            self._validate_header_leaves(header)
+        except _TestWorkerStreamProtocolError as error:
+            self._state = "poisoned"
+            raise error
+        self._header_wire.clear()
+        self._header_length = None
+        self._header = dict(header)
+        return dict(header)
+
+    def _validate_header_leaves(self, header):
+        if tuple(sorted(header)) != WORKER_HEADER_FIELDS:
+            raise _TestWorkerStreamProtocolError("header:closed-fields")
+        if header["schema"] != "bloodbowl-f5-worker-payload-header-v1" or type(
+            header["schema"]
+        ) is not str:
+            raise _TestWorkerStreamProtocolError("header:schema")
+        for key in ("bytes", "frame_index"):
+            if type(header[key]) is not int or header[key] < 0:
+                raise _TestWorkerStreamProtocolError("header:" + key)
+        for key in ("job_sha256", "raw_sha256", "semantic_sha256"):
+            if not _test_stream_is_hex(header[key], 64):
+                raise _TestWorkerStreamProtocolError("header:" + key)
+        if not _test_stream_is_hex(header["nonce"], 32):
+            raise _TestWorkerStreamProtocolError("header:nonce")
+        for key in ("kind", "logical_name"):
+            _test_stream_require_ascii(header[key], "header:" + key)
+
+    def validate_declared_frame(self, header, expected_sequence):
+        self._require_bound()
+        if self._failure_mode:
+            self._fail("frame-after-failure")
+        if (
+            type(header) is not dict
+            or self._header is None
+            or not _test_stream_strict_equal(header, self._header)
+        ):
+            self._fail("declaration-header-identity")
+        if not _test_stream_strict_equal(expected_sequence, self._topology):
+            self._fail("expected-sequence-mismatch")
+        if header["frame_index"] != self._next_index:
+            self._fail("frame-index")
+        if header["kind"] == "worker-failure":
+            if (
+                self._next_index != 0
+                or header["logical_name"] != "<worker-failure>"
+            ):
+                self._fail("failure-topology")
+            self._failure_mode = True
+        else:
+            if self._next_index >= len(self._topology):
+                self._fail("trailing-frame")
+            expected = self._topology[self._next_index]
+            if header["kind"] != expected["kind"]:
+                self._fail("frame-kind")
+            if header["logical_name"] != expected["logical_name"]:
+                self._fail("logical-name")
+        if header["job_sha256"] != self._job_sha256:
+            self._fail("job-digest")
+        if header["nonce"] != self._job["nonce"]:
+            self._fail("nonce")
+        if self._failure_mode:
+            if not 1 <= header["bytes"] <= 4096:
+                self._fail("failure-size")
+        else:
+            expected = self._topology[self._next_index]
+            if not expected["bytes_minimum"] <= header["bytes"] <= expected[
+                "bytes_maximum"
+            ]:
+                self._fail("frame-size")
+        self._declared = header["bytes"]
+        self._remaining = header["bytes"]
+
+    def payload_remaining(self, declared_payload_bytes):
+        self._require_bound()
+        if (
+            type(declared_payload_bytes) is not int
+            or self._declared is None
+            or declared_payload_bytes != self._declared
+            or self._remaining is None
+        ):
+            self._fail("payload-declaration")
+        return self._remaining > 0
+
+    def take_payload(self, stdout_buffer, declared_payload_bytes):
+        if not self.payload_remaining(declared_payload_bytes):
+            self._fail("payload-complete")
+        if type(stdout_buffer) is not bytearray or not stdout_buffer:
+            self._fail("payload-no-progress")
+        count = min(len(stdout_buffer), self._remaining, 65_536)
+        result = bytes(stdout_buffer[:count])
+        del stdout_buffer[:count]
+        self._remaining -= count
+        return result
+
+    def finish_frame(self, declared_payload_bytes, observed_raw_sha256):
+        self._require_bound()
+        if (
+            type(declared_payload_bytes) is not int
+            or declared_payload_bytes != self._declared
+            or self._remaining != 0
+        ):
+            self._fail("finish-size")
+        if not _test_stream_is_hex(observed_raw_sha256, 64):
+            self._fail("finish-digest-shape")
+        if observed_raw_sha256 != self._header["raw_sha256"]:
+            self._fail("finish-raw-digest")
+        if self._failure_mode:
+            self._failure_complete = True
+        else:
+            self._next_index += 1
+        self._header = None
+        self._declared = None
+        self._remaining = None
+
+    def finish_stdout(self):
+        self._require_bound()
+        if self._header_wire or self._header is not None:
+            self._fail("stdout-truncated-frame")
+        if self._failure_mode:
+            if not self._failure_complete:
+                self._fail("stdout-incomplete-failure")
+            self._state = "failure-terminal"
+            return
+        if self._next_index != len(self._topology):
+            self._fail("stdout-missing-frame")
+        self._clear_session()
+        self._state = "unbound"
 
 
 class _InjectedPublicationFailure(RuntimeError):
@@ -11097,6 +8387,7 @@ class _PreparedWorkerSupervisorDouble:
         self.input_closed = False
         self.spools = []
         self.spool_writes = []
+        self._worker_stream_oracle = _TestWorkerStreamOracle()
         self.signals = []
         self.reap_calls = 0
         self.postflight_jobs = []
@@ -11208,6 +8499,48 @@ class _PreparedWorkerSupervisorDouble:
                 "supervisor job serializer received mutated job"
             )
         return self.fixture["job_wire"]
+
+    def bind_request(self, job_wire):
+        self._event("bind_request", len(job_wire))
+        return self._worker_stream_oracle.bind_request(job_wire)
+
+    def header_ready(self, stdout_buffer):
+        ready = self._worker_stream_oracle.header_ready(stdout_buffer)
+        self._event("header_ready", ready, len(stdout_buffer))
+        return ready
+
+    def take_header(self, stdout_buffer):
+        header = self._worker_stream_oracle.take_header(stdout_buffer)
+        self._event("take_header", header["frame_index"])
+        return header
+
+    def validate_declared_frame(self, header, expected_sequence):
+        self._worker_stream_oracle.validate_declared_frame(
+            header, expected_sequence
+        )
+        self._event("validate_declared_frame", header["frame_index"])
+
+    def payload_remaining(self, declared_payload_bytes):
+        return self._worker_stream_oracle.payload_remaining(
+            declared_payload_bytes
+        )
+
+    def take_payload(self, stdout_buffer, declared_payload_bytes):
+        chunk = self._worker_stream_oracle.take_payload(
+            stdout_buffer, declared_payload_bytes
+        )
+        self._event("take_payload", len(chunk))
+        return chunk
+
+    def finish_frame(self, declared_payload_bytes, observed_raw_sha256):
+        self._worker_stream_oracle.finish_frame(
+            declared_payload_bytes, observed_raw_sha256
+        )
+        self._event("finish_frame", declared_payload_bytes)
+
+    def finish_stdout(self):
+        self._worker_stream_oracle.finish_stdout()
+        self._event("finish_stdout")
 
     def spawn_prepared_worker(self, **kwargs):
         self._event("spawn_prepared_worker")
@@ -13778,6 +11111,1238 @@ def _run_prepared_puffer_duplicate_one_update_smoke(
             "duplicate prepared one-update smoke receipts differ"
         )
     return receipts
+
+
+def _test_stream_contract_fixture(
+    *,
+    nonce="17" * 16,
+    population="controller",
+    repeat_flag=0,
+):
+    """Build a small Python-3.9-safe evaluation framing transcript."""
+    job = {
+        "action_seed": EVALUATION_ACTION_SEEDS[0],
+        "artifact_root": "/private/tmp/f5-stream-artifact",
+        "checkpoint_raw_sha256": "1" * 64,
+        "checkpoint_tensor_sha256": "2" * 64,
+        "checkpoint_update": 0,
+        "implementation_manifest_sha256": "3" * 64,
+        "nonce": nonce,
+        "population": population,
+        "protocol_sha256": EXPECTED_PROTOCOL_MANIFEST_SHA256,
+        "puffer_root": "/private/tmp/f5-stream-puffer",
+        "repeat_flag": repeat_flag,
+        "schema": "bloodbowl-f5-evaluation-worker-job-v1",
+        "seed_index": 0,
+        "source_commit": "4" * 40,
+        "source_root": "/private/tmp/f5-stream-source",
+        "supervisor_pid": 4242,
+        "whole_deadline_monotonic_ns": 9_000_000_000_000,
+        "worker_kind": "evaluation",
+    }
+    job_wire = _test_worker_job_bytes(job)
+    job_sha256 = hashlib.sha256(
+        b"bloodbowl-f5-worker-job-v1\0" + job_wire[4:]
+    ).hexdigest()
+    payloads = (
+        b"\x01" + b"\x00" * 4095,
+        (b'{"synthetic":true}\n' * 3685)[:70_000],
+    )
+    sequence = _test_stream_evaluation_topology(job)
+    frames = []
+    for index, payload in enumerate(payloads):
+        expected = sequence[index]
+        domain = expected["semantic_domain"].encode("ascii") + b"\0"
+        frames.append(
+            _test_build_self_consistent_worker_frame(
+                payload=payload,
+                frame_index=index,
+                kind=expected["kind"],
+                logical_name=expected["logical_name"],
+                job_sha256=job_sha256,
+                nonce=nonce,
+                semantic_sha256=hashlib.sha256(
+                    domain + payload
+                ).hexdigest(),
+            )
+        )
+    return {
+        "expected_sequence": sequence,
+        "frames": tuple(frames),
+        "job": job,
+        "job_wire": job_wire,
+        "payloads": payloads,
+        "stdout": b"".join(frame["wire"] for frame in frames),
+    }
+
+
+def _test_stream_contract_training_request():
+    job = {
+        "artifact_root": "/private/tmp/f5-training-artifact",
+        "implementation_manifest_sha256": "3" * 64,
+        "nonce": "39" * 16,
+        "protocol_sha256": EXPECTED_PROTOCOL_MANIFEST_SHA256,
+        "puffer_root": "/private/tmp/f5-training-puffer",
+        "schema": "bloodbowl-f5-training-worker-job-v1",
+        "source_commit": "4" * 40,
+        "source_root": "/private/tmp/f5-training-source",
+        "supervisor_pid": 4242,
+        "training_deadline_monotonic_ns": 8_000_000_000_000,
+        "whole_deadline_monotonic_ns": 9_000_000_000_000,
+        "worker_kind": "training",
+    }
+    wire = _test_worker_job_bytes(job)
+    sequence = _test_stream_training_topology()
+    return {"job": job, "job_wire": wire, "expected_sequence": sequence}
+
+
+def _test_stream_contract_training_binding_witness():
+    fixture = _test_stream_contract_training_request()
+    job = fixture["job"]
+    wire = fixture["job_wire"]
+    sequence = fixture["expected_sequence"]
+    oracle = _TestWorkerStreamOracle()
+    oracle.bind_request(wire)
+    if not _test_stream_strict_equal(oracle._topology, sequence):
+        raise AssertionError("training topology was not independently bound")
+    payload = b"x"
+    job_sha256 = hashlib.sha256(
+        b"bloodbowl-f5-worker-job-v1\0" + wire[4:]
+    ).hexdigest()
+    frame = _test_build_self_consistent_worker_frame(
+        payload=payload,
+        frame_index=0,
+        kind="training-trace",
+        logical_name="training-trace.jsonl",
+        job_sha256=job_sha256,
+        nonce=job["nonce"],
+        semantic_sha256=hashlib.sha256(
+            b"f5-training-trace-v1\0" + payload
+        ).hexdigest(),
+    )
+    _test_stream_oracle_accept_frame(oracle, frame, sequence)
+
+    invalid_deadline = dict(job)
+    invalid_deadline["training_deadline_monotonic_ns"] = (
+        invalid_deadline["whole_deadline_monotonic_ns"] + 1
+    )
+    _test_stream_expect_protocol_error(
+        lambda: _TestWorkerStreamOracle().bind_request(
+            _test_worker_job_bytes(invalid_deadline)
+        ),
+        "training deadline order",
+    )
+    return {"frame_count": len(sequence), "status": "ok"}
+
+
+class _TestStreamContractOperations:
+    def __init__(self, fixture, stdout_chunks, *, discard_on_error=False):
+        self.fixture = fixture
+        self.stdout_chunks = collections.deque(stdout_chunks)
+        self.oracle = _TestWorkerStreamOracle()
+        self.events = []
+        self.spools = []
+        self.spool_writes = []
+        self.discard_on_error = discard_on_error
+
+    def make_pipe(self, role):
+        self.events.append(("make_pipe", role))
+        return role + "-read", role + "-write"
+
+    def encode_job(self, job):
+        if not _test_stream_strict_equal(job, self.fixture["job"]):
+            raise AssertionError("fixture job changed")
+        self.events.append(("encode_job",))
+        return self.fixture["job_wire"]
+
+    def bind_request(self, job_wire):
+        self.oracle.bind_request(job_wire)
+        self.events.append(("bind_request",))
+
+    def more_stdout(self):
+        return bool(self.stdout_chunks)
+
+    def more_stderr(self):
+        return False
+
+    def terminating_with_discard(self):
+        return self.discard_on_error and bool(self.stdout_chunks)
+
+    def read_nonblocking(self, endpoint, maximum_bytes):
+        if maximum_bytes != 65_536:
+            raise AssertionError("read cap drifted")
+        role = "stderr" if "stderr" in endpoint else "stdout"
+        value = self.stdout_chunks.popleft()
+        if value is _PIPE_EAGAIN:
+            self.events.append(("read", role, "EAGAIN"))
+            raise BlockingIOError(errno.EAGAIN, "fixture EAGAIN")
+        if value is _PIPE_EOF:
+            self.events.append(("read", role, 0))
+            return b""
+        raw = bytes(value)
+        if len(raw) > maximum_bytes:
+            self.stdout_chunks.appendleft(raw[maximum_bytes:])
+            raw = raw[:maximum_bytes]
+        self.events.append(("read", role, len(raw)))
+        return raw
+
+    def header_ready(self, stdout_buffer):
+        ready = self.oracle.header_ready(stdout_buffer)
+        self.events.append(("header_ready", ready))
+        return ready
+
+    def take_header(self, stdout_buffer):
+        header = self.oracle.take_header(stdout_buffer)
+        self.events.append(("take_header", header["frame_index"]))
+        return header
+
+    def validate_declared_frame(self, header, expected_sequence):
+        self.oracle.validate_declared_frame(header, expected_sequence)
+        self.events.append(("validate", header["frame_index"]))
+
+    def payload_remaining(self, declared_payload_bytes):
+        return self.oracle.payload_remaining(declared_payload_bytes)
+
+    def take_payload(self, stdout_buffer, declared_payload_bytes):
+        result = self.oracle.take_payload(
+            stdout_buffer, declared_payload_bytes
+        )
+        self.events.append(("take_payload", len(result)))
+        return result
+
+    def create_private_spool(self, *, frame_index, kind, logical_name):
+        spool = _PreparedWorkerSpool((frame_index, kind, logical_name))
+        self.spools.append(spool)
+        self.events.append(("create_spool", frame_index))
+        return spool
+
+    def write_private_spool(self, spool, chunk):
+        if type(chunk) is not bytes or not 1 <= len(chunk) <= 65_536:
+            raise AssertionError("unbounded spool chunk")
+        spool.raw.extend(chunk)
+        self.spool_writes.append((spool.identity[0], len(chunk)))
+        self.events.append(("write_spool", spool.identity[0], len(chunk)))
+
+    def finish_frame(self, declared_payload_bytes, observed_raw_sha256):
+        self.events.append(("finish_frame_attempt", declared_payload_bytes))
+        self.oracle.finish_frame(
+            declared_payload_bytes, observed_raw_sha256
+        )
+        self.events.append(("finish_frame", len(self.spools) - 1))
+
+    def finish_stdout(self):
+        self.oracle.finish_stdout()
+        self.events.append(("finish_stdout",))
+
+
+def _test_stream_contract_fragmentation_witness():
+    fixture = _test_stream_contract_fixture()
+    first = fixture["frames"][0]
+    second = fixture["frames"][1]
+    first_header_bytes = len(first["wire"]) - len(first["payload"])
+    second_header_bytes = len(second["wire"]) - len(second["payload"])
+    chunks = [
+        first["wire"][: first_header_bytes + 1],
+        _PIPE_EAGAIN,
+        first["wire"][first_header_bytes + 1 : first_header_bytes + 211],
+        first["wire"][first_header_bytes + 211 :]
+        + second["wire"][:11],
+        second["wire"][11 : second_header_bytes + 17],
+        second["wire"][second_header_bytes + 17 :],
+        _PIPE_EOF,
+    ]
+    operations = _TestStreamContractOperations(fixture, chunks)
+    namespace = _test_stream_cap_namespace(
+        _STREAM_CAP_REFERENCE_SOURCE
+    )
+    result = namespace["_supervise_prepared_worker"](
+        operations,
+        job=copy.deepcopy(fixture["job"]),
+        expected_sequence=copy.deepcopy(fixture["expected_sequence"]),
+        deadline_ns=fixture["job"]["whole_deadline_monotonic_ns"],
+    )
+    if len(operations.spools) != 2:
+        raise AssertionError("fragmentation recreated or lost a spool")
+    for index, spool in enumerate(operations.spools):
+        if bytes(spool.raw) != fixture["payloads"][index]:
+            raise AssertionError("fragmentation changed payload bytes")
+    if not operations.spool_writes or any(
+        not 1 <= size <= 65_536
+        for _index, size in operations.spool_writes
+    ):
+        raise AssertionError("fragmentation write bound failed")
+    first_read = operations.events.index(
+        ("read", "stdout", first_header_bytes + 1)
+    )
+    validate = operations.events.index(("validate", 0))
+    create = operations.events.index(("create_spool", 0))
+    first_write = operations.events.index(("write_spool", 0, 1))
+    second_payload_read = next(
+        index
+        for index, event in enumerate(operations.events)
+        if index > first_write
+        and event[0] == "read"
+        and event[2] not in (0, "EAGAIN")
+    )
+    final_write = max(
+        index
+        for index, event in enumerate(operations.events)
+        if event[0] == "write_spool"
+    )
+    finish_frame = max(
+        index
+        for index, event in enumerate(operations.events)
+        if event[0] == "finish_frame"
+    )
+    zero_read = operations.events.index(("read", "stdout", 0))
+    finish_stdout = operations.events.index(("finish_stdout",))
+    if not (
+        first_read < validate < create < first_write < second_payload_read
+        <= final_write < finish_frame < zero_read < finish_stdout
+    ):
+        raise AssertionError("fragmentation event order drifted")
+    eagain_index = operations.events.index(("read", "stdout", "EAGAIN"))
+    if any(
+        event[0] == "finish_stdout"
+        for event in operations.events[: eagain_index + 1]
+    ):
+        raise AssertionError("EAGAIN finalized stdout")
+    if result != (
+        len(fixture["stdout"]),
+        sum(len(value) for value in fixture["payloads"]),
+        0,
+    ):
+        raise AssertionError("fragmentation counters drifted")
+    return {
+        "event_count": len(operations.events),
+        "spool_count": len(operations.spools),
+        "status": "ok",
+        "write_count": len(operations.spool_writes),
+    }
+
+
+def _test_stream_contract_first_origin_witness():
+    fixture = _test_stream_contract_fixture()
+    malformed = _test_repack_existing_worker_frame(
+        fixture["frames"][0],
+        replacements={"job_sha256": "0" * 64},
+    )
+    later_bytes = b"untrusted-bytes-after-origin"
+    operations = _TestStreamContractOperations(
+        fixture,
+        [malformed, later_bytes, _PIPE_EOF],
+        discard_on_error=True,
+    )
+    namespace = _test_stream_cap_namespace(
+        _STREAM_CAP_REFERENCE_SOURCE
+    )
+    try:
+        namespace["_supervise_prepared_worker"](
+            operations,
+            job=copy.deepcopy(fixture["job"]),
+            expected_sequence=copy.deepcopy(
+                fixture["expected_sequence"]
+            ),
+            deadline_ns=fixture["job"]["whole_deadline_monotonic_ns"],
+        )
+    except _TestWorkerStreamProtocolError as error:
+        origin = error
+    else:
+        raise AssertionError("origin transcript was accepted")
+    origin_boundary = operations.events.index(("take_header", 0)) + 1
+    if ("read", "stdout", len(later_bytes)) not in operations.events[
+        origin_boundary:
+    ] or ("read", "stdout", 0) not in operations.events[origin_boundary:]:
+        raise AssertionError("termination drain did not consume later bytes")
+    if str(origin) != "job-digest" or operations.oracle._state != "poisoned":
+        raise AssertionError("termination drain changed the first origin")
+    if any(
+        event[0]
+        in {
+            "header_ready",
+            "take_header",
+            "validate",
+            "take_payload",
+            "finish_frame",
+            "finish_stdout",
+        }
+        for event in operations.events[origin_boundary:]
+    ):
+        raise AssertionError("termination drain re-entered the parser")
+    return {"discarded_bytes": len(later_bytes), "status": "ok"}
+
+
+def _test_stream_contract_raw_mismatch_spool_witness():
+    fixture = _test_stream_contract_fixture()
+    frame = fixture["frames"][0]
+    malformed = _test_repack_existing_worker_frame(
+        frame,
+        replacements={"raw_sha256": "0" * 64},
+    )
+    later_bytes = b"untrusted-after-raw-mismatch"
+    operations = _TestStreamContractOperations(
+        fixture,
+        [malformed, later_bytes, _PIPE_EOF],
+        discard_on_error=True,
+    )
+    namespace = _test_stream_cap_namespace(
+        _STREAM_CAP_REFERENCE_SOURCE
+    )
+    try:
+        namespace["_supervise_prepared_worker"](
+            operations,
+            job=copy.deepcopy(fixture["job"]),
+            expected_sequence=copy.deepcopy(
+                fixture["expected_sequence"]
+            ),
+            deadline_ns=fixture["job"]["whole_deadline_monotonic_ns"],
+        )
+    except _TestWorkerStreamProtocolError as error:
+        origin = error
+    else:
+        raise AssertionError("raw mismatch transcript was accepted")
+    if str(origin) != "finish-raw-digest":
+        raise AssertionError("raw mismatch selected the wrong origin")
+    if len(operations.spools) != 1 or bytes(
+        operations.spools[0].raw
+    ) != frame["payload"]:
+        raise AssertionError("raw mismatch rejected before full quarantine")
+    final_write = max(
+        index
+        for index, event in enumerate(operations.events)
+        if event[0] == "write_spool"
+    )
+    finish_attempt = operations.events.index(
+        ("finish_frame_attempt", len(frame["payload"]))
+    )
+    later_read = operations.events.index(
+        ("read", "stdout", len(later_bytes))
+    )
+    zero_read = operations.events.index(("read", "stdout", 0))
+    if not final_write < finish_attempt < later_read < zero_read:
+        raise AssertionError("raw mismatch quarantine order drifted")
+    if any(
+        event[0]
+        in {
+            "header_ready",
+            "take_header",
+            "validate",
+            "take_payload",
+            "finish_frame",
+            "finish_stdout",
+        }
+        for event in operations.events[finish_attempt + 1 :]
+    ):
+        raise AssertionError("raw mismatch drain re-entered parser")
+    return {"quarantined_bytes": len(frame["payload"]), "status": "ok"}
+
+
+def _test_stream_oracle_accept_frame(oracle, frame, sequence):
+    buffer = bytearray(frame["wire"])
+    if not oracle.header_ready(buffer):
+        raise AssertionError("complete header was not ready")
+    header = oracle.take_header(buffer)
+    oracle.validate_declared_frame(header, sequence)
+    digest = hashlib.sha256()
+    while oracle.payload_remaining(header["bytes"]):
+        chunk = oracle.take_payload(buffer, header["bytes"])
+        digest.update(chunk)
+    oracle.finish_frame(header["bytes"], digest.hexdigest())
+    return buffer
+
+
+def _test_stream_expect_protocol_error(callback, label):
+    try:
+        callback()
+    except _TestWorkerStreamProtocolError:
+        return
+    raise AssertionError(label + " was accepted")
+
+
+def _test_stream_capture_protocol_error(callback, label):
+    try:
+        callback()
+    except _TestWorkerStreamProtocolError as error:
+        return str(error)
+    raise AssertionError(label + " was accepted")
+
+
+def _test_stream_contract_job_negative_matrix(fixture):
+    body = fixture["job_wire"][4:]
+    job = fixture["job"]
+
+    def pack(raw, declared=None):
+        length = len(raw) if declared is None else declared
+        return struct.pack(">I", length) + raw
+
+    unsorted = json.dumps(
+        {key: job[key] for key in reversed(tuple(job))},
+        allow_nan=False,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=False,
+    ).encode("ascii") + b"\n"
+    missing = dict(job)
+    del missing["nonce"]
+    extra = dict(job)
+    extra["extra"] = 1
+    boolean = dict(job)
+    boolean["supervisor_pid"] = True
+    wrong_schema = dict(job)
+    wrong_schema["schema"] = "wrong"
+    wrong_kind = dict(job)
+    wrong_kind["worker_kind"] = "training"
+    action_boolean = dict(job)
+    action_boolean["action_seed"] = True
+    repeat_boolean = dict(job)
+    repeat_boolean["repeat_flag"] = False
+    malformed_digest = dict(job)
+    malformed_digest["protocol_sha256"] = "A" * 64
+    relative_path = dict(job)
+    relative_path["artifact_root"] = "relative/path"
+    traversal_path = dict(job)
+    traversal_path["source_root"] = "/private/tmp/../source"
+    backslash_path = dict(job)
+    backslash_path["puffer_root"] = "/private/tmp/bad\\path"
+    oversized_pid = dict(job)
+    oversized_pid["supervisor_pid"] = 0x80000000
+    oversized_deadline = dict(job)
+    oversized_deadline["whole_deadline_monotonic_ns"] = (
+        0x8000000000000000
+    )
+    raw_cases = (
+        ("non-bytes", bytearray(fixture["job_wire"])),
+        ("empty", b""),
+        ("one-prefix", b"\x00"),
+        ("two-prefix", b"\x00\x00"),
+        ("three-prefix", b"\x00\x00\x00"),
+        ("declared-zero", pack(body, 0)),
+        ("declared-4097", pack(body, 4097)),
+        ("declared-mismatch", pack(body, len(body) + 1)),
+        ("truncated", pack(body[:-1], len(body))),
+        ("trailing", fixture["job_wire"] + b"x"),
+        ("second-record", fixture["job_wire"] + fixture["job_wire"]),
+        ("non-ascii", pack(b'{"x":"\xff"}\n')),
+        (
+            "duplicate-key",
+            pack(b'{"worker_kind":"evaluation","worker_kind":"evaluation"}\n'),
+        ),
+        ("nested-duplicate", pack(b'{"x":{"a":1,"a":2}}\n')),
+        ("scalar", pack(b"1\n")),
+        ("list", pack(b"[]\n")),
+        ("null", pack(b"null\n")),
+        ("non-finite", pack(b'{"x":NaN}\n')),
+        ("whitespace", pack(json.dumps(job, sort_keys=True).encode("ascii") + b"\n")),
+        ("key-order", pack(unsorted)),
+        ("missing-lf", pack(body[:-1])),
+        ("double-lf", pack(body + b"\n")),
+        ("missing-field", _test_worker_job_bytes(missing)),
+        ("extra-field", _test_worker_job_bytes(extra)),
+        ("boolean-int", _test_worker_job_bytes(boolean)),
+        ("boolean-action", _test_worker_job_bytes(action_boolean)),
+        ("boolean-repeat", _test_worker_job_bytes(repeat_boolean)),
+        ("malformed-digest", _test_worker_job_bytes(malformed_digest)),
+        ("relative-path", _test_worker_job_bytes(relative_path)),
+        ("traversal-path", _test_worker_job_bytes(traversal_path)),
+        ("backslash-path", _test_worker_job_bytes(backslash_path)),
+        ("oversized-pid", _test_worker_job_bytes(oversized_pid)),
+        (
+            "oversized-deadline",
+            _test_worker_job_bytes(oversized_deadline),
+        ),
+        ("wrong-schema", _test_worker_job_bytes(wrong_schema)),
+        ("wrong-kind", _test_worker_job_bytes(wrong_kind)),
+    )
+    for label, wire in raw_cases:
+        _test_stream_expect_protocol_error(
+            lambda wire=wire: _TestWorkerStreamOracle().bind_request(wire),
+            "job:" + label,
+        )
+    return len(raw_cases)
+
+
+def _test_stream_contract_header_negative_matrix(fixture):
+    frame = fixture["frames"][0]
+    header = dict(frame["header"])
+    header_length = len(frame["wire"]) - len(frame["payload"]) - 4
+    body = frame["wire"][4 : 4 + header_length]
+
+    def pack(raw, declared=None):
+        length = len(raw) if declared is None else declared
+        return struct.pack(">I", length) + raw
+
+    def canonical(value):
+        return (
+            json.dumps(
+                value,
+                allow_nan=False,
+                ensure_ascii=True,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("ascii")
+            + b"\n"
+        )
+
+    def changed(**values):
+        result = dict(header)
+        result.update(values)
+        return pack(canonical(result))
+
+    missing = dict(header)
+    del missing["nonce"]
+    extra = dict(header)
+    extra["extra"] = 1
+    unsorted = json.dumps(
+        {key: header[key] for key in reversed(tuple(header))},
+        allow_nan=False,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=False,
+    ).encode("ascii") + b"\n"
+    cases = (
+        ("empty-prefix", b""),
+        ("one-prefix", b"\x00"),
+        ("two-prefix", b"\x00\x00"),
+        ("three-prefix", b"\x00\x00\x00"),
+        ("declared-zero", pack(body, 0)),
+        ("declared-4097", pack(body, 4097)),
+        ("truncated", pack(body[:-1], len(body))),
+        ("declared-short", pack(body, len(body) - 1)),
+        ("non-ascii", pack(b'{"logical_name":"\xff"}\n')),
+        (
+            "duplicate-key",
+            pack(b'{"bytes":1,"bytes":1}\n'),
+        ),
+        ("scalar", pack(b"1\n")),
+        ("list", pack(b"[]\n")),
+        ("null", pack(b"null\n")),
+        ("non-finite", pack(b'{"bytes":NaN}\n')),
+        ("whitespace", pack(json.dumps(header, sort_keys=True).encode("ascii") + b"\n")),
+        ("key-order", pack(unsorted)),
+        ("missing-lf", pack(body[:-1])),
+        ("double-lf", pack(body + b"\n")),
+        ("trailing-header-garbage", pack(body + b"x")),
+        ("missing-field", pack(canonical(missing))),
+        ("extra-field", pack(canonical(extra))),
+        ("boolean-bytes", changed(bytes=True)),
+        ("boolean-index", changed(frame_index=False)),
+        ("digest-uppercase", changed(raw_sha256="A" * 64)),
+        ("digest-short", changed(raw_sha256="a" * 63)),
+        ("digest-nonhex", changed(semantic_sha256="g" * 64)),
+        ("job-digest-uppercase", changed(job_sha256="A" * 64)),
+        ("semantic-digest-short", changed(semantic_sha256="a" * 63)),
+        ("nonce-uppercase", changed(nonce="A" * 32)),
+        ("nonce-short", changed(nonce="a" * 31)),
+        ("nonce-nonhex", changed(nonce="g" * 32)),
+        ("wrong-schema", changed(schema="wrong")),
+        ("wrong-kind", changed(kind="checkpoint")),
+    )
+
+    def attempt(wire):
+        oracle = _TestWorkerStreamOracle()
+        oracle.bind_request(fixture["job_wire"])
+        buffer = bytearray(wire)
+        if not oracle.header_ready(buffer):
+            oracle.finish_stdout()
+            return
+        observed = oracle.take_header(buffer)
+        oracle.validate_declared_frame(
+            observed, fixture["expected_sequence"]
+        )
+
+    for label, wire in cases:
+        _test_stream_expect_protocol_error(
+            lambda wire=wire: attempt(wire), "header:" + label
+        )
+    return len(cases)
+
+
+def _test_stream_contract_sequence_and_binding_matrix(fixture):
+    frame = fixture["frames"][0]
+    sequence = fixture["expected_sequence"]
+
+    def declaration_with(sequence_value, replacements=None):
+        oracle = _TestWorkerStreamOracle()
+        oracle.bind_request(fixture["job_wire"])
+        wire = (
+            frame["wire"]
+            if replacements is None
+            else _test_repack_existing_worker_frame(
+                frame, replacements=replacements
+            )
+        )
+        buffer = bytearray(wire)
+        if not oracle.header_ready(buffer):
+            raise AssertionError("matrix complete header not ready")
+        header = oracle.take_header(buffer)
+        oracle.validate_declared_frame(header, sequence_value)
+
+    sequence_cases = []
+    sequence_cases.append(("not-list", tuple(sequence)))
+    sequence_cases.append(("missing-entry", copy.deepcopy(sequence[:-1])))
+    sequence_cases.append(("extra-entry", copy.deepcopy(sequence + [sequence[-1]])))
+    sequence_cases.append(("reordered", list(reversed(copy.deepcopy(sequence)))))
+    for field, replacement in (
+        ("frame_index", 1),
+        ("kind", "checkpoint"),
+        ("logical_name", "wrong.bits"),
+        ("bytes_minimum", 4095),
+        ("bytes_maximum", 4097),
+        ("semantic_domain", "wrong-domain"),
+    ):
+        changed = copy.deepcopy(sequence)
+        changed[0][field] = replacement
+        sequence_cases.append(("changed-" + field, changed))
+    missing_field = copy.deepcopy(sequence)
+    del missing_field[0]["semantic_domain"]
+    sequence_cases.append(("missing-field", missing_field))
+    extra_field = copy.deepcopy(sequence)
+    extra_field[0]["extra"] = 0
+    sequence_cases.append(("extra-field", extra_field))
+    bool_minimum = copy.deepcopy(sequence)
+    bool_minimum[0]["bytes_minimum"] = True
+    sequence_cases.append(("boolean-minimum", bool_minimum))
+    for label, changed in sequence_cases:
+        _test_stream_expect_protocol_error(
+            lambda changed=changed: declaration_with(changed),
+            "sequence:" + label,
+        )
+
+    header_cases = (
+        ("job-digest", {"job_sha256": "0" * 64}),
+        ("nonce", {"nonce": "0" * 32}),
+        ("next-index", {"frame_index": 1}),
+        ("kind", {"kind": "evaluation-result"}),
+        ("logical-name", {"logical_name": "wrong.bits"}),
+        ("size-below", {"bytes": 4095}),
+        ("size-above", {"bytes": 4097}),
+    )
+    for label, replacements in header_cases:
+        _test_stream_expect_protocol_error(
+            lambda replacements=replacements: declaration_with(
+                sequence, replacements
+            ),
+            "binding:" + label,
+        )
+
+    precedence_cases = (
+        (
+            "index-before-kind",
+            {"frame_index": 1, "kind": "evaluation-result"},
+            "frame-index",
+        ),
+        (
+            "kind-before-auth",
+            {"kind": "evaluation-result", "job_sha256": "0" * 64},
+            "frame-kind",
+        ),
+        (
+            "digest-before-size",
+            {"job_sha256": "0" * 64, "bytes": 4095},
+            "job-digest",
+        ),
+        (
+            "nonce-before-size",
+            {"nonce": "0" * 32, "bytes": 4095},
+            "nonce",
+        ),
+    )
+    for label, replacements, expected_error in precedence_cases:
+        observed_error = _test_stream_capture_protocol_error(
+            lambda replacements=replacements: declaration_with(
+                sequence, replacements
+            ),
+            "precedence:" + label,
+        )
+        if observed_error != expected_error:
+            raise AssertionError(
+                "precedence:%s:%s" % (label, observed_error)
+            )
+
+    # Mutating the caller sequence after one declaration cannot change the
+    # active frame, but it is detected before the next declaration.
+    mutable_sequence = copy.deepcopy(sequence)
+    mutation_oracle = _TestWorkerStreamOracle()
+    mutation_oracle.bind_request(fixture["job_wire"])
+    first_buffer = bytearray(fixture["frames"][0]["wire"])
+    if not mutation_oracle.header_ready(first_buffer):
+        raise AssertionError("mutation header not ready")
+    first_header = mutation_oracle.take_header(first_buffer)
+    mutation_oracle.validate_declared_frame(
+        first_header, mutable_sequence
+    )
+    mutable_sequence[1]["logical_name"] = "mutated-after-validation"
+    first_digest = hashlib.sha256()
+    while mutation_oracle.payload_remaining(first_header["bytes"]):
+        first_digest.update(
+            mutation_oracle.take_payload(
+                first_buffer, first_header["bytes"]
+            )
+        )
+    mutation_oracle.finish_frame(
+        first_header["bytes"], first_digest.hexdigest()
+    )
+    second_buffer = bytearray(fixture["frames"][1]["wire"])
+    if not mutation_oracle.header_ready(second_buffer):
+        raise AssertionError("second mutation header not ready")
+    second_header = mutation_oracle.take_header(second_buffer)
+    _test_stream_expect_protocol_error(
+        lambda: mutation_oracle.validate_declared_frame(
+            second_header, mutable_sequence
+        ),
+        "sequence mutation between frames",
+    )
+
+    oracle = _TestWorkerStreamOracle()
+    oracle.bind_request(fixture["job_wire"])
+    buffer = bytearray(frame["wire"])
+    if not oracle.header_ready(buffer):
+        raise AssertionError("raw-mismatch header not ready")
+    header = oracle.take_header(buffer)
+    oracle.validate_declared_frame(header, sequence)
+    written = bytearray()
+    while oracle.payload_remaining(header["bytes"]):
+        written.extend(oracle.take_payload(buffer, header["bytes"]))
+    if bytes(written) != frame["payload"]:
+        raise AssertionError("raw-mismatch payload was not fully consumed")
+    _test_stream_expect_protocol_error(
+        lambda: oracle.finish_frame(header["bytes"], "0" * 64),
+        "raw mismatch at finish",
+    )
+    if len(written) != header["bytes"]:
+        raise AssertionError("raw mismatch occurred before quarantine write")
+
+    return (
+        len(sequence_cases)
+        + len(header_cases)
+        + len(precedence_cases)
+        + 2
+    )
+
+
+def _test_stream_contract_size_boundary_matrix():
+    evaluation = _test_stream_contract_fixture()
+    training = _test_stream_contract_training_request()
+
+    def reject_declared(fixture, target_index, declared, *, failure=False):
+        oracle = _TestWorkerStreamOracle()
+        oracle.bind_request(fixture["job_wire"])
+        sequence = fixture["expected_sequence"]
+        job_body = fixture["job_wire"][4:]
+        job_sha256 = hashlib.sha256(
+            b"bloodbowl-f5-worker-job-v1\0" + job_body
+        ).hexdigest()
+        for expected in sequence[:target_index]:
+            payload = b"x" * expected["bytes_minimum"]
+            prior = _test_build_self_consistent_worker_frame(
+                payload=payload,
+                frame_index=expected["frame_index"],
+                kind=expected["kind"],
+                logical_name=expected["logical_name"],
+                job_sha256=job_sha256,
+                nonce=fixture["job"]["nonce"],
+                semantic_sha256=hashlib.sha256(
+                    expected["semantic_domain"].encode("ascii")
+                    + b"\0"
+                    + payload
+                ).hexdigest(),
+            )
+            _test_stream_oracle_accept_frame(oracle, prior, sequence)
+        if failure:
+            kind = "worker-failure"
+            logical_name = "<worker-failure>"
+            frame_index = 0
+        else:
+            expected = sequence[target_index]
+            kind = expected["kind"]
+            logical_name = expected["logical_name"]
+            frame_index = expected["frame_index"]
+        header = {
+            "bytes": declared,
+            "frame_index": frame_index,
+            "job_sha256": job_sha256,
+            "kind": kind,
+            "logical_name": logical_name,
+            "nonce": fixture["job"]["nonce"],
+            "raw_sha256": "0" * 64,
+            "schema": "bloodbowl-f5-worker-payload-header-v1",
+            "semantic_sha256": "1" * 64,
+        }
+        buffer = bytearray(_test_pack_supplied_worker_frame(header, b""))
+        if not oracle.header_ready(buffer):
+            raise AssertionError("size-boundary header not ready")
+        observed = oracle.take_header(buffer)
+        oracle.validate_declared_frame(observed, sequence)
+
+    cases = (
+        ("training-trace-below", training, 0, 0, False),
+        ("training-trace-above", training, 0, 16_777_217, False),
+        ("checkpoint-below", training, 1, 879_899, False),
+        ("checkpoint-above", training, 1, 879_901, False),
+        ("training-result-below", training, 7, 0, False),
+        ("training-result-above", training, 7, 4_194_305, False),
+        ("evaluation-bitset-below", evaluation, 0, 4095, False),
+        ("evaluation-bitset-above", evaluation, 0, 4097, False),
+        ("evaluation-result-below", evaluation, 1, 0, False),
+        ("evaluation-result-above", evaluation, 1, 4_194_305, False),
+        ("worker-failure-below", evaluation, 0, 0, True),
+        ("worker-failure-above", evaluation, 0, 4097, True),
+    )
+    for label, fixture, target_index, declared, failure in cases:
+        _test_stream_expect_protocol_error(
+            lambda fixture=fixture,
+            target_index=target_index,
+            declared=declared,
+            failure=failure: reject_declared(
+                fixture,
+                target_index,
+                declared,
+                failure=failure,
+            ),
+            label,
+        )
+    return len(cases)
+
+
+def _test_stream_contract_lifecycle_matrix(fixture):
+    count = 0
+
+    # Every prefix/header split is internalized without retaining external
+    # bytes, and a complete boundary becomes ready immediately.
+    frame = fixture["frames"][0]
+    header_width = len(frame["wire"]) - len(frame["payload"])
+    header_wire = frame["wire"][:header_width]
+    for split in range(header_width + 1):
+        oracle = _TestWorkerStreamOracle()
+        oracle.bind_request(fixture["job_wire"])
+        buffer = bytearray(header_wire[:split])
+        ready = oracle.header_ready(buffer)
+        if buffer or ready is not (split == header_width):
+            raise AssertionError("header split internalization drifted")
+        if not ready:
+            buffer.extend(header_wire[split:])
+            if not oracle.header_ready(buffer) or buffer:
+                raise AssertionError("header split did not resume")
+        observed = oracle.take_header(buffer)
+        oracle.validate_declared_frame(
+            observed, fixture["expected_sequence"]
+        )
+        count += 1
+
+    # Complete two-frame success and exact EOF.
+    oracle = _TestWorkerStreamOracle()
+    oracle.bind_request(fixture["job_wire"])
+    for candidate in fixture["frames"]:
+        remainder = _test_stream_oracle_accept_frame(
+            oracle, candidate, fixture["expected_sequence"]
+        )
+        if remainder:
+            raise AssertionError("complete frame left bytes")
+    oracle.finish_stdout()
+    count += 1
+
+    def eof_after(raw):
+        oracle = _TestWorkerStreamOracle()
+        oracle.bind_request(fixture["job_wire"])
+        buffer = bytearray(raw)
+        if buffer:
+            ready = oracle.header_ready(buffer)
+            if ready:
+                header = oracle.take_header(buffer)
+                oracle.validate_declared_frame(
+                    header, fixture["expected_sequence"]
+                )
+                while buffer and oracle.payload_remaining(header["bytes"]):
+                    oracle.take_payload(buffer, header["bytes"])
+        oracle.finish_stdout()
+
+    partials = (
+        ("partial-prefix", header_wire[:2]),
+        ("partial-header", header_wire[:-1]),
+        ("partial-payload", frame["wire"][: header_width + 3]),
+    )
+    for label, raw in partials:
+        _test_stream_expect_protocol_error(
+            lambda raw=raw: eof_after(raw), label
+        )
+        count += 1
+
+    # Missing final frame.
+    missing = _TestWorkerStreamOracle()
+    missing.bind_request(fixture["job_wire"])
+    _test_stream_oracle_accept_frame(
+        missing, fixture["frames"][0], fixture["expected_sequence"]
+    )
+    _test_stream_expect_protocol_error(
+        missing.finish_stdout, "missing final frame"
+    )
+    count += 1
+
+    # One trailing byte is owned as a partial next prefix and rejected at EOF.
+    trailing = _TestWorkerStreamOracle()
+    trailing.bind_request(fixture["job_wire"])
+    for candidate in fixture["frames"]:
+        _test_stream_oracle_accept_frame(
+            trailing, candidate, fixture["expected_sequence"]
+        )
+    trailing_buffer = bytearray(b"x")
+    if trailing.header_ready(trailing_buffer) or trailing_buffer:
+        raise AssertionError("trailing byte was not internalized")
+    _test_stream_expect_protocol_error(
+        trailing.finish_stdout, "trailing byte"
+    )
+    count += 1
+
+    # Duplicate/replacement binds poison an active adapter.
+    for label, partial in (
+        ("duplicate-bind", None),
+        ("bind-during-partial-header", header_wire[:7]),
+        ("bind-during-partial-payload", frame["wire"][: header_width + 1]),
+    ):
+        active = _TestWorkerStreamOracle()
+        active.bind_request(fixture["job_wire"])
+        if partial is not None:
+            buffer = bytearray(partial)
+            if active.header_ready(buffer):
+                observed = active.take_header(buffer)
+                active.validate_declared_frame(
+                    observed, fixture["expected_sequence"]
+                )
+                if buffer:
+                    active.take_payload(buffer, observed["bytes"])
+        _test_stream_expect_protocol_error(
+            lambda active=active: active.bind_request(
+                fixture["job_wire"]
+            ),
+            label,
+        )
+        _test_stream_expect_protocol_error(
+            lambda active=active: active.bind_request(
+                fixture["job_wire"]
+            ),
+            label + ":rebind-after-poison",
+        )
+        count += 1
+
+    # A complete success still requires descriptor EOF before reuse.
+    before_eof = _TestWorkerStreamOracle()
+    before_eof.bind_request(fixture["job_wire"])
+    for candidate in fixture["frames"]:
+        _test_stream_oracle_accept_frame(
+            before_eof, candidate, fixture["expected_sequence"]
+        )
+    _test_stream_expect_protocol_error(
+        lambda: before_eof.bind_request(fixture["job_wire"]),
+        "bind-before-finalization",
+    )
+    count += 1
+
+    # Two clean, different sessions reuse one adapter and reject stale auth.
+    second = _test_stream_contract_fixture(
+        nonce="28" * 16,
+        population="verifier",
+        repeat_flag=1,
+    )
+    serial_success = _TestWorkerStreamOracle()
+    for serial_fixture in (fixture, second):
+        serial_success.bind_request(serial_fixture["job_wire"])
+        for candidate in serial_fixture["frames"]:
+            _test_stream_oracle_accept_frame(
+                serial_success,
+                candidate,
+                serial_fixture["expected_sequence"],
+            )
+        serial_success.finish_stdout()
+    if serial_success._state != "unbound":
+        raise AssertionError("two clean serial sessions retained state")
+    count += 1
+
+    reusable = _TestWorkerStreamOracle()
+    reusable.bind_request(fixture["job_wire"])
+    for candidate in fixture["frames"]:
+        _test_stream_oracle_accept_frame(
+            reusable, candidate, fixture["expected_sequence"]
+        )
+    reusable.finish_stdout()
+    reusable.bind_request(second["job_wire"])
+    stale_buffer = bytearray(fixture["frames"][0]["wire"])
+    if not reusable.header_ready(stale_buffer):
+        raise AssertionError("stale frame header not ready")
+    stale_header = reusable.take_header(stale_buffer)
+    _test_stream_expect_protocol_error(
+        lambda: reusable.validate_declared_frame(
+            stale_header, second["expected_sequence"]
+        ),
+        "stale digest/nonce after clean rebind",
+    )
+    count += 1
+
+    cross_session = _TestWorkerStreamOracle()
+    cross_session.bind_request(fixture["job_wire"])
+    for candidate in fixture["frames"]:
+        _test_stream_oracle_accept_frame(
+            cross_session, candidate, fixture["expected_sequence"]
+        )
+    cross_session.finish_stdout()
+    cross_session.bind_request(second["job_wire"])
+    current_buffer = bytearray(second["frames"][0]["wire"])
+    if not cross_session.header_ready(current_buffer):
+        raise AssertionError("cross-session current header not ready")
+    current_header = cross_session.take_header(current_buffer)
+    _test_stream_expect_protocol_error(
+        lambda: cross_session.validate_declared_frame(
+            current_header, fixture["expected_sequence"]
+        ),
+        "cross-session stale sequence",
+    )
+    count += 1
+
+    # A sole failure is terminal and cannot be followed or rebound.
+    failure_payload = b'{"failure":true}\n'
+    job_sha = hashlib.sha256(
+        b"bloodbowl-f5-worker-job-v1\0" + fixture["job_wire"][4:]
+    ).hexdigest()
+    failure_frame = _test_build_self_consistent_worker_frame(
+        payload=failure_payload,
+        frame_index=0,
+        kind="worker-failure",
+        logical_name="<worker-failure>",
+        job_sha256=job_sha,
+        nonce=fixture["job"]["nonce"],
+        semantic_sha256=hashlib.sha256(
+            b"f5-canonical-json-v1\0" + failure_payload
+        ).hexdigest(),
+    )
+    failure = _TestWorkerStreamOracle()
+    failure.bind_request(fixture["job_wire"])
+    _test_stream_oracle_accept_frame(
+        failure, failure_frame, fixture["expected_sequence"]
+    )
+    _test_stream_expect_protocol_error(
+        lambda: failure.header_ready(
+            bytearray(fixture["frames"][0]["wire"])
+        ),
+        "success after failure",
+    )
+    count += 1
+
+    terminal = _TestWorkerStreamOracle()
+    terminal.bind_request(fixture["job_wire"])
+    _test_stream_oracle_accept_frame(
+        terminal, failure_frame, fixture["expected_sequence"]
+    )
+    terminal.finish_stdout()
+    _test_stream_expect_protocol_error(
+        lambda: terminal.bind_request(fixture["job_wire"]),
+        "rebind after failure",
+    )
+    count += 1
+
+    after_success = _TestWorkerStreamOracle()
+    after_success.bind_request(fixture["job_wire"])
+    _test_stream_oracle_accept_frame(
+        after_success, fixture["frames"][0], fixture["expected_sequence"]
+    )
+    _test_stream_expect_protocol_error(
+        lambda: _test_stream_oracle_accept_frame(
+            after_success, failure_frame, fixture["expected_sequence"]
+        ),
+        "failure after success",
+    )
+    count += 1
+
+    # Hostile declared lengths are rejected after exactly four retained bytes.
+    hostile = _TestWorkerStreamOracle()
+    hostile.bind_request(fixture["job_wire"])
+    hostile_buffer = bytearray(struct.pack(">I", 0xFFFFFFFF))
+    _test_stream_expect_protocol_error(
+        lambda: hostile.header_ready(hostile_buffer),
+        "hostile declared length",
+    )
+    if hostile_buffer or len(hostile._header_wire) != 4:
+        raise AssertionError("hostile length grew retained storage")
+    count += 1
+    return count
+
+
+def _test_stream_contract_oracle_matrix():
+    fixture = _test_stream_contract_fixture()
+    evidence = {
+        "header_negative_cases": (
+            _test_stream_contract_header_negative_matrix(fixture)
+        ),
+        "job_negative_cases": (
+            _test_stream_contract_job_negative_matrix(fixture)
+        ),
+        "lifecycle_cases": (
+            _test_stream_contract_lifecycle_matrix(fixture)
+        ),
+        "sequence_binding_cases": (
+            _test_stream_contract_sequence_and_binding_matrix(fixture)
+        ),
+        "size_boundary_cases": (
+            _test_stream_contract_size_boundary_matrix()
+        ),
+        "training_binding": (
+            _test_stream_contract_training_binding_witness()
+        ),
+    }
+    if not (
+        evidence["header_negative_cases"] >= 25
+        and evidence["job_negative_cases"] >= 25
+        and evidence["lifecycle_cases"] >= 10
+        and evidence["sequence_binding_cases"] >= 15
+        and evidence["size_boundary_cases"] == 12
+        and evidence["training_binding"]["frame_count"] == 8
+    ):
+        raise AssertionError("oracle matrix coverage regressed")
+    evidence["status"] = "ok"
+    return evidence
+
+
+class F5WorkerStreamContractInfrastructure(unittest.TestCase):
+    def test_worker_stream_contract_repair_infrastructure(self) -> None:
+        for worker_kind in ("training", "evaluation"):
+            contract = _test_stream_cap_source_contract(
+                _STREAM_CAP_REFERENCE_SOURCE,
+                expected_kind=worker_kind,
+                namespace=_test_stream_cap_namespace(
+                    _STREAM_CAP_REFERENCE_SOURCE
+                ),
+            )
+            self.assertEqual(
+                contract["reachability"],
+                "resumable-operations-parser-v2",
+            )
+        mutants = _test_stream_cap_mutants()
+        self.assertEqual(
+            tuple(label for label, _source, _kind in mutants),
+            _STREAM_CAP_MUTATION_LABELS,
+        )
+        for label, source, worker_kind in mutants:
+            with self.subTest(mutation=label):
+                with self.assertRaises(AssertionError):
+                    _test_stream_cap_source_contract(
+                        source,
+                        expected_kind=worker_kind,
+                        namespace=_test_stream_cap_namespace(source),
+                    )
+        self.assertEqual(
+            _test_stream_contract_fragmentation_witness()["status"],
+            "ok",
+        )
+        self.assertEqual(
+            _test_stream_contract_first_origin_witness()["status"],
+            "ok",
+        )
+        self.assertEqual(
+            _test_stream_contract_raw_mismatch_spool_witness()["status"],
+            "ok",
+        )
+        self.assertEqual(
+            _test_stream_contract_oracle_matrix()["status"],
+            "ok",
+        )
 
 
 class F5RecurrentPpoSurfaceProvenance(unittest.TestCase):
@@ -19783,7 +18348,7 @@ class F5RecurrentPpoPreparedWorkerSupervisorContract(unittest.TestCase):
                 contract["reachability"]
                 for _owner, _worker_kind, contract in observed
             },
-            {"three-direct-supervisor-call-sites"},
+            {"resumable-operations-parser-v2"},
         )
         self.assertEqual(
             len(
@@ -19834,169 +18399,15 @@ class F5RecurrentPpoPreparedWorkerSupervisorContract(unittest.TestCase):
             "live checked-add semantics diverged from frozen reference",
         )
 
-        implementable_variants = _test_stream_cap_implementable_variants()
-        self.assertEqual(
-            tuple(
-                label
-                for label, _source, _kind in implementable_variants
-            ),
-            _STREAM_CAP_IMPLEMENTABLE_VARIANT_LABELS,
-        )
-        self.assertEqual(len(implementable_variants), 6)
-        self.assertEqual(
-            len(
-                {
-                    label
-                    for label, _source, _kind in implementable_variants
-                }
-            ),
-            6,
-        )
-        self.assertEqual(
-            len(
-                {
-                    source
-                    for _label, source, _kind in implementable_variants
-                }
-            ),
-            6,
-        )
-        for label, source, worker_kind in implementable_variants:
-            self.assertNotEqual(source, _STREAM_CAP_REFERENCE_SOURCE)
-            ast.parse(source)
-            with self.subTest(
-                construction="implementable-positive",
-                variant=label,
-            ):
-                _test_stream_cap_source_contract(
-                    source,
-                    expected_kind=worker_kind,
-                    namespace=_test_stream_cap_namespace(source),
-                )
-        reachability_controls = (
-            _test_stream_cap_reachability_controls()
-        )
-        self.assertEqual(
-            tuple(
-                label
-                for label, _source, _kind in reachability_controls
-            ),
-            _STREAM_CAP_REACHABILITY_CONTROL_LABELS,
-        )
-        self.assertEqual(len(reachability_controls), 10)
-        self.assertEqual(
-            len(
-                {
-                    source
-                    for _label, source, _kind
-                    in reachability_controls
-                }
-            ),
-            10,
-        )
-        for label, source, worker_kind in reachability_controls:
-            self.assertNotEqual(source, _STREAM_CAP_REFERENCE_SOURCE)
-            ast.parse(source)
-            with self.subTest(
-                construction="reachability-control",
-                variant=label,
-            ):
-                _test_stream_cap_source_contract(
-                    source,
-                    expected_kind=worker_kind,
-                    namespace=_test_stream_cap_namespace(source),
-                )
-        bound_parser_source = next(
-            source
-            for label, source, _kind in implementable_variants
-            if label == "bound-frame-parser"
-        )
-        protocol_path = (
-            ROOT / "tools/f5_recurrent_ppo_protocol.py"
-        ).resolve()
-        protocol_module = types.ModuleType(
-            "tools.f5_recurrent_ppo_protocol"
-        )
-        protocol_module.__file__ = str(protocol_path)
-        wrong_parser_namespace = {
-            "__name__": protocol_module.__name__,
-        }
-        exec(
-            compile(
-                "class WorkerFrameParser:\n"
-                "    pass\n\n"
-                "class WrongParser:\n"
-                "    pass\n",
-                str(protocol_path),
-                "exec",
-            ),
-            wrong_parser_namespace,
-        )
-        protocol_module.WorkerFrameParser = wrong_parser_namespace[
-            "WorkerFrameParser"
-        ]
-        wrong_parser = wrong_parser_namespace["WrongParser"]
-        self.assertIsNot(
-            wrong_parser,
-            protocol_module.WorkerFrameParser,
-        )
-        live_parser_source_path = (
-            ROOT / "tools/run_f5_recurrent_ppo_pilot.py"
-        ).resolve()
-        with unittest.mock.patch.dict(
-            sys.modules,
-            {protocol_module.__name__: protocol_module},
-        ):
-            self.assertEqual(
-                pathlib.Path(
-                    inspect.getsourcefile(wrong_parser)
-                ).resolve(),
-                protocol_path,
-            )
-            exact_live_parser_namespace = (
-                _test_stream_cap_namespace(
-                    bound_parser_source,
-                    filename=str(live_parser_source_path),
-                )
-            )
-            exact_live_parser_namespace["WorkerFrameParser"] = (
-                protocol_module.WorkerFrameParser
-            )
-            _test_stream_cap_source_contract(
-                bound_parser_source,
-                expected_kind="training",
-                namespace=exact_live_parser_namespace,
-                source_path=live_parser_source_path,
-            )
-            wrong_live_parser_namespace = (
-                _test_stream_cap_namespace(
-                    bound_parser_source,
-                    filename=str(live_parser_source_path),
-                )
-            )
-            wrong_live_parser_namespace["WorkerFrameParser"] = (
-                wrong_parser
-            )
-            with self.assertRaisesRegex(
-                AssertionError,
-                "frame-parser-runtime-source-binding",
-            ):
-                _test_stream_cap_source_contract(
-                    bound_parser_source,
-                    expected_kind="training",
-                    namespace=wrong_live_parser_namespace,
-                    source_path=live_parser_source_path,
-                )
-
         mutants = _test_stream_cap_mutants()
         self.assertEqual(
             tuple(label for label, _source, _kind in mutants),
             _STREAM_CAP_MUTATION_LABELS,
         )
-        self.assertEqual(len(mutants), 26)
+        self.assertEqual(len(mutants), len(_STREAM_CAP_MUTATION_LABELS))
         self.assertEqual(
             len({label for label, _source, _kind in mutants}),
-            26,
+            len(_STREAM_CAP_MUTATION_LABELS),
         )
         for label, source, worker_kind in mutants:
             self.assertNotEqual(source, _STREAM_CAP_REFERENCE_SOURCE)
@@ -20011,37 +18422,9 @@ class F5RecurrentPpoPreparedWorkerSupervisorContract(unittest.TestCase):
                         expected_kind=worker_kind,
                         namespace=_test_stream_cap_namespace(source),
                     )
-        closure_mutants = _test_stream_cap_closure_mutants()
-        self.assertEqual(
-            tuple(
-                label
-                for label, _source, _kind in closure_mutants
-            ),
-            _STREAM_CAP_CLOSURE_MUTATION_LABELS,
-        )
-        self.assertEqual(len(closure_mutants), 140)
-        self.assertEqual(
-            len(
-                {
-                    label
-                    for label, _source, _kind in closure_mutants
-                }
-            ),
-            140,
-        )
-        for label, source, worker_kind in closure_mutants:
-            self.assertNotEqual(source, _STREAM_CAP_REFERENCE_SOURCE)
-            ast.parse(source)
-            with self.subTest(
-                construction="closure-negative",
-                mutation=label,
-            ):
-                with self.assertRaises(AssertionError):
-                    _test_stream_cap_source_contract(
-                        source,
-                        expected_kind=worker_kind,
-                        namespace=_test_stream_cap_namespace(source),
-                    )
+        self.assertEqual(_test_stream_cap_implementable_variants(), ())
+        self.assertEqual(_test_stream_cap_reachability_controls(), ())
+        self.assertEqual(_test_stream_cap_closure_mutants(), ())
 
     def _assert_exact_spawn_and_scratch(
         self,
@@ -32123,16 +30506,19 @@ class F5RecurrentPpoPortablePublicationContract(unittest.TestCase):
                         surface,
                         fail_at=event,
                     )
-                    invoke = lambda: self._publish_leaf(
-                        surface,
-                        operations,
-                    )
+                    def invoke(
+                        surface=surface,
+                        operations=operations,
+                    ):
+                        return self._publish_leaf(surface, operations)
                 elif surface == "root":
                     operations = _FakeControllerChildIO(fail_at=event)
-                    invoke = lambda: self._run_controller_child(operations)
+                    def invoke(operations=operations):
+                        return self._run_controller_child(operations)
                 else:
                     operations = _FakeVerdictChildIO(fail_at=event)
-                    invoke = lambda: self._run_verdict_child(operations)
+                    def invoke(operations=operations):
+                        return self._run_verdict_child(operations)
                 with self.subTest(surface=surface, scenario=scenario):
                     with self.assertRaises(_InjectedPublicationFailure):
                         invoke()
