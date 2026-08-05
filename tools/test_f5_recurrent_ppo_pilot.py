@@ -1607,6 +1607,32 @@ def _test_supervised_result_record(result):
     raise AssertionError("supervisor did not return its typed result record")
 
 
+def _test_byte_popcount(value):
+    if type(value) is not int or not 0 <= value <= 255:
+        raise AssertionError("test byte popcount requires one exact byte")
+    count = 0
+    remaining = value
+    while remaining:
+        count += remaining & 1
+        remaining >>= 1
+    return count
+
+
+def _test_strict_zip(*iterables):
+    if not iterables:
+        return
+    iterators = tuple(iter(iterable) for iterable in iterables)
+    exhausted = object()
+    while True:
+        row = tuple(next(iterator, exhausted) for iterator in iterators)
+        ended = tuple(value is exhausted for value in row)
+        if all(ended):
+            return
+        if any(ended):
+            raise AssertionError("test strict zip length mismatch")
+        yield row
+
+
 def _test_evaluation_worker_stream(
     population: str,
     *,
@@ -1646,7 +1672,7 @@ def _test_evaluation_worker_stream(
     for index in success_indices:
         mutable_bitset[index // 8] |= 1 << (index % 8)
     bitset = bytes(mutable_bitset)
-    if sum(value.bit_count() for value in bitset) != 9:
+    if sum(_test_byte_popcount(value) for value in bitset) != 9:
         raise AssertionError("test-owned sparse evaluation popcount drifted")
     bitset_semantic = _bitset_semantic_sha256_fixture(
         update=0,
@@ -2047,7 +2073,9 @@ def _test_training_typed_value_diff_paths(
         and len(before) == len(after)
     ):
         differences = []
-        for index, (left, right) in enumerate(zip(before, after, strict=True)):
+        for index, (left, right) in enumerate(
+            _test_strict_zip(before, after)
+        ):
             differences.extend(
                 _test_training_typed_value_diff_paths(
                     left,
@@ -2387,7 +2415,7 @@ def _test_index_nine_bitset_coupling_variant(
         raw[1] != original[1] ^ (1 << 1)
         or raw[:1] != original[:1]
         or raw[2:] != original[2:]
-        or sum(byte.bit_count() for byte in raw) != 10
+        or sum(_test_byte_popcount(byte) for byte in raw) != 10
     ):
         raise AssertionError("bitset index-nine mutation drifted")
     job = fixture["job"]
@@ -2515,6 +2543,7 @@ def _test_training_worker_stream(
     runtime_scratch: pathlib.Path,
     training_deadline_ns: int = 7_200_000_000_000,
     whole_deadline_ns: int = 10_800_000_000_000,
+    source_identity=None,
 ) -> dict:
     if (
         type(training_deadline_ns) is not int
@@ -2546,7 +2575,21 @@ def _test_training_worker_stream(
     protocol_sha256 = hashlib.sha256(protocol_bytes).hexdigest()
     if protocol_sha256 != EXPECTED_PROTOCOL_MANIFEST_SHA256:
         raise AssertionError("live training protocol digest drifted")
-    source_identity = _test_live_implementation_identity()
+    if source_identity is None:
+        source_identity = _test_live_implementation_identity()
+    elif not (
+        type(source_identity) is dict
+        and set(source_identity)
+        == {"commit", "implementation_manifest_sha256"}
+        and type(source_identity["commit"]) is str
+        and re.fullmatch(r"[0-9a-f]{40}", source_identity["commit"])
+        and type(source_identity["implementation_manifest_sha256"]) is str
+        and re.fullmatch(
+            r"[0-9a-f]{64}",
+            source_identity["implementation_manifest_sha256"],
+        )
+    ):
+        raise AssertionError("test-owned source identity override is invalid")
 
     nonce = "29" * 16
     job = {
@@ -3303,10 +3346,9 @@ def _test_owned_parameter_l2(current, initial) -> dict:
         initial_values = initial[name]
         if len(current_values) != len(initial_values):
             raise AssertionError("parameter telemetry fixture width mismatch")
-        for current_value, initial_value in zip(
+        for current_value, initial_value in _test_strict_zip(
             current_values,
             initial_values,
-            strict=True,
         ):
             if (
                 type(current_value) is not float
@@ -3331,10 +3373,9 @@ def _checkpoint_parameter_l2_fixture(raw: bytes, initial_raw: bytes) -> dict:
     drift_sum = 0.0
     current_values = struct.iter_unpack("<f", raw)
     initial_values = struct.iter_unpack("<f", initial_raw)
-    for (current_value,), (initial_value,) in zip(
+    for (current_value,), (initial_value,) in _test_strict_zip(
         current_values,
         initial_values,
-        strict=True,
     ):
         norm_sum = norm_sum + current_value * current_value
         delta = current_value - initial_value
@@ -8565,10 +8606,20 @@ class _PreparedWorkerSupervisorDouble:
         self._worker_stream_oracle.finish_stdout()
         self._event("finish_stdout")
 
+    def _bind_spawned_child_peer(self, spawn):
+        del spawn
+
     def spawn_prepared_worker(self, **kwargs):
+        if "stdin" in kwargs:
+            raise AssertionError("supervisor supplied operations-owned stdin")
+        job_read, job_write = self.make_pipe("job")
+        kwargs["stdin"] = job_read
         self._event("spawn_prepared_worker")
-        self.spawn_calls.append(dict(kwargs))
-        return self.child
+        spawn = dict(kwargs)
+        self.spawn_calls.append(spawn)
+        self._bind_spawned_child_peer(spawn)
+        self.close_endpoint(job_read)
+        return self.child, job_write
 
     def prove_worker_process_group(self, child):
         self._event("prove_worker_process_group", child.pid)
@@ -9282,12 +9333,11 @@ class _RealKernelPipeSupervisorDouble(
             offer = 65536
         raise AssertionError("real stdout relay exceeded iteration cap")
 
-    def spawn_prepared_worker(self, **kwargs):
-        child = super().spawn_prepared_worker(**kwargs)
+    def _bind_spawned_child_peer(self, spawn):
         child_endpoint = (
-            kwargs["stdin"]
+            spawn["stdin"]
             if self.real_role == "job"
-            else kwargs["stdout"]
+            else spawn["stdout"]
         )
         if (
             child_endpoint not in self.production_fds
@@ -9298,9 +9348,6 @@ class _RealKernelPipeSupervisorDouble(
         self.child_peer_fd = peer
         self.peer_fds.add(peer)
         self._set_peer_nonblocking(peer)
-        if self.real_role == "job":
-            self._assert_nonblocking(self.real_pairs["job"][1])
-        return child
 
     def close_endpoint(self, endpoint):
         if endpoint not in self.production_fds:
@@ -9384,6 +9431,7 @@ class _RealKernelPipeSupervisorDouble(
                 )
                 return ready
             write_fd = self.real_pairs["job"][1]
+            self._assert_nonblocking(write_fd)
             requested = self._fd_requested(writable, write_fd)
             _reads, writes, _errors = select.select(
                 [],
@@ -17067,6 +17115,275 @@ def _test_candidate_worker_frame_parser_contract():
 
 
 class F5WorkerStreamContractInfrastructure(unittest.TestCase):
+    @unittest.skipUnless(
+        os.name == "posix"
+        and hasattr(os, "pipe")
+        and hasattr(fcntl, "F_GETFL")
+        and hasattr(select, "select"),
+        "real operations-owned input proof requires POSIX pipes",
+    )
+    def test_real_operations_owned_worker_input_lifecycle(self) -> None:
+        fixture = _test_evaluation_worker_stream("controller")
+        operations = _RealKernelPipeSupervisorDouble(
+            fixture,
+            real_role="job",
+            job_mode="recover",
+        )
+        try:
+            stdout_read, stdout_write = operations.make_pipe("stdout")
+            stderr_read, stderr_write = operations.make_pipe("stderr")
+            child, worker_input_write = operations.spawn_prepared_worker(
+                argv=["prepared-python", "runner", "--internal-worker"],
+                cwd=fixture["job"]["puffer_root"],
+                env=operations.worker_environment,
+                stdout=stdout_write,
+                stderr=stderr_write,
+                close_fds=True,
+                start_new_session=True,
+            )
+            job_read, job_write = operations.real_pairs["job"]
+            self.assertIs(child, operations.child)
+            self.assertEqual(worker_input_write, job_write)
+            self.assertEqual(operations.spawn_calls[-1]["stdin"], job_read)
+            self.assertEqual(
+                operations.endpoint_roles,
+                {job_read: ("job", "read"), job_write: ("job", "write")},
+            )
+            self.assertFalse(
+                fcntl.fcntl(worker_input_write, fcntl.F_GETFL)
+                & os.O_NONBLOCK
+            )
+            operations.set_nonblocking(worker_input_write)
+            operations._assert_nonblocking(worker_input_write)
+
+            ready = operations.poll_ready(
+                readable=(stderr_read, stdout_read),
+                writable=(worker_input_write,),
+                timeout_ns=0,
+            )
+            self.assertTrue(ready["writable"])
+            with self.assertRaises(BlockingIOError) as caught:
+                operations.write_nonblocking(
+                    worker_input_write,
+                    memoryview(fixture["job_wire"]),
+                )
+            self.assertEqual(caught.exception.errno, errno.EAGAIN)
+
+            ready = operations.poll_ready(
+                readable=(stderr_read, stdout_read),
+                writable=(worker_input_write,),
+                timeout_ns=0,
+            )
+            self.assertTrue(ready["writable"])
+            written = operations.write_nonblocking(
+                worker_input_write,
+                memoryview(fixture["job_wire"]),
+            )
+            self.assertEqual(written, len(fixture["job_wire"]))
+
+            for endpoint in (
+                worker_input_write,
+                stdout_read,
+                stdout_write,
+                stderr_read,
+                stderr_write,
+            ):
+                operations.close_endpoint(endpoint)
+            self.assertEqual(bytes(operations.job_peer_bytes), fixture["job_wire"])
+            self.assertTrue(operations.job_peer_eof)
+        finally:
+            operations.cleanup()
+
+        self.assertEqual(operations.production_cleanup_leaks, [])
+        self.assertEqual(
+            operations.created_endpoints,
+            operations.closed_endpoints,
+        )
+        self.assertEqual(
+            operations.close_counts,
+            collections.Counter(
+                {endpoint: 1 for endpoint in operations.created_endpoints}
+            ),
+        )
+        self.assertEqual(
+            operations.peer_close_counts,
+            collections.Counter(
+                {descriptor: 1 for descriptor in operations.peer_fds}
+            ),
+        )
+        self.assertEqual(
+            len(operations.peer_flag_restorations),
+            len(operations.peer_fds),
+        )
+        self.assertTrue(
+            all(
+                not operations._fd_is_open(descriptor)
+                for descriptor in operations.production_fds
+                | operations.peer_fds
+            )
+        )
+
+    def test_operations_owned_worker_input_capability_is_explicit(self) -> None:
+        fixture = _test_evaluation_worker_stream("controller")
+        operations = _PreparedWorkerSupervisorDouble(fixture)
+        try:
+            stdout_read, stdout_write = operations.make_pipe("stdout")
+            stderr_read, stderr_write = operations.make_pipe("stderr")
+            child, worker_input_write = operations.spawn_prepared_worker(
+                argv=["prepared-python", "runner", "--internal-worker"],
+                cwd=fixture["job"]["puffer_root"],
+                env=operations.worker_environment,
+                stdout=stdout_write,
+                stderr=stderr_write,
+                close_fds=True,
+                start_new_session=True,
+            )
+            self.assertIs(child, operations.child)
+            self.assertEqual(worker_input_write, "job-write")
+            self.assertEqual(operations.spawn_calls[-1]["stdin"], "job-read")
+            self.assertEqual(
+                operations.close_counts,
+                collections.Counter({"job-read": 1}),
+            )
+            self.assertEqual(
+                operations.created_endpoints,
+                {
+                    stdout_read,
+                    stdout_write,
+                    stderr_read,
+                    stderr_write,
+                    "job-read",
+                    "job-write",
+                },
+            )
+            self.assertEqual(len(operations.spawn_calls), 1)
+            with self.assertRaises(AssertionError):
+                operations.spawn_prepared_worker(
+                    stdin="caller-owned",
+                    stdout=stdout_write,
+                    stderr=stderr_write,
+                )
+            for endpoint in tuple(
+                operations.created_endpoints - operations.closed_endpoints
+            ):
+                operations.close_endpoint(endpoint)
+            self.assertEqual(
+                operations.closed_endpoints,
+                operations.created_endpoints,
+            )
+            self.assertEqual(
+                operations.close_counts,
+                collections.Counter(
+                    {endpoint: 1 for endpoint in operations.created_endpoints}
+                ),
+            )
+        finally:
+            operations.cleanup()
+
+    def test_dual_runtime_fixture_primitives_are_portable(self) -> None:
+        for value in range(256):
+            self.assertEqual(
+                _test_byte_popcount(value),
+                bin(value).count("1"),
+            )
+        for invalid in (-1, 256, True, 1.0, b"\x00"):
+            with self.subTest(invalid_popcount=invalid):
+                with self.assertRaises(AssertionError):
+                    _test_byte_popcount(invalid)
+
+        self.assertEqual(
+            tuple(_test_strict_zip((1, 2), (3, 4))),
+            ((1, 3), (2, 4)),
+        )
+        self.assertEqual(tuple(_test_strict_zip()), ())
+        for left, right in (((1,), (2, 3)), ((1, 2), (3,))):
+            with self.subTest(left=left, right=right):
+                with self.assertRaises(AssertionError):
+                    tuple(_test_strict_zip(left, right))
+
+        source = pathlib.Path(__file__).read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        bit_count_calls = []
+        strict_zip_calls = []
+        for call in (
+            node for node in ast.walk(tree) if isinstance(node, ast.Call)
+        ):
+            if (
+                isinstance(call.func, ast.Attribute)
+                and call.func.attr == "bit_count"
+            ):
+                bit_count_calls.append(call.lineno)
+            if (
+                isinstance(call.func, ast.Name)
+                and call.func.id == "zip"
+                and any(keyword.arg == "strict" for keyword in call.keywords)
+            ):
+                strict_zip_calls.append(call.lineno)
+        self.assertEqual(bit_count_calls, [])
+        self.assertEqual(strict_zip_calls, [])
+
+        synthetic_identity = {
+            "commit": "4" * 40,
+            "implementation_manifest_sha256": "3" * 64,
+        }
+        invalid_identities = (
+            {},
+            {"commit": "4" * 40},
+            {**synthetic_identity, "extra": None},
+            {**synthetic_identity, "commit": "G" * 40},
+            {
+                **synthetic_identity,
+                "implementation_manifest_sha256": "3" * 63,
+            },
+        )
+        with tempfile.TemporaryDirectory(prefix="f5-py39-fixture-") as tmp:
+            root = pathlib.Path(tmp).resolve()
+            artifact = root / "artifact"
+            scratch = root / "scratch"
+            artifact.mkdir(mode=0o700)
+            scratch.mkdir(mode=0o700)
+            fixture = _test_training_worker_stream(
+                artifact_root=artifact,
+                runtime_scratch=scratch,
+                source_identity=synthetic_identity,
+            )
+            chunks = tuple(
+                tuple(
+                    frame["wire"][offset : offset + 65536]
+                    for offset in range(0, len(frame["wire"]), 65536)
+                )
+                for frame in fixture["frames"]
+            )
+            self.assertEqual(len(chunks), 8)
+            self.assertTrue(
+                all(
+                    chunks_for_frame
+                    and all(
+                        0 < len(chunk) <= 65536
+                        for chunk in chunks_for_frame
+                    )
+                    for chunks_for_frame in chunks
+                )
+            )
+            self.assertTrue(
+                all(
+                    b"".join(chunks_for_frame) == frame["wire"]
+                    for chunks_for_frame, frame in _test_strict_zip(
+                        chunks,
+                        fixture["frames"],
+                    )
+                )
+            )
+            self.assertGreater(fixture["first_seven_payload_bytes"], 12 << 20)
+            for invalid_identity in invalid_identities:
+                with self.subTest(invalid_identity=invalid_identity):
+                    with self.assertRaises(AssertionError):
+                        _test_training_worker_stream(
+                            artifact_root=artifact,
+                            runtime_scratch=scratch,
+                            source_identity=invalid_identity,
+                        )
+
     def test_worker_stream_contract_repair_infrastructure(self) -> None:
         for worker_kind in ("training", "evaluation"):
             contract = _test_stream_cap_source_contract(
@@ -17309,10 +17626,9 @@ class F5RecurrentPpoManifestContract(unittest.TestCase):
         }
         labels.update(
             dict(
-                zip(
+                _test_strict_zip(
                     domains["evaluation_actions"],
                     values["evaluation_actions"],
-                    strict=True,
                 )
             )
         )
@@ -20337,7 +20653,10 @@ class F5RecurrentPpoRolloutAlignmentContract(unittest.TestCase):
             self.assertEqual(len(encoded), 1024)
             self.assertRegex(encoded, r"^[0-9a-f]{1024}$")
             self.assertEqual(
-                sum(byte.bit_count() for byte in bytes.fromhex(encoded)),
+                sum(
+                    _test_byte_popcount(byte)
+                    for byte in bytes.fromhex(encoded)
+                ),
                 caught.exception.rollout["agent_row_count"],
             )
 
@@ -22171,7 +22490,7 @@ class F5RecurrentPpoCliAndStaticBoundary(unittest.TestCase):
         expected_rows[0] = 0b00000011
         expected_rollout_bitset = bytes(expected_rows).hex()
         snapshots = []
-        for delayed_row, case in zip(range(1, 8), cases, strict=True):
+        for delayed_row, case in _test_strict_zip(range(1, 8), cases):
             with self.subTest(delayed_row=delayed_row):
                 self.assertEqual(
                     set(case),
@@ -23040,10 +23359,9 @@ class F5RecurrentPpoPreparedWorkerSupervisorContract(unittest.TestCase):
                 for chunks in training_frame_wire_chunks
             ) or any(
                 b"".join(chunks) != frame["wire"]
-                for chunks, frame in zip(
+                for chunks, frame in _test_strict_zip(
                     training_frame_wire_chunks,
                     training_fixture["frames"],
-                    strict=True,
                 )
             ):
                 raise AssertionError("cached training wire chunks drifted")
@@ -25326,7 +25644,7 @@ class F5RecurrentPpoPreparedWorkerSupervisorContract(unittest.TestCase):
                 )
                 self.assertEqual(
                     sum(
-                        byte.bit_count()
+                        _test_byte_popcount(byte)
                         for byte in bitset_frame["payload"]
                     ),
                     10,
@@ -27077,7 +27395,10 @@ class F5RecurrentPpoPreparedWorkerSupervisorContract(unittest.TestCase):
             self.assertEqual(len(encoded), 1024)
             self.assertRegex(encoded, r"^[0-9a-f]{1024}$")
             self.assertEqual(
-                sum(byte.bit_count() for byte in bytes.fromhex(encoded)),
+                sum(
+                    _test_byte_popcount(byte)
+                    for byte in bytes.fromhex(encoded)
+                ),
                 len(set(selected_agents)),
             )
             return {
@@ -29762,10 +30083,9 @@ class F5RecurrentPpoPreparedWorkerSupervisorContract(unittest.TestCase):
                                 self.assertLess(attempt, raised)
 
                         if specification["family"] == "D":
-                            for offered, result in zip(
+                            for offered, result in _test_strict_zip(
                                 operations.write_offers,
                                 operations.write_results,
-                                strict=True,
                             ):
                                 self.assertIs(type(offered), bytes)
                                 self.assertTrue(offered)
@@ -33458,6 +33778,90 @@ class F5RecurrentPpoPreparedWorkerSupervisorContract(unittest.TestCase):
                     operations.cleanup()
 
 
+class F5ControllerPreparedWorkerSupervisorInfrastructure(unittest.TestCase):
+    """Ungated watched-red coverage for the runner-only supervisor slice."""
+
+    @staticmethod
+    def _runner_module():
+        path = ROOT / "tools/run_f5_recurrent_ppo_pilot.py"
+        if not path.is_file() or path.is_symlink():
+            raise AssertionError(
+                "watched-red controller prepared-worker runner is absent"
+            )
+        return _runner()
+
+    def test_runner_stream_cap_source_and_checked_add_contract(self) -> None:
+        runner = self._runner_module()
+        source_path = pathlib.Path(runner.__file__)
+        source = source_path.read_text(encoding="utf-8")
+        observed = []
+        for worker_kind in ("training", "evaluation"):
+            contract = _test_stream_cap_source_contract(
+                source,
+                expected_kind=worker_kind,
+                namespace=vars(runner),
+                source_path=source_path,
+            )
+            reference = _test_stream_cap_source_contract(
+                _STREAM_CAP_REFERENCE_SOURCE,
+                expected_kind=worker_kind,
+                namespace=_test_stream_cap_namespace(
+                    _STREAM_CAP_REFERENCE_SOURCE
+                ),
+            )
+            self.assertEqual(
+                contract["reachability"],
+                "resumable-operations-parser-v2",
+            )
+            self.assertEqual(
+                contract["helper_fingerprint"],
+                reference["helper_fingerprint"],
+            )
+            observed.append(contract["helper_fingerprint"])
+        self.assertEqual(len(set(observed)), 1)
+
+        for total, increment, cap, expected in (
+            (0, 0, 0, 0),
+            (0, 1, 1, 1),
+            (7, 5, 12, 12),
+        ):
+            self.assertEqual(
+                runner.measured_add(total, increment, cap),
+                expected,
+            )
+        for values in (
+            (True, 0, 0),
+            (0, False, 0),
+            (0, 0, True),
+            (-1, 0, 0),
+            (0, -1, 0),
+            (0, 0, -1),
+            (1, 1, 1),
+        ):
+            with self.subTest(values=values):
+                with self.assertRaises(ValueError):
+                    runner.measured_add(*values)
+
+    def test_runner_controller_reactor_contracts(self) -> None:
+        self._runner_module()
+        contract = F5RecurrentPpoPreparedWorkerSupervisorContract
+        contract.setUpClass()
+        try:
+            methods = (
+                "test_runner_accepts_valid_controller_evaluation_stream",
+                "test_runner_accepts_independent_live_root_training_stream",
+                "test_training_stream_rejects_each_original_frame_gap",
+                "test_transport_rejects_stderr_before_otherwise_valid_stdout",
+                "test_first_nonempty_t60_is_fixed_and_progress_never_slides",
+            )
+            for method_name in methods:
+                with self.subTest(contract=method_name):
+                    case = contract(methodName=method_name)
+                    getattr(case, method_name)()
+        finally:
+            contract.tearDownClass()
+
+
 @requires_implementation
 class F5RecurrentPpoPortablePublicationContract(unittest.TestCase):
     def setUp(self) -> None:
@@ -35544,10 +35948,9 @@ class F5RecurrentPpoTraceAndResultsContract(unittest.TestCase):
                     seed["wilson95"],
                     _wilson95_fixture(seed["successes"], 32768),
                 )
-        for primary, repeated in zip(
+        for primary, repeated in _test_strict_zip(
             evaluations[0]["seeds"],
             repeat["seeds"],
-            strict=True,
         ):
             self.assertEqual(
                 self.bitsets[primary["bitset_path"]],
