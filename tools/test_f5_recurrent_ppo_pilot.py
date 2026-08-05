@@ -10,6 +10,7 @@ import copy
 import ctypes
 import errno
 import fcntl
+import gc
 import hashlib
 import importlib
 import inspect
@@ -1517,6 +1518,28 @@ def _test_repack_existing_worker_frame(
     for field, value in (replacements or {}).items():
         header[field] = value
     return _test_pack_supplied_worker_frame(header, frame["payload"])
+
+
+def _test_repack_existing_worker_frame_record(
+    frame,
+    *,
+    replacements=None,
+    removals=(),
+):
+    """Return a copied frame record without repairing dependent fields."""
+    header = dict(frame["header"])
+    for field in removals:
+        if field not in header:
+            raise AssertionError("test-owned repack removal is absent")
+        del header[field]
+    for field, value in (replacements or {}).items():
+        header[field] = value
+    payload = frame["payload"]
+    return {
+        "header": header,
+        "payload": payload,
+        "wire": _test_pack_supplied_worker_frame(header, payload),
+    }
 
 
 def _test_build_self_consistent_worker_frame(
@@ -12300,6 +12323,4749 @@ def _test_stream_contract_oracle_matrix():
     return evidence
 
 
+def _test_candidate_parser_expect_error(protocol, operation, label):
+    try:
+        operation()
+    except protocol.ProtocolError:
+        return
+    raise AssertionError(label + ": expected ProtocolError")
+
+
+def _test_candidate_parser_require_poisoned(
+    protocol,
+    parser,
+    job_wire,
+    label,
+):
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: parser.bind_request(job_wire),
+        label + ": parser recovered after error",
+    )
+
+
+def _test_candidate_parser_accept_frame(
+    parser,
+    frame,
+    expected_sequence,
+):
+    header_width = len(frame["wire"]) - len(frame["payload"])
+    prefix_split = min(3, header_width)
+    stdout_buffer = bytearray(frame["wire"][:prefix_split])
+    ready = parser.header_ready(stdout_buffer)
+    if type(ready) is not bool or ready or stdout_buffer:
+        raise AssertionError("candidate parser prefix split drifted")
+    co_read = min(17, len(frame["payload"]))
+    stdout_buffer.extend(
+        frame["wire"][prefix_split : header_width + co_read]
+    )
+    ready = parser.header_ready(stdout_buffer)
+    if type(ready) is not bool or not ready:
+        raise AssertionError("candidate parser header did not become ready")
+    if bytes(stdout_buffer) != frame["payload"][:co_read]:
+        raise AssertionError("candidate parser consumed co-read payload")
+    before_take = bytes(stdout_buffer)
+    header = parser.take_header(stdout_buffer)
+    if type(header) is not dict or header != frame["header"]:
+        raise AssertionError("candidate parser returned wrong header")
+    if bytes(stdout_buffer) != before_take:
+        raise AssertionError("candidate take_header consumed external bytes")
+    declared = header["bytes"]
+    if parser.validate_declared_frame(header, expected_sequence) is not None:
+        raise AssertionError("candidate declaration return drifted")
+    if _test_candidate_parser_retains_identity(
+        parser,
+        header,
+    ) or _test_candidate_parser_retains_identity(
+        parser,
+        expected_sequence,
+    ):
+        raise AssertionError("candidate parser retained declaration authority")
+    header["raw_sha256"] = "0" * 64
+    expected_sequence[0]["semantic_domain"] = "mutated-after-validation"
+    observed = bytearray()
+    chunks = []
+    if co_read:
+        chunk = parser.take_payload(stdout_buffer, declared)
+        if type(chunk) is not bytes:
+            raise AssertionError("candidate payload chunk is not exact bytes")
+        observed.extend(chunk)
+        chunks.append(len(chunk))
+    stdout_buffer.extend(frame["payload"][co_read:])
+    while True:
+        remaining = parser.payload_remaining(declared)
+        if type(remaining) is not bool:
+            raise AssertionError("candidate payload predicate is not bool")
+        if not remaining:
+            break
+        chunk = parser.take_payload(stdout_buffer, declared)
+        if type(chunk) is not bytes or not 1 <= len(chunk) <= 65_536:
+            raise AssertionError("candidate payload chunk escaped bounds")
+        observed.extend(chunk)
+        chunks.append(len(chunk))
+    if stdout_buffer or bytes(observed) != frame["payload"]:
+        raise AssertionError("candidate parser payload reconstruction drifted")
+    digest = hashlib.sha256(observed).hexdigest()
+    if parser.finish_frame(declared, digest) is not None:
+        raise AssertionError("candidate frame finalizer return drifted")
+    return tuple(chunks)
+
+
+def _test_candidate_parser_complete_fixture(protocol, fixture):
+    parser = protocol.WorkerFrameParser()
+    if parser.bind_request(fixture["job_wire"]) is not None:
+        raise AssertionError("candidate bind return drifted")
+    chunk_counts = []
+    for frame in fixture["frames"]:
+        chunk_counts.append(
+            _test_candidate_parser_accept_frame(
+                parser,
+                frame,
+                copy.deepcopy(fixture["expected_sequence"]),
+            )
+        )
+    if parser.finish_stdout() is not None:
+        raise AssertionError("candidate stdout finalizer return drifted")
+    return tuple(chunk_counts)
+
+
+def _test_candidate_parser_training_fixture():
+    fixture = _test_stream_contract_training_request()
+    job_body = fixture["job_wire"][4:]
+    job_sha256 = hashlib.sha256(
+        b"bloodbowl-f5-worker-job-v1\0" + job_body
+    ).hexdigest()
+    frames = []
+    for expected in fixture["expected_sequence"]:
+        payload = b"x" * expected["bytes_minimum"]
+        domain = expected["semantic_domain"].encode("ascii") + b"\0"
+        frames.append(
+            _test_build_self_consistent_worker_frame(
+                payload=payload,
+                frame_index=expected["frame_index"],
+                kind=expected["kind"],
+                logical_name=expected["logical_name"],
+                job_sha256=job_sha256,
+                nonce=fixture["job"]["nonce"],
+                semantic_sha256=hashlib.sha256(
+                    domain + payload
+                ).hexdigest(),
+            )
+        )
+    return {
+        "expected_sequence": fixture["expected_sequence"],
+        "frames": tuple(frames),
+        "job": fixture["job"],
+        "job_wire": fixture["job_wire"],
+    }
+
+
+def _test_candidate_parser_manifest_mutations(manifest):
+    mutations = []
+
+    def add(label, operation):
+        candidate = copy.deepcopy(manifest)
+        operation(candidate["execution"]["worker_ipc"])
+        mutations.append((label, candidate))
+
+    add(
+        "frame-header-cap",
+        lambda ipc: ipc["frame"].__setitem__(
+            "header_maximum_bytes", 4095
+        ),
+    )
+    add(
+        "frame-chunk-cap",
+        lambda ipc: ipc["frame"].__setitem__(
+            "incremental_drain_chunk_maximum_bytes", 65535
+        ),
+    )
+    add(
+        "frame-validation-order",
+        lambda ipc: ipc["frame"]["pre_payload_validation_order"].reverse(),
+    )
+    add(
+        "frame-payload-verification",
+        lambda ipc: ipc["frame"]["payload_verification"].reverse(),
+    )
+    add(
+        "frame-header-fields",
+        lambda ipc: ipc["frame"]["header_schema"]["fields"].pop(),
+    )
+    add(
+        "frame-bytes-bound",
+        lambda ipc: ipc["frame"]["header_schema"]["field_specs"][
+            "bytes"
+        ].__setitem__("maximum", 16_777_215),
+    )
+    add(
+        "frame-encoding",
+        lambda ipc: ipc["frame"]["header_encoding"].__setitem__(
+            "canonical_ascii_json", False
+        ),
+    )
+    add(
+        "training-count",
+        lambda ipc: ipc["streams"]["training"].__setitem__(
+            "success_frame_count", 7
+        ),
+    )
+    add(
+        "training-name",
+        lambda ipc: ipc["streams"]["training"]["frame_sequence"][1].__setitem__(
+            "logical_name", "checkpoints/wrong.f5w"
+        ),
+    )
+    add(
+        "training-size",
+        lambda ipc: ipc["streams"]["training"]["frame_sequence"][1].__setitem__(
+            "bytes_minimum", 879_899
+        ),
+    )
+    add(
+        "training-order",
+        lambda ipc: ipc["streams"]["training"]["frame_sequence"].reverse(),
+    )
+    add(
+        "training-domain",
+        lambda ipc: ipc["streams"]["training"]["frame_sequence"][0].__setitem__(
+            "semantic_domain", "wrong-domain"
+        ),
+    )
+    add(
+        "evaluation-count",
+        lambda ipc: ipc["streams"]["evaluation"].__setitem__(
+            "success_frame_count", 1
+        ),
+    )
+    add(
+        "evaluation-order",
+        lambda ipc: ipc["streams"]["evaluation"]["frame_sequence"].reverse(),
+    )
+    add(
+        "evaluation-name",
+        lambda ipc: ipc["streams"]["evaluation"]["frame_sequence"][1].__setitem__(
+            "logical_name", "wrong-result"
+        ),
+    )
+    add(
+        "evaluation-size",
+        lambda ipc: ipc["streams"]["evaluation"]["frame_sequence"][0].__setitem__(
+            "bytes_maximum", 4095
+        ),
+    )
+    add(
+        "evaluation-template",
+        lambda ipc: ipc["streams"]["evaluation"]["frame_sequence"][0][
+            "logical_name_templates"
+        ].__setitem__("primary", "wrong/{seed_index:02d}.bits"),
+    )
+    add(
+        "evaluation-domain",
+        lambda ipc: ipc["streams"]["evaluation"]["frame_sequence"][1].__setitem__(
+            "semantic_domain", "wrong-domain"
+        ),
+    )
+    add(
+        "failure-kind",
+        lambda ipc: ipc["failure"]["frame_sequence"][0].__setitem__(
+            "kind", "evaluation-result"
+        ),
+    )
+    add(
+        "failure-size",
+        lambda ipc: ipc["failure"]["frame_sequence"][0].__setitem__(
+            "bytes_maximum", 4095
+        ),
+    )
+    add(
+        "failure-count",
+        lambda ipc: ipc["failure"]["frame_sequence"].append(
+            copy.deepcopy(ipc["failure"]["frame_sequence"][0])
+        ),
+    )
+    add(
+        "failure-index",
+        lambda ipc: ipc["failure"]["frame_sequence"][0].__setitem__(
+            "frame_index", 1
+        ),
+    )
+    add(
+        "failure-name",
+        lambda ipc: ipc["failure"]["frame_sequence"][0].__setitem__(
+            "logical_name", "worker-failure"
+        ),
+    )
+    add(
+        "failure-domain",
+        lambda ipc: ipc["failure"]["frame_sequence"][0].__setitem__(
+            "semantic_domain", "wrong-domain"
+        ),
+    )
+    add(
+        "failure-authentication",
+        lambda ipc: ipc["failure"].__setitem__(
+            "authenticated_job_required_for_frame", False
+        ),
+    )
+    add(
+        "failure-after-success",
+        lambda ipc: ipc["failure"].__setitem__(
+            "failure_after_success_frame_allowed", True
+        ),
+    )
+    add(
+        "failure-unauthenticated",
+        lambda ipc: ipc["failure"].__setitem__(
+            "unauthenticated_job_frame_allowed", True
+        ),
+    )
+    return tuple(mutations)
+
+
+def _test_load_candidate_protocol_without_manifest_io():
+    path = (ROOT / "tools/f5_recurrent_ppo_protocol.py").resolve()
+    raw = path.read_bytes()
+    code = compile(raw, str(path), "exec", dont_inherit=True)
+    module = types.ModuleType("f5_candidate_protocol_no_import_io")
+    module.__file__ = str(path)
+
+    def reject_io(*_args, **_kwargs):
+        raise AssertionError("candidate protocol performed import-time I/O")
+
+    with unittest.mock.patch("builtins.open", side_effect=reject_io), \
+            unittest.mock.patch("io.open", side_effect=reject_io), \
+            unittest.mock.patch("os.open", side_effect=reject_io), \
+            unittest.mock.patch("os.lstat", side_effect=reject_io), \
+            unittest.mock.patch("os.stat", side_effect=reject_io):
+        exec(code, module.__dict__)
+    return module
+
+
+def _test_candidate_parser_function_definition_shape(node):
+    if (
+        isinstance(node, ast.AsyncFunctionDef)
+        or node.decorator_list
+        or node.returns is not None
+        or node.type_comment is not None
+        or node.args.defaults
+        or any(default is not None for default in node.args.kw_defaults)
+    ):
+        raise AssertionError("candidate parser definition-time effect surface")
+    arguments = (
+        tuple(node.args.posonlyargs)
+        + tuple(node.args.args)
+        + tuple(node.args.kwonlyargs)
+    )
+    if node.args.vararg is not None:
+        arguments += (node.args.vararg,)
+    if node.args.kwarg is not None:
+        arguments += (node.args.kwarg,)
+    if any(argument.annotation is not None for argument in arguments):
+        raise AssertionError("candidate parser annotation effect surface")
+
+
+def _test_candidate_parser_class_shape(parser_node):
+    if parser_node.bases or parser_node.keywords or parser_node.decorator_list:
+        raise AssertionError("candidate parser class shape drifted")
+    method_names = set()
+    for statement in parser_node.body:
+        if isinstance(statement, (ast.Assign, ast.AnnAssign)):
+            raise AssertionError("candidate parser class binding is forbidden")
+        if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            _test_candidate_parser_function_definition_shape(statement)
+            if statement.name in method_names:
+                raise AssertionError("candidate parser method is duplicated")
+            method_names.add(statement.name)
+            if (
+                statement.name.startswith("__")
+                and statement.name.endswith("__")
+                and statement.name != "__init__"
+            ):
+                raise AssertionError(
+                    "candidate parser magic-method surface drifted"
+                )
+            continue
+        if (
+            isinstance(statement, ast.Expr)
+            and isinstance(statement.value, ast.Constant)
+            and type(statement.value.value) is str
+        ):
+            continue
+        if isinstance(statement, ast.Pass):
+            continue
+        raise AssertionError("candidate parser class-body execution is forbidden")
+
+
+def _test_candidate_parser_reject_broad_handlers(module_tree, parser_node):
+    functions = {
+        node.name: node
+        for node in module_tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    bind_only_boundaries = {
+        "load_protocol_manifest",
+        "parse_worker_job_wire",
+    }
+    parser_methods = {
+        node.name: node
+        for node in parser_node.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+
+    def record_binding(target, value, bindings):
+        if isinstance(target, ast.Name):
+            bindings[target.id] = value
+            return
+        if isinstance(target, (ast.Tuple, ast.List)):
+            if (
+                isinstance(value, (ast.Tuple, ast.List))
+                and len(target.elts) == len(value.elts)
+            ):
+                for child_target, child_value in zip(target.elts, value.elts):
+                    record_binding(child_target, child_value, bindings)
+                return
+            for child_target in target.elts:
+                record_binding(child_target, value, bindings)
+
+    parser_bindings = {}
+    for statement in parser_node.body:
+        if not isinstance(statement, (ast.Assign, ast.AnnAssign)):
+            continue
+        targets = (
+            statement.targets
+            if isinstance(statement, ast.Assign)
+            else (statement.target,)
+        )
+        if statement.value is not None:
+            for target in targets:
+                record_binding(target, statement.value, parser_bindings)
+    module_classes = {
+        node.name
+        for node in module_tree.body
+        if isinstance(node, ast.ClassDef)
+    }
+    module_bindings = {}
+    for statement in module_tree.body:
+        if not isinstance(statement, (ast.Assign, ast.AnnAssign)):
+            continue
+        targets = (
+            statement.targets
+            if isinstance(statement, ast.Assign)
+            else (statement.target,)
+        )
+        for target in targets:
+            if statement.value is not None:
+                record_binding(target, statement.value, module_bindings)
+
+    narrow_exception_names = {
+        "AttributeError",
+        "BufferError",
+        "IndexError",
+        "KeyError",
+        "OverflowError",
+        "ProtocolError",
+        "RecursionError",
+        "TypeError",
+        "UnicodeDecodeError",
+        "UnicodeEncodeError",
+        "UnicodeError",
+        "ValueError",
+    }
+
+    def expression_is_narrow_exception(expression):
+        if isinstance(expression, ast.Name):
+            return expression.id in narrow_exception_names
+        if isinstance(expression, ast.Attribute):
+            return (
+                isinstance(expression.value, ast.Name)
+                and (
+                    (
+                        expression.value.id == "_struct"
+                        and expression.attr == "error"
+                    )
+                    or (
+                        expression.value.id == "_json"
+                        and expression.attr == "JSONDecodeError"
+                    )
+                )
+            )
+        if isinstance(expression, ast.Tuple):
+            return bool(expression.elts) and all(
+                expression_is_narrow_exception(item)
+                for item in expression.elts
+            )
+        return False
+
+    forbidden_call_names = {
+        "__import__",
+        "eval",
+        "exec",
+        "getattr",
+        "globals",
+        "input",
+        "open",
+        "print",
+        "setattr",
+        "vars",
+    }
+    allowed_builtin_calls = {
+        "ProtocolError",
+        "all",
+        "any",
+        "bool",
+        "bytearray",
+        "bytes",
+        "dict",
+        "enumerate",
+        "float",
+        "frozenset",
+        "int",
+        "isinstance",
+        "len",
+        "list",
+        "max",
+        "min",
+        "range",
+        "set",
+        "str",
+        "tuple",
+        "type",
+        "zip",
+    }
+    forbidden_attributes = {
+        "Popen",
+        "__builtins__",
+        "__class__",
+        "__dict__",
+        "__getattr__",
+        "__getattribute__",
+        "__globals__",
+        "__subclasses__",
+        "__traceback__",
+        "f_builtins",
+        "f_globals",
+        "f_locals",
+        "hexdigest",
+        "open",
+        "read",
+        "run",
+        "sha256",
+        "socket",
+        "tb_frame",
+        "write",
+    }
+    allowed_attribute_calls = {
+        "append",
+        "clear",
+        "copy",
+        "decode",
+        "dumps",
+        "encode",
+        "extend",
+        "get",
+        "isfinite",
+        "items",
+        "keys",
+        "loads",
+        "pack",
+        "pop",
+        "unpack",
+        "update",
+        "values",
+    }
+    mutable_global_names = set()
+    for statement in module_tree.body:
+        if not isinstance(statement, (ast.Assign, ast.AnnAssign)):
+            continue
+        value = statement.value
+        if not isinstance(
+            value,
+            (
+                ast.Dict,
+                ast.DictComp,
+                ast.List,
+                ast.ListComp,
+                ast.Set,
+                ast.SetComp,
+            ),
+        ):
+            continue
+        targets = (
+            statement.targets
+            if isinstance(statement, ast.Assign)
+            else (statement.target,)
+        )
+        for target in targets:
+            if isinstance(target, ast.Name):
+                mutable_global_names.add(target.id)
+
+    def function_local_names(function_node):
+        names = {
+            argument.arg
+            for argument in (
+                tuple(function_node.args.posonlyargs)
+                + tuple(function_node.args.args)
+                + tuple(function_node.args.kwonlyargs)
+            )
+        }
+        if function_node.args.vararg is not None:
+            names.add(function_node.args.vararg.arg)
+        if function_node.args.kwarg is not None:
+            names.add(function_node.args.kwarg.arg)
+
+        class LocalBindingVisitor(ast.NodeVisitor):
+            def visit_FunctionDef(self, child):
+                if child is function_node:
+                    self.generic_visit(child)
+
+            def visit_AsyncFunctionDef(self, child):
+                if child is function_node:
+                    self.generic_visit(child)
+
+            def visit_ClassDef(self, _child):
+                return None
+
+            def visit_Name(self, child):
+                if isinstance(child.ctx, (ast.Store, ast.Del)):
+                    names.add(child.id)
+
+        LocalBindingVisitor().visit(function_node)
+        return names
+
+    def receiver_root(expression):
+        while isinstance(expression, (ast.Attribute, ast.Subscript)):
+            expression = expression.value
+        return expression
+
+    def bound_names(target):
+        if isinstance(target, ast.Name):
+            return {target.id}
+        if isinstance(target, (ast.Tuple, ast.List)):
+            names = set()
+            for child in target.elts:
+                names.update(bound_names(child))
+            return names
+        return set()
+
+    def loaded_names(expression):
+        return {
+            child.id
+            for child in ast.walk(expression)
+            if isinstance(child, ast.Name)
+            and isinstance(child.ctx, ast.Load)
+        }
+
+    def exact_header_append(call):
+        if (
+            not isinstance(call.func, ast.Attribute)
+            or call.func.attr != "extend"
+            or not isinstance(call.func.value, ast.Attribute)
+            or call.func.value.attr != "_header_wire"
+            or not isinstance(call.func.value.value, ast.Name)
+            or call.func.value.value.id != "self"
+            or len(call.args) != 1
+            or call.keywords
+        ):
+            return False
+        argument = call.args[0]
+        return (
+            isinstance(argument, ast.Subscript)
+            and isinstance(argument.value, ast.Name)
+            and argument.value.id == "stdout_buffer"
+            and isinstance(argument.slice, ast.Slice)
+            and argument.slice.lower is None
+            and isinstance(argument.slice.upper, ast.Name)
+            and argument.slice.upper.id
+            in {
+                "_worker_frame_parser_body_take",
+                "_worker_frame_parser_prefix_take",
+            }
+            and argument.slice.step is None
+        )
+
+    def exact_buffer_slice(expression, root):
+        allowed_upper_names = {"_worker_frame_parser_take"}
+        if root == "header_ready":
+            allowed_upper_names = {
+                "_worker_frame_parser_body_take",
+                "_worker_frame_parser_prefix_take",
+            }
+        return (
+            isinstance(expression, ast.Subscript)
+            and isinstance(expression.value, ast.Name)
+            and expression.value.id == "stdout_buffer"
+            and isinstance(expression.slice, ast.Slice)
+            and expression.slice.lower is None
+            and isinstance(expression.slice.upper, ast.Name)
+            and expression.slice.upper.id in allowed_upper_names
+            and expression.slice.step is None
+        )
+
+    def buffer_use_is_allowed(root, name_node, parents):
+        parent = parents.get(name_node)
+        if (
+            isinstance(parent, ast.Call)
+            and isinstance(parent.func, ast.Name)
+            and parent.func.id in {"len", "type"}
+            and len(parent.args) == 1
+            and parent.args[0] is name_node
+            and not parent.keywords
+        ):
+            if root == "take_header":
+                return parent.func.id == "type"
+            if parent.func.id == "type":
+                return root in {"header_ready", "take_payload"}
+            statement = parents.get(parent)
+            return (
+                root in {"header_ready", "take_payload"}
+                and isinstance(statement, ast.Assign)
+                and len(statement.targets) == 1
+                and isinstance(statement.targets[0], ast.Name)
+                and statement.targets[0].id
+                in {
+                    "_worker_frame_parser_body_available",
+                    "_worker_frame_parser_prefix_available",
+                    "_worker_frame_parser_available",
+                }
+            )
+        if not (
+            isinstance(parent, ast.Subscript)
+            and parent.value is name_node
+            and exact_buffer_slice(parent, root)
+        ):
+            return False
+        if isinstance(parent.ctx, ast.Del):
+            return root in {"header_ready", "take_payload"}
+        grandparent = parents.get(parent)
+        if root == "header_ready":
+            return isinstance(grandparent, ast.Call) and exact_header_append(
+                grandparent
+            )
+        if root != "take_payload" or not (
+            isinstance(grandparent, ast.Call)
+            and isinstance(grandparent.func, ast.Name)
+            and grandparent.func.id == "bytes"
+            and grandparent.args == [parent]
+            and not grandparent.keywords
+        ):
+            return False
+        statement = parents.get(grandparent)
+        return (
+            isinstance(statement, ast.Assign)
+            and len(statement.targets) == 1
+            and isinstance(statement.targets[0], ast.Name)
+            and statement.targets[0].id == "_worker_frame_parser_chunk"
+        )
+
+    def expression_shape(expression, expected_source):
+        expected = ast.parse(expected_source, mode="eval").body
+        return ast.dump(expression) == ast.dump(expected)
+
+    def header_wire_use_is_allowed(attribute, parents):
+        parent = parents.get(attribute)
+        if (
+            isinstance(parent, ast.Call)
+            and isinstance(parent.func, ast.Name)
+            and parent.func.id == "len"
+            and parent.args == [attribute]
+            and not parent.keywords
+        ):
+            return True
+        if (
+            isinstance(parent, ast.Attribute)
+            and parent.value is attribute
+            and parent.attr == "extend"
+            and isinstance(parents.get(parent), ast.Call)
+            and exact_header_append(parents[parent])
+        ):
+            return True
+        if (
+            isinstance(parent, ast.Call)
+            and isinstance(parent.func, ast.Name)
+            and parent.func.id == "bytes"
+            and parent.args == [attribute]
+            and not parent.keywords
+        ):
+            unpack_call = parents.get(parent)
+            subscript = parents.get(unpack_call)
+            assignment = parents.get(subscript)
+            return (
+                isinstance(unpack_call, ast.Call)
+                and isinstance(unpack_call.func, ast.Attribute)
+                and isinstance(unpack_call.func.value, ast.Name)
+                and unpack_call.func.value.id == "_struct"
+                and unpack_call.func.attr == "unpack"
+                and len(unpack_call.args) == 2
+                and isinstance(unpack_call.args[0], ast.Constant)
+                and unpack_call.args[0].value == ">I"
+                and unpack_call.args[1] is parent
+                and not unpack_call.keywords
+                and isinstance(subscript, ast.Subscript)
+                and isinstance(subscript.slice, ast.Constant)
+                and subscript.slice.value == 0
+                and isinstance(assignment, ast.Assign)
+                and len(assignment.targets) == 1
+                and isinstance(assignment.targets[0], ast.Attribute)
+                and isinstance(assignment.targets[0].value, ast.Name)
+                and assignment.targets[0].value.id == "self"
+                and assignment.targets[0].attr == "_header_length"
+            )
+        return False
+
+    roots = ("__init__",) + tuple(
+        name for name in parser_methods if not name.startswith("_")
+    )
+    for root in roots:
+        pending = [parser_methods[root]]
+        visited = set()
+        payload_decrements = 0
+        while pending:
+            node = pending.pop()
+            identity = id(node)
+            if identity in visited:
+                continue
+            visited.add(identity)
+            local_names = function_local_names(node)
+            if local_names & allowed_builtin_calls:
+                raise AssertionError("candidate parser shadows a builtin")
+            parents = {
+                child: parent
+                for parent in ast.walk(node)
+                for child in ast.iter_child_nodes(parent)
+            }
+            if root in {"header_ready", "take_header", "take_payload"}:
+                for buffer_name in ast.walk(node):
+                    if (
+                        isinstance(buffer_name, ast.Name)
+                        and buffer_name.id == "stdout_buffer"
+                        and not buffer_use_is_allowed(
+                            root,
+                            buffer_name,
+                            parents,
+                        )
+                    ):
+                        raise AssertionError(
+                            "candidate parser buffer use escapes closed shape"
+                        )
+            if root == "header_ready" and node.name == "header_ready":
+                expected_header_bindings = {
+                    "_worker_frame_parser_prefix_available": (
+                        "len(stdout_buffer)"
+                    ),
+                    "_worker_frame_parser_prefix_take": (
+                        "min(4 - len(self._header_wire), "
+                        "_worker_frame_parser_prefix_available)"
+                    ),
+                    "_worker_frame_parser_body_available": (
+                        "len(stdout_buffer)"
+                    ),
+                    "_worker_frame_parser_body_take": (
+                        "min(4 + self._header_length - "
+                        "len(self._header_wire), "
+                        "_worker_frame_parser_body_available)"
+                    ),
+                }
+                for binding_name, expected_source in (
+                    expected_header_bindings.items()
+                ):
+                    binding_nodes = [
+                        candidate
+                        for candidate in ast.walk(node)
+                        if isinstance(candidate, ast.Assign)
+                        and len(candidate.targets) == 1
+                        and isinstance(candidate.targets[0], ast.Name)
+                        and candidate.targets[0].id == binding_name
+                    ]
+                    store_count = sum(
+                        1
+                        for candidate in ast.walk(node)
+                        if isinstance(candidate, ast.Name)
+                        and isinstance(candidate.ctx, ast.Store)
+                        and candidate.id == binding_name
+                    )
+                    if (
+                        len(binding_nodes) != 1
+                        or store_count != 1
+                        or not expression_shape(
+                            binding_nodes[0].value,
+                            expected_source,
+                        )
+                    ):
+                        raise AssertionError(
+                            "candidate header bound transfer shape drifted"
+                        )
+                append_counts = {
+                    "_worker_frame_parser_prefix_take": 0,
+                    "_worker_frame_parser_body_take": 0,
+                }
+                delete_counts = dict(append_counts)
+                for candidate in ast.walk(node):
+                    if isinstance(candidate, ast.Call) and exact_header_append(
+                        candidate
+                    ):
+                        append_counts[
+                            candidate.args[0].slice.upper.id
+                        ] += 1
+                    if (
+                        isinstance(candidate, ast.Subscript)
+                        and isinstance(candidate.ctx, ast.Del)
+                        and exact_buffer_slice(candidate, "header_ready")
+                    ):
+                        delete_counts[candidate.slice.upper.id] += 1
+                    if (
+                        isinstance(candidate, ast.Attribute)
+                        and isinstance(candidate.value, ast.Name)
+                        and candidate.value.id == "self"
+                        and candidate.attr == "_header_wire"
+                        and isinstance(candidate.ctx, ast.Load)
+                        and not header_wire_use_is_allowed(
+                            candidate,
+                            parents,
+                        )
+                    ):
+                        raise AssertionError(
+                            "candidate header wire read escapes closed shape"
+                        )
+                if append_counts != {
+                    "_worker_frame_parser_prefix_take": 1,
+                    "_worker_frame_parser_body_take": 1,
+                } or delete_counts != {
+                    "_worker_frame_parser_prefix_take": 1,
+                    "_worker_frame_parser_body_take": 1,
+                }:
+                    raise AssertionError(
+                        "candidate header append/delete pairing drifted"
+                    )
+            if root == "take_payload" and node.name == "take_payload":
+                expected_payload_bindings = {
+                    "_worker_frame_parser_available": "len(stdout_buffer)",
+                    "_worker_frame_parser_take": (
+                        "min(_worker_frame_parser_available, "
+                        "self._payload_remaining, 65536)"
+                    ),
+                    "_worker_frame_parser_chunk": (
+                        "bytes(stdout_buffer[:_worker_frame_parser_take])"
+                    ),
+                }
+                for binding_name, expected_source in (
+                    expected_payload_bindings.items()
+                ):
+                    binding_nodes = [
+                        candidate
+                        for candidate in ast.walk(node)
+                        if isinstance(candidate, ast.Assign)
+                        and len(candidate.targets) == 1
+                        and isinstance(candidate.targets[0], ast.Name)
+                        and candidate.targets[0].id == binding_name
+                    ]
+                    store_count = sum(
+                        1
+                        for candidate in ast.walk(node)
+                        if isinstance(candidate, ast.Name)
+                        and isinstance(candidate.ctx, ast.Store)
+                        and candidate.id == binding_name
+                    )
+                    if (
+                        len(binding_nodes) != 1
+                        or store_count != 1
+                        or not expression_shape(
+                            binding_nodes[0].value,
+                            expected_source,
+                        )
+                    ):
+                        raise AssertionError(
+                            "candidate payload extraction shape drifted"
+                        )
+                payload_deletes = sum(
+                    1
+                    for candidate in ast.walk(node)
+                    if isinstance(candidate, ast.Subscript)
+                    and isinstance(candidate.ctx, ast.Del)
+                    and exact_buffer_slice(candidate, "take_payload")
+                )
+                if payload_deletes != 1:
+                    raise AssertionError(
+                        "candidate payload deletion shape drifted"
+                    )
+            for nested in ast.walk(node):
+                if (
+                    isinstance(nested, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and nested is not node
+                ) or isinstance(nested, ast.Lambda):
+                    raise AssertionError(
+                        "candidate parser defines a nested callable"
+                    )
+
+            tainted_names = {
+                argument.arg
+                for argument in (
+                    tuple(node.args.posonlyargs)
+                    + tuple(node.args.args)
+                    + tuple(node.args.kwonlyargs)
+                )
+                if argument.arg == "stdout_buffer"
+                or (
+                    root == "validate_declared_frame"
+                    and argument.arg in {"header", "expected_sequence"}
+                )
+            }
+            fresh_binding_counts = {
+                argument.arg: 1
+                for argument in (
+                    tuple(node.args.posonlyargs)
+                    + tuple(node.args.args)
+                    + tuple(node.args.kwonlyargs)
+                )
+            }
+            fresh_binding_candidates = set()
+            for binding in ast.walk(node):
+                targets = ()
+                value = None
+                if isinstance(binding, ast.Assign):
+                    targets = tuple(binding.targets)
+                    value = binding.value
+                elif isinstance(binding, ast.AnnAssign):
+                    targets = (binding.target,)
+                    value = binding.value
+                elif isinstance(binding, ast.NamedExpr):
+                    targets = (binding.target,)
+                    value = binding.value
+                elif isinstance(binding, (ast.For, ast.AsyncFor)):
+                    targets = (binding.target,)
+                elif isinstance(binding, ast.comprehension):
+                    targets = (binding.target,)
+                elif isinstance(binding, ast.With):
+                    targets = tuple(
+                        item.optional_vars
+                        for item in binding.items
+                        if item.optional_vars is not None
+                    )
+                elif isinstance(binding, ast.ExceptHandler):
+                    if binding.name is not None:
+                        fresh_binding_counts[binding.name] = (
+                            fresh_binding_counts.get(binding.name, 0) + 1
+                        )
+                    continue
+                direct_fresh_value = isinstance(
+                    value,
+                    (ast.Dict, ast.List, ast.Set),
+                ) or (
+                    isinstance(value, ast.Call)
+                    and isinstance(value.func, ast.Name)
+                    and value.func.id
+                    in {"bytearray", "dict", "list", "set"}
+                )
+                for target in targets:
+                    for target_name in bound_names(target):
+                        fresh_binding_counts[target_name] = (
+                            fresh_binding_counts.get(target_name, 0) + 1
+                        )
+                        if direct_fresh_value and len(targets) == 1:
+                            if isinstance(target, ast.Name):
+                                fresh_binding_candidates.add(target_name)
+            fresh_names = {
+                name
+                for name in fresh_binding_candidates
+                if fresh_binding_counts.get(name) == 1
+            }
+            changed = True
+            while changed:
+                changed = False
+                for binding in ast.walk(node):
+                    targets = ()
+                    value = None
+                    if isinstance(binding, ast.Assign):
+                        targets = tuple(binding.targets)
+                        value = binding.value
+                    elif isinstance(binding, ast.AnnAssign):
+                        targets = (binding.target,)
+                        value = binding.value
+                    elif isinstance(binding, (ast.NamedExpr, ast.AugAssign)):
+                        targets = (binding.target,)
+                        value = binding.value
+                    if value is not None:
+                        value_names = loaded_names(value)
+                        for target in targets:
+                            for target_name in bound_names(target):
+                                if value_names & tainted_names and (
+                                    target_name not in tainted_names
+                                ):
+                                    tainted_names.add(target_name)
+                                    changed = True
+                    if isinstance(binding, (ast.For, ast.AsyncFor)) and (
+                        loaded_names(binding.iter) & tainted_names
+                    ):
+                        for child in ast.walk(binding.target):
+                            if (
+                                isinstance(child, ast.Name)
+                                and child.id not in tainted_names
+                            ):
+                                tainted_names.add(child.id)
+                                changed = True
+                    controlled_body = ()
+                    control_expression = None
+                    if isinstance(binding, ast.If):
+                        control_expression = binding.test
+                        controlled_body = tuple(binding.body) + tuple(
+                            binding.orelse
+                        )
+                    elif isinstance(binding, ast.While):
+                        control_expression = binding.test
+                        controlled_body = tuple(binding.body) + tuple(
+                            binding.orelse
+                        )
+                    elif isinstance(binding, (ast.For, ast.AsyncFor)):
+                        control_expression = binding.iter
+                        controlled_body = tuple(binding.body) + tuple(
+                            binding.orelse
+                        )
+                    if (
+                        control_expression is not None
+                        and loaded_names(control_expression) & tainted_names
+                    ):
+                        for controlled_statement in controlled_body:
+                            for controlled in ast.walk(controlled_statement):
+                                controlled_targets = ()
+                                if isinstance(controlled, ast.Assign):
+                                    controlled_targets = tuple(
+                                        controlled.targets
+                                    )
+                                elif isinstance(
+                                    controlled,
+                                    (ast.AnnAssign, ast.AugAssign, ast.NamedExpr),
+                                ):
+                                    controlled_targets = (controlled.target,)
+                                for controlled_target in controlled_targets:
+                                    for controlled_name in bound_names(
+                                        controlled_target
+                                    ):
+                                        if controlled_name not in tainted_names:
+                                            tainted_names.add(controlled_name)
+                                            changed = True
+                                if (
+                                    isinstance(controlled, ast.Call)
+                                    and isinstance(
+                                        controlled.func,
+                                        ast.Attribute,
+                                    )
+                                    and controlled.func.attr
+                                    in {
+                                        "append",
+                                        "clear",
+                                        "extend",
+                                        "pop",
+                                        "update",
+                                    }
+                                ):
+                                    controlled_root = receiver_root(
+                                        controlled.func.value
+                                    )
+                                    if (
+                                        isinstance(controlled_root, ast.Name)
+                                        and controlled_root.id in fresh_names
+                                        and controlled_root.id
+                                        not in tainted_names
+                                    ):
+                                        tainted_names.add(controlled_root.id)
+                                        changed = True
+                    if isinstance(
+                        binding,
+                        (ast.Assign, ast.AnnAssign, ast.AugAssign),
+                    ):
+                        mutation_targets = (
+                            tuple(binding.targets)
+                            if isinstance(binding, ast.Assign)
+                            else (binding.target,)
+                        )
+                        mutation_value = binding.value
+                        for mutation_target in mutation_targets:
+                            mutation_root = receiver_root(mutation_target)
+                            if (
+                                isinstance(mutation_root, ast.Name)
+                                and mutation_root.id in fresh_names
+                                and (
+                                    loaded_names(mutation_target)
+                                    | loaded_names(mutation_value)
+                                )
+                                & tainted_names
+                                and mutation_root.id not in tainted_names
+                            ):
+                                tainted_names.add(mutation_root.id)
+                                changed = True
+                    if (
+                        isinstance(binding, ast.Call)
+                        and isinstance(binding.func, ast.Attribute)
+                        and binding.func.attr
+                        in {"append", "clear", "extend", "pop", "update"}
+                    ):
+                        mutation_root = receiver_root(binding.func.value)
+                        if (
+                            isinstance(mutation_root, ast.Name)
+                            and mutation_root.id in fresh_names
+                            and any(
+                                loaded_names(argument) & tainted_names
+                                for argument in (
+                                    tuple(binding.args)
+                                    + tuple(
+                                        keyword.value
+                                        for keyword in binding.keywords
+                                    )
+                                )
+                            )
+                            and mutation_root.id not in tainted_names
+                        ):
+                            tainted_names.add(mutation_root.id)
+                            changed = True
+            if root == "take_payload":
+                for state_change in ast.walk(node):
+                    targets = ()
+                    permitted_decrement = False
+                    permitted_scalar_assignment = False
+                    if isinstance(state_change, (ast.Assign, ast.AnnAssign)):
+                        targets = (
+                            tuple(state_change.targets)
+                            if isinstance(state_change, ast.Assign)
+                            else (state_change.target,)
+                        )
+                        permitted_scalar_assignment = (
+                            isinstance(state_change.value, ast.Constant)
+                            and state_change.value.value == "poisoned"
+                            and all(
+                                isinstance(target, ast.Attribute)
+                                and isinstance(target.value, ast.Name)
+                                and target.value.id == "self"
+                                and target.attr == "_state"
+                                for target in targets
+                            )
+                        )
+                    elif isinstance(state_change, ast.AugAssign):
+                        targets = (state_change.target,)
+                        permitted_decrement = (
+                            isinstance(state_change.op, ast.Sub)
+                            and isinstance(state_change.target, ast.Attribute)
+                            and isinstance(state_change.target.value, ast.Name)
+                            and state_change.target.value.id == "self"
+                            and state_change.target.attr
+                            == "_payload_remaining"
+                            and isinstance(state_change.value, ast.Name)
+                            and state_change.value.id
+                            == "_worker_frame_parser_take"
+                        )
+                        if permitted_decrement:
+                            payload_decrements += 1
+                    elif isinstance(state_change, ast.NamedExpr):
+                        targets = (state_change.target,)
+                    for target in targets:
+                        root_expression = receiver_root(target)
+                        if (
+                            isinstance(root_expression, ast.Name)
+                            and root_expression.id == "self"
+                            and not permitted_decrement
+                            and not permitted_scalar_assignment
+                        ):
+                            raise AssertionError(
+                                "candidate payload path retains parser state"
+                            )
+            for child in ast.walk(node):
+                if isinstance(child, (ast.Global, ast.Nonlocal)):
+                    raise AssertionError(
+                        "candidate parser declares non-local mutation authority"
+                    )
+                if (
+                    isinstance(child, (ast.Attribute, ast.Subscript))
+                    and isinstance(child.ctx, (ast.Store, ast.Del))
+                ):
+                    root_expression = receiver_root(child)
+                    local_fresh_write = (
+                        isinstance(child, ast.Subscript)
+                        and isinstance(child.value, ast.Name)
+                        and isinstance(root_expression, ast.Name)
+                        and root_expression.id in fresh_names
+                    )
+                    caller_buffer_delete = (
+                        isinstance(child, ast.Subscript)
+                        and isinstance(child.ctx, ast.Del)
+                        and isinstance(root_expression, ast.Name)
+                        and root_expression.id == "stdout_buffer"
+                    )
+                    direct_self_write = (
+                        isinstance(root_expression, ast.Name)
+                        and root_expression.id == "self"
+                    )
+                    if not (
+                        local_fresh_write
+                        or caller_buffer_delete
+                        or direct_self_write
+                    ):
+                        raise AssertionError(
+                            "candidate parser writes non-local object state"
+                        )
+                    if (
+                        direct_self_write
+                        and isinstance(
+                            child,
+                            (ast.Attribute, ast.Subscript),
+                        )
+                    ):
+                        parent_values = []
+                        exact_payload_decrement_target = False
+                        for candidate_statement in ast.walk(node):
+                            if isinstance(candidate_statement, ast.Assign) and (
+                                child in candidate_statement.targets
+                            ):
+                                parent_values.append(candidate_statement.value)
+                            elif isinstance(
+                                candidate_statement,
+                                (ast.AnnAssign, ast.AugAssign),
+                            ) and child is candidate_statement.target:
+                                parent_values.append(candidate_statement.value)
+                                if (
+                                    root == "take_payload"
+                                    and isinstance(
+                                        candidate_statement,
+                                        ast.AugAssign,
+                                    )
+                                    and isinstance(
+                                        candidate_statement.op,
+                                        ast.Sub,
+                                    )
+                                    and isinstance(child, ast.Attribute)
+                                    and child.attr == "_payload_remaining"
+                                    and isinstance(
+                                        candidate_statement.value,
+                                        ast.Name,
+                                    )
+                                    and candidate_statement.value.id
+                                    == "_worker_frame_parser_take"
+                                ):
+                                    exact_payload_decrement_target = True
+                        if any(
+                            loaded_names(value) & tainted_names
+                            for value in parent_values
+                        ) and not exact_payload_decrement_target:
+                            raise AssertionError(
+                                "candidate parser stores caller-buffer data"
+                            )
+                if isinstance(child, ast.Name) and child.id in {
+                    "_ctypes",
+                    "_hashlib",
+                    "_os",
+                    "_subprocess",
+                    "__builtins__",
+                    "input",
+                    "open",
+                    "print",
+                }:
+                    raise AssertionError(
+                        "candidate parser reaches a forbidden effect primitive"
+                    )
+                if (
+                    isinstance(child, ast.Name)
+                    and isinstance(child.ctx, ast.Load)
+                ):
+                    reference_name = child.id
+                    if reference_name in mutable_global_names:
+                        raise AssertionError(
+                            "candidate parser reaches mutable module authority"
+                        )
+                    if reference_name in bind_only_boundaries:
+                        if root != "bind_request":
+                            raise AssertionError(
+                                "post-bind parser path reaches bind I/O"
+                            )
+                    elif (
+                        reference_name in module_classes
+                        and reference_name != "ProtocolError"
+                    ):
+                        raise AssertionError(
+                            "candidate parser reaches a helper class"
+                        )
+                    elif reference_name in parser_methods:
+                        pending.append(parser_methods[reference_name])
+                    elif reference_name in parser_bindings:
+                        pending.append(parser_bindings[reference_name])
+                    elif reference_name in module_bindings:
+                        pending.append(module_bindings[reference_name])
+                    elif (
+                        reference_name in functions
+                    ):
+                        pending.append(functions[reference_name])
+                if (
+                    isinstance(child, ast.Attribute)
+                    and isinstance(child.ctx, ast.Load)
+                ):
+                    if child.attr in forbidden_attributes:
+                        raise AssertionError(
+                            "candidate parser reaches introspective/effect state"
+                        )
+                    if (
+                        isinstance(child.value, ast.Name)
+                        and child.value.id == "self"
+                    ):
+                        if child.attr == "__class__":
+                            raise AssertionError(
+                                "candidate parser reaches dynamic class state"
+                            )
+                        if child.attr in parser_methods:
+                            pending.append(parser_methods[child.attr])
+                        elif child.attr in parser_bindings:
+                            pending.append(parser_bindings[child.attr])
+                    if (
+                        isinstance(child.value, ast.Call)
+                        and isinstance(child.value.func, ast.Name)
+                        and child.value.func.id == "type"
+                        and len(child.value.args) == 1
+                        and isinstance(child.value.args[0], ast.Name)
+                        and child.value.args[0].id == "self"
+                    ):
+                        raise AssertionError(
+                            "candidate parser reaches dynamic class state"
+                        )
+                if isinstance(child, ast.Call):
+                    if isinstance(child.func, ast.Name):
+                        call_name = child.func.id
+                        if call_name in forbidden_call_names:
+                            raise AssertionError(
+                                "candidate parser reaches a dynamic/effect call"
+                            )
+                        if call_name == "type" and len(child.args) != 1:
+                            raise AssertionError(
+                                "candidate parser constructs a dynamic type"
+                            )
+                        if call_name in bind_only_boundaries:
+                            if root != "bind_request":
+                                raise AssertionError(
+                                    "post-bind parser path reaches bind I/O"
+                                )
+                            continue
+                        if (
+                            call_name in module_classes
+                            and call_name != "ProtocolError"
+                        ):
+                            raise AssertionError(
+                                "candidate parser reaches a helper class"
+                            )
+                        if call_name in functions:
+                            if any(
+                                loaded_names(argument) & tainted_names
+                                for argument in (
+                                    tuple(child.args)
+                                    + tuple(
+                                        keyword.value
+                                        for keyword in child.keywords
+                                    )
+                                )
+                            ):
+                                raise AssertionError(
+                                    "candidate parser passes caller data to helper"
+                                )
+                            pending.append(functions[call_name])
+                        elif call_name in module_bindings:
+                            pending.append(module_bindings[call_name])
+                        elif call_name not in allowed_builtin_calls:
+                            raise AssertionError(
+                                "candidate parser reaches an unknown callable"
+                            )
+                    elif (
+                        isinstance(child.func, ast.Attribute)
+                        and isinstance(child.func.value, ast.Name)
+                        and child.func.value.id == "self"
+                    ):
+                        if child.func.attr in parser_methods:
+                            if any(
+                                loaded_names(argument) & tainted_names
+                                for argument in (
+                                    tuple(child.args)
+                                    + tuple(
+                                        keyword.value
+                                        for keyword in child.keywords
+                                    )
+                                )
+                            ):
+                                raise AssertionError(
+                                    "candidate parser passes caller data to method"
+                                )
+                            pending.append(parser_methods[child.func.attr])
+                        elif child.func.attr in parser_bindings:
+                            pending.append(parser_bindings[child.func.attr])
+                        else:
+                            raise AssertionError(
+                                "candidate parser reaches dynamic self dispatch"
+                            )
+                    elif not isinstance(child.func, ast.Attribute):
+                        raise AssertionError(
+                            "candidate parser reaches an unclassified callable"
+                        )
+                    if (
+                        isinstance(child.func, ast.Attribute)
+                        and child.func.attr in forbidden_attributes
+                    ):
+                        raise AssertionError(
+                            "candidate parser reaches an effect method"
+                        )
+                    if (
+                        root == "take_payload"
+                        and isinstance(child.func, ast.Attribute)
+                        and child.func.attr
+                        in {"append", "clear", "extend", "pop", "update"}
+                    ):
+                        raise AssertionError(
+                            "candidate payload path reaches accumulation state"
+                        )
+                    if (
+                        isinstance(child.func, ast.Attribute)
+                        and child.func.attr
+                        in {"append", "clear", "extend", "pop", "update"}
+                    ):
+                        receiver = receiver_root(child.func.value)
+                        receiver_is_fresh = (
+                            isinstance(receiver, ast.Name)
+                            and receiver.id in fresh_names
+                            and isinstance(child.func.value, ast.Name)
+                        )
+                        receiver_is_self = (
+                            isinstance(receiver, ast.Name)
+                            and receiver.id == "self"
+                        )
+                        if not (receiver_is_fresh or receiver_is_self):
+                            raise AssertionError(
+                                "candidate parser mutates aliased state"
+                            )
+                        if (
+                            receiver_is_self
+                            and any(
+                                loaded_names(argument) & tainted_names
+                                for argument in (
+                                    tuple(child.args)
+                                    + tuple(
+                                        keyword.value
+                                        for keyword in child.keywords
+                                    )
+                                )
+                            )
+                            and not exact_header_append(child)
+                        ):
+                            raise AssertionError(
+                                "candidate parser retains caller-buffer data"
+                            )
+                    if (
+                        isinstance(child.func, ast.Attribute)
+                        and child.func.attr not in allowed_attribute_calls
+                        and not (
+                            isinstance(child.func.value, ast.Name)
+                            and child.func.value.id == "self"
+                            and (
+                                child.func.attr in parser_methods
+                                or child.func.attr in parser_bindings
+                            )
+                        )
+                    ):
+                        raise AssertionError(
+                            "candidate parser reaches an unknown method call"
+                        )
+                if isinstance(child, ast.ExceptHandler):
+                    if child.type is None or not expression_is_narrow_exception(
+                        child.type
+                    ):
+                        raise AssertionError(
+                            "candidate parser exception handler is not narrow"
+                        )
+        if root == "take_payload" and payload_decrements != 1:
+            raise AssertionError(
+                "candidate payload remaining decrement shape drifted"
+            )
+
+
+def _test_candidate_parser_authority_fingerprints(
+    source,
+    module_tree,
+    protocol=None,
+):
+    expected = {
+        "load_protocol_manifest": (
+            "fbdf73f6aaed21b55d3f61b87470026cc54b2e555e3a606cfbea356ef4b2660e"
+        ),
+        "parse_worker_job_wire": (
+            "b9d4d44623f0f8af2d25d33ee28177ef9cc85f540dd9a69f47687772a9a39854"
+        ),
+    }
+    functions = {}
+    for node in module_tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            functions.setdefault(node.name, []).append(node)
+    for name, expected_sha256 in expected.items():
+        nodes = functions.get(name, ())
+        node = nodes[0] if len(nodes) == 1 else None
+        segment = ast.get_source_segment(source, node) if node is not None else None
+        if (
+            type(segment) is not str
+            or node.decorator_list
+            or hashlib.sha256(segment.encode("utf-8")).hexdigest()
+            != expected_sha256
+        ):
+            raise AssertionError(
+                "candidate bind-authority source fingerprint drifted: " + name
+            )
+        if protocol is not None:
+            runtime = protocol.__dict__.get(name)
+            if (
+                type(runtime) is not types.FunctionType
+                or runtime.__module__ != protocol.__name__
+                or runtime.__code__.co_filename
+                != str((ROOT / "tools/f5_recurrent_ppo_protocol.py").resolve())
+                or runtime.__code__.co_firstlineno != node.lineno
+            ):
+                raise AssertionError(
+                    "candidate bind-authority runtime binding drifted: " + name
+                )
+
+    load_node = functions["load_protocol_manifest"][0]
+    lines = source.splitlines(keepends=True)
+    prefix = (
+        "".join(lines[: load_node.end_lineno - 1])
+        + lines[load_node.end_lineno - 1][: load_node.end_col_offset]
+    )
+    if hashlib.sha256(prefix.encode("utf-8")).hexdigest() != (
+        "81fbfc2e4463e5385d505dc334a073adbb6894a70541a9056ca0479955259386"
+    ):
+        raise AssertionError("candidate bind-authority dependency slice drifted")
+    validate_nodes = functions.get("validate_closed_keys", ())
+    if len(validate_nodes) != 1:
+        raise AssertionError("candidate authority suffix anchor drifted")
+    validate_node = validate_nodes[0]
+    suffix = "".join(lines[validate_node.lineno - 1 :])
+    if hashlib.sha256(suffix.encode("utf-8")).hexdigest() != (
+        "de302b0706413c0f9cb8b79e2ae1d6ee03e93c399317d9649ae2fe4949f50d90"
+    ):
+        raise AssertionError("candidate post-parser authority slice drifted")
+
+    load_index = module_tree.body.index(load_node)
+    validate_index = module_tree.body.index(validate_node)
+    insertion_statements = module_tree.body[load_index + 1 : validate_index]
+    reserved_names = set()
+    for statement in (
+        module_tree.body[: load_index + 1]
+        + module_tree.body[validate_index:]
+    ):
+        if isinstance(statement, (ast.FunctionDef, ast.ClassDef)):
+            reserved_names.add(statement.name)
+        elif isinstance(statement, ast.Import):
+            reserved_names.update(
+                alias.asname or alias.name.split(".")[0]
+                for alias in statement.names
+            )
+        elif isinstance(statement, ast.ImportFrom):
+            reserved_names.update(
+                alias.asname or alias.name for alias in statement.names
+            )
+        elif isinstance(statement, (ast.Assign, ast.AnnAssign)):
+            targets = (
+                statement.targets
+                if isinstance(statement, ast.Assign)
+                else (statement.target,)
+            )
+            reserved_names.update(
+                target.id for target in targets if isinstance(target, ast.Name)
+            )
+    insertion_names = set()
+    parser_classes = 0
+    for statement in insertion_statements:
+        if isinstance(statement, ast.FunctionDef):
+            if (
+                not statement.name.startswith("_worker_frame_parser_")
+                or statement.name in reserved_names
+                or statement.name in insertion_names
+            ):
+                raise AssertionError("candidate parser helper binding collides")
+            insertion_names.add(statement.name)
+            _test_candidate_parser_function_definition_shape(statement)
+            continue
+        if isinstance(statement, ast.ClassDef) and (
+            statement.name == "WorkerFrameParser"
+        ):
+            if statement.name in insertion_names:
+                raise AssertionError("candidate parser class binding collides")
+            insertion_names.add(statement.name)
+            parser_classes += 1
+            _test_candidate_parser_class_shape(statement)
+            continue
+        raise AssertionError("candidate parser insertion slice is executable")
+    if parser_classes > 1:
+        raise AssertionError("candidate parser class is not unique")
+    return len(expected) + 2
+
+
+def _test_candidate_parser_authority_fingerprint_mutants(source):
+    replacements = (
+        (
+            "def parse_worker_job_wire(wire, *, owner=None, ordinal=None):\n",
+            (
+                "def parse_worker_job_wire(wire, *, owner=None, ordinal=None):\n"
+                "    tampered_authority = None\n"
+            ),
+        ),
+        (
+            "def load_protocol_manifest():\n",
+            "def load_protocol_manifest():\n    tampered_authority = None\n",
+        ),
+        (
+            "def parse_worker_job_wire(wire, *, owner=None, ordinal=None):\n",
+            (
+                "@staticmethod\n"
+                "def parse_worker_job_wire(wire, *, owner=None, ordinal=None):\n"
+            ),
+        ),
+        (
+            "def load_protocol_manifest():\n",
+            "@staticmethod\ndef load_protocol_manifest():\n",
+        ),
+        (
+            "def _worker_job_contract():\n",
+            "def _worker_job_contract():\n    tampered_dependency = None\n",
+        ),
+    )
+    rejected = 0
+    for original, replacement in replacements:
+        if source.count(original) != 1:
+            raise AssertionError("candidate authority mutant anchor drifted")
+        mutated = source.replace(original, replacement, 1)
+        try:
+            _test_candidate_parser_authority_fingerprints(
+                mutated,
+                ast.parse(mutated),
+            )
+        except AssertionError:
+            rejected += 1
+        else:
+            raise AssertionError("candidate authority fingerprint mutant survived")
+    for boundary in ("parse_worker_job_wire", "load_protocol_manifest"):
+        mutated = source + "\n%s = canonical_json_bytes\n" % boundary
+        try:
+            _test_candidate_parser_authority_fingerprints(
+                mutated,
+                ast.parse(mutated),
+            )
+        except AssertionError:
+            rejected += 1
+        else:
+            raise AssertionError("candidate authority rebind mutant survived")
+    for statement in (
+        "for _worker_job_contract in (canonical_json_bytes,):\n    pass\n",
+        "def _unused(trigger=_os.write(2, b'')):\n    pass\n",
+    ):
+        mutated = source + "\n" + statement
+        try:
+            _test_candidate_parser_authority_fingerprints(
+                mutated,
+                ast.parse(mutated),
+            )
+        except AssertionError:
+            rejected += 1
+        else:
+            raise AssertionError("candidate authority effect mutant survived")
+    anchor = "\ndef validate_closed_keys(document, expected_keys):\n"
+    if source.count(anchor) != 1:
+        raise AssertionError("candidate authority collision anchor drifted")
+    mutated = source.replace(
+        anchor,
+        "\ndef _fail(message):\n    return None\n" + anchor,
+        1,
+    )
+    try:
+        _test_candidate_parser_authority_fingerprints(
+            mutated,
+            ast.parse(mutated),
+        )
+    except AssertionError:
+        rejected += 1
+    else:
+        raise AssertionError("candidate authority collision mutant survived")
+    mutated = source.replace(
+        anchor,
+        (
+            "\ndef round(number, ndigits):\n"
+            "    _os.write(2, b'')\n"
+            "    return number\n"
+            + anchor
+        ),
+        1,
+    )
+    try:
+        _test_candidate_parser_authority_fingerprints(
+            mutated,
+            ast.parse(mutated),
+        )
+    except AssertionError:
+        rejected += 1
+    else:
+        raise AssertionError("candidate builtin-shadow mutant survived")
+    return rejected
+
+
+def _test_candidate_parser_source_audit_mutants():
+    prelude = """
+import os as _os
+
+_effect = None
+_FORM_KEYS = {"object": frozenset(("kind",))}
+
+def parse_worker_job_wire(wire):
+    return ({}, "0" * 64)
+
+def load_protocol_manifest():
+    return {}
+"""
+    bodies = (
+        "def _effect(self): return _os.read(0, 1)\n    _alias = _effect",
+        "def _effect(self): return _os.read(0, 1)\n    (_alias,) = (_effect,)",
+        "def _effect(self): return parse_worker_job_wire(b'x')\n    _alias = _effect",
+        "def _effect(self): return parse_worker_job_wire(b'x')\n    (_alias,) = (_effect,)",
+        "def _effect(self): return load_protocol_manifest()\n    _alias = _effect",
+        "def _effect(self): return load_protocol_manifest()\n    (_alias,) = (_effect,)",
+        (
+            "def _effect(self): return _os.read(0, 1)\n"
+            "    _first = _effect\n    _alias = _first"
+        ),
+        (
+            "def _effect(self): return parse_worker_job_wire(b'x')\n"
+            "    _first = _effect\n    _alias = _first"
+        ),
+        (
+            "def _effect(self): return load_protocol_manifest()\n"
+            "    _first = _effect\n    _alias = _first"
+        ),
+        (
+            "_unused = _os.read(0, 1)\n"
+            "    def header_ready(self, stdout_buffer): return False"
+        ),
+        (
+            "_os.read(0, 1)\n"
+            "    def header_ready(self, stdout_buffer): return False"
+        ),
+        (
+            "def _effect(self): return _os.read(0, 1)\n"
+            "    def header_ready(self, stdout_buffer):\n"
+            "        return self.__getattribute__('_effect')()"
+        ),
+        (
+            "def _effect(self): return _os.read(0, 1)\n"
+            "    def header_ready(self, stdout_buffer):\n"
+            "        return object.__getattribute__(self, '_effect')()"
+        ),
+        (
+            "def __getattr__(self, name): return lambda: _os.read(0, 1)\n"
+            "    def header_ready(self, stdout_buffer): return self.missing()"
+        ),
+        (
+            "def header_ready(self, stdout_buffer):\n"
+            "        try: raise ValueError('x')\n"
+            "        except ValueError as error:\n"
+            "            return error.__traceback__.tb_frame."
+            "f_builtins['open']('x')"
+        ),
+        (
+            "def _effect(self, trigger=_os.write(2, b'')): return False\n"
+            "    def header_ready(self, stdout_buffer): return False"
+        ),
+        (
+            "def header_ready(self, stdout_buffer):\n"
+            "        _FORM_KEYS.update({'object': frozenset()})\n"
+            "        return False"
+        ),
+        (
+            "def header_ready(self, stdout_buffer):\n"
+            "        _FORM_KEYS['unused'] = frozenset()\n"
+            "        return False"
+        ),
+        (
+            "def header_ready(self, stdout_buffer):\n"
+            "        del _FORM_KEYS['object']\n"
+            "        return False"
+        ),
+        (
+            "def header_ready(self, stdout_buffer):\n"
+            "        global _FORM_KEYS\n"
+            "        _FORM_KEYS = {}\n"
+            "        return False"
+        ),
+        (
+            "def take_payload(self, stdout_buffer, declared_payload_bytes):\n"
+            "        self._spool.extend(stdout_buffer)\n"
+            "        return b''\n"
+            "    def header_ready(self, stdout_buffer): return False"
+        ),
+        (
+            "def header_ready(self, stdout_buffer):\n"
+            "        stash = {}\n"
+            "        for index, item in enumerate(stdout_buffer):\n"
+            "            stash[index] = item\n"
+            "        self._stash = stash\n"
+            "        return False"
+        ),
+        (
+            "def header_ready(self, stdout_buffer):\n"
+            "        _worker_frame_parser_prefix_available = len(stdout_buffer)\n"
+            "        _worker_frame_parser_prefix_take = len(stdout_buffer)\n"
+            "        self._header_wire.extend("
+            "stdout_buffer[:_worker_frame_parser_prefix_take])\n"
+            "        payload_copy = bytes(self._header_wire)[::-1]\n"
+            "        _worker_frame_parser_prefix_take = 4\n"
+            "        del stdout_buffer[:_worker_frame_parser_prefix_take]\n"
+            "        self._header_wire.clear()\n"
+            "        self._stash = payload_copy\n"
+            "        _worker_frame_parser_body_available = len(stdout_buffer)\n"
+            "        _worker_frame_parser_body_take = min("
+            "4 + self._header_length - len(self._header_wire), "
+            "_worker_frame_parser_body_available)\n"
+            "        self._header_wire.extend("
+            "stdout_buffer[:_worker_frame_parser_body_take])\n"
+            "        del stdout_buffer[:_worker_frame_parser_body_take]\n"
+            "        return False"
+        ),
+        (
+            "def take_payload(self, stdout_buffer, declared_payload_bytes):\n"
+            "        _worker_frame_parser_available = len(stdout_buffer)\n"
+            "        _worker_frame_parser_take = min("
+            "_worker_frame_parser_available, self._payload_remaining, 65536)\n"
+            "        _worker_frame_parser_chunk = bytes("
+            "stdout_buffer[:_worker_frame_parser_take])\n"
+            "        for item in _worker_frame_parser_chunk:\n"
+            "            if item & 1:\n"
+            "                self._payload_bit = True\n"
+            "            else:\n"
+            "                self._payload_bit = False\n"
+            "        del stdout_buffer[:_worker_frame_parser_take]\n"
+            "        self._payload_remaining -= _worker_frame_parser_take\n"
+            "        return _worker_frame_parser_chunk\n"
+            "    def header_ready(self, stdout_buffer): return False"
+        ),
+        (
+            "def validate_declared_frame(self, header, expected_sequence):\n"
+            "        self._unused_header = header\n"
+            "        self._unused_sequence = expected_sequence\n"
+            "    def header_ready(self, stdout_buffer): return False"
+        ),
+        (
+            "def take_payload(self, stdout_buffer, declared_payload_bytes):\n"
+            "        stash = {}\n"
+            "        (stash,) = (self._stash,)\n"
+            "        stash[len(stash):] = stdout_buffer[::-1]\n"
+            "        _worker_frame_parser_take = len(stdout_buffer)\n"
+            "        self._payload_remaining -= _worker_frame_parser_take\n"
+            "        return bytes(stdout_buffer)\n"
+            "    def header_ready(self, stdout_buffer): return False"
+        ),
+        (
+            "def take_payload(self, stdout_buffer, declared_payload_bytes):\n"
+            "        stash = {}\n"
+            "        for stash in (self._stash,):\n"
+            "            stash[len(stash):] = stdout_buffer[::-1]\n"
+            "        _worker_frame_parser_take = len(stdout_buffer)\n"
+            "        self._payload_remaining -= _worker_frame_parser_take\n"
+            "        return bytes(stdout_buffer)\n"
+            "    def header_ready(self, stdout_buffer): return False"
+        ),
+        (
+            "def _retain(self, value): self._stash = value\n"
+            "    def header_ready(self, stdout_buffer):\n"
+            "        self._retain(value=bytes(stdout_buffer)[::-1])\n"
+            "        return False"
+        ),
+        (
+            "def header_ready(self, stdout_buffer):\n"
+            "        (alias,) = (stdout_buffer,)\n"
+            "        self._stash = bytes(alias)[::-1]\n"
+            "        return False"
+        ),
+        (
+            "def header_ready(self, stdout_buffer):\n"
+            "        encoded = 0\n"
+            "        for index, item in enumerate(stdout_buffer):\n"
+            "            encoded -= item * (256 ** index)\n"
+            "        self._stash = encoded\n"
+            "        return False"
+        ),
+        (
+            "def header_ready(self, stdout_buffer):\n"
+            "        stash = []\n"
+            "        for item in stdout_buffer:\n"
+            "            if item & 1:\n"
+            "                stash.append(1)\n"
+            "            else:\n"
+            "                stash.append(0)\n"
+            "        self._stash = stash\n"
+            "        return False"
+        ),
+        (
+            "def take_payload(self, stdout_buffer, declared_payload_bytes):\n"
+            "        chunk = bytes(stdout_buffer)\n"
+            "        self._spool = (((((chunk,),),),),)\n"
+            "        return chunk\n"
+            "    def header_ready(self, stdout_buffer): return False"
+        ),
+        (
+            "def _poison(self, chunk): self._stash = list(chunk)\n"
+            "    def take_payload(self, stdout_buffer, declared_payload_bytes):\n"
+            "        chunk = bytes(stdout_buffer)\n"
+            "        self._poison(chunk)\n"
+            "        return chunk\n"
+            "    def header_ready(self, stdout_buffer): return False"
+        ),
+        (
+            "def take_payload(self, stdout_buffer, declared_payload_bytes):\n"
+            "        self._stash = 0\n"
+            "        for index, item in enumerate(stdout_buffer):\n"
+            "            self._stash -= item * (256 ** index)\n"
+            "        _worker_frame_parser_take = len(stdout_buffer)\n"
+            "        self._payload_remaining -= _worker_frame_parser_take\n"
+            "        return bytes(stdout_buffer)\n"
+            "    def header_ready(self, stdout_buffer): return False"
+        ),
+        (
+            "def take_payload(self, stdout_buffer, declared_payload_bytes):\n"
+            "        stash = self._stash\n"
+            "        for index, item in enumerate(stdout_buffer):\n"
+            "            stash[index] = item\n"
+            "        _worker_frame_parser_take = len(stdout_buffer)\n"
+            "        self._payload_remaining -= _worker_frame_parser_take\n"
+            "        return bytes(stdout_buffer)\n"
+            "    def header_ready(self, stdout_buffer): return False"
+        ),
+        (
+            "def take_payload(self, stdout_buffer, declared_payload_bytes):\n"
+            "        stash = self._stash\n"
+            "        stash[len(stash):] = stdout_buffer[::-1]\n"
+            "        _worker_frame_parser_take = len(stdout_buffer)\n"
+            "        self._payload_remaining -= _worker_frame_parser_take\n"
+            "        return bytes(stdout_buffer)\n"
+            "    def header_ready(self, stdout_buffer): return False"
+        ),
+        (
+            "def take_payload(self, stdout_buffer, declared_payload_bytes):\n"
+            "        holder = ProtocolError\n"
+            "        holder.payload = bytes(stdout_buffer)\n"
+            "        _worker_frame_parser_take = len(stdout_buffer)\n"
+            "        self._payload_remaining -= _worker_frame_parser_take\n"
+            "        return bytes(stdout_buffer)\n"
+            "    def header_ready(self, stdout_buffer): return False"
+        ),
+        (
+            "def header_ready(self, stdout_buffer):\n"
+            "        self._stash = bytes(stdout_buffer)[::-1]\n"
+            "        return False"
+        ),
+        (
+            "def take_payload(self, stdout_buffer, declared_payload_bytes):\n"
+            "        stash = {}\n"
+            "        stash = self._stash\n"
+            "        stash[len(stash):] = stdout_buffer[::-1]\n"
+            "        _worker_frame_parser_take = len(stdout_buffer)\n"
+            "        self._payload_remaining -= _worker_frame_parser_take\n"
+            "        return bytes(stdout_buffer)\n"
+            "    def header_ready(self, stdout_buffer): return False"
+        ),
+    )
+    rejected = 0
+    for body in bodies:
+        if "def header_ready" not in body:
+            body += "\n    def header_ready(self, stdout_buffer): return self._alias()"
+        source = (
+            prelude
+            + "\nclass WorkerFrameParser:\n"
+            + "    def __init__(self): pass\n    "
+            + body
+            + "\n"
+        )
+        module_tree = ast.parse(source)
+        parser_node = next(
+            node
+            for node in module_tree.body
+            if isinstance(node, ast.ClassDef)
+            and node.name == "WorkerFrameParser"
+        )
+        try:
+            _test_candidate_parser_class_shape(parser_node)
+            _test_candidate_parser_reject_broad_handlers(
+                module_tree,
+                parser_node,
+            )
+        except AssertionError:
+            rejected += 1
+        else:
+            raise AssertionError("candidate source-audit mutant survived")
+    decorated = (
+        prelude
+        + "\ndef _decorate(candidate):\n"
+        + "    _os.read(0, 1)\n    return candidate\n"
+        + "\n@_decorate\nclass WorkerFrameParser:\n"
+        + "    def __init__(self): pass\n"
+        + "    def header_ready(self, stdout_buffer): return False\n"
+    )
+    decorated_tree = ast.parse(decorated)
+    decorated_parser = next(
+        node
+        for node in decorated_tree.body
+        if isinstance(node, ast.ClassDef)
+        and node.name == "WorkerFrameParser"
+    )
+    try:
+        _test_candidate_parser_class_shape(decorated_parser)
+    except AssertionError:
+        rejected += 1
+    else:
+        raise AssertionError("candidate class-decorator mutant survived")
+    duplicated = (
+        prelude
+        + "\nclass WorkerFrameParser:\n"
+        + "    def __init__(self, trigger=_os.write(2, b'')): pass\n"
+        + "    def __init__(self): pass\n"
+        + "    def header_ready(self, stdout_buffer): return False\n"
+    )
+    duplicated_tree = ast.parse(duplicated)
+    duplicated_parser = next(
+        node
+        for node in duplicated_tree.body
+        if isinstance(node, ast.ClassDef)
+        and node.name == "WorkerFrameParser"
+    )
+    try:
+        _test_candidate_parser_class_shape(duplicated_parser)
+    except AssertionError:
+        rejected += 1
+    else:
+        raise AssertionError("candidate duplicate-method mutant survived")
+    return rejected
+
+
+def _test_candidate_parser_header_boundaries(protocol, fixture):
+    frame = fixture["frames"][0]
+    header_width = len(frame["wire"]) - len(frame["payload"])
+    header_wire = frame["wire"][:header_width]
+    split_cases = 0
+    for split in range(header_width + 1):
+        parser = protocol.WorkerFrameParser()
+        parser.bind_request(fixture["job_wire"])
+        buffer = bytearray(header_wire[:split])
+        ready = parser.header_ready(buffer)
+        if buffer or ready is not (split == header_width):
+            raise AssertionError("candidate header split drifted")
+        if not ready:
+            buffer.extend(header_wire[split:])
+            if parser.header_ready(buffer) is not True or buffer:
+                raise AssertionError("candidate header split did not resume")
+        header = parser.take_header(buffer)
+        parser.validate_declared_frame(
+            header,
+            copy.deepcopy(fixture["expected_sequence"]),
+        )
+        split_cases += 1
+
+    bytewise = protocol.WorkerFrameParser()
+    bytewise.bind_request(fixture["job_wire"])
+    empty = bytearray()
+    if bytewise.header_ready(empty) is not False or empty:
+        raise AssertionError("candidate empty header poll drifted")
+    one_byte_events = 0
+    for index, value in enumerate(header_wire):
+        single = bytearray((value,))
+        ready = bytewise.header_ready(single)
+        if single or ready is not (index == len(header_wire) - 1):
+            raise AssertionError("candidate bytewise header feed drifted")
+        if index == 0 and _test_candidate_parser_retains_payload(
+            bytewise,
+            b"header-buffer-sentinel-not-present",
+            single,
+        ):
+            raise AssertionError("candidate parser retained stdout buffer alias")
+        if index == 1:
+            stable = bytearray()
+            if (
+                bytewise.header_ready(stable) is not False
+                or stable
+                or bytewise.header_ready(stable) is not False
+            ):
+                raise AssertionError("candidate empty header retry drifted")
+        one_byte_events += 1
+    stable_complete = bytearray()
+    if (
+        bytewise.header_ready(stable_complete) is not True
+        or stable_complete
+        or bytewise.header_ready(stable_complete) is not True
+        or stable_complete
+    ):
+        raise AssertionError("candidate complete-header retry drifted")
+    bytewise_header = bytewise.take_header(bytearray())
+    bytewise.validate_declared_frame(
+        bytewise_header,
+        copy.deepcopy(fixture["expected_sequence"]),
+    )
+
+    co_read_lengths = (0, 1, 17, len(frame["payload"]))
+    for co_read in co_read_lengths:
+        parser = protocol.WorkerFrameParser()
+        parser.bind_request(fixture["job_wire"])
+        buffer = bytearray(header_wire + frame["payload"][:co_read])
+        if parser.header_ready(buffer) is not True:
+            raise AssertionError("candidate co-read header was not ready")
+        if bytes(buffer) != frame["payload"][:co_read]:
+            raise AssertionError("candidate co-read residue drifted")
+        if co_read and (
+            _test_candidate_parser_retains_payload(
+                parser,
+                frame["payload"][:co_read],
+                buffer,
+            )
+        ):
+            raise AssertionError("candidate header_ready retained co-read payload")
+        before = bytes(buffer)
+        parser.take_header(buffer)
+        if bytes(buffer) != before:
+            raise AssertionError("candidate co-read take_header drifted")
+        if co_read and (
+            _test_candidate_parser_retains_payload(
+                parser,
+                frame["payload"][:co_read],
+                buffer,
+            )
+        ):
+            raise AssertionError("candidate take_header retained co-read payload")
+
+    fragment_co_read_cases = 0
+    retained_body_lengths = (1, 2, 10, len(header_wire) - 5)
+    for retained_body in retained_body_lengths:
+        split = 4 + retained_body
+        for co_read in (1, 17, len(frame["payload"])):
+            parser = protocol.WorkerFrameParser()
+            parser.bind_request(fixture["job_wire"])
+            first_buffer = bytearray(header_wire[:split])
+            if parser.header_ready(first_buffer) is not False or first_buffer:
+                raise AssertionError(
+                    "candidate fragmented co-read prefix drifted"
+                )
+            second_buffer = bytearray(
+                header_wire[split:] + frame["payload"][:co_read]
+            )
+            if parser.header_ready(second_buffer) is not True:
+                raise AssertionError(
+                    "candidate fragmented co-read header was not ready"
+                )
+            if bytes(second_buffer) != frame["payload"][:co_read]:
+                raise AssertionError(
+                    "candidate fragmented co-read residue drifted"
+                )
+            header = parser.take_header(second_buffer)
+            if bytes(second_buffer) != frame["payload"][:co_read]:
+                raise AssertionError(
+                    "candidate fragmented take_header consumed payload"
+                )
+            parser.validate_declared_frame(
+                header,
+                copy.deepcopy(fixture["expected_sequence"]),
+            )
+            fragment_co_read_cases += 1
+
+    maximum_header = dict(frame["header"])
+    maximum_header["logical_name"] = ""
+    empty_name_body = _canonical_json_fixture(maximum_header)
+    name_width = 4096 - len(empty_name_body)
+    if name_width <= 0:
+        raise AssertionError("candidate maximum-header fixture is malformed")
+    maximum_header["logical_name"] = "x" * name_width
+    maximum_body = _canonical_json_fixture(maximum_header)
+    if len(maximum_body) != 4096:
+        raise AssertionError("candidate exact maximum header width drifted")
+    maximum_parser = protocol.WorkerFrameParser()
+    maximum_parser.bind_request(fixture["job_wire"])
+    maximum_buffer = bytearray(struct.pack(">I", 4096) + maximum_body)
+    if maximum_parser.header_ready(maximum_buffer) is not True or maximum_buffer:
+        raise AssertionError("candidate exact maximum header was not ready")
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: maximum_parser.take_header(maximum_buffer),
+        "exact maximum framed header leaf bound",
+    )
+
+    cap_cases = ((0, b""), (4097, b""))
+    for declared, body in cap_cases:
+        parser = protocol.WorkerFrameParser()
+        parser.bind_request(fixture["job_wire"])
+        buffer = bytearray(struct.pack(">I", declared) + body)
+        _test_candidate_parser_expect_error(
+            protocol,
+            lambda parser=parser, buffer=buffer: parser.header_ready(buffer),
+            "header cap",
+        )
+
+    header = dict(frame["header"])
+    body = _canonical_json_fixture(header)
+
+    def pack(raw):
+        return struct.pack(">I", len(raw)) + raw
+
+    unsorted = json.dumps(
+        {key: header[key] for key in reversed(tuple(header))},
+        allow_nan=False,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=False,
+    ).encode("ascii") + b"\n"
+    missing = dict(header)
+    del missing["nonce"]
+    extra = dict(header)
+    extra["extra"] = 1
+    duplicate = body.replace(
+        b'"bytes":4096',
+        b'"bytes":4096,"bytes":4096',
+        1,
+    )
+    nonfinite = body.replace(b'"bytes":4096', b'"bytes":NaN', 1)
+    nonascii = body.replace(
+        header["logical_name"].encode("ascii"),
+        b"\xff",
+        1,
+    )
+    canonical_mutants = (
+        pack(body[:-1]),
+        pack(body + b"\n"),
+        pack(json.dumps(header, sort_keys=True).encode("ascii") + b"\n"),
+        pack(unsorted),
+        pack(_canonical_json_fixture(missing)),
+        pack(_canonical_json_fixture(extra)),
+        pack(duplicate),
+        pack(nonfinite),
+        pack(nonascii),
+        pack(b"1\n"),
+        pack(b"[]\n"),
+        pack(b"null\n"),
+    )
+    for wire in canonical_mutants:
+        parser = protocol.WorkerFrameParser()
+        parser.bind_request(fixture["job_wire"])
+        buffer = bytearray(wire)
+
+        def reject_wire(parser=parser, buffer=buffer):
+            if parser.header_ready(buffer):
+                parser.take_header(buffer)
+
+        _test_candidate_parser_expect_error(
+            protocol,
+            reject_wire,
+            "canonical header mutation",
+        )
+
+    canonical_poison = protocol.WorkerFrameParser()
+    canonical_poison.bind_request(fixture["job_wire"])
+    canonical_poison_buffer = bytearray(canonical_mutants[0])
+    if canonical_poison.header_ready(canonical_poison_buffer) is not True:
+        raise AssertionError("candidate canonical poison header was not ready")
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: canonical_poison.take_header(canonical_poison_buffer),
+        "canonical header poison setup",
+    )
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: canonical_poison.header_ready(bytearray()),
+        "canonical header poison recovery",
+    )
+
+    class HeaderBufferSubclass(bytearray):
+        pass
+
+    subclass_parser = protocol.WorkerFrameParser()
+    subclass_parser.bind_request(fixture["job_wire"])
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: subclass_parser.header_ready(
+            HeaderBufferSubclass(header_wire)
+        ),
+        "header buffer subclass",
+    )
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: subclass_parser.header_ready(bytearray(header_wire)),
+        "header buffer subclass retry",
+    )
+    take_subclass_parser = protocol.WorkerFrameParser()
+    take_subclass_parser.bind_request(fixture["job_wire"])
+    take_buffer = bytearray(header_wire)
+    if take_subclass_parser.header_ready(take_buffer) is not True:
+        raise AssertionError("take-header subclass setup drifted")
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: take_subclass_parser.take_header(HeaderBufferSubclass()),
+        "take-header buffer subclass",
+    )
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: take_subclass_parser.take_header(bytearray()),
+        "take-header buffer subclass retry",
+    )
+    return (
+        split_cases,
+        one_byte_events,
+        len(co_read_lengths),
+        fragment_co_read_cases,
+        len(cap_cases) + 1,
+        len(canonical_mutants),
+        2,
+        1,
+    )
+
+
+def _test_candidate_parser_active_payload(protocol, fixture):
+    parser = protocol.WorkerFrameParser()
+    parser.bind_request(fixture["job_wire"])
+    frame = fixture["frames"][0]
+    header_width = len(frame["wire"]) - len(frame["payload"])
+    buffer = bytearray(frame["wire"][:header_width])
+    if parser.header_ready(buffer) is not True:
+        raise AssertionError("candidate active payload header was not ready")
+    header = parser.take_header(buffer)
+    parser.validate_declared_frame(
+        header,
+        copy.deepcopy(fixture["expected_sequence"]),
+    )
+    return parser, header, bytearray(frame["payload"])
+
+
+def _test_candidate_parser_header_phase_poison(protocol, fixture):
+    frame = fixture["frames"][0]
+    header_width = len(frame["wire"]) - len(frame["payload"])
+
+    def taken_header():
+        parser = protocol.WorkerFrameParser()
+        parser.bind_request(fixture["job_wire"])
+        buffer = bytearray(frame["wire"][:header_width])
+        if parser.header_ready(buffer) is not True or buffer:
+            raise AssertionError("candidate header-phase setup drifted")
+        return parser, parser.take_header(buffer)
+
+    parser = protocol.WorkerFrameParser()
+    parser.bind_request(fixture["job_wire"])
+    partial = bytearray(frame["wire"][:2])
+    if parser.header_ready(partial) is not False or partial:
+        raise AssertionError("candidate incomplete-header setup drifted")
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: parser.take_header(bytearray()),
+        "take_header before completion",
+    )
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: parser.header_ready(
+            bytearray(frame["wire"][2:header_width])
+        ),
+        "take_header before completion poison",
+    )
+
+    parser = protocol.WorkerFrameParser()
+    parser.bind_request(fixture["job_wire"])
+    complete = bytearray(frame["wire"][:header_width])
+    if parser.header_ready(complete) is not True or complete:
+        raise AssertionError("candidate complete-header phase setup drifted")
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: parser.validate_declared_frame(
+            frame["header"],
+            copy.deepcopy(fixture["expected_sequence"]),
+        ),
+        "validate declaration before take_header",
+    )
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: parser.take_header(bytearray()),
+        "validate declaration before take_header poison",
+    )
+
+    parser, header = taken_header()
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: parser.take_header(bytearray()),
+        "duplicate take_header",
+    )
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: parser.validate_declared_frame(
+            header,
+            copy.deepcopy(fixture["expected_sequence"]),
+        ),
+        "duplicate take_header poison",
+    )
+
+    parser, header = taken_header()
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: parser.header_ready(bytearray()),
+        "header_ready after take_header",
+    )
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: parser.validate_declared_frame(
+            header,
+            copy.deepcopy(fixture["expected_sequence"]),
+        ),
+        "header_ready after take_header poison",
+    )
+
+    parser, header = taken_header()
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: parser.payload_remaining(header["bytes"]),
+        "payload_remaining before validation",
+    )
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: parser.validate_declared_frame(
+            header,
+            copy.deepcopy(fixture["expected_sequence"]),
+        ),
+        "payload_remaining before validation poison",
+    )
+
+    parser, header = taken_header()
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: parser.take_payload(
+            bytearray(frame["payload"][:1]),
+            header["bytes"],
+        ),
+        "take_payload before validation",
+    )
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: parser.validate_declared_frame(
+            header,
+            copy.deepcopy(fixture["expected_sequence"]),
+        ),
+        "take_payload before validation poison",
+    )
+
+    parser, header = taken_header()
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: parser.finish_frame(
+            header["bytes"],
+            header["raw_sha256"],
+        ),
+        "finish_frame before declaration validation",
+    )
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: parser.validate_declared_frame(
+            header,
+            copy.deepcopy(fixture["expected_sequence"]),
+        ),
+        "finish_frame before declaration validation poison",
+    )
+
+    parser, header = taken_header()
+    parser.validate_declared_frame(
+        header,
+        copy.deepcopy(fixture["expected_sequence"]),
+    )
+    partial_payload = bytearray(frame["payload"][:1])
+    parser.take_payload(partial_payload, header["bytes"])
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: parser.validate_declared_frame(
+            header,
+            copy.deepcopy(fixture["expected_sequence"]),
+        ),
+        "duplicate declaration validation",
+    )
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: parser.payload_remaining(header["bytes"]),
+        "duplicate declaration validation poison",
+    )
+
+    parser, header, _payload = _test_candidate_parser_active_payload(
+        protocol, fixture
+    )
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: parser.header_ready(bytearray()),
+        "header_ready during payload",
+    )
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: parser.payload_remaining(header["bytes"]),
+        "header_ready during payload poison",
+    )
+
+    parser, header, _payload = _test_candidate_parser_active_payload(
+        protocol, fixture
+    )
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: parser.take_header(bytearray()),
+        "take_header during payload",
+    )
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: parser.payload_remaining(header["bytes"]),
+        "take_header during payload poison",
+    )
+
+    parser, header, payload = _test_candidate_parser_active_payload(
+        protocol, fixture
+    )
+    while parser.payload_remaining(header["bytes"]):
+        parser.take_payload(payload, header["bytes"])
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: parser.take_payload(bytearray(b"x"), header["bytes"]),
+        "take_payload after zero remaining",
+    )
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: parser.finish_frame(
+            header["bytes"],
+            frame["header"]["raw_sha256"],
+        ),
+        "take_payload after zero remaining poison",
+    )
+
+    parser, header, payload = _test_candidate_parser_active_payload(
+        protocol, fixture
+    )
+    while parser.payload_remaining(header["bytes"]):
+        parser.take_payload(payload, header["bytes"])
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: parser.header_ready(bytearray()),
+        "header_ready before raw finalization",
+    )
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: parser.finish_frame(
+            header["bytes"],
+            frame["header"]["raw_sha256"],
+        ),
+        "header_ready before raw finalization poison",
+    )
+    return 12
+
+
+def _test_candidate_parser_payload_and_eof_negatives(protocol, fixture):
+    poison_cases = 0
+
+    class DeclaredIntSubclass(int):
+        pass
+
+    for wrong_declared in (
+        fixture["frames"][0]["header"]["bytes"] + 1,
+        True,
+        -1,
+        "4096",
+        4096.0,
+        DeclaredIntSubclass(4096),
+    ):
+        parser, header, _payload = _test_candidate_parser_active_payload(
+            protocol, fixture
+        )
+        _test_candidate_parser_expect_error(
+            protocol,
+            lambda parser=parser, value=wrong_declared: (
+                parser.payload_remaining(value)
+            ),
+            "wrong declared total",
+        )
+        _test_candidate_parser_expect_error(
+            protocol,
+            lambda parser=parser, header=header: (
+                parser.payload_remaining(header["bytes"])
+            ),
+            "wrong declared total retry",
+        )
+        poison_cases += 1
+
+        parser, header, payload = _test_candidate_parser_active_payload(
+            protocol, fixture
+        )
+        _test_candidate_parser_expect_error(
+            protocol,
+            lambda parser=parser,
+            payload=payload,
+            value=wrong_declared: parser.take_payload(payload, value),
+            "take-payload wrong declared total",
+        )
+        _test_candidate_parser_expect_error(
+            protocol,
+            lambda parser=parser,
+            payload=payload,
+            header=header: parser.take_payload(payload, header["bytes"]),
+            "take-payload wrong declared total retry",
+        )
+        poison_cases += 1
+
+    parser, header, payload = _test_candidate_parser_active_payload(
+        protocol, fixture
+    )
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: parser.take_payload(bytearray(), header["bytes"]),
+        "empty payload buffer",
+    )
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: parser.take_payload(payload, header["bytes"]),
+        "empty payload retry",
+    )
+    poison_cases += 1
+
+    parser, header, payload = _test_candidate_parser_active_payload(
+        protocol, fixture
+    )
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: parser.finish_frame(header["bytes"], "0" * 64),
+        "early frame finish",
+    )
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: parser.take_payload(payload, header["bytes"]),
+        "early frame finish retry",
+    )
+    poison_cases += 1
+
+    parser, header, payload = _test_candidate_parser_active_payload(
+        protocol, fixture
+    )
+    observed = bytearray()
+    while parser.payload_remaining(header["bytes"]):
+        observed.extend(parser.take_payload(payload, header["bytes"]))
+    correct_digest = hashlib.sha256(observed).hexdigest()
+    wrong_digest = "0" * 64
+    if wrong_digest == correct_digest:
+        wrong_digest = "1" * 64
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: parser.finish_frame(header["bytes"], wrong_digest),
+        "shape-valid raw digest mismatch",
+    )
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: parser.finish_frame(header["bytes"], correct_digest),
+        "raw digest mismatch retry",
+    )
+    poison_cases += 1
+
+    parser = protocol.WorkerFrameParser()
+    parser.bind_request(fixture["job_wire"])
+    _test_candidate_parser_expect_error(
+        protocol,
+        parser.finish_stdout,
+        "EOF before first frame",
+    )
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: parser.header_ready(
+            bytearray(fixture["frames"][0]["wire"])
+        ),
+        "EOF before first frame retry",
+    )
+    poison_cases += 1
+
+    frame = fixture["frames"][0]
+    header_width = len(frame["wire"]) - len(frame["payload"])
+    parser = protocol.WorkerFrameParser()
+    parser.bind_request(fixture["job_wire"])
+    partial = bytearray(frame["wire"][:2])
+    if parser.header_ready(partial) is not False or partial:
+        raise AssertionError("candidate partial EOF setup drifted")
+    _test_candidate_parser_expect_error(
+        protocol,
+        parser.finish_stdout,
+        "EOF during header",
+    )
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: parser.header_ready(
+            bytearray(frame["wire"][2:header_width])
+        ),
+        "EOF during header retry",
+    )
+    poison_cases += 1
+
+    parser = protocol.WorkerFrameParser()
+    parser.bind_request(fixture["job_wire"])
+    partial_body = bytearray(frame["wire"][:9])
+    if parser.header_ready(partial_body) is not False or partial_body:
+        raise AssertionError("candidate partial-body EOF setup drifted")
+    _test_candidate_parser_expect_error(
+        protocol,
+        parser.finish_stdout,
+        "EOF during header body",
+    )
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: parser.header_ready(bytearray(frame["wire"][9:header_width])),
+        "EOF during header body retry",
+    )
+    poison_cases += 1
+
+    parser = protocol.WorkerFrameParser()
+    parser.bind_request(fixture["job_wire"])
+    complete_header = bytearray(frame["wire"][:header_width])
+    if parser.header_ready(complete_header) is not True or complete_header:
+        raise AssertionError("candidate complete-header EOF setup drifted")
+    _test_candidate_parser_expect_error(
+        protocol,
+        parser.finish_stdout,
+        "EOF before take_header",
+    )
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: parser.take_header(bytearray()),
+        "EOF before take_header retry",
+    )
+    poison_cases += 1
+
+    parser = protocol.WorkerFrameParser()
+    parser.bind_request(fixture["job_wire"])
+    declared_header = bytearray(frame["wire"][:header_width])
+    if parser.header_ready(declared_header) is not True or declared_header:
+        raise AssertionError("candidate declaration EOF setup drifted")
+    observed_header = parser.take_header(declared_header)
+    _test_candidate_parser_expect_error(
+        protocol,
+        parser.finish_stdout,
+        "EOF before declaration validation",
+    )
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: parser.validate_declared_frame(
+            observed_header,
+            copy.deepcopy(fixture["expected_sequence"]),
+        ),
+        "EOF before declaration validation retry",
+    )
+    poison_cases += 1
+
+    parser, header, payload = _test_candidate_parser_active_payload(
+        protocol, fixture
+    )
+    partial_payload = bytearray(payload[:3])
+    parser.take_payload(partial_payload, header["bytes"])
+    _test_candidate_parser_expect_error(
+        protocol,
+        parser.finish_stdout,
+        "EOF during payload",
+    )
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: parser.payload_remaining(header["bytes"]),
+        "EOF during payload retry",
+    )
+    poison_cases += 1
+
+    parser, header, payload = _test_candidate_parser_active_payload(
+        protocol, fixture
+    )
+    while parser.payload_remaining(header["bytes"]):
+        parser.take_payload(payload, header["bytes"])
+    _test_candidate_parser_expect_error(
+        protocol,
+        parser.finish_stdout,
+        "EOF before zero-remaining frame finalization",
+    )
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: parser.finish_frame(
+            header["bytes"],
+            fixture["frames"][0]["header"]["raw_sha256"],
+        ),
+        "EOF before zero-remaining frame finalization retry",
+    )
+    poison_cases += 1
+
+    class BufferSubclass(bytearray):
+        pass
+
+    parser, header, payload = _test_candidate_parser_active_payload(
+        protocol, fixture
+    )
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: parser.take_payload(
+            BufferSubclass(payload[:8]),
+            header["bytes"],
+        ),
+        "payload buffer subclass",
+    )
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: parser.take_payload(payload, header["bytes"]),
+        "payload buffer subclass retry",
+    )
+    poison_cases += 1
+
+    parser, header, payload = _test_candidate_parser_active_payload(
+        protocol, fixture
+    )
+    exported_payload = bytearray(payload[:8])
+    exported_payload_view = memoryview(exported_payload)
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: parser.take_payload(exported_payload, header["bytes"]),
+        "exported payload buffer",
+    )
+    exported_payload_view.release()
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: parser.take_payload(payload, header["bytes"]),
+        "exported payload buffer retry",
+    )
+    poison_cases += 1
+
+    digest_shapes = ("A" * 64, "a" * 63, "g" * 64)
+    for observed_digest in digest_shapes:
+        parser, header, payload = _test_candidate_parser_active_payload(
+            protocol, fixture
+        )
+        while parser.payload_remaining(header["bytes"]):
+            parser.take_payload(payload, header["bytes"])
+        _test_candidate_parser_expect_error(
+            protocol,
+            lambda parser=parser,
+            header=header,
+            observed_digest=observed_digest: parser.finish_frame(
+                header["bytes"], observed_digest
+            ),
+            "raw digest shape",
+        )
+        _test_candidate_parser_expect_error(
+            protocol,
+            lambda parser=parser, header=header: parser.finish_frame(
+                header["bytes"],
+                fixture["frames"][0]["header"]["raw_sha256"],
+            ),
+            "raw digest shape poison",
+        )
+        poison_cases += 1
+
+    class DigestStrSubclass(str):
+        pass
+
+    finish_type_cases = (
+        fixture["frames"][0]["header"]["bytes"] + 1,
+        True,
+        -1,
+        "4096",
+        4096.0,
+        DeclaredIntSubclass(4096),
+        "digest-subclass",
+    )
+    for invalid_value in finish_type_cases:
+        parser, header, payload = _test_candidate_parser_active_payload(
+            protocol, fixture
+        )
+        correct_digest = hashlib.sha256(payload).hexdigest()
+        while parser.payload_remaining(header["bytes"]):
+            parser.take_payload(payload, header["bytes"])
+        declared_value = header["bytes"]
+        digest_value = correct_digest
+        if invalid_value == "digest-subclass":
+            digest_value = DigestStrSubclass(digest_value)
+        else:
+            declared_value = invalid_value
+        _test_candidate_parser_expect_error(
+            protocol,
+            lambda parser=parser,
+            declared_value=declared_value,
+            digest_value=digest_value: parser.finish_frame(
+                declared_value,
+                digest_value,
+            ),
+            "finish-frame exact type",
+        )
+        _test_candidate_parser_expect_error(
+            protocol,
+            lambda parser=parser,
+            header=header,
+            correct_digest=correct_digest: parser.finish_frame(
+                header["bytes"],
+                correct_digest,
+            ),
+            "finish-frame exact type poison",
+        )
+        poison_cases += 1
+
+    parser, header, payload = _test_candidate_parser_active_payload(
+        protocol, fixture
+    )
+    digest = hashlib.sha256(payload).hexdigest()
+    while parser.payload_remaining(header["bytes"]):
+        parser.take_payload(payload, header["bytes"])
+    parser.finish_frame(header["bytes"], digest)
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: parser.finish_frame(header["bytes"], digest),
+        "late duplicate frame finish",
+    )
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: parser.header_ready(
+            bytearray(fixture["frames"][1]["wire"])
+        ),
+        "late duplicate frame finish poison",
+    )
+    poison_cases += 1
+
+    parser = protocol.WorkerFrameParser()
+    parser.bind_request(fixture["job_wire"])
+    _test_candidate_parser_accept_frame(
+        parser,
+        fixture["frames"][0],
+        copy.deepcopy(fixture["expected_sequence"]),
+    )
+    _test_candidate_parser_expect_error(
+        protocol,
+        parser.finish_stdout,
+        "EOF before final frame",
+    )
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: parser.header_ready(
+            bytearray(fixture["frames"][1]["wire"])
+        ),
+        "EOF before final frame retry",
+    )
+    poison_cases += 1
+
+    parser = protocol.WorkerFrameParser()
+    parser.bind_request(fixture["job_wire"])
+    for candidate in fixture["frames"]:
+        _test_candidate_parser_accept_frame(
+            parser,
+            candidate,
+            copy.deepcopy(fixture["expected_sequence"]),
+        )
+    trailing = bytearray(b"x")
+    if parser.header_ready(trailing) is not False or trailing:
+        raise AssertionError("candidate trailing byte was not internalized")
+    _test_candidate_parser_expect_error(
+        protocol,
+        parser.finish_stdout,
+        "EOF after trailing byte",
+    )
+    poison_cases += 1
+    return poison_cases
+
+
+def _test_candidate_parser_declare_size(
+    protocol,
+    fixture,
+    target_index,
+    declared,
+    failure,
+):
+    parser = protocol.WorkerFrameParser()
+    parser.bind_request(fixture["job_wire"])
+    sequence = fixture["expected_sequence"]
+    job_sha256 = hashlib.sha256(
+        b"bloodbowl-f5-worker-job-v1\0" + fixture["job_wire"][4:]
+    ).hexdigest()
+    for expected in sequence[:target_index]:
+        payload = b"x" * expected["bytes_minimum"]
+        prior = _test_build_self_consistent_worker_frame(
+            payload=payload,
+            frame_index=expected["frame_index"],
+            kind=expected["kind"],
+            logical_name=expected["logical_name"],
+            job_sha256=job_sha256,
+            nonce=fixture["job"]["nonce"],
+            semantic_sha256=hashlib.sha256(
+                expected["semantic_domain"].encode("ascii")
+                + b"\0"
+                + payload
+            ).hexdigest(),
+        )
+        _test_candidate_parser_accept_frame(
+            parser,
+            prior,
+            copy.deepcopy(sequence),
+        )
+    if failure:
+        frame_index = 0
+        kind = "worker-failure"
+        logical_name = "<worker-failure>"
+    else:
+        expected = sequence[target_index]
+        frame_index = expected["frame_index"]
+        kind = expected["kind"]
+        logical_name = expected["logical_name"]
+    header = {
+        "bytes": declared,
+        "frame_index": frame_index,
+        "job_sha256": job_sha256,
+        "kind": kind,
+        "logical_name": logical_name,
+        "nonce": fixture["job"]["nonce"],
+        "raw_sha256": "0" * 64,
+        "schema": "bloodbowl-f5-worker-payload-header-v1",
+        "semantic_sha256": "1" * 64,
+    }
+    buffer = bytearray(_test_pack_supplied_worker_frame(header, b""))
+    if parser.header_ready(buffer) is not True:
+        raise AssertionError("candidate size declaration header not ready")
+    observed = parser.take_header(buffer)
+    parser.validate_declared_frame(observed, copy.deepcopy(sequence))
+    return parser
+
+
+def _test_candidate_parser_size_boundaries(protocol):
+    evaluation = _test_stream_contract_fixture()
+    training = _test_stream_contract_training_request()
+    rejected = (
+        (training, 0, 0, False),
+        (training, 0, 16_777_217, False),
+        (training, 1, 879_899, False),
+        (training, 1, 879_901, False),
+        (training, 7, 0, False),
+        (training, 7, 4_194_305, False),
+        (evaluation, 0, 4095, False),
+        (evaluation, 0, 4097, False),
+        (evaluation, 1, 0, False),
+        (evaluation, 1, 4_194_305, False),
+        (evaluation, 0, 0, True),
+        (evaluation, 0, 4097, True),
+    )
+    for fixture, target, declared, failure in rejected:
+        _test_candidate_parser_expect_error(
+            protocol,
+            lambda fixture=fixture,
+            target=target,
+            declared=declared,
+            failure=failure: _test_candidate_parser_declare_size(
+                protocol,
+                fixture,
+                target,
+                declared,
+                failure,
+            ),
+            "candidate size rejection",
+        )
+    accepted = (
+        (training, 0, 1, False),
+        (training, 0, 16_777_216, False),
+        (training, 1, 879_900, False),
+        (training, 7, 1, False),
+        (training, 7, 4_194_304, False),
+        (evaluation, 0, 4096, False),
+        (evaluation, 1, 1, False),
+        (evaluation, 1, 4_194_304, False),
+        (evaluation, 0, 1, True),
+        (evaluation, 0, 4096, True),
+    )
+    for fixture, target, declared, failure in accepted:
+        _test_candidate_parser_declare_size(
+            protocol,
+            fixture,
+            target,
+            declared,
+            failure,
+        )
+    return len(rejected), len(accepted)
+
+
+def _test_candidate_parser_retains_payload(
+    parser,
+    payload_chunk,
+    caller_buffer,
+):
+    pending = list(gc.get_referents(parser))
+    visited = set()
+    while pending:
+        value = pending.pop()
+        identity = id(value)
+        if identity in visited:
+            continue
+        visited.add(identity)
+        if value is caller_buffer:
+            return True
+        if type(value) in (bytes, bytearray, memoryview):
+            retained = bytes(value)
+            if (
+                value is payload_chunk
+                or retained == payload_chunk
+                or (
+                    len(payload_chunk) >= 1024
+                    and payload_chunk in retained
+                )
+                or (
+                    len(retained) >= 16
+                    and retained in payload_chunk
+                )
+            ):
+                return True
+        if (
+            type(value) is int
+            and len(payload_chunk) >= 16
+            and value.bit_length() >= len(payload_chunk) * 7
+        ):
+            return True
+        if (
+            type(value) in (list, tuple)
+            and len(value) == len(payload_chunk)
+            and all(type(item) is int and 0 <= item <= 255 for item in value)
+            and bytes(value) == payload_chunk
+        ):
+            return True
+        if (
+            type(value) is dict
+            and len(value) == len(payload_chunk)
+            and set(value) == set(range(len(payload_chunk)))
+            and all(
+                type(value[index]) is int
+                and 0 <= value[index] <= 255
+                for index in range(len(payload_chunk))
+            )
+            and bytes(
+                value[index] for index in range(len(payload_chunk))
+            )
+            == payload_chunk
+        ):
+            return True
+        if isinstance(value, types.FunctionType):
+            pending.extend(value.__defaults__ or ())
+            pending.extend((value.__kwdefaults__ or {}).values())
+            pending.extend(value.__dict__.values())
+            if value.__closure__ is not None:
+                pending.extend(
+                    cell.cell_contents for cell in value.__closure__
+                )
+            continue
+        if isinstance(value, types.GeneratorType):
+            if value.gi_frame is not None:
+                pending.extend(value.gi_frame.f_locals.values())
+            if value.gi_yieldfrom is not None:
+                pending.append(value.gi_yieldfrom)
+            continue
+        if isinstance(value, (type, types.ModuleType)):
+            continue
+        pending.extend(gc.get_referents(value))
+    return False
+
+
+def _test_candidate_parser_retains_identity(parser, target):
+    pending = list(gc.get_referents(parser))
+    visited = set()
+    while pending:
+        value = pending.pop()
+        identity = id(value)
+        if identity in visited:
+            continue
+        visited.add(identity)
+        if value is target:
+            return True
+        if isinstance(value, types.FunctionType):
+            pending.extend(value.__defaults__ or ())
+            pending.extend((value.__kwdefaults__ or {}).values())
+            pending.extend(value.__dict__.values())
+            if value.__closure__ is not None:
+                pending.extend(
+                    cell.cell_contents for cell in value.__closure__
+                )
+            continue
+        if isinstance(value, types.GeneratorType):
+            if value.gi_frame is not None:
+                pending.extend(value.gi_frame.f_locals.values())
+            if value.gi_yieldfrom is not None:
+                pending.append(value.gi_yieldfrom)
+            continue
+        if isinstance(value, (type, types.ModuleType)):
+            continue
+        pending.extend(gc.get_referents(value))
+    return False
+
+
+def _test_candidate_parser_payload_fragmentation(protocol):
+    fixture = _test_stream_contract_training_request()
+    sequence = fixture["expected_sequence"]
+    job_sha256 = hashlib.sha256(
+        b"bloodbowl-f5-worker-job-v1\0" + fixture["job_wire"][4:]
+    ).hexdigest()
+    chunk_shapes = []
+    residue_cases = 0
+    for declared in (65_535, 65_536, 65_537):
+        payload = bytes((index % 251 for index in range(declared)))
+        frame = _test_build_self_consistent_worker_frame(
+            payload=payload,
+            frame_index=0,
+            kind="training-trace",
+            logical_name="training-trace.jsonl",
+            job_sha256=job_sha256,
+            nonce=fixture["job"]["nonce"],
+            semantic_sha256=hashlib.sha256(
+                b"f5-training-trace-v1\0" + payload
+            ).hexdigest(),
+        )
+        parser = protocol.WorkerFrameParser()
+        parser.bind_request(fixture["job_wire"])
+        header_width = len(frame["wire"]) - len(payload)
+        buffer = bytearray(frame["wire"][:header_width])
+        if parser.header_ready(buffer) is not True:
+            raise AssertionError("fragmentation header was not ready")
+        header = parser.take_header(buffer)
+        parser.validate_declared_frame(header, copy.deepcopy(sequence))
+        tail = b"next-frame-prefix"
+        buffer.extend(payload + tail)
+        chunks = []
+        observed = bytearray()
+        while parser.payload_remaining(declared):
+            chunk = parser.take_payload(buffer, declared)
+            if _test_candidate_parser_retains_payload(parser, chunk, buffer):
+                raise AssertionError("candidate parser retained payload bytes")
+            chunks.append(len(chunk))
+            observed.extend(chunk)
+        if bytes(observed) != payload or bytes(buffer) != tail:
+            raise AssertionError("candidate payload residue drifted")
+        parser.finish_frame(declared, hashlib.sha256(observed).hexdigest())
+        chunk_shapes.append(tuple(chunks))
+        residue_cases += 1
+    if tuple(chunk_shapes) != (
+        (65_535,),
+        (65_536,),
+        (65_536, 1),
+    ):
+        raise AssertionError("candidate payload fragmentation shapes drifted")
+
+    payload = b"one-byte-payload"
+    frame = _test_build_self_consistent_worker_frame(
+        payload=payload,
+        frame_index=0,
+        kind="training-trace",
+        logical_name="training-trace.jsonl",
+        job_sha256=job_sha256,
+        nonce=fixture["job"]["nonce"],
+        semantic_sha256=hashlib.sha256(
+            b"f5-training-trace-v1\0" + payload
+        ).hexdigest(),
+    )
+    parser = protocol.WorkerFrameParser()
+    parser.bind_request(fixture["job_wire"])
+    header_width = len(frame["wire"]) - len(payload)
+    header_buffer = bytearray(frame["wire"][:header_width])
+    if parser.header_ready(header_buffer) is not True:
+        raise AssertionError("one-byte payload header was not ready")
+    header = parser.take_header(header_buffer)
+    parser.validate_declared_frame(header, copy.deepcopy(sequence))
+    observed = bytearray()
+    for value in payload:
+        single = bytearray((value,))
+        observed.extend(parser.take_payload(single, len(payload)))
+        if single:
+            raise AssertionError("one-byte payload feed retained external bytes")
+    if parser.payload_remaining(len(payload)) is not False:
+        raise AssertionError("one-byte payload did not complete")
+    parser.finish_frame(len(payload), hashlib.sha256(observed).hexdigest())
+    split_cases = 0
+    for split in range(len(payload) + 1):
+        parser = protocol.WorkerFrameParser()
+        parser.bind_request(fixture["job_wire"])
+        header_buffer = bytearray(frame["wire"][:header_width])
+        if parser.header_ready(header_buffer) is not True:
+            raise AssertionError("split payload header was not ready")
+        header = parser.take_header(header_buffer)
+        parser.validate_declared_frame(header, copy.deepcopy(sequence))
+        observed = bytearray()
+        for fragment in (payload[:split], payload[split:]):
+            if fragment:
+                external = bytearray(fragment)
+                observed.extend(parser.take_payload(external, len(payload)))
+                if external:
+                    raise AssertionError("split payload left external bytes")
+        if (
+            parser.payload_remaining(len(payload)) is not False
+            or bytes(observed) != payload
+        ):
+            raise AssertionError("split payload reconstruction drifted")
+        parser.finish_frame(
+            len(payload),
+            hashlib.sha256(observed).hexdigest(),
+        )
+        split_cases += 1
+    return len(chunk_shapes), residue_cases, len(payload), split_cases
+
+
+def _test_candidate_worker_frame_parser_contract():
+    protocol = _test_load_candidate_protocol_without_manifest_io()
+    source = (ROOT / "tools/f5_recurrent_ppo_protocol.py").read_text(
+        encoding="utf-8"
+    )
+    module_tree = ast.parse(source)
+    authority_fingerprint_cases = (
+        _test_candidate_parser_authority_fingerprints(
+            source,
+            module_tree,
+            protocol,
+        )
+    )
+    authority_fingerprint_mutants = (
+        _test_candidate_parser_authority_fingerprint_mutants(source)
+    )
+    source_audit_mutants = _test_candidate_parser_source_audit_mutants()
+    parser_class = getattr(protocol, "WorkerFrameParser", None)
+    if parser_class is None:
+        raise AssertionError("candidate WorkerFrameParser is absent")
+    expected_signatures = {
+        "bind_request": "(self, job_wire)",
+        "finish_frame": "(self, declared_payload_bytes, observed_raw_sha256)",
+        "finish_stdout": "(self)",
+        "header_ready": "(self, stdout_buffer)",
+        "payload_remaining": "(self, declared_payload_bytes)",
+        "take_header": "(self, stdout_buffer)",
+        "take_payload": "(self, stdout_buffer, declared_payload_bytes)",
+        "validate_declared_frame": "(self, header, expected_sequence)",
+    }
+    if str(inspect.signature(parser_class)) != "()":
+        raise AssertionError("candidate parser constructor signature drifted")
+    for name, expected in sorted(expected_signatures.items()):
+        observed = str(inspect.signature(getattr(parser_class, name)))
+        if observed != expected:
+            raise AssertionError(
+                "candidate parser signature drifted: %s %s" % (
+                    name,
+                    observed,
+                )
+            )
+
+    if (
+        parser_class.__name__ != "WorkerFrameParser"
+        or parser_class.__qualname__ != "WorkerFrameParser"
+        or parser_class.__module__ != protocol.__name__
+        or type(parser_class) is not type
+        or parser_class.__bases__ != (object,)
+        or parser_class.__new__ is not object.__new__
+        or protocol.__dict__.get("WorkerFrameParser") is not parser_class
+    ):
+        raise AssertionError("candidate runtime parser class identity drifted")
+    public_names = set()
+    for ancestor in parser_class.__mro__[:-1]:
+        public_names.update(
+            name for name in ancestor.__dict__ if not name.startswith("_")
+        )
+    if public_names != set(expected_signatures):
+        raise AssertionError("candidate parser public surface is not closed")
+
+    allowed_imports = {
+        ("ctypes", "_ctypes"),
+        ("errno", "_errno"),
+        ("hashlib", "_hashlib"),
+        ("json", "_json"),
+        ("math", "_math"),
+        ("os", "_os"),
+        ("re", "_re"),
+        ("stat", "_stat"),
+        ("struct", "_struct"),
+        ("subprocess", "_subprocess"),
+    }
+    observed_imports = set()
+    for node in ast.walk(module_tree):
+        if isinstance(node, ast.Import):
+            observed_imports.update(
+                (alias.name, alias.asname) for alias in node.names
+            )
+        elif isinstance(node, ast.ImportFrom):
+            observed_imports.add(
+                (
+                    "from:" + (node.module or ""),
+                    tuple((alias.name, alias.asname) for alias in node.names),
+                )
+            )
+    if observed_imports != allowed_imports:
+        raise AssertionError("candidate protocol module-import set drifted")
+    parser_nodes = [
+        node
+        for node in module_tree.body
+        if isinstance(node, ast.ClassDef)
+        and node.name == "WorkerFrameParser"
+    ]
+    if len(parser_nodes) != 1:
+        raise AssertionError("candidate parser class definition is not unique")
+    parser_source = ast.get_source_segment(source, parser_nodes[0])
+    if parser_source is None or (
+        "_TestWorkerStreamOracle" in parser_source
+        or "test_f5_recurrent_ppo_pilot" in parser_source
+    ):
+        raise AssertionError("candidate parser depends on watched tests")
+    _test_candidate_parser_class_shape(parser_nodes[0])
+    parser_index = module_tree.body.index(parser_nodes[0])
+    for statement in module_tree.body[parser_index + 1 :]:
+        for node in ast.walk(statement):
+            targets = ()
+            if isinstance(node, ast.Assign):
+                targets = tuple(node.targets)
+            elif isinstance(node, ast.AnnAssign):
+                targets = (node.target,)
+            elif isinstance(node, ast.NamedExpr):
+                targets = (node.target,)
+            if any(
+                isinstance(target, ast.Name)
+                and target.id == "WorkerFrameParser"
+                for target in targets
+            ):
+                raise AssertionError("candidate parser class is rebound")
+    parser_method_nodes = {
+        node.name: node
+        for node in parser_nodes[0].body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    for name in ("__init__", *expected_signatures):
+        runtime_method = getattr(parser_class, name)
+        source_method = parser_method_nodes.get(name)
+        if (
+            source_method is None
+            or runtime_method.__code__.co_filename
+            != str((ROOT / "tools/f5_recurrent_ppo_protocol.py").resolve())
+            or runtime_method.__code__.co_firstlineno != source_method.lineno
+        ):
+            raise AssertionError(
+                "candidate runtime parser method escaped audited AST: " + name
+            )
+    _test_candidate_parser_reject_broad_handlers(
+        module_tree,
+        parser_nodes[0],
+    )
+
+    evaluation = _test_stream_contract_fixture()
+    real_job_parser = protocol.parse_worker_job_wire
+    delegated_job = dict(evaluation["job"])
+    delegated_job.update(
+        {
+            "action_seed": EVALUATION_ACTION_SEEDS[1],
+            "checkpoint_update": 512,
+            "nonce": "39" * 16,
+            "seed_index": 1,
+        }
+    )
+    delegated_wire = _test_worker_job_bytes(delegated_job)
+    delegated_authority = real_job_parser(delegated_wire)
+    delegated_return_job = dict(delegated_authority[0])
+    parser_calls = []
+
+    def job_parser_spy(*args, **kwargs):
+        parser_calls.append((args, kwargs))
+        return (delegated_return_job, delegated_authority[1])
+
+    protocol.parse_worker_job_wire = job_parser_spy
+    delegated = parser_class()
+    delegated.bind_request(evaluation["job_wire"])
+    if parser_calls != [((evaluation["job_wire"],), {})]:
+        raise AssertionError("candidate job-parser delegation drifted")
+    delegated_return_job.update(
+        {
+            "checkpoint_update": 0,
+            "nonce": "00" * 16,
+            "seed_index": 0,
+        }
+    )
+
+    def reject_post_bind_job_parse(*_args, **_kwargs):
+        raise AssertionError("candidate reparsed a job after bind")
+
+    protocol.parse_worker_job_wire = reject_post_bind_job_parse
+    delegated_payload = evaluation["frames"][0]["payload"]
+    delegated_frame = _test_build_self_consistent_worker_frame(
+        payload=delegated_payload,
+        frame_index=0,
+        kind="evaluation-bitset",
+        logical_name="evaluation/update-000512/seed-01.bits",
+        job_sha256=delegated_authority[1],
+        nonce=delegated_job["nonce"],
+        semantic_sha256="c" * 64,
+    )
+    _test_candidate_parser_accept_frame(
+        delegated,
+        delegated_frame,
+        _test_stream_evaluation_topology(delegated_job),
+    )
+    protocol.parse_worker_job_wire = real_job_parser
+
+    loader_calls = []
+    real_loader = protocol.load_protocol_manifest
+
+    def counted_loader():
+        loader_calls.append("load")
+        return real_loader()
+
+    protocol.load_protocol_manifest = counted_loader
+    parser = parser_class()
+    if loader_calls:
+        raise AssertionError("candidate constructor read the manifest")
+    if parser.bind_request(evaluation["job_wire"]) is not None:
+        raise AssertionError("candidate bind return drifted")
+    if not loader_calls:
+        raise AssertionError("candidate bind ignored manifest authority")
+    post_bind_failure = parser_class()
+    post_bind_failure.bind_request(evaluation["job_wire"])
+    post_bind_negative = parser_class()
+    post_bind_negative.bind_request(evaluation["job_wire"])
+
+    def reject_post_bind_load():
+        raise AssertionError("candidate parser reread manifest after bind")
+
+    protocol.load_protocol_manifest = reject_post_bind_load
+    protocol.parse_worker_job_wire = reject_post_bind_job_parse
+    for frame in evaluation["frames"]:
+        _test_candidate_parser_accept_frame(
+            parser,
+            frame,
+            copy.deepcopy(evaluation["expected_sequence"]),
+        )
+    parser.finish_stdout()
+    post_bind_failure_payload = b'{"failure":true}\n'
+    post_bind_failure_frame = _test_build_self_consistent_worker_frame(
+        payload=post_bind_failure_payload,
+        frame_index=0,
+        kind="worker-failure",
+        logical_name="<worker-failure>",
+        job_sha256=hashlib.sha256(
+            b"bloodbowl-f5-worker-job-v1\0" + evaluation["job_wire"][4:]
+        ).hexdigest(),
+        nonce=evaluation["job"]["nonce"],
+        semantic_sha256="f" * 64,
+    )
+    _test_candidate_parser_accept_frame(
+        post_bind_failure,
+        post_bind_failure_frame,
+        copy.deepcopy(evaluation["expected_sequence"]),
+    )
+    post_bind_failure.finish_stdout()
+    post_bind_negative_frame = _test_repack_existing_worker_frame_record(
+        evaluation["frames"][0],
+        replacements={"kind": "evaluation-result"},
+    )
+    post_bind_negative_buffer = bytearray(post_bind_negative_frame["wire"])
+    if not post_bind_negative.header_ready(post_bind_negative_buffer):
+        raise AssertionError("post-bind negative header was not ready")
+    post_bind_negative_header = post_bind_negative.take_header(
+        post_bind_negative_buffer
+    )
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: post_bind_negative.validate_declared_frame(
+            post_bind_negative_header,
+            copy.deepcopy(evaluation["expected_sequence"]),
+        ),
+        "post-bind dependency negative",
+    )
+    protocol.load_protocol_manifest = real_loader
+    protocol.parse_worker_job_wire = real_job_parser
+
+    manifest = real_loader()
+    manifest_mutants = _test_candidate_parser_manifest_mutations(manifest)
+    for label, mutated in manifest_mutants:
+        candidate = parser_class()
+        protocol.load_protocol_manifest = lambda mutated=mutated: mutated
+        _test_candidate_parser_expect_error(
+            protocol,
+            lambda candidate=candidate: candidate.bind_request(
+                evaluation["job_wire"]
+            ),
+            "manifest mutation:" + label,
+        )
+        protocol.load_protocol_manifest = real_loader
+        _test_candidate_parser_require_poisoned(
+            protocol,
+            candidate,
+            evaluation["job_wire"],
+            "manifest mutation:" + label,
+        )
+    protocol.load_protocol_manifest = real_loader
+
+    shared_manifest = real_loader()
+    protocol.load_protocol_manifest = lambda: shared_manifest
+    isolated = parser_class()
+    isolated.bind_request(evaluation["job_wire"])
+    isolated_failure = parser_class()
+    isolated_failure.bind_request(evaluation["job_wire"])
+    isolated_after_success = parser_class()
+    isolated_after_success.bind_request(evaluation["job_wire"])
+    shared_manifest["execution"]["worker_ipc"]["streams"]["evaluation"][
+        "frame_sequence"
+    ][0]["logical_name_templates"]["primary"] = "wrong/{seed_index}.bits"
+    shared_manifest["execution"]["worker_ipc"]["streams"]["evaluation"][
+        "frame_sequence"
+    ][1].update(
+        {
+            "bytes_maximum": 1,
+            "logical_name": "wrong-result",
+            "semantic_domain": "wrong-domain",
+        }
+    )
+    shared_manifest["execution"]["worker_ipc"]["failure"][
+        "frame_sequence"
+    ][0].update(
+        {
+            "bytes_maximum": 1,
+            "logical_name": "wrong-failure",
+            "semantic_domain": "wrong-domain",
+        }
+    )
+    shared_manifest["execution"]["worker_ipc"]["failure"][
+        "failure_after_success_frame_allowed"
+    ] = True
+    for frame in evaluation["frames"]:
+        _test_candidate_parser_accept_frame(
+            isolated,
+            frame,
+            copy.deepcopy(evaluation["expected_sequence"]),
+        )
+    isolated.finish_stdout()
+    alias_failure_payload = b'{"failure":true}\n'
+    alias_job_sha256 = hashlib.sha256(
+        b"bloodbowl-f5-worker-job-v1\0" + evaluation["job_wire"][4:]
+    ).hexdigest()
+    alias_failure_frame = _test_build_self_consistent_worker_frame(
+        payload=alias_failure_payload,
+        frame_index=0,
+        kind="worker-failure",
+        logical_name="<worker-failure>",
+        job_sha256=alias_job_sha256,
+        nonce=evaluation["job"]["nonce"],
+        semantic_sha256=hashlib.sha256(
+            b"f5-canonical-json-v1\0" + alias_failure_payload
+        ).hexdigest(),
+    )
+    _test_candidate_parser_accept_frame(
+        isolated_failure,
+        alias_failure_frame,
+        copy.deepcopy(evaluation["expected_sequence"]),
+    )
+    isolated_failure.finish_stdout()
+    _test_candidate_parser_accept_frame(
+        isolated_after_success,
+        evaluation["frames"][0],
+        copy.deepcopy(evaluation["expected_sequence"]),
+    )
+    alias_late_failure = _test_repack_existing_worker_frame_record(
+        alias_failure_frame,
+        replacements={"frame_index": 1},
+    )
+    alias_late_buffer = bytearray(alias_late_failure["wire"])
+    if not isolated_after_success.header_ready(alias_late_buffer):
+        raise AssertionError("alias late-failure header was not ready")
+    alias_late_header = isolated_after_success.take_header(alias_late_buffer)
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: isolated_after_success.validate_declared_frame(
+            alias_late_header,
+            copy.deepcopy(evaluation["expected_sequence"]),
+        ),
+        "post-bind failure-after-success policy mutation",
+    )
+    protocol.load_protocol_manifest = real_loader
+
+    for exception in (MemoryError("memory"), KeyboardInterrupt(), SystemExit(9)):
+        abandoned = parser_class()
+
+        def raise_resource(exception=exception):
+            raise exception
+
+        protocol.load_protocol_manifest = raise_resource
+        try:
+            abandoned.bind_request(evaluation["job_wire"])
+        except BaseException as observed:
+            if observed is not exception:
+                raise AssertionError(
+                    "candidate resource/control exception was translated"
+                )
+        else:
+            raise AssertionError(
+                "candidate resource/control exception was swallowed"
+            )
+    protocol.load_protocol_manifest = real_loader
+
+    exported = parser_class()
+    exported.bind_request(evaluation["job_wire"])
+    exported_buffer = bytearray(evaluation["frames"][0]["wire"][:8])
+    exported_view = memoryview(exported_buffer)
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: exported.header_ready(exported_buffer),
+        "exported bytearray",
+    )
+    exported_view.release()
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: exported.header_ready(bytearray()),
+        "exported bytearray continuation",
+    )
+
+    wrong_state_cases = (
+        ("bind", lambda parser: parser.bind_request(b"bad")),
+        ("header-ready", lambda parser: parser.header_ready(bytearray())),
+        ("take-header", lambda parser: parser.take_header(bytearray())),
+        ("validate", lambda parser: parser.validate_declared_frame({}, [])),
+        ("remaining", lambda parser: parser.payload_remaining(0)),
+        ("take-payload", lambda parser: parser.take_payload(bytearray(b"x"), 1)),
+        ("finish-frame", lambda parser: parser.finish_frame(0, "0" * 64)),
+        ("finish-stdout", lambda parser: parser.finish_stdout()),
+    )
+    for label, operation in wrong_state_cases:
+        candidate = parser_class()
+        _test_candidate_parser_expect_error(
+            protocol,
+            lambda candidate=candidate, operation=operation: operation(candidate),
+            "wrong-state:" + label,
+        )
+        _test_candidate_parser_require_poisoned(
+            protocol,
+            candidate,
+            evaluation["job_wire"],
+            "wrong-state:" + label,
+        )
+
+    duplicate_bind = parser_class()
+    duplicate_bind.bind_request(evaluation["job_wire"])
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: duplicate_bind.bind_request(evaluation["job_wire"]),
+        "duplicate active bind",
+    )
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: duplicate_bind.header_ready(
+            bytearray(evaluation["frames"][0]["wire"])
+        ),
+        "duplicate active bind continuation",
+    )
+    (
+        header_split_cases,
+        header_bytewise_events,
+        header_co_read_cases,
+        header_fragment_co_read_cases,
+        header_cap_cases,
+        canonical_header_mutants,
+        header_buffer_type_mutants,
+        canonical_header_poison_cases,
+    ) = _test_candidate_parser_header_boundaries(protocol, evaluation)
+    header_phase_poison_cases = _test_candidate_parser_header_phase_poison(
+        protocol,
+        evaluation,
+    )
+    payload_eof_poison_cases = (
+        _test_candidate_parser_payload_and_eof_negatives(
+            protocol,
+            evaluation,
+        )
+    )
+    rejected_sizes, accepted_sizes = (
+        _test_candidate_parser_size_boundaries(protocol)
+    )
+    (
+        payload_fragment_shapes,
+        payload_residue_cases,
+        payload_bytewise_events,
+        payload_split_cases,
+    ) = _test_candidate_parser_payload_fragmentation(protocol)
+
+    chunk_counts = _test_candidate_parser_complete_fixture(
+        protocol,
+        evaluation,
+    )
+    if 65_536 not in chunk_counts[1]:
+        raise AssertionError("candidate parser did not exercise chunk cap")
+    repeat = _test_stream_contract_fixture(
+        nonce="28" * 16,
+        population="verifier",
+        repeat_flag=1,
+    )
+    _test_candidate_parser_complete_fixture(protocol, repeat)
+    training = _test_candidate_parser_training_fixture()
+    training_chunks = _test_candidate_parser_complete_fixture(
+        protocol,
+        training,
+    )
+    if len(training_chunks) != 8:
+        raise AssertionError("candidate training topology drifted")
+
+    plain_evaluation = dict(evaluation)
+    plain_evaluation["frames"] = tuple(
+        _test_repack_existing_worker_frame_record(frame)
+        for frame in evaluation["frames"]
+    )
+    removed_oracle = globals().pop("_TestWorkerStreamOracle")
+    try:
+        _test_candidate_parser_complete_fixture(
+            protocol,
+            plain_evaluation,
+        )
+    finally:
+        globals()["_TestWorkerStreamOracle"] = removed_oracle
+
+    serial = parser_class()
+    for fixture in (evaluation, training, repeat):
+        serial.bind_request(fixture["job_wire"])
+        for frame in fixture["frames"]:
+            _test_candidate_parser_accept_frame(
+                serial,
+                frame,
+                copy.deepcopy(fixture["expected_sequence"]),
+            )
+        serial.finish_stdout()
+
+    alternate_job = dict(evaluation["job"])
+    alternate_job["action_seed"] = EVALUATION_ACTION_SEEDS[1]
+    alternate_job["seed_index"] = 1
+    alternate_wire = _test_worker_job_bytes(alternate_job)
+    member = parser_class()
+    member.bind_request(alternate_wire)
+    alternate_sequence = _test_stream_evaluation_topology(alternate_job)
+    alternate_payload = evaluation["frames"][0]["payload"]
+    alternate_frame = _test_build_self_consistent_worker_frame(
+        payload=alternate_payload,
+        frame_index=0,
+        kind="evaluation-bitset",
+        logical_name="evaluation/update-000000/seed-01.bits",
+        job_sha256=hashlib.sha256(
+            b"bloodbowl-f5-worker-job-v1\0" + alternate_wire[4:]
+        ).hexdigest(),
+        nonce=alternate_job["nonce"],
+        semantic_sha256="e" * 64,
+    )
+    _test_candidate_parser_accept_frame(
+        member,
+        alternate_frame,
+        alternate_sequence,
+    )
+    nonmember_job = dict(alternate_job)
+    nonmember_job["action_seed"] = EVALUATION_ACTION_SEEDS[0]
+    nonmember = parser_class()
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: nonmember.bind_request(_test_worker_job_bytes(nonmember_job)),
+        "nonmember job",
+    )
+
+    identity_job = dict(evaluation["job"])
+    identity_job.update(
+        {
+            "checkpoint_raw_sha256": "a" * 64,
+            "checkpoint_tensor_sha256": "b" * 64,
+            "implementation_manifest_sha256": "c" * 64,
+            "protocol_sha256": "d" * 64,
+            "source_commit": "e" * 40,
+        }
+    )
+    identity_parser = parser_class()
+    identity_wire = _test_worker_job_bytes(identity_job)
+    identity_parser.bind_request(identity_wire)
+    identity_frame = _test_build_self_consistent_worker_frame(
+        payload=evaluation["frames"][0]["payload"],
+        frame_index=0,
+        kind="evaluation-bitset",
+        logical_name="evaluation/update-000000/seed-00.bits",
+        job_sha256=hashlib.sha256(
+            b"bloodbowl-f5-worker-job-v1\0" + identity_wire[4:]
+        ).hexdigest(),
+        nonce=identity_job["nonce"],
+        semantic_sha256="d" * 64,
+    )
+    _test_candidate_parser_accept_frame(
+        identity_parser,
+        identity_frame,
+        _test_stream_evaluation_topology(identity_job),
+    )
+
+    job_body = evaluation["job_wire"][4:]
+
+    def pack_job_body(body):
+        return struct.pack(">I", len(body)) + body
+
+    job_wire_mutants = (
+        bytearray(evaluation["job_wire"]),
+        memoryview(evaluation["job_wire"]),
+        evaluation["job_wire"] + b"x",
+        pack_job_body(job_body[:-1]),
+        pack_job_body(job_body + b"\n"),
+        pack_job_body(b'{"worker_kind":"evaluation","worker_kind":"evaluation"}\n'),
+        pack_job_body(b'{"x":"\xff"}\n'),
+        pack_job_body(b'{"x":NaN}\n'),
+    )
+
+    class JobBytesSubclass(bytes):
+        pass
+
+    job_wire_mutants = job_wire_mutants + (
+        JobBytesSubclass(evaluation["job_wire"]),
+    )
+    for wire in job_wire_mutants:
+        candidate = parser_class()
+        _test_candidate_parser_expect_error(
+            protocol,
+            lambda candidate=candidate, wire=wire: candidate.bind_request(wire),
+            "candidate job wire mutation",
+        )
+
+    checkpoint_job = dict(evaluation["job"])
+    checkpoint_job["checkpoint_update"] = 512
+    checkpoint_wire = _test_worker_job_bytes(checkpoint_job)
+    checkpoint_sequence = _test_stream_evaluation_topology(checkpoint_job)
+    checkpoint_payload = b"\x01" + b"\x00" * 4095
+    checkpoint_job_sha256 = hashlib.sha256(
+        b"bloodbowl-f5-worker-job-v1\0" + checkpoint_wire[4:]
+    ).hexdigest()
+    checkpoint_frame = _test_build_self_consistent_worker_frame(
+        payload=checkpoint_payload,
+        frame_index=0,
+        kind="evaluation-bitset",
+        logical_name="evaluation/update-000512/seed-00.bits",
+        job_sha256=checkpoint_job_sha256,
+        nonce=checkpoint_job["nonce"],
+        semantic_sha256=hashlib.sha256(
+            b"f5-success-bitset-v1\0" + checkpoint_payload
+        ).hexdigest(),
+    )
+    checkpoint_parser = parser_class()
+    checkpoint_parser.bind_request(checkpoint_wire)
+    _test_candidate_parser_accept_frame(
+        checkpoint_parser,
+        checkpoint_frame,
+        checkpoint_sequence,
+    )
+
+    first = evaluation["frames"][0]
+    header_mutations = (
+        {"bytes": True},
+        {"bytes": 4096.0},
+        {"bytes": "4096"},
+        {"bytes": -1},
+        {"bytes": 16_777_217},
+        {"frame_index": False},
+        {"frame_index": 0.0},
+        {"frame_index": "0"},
+        {"frame_index": -1},
+        {"frame_index": 8},
+        {"job_sha256": "A" * 64},
+        {"job_sha256": "a" * 63},
+        {"job_sha256": "g" * 64},
+        {"job_sha256": "0" * 64},
+        {"job_sha256": 0},
+        {"kind": "wrong-kind"},
+        {"kind": 0},
+        {"logical_name": ""},
+        {"logical_name": "wrong.bits"},
+        {"logical_name": "x" * 1025},
+        {"logical_name": "\x1f"},
+        {"logical_name": "\x7f"},
+        {"logical_name": "é"},
+        {"logical_name": 0},
+        {"nonce": "A" * 32},
+        {"nonce": "a" * 31},
+        {"nonce": "g" * 32},
+        {"nonce": "0" * 32},
+        {"nonce": 0},
+        {"raw_sha256": "A" * 64},
+        {"raw_sha256": "a" * 63},
+        {"raw_sha256": "g" * 64},
+        {"raw_sha256": 0},
+        {"schema": "wrong-schema"},
+        {"schema": 0},
+        {"semantic_sha256": "a" * 63},
+        {"semantic_sha256": "A" * 64},
+        {"semantic_sha256": "g" * 64},
+        {"semantic_sha256": 0},
+    )
+    for replacements in header_mutations:
+        candidate = parser_class()
+        candidate.bind_request(evaluation["job_wire"])
+        mutated = _test_repack_existing_worker_frame_record(
+            first,
+            replacements=replacements,
+        )
+        buffer = bytearray(mutated["wire"])
+
+        def reject_mutated(candidate=candidate, buffer=buffer):
+            if candidate.header_ready(buffer):
+                header = candidate.take_header(buffer)
+                candidate.validate_declared_frame(
+                    header,
+                    copy.deepcopy(evaluation["expected_sequence"]),
+                )
+
+        _test_candidate_parser_expect_error(
+            protocol,
+            reject_mutated,
+            "header mutation:%r" % replacements,
+        )
+
+    take_header_leaf_mutations = (
+        {"bytes": True},
+        {"bytes": 4096.0},
+        {"bytes": "4096"},
+        {"bytes": -1},
+        {"bytes": 16_777_217},
+        {"frame_index": False},
+        {"frame_index": 0.0},
+        {"frame_index": "0"},
+        {"frame_index": -1},
+        {"frame_index": 8},
+        {"job_sha256": "A" * 64},
+        {"job_sha256": "a" * 63},
+        {"job_sha256": "g" * 64},
+        {"job_sha256": 0},
+        {"kind": "wrong-kind"},
+        {"kind": 0},
+        {"logical_name": ""},
+        {"logical_name": "x" * 1025},
+        {"logical_name": "\x1f"},
+        {"logical_name": "\x7f"},
+        {"logical_name": "é"},
+        {"logical_name": 0},
+        {"nonce": "A" * 32},
+        {"nonce": "a" * 31},
+        {"nonce": "g" * 32},
+        {"nonce": 0},
+        {"raw_sha256": "A" * 64},
+        {"raw_sha256": "a" * 63},
+        {"raw_sha256": "g" * 64},
+        {"raw_sha256": 0},
+        {"schema": "wrong-schema"},
+        {"schema": 0},
+        {"semantic_sha256": "a" * 63},
+        {"semantic_sha256": "A" * 64},
+        {"semantic_sha256": "g" * 64},
+        {"semantic_sha256": 0},
+    )
+    for replacements in take_header_leaf_mutations:
+        leaf_poison = parser_class()
+        leaf_poison.bind_request(evaluation["job_wire"])
+        leaf_frame = _test_repack_existing_worker_frame_record(
+            first,
+            replacements=replacements,
+        )
+        leaf_buffer = bytearray(leaf_frame["wire"])
+        if not leaf_poison.header_ready(leaf_buffer):
+            raise AssertionError("candidate leaf poison header was not ready")
+        _test_candidate_parser_expect_error(
+            protocol,
+            lambda leaf_poison=leaf_poison,
+            leaf_buffer=leaf_buffer: leaf_poison.take_header(leaf_buffer),
+            "header leaf poison setup:%r" % replacements,
+        )
+        _test_candidate_parser_expect_error(
+            protocol,
+            lambda leaf_poison=leaf_poison: leaf_poison.header_ready(
+                bytearray()
+            ),
+            "header leaf poison recovery:%r" % replacements,
+        )
+
+    shape_valid_authority_mutations = (
+        {"job_sha256": "0" * 64},
+        {"nonce": "0" * 32},
+        {"logical_name": "wrong.bits"},
+        {"bytes": 0},
+        {"logical_name": "x" * 1024},
+    )
+    for replacements in shape_valid_authority_mutations:
+        authority = parser_class()
+        authority.bind_request(evaluation["job_wire"])
+        authority_frame = _test_repack_existing_worker_frame_record(
+            first,
+            replacements=replacements,
+        )
+        authority_buffer = bytearray(authority_frame["wire"])
+        if not authority.header_ready(authority_buffer):
+            raise AssertionError("candidate authority header was not ready")
+        authority_header = authority.take_header(authority_buffer)
+        if (
+            type(authority_header) is not dict
+            or authority_header != authority_frame["header"]
+        ):
+            raise AssertionError("candidate authority header return drifted")
+        _test_candidate_parser_expect_error(
+            protocol,
+            lambda authority=authority,
+            authority_header=authority_header: authority.validate_declared_frame(
+                authority_header,
+                copy.deepcopy(evaluation["expected_sequence"]),
+            ),
+            "shape-valid authority mutation:%r" % replacements,
+        )
+
+    combined_header_mutations = (
+        {"frame_index": 1, "kind": "evaluation-result"},
+        {"kind": "evaluation-result", "job_sha256": "0" * 64},
+        {"job_sha256": "0" * 64, "bytes": 4095},
+        {"nonce": "0" * 32, "bytes": 4095},
+    )
+    for replacements in combined_header_mutations:
+        candidate = parser_class()
+        candidate.bind_request(evaluation["job_wire"])
+        mutated = _test_repack_existing_worker_frame_record(
+            first,
+            replacements=replacements,
+        )
+        buffer = bytearray(mutated["wire"])
+        if not candidate.header_ready(buffer):
+            raise AssertionError("combined mutation header was not ready")
+        header = candidate.take_header(buffer)
+        _test_candidate_parser_expect_error(
+            protocol,
+            lambda candidate=candidate, header=header: (
+                candidate.validate_declared_frame(
+                    header,
+                    copy.deepcopy(evaluation["expected_sequence"]),
+                )
+            ),
+            "combined header mutation",
+        )
+
+    identity = parser_class()
+    identity.bind_request(evaluation["job_wire"])
+    identity_buffer = bytearray(first["wire"])
+    if not identity.header_ready(identity_buffer):
+        raise AssertionError("candidate identity header was not ready")
+    returned_header = identity.take_header(identity_buffer)
+    saved_header = dict(returned_header)
+    returned_header["logical_name"] = "mutated"
+    identity_sequence = copy.deepcopy(evaluation["expected_sequence"])
+    if identity.validate_declared_frame(
+        saved_header,
+        identity_sequence,
+    ) is not None:
+        raise AssertionError("candidate retained returned-header alias")
+    identity_sequence[1]["logical_name"] = "mutated-after-declaration"
+    identity_payload = bytearray(first["payload"])
+    identity_digest = hashlib.sha256()
+    while identity.payload_remaining(saved_header["bytes"]):
+        identity_digest.update(
+            identity.take_payload(identity_payload, saved_header["bytes"])
+        )
+    identity.finish_frame(
+        saved_header["bytes"],
+        identity_digest.hexdigest(),
+    )
+    second_buffer = bytearray(evaluation["frames"][1]["wire"])
+    if not identity.header_ready(second_buffer):
+        raise AssertionError("candidate alias second header was not ready")
+    second_header = identity.take_header(second_buffer)
+    if identity.validate_declared_frame(
+        second_header,
+        copy.deepcopy(evaluation["expected_sequence"]),
+    ) is not None:
+        raise AssertionError("candidate retained expected-sequence alias")
+
+    mutated_identity = parser_class()
+    mutated_identity.bind_request(evaluation["job_wire"])
+    mutated_identity_buffer = bytearray(first["wire"])
+    if not mutated_identity.header_ready(mutated_identity_buffer):
+        raise AssertionError("candidate mutated identity header was not ready")
+    mutated_return = mutated_identity.take_header(mutated_identity_buffer)
+    valid_mutated_return = dict(mutated_return)
+    mutated_return["logical_name"] = "mutated"
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: mutated_identity.validate_declared_frame(
+            mutated_return,
+            copy.deepcopy(evaluation["expected_sequence"]),
+        ),
+        "mutated returned header accepted",
+    )
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: mutated_identity.validate_declared_frame(
+            valid_mutated_return,
+            copy.deepcopy(evaluation["expected_sequence"]),
+        ),
+        "mutated returned header did not poison",
+    )
+
+    class HeaderIntSubclass(int):
+        pass
+
+    class HeaderStrSubclass(str):
+        pass
+
+    class HeaderKeySubclass(str):
+        pass
+
+    for field, constructor in (
+        ("frame_index", HeaderIntSubclass),
+        ("logical_name", HeaderStrSubclass),
+    ):
+        scalar_identity = parser_class()
+        scalar_identity.bind_request(evaluation["job_wire"])
+        scalar_buffer = bytearray(first["wire"])
+        if not scalar_identity.header_ready(scalar_buffer):
+            raise AssertionError("candidate scalar identity header not ready")
+        scalar_header = scalar_identity.take_header(scalar_buffer)
+        scalar_mutation = dict(scalar_header)
+        scalar_mutation[field] = constructor(scalar_mutation[field])
+        _test_candidate_parser_expect_error(
+            protocol,
+            lambda scalar_identity=scalar_identity,
+            scalar_mutation=scalar_mutation: scalar_identity.validate_declared_frame(
+                scalar_mutation,
+                copy.deepcopy(evaluation["expected_sequence"]),
+            ),
+            "header scalar subclass:" + field,
+        )
+        _test_candidate_parser_expect_error(
+            protocol,
+            lambda scalar_identity=scalar_identity,
+            scalar_header=scalar_header: scalar_identity.validate_declared_frame(
+                scalar_header,
+                copy.deepcopy(evaluation["expected_sequence"]),
+            ),
+            "header scalar subclass poison:" + field,
+        )
+
+    key_identity = parser_class()
+    key_identity.bind_request(evaluation["job_wire"])
+    key_buffer = bytearray(first["wire"])
+    if not key_identity.header_ready(key_buffer):
+        raise AssertionError("candidate key identity header not ready")
+    key_header = key_identity.take_header(key_buffer)
+    key_mutation = {
+        (HeaderKeySubclass(key) if key == "kind" else key): value
+        for key, value in key_header.items()
+    }
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: key_identity.validate_declared_frame(
+            key_mutation,
+            copy.deepcopy(evaluation["expected_sequence"]),
+        ),
+        "header key subclass",
+    )
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: key_identity.validate_declared_frame(
+            key_header,
+            copy.deepcopy(evaluation["expected_sequence"]),
+        ),
+        "header key subclass poison",
+    )
+
+    class SequenceIntSubclass(int):
+        pass
+
+    class SequenceStrSubclass(str):
+        pass
+
+    class SequenceKeySubclass(str):
+        pass
+
+    sequence_mutations = []
+    sequence_mutations.append(tuple(evaluation["expected_sequence"]))
+    sequence_mutations.append(copy.deepcopy(evaluation["expected_sequence"][:-1]))
+    sequence_mutations.append(
+        copy.deepcopy(
+            evaluation["expected_sequence"]
+            + [evaluation["expected_sequence"][-1]]
+        )
+    )
+    sequence_mutations.append(
+        list(reversed(copy.deepcopy(evaluation["expected_sequence"])))
+    )
+    changed_sequence = copy.deepcopy(evaluation["expected_sequence"])
+    changed_sequence[0]["semantic_domain"] = "wrong-domain"
+    sequence_mutations.append(changed_sequence)
+    missing_sequence_key = copy.deepcopy(evaluation["expected_sequence"])
+    del missing_sequence_key[0]["semantic_domain"]
+    sequence_mutations.append(missing_sequence_key)
+    extra_sequence_key = copy.deepcopy(evaluation["expected_sequence"])
+    extra_sequence_key[0]["extra"] = 0
+    sequence_mutations.append(extra_sequence_key)
+    next_sequence_value = copy.deepcopy(evaluation["expected_sequence"])
+    next_sequence_value[1]["logical_name"] = "wrong-next-result"
+    sequence_mutations.append(next_sequence_value)
+    sequence_type_value = copy.deepcopy(evaluation["expected_sequence"])
+    sequence_type_value[0]["bytes_minimum"] = True
+    sequence_mutations.append(sequence_type_value)
+    sequence_bytes_maximum = copy.deepcopy(evaluation["expected_sequence"])
+    sequence_bytes_maximum[0]["bytes_maximum"] = 4095
+    sequence_mutations.append(sequence_bytes_maximum)
+    sequence_frame_index = copy.deepcopy(evaluation["expected_sequence"])
+    sequence_frame_index[0]["frame_index"] = 1
+    sequence_mutations.append(sequence_frame_index)
+    sequence_kind = copy.deepcopy(evaluation["expected_sequence"])
+    sequence_kind[0]["kind"] = "evaluation-result"
+    sequence_mutations.append(sequence_kind)
+    sequence_int_subclass = copy.deepcopy(evaluation["expected_sequence"])
+    sequence_int_subclass[0]["bytes_minimum"] = SequenceIntSubclass(
+        sequence_int_subclass[0]["bytes_minimum"]
+    )
+    sequence_mutations.append(sequence_int_subclass)
+    sequence_str_subclass = copy.deepcopy(evaluation["expected_sequence"])
+    sequence_str_subclass[0]["semantic_domain"] = SequenceStrSubclass(
+        sequence_str_subclass[0]["semantic_domain"]
+    )
+    sequence_mutations.append(sequence_str_subclass)
+    sequence_key_subclass = copy.deepcopy(evaluation["expected_sequence"])
+    sequence_key_subclass[0] = {
+        (SequenceKeySubclass(key) if key == "kind" else key): value
+        for key, value in sequence_key_subclass[0].items()
+    }
+    sequence_mutations.append(sequence_key_subclass)
+    for sequence in sequence_mutations:
+        candidate = parser_class()
+        candidate.bind_request(evaluation["job_wire"])
+        buffer = bytearray(first["wire"])
+        if not candidate.header_ready(buffer):
+            raise AssertionError("candidate sequence header was not ready")
+        header = candidate.take_header(buffer)
+        _test_candidate_parser_expect_error(
+            protocol,
+            lambda candidate=candidate, header=header, sequence=sequence: (
+                candidate.validate_declared_frame(header, sequence)
+            ),
+            "sequence mutation",
+        )
+
+    sequence_poison = parser_class()
+    sequence_poison.bind_request(evaluation["job_wire"])
+    sequence_poison_buffer = bytearray(first["wire"])
+    if not sequence_poison.header_ready(sequence_poison_buffer):
+        raise AssertionError("candidate sequence poison header was not ready")
+    sequence_poison_header = sequence_poison.take_header(
+        sequence_poison_buffer
+    )
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: sequence_poison.validate_declared_frame(
+            sequence_poison_header,
+            tuple(evaluation["expected_sequence"]),
+        ),
+        "sequence poison setup",
+    )
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: sequence_poison.validate_declared_frame(
+            sequence_poison_header,
+            copy.deepcopy(evaluation["expected_sequence"]),
+        ),
+        "sequence poison recovery",
+    )
+
+    class HeaderDictSubclass(dict):
+        pass
+
+    class SequenceListSubclass(list):
+        pass
+
+    class SequenceEntrySubclass(dict):
+        pass
+
+    for header_subclass, sequence_subclass, entry_subclass in (
+        (True, False, False),
+        (False, True, False),
+        (False, False, True),
+    ):
+        candidate = parser_class()
+        candidate.bind_request(evaluation["job_wire"])
+        buffer = bytearray(first["wire"])
+        if not candidate.header_ready(buffer):
+            raise AssertionError("candidate declaration subclass header not ready")
+        header = candidate.take_header(buffer)
+        header_value = HeaderDictSubclass(header) if header_subclass else header
+        sequence_value = copy.deepcopy(evaluation["expected_sequence"])
+        if sequence_subclass:
+            sequence_value = SequenceListSubclass(sequence_value)
+        if entry_subclass:
+            sequence_value[0] = SequenceEntrySubclass(sequence_value[0])
+        _test_candidate_parser_expect_error(
+            protocol,
+            lambda candidate=candidate,
+            header_value=header_value,
+            sequence_value=sequence_value: candidate.validate_declared_frame(
+                header_value,
+                sequence_value,
+            ),
+            "declaration subclass",
+        )
+    sequence_mutations.extend(
+        ("header-subclass", "sequence-subclass", "entry-subclass")
+    )
+
+    opaque_semantic = parser_class()
+    opaque_semantic.bind_request(evaluation["job_wire"])
+    opaque_semantic_frame = _test_repack_existing_worker_frame_record(
+        first,
+        replacements={"semantic_sha256": "f" * 64},
+    )
+    _test_candidate_parser_accept_frame(
+        opaque_semantic,
+        opaque_semantic_frame,
+        copy.deepcopy(evaluation["expected_sequence"]),
+    )
+
+    failure_payload = b'{"failure":true}\n'
+    job_sha256 = hashlib.sha256(
+        b"bloodbowl-f5-worker-job-v1\0" + evaluation["job_wire"][4:]
+    ).hexdigest()
+    failure_frame = _test_build_self_consistent_worker_frame(
+        payload=failure_payload,
+        frame_index=0,
+        kind="worker-failure",
+        logical_name="<worker-failure>",
+        job_sha256=job_sha256,
+        nonce=evaluation["job"]["nonce"],
+        semantic_sha256=hashlib.sha256(
+            b"f5-canonical-json-v1\0" + failure_payload
+        ).hexdigest(),
+    )
+    unfinished_failure = parser_class()
+    unfinished_failure.bind_request(evaluation["job_wire"])
+    unfinished_width = (
+        len(failure_frame["wire"]) - len(failure_frame["payload"])
+    )
+    unfinished_buffer = bytearray(failure_frame["wire"][:unfinished_width])
+    if not unfinished_failure.header_ready(unfinished_buffer):
+        raise AssertionError("unfinished failure header was not ready")
+    unfinished_header = unfinished_failure.take_header(unfinished_buffer)
+    unfinished_failure.validate_declared_frame(
+        unfinished_header,
+        copy.deepcopy(evaluation["expected_sequence"]),
+    )
+    unfinished_payload = bytearray(failure_frame["payload"])
+    while unfinished_failure.payload_remaining(unfinished_header["bytes"]):
+        unfinished_failure.take_payload(
+            unfinished_payload,
+            unfinished_header["bytes"],
+        )
+    _test_candidate_parser_expect_error(
+        protocol,
+        unfinished_failure.finish_stdout,
+        "failure EOF before frame finalization",
+    )
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: unfinished_failure.finish_frame(
+            unfinished_header["bytes"],
+            failure_frame["header"]["raw_sha256"],
+        ),
+        "failure EOF before frame finalization retry",
+    )
+
+    incomplete_failure = parser_class()
+    incomplete_failure.bind_request(evaluation["job_wire"])
+    incomplete_width = (
+        len(failure_frame["wire"]) - len(failure_frame["payload"])
+    )
+    incomplete_buffer = bytearray(failure_frame["wire"][:incomplete_width])
+    if not incomplete_failure.header_ready(incomplete_buffer):
+        raise AssertionError("incomplete failure header was not ready")
+    incomplete_header = incomplete_failure.take_header(incomplete_buffer)
+    incomplete_failure.validate_declared_frame(
+        incomplete_header,
+        copy.deepcopy(evaluation["expected_sequence"]),
+    )
+    _test_candidate_parser_expect_error(
+        protocol,
+        incomplete_failure.finish_stdout,
+        "incomplete failure EOF",
+    )
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: incomplete_failure.take_payload(
+            bytearray(failure_frame["payload"]),
+            incomplete_header["bytes"],
+        ),
+        "incomplete failure EOF continuation",
+    )
+    terminal_operations = (
+        ("bind", lambda parser: parser.bind_request(evaluation["job_wire"])),
+        (
+            "header-ready",
+            lambda parser: parser.header_ready(
+                bytearray(evaluation["frames"][0]["wire"])
+            ),
+        ),
+        ("take-header", lambda parser: parser.take_header(bytearray())),
+        (
+            "validate",
+            lambda parser: parser.validate_declared_frame({}, []),
+        ),
+        ("remaining", lambda parser: parser.payload_remaining(0)),
+        (
+            "take-payload",
+            lambda parser: parser.take_payload(bytearray(b"x"), 1),
+        ),
+        (
+            "finish-frame",
+            lambda parser: parser.finish_frame(0, "0" * 64),
+        ),
+        ("finish-stdout", lambda parser: parser.finish_stdout()),
+    )
+    for label, operation in terminal_operations:
+        terminal = parser_class()
+        terminal.bind_request(evaluation["job_wire"])
+        _test_candidate_parser_accept_frame(
+            terminal,
+            failure_frame,
+            copy.deepcopy(evaluation["expected_sequence"]),
+        )
+        if terminal.finish_stdout() is not None:
+            raise AssertionError("candidate failure EOF return drifted")
+        _test_candidate_parser_expect_error(
+            protocol,
+            lambda terminal=terminal, operation=operation: operation(terminal),
+            "terminal failure method:" + label,
+        )
+
+    after_success = parser_class()
+    after_success.bind_request(evaluation["job_wire"])
+    _test_candidate_parser_accept_frame(
+        after_success,
+        evaluation["frames"][0],
+        copy.deepcopy(evaluation["expected_sequence"]),
+    )
+    failure_after_success = _test_repack_existing_worker_frame_record(
+        failure_frame,
+        replacements={"frame_index": 1},
+    )
+    failure_buffer = bytearray(failure_after_success["wire"])
+    if not after_success.header_ready(failure_buffer):
+        raise AssertionError("failure-after-success header was not ready")
+    failure_header = after_success.take_header(failure_buffer)
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: after_success.validate_declared_frame(
+            failure_header,
+            copy.deepcopy(evaluation["expected_sequence"]),
+        ),
+        "failure after success",
+    )
+
+    failure_trailing = parser_class()
+    failure_trailing.bind_request(evaluation["job_wire"])
+    _test_candidate_parser_accept_frame(
+        failure_trailing,
+        failure_frame,
+        copy.deepcopy(evaluation["expected_sequence"]),
+    )
+    _test_candidate_parser_expect_error(
+        protocol,
+        lambda: failure_trailing.header_ready(bytearray(b"x")),
+        "bytes after completed failure",
+    )
+    _test_candidate_parser_expect_error(
+        protocol,
+        failure_trailing.finish_stdout,
+        "bytes after completed failure poison",
+    )
+
+    evidence = {
+        "alias_isolation_vectors": 5,
+        "api_methods": len(expected_signatures),
+        "authority_fingerprint_cases": authority_fingerprint_cases,
+        "authority_fingerprint_mutants": authority_fingerprint_mutants,
+        "bind_delegate_authority_cases": 2,
+        "binding_authority_accept_vectors": 3,
+        "canonical_header_mutants": canonical_header_mutants,
+        "canonical_header_poison_cases": canonical_header_poison_cases,
+        "combined_header_mutants": len(combined_header_mutations),
+        "control_exceptions": 3,
+        "duplicate_bind_poison_cases": 1,
+        "exported_buffer_poison_cases": 2,
+        "failure_lifecycle_cases": 12,
+        "header_mutants": len(header_mutations),
+        "header_identity_mutants": 4,
+        "header_cap_cases": header_cap_cases,
+        "header_buffer_type_mutants": header_buffer_type_mutants,
+        "header_bytewise_events": header_bytewise_events,
+        "header_complete_stability_events": 2,
+        "header_co_read_cases": header_co_read_cases,
+        "header_fragment_co_read_cases": header_fragment_co_read_cases,
+        "header_phase_poison_cases": header_phase_poison_cases,
+        "header_schema_poison_cases": len(take_header_leaf_mutations),
+        "header_split_cases": header_split_cases,
+        "job_wire_mutants": len(job_wire_mutants),
+        "manifest_mutants": len(manifest_mutants),
+        "oracle_absent_sessions": 1,
+        "population_nonmember_cases": 1,
+        "post_bind_dependency_negative_cases": 1,
+        "post_bind_loader_failure_sessions": 1,
+        "payload_eof_poison_cases": payload_eof_poison_cases,
+        "payload_bytewise_events": payload_bytewise_events,
+        "payload_fragment_shapes": payload_fragment_shapes,
+        "payload_residue_cases": payload_residue_cases,
+        "payload_split_cases": payload_split_cases,
+        "semantic_digest_opaque_cases": 1,
+        "size_accept_cases": accepted_sizes,
+        "size_reject_cases": rejected_sizes,
+        "sequence_mutants": len(sequence_mutations),
+        "sequence_poison_recovery_cases": 1,
+        "shape_valid_authority_mutants": len(
+            shape_valid_authority_mutations
+        ),
+        "state_poison_cases": len(wrong_state_cases),
+        "source_audit_mutants": source_audit_mutants,
+        "training_frames": len(training["frames"]),
+        "valid_success_sessions": 9,
+    }
+    mutant_keys = (
+        "authority_fingerprint_mutants",
+        "canonical_header_mutants",
+        "canonical_header_poison_cases",
+        "combined_header_mutants",
+        "duplicate_bind_poison_cases",
+        "exported_buffer_poison_cases",
+        "failure_lifecycle_cases",
+        "header_buffer_type_mutants",
+        "header_cap_cases",
+        "header_identity_mutants",
+        "header_mutants",
+        "header_phase_poison_cases",
+        "header_schema_poison_cases",
+        "job_wire_mutants",
+        "manifest_mutants",
+        "payload_eof_poison_cases",
+        "population_nonmember_cases",
+        "post_bind_dependency_negative_cases",
+        "sequence_mutants",
+        "sequence_poison_recovery_cases",
+        "shape_valid_authority_mutants",
+        "size_reject_cases",
+        "state_poison_cases",
+        "source_audit_mutants",
+    )
+    evidence["parser_mutants_total"] = sum(
+        evidence[key] for key in mutant_keys
+    )
+    vector_keys = (
+        "alias_isolation_vectors",
+        "api_methods",
+        "authority_fingerprint_cases",
+        "bind_delegate_authority_cases",
+        "binding_authority_accept_vectors",
+        "control_exceptions",
+        "header_bytewise_events",
+        "header_complete_stability_events",
+        "header_co_read_cases",
+        "header_fragment_co_read_cases",
+        "header_split_cases",
+        "oracle_absent_sessions",
+        "payload_bytewise_events",
+        "payload_fragment_shapes",
+        "payload_residue_cases",
+        "payload_split_cases",
+        "post_bind_loader_failure_sessions",
+        "semantic_digest_opaque_cases",
+        "size_accept_cases",
+        "training_frames",
+        "valid_success_sessions",
+    )
+    evidence["parser_vectors_total"] = evidence[
+        "parser_mutants_total"
+    ] + sum(evidence[key] for key in vector_keys)
+    print(
+        "worker-frame-parser-evidence:"
+        + _canonical_json_fixture(evidence).decode("ascii").rstrip("\n"),
+        flush=True,
+    )
+    return evidence
+
+
 class F5WorkerStreamContractInfrastructure(unittest.TestCase):
     def test_worker_stream_contract_repair_infrastructure(self) -> None:
         for worker_kind in ("training", "evaluation"):
@@ -12342,6 +17108,58 @@ class F5WorkerStreamContractInfrastructure(unittest.TestCase):
         self.assertEqual(
             _test_stream_contract_oracle_matrix()["status"],
             "ok",
+        )
+        self.assertEqual(
+            _test_candidate_worker_frame_parser_contract(),
+            {
+                "alias_isolation_vectors": 5,
+                "api_methods": 8,
+                "authority_fingerprint_cases": 4,
+                "authority_fingerprint_mutants": 11,
+                "bind_delegate_authority_cases": 2,
+                "binding_authority_accept_vectors": 3,
+                "canonical_header_mutants": 12,
+                "canonical_header_poison_cases": 1,
+                "combined_header_mutants": 4,
+                "control_exceptions": 3,
+                "duplicate_bind_poison_cases": 1,
+                "exported_buffer_poison_cases": 2,
+                "failure_lifecycle_cases": 12,
+                "header_mutants": 39,
+                "header_identity_mutants": 4,
+                "header_cap_cases": 3,
+                "header_buffer_type_mutants": 2,
+                "header_bytewise_events": 454,
+                "header_complete_stability_events": 2,
+                "header_co_read_cases": 4,
+                "header_fragment_co_read_cases": 12,
+                "header_phase_poison_cases": 12,
+                "header_schema_poison_cases": 36,
+                "header_split_cases": 455,
+                "job_wire_mutants": 9,
+                "manifest_mutants": 27,
+                "oracle_absent_sessions": 1,
+                "parser_mutants_total": 299,
+                "parser_vectors_total": 1320,
+                "payload_bytewise_events": 16,
+                "payload_eof_poison_cases": 37,
+                "payload_fragment_shapes": 3,
+                "payload_residue_cases": 3,
+                "payload_split_cases": 17,
+                "population_nonmember_cases": 1,
+                "post_bind_dependency_negative_cases": 1,
+                "post_bind_loader_failure_sessions": 1,
+                "size_accept_cases": 10,
+                "size_reject_cases": 12,
+                "semantic_digest_opaque_cases": 1,
+                "sequence_mutants": 18,
+                "sequence_poison_recovery_cases": 1,
+                "shape_valid_authority_mutants": 5,
+                "state_poison_cases": 8,
+                "source_audit_mutants": 41,
+                "training_frames": 8,
+                "valid_success_sessions": 9,
+            },
         )
 
 
