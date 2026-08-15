@@ -38,7 +38,10 @@ jobs:
             tools.test_run_checkpoint_milestone_eval \
             tools.test_run_reward_learned_transfer \
             tools.test_live_integrity_guard \
-            tools.test_checkpoint_lineage
+            tools.test_checkpoint_lineage \
+            tools.test_ladder_knobs \
+            tools.test_ladder_rung_profile \
+            tools.test_campaign_supervisor
           for manifest in puffer/config/rewards/*.json; do
             python3 tools/reward_manifest.py "$manifest" --json >/dev/null
           done

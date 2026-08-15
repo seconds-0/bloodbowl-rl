@@ -24,7 +24,7 @@ fi
 LAUNCH_CWD="$PWD"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 : "${STEPS:?STEPS is required (explicit experiment budget)}"
-: "${SCREEN_PROFILE:?SCREEN_PROFILE is required (distance-possession, possession-gain, possession-gain-exact, exact-action-canary, genesis, genesis-pool, paired-confirmation, paired-final, or control-final)}"
+: "${SCREEN_PROFILE:?SCREEN_PROFILE is required (distance-possession, possession-gain, possession-gain-exact, exact-action-canary, genesis, genesis-pool, ladder-rung, paired-confirmation, paired-final, or control-final)}"
 CANDIDATE_ARM="${CANDIDATE_ARM:-}"
 TRANSFER_COMPLETE="${TRANSFER_COMPLETE:-}"
 EXPECTED_TRANSFER_SHA256="${EXPECTED_TRANSFER_SHA256:-}"
@@ -33,6 +33,13 @@ OUT_DIR="${OUT_DIR:-$ROOT/runs/reward-screens/$PREFIX}"
 POLL_SECONDS="${POLL_SECONDS:-30}"
 PLAN_ONLY="${PLAN_ONLY:-0}"
 ARM_DETACH="${ARM_DETACH:-1}"
+# ladder-rung only: the backplay curriculum knobs and the learner seed. Every
+# other profile pins these to the launcher defaults (kickoff starts, seed from
+# the schedule); the rung profile is the one place the start distribution is a
+# declared factor. Validated below, before any artifact is touched.
+LADDER_ENDZONE_MAXDIST="${LADDER_ENDZONE_MAXDIST:-}"
+LADDER_RESET_PCT="${LADDER_RESET_PCT:-}"
+LADDER_SEED="${LADDER_SEED:-}"
 
 # Fixed Stage-1 causal contract. Assign, rather than inherit, every optional
 # launcher input which could alter optimization, batching, or pool allocation.
@@ -103,8 +110,13 @@ case "$ARM_DETACH" in
   0|1) ;;
   *) echo "ARM_DETACH must be 0 or 1" >&2; exit 1 ;;
 esac
+if [ "$SCREEN_PROFILE" != "ladder-rung" ] && \
+   [ -n "$LADDER_ENDZONE_MAXDIST$LADDER_RESET_PCT$LADDER_SEED" ]; then
+  echo "LADDER_ENDZONE_MAXDIST, LADDER_RESET_PCT and LADDER_SEED are only valid with SCREEN_PROFILE=ladder-rung" >&2
+  exit 1
+fi
 case "$SCREEN_PROFILE" in
-  distance-possession|possession-gain|possession-gain-exact|exact-action-canary|genesis|genesis-pool|control-final)
+  distance-possession|possession-gain|possession-gain-exact|exact-action-canary|genesis|genesis-pool|control-final|ladder-rung)
     [ -z "$CANDIDATE_ARM$TRANSFER_COMPLETE$EXPECTED_TRANSFER_SHA256" ] || {
       echo "candidate transfer inputs are only valid with a paired profile" >&2
       exit 1; }
@@ -112,6 +124,29 @@ case "$SCREEN_PROFILE" in
        [ "$STEPS" -ne 50000000 ]; then
       echo "exact-action-canary requires STEPS=50000000" >&2
       exit 1
+    fi
+    if [ "$SCREEN_PROFILE" = "ladder-rung" ]; then
+      # A rung is a start-distribution factor, so both knobs are REQUIRED and
+      # explicit; an inherited empty value must not silently train a kickoff
+      # arm under a ladder label. maxdist 0 is the legitimate "uniform" rung
+      # (any banked start, no endzone filter) and reset_pct 0 is the kickoff
+      # graduation rung; the per-arm launcher refuses the no-op pairing
+      # (maxdist>0 with reset_pct 0) so it is not repeated here.
+      case "$LADDER_ENDZONE_MAXDIST" in
+        ''|*[!0-9]*)
+          echo "ladder-rung requires LADDER_ENDZONE_MAXDIST as a non-negative integer (0 = uniform bank starts)" >&2
+          exit 1 ;;
+      esac
+      case "$LADDER_RESET_PCT" in
+        0|0.0|1|1.0|0.[0-9]*) ;;
+        *) echo "ladder-rung requires LADDER_RESET_PCT as a fraction in [0,1]" >&2
+           exit 1 ;;
+      esac
+      case "$LADDER_SEED" in
+        ''|*[!0-9]*)
+          echo "ladder-rung requires LADDER_SEED as a non-negative integer" >&2
+          exit 1 ;;
+      esac
     fi
     ;;
   paired-confirmation|paired-final)
@@ -127,7 +162,7 @@ case "$SCREEN_PROFILE" in
       exit 1
     fi
     ;;
-  *) echo "SCREEN_PROFILE must be distance-possession, possession-gain, possession-gain-exact, exact-action-canary, genesis, genesis-pool, paired-confirmation, paired-final, or control-final" >&2
+  *) echo "SCREEN_PROFILE must be distance-possession, possession-gain, possession-gain-exact, exact-action-canary, genesis, genesis-pool, ladder-rung, paired-confirmation, paired-final, or control-final" >&2
      exit 1 ;;
 esac
 
@@ -261,6 +296,20 @@ case "$SCREEN_PROFILE" in
     arms=(s_both)
     seeds=(42)
     ;;
+  ladder-rung)
+    # One rung of the backplay curriculum ladder (6 -> 9 -> 12 -> 0 -> kickoff;
+    # CLAUDE.md, D50/D51/D168) run AS A SCREEN so its accepted checkpoint is
+    # published with an eligible lineage sidecar and can warm-start the next
+    # rung and seed the next pool. tools/launch_ladder_rung.sh could not do
+    # that: eligible lineage is only ever written by materialize_result below,
+    # after the full acceptance gate (all hard-integrity counters zero in both
+    # phases, game floors, schema-2 telemetry), and the rung launcher also ran
+    # with no live integrity guard attached. One arm, one seed, on purpose: a
+    # rung is a lineage step, not a comparison. Deliberately s_both, the same
+    # corrected reward every genesis root and pool bank was minted on.
+    arms=(s_both)
+    seeds=("$LADDER_SEED")
+    ;;
   paired-confirmation)
     arms=(both "$CANDIDATE_ARM" "$CANDIDATE_ARM" both)
     seeds=(42 42 43 43)
@@ -335,6 +384,8 @@ SCREEN_PLAN="$(
       FROZEN_BANK_PCT="$FROZEN_BANK_PCT" \
       NUM_FROZEN_BANKS="$NUM_FROZEN_BANKS" \
       MIN_TRAIN_GAMES="$MIN_TRAIN_GAMES" MIN_EVAL_GAMES="$MIN_EVAL_GAMES" \
+      LADDER_ENDZONE_MAXDIST="$LADDER_ENDZONE_MAXDIST" \
+      LADDER_RESET_PCT="$LADDER_RESET_PCT" \
       "$PYBIN" - "$SCREEN_MANIFEST" <<'PY'
 import datetime, hashlib, json, os, pathlib, subprocess, sys, sysconfig
 
@@ -611,6 +662,15 @@ contract = {
         "vendor_source_sha256": vendor_source_sha,
     },
 }
+if profile == "ladder-rung":
+    # The start distribution is this profile's declared factor. Recorded here so
+    # a rung's SCREEN_MANIFEST says which rung it was without opening the run
+    # manifest; the per-arm launcher binds the same values (plus the state-bank
+    # digest) into the run manifest that the lineage sidecar hashes.
+    contract["ladder"] = {
+        "endzone_maxdist": int(os.environ["LADDER_ENDZONE_MAXDIST"]),
+        "reset_pct": float(os.environ["LADDER_RESET_PCT"]),
+    }
 if profile in ("paired-confirmation", "paired-final"):
     from analyze_reward_candidate_transfer import (
         TransferError, validate_completion_evidence,
@@ -1030,7 +1090,13 @@ PY
   else
     echo "START index=$CURRENT_INDEX/$TOTAL_ARMS arm=$arm seed=$seed steps=$STEPS tag=$tag"
     write_screen_status running 0 "launching arm"
-    env TAG="$tag" REWARD_MANIFEST="$manifest" WARM="$WARM" POOL="$POOL" \
+    LADDER_ENV=()
+    if [ "$SCREEN_PROFILE" = "ladder-rung" ]; then
+      LADDER_ENV=(LADDER_ENDZONE_MAXDIST="$LADDER_ENDZONE_MAXDIST" \
+                  LADDER_RESET_PCT="$LADDER_RESET_PCT")
+    fi
+    env "${LADDER_ENV[@]}" \
+        TAG="$tag" REWARD_MANIFEST="$manifest" WARM="$WARM" POOL="$POOL" \
         BOOTSTRAP_MODE="$BOOTSTRAP_MODE" \
         STEPS="$STEPS" SEED="$seed" LOG="$log" RIG_ALLOW_FLOAT=1 \
         SCREEN_MANIFEST_SHA256="$SCREEN_MANIFEST_SHA" DRY_RUN=0 \
