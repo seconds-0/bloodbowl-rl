@@ -18,8 +18,8 @@ Backplay ladder as one-arm screens (`SCREEN_PROFILE=ladder-rung`, PR #93):
 | stage | rung | reset | warm | pool | state |
 |---|---|---|---|---|---|
 | 0 | sync + rebuild + plan-only | — | — | — | done 2026-08-15 03:40 PDT |
-| 1 | 6 | 0.5 | genesis root gen1042 | genesis pool | **running** since 03:46 PDT |
-| 2 | 9 | 0.5 | rung-6 accepted | 3 newest + rung-6 | queued |
+| 1 | 6 | 0.5 | genesis root gen1042 | genesis pool | **accepted** 15:43 PDT — tds 0.303, bit-exact July replicate (D236) |
+| 2 | 9 | 0.5 | rung-6 accepted | gen1043-45 + rung-6 (`724f9470`) | **running** since 15:50 PDT |
 | 3 | 12 | 0.5 | rung-9 accepted | 3 newest + rung-9 | queued |
 | 4 | 0 (uniform) | 0.5 | rung-12 accepted | promoted | queued |
 | 5 | 0 | 0.25 | uniform accepted | promoted | queued |
