@@ -81,6 +81,12 @@ class LadderRungProfileTests(unittest.TestCase):
               "LADDER_SEED": "42"}, "requires LADDER_RESET_PCT"),
             ({"LADDER_ENDZONE_MAXDIST": "9", "LADDER_RESET_PCT": "0.5",
               "LADDER_SEED": "s42"}, "requires LADDER_SEED"),
+            # A case glob `0.[0-9]*` would accept this; it must not.
+            ({"LADDER_ENDZONE_MAXDIST": "9", "LADDER_RESET_PCT": "0.5garbage",
+              "LADDER_SEED": "42"}, "requires LADDER_RESET_PCT"),
+            # Non-canonical seeds die 5B steps later in checkpoint_lineage.
+            ({"LADDER_ENDZONE_MAXDIST": "9", "LADDER_RESET_PCT": "0.5",
+              "LADDER_SEED": "042"}, "requires LADDER_SEED"),
         ):
             result = run(SCREEN, {**BASE, **knobs})
             self.assertNotEqual(result.returncode, 0, knobs)
@@ -123,14 +129,30 @@ class LadderRungProfileTests(unittest.TestCase):
         # Per-arm launcher receives the knobs from the rung profile only.
         self.assertIn('if [ "$SCREEN_PROFILE" = "ladder-rung" ]; then\n'
                       '      LADDER_ENV=(LADDER_ENDZONE_MAXDIST=', source)
-        self.assertIn('env "${LADDER_ENV[@]}"', source)
+        self.assertIn('env ${LADDER_ENV[@]+"${LADDER_ENV[@]}"}', source)
         # And the SCREEN_MANIFEST contract names the rung.
         self.assertIn('contract["ladder"] = {', source)
         self.assertIn('"endzone_maxdist": int(os.environ["LADDER_ENDZONE_MAXDIST"])',
                       source)
 
+    def test_screen_gates_curriculum_activity_and_manifest_reuse(self):
+        source = SCREEN.read_text(encoding="utf-8")
+        # A rung whose bank never loaded is a kickoff run with clean counters;
+        # the acceptance gate must refuse it rather than publish it as lineage.
+        self.assertIn('"kind": "curriculum_inactive"', source)
+        self.assertIn('observed_demo = phase_metrics["train"].get("demo_episodes")',
+                      source)
+        # A relaunch into an OUT_DIR holding a different plan must fail closed.
+        self.assertIn("SCREEN_MANIFEST.json already exists with a different contract",
+                      source)
+
     def test_rung_launcher_drives_the_screen_profile_not_the_bare_arm(self):
         source = RUNG.read_text(encoding="utf-8")
+        # Reboot-safe: the screen runs in a numbered attempt directory so a dead
+        # partial arm cannot wedge the stage; the marker stays at OUT.
+        self.assertIn("pick_screen_dir()", source)
+        self.assertIn('OUT_DIR="$SCREEN_DIR"', source)
+        self.assertIn('"$OUT/LADDER_RUNG_COMPLETE.json"', source)
         self.assertIn("SCREEN_PROFILE=ladder-rung", source)
         self.assertIn('bash "$C/tools/run_reward_screen.sh"', source)
         self.assertNotIn('bash "$C/tools/run_reward_ablation.sh"', source)

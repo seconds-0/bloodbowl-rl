@@ -138,13 +138,13 @@ case "$SCREEN_PROFILE" in
           exit 1 ;;
       esac
       case "$LADDER_RESET_PCT" in
-        0|0.0|1|1.0|0.[0-9]*) ;;
-        *) echo "ladder-rung requires LADDER_RESET_PCT as a fraction in [0,1]" >&2
+        0|0.0|1|1.0|0.[0-9]|0.[0-9][0-9]|0.[0-9][0-9][0-9]) ;;
+        *) echo "ladder-rung requires LADDER_RESET_PCT as a fraction in [0,1] (at most three decimals)" >&2
            exit 1 ;;
       esac
       case "$LADDER_SEED" in
-        ''|*[!0-9]*)
-          echo "ladder-rung requires LADDER_SEED as a non-negative integer" >&2
+        ''|*[!0-9]*|0[0-9]*)
+          echo "ladder-rung requires LADDER_SEED as a canonical non-negative integer" >&2
           exit 1 ;;
       esac
     fi
@@ -689,7 +689,19 @@ if profile in ("paired-confirmation", "paired-final"):
         raise SystemExit(f"invalid candidate transfer evidence: {exc}") from exc
 
 # A retried screen reuses the plan it already published so its accepted arms
-# keep one manifest identity.
+# keep one manifest identity -- but only if it IS the same plan. The ladder
+# resolves warm/pool at launch time, so a relaunch into an OUT_DIR that holds a
+# different contract must fail here rather than stamp results with a plan that
+# describes another run.
+if destination.exists():
+    existing = json.loads(destination.read_text(encoding="utf-8"))
+    if existing.get("contract") != contract:
+        changed = sorted(
+            key for key in set(existing.get("contract", {})) | set(contract)
+            if existing.get("contract", {}).get(key) != contract.get(key))
+        raise SystemExit(
+            "SCREEN_MANIFEST.json already exists with a different contract "
+            f"(differs in: {', '.join(changed)}); use a fresh OUT_DIR/PREFIX")
 if not destination.exists():
     temporary = destination.with_suffix(destination.suffix + ".tmp")
     temporary.write_text(json.dumps({
@@ -879,6 +891,24 @@ for phase, minimum in (
         failures.append({
             "phase": phase, "kind": "insufficient_games",
             "observed": observed, "minimum": minimum,
+        })
+# A ladder rung is only a rung if the bank actually supplied its starts. The
+# per-arm launcher checks that the bank FILE exists; a bank the env rejects at
+# load (fingerprint mismatch after a bb_match layout change, or zero resumable
+# records) makes every reset a procgen kickoff with all counters clean, so the
+# hard-integrity gate alone would accept a kickoff run as a curriculum
+# checkpoint. demo_episodes is the per-episode fraction of banked starts; at
+# reset_pct p the training phase must show it near p.
+ladder = screen.get("ladder")
+if ladder and float(ladder["reset_pct"]) > 0.0:
+    expected_demo = float(ladder["reset_pct"])
+    observed_demo = phase_metrics["train"].get("demo_episodes")
+    if observed_demo is None or not (
+            expected_demo - 0.15 <= observed_demo <= expected_demo + 0.15):
+        failures.append({
+            "phase": "train", "kind": "curriculum_inactive",
+            "metric": "demo_episodes", "observed": observed_demo,
+            "expected": expected_demo,
         })
 counted_windows = [
     window for window in dashboard_windows(log)
@@ -1095,7 +1125,7 @@ PY
       LADDER_ENV=(LADDER_ENDZONE_MAXDIST="$LADDER_ENDZONE_MAXDIST" \
                   LADDER_RESET_PCT="$LADDER_RESET_PCT")
     fi
-    env "${LADDER_ENV[@]}" \
+    env ${LADDER_ENV[@]+"${LADDER_ENV[@]}"} \
         TAG="$tag" REWARD_MANIFEST="$manifest" WARM="$WARM" POOL="$POOL" \
         BOOTSTRAP_MODE="$BOOTSTRAP_MODE" \
         STEPS="$STEPS" SEED="$seed" LOG="$log" RIG_ALLOW_FLOAT=1 \

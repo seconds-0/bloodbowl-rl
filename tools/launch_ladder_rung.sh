@@ -63,10 +63,42 @@ PREFIX="${PREFIX:-ladder-d${RUNG}-s${SEED}-${STAMP}}"
 OUT="${OUT:-$C/runs/ladder-d${RUNG}-${STAMP}}"
 DEADLINE_HOURS="${DEADLINE_HOURS:-36}"
 TAG="${PREFIX}-s_both-s${SEED}"
-RESULT="$OUT/${TAG}.result.json"
-COMPLETE="$OUT/SCREEN_COMPLETE.json"
 
 mkdir -p "$OUT"
+
+# The screen runs in a numbered sub-directory of OUT so a host reboot or OOM
+# mid-arm -- partial artifacts, no atomic status, no live trainer -- does not
+# wedge the stage forever (the screen refuses such a directory by design). A
+# relaunch reuses the newest attempt directory when it is still recoverable
+# (a live trainer holds its lock, or the arm finished and can be materialized)
+# and otherwise opens the next one. LADDER_RUNG_COMPLETE.json is always
+# published to OUT itself, which is what the campaign supervisor watches.
+pick_screen_dir() {
+    local n=1 dir log
+    while :; do
+        dir="$OUT/screen-attempt$n"
+        log="$dir/${TAG}.log"
+        if [ ! -d "$dir" ]; then printf '%s\n' "$dir"; return; fi
+        if [ -f "$dir/SCREEN_COMPLETE.json" ]; then printf '%s\n' "$dir"; return; fi
+        if [ ! -f "$log" ]; then printf '%s\n' "$dir"; return; fi        # planned, never launched
+        if [ -f "$log.status.json" ]; then printf '%s\n' "$dir"; return; fi   # finished: recover
+        if [ -f "$log.process.json" ]; then
+            local pid
+            pid="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["pid"])' "$log.process.json" 2>/dev/null)"
+            if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+                printf '%s\n' "$dir"; return                          # trainer alive: wait on it
+            fi
+        fi
+        echo "screen attempt dir $dir holds a dead partial arm; opening the next" >&2
+        n=$((n + 1))
+    done
+}
+SCREEN_DIR="$(pick_screen_dir)"
+RESULT="$SCREEN_DIR/${TAG}.result.json"
+COMPLETE="$SCREEN_DIR/SCREEN_COMPLETE.json"
+mkdir -p "$SCREEN_DIR"
+# Stable progress path for the campaign supervisor's staleness probe.
+ln -sfn "$SCREEN_DIR/SCREEN_STATUS.json" "$OUT/SCREEN_STATUS.json"
 
 echo "=== ladder rung ==="
 echo "  prefix $PREFIX"
@@ -77,6 +109,7 @@ echo "  warm   $WARM"
 echo "  pool   $POOL ($EXPECTED_POOL_HASH)"
 echo "  bank   $(sha256sum "$C/vendor/PufferLib/resources/bloodbowl/state_bank.bbs" 2>/dev/null | cut -c1-16)"
 echo "  out    $OUT"
+echo "  screen $SCREEN_DIR"
 
 # The screen blocks until the arm is accepted (or fails closed) and writes
 # SCREEN_COMPLETE.json itself; there is no detached-launch race to guard here.
@@ -84,7 +117,7 @@ echo "  out    $OUT"
 # and the acceptance gate. Bound by a wall-clock deadline so a wedged trainer
 # cannot hold the campaign forever.
 timeout --signal=TERM --kill-after=120 "$((DEADLINE_HOURS * 3600))" \
-  env SCREEN_PROFILE=ladder-rung PREFIX="$PREFIX" OUT_DIR="$OUT" \
+  env SCREEN_PROFILE=ladder-rung PREFIX="$PREFIX" OUT_DIR="$SCREEN_DIR" \
       STEPS="$STEPS" WARM="$WARM" POOL="$POOL" \
       EXPECTED_POOL_HASH="$EXPECTED_POOL_HASH" \
       LADDER_ENDZONE_MAXDIST="$RUNG" LADDER_RESET_PCT="$RESET_PCT" \
