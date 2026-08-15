@@ -1,73 +1,52 @@
-# Status — 2026-07-13
+# Status — 2026-08-15
 
 ## Current verdict
 
-The BB2025 rules/reward/replay audit is complete in the working tree. No reward
-configuration has been promoted to production and no production default was
-changed.
+The obs-v6 / exact-action lineage has its first reproducible scoring policy:
+two independent rung-6 backplay runs (maxdist 6, reset 0.5, `s0_both`,
+genesis pool `f6a6323a`, 5B steps) finished clean in July at tds 0.299 /
+0.303 per episode from curriculum starts, all sixteen hard-integrity counters
+zero in both phases, curves plateaued from ~2.6B on. Neither could advance the
+ladder because the bare rung launcher never published eligible lineage
+(D235). No production reward or default has changed; `s0_both` remains the
+experimental lineage reward.
 
-The repaired paired R0–R3 reward screen completed all eight arms at exact
-`249,954,304` native steps with two seeds, at least 10,001 final-policy eval
-games per arm, frozen provenance, and zero clip/non-finite/error/demo/fallback
-telemetry. Distance shaping supplied nearly all present scoring learnability
-(`+0.76365 TD/game`, `+0.11130` match score), but also increased block volume
-and 2D-red rate. Raw distance delta is a temporary scaffold, not exact PBRS at
-`gamma=0.995`.
+## Live campaign: `week-20260815` (RTX 2070, systemd supervisor)
 
-The R0-versus-R2 held-out scripted transfer completed 16 cells and 16,076 full
-games. Removing possession+gain (R2) made match score worse in all eight paired
-seed/style/side cells and increased losses plus opponent TDs in all eight. R0
-therefore survives as the next experimental baseline, not a production recipe.
+Backplay ladder as one-arm screens (`SCREEN_PROFILE=ladder-rung`, PR #93):
 
-The first 500M possession/gain decomposition arm completed cleanly at runtime
-but was rejected before acceptance because a partially deployed per-arm
-launcher hashed an older five-patch Puffer bundle while the frozen screen
-required seven patches. D181 records the failure. No metric from that arm is a
-reward verdict. The launcher now enforces the frozen bundle before training;
-the screen will restart under a fresh immutable identity after deployment.
+| stage | rung | reset | warm | pool | state |
+|---|---|---|---|---|---|
+| 0 | sync + rebuild + plan-only | — | — | — | done 2026-08-15 03:40 PDT |
+| 1 | 6 | 0.5 | genesis root gen1042 | genesis pool | **running** since 03:46 PDT |
+| 2 | 9 | 0.5 | rung-6 accepted | 3 newest + rung-6 | queued |
+| 3 | 12 | 0.5 | rung-9 accepted | 3 newest + rung-9 | queued |
+| 4 | 0 (uniform) | 0.5 | rung-12 accepted | promoted | queued |
+| 5 | 0 | 0.25 | uniform accepted | promoted | queued |
 
-## Next experiment
+Seed 43 throughout, 5B cap per rung, +3 squares per rung (D51), plateau read
+per D168 between rungs. Progress: `~/bin/bbwatch` from the Mac; artifacts
+under `runs/ladder-d<rung>-20260815/`; supervisor state under
+`runs/campaigns/week-20260815/`.
 
-With distance fixed on, decompose the bundled family:
+## Next after the chain
 
-1. possession annuity + ball gain;
-2. possession annuity only;
-3. ball gain only;
-4. neither.
-
-Run `500M × 2 seeds` under the immutable screen contract. Then compare R0 with
-the simplest transfer-noninferior survivor using learned opponents, both sides,
-roster-grid macro evaluation, longer training, and a second ancestry. Only that
-confirmation path can authorize a default change.
+1. Kickoff graduation (reset 0.25 → 0) and the D50 exam: full-game
+   tournament from kickoff vs the genesis pool + scripted contact bot
+   (`tools/eval_vs_contact_bot.sh` after `training/convert_checkpoint.py`).
+2. Second seed of the whole chain (seed 42) for a replicate before any claim.
+3. Then the reward program resumes on a policy that can score from kickoff:
+   the possession/gain decomposition (D229/D233) is uninterpretable on
+   scoreless policies.
 
 ## Replay and BC state
 
-- Raw manifest: 15,347 replays = 11,580 BB2025 + 3,767 BB2020 by embedded
-  `rulesVersion`.
-- Strict non-empty BB2025 allowlist: 9,118 replays / 1,622,231 joined records.
-- The corpus is severely opening-censored and almost lacks rare action targets;
-  it cannot be the sole source for second halves, late drives, stalling, or
-  comeback policy.
-- `training/bc_pretrain.py` now uses exact allowlists, replay-disjoint splits,
-  bounded memory-mapped streaming, owning minibatches, and batchwise eval.
-- Replay-first is the current default. Next sampling work must stratify
-  roster/matchup, turn/drive depth, and action family while capping setup mass.
-
-## Canonical evidence
-
-- Full report: `docs/reward-and-replay-audit-2026-07-09.md`
-- Screen proof: `runs/reward-screens/reward-screen-20260709-v1/SCREEN_COMPLETE.json`
-- Transfer analysis: `runs/reward-transfer-20260713-v1/ANALYSIS.json`
-- Replay audit and strict allowlist: `runs/replay-audit-20260713/`
-- Durable decisions: D177–D180 in `DECISIONS.md`
+Unchanged since 2026-07-13: 9,118 strict BB2025 replays / 1,622,231 joined
+records; corpus is opening-censored; replay-first sampling is the default.
 
 ## Verification and deployment state
 
-The corrected engine passed 419 normal tests and the same 419 under
-sanitizers. This ship cycle also passed 56 tool/analyzer tests, 24
-replay/streaming/league tests, 6 BC-context tests, 4 checkpoint-conversion
-tests, and the BC regression harness. Core reward/BBTV corrections are merged;
-BBTV is deployed and streams the newest complete manifested checkpoint against
-its hash-pinned warm baseline. No production reward was promoted. Training
-continues only from the isolated RTX 2070 audit checkout; the production viewer
-checkout and isolated float viewer build remain separate.
+Rig checkout `/home/rache/bloodbowl-rl-qualification-candidate-10619e2` at
+`8ecf8a6` (clean `--float` rebuild, drift check OK, genesis root and pool
+re-validated against the rebuilt module). BBTV production checkout untouched.
+Vast credit is exhausted (balance −$2.96); the 2070 is the only trainer.
