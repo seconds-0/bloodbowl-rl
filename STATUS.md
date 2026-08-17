@@ -1,4 +1,4 @@
-# Status — 2026-08-15
+# Status — 2026-08-16
 
 ## Current verdict
 
@@ -19,9 +19,9 @@ Backplay ladder as one-arm screens (`SCREEN_PROFILE=ladder-rung`, PR #93):
 |---|---|---|---|---|---|
 | 0 | sync + rebuild + plan-only | — | — | — | done 2026-08-15 03:40 PDT |
 | 1 | 6 | 0.5 | genesis root gen1042 | genesis pool | **accepted** 15:43 PDT — tds 0.303, bit-exact July replicate (D236) |
-| 2 | 9 | 0.5 | rung-6 accepted | gen1043-45 + rung-6 (`724f9470`) | **running** since 15:50 PDT |
-| 3 | 12 | 0.5 | rung-9 accepted | 3 newest + rung-9 | queued |
-| 4 | 0 (uniform) | 0.5 | rung-12 accepted | promoted | queued |
+| 2 | 9 | 0.5 | rung-6 accepted | gen1043-45 + rung-6 (`724f9470`) | accepted Aug 16 03:40 — tds 0.257, plateau (D237) |
+| 3 | 12 | 0.5 | rung-9 accepted | gen1044-45 + rung-6/9 (`2dd42771`) | accepted Aug 16 15:18 — tds 0.335, STILL CLIMBING at cap (D237) |
+| 4 | 0 (uniform) | 0.5 | rung-12 accepted | gen1045 + rung-6/9/12 (`6cbb53c9`) | **running** since Aug 16 22:18 PDT |
 | 5 | 0 | 0.25 | uniform accepted | promoted | queued |
 
 Seed 43 throughout, 5B cap per rung, +3 squares per rung (D51), plateau read
