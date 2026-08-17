@@ -81,7 +81,16 @@ pick_screen_dir() {
         if [ ! -d "$dir" ]; then printf '%s\n' "$dir"; return; fi
         if [ -f "$dir/SCREEN_COMPLETE.json" ]; then printf '%s\n' "$dir"; return; fi
         if [ ! -f "$log" ]; then printf '%s\n' "$dir"; return; fi        # planned, never launched
-        if [ -f "$log.status.json" ]; then printf '%s\n' "$dir"; return; fi   # finished: recover
+        if [ -f "$log.status.json" ]; then
+            # Finished. A clean exit is recoverable (the screen re-validates
+            # and materializes); a non-zero exit is refused by the screen
+            # forever ("cannot recover failed arm"), so open the next attempt.
+            if python3 -c 'import json,sys; sys.exit(0 if int(json.load(open(sys.argv[1]))["exit_code"])==0 else 1)' "$log.status.json" 2>/dev/null; then
+                printf '%s\n' "$dir"; return
+            fi
+            echo "screen attempt dir $dir holds a failed arm (non-zero status); opening the next" >&2
+            n=$((n + 1)); continue
+        fi
         if [ -f "$log.process.json" ]; then
             local pid
             pid="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["pid"])' "$log.process.json" 2>/dev/null)"
