@@ -45,7 +45,14 @@ LADDER_SEED="${LADDER_SEED:-}"
 # launcher input which could alter optimization, batching, or pool allocation.
 TOTAL_AGENTS=2048
 NUM_BUFFERS=2
-NUM_THREADS=16
+# Env-stepping thread count is a HOST property, not an optimization factor:
+# it changes wall-clock only (the vec batch is TOTAL_AGENTS regardless), so it
+# may be overridden per host. 16 was the RTX 2070 rig's core count; a 32-thread
+# Vast box left half its CPU idle under it. Recorded in every run manifest.
+NUM_THREADS="${NUM_THREADS:-16}"
+case "$NUM_THREADS" in
+  ''|*[!0-9]*|0) echo "NUM_THREADS must be a positive integer" >&2; exit 1 ;;
+esac
 FROZEN_BANK_PCT=0.06
 EXPECT_BYTES=16066560
 LR=0.00028
