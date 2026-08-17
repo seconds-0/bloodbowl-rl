@@ -1,4 +1,4 @@
-# Status — 2026-08-16
+# Status — 2026-08-17
 
 ## Current verdict
 
@@ -21,13 +21,25 @@ Backplay ladder as one-arm screens (`SCREEN_PROFILE=ladder-rung`, PR #93):
 | 1 | 6 | 0.5 | genesis root gen1042 | genesis pool | **accepted** 15:43 PDT — tds 0.303, bit-exact July replicate (D236) |
 | 2 | 9 | 0.5 | rung-6 accepted | gen1043-45 + rung-6 (`724f9470`) | accepted Aug 16 03:40 — tds 0.257, plateau (D237) |
 | 3 | 12 | 0.5 | rung-9 accepted | gen1044-45 + rung-6/9 (`2dd42771`) | accepted Aug 16 15:18 — tds 0.335, STILL CLIMBING at cap (D237) |
-| 4 | 0 (uniform) | 0.5 | rung-12 accepted | gen1045 + rung-6/9/12 (`6cbb53c9`) | **running** since Aug 16 22:18 PDT |
-| 5 | 0 | 0.25 | uniform accepted | promoted | queued |
+| 4 | 0 (uniform) | 0.5 | rung-12 accepted | gen1045 + rung-6/9/12 (`6cbb53c9`) | accepted Aug 17 02:24 — tds 0.272, still climbing → chained |
+| 4b | 0 (uniform, chain) | 0.5 | uniform accepted | rung-6/9/12/uniform (`0c9fb9ae`) | accepted Aug 17 13:5x — **tds 0.483**, still climbing (D238) |
+| 5 | — | — | — | — | rig campaign HALTED; frontier moved to Vast (D238) |
 
 Seed 43 throughout, 5B cap per rung, +3 squares per rung (D51), plateau read
 per D168 between rungs. Progress: `~/bin/bbwatch` from the Mac; artifacts
 under `runs/ladder-d<rung>-20260815/`; supervisor state under
 `runs/campaigns/week-20260815/`.
+
+## Live campaign: `vast-20260817` (Vast bb-ryzen1, Ryzen 9 3950X 32t + RTX 3090, $0.176/hr, ~3× the rig)
+
+| stage | rung | reset | warm | pool | state |
+|---|---|---|---|---|---|
+| 1 | 0 (uniform) | 0.5 | chain accepted (rehosted) | rung-9/12/uniform/chain (`575d58f9`) | **running** since Aug 17 14:06 PDT, threads=30 |
+| 2 | 0 | 0.25 | stage-1 accepted | promoted | queued |
+| 3 | 0 (kickoff) | 0 | stage-2 accepted | promoted | queued |
+
+Watch: `~/bin/vwatch`. Rig watch: `~/bin/bbwatch`. Cross-host moves use
+`checkpoint_lineage.py rehost` (D238).
 
 ## Next after the chain
 
