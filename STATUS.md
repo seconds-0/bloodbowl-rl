@@ -1,4 +1,4 @@
-# Status — 2026-08-17
+# Status — 2026-08-18
 
 ## Current verdict
 
@@ -35,8 +35,8 @@ under `runs/ladder-d<rung>-20260815/`; supervisor state under
 | stage | rung | reset | warm | pool | state |
 |---|---|---|---|---|---|
 | 1 | 0 (uniform) | 0.5 | chain accepted (rehosted) | rung-9/12/uniform/chain (`575d58f9`) | accepted Aug 17 23:01 — **tds 0.530**, still climbing (D239) |
-| 1b | 0 (uniform, chain2) | 0.5 | stage-1 accepted | rung-12/uniform/chain/stage-1 (`f1f423f8`) | **running** since Aug 17 23:01 PDT |
-| 2 | 0 | 0.25 | stage-1 accepted | promoted | queued |
+| 1b | 0 (uniform, chain2) | 0.5 | stage-1 accepted | rung-12/uniform/chain/stage-1 (`f1f423f8`) | accepted Aug 18 06:45 — **tds 0.652**, pickups 0.91, still rising (D240) |
+| 2 | 0 | 0.25 | chain2 accepted | promoted (`e138c936`) | **running** since Aug 18 06:47 PDT; tds ~0.6 at 2.2B from 75% kickoff starts |
 | 3 | 0 (kickoff) | 0 | stage-2 accepted | promoted | queued |
 
 Watch: `~/bin/vwatch`. Rig watch: `~/bin/bbwatch`. Cross-host moves use
