@@ -39,6 +39,12 @@
 #     -- scripted bank: bank (tag-1)'s seat is played by the contact (0) or
 #        offense (1) bot in that bank's envs; forwarded to the screen and
 #        recorded in LADDER_RUNG_COMPLETE.json. 0 = ordinary rung.
+#   LADDER_PROFILE (default ladder-rung; `graft` allowed)
+#     -- graft: this rung is the reviewed lineage bridge across a build change
+#        (SCREEN_PROFILE=graft). Requires GRAFT_FROM_SOURCE_SHA256,
+#        GRAFT_FROM_PATCH_BUNDLE_SHA256 and GRAFT_REASON, forwarded to the
+#        screen. Same one-arm shape and tag, so the completion marker is
+#        published exactly like a rung's, plus the graft declaration.
 
 set -uo pipefail
 
@@ -68,6 +74,37 @@ OUT="${OUT:-$C/runs/ladder-d${RUNG}-${STAMP}}"
 DEADLINE_HOURS="${DEADLINE_HOURS:-36}"
 SCRIPTED_BANK_TAG="${SCRIPTED_BANK_TAG:-0}"
 SCRIPTED_BOT_TYPE="${SCRIPTED_BOT_TYPE:-0}"
+LADDER_PROFILE="${LADDER_PROFILE:-ladder-rung}"
+GRAFT_FROM_SOURCE_SHA256="${GRAFT_FROM_SOURCE_SHA256:-}"
+GRAFT_FROM_PATCH_BUNDLE_SHA256="${GRAFT_FROM_PATCH_BUNDLE_SHA256:-}"
+GRAFT_REASON="${GRAFT_REASON:-}"
+case "$LADDER_PROFILE" in
+  ladder-rung)
+    if [ -n "$GRAFT_FROM_SOURCE_SHA256$GRAFT_FROM_PATCH_BUNDLE_SHA256$GRAFT_REASON" ]; then
+      echo "GRAFT_FROM_SOURCE_SHA256/GRAFT_FROM_PATCH_BUNDLE_SHA256/GRAFT_REASON require LADDER_PROFILE=graft" >&2
+      exit 1
+    fi
+    ;;
+  graft)
+    : "${GRAFT_FROM_SOURCE_SHA256:?GRAFT_FROM_SOURCE_SHA256 is required for LADDER_PROFILE=graft}"
+    : "${GRAFT_FROM_PATCH_BUNDLE_SHA256:?GRAFT_FROM_PATCH_BUNDLE_SHA256 is required for LADDER_PROFILE=graft}"
+    : "${GRAFT_REASON:?GRAFT_REASON is required for LADDER_PROFILE=graft}"
+    ;;
+  *)
+    echo "LADDER_PROFILE must be ladder-rung or graft, got '$LADDER_PROFILE'" >&2
+    exit 1
+    ;;
+esac
+# The screen refuses GRAFT_* on any profile but graft, so forward them only
+# there; the shared knobs go on both.
+GRAFT_ENV=()
+if [ "$LADDER_PROFILE" = "graft" ]; then
+  GRAFT_ENV=(GRAFT_FROM_SOURCE_SHA256="$GRAFT_FROM_SOURCE_SHA256" \
+             GRAFT_FROM_PATCH_BUNDLE_SHA256="$GRAFT_FROM_PATCH_BUNDLE_SHA256" \
+             GRAFT_REASON="$GRAFT_REASON")
+fi
+# Both profiles are one s_both arm at SEED, so the result/marker naming below
+# is identical for a rung and a graft.
 TAG="${PREFIX}-s_both-s${SEED}"
 
 mkdir -p "$OUT"
@@ -123,6 +160,9 @@ echo "  seed   $SEED"
 echo "  warm   $WARM"
 echo "  pool   $POOL ($EXPECTED_POOL_HASH)"
 echo "  bot    scripted_bank_tag=$SCRIPTED_BANK_TAG scripted_bot_type=$SCRIPTED_BOT_TYPE"
+echo "  profile $LADDER_PROFILE"
+[ "$LADDER_PROFILE" != "graft" ] || \
+  echo "  graft  from source=$GRAFT_FROM_SOURCE_SHA256 patch=$GRAFT_FROM_PATCH_BUNDLE_SHA256 reason=$GRAFT_REASON"
 echo "  bank   $(sha256sum "$C/vendor/PufferLib/resources/bloodbowl/state_bank.bbs" 2>/dev/null | cut -c1-16)"
 echo "  out    $OUT"
 echo "  screen $SCREEN_DIR"
@@ -133,7 +173,8 @@ echo "  screen $SCREEN_DIR"
 # and the acceptance gate. Bound by a wall-clock deadline so a wedged trainer
 # cannot hold the campaign forever.
 timeout --signal=TERM --kill-after=120 "$((DEADLINE_HOURS * 3600))" \
-  env SCREEN_PROFILE=ladder-rung PREFIX="$PREFIX" OUT_DIR="$SCREEN_DIR" \
+  env ${GRAFT_ENV[@]+"${GRAFT_ENV[@]}"} \
+      SCREEN_PROFILE="$LADDER_PROFILE" PREFIX="$PREFIX" OUT_DIR="$SCREEN_DIR" \
       STEPS="$STEPS" WARM="$WARM" POOL="$POOL" \
       EXPECTED_POOL_HASH="$EXPECTED_POOL_HASH" \
       LADDER_ENDZONE_MAXDIST="$RUNG" LADDER_RESET_PCT="$RESET_PCT" \
@@ -156,10 +197,13 @@ fi
 # checkpoint path recorded here is the one whose lineage sidecar was written.
 python3 - "$RESULT" "$OUT/LADDER_RUNG_COMPLETE.json" "$RUNG" "$RESET_PCT" \
     "$STEPS" "$SEED" "$WARM" "$EXPECTED_POOL_HASH" "$PREFIX" \
-    "$SCRIPTED_BANK_TAG" "$SCRIPTED_BOT_TYPE" <<'PY'
+    "$SCRIPTED_BANK_TAG" "$SCRIPTED_BOT_TYPE" "$LADDER_PROFILE" \
+    "$GRAFT_FROM_SOURCE_SHA256" "$GRAFT_FROM_PATCH_BUNDLE_SHA256" \
+    "$GRAFT_REASON" <<'PY'
 import json, sys
 (result_path, out_path, rung, reset_pct, steps, seed, warm, pool_hash, prefix,
- scripted_bank_tag, scripted_bot_type) = sys.argv[1:]
+ scripted_bank_tag, scripted_bot_type, profile, graft_source, graft_patch,
+ graft_reason) = sys.argv[1:]
 result = json.load(open(result_path, encoding="utf-8"))
 if not result.get("acceptance_pass"):
     raise SystemExit(f"result is not accepted: {result_path}")
@@ -181,7 +225,14 @@ payload = {
     "checkpoint_lineage_sha256": result["checkpoint_lineage_sha256"],
     "result": result_path,
     "trainer_exit": 0,
+    "profile": profile,
 }
+if profile == "graft":
+    payload["graft"] = {
+        "from_source_sha256": graft_source,
+        "from_patch_bundle_sha256": graft_patch,
+        "reason": graft_reason,
+    }
 with open(out_path, "w", encoding="utf-8") as handle:
     json.dump(payload, handle, indent=2, sort_keys=True)
     handle.write("\n")

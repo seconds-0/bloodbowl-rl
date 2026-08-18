@@ -227,6 +227,66 @@ class LadderRungProfileTests(unittest.TestCase):
         self.assertIn('[ -z "${SCRIPTED_BOT_TYPE:-}" ] || export SCRIPTED_BOT_TYPE',
                       stage)
 
+    def _rung_env(self, **over):
+        env = os.environ.copy()
+        for key in list(env):
+            if key.startswith(("LADDER_", "GRAFT_", "SCRIPTED_")):
+                env.pop(key)
+        env.update({"C": str(ROOT), "RUNG": "9", "WARM": "missing.bin",
+                    "POOL": "missing-pool", "EXPECTED_POOL_HASH": "0" * 64,
+                    "OUT": "/nonexistent/never-created"})
+        env.update(over)
+        return env
+
+    def _run_rung(self, **over):
+        return subprocess.run(
+            ["bash", str(RUNG)], cwd=ROOT, env=self._rung_env(**over), text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False,
+            timeout=60)
+
+    def test_rung_launcher_validates_ladder_profile_and_graft_declaration(self):
+        result = self._run_rung(LADDER_PROFILE="bogus")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("LADDER_PROFILE must be ladder-rung or graft", result.stdout)
+        # Default profile refuses a stray graft declaration.
+        for knob in ("GRAFT_FROM_SOURCE_SHA256", "GRAFT_REASON"):
+            result = self._run_rung(**{knob: "x"})
+            self.assertNotEqual(result.returncode, 0, knob)
+            self.assertIn("require LADDER_PROFILE=graft", result.stdout, knob)
+        # graft requires all three.
+        for missing, message in (
+            ("GRAFT_FROM_SOURCE_SHA256", "GRAFT_FROM_SOURCE_SHA256 is required"),
+            ("GRAFT_FROM_PATCH_BUNDLE_SHA256",
+             "GRAFT_FROM_PATCH_BUNDLE_SHA256 is required"),
+            ("GRAFT_REASON", "GRAFT_REASON is required"),
+        ):
+            declared = {"GRAFT_FROM_SOURCE_SHA256": "a" * 64,
+                        "GRAFT_FROM_PATCH_BUNDLE_SHA256": "b" * 64,
+                        "GRAFT_REASON": "D242"}
+            declared.pop(missing)
+            result = self._run_rung(LADDER_PROFILE="graft", **declared)
+            self.assertNotEqual(result.returncode, 0, missing)
+            self.assertIn(message, result.stdout, missing)
+
+    def test_rung_launcher_forwards_the_profile_and_graft_and_marks_the_same_result(self):
+        source = RUNG.read_text(encoding="utf-8")
+        self.assertIn('LADDER_PROFILE="${LADDER_PROFILE:-ladder-rung}"', source)
+        self.assertIn('SCREEN_PROFILE="$LADDER_PROFILE"', source)
+        self.assertNotIn("env SCREEN_PROFILE=ladder-rung", source)
+        self.assertIn('env ${GRAFT_ENV[@]+"${GRAFT_ENV[@]}"}', source)
+        self.assertIn('GRAFT_REASON="$GRAFT_REASON")', source)
+        # One TAG for both profiles: the screen names a graft arm exactly like
+        # a rung arm (s_both at SEED), so RESULT/COMPLETE resolve unchanged and
+        # LADDER_RUNG_COMPLETE.json is published the same way.
+        self.assertEqual(source.count('TAG="${PREFIX}-s_both-s${SEED}"'), 1)
+        self.assertIn('RESULT="$SCREEN_DIR/${TAG}.result.json"', source)
+        self.assertIn('"profile": profile,', source)
+        self.assertIn('if profile == "graft":\n    payload["graft"] = {', source)
+        stage = (ROOT / "tools/ladder_stage.sh").read_text(encoding="utf-8")
+        for knob in ("LADDER_PROFILE", "GRAFT_FROM_SOURCE_SHA256",
+                     "GRAFT_FROM_PATCH_BUNDLE_SHA256", "GRAFT_REASON"):
+            self.assertIn(f'[ -z "${{{knob}:-}}" ] || export {knob}', stage)
+
     def test_rung_launcher_refuses_missing_inputs_before_launch(self):
         env = os.environ.copy()
         for key in ("RUNG", "WARM", "POOL", "EXPECTED_POOL_HASH"):
