@@ -355,5 +355,114 @@ class CheckpointLineageTests(unittest.TestCase):
                         self.checkpoint, self.run_manifest)
 
 
+    def _eligible(self):
+        manifest = json.loads(self.run_manifest.read_text(encoding="utf-8"))
+        manifest["qualification_only"] = "0"
+        manifest["initialization"] = "lineage-v6"
+        manifest["mode"] = "native_static_pool_reward_ablation"
+        manifest["warm_lineage_sha256"] = "5" * 64
+        manifest["pool_lineage_bundle_sha256"] = "6" * 64
+        self.run_manifest.write_text(
+            json.dumps(manifest, sort_keys=True) + "\n", encoding="utf-8")
+        payload = checkpoint_lineage.lineage_from_run_manifest(
+            self.checkpoint, self.run_manifest,
+            allow_eligible_publication=True)
+        sidecar = checkpoint_lineage.sidecar_path(self.checkpoint)
+        checkpoint_lineage.write_lineage(sidecar, payload)
+        return payload, sidecar
+
+    def test_rehost_rebinds_only_the_module_and_records_ancestry(self):
+        payload, sidecar = self._eligible()
+        module = self.root / "_C.so"
+        module.write_bytes(b"other-host-build")
+        rehosted = checkpoint_lineage.rehost_lineage(
+            self.checkpoint, sidecar=sidecar, target_module=module,
+            target_source_sha256="1" * 64,
+            target_patch_bundle_sha256="3" * 64)
+        self.assertEqual(rehosted["implementation"]["compiled_module_sha256"],
+                         digest(module.read_bytes()))
+        self.assertEqual(rehosted["implementation"]["source_sha256"], "1" * 64)
+        self.assertEqual(rehosted["ancestry"]["rehosted_from"],
+                         checkpoint_lineage.lineage_digest(payload))
+        # Everything else is preserved verbatim.
+        for section in ("compatibility", "producer"):
+            self.assertEqual(rehosted[section], payload[section])
+        self.assertEqual(rehosted["checkpoint"], payload["checkpoint"])
+        # And the rehosted sidecar validates against the NEW module, not the old.
+        out = self.root / "rehosted.lineage.json"
+        checkpoint_lineage.write_lineage(out, rehosted)
+        observed = checkpoint_lineage.validate_lineage(
+            self.checkpoint, out, expected={
+                "source_sha256": "1" * 64,
+                "compiled_module_sha256": digest(module.read_bytes()),
+                "puffer_patch_bundle_sha256": "3" * 64,
+            }, require_eligible=True)
+        self.assertEqual(observed, rehosted)
+        with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                    "compiled_module_sha256 lineage mismatch"):
+            checkpoint_lineage.validate_lineage(
+                self.checkpoint, out, expected=self.expected(),
+                require_eligible=True)
+
+    def test_rehost_refuses_source_or_patch_drift_and_qualification(self):
+        payload, sidecar = self._eligible()
+        module = self.root / "_C.so"
+        module.write_bytes(b"other-host-build")
+        with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                    "environment source differs"):
+            checkpoint_lineage.rehost_lineage(
+                self.checkpoint, sidecar=sidecar, target_module=module,
+                target_source_sha256="9" * 64,
+                target_patch_bundle_sha256="3" * 64)
+        with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                    "patch bundle differs"):
+            checkpoint_lineage.rehost_lineage(
+                self.checkpoint, sidecar=sidecar, target_module=module,
+                target_source_sha256="1" * 64,
+                target_patch_bundle_sha256="9" * 64)
+        # Same module -> no-op refused (nothing to rehost).
+        same = self.root / "same.so"
+        same.write_bytes(b"x")
+        payload2 = json.loads(json.dumps(payload))
+        payload2["implementation"]["compiled_module_sha256"] = digest(b"x")
+        side2 = self.root / "same.lineage.json"
+        checkpoint_lineage.write_lineage(side2, payload2)
+        with self.assertRaisesRegex(checkpoint_lineage.LineageError, "no-op"):
+            checkpoint_lineage.rehost_lineage(
+                self.checkpoint, sidecar=side2, target_module=same,
+                target_source_sha256="1" * 64,
+                target_patch_bundle_sha256="3" * 64)
+        # A qualification-only (ineligible) sidecar can never be rehosted.
+        self.run_manifest.write_text(json.dumps({
+            **json.loads(self.run_manifest.read_text(encoding="utf-8")),
+            "qualification_only": "1", "initialization": "fresh",
+            "mode": "native_fresh_v6_qualification",
+            "warm_lineage_sha256": "", "pool_lineage_bundle_sha256": "",
+        }, sort_keys=True) + "\n", encoding="utf-8")
+        qual = checkpoint_lineage.lineage_from_run_manifest(
+            self.checkpoint, self.run_manifest)
+        qside = self.root / "qual.lineage.json"
+        checkpoint_lineage.write_lineage(qside, qual)
+        with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                    "not eligible ancestry"):
+            checkpoint_lineage.rehost_lineage(
+                self.checkpoint, sidecar=qside, target_module=module,
+                target_source_sha256="1" * 64,
+                target_patch_bundle_sha256="3" * 64)
+
+    def test_rehost_cannot_ride_a_substituted_checkpoint(self):
+        _, sidecar = self._eligible()
+        module = self.root / "_C.so"
+        module.write_bytes(b"other-host-build")
+        self.checkpoint.write_bytes(b"tampered" + b"\0" * (
+            checkpoint_lineage.EXPECTED_CHECKPOINT_BYTES - len(b"tampered")))
+        with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                    "SHA-256 differs"):
+            checkpoint_lineage.rehost_lineage(
+                self.checkpoint, sidecar=sidecar, target_module=module,
+                target_source_sha256="1" * 64,
+                target_patch_bundle_sha256="3" * 64)
+
+
 if __name__ == "__main__":
     unittest.main()

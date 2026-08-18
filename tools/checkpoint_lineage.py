@@ -271,6 +271,49 @@ def write_lineage(path, payload, replace=False):
     return path
 
 
+def rehost_lineage(checkpoint, *, target_module, target_source_sha256,
+                   target_patch_bundle_sha256, sidecar=None):
+    """Re-bind an ELIGIBLE sidecar to a different compiled module.
+
+    A checkpoint moved between hosts is validated against that host's build,
+    and every eligibility check binds `compiled_module_sha256`. Two builds of
+    the SAME environment source under the SAME Puffer patch stack differ only
+    in compiler output, so a rehost is legitimate exactly when
+    `source_sha256` and `puffer_patch_bundle_sha256` are byte-identical to
+    the target's; the module digest is the one field that may change. The
+    original sidecar's digest is recorded as `ancestry.rehosted_from` so the
+    provenance chain stays auditable, and the checkpoint bytes are re-hashed
+    so a substituted blob cannot ride the rehost.
+    """
+    checkpoint = Path(checkpoint)
+    payload = validate_lineage(checkpoint, sidecar, require_eligible=True)
+    target_module = Path(target_module)
+    if not target_module.is_file():
+        raise LineageError(f"missing target module: {target_module}")
+    _need_sha(target_source_sha256, "target_source_sha256")
+    _need_sha(target_patch_bundle_sha256, "target_patch_bundle_sha256")
+    implementation = payload["implementation"]
+    if implementation["source_sha256"] != target_source_sha256:
+        raise LineageError(
+            "rehost refused: environment source differs from the target build "
+            f"({implementation['source_sha256'][:12]} != "
+            f"{target_source_sha256[:12]}); that is a new lineage, not a rehost")
+    if implementation["puffer_patch_bundle_sha256"] != target_patch_bundle_sha256:
+        raise LineageError(
+            "rehost refused: Puffer patch bundle differs from the target build "
+            f"({implementation['puffer_patch_bundle_sha256'][:12]} != "
+            f"{target_patch_bundle_sha256[:12]}); that is a new lineage, not a rehost")
+    target_module_sha = sha256_file(target_module)
+    if target_module_sha == implementation["compiled_module_sha256"]:
+        raise LineageError("rehost is a no-op: the target module is already bound")
+    rehosted = json.loads(json.dumps(payload))
+    rehosted["implementation"]["compiled_module_sha256"] = target_module_sha
+    rehosted["ancestry"]["rehosted_from"] = lineage_digest(payload)
+    rehosted["checkpoint"]["sha256"] = sha256_file(checkpoint)
+    rehosted["checkpoint"]["bytes"] = checkpoint.stat().st_size
+    return rehosted
+
+
 def validate_lineage(checkpoint, sidecar=None, *, expected=None,
                      require_eligible=True):
     checkpoint = Path(checkpoint)
@@ -401,6 +444,10 @@ def validate_lineage(checkpoint, sidecar=None, *, expected=None,
     elif qualification_only or not eligible or not warm_lineage or not pool_lineage:
         raise LineageError(
             "lineage-v6 must be eligible and bind warm/pool ancestry")
+    if "rehosted_from" in ancestry:
+        _need_sha(ancestry.get("rehosted_from"), "ancestry.rehosted_from")
+        if initialization == "fresh" and ancestry.get("mode") != "native_fresh_v6_genesis":
+            raise LineageError("only eligible lineage may be rehosted")
     if require_eligible and not eligible:
         raise LineageError("qualification-only checkpoint is not eligible ancestry")
     return payload
@@ -440,9 +487,27 @@ def main(argv=None):
     validate.add_argument("--lineage")
     validate.add_argument("--expect", action="append", default=[])
     validate.add_argument("--allow-qualification", action="store_true")
+    rehost = subparsers.add_parser(
+        "rehost", help="re-bind an eligible sidecar to another build of the "
+        "same source + patch bundle (writes <out>, default in place)")
+    rehost.add_argument("--checkpoint", required=True)
+    rehost.add_argument("--lineage")
+    rehost.add_argument("--target-module", required=True)
+    rehost.add_argument("--target-source-sha256", required=True)
+    rehost.add_argument("--target-patch-bundle-sha256", required=True)
+    rehost.add_argument("--out")
     args = parser.parse_args(argv)
     try:
-        if args.command == "create":
+        if args.command == "rehost":
+            payload = rehost_lineage(
+                args.checkpoint, sidecar=args.lineage,
+                target_module=args.target_module,
+                target_source_sha256=args.target_source_sha256,
+                target_patch_bundle_sha256=args.target_patch_bundle_sha256)
+            output = Path(args.out) if args.out else sidecar_path(args.checkpoint)
+            write_lineage(output, payload, replace=True)
+            print(lineage_digest(payload), output)
+        elif args.command == "create":
             payload = lineage_from_run_manifest(
                 args.checkpoint, args.run_manifest)
             output = Path(args.out) if args.out else sidecar_path(args.checkpoint)
