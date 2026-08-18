@@ -24,11 +24,11 @@ RUNG = ROOT / "tools/launch_ladder_rung.sh"
 
 
 def run(script, env):
-    merged = os.environ.copy()
-    for key in ("LADDER_ENDZONE_MAXDIST", "LADDER_RESET_PCT", "LADDER_SEED",
-                "SCRIPTED_BANK_TAG", "SCRIPTED_BOT_TYPE",
-                "WARM", "POOL", "CANDIDATE_ARM"):
-        merged.pop(key, None)
+    merged = {k: v for k, v in os.environ.items()
+              if not k.startswith(("LADDER_", "SCRIPTED_", "GRAFT_"))
+              and k not in ("WARM", "POOL", "CANDIDATE_ARM", "STEPS",
+                            "SCREEN_PROFILE", "EXPECTED_POOL_HASH", "PREFIX",
+                            "OUT_DIR")}
     merged.update(env)
     return subprocess.run(
         ["bash", str(script)], cwd=ROOT, env=merged, text=True,

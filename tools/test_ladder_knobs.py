@@ -20,7 +20,11 @@ LAUNCHER = ROOT / "tools" / "run_reward_ablation.sh"
 
 
 def run(**knobs) -> subprocess.CompletedProcess:
-    env = dict(os.environ)
+    # Scrub every launcher knob so an operator's shell cannot leak into a test.
+    env = {k: v for k, v in os.environ.items()
+           if not k.startswith(("LADDER_", "SCRIPTED_", "GRAFT_"))
+           and k not in ("WARM", "POOL", "BOOTSTRAP_MODE", "EXPECTED_POOL_HASH",
+                         "TAG", "REWARD_MANIFEST", "STEPS", "SEED")}
     # Enough to get past the required-variable checks and reach the knobs.
     env.setdefault("TAG", "ladder-knob-test")
     env.setdefault("REWARD_MANIFEST", str(ROOT / "puffer/config/rewards/s0_both.json"))
