@@ -34,7 +34,8 @@ under `runs/ladder-d<rung>-20260815/`; supervisor state under
 
 | stage | rung | reset | warm | pool | state |
 |---|---|---|---|---|---|
-| 1 | 0 (uniform) | 0.5 | chain accepted (rehosted) | rung-9/12/uniform/chain (`575d58f9`) | **running** since Aug 17 14:06 PDT, threads=30 |
+| 1 | 0 (uniform) | 0.5 | chain accepted (rehosted) | rung-9/12/uniform/chain (`575d58f9`) | accepted Aug 17 23:01 — **tds 0.530**, still climbing (D239) |
+| 1b | 0 (uniform, chain2) | 0.5 | stage-1 accepted | rung-12/uniform/chain/stage-1 (`f1f423f8`) | **running** since Aug 17 23:01 PDT |
 | 2 | 0 | 0.25 | stage-1 accepted | promoted | queued |
 | 3 | 0 (kickoff) | 0 | stage-2 accepted | promoted | queued |
 
