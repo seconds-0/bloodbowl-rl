@@ -8,12 +8,14 @@
 # lineage-v6 additionally requires WARM and POOL with eligible obs-v6 lineage
 # sidecars. fresh-v6-qualification forbids both inputs.
 # graft-v6 is lineage-v6 across a reviewed source/patch-bundle change: the
-# warm/pool sidecars are validated against their OWN recorded implementation
-# (internally consistent + eligible) instead of this build's, and the operator
-# declares what is being grafted from with GRAFT_FROM_SOURCE_SHA256 and
-# GRAFT_FROM_PATCH_BUNDLE_SHA256, which MUST equal what the warm sidecar
-# records. The run manifest carries graft_from_* so the published sidecar
-# records ancestry.grafted_from (tools/checkpoint_lineage.py).
+# warm/pool sidecars are validated as internally consistent + eligible on
+# their OWN recorded implementation, and each must then bind EITHER this build
+# exactly OR the old build the operator declares with GRAFT_FROM_SOURCE_SHA256
+# + GRAFT_FROM_PATCH_BUNDLE_SHA256 (any module); at least one must be old-build
+# and all old-build sidecars must share one module (checkpoint_lineage
+# .graft_bridge -- the same rule the screen plan writer applies). GRAFT_REASON
+# (e.g. "D242") is required. The run manifest carries graft_from_* and
+# graft_reason so the published sidecar records ancestry.grafted_from.
 #
 # Optional:
 #   STEPS=250000000 SEED=42 LOG=/tmp/$TAG.log
@@ -163,6 +165,7 @@ case "$BOOTSTRAP_MODE" in
     : "${POOL:?POOL is required for graft-v6}"
     : "${GRAFT_FROM_SOURCE_SHA256:?GRAFT_FROM_SOURCE_SHA256 is required for graft-v6}"
     : "${GRAFT_FROM_PATCH_BUNDLE_SHA256:?GRAFT_FROM_PATCH_BUNDLE_SHA256 is required for graft-v6}"
+    : "${GRAFT_REASON:?GRAFT_REASON is required for graft-v6 (e.g. the DECISIONS.md entry)}"
     QUALIFICATION_ONLY=0
     ;;
   *)
@@ -179,6 +182,7 @@ case "$BOOTSTRAP_MODE" in
 esac
 GRAFT_FROM_SOURCE_SHA256="${GRAFT_FROM_SOURCE_SHA256:-}"
 GRAFT_FROM_PATCH_BUNDLE_SHA256="${GRAFT_FROM_PATCH_BUNDLE_SHA256:-}"
+GRAFT_REASON="${GRAFT_REASON:-}"
 if [ "$BOOTSTRAP_MODE" = "graft-v6" ]; then
   for digest_name in GRAFT_FROM_SOURCE_SHA256 GRAFT_FROM_PATCH_BUNDLE_SHA256; do
     digest="${!digest_name}"
@@ -187,8 +191,12 @@ if [ "$BOOTSTRAP_MODE" = "graft-v6" ]; then
       exit 1
     fi
   done
-elif [ -n "$GRAFT_FROM_SOURCE_SHA256$GRAFT_FROM_PATCH_BUNDLE_SHA256" ]; then
-  echo "GRAFT_FROM_SOURCE_SHA256/GRAFT_FROM_PATCH_BUNDLE_SHA256 are only valid with BOOTSTRAP_MODE=graft-v6" >&2
+  if [ -z "${GRAFT_REASON// /}" ] || [ "${#GRAFT_REASON}" -gt 200 ]; then
+    echo "GRAFT_REASON must be a non-empty string of at most 200 characters" >&2
+    exit 1
+  fi
+elif [ -n "$GRAFT_FROM_SOURCE_SHA256$GRAFT_FROM_PATCH_BUNDLE_SHA256$GRAFT_REASON" ]; then
+  echo "GRAFT_FROM_SOURCE_SHA256/GRAFT_FROM_PATCH_BUNDLE_SHA256/GRAFT_REASON are only valid with BOOTSTRAP_MODE=graft-v6" >&2
   exit 1
 fi
 
@@ -666,13 +674,14 @@ VENDOR_SOURCE_HASH="$({
 GRAFT_FROM_MODULE_SHA256=""
 if [ "$POOL_MODE" = "1" ]; then
   # lineage-v6: every sidecar must bind THIS build's source/module/patch
-  # digests. graft-v6: the warm/pool were produced on an OLD build, so each
-  # sidecar is validated as internally consistent + eligible on its OWN
-  # recorded implementation, and the warm's recorded source/patch digests must
-  # equal what the operator declared with GRAFT_FROM_*; the warm's recorded
-  # module digest becomes graft_from_module_sha256. A "graft" onto the
-  # identical build is refused here rather than at publication (5B steps later,
-  # where checkpoint_lineage would refuse it as a no-op).
+  # digests. graft-v6: each sidecar is validated as internally consistent +
+  # eligible on its OWN recorded implementation, then checkpoint_lineage
+  # .graft_bridge requires every one of {warm, bank0..3} to bind either this
+  # build exactly or the declared old build (GRAFT_FROM_*, any module), with at
+  # least one old-build sidecar (else it is a no-op / rehost, refused here
+  # rather than 5B steps later at publication) and one shared old module,
+  # which becomes graft_from_module_sha256. The screen plan writer applies the
+  # identical function.
   read -r WARM_LINEAGE_HASH POOL_LINEAGE_BUNDLE_HASH GRAFT_FROM_MODULE_SHA256 < <(
     "$PYBIN" - "$ROOT" "$WARM" "$POOL" "$SOURCE_HASH" \
       "$MODULE_HASH" "$PATCH_HASH" "$BOOTSTRAP_MODE" \
@@ -683,34 +692,20 @@ import hashlib, json, pathlib, sys
 sys.path.insert(0, str(pathlib.Path(root) / "tools"))
 from checkpoint_lineage import lineage_digest, sidecar_path, validate_lineage
 
+from checkpoint_lineage import LineageError, graft_bridge
+
 graft = mode == "graft-v6"
-expected = None if graft else {
+current = {
     "source_sha256": source_sha,
     "compiled_module_sha256": module_sha,
     "puffer_patch_bundle_sha256": patch_sha,
 }
+expected = None if graft else current
 warm = pathlib.Path(warm_path)
 warm_payload = validate_lineage(
     warm, sidecar_path(warm), expected=expected, require_eligible=True)
 graft_module = ""
-if graft:
-    recorded = warm_payload["implementation"]
-    if recorded["source_sha256"] != graft_source:
-        raise SystemExit(
-            "graft refused: warm sidecar records source "
-            f"{recorded['source_sha256']}, GRAFT_FROM_SOURCE_SHA256 declares "
-            f"{graft_source}")
-    if recorded["puffer_patch_bundle_sha256"] != graft_patch:
-        raise SystemExit(
-            "graft refused: warm sidecar records patch bundle "
-            f"{recorded['puffer_patch_bundle_sha256']}, "
-            f"GRAFT_FROM_PATCH_BUNDLE_SHA256 declares {graft_patch}")
-    graft_module = recorded["compiled_module_sha256"]
-    if (graft_source == source_sha and graft_patch == patch_sha
-            and graft_module == module_sha):
-        raise SystemExit(
-            "graft refused as a no-op: the warm sidecar already binds this "
-            "build; use BOOTSTRAP_MODE=lineage-v6")
+graft_sidecars = [("warm", warm_payload)]
 pool = pathlib.Path(pool_path)
 manifest = json.loads((pool / "league_seeds.json").read_text(encoding="utf-8"))
 identities = []
@@ -722,6 +717,7 @@ for index, seed in enumerate(manifest["seeds"]):
     payload_sha = lineage_digest(payload)
     if payload_sha != seed["lineage_sha256"]:
         raise SystemExit(f"pool bank {index} lineage digest differs from manifest")
+    graft_sidecars.append((f"pool bank {index}", payload))
     identities.append({
         "bank": index,
         "checkpoint_sha256": hashlib.sha256(checkpoint.read_bytes()).hexdigest(),
@@ -729,6 +725,13 @@ for index, seed in enumerate(manifest["seeds"]):
     })
 bundle = hashlib.sha256(json.dumps(
     identities, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+if graft:
+    try:
+        graft_module = graft_bridge(
+            graft_sidecars, current=current, old_source_sha256=graft_source,
+            old_patch_bundle_sha256=graft_patch)
+    except LineageError as exc:
+        raise SystemExit(str(exc)) from exc
 print(lineage_digest(warm_payload), bundle, graft_module or "-")
 PY
   )
@@ -746,7 +749,7 @@ echo "native_precision_bytes=$precision total_agents=$TOTAL_AGENTS buffers=$NUM_
 echo "lr=$LR ent_coef=$ENT_COEF gamma=$GAMMA gae_lambda=$GAE_LAMBDA replay_ratio=$REPLAY_RATIO log=$LOG"
 echo "scripted_bank_tag=$SCRIPTED_BANK_TAG scripted_bot_type=$SCRIPTED_BOT_TYPE"
 [ "$BOOTSTRAP_MODE" != "graft-v6" ] || \
-  echo "graft_from source_sha256=$GRAFT_FROM_SOURCE_SHA256 patch_bundle_sha256=$GRAFT_FROM_PATCH_BUNDLE_SHA256 module_sha256=$GRAFT_FROM_MODULE_SHA256 warm_lineage_sha256=$WARM_LINEAGE_HASH"
+  echo "graft_from source_sha256=$GRAFT_FROM_SOURCE_SHA256 patch_bundle_sha256=$GRAFT_FROM_PATCH_BUNDLE_SHA256 module_sha256=$GRAFT_FROM_MODULE_SHA256 warm_lineage_sha256=$WARM_LINEAGE_HASH reason=$GRAFT_REASON"
 
 CMD=(env PUFFER_CUDA_RUNTIME_MANIFEST="$RUN_MANIFEST" \
   PUFFER_CUDA_RUNTIME_EVIDENCE="$CUDA_RUNTIME_EVIDENCE" \
@@ -868,6 +871,7 @@ if [ "$BOOTSTRAP_MODE" = "graft-v6" ]; then
     graft_from_module_sha256 "$GRAFT_FROM_MODULE_SHA256"
     graft_from_patch_bundle_sha256 "$GRAFT_FROM_PATCH_BUNDLE_SHA256"
     graft_from_warm_lineage_sha256 "$WARM_LINEAGE_HASH"
+    graft_reason "$GRAFT_REASON"
   )
 fi
 "$PYBIN" - "$RUN_MANIFEST" "${META_ARGS[@]}" -- "${CMD[@]}" <<'PY'

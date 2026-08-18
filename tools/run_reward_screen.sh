@@ -47,10 +47,12 @@ LADDER_SEED="${LADDER_SEED:-}"
 SCRIPTED_BANK_TAG="${SCRIPTED_BANK_TAG:-}"
 SCRIPTED_BOT_TYPE="${SCRIPTED_BOT_TYPE:-}"
 # graft only: the reviewed lineage bridge across a source/patch-bundle change.
-# The operator declares the OLD build the warm/pool came from; both must equal
-# what the warm sidecar records, and the per-arm launcher re-checks them.
+# The operator declares the OLD build (source + patch bundle) some of the
+# warm/pool sidecars still bind, and why (GRAFT_REASON, e.g. "D242"); the
+# per-arm launcher re-checks the same declaration with the same rule.
 GRAFT_FROM_SOURCE_SHA256="${GRAFT_FROM_SOURCE_SHA256:-}"
 GRAFT_FROM_PATCH_BUNDLE_SHA256="${GRAFT_FROM_PATCH_BUNDLE_SHA256:-}"
+GRAFT_REASON="${GRAFT_REASON:-}"
 
 # Fixed Stage-1 causal contract. Assign, rather than inherit, every optional
 # launcher input which could alter optimization, batching, or pool allocation.
@@ -145,8 +147,8 @@ if [ "$RUNG_LIKE" != "1" ] && \
   exit 1
 fi
 if [ "$SCREEN_PROFILE" != "graft" ] && \
-   [ -n "$GRAFT_FROM_SOURCE_SHA256$GRAFT_FROM_PATCH_BUNDLE_SHA256" ]; then
-  echo "GRAFT_FROM_SOURCE_SHA256 and GRAFT_FROM_PATCH_BUNDLE_SHA256 are only valid with SCREEN_PROFILE=graft" >&2
+   [ -n "$GRAFT_FROM_SOURCE_SHA256$GRAFT_FROM_PATCH_BUNDLE_SHA256$GRAFT_REASON" ]; then
+  echo "GRAFT_FROM_SOURCE_SHA256, GRAFT_FROM_PATCH_BUNDLE_SHA256 and GRAFT_REASON are only valid with SCREEN_PROFILE=graft" >&2
   exit 1
 fi
 case "$SCREEN_PROFILE" in
@@ -206,6 +208,10 @@ case "$SCREEN_PROFILE" in
           exit 1
         fi
       done
+      if [ -z "${GRAFT_REASON// /}" ] || [ "${#GRAFT_REASON}" -gt 200 ]; then
+        echo "graft requires GRAFT_REASON as a non-empty string of at most 200 characters (e.g. the DECISIONS.md entry)" >&2
+        exit 1
+      fi
     fi
     ;;
   paired-confirmation|paired-final)
@@ -362,13 +368,16 @@ case "$SCREEN_PROFILE" in
   graft)
     # The reviewed lineage bridge across a source/patch-bundle change. Shaped
     # exactly like a rung -- one s_both arm at LADDER_SEED, warm + four-bank
-    # pool, the rung's start-distribution and scripted-bank knobs -- but the
-    # warm/pool sidecars were published on an OLD build, so they are validated
-    # on their OWN recorded implementation (internally consistent + eligible)
-    # against the operator's GRAFT_FROM_* declaration, and the accepted
+    # pool, the rung's start-distribution and scripted-bank knobs -- but some
+    # of the warm/pool sidecars were published on an OLD build, so each is
+    # validated on its OWN recorded implementation (internally consistent +
+    # eligible) and then must bind either this build or the operator's
+    # GRAFT_FROM_* declaration (checkpoint_lineage.graft_bridge); the accepted
     # checkpoint is published on the NEW build with ancestry.grafted_from.
     # One arm, one seed: a graft is a lineage step, not a comparison, and it
     # is the only place an implementation change may enter an existing lineage.
+    # It stays usable for the rungs after the bridge, whose warm is new-build
+    # while the pool still carries old-build banks.
     arms=(s_both)
     seeds=("$LADDER_SEED")
     ;;
@@ -466,6 +475,7 @@ SCREEN_PLAN="$(
       SCRIPTED_BOT_TYPE="$SCRIPTED_BOT_TYPE" \
       GRAFT_FROM_SOURCE_SHA256="$GRAFT_FROM_SOURCE_SHA256" \
       GRAFT_FROM_PATCH_BUNDLE_SHA256="$GRAFT_FROM_PATCH_BUNDLE_SHA256" \
+      GRAFT_REASON="$GRAFT_REASON" \
       "$PYBIN" - "$SCREEN_MANIFEST" <<'PY'
 import datetime, hashlib, json, os, pathlib, subprocess, sys, sysconfig
 
@@ -640,48 +650,26 @@ else:
     # of an obs-v6 run. The per-arm launcher validates the four pool banks the
     # same way, against the same expectations, before it allocates GPU state.
     #
-    # graft: the warm/pool were published on an OLD build, so the expected
+    # graft: some sidecars were published on an OLD build, so the expected
     # implementation overrides are dropped -- each sidecar must still be
     # canonical, hash-bound to its checkpoint, obs-v6/exact-joint-v1 and
-    # ELIGIBLE -- and the warm's recorded source/patch digests must equal the
-    # operator's GRAFT_FROM_* declaration. The per-arm launcher repeats this.
+    # ELIGIBLE -- and checkpoint_lineage.graft_bridge then requires each of
+    # {warm, bank0..3} to bind either this build exactly or the operator's
+    # GRAFT_FROM_* declaration. The per-arm launcher applies the same function.
     graft = profile == "graft"
-    implementation_expected = None if graft else {
+    current_implementation = {
         "source_sha256": source_hash,
         "compiled_module_sha256": sha(module),
         "puffer_patch_bundle_sha256": patch_bundle_sha,
     }
+    implementation_expected = None if graft else current_implementation
     warm_payload = validate_lineage(
         warm, sidecar_path(warm),
         expected=implementation_expected,
         require_eligible=True)
     warm_lineage_sha = lineage_digest(warm_payload)
     graft_identity = None
-    if graft:
-        recorded = warm_payload["implementation"]
-        declared_source = os.environ["GRAFT_FROM_SOURCE_SHA256"]
-        declared_patch = os.environ["GRAFT_FROM_PATCH_BUNDLE_SHA256"]
-        if recorded["source_sha256"] != declared_source:
-            raise SystemExit(
-                "graft refused: warm sidecar records source "
-                f"{recorded['source_sha256']}, GRAFT_FROM_SOURCE_SHA256 "
-                f"declares {declared_source}")
-        if recorded["puffer_patch_bundle_sha256"] != declared_patch:
-            raise SystemExit(
-                "graft refused: warm sidecar records patch bundle "
-                f"{recorded['puffer_patch_bundle_sha256']}, "
-                f"GRAFT_FROM_PATCH_BUNDLE_SHA256 declares {declared_patch}")
-        if (declared_source == source_hash and declared_patch == patch_bundle_sha
-                and recorded["compiled_module_sha256"] == sha(module)):
-            raise SystemExit(
-                "graft refused as a no-op: the warm sidecar already binds this "
-                "build; use SCREEN_PROFILE=ladder-rung")
-        graft_identity = {
-            "from_source_sha256": declared_source,
-            "from_patch_bundle_sha256": declared_patch,
-            "from_module_sha256": recorded["compiled_module_sha256"],
-            "warm_lineage_sha256": warm_lineage_sha,
-        }
+    graft_sidecars = [("warm", warm_payload)]
     warm_identity = {
         "path": str(warm), "bytes": warm.stat().st_size, "sha256": sha(warm),
         "lineage_path": str(sidecar_path(warm).resolve()),
@@ -694,6 +682,7 @@ else:
     if graft:
         # Same rule for the pool: eligible, internally consistent, on their
         # own recorded build. lineage-v6 leaves this to the per-arm launcher.
+        from checkpoint_lineage import LineageError, graft_bridge
         for index, bank in enumerate(banks):
             bank_payload = validate_lineage(
                 pool / bank["file"], pool / bank["lineage_file"],
@@ -701,6 +690,23 @@ else:
             if lineage_digest(bank_payload) != bank["lineage_sha256"]:
                 raise SystemExit(
                     f"pool bank {index} lineage digest differs from manifest")
+            graft_sidecars.append((f"pool bank {index}", bank_payload))
+        declared_source = os.environ["GRAFT_FROM_SOURCE_SHA256"]
+        declared_patch = os.environ["GRAFT_FROM_PATCH_BUNDLE_SHA256"]
+        try:
+            old_module = graft_bridge(
+                graft_sidecars, current=current_implementation,
+                old_source_sha256=declared_source,
+                old_patch_bundle_sha256=declared_patch)
+        except LineageError as exc:
+            raise SystemExit(str(exc)) from exc
+        graft_identity = {
+            "from_source_sha256": declared_source,
+            "from_patch_bundle_sha256": declared_patch,
+            "from_module_sha256": old_module,
+            "warm_lineage_sha256": warm_lineage_sha,
+            "reason": os.environ["GRAFT_REASON"],
+        }
     pool_lineage_bundle_sha = hashlib.sha256(json.dumps([
         {"bank": index, "checkpoint_sha256": bank["sha256"],
          "lineage_sha256": bank["lineage_sha256"]}
@@ -1262,7 +1268,8 @@ PY
                   SCRIPTED_BANK_TAG="$SCRIPTED_BANK_TAG" \
                   SCRIPTED_BOT_TYPE="$SCRIPTED_BOT_TYPE" \
                   GRAFT_FROM_SOURCE_SHA256="$GRAFT_FROM_SOURCE_SHA256" \
-                  GRAFT_FROM_PATCH_BUNDLE_SHA256="$GRAFT_FROM_PATCH_BUNDLE_SHA256")
+                  GRAFT_FROM_PATCH_BUNDLE_SHA256="$GRAFT_FROM_PATCH_BUNDLE_SHA256" \
+                  GRAFT_REASON="$GRAFT_REASON")
     fi
     env ${LADDER_ENV[@]+"${LADDER_ENV[@]}"} \
         TAG="$tag" REWARD_MANIFEST="$manifest" WARM="$WARM" POOL="$POOL" \
