@@ -47,7 +47,7 @@
  def require_training_state_reset(args):
      if not args['reset_state']:
          raise ValueError('training requires reset_state=True')
-@@ -219,6 +239,7 @@
+@@ -219,6 +259,7 @@
  
  def _train_worker(args):
      require_training_state_reset(args)
@@ -55,7 +55,7 @@
      backend = _resolve_backend(args)
      pufferl = backend.create_pufferl(args)
      args.pop('nccl_id', None)
-@@ -231,6 +252,7 @@
+@@ -231,6 +272,7 @@
  def _train(env_name, args, sweep_obj=None, result_queue=None, verbose=False):
      '''Single-GPU training worker. Process target for both DDP ranks and sweep trials.'''
      require_training_state_reset(args)
@@ -63,7 +63,7 @@
      backend = _resolve_backend(args)
      rank = args['rank']
      run_id = str(int(1000*time.time()))
-@@ -453,6 +475,7 @@
+@@ -453,6 +495,7 @@
  def train(env_name, args=None, gpus=None, **kwargs):
      args = args or load_config(env_name)
      require_training_state_reset(args)
