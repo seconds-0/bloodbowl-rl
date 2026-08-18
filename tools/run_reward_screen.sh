@@ -24,7 +24,7 @@ fi
 LAUNCH_CWD="$PWD"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 : "${STEPS:?STEPS is required (explicit experiment budget)}"
-: "${SCREEN_PROFILE:?SCREEN_PROFILE is required (distance-possession, possession-gain, possession-gain-exact, exact-action-canary, genesis, genesis-pool, ladder-rung, paired-confirmation, paired-final, or control-final)}"
+: "${SCREEN_PROFILE:?SCREEN_PROFILE is required (distance-possession, possession-gain, possession-gain-exact, exact-action-canary, genesis, genesis-pool, ladder-rung, graft, paired-confirmation, paired-final, or control-final)}"
 CANDIDATE_ARM="${CANDIDATE_ARM:-}"
 TRANSFER_COMPLETE="${TRANSFER_COMPLETE:-}"
 EXPECTED_TRANSFER_SHA256="${EXPECTED_TRANSFER_SHA256:-}"
@@ -46,6 +46,11 @@ LADDER_SEED="${LADDER_SEED:-}"
 # then passed and recorded EXPLICITLY, so "no bot" is a declared value.
 SCRIPTED_BANK_TAG="${SCRIPTED_BANK_TAG:-}"
 SCRIPTED_BOT_TYPE="${SCRIPTED_BOT_TYPE:-}"
+# graft only: the reviewed lineage bridge across a source/patch-bundle change.
+# The operator declares the OLD build the warm/pool came from; both must equal
+# what the warm sidecar records, and the per-arm launcher re-checks them.
+GRAFT_FROM_SOURCE_SHA256="${GRAFT_FROM_SOURCE_SHA256:-}"
+GRAFT_FROM_PATCH_BUNDLE_SHA256="${GRAFT_FROM_PATCH_BUNDLE_SHA256:-}"
 
 # Fixed Stage-1 causal contract. Assign, rather than inherit, every optional
 # launcher input which could alter optimization, batching, or pool allocation.
@@ -123,18 +128,29 @@ case "$ARM_DETACH" in
   0|1) ;;
   *) echo "ARM_DETACH must be 0 or 1" >&2; exit 1 ;;
 esac
-if [ "$SCREEN_PROFILE" != "ladder-rung" ] && \
+# The graft profile is a rung across a build change, so it takes the rung's
+# knobs; every other profile pins them.
+RUNG_LIKE=0
+case "$SCREEN_PROFILE" in
+  ladder-rung|graft) RUNG_LIKE=1 ;;
+esac
+if [ "$RUNG_LIKE" != "1" ] && \
    [ -n "$LADDER_ENDZONE_MAXDIST$LADDER_RESET_PCT$LADDER_SEED" ]; then
-  echo "LADDER_ENDZONE_MAXDIST, LADDER_RESET_PCT and LADDER_SEED are only valid with SCREEN_PROFILE=ladder-rung" >&2
+  echo "LADDER_ENDZONE_MAXDIST, LADDER_RESET_PCT and LADDER_SEED are only valid with SCREEN_PROFILE=ladder-rung or graft" >&2
   exit 1
 fi
-if [ "$SCREEN_PROFILE" != "ladder-rung" ] && \
+if [ "$RUNG_LIKE" != "1" ] && \
    [ -n "$SCRIPTED_BANK_TAG$SCRIPTED_BOT_TYPE" ]; then
-  echo "SCRIPTED_BANK_TAG and SCRIPTED_BOT_TYPE are only valid with SCREEN_PROFILE=ladder-rung" >&2
+  echo "SCRIPTED_BANK_TAG and SCRIPTED_BOT_TYPE are only valid with SCREEN_PROFILE=ladder-rung or graft" >&2
+  exit 1
+fi
+if [ "$SCREEN_PROFILE" != "graft" ] && \
+   [ -n "$GRAFT_FROM_SOURCE_SHA256$GRAFT_FROM_PATCH_BUNDLE_SHA256" ]; then
+  echo "GRAFT_FROM_SOURCE_SHA256 and GRAFT_FROM_PATCH_BUNDLE_SHA256 are only valid with SCREEN_PROFILE=graft" >&2
   exit 1
 fi
 case "$SCREEN_PROFILE" in
-  distance-possession|possession-gain|possession-gain-exact|exact-action-canary|genesis|genesis-pool|control-final|ladder-rung)
+  distance-possession|possession-gain|possession-gain-exact|exact-action-canary|genesis|genesis-pool|control-final|ladder-rung|graft)
     [ -z "$CANDIDATE_ARM$TRANSFER_COMPLETE$EXPECTED_TRANSFER_SHA256" ] || {
       echo "candidate transfer inputs are only valid with a paired profile" >&2
       exit 1; }
@@ -143,7 +159,7 @@ case "$SCREEN_PROFILE" in
       echo "exact-action-canary requires STEPS=50000000" >&2
       exit 1
     fi
-    if [ "$SCREEN_PROFILE" = "ladder-rung" ]; then
+    if [ "$RUNG_LIKE" = "1" ]; then
       # A rung is a start-distribution factor, so both knobs are REQUIRED and
       # explicit; an inherited empty value must not silently train a kickoff
       # arm under a ladder label. maxdist 0 is the legitimate "uniform" rung
@@ -152,17 +168,17 @@ case "$SCREEN_PROFILE" in
       # (maxdist>0 with reset_pct 0) so it is not repeated here.
       case "$LADDER_ENDZONE_MAXDIST" in
         ''|*[!0-9]*)
-          echo "ladder-rung requires LADDER_ENDZONE_MAXDIST as a non-negative integer (0 = uniform bank starts)" >&2
+          echo "$SCREEN_PROFILE requires LADDER_ENDZONE_MAXDIST as a non-negative integer (0 = uniform bank starts)" >&2
           exit 1 ;;
       esac
       case "$LADDER_RESET_PCT" in
         0|0.0|1|1.0|0.[0-9]|0.[0-9][0-9]|0.[0-9][0-9][0-9]) ;;
-        *) echo "ladder-rung requires LADDER_RESET_PCT as a fraction in [0,1] (at most three decimals)" >&2
+        *) echo "$SCREEN_PROFILE requires LADDER_RESET_PCT as a fraction in [0,1] (at most three decimals)" >&2
            exit 1 ;;
       esac
       case "$LADDER_SEED" in
         ''|*[!0-9]*|0[0-9]*)
-          echo "ladder-rung requires LADDER_SEED as a canonical non-negative integer" >&2
+          echo "$SCREEN_PROFILE requires LADDER_SEED as a canonical non-negative integer" >&2
           exit 1 ;;
       esac
       # The scripted bank is optional; unset resolves to the explicit 0 the
@@ -171,14 +187,25 @@ case "$SCREEN_PROFILE" in
       SCRIPTED_BOT_TYPE="${SCRIPTED_BOT_TYPE:-0}"
       case "$SCRIPTED_BANK_TAG" in
         0|1|2|3|4) ;;
-        *) echo "ladder-rung requires SCRIPTED_BANK_TAG as an integer in 0..4 (0 = no scripted bank)" >&2
+        *) echo "$SCREEN_PROFILE requires SCRIPTED_BANK_TAG as an integer in 0..4 (0 = no scripted bank)" >&2
            exit 1 ;;
       esac
       case "$SCRIPTED_BOT_TYPE" in
         0|1) ;;
-        *) echo "ladder-rung requires SCRIPTED_BOT_TYPE as 0 (contact) or 1 (offense)" >&2
+        *) echo "$SCREEN_PROFILE requires SCRIPTED_BOT_TYPE as 0 (contact) or 1 (offense)" >&2
            exit 1 ;;
       esac
+    fi
+    if [ "$SCREEN_PROFILE" = "graft" ]; then
+      # The operator declares what is being grafted from; a graft with an
+      # inherited or empty declaration would silently accept whatever old
+      # build the warm sidecar happens to record.
+      for digest_name in GRAFT_FROM_SOURCE_SHA256 GRAFT_FROM_PATCH_BUNDLE_SHA256; do
+        if ! [[ "${!digest_name}" =~ ^[0-9a-f]{64}$ ]]; then
+          echo "graft requires $digest_name as a lowercase 64-character SHA-256 digest" >&2
+          exit 1
+        fi
+      done
     fi
     ;;
   paired-confirmation|paired-final)
@@ -194,7 +221,7 @@ case "$SCREEN_PROFILE" in
       exit 1
     fi
     ;;
-  *) echo "SCREEN_PROFILE must be distance-possession, possession-gain, possession-gain-exact, exact-action-canary, genesis, genesis-pool, ladder-rung, paired-confirmation, paired-final, or control-final" >&2
+  *) echo "SCREEN_PROFILE must be distance-possession, possession-gain, possession-gain-exact, exact-action-canary, genesis, genesis-pool, ladder-rung, graft, paired-confirmation, paired-final, or control-final" >&2
      exit 1 ;;
 esac
 
@@ -228,7 +255,11 @@ if [ "$SCREEN_PROFILE" = "exact-action-canary" ] || \
 else
   : "${WARM:?WARM is required}"
   : "${POOL:?POOL is required}"
-  BOOTSTRAP_MODE=lineage-v6
+  if [ "$SCREEN_PROFILE" = "graft" ]; then
+    BOOTSTRAP_MODE=graft-v6
+  else
+    BOOTSTRAP_MODE=lineage-v6
+  fi
 fi
 
 abspath() {
@@ -245,7 +276,7 @@ if [ -n "$TRANSFER_COMPLETE" ]; then
   [ -f "$TRANSFER_COMPLETE" ] || {
     echo "missing transfer completion: $TRANSFER_COMPLETE" >&2; exit 1; }
 fi
-if [ "$BOOTSTRAP_MODE" = "lineage-v6" ]; then
+if [ "$BOOTSTRAP_MODE" = "lineage-v6" ] || [ "$BOOTSTRAP_MODE" = "graft-v6" ]; then
   [ -f "$WARM" ] || { echo "missing warm checkpoint: $WARM" >&2; exit 1; }
   [ -d "$POOL" ] || { echo "missing static pool: $POOL" >&2; exit 1; }
   [[ "$EXPECTED_POOL_HASH" =~ ^[0-9a-f]{64}$ ]] || {
@@ -327,6 +358,19 @@ case "$SCREEN_PROFILE" in
     # the reward with no known defect, not merely the newest one.
     arms=(s_both)
     seeds=(42)
+    ;;
+  graft)
+    # The reviewed lineage bridge across a source/patch-bundle change. Shaped
+    # exactly like a rung -- one s_both arm at LADDER_SEED, warm + four-bank
+    # pool, the rung's start-distribution and scripted-bank knobs -- but the
+    # warm/pool sidecars were published on an OLD build, so they are validated
+    # on their OWN recorded implementation (internally consistent + eligible)
+    # against the operator's GRAFT_FROM_* declaration, and the accepted
+    # checkpoint is published on the NEW build with ancestry.grafted_from.
+    # One arm, one seed: a graft is a lineage step, not a comparison, and it
+    # is the only place an implementation change may enter an existing lineage.
+    arms=(s_both)
+    seeds=("$LADDER_SEED")
     ;;
   ladder-rung)
     # One rung of the backplay curriculum ladder (6 -> 9 -> 12 -> 0 -> kickoff;
@@ -420,6 +464,8 @@ SCREEN_PLAN="$(
       LADDER_RESET_PCT="$LADDER_RESET_PCT" \
       SCRIPTED_BANK_TAG="$SCRIPTED_BANK_TAG" \
       SCRIPTED_BOT_TYPE="$SCRIPTED_BOT_TYPE" \
+      GRAFT_FROM_SOURCE_SHA256="$GRAFT_FROM_SOURCE_SHA256" \
+      GRAFT_FROM_PATCH_BUNDLE_SHA256="$GRAFT_FROM_PATCH_BUNDLE_SHA256" \
       "$PYBIN" - "$SCREEN_MANIFEST" <<'PY'
 import datetime, hashlib, json, os, pathlib, subprocess, sys, sysconfig
 
@@ -593,15 +639,49 @@ else:
     # The lineage sidecar is the only thing that keeps an obs-v4 checkpoint out
     # of an obs-v6 run. The per-arm launcher validates the four pool banks the
     # same way, against the same expectations, before it allocates GPU state.
+    #
+    # graft: the warm/pool were published on an OLD build, so the expected
+    # implementation overrides are dropped -- each sidecar must still be
+    # canonical, hash-bound to its checkpoint, obs-v6/exact-joint-v1 and
+    # ELIGIBLE -- and the warm's recorded source/patch digests must equal the
+    # operator's GRAFT_FROM_* declaration. The per-arm launcher repeats this.
+    graft = profile == "graft"
+    implementation_expected = None if graft else {
+        "source_sha256": source_hash,
+        "compiled_module_sha256": sha(module),
+        "puffer_patch_bundle_sha256": patch_bundle_sha,
+    }
     warm_payload = validate_lineage(
         warm, sidecar_path(warm),
-        expected={
-            "source_sha256": source_hash,
-            "compiled_module_sha256": sha(module),
-            "puffer_patch_bundle_sha256": patch_bundle_sha,
-        },
+        expected=implementation_expected,
         require_eligible=True)
     warm_lineage_sha = lineage_digest(warm_payload)
+    graft_identity = None
+    if graft:
+        recorded = warm_payload["implementation"]
+        declared_source = os.environ["GRAFT_FROM_SOURCE_SHA256"]
+        declared_patch = os.environ["GRAFT_FROM_PATCH_BUNDLE_SHA256"]
+        if recorded["source_sha256"] != declared_source:
+            raise SystemExit(
+                "graft refused: warm sidecar records source "
+                f"{recorded['source_sha256']}, GRAFT_FROM_SOURCE_SHA256 "
+                f"declares {declared_source}")
+        if recorded["puffer_patch_bundle_sha256"] != declared_patch:
+            raise SystemExit(
+                "graft refused: warm sidecar records patch bundle "
+                f"{recorded['puffer_patch_bundle_sha256']}, "
+                f"GRAFT_FROM_PATCH_BUNDLE_SHA256 declares {declared_patch}")
+        if (declared_source == source_hash and declared_patch == patch_bundle_sha
+                and recorded["compiled_module_sha256"] == sha(module)):
+            raise SystemExit(
+                "graft refused as a no-op: the warm sidecar already binds this "
+                "build; use SCREEN_PROFILE=ladder-rung")
+        graft_identity = {
+            "from_source_sha256": declared_source,
+            "from_patch_bundle_sha256": declared_patch,
+            "from_module_sha256": recorded["compiled_module_sha256"],
+            "warm_lineage_sha256": warm_lineage_sha,
+        }
     warm_identity = {
         "path": str(warm), "bytes": warm.stat().st_size, "sha256": sha(warm),
         "lineage_path": str(sidecar_path(warm).resolve()),
@@ -611,6 +691,16 @@ else:
     banks = json.loads(pool_manifest_raw).get("seeds")
     if not isinstance(banks, list) or len(banks) != 4:
         raise SystemExit("screen pool must contain exactly four banks")
+    if graft:
+        # Same rule for the pool: eligible, internally consistent, on their
+        # own recorded build. lineage-v6 leaves this to the per-arm launcher.
+        for index, bank in enumerate(banks):
+            bank_payload = validate_lineage(
+                pool / bank["file"], pool / bank["lineage_file"],
+                expected=None, require_eligible=True)
+            if lineage_digest(bank_payload) != bank["lineage_sha256"]:
+                raise SystemExit(
+                    f"pool bank {index} lineage digest differs from manifest")
     pool_lineage_bundle_sha = hashlib.sha256(json.dumps([
         {"bank": index, "checkpoint_sha256": bank["sha256"],
          "lineage_sha256": bank["lineage_sha256"]}
@@ -696,7 +786,9 @@ contract = {
         "vendor_source_sha256": vendor_source_sha,
     },
 }
-if profile == "ladder-rung":
+if profile == "graft":
+    contract["graft"] = graft_identity
+if profile in ("ladder-rung", "graft"):
     # The start distribution is this profile's declared factor. Recorded here so
     # a rung's SCREEN_MANIFEST says which rung it was without opening the run
     # manifest; the per-arm launcher binds the same values (plus the state-bank
@@ -1164,6 +1256,13 @@ PY
                   LADDER_RESET_PCT="$LADDER_RESET_PCT" \
                   SCRIPTED_BANK_TAG="$SCRIPTED_BANK_TAG" \
                   SCRIPTED_BOT_TYPE="$SCRIPTED_BOT_TYPE")
+    elif [ "$SCREEN_PROFILE" = "graft" ]; then
+      LADDER_ENV=(LADDER_ENDZONE_MAXDIST="$LADDER_ENDZONE_MAXDIST" \
+                  LADDER_RESET_PCT="$LADDER_RESET_PCT" \
+                  SCRIPTED_BANK_TAG="$SCRIPTED_BANK_TAG" \
+                  SCRIPTED_BOT_TYPE="$SCRIPTED_BOT_TYPE" \
+                  GRAFT_FROM_SOURCE_SHA256="$GRAFT_FROM_SOURCE_SHA256" \
+                  GRAFT_FROM_PATCH_BUNDLE_SHA256="$GRAFT_FROM_PATCH_BUNDLE_SHA256")
     fi
     env ${LADDER_ENV[@]+"${LADDER_ENV[@]}"} \
         TAG="$tag" REWARD_MANIFEST="$manifest" WARM="$WARM" POOL="$POOL" \
