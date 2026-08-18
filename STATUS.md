@@ -37,7 +37,20 @@ under `runs/ladder-d<rung>-20260815/`; supervisor state under
 | 1 | 0 (uniform) | 0.5 | chain accepted (rehosted) | rung-9/12/uniform/chain (`575d58f9`) | accepted Aug 17 23:01 — **tds 0.530**, still climbing (D239) |
 | 1b | 0 (uniform, chain2) | 0.5 | stage-1 accepted | rung-12/uniform/chain/stage-1 (`f1f423f8`) | accepted Aug 18 06:45 — **tds 0.652**, pickups 0.91, still rising (D240) |
 | 2 | 0 | 0.25 | chain2 accepted | promoted (`e138c936`) | **running** since Aug 18 06:47 PDT; tds ~0.6 at 2.2B from 75% kickoff starts |
-| 3 | 0 (kickoff) | 0 | stage-2 accepted | promoted | queued |
+| 2b | 0 | 0.25 (chain) | r25 accepted | promoted | queued (pre-inserted, r25 still climbing) |
+| 3 | 0 (kickoff) | 0 | r25-chain accepted | promoted | queued |
+
+## Live campaign: `rig-seed42-20260818` (RTX 2070, seed-42 replicate of the uniform chain)
+
+| stage | rung | reset | warm | pool | state |
+|---|---|---|---|---|---|
+| 1 | 0 (uniform) | 0.5 | Vast stage-1 accepted (rehosted) | rung-12/uniform/chain/stage-1 (`ce9042f6`) | **running** since Aug 18 13:05 PDT |
+| 2 | 0 | 0.25 | s42 stage-1 | promoted | queued |
+| 3 | 0 (kickoff) | 0 | s42 stage-2 | promoted | queued |
+
+## Kickoff exam (D50) — chain2 checkpoint, 2026-08-18
+
+Full games from kickoff, frozen, torch: vs contact bot AWAY champion **0.052** TD/g / bot 1.281 (2,017 g); vs contact bot HOME champion **0.035** / bot 1.276 (2,003 g); mirror self-play 0.951 TD/g total, possession 0.199, blocks 9.2 (human 2.2 / 0.475 / 80). Verdict D241: scores from kickoff vs itself, not under scripted contact pressure → graduation rungs need a scripted-opponent share.
 
 Watch: `~/bin/vwatch`. Rig watch: `~/bin/bbwatch`. Cross-host moves use
 `checkpoint_lineage.py rehost` (D238).
