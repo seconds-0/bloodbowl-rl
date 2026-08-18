@@ -208,6 +208,10 @@ static void apply_kwargs(Env* env, Dict* kwargs) {
     if (env->scripted_opponent_type < 0 || env->scripted_opponent_type > 1) {
         env->scripted_opponent_type = 0;
     }
+    env->scripted_bank_tag = (int)kw(kwargs, "scripted_bank_tag", 0.0);
+    if (env->scripted_bank_tag < 0 || env->scripted_bank_tag > 8) {
+        env->scripted_bank_tag = 0;
+    }
     env->max_decisions = (int)kw(kwargs, "max_decisions", BBE_MAX_DECISIONS);
     if (env->max_decisions <= 0 || env->max_decisions > BBE_MAX_DECISIONS) {
         env->max_decisions = BBE_MAX_DECISIONS;

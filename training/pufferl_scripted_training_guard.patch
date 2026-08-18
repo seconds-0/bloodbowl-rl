@@ -1,6 +1,6 @@
 --- a/pufferlib/pufferl.py
 +++ b/pufferlib/pufferl.py
-@@ -204,6 +204,26 @@
+@@ -204,6 +204,46 @@
      assert minibatch_size <= horizon * total_agents, \
          f'minibatch_size {minibatch_size} > total_agents {total_agents} * horizon {horizon}'
  
@@ -15,14 +15,34 @@
 +    # LOCAL PATCH (bloodbowl-rl): the native/CUDA backend has the same
 +    # scripted-row contamination risk as torch, but its selfplay/rollout path
 +    # has no tested row-filter here. Block active native scripted training
-+    # until that backend gets its own gated implementation.
++    # unless it is confined to a SCRIPTED BANK: env.scripted_bank_tag = b+1
++    # applies the bot only in the envs tagged for frozen bank b, whose bot
++    # seats occupy that bank's tail row slice -- rows the native prioritized
++    # sampler never selects (puffer_frozen_prio_mask). That is the same
++    # exclusion frozen-bank rows get, so the learner batch stays clean.
 +    if not args.get('slowly'):
-+        raise RuntimeError(
-+            'scripted_opponent with learning_rate > 1e-9 is unsafe on the '
-+            'native/CUDA backend: bot-side sampled actions are replaced by '
-+            'c_step and the native PPO path does not implement scripted row '
-+            'exclusion. Use --slowly for the torch row-filter, or keep '
-+            'learning_rate <= 1e-9 for frozen eval.')
++        bank_tag = int(env.get('scripted_bank_tag', 0) or 0)
++        if bank_tag <= 0:
++            raise RuntimeError(
++                'scripted_opponent with learning_rate > 1e-9 is unsafe on the '
++                'native/CUDA backend: bot-side sampled actions are replaced by '
++                'c_step and the native PPO path does not implement scripted row '
++                'exclusion. Use --slowly for the torch row-filter, keep '
++                'learning_rate <= 1e-9 for frozen eval, or confine the bot to a '
++                'frozen bank with env.scripted_bank_tag.')
++        sp = args.get('selfplay', {})
++        vec = args.get('vec', {})
++        num_banks = int(vec.get('num_frozen_banks', 0) or 0)
++        if not int(sp.get('enabled', 0) or 0) or bank_tag > num_banks:
++            raise RuntimeError(
++                f'env.scripted_bank_tag={bank_tag} requires selfplay.enabled=1 '
++                f'and 1 <= tag <= vec.num_frozen_banks ({num_banks}); the bot '
++                'seat is only excluded from PPO inside a frozen-bank row slice.')
++        team = int(env.get('scripted_opponent_team', 1) or 0)
++        if team != 1:
++            raise RuntimeError(
++                'env.scripted_bank_tag requires scripted_opponent_team=1: tagged '
++                'envs place the frozen bank (and so the bot) on slot 1 / AWAY.')
 +
  def require_training_state_reset(args):
      if not args['reset_state']:

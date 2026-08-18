@@ -669,6 +669,15 @@ typedef struct {
     int scripted_opponent;
     int scripted_opponent_team;
     int scripted_opponent_type;
+    // Scripted BANK (native training vs a bot at native SPS): when > 0, the
+    // scripted opponent above is applied ONLY in envs whose selfplay tag equals
+    // this value, i.e. exactly the historical envs of frozen bank (tag-1). Those
+    // envs' opponent seats already sit in the bank's tail row slice, which the
+    // native PPO prioritized sampler never selects (puffer_frozen_prio_mask), so
+    // the bot's seat rows are excluded from the learner batch by the SAME
+    // mechanism that excludes frozen-bank rows -- no CUDA change. 0 = global
+    // scripted_opponent semantics (every env; only legal when not learning).
+    int scripted_bank_tag;
     int max_decisions;
     // Spectator rendering (bbe_render.h); NULL until c_render is first called.
     int render_fps;
@@ -3454,7 +3463,9 @@ static void c_step(Bloodbowl* env) {
         int scripted_team = env->scripted_opponent_team == BB_HOME
                                 ? BB_HOME : BB_AWAY;
         bb_action act;
-        if (env->scripted_opponent && (scripted_both || agent == scripted_team)) {
+        int scripted_env = env->scripted_opponent &&
+            (env->scripted_bank_tag <= 0 || env->tag == env->scripted_bank_tag);
+        if (scripted_env && (scripted_both || agent == scripted_team)) {
             act = env->scripted_opponent_type == 1
                       ? bbe_offense_bot_pick(m, env->legal, env->n_legal)
                       : bbe_contact_bot_pick(m, env->legal, env->n_legal);
