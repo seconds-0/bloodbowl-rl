@@ -15,6 +15,11 @@
 #   LR=0.00028 ENT_COEF=0.009 GAMMA=0.995 GAE_LAMBDA=0.85
 #   HORIZON=64 MINIBATCH_SIZE=16384 CHECKPOINT_STEPS=50000000
 #   RIG_ALLOW_FLOAT=1   required for native fp32 on the RTX 2070/Turing rig
+#   SCRIPTED_BANK_TAG=0 lineage-v6 only: 1..4 replaces frozen bank (tag-1)'s
+#                       seat with the scripted bot in that bank's envs (native
+#                       training vs a bot at native SPS; see bloodbowl.h
+#                       scripted_bank_tag). 0 = no scripted opponent.
+#   SCRIPTED_BOT_TYPE=0 0 = contact bot, 1 = offense bot (with SCRIPTED_BANK_TAG)
 #   DRY_RUN=1           validate every artifact/build contract and print the
 #                       final command without starting a trainer
 #
@@ -151,6 +156,37 @@ case "$BOOTSTRAP_MODE" in
     exit 1
     ;;
 esac
+
+# Scripted BANK: train the learner against a scripted bot at native SPS. The
+# env applies the bot only in envs whose selfplay tag equals SCRIPTED_BANK_TAG,
+# i.e. the historical envs of frozen bank (tag-1). Those envs' opponent seats
+# sit in that bank's tail row slice, which the native prioritized sampler never
+# selects (training/puffer_frozen_prio_mask.patch), so the bot's rows are
+# excluded from PPO by the same mechanism that excludes frozen-bank rows.
+# The pool bank at index (tag-1) still loads its real weights -- the launcher
+# validates it like every other bank -- they are simply never consulted for an
+# action in those envs; the bank keeps its row slice and its hist_score_bank
+# telemetry, which then measures the learner against the BOT.
+# Both knobs default to 0 and are recorded explicitly in the run manifest, so
+# "no scripted opponent" is a declared value, never an omission.
+SCRIPTED_BANK_TAG="${SCRIPTED_BANK_TAG:-0}"
+SCRIPTED_BOT_TYPE="${SCRIPTED_BOT_TYPE:-0}"
+case "$SCRIPTED_BANK_TAG" in
+  0|1|2|3|4) ;;
+  *) echo "SCRIPTED_BANK_TAG must be an integer in 0..4, got '$SCRIPTED_BANK_TAG'" >&2
+     exit 1 ;;
+esac
+case "$SCRIPTED_BOT_TYPE" in
+  0|1) ;;
+  *) echo "SCRIPTED_BOT_TYPE must be 0 (contact) or 1 (offense), got '$SCRIPTED_BOT_TYPE'" >&2
+     exit 1 ;;
+esac
+if [ "$SCRIPTED_BANK_TAG" != "0" ] && [ "$BOOTSTRAP_MODE" != "lineage-v6" ]; then
+  echo "SCRIPTED_BANK_TAG=$SCRIPTED_BANK_TAG requires BOOTSTRAP_MODE=lineage-v6:" >&2
+  echo "the bot seat is only excluded from PPO inside a frozen-bank row slice," >&2
+  echo "and only lineage-v6 allocates the four-bank pool" >&2
+  exit 1
+fi
 
 STEPS="${STEPS:-250000000}"
 SEED="${SEED:-42}"
@@ -641,6 +677,7 @@ echo "source_sha256=$SOURCE_HASH config_sha256=$CONFIG_HASH module_sha256=$MODUL
 echo "compiled_exact_action_source_sha256=$COMPILED_EXACT_ACTION_SOURCE_HASH compiled_observation=$COMPILED_OBSERVATION_ABI/$COMPILED_OBSERVATION_VERSION compiled_action=$COMPILED_ACTION_ABI"
 echo "native_precision_bytes=$precision total_agents=$TOTAL_AGENTS buffers=$NUM_BUFFERS threads=$NUM_THREADS horizon=$HORIZON minibatch=$MINIBATCH_SIZE"
 echo "lr=$LR ent_coef=$ENT_COEF gamma=$GAMMA gae_lambda=$GAE_LAMBDA replay_ratio=$REPLAY_RATIO log=$LOG"
+echo "scripted_bank_tag=$SCRIPTED_BANK_TAG scripted_bot_type=$SCRIPTED_BOT_TYPE"
 
 CMD=(env PUFFER_CUDA_RUNTIME_MANIFEST="$RUN_MANIFEST" \
   PUFFER_CUDA_RUNTIME_EVIDENCE="$CUDA_RUNTIME_EVIDENCE" \
@@ -678,6 +715,15 @@ else
     --selfplay.snapshot-interval 1000000000000 \
     --vec.num-frozen-banks 4 --vec.frozen-bank-pct "$FROZEN_BANK_PCT" \
     --load-model-path "$WARM")
+  if [ "$SCRIPTED_BANK_TAG" != "0" ]; then
+    # Team 1 (AWAY) is where tagged envs seat the frozen bank, and the guard
+    # in pufferl_scripted_training_guard.patch refuses anything else. When the
+    # tag is 0 the installed config default (scripted_opponent = 0) applies.
+    CMD+=(--env.scripted-opponent 1 \
+      --env.scripted-opponent-type "$SCRIPTED_BOT_TYPE" \
+      --env.scripted-opponent-team 1 \
+      --env.scripted-bank-tag "$SCRIPTED_BANK_TAG")
+  fi
 fi
 
 if [ "${DRY_RUN:-0}" = "1" ]; then
@@ -700,6 +746,8 @@ META_ARGS=(
   ladder_postkick_maxturn "$LADDER_POSTKICK_MAXTURN"
   ladder_pass_maxrange "$LADDER_PASS_MAXRANGE"
   ladder_state_bank_sha256 "$LADDER_STATE_BANK_SHA256"
+  scripted_bank_tag "$SCRIPTED_BANK_TAG"
+  scripted_bot_type "$SCRIPTED_BOT_TYPE"
   rollout_quantum "$ROLLOUT_QUANTUM" reward_name "$REWARD_NAME"
   reward_sha256 "$REWARD_HASH" reward_manifest "$REWARD_MANIFEST"
   pool "$POOL" pool_identity_sha256 "$POOL_HASH"

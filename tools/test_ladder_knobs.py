@@ -85,5 +85,59 @@ class LadderKnobTests(unittest.TestCase):
             self.assertNotIn(message, out, f"default config tripped: {message}")
 
 
+class ScriptedBankKnobTests(unittest.TestCase):
+    """SCRIPTED_BANK_TAG / SCRIPTED_BOT_TYPE: native training against a bot.
+
+    The bot is only excluded from PPO when it sits in a frozen bank's row
+    slice, so the knob is refused outside the pool-backed bootstrap mode, and
+    every malformed value is refused before any preflight. Both knobs are
+    recorded explicitly (0 is a value, not an omission)."""
+
+    def test_default_zero_passes_the_gate(self):
+        out = run().stdout
+        self.assertNotIn("SCRIPTED_BANK_TAG", out)
+        self.assertNotIn("SCRIPTED_BOT_TYPE", out)
+
+    def test_tag_out_of_range_is_refused(self):
+        for value in ("5", "-1", "x", "1.0", "01"):
+            out = run(SCRIPTED_BANK_TAG=value).stdout
+            self.assertIn("SCRIPTED_BANK_TAG must be an integer in 0..4", out, value)
+
+    def test_bot_type_out_of_range_is_refused(self):
+        for value in ("2", "-1", "contact", "0 "):
+            out = run(SCRIPTED_BOT_TYPE=value).stdout
+            self.assertIn("SCRIPTED_BOT_TYPE must be 0 (contact) or 1 (offense)",
+                          out, value)
+
+    def test_tag_requires_the_pool_backed_bootstrap_mode(self):
+        # fresh-v6-genesis has no frozen banks: nowhere to hide the bot's rows.
+        out = run(SCRIPTED_BANK_TAG="1").stdout
+        self.assertIn("requires BOOTSTRAP_MODE=lineage-v6", out)
+        # lineage-v6 gets past the knob gate and fails LATER on missing inputs.
+        out = run(SCRIPTED_BANK_TAG="1", BOOTSTRAP_MODE="lineage-v6",
+                  WARM="missing.bin", POOL="missing-pool",
+                  EXPECTED_POOL_HASH="0" * 64).stdout
+        self.assertNotIn("SCRIPTED_BANK_TAG", out)
+        self.assertNotIn("requires BOOTSTRAP_MODE", out)
+
+    def test_launcher_passes_the_flags_and_records_the_knobs(self):
+        source = LAUNCHER.read_text(encoding="utf-8")
+        # Flags only in the pool-backed branch, and only when the tag is set;
+        # tag 0 leaves the installed config default (scripted_opponent = 0).
+        self.assertIn('if [ "$SCRIPTED_BANK_TAG" != "0" ]; then\n'
+                      '    # Team 1 (AWAY)', source)
+        self.assertIn('--env.scripted-opponent 1', source)
+        self.assertIn('--env.scripted-opponent-type "$SCRIPTED_BOT_TYPE"', source)
+        self.assertIn('--env.scripted-opponent-team 1', source)
+        self.assertIn('--env.scripted-bank-tag "$SCRIPTED_BANK_TAG"', source)
+        self.assertNotIn('--env.scripted-opponent 0', source)
+        # Explicit record in the run manifest, unconditionally.
+        self.assertIn('scripted_bank_tag "$SCRIPTED_BANK_TAG"', source)
+        self.assertIn('scripted_bot_type "$SCRIPTED_BOT_TYPE"', source)
+        # And in the launch banner.
+        self.assertIn('echo "scripted_bank_tag=$SCRIPTED_BANK_TAG '
+                      'scripted_bot_type=$SCRIPTED_BOT_TYPE"', source)
+
+
 if __name__ == "__main__":
     unittest.main()
