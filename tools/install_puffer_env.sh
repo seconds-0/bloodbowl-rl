@@ -161,6 +161,22 @@ if [ "$MODE" = "check" ]; then
             exit 1
         fi
     done
+    # The two local pufferl.py patches (scripted-training guard, warm start)
+    # are outside the hashed patch bundle, so their identity is only ever
+    # proven here: each must reverse-apply cleanly, which a tree still carrying
+    # the v1 guard (pre scripted_bank_tag) fails. Same full-tree discriminator
+    # as the install path below.
+    if grep -Fq 'require_training_state_reset' "$PUFFER/pufferlib/pufferl.py"; then
+        for local_pufferl_patch in \
+            "$ROOT/training/pufferl_scripted_training_guard.patch" \
+            "$ROOT/training/pufferl_warm_start.patch"; do
+            if ! git -C "$PUFFER" apply --reverse --check --no-index "$local_pufferl_patch"; then
+                echo "drift check: local pufferl.py patch is missing or stale: $local_pufferl_patch" >&2
+                echo "  fix: tools/install_puffer_env.sh $PUFFER (it upgrades an installed v1 guard in place)" >&2
+                exit 1
+            fi
+        done
+    fi
     # D234: BOTH backends, checked separately, and ordered LAST among the
     # marker checks -- the earlier ones carry message-ordering contracts
     # that training/test_recurrent_cuda_qualification.py asserts against a
@@ -577,6 +593,20 @@ fi
 # qualification.py builds one to exercise the selfplay state machine alone), not a
 # trainer tree with drifted patches. Hard-fail on the latter, skip the former.
 if grep -Fq 'require_training_state_reset' "$PUFFER/pufferlib/pufferl.py" 2>/dev/null; then
+    # The scripted-training guard was revised (scripted_bank_tag: native
+    # training vs a bot confined to one frozen bank). A tree that already
+    # carries the previous guard cannot take the new patch -- its first hunk
+    # sits on the same lines -- so the retired revision is kept as
+    # training/pufferl_scripted_training_guard.v1.patch and reverse-applied
+    # first when, and only when, it is what the tree holds. The new patch is
+    # then applied by the ordinary logic below. A fresh tree and an already
+    # upgraded tree both fail the v1 reverse-check and skip this step.
+    GUARD_V1_PATCH="$ROOT/training/pufferl_scripted_training_guard.v1.patch"
+    if [ -f "$GUARD_V1_PATCH" ] && \
+       git -C "$PUFFER" apply --reverse --check --no-index "$GUARD_V1_PATCH" 2>/dev/null; then
+        git -C "$PUFFER" apply --reverse --no-index "$GUARD_V1_PATCH"
+        echo "reversed:  $(basename "$GUARD_V1_PATCH") <- pufferlib/pufferl.py (upgrading the scripted guard)"
+    fi
     for local_pufferl_patch in \
         "$ROOT/training/pufferl_scripted_training_guard.patch" \
         "$ROOT/training/pufferl_warm_start.patch"; do
