@@ -209,9 +209,29 @@ static void apply_kwargs(Env* env, Dict* kwargs) {
         env->scripted_opponent_type = 0;
     }
     env->scripted_bank_tag = (int)kw(kwargs, "scripted_bank_tag", 0.0);
-    if (env->scripted_bank_tag < 0 || env->scripted_bank_tag > 8) {
-        env->scripted_bank_tag = 0;
+    // Never fall back to global scripted mode on a bad bank tag: global mode
+    // means EVERY env's opponent seat is a bot, which is exactly the learner
+    // contamination the tag exists to prevent, and the trainer-side guard
+    // (pufferl_scripted_training_guard.patch) would then be reasoning about
+    // a value the env silently discarded. Fail closed instead.
+    if (env->scripted_bank_tag < 0 || env->scripted_bank_tag > BBE_MAX_BANKS) {
+        fprintf(stderr,
+                "bloodbowl: scripted_bank_tag=%d out of range 0..%d\n",
+                env->scripted_bank_tag, BBE_MAX_BANKS);
+        exit(1);
     }
+    if (env->scripted_bank_tag > 0 && env->scripted_opponent_team != BB_AWAY) {
+        fprintf(stderr,
+                "bloodbowl: scripted_bank_tag=%d requires scripted_opponent_team=%d "
+                "(AWAY): tagged selfplay envs seat the frozen bank -- and so the "
+                "bot -- on slot 1\n",
+                env->scripted_bank_tag, BB_AWAY);
+        exit(1);
+    }
+    // Whether any env will actually carry this tag is decided later by
+    // selfplay.py (set_env_tags), which the env cannot see at init: with
+    // selfplay disabled or num_frozen_banks < tag no env is ever tagged and
+    // the bot never plays. The trainer guard refuses those configurations.
     env->max_decisions = (int)kw(kwargs, "max_decisions", BBE_MAX_DECISIONS);
     if (env->max_decisions <= 0 || env->max_decisions > BBE_MAX_DECISIONS) {
         env->max_decisions = BBE_MAX_DECISIONS;
