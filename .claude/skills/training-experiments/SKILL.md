@@ -117,6 +117,32 @@ default.
 - The `exact-action-canary` is a fresh-initialization qualification run: launch with
   `env -u WARM -u POOL` and zero frozen banks. Its output is qualification-only — never
   continue from it, never analyze it as a result cell.
+- **Bootstrap modes and screen profiles.** `tools/run_reward_ablation.sh` takes
+  `BOOTSTRAP_MODE=fresh-v6-qualification|fresh-v6-genesis|lineage-v6|graft-v6`.
+  `lineage-v6` (warm + four-bank pool) requires every warm/pool sidecar to bind THIS
+  build's source/module/patch-bundle digests. `graft-v6` is the reviewed bridge across a
+  source or patch-bundle change: each sidecar is validated on its own recorded
+  implementation and must bind either this build exactly or the declared old build
+  (`GRAFT_FROM_SOURCE_SHA256` + `GRAFT_FROM_PATCH_BUNDLE_SHA256`, any module), at least
+  one must be old-build, all old-build sidecars share one module, and `GRAFT_REASON` (the
+  DECISIONS entry) is required; the accepted sidecar publishes on the new build with
+  `ancestry.grafted_from`. Because a sidecar may already be new-build, the rungs after a
+  graft (new-build warm, mixed pool) launch as `graft` too until the pool has turned
+  over; a same-source/same-patch module difference is a `rehost`, not a graft. Screen
+  profiles: `ladder-rung` (one `s_both` arm at `LADDER_SEED`, `LADDER_ENDZONE_MAXDIST` +
+  `LADDER_RESET_PCT` required) and `graft` (the same shape on `graft-v6`); the ladder
+  chain selects them with `LADDER_PROFILE` in `tools/launch_ladder_rung.sh` /
+  `tools/ladder_stage.sh`.
+- **`SCRIPTED_BANK_TAG` (0..4, default 0) + `SCRIPTED_BOT_TYPE` (0 contact / 1
+  offense).** Native training against a scripted bot at native SPS: the bot replaces
+  frozen bank (tag-1)'s seat only in that bank's tagged envs, whose opponent rows sit in
+  the bank's tail row slice that the native prioritized sampler never selects, so the
+  bot's rows are excluded from PPO by the same mechanism as frozen rows. Only legal in
+  the pool-backed modes with `scripted_opponent_team=1`; the trainer guard refuses
+  anything else. The bank still loads its real weights (never consulted for actions) and
+  its `hist_score_bank` telemetry then reads learner-vs-bot. Recorded explicitly (0 is a
+  value) in the run manifest, `contract["ladder"]`, and `LADDER_RUNG_COMPLETE.json`;
+  it is a training-opponent factor, not held-out evidence (D176).
 - A new runtime must pass the fp32 target-GPU recurrent gate
   (`tools/qualify_recurrent_cuda.py`) and then a disposable 50M-step canary before any long
   paired screen. What the gate proves and why bf16 is refused: `puffer-env-dev` §8.
