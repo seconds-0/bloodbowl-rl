@@ -35,6 +35,10 @@
 #   STEPS (default 5000000000)  RESET_PCT (default 0.5)  SEED (default 42)
 #   PREFIX (default ladder-d<RUNG>-s<SEED>-<STAMP>)  STAMP  OUT  C
 #   DEADLINE_HOURS (default 36)
+#   SCRIPTED_BANK_TAG (default 0)  SCRIPTED_BOT_TYPE (default 0)
+#     -- scripted bank: bank (tag-1)'s seat is played by the contact (0) or
+#        offense (1) bot in that bank's envs; forwarded to the screen and
+#        recorded in LADDER_RUNG_COMPLETE.json. 0 = ordinary rung.
 
 set -uo pipefail
 
@@ -62,6 +66,8 @@ STAMP="${STAMP:-$(date +%Y%m%d)}"
 PREFIX="${PREFIX:-ladder-d${RUNG}-s${SEED}-${STAMP}}"
 OUT="${OUT:-$C/runs/ladder-d${RUNG}-${STAMP}}"
 DEADLINE_HOURS="${DEADLINE_HOURS:-36}"
+SCRIPTED_BANK_TAG="${SCRIPTED_BANK_TAG:-0}"
+SCRIPTED_BOT_TYPE="${SCRIPTED_BOT_TYPE:-0}"
 TAG="${PREFIX}-s_both-s${SEED}"
 
 mkdir -p "$OUT"
@@ -116,6 +122,7 @@ echo "  steps  $STEPS (CAP -- read the plateau, chain if still climbing)"
 echo "  seed   $SEED"
 echo "  warm   $WARM"
 echo "  pool   $POOL ($EXPECTED_POOL_HASH)"
+echo "  bot    scripted_bank_tag=$SCRIPTED_BANK_TAG scripted_bot_type=$SCRIPTED_BOT_TYPE"
 echo "  bank   $(sha256sum "$C/vendor/PufferLib/resources/bloodbowl/state_bank.bbs" 2>/dev/null | cut -c1-16)"
 echo "  out    $OUT"
 echo "  screen $SCREEN_DIR"
@@ -131,6 +138,8 @@ timeout --signal=TERM --kill-after=120 "$((DEADLINE_HOURS * 3600))" \
       EXPECTED_POOL_HASH="$EXPECTED_POOL_HASH" \
       LADDER_ENDZONE_MAXDIST="$RUNG" LADDER_RESET_PCT="$RESET_PCT" \
       LADDER_SEED="$SEED" \
+      SCRIPTED_BANK_TAG="$SCRIPTED_BANK_TAG" \
+      SCRIPTED_BOT_TYPE="$SCRIPTED_BOT_TYPE" \
       bash "$C/tools/run_reward_screen.sh"
 rc=$?
 echo "LADDER_RUNG_SCREEN_EXIT=$rc"
@@ -146,9 +155,11 @@ fi
 # Publish the rung marker only from the screen's own accepted result, so the
 # checkpoint path recorded here is the one whose lineage sidecar was written.
 python3 - "$RESULT" "$OUT/LADDER_RUNG_COMPLETE.json" "$RUNG" "$RESET_PCT" \
-    "$STEPS" "$SEED" "$WARM" "$EXPECTED_POOL_HASH" "$PREFIX" <<'PY'
+    "$STEPS" "$SEED" "$WARM" "$EXPECTED_POOL_HASH" "$PREFIX" \
+    "$SCRIPTED_BANK_TAG" "$SCRIPTED_BOT_TYPE" <<'PY'
 import json, sys
-result_path, out_path, rung, reset_pct, steps, seed, warm, pool_hash, prefix = sys.argv[1:]
+(result_path, out_path, rung, reset_pct, steps, seed, warm, pool_hash, prefix,
+ scripted_bank_tag, scripted_bot_type) = sys.argv[1:]
 result = json.load(open(result_path, encoding="utf-8"))
 if not result.get("acceptance_pass"):
     raise SystemExit(f"result is not accepted: {result_path}")
@@ -157,6 +168,8 @@ payload = {
     "tag": result["tag"],
     "rung": int(rung),
     "reset_pct": float(reset_pct),
+    "scripted_bank_tag": int(scripted_bank_tag),
+    "scripted_bot_type": int(scripted_bot_type),
     "steps": str(steps),
     "seed": int(seed),
     "log": result["log"],

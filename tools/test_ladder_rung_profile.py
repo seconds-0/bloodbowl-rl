@@ -26,6 +26,7 @@ RUNG = ROOT / "tools/launch_ladder_rung.sh"
 def run(script, env):
     merged = os.environ.copy()
     for key in ("LADDER_ENDZONE_MAXDIST", "LADDER_RESET_PCT", "LADDER_SEED",
+                "SCRIPTED_BANK_TAG", "SCRIPTED_BOT_TYPE",
                 "WARM", "POOL", "CANDIDATE_ARM"):
         merged.pop(key, None)
     merged.update(env)
@@ -160,6 +161,71 @@ class LadderRungProfileTests(unittest.TestCase):
         # which is where the lineage sidecar path/digest come from.
         self.assertIn('result["checkpoint_lineage_sha256"]', source)
         self.assertIn('if not result.get("acceptance_pass")', source)
+
+    RUNG_OK = {"LADDER_ENDZONE_MAXDIST": "9", "LADDER_RESET_PCT": "0.5",
+               "LADDER_SEED": "42"}
+
+    def test_scripted_bank_knobs_are_refused_on_every_other_profile(self):
+        for knob in ("SCRIPTED_BANK_TAG", "SCRIPTED_BOT_TYPE"):
+            result = run(SCREEN, {
+                "WARM": "missing.bin", "POOL": "missing-pool",
+                "STEPS": "12000000000", "SCREEN_PROFILE": "control-final",
+                knob: "0",
+            })
+            self.assertNotEqual(result.returncode, 0, knob)
+            self.assertIn("SCRIPTED_BANK_TAG and SCRIPTED_BOT_TYPE are only "
+                          "valid with SCREEN_PROFILE=ladder-rung", result.stderr, knob)
+
+    def test_rung_validates_scripted_bank_knobs(self):
+        for knobs, message in (
+            ({"SCRIPTED_BANK_TAG": "5"}, "requires SCRIPTED_BANK_TAG"),
+            ({"SCRIPTED_BANK_TAG": "-1"}, "requires SCRIPTED_BANK_TAG"),
+            ({"SCRIPTED_BANK_TAG": "01"}, "requires SCRIPTED_BANK_TAG"),
+            ({"SCRIPTED_BOT_TYPE": "2"}, "requires SCRIPTED_BOT_TYPE"),
+            ({"SCRIPTED_BOT_TYPE": "contact"}, "requires SCRIPTED_BOT_TYPE"),
+        ):
+            result = run(SCREEN, {**BASE, **self.RUNG_OK, **knobs})
+            self.assertNotEqual(result.returncode, 0, knobs)
+            self.assertIn(message, result.stderr, knobs)
+        # Legal values, and the unset default, get past the validator and fail
+        # later on the deliberately missing warm checkpoint.
+        for knobs in ({}, {"SCRIPTED_BANK_TAG": "0"},
+                      {"SCRIPTED_BANK_TAG": "4", "SCRIPTED_BOT_TYPE": "1"},
+                      {"SCRIPTED_BANK_TAG": "1", "SCRIPTED_BOT_TYPE": "0"}):
+            result = run(SCREEN, {**BASE, **self.RUNG_OK, **knobs})
+            self.assertNotEqual(result.returncode, 0, knobs)
+            self.assertNotIn("SCRIPTED_B", result.stderr, knobs)
+            self.assertIn("missing warm checkpoint", result.stderr, knobs)
+
+    def test_screen_passes_and_records_scripted_bank_knobs_explicitly(self):
+        source = SCREEN.read_text(encoding="utf-8")
+        # Unset resolves to the explicit 0 inside the rung branch only.
+        self.assertIn('SCRIPTED_BANK_TAG="${SCRIPTED_BANK_TAG:-0}"', source)
+        self.assertIn('SCRIPTED_BOT_TYPE="${SCRIPTED_BOT_TYPE:-0}"', source)
+        # Passed to the per-arm launcher with the other rung knobs.
+        self.assertIn('LADDER_RESET_PCT="$LADDER_RESET_PCT" \\\n'
+                      '                  SCRIPTED_BANK_TAG="$SCRIPTED_BANK_TAG" \\\n'
+                      '                  SCRIPTED_BOT_TYPE="$SCRIPTED_BOT_TYPE")', source)
+        # Recorded as ints in the contract, unconditionally for a rung.
+        self.assertIn('"scripted_bank_tag": int(os.environ["SCRIPTED_BANK_TAG"])',
+                      source)
+        self.assertIn('"scripted_bot_type": int(os.environ["SCRIPTED_BOT_TYPE"])',
+                      source)
+
+    def test_rung_launcher_and_stage_forward_scripted_bank_knobs(self):
+        source = RUNG.read_text(encoding="utf-8")
+        self.assertIn('SCRIPTED_BANK_TAG="${SCRIPTED_BANK_TAG:-0}"', source)
+        self.assertIn('SCRIPTED_BOT_TYPE="${SCRIPTED_BOT_TYPE:-0}"', source)
+        self.assertIn('SCRIPTED_BANK_TAG="$SCRIPTED_BANK_TAG" \\\n'
+                      '      SCRIPTED_BOT_TYPE="$SCRIPTED_BOT_TYPE" \\\n'
+                      '      bash "$C/tools/run_reward_screen.sh"', source)
+        self.assertIn('"scripted_bank_tag": int(scripted_bank_tag)', source)
+        self.assertIn('"scripted_bot_type": int(scripted_bot_type)', source)
+        stage = (ROOT / "tools/ladder_stage.sh").read_text(encoding="utf-8")
+        self.assertIn('[ -z "${SCRIPTED_BANK_TAG:-}" ] || export SCRIPTED_BANK_TAG',
+                      stage)
+        self.assertIn('[ -z "${SCRIPTED_BOT_TYPE:-}" ] || export SCRIPTED_BOT_TYPE',
+                      stage)
 
     def test_rung_launcher_refuses_missing_inputs_before_launch(self):
         env = os.environ.copy()

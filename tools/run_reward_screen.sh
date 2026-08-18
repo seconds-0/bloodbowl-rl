@@ -40,6 +40,12 @@ ARM_DETACH="${ARM_DETACH:-1}"
 LADDER_ENDZONE_MAXDIST="${LADDER_ENDZONE_MAXDIST:-}"
 LADDER_RESET_PCT="${LADDER_RESET_PCT:-}"
 LADDER_SEED="${LADDER_SEED:-}"
+# ladder-rung only: scripted BANK. SCRIPTED_BANK_TAG=b+1 replaces frozen bank
+# b's seat with a scripted bot in that bank's envs (bloodbowl.h
+# scripted_bank_tag; contact 0 / offense 1). Unset means 0 for a rung and is
+# then passed and recorded EXPLICITLY, so "no bot" is a declared value.
+SCRIPTED_BANK_TAG="${SCRIPTED_BANK_TAG:-}"
+SCRIPTED_BOT_TYPE="${SCRIPTED_BOT_TYPE:-}"
 
 # Fixed Stage-1 causal contract. Assign, rather than inherit, every optional
 # launcher input which could alter optimization, batching, or pool allocation.
@@ -122,6 +128,11 @@ if [ "$SCREEN_PROFILE" != "ladder-rung" ] && \
   echo "LADDER_ENDZONE_MAXDIST, LADDER_RESET_PCT and LADDER_SEED are only valid with SCREEN_PROFILE=ladder-rung" >&2
   exit 1
 fi
+if [ "$SCREEN_PROFILE" != "ladder-rung" ] && \
+   [ -n "$SCRIPTED_BANK_TAG$SCRIPTED_BOT_TYPE" ]; then
+  echo "SCRIPTED_BANK_TAG and SCRIPTED_BOT_TYPE are only valid with SCREEN_PROFILE=ladder-rung" >&2
+  exit 1
+fi
 case "$SCREEN_PROFILE" in
   distance-possession|possession-gain|possession-gain-exact|exact-action-canary|genesis|genesis-pool|control-final|ladder-rung)
     [ -z "$CANDIDATE_ARM$TRANSFER_COMPLETE$EXPECTED_TRANSFER_SHA256" ] || {
@@ -153,6 +164,20 @@ case "$SCREEN_PROFILE" in
         ''|*[!0-9]*|0[0-9]*)
           echo "ladder-rung requires LADDER_SEED as a canonical non-negative integer" >&2
           exit 1 ;;
+      esac
+      # The scripted bank is optional; unset resolves to the explicit 0 the
+      # per-arm launcher then records. Same domain as the launcher's own gate.
+      SCRIPTED_BANK_TAG="${SCRIPTED_BANK_TAG:-0}"
+      SCRIPTED_BOT_TYPE="${SCRIPTED_BOT_TYPE:-0}"
+      case "$SCRIPTED_BANK_TAG" in
+        0|1|2|3|4) ;;
+        *) echo "ladder-rung requires SCRIPTED_BANK_TAG as an integer in 0..4 (0 = no scripted bank)" >&2
+           exit 1 ;;
+      esac
+      case "$SCRIPTED_BOT_TYPE" in
+        0|1) ;;
+        *) echo "ladder-rung requires SCRIPTED_BOT_TYPE as 0 (contact) or 1 (offense)" >&2
+           exit 1 ;;
       esac
     fi
     ;;
@@ -393,6 +418,8 @@ SCREEN_PLAN="$(
       MIN_TRAIN_GAMES="$MIN_TRAIN_GAMES" MIN_EVAL_GAMES="$MIN_EVAL_GAMES" \
       LADDER_ENDZONE_MAXDIST="$LADDER_ENDZONE_MAXDIST" \
       LADDER_RESET_PCT="$LADDER_RESET_PCT" \
+      SCRIPTED_BANK_TAG="$SCRIPTED_BANK_TAG" \
+      SCRIPTED_BOT_TYPE="$SCRIPTED_BOT_TYPE" \
       "$PYBIN" - "$SCREEN_MANIFEST" <<'PY'
 import datetime, hashlib, json, os, pathlib, subprocess, sys, sysconfig
 
@@ -677,6 +704,10 @@ if profile == "ladder-rung":
     contract["ladder"] = {
         "endzone_maxdist": int(os.environ["LADDER_ENDZONE_MAXDIST"]),
         "reset_pct": float(os.environ["LADDER_RESET_PCT"]),
+        # Scripted bank: 0 = none. Recorded even when 0 so the contract says
+        # which opponent the rung trained against, not merely which starts.
+        "scripted_bank_tag": int(os.environ["SCRIPTED_BANK_TAG"]),
+        "scripted_bot_type": int(os.environ["SCRIPTED_BOT_TYPE"]),
     }
 if profile in ("paired-confirmation", "paired-final"):
     from analyze_reward_candidate_transfer import (
@@ -1130,7 +1161,9 @@ PY
     LADDER_ENV=()
     if [ "$SCREEN_PROFILE" = "ladder-rung" ]; then
       LADDER_ENV=(LADDER_ENDZONE_MAXDIST="$LADDER_ENDZONE_MAXDIST" \
-                  LADDER_RESET_PCT="$LADDER_RESET_PCT")
+                  LADDER_RESET_PCT="$LADDER_RESET_PCT" \
+                  SCRIPTED_BANK_TAG="$SCRIPTED_BANK_TAG" \
+                  SCRIPTED_BOT_TYPE="$SCRIPTED_BOT_TYPE")
     fi
     env ${LADDER_ENV[@]+"${LADDER_ENV[@]}"} \
         TAG="$tag" REWARD_MANIFEST="$manifest" WARM="$WARM" POOL="$POOL" \

@@ -28,6 +28,8 @@
 #   PIN (git ref to fetch+checkout, default: current HEAD, no checkout)
 #   STEPS (default 5000000000)  C (checkout root)  DEADLINE_HOURS
 #   POOL_KEEP=<n> newest banks kept from PREV_POOL (default 3)
+#   SCRIPTED_BANK_TAG / SCRIPTED_BOT_TYPE  scripted bank for this rung
+#     (forwarded to launch_ladder_rung.sh only when set; unset = ordinary rung)
 set -uo pipefail
 
 C="${C:-/home/rache/bloodbowl-rl-qualification-candidate-10619e2}"
@@ -152,6 +154,10 @@ echo "  warm $WARM"
 echo "  pool $POOL_OUT/pool ($EXPECTED_POOL_HASH)"
 
 export RUNG STEPS RESET_PCT SEED STAMP WARM OUT C
+[ -z "${SCRIPTED_BANK_TAG:-}" ] || export SCRIPTED_BANK_TAG
+[ -z "${SCRIPTED_BOT_TYPE:-}" ] || export SCRIPTED_BOT_TYPE
+[ -z "${SCRIPTED_BANK_TAG:-}${SCRIPTED_BOT_TYPE:-}" ] || \
+  echo "  bot  scripted_bank_tag=${SCRIPTED_BANK_TAG:-0} scripted_bot_type=${SCRIPTED_BOT_TYPE:-0}"
 export POOL="$POOL_OUT/pool"
 export DEADLINE_HOURS="${DEADLINE_HOURS:-40}"
 exec bash tools/launch_ladder_rung.sh
