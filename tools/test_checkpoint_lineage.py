@@ -476,6 +476,7 @@ class GraftLineageTests(unittest.TestCase):
         "graft_from_module_sha256": "b" * 64,
         "graft_from_patch_bundle_sha256": "c" * 64,
         "graft_from_warm_lineage_sha256": "5" * 64,
+        "graft_reason": "D242",
     }
 
     def setUp(self):
@@ -534,6 +535,7 @@ class GraftLineageTests(unittest.TestCase):
             "source_sha256": "a" * 64,
             "compiled_module_sha256": "b" * 64,
             "puffer_patch_bundle_sha256": "c" * 64,
+            "reason": "D242",
         })
         # Published on the NEW build's digests, ordinary lineage-v6 otherwise.
         self.assertEqual(payload["implementation"], self.expected())
@@ -559,8 +561,20 @@ class GraftLineageTests(unittest.TestCase):
                                         "all-or-none"):
                 self.create()
 
+    def test_malformed_graft_reason_is_refused(self):
+        for bad in ("", "   ", 7, None, "x" * 201):
+            self.write(**{**self.OLD, "graft_reason": bad})
+            with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                        "graft_reason"):
+                self.create()
+        self.write(**{**self.OLD, "graft_reason": "y" * 200})
+        self.assertEqual(self.create()["ancestry"]["grafted_from"]["reason"],
+                         "y" * 200)
+
     def test_malformed_graft_sha_is_refused(self):
         for key in self.OLD:
+            if key == "graft_reason":
+                continue
             for bad in ("", "A" * 64, "a" * 63, 7, None):
                 self.write(**{**self.OLD, key: bad})
                 with self.assertRaisesRegex(checkpoint_lineage.LineageError,
@@ -581,13 +595,21 @@ class GraftLineageTests(unittest.TestCase):
                                     "lineage-v6"):
             self.create()
 
-    def test_graft_onto_the_identical_build_is_refused_as_a_no_op(self):
-        self.write(**{**self.OLD,
-                      "graft_from_source_sha256": "1" * 64,
-                      "graft_from_module_sha256": "2" * 64,
-                      "graft_from_patch_bundle_sha256": "3" * 64})
-        with self.assertRaisesRegex(checkpoint_lineage.LineageError, "no-op"):
-            self.create()
+    def test_graft_onto_the_identical_source_and_patch_is_refused_as_a_no_op(self):
+        # Even with a different module: that is a rehost, not a graft.
+        for module in ("2" * 64, "b" * 64):
+            self.write(**{**self.OLD,
+                          "graft_from_source_sha256": "1" * 64,
+                          "graft_from_module_sha256": module,
+                          "graft_from_patch_bundle_sha256": "3" * 64})
+            with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                        "no-op.*rehost"):
+                self.create()
+        # A source-only or patch-only change IS a graft.
+        self.write(**{**self.OLD, "graft_from_source_sha256": "1" * 64})
+        self.create()
+        self.write(**{**self.OLD, "graft_from_patch_bundle_sha256": "3" * 64})
+        self.create()
 
     def test_validate_refuses_malformed_grafted_from_in_the_sidecar(self):
         self.write(**self.OLD)
@@ -613,6 +635,10 @@ class GraftLineageTests(unittest.TestCase):
             "compiled_module_sha256", "Z" * 64), "grafted_from.compiled_module")
         check(lambda b: b["ancestry"]["grafted_from"].__setitem__(
             "warm_lineage_sha256", "9" * 64), "differs from")
+        check(lambda b: b["ancestry"]["grafted_from"].__setitem__("reason", ""),
+              "grafted_from.reason")
+        check(lambda b: b["ancestry"]["grafted_from"].__setitem__(
+            "reason", "r" * 201), "grafted_from.reason")
 
     def test_validate_refuses_grafted_from_on_fresh_lineage(self):
         self.write(initialization="fresh", mode="native_fresh_v6_genesis",
@@ -621,7 +647,7 @@ class GraftLineageTests(unittest.TestCase):
         payload["ancestry"]["grafted_from"] = {
             "warm_lineage_sha256": "", "source_sha256": "a" * 64,
             "compiled_module_sha256": "b" * 64,
-            "puffer_patch_bundle_sha256": "c" * 64}
+            "puffer_patch_bundle_sha256": "c" * 64, "reason": "D242"}
         sidecar = self.root / "g.lineage.json"
         checkpoint_lineage.write_lineage(sidecar, payload)
         with self.assertRaisesRegex(checkpoint_lineage.LineageError,

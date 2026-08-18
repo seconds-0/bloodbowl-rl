@@ -30,23 +30,30 @@ SHA256_KEYS = (
     "compiled_module_sha256",
     "puffer_patch_bundle_sha256",
 )
-# A GRAFT is a reviewed lineage bridge across a source/patch-bundle change: the
-# warm checkpoint and pool were produced on an OLD build and the new run
-# publishes on the NEW build's digests. The run manifest declares the old
-# identity under these keys (all four or none) and the sidecar records it as
-# `ancestry.grafted_from`, so the bridge is auditable rather than invisible.
+# A GRAFT is a reviewed lineage bridge across a source/patch-bundle change: at
+# least one of the warm checkpoint / pool banks was produced on an OLD build
+# and the new run publishes on the NEW build's digests. The run manifest
+# declares the old identity plus a reason under these keys (all five or none)
+# and the sidecar records them as `ancestry.grafted_from`, so the bridge is
+# auditable rather than invisible. The warm itself may already be new-build
+# (a rung after the graft, whose pool still holds old-build banks); the bridge
+# is then the pool's, and warm_lineage_sha256 still names the warm it started
+# from.
 GRAFT_MANIFEST_KEYS = (
     "graft_from_source_sha256",
     "graft_from_module_sha256",
     "graft_from_patch_bundle_sha256",
     "graft_from_warm_lineage_sha256",
+    "graft_reason",
 )
 GRAFTED_FROM_KEYS = (
     "warm_lineage_sha256",
     "source_sha256",
     "compiled_module_sha256",
     "puffer_patch_bundle_sha256",
+    "reason",
 )
+GRAFT_REASON_MAX_CHARS = 200
 
 
 class LineageError(RuntimeError):
@@ -91,6 +98,15 @@ def _need_int(value, label):
     if str(parsed) != str(value):
         raise LineageError(f"{label} must be a canonical integer")
     return parsed
+
+
+def _need_reason(value, label):
+    if not isinstance(value, str) or not value.strip():
+        raise LineageError(f"{label} must be a non-empty string")
+    if len(value) > GRAFT_REASON_MAX_CHARS:
+        raise LineageError(
+            f"{label} must be at most {GRAFT_REASON_MAX_CHARS} characters")
+    return value
 
 
 def _need_bool_string(value, label):
@@ -255,16 +271,21 @@ def lineage_from_run_manifest(checkpoint, run_manifest, *,
             "puffer_patch_bundle_sha256": _need_sha(
                 manifest.get("graft_from_patch_bundle_sha256"),
                 "graft_from_patch_bundle_sha256"),
+            "reason": _need_reason(manifest.get("graft_reason"), "graft_reason"),
         }
-        # The warm sidecar IS the thing being grafted from; the manifest's
+        # The graft names the warm it started from; the manifest's
         # warm_lineage_sha256 is that sidecar's digest, so both must agree.
         if grafted_from["warm_lineage_sha256"] != warm_lineage:
             raise LineageError(
                 "graft_from_warm_lineage_sha256 differs from warm_lineage_sha256")
-        if all(grafted_from[key] == implementation[key] for key in SHA256_KEYS):
+        if (grafted_from["source_sha256"] == implementation["source_sha256"] and
+                grafted_from["puffer_patch_bundle_sha256"]
+                == implementation["puffer_patch_bundle_sha256"]):
             raise LineageError(
-                "graft is a no-op: the declared old implementation equals the "
-                "new build; run an ordinary lineage-v6 arm instead")
+                "graft is a no-op: the declared old source/patch bundle equal "
+                "the new build's, so there is nothing to graft; a module-only "
+                "difference is a `rehost`, otherwise run an ordinary lineage-v6 "
+                "arm")
 
     ancestry = {
         "initialization": initialization,
@@ -515,7 +536,10 @@ def validate_lineage(checkpoint, sidecar=None, *, expected=None,
                 "ancestry.grafted_from must contain exactly "
                 f"{sorted(GRAFTED_FROM_KEYS)}, got {sorted(grafted_from)}")
         for key in GRAFTED_FROM_KEYS:
-            _need_sha(grafted_from.get(key), f"ancestry.grafted_from.{key}")
+            if key == "reason":
+                _need_reason(grafted_from.get(key), "ancestry.grafted_from.reason")
+            else:
+                _need_sha(grafted_from.get(key), f"ancestry.grafted_from.{key}")
         if initialization != "lineage-v6":
             raise LineageError("only lineage-v6 lineage may be grafted")
         if grafted_from["warm_lineage_sha256"] != warm_lineage:
