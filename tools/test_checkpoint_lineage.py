@@ -656,5 +656,77 @@ class GraftLineageTests(unittest.TestCase):
                 self.checkpoint, sidecar, expected=self.expected())
 
 
+class GraftBridgeTests(unittest.TestCase):
+    """graft_bridge is the shared launcher/screen classification of a graft."""
+
+    NEW = {"source_sha256": "1" * 64, "compiled_module_sha256": "2" * 64,
+           "puffer_patch_bundle_sha256": "3" * 64}
+
+    @staticmethod
+    def payload(source, module, patch):
+        return {"implementation": {
+            "source_sha256": source, "compiled_module_sha256": module,
+            "puffer_patch_bundle_sha256": patch}}
+
+    def bridge(self, sidecars, old_source="a" * 64, old_patch="c" * 64):
+        return checkpoint_lineage.graft_bridge(
+            sidecars, current=self.NEW, old_source_sha256=old_source,
+            old_patch_bundle_sha256=old_patch)
+
+    def test_all_old_returns_the_shared_old_module(self):
+        old = self.payload("a" * 64, "b" * 64, "c" * 64)
+        self.assertEqual(self.bridge([("warm", old)] + [
+            (f"bank{i}", old) for i in range(4)]), "b" * 64)
+
+    def test_mixed_pool_after_a_graft_is_accepted(self):
+        # Rung N+1: warm is new-build, one bank is the new-build rung-N
+        # checkpoint, three banks are still old-build.
+        new = self.payload("1" * 64, "2" * 64, "3" * 64)
+        old = self.payload("a" * 64, "b" * 64, "c" * 64)
+        self.assertEqual(self.bridge([("warm", new), ("bank0", old),
+                                      ("bank1", old), ("bank2", old),
+                                      ("bank3", new)]), "b" * 64)
+
+    def test_a_bank_from_a_different_old_build_is_refused(self):
+        old = self.payload("a" * 64, "b" * 64, "c" * 64)
+        other = self.payload("d" * 64, "e" * 64, "f" * 64)
+        with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                    "bank2 binds neither"):
+            self.bridge([("warm", old), ("bank0", old), ("bank1", old),
+                         ("bank2", other), ("bank3", old)])
+
+    def test_old_build_sidecars_must_share_one_module(self):
+        old = self.payload("a" * 64, "b" * 64, "c" * 64)
+        rehosted = self.payload("a" * 64, "9" * 64, "c" * 64)
+        with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                    "different compiled modules"):
+            self.bridge([("warm", old), ("bank0", rehosted)])
+
+    def test_same_source_and_patch_with_other_module_is_a_rehost_not_a_graft(self):
+        drifted = self.payload("1" * 64, "9" * 64, "3" * 64)
+        with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                    "binds neither.*rehost"):
+            self.bridge([("warm", drifted)])
+
+    def test_nothing_old_is_a_refused_no_op(self):
+        new = self.payload("1" * 64, "2" * 64, "3" * 64)
+        with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                    "no-op.*rehost"):
+            self.bridge([("warm", new), ("bank0", new)])
+
+    def test_declaring_this_build_as_the_old_build_is_refused(self):
+        old = self.payload("a" * 64, "b" * 64, "c" * 64)
+        with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                    "nothing to graft.*rehost"):
+            self.bridge([("warm", old)], old_source="1" * 64,
+                        old_patch="3" * 64)
+
+    def test_malformed_digests_are_refused(self):
+        old = self.payload("a" * 64, "b" * 64, "c" * 64)
+        with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                    "old_source_sha256"):
+            self.bridge([("warm", old)], old_source="A" * 64)
+
+
 if __name__ == "__main__":
     unittest.main()

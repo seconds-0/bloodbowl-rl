@@ -390,6 +390,68 @@ def rehost_lineage(checkpoint, *, target_module, target_source_sha256,
     return rehosted
 
 
+def graft_bridge(sidecars, *, current, old_source_sha256,
+                 old_patch_bundle_sha256):
+    """Classify validated warm/pool sidecars for a graft; return the old module.
+
+    ``sidecars`` is a sequence of ``(label, payload)`` where each payload has
+    already passed ``validate_lineage`` (eligible, hash-bound, obs-v6) with no
+    implementation overrides. ``current`` is this build's three implementation
+    digests. Every sidecar must bind EITHER this build exactly (source, module
+    and patch bundle -- what lineage-v6 would demand) OR the declared old
+    build's source and patch bundle with any module; anything else is refused.
+    At least one sidecar must be old-build (else there is nothing to graft), and
+    every old-build sidecar must record the same module, which is returned so
+    the run manifest can carry it as graft_from_module_sha256.
+
+    This is the single definition both the per-arm launcher and the screen plan
+    writer use, so a graft the screen plans is a graft the launcher accepts. It
+    is what lets a lineage keep chaining after a graft: the next rung's warm is
+    new-build while its pool still holds old-build banks, and lineage-v6 alone
+    would refuse that pool forever.
+    """
+    for key in SHA256_KEYS:
+        _need_sha(current.get(key), f"current.{key}")
+    _need_sha(old_source_sha256, "old_source_sha256")
+    _need_sha(old_patch_bundle_sha256, "old_patch_bundle_sha256")
+    if (old_source_sha256 == current["source_sha256"] and
+            old_patch_bundle_sha256 == current["puffer_patch_bundle_sha256"]):
+        raise LineageError(
+            "graft refused: the declared old source/patch bundle ARE this "
+            "build's, so there is nothing to graft; a module-only difference "
+            "is a `rehost`, otherwise use lineage-v6")
+    old_modules = {}
+    for label, payload in sidecars:
+        implementation = payload["implementation"]
+        if all(implementation.get(key) == current[key] for key in SHA256_KEYS):
+            continue
+        if (implementation.get("source_sha256") == old_source_sha256 and
+                implementation.get("puffer_patch_bundle_sha256")
+                == old_patch_bundle_sha256):
+            old_modules[label] = implementation["compiled_module_sha256"]
+            continue
+        raise LineageError(
+            f"graft refused: {label} binds neither this build nor the declared "
+            "old build (source "
+            f"{implementation.get('source_sha256', '?')[:12]}, patch "
+            f"{implementation.get('puffer_patch_bundle_sha256', '?')[:12]}, "
+            f"module {implementation.get('compiled_module_sha256', '?')[:12]}); "
+            "a same-source/same-patch module difference is a `rehost`")
+    if not old_modules:
+        raise LineageError(
+            "graft refused as a no-op: every sidecar already binds this build, "
+            "so there is nothing to graft; use lineage-v6 (or `rehost` for a "
+            "module-only difference)")
+    modules = sorted(set(old_modules.values()))
+    if len(modules) != 1:
+        raise LineageError(
+            "graft refused: old-build sidecars record different compiled "
+            "modules: " + ", ".join(
+                f"{label}={module[:12]}" for label, module in sorted(
+                    old_modules.items())))
+    return modules[0]
+
+
 def validate_lineage(checkpoint, sidecar=None, *, expected=None,
                      require_eligible=True):
     checkpoint = Path(checkpoint)
