@@ -40,6 +40,14 @@ under `runs/ladder-d<rung>-20260815/`; supervisor state under
 | 2b | 0 | 0.25 (chain) | r25 accepted | promoted | queued (pre-inserted, r25 still climbing) |
 | 3 | 0 (kickoff) | 0 | r25-chain accepted | promoted | queued |
 
+## Live campaign: `vast2-20260818` (Vast bb-ryzen2, Ryzen 9 5950X 32t + RTX 3090, $0.241/hr) — PR #94 build
+
+| stage | rung | reset | warm | pool | state |
+|---|---|---|---|---|---|
+| 1 | 0 (kickoff) + contact-bot bank 4 | 0 | chain2 accepted (graft, D243) | uniform/chain/stage-1/chain2 (`cb769c10`) | **running** since Aug 18 14:52 PDT, 200K SPS |
+
+Watch: `~/bin/v2watch`. A/B vs box 1's pure-pool kickoff path; verdict = the contact-bot exam.
+
 ## Live campaign: `rig-seed42-20260818` (RTX 2070, seed-42 replicate of the uniform chain)
 
 | stage | rung | reset | warm | pool | state |
