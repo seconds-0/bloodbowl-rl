@@ -56,7 +56,8 @@ Watch: `~/bin/v2watch`. Exams: `/root/native_exam.sh <ckpt> <outdir> away home o
 | stage | rung | reset | warm | pool | state |
 |---|---|---|---|---|---|
 | 1 | 0 (uniform) | 0.5 | Vast stage-1 accepted (rehosted) | rung-12/uniform/chain/stage-1 (`ce9042f6`) | accepted Aug 19 00:20 — **tds 0.647** (replicates seed-43 chain2 0.652) |
-| 2 | 0 | 0.25 | s42 stage-1 | anchor rung12 + chain/stage-1/s42 (`5a831aa4`) | **running** since Aug 19 00:21; dipped to 0.11 then recovering (0.26 at 3.6B) |
+| 2 | 0 | 0.25 | s42 stage-1 | anchor rung12 + chain/stage-1/s42 (`5a831aa4`) | accepted Aug 19 ~13:00 at **0.334** (hot-restart dip, half-recovered; D248) |
+| 3 | 0 (kickoff) | 0, LR×0.1 | s42 r25 | promoted | **running** since Aug 19 13:0x — no dip (cold restart) |
 | 3 | 0 (kickoff) | 0 | s42 stage-2 | promoted | queued |
 
 ## Kickoff exam (D50) — the scoreboard (TD/game vs contact bot, full games from kickoff)
