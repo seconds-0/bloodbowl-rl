@@ -48,6 +48,13 @@ PUFFER_BIN="$ROOT/vendor/PufferLib/.venv/bin/puffer"
 PYBIN="$ROOT/vendor/PufferLib/.venv/bin/python"
 [ -x "$PUFFER_BIN" ] || { echo "vendored puffer entrypoint missing: $PUFFER_BIN" >&2; exit 1; }
 [ -x "$PYBIN" ] || { echo "vendored Python missing: $PYBIN" >&2; exit 1; }
+if [ "${NATIVE:-0}" = "1" ]; then
+  "$PYBIN" "$ROOT/tools/checkpoint_lineage.py" validate --checkpoint "$CKPT" \
+      --allow-qualification >/dev/null || {
+    echo "NATIVE=1 requires a native flat blob with a valid lineage sidecar: $CKPT" >&2
+    exit 1
+  }
+else
 "$PYBIN" - "$CKPT" <<'PY' || {
 import sys, torch
 state = torch.load(sys.argv[1], map_location="cpu", weights_only=False)
@@ -57,6 +64,7 @@ PY
   echo "convert/select the *_torch.bin artifact; native flat blobs cannot use --slowly" >&2
   exit 1
 }
+fi
 
 if ! "$ROOT/tools/install_puffer_env.sh" --check "$ROOT/vendor/PufferLib"; then
   echo "stale PufferLib Blood Bowl snapshot; reinstall and rebuild before eval" >&2
@@ -92,6 +100,21 @@ cd "$ROOT/vendor/PufferLib"
 echo "measuring $CKPT over $STEPS steps (kickoff starts, frozen) -> $LOG" >&2
 # --slowly = torch backend (loads a torch state_dict). lr 1e-12 + bc-coef 0 =
 # effectively frozen; demo-reset-pct 0 = full games from kickoff.
+if [ "${NATIVE:-0}" = "1" ]; then
+  # Frozen eval on the CUDA backend from the rung's flat fp32 blob (~30-80x
+  # the torch --slowly throughput, real biases). lr 1e-12 = frozen.
+  CMD=("$PUFFER_BIN" train bloodbowl --selfplay.enabled 0 \
+    --vec.num-frozen-banks 0 --vec.frozen-bank-pct 0 \
+    --seed "$SEED" --train.seed "$SEED" --env.seed "$SEED" \
+    --load-model-path "$CKPT" \
+    --tag game-stats-eval \
+    --train.total-timesteps "$STEPS" \
+    --train.learning-rate 0.000000000001 \
+    --env.demo-reset-pct 0 \
+    --vec.total-agents 2048 --vec.num-buffers 2 \
+    --vec.num-threads "${OMP_NUM_THREADS:-8}" \
+    --train.horizon 64 --train.minibatch-size 16384)
+else
 CMD=("$PUFFER_BIN" train bloodbowl --slowly --selfplay.enabled 0 \
   --seed "$SEED" --train.seed "$SEED" --env.seed "$SEED" \
   --load-model-path "$CKPT" \
@@ -102,6 +125,7 @@ CMD=("$PUFFER_BIN" train bloodbowl --slowly --selfplay.enabled 0 \
   --env.demo-reset-pct 0 \
   --vec.total-agents 256 --vec.num-threads "${OMP_NUM_THREADS:-8}" \
   --train.minibatch-size 2048)
+fi
 
 CKPT_SHA="$(sha256sum "$CKPT" | awk '{print $1}')"
 CONFIG_SHA="$(sha256sum config/bloodbowl.ini | awk '{print $1}')"
