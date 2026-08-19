@@ -33,6 +33,8 @@
 #   EXPECTED_POOL_HASH=<sha256> printed by tools/build_league.py
 # Optional:
 #   STEPS (default 5000000000)  RESET_PCT (default 0.5)  SEED (default 42)
+#   LADDER_CHAIN_LR_SCALE (default 1; e.g. 0.1 to resume a chain near the warm
+#     rung's final LR/entropy instead of re-annealing from the top, D245)
 #   PREFIX (default ladder-d<RUNG>-s<SEED>-<STAMP>)  STAMP  OUT  C
 #   DEADLINE_HOURS (default 36)
 #   SCRIPTED_BANK_TAG (default 0)  SCRIPTED_BOT_TYPE (default 0)
@@ -178,7 +180,7 @@ timeout --signal=TERM --kill-after=120 "$((DEADLINE_HOURS * 3600))" \
       STEPS="$STEPS" WARM="$WARM" POOL="$POOL" \
       EXPECTED_POOL_HASH="$EXPECTED_POOL_HASH" \
       LADDER_ENDZONE_MAXDIST="$RUNG" LADDER_RESET_PCT="$RESET_PCT" \
-      LADDER_SEED="$SEED" \
+      LADDER_SEED="$SEED" LADDER_CHAIN_LR_SCALE="${LADDER_CHAIN_LR_SCALE:-1}" \
       SCRIPTED_BANK_TAG="$SCRIPTED_BANK_TAG" \
       SCRIPTED_BOT_TYPE="$SCRIPTED_BOT_TYPE" \
       bash "$C/tools/run_reward_screen.sh"
@@ -193,20 +195,49 @@ fi
     exit 1
 }
 
+# D244: an accepted-but-collapsed rung must not become lineage. The screen's
+# acceptance gate is an integrity gate (counters, floors, schema); it says
+# nothing about whether the policy still plays. When the warm came from a rung
+# with the SAME start distribution (WARM_MARKER: same rung + reset_pct), refuse
+# to publish if this rung's eval tds fell below LADDER_REGRESSION_FLOOR times
+# the warm rung's eval tds. Different start distributions are not comparable
+# (CLAUDE.md), so the gate is skipped there. A refused rung leaves no marker;
+# the supervisor retries into a fresh attempt dir and halts at its cap, which
+# is the desired outcome for a collapsed lineage -- stop and page.
+WARM_MARKER="${WARM_MARKER:-}"
+LADDER_REGRESSION_FLOOR="${LADDER_REGRESSION_FLOOR:-0.5}"
+
 # Publish the rung marker only from the screen's own accepted result, so the
 # checkpoint path recorded here is the one whose lineage sidecar was written.
 python3 - "$RESULT" "$OUT/LADDER_RUNG_COMPLETE.json" "$RUNG" "$RESET_PCT" \
     "$STEPS" "$SEED" "$WARM" "$EXPECTED_POOL_HASH" "$PREFIX" \
+    "$WARM_MARKER" "$LADDER_REGRESSION_FLOOR" \
     "$SCRIPTED_BANK_TAG" "$SCRIPTED_BOT_TYPE" "$LADDER_PROFILE" \
     "$GRAFT_FROM_SOURCE_SHA256" "$GRAFT_FROM_PATCH_BUNDLE_SHA256" \
     "$GRAFT_REASON" <<'PY'
-import json, sys
+import json, os, sys
 (result_path, out_path, rung, reset_pct, steps, seed, warm, pool_hash, prefix,
+ warm_marker, floor,
  scripted_bank_tag, scripted_bot_type, profile, graft_source, graft_patch,
  graft_reason) = sys.argv[1:]
 result = json.load(open(result_path, encoding="utf-8"))
 if not result.get("acceptance_pass"):
     raise SystemExit(f"result is not accepted: {result_path}")
+regression = None
+if warm_marker and os.path.isfile(warm_marker):
+    wm = json.load(open(warm_marker, encoding="utf-8"))
+    same_dist = (int(wm.get("rung", -1)) == int(rung) and
+                 abs(float(wm.get("reset_pct", -1)) - float(reset_pct)) < 1e-9)
+    warm_tds = wm.get("eval_tds")
+    if same_dist and isinstance(warm_tds, (int, float)) and warm_tds > 0:
+        this_tds = float(result["eval_metrics"]["tds"])
+        regression = {"warm_marker": warm_marker, "warm_eval_tds": warm_tds,
+                      "eval_tds": this_tds, "floor": float(floor)}
+        if this_tds < float(floor) * float(warm_tds):
+            raise SystemExit(
+                f"REGRESSION GATE: eval tds {this_tds:.4f} < {float(floor)} x warm "
+                f"rung tds {warm_tds:.4f} ({warm_marker}); refusing to publish "
+                "this rung as lineage (D244)")
 payload = {
     "prefix": prefix,
     "tag": result["tag"],
@@ -214,6 +245,7 @@ payload = {
     "reset_pct": float(reset_pct),
     "scripted_bank_tag": int(scripted_bank_tag),
     "scripted_bot_type": int(scripted_bot_type),
+    "chain_lr_scale": float(os.environ.get("LADDER_CHAIN_LR_SCALE", "1")),
     "steps": str(steps),
     "seed": int(seed),
     "log": result["log"],
@@ -224,6 +256,9 @@ payload = {
     "checkpoint_lineage": result["checkpoint_lineage"],
     "checkpoint_lineage_sha256": result["checkpoint_lineage_sha256"],
     "result": result_path,
+    "eval_tds": float(result["eval_metrics"]["tds"]),
+    "eval_perf": float(result["eval_metrics"]["perf"]),
+    "regression_gate": regression,
     "trainer_exit": 0,
     "profile": profile,
 }

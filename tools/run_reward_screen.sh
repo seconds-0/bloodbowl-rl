@@ -53,6 +53,12 @@ SCRIPTED_BOT_TYPE="${SCRIPTED_BOT_TYPE:-}"
 GRAFT_FROM_SOURCE_SHA256="${GRAFT_FROM_SOURCE_SHA256:-}"
 GRAFT_FROM_PATCH_BUNDLE_SHA256="${GRAFT_FROM_PATCH_BUNDLE_SHA256:-}"
 GRAFT_REASON="${GRAFT_REASON:-}"
+# ladder-rung / graft only: scale the trainer's LR and entropy coefficient for a
+# CHAINED warm restart. D245: a settled policy re-annealed from the top
+# (0.00028 / 0.009) into a pool of >=-strength selves dips into passivity for
+# ~0.5-2B steps; resuming near the warm rung's FINAL values (min-lr ratio 0.1
+# => scale 0.1) is the hypothesised fix. 1 = the fixed contract, unchanged.
+LADDER_CHAIN_LR_SCALE="${LADDER_CHAIN_LR_SCALE:-1}"
 
 # Fixed Stage-1 causal contract. Assign, rather than inherit, every optional
 # launcher input which could alter optimization, batching, or pool allocation.
@@ -150,6 +156,19 @@ if [ "$SCREEN_PROFILE" != "graft" ] && \
    [ -n "$GRAFT_FROM_SOURCE_SHA256$GRAFT_FROM_PATCH_BUNDLE_SHA256$GRAFT_REASON" ]; then
   echo "GRAFT_FROM_SOURCE_SHA256, GRAFT_FROM_PATCH_BUNDLE_SHA256 and GRAFT_REASON are only valid with SCREEN_PROFILE=graft" >&2
   exit 1
+fi
+if [ "$RUNG_LIKE" != "1" ] && [ "$LADDER_CHAIN_LR_SCALE" != "1" ]; then
+  echo "LADDER_CHAIN_LR_SCALE is only valid with SCREEN_PROFILE=ladder-rung or graft" >&2
+  exit 1
+fi
+case "$LADDER_CHAIN_LR_SCALE" in
+  1|1.0|0.[0-9]|0.[0-9][0-9]|0.[0-9][0-9][0-9]) ;;
+  *) echo "LADDER_CHAIN_LR_SCALE must be a fraction in (0,1] with at most three decimals" >&2; exit 1 ;;
+esac
+case "$LADDER_CHAIN_LR_SCALE" in 0|0.0|0.00|0.000) echo "LADDER_CHAIN_LR_SCALE must be > 0" >&2; exit 1 ;; esac
+if [ "$LADDER_CHAIN_LR_SCALE" != "1" ]; then
+  LR="$(python3 -c 'import sys; print(repr(float(sys.argv[1])*float(sys.argv[2])))' "$LR" "$LADDER_CHAIN_LR_SCALE")"
+  ENT_COEF="$(python3 -c 'import sys; print(repr(float(sys.argv[1])*float(sys.argv[2])))' "$ENT_COEF" "$LADDER_CHAIN_LR_SCALE")"
 fi
 case "$SCREEN_PROFILE" in
   distance-possession|possession-gain|possession-gain-exact|exact-action-canary|genesis|genesis-pool|control-final|ladder-rung|graft)
@@ -476,6 +495,7 @@ SCREEN_PLAN="$(
       GRAFT_FROM_SOURCE_SHA256="$GRAFT_FROM_SOURCE_SHA256" \
       GRAFT_FROM_PATCH_BUNDLE_SHA256="$GRAFT_FROM_PATCH_BUNDLE_SHA256" \
       GRAFT_REASON="$GRAFT_REASON" \
+      LADDER_CHAIN_LR_SCALE="$LADDER_CHAIN_LR_SCALE" LR="$LR" ENT_COEF="$ENT_COEF" \
       "$PYBIN" - "$SCREEN_MANIFEST" <<'PY'
 import datetime, hashlib, json, os, pathlib, subprocess, sys, sysconfig
 
@@ -806,6 +826,9 @@ if profile in ("ladder-rung", "graft"):
         # which opponent the rung trained against, not merely which starts.
         "scripted_bank_tag": int(os.environ["SCRIPTED_BANK_TAG"]),
         "scripted_bot_type": int(os.environ["SCRIPTED_BOT_TYPE"]),
+        "chain_lr_scale": float(os.environ["LADDER_CHAIN_LR_SCALE"]),
+        "learning_rate": float(os.environ["LR"]),
+        "ent_coef": float(os.environ["ENT_COEF"]),
     }
 if profile in ("paired-confirmation", "paired-final"):
     from analyze_reward_candidate_transfer import (

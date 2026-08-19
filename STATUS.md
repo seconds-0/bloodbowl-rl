@@ -36,17 +36,36 @@ under `runs/ladder-d<rung>-20260815/`; supervisor state under
 |---|---|---|---|---|---|
 | 1 | 0 (uniform) | 0.5 | chain accepted (rehosted) | rung-9/12/uniform/chain (`575d58f9`) | accepted Aug 17 23:01 — **tds 0.530**, still climbing (D239) |
 | 1b | 0 (uniform, chain2) | 0.5 | stage-1 accepted | rung-12/uniform/chain/stage-1 (`f1f423f8`) | accepted Aug 18 06:45 — **tds 0.652**, pickups 0.91, still rising (D240) |
-| 2 | 0 | 0.25 | chain2 accepted | promoted (`e138c936`) | **running** since Aug 18 06:47 PDT; tds ~0.6 at 2.2B from 75% kickoff starts |
-| 2b | 0 | 0.25 (chain) | r25 accepted | promoted | queued (pre-inserted, r25 still climbing) |
+| 2 | 0 | 0.25 | chain2 accepted | promoted (`e138c936`) | accepted Aug 18 15:35 — **tds 0.695**, pickups 1.17, still climbing (D242) |
+| 2b | 0 | 0.25 (chain) | r25 accepted | chain/stage-1/chain2/r25 (`0339ccb4`) | COLLAPSED (tds 0.10, D244) — killed at 2.06B |
+| 2b-v2 | 0 | 0.25 (chain) | r25 accepted | rung-12/uniform/chain/stage-1 (`e138c936`, r25's own pool) | COLLAPSED again at 0.55B (D245) — box-1 campaign HALTED; frontier = r25 accepted (tds 0.695) |
 | 3 | 0 (kickoff) | 0 | r25-chain accepted | promoted | queued |
+
+## Live campaign: `vast2-20260818` (Vast bb-ryzen2, Ryzen 9 5950X 32t + RTX 3090, $0.241/hr) — PR #94 build
+
+| stage | rung | reset | warm | pool | state |
+|---|---|---|---|---|---|
+| 1 | 0 (kickoff) + contact-bot bank 4 | 0 | chain2 accepted (graft, D243) | uniform/chain/stage-1/chain2 (`cb769c10`) | accepted Aug 18 ~22:00 — **tds 0.731 from kickoff**, vs-bot 0.21; D50 exam running |
+
+Watch: `~/bin/v2watch`. A/B vs box 1's pure-pool kickoff path; verdict = the contact-bot exam.
 
 ## Live campaign: `rig-seed42-20260818` (RTX 2070, seed-42 replicate of the uniform chain)
 
 | stage | rung | reset | warm | pool | state |
 |---|---|---|---|---|---|
-| 1 | 0 (uniform) | 0.5 | Vast stage-1 accepted (rehosted) | rung-12/uniform/chain/stage-1 (`ce9042f6`) | **running** since Aug 18 13:05 PDT |
-| 2 | 0 | 0.25 | s42 stage-1 | promoted | queued |
+| 1 | 0 (uniform) | 0.5 | Vast stage-1 accepted (rehosted) | rung-12/uniform/chain/stage-1 (`ce9042f6`) | accepted Aug 19 00:20 — **tds 0.647** (replicates seed-43 chain2 0.652) |
+| 2 | 0 | 0.25 | s42 stage-1 | anchor rung12 + chain/stage-1/s42 (`5a831aa4`) | **running** since Aug 19 00:21; dipped to 0.11 then recovering (0.26 at 3.6B) |
 | 3 | 0 (kickoff) | 0 | s42 stage-2 | promoted | queued |
+
+## Kickoff exam (D50) — the scoreboard (TD/game vs contact bot, full games from kickoff)
+
+| checkpoint | path | AWAY champ/bot | HOME champ/bot | mirror TD/g |
+|---|---|---|---|---|
+| chain2 (uniform@0.5) | D241 | 0.052 / 1.281 | 0.035 / 1.276 | 0.951 |
+| r25 (→ uniform@0.25) | D246 | 0.038 / 1.150 | 0.025 / 1.211 | pending |
+| **kickoff+bot** (→ kickoff@0, contact-bot bank 4) | D246 | **0.102 / 0.997** | pending | pending |
+
+Verdict so far: opponent quality moves the exam; more curriculum alone does not.
 
 ## Kickoff exam (D50) — chain2 checkpoint, 2026-08-18
 

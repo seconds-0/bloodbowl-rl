@@ -27,7 +27,10 @@
 # Optional:
 #   PIN (git ref to fetch+checkout, default: current HEAD, no checkout)
 #   STEPS (default 5000000000)  C (checkout root)  DEADLINE_HOURS
-#   POOL_KEEP=<n> newest banks kept from PREV_POOL (default 3)
+#   POOL_KEEP=<n> banks kept from PREV_POOL incl. the anchor (default 3)
+#   POOL_ANCHOR=<ckpt> weak-anchor bank that never rotates (default: PREV_POOL's
+#     bank 0; D244)
+#   LADDER_CHAIN_LR_SCALE  forwarded to launch_ladder_rung.sh when set (D244)
 #   SCRIPTED_BANK_TAG / SCRIPTED_BOT_TYPE  scripted bank for this rung
 #     (forwarded to launch_ladder_rung.sh only when set; unset = ordinary rung)
 #   LADDER_PROFILE=graft + GRAFT_FROM_SOURCE_SHA256 / GRAFT_FROM_PATCH_BUNDLE_SHA256
@@ -47,6 +50,7 @@ export CUDA_VISIBLE_DEVICES=0
 : "${STAMP:?STAMP is required}"
 STEPS="${STEPS:-5000000000}"
 POOL_KEEP="${POOL_KEEP:-3}"
+POOL_ANCHOR="${POOL_ANCHOR:-}"
 PREV_COMPLETE="${PREV_COMPLETE:-}"
 PREV_POOL="${PREV_POOL:-}"
 WARM="${WARM:-}"
@@ -106,22 +110,27 @@ if [ -f "$POOL_OUT/POOL_IDENTITY.env" ]; then
   echo "=== reusing published pool for this stage ==="
 else
   echo "=== building pool: newest $POOL_KEEP of $PREV_POOL + warm ==="
-  mapfile -t SEEDS < <(python3 - "$PREV_POOL" "$WARM" "$POOL_KEEP" "$RUNG" <<'PY'
+  mapfile -t SEEDS < <(python3 - "$PREV_POOL" "$WARM" "$POOL_KEEP" "$RUNG" "$POOL_ANCHOR" <<'PY'
 import json, os, sys
-prev_pool, warm, keep, rung = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4]
+prev_pool, warm, keep, rung, anchor = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4], sys.argv[5]
 m = json.load(open(os.path.join(prev_pool, "league_seeds.json"), encoding="utf-8"))
 banks = m["seeds"]
-kept = banks[-keep:]
 warm_real = os.path.realpath(warm)
-out = []
-for b in kept:
-    src = b["source"]
-    if os.path.realpath(src) == warm_real:
-        # The warm checkpoint is already a bank (a chained restart at the same
-        # rung); keep the pool identical rather than duplicating it.
-        continue
-    out.append(f"{b['name']}={src}")
-# The new bank is the previous rung's accepted checkpoint == this rung's warm.
+# D244: a pool that is four near-identical recent selves is the mutually
+# permissive equilibrium D166 warned about; the first r25-chain collapsed into
+# the abstinence basin against exactly that pool. Bank 0 is therefore a WEAK
+# ANCHOR that never rotates (POOL_ANCHOR, default = the previous pool's bank 0,
+# so an anchor set once at the start of a chain is inherited by every rung);
+# only the remaining banks rotate newest-first, and the previous rung's
+# accepted checkpoint enters as the newest.
+anchor_src = anchor if anchor else banks[0]["source"]
+anchor_real = os.path.realpath(anchor_src)
+anchor_name = next((b["name"] for b in banks if os.path.realpath(b["source"]) == anchor_real), "anchor")
+rest = [b for b in banks if os.path.realpath(b["source"]) not in (anchor_real, warm_real)]
+kept = rest[-(keep - 1):] if keep > 1 else []
+out = [f"{anchor_name}={anchor_src}"] + [f"{b['name']}={b['source']}" for b in kept]
+if anchor_real == warm_real:
+    raise SystemExit("the weak anchor cannot also be the warm checkpoint")
 name = f"rung{rung}warm"
 names = {o.split('=')[0] for o in out}
 i = 0
@@ -131,11 +140,11 @@ while name in names:
 out.append(f"{name}={warm}")
 if len(out) != 4:
     # Pad from the older end of the previous pool if the warm was already a bank.
-    for b in reversed(banks[:-keep] if keep < len(banks) else []):
+    for b in reversed(rest[:-(keep - 1)] if keep > 1 else rest):
         if len(out) >= 4:
             break
-        if os.path.realpath(b["source"]) != warm_real and b["name"] not in names:
-            out.insert(0, f"{b['name']}={b['source']}")
+        if b["name"] not in names:
+            out.insert(1, f"{b['name']}={b['source']}")
 if len(out) != 4:
     raise SystemExit(f"could not compose exactly four banks: {out}")
 print("\n".join(out))
@@ -157,6 +166,10 @@ echo "  warm $WARM"
 echo "  pool $POOL_OUT/pool ($EXPECTED_POOL_HASH)"
 
 export RUNG STEPS RESET_PCT SEED STAMP WARM OUT C
+# D244 regression gate input: the previous rung's marker (same-distribution
+# comparison happens inside launch_ladder_rung.sh).
+[ -z "$PREV_COMPLETE" ] || export WARM_MARKER="$PREV_COMPLETE"
+[ -z "${LADDER_CHAIN_LR_SCALE:-}" ] || export LADDER_CHAIN_LR_SCALE
 [ -z "${SCRIPTED_BANK_TAG:-}" ] || export SCRIPTED_BANK_TAG
 [ -z "${SCRIPTED_BOT_TYPE:-}" ] || export SCRIPTED_BOT_TYPE
 [ -z "${LADDER_PROFILE:-}" ] || export LADDER_PROFILE
