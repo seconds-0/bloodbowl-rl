@@ -45,7 +45,7 @@ under `runs/ladder-d<rung>-20260815/`; supervisor state under
 
 | stage | rung | reset | warm | pool | state |
 |---|---|---|---|---|---|
-| 1 | 0 (kickoff) + contact-bot bank 4 | 0 | chain2 accepted (graft, D243) | uniform/chain/stage-1/chain2 (`cb769c10`) | **running** since Aug 18 14:52 PDT, 200K SPS |
+| 1 | 0 (kickoff) + contact-bot bank 4 | 0 | chain2 accepted (graft, D243) | uniform/chain/stage-1/chain2 (`cb769c10`) | accepted Aug 18 ~22:00 — **tds 0.731 from kickoff**, vs-bot 0.21; D50 exam running |
 
 Watch: `~/bin/v2watch`. A/B vs box 1's pure-pool kickoff path; verdict = the contact-bot exam.
 
@@ -53,8 +53,8 @@ Watch: `~/bin/v2watch`. A/B vs box 1's pure-pool kickoff path; verdict = the con
 
 | stage | rung | reset | warm | pool | state |
 |---|---|---|---|---|---|
-| 1 | 0 (uniform) | 0.5 | Vast stage-1 accepted (rehosted) | rung-12/uniform/chain/stage-1 (`ce9042f6`) | **running** since Aug 18 13:05 PDT |
-| 2 | 0 | 0.25 | s42 stage-1 | promoted | queued |
+| 1 | 0 (uniform) | 0.5 | Vast stage-1 accepted (rehosted) | rung-12/uniform/chain/stage-1 (`ce9042f6`) | accepted Aug 19 00:20 — **tds 0.647** (replicates seed-43 chain2 0.652) |
+| 2 | 0 | 0.25 | s42 stage-1 | anchor rung12 + chain/stage-1/s42 (`5a831aa4`) | **running** since Aug 19 00:21; dipped to 0.11 then recovering (0.26 at 3.6B) |
 | 3 | 0 (kickoff) | 0 | s42 stage-2 | promoted | queued |
 
 ## Kickoff exam (D50) — chain2 checkpoint, 2026-08-18
