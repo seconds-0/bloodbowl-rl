@@ -33,6 +33,8 @@
 #   EXPECTED_POOL_HASH=<sha256> printed by tools/build_league.py
 # Optional:
 #   STEPS (default 5000000000)  RESET_PCT (default 0.5)  SEED (default 42)
+#   LADDER_CHAIN_LR_SCALE (default 1; e.g. 0.1 to resume a chain near the warm
+#     rung's final LR/entropy instead of re-annealing from the top, D245)
 #   PREFIX (default ladder-d<RUNG>-s<SEED>-<STAMP>)  STAMP  OUT  C
 #   DEADLINE_HOURS (default 36)
 
@@ -130,7 +132,7 @@ timeout --signal=TERM --kill-after=120 "$((DEADLINE_HOURS * 3600))" \
       STEPS="$STEPS" WARM="$WARM" POOL="$POOL" \
       EXPECTED_POOL_HASH="$EXPECTED_POOL_HASH" \
       LADDER_ENDZONE_MAXDIST="$RUNG" LADDER_RESET_PCT="$RESET_PCT" \
-      LADDER_SEED="$SEED" \
+      LADDER_SEED="$SEED" LADDER_CHAIN_LR_SCALE="${LADDER_CHAIN_LR_SCALE:-1}" \
       bash "$C/tools/run_reward_screen.sh"
 rc=$?
 echo "LADDER_RUNG_SCREEN_EXIT=$rc"
@@ -186,6 +188,7 @@ payload = {
     "tag": result["tag"],
     "rung": int(rung),
     "reset_pct": float(reset_pct),
+    "chain_lr_scale": float(os.environ.get("LADDER_CHAIN_LR_SCALE", "1")),
     "steps": str(steps),
     "seed": int(seed),
     "log": result["log"],

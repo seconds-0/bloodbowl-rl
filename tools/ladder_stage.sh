@@ -163,6 +163,7 @@ export RUNG STEPS RESET_PCT SEED STAMP WARM OUT C
 # D244 regression gate input: the previous rung's marker (same-distribution
 # comparison happens inside launch_ladder_rung.sh).
 [ -z "$PREV_COMPLETE" ] || export WARM_MARKER="$PREV_COMPLETE"
+[ -z "${LADDER_CHAIN_LR_SCALE:-}" ] || export LADDER_CHAIN_LR_SCALE
 export POOL="$POOL_OUT/pool"
 export DEADLINE_HOURS="${DEADLINE_HOURS:-40}"
 exec bash tools/launch_ladder_rung.sh

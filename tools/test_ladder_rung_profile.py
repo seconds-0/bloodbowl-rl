@@ -226,3 +226,27 @@ class LadderRungProfileTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LadderChainLrScaleTests(unittest.TestCase):
+    def test_scale_is_rung_only_and_validated(self):
+        base = {"WARM": "missing.bin", "POOL": "missing-pool", "STEPS": "5000000000",
+                "EXPECTED_POOL_HASH": "0" * 64}
+        r = run(SCREEN, {**base, "SCREEN_PROFILE": "control-final",
+                         "LADDER_CHAIN_LR_SCALE": "0.1"})
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("only valid with SCREEN_PROFILE=ladder-rung", r.stderr)
+        for bad in ("0", "1.5", "0.1x", "2"):
+            r = run(SCREEN, {**base, "SCREEN_PROFILE": "ladder-rung",
+                             "LADDER_ENDZONE_MAXDIST": "0", "LADDER_RESET_PCT": "0.25",
+                             "LADDER_SEED": "43", "LADDER_CHAIN_LR_SCALE": bad})
+            self.assertNotEqual(r.returncode, 0, bad)
+            self.assertIn("LADDER_CHAIN_LR_SCALE must be", r.stderr, bad)
+        # A valid scale passes the validator and fails later on the warm file.
+        r = run(SCREEN, {**base, "SCREEN_PROFILE": "ladder-rung",
+                         "LADDER_ENDZONE_MAXDIST": "0", "LADDER_RESET_PCT": "0.25",
+                         "LADDER_SEED": "43", "LADDER_CHAIN_LR_SCALE": "0.1"})
+        self.assertIn("missing warm checkpoint", r.stderr)
+        source = SCREEN.read_text(encoding="utf-8")
+        self.assertIn('"chain_lr_scale": float(os.environ["LADDER_CHAIN_LR_SCALE"])', source)
+        self.assertIn('"learning_rate": float(os.environ["LR"])', source)
