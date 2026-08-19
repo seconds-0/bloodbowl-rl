@@ -70,7 +70,7 @@ class LadderStageTests(unittest.TestCase):
     def test_pool_composition_promotes_warm_and_retires_oldest(self):
         source = STAGE.read_text(encoding="utf-8")
         match = re.search(
-            r"mapfile -t SEEDS < <\(python3 - \"\$PREV_POOL\" \"\$WARM\" \"\$POOL_KEEP\" \"\$RUNG\" <<'PY'\n(.*?)\nPY\n",
+            r"mapfile -t SEEDS < <\(python3 - \"\$PREV_POOL\" \"\$WARM\" \"\$POOL_KEEP\" \"\$RUNG\" \"\$POOL_ANCHOR\" <<'PY'\n(.*?)\nPY\n",
             source, re.S)
         self.assertIsNotNone(match, "embedded pool resolver not found")
         resolver = match.group(1)
@@ -87,15 +87,31 @@ class LadderStageTests(unittest.TestCase):
             warm = Path(tmp) / "rung6.bin"
             warm.write_bytes(b"y")
             out = subprocess.run(
-                ["python3", "-", str(prev), str(warm), "3", "9"],
+                ["python3", "-", str(prev), str(warm), "3", "9", ""],
                 input=resolver, text=True, stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE, check=False)
             self.assertEqual(out.returncode, 0, out.stderr)
             lines = out.stdout.strip().splitlines()
+            # D244: bank 0 is the weak anchor and never rotates; the oldest
+            # NON-anchor bank (gen1) is what retires.
             self.assertEqual(lines, [
-                f"gen1={srcs[1]}", f"gen2={srcs[2]}", f"gen3={srcs[3]}",
+                f"gen0={srcs[0]}", f"gen2={srcs[2]}", f"gen3={srcs[3]}",
                 f"rung9warm={warm}",
             ])
+            # An explicit anchor overrides bank 0 and is labelled as such.
+            out = subprocess.run(
+                ["python3", "-", str(prev), str(warm), "3", "9", srcs[1]],
+                input=resolver, text=True, stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE, check=False)
+            self.assertEqual(out.returncode, 0, out.stderr)
+            self.assertEqual(out.stdout.strip().splitlines()[0], f"gen1={srcs[1]}")
+            # The anchor may not be the warm checkpoint.
+            out = subprocess.run(
+                ["python3", "-", str(prev), str(warm), "3", "9", str(warm)],
+                input=resolver, text=True, stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE, check=False)
+            self.assertNotEqual(out.returncode, 0)
+            self.assertIn("cannot also be the warm", out.stderr)
             # Chained restart at the same rung: warm already a bank -> pool
             # stays four banks and does not duplicate the warm.
             (prev / "league_seeds.json").write_text(json.dumps({"seeds": [
@@ -104,13 +120,14 @@ class LadderStageTests(unittest.TestCase):
                 {"bank": 2, "name": "gen3", "source": srcs[3]},
                 {"bank": 3, "name": "rung9warm", "source": str(warm)}]}))
             out = subprocess.run(
-                ["python3", "-", str(prev), str(warm), "3", "9"],
+                ["python3", "-", str(prev), str(warm), "3", "9", ""],
                 input=resolver, text=True, stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE, check=False)
             self.assertEqual(out.returncode, 0, out.stderr)
             lines = out.stdout.strip().splitlines()
             self.assertEqual(len(lines), 4)
             self.assertEqual(sum(1 for l in lines if l.endswith(str(warm))), 1)
+            self.assertTrue(lines[0].startswith("gen1="))  # anchor sticks
 
 
 if __name__ == "__main__":

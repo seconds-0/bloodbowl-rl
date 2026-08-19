@@ -143,15 +143,44 @@ fi
     exit 1
 }
 
+# D244: an accepted-but-collapsed rung must not become lineage. The screen's
+# acceptance gate is an integrity gate (counters, floors, schema); it says
+# nothing about whether the policy still plays. When the warm came from a rung
+# with the SAME start distribution (WARM_MARKER: same rung + reset_pct), refuse
+# to publish if this rung's eval tds fell below LADDER_REGRESSION_FLOOR times
+# the warm rung's eval tds. Different start distributions are not comparable
+# (CLAUDE.md), so the gate is skipped there. A refused rung leaves no marker;
+# the supervisor retries into a fresh attempt dir and halts at its cap, which
+# is the desired outcome for a collapsed lineage -- stop and page.
+WARM_MARKER="${WARM_MARKER:-}"
+LADDER_REGRESSION_FLOOR="${LADDER_REGRESSION_FLOOR:-0.5}"
+
 # Publish the rung marker only from the screen's own accepted result, so the
 # checkpoint path recorded here is the one whose lineage sidecar was written.
 python3 - "$RESULT" "$OUT/LADDER_RUNG_COMPLETE.json" "$RUNG" "$RESET_PCT" \
-    "$STEPS" "$SEED" "$WARM" "$EXPECTED_POOL_HASH" "$PREFIX" <<'PY'
-import json, sys
-result_path, out_path, rung, reset_pct, steps, seed, warm, pool_hash, prefix = sys.argv[1:]
+    "$STEPS" "$SEED" "$WARM" "$EXPECTED_POOL_HASH" "$PREFIX" \
+    "$WARM_MARKER" "$LADDER_REGRESSION_FLOOR" <<'PY'
+import json, os, sys
+(result_path, out_path, rung, reset_pct, steps, seed, warm, pool_hash, prefix,
+ warm_marker, floor) = sys.argv[1:]
 result = json.load(open(result_path, encoding="utf-8"))
 if not result.get("acceptance_pass"):
     raise SystemExit(f"result is not accepted: {result_path}")
+regression = None
+if warm_marker and os.path.isfile(warm_marker):
+    wm = json.load(open(warm_marker, encoding="utf-8"))
+    same_dist = (int(wm.get("rung", -1)) == int(rung) and
+                 abs(float(wm.get("reset_pct", -1)) - float(reset_pct)) < 1e-9)
+    warm_tds = wm.get("eval_tds")
+    if same_dist and isinstance(warm_tds, (int, float)) and warm_tds > 0:
+        this_tds = float(result["eval_metrics"]["tds"])
+        regression = {"warm_marker": warm_marker, "warm_eval_tds": warm_tds,
+                      "eval_tds": this_tds, "floor": float(floor)}
+        if this_tds < float(floor) * float(warm_tds):
+            raise SystemExit(
+                f"REGRESSION GATE: eval tds {this_tds:.4f} < {float(floor)} x warm "
+                f"rung tds {warm_tds:.4f} ({warm_marker}); refusing to publish "
+                "this rung as lineage (D244)")
 payload = {
     "prefix": prefix,
     "tag": result["tag"],
@@ -167,6 +196,9 @@ payload = {
     "checkpoint_lineage": result["checkpoint_lineage"],
     "checkpoint_lineage_sha256": result["checkpoint_lineage_sha256"],
     "result": result_path,
+    "eval_tds": float(result["eval_metrics"]["tds"]),
+    "eval_perf": float(result["eval_metrics"]["perf"]),
+    "regression_gate": regression,
     "trainer_exit": 0,
 }
 with open(out_path, "w", encoding="utf-8") as handle:

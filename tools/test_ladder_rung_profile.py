@@ -175,5 +175,54 @@ class LadderRungProfileTests(unittest.TestCase):
         self.assertIn("RUNG is required", result.stdout)
 
 
+    def test_regression_gate_refuses_a_collapsed_same_distribution_rung(self):
+        # D244: the screen's acceptance gate is an integrity gate; a policy that
+        # collapsed into the abstinence basin still passes it. The marker step
+        # refuses to publish when eval tds fell below the floor times the warm
+        # rung's tds AND the two rungs share a start distribution.
+        source = RUNG.read_text(encoding="utf-8")
+        match = re.search(
+            r'"\$WARM_MARKER" "\$LADDER_REGRESSION_FLOOR" <<\'PY\'\n(.*?)\nPY\n',
+            source, re.S)
+        self.assertIsNotNone(match, "marker/regression block not found")
+        code = match.group(1)
+        import json, tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            res = tmp / "r.json"
+            base = {"acceptance_pass": True, "tag": "t", "log": "l",
+                    "checkpoint": "c", "checkpoint_sha256": "s",
+                    "checkpoint_lineage": "cl", "checkpoint_lineage_sha256": "cls",
+                    "eval_metrics": {"tds": 0.10, "perf": 0.48}}
+            wm = tmp / "wm.json"
+            wm.write_text(json.dumps({"rung": 0, "reset_pct": 0.25, "eval_tds": 0.695}))
+            out = tmp / "m.json"
+
+            def run(rung, reset, marker, tds):
+                d = dict(base); d["eval_metrics"] = {"tds": tds, "perf": 0.5}
+                res.write_text(json.dumps(d))
+                return subprocess.run(
+                    ["python3", "-", str(res), str(out), rung, reset, "5000000000",
+                     "43", "w", "p", "pfx", marker, "0.5"],
+                    input=code, text=True, stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE, check=False)
+
+            r = run("0", "0.25", str(wm), 0.10)
+            self.assertNotEqual(r.returncode, 0)
+            self.assertIn("REGRESSION GATE", r.stderr)
+            r = run("0", "0.25", str(wm), 0.60)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertEqual(json.loads(out.read_text())["regression_gate"]["warm_eval_tds"], 0.695)
+            self.assertEqual(json.loads(out.read_text())["eval_tds"], 0.6)
+            # A different start distribution is not comparable: gate skipped.
+            r = run("0", "0", str(wm), 0.10)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIsNone(json.loads(out.read_text())["regression_gate"])
+            # An old-format marker without eval_tds: gate skipped, not crashed.
+            wm.write_text(json.dumps({"rung": 0, "reset_pct": 0.25}))
+            r = run("0", "0.25", str(wm), 0.10)
+            self.assertEqual(r.returncode, 0, r.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()
