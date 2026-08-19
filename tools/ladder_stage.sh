@@ -169,6 +169,15 @@ export RUNG STEPS RESET_PCT SEED STAMP WARM OUT C
 # D244 regression gate input: the previous rung's marker (same-distribution
 # comparison happens inside launch_ladder_rung.sh).
 [ -z "$PREV_COMPLETE" ] || export WARM_MARKER="$PREV_COMPLETE"
+# D245/D248: a chained rung (PREV_COMPLETE set) that re-anneals LR/entropy from
+# the top dips into passivity for 0.5-2B steps and may not fully recover (s42
+# r25: warm 0.647 -> accepted 0.334); resuming at 0.1x (the warm rung's final
+# values) showed no dip in both tests (box 2 offense-bot rung, rig s42 kickoff).
+# Default chained rungs to 0.1; an explicit LADDER_CHAIN_LR_SCALE still wins;
+# first rungs of a chain (no PREV_COMPLETE) keep 1.
+if [ -n "$PREV_COMPLETE" ] && [ -z "${LADDER_CHAIN_LR_SCALE:-}" ]; then
+  export LADDER_CHAIN_LR_SCALE=0.1
+fi
 [ -z "${LADDER_CHAIN_LR_SCALE:-}" ] || export LADDER_CHAIN_LR_SCALE
 [ -z "${SCRIPTED_BANK_TAG:-}" ] || export SCRIPTED_BANK_TAG
 [ -z "${SCRIPTED_BOT_TYPE:-}" ] || export SCRIPTED_BOT_TYPE
