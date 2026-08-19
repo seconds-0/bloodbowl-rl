@@ -57,6 +57,16 @@ Watch: `~/bin/v2watch`. A/B vs box 1's pure-pool kickoff path; verdict = the con
 | 2 | 0 | 0.25 | s42 stage-1 | anchor rung12 + chain/stage-1/s42 (`5a831aa4`) | **running** since Aug 19 00:21; dipped to 0.11 then recovering (0.26 at 3.6B) |
 | 3 | 0 (kickoff) | 0 | s42 stage-2 | promoted | queued |
 
+## Kickoff exam (D50) — the scoreboard (TD/game vs contact bot, full games from kickoff)
+
+| checkpoint | path | AWAY champ/bot | HOME champ/bot | mirror TD/g |
+|---|---|---|---|---|
+| chain2 (uniform@0.5) | D241 | 0.052 / 1.281 | 0.035 / 1.276 | 0.951 |
+| r25 (→ uniform@0.25) | D246 | 0.038 / 1.150 | 0.025 / 1.211 | pending |
+| **kickoff+bot** (→ kickoff@0, contact-bot bank 4) | D246 | **0.102 / 0.997** | pending | pending |
+
+Verdict so far: opponent quality moves the exam; more curriculum alone does not.
+
 ## Kickoff exam (D50) — chain2 checkpoint, 2026-08-18
 
 Full games from kickoff, frozen, torch: vs contact bot AWAY champion **0.052** TD/g / bot 1.281 (2,017 g); vs contact bot HOME champion **0.035** / bot 1.276 (2,003 g); mirror self-play 0.951 TD/g total, possession 0.199, blocks 9.2 (human 2.2 / 0.475 / 80). Verdict D241: scores from kickoff vs itself, not under scripted contact pressure → graduation rungs need a scripted-opponent share.
