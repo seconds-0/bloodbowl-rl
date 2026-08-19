@@ -391,6 +391,20 @@ Knobs (`config/default.ini` `[selfplay]`; chess.ini has tuned values):
   `[vec] num_frozen_banks` (1-8).
 - Opponent sampling: sqrt-rank weights, newest 5 excluded once the pool reaches 6.
 
+**Scripted bank (`[env] scripted_bank_tag`, default 0).** `scripted_opponent=1` alone
+replaces the bot-side seat in EVERY env, so with a learning rate the native PPO batch
+would contain bot-chosen actions on the learner's rows — the trainer guard
+(`training/pufferl_scripted_training_guard.patch`) refuses that outright. With
+`scripted_bank_tag = b+1` the env applies the bot only when `env->tag == b+1`, i.e. in
+the historical envs of frozen bank b, and only on slot 1 / AWAY (`scripted_opponent_team`
+must be 1; `binding.c` exits on anything else or a tag outside `0..BBE_MAX_BANKS`). Those
+seats are exactly the rows `puffer_frozen_prio_mask.patch` gives zero sampling priority,
+so the bot's rows are excluded from PPO by the same mechanism as frozen-bank rows and no
+CUDA change is needed; the bank's weights still load and its `hist_score_bank_b` now
+scores the learner against the bot. The env cannot know whether any env will carry the
+tag (that is `selfplay.py`'s `set_env_tags`); the guard requires `selfplay.enabled=1` and
+`1 <= tag <= num_frozen_banks`. Tag 0 keeps the global (eval-only) semantics.
+
 A pending swap waits until every historical env of that bank has finished a game
 (`count_aligned >= num_hist_envs`, selfplay.py:268) — that is what `boundary_reached` is
 for. Row routing is built by `build_perm_tags` (selfplay.py:50) and pushed via

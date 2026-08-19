@@ -36,10 +36,14 @@ typedef struct {
     float tds_t1;
 } ContactHookStats;
 
-static ContactHookStats run_contact_hook(int scripted, int scripted_team,
-                                         uint64_t seed, int games) {
+static ContactHookStats run_contact_hook_tagged(int scripted, int scripted_team,
+                                                uint64_t seed, int games,
+                                                int scripted_bank_tag,
+                                                int env_tag) {
     Bloodbowl env;
     memset(&env, 0, sizeof env);
+    env.scripted_bank_tag = scripted_bank_tag;
+    env.tag = env_tag;
     static uint8_t obs[BBE_AGENTS * BBE_OBS_SIZE];
     static float actions[BBE_AGENTS * 3];
     static unsigned char masks[BBE_AGENTS * BBE_MASK_SIZE];
@@ -89,6 +93,11 @@ static ContactHookStats run_contact_hook(int scripted, int scripted_team,
     out.tds_t0 = env.log.tds_t0;
     out.tds_t1 = env.log.tds_t1;
     return out;
+}
+
+static ContactHookStats run_contact_hook(int scripted, int scripted_team,
+                                         uint64_t seed, int games) {
+    return run_contact_hook_tagged(scripted, scripted_team, seed, games, 0, 0);
 }
 
 BB_TEST(contact_bot_full_games_terminate_and_make_contact) {
@@ -159,4 +168,28 @@ BB_TEST(contact_bot_c_step_hook_logs_per_team_and_off_is_inert) {
     BB_CHECK_EQ(off_away_side.completed, off_home_side.completed);
     BB_CHECK(off_away_side.digest == off_home_side.digest);
     BB_CHECK_EQ((int)off_away_side.n, (int)off_home_side.n);
+}
+
+BB_TEST(contact_bot_scripted_bank_tag_gates_the_bot_on_the_env_tag) {
+    // scripted_bank_tag = b+1 confines the bot to the envs tagged for frozen
+    // bank b. In an untagged env (tag 0, pure self-play) or an env of another
+    // bank the step is byte-identical to no bot at all; in the matching env
+    // it is byte-identical to the global scripted opponent.
+    const uint64_t seed = 0x5C817BA9u;
+    ContactHookStats unscripted = run_contact_hook_tagged(0, BB_AWAY, seed, 6, 0, 0);
+    ContactHookStats scripted = run_contact_hook_tagged(1, BB_AWAY, seed, 6, 0, 0);
+    BB_CHECK(unscripted.digest != scripted.digest);
+    BB_CHECK(scripted.blocks_thrown_t1 > unscripted.blocks_thrown_t1);
+
+    ContactHookStats bank_untagged_env = run_contact_hook_tagged(1, BB_AWAY, seed, 6, 2, 0);
+    ContactHookStats bank_other_env = run_contact_hook_tagged(1, BB_AWAY, seed, 6, 2, 1);
+    ContactHookStats bank_matching_env = run_contact_hook_tagged(1, BB_AWAY, seed, 6, 2, 2);
+    BB_CHECK(bank_untagged_env.digest == unscripted.digest);
+    BB_CHECK(bank_other_env.digest == unscripted.digest);
+    BB_CHECK(bank_matching_env.digest == scripted.digest);
+    BB_CHECK_EQ(bank_matching_env.completed, scripted.completed);
+    BB_CHECK(bank_matching_env.blocks_thrown_t1 == scripted.blocks_thrown_t1);
+    // Tag 0 = global semantics, unchanged: every env is scripted.
+    ContactHookStats global_tagged_env = run_contact_hook_tagged(1, BB_AWAY, seed, 6, 0, 3);
+    BB_CHECK(global_tagged_env.digest == scripted.digest);
 }

@@ -42,7 +42,10 @@ jobs:
             tools.test_ladder_knobs \
             tools.test_ladder_rung_profile \
             tools.test_campaign_supervisor \
-            tools.test_ladder_stage
+            tools.test_ladder_stage \
+            tools.test_graft_profile \
+            tools.test_install_guard_patch \
+            tools.test_scripted_training_guard
           for manifest in puffer/config/rewards/*.json; do
             python3 tools/reward_manifest.py "$manifest" --json >/dev/null
           done

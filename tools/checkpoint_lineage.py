@@ -30,6 +30,30 @@ SHA256_KEYS = (
     "compiled_module_sha256",
     "puffer_patch_bundle_sha256",
 )
+# A GRAFT is a reviewed lineage bridge across a source/patch-bundle change: at
+# least one of the warm checkpoint / pool banks was produced on an OLD build
+# and the new run publishes on the NEW build's digests. The run manifest
+# declares the old identity plus a reason under these keys (all five or none)
+# and the sidecar records them as `ancestry.grafted_from`, so the bridge is
+# auditable rather than invisible. The warm itself may already be new-build
+# (a rung after the graft, whose pool still holds old-build banks); the bridge
+# is then the pool's, and warm_lineage_sha256 still names the warm it started
+# from.
+GRAFT_MANIFEST_KEYS = (
+    "graft_from_source_sha256",
+    "graft_from_module_sha256",
+    "graft_from_patch_bundle_sha256",
+    "graft_from_warm_lineage_sha256",
+    "graft_reason",
+)
+GRAFTED_FROM_KEYS = (
+    "warm_lineage_sha256",
+    "source_sha256",
+    "compiled_module_sha256",
+    "puffer_patch_bundle_sha256",
+    "reason",
+)
+GRAFT_REASON_MAX_CHARS = 200
 
 
 class LineageError(RuntimeError):
@@ -74,6 +98,15 @@ def _need_int(value, label):
     if str(parsed) != str(value):
         raise LineageError(f"{label} must be a canonical integer")
     return parsed
+
+
+def _need_reason(value, label):
+    if not isinstance(value, str) or not value.strip():
+        raise LineageError(f"{label} must be a non-empty string")
+    if len(value) > GRAFT_REASON_MAX_CHARS:
+        raise LineageError(
+            f"{label} must be at most {GRAFT_REASON_MAX_CHARS} characters")
+    return value
 
 
 def _need_bool_string(value, label):
@@ -214,6 +247,61 @@ def lineage_from_run_manifest(checkpoint, run_manifest, *,
     screen_sha = _need_sha(
         manifest.get("screen_manifest_sha256"), "screen_manifest_sha256")
     seed = _need_int(manifest.get("seed"), "seed")
+
+    grafted_from = None
+    present = [key for key in GRAFT_MANIFEST_KEYS if key in manifest]
+    if present:
+        if len(present) != len(GRAFT_MANIFEST_KEYS):
+            missing = sorted(set(GRAFT_MANIFEST_KEYS) - set(present))
+            raise LineageError(
+                "graft_from_* keys are all-or-none; run manifest lacks "
+                f"{missing}")
+        if initialization != "lineage-v6":
+            raise LineageError("a graft requires lineage-v6 initialization")
+        grafted_from = {
+            "warm_lineage_sha256": _need_sha(
+                manifest.get("graft_from_warm_lineage_sha256"),
+                "graft_from_warm_lineage_sha256"),
+            "source_sha256": _need_sha(
+                manifest.get("graft_from_source_sha256"),
+                "graft_from_source_sha256"),
+            "compiled_module_sha256": _need_sha(
+                manifest.get("graft_from_module_sha256"),
+                "graft_from_module_sha256"),
+            "puffer_patch_bundle_sha256": _need_sha(
+                manifest.get("graft_from_patch_bundle_sha256"),
+                "graft_from_patch_bundle_sha256"),
+            "reason": _need_reason(manifest.get("graft_reason"), "graft_reason"),
+        }
+        # The graft names the warm it started from; the manifest's
+        # warm_lineage_sha256 is that sidecar's digest, so both must agree.
+        if grafted_from["warm_lineage_sha256"] != warm_lineage:
+            raise LineageError(
+                "graft_from_warm_lineage_sha256 differs from warm_lineage_sha256")
+        if (grafted_from["source_sha256"] == implementation["source_sha256"] and
+                grafted_from["puffer_patch_bundle_sha256"]
+                == implementation["puffer_patch_bundle_sha256"]):
+            raise LineageError(
+                "graft is a no-op: the declared old source/patch bundle equal "
+                "the new build's, so there is nothing to graft; a module-only "
+                "difference is a `rehost`, otherwise run an ordinary lineage-v6 "
+                "arm")
+
+    ancestry = {
+        "initialization": initialization,
+        # The producer's mode is bound here, not merely checked at create
+        # time, because it is what distinguishes declared genesis from an
+        # ordinary fresh canary. validate_lineage needs it to re-derive that
+        # distinction, and binding it means the eligibility flag cannot be
+        # edited into a lie without also editing a hashed field.
+        "mode": mode,
+        "qualification_only": qualification_only,
+        "eligible": not qualification_only,
+        "warm_lineage_sha256": warm_lineage,
+        "pool_lineage_bundle_sha256": pool_lineage,
+    }
+    if grafted_from is not None:
+        ancestry["grafted_from"] = grafted_from
     return {
         "schema_version": SCHEMA_VERSION,
         "checkpoint": {
@@ -234,19 +322,7 @@ def lineage_from_run_manifest(checkpoint, run_manifest, *,
             "screen_manifest_sha256": screen_sha,
             "seed": seed,
         },
-        "ancestry": {
-            "initialization": initialization,
-            # The producer's mode is bound here, not merely checked at create
-            # time, because it is what distinguishes declared genesis from an
-            # ordinary fresh canary. validate_lineage needs it to re-derive that
-            # distinction, and binding it means the eligibility flag cannot be
-            # edited into a lie without also editing a hashed field.
-            "mode": mode,
-            "qualification_only": qualification_only,
-            "eligible": not qualification_only,
-            "warm_lineage_sha256": warm_lineage,
-            "pool_lineage_bundle_sha256": pool_lineage,
-        },
+        "ancestry": ancestry,
     }
 
 
@@ -312,6 +388,68 @@ def rehost_lineage(checkpoint, *, target_module, target_source_sha256,
     rehosted["checkpoint"]["sha256"] = sha256_file(checkpoint)
     rehosted["checkpoint"]["bytes"] = checkpoint.stat().st_size
     return rehosted
+
+
+def graft_bridge(sidecars, *, current, old_source_sha256,
+                 old_patch_bundle_sha256):
+    """Classify validated warm/pool sidecars for a graft; return the old module.
+
+    ``sidecars`` is a sequence of ``(label, payload)`` where each payload has
+    already passed ``validate_lineage`` (eligible, hash-bound, obs-v6) with no
+    implementation overrides. ``current`` is this build's three implementation
+    digests. Every sidecar must bind EITHER this build exactly (source, module
+    and patch bundle -- what lineage-v6 would demand) OR the declared old
+    build's source and patch bundle with any module; anything else is refused.
+    At least one sidecar must be old-build (else there is nothing to graft), and
+    every old-build sidecar must record the same module, which is returned so
+    the run manifest can carry it as graft_from_module_sha256.
+
+    This is the single definition both the per-arm launcher and the screen plan
+    writer use, so a graft the screen plans is a graft the launcher accepts. It
+    is what lets a lineage keep chaining after a graft: the next rung's warm is
+    new-build while its pool still holds old-build banks, and lineage-v6 alone
+    would refuse that pool forever.
+    """
+    for key in SHA256_KEYS:
+        _need_sha(current.get(key), f"current.{key}")
+    _need_sha(old_source_sha256, "old_source_sha256")
+    _need_sha(old_patch_bundle_sha256, "old_patch_bundle_sha256")
+    if (old_source_sha256 == current["source_sha256"] and
+            old_patch_bundle_sha256 == current["puffer_patch_bundle_sha256"]):
+        raise LineageError(
+            "graft refused: the declared old source/patch bundle ARE this "
+            "build's, so there is nothing to graft; a module-only difference "
+            "is a `rehost`, otherwise use lineage-v6")
+    old_modules = {}
+    for label, payload in sidecars:
+        implementation = payload["implementation"]
+        if all(implementation.get(key) == current[key] for key in SHA256_KEYS):
+            continue
+        if (implementation.get("source_sha256") == old_source_sha256 and
+                implementation.get("puffer_patch_bundle_sha256")
+                == old_patch_bundle_sha256):
+            old_modules[label] = implementation["compiled_module_sha256"]
+            continue
+        raise LineageError(
+            f"graft refused: {label} binds neither this build nor the declared "
+            "old build (source "
+            f"{implementation.get('source_sha256', '?')[:12]}, patch "
+            f"{implementation.get('puffer_patch_bundle_sha256', '?')[:12]}, "
+            f"module {implementation.get('compiled_module_sha256', '?')[:12]}); "
+            "a same-source/same-patch module difference is a `rehost`")
+    if not old_modules:
+        raise LineageError(
+            "graft refused as a no-op: every sidecar already binds this build, "
+            "so there is nothing to graft; use lineage-v6 (or `rehost` for a "
+            "module-only difference)")
+    modules = sorted(set(old_modules.values()))
+    if len(modules) != 1:
+        raise LineageError(
+            "graft refused: old-build sidecars record different compiled "
+            "modules: " + ", ".join(
+                f"{label}={module[:12]}" for label, module in sorted(
+                    old_modules.items())))
+    return modules[0]
 
 
 def validate_lineage(checkpoint, sidecar=None, *, expected=None,
@@ -448,6 +586,28 @@ def validate_lineage(checkpoint, sidecar=None, *, expected=None,
         _need_sha(ancestry.get("rehosted_from"), "ancestry.rehosted_from")
         if initialization == "fresh" and ancestry.get("mode") != "native_fresh_v6_genesis":
             raise LineageError("only eligible lineage may be rehosted")
+    if "grafted_from" in ancestry:
+        # Optional, and otherwise unchanged: a graft records the OLD build the
+        # warm/pool came from. Its shape is exact -- the four digests, nothing
+        # else -- and it is only meaningful on a warm-started lineage.
+        grafted_from = ancestry.get("grafted_from")
+        if not isinstance(grafted_from, dict):
+            raise LineageError("ancestry.grafted_from must be an object")
+        if sorted(grafted_from) != sorted(GRAFTED_FROM_KEYS):
+            raise LineageError(
+                "ancestry.grafted_from must contain exactly "
+                f"{sorted(GRAFTED_FROM_KEYS)}, got {sorted(grafted_from)}")
+        for key in GRAFTED_FROM_KEYS:
+            if key == "reason":
+                _need_reason(grafted_from.get(key), "ancestry.grafted_from.reason")
+            else:
+                _need_sha(grafted_from.get(key), f"ancestry.grafted_from.{key}")
+        if initialization != "lineage-v6":
+            raise LineageError("only lineage-v6 lineage may be grafted")
+        if grafted_from["warm_lineage_sha256"] != warm_lineage:
+            raise LineageError(
+                "ancestry.grafted_from.warm_lineage_sha256 differs from "
+                "ancestry.warm_lineage_sha256")
     if require_eligible and not eligible:
         raise LineageError("qualification-only checkpoint is not eligible ancestry")
     return payload

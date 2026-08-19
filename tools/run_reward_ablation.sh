@@ -4,9 +4,18 @@
 # Required for every mode:
 #   TAG=<unique arm tag>
 #   REWARD_MANIFEST=<puffer/config/rewards/*.json>
-#   BOOTSTRAP_MODE=fresh-v6-qualification|fresh-v6-genesis|lineage-v6
+#   BOOTSTRAP_MODE=fresh-v6-qualification|fresh-v6-genesis|lineage-v6|graft-v6
 # lineage-v6 additionally requires WARM and POOL with eligible obs-v6 lineage
 # sidecars. fresh-v6-qualification forbids both inputs.
+# graft-v6 is lineage-v6 across a reviewed source/patch-bundle change: the
+# warm/pool sidecars are validated as internally consistent + eligible on
+# their OWN recorded implementation, and each must then bind EITHER this build
+# exactly OR the old build the operator declares with GRAFT_FROM_SOURCE_SHA256
+# + GRAFT_FROM_PATCH_BUNDLE_SHA256 (any module); at least one must be old-build
+# and all old-build sidecars must share one module (checkpoint_lineage
+# .graft_bridge -- the same rule the screen plan writer applies). GRAFT_REASON
+# (e.g. "D242") is required. The run manifest carries graft_from_* and
+# graft_reason so the published sidecar records ancestry.grafted_from.
 #
 # Optional:
 #   STEPS=250000000 SEED=42 LOG=/tmp/$TAG.log
@@ -15,6 +24,11 @@
 #   LR=0.00028 ENT_COEF=0.009 GAMMA=0.995 GAE_LAMBDA=0.85
 #   HORIZON=64 MINIBATCH_SIZE=16384 CHECKPOINT_STEPS=50000000
 #   RIG_ALLOW_FLOAT=1   required for native fp32 on the RTX 2070/Turing rig
+#   SCRIPTED_BANK_TAG=0 lineage-v6/graft-v6 only: 1..4 replaces frozen bank (tag-1)'s
+#                       seat with the scripted bot in that bank's envs (native
+#                       training vs a bot at native SPS; see bloodbowl.h
+#                       scripted_bank_tag). 0 = no scripted opponent.
+#   SCRIPTED_BOT_TYPE=0 0 = contact bot, 1 = offense bot (with SCRIPTED_BANK_TAG)
 #   DRY_RUN=1           validate every artifact/build contract and print the
 #                       final command without starting a trainer
 #
@@ -146,11 +160,76 @@ case "$BOOTSTRAP_MODE" in
     : "${POOL:?POOL is required for lineage-v6}"
     QUALIFICATION_ONLY=0
     ;;
+  graft-v6)
+    : "${WARM:?WARM is required for graft-v6}"
+    : "${POOL:?POOL is required for graft-v6}"
+    : "${GRAFT_FROM_SOURCE_SHA256:?GRAFT_FROM_SOURCE_SHA256 is required for graft-v6}"
+    : "${GRAFT_FROM_PATCH_BUNDLE_SHA256:?GRAFT_FROM_PATCH_BUNDLE_SHA256 is required for graft-v6}"
+    : "${GRAFT_REASON:?GRAFT_REASON is required for graft-v6 (e.g. the DECISIONS.md entry)}"
+    QUALIFICATION_ONLY=0
+    ;;
   *)
-    echo "BOOTSTRAP_MODE must be fresh-v6-qualification, fresh-v6-genesis, or lineage-v6" >&2
+    echo "BOOTSTRAP_MODE must be fresh-v6-qualification, fresh-v6-genesis, lineage-v6, or graft-v6" >&2
     exit 1
     ;;
 esac
+# POOL_MODE: the two warm-started, four-bank modes. Everything downstream that
+# used to key on lineage-v6 keys on this, so a graft differs from lineage-v6 in
+# exactly one place: how the warm/pool sidecars' implementation is validated.
+POOL_MODE=0
+case "$BOOTSTRAP_MODE" in
+  lineage-v6|graft-v6) POOL_MODE=1 ;;
+esac
+GRAFT_FROM_SOURCE_SHA256="${GRAFT_FROM_SOURCE_SHA256:-}"
+GRAFT_FROM_PATCH_BUNDLE_SHA256="${GRAFT_FROM_PATCH_BUNDLE_SHA256:-}"
+GRAFT_REASON="${GRAFT_REASON:-}"
+if [ "$BOOTSTRAP_MODE" = "graft-v6" ]; then
+  for digest_name in GRAFT_FROM_SOURCE_SHA256 GRAFT_FROM_PATCH_BUNDLE_SHA256; do
+    digest="${!digest_name}"
+    if [[ ! "$digest" =~ ^[0-9a-f]{64}$ ]]; then
+      echo "$digest_name must be a lowercase SHA-256 digest for graft-v6" >&2
+      exit 1
+    fi
+  done
+  if [ -z "${GRAFT_REASON// /}" ] || [ "${#GRAFT_REASON}" -gt 200 ]; then
+    echo "GRAFT_REASON must be a non-empty string of at most 200 characters" >&2
+    exit 1
+  fi
+elif [ -n "$GRAFT_FROM_SOURCE_SHA256$GRAFT_FROM_PATCH_BUNDLE_SHA256$GRAFT_REASON" ]; then
+  echo "GRAFT_FROM_SOURCE_SHA256/GRAFT_FROM_PATCH_BUNDLE_SHA256/GRAFT_REASON are only valid with BOOTSTRAP_MODE=graft-v6" >&2
+  exit 1
+fi
+
+# Scripted BANK: train the learner against a scripted bot at native SPS. The
+# env applies the bot only in envs whose selfplay tag equals SCRIPTED_BANK_TAG,
+# i.e. the historical envs of frozen bank (tag-1). Those envs' opponent seats
+# sit in that bank's tail row slice, which the native prioritized sampler never
+# selects (training/puffer_frozen_prio_mask.patch), so the bot's rows are
+# excluded from PPO by the same mechanism that excludes frozen-bank rows.
+# The pool bank at index (tag-1) still loads its real weights -- the launcher
+# validates it like every other bank -- they are simply never consulted for an
+# action in those envs; the bank keeps its row slice and its hist_score_bank
+# telemetry, which then measures the learner against the BOT.
+# Both knobs default to 0 and are recorded explicitly in the run manifest, so
+# "no scripted opponent" is a declared value, never an omission.
+SCRIPTED_BANK_TAG="${SCRIPTED_BANK_TAG:-0}"
+SCRIPTED_BOT_TYPE="${SCRIPTED_BOT_TYPE:-0}"
+case "$SCRIPTED_BANK_TAG" in
+  0|1|2|3|4) ;;
+  *) echo "SCRIPTED_BANK_TAG must be an integer in 0..4, got '$SCRIPTED_BANK_TAG'" >&2
+     exit 1 ;;
+esac
+case "$SCRIPTED_BOT_TYPE" in
+  0|1) ;;
+  *) echo "SCRIPTED_BOT_TYPE must be 0 (contact) or 1 (offense), got '$SCRIPTED_BOT_TYPE'" >&2
+     exit 1 ;;
+esac
+if [ "$SCRIPTED_BANK_TAG" != "0" ] && [ "$POOL_MODE" != "1" ]; then
+  echo "SCRIPTED_BANK_TAG=$SCRIPTED_BANK_TAG requires BOOTSTRAP_MODE=lineage-v6 (or graft-v6):" >&2
+  echo "the bot seat is only excluded from PPO inside a frozen-bank row slice," >&2
+  echo "and only the pool-backed modes allocate the four-bank pool" >&2
+  exit 1
+fi
 
 STEPS="${STEPS:-250000000}"
 SEED="${SEED:-42}"
@@ -264,7 +343,7 @@ CUDA_RUNTIME_WRAPPER="$ROOT/tools/puffer_cuda_runtime.py"
   echo "CUDA runtime wrapper missing: $CUDA_RUNTIME_WRAPPER" >&2; exit 1; }
 [ "${CUDA_VISIBLE_DEVICES:-}" = "0" ] || {
   echo "CUDA_VISIBLE_DEVICES must be exactly 0" >&2; exit 1; }
-if [ "$BOOTSTRAP_MODE" != "lineage-v6" ]; then
+if [ "$POOL_MODE" != "1" ]; then
   FROZEN_BANK_PCT=0
   NUM_FROZEN_BANKS=0
   FROZEN_PER_BANK=0
@@ -274,7 +353,7 @@ if [ "$BOOTSTRAP_MODE" != "lineage-v6" ]; then
 else
   NUM_FROZEN_BANKS=4
   [ -n "$EXPECTED_POOL_HASH" ] || {
-    echo "lineage-v6 requires EXPECTED_POOL_HASH" >&2; exit 1; }
+    echo "$BOOTSTRAP_MODE requires EXPECTED_POOL_HASH" >&2; exit 1; }
   read -r FROZEN_PER_BANK HISTORICAL_GAME_SHARE < <(
     "$PYBIN" - "$TOTAL_AGENTS" "$NUM_BUFFERS" "$FROZEN_BANK_PCT" <<'PY'
 import math, sys
@@ -299,7 +378,7 @@ PY
 fi
 
 [ -f "$REWARD_MANIFEST" ] || { echo "missing reward manifest: $REWARD_MANIFEST" >&2; exit 1; }
-if [ "$BOOTSTRAP_MODE" = "lineage-v6" ]; then
+if [ "$POOL_MODE" = "1" ]; then
   [ -f "$WARM" ] || { echo "missing warm checkpoint: $WARM" >&2; exit 1; }
   [ -f "$POOL/league_seeds.json" ] || { echo "missing $POOL/league_seeds.json" >&2; exit 1; }
 fi
@@ -374,7 +453,7 @@ POOL_BANKS=0
 POOL_MANIFEST_HASH=""
 POOL_LINEAGE_BUNDLE_HASH=""
 warm_size=0
-if [ "$BOOTSTRAP_MODE" = "lineage-v6" ]; then
+if [ "$POOL_MODE" = "1" ]; then
   warm_size=$(wc -c < "$WARM")
   if [ "$warm_size" -ne "$EXPECT_BYTES" ]; then
     echo "warm checkpoint is $warm_size bytes; expected $EXPECT_BYTES" >&2
@@ -592,23 +671,41 @@ VENDOR_SOURCE_HASH="$({
     src/bindings_cpu.cpp src/kernels.cu src/vecenv.h
 } | sha256sum | awk '{print $1}')"
 
-if [ "$BOOTSTRAP_MODE" = "lineage-v6" ]; then
-  read -r WARM_LINEAGE_HASH POOL_LINEAGE_BUNDLE_HASH < <(
+GRAFT_FROM_MODULE_SHA256=""
+if [ "$POOL_MODE" = "1" ]; then
+  # lineage-v6: every sidecar must bind THIS build's source/module/patch
+  # digests. graft-v6: each sidecar is validated as internally consistent +
+  # eligible on its OWN recorded implementation, then checkpoint_lineage
+  # .graft_bridge requires every one of {warm, bank0..3} to bind either this
+  # build exactly or the declared old build (GRAFT_FROM_*, any module), with at
+  # least one old-build sidecar (else it is a no-op / rehost, refused here
+  # rather than 5B steps later at publication) and one shared old module,
+  # which becomes graft_from_module_sha256. The screen plan writer applies the
+  # identical function.
+  read -r WARM_LINEAGE_HASH POOL_LINEAGE_BUNDLE_HASH GRAFT_FROM_MODULE_SHA256 < <(
     "$PYBIN" - "$ROOT" "$WARM" "$POOL" "$SOURCE_HASH" \
-      "$MODULE_HASH" "$PATCH_HASH" <<'PY'
+      "$MODULE_HASH" "$PATCH_HASH" "$BOOTSTRAP_MODE" \
+      "$GRAFT_FROM_SOURCE_SHA256" "$GRAFT_FROM_PATCH_BUNDLE_SHA256" <<'PY'
 import hashlib, json, pathlib, sys
-root, warm_path, pool_path, source_sha, module_sha, patch_sha = sys.argv[1:]
+(root, warm_path, pool_path, source_sha, module_sha, patch_sha, mode,
+ graft_source, graft_patch) = sys.argv[1:]
 sys.path.insert(0, str(pathlib.Path(root) / "tools"))
 from checkpoint_lineage import lineage_digest, sidecar_path, validate_lineage
 
-expected = {
+from checkpoint_lineage import LineageError, graft_bridge
+
+graft = mode == "graft-v6"
+current = {
     "source_sha256": source_sha,
     "compiled_module_sha256": module_sha,
     "puffer_patch_bundle_sha256": patch_sha,
 }
+expected = None if graft else current
 warm = pathlib.Path(warm_path)
 warm_payload = validate_lineage(
     warm, sidecar_path(warm), expected=expected, require_eligible=True)
+graft_module = ""
+graft_sidecars = [("warm", warm_payload)]
 pool = pathlib.Path(pool_path)
 manifest = json.loads((pool / "league_seeds.json").read_text(encoding="utf-8"))
 identities = []
@@ -620,6 +717,7 @@ for index, seed in enumerate(manifest["seeds"]):
     payload_sha = lineage_digest(payload)
     if payload_sha != seed["lineage_sha256"]:
         raise SystemExit(f"pool bank {index} lineage digest differs from manifest")
+    graft_sidecars.append((f"pool bank {index}", payload))
     identities.append({
         "bank": index,
         "checkpoint_sha256": hashlib.sha256(checkpoint.read_bytes()).hexdigest(),
@@ -627,9 +725,17 @@ for index, seed in enumerate(manifest["seeds"]):
     })
 bundle = hashlib.sha256(json.dumps(
     identities, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-print(lineage_digest(warm_payload), bundle)
+if graft:
+    try:
+        graft_module = graft_bridge(
+            graft_sidecars, current=current, old_source_sha256=graft_source,
+            old_patch_bundle_sha256=graft_patch)
+    except LineageError as exc:
+        raise SystemExit(str(exc)) from exc
+print(lineage_digest(warm_payload), bundle, graft_module or "-")
 PY
   )
+  [ "$GRAFT_FROM_MODULE_SHA256" != "-" ] || GRAFT_FROM_MODULE_SHA256=""
 fi
 
 echo "tag=$TAG seed=$SEED requested_steps=$STEPS final_steps=$FINAL_STEPS rollout_quantum=$ROLLOUT_QUANTUM"
@@ -641,6 +747,9 @@ echo "source_sha256=$SOURCE_HASH config_sha256=$CONFIG_HASH module_sha256=$MODUL
 echo "compiled_exact_action_source_sha256=$COMPILED_EXACT_ACTION_SOURCE_HASH compiled_observation=$COMPILED_OBSERVATION_ABI/$COMPILED_OBSERVATION_VERSION compiled_action=$COMPILED_ACTION_ABI"
 echo "native_precision_bytes=$precision total_agents=$TOTAL_AGENTS buffers=$NUM_BUFFERS threads=$NUM_THREADS horizon=$HORIZON minibatch=$MINIBATCH_SIZE"
 echo "lr=$LR ent_coef=$ENT_COEF gamma=$GAMMA gae_lambda=$GAE_LAMBDA replay_ratio=$REPLAY_RATIO log=$LOG"
+echo "scripted_bank_tag=$SCRIPTED_BANK_TAG scripted_bot_type=$SCRIPTED_BOT_TYPE"
+[ "$BOOTSTRAP_MODE" != "graft-v6" ] || \
+  echo "graft_from source_sha256=$GRAFT_FROM_SOURCE_SHA256 patch_bundle_sha256=$GRAFT_FROM_PATCH_BUNDLE_SHA256 module_sha256=$GRAFT_FROM_MODULE_SHA256 warm_lineage_sha256=$WARM_LINEAGE_HASH reason=$GRAFT_REASON"
 
 CMD=(env PUFFER_CUDA_RUNTIME_MANIFEST="$RUN_MANIFEST" \
   PUFFER_CUDA_RUNTIME_EVIDENCE="$CUDA_RUNTIME_EVIDENCE" \
@@ -669,7 +778,7 @@ CMD=(env PUFFER_CUDA_RUNTIME_MANIFEST="$RUN_MANIFEST" \
   --train.update-epochs 1 --train.beta1 0.95 --train.beta2 0.999 \
   --train.eps 0.000000000001)
 
-if [ "$BOOTSTRAP_MODE" != "lineage-v6" ]; then
+if [ "$POOL_MODE" != "1" ]; then
   CMD+=(--selfplay.enabled 0 --vec.num-frozen-banks 0 \
     --vec.frozen-bank-pct 0)
 else
@@ -678,6 +787,15 @@ else
     --selfplay.snapshot-interval 1000000000000 \
     --vec.num-frozen-banks 4 --vec.frozen-bank-pct "$FROZEN_BANK_PCT" \
     --load-model-path "$WARM")
+  if [ "$SCRIPTED_BANK_TAG" != "0" ]; then
+    # Team 1 (AWAY) is where tagged envs seat the frozen bank, and the guard
+    # in pufferl_scripted_training_guard.patch refuses anything else. When the
+    # tag is 0 the installed config default (scripted_opponent = 0) applies.
+    CMD+=(--env.scripted-opponent 1 \
+      --env.scripted-opponent-type "$SCRIPTED_BOT_TYPE" \
+      --env.scripted-opponent-team 1 \
+      --env.scripted-bank-tag "$SCRIPTED_BANK_TAG")
+  fi
 fi
 
 if [ "${DRY_RUN:-0}" = "1" ]; then
@@ -690,7 +808,7 @@ fi
 META_ARGS=(
   tag "$TAG" seed "$SEED" requested_steps "$STEPS" final_steps "$FINAL_STEPS"
   bootstrap_mode "$BOOTSTRAP_MODE" initialization \
-  "$([ "$BOOTSTRAP_MODE" != "lineage-v6" ] && printf fresh || printf lineage-v6)" \
+  "$([ "$POOL_MODE" != "1" ] && printf fresh || printf lineage-v6)" \
   qualification_only "$QUALIFICATION_ONLY" observation_abi obs-v6 \
   observation_version 6 action_abi exact-joint-v1 \
   policy_hidden_size 512 policy_num_layers 3 policy_expansion_factor 1 \
@@ -700,6 +818,8 @@ META_ARGS=(
   ladder_postkick_maxturn "$LADDER_POSTKICK_MAXTURN"
   ladder_pass_maxrange "$LADDER_PASS_MAXRANGE"
   ladder_state_bank_sha256 "$LADDER_STATE_BANK_SHA256"
+  scripted_bank_tag "$SCRIPTED_BANK_TAG"
+  scripted_bot_type "$SCRIPTED_BOT_TYPE"
   rollout_quantum "$ROLLOUT_QUANTUM" reward_name "$REWARD_NAME"
   reward_sha256 "$REWARD_HASH" reward_manifest "$REWARD_MANIFEST"
   pool "$POOL" pool_identity_sha256 "$POOL_HASH"
@@ -743,6 +863,17 @@ META_ARGS=(
   expected_checkpoint_bytes "$EXPECT_BYTES"
   screen_manifest_sha256 "$SCREEN_MANIFEST_SHA256"
 )
+if [ "$BOOTSTRAP_MODE" = "graft-v6" ]; then
+  # All four or none: checkpoint_lineage treats their presence as the graft
+  # declaration and writes ancestry.grafted_from into the published sidecar.
+  META_ARGS+=(
+    graft_from_source_sha256 "$GRAFT_FROM_SOURCE_SHA256"
+    graft_from_module_sha256 "$GRAFT_FROM_MODULE_SHA256"
+    graft_from_patch_bundle_sha256 "$GRAFT_FROM_PATCH_BUNDLE_SHA256"
+    graft_from_warm_lineage_sha256 "$WARM_LINEAGE_HASH"
+    graft_reason "$GRAFT_REASON"
+  )
+fi
 "$PYBIN" - "$RUN_MANIFEST" "${META_ARGS[@]}" -- "${CMD[@]}" <<'PY'
 import json, pathlib, sys
 path = pathlib.Path(sys.argv[1])

@@ -1,0 +1,53 @@
+--- a/pufferlib/pufferl.py
++++ b/pufferlib/pufferl.py
+@@ -204,6 +204,26 @@
+     assert minibatch_size <= horizon * total_agents, \
+         f'minibatch_size {minibatch_size} > total_agents {total_agents} * horizon {horizon}'
+ 
++def guard_scripted_training(args):
++    env = args.get('env', {})
++    train = args.get('train', {})
++    scripted = bool(int(env.get('scripted_opponent', 0) or 0))
++    learning_active = float(train.get('learning_rate', 0.0) or 0.0) > 1e-9
++    if not scripted or not learning_active:
++        return
++
++    # LOCAL PATCH (bloodbowl-rl): the native/CUDA backend has the same
++    # scripted-row contamination risk as torch, but its selfplay/rollout path
++    # has no tested row-filter here. Block active native scripted training
++    # until that backend gets its own gated implementation.
++    if not args.get('slowly'):
++        raise RuntimeError(
++            'scripted_opponent with learning_rate > 1e-9 is unsafe on the '
++            'native/CUDA backend: bot-side sampled actions are replaced by '
++            'c_step and the native PPO path does not implement scripted row '
++            'exclusion. Use --slowly for the torch row-filter, or keep '
++            'learning_rate <= 1e-9 for frozen eval.')
++
+ def require_training_state_reset(args):
+     if not args['reset_state']:
+         raise ValueError('training requires reset_state=True')
+@@ -219,6 +239,7 @@
+ 
+ def _train_worker(args):
+     require_training_state_reset(args)
++    guard_scripted_training(args)
+     backend = _resolve_backend(args)
+     pufferl = backend.create_pufferl(args)
+     args.pop('nccl_id', None)
+@@ -231,6 +252,7 @@
+ def _train(env_name, args, sweep_obj=None, result_queue=None, verbose=False):
+     '''Single-GPU training worker. Process target for both DDP ranks and sweep trials.'''
+     require_training_state_reset(args)
++    guard_scripted_training(args)
+     backend = _resolve_backend(args)
+     rank = args['rank']
+     run_id = str(int(1000*time.time()))
+@@ -453,6 +475,7 @@
+ def train(env_name, args=None, gpus=None, **kwargs):
+     args = args or load_config(env_name)
+     require_training_state_reset(args)
++    guard_scripted_training(args)
+     validate_config(args)
+ 
+     subprocess = gpus is not None

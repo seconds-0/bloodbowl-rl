@@ -24,7 +24,7 @@ fi
 LAUNCH_CWD="$PWD"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 : "${STEPS:?STEPS is required (explicit experiment budget)}"
-: "${SCREEN_PROFILE:?SCREEN_PROFILE is required (distance-possession, possession-gain, possession-gain-exact, exact-action-canary, genesis, genesis-pool, ladder-rung, paired-confirmation, paired-final, or control-final)}"
+: "${SCREEN_PROFILE:?SCREEN_PROFILE is required (distance-possession, possession-gain, possession-gain-exact, exact-action-canary, genesis, genesis-pool, ladder-rung, graft, paired-confirmation, paired-final, or control-final)}"
 CANDIDATE_ARM="${CANDIDATE_ARM:-}"
 TRANSFER_COMPLETE="${TRANSFER_COMPLETE:-}"
 EXPECTED_TRANSFER_SHA256="${EXPECTED_TRANSFER_SHA256:-}"
@@ -40,7 +40,20 @@ ARM_DETACH="${ARM_DETACH:-1}"
 LADDER_ENDZONE_MAXDIST="${LADDER_ENDZONE_MAXDIST:-}"
 LADDER_RESET_PCT="${LADDER_RESET_PCT:-}"
 LADDER_SEED="${LADDER_SEED:-}"
-# ladder-rung only: scale the trainer's LR and entropy coefficient for a
+# ladder-rung only: scripted BANK. SCRIPTED_BANK_TAG=b+1 replaces frozen bank
+# b's seat with a scripted bot in that bank's envs (bloodbowl.h
+# scripted_bank_tag; contact 0 / offense 1). Unset means 0 for a rung and is
+# then passed and recorded EXPLICITLY, so "no bot" is a declared value.
+SCRIPTED_BANK_TAG="${SCRIPTED_BANK_TAG:-}"
+SCRIPTED_BOT_TYPE="${SCRIPTED_BOT_TYPE:-}"
+# graft only: the reviewed lineage bridge across a source/patch-bundle change.
+# The operator declares the OLD build (source + patch bundle) some of the
+# warm/pool sidecars still bind, and why (GRAFT_REASON, e.g. "D242"); the
+# per-arm launcher re-checks the same declaration with the same rule.
+GRAFT_FROM_SOURCE_SHA256="${GRAFT_FROM_SOURCE_SHA256:-}"
+GRAFT_FROM_PATCH_BUNDLE_SHA256="${GRAFT_FROM_PATCH_BUNDLE_SHA256:-}"
+GRAFT_REASON="${GRAFT_REASON:-}"
+# ladder-rung / graft only: scale the trainer's LR and entropy coefficient for a
 # CHAINED warm restart. D245: a settled policy re-annealed from the top
 # (0.00028 / 0.009) into a pool of >=-strength selves dips into passivity for
 # ~0.5-2B steps; resuming near the warm rung's FINAL values (min-lr ratio 0.1
@@ -123,13 +136,29 @@ case "$ARM_DETACH" in
   0|1) ;;
   *) echo "ARM_DETACH must be 0 or 1" >&2; exit 1 ;;
 esac
-if [ "$SCREEN_PROFILE" != "ladder-rung" ] && \
+# The graft profile is a rung across a build change, so it takes the rung's
+# knobs; every other profile pins them.
+RUNG_LIKE=0
+case "$SCREEN_PROFILE" in
+  ladder-rung|graft) RUNG_LIKE=1 ;;
+esac
+if [ "$RUNG_LIKE" != "1" ] && \
    [ -n "$LADDER_ENDZONE_MAXDIST$LADDER_RESET_PCT$LADDER_SEED" ]; then
-  echo "LADDER_ENDZONE_MAXDIST, LADDER_RESET_PCT and LADDER_SEED are only valid with SCREEN_PROFILE=ladder-rung" >&2
+  echo "LADDER_ENDZONE_MAXDIST, LADDER_RESET_PCT and LADDER_SEED are only valid with SCREEN_PROFILE=ladder-rung or graft" >&2
   exit 1
 fi
-if [ "$SCREEN_PROFILE" != "ladder-rung" ] && [ "$LADDER_CHAIN_LR_SCALE" != "1" ]; then
-  echo "LADDER_CHAIN_LR_SCALE is only valid with SCREEN_PROFILE=ladder-rung" >&2
+if [ "$RUNG_LIKE" != "1" ] && \
+   [ -n "$SCRIPTED_BANK_TAG$SCRIPTED_BOT_TYPE" ]; then
+  echo "SCRIPTED_BANK_TAG and SCRIPTED_BOT_TYPE are only valid with SCREEN_PROFILE=ladder-rung or graft" >&2
+  exit 1
+fi
+if [ "$SCREEN_PROFILE" != "graft" ] && \
+   [ -n "$GRAFT_FROM_SOURCE_SHA256$GRAFT_FROM_PATCH_BUNDLE_SHA256$GRAFT_REASON" ]; then
+  echo "GRAFT_FROM_SOURCE_SHA256, GRAFT_FROM_PATCH_BUNDLE_SHA256 and GRAFT_REASON are only valid with SCREEN_PROFILE=graft" >&2
+  exit 1
+fi
+if [ "$RUNG_LIKE" != "1" ] && [ "$LADDER_CHAIN_LR_SCALE" != "1" ]; then
+  echo "LADDER_CHAIN_LR_SCALE is only valid with SCREEN_PROFILE=ladder-rung or graft" >&2
   exit 1
 fi
 case "$LADDER_CHAIN_LR_SCALE" in
@@ -142,7 +171,7 @@ if [ "$LADDER_CHAIN_LR_SCALE" != "1" ]; then
   ENT_COEF="$(python3 -c 'import sys; print(repr(float(sys.argv[1])*float(sys.argv[2])))' "$ENT_COEF" "$LADDER_CHAIN_LR_SCALE")"
 fi
 case "$SCREEN_PROFILE" in
-  distance-possession|possession-gain|possession-gain-exact|exact-action-canary|genesis|genesis-pool|control-final|ladder-rung)
+  distance-possession|possession-gain|possession-gain-exact|exact-action-canary|genesis|genesis-pool|control-final|ladder-rung|graft)
     [ -z "$CANDIDATE_ARM$TRANSFER_COMPLETE$EXPECTED_TRANSFER_SHA256" ] || {
       echo "candidate transfer inputs are only valid with a paired profile" >&2
       exit 1; }
@@ -151,7 +180,7 @@ case "$SCREEN_PROFILE" in
       echo "exact-action-canary requires STEPS=50000000" >&2
       exit 1
     fi
-    if [ "$SCREEN_PROFILE" = "ladder-rung" ]; then
+    if [ "$RUNG_LIKE" = "1" ]; then
       # A rung is a start-distribution factor, so both knobs are REQUIRED and
       # explicit; an inherited empty value must not silently train a kickoff
       # arm under a ladder label. maxdist 0 is the legitimate "uniform" rung
@@ -160,19 +189,48 @@ case "$SCREEN_PROFILE" in
       # (maxdist>0 with reset_pct 0) so it is not repeated here.
       case "$LADDER_ENDZONE_MAXDIST" in
         ''|*[!0-9]*)
-          echo "ladder-rung requires LADDER_ENDZONE_MAXDIST as a non-negative integer (0 = uniform bank starts)" >&2
+          echo "$SCREEN_PROFILE requires LADDER_ENDZONE_MAXDIST as a non-negative integer (0 = uniform bank starts)" >&2
           exit 1 ;;
       esac
       case "$LADDER_RESET_PCT" in
         0|0.0|1|1.0|0.[0-9]|0.[0-9][0-9]|0.[0-9][0-9][0-9]) ;;
-        *) echo "ladder-rung requires LADDER_RESET_PCT as a fraction in [0,1] (at most three decimals)" >&2
+        *) echo "$SCREEN_PROFILE requires LADDER_RESET_PCT as a fraction in [0,1] (at most three decimals)" >&2
            exit 1 ;;
       esac
       case "$LADDER_SEED" in
         ''|*[!0-9]*|0[0-9]*)
-          echo "ladder-rung requires LADDER_SEED as a canonical non-negative integer" >&2
+          echo "$SCREEN_PROFILE requires LADDER_SEED as a canonical non-negative integer" >&2
           exit 1 ;;
       esac
+      # The scripted bank is optional; unset resolves to the explicit 0 the
+      # per-arm launcher then records. Same domain as the launcher's own gate.
+      SCRIPTED_BANK_TAG="${SCRIPTED_BANK_TAG:-0}"
+      SCRIPTED_BOT_TYPE="${SCRIPTED_BOT_TYPE:-0}"
+      case "$SCRIPTED_BANK_TAG" in
+        0|1|2|3|4) ;;
+        *) echo "$SCREEN_PROFILE requires SCRIPTED_BANK_TAG as an integer in 0..4 (0 = no scripted bank)" >&2
+           exit 1 ;;
+      esac
+      case "$SCRIPTED_BOT_TYPE" in
+        0|1) ;;
+        *) echo "$SCREEN_PROFILE requires SCRIPTED_BOT_TYPE as 0 (contact) or 1 (offense)" >&2
+           exit 1 ;;
+      esac
+    fi
+    if [ "$SCREEN_PROFILE" = "graft" ]; then
+      # The operator declares what is being grafted from; a graft with an
+      # inherited or empty declaration would silently accept whatever old
+      # build the warm sidecar happens to record.
+      for digest_name in GRAFT_FROM_SOURCE_SHA256 GRAFT_FROM_PATCH_BUNDLE_SHA256; do
+        if ! [[ "${!digest_name}" =~ ^[0-9a-f]{64}$ ]]; then
+          echo "graft requires $digest_name as a lowercase 64-character SHA-256 digest" >&2
+          exit 1
+        fi
+      done
+      if [ -z "${GRAFT_REASON// /}" ] || [ "${#GRAFT_REASON}" -gt 200 ]; then
+        echo "graft requires GRAFT_REASON as a non-empty string of at most 200 characters (e.g. the DECISIONS.md entry)" >&2
+        exit 1
+      fi
     fi
     ;;
   paired-confirmation|paired-final)
@@ -188,7 +246,7 @@ case "$SCREEN_PROFILE" in
       exit 1
     fi
     ;;
-  *) echo "SCREEN_PROFILE must be distance-possession, possession-gain, possession-gain-exact, exact-action-canary, genesis, genesis-pool, ladder-rung, paired-confirmation, paired-final, or control-final" >&2
+  *) echo "SCREEN_PROFILE must be distance-possession, possession-gain, possession-gain-exact, exact-action-canary, genesis, genesis-pool, ladder-rung, graft, paired-confirmation, paired-final, or control-final" >&2
      exit 1 ;;
 esac
 
@@ -222,7 +280,11 @@ if [ "$SCREEN_PROFILE" = "exact-action-canary" ] || \
 else
   : "${WARM:?WARM is required}"
   : "${POOL:?POOL is required}"
-  BOOTSTRAP_MODE=lineage-v6
+  if [ "$SCREEN_PROFILE" = "graft" ]; then
+    BOOTSTRAP_MODE=graft-v6
+  else
+    BOOTSTRAP_MODE=lineage-v6
+  fi
 fi
 
 abspath() {
@@ -239,7 +301,7 @@ if [ -n "$TRANSFER_COMPLETE" ]; then
   [ -f "$TRANSFER_COMPLETE" ] || {
     echo "missing transfer completion: $TRANSFER_COMPLETE" >&2; exit 1; }
 fi
-if [ "$BOOTSTRAP_MODE" = "lineage-v6" ]; then
+if [ "$BOOTSTRAP_MODE" = "lineage-v6" ] || [ "$BOOTSTRAP_MODE" = "graft-v6" ]; then
   [ -f "$WARM" ] || { echo "missing warm checkpoint: $WARM" >&2; exit 1; }
   [ -d "$POOL" ] || { echo "missing static pool: $POOL" >&2; exit 1; }
   [[ "$EXPECTED_POOL_HASH" =~ ^[0-9a-f]{64}$ ]] || {
@@ -321,6 +383,22 @@ case "$SCREEN_PROFILE" in
     # the reward with no known defect, not merely the newest one.
     arms=(s_both)
     seeds=(42)
+    ;;
+  graft)
+    # The reviewed lineage bridge across a source/patch-bundle change. Shaped
+    # exactly like a rung -- one s_both arm at LADDER_SEED, warm + four-bank
+    # pool, the rung's start-distribution and scripted-bank knobs -- but some
+    # of the warm/pool sidecars were published on an OLD build, so each is
+    # validated on its OWN recorded implementation (internally consistent +
+    # eligible) and then must bind either this build or the operator's
+    # GRAFT_FROM_* declaration (checkpoint_lineage.graft_bridge); the accepted
+    # checkpoint is published on the NEW build with ancestry.grafted_from.
+    # One arm, one seed: a graft is a lineage step, not a comparison, and it
+    # is the only place an implementation change may enter an existing lineage.
+    # It stays usable for the rungs after the bridge, whose warm is new-build
+    # while the pool still carries old-build banks.
+    arms=(s_both)
+    seeds=("$LADDER_SEED")
     ;;
   ladder-rung)
     # One rung of the backplay curriculum ladder (6 -> 9 -> 12 -> 0 -> kickoff;
@@ -412,6 +490,11 @@ SCREEN_PLAN="$(
       MIN_TRAIN_GAMES="$MIN_TRAIN_GAMES" MIN_EVAL_GAMES="$MIN_EVAL_GAMES" \
       LADDER_ENDZONE_MAXDIST="$LADDER_ENDZONE_MAXDIST" \
       LADDER_RESET_PCT="$LADDER_RESET_PCT" \
+      SCRIPTED_BANK_TAG="$SCRIPTED_BANK_TAG" \
+      SCRIPTED_BOT_TYPE="$SCRIPTED_BOT_TYPE" \
+      GRAFT_FROM_SOURCE_SHA256="$GRAFT_FROM_SOURCE_SHA256" \
+      GRAFT_FROM_PATCH_BUNDLE_SHA256="$GRAFT_FROM_PATCH_BUNDLE_SHA256" \
+      GRAFT_REASON="$GRAFT_REASON" \
       LADDER_CHAIN_LR_SCALE="$LADDER_CHAIN_LR_SCALE" LR="$LR" ENT_COEF="$ENT_COEF" \
       "$PYBIN" - "$SCREEN_MANIFEST" <<'PY'
 import datetime, hashlib, json, os, pathlib, subprocess, sys, sysconfig
@@ -586,15 +669,27 @@ else:
     # The lineage sidecar is the only thing that keeps an obs-v4 checkpoint out
     # of an obs-v6 run. The per-arm launcher validates the four pool banks the
     # same way, against the same expectations, before it allocates GPU state.
+    #
+    # graft: some sidecars were published on an OLD build, so the expected
+    # implementation overrides are dropped -- each sidecar must still be
+    # canonical, hash-bound to its checkpoint, obs-v6/exact-joint-v1 and
+    # ELIGIBLE -- and checkpoint_lineage.graft_bridge then requires each of
+    # {warm, bank0..3} to bind either this build exactly or the operator's
+    # GRAFT_FROM_* declaration. The per-arm launcher applies the same function.
+    graft = profile == "graft"
+    current_implementation = {
+        "source_sha256": source_hash,
+        "compiled_module_sha256": sha(module),
+        "puffer_patch_bundle_sha256": patch_bundle_sha,
+    }
+    implementation_expected = None if graft else current_implementation
     warm_payload = validate_lineage(
         warm, sidecar_path(warm),
-        expected={
-            "source_sha256": source_hash,
-            "compiled_module_sha256": sha(module),
-            "puffer_patch_bundle_sha256": patch_bundle_sha,
-        },
+        expected=implementation_expected,
         require_eligible=True)
     warm_lineage_sha = lineage_digest(warm_payload)
+    graft_identity = None
+    graft_sidecars = [("warm", warm_payload)]
     warm_identity = {
         "path": str(warm), "bytes": warm.stat().st_size, "sha256": sha(warm),
         "lineage_path": str(sidecar_path(warm).resolve()),
@@ -604,6 +699,34 @@ else:
     banks = json.loads(pool_manifest_raw).get("seeds")
     if not isinstance(banks, list) or len(banks) != 4:
         raise SystemExit("screen pool must contain exactly four banks")
+    if graft:
+        # Same rule for the pool: eligible, internally consistent, on their
+        # own recorded build. lineage-v6 leaves this to the per-arm launcher.
+        from checkpoint_lineage import LineageError, graft_bridge
+        for index, bank in enumerate(banks):
+            bank_payload = validate_lineage(
+                pool / bank["file"], pool / bank["lineage_file"],
+                expected=None, require_eligible=True)
+            if lineage_digest(bank_payload) != bank["lineage_sha256"]:
+                raise SystemExit(
+                    f"pool bank {index} lineage digest differs from manifest")
+            graft_sidecars.append((f"pool bank {index}", bank_payload))
+        declared_source = os.environ["GRAFT_FROM_SOURCE_SHA256"]
+        declared_patch = os.environ["GRAFT_FROM_PATCH_BUNDLE_SHA256"]
+        try:
+            old_module = graft_bridge(
+                graft_sidecars, current=current_implementation,
+                old_source_sha256=declared_source,
+                old_patch_bundle_sha256=declared_patch)
+        except LineageError as exc:
+            raise SystemExit(str(exc)) from exc
+        graft_identity = {
+            "from_source_sha256": declared_source,
+            "from_patch_bundle_sha256": declared_patch,
+            "from_module_sha256": old_module,
+            "warm_lineage_sha256": warm_lineage_sha,
+            "reason": os.environ["GRAFT_REASON"],
+        }
     pool_lineage_bundle_sha = hashlib.sha256(json.dumps([
         {"bank": index, "checkpoint_sha256": bank["sha256"],
          "lineage_sha256": bank["lineage_sha256"]}
@@ -689,7 +812,9 @@ contract = {
         "vendor_source_sha256": vendor_source_sha,
     },
 }
-if profile == "ladder-rung":
+if profile == "graft":
+    contract["graft"] = graft_identity
+if profile in ("ladder-rung", "graft"):
     # The start distribution is this profile's declared factor. Recorded here so
     # a rung's SCREEN_MANIFEST says which rung it was without opening the run
     # manifest; the per-arm launcher binds the same values (plus the state-bank
@@ -697,6 +822,10 @@ if profile == "ladder-rung":
     contract["ladder"] = {
         "endzone_maxdist": int(os.environ["LADDER_ENDZONE_MAXDIST"]),
         "reset_pct": float(os.environ["LADDER_RESET_PCT"]),
+        # Scripted bank: 0 = none. Recorded even when 0 so the contract says
+        # which opponent the rung trained against, not merely which starts.
+        "scripted_bank_tag": int(os.environ["SCRIPTED_BANK_TAG"]),
+        "scripted_bot_type": int(os.environ["SCRIPTED_BOT_TYPE"]),
         "chain_lr_scale": float(os.environ["LADDER_CHAIN_LR_SCALE"]),
         "learning_rate": float(os.environ["LR"]),
         "ent_coef": float(os.environ["ENT_COEF"]),
@@ -1153,7 +1282,17 @@ PY
     LADDER_ENV=()
     if [ "$SCREEN_PROFILE" = "ladder-rung" ]; then
       LADDER_ENV=(LADDER_ENDZONE_MAXDIST="$LADDER_ENDZONE_MAXDIST" \
-                  LADDER_RESET_PCT="$LADDER_RESET_PCT")
+                  LADDER_RESET_PCT="$LADDER_RESET_PCT" \
+                  SCRIPTED_BANK_TAG="$SCRIPTED_BANK_TAG" \
+                  SCRIPTED_BOT_TYPE="$SCRIPTED_BOT_TYPE")
+    elif [ "$SCREEN_PROFILE" = "graft" ]; then
+      LADDER_ENV=(LADDER_ENDZONE_MAXDIST="$LADDER_ENDZONE_MAXDIST" \
+                  LADDER_RESET_PCT="$LADDER_RESET_PCT" \
+                  SCRIPTED_BANK_TAG="$SCRIPTED_BANK_TAG" \
+                  SCRIPTED_BOT_TYPE="$SCRIPTED_BOT_TYPE" \
+                  GRAFT_FROM_SOURCE_SHA256="$GRAFT_FROM_SOURCE_SHA256" \
+                  GRAFT_FROM_PATCH_BUNDLE_SHA256="$GRAFT_FROM_PATCH_BUNDLE_SHA256" \
+                  GRAFT_REASON="$GRAFT_REASON")
     fi
     env ${LADDER_ENV[@]+"${LADDER_ENV[@]}"} \
         TAG="$tag" REWARD_MANIFEST="$manifest" WARM="$WARM" POOL="$POOL" \

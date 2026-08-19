@@ -25,7 +25,9 @@ STAGE = ROOT / "tools/ladder_stage.sh"
 def run(env, cwd=None):
     merged = {k: v for k, v in os.environ.items()
               if k not in ("RUNG", "RESET_PCT", "SEED", "STAMP", "WARM",
-                           "PREV_COMPLETE", "PREV_POOL", "PIN")}
+                           "PREV_COMPLETE", "PREV_POOL", "PIN", "STEPS",
+                           "POOL_KEEP")
+              and not k.startswith(("LADDER_", "SCRIPTED_", "GRAFT_"))}
     merged.update(env)
     return subprocess.run(
         ["bash", str(STAGE)], cwd=cwd or ROOT, env=merged, text=True,

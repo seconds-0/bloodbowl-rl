@@ -464,5 +464,269 @@ class CheckpointLineageTests(unittest.TestCase):
                 target_patch_bundle_sha256="3" * 64)
 
 
+class GraftLineageTests(unittest.TestCase):
+    """A graft bridges a warm/pool lineage across a source/patch-bundle change.
+
+    The run manifest declares the OLD implementation (all four graft_from_*
+    keys or none) and the sidecar records it as ancestry.grafted_from, on top
+    of an otherwise ordinary lineage-v6 payload published on the NEW build."""
+
+    OLD = {
+        "graft_from_source_sha256": "a" * 64,
+        "graft_from_module_sha256": "b" * 64,
+        "graft_from_patch_bundle_sha256": "c" * 64,
+        "graft_from_warm_lineage_sha256": "5" * 64,
+        "graft_reason": "D242",
+    }
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.checkpoint = self.root / "policy.bin"
+        self.checkpoint.write_bytes(
+            b"graft" + b"\0" * (
+                checkpoint_lineage.EXPECTED_CHECKPOINT_BYTES - len(b"graft")))
+        self.run_manifest = self.root / "RUN_MANIFEST.json"
+        self.base = {
+            "schema_version": 1,
+            "mode": "native_static_pool_reward_ablation",
+            "seed": "42",
+            "observation_abi": "obs-v6",
+            "observation_version": "6",
+            "action_abi": "exact-joint-v1",
+            "initialization": "lineage-v6",
+            "qualification_only": "0",
+            "policy_hidden_size": "512",
+            "policy_num_layers": "3",
+            "policy_expansion_factor": "1",
+            "expected_checkpoint_bytes": str(
+                checkpoint_lineage.EXPECTED_CHECKPOINT_BYTES),
+            "source_sha256": "1" * 64,
+            "compiled_module_sha256": "2" * 64,
+            "puffer_patch_bundle_sha256": "3" * 64,
+            "screen_manifest_sha256": "4" * 64,
+            "warm_lineage_sha256": "5" * 64,
+            "pool_lineage_bundle_sha256": "6" * 64,
+        }
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def write(self, **over):
+        manifest = dict(self.base)
+        manifest.update(over)
+        self.run_manifest.write_text(
+            json.dumps(manifest, sort_keys=True) + "\n", encoding="utf-8")
+
+    def create(self):
+        return checkpoint_lineage.lineage_from_run_manifest(
+            self.checkpoint, self.run_manifest,
+            allow_eligible_publication=True)
+
+    def expected(self):
+        return {"source_sha256": "1" * 64, "compiled_module_sha256": "2" * 64,
+                "puffer_patch_bundle_sha256": "3" * 64}
+
+    def test_graft_round_trips_and_records_the_old_build(self):
+        self.write(**self.OLD)
+        payload = self.create()
+        self.assertEqual(payload["ancestry"]["grafted_from"], {
+            "warm_lineage_sha256": "5" * 64,
+            "source_sha256": "a" * 64,
+            "compiled_module_sha256": "b" * 64,
+            "puffer_patch_bundle_sha256": "c" * 64,
+            "reason": "D242",
+        })
+        # Published on the NEW build's digests, ordinary lineage-v6 otherwise.
+        self.assertEqual(payload["implementation"], self.expected())
+        self.assertEqual(payload["ancestry"]["initialization"], "lineage-v6")
+        self.assertTrue(payload["ancestry"]["eligible"])
+        sidecar = checkpoint_lineage.sidecar_path(self.checkpoint)
+        checkpoint_lineage.write_lineage(sidecar, payload)
+        observed = checkpoint_lineage.validate_lineage(
+            self.checkpoint, sidecar, expected=self.expected(),
+            require_eligible=True)
+        self.assertEqual(observed, payload)
+
+    def test_no_graft_keys_means_no_grafted_from(self):
+        self.write()
+        payload = self.create()
+        self.assertNotIn("grafted_from", payload["ancestry"])
+
+    def test_partial_graft_keys_are_refused(self):
+        for drop in self.OLD:
+            partial = {k: v for k, v in self.OLD.items() if k != drop}
+            self.write(**partial)
+            with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                        "all-or-none"):
+                self.create()
+
+    def test_malformed_graft_reason_is_refused(self):
+        for bad in ("", "   ", 7, None, "x" * 201):
+            self.write(**{**self.OLD, "graft_reason": bad})
+            with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                        "graft_reason"):
+                self.create()
+        self.write(**{**self.OLD, "graft_reason": "y" * 200})
+        self.assertEqual(self.create()["ancestry"]["grafted_from"]["reason"],
+                         "y" * 200)
+
+    def test_malformed_graft_sha_is_refused(self):
+        for key in self.OLD:
+            if key == "graft_reason":
+                continue
+            for bad in ("", "A" * 64, "a" * 63, 7, None):
+                self.write(**{**self.OLD, key: bad})
+                with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                            key):
+                    self.create()
+
+    def test_graft_warm_digest_must_match_the_warm_lineage(self):
+        self.write(**{**self.OLD, "graft_from_warm_lineage_sha256": "7" * 64})
+        with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                    "differs from warm_lineage_sha256"):
+            self.create()
+
+    def test_graft_requires_lineage_v6_initialization(self):
+        self.write(**{**self.OLD, "graft_from_warm_lineage_sha256": "5" * 64},
+                   initialization="fresh", mode="native_fresh_v6_genesis",
+                   warm_lineage_sha256="", pool_lineage_bundle_sha256="")
+        with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                    "lineage-v6"):
+            self.create()
+
+    def test_graft_onto_the_identical_source_and_patch_is_refused_as_a_no_op(self):
+        # Even with a different module: that is a rehost, not a graft.
+        for module in ("2" * 64, "b" * 64):
+            self.write(**{**self.OLD,
+                          "graft_from_source_sha256": "1" * 64,
+                          "graft_from_module_sha256": module,
+                          "graft_from_patch_bundle_sha256": "3" * 64})
+            with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                        "no-op.*rehost"):
+                self.create()
+        # A source-only or patch-only change IS a graft.
+        self.write(**{**self.OLD, "graft_from_source_sha256": "1" * 64})
+        self.create()
+        self.write(**{**self.OLD, "graft_from_patch_bundle_sha256": "3" * 64})
+        self.create()
+
+    def test_validate_refuses_malformed_grafted_from_in_the_sidecar(self):
+        self.write(**self.OLD)
+        payload = self.create()
+        sidecar = self.root / "g.lineage.json"
+
+        def check(mutate, message):
+            broken = json.loads(json.dumps(payload))
+            mutate(broken)
+            checkpoint_lineage.write_lineage(sidecar, broken, replace=True)
+            with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                        message):
+                checkpoint_lineage.validate_lineage(
+                    self.checkpoint, sidecar, expected=self.expected())
+
+        check(lambda b: b["ancestry"].__setitem__("grafted_from", "x"),
+              "must be an object")
+        check(lambda b: b["ancestry"]["grafted_from"].pop("source_sha256"),
+              "exactly")
+        check(lambda b: b["ancestry"]["grafted_from"].__setitem__("extra", "1" * 64),
+              "exactly")
+        check(lambda b: b["ancestry"]["grafted_from"].__setitem__(
+            "compiled_module_sha256", "Z" * 64), "grafted_from.compiled_module")
+        check(lambda b: b["ancestry"]["grafted_from"].__setitem__(
+            "warm_lineage_sha256", "9" * 64), "differs from")
+        check(lambda b: b["ancestry"]["grafted_from"].__setitem__("reason", ""),
+              "grafted_from.reason")
+        check(lambda b: b["ancestry"]["grafted_from"].__setitem__(
+            "reason", "r" * 201), "grafted_from.reason")
+
+    def test_validate_refuses_grafted_from_on_fresh_lineage(self):
+        self.write(initialization="fresh", mode="native_fresh_v6_genesis",
+                   warm_lineage_sha256="", pool_lineage_bundle_sha256="")
+        payload = self.create()
+        payload["ancestry"]["grafted_from"] = {
+            "warm_lineage_sha256": "", "source_sha256": "a" * 64,
+            "compiled_module_sha256": "b" * 64,
+            "puffer_patch_bundle_sha256": "c" * 64, "reason": "D242"}
+        sidecar = self.root / "g.lineage.json"
+        checkpoint_lineage.write_lineage(sidecar, payload)
+        with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                    "grafted_from"):
+            checkpoint_lineage.validate_lineage(
+                self.checkpoint, sidecar, expected=self.expected())
+
+
+class GraftBridgeTests(unittest.TestCase):
+    """graft_bridge is the shared launcher/screen classification of a graft."""
+
+    NEW = {"source_sha256": "1" * 64, "compiled_module_sha256": "2" * 64,
+           "puffer_patch_bundle_sha256": "3" * 64}
+
+    @staticmethod
+    def payload(source, module, patch):
+        return {"implementation": {
+            "source_sha256": source, "compiled_module_sha256": module,
+            "puffer_patch_bundle_sha256": patch}}
+
+    def bridge(self, sidecars, old_source="a" * 64, old_patch="c" * 64):
+        return checkpoint_lineage.graft_bridge(
+            sidecars, current=self.NEW, old_source_sha256=old_source,
+            old_patch_bundle_sha256=old_patch)
+
+    def test_all_old_returns_the_shared_old_module(self):
+        old = self.payload("a" * 64, "b" * 64, "c" * 64)
+        self.assertEqual(self.bridge([("warm", old)] + [
+            (f"bank{i}", old) for i in range(4)]), "b" * 64)
+
+    def test_mixed_pool_after_a_graft_is_accepted(self):
+        # Rung N+1: warm is new-build, one bank is the new-build rung-N
+        # checkpoint, three banks are still old-build.
+        new = self.payload("1" * 64, "2" * 64, "3" * 64)
+        old = self.payload("a" * 64, "b" * 64, "c" * 64)
+        self.assertEqual(self.bridge([("warm", new), ("bank0", old),
+                                      ("bank1", old), ("bank2", old),
+                                      ("bank3", new)]), "b" * 64)
+
+    def test_a_bank_from_a_different_old_build_is_refused(self):
+        old = self.payload("a" * 64, "b" * 64, "c" * 64)
+        other = self.payload("d" * 64, "e" * 64, "f" * 64)
+        with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                    "bank2 binds neither"):
+            self.bridge([("warm", old), ("bank0", old), ("bank1", old),
+                         ("bank2", other), ("bank3", old)])
+
+    def test_old_build_sidecars_must_share_one_module(self):
+        old = self.payload("a" * 64, "b" * 64, "c" * 64)
+        rehosted = self.payload("a" * 64, "9" * 64, "c" * 64)
+        with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                    "different compiled modules"):
+            self.bridge([("warm", old), ("bank0", rehosted)])
+
+    def test_same_source_and_patch_with_other_module_is_a_rehost_not_a_graft(self):
+        drifted = self.payload("1" * 64, "9" * 64, "3" * 64)
+        with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                    "binds neither.*rehost"):
+            self.bridge([("warm", drifted)])
+
+    def test_nothing_old_is_a_refused_no_op(self):
+        new = self.payload("1" * 64, "2" * 64, "3" * 64)
+        with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                    "no-op.*rehost"):
+            self.bridge([("warm", new), ("bank0", new)])
+
+    def test_declaring_this_build_as_the_old_build_is_refused(self):
+        old = self.payload("a" * 64, "b" * 64, "c" * 64)
+        with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                    "nothing to graft.*rehost"):
+            self.bridge([("warm", old)], old_source="1" * 64,
+                        old_patch="3" * 64)
+
+    def test_malformed_digests_are_refused(self):
+        old = self.payload("a" * 64, "b" * 64, "c" * 64)
+        with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                    "old_source_sha256"):
+            self.bridge([("warm", old)], old_source="A" * 64)
+
+
 if __name__ == "__main__":
     unittest.main()

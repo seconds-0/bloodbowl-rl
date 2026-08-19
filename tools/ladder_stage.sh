@@ -30,6 +30,12 @@
 #   POOL_KEEP=<n> banks kept from PREV_POOL incl. the anchor (default 3)
 #   POOL_ANCHOR=<ckpt> weak-anchor bank that never rotates (default: PREV_POOL's
 #     bank 0; D244)
+#   LADDER_CHAIN_LR_SCALE  forwarded to launch_ladder_rung.sh when set (D244)
+#   SCRIPTED_BANK_TAG / SCRIPTED_BOT_TYPE  scripted bank for this rung
+#     (forwarded to launch_ladder_rung.sh only when set; unset = ordinary rung)
+#   LADDER_PROFILE=graft + GRAFT_FROM_SOURCE_SHA256 / GRAFT_FROM_PATCH_BUNDLE_SHA256
+#     / GRAFT_REASON  make this stage the reviewed lineage bridge across a
+#     build change (forwarded like SCRIPTED_*; unset = ordinary rung)
 set -uo pipefail
 
 C="${C:-/home/rache/bloodbowl-rl-qualification-candidate-10619e2}"
@@ -164,6 +170,16 @@ export RUNG STEPS RESET_PCT SEED STAMP WARM OUT C
 # comparison happens inside launch_ladder_rung.sh).
 [ -z "$PREV_COMPLETE" ] || export WARM_MARKER="$PREV_COMPLETE"
 [ -z "${LADDER_CHAIN_LR_SCALE:-}" ] || export LADDER_CHAIN_LR_SCALE
+[ -z "${SCRIPTED_BANK_TAG:-}" ] || export SCRIPTED_BANK_TAG
+[ -z "${SCRIPTED_BOT_TYPE:-}" ] || export SCRIPTED_BOT_TYPE
+[ -z "${LADDER_PROFILE:-}" ] || export LADDER_PROFILE
+[ -z "${GRAFT_FROM_SOURCE_SHA256:-}" ] || export GRAFT_FROM_SOURCE_SHA256
+[ -z "${GRAFT_FROM_PATCH_BUNDLE_SHA256:-}" ] || export GRAFT_FROM_PATCH_BUNDLE_SHA256
+[ -z "${GRAFT_REASON:-}" ] || export GRAFT_REASON
+[ -z "${LADDER_PROFILE:-}" ] || \
+  echo "  profile ${LADDER_PROFILE} graft_from=${GRAFT_FROM_SOURCE_SHA256:-}/${GRAFT_FROM_PATCH_BUNDLE_SHA256:-} reason=${GRAFT_REASON:-}"
+[ -z "${SCRIPTED_BANK_TAG:-}${SCRIPTED_BOT_TYPE:-}" ] || \
+  echo "  bot  scripted_bank_tag=${SCRIPTED_BANK_TAG:-0} scripted_bot_type=${SCRIPTED_BOT_TYPE:-0}"
 export POOL="$POOL_OUT/pool"
 export DEADLINE_HOURS="${DEADLINE_HOURS:-40}"
 exec bash tools/launch_ladder_rung.sh
