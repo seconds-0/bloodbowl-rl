@@ -47,7 +47,9 @@ under `runs/ladder-d<rung>-20260815/`; supervisor state under
 |---|---|---|---|---|---|
 | 1 | 0 (kickoff) + contact-bot bank 4 | 0 | chain2 accepted (graft, D243) | uniform/chain/stage-1/chain2 (`cb769c10`) | accepted Aug 18 ~22:00 — **tds 0.731 from kickoff**, vs-bot 0.21; D50 exam running |
 
-Watch: `~/bin/v2watch`. A/B vs box 1's pure-pool kickoff path; verdict = the contact-bot exam.
+| 2 | 0 (kickoff) + offense-bot bank 4, LR×0.1 | 0 | kickoff+bot accepted (rehost) | anchor uniform + chain/stage-1/chain2/kickoff+bot | **running** since Aug 19 12:22 PDT, 195K SPS |
+
+Watch: `~/bin/v2watch`. Exams: `/root/native_exam.sh <ckpt> <outdir> away home offense mirror` (~4 min). Box 1 retired Aug 19 12:09 PDT (D247).
 
 ## Live campaign: `rig-seed42-20260818` (RTX 2070, seed-42 replicate of the uniform chain)
 
@@ -61,9 +63,11 @@ Watch: `~/bin/v2watch`. A/B vs box 1's pure-pool kickoff path; verdict = the con
 
 | checkpoint | path | AWAY champ/bot | HOME champ/bot | mirror TD/g |
 |---|---|---|---|---|
-| chain2 (uniform@0.5) | D241 | 0.052 / 1.281 | 0.035 / 1.276 | 0.951 |
-| r25 (→ uniform@0.25) | D246 | 0.038 / 1.150 | 0.025 / 1.211 | pending |
-| **kickoff+bot** (→ kickoff@0, contact-bot bank 4) | D246 | **0.102 / 0.997** | pending | pending |
+| chain2 (uniform@0.5) [torch] | D241 | 0.052 / 1.281 | 0.035 / 1.276 | 0.951 |
+| r25 (→ uniform@0.25) [torch] | D246 | 0.038 / 1.150 | 0.025 / 1.211 | — |
+| r25 [native] | D247 | 0.043 / 1.118 | 0.037 / 1.131 | offense-bot AWAY 0.101 / 0.587 |
+| **kickoff+bot** [torch] | D246 | 0.102 / 0.997 | 0.052 / 1.065 | — |
+| **kickoff+bot** [native] | D247 | **0.091 / 1.023** | **0.069 / 0.975** | **offense-bot AWAY 0.152 / 0.538** |
 
 Verdict so far: opponent quality moves the exam; more curriculum alone does not.
 
