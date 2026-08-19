@@ -64,6 +64,15 @@ PUFFER_BIN="$ROOT/vendor/PufferLib/.venv/bin/puffer"
 PYBIN="$ROOT/vendor/PufferLib/.venv/bin/python"
 [ -x "$PUFFER_BIN" ] || { echo "vendored puffer entrypoint missing: $PUFFER_BIN" >&2; exit 1; }
 [ -x "$PYBIN" ] || { echo "vendored Python missing: $PYBIN" >&2; exit 1; }
+if [ "${NATIVE:-0}" = "1" ]; then
+  # Native flat fp32 blob: size-pinned, and its lineage sidecar must validate
+  # against THIS build (the obs/action semantics are only knowable from it).
+  "$PYBIN" "$ROOT/tools/checkpoint_lineage.py" validate --checkpoint "$CKPT" \
+      --allow-qualification >/dev/null || {
+    echo "NATIVE=1 requires a native flat blob with a valid lineage sidecar: $CKPT" >&2
+    exit 1
+  }
+else
 "$PYBIN" - "$CKPT" <<'PY' || {
 import sys, torch
 state = torch.load(sys.argv[1], map_location="cpu", weights_only=False)
@@ -73,6 +82,7 @@ PY
   echo "convert/select the *_torch.bin artifact; native flat blobs cannot use --slowly" >&2
   exit 1
 }
+fi
 
 if ! "$ROOT/tools/install_puffer_env.sh" --check "$ROOT/vendor/PufferLib"; then
   echo "stale PufferLib bloodbowl snapshot; reinstall before eval:" >&2
@@ -110,19 +120,42 @@ PY
 
 cd "$ROOT/vendor/PufferLib"
 echo "measuring $CKPT vs scripted bot type=$BOT_TYPE team=$BOT_TEAM over $STEPS steps -> $LOG" >&2
-CMD=("$PUFFER_BIN" train bloodbowl --slowly --selfplay.enabled 0 \
-  --seed "$SEED" --train.seed "$SEED" --env.seed "$SEED" \
-  --load-model-path "$CKPT" \
-  --tag contact-bot-eval \
-  --train.total-timesteps "$STEPS" \
-  --train.learning-rate 0.000000000001 \
-  --train.bc-coef 0 \
-  --env.demo-reset-pct 0 \
-  --env.scripted-opponent 1 \
-  --env.scripted-opponent-type "$BOT_TYPE" \
-  --env.scripted-opponent-team "$BOT_TEAM" \
-  --vec.total-agents 256 --vec.num-threads "${OMP_NUM_THREADS:-8}" \
-  --train.minibatch-size 2048)
+# NATIVE=1: frozen eval on the native CUDA backend from the flat fp32 blob a
+# rung publishes (no torch conversion, no zero-filled biases, ~30-80x the
+# torch --slowly throughput). The scripted-training guard permits this
+# because learning_rate <= 1e-9 -- the scripted seat's rows are never trained
+# on, so the row-exclusion the guard exists for is moot. Default 0 keeps the
+# historical torch path (needed only when the input is a torch state_dict).
+if [ "${NATIVE:-0}" = "1" ]; then
+  CMD=("$PUFFER_BIN" train bloodbowl --selfplay.enabled 0 \
+    --vec.num-frozen-banks 0 --vec.frozen-bank-pct 0 \
+    --seed "$SEED" --train.seed "$SEED" --env.seed "$SEED" \
+    --load-model-path "$CKPT" \
+    --tag contact-bot-eval \
+    --train.total-timesteps "$STEPS" \
+    --train.learning-rate 0.000000000001 \
+    --env.demo-reset-pct 0 \
+    --env.scripted-opponent 1 \
+    --env.scripted-opponent-type "$BOT_TYPE" \
+    --env.scripted-opponent-team "$BOT_TEAM" \
+    --vec.total-agents 2048 --vec.num-buffers 2 \
+    --vec.num-threads "${OMP_NUM_THREADS:-8}" \
+    --train.horizon 64 --train.minibatch-size 16384)
+else
+  CMD=("$PUFFER_BIN" train bloodbowl --slowly --selfplay.enabled 0 \
+    --seed "$SEED" --train.seed "$SEED" --env.seed "$SEED" \
+    --load-model-path "$CKPT" \
+    --tag contact-bot-eval \
+    --train.total-timesteps "$STEPS" \
+    --train.learning-rate 0.000000000001 \
+    --train.bc-coef 0 \
+    --env.demo-reset-pct 0 \
+    --env.scripted-opponent 1 \
+    --env.scripted-opponent-type "$BOT_TYPE" \
+    --env.scripted-opponent-team "$BOT_TEAM" \
+    --vec.total-agents 256 --vec.num-threads "${OMP_NUM_THREADS:-8}" \
+    --train.minibatch-size 2048)
+fi
 [ -n "$EVAL_EPISODES" ] && \
   CMD+=(--eval-episodes "$EVAL_EPISODES")
 
