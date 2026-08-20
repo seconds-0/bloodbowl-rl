@@ -74,8 +74,9 @@ Watch: `~/bin/v2watch`. Exams: `/root/native_exam.sh <ckpt> <outdir> away home o
 | **kickoff+bot** [native] | D247 | **0.091 / 1.023** | **0.069 / 0.975** | **offense-bot AWAY 0.152 / 0.538** |
 | **+offense-bot rung** [native] | D249 | 0.077 / 1.029 | 0.068 / 1.009 | **offense-bot AWAY 0.151 / 0.405**; mirror 0.765 |
 | **+contact rung 2** [native] | D250 | **0.083 / 0.993** | **0.088 / 1.028** | offense-bot AWAY 0.160 / 0.459; mirror 0.803 |
+| s42-kickoff pure-pool control (seed 42, no bot) [native] | D250 add. | 0.023 / 1.292 | 0.016 / 1.282 | offense-bot AWAY 0.027 / 0.683 |
 
-Verdict so far: opponent quality moves the exam; more curriculum alone does not.
+Verdict: opponent quality in training moves the exam; pure-pool kickoff training makes it WORSE; curriculum alone does not help.
 
 ## Kickoff exam (D50) — chain2 checkpoint, 2026-08-18
 
