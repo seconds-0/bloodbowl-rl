@@ -1,4 +1,4 @@
-# Status — 2026-08-18
+# Status — 2026-08-20
 
 ## Current verdict
 
@@ -54,7 +54,14 @@ under `runs/ladder-d<rung>-20260815/`; supervisor state under
 
 Watch: `~/bin/v2watch`. Exams: `/root/native_exam.sh <ckpt> <outdir> away home offense mirror` (~4 min). Box 1 retired Aug 19 12:09 PDT (D247).
 
-## Live campaign: `rig-seed42-20260818` (RTX 2070, seed-42 replicate of the uniform chain)
+## Live campaign: `rig-s42-bot-20260820` (RTX 2070, free) — seed-42 bot-bank replicate on the new source
+
+| stage | rung | warm | pool | state |
+|---|---|---|---|---|
+| 1 | kickoff + contact-bot bank 4, LR×0.1 (graft) | s42-kickoff (pure-pool control, D250 add.) | s42-kickoff pool (anchor rung12) | **running** since Aug 20 07:53 PDT, 123K SPS |
+| 2 | kickoff + offense-bot bank 4 | stage 1 | promoted | queued |
+
+## Completed campaign: `rig-seed42-20260818` (RTX 2070, seed-42 replicate of the uniform chain)
 
 | stage | rung | reset | warm | pool | state |
 |---|---|---|---|---|---|
