@@ -728,5 +728,335 @@ class GraftBridgeTests(unittest.TestCase):
             self.bridge([("warm", old)], old_source="A" * 64)
 
 
+class BridgeLineageTests(unittest.TestCase):
+    """A bridge warm-starts from an OUT-OF-LINEAGE raw blob with no sidecar.
+
+    The run manifest declares initialization=bridge plus the four bridge_*
+    keys (all or none), an EMPTY warm_lineage_sha256 (there is no warm
+    sidecar) and a NON-empty pool bundle digest (the banks are ordinary
+    eligible obs-v6 sidecars). The sidecar records ancestry.bridged_from and
+    is itself eligible ancestry for later lineage-v6 rungs."""
+
+    JULY_SHA = "4e97ba4ff72fcc71e154ca146caeab45eb7c5d9e584db42f17b07f77c72a7630"
+    BRIDGE = {
+        "bridge_warm_sha256": JULY_SHA,
+        "bridge_warm_observation_version": "4",
+        "bridge_provenance": (
+            "runs/reward-transfer-20260713-v1/checkpoints/r0-s42-native.bin "
+            "(ANALYSIS.json; docs/audit-2026-08-20.md F2)"),
+        "bridge_reason": "audit-2026-08-20 F2",
+    }
+    GRAFT = {
+        "graft_from_source_sha256": "a" * 64,
+        "graft_from_module_sha256": "b" * 64,
+        "graft_from_patch_bundle_sha256": "c" * 64,
+        "graft_from_warm_lineage_sha256": "",
+        "graft_reason": "D242",
+    }
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.checkpoint = self.root / "policy.bin"
+        self.checkpoint.write_bytes(
+            b"bridge" + b"\0" * (
+                checkpoint_lineage.EXPECTED_CHECKPOINT_BYTES - len(b"bridge")))
+        self.run_manifest = self.root / "RUN_MANIFEST.json"
+        self.base = {
+            "schema_version": 1,
+            "mode": "native_static_pool_reward_ablation",
+            "seed": "42",
+            "observation_abi": "obs-v6",
+            "observation_version": "6",
+            "action_abi": "exact-joint-v1",
+            "initialization": "bridge",
+            "qualification_only": "0",
+            "policy_hidden_size": "512",
+            "policy_num_layers": "3",
+            "policy_expansion_factor": "1",
+            "expected_checkpoint_bytes": str(
+                checkpoint_lineage.EXPECTED_CHECKPOINT_BYTES),
+            "source_sha256": "1" * 64,
+            "compiled_module_sha256": "2" * 64,
+            "puffer_patch_bundle_sha256": "3" * 64,
+            "screen_manifest_sha256": "4" * 64,
+            "warm_lineage_sha256": "",
+            "pool_lineage_bundle_sha256": "6" * 64,
+            **self.BRIDGE,
+        }
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def write(self, drop=(), **over):
+        manifest = {k: v for k, v in self.base.items() if k not in drop}
+        manifest.update(over)
+        self.run_manifest.write_text(
+            json.dumps(manifest, sort_keys=True) + "\n", encoding="utf-8")
+
+    def create(self, **kw):
+        kw.setdefault("allow_eligible_publication", True)
+        return checkpoint_lineage.lineage_from_run_manifest(
+            self.checkpoint, self.run_manifest, **kw)
+
+    def expected(self):
+        return {"source_sha256": "1" * 64, "compiled_module_sha256": "2" * 64,
+                "puffer_patch_bundle_sha256": "3" * 64}
+
+    def test_bridge_round_trips_and_records_the_raw_warm(self):
+        self.write()
+        payload = self.create()
+        self.assertEqual(payload["ancestry"]["initialization"], "bridge")
+        self.assertTrue(payload["ancestry"]["eligible"])
+        self.assertFalse(payload["ancestry"]["qualification_only"])
+        self.assertEqual(payload["ancestry"]["warm_lineage_sha256"], "")
+        self.assertEqual(payload["ancestry"]["pool_lineage_bundle_sha256"],
+                         "6" * 64)
+        self.assertEqual(payload["ancestry"]["bridged_from"], {
+            "warm_checkpoint_sha256": self.JULY_SHA,
+            "warm_observation_version": 4,
+            "provenance": self.BRIDGE["bridge_provenance"],
+            "reason": "audit-2026-08-20 F2",
+        })
+        self.assertNotIn("grafted_from", payload["ancestry"])
+        # Published on THIS build's digests and obs-v6, like any arm.
+        self.assertEqual(payload["implementation"], self.expected())
+        self.assertEqual(payload["compatibility"]["observation_version"], 6)
+        sidecar = checkpoint_lineage.sidecar_path(self.checkpoint)
+        checkpoint_lineage.write_lineage(sidecar, payload)
+        observed = checkpoint_lineage.validate_lineage(
+            self.checkpoint, sidecar, expected=self.expected(),
+            require_eligible=True)
+        self.assertEqual(observed, payload)
+        # obs-v5 is the other bridgeable revision; the stored version is an int.
+        self.write(bridge_warm_observation_version="5")
+        self.assertEqual(
+            self.create()["ancestry"]["bridged_from"]["warm_observation_version"], 5)
+
+    def test_bridge_is_eligible_only_through_accepted_publication(self):
+        # Same gate as lineage-v6: a bridge output is eligible, so only the
+        # screen's materialize_result may mint it.
+        self.write()
+        with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                    "accepted screen"):
+            self.create(allow_eligible_publication=False)
+
+    def test_each_missing_bridge_key_is_refused(self):
+        for drop in self.BRIDGE:
+            self.write(drop=(drop,))
+            with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                        "all-or-none"):
+                self.create()
+        # None at all on a bridge initialization is refused too.
+        self.write(drop=tuple(self.BRIDGE))
+        with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                    "requires the bridge_\\* keys"):
+            self.create()
+
+    def test_malformed_bridge_fields_are_refused(self):
+        for bad in ("", "A" * 64, "a" * 63, 7, None):
+            self.write(bridge_warm_sha256=bad)
+            with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                        "bridge_warm_sha256"):
+                self.create()
+        # Only obs-v4 and obs-v5 are bridgeable: v3 cannot load, v6 is in
+        # lineage and must come with a sidecar.
+        for bad in ("3", "6", "04", "x", "", None, True, 4.0):
+            self.write(bridge_warm_observation_version=bad)
+            with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                        "bridge_warm_observation_version"):
+                self.create()
+        for bad in ("", "   ", 7, None, "p" * 301):
+            self.write(bridge_provenance=bad)
+            with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                        "bridge_provenance"):
+                self.create()
+        self.write(bridge_provenance="p" * 300)
+        self.assertEqual(self.create()["ancestry"]["bridged_from"]["provenance"],
+                         "p" * 300)
+        for bad in ("", "   ", 7, None, "r" * 201):
+            self.write(bridge_reason=bad)
+            with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                        "bridge_reason"):
+                self.create()
+        self.write(bridge_reason="r" * 200)
+        self.assertEqual(self.create()["ancestry"]["bridged_from"]["reason"],
+                         "r" * 200)
+
+    def test_bridge_with_a_warm_lineage_digest_is_refused(self):
+        # The whole point: the bridged warm HAS no sidecar. A digest here means
+        # the manifest was assembled for lineage-v6 and mislabelled.
+        self.write(warm_lineage_sha256="5" * 64)
+        with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                    "leave warm_lineage_sha256 empty"):
+            self.create()
+
+    def test_bridge_without_a_pool_bundle_is_refused(self):
+        self.write(pool_lineage_bundle_sha256="")
+        with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                    "requires pool_lineage_bundle_sha256"):
+            self.create()
+
+    def test_bridge_keys_on_any_other_initialization_are_refused(self):
+        self.write(initialization="lineage-v6", warm_lineage_sha256="5" * 64)
+        with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                    "only valid with bridge initialization"):
+            self.create()
+        self.write(initialization="fresh", mode="native_fresh_v6_genesis",
+                   pool_lineage_bundle_sha256="")
+        with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                    "only valid with bridge initialization"):
+            self.create()
+        # And a bridge cannot be qualification-only or declared genesis.
+        self.write(qualification_only="1", mode="native_fresh_v6_qualification")
+        with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                    "fresh initialization"):
+            self.create()
+        self.write(mode="native_fresh_v6_genesis")
+        with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                    "genesis output must use fresh"):
+            self.create()
+
+    def test_graft_and_bridge_together_are_refused(self):
+        self.write(**self.GRAFT)
+        with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                    "mutually exclusive"):
+            self.create()
+        # Even a partial graft declaration alongside a bridge.
+        self.write(graft_reason="D242")
+        with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                    "mutually exclusive"):
+            self.create()
+
+    def test_validate_accepts_a_bridge_sidecar_as_eligible_ancestry(self):
+        self.write()
+        payload = self.create()
+        sidecar = checkpoint_lineage.sidecar_path(self.checkpoint)
+        checkpoint_lineage.write_lineage(sidecar, payload)
+        # require_eligible=True is what every launcher asks for the warm and
+        # every pool bank; graft_bridge and rehost go through the same call.
+        observed = checkpoint_lineage.validate_lineage(
+            self.checkpoint, sidecar, expected=self.expected(),
+            require_eligible=True)
+        self.assertTrue(observed["ancestry"]["eligible"])
+        # A rehost of a bridge output carries bridged_from along unchanged.
+        module = self.root / "other.so"
+        module.write_bytes(b"module")
+        rehosted = checkpoint_lineage.rehost_lineage(
+            self.checkpoint, sidecar=sidecar, target_module=module,
+            target_source_sha256="1" * 64, target_patch_bundle_sha256="3" * 64)
+        self.assertEqual(rehosted["ancestry"]["bridged_from"],
+                         payload["ancestry"]["bridged_from"])
+        self.assertEqual(rehosted["ancestry"]["initialization"], "bridge")
+
+    def test_validate_rechecks_bridged_from_shape_and_consistency(self):
+        self.write()
+        payload = self.create()
+        sidecar = self.root / "b.lineage.json"
+
+        def check(mutate, message):
+            broken = json.loads(json.dumps(payload))
+            mutate(broken)
+            checkpoint_lineage.write_lineage(sidecar, broken, replace=True)
+            with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                        message):
+                checkpoint_lineage.validate_lineage(
+                    self.checkpoint, sidecar, expected=self.expected())
+
+        check(lambda b: b["ancestry"].pop("bridged_from"),
+              "must record ancestry.bridged_from")
+        check(lambda b: b["ancestry"].__setitem__("bridged_from", "x"),
+              "must be an object")
+        check(lambda b: b["ancestry"]["bridged_from"].pop("provenance"),
+              "exactly")
+        check(lambda b: b["ancestry"]["bridged_from"].__setitem__("extra", 1),
+              "exactly")
+        check(lambda b: b["ancestry"]["bridged_from"].__setitem__(
+            "warm_checkpoint_sha256", "Z" * 64), "bridged_from.warm_checkpoint")
+        check(lambda b: b["ancestry"]["bridged_from"].__setitem__(
+            "warm_observation_version", 6), "bridged_from.warm_observation")
+        check(lambda b: b["ancestry"]["bridged_from"].__setitem__(
+            "warm_observation_version", "4"), "bridged_from.warm_observation")
+        check(lambda b: b["ancestry"]["bridged_from"].__setitem__(
+            "provenance", ""), "bridged_from.provenance")
+        check(lambda b: b["ancestry"]["bridged_from"].__setitem__(
+            "reason", "r" * 201), "bridged_from.reason")
+        # A bridge sidecar that grew a warm digest is contradicting itself.
+        check(lambda b: b["ancestry"].__setitem__("warm_lineage_sha256", "5" * 64),
+              "leave warm_lineage_sha256 empty")
+        check(lambda b: b["ancestry"].__setitem__("pool_lineage_bundle_sha256", ""),
+              "bind pool ancestry")
+        # bridged_from on a lineage-v6 or genesis sidecar is refused outright.
+        check(lambda b: b["ancestry"].update(
+            initialization="lineage-v6", warm_lineage_sha256="5" * 64),
+            "only bridge lineage may record bridged_from")
+        check(lambda b: b["ancestry"].update(
+            initialization="fresh", mode="native_fresh_v6_genesis",
+            pool_lineage_bundle_sha256=""),
+            "only bridge lineage may record bridged_from")
+        # grafted_from never belongs on a bridge (well-formed, so the
+        # initialization rule is what refuses it, not the digest shape).
+        check(lambda b: b["ancestry"].__setitem__("grafted_from", {
+            "warm_lineage_sha256": "5" * 64, "source_sha256": "a" * 64,
+            "compiled_module_sha256": "b" * 64,
+            "puffer_patch_bundle_sha256": "c" * 64, "reason": "D242"}),
+            "only lineage-v6 lineage may be grafted")
+
+    def test_a_later_lineage_v6_rung_can_warm_from_the_bridge_output(self):
+        # The bridge output is ordinary eligible ancestry: the next rung names
+        # its sidecar digest as warm_lineage_sha256 under lineage-v6, and the
+        # bridged_from record stays one hop back rather than being copied.
+        self.write()
+        bridge_payload = self.create()
+        bridge_sidecar = checkpoint_lineage.sidecar_path(self.checkpoint)
+        checkpoint_lineage.write_lineage(bridge_sidecar, bridge_payload)
+        bridge_digest = checkpoint_lineage.lineage_digest(bridge_payload)
+        checkpoint_lineage.validate_lineage(
+            self.checkpoint, bridge_sidecar, expected=self.expected(),
+            require_eligible=True)
+
+        next_checkpoint = self.root / "rung1.bin"
+        next_checkpoint.write_bytes(
+            b"rung1" + b"\0" * (
+                checkpoint_lineage.EXPECTED_CHECKPOINT_BYTES - len(b"rung1")))
+        next_manifest = self.root / "RUNG1_MANIFEST.json"
+        manifest = {k: v for k, v in self.base.items() if k not in self.BRIDGE}
+        manifest.update(initialization="lineage-v6",
+                        warm_lineage_sha256=bridge_digest,
+                        pool_lineage_bundle_sha256="7" * 64)
+        next_manifest.write_text(
+            json.dumps(manifest, sort_keys=True) + "\n", encoding="utf-8")
+        next_payload = checkpoint_lineage.lineage_from_run_manifest(
+            next_checkpoint, next_manifest, allow_eligible_publication=True)
+        self.assertEqual(next_payload["ancestry"]["initialization"], "lineage-v6")
+        self.assertEqual(next_payload["ancestry"]["warm_lineage_sha256"],
+                         bridge_digest)
+        self.assertNotIn("bridged_from", next_payload["ancestry"])
+        next_sidecar = checkpoint_lineage.sidecar_path(next_checkpoint)
+        checkpoint_lineage.write_lineage(next_sidecar, next_payload)
+        observed = checkpoint_lineage.validate_lineage(
+            next_checkpoint, next_sidecar, expected=self.expected(),
+            require_eligible=True)
+        self.assertTrue(observed["ancestry"]["eligible"])
+
+    def test_bridge_cli_create_and_validate(self):
+        self.write()
+        out = self.root / "cli.lineage.json"
+        # create refuses eligible publication from the CLI, like lineage-v6.
+        with self.assertRaises(SystemExit) as caught:
+            checkpoint_lineage.main([
+                "create", "--checkpoint", str(self.checkpoint),
+                "--run-manifest", str(self.run_manifest), "--out", str(out)])
+        self.assertEqual(caught.exception.code, 1)
+        payload = self.create()
+        checkpoint_lineage.write_lineage(out, payload)
+        self.assertEqual(checkpoint_lineage.main([
+            "validate", "--checkpoint", str(self.checkpoint),
+            "--lineage", str(out),
+            "--expect", "source_sha256=" + "1" * 64,
+            "--expect", "compiled_module_sha256=" + "2" * 64,
+            "--expect", "puffer_patch_bundle_sha256=" + "3" * 64]), 0)
+
+
 if __name__ == "__main__":
     unittest.main()

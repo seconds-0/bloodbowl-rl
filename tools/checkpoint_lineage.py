@@ -24,7 +24,7 @@ POLICY_HIDDEN_SIZE = 512
 POLICY_NUM_LAYERS = 3
 POLICY_EXPANSION_FACTOR = 1
 EXPECTED_CHECKPOINT_BYTES = 16_066_560
-ALLOWED_INITIALIZATIONS = frozenset(("fresh", "lineage-v6"))
+ALLOWED_INITIALIZATIONS = frozenset(("fresh", "lineage-v6", "bridge"))
 SHA256_KEYS = (
     "source_sha256",
     "compiled_module_sha256",
@@ -54,6 +54,40 @@ GRAFTED_FROM_KEYS = (
     "reason",
 )
 GRAFT_REASON_MAX_CHARS = 200
+# A BRIDGE is the reviewed warm start from an OUT-OF-LINEAGE blob: a raw
+# checkpoint with no sidecar at all, produced under an older observation
+# revision (obs-v4 or obs-v5) whose tensor shapes are identical to obs-v6's.
+# The 2026-08-20 audit (docs/audit-2026-08-20.md, F2) measured the July obs-v4
+# R0 checkpoint loading unmodified on the current build and playing ~6x better
+# than the whole obs-v6 lineage, which had been restarted from random weights
+# only because the lineage tooling had no entry point for such a warm. A bridge
+# is that entry point, and it is deliberately narrow: the warm has NO lineage
+# digest (there is nothing to validate, so the manifest must say so rather
+# than carry an empty string by accident), the pool banks must still be
+# eligible obs-v6 sidecars validated exactly as lineage-v6 validates them, and
+# the manifest names the raw blob by content hash, its original observation
+# version, where it came from and why. The sidecar records all of that as
+# `ancestry.bridged_from`, so the out-of-lineage origin is visible to every
+# later rung instead of being laundered into an ordinary lineage-v6 ancestor.
+# The bridge output itself IS eligible ancestry: later rungs warm from it with
+# lineage-v6 like any other accepted checkpoint.
+BRIDGE_MANIFEST_KEYS = (
+    "bridge_warm_sha256",
+    "bridge_warm_observation_version",
+    "bridge_provenance",
+    "bridge_reason",
+)
+BRIDGED_FROM_KEYS = (
+    "warm_checkpoint_sha256",
+    "warm_observation_version",
+    "provenance",
+    "reason",
+)
+# Only the two older same-shape revisions may be bridged. obs-v3 and older are
+# input-shape incompatible and could not load anyway; obs-v6 is in lineage and
+# must come with a sidecar (lineage-v6), never through a bridge.
+BRIDGE_OBSERVATION_VERSIONS = (4, 5)
+BRIDGE_PROVENANCE_MAX_CHARS = 300
 
 
 class LineageError(RuntimeError):
@@ -107,6 +141,24 @@ def _need_reason(value, label):
         raise LineageError(
             f"{label} must be at most {GRAFT_REASON_MAX_CHARS} characters")
     return value
+
+
+def _need_provenance(value, label):
+    if not isinstance(value, str) or not value.strip():
+        raise LineageError(f"{label} must be a non-empty string")
+    if len(value) > BRIDGE_PROVENANCE_MAX_CHARS:
+        raise LineageError(
+            f"{label} must be at most {BRIDGE_PROVENANCE_MAX_CHARS} characters")
+    return value
+
+
+def _need_bridge_observation_version(value, label):
+    parsed = _need_int(value, label)
+    if parsed not in BRIDGE_OBSERVATION_VERSIONS:
+        raise LineageError(
+            f"{label} must be one of {list(BRIDGE_OBSERVATION_VERSIONS)}, "
+            f"got {parsed}")
+    return parsed
 
 
 def _need_bool_string(value, label):
@@ -248,8 +300,55 @@ def lineage_from_run_manifest(checkpoint, run_manifest, *,
         manifest.get("screen_manifest_sha256"), "screen_manifest_sha256")
     seed = _need_int(manifest.get("seed"), "seed")
 
+    bridged_from = None
+    bridge_present = [key for key in BRIDGE_MANIFEST_KEYS if key in manifest]
+    graft_present = [key for key in GRAFT_MANIFEST_KEYS if key in manifest]
+    if bridge_present and graft_present:
+        # A graft re-binds SIDECARS across a build change; a bridge has no warm
+        # sidecar to re-bind. The two declarations describe different things
+        # and a manifest carrying both is describing neither.
+        raise LineageError(
+            "bridge_* and graft_from_* keys are mutually exclusive")
+    if initialization == "bridge" and not bridge_present:
+        raise LineageError(
+            "bridge initialization requires the bridge_* keys "
+            f"{list(BRIDGE_MANIFEST_KEYS)}")
+    if bridge_present:
+        if len(bridge_present) != len(BRIDGE_MANIFEST_KEYS):
+            missing = sorted(set(BRIDGE_MANIFEST_KEYS) - set(bridge_present))
+            raise LineageError(
+                "bridge_* keys are all-or-none; run manifest lacks "
+                f"{missing}")
+        if initialization != "bridge":
+            raise LineageError(
+                "bridge_* keys are only valid with bridge initialization")
+        # The warm is a raw blob with no sidecar, so there is no warm lineage
+        # digest to carry; an empty string is the declaration, and a non-empty
+        # one means the manifest was assembled for the wrong mode.
+        if warm_lineage:
+            raise LineageError(
+                "bridge initialization must leave warm_lineage_sha256 empty: "
+                "the bridged warm has no lineage sidecar")
+        # The pool is NOT bridged: its four banks are ordinary eligible obs-v6
+        # sidecars, so their bundle digest is required exactly as lineage-v6
+        # requires it.
+        if not pool_lineage:
+            raise LineageError(
+                "bridge initialization requires pool_lineage_bundle_sha256: "
+                "the pool banks must be eligible obs-v6 lineage")
+        bridged_from = {
+            "warm_checkpoint_sha256": _need_sha(
+                manifest.get("bridge_warm_sha256"), "bridge_warm_sha256"),
+            "warm_observation_version": _need_bridge_observation_version(
+                manifest.get("bridge_warm_observation_version"),
+                "bridge_warm_observation_version"),
+            "provenance": _need_provenance(
+                manifest.get("bridge_provenance"), "bridge_provenance"),
+            "reason": _need_reason(manifest.get("bridge_reason"), "bridge_reason"),
+        }
+
     grafted_from = None
-    present = [key for key in GRAFT_MANIFEST_KEYS if key in manifest]
+    present = graft_present
     if present:
         if len(present) != len(GRAFT_MANIFEST_KEYS):
             missing = sorted(set(GRAFT_MANIFEST_KEYS) - set(present))
@@ -302,6 +401,8 @@ def lineage_from_run_manifest(checkpoint, run_manifest, *,
     }
     if grafted_from is not None:
         ancestry["grafted_from"] = grafted_from
+    if bridged_from is not None:
+        ancestry["bridged_from"] = bridged_from
     return {
         "schema_version": SCHEMA_VERSION,
         "checkpoint": {
@@ -579,9 +680,50 @@ def validate_lineage(checkpoint, sidecar=None, *, expected=None,
             raise LineageError(
                 "fresh lineage must be qualification-only and ineligible unless "
                 "it is declared genesis")
+    elif initialization == "bridge":
+        # A bridge is eligible ancestry with a pool but NO warm lineage: the
+        # warm was a raw out-of-lineage blob, and its identity lives in
+        # bridged_from (checked below) rather than in warm_lineage_sha256. A
+        # non-empty warm digest here would mean the sidecar claims an
+        # in-lineage warm it never had.
+        if qualification_only or not eligible or not pool_lineage:
+            raise LineageError(
+                "bridge lineage must be eligible and bind pool ancestry")
+        if warm_lineage:
+            raise LineageError(
+                "bridge lineage must leave warm_lineage_sha256 empty")
+        if "bridged_from" not in ancestry:
+            raise LineageError("bridge lineage must record ancestry.bridged_from")
     elif qualification_only or not eligible or not warm_lineage or not pool_lineage:
         raise LineageError(
             "lineage-v6 must be eligible and bind warm/pool ancestry")
+    if "bridged_from" in ancestry:
+        # Exact shape, like grafted_from: the raw warm's content hash, its
+        # original observation revision, where it came from and why. Only a
+        # bridge may carry it; on any other initialization it would be an
+        # out-of-lineage origin smuggled into an ordinary ancestor.
+        bridged_from = ancestry.get("bridged_from")
+        if not isinstance(bridged_from, dict):
+            raise LineageError("ancestry.bridged_from must be an object")
+        if sorted(bridged_from) != sorted(BRIDGED_FROM_KEYS):
+            raise LineageError(
+                "ancestry.bridged_from must contain exactly "
+                f"{sorted(BRIDGED_FROM_KEYS)}, got {sorted(bridged_from)}")
+        _need_sha(bridged_from.get("warm_checkpoint_sha256"),
+                  "ancestry.bridged_from.warm_checkpoint_sha256")
+        # Stored as a JSON integer, like compatibility.observation_version;
+        # the run manifest's string form is normalised at create time.
+        stored_version = bridged_from.get("warm_observation_version")
+        if isinstance(stored_version, bool) or not isinstance(stored_version, int):
+            raise LineageError(
+                "ancestry.bridged_from.warm_observation_version must be an integer")
+        _need_bridge_observation_version(
+            stored_version, "ancestry.bridged_from.warm_observation_version")
+        _need_provenance(bridged_from.get("provenance"),
+                         "ancestry.bridged_from.provenance")
+        _need_reason(bridged_from.get("reason"), "ancestry.bridged_from.reason")
+        if initialization != "bridge":
+            raise LineageError("only bridge lineage may record bridged_from")
     if "rehosted_from" in ancestry:
         _need_sha(ancestry.get("rehosted_from"), "ancestry.rehosted_from")
         if initialization == "fresh" and ancestry.get("mode") != "native_fresh_v6_genesis":
