@@ -54,6 +54,13 @@ under `runs/ladder-d<rung>-20260815/`; supervisor state under
 
 Watch: `~/bin/v2watch`. Exams: `/root/native_exam.sh <ckpt> <outdir> away home offense mirror` (~4 min). Box 1 retired Aug 19 12:09 PDT (D247).
 
+## Hill-climb from the July R0 warm (D252+)
+
+| arm | warm | reward | LR | state |
+|---|---|---|---|---|
+| bridge 1 | July R0 s42 (bridge-v4) | s0_both | 2.8e-4 | **STOPPED at 522M (D253)**: tds 0.96 -> 0.46, pickups 3.4 -> 1.4, possession 0.30 -> 0.16, blocks 15 -> 21; s0_both pulls the policy into the non-play equilibrium |
+| bridge 2 | July R0 s42 (bridge-v4) | **s4_sparse** (td/win/draw only) | 2.8e-4 | running since Aug 20 23:49 PDT, 2B, `runs/ladder-d0-bridge-jul-s42-sparse-20260821` |
+
 ## AUDIT 2026-08-20 (D252): the obs-v6 lineage was frozen by its recipe; the July policy is ~6x better
 
 `docs/audit-2026-08-20.md`. Chained rungs at `LADDER_CHAIN_LR_SCALE=0.1` had kl/clipfrac 0.000 on 38,206/38,207 updates (not training); the native optimizer is Muon (lr = relative step, ours 2-50x below reference); reward is 94% shaping and the TD step nets -0.56 to the scorer; training `tds` is a both-sides mixture. Campaign `rig-s42-bot-20260820` HALTED, rung 2 stopped, timers off. Next: bridge July R0 s42 onto the current build (reviewed `bridge` lineage mode) and hill-climb from there: LR probe, sparse-reward arm, bot share, entropy, gamma.
