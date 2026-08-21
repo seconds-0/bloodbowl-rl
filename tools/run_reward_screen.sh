@@ -46,10 +46,15 @@ LADDER_SEED="${LADDER_SEED:-}"
 # the 2026-08-20 audit measured s0_both at 94% shaping mass with a net-negative
 # touchdown step. The arm is a declared factor, recorded in the contract and
 # the rung marker, never inferred from the reward hash after the fact.
+# `r0` is the July reward (r0_full, legacy raw-delta distance) so a bridged
+# July checkpoint can be continued under the reward its critic was fitted to:
+# D253 measured that switching that warm to s0_both or to sparse at LR 2.8e-4
+# decays it within 500M steps, and a same-reward continuation is the control
+# that separates reward mismatch from the optimizer step.
 LADDER_ARM="${LADDER_ARM:-s_both}"
 case "$LADDER_ARM" in
-  s_both|sparse) ;;
-  *) echo "LADDER_ARM must be s_both or sparse, got '$LADDER_ARM'" >&2; exit 1 ;;
+  s_both|sparse|r0) ;;
+  *) echo "LADDER_ARM must be s_both, sparse or r0, got '$LADDER_ARM'" >&2; exit 1 ;;
 esac
 # ladder-rung only: scripted BANK. SCRIPTED_BANK_TAG=b+1 replaces frozen bank
 # b's seat with a scripted bot in that bank's envs (bloodbowl.h
