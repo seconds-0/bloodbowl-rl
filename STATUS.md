@@ -54,12 +54,14 @@ under `runs/ladder-d<rung>-20260815/`; supervisor state under
 
 Watch: `~/bin/v2watch`. Exams: `/root/native_exam.sh <ckpt> <outdir> away home offense mirror` (~4 min). Box 1 retired Aug 19 12:09 PDT (D247).
 
-## Live campaign: `rig-s42-bot-20260820` (RTX 2070, free) — seed-42 bot-bank replicate on the new source
+## AUDIT 2026-08-20 (D252): the obs-v6 lineage was frozen by its recipe; the July policy is ~6x better
+
+`docs/audit-2026-08-20.md`. Chained rungs at `LADDER_CHAIN_LR_SCALE=0.1` had kl/clipfrac 0.000 on 38,206/38,207 updates (not training); the native optimizer is Muon (lr = relative step, ours 2-50x below reference); reward is 94% shaping and the TD step nets -0.56 to the scorer; training `tds` is a both-sides mixture. Campaign `rig-s42-bot-20260820` HALTED, rung 2 stopped, timers off. Next: bridge July R0 s42 onto the current build (reviewed `bridge` lineage mode) and hill-climb from there: LR probe, sparse-reward arm, bot share, entropy, gamma.
 
 | stage | rung | warm | pool | state |
 |---|---|---|---|---|
-| 1 | kickoff + contact-bot bank 4, LR×0.1 (graft) | s42-kickoff (pure-pool control, D250 add.) | s42-kickoff pool (anchor rung12) | **running** since Aug 20 07:53 PDT, 123K SPS |
-| 2 | kickoff + offense-bot bank 4 | stage 1 | promoted | queued |
+| 1 | kickoff + contact-bot bank 4, LR x0.1 (graft) | s42-kickoff (pure-pool control) | s42-kickoff pool | done Aug 20 19:13, eval tds 0.489; exam contact 0.056/1.224 AWAY, 0.046/1.224 HOME, offense 0.060/0.649 (D252: recipe was frozen) |
+| 2 | kickoff + offense-bot bank 4 | stage 1 | promoted | STOPPED at 1.1B (D252) |
 
 ## Completed campaign: `rig-seed42-20260818` (RTX 2070, seed-42 replicate of the uniform chain)
 
@@ -82,8 +84,10 @@ Watch: `~/bin/v2watch`. Exams: `/root/native_exam.sh <ckpt> <outdir> away home o
 | **+offense-bot rung** [native] | D249 | 0.077 / 1.029 | 0.068 / 1.009 | **offense-bot AWAY 0.151 / 0.405**; mirror 0.765 |
 | **+contact rung 2** [native] | D250 | **0.083 / 0.993** | **0.088 / 1.028** | offense-bot AWAY 0.160 / 0.459; mirror 0.803 |
 | s42-kickoff pure-pool control (seed 42, no bot) [native] | D250 add. | 0.023 / 1.292 | 0.016 / 1.282 | offense-bot AWAY 0.027 / 0.683 |
+| s42 + contact-bot rung 1 (LR x0.1, frozen recipe) [native] | D252 | 0.056 / 1.224 | 0.046 / 1.224 | offense-bot AWAY 0.060 / 0.649 |
+| **July R0 s42 (obs-v4 era, 2026-07-13) on the CURRENT build** [native, diagnostic] | D252 | **0.354 / 0.438** | **0.346 / 0.447** | **offense-bot AWAY 0.392 / 0.334 (score 0.541)**; 18 blocks, 6.2 pickups |
 
-Verdict: opponent quality in training moves the exam; pure-pool kickoff training makes it WORSE; curriculum alone does not help.
+Verdict (revised D252): the obs-v6 lineage never left a non-play equilibrium and its kickoff rungs were not training; the July lineage is the warm start to beat.
 
 ## Kickoff exam (D50) — chain2 checkpoint, 2026-08-18
 
