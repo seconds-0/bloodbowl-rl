@@ -36,6 +36,13 @@
 #   LADDER_PROFILE=graft + GRAFT_FROM_SOURCE_SHA256 / GRAFT_FROM_PATCH_BUNDLE_SHA256
 #     / GRAFT_REASON  make this stage the reviewed lineage bridge across a
 #     build change (forwarded like SCRIPTED_*; unset = ordinary rung)
+#   LADDER_PROFILE=bridge + BRIDGE_WARM_SHA256 / BRIDGE_WARM_OBS_VERSION /
+#     BRIDGE_PROVENANCE / BRIDGE_REASON  make this stage the reviewed warm
+#     start from an OUT-OF-LINEAGE raw blob (docs/audit-2026-08-20.md F2).
+#     A bridge is always a FIRST rung: WARM is the raw obs-v4/obs-v5-era
+#     checkpoint with no sidecar, PREV_POOL is an eligible obs-v6 pool, and
+#     PREV_COMPLETE must be unset (a chained rung's warm has a sidecar, and a
+#     sidecar-bearing warm is refused by the bridge on purpose).
 set -uo pipefail
 
 C="${C:-/home/rache/bloodbowl-rl-qualification-candidate-10619e2}"
@@ -55,6 +62,26 @@ PREV_COMPLETE="${PREV_COMPLETE:-}"
 PREV_POOL="${PREV_POOL:-}"
 WARM="${WARM:-}"
 PIN="${PIN:-}"
+LADDER_PROFILE="${LADDER_PROFILE:-ladder-rung}"
+case "$LADDER_PROFILE" in
+  ladder-rung|graft) ;;
+  bridge)
+    # The raw warm has no marker and no sidecar to chain from; the bridge is
+    # the entry point of a chain, never a link inside one.
+    if [ -n "$PREV_COMPLETE" ]; then
+      echo "LADDER_PROFILE=bridge is a first rung: set WARM (the raw blob) and PREV_POOL, not PREV_COMPLETE" >&2
+      exit 1
+    fi
+    : "${BRIDGE_WARM_SHA256:?BRIDGE_WARM_SHA256 is required for LADDER_PROFILE=bridge}"
+    : "${BRIDGE_WARM_OBS_VERSION:?BRIDGE_WARM_OBS_VERSION is required for LADDER_PROFILE=bridge}"
+    : "${BRIDGE_PROVENANCE:?BRIDGE_PROVENANCE is required for LADDER_PROFILE=bridge}"
+    : "${BRIDGE_REASON:?BRIDGE_REASON is required for LADDER_PROFILE=bridge}"
+    ;;
+  *)
+    echo "LADDER_PROFILE must be ladder-rung, graft or bridge, got '$LADDER_PROFILE'" >&2
+    exit 1
+    ;;
+esac
 
 if [ -n "$PIN" ]; then
   echo "=== sync to $PIN ==="
@@ -93,7 +120,21 @@ fi
 : "${WARM:?WARM could not be resolved (set WARM or PREV_COMPLETE)}"
 : "${PREV_POOL:?PREV_POOL could not be resolved}"
 [ -f "$WARM" ] || { echo "missing warm checkpoint: $WARM" >&2; exit 1; }
-[ -f "$WARM.lineage.json" ] || { echo "warm has no lineage sidecar: $WARM" >&2; exit 1; }
+if [ "$LADDER_PROFILE" = "bridge" ]; then
+  # The bridged warm is identified by its declared content hash, not by a
+  # sidecar. Check the hash here so a stage-level typo fails before a pool is
+  # built, and refuse a sidecar outright: a blob with eligible lineage belongs
+  # in an ordinary rung.
+  [ ! -f "$WARM.lineage.json" ] || {
+    echo "bridge warm has a lineage sidecar; use LADDER_PROFILE=ladder-rung for an in-lineage warm: $WARM" >&2
+    exit 1; }
+  WARM_ACTUAL_SHA256="$(sha256sum "$WARM" | awk '{print $1}')"
+  [ "$WARM_ACTUAL_SHA256" = "$BRIDGE_WARM_SHA256" ] || {
+    echo "bridge warm $WARM has sha256 $WARM_ACTUAL_SHA256 but BRIDGE_WARM_SHA256 declares $BRIDGE_WARM_SHA256" >&2
+    exit 1; }
+else
+  [ -f "$WARM.lineage.json" ] || { echo "warm has no lineage sidecar: $WARM" >&2; exit 1; }
+fi
 [ -f "$PREV_POOL/league_seeds.json" ] || { echo "no league_seeds.json in $PREV_POOL" >&2; exit 1; }
 
 # --- build (or reuse) this rung's pool ------------------------------------
@@ -169,14 +210,17 @@ export RUNG STEPS RESET_PCT SEED STAMP WARM OUT C
 # D244 regression gate input: the previous rung's marker (same-distribution
 # comparison happens inside launch_ladder_rung.sh).
 [ -z "$PREV_COMPLETE" ] || export WARM_MARKER="$PREV_COMPLETE"
-# D245/D248: a chained rung (PREV_COMPLETE set) that re-anneals LR/entropy from
-# the top dips into passivity for 0.5-2B steps and may not fully recover (s42
-# r25: warm 0.647 -> accepted 0.334); resuming at 0.1x (the warm rung's final
-# values) showed no dip in both tests (box 2 offense-bot rung, rig s42 kickoff).
-# Default chained rungs to 0.1; an explicit LADDER_CHAIN_LR_SCALE still wins;
-# first rungs of a chain (no PREV_COMPLETE) keep 1.
+# D245/D248 hypothesised that a chained rung (PREV_COMPLETE set) re-annealing
+# LR/entropy from the top dips into passivity, and defaulted chained rungs to
+# 0.1x. The 2026-08-20 audit (F1) showed the opposite failure: under Muon the
+# LR IS the per-step relative change, and at 0.1x the rung-1 log had kl 0.000
+# and clipfrac 0.000 on 38,206 of 38,207 updates with every game statistic
+# flat over 5B steps -- "no dip" was "no movement", and every exam since
+# measured the warm checkpoint, not the rung. Chained rungs therefore default
+# to 1.0 (the fixed contract) like first rungs; an explicit
+# LADDER_CHAIN_LR_SCALE still wins for a deliberate experiment.
 if [ -n "$PREV_COMPLETE" ] && [ -z "${LADDER_CHAIN_LR_SCALE:-}" ]; then
-  export LADDER_CHAIN_LR_SCALE=0.1
+  export LADDER_CHAIN_LR_SCALE=1.0
 fi
 [ -z "${LADDER_CHAIN_LR_SCALE:-}" ] || export LADDER_CHAIN_LR_SCALE
 [ -z "${SCRIPTED_BANK_TAG:-}" ] || export SCRIPTED_BANK_TAG
@@ -185,8 +229,18 @@ fi
 [ -z "${GRAFT_FROM_SOURCE_SHA256:-}" ] || export GRAFT_FROM_SOURCE_SHA256
 [ -z "${GRAFT_FROM_PATCH_BUNDLE_SHA256:-}" ] || export GRAFT_FROM_PATCH_BUNDLE_SHA256
 [ -z "${GRAFT_REASON:-}" ] || export GRAFT_REASON
-[ -z "${LADDER_PROFILE:-}" ] || \
-  echo "  profile ${LADDER_PROFILE} graft_from=${GRAFT_FROM_SOURCE_SHA256:-}/${GRAFT_FROM_PATCH_BUNDLE_SHA256:-} reason=${GRAFT_REASON:-}"
+[ -z "${BRIDGE_WARM_SHA256:-}" ] || export BRIDGE_WARM_SHA256
+[ -z "${BRIDGE_WARM_OBS_VERSION:-}" ] || export BRIDGE_WARM_OBS_VERSION
+[ -z "${BRIDGE_PROVENANCE:-}" ] || export BRIDGE_PROVENANCE
+[ -z "${BRIDGE_REASON:-}" ] || export BRIDGE_REASON
+case "$LADDER_PROFILE" in
+  graft)
+    echo "  profile ${LADDER_PROFILE} graft_from=${GRAFT_FROM_SOURCE_SHA256:-}/${GRAFT_FROM_PATCH_BUNDLE_SHA256:-} reason=${GRAFT_REASON:-}" ;;
+  bridge)
+    echo "  profile ${LADDER_PROFILE} warm_sha256=${BRIDGE_WARM_SHA256} obs_version=${BRIDGE_WARM_OBS_VERSION} provenance=${BRIDGE_PROVENANCE} reason=${BRIDGE_REASON}" ;;
+  *)
+    echo "  profile ${LADDER_PROFILE}" ;;
+esac
 [ -z "${SCRIPTED_BANK_TAG:-}${SCRIPTED_BOT_TYPE:-}" ] || \
   echo "  bot  scripted_bank_tag=${SCRIPTED_BANK_TAG:-0} scripted_bot_type=${SCRIPTED_BOT_TYPE:-0}"
 export POOL="$POOL_OUT/pool"

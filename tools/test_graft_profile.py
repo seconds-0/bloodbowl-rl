@@ -45,7 +45,7 @@ def scrubbed_environ():
     """Drop every knob the scripts read, so an operator's shell cannot leak in."""
     return {
         k: v for k, v in os.environ.items()
-        if not k.startswith(("SCRIPTED_", "GRAFT_", "LADDER_"))
+        if not k.startswith(("SCRIPTED_", "GRAFT_", "LADDER_", "BRIDGE_"))
         and k not in ("WARM", "POOL", "CANDIDATE_ARM", "BOOTSTRAP_MODE",
                       "EXPECTED_POOL_HASH", "STEPS", "SCREEN_PROFILE",
                       "TAG", "REWARD_MANIFEST", "SEED", "PREFIX", "OUT_DIR")
@@ -81,7 +81,7 @@ class GraftLauncherTests(unittest.TestCase):
     def test_graft_v6_is_a_bootstrap_mode(self):
         result = run(LAUNCHER, {**LAUNCHER_BASE, "BOOTSTRAP_MODE": "nonsense"})
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("lineage-v6, or graft-v6", result.stderr)
+        self.assertIn("lineage-v6, graft-v6, or bridge-v4", result.stderr)
 
     def test_graft_v6_requires_the_full_declaration(self):
         for missing, message in (
@@ -163,11 +163,15 @@ class GraftLauncherTests(unittest.TestCase):
         self.assertIn('graft_reason "$GRAFT_REASON"', source)
         # Everything else keys on POOL_MODE, so graft-v6 shares lineage-v6's
         # selfplay/pool command and initialization string.
-        self.assertIn("lineage-v6|graft-v6) POOL_MODE=1 ;;", source)
+        self.assertIn("lineage-v6|graft-v6|bridge-v4) POOL_MODE=1 ;;", source)
         self.assertNotIn('[ "$BOOTSTRAP_MODE" != "lineage-v6" ]', source)
         self.assertNotIn('[ "$BOOTSTRAP_MODE" = "lineage-v6" ]', source)
-        self.assertIn('"$([ "$POOL_MODE" != "1" ] && printf fresh || printf lineage-v6)"',
-                      source)
+        # graft-v6 is not named in the initialization mapping, so it falls
+        # through to lineage-v6; only the fresh modes and the bridge are.
+        self.assertIn("INITIALIZATION=lineage-v6\ncase \"$BOOTSTRAP_MODE\" in\n"
+                      "  fresh-v6-qualification|fresh-v6-genesis) INITIALIZATION=fresh ;;\n"
+                      "  bridge-v4) INITIALIZATION=bridge ;;\nesac", source)
+        self.assertIn('initialization "$INITIALIZATION"', source)
 
 
 def mint_lineage(root, checkpoint, *, source, module, patch, seed=42, fill=b"x",
@@ -375,7 +379,7 @@ SCREEN_BASE = {
 class GraftScreenProfileTests(unittest.TestCase):
     def test_profile_is_listed_and_is_one_s_both_arm_at_the_ladder_seed(self):
         source = SCREEN.read_text(encoding="utf-8")
-        self.assertIn("ladder-rung, graft, paired-confirmation", source)
+        self.assertIn("ladder-rung, graft, bridge, paired-confirmation", source)
         self.assertRegex(
             source,
             r"\n  graft\)\n(?:.*\n)*?\s+arms=\(s_both\)\n\s+seeds=\(\"\$LADDER_SEED\"\)",
@@ -473,7 +477,7 @@ class GraftScreenProfileTests(unittest.TestCase):
         for key in ("from_source_sha256", "from_patch_bundle_sha256",
                     "from_module_sha256", "warm_lineage_sha256", "reason"):
             self.assertIn(f'"{key}":', source)
-        self.assertIn('if profile in ("ladder-rung", "graft"):', source)
+        self.assertIn('if profile in ("ladder-rung", "graft", "bridge"):', source)
         # Per-arm launcher receives the rung knobs AND the graft declaration.
         self.assertIn('elif [ "$SCREEN_PROFILE" = "graft" ]; then\n'
                       '      LADDER_ENV=(LADDER_ENDZONE_MAXDIST=', source)

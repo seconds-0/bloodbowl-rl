@@ -27,7 +27,7 @@ def run(env, cwd=None):
               if k not in ("RUNG", "RESET_PCT", "SEED", "STAMP", "WARM",
                            "PREV_COMPLETE", "PREV_POOL", "PIN", "STEPS",
                            "POOL_KEEP")
-              and not k.startswith(("LADDER_", "SCRIPTED_", "GRAFT_"))}
+              and not k.startswith(("LADDER_", "SCRIPTED_", "GRAFT_", "BRIDGE_"))}
     merged.update(env)
     return subprocess.run(
         ["bash", str(STAGE)], cwd=cwd or ROOT, env=merged, text=True,
@@ -68,6 +68,78 @@ class LadderStageTests(unittest.TestCase):
                        "STAMP": "t", "WARM": str(warm), "PREV_POOL": str(pool)})
             self.assertNotEqual(out.returncode, 0)
             self.assertIn("warm has no lineage sidecar", out.stdout)
+
+    BRIDGE = {"LADDER_PROFILE": "bridge",
+              "BRIDGE_WARM_OBS_VERSION": "4",
+              "BRIDGE_PROVENANCE": "runs/reward-transfer-20260713-v1 ANALYSIS.json",
+              "BRIDGE_REASON": "audit-2026-08-20 F2"}
+
+    def _bridge_fixture(self, tmp, with_sidecar=False):
+        (Path(tmp) / "tools").mkdir()
+        (Path(tmp) / "tools/install_puffer_env.sh").write_text("#!/bin/bash\nexit 0\n")
+        warm = Path(tmp) / "r0-s42-native.bin"
+        warm.write_bytes(b"july-obs-v4")
+        if with_sidecar:
+            (Path(tmp) / "r0-s42-native.bin.lineage.json").write_text("{}")
+        pool = Path(tmp) / "prev" / "pool"
+        pool.mkdir(parents=True)
+        (pool / "league_seeds.json").write_text("{}")
+        import hashlib
+        return warm, pool, hashlib.sha256(warm.read_bytes()).hexdigest()
+
+    def test_bridge_first_rung_takes_a_raw_warm_without_a_sidecar(self):
+        # A bridge is the one stage whose warm legitimately has no sidecar:
+        # it must get PAST the sidecar check and fail later, on the missing
+        # POOL_IDENTITY.env beside the (synthetic) previous pool.
+        with tempfile.TemporaryDirectory() as tmp:
+            warm, pool, sha = self._bridge_fixture(tmp)
+            out = run({"C": tmp, "RUNG": "0", "RESET_PCT": "0", "SEED": "42",
+                       "STAMP": "t", "WARM": str(warm), "PREV_POOL": str(pool),
+                       **self.BRIDGE, "BRIDGE_WARM_SHA256": sha})
+            self.assertNotEqual(out.returncode, 0)
+            self.assertNotIn("warm has no lineage sidecar", out.stdout)
+            self.assertIn("PREV_POOL has no published POOL_IDENTITY.env", out.stdout)
+
+    def test_bridge_refuses_a_hash_mismatch_a_sidecar_and_a_chained_marker(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            warm, pool, sha = self._bridge_fixture(tmp)
+            base = {"C": tmp, "RUNG": "0", "RESET_PCT": "0", "SEED": "42",
+                    "STAMP": "t", "WARM": str(warm), "PREV_POOL": str(pool),
+                    **self.BRIDGE}
+            out = run({**base, "BRIDGE_WARM_SHA256": "0" * 64})
+            self.assertNotEqual(out.returncode, 0)
+            self.assertIn(f"has sha256 {sha} but BRIDGE_WARM_SHA256 declares",
+                          out.stdout)
+            marker = Path(tmp) / "LADDER_RUNG_COMPLETE.json"
+            marker.write_text(json.dumps({"trainer_exit": 0, "checkpoint": str(warm),
+                                          "checkpoint_lineage_sha256": "x"}))
+            out = run({**base, "BRIDGE_WARM_SHA256": sha,
+                       "PREV_COMPLETE": str(marker)})
+            self.assertNotEqual(out.returncode, 0)
+            self.assertIn("LADDER_PROFILE=bridge is a first rung", out.stdout)
+            for missing in ("BRIDGE_WARM_OBS_VERSION", "BRIDGE_PROVENANCE",
+                            "BRIDGE_REASON"):
+                env = {**base, "BRIDGE_WARM_SHA256": sha}
+                env.pop(missing)
+                out = run(env)
+                self.assertNotEqual(out.returncode, 0, missing)
+                self.assertIn(f"{missing} is required for LADDER_PROFILE=bridge",
+                              out.stdout, missing)
+        with tempfile.TemporaryDirectory() as tmp:
+            warm, pool, sha = self._bridge_fixture(tmp, with_sidecar=True)
+            out = run({"C": tmp, "RUNG": "0", "RESET_PCT": "0", "SEED": "42",
+                       "STAMP": "t", "WARM": str(warm), "PREV_POOL": str(pool),
+                       **self.BRIDGE, "BRIDGE_WARM_SHA256": sha})
+            self.assertNotEqual(out.returncode, 0)
+            self.assertIn("bridge warm has a lineage sidecar", out.stdout)
+
+    def test_chained_rungs_default_to_the_full_lr_scale(self):
+        # Audit F1: 0.1x froze training under Muon. The default is back to 1.0
+        # for chained rungs; the knob survives for explicit experiments.
+        source = STAGE.read_text(encoding="utf-8")
+        self.assertIn('if [ -n "$PREV_COMPLETE" ] && [ -z "${LADDER_CHAIN_LR_SCALE:-}" ]; then\n'
+                      '  export LADDER_CHAIN_LR_SCALE=1.0\n', source)
+        self.assertNotIn("export LADDER_CHAIN_LR_SCALE=0.1", source)
 
     def test_pool_composition_promotes_warm_and_retires_oldest(self):
         source = STAGE.read_text(encoding="utf-8")

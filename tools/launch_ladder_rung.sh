@@ -33,20 +33,27 @@
 #   EXPECTED_POOL_HASH=<sha256> printed by tools/build_league.py
 # Optional:
 #   STEPS (default 5000000000)  RESET_PCT (default 0.5)  SEED (default 42)
-#   LADDER_CHAIN_LR_SCALE (default 1; e.g. 0.1 to resume a chain near the warm
-#     rung's final LR/entropy instead of re-annealing from the top, D245)
+#   LADDER_CHAIN_LR_SCALE (default 1; D245 proposed 0.1 to resume a chain near
+#     the warm rung's final LR/entropy, but the 2026-08-20 audit F1 found 0.1
+#     freezes training under Muon, so leave it at 1 unless experimenting)
 #   PREFIX (default ladder-d<RUNG>-s<SEED>-<STAMP>)  STAMP  OUT  C
 #   DEADLINE_HOURS (default 36)
 #   SCRIPTED_BANK_TAG (default 0)  SCRIPTED_BOT_TYPE (default 0)
 #     -- scripted bank: bank (tag-1)'s seat is played by the contact (0) or
 #        offense (1) bot in that bank's envs; forwarded to the screen and
 #        recorded in LADDER_RUNG_COMPLETE.json. 0 = ordinary rung.
-#   LADDER_PROFILE (default ladder-rung; `graft` allowed)
+#   LADDER_PROFILE (default ladder-rung; `graft` and `bridge` allowed)
 #     -- graft: this rung is the reviewed lineage bridge across a build change
 #        (SCREEN_PROFILE=graft). Requires GRAFT_FROM_SOURCE_SHA256,
 #        GRAFT_FROM_PATCH_BUNDLE_SHA256 and GRAFT_REASON, forwarded to the
 #        screen. Same one-arm shape and tag, so the completion marker is
 #        published exactly like a rung's, plus the graft declaration.
+#     -- bridge: this rung warm-starts from an OUT-OF-LINEAGE raw blob with no
+#        sidecar (SCREEN_PROFILE=bridge; docs/audit-2026-08-20.md F2). WARM is
+#        the raw obs-v4/obs-v5-era checkpoint. Requires BRIDGE_WARM_SHA256
+#        (sha256sum of WARM), BRIDGE_WARM_OBS_VERSION (4|5), BRIDGE_PROVENANCE
+#        and BRIDGE_REASON, forwarded to the screen and recorded in the
+#        completion marker under `bridge`.
 
 set -uo pipefail
 
@@ -80,33 +87,55 @@ LADDER_PROFILE="${LADDER_PROFILE:-ladder-rung}"
 GRAFT_FROM_SOURCE_SHA256="${GRAFT_FROM_SOURCE_SHA256:-}"
 GRAFT_FROM_PATCH_BUNDLE_SHA256="${GRAFT_FROM_PATCH_BUNDLE_SHA256:-}"
 GRAFT_REASON="${GRAFT_REASON:-}"
+BRIDGE_WARM_SHA256="${BRIDGE_WARM_SHA256:-}"
+BRIDGE_WARM_OBS_VERSION="${BRIDGE_WARM_OBS_VERSION:-}"
+BRIDGE_PROVENANCE="${BRIDGE_PROVENANCE:-}"
+BRIDGE_REASON="${BRIDGE_REASON:-}"
+if [ "$LADDER_PROFILE" != "graft" ] && \
+   [ -n "$GRAFT_FROM_SOURCE_SHA256$GRAFT_FROM_PATCH_BUNDLE_SHA256$GRAFT_REASON" ]; then
+  echo "GRAFT_FROM_SOURCE_SHA256/GRAFT_FROM_PATCH_BUNDLE_SHA256/GRAFT_REASON require LADDER_PROFILE=graft" >&2
+  exit 1
+fi
+if [ "$LADDER_PROFILE" != "bridge" ] && \
+   [ -n "$BRIDGE_WARM_SHA256$BRIDGE_WARM_OBS_VERSION$BRIDGE_PROVENANCE$BRIDGE_REASON" ]; then
+  echo "BRIDGE_WARM_SHA256/BRIDGE_WARM_OBS_VERSION/BRIDGE_PROVENANCE/BRIDGE_REASON require LADDER_PROFILE=bridge" >&2
+  exit 1
+fi
 case "$LADDER_PROFILE" in
   ladder-rung)
-    if [ -n "$GRAFT_FROM_SOURCE_SHA256$GRAFT_FROM_PATCH_BUNDLE_SHA256$GRAFT_REASON" ]; then
-      echo "GRAFT_FROM_SOURCE_SHA256/GRAFT_FROM_PATCH_BUNDLE_SHA256/GRAFT_REASON require LADDER_PROFILE=graft" >&2
-      exit 1
-    fi
     ;;
   graft)
     : "${GRAFT_FROM_SOURCE_SHA256:?GRAFT_FROM_SOURCE_SHA256 is required for LADDER_PROFILE=graft}"
     : "${GRAFT_FROM_PATCH_BUNDLE_SHA256:?GRAFT_FROM_PATCH_BUNDLE_SHA256 is required for LADDER_PROFILE=graft}"
     : "${GRAFT_REASON:?GRAFT_REASON is required for LADDER_PROFILE=graft}"
     ;;
+  bridge)
+    : "${BRIDGE_WARM_SHA256:?BRIDGE_WARM_SHA256 is required for LADDER_PROFILE=bridge}"
+    : "${BRIDGE_WARM_OBS_VERSION:?BRIDGE_WARM_OBS_VERSION is required for LADDER_PROFILE=bridge}"
+    : "${BRIDGE_PROVENANCE:?BRIDGE_PROVENANCE is required for LADDER_PROFILE=bridge}"
+    : "${BRIDGE_REASON:?BRIDGE_REASON is required for LADDER_PROFILE=bridge}"
+    ;;
   *)
-    echo "LADDER_PROFILE must be ladder-rung or graft, got '$LADDER_PROFILE'" >&2
+    echo "LADDER_PROFILE must be ladder-rung, graft or bridge, got '$LADDER_PROFILE'" >&2
     exit 1
     ;;
 esac
-# The screen refuses GRAFT_* on any profile but graft, so forward them only
-# there; the shared knobs go on both.
+# The screen refuses GRAFT_* on any profile but graft and BRIDGE_* on any
+# profile but bridge, so forward each set only there; the shared knobs go on
+# every profile.
 GRAFT_ENV=()
 if [ "$LADDER_PROFILE" = "graft" ]; then
   GRAFT_ENV=(GRAFT_FROM_SOURCE_SHA256="$GRAFT_FROM_SOURCE_SHA256" \
              GRAFT_FROM_PATCH_BUNDLE_SHA256="$GRAFT_FROM_PATCH_BUNDLE_SHA256" \
              GRAFT_REASON="$GRAFT_REASON")
+elif [ "$LADDER_PROFILE" = "bridge" ]; then
+  GRAFT_ENV=(BRIDGE_WARM_SHA256="$BRIDGE_WARM_SHA256" \
+             BRIDGE_WARM_OBS_VERSION="$BRIDGE_WARM_OBS_VERSION" \
+             BRIDGE_PROVENANCE="$BRIDGE_PROVENANCE" \
+             BRIDGE_REASON="$BRIDGE_REASON")
 fi
-# Both profiles are one s_both arm at SEED, so the result/marker naming below
-# is identical for a rung and a graft.
+# All three profiles are one s_both arm at SEED, so the result/marker naming
+# below is identical for a rung, a graft and a bridge.
 TAG="${PREFIX}-s_both-s${SEED}"
 
 mkdir -p "$OUT"
@@ -165,6 +194,8 @@ echo "  bot    scripted_bank_tag=$SCRIPTED_BANK_TAG scripted_bot_type=$SCRIPTED_
 echo "  profile $LADDER_PROFILE"
 [ "$LADDER_PROFILE" != "graft" ] || \
   echo "  graft  from source=$GRAFT_FROM_SOURCE_SHA256 patch=$GRAFT_FROM_PATCH_BUNDLE_SHA256 reason=$GRAFT_REASON"
+[ "$LADDER_PROFILE" != "bridge" ] || \
+  echo "  bridge warm_sha256=$BRIDGE_WARM_SHA256 obs_version=$BRIDGE_WARM_OBS_VERSION provenance=$BRIDGE_PROVENANCE reason=$BRIDGE_REASON"
 echo "  bank   $(sha256sum "$C/vendor/PufferLib/resources/bloodbowl/state_bank.bbs" 2>/dev/null | cut -c1-16)"
 echo "  out    $OUT"
 echo "  screen $SCREEN_DIR"
@@ -214,12 +245,15 @@ python3 - "$RESULT" "$OUT/LADDER_RUNG_COMPLETE.json" "$RUNG" "$RESET_PCT" \
     "$WARM_MARKER" "$LADDER_REGRESSION_FLOOR" \
     "$SCRIPTED_BANK_TAG" "$SCRIPTED_BOT_TYPE" "$LADDER_PROFILE" \
     "$GRAFT_FROM_SOURCE_SHA256" "$GRAFT_FROM_PATCH_BUNDLE_SHA256" \
-    "$GRAFT_REASON" <<'PY'
+    "$GRAFT_REASON" \
+    "$BRIDGE_WARM_SHA256" "$BRIDGE_WARM_OBS_VERSION" "$BRIDGE_PROVENANCE" \
+    "$BRIDGE_REASON" <<'PY'
 import json, os, sys
 (result_path, out_path, rung, reset_pct, steps, seed, warm, pool_hash, prefix,
  warm_marker, floor,
  scripted_bank_tag, scripted_bot_type, profile, graft_source, graft_patch,
- graft_reason) = sys.argv[1:]
+ graft_reason, bridge_warm_sha256, bridge_warm_obs_version, bridge_provenance,
+ bridge_reason) = sys.argv[1:]
 result = json.load(open(result_path, encoding="utf-8"))
 if not result.get("acceptance_pass"):
     raise SystemExit(f"result is not accepted: {result_path}")
@@ -267,6 +301,16 @@ if profile == "graft":
         "from_source_sha256": graft_source,
         "from_patch_bundle_sha256": graft_patch,
         "reason": graft_reason,
+    }
+if profile == "bridge":
+    # The marker is what the next stage reads to chain from; naming the raw
+    # warm here keeps the out-of-lineage origin visible at the campaign
+    # level, not only inside the sidecar's ancestry.bridged_from.
+    payload["bridge"] = {
+        "warm_sha256": bridge_warm_sha256,
+        "warm_observation_version": int(bridge_warm_obs_version),
+        "provenance": bridge_provenance,
+        "reason": bridge_reason,
     }
 with open(out_path, "w", encoding="utf-8") as handle:
     json.dump(payload, handle, indent=2, sort_keys=True)

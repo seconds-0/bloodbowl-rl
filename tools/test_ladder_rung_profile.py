@@ -25,7 +25,7 @@ RUNG = ROOT / "tools/launch_ladder_rung.sh"
 
 def run(script, env):
     merged = {k: v for k, v in os.environ.items()
-              if not k.startswith(("LADDER_", "SCRIPTED_", "GRAFT_"))
+              if not k.startswith(("LADDER_", "SCRIPTED_", "GRAFT_", "BRIDGE_"))
               and k not in ("WARM", "POOL", "CANDIDATE_ARM", "STEPS",
                             "SCREEN_PROFILE", "EXPECTED_POOL_HASH", "PREFIX",
                             "OUT_DIR")}
@@ -230,7 +230,7 @@ class LadderRungProfileTests(unittest.TestCase):
     def _rung_env(self, **over):
         env = os.environ.copy()
         for key in list(env):
-            if key.startswith(("LADDER_", "GRAFT_", "SCRIPTED_")):
+            if key.startswith(("LADDER_", "GRAFT_", "SCRIPTED_", "BRIDGE_")):
                 env.pop(key)
         env.update({"C": str(ROOT), "RUNG": "9", "WARM": "missing.bin",
                     "POOL": "missing-pool", "EXPECTED_POOL_HASH": "0" * 64,
@@ -244,15 +244,43 @@ class LadderRungProfileTests(unittest.TestCase):
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False,
             timeout=60)
 
+    BRIDGE_OK = {"BRIDGE_WARM_SHA256": "4e97ba4f" + "0" * 56,
+                 "BRIDGE_WARM_OBS_VERSION": "4",
+                 "BRIDGE_PROVENANCE": "runs/reward-transfer-20260713-v1 ANALYSIS.json",
+                 "BRIDGE_REASON": "audit-2026-08-20 F2"}
+
     def test_rung_launcher_validates_ladder_profile_and_graft_declaration(self):
         result = self._run_rung(LADDER_PROFILE="bogus")
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("LADDER_PROFILE must be ladder-rung or graft", result.stdout)
+        self.assertIn("LADDER_PROFILE must be ladder-rung, graft or bridge",
+                      result.stdout)
         # Default profile refuses a stray graft declaration.
         for knob in ("GRAFT_FROM_SOURCE_SHA256", "GRAFT_REASON"):
             result = self._run_rung(**{knob: "x"})
             self.assertNotEqual(result.returncode, 0, knob)
             self.assertIn("require LADDER_PROFILE=graft", result.stdout, knob)
+        # And a stray bridge declaration, on the default AND on graft.
+        for profile in ({}, {"LADDER_PROFILE": "graft",
+                             "GRAFT_FROM_SOURCE_SHA256": "a" * 64,
+                             "GRAFT_FROM_PATCH_BUNDLE_SHA256": "b" * 64,
+                             "GRAFT_REASON": "D242"}):
+            for knob in ("BRIDGE_WARM_SHA256", "BRIDGE_REASON"):
+                result = self._run_rung(**profile, **{knob: self.BRIDGE_OK[knob]})
+                self.assertNotEqual(result.returncode, 0, (profile, knob))
+                self.assertIn("require LADDER_PROFILE=bridge", result.stdout,
+                              (profile, knob))
+        # bridge refuses a graft declaration and requires all four of its own.
+        result = self._run_rung(LADDER_PROFILE="bridge", **self.BRIDGE_OK,
+                                GRAFT_REASON="D242")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("require LADDER_PROFILE=graft", result.stdout)
+        for missing in self.BRIDGE_OK:
+            declared = dict(self.BRIDGE_OK)
+            declared.pop(missing)
+            result = self._run_rung(LADDER_PROFILE="bridge", **declared)
+            self.assertNotEqual(result.returncode, 0, missing)
+            self.assertIn(f"{missing} is required for LADDER_PROFILE=bridge",
+                          result.stdout, missing)
         # graft requires all three.
         for missing, message in (
             ("GRAFT_FROM_SOURCE_SHA256", "GRAFT_FROM_SOURCE_SHA256 is required"),
@@ -282,10 +310,23 @@ class LadderRungProfileTests(unittest.TestCase):
         self.assertIn('RESULT="$SCREEN_DIR/${TAG}.result.json"', source)
         self.assertIn('"profile": profile,', source)
         self.assertIn('if profile == "graft":\n    payload["graft"] = {', source)
+        # The bridge rides the same forwarding array (only one of the two
+        # declarations is ever set) and marks its identity next to graft's.
+        self.assertIn('elif [ "$LADDER_PROFILE" = "bridge" ]; then\n'
+                      '  GRAFT_ENV=(BRIDGE_WARM_SHA256="$BRIDGE_WARM_SHA256" \\\n',
+                      source)
+        self.assertIn('BRIDGE_REASON="$BRIDGE_REASON")', source)
+        self.assertIn('if profile == "bridge":', source)
+        self.assertIn('payload["bridge"] = {', source)
         stage = (ROOT / "tools/ladder_stage.sh").read_text(encoding="utf-8")
         for knob in ("LADDER_PROFILE", "GRAFT_FROM_SOURCE_SHA256",
-                     "GRAFT_FROM_PATCH_BUNDLE_SHA256", "GRAFT_REASON"):
+                     "GRAFT_FROM_PATCH_BUNDLE_SHA256", "GRAFT_REASON",
+                     "BRIDGE_WARM_SHA256", "BRIDGE_WARM_OBS_VERSION",
+                     "BRIDGE_PROVENANCE", "BRIDGE_REASON"):
             self.assertIn(f'[ -z "${{{knob}:-}}" ] || export {knob}', stage)
+        # Audit F1: chained rungs no longer default to the frozen 0.1 scale.
+        self.assertIn('export LADDER_CHAIN_LR_SCALE=1.0', stage)
+        self.assertNotIn('export LADDER_CHAIN_LR_SCALE=0.1', stage)
 
     def test_rung_launcher_refuses_missing_inputs_before_launch(self):
         env = os.environ.copy()
@@ -311,7 +352,9 @@ class LadderRungProfileTests(unittest.TestCase):
             r'"\$WARM_MARKER" "\$LADDER_REGRESSION_FLOOR" \\\n'
             r'    "\$SCRIPTED_BANK_TAG" "\$SCRIPTED_BOT_TYPE" "\$LADDER_PROFILE" \\\n'
             r'    "\$GRAFT_FROM_SOURCE_SHA256" "\$GRAFT_FROM_PATCH_BUNDLE_SHA256" \\\n'
-            r'    "\$GRAFT_REASON" <<\'PY\'\n(.*?)\nPY\n',
+            r'    "\$GRAFT_REASON" \\\n'
+            r'    "\$BRIDGE_WARM_SHA256" "\$BRIDGE_WARM_OBS_VERSION" "\$BRIDGE_PROVENANCE" \\\n'
+            r'    "\$BRIDGE_REASON" <<\'PY\'\n(.*?)\nPY\n',
             source, re.S)
         self.assertIsNotNone(match, "marker/regression block not found")
         code = match.group(1)
@@ -327,13 +370,14 @@ class LadderRungProfileTests(unittest.TestCase):
             wm.write_text(json.dumps({"rung": 0, "reset_pct": 0.25, "eval_tds": 0.695}))
             out = tmp / "m.json"
 
-            def run(rung, reset, marker, tds):
+            def run(rung, reset, marker, tds, profile="ladder-rung",
+                    bridge=("", "", "", "")):
                 d = dict(base); d["eval_metrics"] = {"tds": tds, "perf": 0.5}
                 res.write_text(json.dumps(d))
                 return subprocess.run(
                     ["python3", "-", str(res), str(out), rung, reset, "5000000000",
                      "43", "w", "p", "pfx", marker, "0.5",
-                     "0", "0", "ladder-rung", "", "", ""],
+                     "0", "0", profile, "", "", "", *bridge],
                     input=code, text=True, stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE, check=False)
 
@@ -357,6 +401,20 @@ class LadderRungProfileTests(unittest.TestCase):
             wm.write_text(json.dumps({"rung": 0, "reset_pct": 0.25}))
             r = run("0", "0.25", str(wm), 0.10)
             self.assertEqual(r.returncode, 0, r.stderr)
+            # A bridge marker records the raw warm's identity next to the
+            # accepted result; a rung marker carries no bridge key at all.
+            self.assertNotIn("bridge", json.loads(out.read_text()))
+            r = run("0", "0", "", 0.30, profile="bridge",
+                    bridge=("4" * 64, "4", "runs/reward-transfer-20260713-v1",
+                            "audit-2026-08-20 F2"))
+            self.assertEqual(r.returncode, 0, r.stderr)
+            marker = json.loads(out.read_text())
+            self.assertEqual(marker["profile"], "bridge")
+            self.assertEqual(marker["bridge"], {
+                "warm_sha256": "4" * 64, "warm_observation_version": 4,
+                "provenance": "runs/reward-transfer-20260713-v1",
+                "reason": "audit-2026-08-20 F2"})
+            self.assertNotIn("graft", marker)
 
 
 if __name__ == "__main__":

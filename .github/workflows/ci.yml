@@ -44,6 +44,7 @@ jobs:
             tools.test_campaign_supervisor \
             tools.test_ladder_stage \
             tools.test_graft_profile \
+            tools.test_bridge_profile \
             tools.test_install_guard_patch \
             tools.test_scripted_training_guard
           for manifest in puffer/config/rewards/*.json; do

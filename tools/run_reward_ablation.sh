@@ -4,7 +4,7 @@
 # Required for every mode:
 #   TAG=<unique arm tag>
 #   REWARD_MANIFEST=<puffer/config/rewards/*.json>
-#   BOOTSTRAP_MODE=fresh-v6-qualification|fresh-v6-genesis|lineage-v6|graft-v6
+#   BOOTSTRAP_MODE=fresh-v6-qualification|fresh-v6-genesis|lineage-v6|graft-v6|bridge-v4
 # lineage-v6 additionally requires WARM and POOL with eligible obs-v6 lineage
 # sidecars. fresh-v6-qualification forbids both inputs.
 # graft-v6 is lineage-v6 across a reviewed source/patch-bundle change: the
@@ -16,6 +16,17 @@
 # .graft_bridge -- the same rule the screen plan writer applies). GRAFT_REASON
 # (e.g. "D242") is required. The run manifest carries graft_from_* and
 # graft_reason so the published sidecar records ancestry.grafted_from.
+# bridge-v4 is the reviewed warm start from an OUT-OF-LINEAGE raw blob (an
+# obs-v4/obs-v5-era checkpoint with NO sidecar; docs/audit-2026-08-20.md F2).
+# WARM is the raw blob and is never lineage-validated; instead the operator
+# declares BRIDGE_WARM_SHA256 (must equal sha256sum of WARM, hard-fail
+# otherwise), BRIDGE_WARM_OBS_VERSION (4|5), BRIDGE_PROVENANCE (<=300 chars,
+# e.g. the run dir + ANALYSIS.json) and BRIDGE_REASON (<=200 chars). POOL is
+# NOT bridged: its four banks are validated exactly as lineage-v6 validates
+# them. The run manifest carries initialization=bridge, the four bridge_*
+# keys and an EMPTY warm_lineage_sha256, so the published sidecar records
+# ancestry.bridged_from; the accepted checkpoint is then ordinary eligible
+# ancestry for lineage-v6 rungs.
 #
 # Optional:
 #   STEPS=250000000 SEED=42 LOG=/tmp/$TAG.log
@@ -24,7 +35,7 @@
 #   LR=0.00028 ENT_COEF=0.009 GAMMA=0.995 GAE_LAMBDA=0.85
 #   HORIZON=64 MINIBATCH_SIZE=16384 CHECKPOINT_STEPS=50000000
 #   RIG_ALLOW_FLOAT=1   required for native fp32 on the RTX 2070/Turing rig
-#   SCRIPTED_BANK_TAG=0 lineage-v6/graft-v6 only: 1..4 replaces frozen bank (tag-1)'s
+#   SCRIPTED_BANK_TAG=0 pool-backed modes only: 1..4 replaces frozen bank (tag-1)'s
 #                       seat with the scripted bot in that bank's envs (native
 #                       training vs a bot at native SPS; see bloodbowl.h
 #                       scripted_bank_tag). 0 = no scripted opponent.
@@ -168,17 +179,28 @@ case "$BOOTSTRAP_MODE" in
     : "${GRAFT_REASON:?GRAFT_REASON is required for graft-v6 (e.g. the DECISIONS.md entry)}"
     QUALIFICATION_ONLY=0
     ;;
+  bridge-v4)
+    : "${WARM:?WARM is required for bridge-v4 (the raw out-of-lineage blob)}"
+    : "${POOL:?POOL is required for bridge-v4}"
+    : "${BRIDGE_WARM_SHA256:?BRIDGE_WARM_SHA256 is required for bridge-v4}"
+    : "${BRIDGE_WARM_OBS_VERSION:?BRIDGE_WARM_OBS_VERSION is required for bridge-v4 (4 or 5)}"
+    : "${BRIDGE_PROVENANCE:?BRIDGE_PROVENANCE is required for bridge-v4 (e.g. the run dir + ANALYSIS.json)}"
+    : "${BRIDGE_REASON:?BRIDGE_REASON is required for bridge-v4 (e.g. the DECISIONS.md entry)}"
+    QUALIFICATION_ONLY=0
+    ;;
   *)
-    echo "BOOTSTRAP_MODE must be fresh-v6-qualification, fresh-v6-genesis, lineage-v6, or graft-v6" >&2
+    echo "BOOTSTRAP_MODE must be fresh-v6-qualification, fresh-v6-genesis, lineage-v6, graft-v6, or bridge-v4" >&2
     exit 1
     ;;
 esac
-# POOL_MODE: the two warm-started, four-bank modes. Everything downstream that
+# POOL_MODE: the warm-started, four-bank modes. Everything downstream that
 # used to key on lineage-v6 keys on this, so a graft differs from lineage-v6 in
-# exactly one place: how the warm/pool sidecars' implementation is validated.
+# exactly one place: how the warm/pool sidecars' implementation is validated;
+# and a bridge differs in exactly one place: the warm has no sidecar to
+# validate, so its identity is declared instead.
 POOL_MODE=0
 case "$BOOTSTRAP_MODE" in
-  lineage-v6|graft-v6) POOL_MODE=1 ;;
+  lineage-v6|graft-v6|bridge-v4) POOL_MODE=1 ;;
 esac
 GRAFT_FROM_SOURCE_SHA256="${GRAFT_FROM_SOURCE_SHA256:-}"
 GRAFT_FROM_PATCH_BUNDLE_SHA256="${GRAFT_FROM_PATCH_BUNDLE_SHA256:-}"
@@ -197,6 +219,35 @@ if [ "$BOOTSTRAP_MODE" = "graft-v6" ]; then
   fi
 elif [ -n "$GRAFT_FROM_SOURCE_SHA256$GRAFT_FROM_PATCH_BUNDLE_SHA256$GRAFT_REASON" ]; then
   echo "GRAFT_FROM_SOURCE_SHA256/GRAFT_FROM_PATCH_BUNDLE_SHA256/GRAFT_REASON are only valid with BOOTSTRAP_MODE=graft-v6" >&2
+  exit 1
+fi
+BRIDGE_WARM_SHA256="${BRIDGE_WARM_SHA256:-}"
+BRIDGE_WARM_OBS_VERSION="${BRIDGE_WARM_OBS_VERSION:-}"
+BRIDGE_PROVENANCE="${BRIDGE_PROVENANCE:-}"
+BRIDGE_REASON="${BRIDGE_REASON:-}"
+if [ "$BOOTSTRAP_MODE" = "bridge-v4" ]; then
+  # Shape checks only, here; the sha256sum equality against WARM is asserted
+  # below once the file is known to exist, and checkpoint_lineage re-checks
+  # every field at publication.
+  if [[ ! "$BRIDGE_WARM_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "BRIDGE_WARM_SHA256 must be a lowercase SHA-256 digest for bridge-v4" >&2
+    exit 1
+  fi
+  case "$BRIDGE_WARM_OBS_VERSION" in
+    4|5) ;;
+    *) echo "BRIDGE_WARM_OBS_VERSION must be 4 or 5 for bridge-v4, got '$BRIDGE_WARM_OBS_VERSION'" >&2
+       exit 1 ;;
+  esac
+  if [ -z "${BRIDGE_PROVENANCE// /}" ] || [ "${#BRIDGE_PROVENANCE}" -gt 300 ]; then
+    echo "BRIDGE_PROVENANCE must be a non-empty string of at most 300 characters" >&2
+    exit 1
+  fi
+  if [ -z "${BRIDGE_REASON// /}" ] || [ "${#BRIDGE_REASON}" -gt 200 ]; then
+    echo "BRIDGE_REASON must be a non-empty string of at most 200 characters" >&2
+    exit 1
+  fi
+elif [ -n "$BRIDGE_WARM_SHA256$BRIDGE_WARM_OBS_VERSION$BRIDGE_PROVENANCE$BRIDGE_REASON" ]; then
+  echo "BRIDGE_WARM_SHA256/BRIDGE_WARM_OBS_VERSION/BRIDGE_PROVENANCE/BRIDGE_REASON are only valid with BOOTSTRAP_MODE=bridge-v4" >&2
   exit 1
 fi
 
@@ -225,7 +276,7 @@ case "$SCRIPTED_BOT_TYPE" in
      exit 1 ;;
 esac
 if [ "$SCRIPTED_BANK_TAG" != "0" ] && [ "$POOL_MODE" != "1" ]; then
-  echo "SCRIPTED_BANK_TAG=$SCRIPTED_BANK_TAG requires BOOTSTRAP_MODE=lineage-v6 (or graft-v6):" >&2
+  echo "SCRIPTED_BANK_TAG=$SCRIPTED_BANK_TAG requires BOOTSTRAP_MODE=lineage-v6 (or graft-v6 / bridge-v4):" >&2
   echo "the bot seat is only excluded from PPO inside a frozen-bank row slice," >&2
   echo "and only the pool-backed modes allocate the four-bank pool" >&2
   exit 1
@@ -603,6 +654,14 @@ fi
 NUM_THREADS="${NUM_THREADS:-${OMP_NUM_THREADS:-8}}"
 
 [ -z "$WARM" ] || WARM_HASH="$(sha256sum "$WARM" | awk '{print $1}')"
+if [ "$BOOTSTRAP_MODE" = "bridge-v4" ] && [ "$WARM_HASH" != "$BRIDGE_WARM_SHA256" ]; then
+  # The declared digest is the ONLY identity a sidecar-less warm has. A
+  # mismatch means the operator is bridging a different blob than the one
+  # that was reviewed (or a truncated/substituted copy), and every obs
+  # revision has the same byte count, so nothing else would catch it.
+  echo "bridge-v4 warm $WARM has sha256 $WARM_HASH but BRIDGE_WARM_SHA256 declares $BRIDGE_WARM_SHA256" >&2
+  exit 1
+fi
 CONFIG_HASH="$(sha256sum config/bloodbowl.ini | awk '{print $1}')"
 DEFAULT_CONFIG_HASH="$(sha256sum config/default.ini | awk '{print $1}')"
 CONFIG_TREE_HASH="$("$PYBIN" - config <<'PY'
@@ -681,7 +740,11 @@ if [ "$POOL_MODE" = "1" ]; then
   # least one old-build sidecar (else it is a no-op / rehost, refused here
   # rather than 5B steps later at publication) and one shared old module,
   # which becomes graft_from_module_sha256. The screen plan writer applies the
-  # identical function.
+  # identical function. bridge-v4: the warm is a raw out-of-lineage blob with
+  # NO sidecar, so it is deliberately not validated here (its identity is the
+  # declared BRIDGE_WARM_SHA256, asserted above) and WARM_LINEAGE_HASH stays
+  # empty; the four pool banks are validated exactly as lineage-v6 validates
+  # them, against this build's digests.
   read -r WARM_LINEAGE_HASH POOL_LINEAGE_BUNDLE_HASH GRAFT_FROM_MODULE_SHA256 < <(
     "$PYBIN" - "$ROOT" "$WARM" "$POOL" "$SOURCE_HASH" \
       "$MODULE_HASH" "$PATCH_HASH" "$BOOTSTRAP_MODE" \
@@ -695,6 +758,7 @@ from checkpoint_lineage import lineage_digest, sidecar_path, validate_lineage
 from checkpoint_lineage import LineageError, graft_bridge
 
 graft = mode == "graft-v6"
+bridge = mode == "bridge-v4"
 current = {
     "source_sha256": source_sha,
     "compiled_module_sha256": module_sha,
@@ -702,10 +766,21 @@ current = {
 }
 expected = None if graft else current
 warm = pathlib.Path(warm_path)
-warm_payload = validate_lineage(
-    warm, sidecar_path(warm), expected=expected, require_eligible=True)
+if bridge:
+    # No sidecar to validate; refuse one that exists, because a blob WITH
+    # eligible lineage belongs in lineage-v6 and a bridge would only hide it.
+    if sidecar_path(warm).exists():
+        raise SystemExit(
+            f"bridge-v4 warm {warm} has a lineage sidecar; a sidecar-bearing "
+            "warm must go through lineage-v6 (or graft-v6), not a bridge")
+    warm_payload = None
+    warm_lineage = ""
+else:
+    warm_payload = validate_lineage(
+        warm, sidecar_path(warm), expected=expected, require_eligible=True)
+    warm_lineage = lineage_digest(warm_payload)
 graft_module = ""
-graft_sidecars = [("warm", warm_payload)]
+graft_sidecars = [] if warm_payload is None else [("warm", warm_payload)]
 pool = pathlib.Path(pool_path)
 manifest = json.loads((pool / "league_seeds.json").read_text(encoding="utf-8"))
 identities = []
@@ -732,10 +807,15 @@ if graft:
             old_patch_bundle_sha256=graft_patch)
     except LineageError as exc:
         raise SystemExit(str(exc)) from exc
-print(lineage_digest(warm_payload), bundle, graft_module or "-")
+print(warm_lineage or "-", bundle, graft_module or "-")
 PY
   )
   [ "$GRAFT_FROM_MODULE_SHA256" != "-" ] || GRAFT_FROM_MODULE_SHA256=""
+  [ "$WARM_LINEAGE_HASH" != "-" ] || WARM_LINEAGE_HASH=""
+  if [ "$BOOTSTRAP_MODE" = "bridge-v4" ] && [ -n "$WARM_LINEAGE_HASH" ]; then
+    echo "internal error: bridge-v4 produced a warm lineage digest" >&2
+    exit 1
+  fi
 fi
 
 echo "tag=$TAG seed=$SEED requested_steps=$STEPS final_steps=$FINAL_STEPS rollout_quantum=$ROLLOUT_QUANTUM"
@@ -750,6 +830,8 @@ echo "lr=$LR ent_coef=$ENT_COEF gamma=$GAMMA gae_lambda=$GAE_LAMBDA replay_ratio
 echo "scripted_bank_tag=$SCRIPTED_BANK_TAG scripted_bot_type=$SCRIPTED_BOT_TYPE"
 [ "$BOOTSTRAP_MODE" != "graft-v6" ] || \
   echo "graft_from source_sha256=$GRAFT_FROM_SOURCE_SHA256 patch_bundle_sha256=$GRAFT_FROM_PATCH_BUNDLE_SHA256 module_sha256=$GRAFT_FROM_MODULE_SHA256 warm_lineage_sha256=$WARM_LINEAGE_HASH reason=$GRAFT_REASON"
+[ "$BOOTSTRAP_MODE" != "bridge-v4" ] || \
+  echo "bridged_from warm_sha256=$BRIDGE_WARM_SHA256 warm_observation_version=$BRIDGE_WARM_OBS_VERSION provenance=$BRIDGE_PROVENANCE reason=$BRIDGE_REASON"
 
 CMD=(env PUFFER_CUDA_RUNTIME_MANIFEST="$RUN_MANIFEST" \
   PUFFER_CUDA_RUNTIME_EVIDENCE="$CUDA_RUNTIME_EVIDENCE" \
@@ -805,10 +887,18 @@ if [ "${DRY_RUN:-0}" = "1" ]; then
   exit 0
 fi
 
+# The initialization string is what checkpoint_lineage keys its ancestry rules
+# on. Fresh modes have no ancestry; the pool-backed modes are lineage-v6 (a
+# graft is lineage-v6 plus a declaration) except the bridge, whose warm has no
+# lineage and must say so.
+INITIALIZATION=lineage-v6
+case "$BOOTSTRAP_MODE" in
+  fresh-v6-qualification|fresh-v6-genesis) INITIALIZATION=fresh ;;
+  bridge-v4) INITIALIZATION=bridge ;;
+esac
 META_ARGS=(
   tag "$TAG" seed "$SEED" requested_steps "$STEPS" final_steps "$FINAL_STEPS"
-  bootstrap_mode "$BOOTSTRAP_MODE" initialization \
-  "$([ "$POOL_MODE" != "1" ] && printf fresh || printf lineage-v6)" \
+  bootstrap_mode "$BOOTSTRAP_MODE" initialization "$INITIALIZATION" \
   qualification_only "$QUALIFICATION_ONLY" observation_abi obs-v6 \
   observation_version 6 action_abi exact-joint-v1 \
   policy_hidden_size 512 policy_num_layers 3 policy_expansion_factor 1 \
@@ -872,6 +962,17 @@ if [ "$BOOTSTRAP_MODE" = "graft-v6" ]; then
     graft_from_patch_bundle_sha256 "$GRAFT_FROM_PATCH_BUNDLE_SHA256"
     graft_from_warm_lineage_sha256 "$WARM_LINEAGE_HASH"
     graft_reason "$GRAFT_REASON"
+  )
+fi
+if [ "$BOOTSTRAP_MODE" = "bridge-v4" ]; then
+  # All four or none: checkpoint_lineage treats their presence as the bridge
+  # declaration and writes ancestry.bridged_from into the published sidecar.
+  # warm_lineage_sha256 above is the empty string on purpose.
+  META_ARGS+=(
+    bridge_warm_sha256 "$BRIDGE_WARM_SHA256"
+    bridge_warm_observation_version "$BRIDGE_WARM_OBS_VERSION"
+    bridge_provenance "$BRIDGE_PROVENANCE"
+    bridge_reason "$BRIDGE_REASON"
   )
 fi
 "$PYBIN" - "$RUN_MANIFEST" "${META_ARGS[@]}" -- "${CMD[@]}" <<'PY'

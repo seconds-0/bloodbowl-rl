@@ -24,7 +24,7 @@ fi
 LAUNCH_CWD="$PWD"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 : "${STEPS:?STEPS is required (explicit experiment budget)}"
-: "${SCREEN_PROFILE:?SCREEN_PROFILE is required (distance-possession, possession-gain, possession-gain-exact, exact-action-canary, genesis, genesis-pool, ladder-rung, graft, paired-confirmation, paired-final, or control-final)}"
+: "${SCREEN_PROFILE:?SCREEN_PROFILE is required (distance-possession, possession-gain, possession-gain-exact, exact-action-canary, genesis, genesis-pool, ladder-rung, graft, bridge, paired-confirmation, paired-final, or control-final)}"
 CANDIDATE_ARM="${CANDIDATE_ARM:-}"
 TRANSFER_COMPLETE="${TRANSFER_COMPLETE:-}"
 EXPECTED_TRANSFER_SHA256="${EXPECTED_TRANSFER_SHA256:-}"
@@ -53,11 +53,24 @@ SCRIPTED_BOT_TYPE="${SCRIPTED_BOT_TYPE:-}"
 GRAFT_FROM_SOURCE_SHA256="${GRAFT_FROM_SOURCE_SHA256:-}"
 GRAFT_FROM_PATCH_BUNDLE_SHA256="${GRAFT_FROM_PATCH_BUNDLE_SHA256:-}"
 GRAFT_REASON="${GRAFT_REASON:-}"
-# ladder-rung / graft only: scale the trainer's LR and entropy coefficient for a
-# CHAINED warm restart. D245: a settled policy re-annealed from the top
-# (0.00028 / 0.009) into a pool of >=-strength selves dips into passivity for
-# ~0.5-2B steps; resuming near the warm rung's FINAL values (min-lr ratio 0.1
-# => scale 0.1) is the hypothesised fix. 1 = the fixed contract, unchanged.
+# bridge only: the reviewed warm start from an OUT-OF-LINEAGE raw blob (an
+# obs-v4/obs-v5-era checkpoint with no sidecar; docs/audit-2026-08-20.md F2).
+# The operator declares the blob's content hash, its original observation
+# version, where it came from and why; the per-arm launcher re-checks the
+# declaration (hash equality against WARM included) and the published sidecar
+# records it as ancestry.bridged_from.
+BRIDGE_WARM_SHA256="${BRIDGE_WARM_SHA256:-}"
+BRIDGE_WARM_OBS_VERSION="${BRIDGE_WARM_OBS_VERSION:-}"
+BRIDGE_PROVENANCE="${BRIDGE_PROVENANCE:-}"
+BRIDGE_REASON="${BRIDGE_REASON:-}"
+# ladder-rung / graft / bridge only: scale the trainer's LR and entropy
+# coefficient for a CHAINED warm restart. D245: a settled policy re-annealed
+# from the top (0.00028 / 0.009) into a pool of >=-strength selves dips into
+# passivity for ~0.5-2B steps; resuming near the warm rung's FINAL values
+# (min-lr ratio 0.1 => scale 0.1) was the hypothesised fix. The 2026-08-20
+# audit (F1) then found that 0.1 under Muon freezes training outright (kl and
+# clipfrac 0.000 on 38,206 of 38,207 updates), so 1 is the default everywhere
+# again; the knob stays for explicit experiments. 1 = the fixed contract.
 LADDER_CHAIN_LR_SCALE="${LADDER_CHAIN_LR_SCALE:-1}"
 
 # Fixed Stage-1 causal contract. Assign, rather than inherit, every optional
@@ -136,20 +149,21 @@ case "$ARM_DETACH" in
   0|1) ;;
   *) echo "ARM_DETACH must be 0 or 1" >&2; exit 1 ;;
 esac
-# The graft profile is a rung across a build change, so it takes the rung's
-# knobs; every other profile pins them.
+# The graft profile is a rung across a build change and the bridge profile is
+# a rung from an out-of-lineage warm, so both take the rung's knobs; every
+# other profile pins them.
 RUNG_LIKE=0
 case "$SCREEN_PROFILE" in
-  ladder-rung|graft) RUNG_LIKE=1 ;;
+  ladder-rung|graft|bridge) RUNG_LIKE=1 ;;
 esac
 if [ "$RUNG_LIKE" != "1" ] && \
    [ -n "$LADDER_ENDZONE_MAXDIST$LADDER_RESET_PCT$LADDER_SEED" ]; then
-  echo "LADDER_ENDZONE_MAXDIST, LADDER_RESET_PCT and LADDER_SEED are only valid with SCREEN_PROFILE=ladder-rung or graft" >&2
+  echo "LADDER_ENDZONE_MAXDIST, LADDER_RESET_PCT and LADDER_SEED are only valid with SCREEN_PROFILE=ladder-rung, graft or bridge" >&2
   exit 1
 fi
 if [ "$RUNG_LIKE" != "1" ] && \
    [ -n "$SCRIPTED_BANK_TAG$SCRIPTED_BOT_TYPE" ]; then
-  echo "SCRIPTED_BANK_TAG and SCRIPTED_BOT_TYPE are only valid with SCREEN_PROFILE=ladder-rung or graft" >&2
+  echo "SCRIPTED_BANK_TAG and SCRIPTED_BOT_TYPE are only valid with SCREEN_PROFILE=ladder-rung, graft or bridge" >&2
   exit 1
 fi
 if [ "$SCREEN_PROFILE" != "graft" ] && \
@@ -157,8 +171,13 @@ if [ "$SCREEN_PROFILE" != "graft" ] && \
   echo "GRAFT_FROM_SOURCE_SHA256, GRAFT_FROM_PATCH_BUNDLE_SHA256 and GRAFT_REASON are only valid with SCREEN_PROFILE=graft" >&2
   exit 1
 fi
+if [ "$SCREEN_PROFILE" != "bridge" ] && \
+   [ -n "$BRIDGE_WARM_SHA256$BRIDGE_WARM_OBS_VERSION$BRIDGE_PROVENANCE$BRIDGE_REASON" ]; then
+  echo "BRIDGE_WARM_SHA256, BRIDGE_WARM_OBS_VERSION, BRIDGE_PROVENANCE and BRIDGE_REASON are only valid with SCREEN_PROFILE=bridge" >&2
+  exit 1
+fi
 if [ "$RUNG_LIKE" != "1" ] && [ "$LADDER_CHAIN_LR_SCALE" != "1" ]; then
-  echo "LADDER_CHAIN_LR_SCALE is only valid with SCREEN_PROFILE=ladder-rung or graft" >&2
+  echo "LADDER_CHAIN_LR_SCALE is only valid with SCREEN_PROFILE=ladder-rung, graft or bridge" >&2
   exit 1
 fi
 case "$LADDER_CHAIN_LR_SCALE" in
@@ -171,7 +190,7 @@ if [ "$LADDER_CHAIN_LR_SCALE" != "1" ]; then
   ENT_COEF="$(python3 -c 'import sys; print(repr(float(sys.argv[1])*float(sys.argv[2])))' "$ENT_COEF" "$LADDER_CHAIN_LR_SCALE")"
 fi
 case "$SCREEN_PROFILE" in
-  distance-possession|possession-gain|possession-gain-exact|exact-action-canary|genesis|genesis-pool|control-final|ladder-rung|graft)
+  distance-possession|possession-gain|possession-gain-exact|exact-action-canary|genesis|genesis-pool|control-final|ladder-rung|graft|bridge)
     [ -z "$CANDIDATE_ARM$TRANSFER_COMPLETE$EXPECTED_TRANSFER_SHA256" ] || {
       echo "candidate transfer inputs are only valid with a paired profile" >&2
       exit 1; }
@@ -232,6 +251,30 @@ case "$SCREEN_PROFILE" in
         exit 1
       fi
     fi
+    if [ "$SCREEN_PROFILE" = "bridge" ]; then
+      # The operator declares which raw blob is being bridged and from which
+      # observation revision; an inherited or empty declaration would let any
+      # same-size blob ride in under a bridge label. Shape checks here; the
+      # hash equality against WARM is asserted by the plan writer and again by
+      # the per-arm launcher.
+      if ! [[ "$BRIDGE_WARM_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+        echo "bridge requires BRIDGE_WARM_SHA256 as a lowercase 64-character SHA-256 digest (sha256sum of WARM)" >&2
+        exit 1
+      fi
+      case "$BRIDGE_WARM_OBS_VERSION" in
+        4|5) ;;
+        *) echo "bridge requires BRIDGE_WARM_OBS_VERSION as 4 or 5 (the blob's original observation version)" >&2
+           exit 1 ;;
+      esac
+      if [ -z "${BRIDGE_PROVENANCE// /}" ] || [ "${#BRIDGE_PROVENANCE}" -gt 300 ]; then
+        echo "bridge requires BRIDGE_PROVENANCE as a non-empty string of at most 300 characters (e.g. the run dir + ANALYSIS.json)" >&2
+        exit 1
+      fi
+      if [ -z "${BRIDGE_REASON// /}" ] || [ "${#BRIDGE_REASON}" -gt 200 ]; then
+        echo "bridge requires BRIDGE_REASON as a non-empty string of at most 200 characters (e.g. the DECISIONS.md entry)" >&2
+        exit 1
+      fi
+    fi
     ;;
   paired-confirmation|paired-final)
     case "$CANDIDATE_ARM" in
@@ -246,7 +289,7 @@ case "$SCREEN_PROFILE" in
       exit 1
     fi
     ;;
-  *) echo "SCREEN_PROFILE must be distance-possession, possession-gain, possession-gain-exact, exact-action-canary, genesis, genesis-pool, ladder-rung, graft, paired-confirmation, paired-final, or control-final" >&2
+  *) echo "SCREEN_PROFILE must be distance-possession, possession-gain, possession-gain-exact, exact-action-canary, genesis, genesis-pool, ladder-rung, graft, bridge, paired-confirmation, paired-final, or control-final" >&2
      exit 1 ;;
 esac
 
@@ -282,6 +325,8 @@ else
   : "${POOL:?POOL is required}"
   if [ "$SCREEN_PROFILE" = "graft" ]; then
     BOOTSTRAP_MODE=graft-v6
+  elif [ "$SCREEN_PROFILE" = "bridge" ]; then
+    BOOTSTRAP_MODE=bridge-v4
   else
     BOOTSTRAP_MODE=lineage-v6
   fi
@@ -301,13 +346,24 @@ if [ -n "$TRANSFER_COMPLETE" ]; then
   [ -f "$TRANSFER_COMPLETE" ] || {
     echo "missing transfer completion: $TRANSFER_COMPLETE" >&2; exit 1; }
 fi
-if [ "$BOOTSTRAP_MODE" = "lineage-v6" ] || [ "$BOOTSTRAP_MODE" = "graft-v6" ]; then
+if [ "$BOOTSTRAP_MODE" = "lineage-v6" ] || [ "$BOOTSTRAP_MODE" = "graft-v6" ] || \
+   [ "$BOOTSTRAP_MODE" = "bridge-v4" ]; then
   [ -f "$WARM" ] || { echo "missing warm checkpoint: $WARM" >&2; exit 1; }
   [ -d "$POOL" ] || { echo "missing static pool: $POOL" >&2; exit 1; }
   [[ "$EXPECTED_POOL_HASH" =~ ^[0-9a-f]{64}$ ]] || {
-    echo "lineage-v6 screen requires the explicit current EXPECTED_POOL_HASH as a lowercase SHA-256 digest" >&2
+    echo "$BOOTSTRAP_MODE screen requires the explicit current EXPECTED_POOL_HASH as a lowercase SHA-256 digest" >&2
     exit 1
   }
+fi
+if [ "$BOOTSTRAP_MODE" = "bridge-v4" ]; then
+  # Fail here, before the lock and the plan, rather than in the plan writer:
+  # the declared digest is the only identity a sidecar-less warm has, and a
+  # mismatch means a different blob than the reviewed one is being bridged.
+  WARM_ACTUAL_SHA256="$(sha256sum "$WARM" | awk '{print $1}')"
+  if [ "$WARM_ACTUAL_SHA256" != "$BRIDGE_WARM_SHA256" ]; then
+    echo "bridge warm $WARM has sha256 $WARM_ACTUAL_SHA256 but BRIDGE_WARM_SHA256 declares $BRIDGE_WARM_SHA256" >&2
+    exit 1
+  fi
 fi
 mkdir -p "$OUT_DIR"
 
@@ -397,6 +453,22 @@ case "$SCREEN_PROFILE" in
     # is the only place an implementation change may enter an existing lineage.
     # It stays usable for the rungs after the bridge, whose warm is new-build
     # while the pool still carries old-build banks.
+    arms=(s_both)
+    seeds=("$LADDER_SEED")
+    ;;
+  bridge)
+    # The reviewed warm start from an OUT-OF-LINEAGE raw blob. Shaped exactly
+    # like a rung -- one s_both arm at LADDER_SEED, four-bank pool, the rung's
+    # start-distribution and scripted-bank knobs -- but WARM is a sidecar-less
+    # obs-v4/obs-v5-era checkpoint, identified only by the operator's
+    # BRIDGE_WARM_SHA256 declaration (asserted against the file here and in
+    # the per-arm launcher). The pool is NOT bridged: its banks must be
+    # eligible obs-v6 sidecars on this build, exactly as lineage-v6 demands.
+    # The accepted checkpoint is published with ancestry.bridged_from and is
+    # ordinary eligible ancestry thereafter. One arm, one seed: a bridge is a
+    # lineage entry point, not a comparison. docs/audit-2026-08-20.md F2 is
+    # why it exists: the July obs-v4 R0 checkpoint plays ~6x better than the
+    # obs-v6 lineage that was restarted from random weights in its place.
     arms=(s_both)
     seeds=("$LADDER_SEED")
     ;;
@@ -495,6 +567,10 @@ SCREEN_PLAN="$(
       GRAFT_FROM_SOURCE_SHA256="$GRAFT_FROM_SOURCE_SHA256" \
       GRAFT_FROM_PATCH_BUNDLE_SHA256="$GRAFT_FROM_PATCH_BUNDLE_SHA256" \
       GRAFT_REASON="$GRAFT_REASON" \
+      BRIDGE_WARM_SHA256="$BRIDGE_WARM_SHA256" \
+      BRIDGE_WARM_OBS_VERSION="$BRIDGE_WARM_OBS_VERSION" \
+      BRIDGE_PROVENANCE="$BRIDGE_PROVENANCE" \
+      BRIDGE_REASON="$BRIDGE_REASON" \
       LADDER_CHAIN_LR_SCALE="$LADDER_CHAIN_LR_SCALE" LR="$LR" ENT_COEF="$ENT_COEF" \
       "$PYBIN" - "$SCREEN_MANIFEST" <<'PY'
 import datetime, hashlib, json, os, pathlib, subprocess, sys, sysconfig
@@ -676,29 +752,77 @@ else:
     # ELIGIBLE -- and checkpoint_lineage.graft_bridge then requires each of
     # {warm, bank0..3} to bind either this build exactly or the operator's
     # GRAFT_FROM_* declaration. The per-arm launcher applies the same function.
+    #
+    # bridge: the warm is a RAW out-of-lineage blob with no sidecar, so the
+    # warm validation is skipped on purpose (there is nothing to validate; a
+    # sidecar that does exist is refused, because such a blob belongs in
+    # lineage-v6). Its identity is the operator's BRIDGE_* declaration, hash
+    # checked against the file. The pool is validated like lineage-v6's,
+    # against THIS build, so a bridge cannot smuggle old banks in.
     graft = profile == "graft"
+    bridge = profile == "bridge"
     current_implementation = {
         "source_sha256": source_hash,
         "compiled_module_sha256": sha(module),
         "puffer_patch_bundle_sha256": patch_bundle_sha,
     }
     implementation_expected = None if graft else current_implementation
-    warm_payload = validate_lineage(
-        warm, sidecar_path(warm),
-        expected=implementation_expected,
-        require_eligible=True)
-    warm_lineage_sha = lineage_digest(warm_payload)
     graft_identity = None
-    graft_sidecars = [("warm", warm_payload)]
-    warm_identity = {
-        "path": str(warm), "bytes": warm.stat().st_size, "sha256": sha(warm),
-        "lineage_path": str(sidecar_path(warm).resolve()),
-        "lineage_sha256": warm_lineage_sha,
-    }
+    bridge_identity = None
+    warm_sha = sha(warm)
+    if bridge:
+        if sidecar_path(warm).exists():
+            raise SystemExit(
+                f"bridge warm {warm} has a lineage sidecar; a sidecar-bearing "
+                "warm must go through ladder-rung (lineage-v6) or graft, not a "
+                "bridge")
+        declared_sha = os.environ["BRIDGE_WARM_SHA256"]
+        if warm_sha != declared_sha:
+            raise SystemExit(
+                f"bridge warm {warm} has sha256 {warm_sha} but "
+                f"BRIDGE_WARM_SHA256 declares {declared_sha}")
+        warm_payload = None
+        warm_lineage_sha = ""
+        bridge_identity = {
+            "warm_path": str(warm),
+            "warm_sha256": warm_sha,
+            "warm_observation_version": int(
+                os.environ["BRIDGE_WARM_OBS_VERSION"]),
+            "provenance": os.environ["BRIDGE_PROVENANCE"],
+            "reason": os.environ["BRIDGE_REASON"],
+        }
+        warm_identity = {
+            "path": str(warm), "bytes": warm.stat().st_size, "sha256": warm_sha,
+            "lineage_path": None,
+            "lineage_sha256": "",
+        }
+    else:
+        warm_payload = validate_lineage(
+            warm, sidecar_path(warm),
+            expected=implementation_expected,
+            require_eligible=True)
+        warm_lineage_sha = lineage_digest(warm_payload)
+        warm_identity = {
+            "path": str(warm), "bytes": warm.stat().st_size, "sha256": warm_sha,
+            "lineage_path": str(sidecar_path(warm).resolve()),
+            "lineage_sha256": warm_lineage_sha,
+        }
+    graft_sidecars = [] if warm_payload is None else [("warm", warm_payload)]
     pool_manifest_raw = (pool / "league_seeds.json").read_bytes()
     banks = json.loads(pool_manifest_raw).get("seeds")
     if not isinstance(banks, list) or len(banks) != 4:
         raise SystemExit("screen pool must contain exactly four banks")
+    if bridge:
+        # lineage-v6 leaves the pool to the per-arm launcher; a bridge checks
+        # it here too, because the pool is the ONLY lineage a bridge has and
+        # a 5B-step arm should not be the first place a bad bank is noticed.
+        for index, bank in enumerate(banks):
+            bank_payload = validate_lineage(
+                pool / bank["file"], pool / bank["lineage_file"],
+                expected=current_implementation, require_eligible=True)
+            if lineage_digest(bank_payload) != bank["lineage_sha256"]:
+                raise SystemExit(
+                    f"pool bank {index} lineage digest differs from manifest")
     if graft:
         # Same rule for the pool: eligible, internally consistent, on their
         # own recorded build. lineage-v6 leaves this to the per-arm launcher.
@@ -765,7 +889,11 @@ contract = {
         # Genesis is fresh yet not qualification-only, so this must key on
         # freshness. checkpoint_lineage cross-checks initialization against the
         # producer mode, so getting this wrong fails the run at publication.
-        "initialization": "fresh" if fresh else "lineage-v6",
+        # A bridge is warm-started yet has no warm lineage, so it is its own
+        # initialization rather than lineage-v6 with a blank digest.
+        "initialization": ("fresh" if fresh
+                           else "bridge" if profile == "bridge"
+                           else "lineage-v6"),
         "warm_lineage_sha256": warm_lineage_sha,
         "pool_lineage_bundle_sha256": pool_lineage_bundle_sha,
     },
@@ -814,7 +942,12 @@ contract = {
 }
 if profile == "graft":
     contract["graft"] = graft_identity
-if profile in ("ladder-rung", "graft"):
+if profile == "bridge":
+    # The bridge identity is part of the contract so the manifest-reuse check
+    # below refuses a relaunch that names a different raw blob, observation
+    # version or provenance under the same OUT_DIR.
+    contract["bridge"] = bridge_identity
+if profile in ("ladder-rung", "graft", "bridge"):
     # The start distribution is this profile's declared factor. Recorded here so
     # a rung's SCREEN_MANIFEST says which rung it was without opening the run
     # manifest; the per-arm launcher binds the same values (plus the state-bank
@@ -1293,6 +1426,15 @@ PY
                   GRAFT_FROM_SOURCE_SHA256="$GRAFT_FROM_SOURCE_SHA256" \
                   GRAFT_FROM_PATCH_BUNDLE_SHA256="$GRAFT_FROM_PATCH_BUNDLE_SHA256" \
                   GRAFT_REASON="$GRAFT_REASON")
+    elif [ "$SCREEN_PROFILE" = "bridge" ]; then
+      LADDER_ENV=(LADDER_ENDZONE_MAXDIST="$LADDER_ENDZONE_MAXDIST" \
+                  LADDER_RESET_PCT="$LADDER_RESET_PCT" \
+                  SCRIPTED_BANK_TAG="$SCRIPTED_BANK_TAG" \
+                  SCRIPTED_BOT_TYPE="$SCRIPTED_BOT_TYPE" \
+                  BRIDGE_WARM_SHA256="$BRIDGE_WARM_SHA256" \
+                  BRIDGE_WARM_OBS_VERSION="$BRIDGE_WARM_OBS_VERSION" \
+                  BRIDGE_PROVENANCE="$BRIDGE_PROVENANCE" \
+                  BRIDGE_REASON="$BRIDGE_REASON")
     fi
     env ${LADDER_ENV[@]+"${LADDER_ENV[@]}"} \
         TAG="$tag" REWARD_MANIFEST="$manifest" WARM="$WARM" POOL="$POOL" \
