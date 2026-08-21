@@ -60,7 +60,8 @@ Watch: `~/bin/v2watch`. Exams: `/root/native_exam.sh <ckpt> <outdir> away home o
 |---|---|---|---|---|
 | bridge 1 | July R0 s42 (bridge-v4) | s0_both | 2.8e-4 | **STOPPED at 522M (D253)**: tds 0.96 -> 0.46, pickups 3.4 -> 1.4, possession 0.30 -> 0.16, blocks 15 -> 21; s0_both pulls the policy into the non-play equilibrium |
 | bridge 2 | July R0 s42 (bridge-v4) | s4_sparse (td/win/draw only) | 2.8e-4 | STOPPED at 360M (D254): tds 0.93 -> 0.85 but pickups 3.1 -> 1.9, blocks 12.8 -> 4.0 |
-| bridge 3 | July R0 s42 (bridge-v4) | **r0_full** (the warm's own reward) | 2.8e-4 | running since Aug 21 00:40 PDT, 2B; **CLIMBING (D255): tds 0.96 -> 1.52 at 360M, pickups 3.5 -> 3.7, possession 0.30 -> 0.35, 81% vs bank 0** |
+| bridge 3 | July R0 s42 (bridge-v4) | **r0_full** (the warm's own reward) | 2.8e-4 | **DONE 2B, eval tds 1.585 (D256); exam contact 0.433/0.435 & 0.388/0.456, offense 0.508/0.345 = project records** |
+| chain 1 | bridge 3 output (`1787297626522`) | r0_full | 2.8e-4 (scale 1.0) | running since Aug 21 05:12 PDT, 3B, `runs/ladder-d0-r0chain1-20260821`, ETA ~11:30 |
 
 ## AUDIT 2026-08-20 (D252): the obs-v6 lineage was frozen by its recipe; the July policy is ~6x better
 
@@ -93,9 +94,10 @@ Watch: `~/bin/v2watch`. Exams: `/root/native_exam.sh <ckpt> <outdir> away home o
 | **+contact rung 2** [native] | D250 | **0.083 / 0.993** | **0.088 / 1.028** | offense-bot AWAY 0.160 / 0.459; mirror 0.803 |
 | s42-kickoff pure-pool control (seed 42, no bot) [native] | D250 add. | 0.023 / 1.292 | 0.016 / 1.282 | offense-bot AWAY 0.027 / 0.683 |
 | s42 + contact-bot rung 1 (LR x0.1, frozen recipe) [native] | D252 | 0.056 / 1.224 | 0.046 / 1.224 | offense-bot AWAY 0.060 / 0.649 |
-| **July R0 s42 (obs-v4 era, 2026-07-13) on the CURRENT build** [native, diagnostic] | D252 | **0.354 / 0.438** | **0.346 / 0.447** | **offense-bot AWAY 0.392 / 0.334 (score 0.541)**; 18 blocks, 6.2 pickups |
+| July R0 s42 (obs-v4 era, 2026-07-13) on the CURRENT build [native, diagnostic] | D252 | 0.354 / 0.438 | 0.346 / 0.447 | offense-bot AWAY 0.392 / 0.334 (score 0.541); 18 blocks, 6.2 pickups |
+| **bridge 3 = July R0 s42 + r0_full + bot bank, 2B** [native] | D256 | **0.433 / 0.435** | **0.388 / 0.456** | **offense-bot AWAY 0.508 / 0.345** |
 
-Verdict (revised D252): the obs-v6 lineage never left a non-play equilibrium and its kickoff rungs were not training; the July lineage is the warm start to beat.
+Verdict (revised D256): the bridged July lineage, continued under its own reward at full LR, is the live frontier; one 2B rung raised every exam cell. Defense vs the contact bot is the flat cell (bot share next).
 
 ## Kickoff exam (D50) — chain2 checkpoint, 2026-08-18
 
