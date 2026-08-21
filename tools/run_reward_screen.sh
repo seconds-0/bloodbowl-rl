@@ -101,7 +101,18 @@ NUM_THREADS="${NUM_THREADS:-16}"
 case "$NUM_THREADS" in
   ''|*[!0-9]*|0) echo "NUM_THREADS must be a positive integer" >&2; exit 1 ;;
 esac
-FROZEN_BANK_PCT=0.06
+# Fraction of ROWS per buffer given to EACH frozen bank; every historical env
+# pairs one frozen row with one learner row, so with 4 banks the GAME share is
+# about 2x the sum (0.06 x 4 = 24% of rows = 48% of games; the per-arm launcher
+# prints the exact historical_game_share). Overridable because the 2026-08-20
+# audit found the scripted-bot bank (one of the four) is the only opponent
+# that contests the ball, and defense vs it is the exam cell that does not move
+# at 0.06. Recorded in the contract settings and every run manifest.
+FROZEN_BANK_PCT="${FROZEN_BANK_PCT:-0.06}"
+case "$FROZEN_BANK_PCT" in
+  0.0[1-9]|0.0[1-9][0-9]|0.[1-9]|0.[1-9][0-9]|0.[1-9][0-9][0-9]) ;;
+  *) echo "FROZEN_BANK_PCT must be a decimal in (0.01, 0.999], got '$FROZEN_BANK_PCT'" >&2; exit 1 ;;
+esac
 EXPECT_BYTES=16066560
 LR=0.00028
 ENT_COEF=0.009

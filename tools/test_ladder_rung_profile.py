@@ -64,6 +64,21 @@ class LadderRungProfileTests(unittest.TestCase):
             r"sparse\) printf '%s\\n' \"\$ROOT/puffer/config/rewards/s4_sparse.json\"")
         self.assertIn('"arm": os.environ["LADDER_ARM"]', source)
 
+    def test_frozen_bank_pct_is_overridable_and_validated(self):
+        source = SCREEN.read_text(encoding="utf-8")
+        self.assertIn('FROZEN_BANK_PCT="${FROZEN_BANK_PCT:-0.06}"', source)
+        self.assertNotIn("\nFROZEN_BANK_PCT=0.06\n", source)
+        result = run(SCREEN, {**BASE, "LADDER_ENDZONE_MAXDIST": "6",
+                              "LADDER_RESET_PCT": "0.5", "LADDER_SEED": "42",
+                              "FROZEN_BANK_PCT": "abc"})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("FROZEN_BANK_PCT must be a decimal", result.stderr)
+        result = run(SCREEN, {**BASE, "LADDER_ENDZONE_MAXDIST": "6",
+                              "LADDER_RESET_PCT": "0.5", "LADDER_SEED": "42",
+                              "FROZEN_BANK_PCT": "1.5"})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("FROZEN_BANK_PCT must be a decimal", result.stderr)
+
     def test_rung_rejects_unknown_arm(self):
         result = run(SCREEN, {**BASE, "LADDER_ENDZONE_MAXDIST": "6",
                               "LADDER_RESET_PCT": "0.5", "LADDER_SEED": "42",
