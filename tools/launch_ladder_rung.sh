@@ -22,7 +22,7 @@
 # produced accepted-looking checkpoints that could not warm-start anything:
 # eligible lineage is written only by the screen's materialize_result, after
 # the acceptance gate, and the bare launcher also attaches no live integrity
-# guard. The screen fixes both, publishes <PREFIX>-s_both-s<SEED>.result.json
+# guard. The screen fixes both, publishes <PREFIX>-<LADDER_ARM>-s<SEED>.result.json
 # with the accepted checkpoint path and its lineage digest, and is safe to
 # relaunch: a completed arm is re-validated, an unfinished one resumes.
 #
@@ -134,9 +134,12 @@ elif [ "$LADDER_PROFILE" = "bridge" ]; then
              BRIDGE_PROVENANCE="$BRIDGE_PROVENANCE" \
              BRIDGE_REASON="$BRIDGE_REASON")
 fi
-# All three profiles are one s_both arm at SEED, so the result/marker naming
-# below is identical for a rung, a graft and a bridge.
-TAG="${PREFIX}-s_both-s${SEED}"
+# Rung-shaped profiles run ONE arm at SEED; the arm is LADDER_ARM (s_both by
+# default, see run_reward_screen.sh), and the screen names the result after
+# it, so the marker must be derived from the same value. A hardcoded s_both
+# here silently failed to publish the first r0 rung (D256).
+LADDER_ARM="${LADDER_ARM:-s_both}"
+TAG="${PREFIX}-${LADDER_ARM}-s${SEED}"
 
 mkdir -p "$OUT"
 
@@ -212,7 +215,7 @@ timeout --signal=TERM --kill-after=120 "$((DEADLINE_HOURS * 3600))" \
       EXPECTED_POOL_HASH="$EXPECTED_POOL_HASH" \
       LADDER_ENDZONE_MAXDIST="$RUNG" LADDER_RESET_PCT="$RESET_PCT" \
       LADDER_SEED="$SEED" LADDER_CHAIN_LR_SCALE="${LADDER_CHAIN_LR_SCALE:-1}" \
-      LADDER_ARM="${LADDER_ARM:-s_both}" \
+      LADDER_ARM="$LADDER_ARM" \
       SCRIPTED_BANK_TAG="$SCRIPTED_BANK_TAG" \
       SCRIPTED_BOT_TYPE="$SCRIPTED_BOT_TYPE" \
       bash "$C/tools/run_reward_screen.sh"

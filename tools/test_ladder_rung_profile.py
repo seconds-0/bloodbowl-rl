@@ -319,10 +319,15 @@ class LadderRungProfileTests(unittest.TestCase):
         self.assertNotIn("env SCREEN_PROFILE=ladder-rung", source)
         self.assertIn('env ${GRAFT_ENV[@]+"${GRAFT_ENV[@]}"}', source)
         self.assertIn('GRAFT_REASON="$GRAFT_REASON")', source)
-        # One TAG for both profiles: the screen names a graft arm exactly like
-        # a rung arm (s_both at SEED), so RESULT/COMPLETE resolve unchanged and
-        # LADDER_RUNG_COMPLETE.json is published the same way.
-        self.assertEqual(source.count('TAG="${PREFIX}-s_both-s${SEED}"'), 1)
+        # One TAG shape for every rung-shaped profile: the screen names the arm
+        # <PREFIX>-<LADDER_ARM>-s<SEED>, so RESULT/COMPLETE must be derived from
+        # the same LADDER_ARM the screen received. A hardcoded s_both here made
+        # the first r0 rung complete its screen and then fail to publish its
+        # marker (D256).
+        self.assertEqual(source.count('TAG="${PREFIX}-${LADDER_ARM}-s${SEED}"'), 1)
+        self.assertNotIn('TAG="${PREFIX}-s_both-s${SEED}"', source)
+        self.assertIn('LADDER_ARM="${LADDER_ARM:-s_both}"', source)
+        self.assertIn('LADDER_ARM="$LADDER_ARM" \\', source)
         self.assertIn('RESULT="$SCREEN_DIR/${TAG}.result.json"', source)
         self.assertIn('"profile": profile,', source)
         self.assertIn('if profile == "graft":\n    payload["graft"] = {', source)
