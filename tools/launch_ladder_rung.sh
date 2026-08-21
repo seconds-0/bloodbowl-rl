@@ -212,6 +212,7 @@ timeout --signal=TERM --kill-after=120 "$((DEADLINE_HOURS * 3600))" \
       EXPECTED_POOL_HASH="$EXPECTED_POOL_HASH" \
       LADDER_ENDZONE_MAXDIST="$RUNG" LADDER_RESET_PCT="$RESET_PCT" \
       LADDER_SEED="$SEED" LADDER_CHAIN_LR_SCALE="${LADDER_CHAIN_LR_SCALE:-1}" \
+      LADDER_ARM="${LADDER_ARM:-s_both}" \
       SCRIPTED_BANK_TAG="$SCRIPTED_BANK_TAG" \
       SCRIPTED_BOT_TYPE="$SCRIPTED_BOT_TYPE" \
       bash "$C/tools/run_reward_screen.sh"
@@ -295,6 +296,7 @@ payload = {
     "regression_gate": regression,
     "trainer_exit": 0,
     "profile": profile,
+    "arm": os.environ.get("LADDER_ARM", "s_both"),
 }
 if profile == "graft":
     payload["graft"] = {

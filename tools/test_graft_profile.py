@@ -382,7 +382,7 @@ class GraftScreenProfileTests(unittest.TestCase):
         self.assertIn("ladder-rung, graft, bridge, paired-confirmation", source)
         self.assertRegex(
             source,
-            r"\n  graft\)\n(?:.*\n)*?\s+arms=\(s_both\)\n\s+seeds=\(\"\$LADDER_SEED\"\)",
+            r"\n  graft\)\n(?:.*\n)*?\s+arms=\(\"\$LADDER_ARM\"\)\n\s+seeds=\(\"\$LADDER_SEED\"\)",
         )
         # And it is the graft-v6 bootstrap mode, never lineage-v6.
         self.assertIn('if [ "$SCREEN_PROFILE" = "graft" ]; then\n'

@@ -52,8 +52,24 @@ class LadderRungProfileTests(unittest.TestCase):
         self.assertIn("ladder-rung", source)
         self.assertRegex(
             source,
-            r"ladder-rung\)\n(?:.*\n)*?\s+arms=\(s_both\)\n\s+seeds=\(\"\$LADDER_SEED\"\)",
+            r"ladder-rung\)\n(?:.*\n)*?\s+arms=\(\"\$LADDER_ARM\"\)\n\s+seeds=\(\"\$LADDER_SEED\"\)",
         )
+
+    def test_arm_knob_defaults_to_s_both_and_maps_sparse_to_s4(self):
+        source = SCREEN.read_text(encoding="utf-8")
+        self.assertIn('LADDER_ARM="${LADDER_ARM:-s_both}"', source)
+        self.assertIn("s_both|sparse) ;;", source)
+        self.assertRegex(
+            source,
+            r"sparse\) printf '%s\\n' \"\$ROOT/puffer/config/rewards/s4_sparse.json\"")
+        self.assertIn('"arm": os.environ["LADDER_ARM"]', source)
+
+    def test_rung_rejects_unknown_arm(self):
+        result = run(SCREEN, {**BASE, "LADDER_ENDZONE_MAXDIST": "6",
+                              "LADDER_RESET_PCT": "0.5", "LADDER_SEED": "42",
+                              "LADDER_ARM": "r0"})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("LADDER_ARM must be s_both or sparse", result.stderr)
 
     def test_rung_requires_explicit_maxdist(self):
         result = run(SCREEN, {**BASE, "LADDER_RESET_PCT": "0.5",

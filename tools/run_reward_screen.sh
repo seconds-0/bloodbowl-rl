@@ -40,6 +40,17 @@ ARM_DETACH="${ARM_DETACH:-1}"
 LADDER_ENDZONE_MAXDIST="${LADDER_ENDZONE_MAXDIST:-}"
 LADDER_RESET_PCT="${LADDER_RESET_PCT:-}"
 LADDER_SEED="${LADDER_SEED:-}"
+# Rung-shaped profiles (ladder-rung, graft, bridge) train ONE arm. s_both is
+# the lineage reward every root and bank was minted on; `sparse` is the
+# objective-only manifest (s4_sparse: td/win/draw, no dense terms) added after
+# the 2026-08-20 audit measured s0_both at 94% shaping mass with a net-negative
+# touchdown step. The arm is a declared factor, recorded in the contract and
+# the rung marker, never inferred from the reward hash after the fact.
+LADDER_ARM="${LADDER_ARM:-s_both}"
+case "$LADDER_ARM" in
+  s_both|sparse) ;;
+  *) echo "LADDER_ARM must be s_both or sparse, got '$LADDER_ARM'" >&2; exit 1 ;;
+esac
 # ladder-rung only: scripted BANK. SCRIPTED_BANK_TAG=b+1 replaces frozen bank
 # b's seat with a scripted bot in that bank's envs (bloodbowl.h
 # scripted_bank_tag; contact 0 / offense 1). Unset means 0 for a rung and is
@@ -453,7 +464,7 @@ case "$SCREEN_PROFILE" in
     # is the only place an implementation change may enter an existing lineage.
     # It stays usable for the rungs after the bridge, whose warm is new-build
     # while the pool still carries old-build banks.
-    arms=(s_both)
+    arms=("$LADDER_ARM")
     seeds=("$LADDER_SEED")
     ;;
   bridge)
@@ -469,7 +480,7 @@ case "$SCREEN_PROFILE" in
     # lineage entry point, not a comparison. docs/audit-2026-08-20.md F2 is
     # why it exists: the July obs-v4 R0 checkpoint plays ~6x better than the
     # obs-v6 lineage that was restarted from random weights in its place.
-    arms=(s_both)
+    arms=("$LADDER_ARM")
     seeds=("$LADDER_SEED")
     ;;
   ladder-rung)
@@ -483,7 +494,7 @@ case "$SCREEN_PROFILE" in
     # with no live integrity guard attached. One arm, one seed, on purpose: a
     # rung is a lineage step, not a comparison. Deliberately s_both, the same
     # corrected reward every genesis root and pool bank was minted on.
-    arms=(s_both)
+    arms=("$LADDER_ARM")
     seeds=("$LADDER_SEED")
     ;;
   paired-confirmation)
@@ -527,6 +538,8 @@ manifest_for() {
     s_possession_only) printf '%s\n' "$ROOT/puffer/config/rewards/s1_possession_only.json" ;;
     s_gain_only) printf '%s\n' "$ROOT/puffer/config/rewards/s2_gain_only.json" ;;
     s_neither) printf '%s\n' "$ROOT/puffer/config/rewards/s3_neither.json" ;;
+    # Objective-only (D252 audit arm): touchdown, win, draw; every dense term 0.
+    sparse) printf '%s\n' "$ROOT/puffer/config/rewards/s4_sparse.json" ;;
     possession_only) printf '%s\n' "$ROOT/puffer/config/rewards/p1_possession_only.json" ;;
     gain_only) printf '%s\n' "$ROOT/puffer/config/rewards/p2_gain_only.json" ;;
     neither) printf '%s\n' "$ROOT/puffer/config/rewards/r2_no_possession.json" ;;
@@ -571,7 +584,7 @@ SCREEN_PLAN="$(
       BRIDGE_WARM_OBS_VERSION="$BRIDGE_WARM_OBS_VERSION" \
       BRIDGE_PROVENANCE="$BRIDGE_PROVENANCE" \
       BRIDGE_REASON="$BRIDGE_REASON" \
-      LADDER_CHAIN_LR_SCALE="$LADDER_CHAIN_LR_SCALE" LR="$LR" ENT_COEF="$ENT_COEF" \
+      LADDER_CHAIN_LR_SCALE="$LADDER_CHAIN_LR_SCALE" LADDER_ARM="$LADDER_ARM" LR="$LR" ENT_COEF="$ENT_COEF" \
       "$PYBIN" - "$SCREEN_MANIFEST" <<'PY'
 import datetime, hashlib, json, os, pathlib, subprocess, sys, sysconfig
 
@@ -959,6 +972,7 @@ if profile in ("ladder-rung", "graft", "bridge"):
         # which opponent the rung trained against, not merely which starts.
         "scripted_bank_tag": int(os.environ["SCRIPTED_BANK_TAG"]),
         "scripted_bot_type": int(os.environ["SCRIPTED_BOT_TYPE"]),
+        "arm": os.environ["LADDER_ARM"],
         "chain_lr_scale": float(os.environ["LADDER_CHAIN_LR_SCALE"]),
         "learning_rate": float(os.environ["LR"]),
         "ent_coef": float(os.environ["ENT_COEF"]),

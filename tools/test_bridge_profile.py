@@ -276,7 +276,7 @@ class BridgeScreenProfileTests(unittest.TestCase):
         self.assertIn("ladder-rung, graft, bridge, paired-confirmation", source)
         self.assertRegex(
             source,
-            r"\n  bridge\)\n(?:.*\n)*?\s+arms=\(s_both\)\n\s+seeds=\(\"\$LADDER_SEED\"\)",
+            r"\n  bridge\)\n(?:.*\n)*?\s+arms=\(\"\$LADDER_ARM\"\)\n\s+seeds=\(\"\$LADDER_SEED\"\)",
         )
         self.assertIn('elif [ "$SCREEN_PROFILE" = "bridge" ]; then\n'
                       '    BOOTSTRAP_MODE=bridge-v4', source)
