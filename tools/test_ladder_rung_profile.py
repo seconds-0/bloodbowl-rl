@@ -470,12 +470,18 @@ class LadderChainLrScaleTests(unittest.TestCase):
                          "LADDER_ENDZONE_MAXDIST": "0", "LADDER_RESET_PCT": "0.25",
                          "LADDER_SEED": "43", "LADDER_CHAIN_LR_SCALE": "0.1"})
         self.assertNotIn("LADDER_CHAIN_LR_SCALE is only valid", r.stderr)
-        for bad in ("0", "1.5", "0.1x", "2"):
+        for bad in ("0", "0.1x", "4.5", "5", "0.0001"):
             r = run(SCREEN, {**base, "SCREEN_PROFILE": "ladder-rung",
                              "LADDER_ENDZONE_MAXDIST": "0", "LADDER_RESET_PCT": "0.25",
                              "LADDER_SEED": "43", "LADDER_CHAIN_LR_SCALE": bad})
             self.assertNotEqual(r.returncode, 0, bad)
             self.assertIn("LADDER_CHAIN_LR_SCALE must be", r.stderr, bad)
+        # LR probes above 1 (audit F3: Muon, lr is the relative step) are valid.
+        for good in ("1.5", "2", "2.0", "4"):
+            r = run(SCREEN, {**base, "SCREEN_PROFILE": "ladder-rung",
+                             "LADDER_ENDZONE_MAXDIST": "0", "LADDER_RESET_PCT": "0.25",
+                             "LADDER_SEED": "43", "LADDER_CHAIN_LR_SCALE": good})
+            self.assertNotIn("LADDER_CHAIN_LR_SCALE must be", r.stderr, good)
         # A valid scale passes the validator and fails later on the warm file.
         r = run(SCREEN, {**base, "SCREEN_PROFILE": "ladder-rung",
                          "LADDER_ENDZONE_MAXDIST": "0", "LADDER_RESET_PCT": "0.25",
