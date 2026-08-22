@@ -214,7 +214,7 @@ case "$LADDER_CHAIN_LR_SCALE" in
   [1-4]|[1-4].[0-9]|[1-4].[0-9][0-9]|[1-4].[0-9][0-9][0-9]|0.[0-9]|0.[0-9][0-9]|0.[0-9][0-9][0-9]) ;;
   *) echo "LADDER_CHAIN_LR_SCALE must be a decimal in (0,4] with at most three decimals" >&2; exit 1 ;;
 esac
-case "$LADDER_CHAIN_LR_SCALE" in 4.[0-9]*[1-9]*) echo "LADDER_CHAIN_LR_SCALE must be <= 4" >&2; exit 1 ;; esac
+case "$LADDER_CHAIN_LR_SCALE" in 4.*[1-9]*) echo "LADDER_CHAIN_LR_SCALE must be <= 4" >&2; exit 1 ;; esac
 case "$LADDER_CHAIN_LR_SCALE" in 0|0.0|0.00|0.000) echo "LADDER_CHAIN_LR_SCALE must be > 0" >&2; exit 1 ;; esac
 if [ "$LADDER_CHAIN_LR_SCALE" != "1" ]; then
   LR="$(python3 -c 'import sys; print(repr(float(sys.argv[1])*float(sys.argv[2])))' "$LR" "$LADDER_CHAIN_LR_SCALE")"
