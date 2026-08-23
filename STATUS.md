@@ -66,7 +66,8 @@ Watch: `~/bin/v2watch`. Exams: `/root/native_exam.sh <ckpt> <outdir> away home o
 | chain 3 | chain 2 output (`1787338735330`) | r0_full | 5.6e-4 (scale 2.0), bot share 0.12 | DONE 3B, eval tds 1.724 (D259); exam contact 0.456/0.484 & 0.403/0.501, offense 0.522/0.424: **worse on every cell, LR x2 rejected** |
 | chain 4 | chain 2 output (`1787338735330`) | r0_full | 2.8e-4, bot share 0.12, **offense bot (type 1)** | DONE 3B Aug 23 00:50 PDT, eval tds 1.655 (D260); exam contact 0.507/0.484 & 0.441/0.471, offense 0.583/0.351: offense-bot cell flat, conceded vs the contact bot up 0.06-0.09, **offense bot rejected** |
 | chain 5 | chain 2 output (`1787338735330`) | r0_full | 2.8e-4, **entropy-only x2 (`LADDER_CHAIN_ENT_SCALE=2.0`, ent_coef 0.018)**, bot share 0.12, contact bot | DONE 3B Aug 23 08:58 PDT, eval tds 1.457 (D261); exam contact 0.467/0.400 & 0.429/0.386, offense 0.537/0.322: champion down on every cell, conceded down on two, **entropy x2 rejected** |
-| chain 6 | chain 2 output (`1787338735330`) | r0_full | 2.8e-4, entropy scale 1.0, bot share 0.12, contact bot (no knob) | running since Aug 23 09:18 PDT, 3B, `runs/ladder-d0-r0chain6-20260823`, ETA ~16:00 Aug 23 |
+| chain 6 | chain 2 output (`1787338735330`) | r0_full | 2.8e-4, entropy scale 1.0, bot share 0.12, contact bot (no knob) | DONE 3B Aug 23 15:57 PDT, eval tds 1.576 (D262), ckpt `1787501452582/0000002999975936.bin`; exam s42 contact 0.521/0.444 & 0.453/0.430, offense 0.563/0.329: AWAY champion up, HOME conceded up; **verdict pending a seed-43 re-exam of chain 2 and chain 6** |
+| chain 7 | winner of chain 2 vs chain 6 (two-seed mean) | **r0_dist_half** (dist_ball 0.01, dist_endzone 0.02) | 2.8e-4, bot share 0.12, contact bot | planned: first reward-anneal step, script `/home/rache/r0chain7.sh` |
 
 ## AUDIT 2026-08-20 (D252): the obs-v6 lineage was frozen by its recipe; the July policy is ~6x better
 
@@ -106,8 +107,11 @@ Watch: `~/bin/v2watch`. Exams: `/root/native_exam.sh <ckpt> <outdir> away home o
 | chain 3 = LR x2 (rejected) [native] | D259 | 0.456 / 0.484 | 0.403 / 0.501 | offense-bot AWAY 0.522 / 0.424 |
 | chain 4 = offense bot in the bank seat (rejected) [native] | D260 | 0.507 / 0.484 | 0.441 / 0.471 | offense-bot AWAY 0.583 / 0.351 |
 | chain 5 = entropy-only x2 (rejected) [native] | D261 | 0.467 / 0.400 | 0.429 / 0.386 | offense-bot AWAY 0.537 / 0.322 |
+| chain 6 = plain r0 continuation from chain 2, seed 42 [native] | D262 | 0.521 / 0.444 | 0.453 / 0.430 | offense-bot AWAY 0.563 / 0.329 |
+| chain 2 seed-43 re-exam [native] | D262 | pending | pending | pending |
+| chain 6 seed-43 re-exam [native] | D262 | pending | pending | pending |
 
-Verdict (revised D257): the bridged July lineage, continued under its own reward at full LR, is the live frontier; two rungs (2B + 3B) raised every champion cell twice over, and chain 1 also cut the HOME conceded rate by 0.04. Conceded AWAY is the flat cell; chain 2 doubled the bot share (0.12) and cut it. Chain 2 is the frontier: all three probes from it (LR x2, offense bot, entropy x2) lost on the exam, and training the bank seat without the contact bot gave back 0.06-0.09 conceded TD/game on the contact cells (D260).
+Verdict (revised D257): the bridged July lineage, continued under its own reward at full LR, is the live frontier; two rungs (2B + 3B) raised every champion cell twice over, and chain 1 also cut the HOME conceded rate by 0.04. Conceded AWAY is the flat cell; chain 2 doubled the bot share (0.12) and cut it. Chain 2 is the frontier: all three probes from it (LR x2, offense bot, entropy x2) lost on the exam, and training the bank seat without the contact bot gave back 0.06-0.09 conceded TD/game on the contact cells (D260). Chain 6 (plain continuation) split the cells on seed 42 (D262); note every exam before D262 is the seed-42 draw and chain 2 is a marker that won on that draw, so both sides are being re-examined on seed 43 before the verdict.
 
 ## Kickoff exam (D50) — chain2 checkpoint, 2026-08-18
 
