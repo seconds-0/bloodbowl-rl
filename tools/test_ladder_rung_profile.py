@@ -490,3 +490,36 @@ class LadderChainLrScaleTests(unittest.TestCase):
         source = SCREEN.read_text(encoding="utf-8")
         self.assertIn('"chain_lr_scale": float(os.environ["LADDER_CHAIN_LR_SCALE"])', source)
         self.assertIn('"learning_rate": float(os.environ["LR"])', source)
+
+
+class LadderChainEntScaleTests(unittest.TestCase):
+    def test_ent_scale_is_rung_only_validated_and_entropy_only(self):
+        base = {"WARM": "missing.bin", "POOL": "missing-pool", "STEPS": "5000000000",
+                "EXPECTED_POOL_HASH": "0" * 64}
+        rung = {**base, "SCREEN_PROFILE": "ladder-rung", "LADDER_ENDZONE_MAXDIST": "0",
+                "LADDER_RESET_PCT": "0.25", "LADDER_SEED": "43"}
+        r = run(SCREEN, {**base, "SCREEN_PROFILE": "control-final",
+                         "LADDER_CHAIN_ENT_SCALE": "2"})
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("LADDER_CHAIN_ENT_SCALE is only valid with SCREEN_PROFILE=ladder-rung", r.stderr)
+        for bad in ("0", "0.1x", "4.5", "5", "0.0001"):
+            r = run(SCREEN, {**rung, "LADDER_CHAIN_ENT_SCALE": bad})
+            self.assertNotEqual(r.returncode, 0, bad)
+            self.assertIn("LADDER_CHAIN_ENT_SCALE must be", r.stderr, bad)
+        for good in ("0.5", "1.5", "2", "2.0", "4"):
+            r = run(SCREEN, {**rung, "LADDER_CHAIN_ENT_SCALE": good})
+            self.assertNotIn("LADDER_CHAIN_ENT_SCALE must be", r.stderr, good)
+            self.assertIn("missing warm checkpoint", r.stderr, good)
+        source = SCREEN.read_text(encoding="utf-8")
+        # The entropy scale multiplies ENT_COEF only, after the joint LR scale,
+        # and is recorded in the screen manifest beside the LR scale.
+        self.assertIn('"chain_ent_scale": float(os.environ["LADDER_CHAIN_ENT_SCALE"])', source)
+        lr_block = source.index('"$LR" "$LADDER_CHAIN_LR_SCALE"')
+        ent_block = source.index('"$ENT_COEF" "$LADDER_CHAIN_ENT_SCALE"')
+        self.assertLess(lr_block, ent_block)
+        self.assertNotIn('"$LR" "$LADDER_CHAIN_ENT_SCALE"', source)
+        launcher = RUNG.read_text(encoding="utf-8")
+        self.assertIn('LADDER_CHAIN_ENT_SCALE="${LADDER_CHAIN_ENT_SCALE:-1}"', launcher)
+        self.assertIn('"chain_ent_scale": float(os.environ.get("LADDER_CHAIN_ENT_SCALE", "1"))', launcher)
+        stage = (ROOT / "tools/ladder_stage.sh").read_text(encoding="utf-8")
+        self.assertIn('[ -z "${LADDER_CHAIN_ENT_SCALE:-}" ] || export LADDER_CHAIN_ENT_SCALE', stage)

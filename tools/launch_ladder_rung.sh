@@ -36,6 +36,8 @@
 #   LADDER_CHAIN_LR_SCALE (default 1; D245 proposed 0.1 to resume a chain near
 #     the warm rung's final LR/entropy, but the 2026-08-20 audit F1 found 0.1
 #     freezes training under Muon, so leave it at 1 unless experimenting)
+#   LADDER_CHAIN_ENT_SCALE (default 1; scales ONLY the entropy coefficient,
+#     on top of LADDER_CHAIN_LR_SCALE, for an entropy-only probe)
 #   PREFIX (default ladder-d<RUNG>-s<SEED>-<STAMP>)  STAMP  OUT  C
 #   DEADLINE_HOURS (default 36)
 #   SCRIPTED_BANK_TAG (default 0)  SCRIPTED_BOT_TYPE (default 0)
@@ -215,6 +217,7 @@ timeout --signal=TERM --kill-after=120 "$((DEADLINE_HOURS * 3600))" \
       EXPECTED_POOL_HASH="$EXPECTED_POOL_HASH" \
       LADDER_ENDZONE_MAXDIST="$RUNG" LADDER_RESET_PCT="$RESET_PCT" \
       LADDER_SEED="$SEED" LADDER_CHAIN_LR_SCALE="${LADDER_CHAIN_LR_SCALE:-1}" \
+      LADDER_CHAIN_ENT_SCALE="${LADDER_CHAIN_ENT_SCALE:-1}" \
       LADDER_ARM="$LADDER_ARM" \
       SCRIPTED_BANK_TAG="$SCRIPTED_BANK_TAG" \
       SCRIPTED_BOT_TYPE="$SCRIPTED_BOT_TYPE" \
@@ -284,6 +287,7 @@ payload = {
     "scripted_bank_tag": int(scripted_bank_tag),
     "scripted_bot_type": int(scripted_bot_type),
     "chain_lr_scale": float(os.environ.get("LADDER_CHAIN_LR_SCALE", "1")),
+    "chain_ent_scale": float(os.environ.get("LADDER_CHAIN_ENT_SCALE", "1")),
     "steps": str(steps),
     "seed": int(seed),
     "log": result["log"],

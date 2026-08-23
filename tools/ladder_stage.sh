@@ -31,6 +31,7 @@
 #   POOL_ANCHOR=<ckpt> weak-anchor bank that never rotates (default: PREV_POOL's
 #     bank 0; D244)
 #   LADDER_CHAIN_LR_SCALE  forwarded to launch_ladder_rung.sh when set (D244)
+#   LADDER_CHAIN_ENT_SCALE forwarded when set (entropy-only scale, default 1)
 #   SCRIPTED_BANK_TAG / SCRIPTED_BOT_TYPE  scripted bank for this rung
 #     (forwarded to launch_ladder_rung.sh only when set; unset = ordinary rung)
 #   LADDER_PROFILE=graft + GRAFT_FROM_SOURCE_SHA256 / GRAFT_FROM_PATCH_BUNDLE_SHA256
@@ -223,6 +224,7 @@ if [ -n "$PREV_COMPLETE" ] && [ -z "${LADDER_CHAIN_LR_SCALE:-}" ]; then
   export LADDER_CHAIN_LR_SCALE=1.0
 fi
 [ -z "${LADDER_CHAIN_LR_SCALE:-}" ] || export LADDER_CHAIN_LR_SCALE
+[ -z "${LADDER_CHAIN_ENT_SCALE:-}" ] || export LADDER_CHAIN_ENT_SCALE
 [ -z "${SCRIPTED_BANK_TAG:-}" ] || export SCRIPTED_BANK_TAG
 [ -z "${SCRIPTED_BOT_TYPE:-}" ] || export SCRIPTED_BOT_TYPE
 [ -z "${LADDER_PROFILE:-}" ] || export LADDER_PROFILE

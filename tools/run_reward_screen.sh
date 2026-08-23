@@ -88,6 +88,11 @@ BRIDGE_REASON="${BRIDGE_REASON:-}"
 # clipfrac 0.000 on 38,206 of 38,207 updates), so 1 is the default everywhere
 # again; the knob stays for explicit experiments. 1 = the fixed contract.
 LADDER_CHAIN_LR_SCALE="${LADDER_CHAIN_LR_SCALE:-1}"
+# ladder-rung / graft / bridge only: scale ONLY the entropy coefficient, on
+# top of LADDER_CHAIN_LR_SCALE (which scales LR and entropy together). Lets a
+# chained rung probe entropy alone; 1 = the fixed contract. Same domain and
+# validation as the LR scale.
+LADDER_CHAIN_ENT_SCALE="${LADDER_CHAIN_ENT_SCALE:-1}"
 
 # Fixed Stage-1 causal contract. Assign, rather than inherit, every optional
 # launcher input which could alter optimization, batching, or pool allocation.
@@ -219,6 +224,19 @@ case "$LADDER_CHAIN_LR_SCALE" in 0|0.0|0.00|0.000) echo "LADDER_CHAIN_LR_SCALE m
 if [ "$LADDER_CHAIN_LR_SCALE" != "1" ]; then
   LR="$(python3 -c 'import sys; print(repr(float(sys.argv[1])*float(sys.argv[2])))' "$LR" "$LADDER_CHAIN_LR_SCALE")"
   ENT_COEF="$(python3 -c 'import sys; print(repr(float(sys.argv[1])*float(sys.argv[2])))' "$ENT_COEF" "$LADDER_CHAIN_LR_SCALE")"
+fi
+if [ "$RUNG_LIKE" != "1" ] && [ "$LADDER_CHAIN_ENT_SCALE" != "1" ]; then
+  echo "LADDER_CHAIN_ENT_SCALE is only valid with SCREEN_PROFILE=ladder-rung, graft or bridge" >&2
+  exit 1
+fi
+case "$LADDER_CHAIN_ENT_SCALE" in
+  [1-4]|[1-4].[0-9]|[1-4].[0-9][0-9]|[1-4].[0-9][0-9][0-9]|0.[0-9]|0.[0-9][0-9]|0.[0-9][0-9][0-9]) ;;
+  *) echo "LADDER_CHAIN_ENT_SCALE must be a decimal in (0,4] with at most three decimals" >&2; exit 1 ;;
+esac
+case "$LADDER_CHAIN_ENT_SCALE" in 4.*[1-9]*) echo "LADDER_CHAIN_ENT_SCALE must be <= 4" >&2; exit 1 ;; esac
+case "$LADDER_CHAIN_ENT_SCALE" in 0|0.0|0.00|0.000) echo "LADDER_CHAIN_ENT_SCALE must be > 0" >&2; exit 1 ;; esac
+if [ "$LADDER_CHAIN_ENT_SCALE" != "1" ]; then
+  ENT_COEF="$(python3 -c 'import sys; print(repr(float(sys.argv[1])*float(sys.argv[2])))' "$ENT_COEF" "$LADDER_CHAIN_ENT_SCALE")"
 fi
 case "$SCREEN_PROFILE" in
   distance-possession|possession-gain|possession-gain-exact|exact-action-canary|genesis|genesis-pool|control-final|ladder-rung|graft|bridge)
@@ -604,7 +622,8 @@ SCREEN_PLAN="$(
       BRIDGE_WARM_OBS_VERSION="$BRIDGE_WARM_OBS_VERSION" \
       BRIDGE_PROVENANCE="$BRIDGE_PROVENANCE" \
       BRIDGE_REASON="$BRIDGE_REASON" \
-      LADDER_CHAIN_LR_SCALE="$LADDER_CHAIN_LR_SCALE" LADDER_ARM="$LADDER_ARM" LR="$LR" ENT_COEF="$ENT_COEF" \
+      LADDER_CHAIN_LR_SCALE="$LADDER_CHAIN_LR_SCALE" LADDER_CHAIN_ENT_SCALE="$LADDER_CHAIN_ENT_SCALE" \
+      LADDER_ARM="$LADDER_ARM" LR="$LR" ENT_COEF="$ENT_COEF" \
       "$PYBIN" - "$SCREEN_MANIFEST" <<'PY'
 import datetime, hashlib, json, os, pathlib, subprocess, sys, sysconfig
 
@@ -994,6 +1013,7 @@ if profile in ("ladder-rung", "graft", "bridge"):
         "scripted_bot_type": int(os.environ["SCRIPTED_BOT_TYPE"]),
         "arm": os.environ["LADDER_ARM"],
         "chain_lr_scale": float(os.environ["LADDER_CHAIN_LR_SCALE"]),
+        "chain_ent_scale": float(os.environ["LADDER_CHAIN_ENT_SCALE"]),
         "learning_rate": float(os.environ["LR"]),
         "ent_coef": float(os.environ["ENT_COEF"]),
     }
