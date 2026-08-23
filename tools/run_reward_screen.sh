@@ -50,11 +50,13 @@ LADDER_SEED="${LADDER_SEED:-}"
 # July checkpoint can be continued under the reward its critic was fitted to:
 # D253 measured that switching that warm to s0_both or to sparse at LR 2.8e-4
 # decays it within 500M steps, and a same-reward continuation is the control
-# that separates reward mismatch from the optimizer step.
+# that separates reward mismatch from the optimizer step. `r0_dist_half` is
+# the first distance-anneal step (r0_full with both raw-delta distance
+# coefficients halved) for a chained rung warm-started from a fitted r0 rung.
 LADDER_ARM="${LADDER_ARM:-s_both}"
 case "$LADDER_ARM" in
-  s_both|sparse|r0) ;;
-  *) echo "LADDER_ARM must be s_both, sparse or r0, got '$LADDER_ARM'" >&2; exit 1 ;;
+  s_both|sparse|r0|r0_dist_half) ;;
+  *) echo "LADDER_ARM must be s_both, sparse, r0 or r0_dist_half, got '$LADDER_ARM'" >&2; exit 1 ;;
 esac
 # ladder-rung only: scripted BANK. SCRIPTED_BANK_TAG=b+1 replaces frozen bank
 # b's seat with a scripted bot in that bank's envs (bloodbowl.h
@@ -561,6 +563,9 @@ SCREEN_COMPLETE="$OUT_DIR/SCREEN_COMPLETE.json"
 manifest_for() {
   case "$1" in
     r0) printf '%s\n' "$ROOT/puffer/config/rewards/r0_full.json" ;;
+    # Distance anneal step 1 (chained from a fitted r0 rung): r0_full with both
+    # legacy raw-delta distance coefficients halved, everything else identical.
+    r0_dist_half) printf '%s\n' "$ROOT/puffer/config/rewards/r0_dist_half.json" ;;
     r1) printf '%s\n' "$ROOT/puffer/config/rewards/r1_no_distance.json" ;;
     r2) printf '%s\n' "$ROOT/puffer/config/rewards/r2_no_possession.json" ;;
     r3) printf '%s\n' "$ROOT/puffer/config/rewards/r3_minimal_block.json" ;;
