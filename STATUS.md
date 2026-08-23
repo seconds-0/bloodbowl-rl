@@ -63,7 +63,8 @@ Watch: `~/bin/v2watch`. Exams: `/root/native_exam.sh <ckpt> <outdir> away home o
 | bridge 3 | July R0 s42 (bridge-v4) | **r0_full** (the warm's own reward) | 2.8e-4 | **DONE 2B, eval tds 1.585 (D256); exam contact 0.433/0.435 & 0.388/0.456, offense 0.508/0.345 = project records** |
 | chain 1 | bridge 3 output (`1787297626522`) | r0_full | 2.8e-4 (scale 1.0) | **DONE 3B** Aug 21 11:38 PDT, `runs/ladder-d0-r0chain1-20260821`, ckpt `1787314366343/0000002999975936.bin`, eval tds 1.555 / perf 0.627 (D257); **exam contact 0.486/0.433 & 0.463/0.416, offense 0.555/0.346 = every cell a new record** |
 | chain 2 | chain 1 output (`1787314366343`) | r0_full | 2.8e-4, bot share **0.12** | **DONE 3B, eval tds 1.399 (D258); exam contact 0.491/0.426 & 0.462/0.384, offense 0.578/0.345: conceded down, kept** |
-| chain 3 | chain 2 output (`1787338735330`) | r0_full | **5.6e-4 (scale 2.0)**, bot share 0.12 | running since Aug 22 10:04 PDT, 3B, `runs/ladder-d0-r0chain3-20260822`, ETA ~16:40 |
+| chain 3 | chain 2 output (`1787338735330`) | r0_full | 5.6e-4 (scale 2.0), bot share 0.12 | DONE 3B, eval tds 1.724 (D259); exam contact 0.456/0.484 & 0.403/0.501, offense 0.522/0.424: **worse on every cell, LR x2 rejected** |
+| chain 4 | chain 2 output (`1787338735330`) | r0_full | 2.8e-4, bot share 0.12, **offense bot (type 1)** | running since Aug 22 18:06 PDT, 3B, `runs/ladder-d0-r0chain4-20260822`, ETA ~00:15 Aug 23 |
 
 ## AUDIT 2026-08-20 (D252): the obs-v6 lineage was frozen by its recipe; the July policy is ~6x better
 
@@ -100,6 +101,7 @@ Watch: `~/bin/v2watch`. Exams: `/root/native_exam.sh <ckpt> <outdir> away home o
 | **bridge 3 = July R0 s42 + r0_full + bot bank, 2B** [native] | D256 | **0.433 / 0.435** | **0.388 / 0.456** | **offense-bot AWAY 0.508 / 0.345** |
 | **chain 1 = bridge 3 + 3B more under r0_full (bot share 0.06)** [native] | D257 | **0.486 / 0.433** | **0.463 / 0.416** | **offense-bot AWAY 0.555 / 0.346** |
 | **chain 2 = +bot share 0.12, 3B** [native] | D258 | **0.491 / 0.426** | **0.462 / 0.384** | **offense-bot AWAY 0.578 / 0.345** |
+| chain 3 = LR x2 (rejected) [native] | D259 | 0.456 / 0.484 | 0.403 / 0.501 | offense-bot AWAY 0.522 / 0.424 |
 
 Verdict (revised D257): the bridged July lineage, continued under its own reward at full LR, is the live frontier; two rungs (2B + 3B) raised every champion cell twice over, and chain 1 also cut the HOME conceded rate by 0.04. Conceded AWAY is the flat cell; chain 2 doubles the bot share (0.12) to target it.
 
