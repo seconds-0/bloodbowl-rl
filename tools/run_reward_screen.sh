@@ -55,8 +55,8 @@ LADDER_SEED="${LADDER_SEED:-}"
 # coefficients halved) for a chained rung warm-started from a fitted r0 rung.
 LADDER_ARM="${LADDER_ARM:-s_both}"
 case "$LADDER_ARM" in
-  s_both|sparse|r0|r0_dist_half|r0_dist_quarter|r0_dist_zero|r0_dist_ball_half|r0_poss_half|r0_poss_quarter|r0_gain_half) ;;
-  *) echo "LADDER_ARM must be s_both, sparse, r0, r0_dist_half, r0_dist_quarter, r0_dist_zero, r0_dist_ball_half, r0_poss_half, r0_poss_quarter or r0_gain_half, got '$LADDER_ARM'" >&2; exit 1 ;;
+  s_both|sparse|r0|r0_dist_half|r0_dist_quarter|r0_dist_zero|r0_dist_ball_half|r0_poss_half|r0_poss_quarter|r0_poss_zero|r0_gain_half) ;;
+  *) echo "LADDER_ARM must be s_both, sparse, r0, r0_dist_half, r0_dist_quarter, r0_dist_zero, r0_dist_ball_half, r0_poss_half, r0_poss_quarter, r0_poss_zero or r0_gain_half, got '$LADDER_ARM'" >&2; exit 1 ;;
 esac
 # ladder-rung only: scripted BANK. SCRIPTED_BANK_TAG=b+1 replaces frozen bank
 # b's seat with a scripted bot in that bank's envs (bloodbowl.h
@@ -580,6 +580,9 @@ manifest_for() {
     # Possession-annuity quarter step, chained from the r0_poss_half rung only
     # if that step held on the two-seed exam.
     r0_poss_quarter) printf '%s\n' "$ROOT/puffer/config/rewards/r0_poss_quarter.json" ;;
+    # Possession annuity removed, chained from the r0_poss_quarter rung only if
+    # that step held on the two-seed exam (D266 accepted the half step).
+    r0_poss_zero) printf '%s\n' "$ROOT/puffer/config/rewards/r0_poss_zero.json" ;;
     # Ball-gain-only half step (annuity and both distance terms intact): the
     # other half of the D178 decomposition, chained from the chain 2 frontier.
     r0_gain_half) printf '%s\n' "$ROOT/puffer/config/rewards/r0_gain_half.json" ;;
