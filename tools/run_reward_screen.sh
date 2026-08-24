@@ -55,8 +55,8 @@ LADDER_SEED="${LADDER_SEED:-}"
 # coefficients halved) for a chained rung warm-started from a fitted r0 rung.
 LADDER_ARM="${LADDER_ARM:-s_both}"
 case "$LADDER_ARM" in
-  s_both|sparse|r0|r0_dist_half) ;;
-  *) echo "LADDER_ARM must be s_both, sparse, r0 or r0_dist_half, got '$LADDER_ARM'" >&2; exit 1 ;;
+  s_both|sparse|r0|r0_dist_half|r0_dist_quarter|r0_dist_zero) ;;
+  *) echo "LADDER_ARM must be s_both, sparse, r0, r0_dist_half, r0_dist_quarter or r0_dist_zero, got '$LADDER_ARM'" >&2; exit 1 ;;
 esac
 # ladder-rung only: scripted BANK. SCRIPTED_BANK_TAG=b+1 replaces frozen bank
 # b's seat with a scripted bot in that bank's envs (bloodbowl.h
@@ -566,6 +566,10 @@ manifest_for() {
     # Distance anneal step 1 (chained from a fitted r0 rung): r0_full with both
     # legacy raw-delta distance coefficients halved, everything else identical.
     r0_dist_half) printf '%s\n' "$ROOT/puffer/config/rewards/r0_dist_half.json" ;;
+    # Anneal steps 2 and 3: quarter, then zero (same family, reached only by
+    # chaining from an accepted earlier anneal rung).
+    r0_dist_quarter) printf '%s\n' "$ROOT/puffer/config/rewards/r0_dist_quarter.json" ;;
+    r0_dist_zero) printf '%s\n' "$ROOT/puffer/config/rewards/r0_dist_zero.json" ;;
     r1) printf '%s\n' "$ROOT/puffer/config/rewards/r1_no_distance.json" ;;
     r2) printf '%s\n' "$ROOT/puffer/config/rewards/r2_no_possession.json" ;;
     r3) printf '%s\n' "$ROOT/puffer/config/rewards/r3_minimal_block.json" ;;
