@@ -12,6 +12,7 @@ artifact I/O and assert on specific messages, never on exit status alone.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
@@ -58,11 +59,28 @@ class LadderRungProfileTests(unittest.TestCase):
     def test_arm_knob_defaults_to_s_both_and_maps_sparse_to_s4(self):
         source = SCREEN.read_text(encoding="utf-8")
         self.assertIn('LADDER_ARM="${LADDER_ARM:-s_both}"', source)
-        self.assertIn("s_both|sparse|r0|r0_dist_half|r0_dist_quarter|r0_dist_zero|r0_dist_ball_half|r0_poss_half|r0_poss_quarter|r0_poss_zero|r0_gain_half|r0_poss_half_gain_half) ;;", source)
+        self.assertIn("s_both|sparse|r0|r0_dist_half|r0_dist_quarter|r0_dist_zero|r0_dist_ball_half|r0_poss_half|r0_poss_quarter|r0_poss_zero|r0_gain_half|r0_poss_half_gain_half|r0_blockev_half) ;;", source)
         self.assertRegex(
             source,
             r"sparse\) printf '%s\\n' \"\$ROOT/puffer/config/rewards/s4_sparse.json\"")
         self.assertIn('"arm": os.environ["LADDER_ARM"]', source)
+
+    def test_blockev_half_arm_halves_only_the_block_ev_family(self):
+        source = SCREEN.read_text(encoding="utf-8")
+        self.assertRegex(
+            source,
+            r"r0_blockev_half\) printf '%s\\n' \"\$ROOT/puffer/config/rewards/r0_blockev_half\.json\"")
+        rewards = SCREEN.parent.parent / "puffer/config/rewards"
+        base = json.loads((rewards / "r0_poss_half.json").read_text(encoding="utf-8"))["reward"]
+        arm = json.loads((rewards / "r0_blockev_half.json").read_text(encoding="utf-8"))["reward"]
+        self.assertEqual(set(base), set(arm))
+        family = {"reward_k_kd", "reward_k_value", "reward_k_ball",
+                  "reward_k_seq", "reward_k_turnover"}
+        for key, value in base.items():
+            if key in family:
+                self.assertAlmostEqual(arm[key], value / 2.0, places=9, msg=key)
+            else:
+                self.assertEqual(arm[key], value, msg=key)
 
     def test_frozen_bank_pct_is_overridable_and_validated(self):
         source = SCREEN.read_text(encoding="utf-8")
@@ -84,7 +102,7 @@ class LadderRungProfileTests(unittest.TestCase):
                               "LADDER_RESET_PCT": "0.5", "LADDER_SEED": "42",
                               "LADDER_ARM": "r9"})
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("LADDER_ARM must be s_both, sparse, r0, r0_dist_half, r0_dist_quarter, r0_dist_zero, r0_dist_ball_half, r0_poss_half, r0_poss_quarter, r0_poss_zero, r0_gain_half or r0_poss_half_gain_half", result.stderr)
+        self.assertIn("LADDER_ARM must be s_both, sparse, r0, r0_dist_half, r0_dist_quarter, r0_dist_zero, r0_dist_ball_half, r0_poss_half, r0_poss_quarter, r0_poss_zero, r0_gain_half, r0_poss_half_gain_half or r0_blockev_half", result.stderr)
 
     def test_rung_requires_explicit_maxdist(self):
         result = run(SCREEN, {**BASE, "LADDER_RESET_PCT": "0.5",

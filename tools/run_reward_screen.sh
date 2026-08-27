@@ -55,8 +55,8 @@ LADDER_SEED="${LADDER_SEED:-}"
 # coefficients halved) for a chained rung warm-started from a fitted r0 rung.
 LADDER_ARM="${LADDER_ARM:-s_both}"
 case "$LADDER_ARM" in
-  s_both|sparse|r0|r0_dist_half|r0_dist_quarter|r0_dist_zero|r0_dist_ball_half|r0_poss_half|r0_poss_quarter|r0_poss_zero|r0_gain_half|r0_poss_half_gain_half) ;;
-  *) echo "LADDER_ARM must be s_both, sparse, r0, r0_dist_half, r0_dist_quarter, r0_dist_zero, r0_dist_ball_half, r0_poss_half, r0_poss_quarter, r0_poss_zero, r0_gain_half or r0_poss_half_gain_half, got '$LADDER_ARM'" >&2; exit 1 ;;
+  s_both|sparse|r0|r0_dist_half|r0_dist_quarter|r0_dist_zero|r0_dist_ball_half|r0_poss_half|r0_poss_quarter|r0_poss_zero|r0_gain_half|r0_poss_half_gain_half|r0_blockev_half) ;;
+  *) echo "LADDER_ARM must be s_both, sparse, r0, r0_dist_half, r0_dist_quarter, r0_dist_zero, r0_dist_ball_half, r0_poss_half, r0_poss_quarter, r0_poss_zero, r0_gain_half, r0_poss_half_gain_half or r0_blockev_half, got '$LADDER_ARM'" >&2; exit 1 ;;
 esac
 # ladder-rung only: scripted BANK. SCRIPTED_BANK_TAG=b+1 replaces frozen bank
 # b's seat with a scripted bot in that bank's envs (bloodbowl.h
@@ -590,6 +590,12 @@ manifest_for() {
     # single-knob gain step from the chain 9 (r0_poss_half) frontier after the
     # quarter annuity step (chain 10) was rejected on the three-seed exam (D268).
     r0_poss_half_gain_half) printf '%s\n' "$ROOT/puffer/config/rewards/r0_poss_half_gain_half.json" ;;
+    # Block-EV family half step, chained from the accepted r0_poss_half rung
+    # only: the five reward_k_ coefficients are a linear weighted sum over
+    # pre-roll bb_block_ev probabilities, so halving all five halves that
+    # shaping mass with every relative weight preserved. First anneal outside
+    # the distance / possession / ball-gain families.
+    r0_blockev_half) printf '%s\n' "$ROOT/puffer/config/rewards/r0_blockev_half.json" ;;
     r1) printf '%s\n' "$ROOT/puffer/config/rewards/r1_no_distance.json" ;;
     r2) printf '%s\n' "$ROOT/puffer/config/rewards/r2_no_possession.json" ;;
     r3) printf '%s\n' "$ROOT/puffer/config/rewards/r3_minimal_block.json" ;;
