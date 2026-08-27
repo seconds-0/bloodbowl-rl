@@ -11,6 +11,18 @@ ladder because the bare rung launcher never published eligible lineage
 (D235). No production reward or default has changed; `s0_both` remains the
 experimental lineage reward.
 
+**Update 2026-08-27 (D281).** The hill-climb from the July R0 warm has run 19
+chained rungs. The frontier is unchanged since D266: chain 9
+(`runs/ladder-d0-r0chain9-20260824`, `r0_poss_half`), two-seed exam
+0.534/0.393, 0.488/0.396, 0.575/0.336. The one-family-at-a-time shaping anneal
+is now finished and every family - distance, possession annuity, ball gain,
+block EV - came back flat or worse on the native kickoff exam at 3B, the last
+of them (`r0_blockev_half`) on a two-training-seed replicate. The knob screen
+ended earlier at D274. What is left is above this loop: an opponent population
+(blocked by the 0.124 frozen-bank arithmetic ceiling, needs an env/launcher
+change) or a capability `r0_poss_half` cannot express. No production reward or
+default has changed.
+
 ## Live campaign: `week-20260815` (RTX 2070, systemd supervisor)
 
 Backplay ladder as one-arm screens (`SCREEN_PROFILE=ladder-rung`, PR #93):
@@ -78,8 +90,9 @@ Watch: `~/bin/v2watch`. Exams: `/root/native_exam.sh <ckpt> <outdir> away home o
 | chain 15 | chain 9 output (`1787584031608`) | **r0_poss_half** (frontier reward) | **bot share 0.18** (the last knob on the brief's list) | **NEVER RAN** (D274): the launcher's config guard refused it before training - four frozen banks would reserve 736 rows of a 512-row budget (`apb` 1024, `4*int(apb*pct) < apb//2`), so the share ceiling is 0.124 and chain 2's promoted 0.12 already sits at it. The knob screen is over; raising bot exposure needs a code change, not a variable |
 | chain 15h | **chain 14 output** (`1787716871429`) | **r0_poss_half** (frontier reward) | 2.8e-4, bot share 0.12, contact bot, **no knob: horizon probe** (cumulative 6B of continuation from chain 9) | DONE 3B Aug 26 11:14 PDT, eval tds 1.790 / perf 0.581, ckpt `1787744102664` (sha `a9cdc325`); **REJECTED** (D275): two-seed mean 0.512/0.433, 0.450/0.409, 0.594/0.368 vs chain 9's 0.534/0.393, 0.488/0.396, 0.575/0.336 - contact AWAY champion -0.022 / net -0.062, HOME champion -0.038 / net -0.051. Against chain 14's mean every cell moves by <=0.02: 6B of continuation lands where 3B did, so the horizon direction is answered negatively and no chain 16 is launched from this recipe |
 | chain 16 | **chain 2** (`ladder-d0-r0chain2-20260821`, chain 9's own parent) | **r0_poss_half** (frontier reward) | 2.8e-4, bot share 0.12, contact bot, **no knob: SEED 42 -> 43 replicate of chain 9** | COMPLETE Aug 26 19:04 PDT (`runs/ladder-d0-r0chain16-seedrep-20260826`, ckpt `1787771854045/...2999975936.bin`). Noise-floor control, not a challenger. Result (D277): champion cells reproduce to 0.011, conceded cells move up to 0.086 from reseeding alone; conceded-driven rejections retracted as underpowered, champion-driven ones stand |
-| chain 17 | chain 9 output (`1787584031608`) | **r0_blockev_half** (block-EV family halved) | 2.8e-4, bot share 0.12, contact bot, seed 42 | DONE Aug 27 02:40 PDT, 3B clean (error_episodes 0, illegal_frac 0). Exam seeds 42/43: contact champion flat and direction-inconsistent (-0.020/+0.015 AWAY, +0.008/-0.018 HOME vs the pooled baseline), conceded not scored (one seed, D277), offense AWAY champion 0.599 two-seed mean = +0.028 and up on BOTH exam seeds, passing the pre-registered champion test; candidate positive pending its seed-43 replicate (D279a) |
-| chain 18 | chain 16 output (seed-43 twin of chain 9) | r0_blockev_half | 2.8e-4, bot share 0.12, contact bot, **seed 43** | DONE Aug 27 09:44 PDT, 3B clean at the exact step cap (error_episodes 0, illegal_frac 0), eval tds 1.688 / perf 0.578, ckpt `1787824919893/...2999975936.bin`. Two-seed exam launched 09:47 PDT (unit `exam18-1787849157`); the seed-matched replicate that makes `r0_blockev_half` the first two-training-seed arm of the campaign, judged on the chains 17+18 mean vs the chain 9 + chain 16 pooled baseline (D280) |
+| chain 17 | chain 9 output (`1787584031608`) | **r0_blockev_half** (block-EV family halved) | 2.8e-4, bot share 0.12, contact bot, seed 42 | DONE Aug 27 02:40 PDT, 3B clean (error_episodes 0, illegal_frac 0). Exam seeds 42/43: contact champion flat, offense AWAY champion 0.599 two-seed mean (+0.028). Read as a candidate positive in D279a; **that read is RETRACTED by D281** - it was one training seed, and chain 18's replicate drops the pooled offense mean to +0.010 |
+| chain 18 | chain 16 output (seed-43 twin of chain 9) | r0_blockev_half | 2.8e-4, bot share 0.12, contact bot, **seed 43** | DONE Aug 27 09:44 PDT, 3B clean at the exact step cap (error_episodes 0, illegal_frac 0), eval tds 1.688 / perf 0.578, ckpt `1787824919893/...2999975936.bin`. Exam s42 contact 0.527/0.441 & 0.504/0.418, offense 0.564/0.387; s43 0.517/0.440 & 0.488/0.455, 0.560/0.390. Pooled chains 17+18 mean 0.528/0.449, 0.492/0.438, 0.581/0.394 vs the chain 9 + chain 16 baseline 0.537/0.416, 0.492/0.406, 0.571/0.350: champion deltas -0.009 / -0.001 / +0.010, no cell clears the pre-registered +0.02 floor; **`r0_blockev_half` REJECTED** (D281), chain 9 stays the frontier |
+| chain 19 | chain 16 output (seed-43 twin of chain 9) | **r0_poss_half** (frontier reward) | 2.8e-4, bot share 0.12, contact bot, seed 43, **no knob: FILLER** | RUNNING since Aug 27 10:48 PDT (`runs/ladder-d0-r0chain19-plain-20260827`, unit `r0chain19-1787851690`), 3B, ETA about 7.5 h. Explicitly filler (D282): tests nothing, but is the seed-43 twin of the chain 14 plain control, so the pair gives a two-training-seed read on the D273/D275 plateau claim. Not a promotion candidate |
 ## AUDIT 2026-08-20 (D252): the obs-v6 lineage was frozen by its recipe; the July policy is ~6x better
 
 `docs/audit-2026-08-20.md`. Chained rungs at `LADDER_CHAIN_LR_SCALE=0.1` had kl/clipfrac 0.000 on 38,206/38,207 updates (not training); the native optimizer is Muon (lr = relative step, ours 2-50x below reference); reward is 94% shaping and the TD step nets -0.56 to the scorer; training `tds` is a both-sides mixture. Campaign `rig-s42-bot-20260820` HALTED, rung 2 stopped, timers off. Next: bridge July R0 s42 onto the current build (reviewed `bridge` lineage mode) and hill-climb from there: LR probe, sparse-reward arm, bot share, entropy, gamma.
@@ -118,6 +131,9 @@ Watch: `~/bin/v2watch`. Exams: `/root/native_exam.sh <ckpt> <outdir> away home o
 | chain 3 = LR x2 (rejected) [native] | D259 | 0.456 / 0.484 | 0.403 / 0.501 | offense-bot AWAY 0.522 / 0.424 |
 | chain 4 = offense bot in the bank seat (rejected) [native] | D260 | 0.507 / 0.484 | 0.441 / 0.471 | offense-bot AWAY 0.583 / 0.351 |
 | chain 5 = entropy-only x2 (rejected) [native] | D261 | 0.467 / 0.400 | 0.429 / 0.386 | offense-bot AWAY 0.537 / 0.322 |
+| chain 18 = r0_blockev_half seed 43, exam s42 [native] | D281 | 0.527 / 0.441 | 0.504 / 0.418 | offense-bot AWAY 0.564 / 0.387 |
+| chain 18, exam s43 [native] | D281 | 0.517 / 0.440 | 0.488 / 0.455 | offense-bot AWAY 0.560 / 0.390 |
+| **r0_blockev_half pooled arm mean (chains 17+18 x exam seeds 42/43)** [native] | D281 | 0.528 / 0.449 | 0.492 / 0.438 | offense-bot AWAY 0.581 / 0.394 (**rejected vs baseline 0.537/0.416, 0.492/0.406, 0.571/0.350**) |
 | chain 6 = plain r0 continuation from chain 2, seed 42 [native] | D262 | 0.521 / 0.444 | 0.453 / 0.430 | offense-bot AWAY 0.563 / 0.329 |
 | chain 2 seed-43 re-exam [native] | D263 | 0.482 / 0.417 | 0.438 / 0.397 | offense-bot AWAY 0.575 / 0.335 |
 | chain 6 seed-43 re-exam [native] | D263 | 0.490 / 0.429 | 0.451 / 0.437 | offense-bot AWAY 0.569 / 0.335 |
