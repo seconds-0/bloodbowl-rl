@@ -26,7 +26,7 @@ def run(env, cwd=None):
     merged = {k: v for k, v in os.environ.items()
               if k not in ("RUNG", "RESET_PCT", "SEED", "STAMP", "WARM",
                            "PREV_COMPLETE", "PREV_POOL", "PIN", "STEPS",
-                           "POOL_KEEP")
+                           "POOL_KEEP", "NUM_FROZEN_BANKS")
               and not k.startswith(("LADDER_", "SCRIPTED_", "GRAFT_", "BRIDGE_"))}
     merged.update(env)
     return subprocess.run(
@@ -144,7 +144,7 @@ class LadderStageTests(unittest.TestCase):
     def test_pool_composition_promotes_warm_and_retires_oldest(self):
         source = STAGE.read_text(encoding="utf-8")
         match = re.search(
-            r"mapfile -t SEEDS < <\(python3 - \"\$PREV_POOL\" \"\$WARM\" \"\$POOL_KEEP\" \"\$RUNG\" \"\$POOL_ANCHOR\" <<'PY'\n(.*?)\nPY\n",
+            r"mapfile -t SEEDS < <\(python3 - \"\$PREV_POOL\" \"\$WARM\" \"\$POOL_KEEP\" \"\$RUNG\" \"\$POOL_ANCHOR\" \"\$NUM_FROZEN_BANKS\" <<'PY'\n(.*?)\nPY\n",
             source, re.S)
         self.assertIsNotNone(match, "embedded pool resolver not found")
         resolver = match.group(1)
@@ -161,7 +161,7 @@ class LadderStageTests(unittest.TestCase):
             warm = Path(tmp) / "rung6.bin"
             warm.write_bytes(b"y")
             out = subprocess.run(
-                ["python3", "-", str(prev), str(warm), "3", "9", ""],
+                ["python3", "-", str(prev), str(warm), "3", "9", "", "4"],
                 input=resolver, text=True, stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE, check=False)
             self.assertEqual(out.returncode, 0, out.stderr)
@@ -174,14 +174,14 @@ class LadderStageTests(unittest.TestCase):
             ])
             # An explicit anchor overrides bank 0 and is labelled as such.
             out = subprocess.run(
-                ["python3", "-", str(prev), str(warm), "3", "9", srcs[1]],
+                ["python3", "-", str(prev), str(warm), "3", "9", srcs[1], "4"],
                 input=resolver, text=True, stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE, check=False)
             self.assertEqual(out.returncode, 0, out.stderr)
             self.assertEqual(out.stdout.strip().splitlines()[0], f"gen1={srcs[1]}")
             # The anchor may not be the warm checkpoint.
             out = subprocess.run(
-                ["python3", "-", str(prev), str(warm), "3", "9", str(warm)],
+                ["python3", "-", str(prev), str(warm), "3", "9", str(warm), "4"],
                 input=resolver, text=True, stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE, check=False)
             self.assertNotEqual(out.returncode, 0)
@@ -194,7 +194,7 @@ class LadderStageTests(unittest.TestCase):
                 {"bank": 2, "name": "gen3", "source": srcs[3]},
                 {"bank": 3, "name": "rung9warm", "source": str(warm)}]}))
             out = subprocess.run(
-                ["python3", "-", str(prev), str(warm), "3", "9", ""],
+                ["python3", "-", str(prev), str(warm), "3", "9", "", "4"],
                 input=resolver, text=True, stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE, check=False)
             self.assertEqual(out.returncode, 0, out.stderr)
@@ -202,6 +202,71 @@ class LadderStageTests(unittest.TestCase):
             self.assertEqual(len(lines), 4)
             self.assertEqual(sum(1 for l in lines if l.endswith(str(warm))), 1)
             self.assertTrue(lines[0].startswith("gen1="))  # anchor sticks
+
+    def test_pool_composition_scales_to_eight_banks(self):
+        """D282 follow-up: the opponent population is the bank count, and the
+        composition rule (weak anchor, newest kept, warm promoted) has to hold
+        at 8 banks, the BBE_MAX_BANKS cap, exactly as it does at 4."""
+        source = STAGE.read_text(encoding="utf-8")
+        match = re.search(
+            r"mapfile -t SEEDS < <\(python3 - \"\$PREV_POOL\" \"\$WARM\" \"\$POOL_KEEP\" \"\$RUNG\" \"\$POOL_ANCHOR\" \"\$NUM_FROZEN_BANKS\" <<'PY'\n(.*?)\nPY\n",
+            source, re.S)
+        self.assertIsNotNone(match, "embedded pool resolver not found")
+        resolver = match.group(1)
+        with tempfile.TemporaryDirectory() as tmp:
+            prev = Path(tmp) / "prevpool"
+            prev.mkdir()
+            srcs = []
+            for i in range(8):
+                q = Path(tmp) / f"gen{i}.bin"
+                q.write_bytes(b"x")
+                srcs.append(str(q))
+            (prev / "league_seeds.json").write_text(json.dumps({"seeds": [
+                {"bank": i, "name": f"gen{i}", "source": srcs[i]}
+                for i in range(8)]}))
+            warm = Path(tmp) / "chain20.bin"
+            warm.write_bytes(b"y")
+            # POOL_KEEP = banks - 1: anchor + 6 newest kept + warm = 8.
+            out = subprocess.run(
+                ["python3", "-", str(prev), str(warm), "7", "20", "", "8"],
+                input=resolver, text=True, stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE, check=False)
+            self.assertEqual(out.returncode, 0, out.stderr)
+            lines = out.stdout.strip().splitlines()
+            self.assertEqual(len(lines), 8)
+            # Anchor sticks at bank 0, the oldest non-anchor (gen1) retires,
+            # and the warm enters as the newest bank.
+            self.assertEqual(lines[0], f"gen0={srcs[0]}")
+            self.assertEqual(lines[-1], f"rung20warm={warm}")
+            self.assertNotIn(f"gen1={srcs[1]}", lines)
+            # A pool too small to reach the requested width fails loudly
+            # rather than silently training against fewer opponents than
+            # declared. Widening from the current 4-bank pool needs a one-time
+            # 8-seed build; rotation alone cannot get there.
+            narrow = Path(tmp) / "narrowpool"
+            narrow.mkdir()
+            (narrow / "league_seeds.json").write_text(json.dumps({"seeds": [
+                {"bank": i, "name": f"gen{i}", "source": srcs[i]}
+                for i in range(4)]}))
+            out = subprocess.run(
+                ["python3", "-", str(narrow), str(warm), "7", "20", "", "8"],
+                input=resolver, text=True, stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE, check=False)
+            self.assertNotEqual(out.returncode, 0)
+            self.assertIn("could not compose exactly 8 banks", out.stderr)
+
+    def test_bank_count_is_validated_against_the_engine_cap(self):
+        source = STAGE.read_text(encoding="utf-8")
+        self.assertIn('NUM_FROZEN_BANKS="${NUM_FROZEN_BANKS:-4}"', source)
+        self.assertIn('POOL_KEEP="${POOL_KEEP:-$((NUM_FROZEN_BANKS - 1))}"', source)
+        with tempfile.TemporaryDirectory() as tmp:
+            for bad in ("0", "9", "abc"):
+                result = run({"C": tmp, "RUNG": "0", "RESET_PCT": "0",
+                              "SEED": "42", "STAMP": "t",
+                              "NUM_FROZEN_BANKS": bad})
+                self.assertNotEqual(result.returncode, 0, bad)
+                self.assertIn("NUM_FROZEN_BANKS must be an integer in 1..8",
+                              result.stdout, bad)
 
 
 if __name__ == "__main__":
