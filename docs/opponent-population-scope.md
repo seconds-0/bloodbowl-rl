@@ -104,36 +104,35 @@ From the live chain 19 script on the rig: `SCRIPTED_BANK_TAG=4`,
 Three distinct historical opponents. That is the population the last ten
 rejected rungs were trained against.
 
-## Change list
+## Change list: DONE
 
-Launcher only. No engine change, no patch bundle change, no rebuild. Three
-scripts, roughly a dozen lines, plus the one time pool build below.
+Implemented on branch `scope/frozen-bank-ceiling`, two atomic commits, default
+unchanged at 4 so every existing chain script is inert to it.
 
-1. `tools/run_reward_screen.sh:160`, `NUM_FROZEN_BANKS=4` becomes an env var
-   with a validated range 1 to 8, defaulting to 4 so every existing chain
-   script keeps its current behavior.
-2. `tools/run_reward_screen.sh:281`, the validation string "an integer in 0..4"
-   becomes 0 to `NUM_FROZEN_BANKS`.
-3. `tools/run_reward_ablation.sh:405`, same `NUM_FROZEN_BANKS=4` hardcode.
-4. `tools/run_reward_ablation.sh:422 and 425`, `total_frozen = 4 * per_bank`
-   and the "four banks reserve" error string become N aware.
-5. `tools/run_reward_ablation.sh:870`, the literal
-   `--vec.num-frozen-banks 4` takes the variable.
-6. `tools/ladder_stage.sh` builds the pool and hardcodes the count in its
-   embedded Python: `if len(out) != 4` twice (lines 183 and 190) and the
-   `if len(out) >= 4` pad loop at 186, plus the "fresh 4-bank league" contract
-   comment at line 11. `POOL_KEEP` is already a variable and becomes 7.
-7. `tools/test_ladder_rung_profile.py` asserts on exact source strings
-   (lines 87-88 are the pattern), so the new default line and the new error
-   text need their asserts updated, plus a case for the N range validation.
+- `5d7ecf8` launchers. `NUM_FROZEN_BANKS` becomes an env var validated to
+  1..8 in `run_reward_screen.sh` and `run_reward_ablation.sh`, the ablation
+  guard takes the count instead of assuming four, `--vec.num-frozen-banks`
+  takes the variable, and `SCRIPTED_BANK_TAG` validates against the count
+  (single digit, so the pre-existing refusal of non-canonical forms like "01"
+  is preserved).
+- `6bd9fb2` pool builder. Both `len(out) != 4` gates and the pad loop in
+  `ladder_stage.sh` take the requested width, and `POOL_KEEP` defaults to one
+  less than the bank count.
 
-Homebase runs `python3 -m unittest`, not pytest. The relevant suites are
-`tools.test_ladder_rung_profile`, `tools.test_ladder_knobs`,
-`tools.test_ladder_stage`, `tools.test_scripted_training_guard`, and from
-inside `tools/`, `test_reward_manifest`.
+Tests: `tools.test_ladder_rung_profile` gains bank-count validation and
+scripted-tag range cases; `tools.test_ladder_stage` gains an 8-bank
+composition test (anchor sticks, oldest non-anchor retires, warm promoted) and
+a too-narrow-pool case. 55 tests green across
+`test_ladder_rung_profile`, `test_ladder_knobs`, `test_ladder_stage`,
+`test_scripted_training_guard`, plus 39 in `test_reward_manifest` and
+`test_experiment_contracts` from inside `tools/`. Every other suite in
+`tools/` was run against pristine `origin/main` and this branch: the failure
+sets are identical (6 environment dependent suites fail both ways), so nothing
+regressed.
 
-Default stays 4 throughout, so this lands as an inert capability addition and
-chain 19 or any successor is unaffected until a script opts in.
+The 8-bank composition test earned its place immediately: the first draft of
+the resolver change shadowed the existing `banks` seed-list variable and the
+test caught it as a TypeError.
 
 ## How the pool is actually built, and why 8 is a continuation of D244
 
