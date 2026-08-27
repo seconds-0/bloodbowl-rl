@@ -288,6 +288,13 @@ LOG="${LOG:-/tmp/${TAG}.log}"
 TOTAL_AGENTS="${TOTAL_AGENTS:-2048}"
 NUM_BUFFERS="${NUM_BUFFERS:-2}"
 FROZEN_BANK_PCT="${FROZEN_BANK_PCT:-0.06}"
+# Banks reserved for the frozen selfplay pool. Capped at BBE_MAX_BANKS
+# (puffer/bloodbowl/bloodbowl.h); selfplay.py raises above the same 8 (D97-A).
+NUM_FROZEN_BANKS_REQ="${NUM_FROZEN_BANKS:-4}"
+case "$NUM_FROZEN_BANKS_REQ" in
+  [1-8]) ;;
+  *) echo "NUM_FROZEN_BANKS must be an integer in 1..8 (BBE_MAX_BANKS), got '$NUM_FROZEN_BANKS_REQ'" >&2; exit 1 ;;
+esac
 EXPECT_BYTES="${EXPECT_BYTES:-16066560}"
 LR="${LR:-0.00028}"
 ENT_COEF="${ENT_COEF:-0.009}"
@@ -402,13 +409,14 @@ if [ "$POOL_MODE" != "1" ]; then
   [ -z "$EXPECTED_POOL_HASH" ] || {
     echo "fresh-v6-qualification forbids EXPECTED_POOL_HASH" >&2; exit 1; }
 else
-  NUM_FROZEN_BANKS=4
+  NUM_FROZEN_BANKS="$NUM_FROZEN_BANKS_REQ"
   [ -n "$EXPECTED_POOL_HASH" ] || {
     echo "$BOOTSTRAP_MODE requires EXPECTED_POOL_HASH" >&2; exit 1; }
   read -r FROZEN_PER_BANK HISTORICAL_GAME_SHARE < <(
-    "$PYBIN" - "$TOTAL_AGENTS" "$NUM_BUFFERS" "$FROZEN_BANK_PCT" <<'PY'
+    "$PYBIN" - "$TOTAL_AGENTS" "$NUM_BUFFERS" "$FROZEN_BANK_PCT" "$NUM_FROZEN_BANKS" <<'PY'
 import math, sys
 total, buffers = map(int, sys.argv[1:3])
+banks = int(sys.argv[4])
 try:
     pct = float(sys.argv[3])
 except ValueError as exc:
@@ -419,10 +427,10 @@ apb = total // buffers
 per_bank = int(apb * pct)
 if per_bank <= 0:
     raise SystemExit("FROZEN_BANK_PCT rounds to zero rows per bank")
-total_frozen = 4 * per_bank
+total_frozen = banks * per_bank
 if total_frozen >= apb // 2:
     raise SystemExit(
-        f"four banks reserve {total_frozen} rows/buffer, must be < {apb//2}")
+        f"{banks} banks reserve {total_frozen} rows/buffer, must be < {apb//2}")
 print(per_bank, total_frozen / (apb / 2.0))
 PY
   )
@@ -867,7 +875,7 @@ else
   CMD+=(--selfplay.enabled 1 --selfplay.league-preseed "$POOL" \
     --selfplay.swap-winrate 1.1 --selfplay.opp-timeout-steps "$OPP_TIMEOUT" \
     --selfplay.snapshot-interval 1000000000000 \
-    --vec.num-frozen-banks 4 --vec.frozen-bank-pct "$FROZEN_BANK_PCT" \
+    --vec.num-frozen-banks "$NUM_FROZEN_BANKS" --vec.frozen-bank-pct "$FROZEN_BANK_PCT" \
     --load-model-path "$WARM")
   if [ "$SCRIPTED_BANK_TAG" != "0" ]; then
     # Team 1 (AWAY) is where tagged envs seat the frozen bank, and the guard
