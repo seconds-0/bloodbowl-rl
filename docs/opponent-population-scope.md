@@ -113,8 +113,8 @@ unchanged at 4 so every existing chain script is inert to it.
   1..8 in `run_reward_screen.sh` and `run_reward_ablation.sh`, the ablation
   guard takes the count instead of assuming four, `--vec.num-frozen-banks`
   takes the variable, and `SCRIPTED_BANK_TAG` validates against the count
-  (single digit, so the pre-existing refusal of non-canonical forms like "01"
-  is preserved).
+  (single digit, so the pre-existing refusal of forms with a leading zero
+  such as "01" is preserved).
 - `6bd9fb2` pool builder. Both `len(out) != 4` gates and the pad loop in
   `ladder_stage.sh` take the requested width, and `POOL_KEEP` defaults to one
   less than the bank count.
@@ -129,6 +129,22 @@ a too-narrow-pool case. 55 tests green across
 `tools/` was run against pristine `origin/main` and this branch: the failure
 sets are identical (6 environment dependent suites fail both ways), so nothing
 regressed.
+
+Failure modes were checked against the real extracted guard, not a
+reimplementation of it: 4 x 0.12 and 8 x 0.06 both pass and both report an
+identical frozen share of 0.953, while 8 x 0.12 and D274's 4 x 0.18 are
+rejected with "8 banks reserve 976 rows/buffer, must be < 512". An out of
+range bank count fails immediately in `run_reward_screen.sh`; an impossible
+count and share combination fails at the ablation guard, which sits before any
+build, copy or trainer launch, so a bad combination costs nothing.
+
+**What has not happened: none of this has run on hardware.** The 8-bank path
+is unit tested and validated up to launch, and no 8-bank rung has executed
+under the current recurrent native trainer, which has only ever been exercised
+at 4 banks or fewer. The launch verification step above (manifest shows
+`num_frozen_banks 8`, state report covers all 9 bank buffer groups, first
+window telemetry sane) is the first real execution and should be treated as
+such.
 
 The 8-bank composition test earned its place immediately: the first draft of
 the resolver change shadowed the existing `banks` seed-list variable and the
