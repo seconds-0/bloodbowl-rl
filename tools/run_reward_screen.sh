@@ -596,6 +596,9 @@ manifest_for() {
     # shaping mass with every relative weight preserved. First anneal outside
     # the distance / possession / ball-gain families.
     r0_blockev_half) printf '%s\n' "$ROOT/puffer/config/rewards/r0_blockev_half.json" ;;
+    # r0_poss_half with the rush fine removed (reward_rush_cost 0.015 -> 0),
+    # the last nonzero shaping term in r0_poss_half no arm has ever varied.
+    r0_poss_half_rush_zero) printf '%s\n' "$ROOT/puffer/config/rewards/r0_poss_half_rush_zero.json" ;;
     r1) printf '%s\n' "$ROOT/puffer/config/rewards/r1_no_distance.json" ;;
     r2) printf '%s\n' "$ROOT/puffer/config/rewards/r2_no_possession.json" ;;
     r3) printf '%s\n' "$ROOT/puffer/config/rewards/r3_minimal_block.json" ;;
