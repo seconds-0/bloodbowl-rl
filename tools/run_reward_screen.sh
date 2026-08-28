@@ -55,8 +55,8 @@ LADDER_SEED="${LADDER_SEED:-}"
 # coefficients halved) for a chained rung warm-started from a fitted r0 rung.
 LADDER_ARM="${LADDER_ARM:-s_both}"
 case "$LADDER_ARM" in
-  s_both|sparse|r0|r0_dist_half|r0_dist_quarter|r0_dist_zero|r0_dist_ball_half|r0_poss_half|r0_poss_quarter|r0_poss_zero|r0_gain_half|r0_poss_half_gain_half|r0_blockev_half) ;;
-  *) echo "LADDER_ARM must be s_both, sparse, r0, r0_dist_half, r0_dist_quarter, r0_dist_zero, r0_dist_ball_half, r0_poss_half, r0_poss_quarter, r0_poss_zero, r0_gain_half, r0_poss_half_gain_half or r0_blockev_half, got '$LADDER_ARM'" >&2; exit 1 ;;
+  s_both|sparse|r0|r0_dist_half|r0_dist_quarter|r0_dist_zero|r0_dist_ball_half|r0_poss_half|r0_poss_quarter|r0_poss_zero|r0_gain_half|r0_poss_half_gain_half|r0_blockev_half|r0_poss_half_rush_zero) ;;
+  *) echo "LADDER_ARM must be s_both, sparse, r0, r0_dist_half, r0_dist_quarter, r0_dist_zero, r0_dist_ball_half, r0_poss_half, r0_poss_quarter, r0_poss_zero, r0_gain_half, r0_poss_half_gain_half, r0_blockev_half or r0_poss_half_rush_zero, got '$LADDER_ARM'" >&2; exit 1 ;;
 esac
 # ladder-rung only: scripted BANK. SCRIPTED_BANK_TAG=b+1 replaces frozen bank
 # b's seat with a scripted bot in that bank's envs (bloodbowl.h
