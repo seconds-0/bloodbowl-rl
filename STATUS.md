@@ -11,6 +11,28 @@ ladder because the bare rung launcher never published eligible lineage
 (D235). No production reward or default has changed; `s0_both` remains the
 experimental lineage reward.
 
+**Update 2026-08-28 (D289) - the loop is out of moves and the rig is parked on a decision from Alex.**
+Every direction available below the structural choice named in D275 is now
+closed with a ledger entry: the shaping inventory is empty (distance D264/D265,
+the possession/ball-gain decomposition D266/D267/D269/D270, the block-EV family
+D278/D281, the rush fine D289 - each varied one at a time from `r0_poss_half`,
+each null or negative, leaving only `reward_td` 0.4 and `reward_win` 0.6, which
+are the objective); the knob screen is closed twice over (bot share at the 0.124
+arithmetic ceiling D274, LR x2 rejected D259/D271, offense bot in the bank seat
+rejected D260/D272, entropy D262); the horizon direction is closed (6B cumulative
+continuation lands within 0.02 of 3B, D275); and plain continuation is a settled
+null across two parents and four training seeds (chains 14, 19, 20, 21 -
+D273/D284/D285/D287). Chain 9 remains the frontier at a pooled 0.537/0.416,
+0.492/0.406, 0.571/0.350.
+
+**The open question, which the loop cannot answer for itself:** which structural
+change to fund - (a) an opponent population, which needs an env/launcher change
+because the frozen-bank share is already at its 0.124 arithmetic ceiling, or (b) a
+capability `r0_poss_half` cannot express at 3B and this policy scale. Until one is
+named the rig is deliberately idle rather than spending 12 GPU-hours per rung to
+re-measure a result five runs have already established. No production reward or
+default has changed.
+
 **Update 2026-08-27 (D283/D284).** Chain 19, a plain 3B continuation testing
 nothing, came back ON the frontier (two-seed mean 0.533/0.483, 0.481/0.460,
 0.581/0.393, every champion cell inside 0.02 of chain 9) while chain 14, the
