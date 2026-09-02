@@ -203,34 +203,65 @@ exists to prevent, and would buy population in name only.
 
 ## Experiment design
 
-Chain 9 is already the matched control. It is 4 banks x 0.12 with the bot at
-tag 4, measured on three exam seeds, and it is the standing frontier. So only
-one new arm has to run:
+The matched controls already exist. Arm B warms from the chain 9 marker and
+trains 3B more, so its paired comparators are the plain continuations that did
+exactly that at 4 banks x 0.12: **chain 14 (training seed 42) and chain 20
+(training seed 44)**, both from the chain 9 marker, both `r0_poss_half`, both
+examined on two exam seeds (D273, D285). Chain 9 itself is not the paired
+control: it was warmed from chain 2, and its pool was [anchor-kickbot, bridge,
+chain1] + bot, while chains 14 and 20 trained against [anchor-kickbot, chain1,
+chain2] + bot (read from their `league_seeds.json` on the rig). Chain 9 stays
+the bar to beat under D268 as the pooled frontier.
 
 **Arm B: 8 banks x 0.06, bot at tag 8, everything else the kept chain 9
 recipe** (`r0_poss_half`, LR 2.8e-4, contact bot, 3B steps, warm from the
-chain 9 marker).
+chain 9 marker), run at training seeds 42 and 44 so each run has a paired
+4-bank twin.
 
-| | chain 9 (control, measured) | arm B |
+| | chains 14 / 20 (paired controls, measured) | arm B |
 |---|---|---|
 | total frozen share | 47.7% | 47.7% |
 | distinct historical opponents | 3 | 7 |
 | historical share | 35.7% | 41.6% |
 | scripted bot share | 11.9% | 6.0% |
 
+The arm B pool is a superset of the controls' population. Seats, oldest first
+(bank order sets the staleness weighting):
+
+| bank | seat | why |
+|---|---|---|
+| 0 | anchor-kickbot | the weak anchor, never rotates (D244) |
+| 1 | chain1 | in the controls' pool |
+| 2 | chain2 | in the controls' pool |
+| 3 | chain3 | weakest July-lineage rung (0.456/0.403/0.522), `r0` at LR x2 from chain 2; a tier between the anchor and the frontier |
+| 4 | chain11 | `r0_poss_half_gain_half`; concedes least on offense (0.30) of any examined rung, a distinct defensive profile |
+| 5 | chain13b | `r0_poss_half` trained with the OFFENSE bot in the bank seat; the only policy with a different opponent exposure |
+| 6 | chain17 | `r0_blockev_half`; frontier strength (0.517/0.552) under a different block economy |
+| 7 | warm = chain 9 | replaced by the contact bot at tag 8, exactly as tag 4 replaces the warm seat today |
+
+That is the D109 shape (weak anchor, tiers, specialists, frontier strength)
+rather than seven near-identical siblings. The August obs-v6 backplay accepts
+were excluded: they score 0.02 to 0.09 TD/game and concede over 1.2, which is
+the tier the anchor already fills, and adding more of it buys punching bags,
+not population.
+
 Total opponent share is held fixed. Two things move: population 3 to 7, and
 bot exposure 12% to 6%. **Those cannot be separated in one run**, because
 `SCRIPTED_BANK_TAG` is a single integer and the bot can hold exactly one seat.
 Halving per bank share necessarily halves the bot's seat with it.
 
-The honest way to handle that is sequencing, not a binding.c edit:
+That confound cuts one way. D250 is this campaign's strongest finding: bot
+exposure in the training distribution is the lever that moved every exam cell.
+So:
 
-- If arm B loses, stop. The lever is dead at matched share and no control is
-  needed.
-- If arm B wins, run **arm C: 4 banks x 0.06, bot at tag 4** (bot 6%,
-  3 historical at 18%). C shares arm B's bot exposure with chain 9's
-  population, so B vs C isolates population and C vs chain 9 isolates bot
-  exposure.
+- **If arm B wins**, that is the clean case: population helped despite half the
+  bot exposure.
+- **If arm B loses, the result is ambiguous** between "population does not
+  help" and "halving the bot hurt". It must not be journaled as "population
+  rejected". Arm C (4 banks x 0.06, bot at tag 4) shares arm B's bot exposure
+  with the controls' population, so B vs C would isolate population, but C also
+  drops total opponent share from 48% to 24%, which is its own change. C
+  narrows the ambiguity; it does not remove it.
 
 Adding a second bot seat would need a `scripted_bank_tag` to bitmask change in
 `binding.c` and `bloodbowl.h` and would re-scope this from a launcher change to
@@ -241,10 +272,18 @@ an engine change. Not worth it before arm B says anything.
 This campaign's own standards from D277 and D281 apply, and anything less will
 be bounced:
 
-- Two training seeds per arm. One training seed is not a result (D281 had to
+- Two training seeds per arm, 42 and 44, so each run pairs with a plain 4-bank
+  twin (chain 14, chain 20). One training seed is not a result (D281 had to
   retract D279a for exactly this).
 - Exam at seeds 42 and 43, a third seed if the two-seed read lands inside
   noise.
+- Two comparisons, both pre-registered: the paired one (arm B s42 vs chain 14,
+  arm B s44 vs chain 20, same warm, same steps, same recipe) answers "did the
+  population change the continuation", and the D268 one against the pooled
+  frontier (chain 9 + chain 16) answers "is it a new frontier". Plain
+  continuation is net-worse than chain 9 (D273/D285), so "beats 14/20 but not
+  the frontier" reads as: the population recovers what continuation loses, and
+  no more. Write that reading down as such, not as a win.
 - Champion cells only. Conceded cells move 0.086 from reseeding alone (D277)
   and are unscorable.
 - Use the operator's existing D268 rule verbatim rather than a second rule it
@@ -283,10 +322,10 @@ standing rule against starting a rung while an exam runs.
 
 ## Open questions for Alex
 
-1. Pool composition. Curated for behavioral spread per D109, or the 7 most
-   recent chain checkpoints? Curated is the stronger experiment and the slower
-   one.
-2. Whether to include the August backplay ladder accepts, which are obs-v6 but
-   from a different reward era and a much older policy generation.
+1. ~~Pool composition.~~ Resolved 2026-09-01 under "do next steps": curated per
+   D109, seats listed above. The composition is fixed for both training seeds;
+   changing it means restarting the arm.
+2. ~~Whether to include the August backplay ladder accepts.~~ Resolved: excluded,
+   see above.
 3. Whether an 8 bank pool should also become the default for future ladder
    rungs if arm B wins, or stay an arm.
