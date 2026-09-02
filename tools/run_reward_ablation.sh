@@ -503,6 +503,21 @@ sys.exit(0 if abs(manifest_gamma - train_gamma) <= 1e-9 else 1)
          "the distance channels would not be exact PBRS under this trainer" >&2
     exit 1
   fi
+
+  # Exact PBRS repays the whole accumulated potential in ONE terminal emission
+  # (`-Phi(s_T-1)`), while the matching `+Phi` increments were earned a square
+  # at a time and are individually far too small to clip. If that one-shot
+  # repayment exceeds PPO's [-1,1] clamp, the clamp truncates only the
+  # repayment -- the agent keeps shaping it was supposed to give back, and
+  # D226's telescoping guarantee breaks in its favour on exactly the behaviour
+  # the shaping teaches. reward_manifest.py already bounds each piece
+  # separately (25*k_fetch, 25*k_carry, abs(td)+abs(win)); this is the missing
+  # bound on them landing on the SAME agent-step. Gated on gamma>0: the legacy
+  # raw-delta path emits no terminal payback and must stay bit-identical.
+  if ! "$PYBIN" "$ROOT/tools/reward_clamp_guard.py" "$REWARD_MANIFEST" \
+       --root "$ROOT"; then
+    exit 1
+  fi
 fi
 
 WARM_HASH=""
