@@ -157,7 +157,18 @@ VF_COEF=1.0
 VF_CLIP_COEF=0.5
 MAX_GRAD_NORM=1.5
 EXPECTED_POOL_HASH="${EXPECTED_POOL_HASH:-}"
-NUM_FROZEN_BANKS=4
+# Frozen selfplay-pool banks. The engine caps this at BBE_MAX_BANKS
+# (puffer/bloodbowl/bloodbowl.h), and selfplay.py raises above the same 8
+# (D97-A). The guard that actually binds is in run_reward_ablation.sh:
+# NUM_FROZEN_BANKS * int(apb * FROZEN_BANK_PCT) < apb / 2, so the two settings
+# trade against each other: 4 banks at 0.12 and 8 banks at 0.06 both reserve
+# 488 of 1024 rows per buffer. Default stays 4, the composition every rung
+# through chain 19 trained against.
+NUM_FROZEN_BANKS="${NUM_FROZEN_BANKS:-4}"
+case "$NUM_FROZEN_BANKS" in
+  [1-8]) ;;
+  *) echo "NUM_FROZEN_BANKS must be an integer in 1..8 (BBE_MAX_BANKS), got '$NUM_FROZEN_BANKS'" >&2; exit 1 ;;
+esac
 MIN_TRAIN_GAMES=1
 MIN_EVAL_GAMES=10000
 MAX_PANEL_SILENCE_SECONDS=180
@@ -277,10 +288,14 @@ case "$SCREEN_PROFILE" in
       SCRIPTED_BANK_TAG="${SCRIPTED_BANK_TAG:-0}"
       SCRIPTED_BOT_TYPE="${SCRIPTED_BOT_TYPE:-0}"
       case "$SCRIPTED_BANK_TAG" in
-        0|1|2|3|4) ;;
-        *) echo "$SCREEN_PROFILE requires SCRIPTED_BANK_TAG as an integer in 0..4 (0 = no scripted bank)" >&2
+        [0-9]) ;;
+        *) echo "$SCREEN_PROFILE requires SCRIPTED_BANK_TAG as an integer in 0..$NUM_FROZEN_BANKS (0 = no scripted bank)" >&2
            exit 1 ;;
       esac
+      if [ "$SCRIPTED_BANK_TAG" -gt "$NUM_FROZEN_BANKS" ]; then
+        echo "$SCREEN_PROFILE requires SCRIPTED_BANK_TAG as an integer in 0..$NUM_FROZEN_BANKS (0 = no scripted bank)" >&2
+        exit 1
+      fi
       case "$SCRIPTED_BOT_TYPE" in
         0|1) ;;
         *) echo "$SCREEN_PROFILE requires SCRIPTED_BOT_TYPE as 0 (contact) or 1 (offense)" >&2

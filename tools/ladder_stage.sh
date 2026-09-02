@@ -8,7 +8,8 @@
 #
 #   WARM  = the previous rung's ACCEPTED checkpoint, read from its
 #           LADDER_RUNG_COMPLETE.json (or an explicit WARM for the first rung);
-#   POOL  = a fresh 4-bank league: the previous pool's newest three banks plus
+#   POOL  = a fresh NUM_FROZEN_BANKS-bank league: the previous pool's newest
+#           POOL_KEEP banks (the weak anchor included) plus
 #           the previous rung's accepted checkpoint, so opponent quality rises
 #           one bank per rung and the oldest genesis root retires; the pool is
 #           built once per stage under runs/<OUT>/pool and its identity is
@@ -57,7 +58,19 @@ export CUDA_VISIBLE_DEVICES=0
 : "${SEED:?SEED is required}"
 : "${STAMP:?STAMP is required}"
 STEPS="${STEPS:-5000000000}"
-POOL_KEEP="${POOL_KEEP:-3}"
+# Frozen selfplay-pool banks, capped at BBE_MAX_BANKS (bloodbowl.h). The pool
+# is composed as [weak anchor] + [POOL_KEEP - 1 newest kept] + [warm], so
+# POOL_KEEP tracks the bank count and defaults to one less than it. Raising
+# NUM_FROZEN_BANKS also needs FROZEN_BANK_PCT lowered to keep
+# NUM_FROZEN_BANKS * int(apb * pct) under apb / 2: 8 banks want 0.06 where
+# 4 want 0.12, both reserving 488 of 1024 rows per buffer.
+NUM_FROZEN_BANKS="${NUM_FROZEN_BANKS:-4}"
+case "$NUM_FROZEN_BANKS" in
+  [1-8]) ;;
+  *) echo "NUM_FROZEN_BANKS must be an integer in 1..8 (BBE_MAX_BANKS), got '$NUM_FROZEN_BANKS'" >&2; exit 1 ;;
+esac
+export NUM_FROZEN_BANKS
+POOL_KEEP="${POOL_KEEP:-$((NUM_FROZEN_BANKS - 1))}"
 POOL_ANCHOR="${POOL_ANCHOR:-}"
 PREV_COMPLETE="${PREV_COMPLETE:-}"
 PREV_POOL="${PREV_POOL:-}"
@@ -151,10 +164,11 @@ fi
 if [ -f "$POOL_OUT/POOL_IDENTITY.env" ]; then
   echo "=== reusing published pool for this stage ==="
 else
-  echo "=== building pool: newest $POOL_KEEP of $PREV_POOL + warm ==="
-  mapfile -t SEEDS < <(python3 - "$PREV_POOL" "$WARM" "$POOL_KEEP" "$RUNG" "$POOL_ANCHOR" <<'PY'
+  echo "=== building pool: $NUM_FROZEN_BANKS banks, newest $POOL_KEEP of $PREV_POOL + warm ==="
+  mapfile -t SEEDS < <(python3 - "$PREV_POOL" "$WARM" "$POOL_KEEP" "$RUNG" "$POOL_ANCHOR" "$NUM_FROZEN_BANKS" <<'PY'
 import json, os, sys
 prev_pool, warm, keep, rung, anchor = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4], sys.argv[5]
+want_banks = int(sys.argv[6])
 m = json.load(open(os.path.join(prev_pool, "league_seeds.json"), encoding="utf-8"))
 banks = m["seeds"]
 warm_real = os.path.realpath(warm)
@@ -180,15 +194,15 @@ while name in names:
     i += 1
     name = f"rung{rung}warm{i}"
 out.append(f"{name}={warm}")
-if len(out) != 4:
+if len(out) != want_banks:
     # Pad from the older end of the previous pool if the warm was already a bank.
     for b in reversed(rest[:-(keep - 1)] if keep > 1 else rest):
-        if len(out) >= 4:
+        if len(out) >= want_banks:
             break
         if b["name"] not in names:
             out.insert(1, f"{b['name']}={b['source']}")
-if len(out) != 4:
-    raise SystemExit(f"could not compose exactly four banks: {out}")
+if len(out) != want_banks:
+    raise SystemExit(f"could not compose exactly {want_banks} banks: {out}")
 print("\n".join(out))
 PY
   ) || exit 1

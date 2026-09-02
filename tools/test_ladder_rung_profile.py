@@ -97,6 +97,42 @@ class LadderRungProfileTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("FROZEN_BANK_PCT must be a decimal", result.stderr)
 
+    def test_num_frozen_banks_is_overridable_and_capped_at_the_engine_max(self):
+        """D282 follow-up: the opponent population is the bank count, not the
+        per-bank share. 0.124 caps FROZEN_BANK_PCT at four banks; the count
+        itself is a separate axis the engine already supports to
+        BBE_MAX_BANKS = 8 (puffer/bloodbowl/bloodbowl.h)."""
+        source = SCREEN.read_text(encoding="utf-8")
+        self.assertIn('NUM_FROZEN_BANKS="${NUM_FROZEN_BANKS:-4}"', source)
+        self.assertNotIn("\nNUM_FROZEN_BANKS=4\n", source)
+        base = {**BASE, "LADDER_ENDZONE_MAXDIST": "6",
+                "LADDER_RESET_PCT": "0.5", "LADDER_SEED": "42"}
+        for bad in ("0", "9", "abc"):
+            result = run(SCREEN, {**base, "NUM_FROZEN_BANKS": bad})
+            self.assertNotEqual(result.returncode, 0, bad)
+            self.assertIn("NUM_FROZEN_BANKS must be an integer in 1..8",
+                          result.stderr, bad)
+
+    def test_scripted_bank_tag_range_follows_the_bank_count(self):
+        """The scripted bot replaces one bank's seat, so its legal tags are
+        0..NUM_FROZEN_BANKS. A tag of 5 is out of range in the default 4-bank
+        pool and in range once the pool is widened to 8."""
+        base = {**BASE, "LADDER_ENDZONE_MAXDIST": "6",
+                "LADDER_RESET_PCT": "0.5", "LADDER_SEED": "42"}
+        result = run(SCREEN, {**base, "SCRIPTED_BANK_TAG": "5"})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("SCRIPTED_BANK_TAG as an integer in 0..4", result.stderr)
+        # Widened pool: the same tag clears this gate. The run still fails
+        # later on the missing warm/pool fixtures, which is not this gate.
+        result = run(SCREEN, {**base, "NUM_FROZEN_BANKS": "8",
+                              "SCRIPTED_BANK_TAG": "5"})
+        self.assertNotIn("SCRIPTED_BANK_TAG as an integer", result.stderr)
+        # And 9 is still out of range at 8 banks.
+        result = run(SCREEN, {**base, "NUM_FROZEN_BANKS": "8",
+                              "SCRIPTED_BANK_TAG": "9"})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("SCRIPTED_BANK_TAG as an integer in 0..8", result.stderr)
+
     def test_rung_rejects_unknown_arm(self):
         result = run(SCREEN, {**BASE, "LADDER_ENDZONE_MAXDIST": "6",
                               "LADDER_RESET_PCT": "0.5", "LADDER_SEED": "42",
