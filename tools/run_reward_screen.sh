@@ -129,22 +129,28 @@ GAMMA=0.995
 # distance channels quietly reacquire the bias the discounted form removes. The
 # per-arm launcher asserts the pair (tools/run_reward_ablation.sh), but it only
 # sees the gamma this script passes it, so a divergence here would be invisible:
-# assert it once, up front, against every manifest the profile can select.
-if ! python3 -c '
-import json, pathlib, sys
+# assert it once, up front, against every manifest the profile can select. The
+# same check refuses distance coefficients with no gamma, which select the
+# farmable legacy raw-delta ratchet unless the manifest declares that form or is
+# a pinned historical one (reward_manifest.distance_form).
+if ! python3 - "$ROOT" "$GAMMA" <<'PY'
+import pathlib, sys
 root, gamma = pathlib.Path(sys.argv[1]), float(sys.argv[2])
+sys.path.insert(0, str(root / "tools"))
+from reward_manifest import distance_form, load_manifest
 bad = []
 for m in sorted((root / "puffer/config/rewards").glob("*.json")):
-    reward = json.loads(m.read_text(encoding="utf-8")).get("reward", {})
-    claimed = reward.get("reward_dist_pbrs_gamma", 0.0)
-    if claimed and abs(float(claimed) - gamma) > 1e-9:
-        bad.append(f"{m.name} claims {claimed}")
+    try:
+        manifest, digest = load_manifest(m)
+        distance_form(manifest, digest, gamma)
+    except (OSError, ValueError) as exc:
+        bad.append(f"  {m.name}: {exc}")
 if bad:
-    print("; ".join(bad))
+    print("\n".join(bad), file=sys.stderr)
     sys.exit(1)
-' "$ROOT" "$GAMMA" 2>/dev/null; then
-  echo "a reward manifest declares an exact-PBRS gamma other than $GAMMA;" >&2
-  echo "  the distance channels would not be exact PBRS under this screen" >&2
+PY
+then
+  echo "a reward manifest would not train the distance form it claims under train gamma $GAMMA" >&2
   exit 1
 fi
 GAE_LAMBDA=0.85
