@@ -2,6 +2,17 @@
 
 ## Current verdict
 
+**Update 2026-09-12 (D388/D389): direction reset, chain 23 training.** From Sep 4 to Sep 11 the program ran on an uncommitted obs-v7 tree, now archived as `archive/codex-improvement-20260911`, where decisions D290-D387 live. Every model it trained scored zero learner touchdowns. A 154-agent audit found no engine, observation, reward-plumbing or evaluation bug behind that result. The cause was direction:
+- Every learner started from weights that never scored.
+- The imitation teacher scores 0.19 TD/game, while migrated chain 9 still scores 0.40 through the same harness.
+
+The obs-v6 chain 9 lineage is the program again. Chain 23 launched 2026-09-12 06:42 PDT from 2ae5144 at 98-104K SPS:
+- warm start: chain 9
+- opponents: 8 frozen banks x 0.06, contact bot at tag 8
+- reward: `r0_poss_half`, seed 42, 3B steps
+
+The pre-registered paired analysis against chain 14 is in `docs/opponent-population-scope.md`.
+
 The obs-v6 / exact-action lineage has its first reproducible scoring policy:
 two independent rung-6 backplay runs (maxdist 6, reset 0.5, `s0_both`,
 genesis pool `f6a6323a`, 5B steps) finished clean in July at tds 0.299 /
