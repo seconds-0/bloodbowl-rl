@@ -33,6 +33,8 @@
 #   TOTAL_AGENTS=2048 NUM_BUFFERS=2 NUM_THREADS=<cpu cap>
 #   FROZEN_BANK_PCT=0.06 EXPECT_BYTES=16066560
 #   LR=0.00028 ENT_COEF=0.009 GAMMA=0.995 GAE_LAMBDA=0.85
+#                       (GAMMA and GAE_LAMBDA: decimals in (0,1), at most six
+#                       decimals)
 #   HORIZON=64 MINIBATCH_SIZE=16384 CHECKPOINT_STEPS=50000000
 #   RIG_ALLOW_FLOAT=1   required for native fp32 on the RTX 2070/Turing rig
 #   SCRIPTED_BANK_TAG=0 pool-backed modes only: 1..4 replaces frozen bank (tag-1)'s
@@ -323,6 +325,15 @@ LIVE_INTEGRITY_FAILURE="${LIVE_INTEGRITY_FAILURE:-}"
 LIVE_INTEGRITY_MAX_SILENCE="${LIVE_INTEGRITY_MAX_SILENCE:-180}"
 LIVE_INTEGRITY_POLL_SECONDS="${LIVE_INTEGRITY_POLL_SECONDS:-30}"
 
+# Both reach --train.gamma / --train.gae-lambda verbatim, and GAMMA is also the
+# train gamma the distance-form guard below holds the reward manifest to.
+for knob in GAMMA GAE_LAMBDA; do
+  value="${!knob}"
+  if [[ ! "$value" =~ ^0\.[0-9]{1,6}$ ]] || [[ ! "$value" =~ [1-9] ]]; then
+    echo "$knob must be a decimal in (0,1) with at most six decimals, got '$value'" >&2
+    exit 1
+  fi
+done
 for digest_name in SCREEN_MANIFEST_SHA256 \
                    EXPECTED_PUFFER_PATCH_BUNDLE_SHA256; do
   digest="${!digest_name}"
