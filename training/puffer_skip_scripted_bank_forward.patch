@@ -60,9 +60,9 @@ index 45f56fd..f3d0251 100644
  
 +        if (pufferl->scripted_skip_bank > 0 && b == pufferl->scripted_skip_bank) {
 +            // c_step plays every seat of this slice with the scripted bot and
-+            // never reads their actions. Zero the slice so rollout buffers stay
-+            // deterministic; puffer_frozen_prio_mask already keeps these rows
-+            // out of PPO, and their RNG slots belong to no other row.
++            // never reads their actions. Zero actions, logprobs and values; the
++            // mask keeps the env marginal and recurrent state goes stale. None
++            // of it reaches PPO (frozen_prio_mask), and RNG slots are per row.
 +            int act_n = numel(act_b.shape);
 +            int lp_n = numel(lp_b.shape);
 +            int val_n = numel(val_b.shape);
