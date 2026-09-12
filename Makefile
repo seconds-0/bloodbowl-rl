@@ -31,7 +31,7 @@ BBP_V4_WRITER_TESTBIN := $(BUILD)/bbp_v4_writer_tests
 PROFILE_BIN := $(BUILD)/bbe_profile
 PUFFER_TESTBINS := $(PUFFER_REWARD_TESTBIN) $(PUFFER_CONTACT_TESTBIN) $(PUFFER_STATE_BANK_TESTBIN) $(PUFFER_OBSERVATION_TESTBIN) $(BBP_V4_WRITER_TESTBIN)
 
-.PHONY: all test asan fuzz coverage coverage-run lockstep ballstats blockstats human-ball-advancement blockev-mc scenario-scan clean
+.PHONY: all test asan fuzz coverage coverage-run lockstep ballstats blockstats human-ball-advancement blockev-mc scenario-scan legal-digest clean
 
 all: test
 
@@ -89,6 +89,12 @@ test: $(TESTBIN) $(PUFFER_TESTBINS) $(PROFILE_BIN)
 blockev-mc: $(OBJ)
 	$(CC) $(CFLAGS) -Iengine/tests tools/blockev_mc.c $(OBJ) -o $(BUILD)/blockev_mc -lm
 	./$(BUILD)/blockev_mc
+
+# Old-vs-new legal-action/mask bit-identity: build against each tree, diff outputs.
+legal-digest: tools/bb_legal_digest.c puffer/bloodbowl/bloodbowl.h engine/tests/bb_fixtures.h $(SRC) $(ENGINE_HDR)
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -Iengine/tests -Ipuffer/bloodbowl -Wno-unused-function $< -o $(BUILD)/bb_legal_digest -lm $(LDFLAGS)
+	@echo "run: ./$(BUILD)/bb_legal_digest [--games N] [--episodes N] [--seed S] > digest.txt"
 
 asan:
 	$(MAKE) BUILD=build/asan CFLAGS="-std=c11 $(SAN_FLAGS) -Wall -Wextra -Werror -Iengine/include" test
