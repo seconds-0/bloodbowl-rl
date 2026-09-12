@@ -690,11 +690,12 @@ class GraftScreenProfileTests(unittest.TestCase):
         self.assertIn('graft = profile == "graft"', source)
         self.assertIn("implementation_expected = None if graft else current_implementation",
                       source)
-        self.assertIn("from checkpoint_lineage import LineageError, graft_bridge",
+        self.assertIn("LineageError, graft_bridge, migrated_graft_records)",
                       source)
         self.assertIn("old_module = graft_bridge(", source)
         # Pool banks get the same treatment in the plan writer.
-        self.assertIn("expected=None, require_eligible=True)", source)
+        self.assertIn("expected=None, require_eligible=True,\n"
+                      "                accept_migrated=accept_migrated)", source)
         self.assertIn('graft_sidecars.append((f"pool bank {index}", bank_payload))',
                       source)
         # Contract records the bridge (with its reason), plus the rung knobs.
@@ -707,7 +708,10 @@ class GraftScreenProfileTests(unittest.TestCase):
         self.assertIn('elif [ "$SCREEN_PROFILE" = "graft" ]; then\n'
                       '      LADDER_ENV=(LADDER_ENDZONE_MAXDIST=', source)
         self.assertIn('GRAFT_FROM_PATCH_BUNDLE_SHA256="$GRAFT_FROM_PATCH_BUNDLE_SHA256" \\\n'
-                      '                  GRAFT_REASON="$GRAFT_REASON")', source)
+                      '                  GRAFT_REASON="$GRAFT_REASON" \\\n'
+                      '                  GRAFT_ACCEPT_MIGRATED="$GRAFT_ACCEPT_MIGRATED" \\\n'
+                      '                  GRAFT_MIGRATED_REASON="$GRAFT_MIGRATED_REASON")',
+                      source)
         # materialize_result is unchanged: the published sidecar is validated
         # against the NEW build's implementation digests.
         self.assertIn('"source_sha256": screen["implementation"]["source_sha256"],',
@@ -715,6 +719,50 @@ class GraftScreenProfileTests(unittest.TestCase):
         self.assertIn('lineage_from_run_manifest(\n'
                       '    checkpoint, run_manifest_path, '
                       'allow_eligible_publication=True)', source)
+
+
+class MigratedGraftScreenGateTests(unittest.TestCase):
+    def test_accept_migrated_requires_a_reason_and_a_boolean(self):
+        base = {**SCREEN_BASE, **MIGRATED_DECLARATION}
+        for over, message in (
+            ({"GRAFT_MIGRATED_REASON": " "},
+             "graft requires GRAFT_MIGRATED_REASON"),
+            ({"GRAFT_MIGRATED_REASON": "m" * 201},
+             "graft requires GRAFT_MIGRATED_REASON"),
+            ({"GRAFT_ACCEPT_MIGRATED": "0"},
+             "graft requires GRAFT_ACCEPT_MIGRATED=1 when GRAFT_MIGRATED_REASON"),
+            ({"GRAFT_ACCEPT_MIGRATED": "2"},
+             "graft requires GRAFT_ACCEPT_MIGRATED as 0 or 1"),
+        ):
+            result = run(SCREEN, {**base, **over})
+            self.assertNotEqual(result.returncode, 0, over)
+            self.assertIn(message, result.stderr, over)
+        result = run(SCREEN, base)
+        self.assertNotIn("graft requires", result.stderr)
+        self.assertIn("missing warm checkpoint", result.stderr)
+
+    def test_accept_migrated_is_refused_on_every_other_profile(self):
+        for knob in ("GRAFT_ACCEPT_MIGRATED", "GRAFT_MIGRATED_REASON"):
+            result = run(SCREEN, {
+                "WARM": "missing.bin", "POOL": "missing-pool",
+                "STEPS": "12000000000", "SCREEN_PROFILE": "ladder-rung",
+                "EXPECTED_POOL_HASH": "0" * 64, "LADDER_ENDZONE_MAXDIST": "9",
+                "LADDER_RESET_PCT": "0.5", "LADDER_SEED": "42",
+                knob: MIGRATED_DECLARATION[knob]})
+            self.assertNotEqual(result.returncode, 0, knob)
+            self.assertIn("only valid with SCREEN_PROFILE=graft", result.stderr, knob)
+
+    def test_plan_writer_admits_and_records_declared_migrated_inputs(self):
+        source = SCREEN.read_text(encoding="utf-8")
+        self.assertIn('accept_migrated = graft and os.environ["GRAFT_ACCEPT_MIGRATED"] == "1"',
+                      source)
+        self.assertIn("require_eligible=True, accept_migrated=accept_migrated)", source)
+        self.assertIn("old_patch_bundle_sha256=declared_patch,\n"
+                      "                accept_migrated=accept_migrated)", source)
+        self.assertIn('graft_identity["migrated"] = {', source)
+        self.assertIn('"sidecars": migrated_graft_records(graft_sidecars),', source)
+        self.assertIn('      GRAFT_ACCEPT_MIGRATED="$GRAFT_ACCEPT_MIGRATED" \\\n'
+                      '      GRAFT_MIGRATED_REASON="$GRAFT_MIGRATED_REASON" \\\n', source)
 
 
 if __name__ == "__main__":

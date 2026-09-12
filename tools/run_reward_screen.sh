@@ -88,6 +88,13 @@ SCRIPTED_BOT_TYPE="${SCRIPTED_BOT_TYPE:-}"
 GRAFT_FROM_SOURCE_SHA256="${GRAFT_FROM_SOURCE_SHA256:-}"
 GRAFT_FROM_PATCH_BUNDLE_SHA256="${GRAFT_FROM_PATCH_BUNDLE_SHA256:-}"
 GRAFT_REASON="${GRAFT_REASON:-}"
+# graft only: GRAFT_ACCEPT_MIGRATED=1 admits zero-extended obs-v6 -> obs-v7
+# migration sidecars (e.g. migrated chain 9) as warm/pool inputs, with
+# GRAFT_MIGRATED_REASON naming the review. The contract records one entry per
+# migrated input and the accepted checkpoint's sidecar records
+# ancestry.migrated_from.
+GRAFT_ACCEPT_MIGRATED="${GRAFT_ACCEPT_MIGRATED:-0}"
+GRAFT_MIGRATED_REASON="${GRAFT_MIGRATED_REASON:-}"
 # bridge only: the reviewed warm start from an OUT-OF-LINEAGE raw blob (an
 # obs-v4/obs-v5-era checkpoint with no sidecar; docs/audit-2026-08-20.md F2).
 # The operator declares the blob's content hash, its original observation
@@ -228,9 +235,10 @@ if [ "$RUNG_LIKE" != "1" ] && \
   echo "SCRIPTED_BANK_TAG, SCRIPTED_BANK_MASK and SCRIPTED_BOT_TYPE are only valid with SCREEN_PROFILE=ladder-rung, graft or bridge" >&2
   exit 1
 fi
-if [ "$SCREEN_PROFILE" != "graft" ] && \
-   [ -n "$GRAFT_FROM_SOURCE_SHA256$GRAFT_FROM_PATCH_BUNDLE_SHA256$GRAFT_REASON" ]; then
-  echo "GRAFT_FROM_SOURCE_SHA256, GRAFT_FROM_PATCH_BUNDLE_SHA256 and GRAFT_REASON are only valid with SCREEN_PROFILE=graft" >&2
+if [ "$SCREEN_PROFILE" != "graft" ] && {
+     [ -n "$GRAFT_FROM_SOURCE_SHA256$GRAFT_FROM_PATCH_BUNDLE_SHA256$GRAFT_REASON$GRAFT_MIGRATED_REASON" ] || \
+     [ "$GRAFT_ACCEPT_MIGRATED" != "0" ]; }; then
+  echo "GRAFT_FROM_SOURCE_SHA256, GRAFT_FROM_PATCH_BUNDLE_SHA256, GRAFT_REASON, GRAFT_ACCEPT_MIGRATED and GRAFT_MIGRATED_REASON are only valid with SCREEN_PROFILE=graft" >&2
   exit 1
 fi
 if [ "$SCREEN_PROFILE" != "bridge" ] && \
@@ -344,6 +352,20 @@ case "$SCREEN_PROFILE" in
         echo "graft requires GRAFT_REASON as a non-empty string of at most 200 characters (e.g. the DECISIONS.md entry)" >&2
         exit 1
       fi
+      case "$GRAFT_ACCEPT_MIGRATED" in
+        0)
+          [ -z "$GRAFT_MIGRATED_REASON" ] || {
+            echo "graft requires GRAFT_ACCEPT_MIGRATED=1 when GRAFT_MIGRATED_REASON is set" >&2
+            exit 1; }
+          ;;
+        1)
+          if [ -z "${GRAFT_MIGRATED_REASON// /}" ] || [ "${#GRAFT_MIGRATED_REASON}" -gt 200 ]; then
+            echo "graft requires GRAFT_MIGRATED_REASON as a non-empty string of at most 200 characters when GRAFT_ACCEPT_MIGRATED=1" >&2
+            exit 1
+          fi
+          ;;
+        *) echo "graft requires GRAFT_ACCEPT_MIGRATED as 0 or 1" >&2; exit 1 ;;
+      esac
     fi
     if [ "$SCREEN_PROFILE" = "bridge" ]; then
       # The operator declares which raw blob is being bridged and from which
@@ -698,6 +720,8 @@ SCREEN_PLAN="$(
       GRAFT_FROM_SOURCE_SHA256="$GRAFT_FROM_SOURCE_SHA256" \
       GRAFT_FROM_PATCH_BUNDLE_SHA256="$GRAFT_FROM_PATCH_BUNDLE_SHA256" \
       GRAFT_REASON="$GRAFT_REASON" \
+      GRAFT_ACCEPT_MIGRATED="$GRAFT_ACCEPT_MIGRATED" \
+      GRAFT_MIGRATED_REASON="$GRAFT_MIGRATED_REASON" \
       BRIDGE_WARM_SHA256="$BRIDGE_WARM_SHA256" \
       BRIDGE_WARM_OBS_VERSION="$BRIDGE_WARM_OBS_VERSION" \
       BRIDGE_PROVENANCE="$BRIDGE_PROVENANCE" \
@@ -927,6 +951,7 @@ else:
     # against THIS build, so a bridge cannot smuggle old banks in.
     graft = profile == "graft"
     bridge = profile == "bridge"
+    accept_migrated = graft and os.environ["GRAFT_ACCEPT_MIGRATED"] == "1"
     current_implementation = {
         "source_sha256": source_hash,
         "compiled_module_sha256": sha(module),
@@ -966,7 +991,7 @@ else:
         warm_payload = validate_lineage(
             warm, sidecar_path(warm),
             expected=implementation_expected,
-            require_eligible=True)
+            require_eligible=True, accept_migrated=accept_migrated)
         warm_lineage_sha = lineage_digest(warm_payload)
         warm_identity = {
             "path": str(warm), "bytes": warm.stat().st_size, "sha256": warm_sha,
@@ -992,11 +1017,13 @@ else:
     if graft:
         # Same rule for the pool: eligible, internally consistent, on their
         # own recorded build. lineage-v7 leaves this to the per-arm launcher.
-        from checkpoint_lineage import LineageError, graft_bridge
+        from checkpoint_lineage import (
+            LineageError, graft_bridge, migrated_graft_records)
         for index, bank in enumerate(banks):
             bank_payload = validate_lineage(
                 pool / bank["file"], pool / bank["lineage_file"],
-                expected=None, require_eligible=True)
+                expected=None, require_eligible=True,
+                accept_migrated=accept_migrated)
             if lineage_digest(bank_payload) != bank["lineage_sha256"]:
                 raise SystemExit(
                     f"pool bank {index} lineage digest differs from manifest")
@@ -1007,7 +1034,8 @@ else:
             old_module = graft_bridge(
                 graft_sidecars, current=current_implementation,
                 old_source_sha256=declared_source,
-                old_patch_bundle_sha256=declared_patch)
+                old_patch_bundle_sha256=declared_patch,
+                accept_migrated=accept_migrated)
         except LineageError as exc:
             raise SystemExit(str(exc)) from exc
         graft_identity = {
@@ -1017,6 +1045,13 @@ else:
             "warm_lineage_sha256": warm_lineage_sha,
             "reason": os.environ["GRAFT_REASON"],
         }
+        # Only when declared, so an existing graft screen's contract is
+        # unchanged and its manifest-reuse check still matches.
+        if accept_migrated:
+            graft_identity["migrated"] = {
+                "reason": os.environ["GRAFT_MIGRATED_REASON"],
+                "sidecars": migrated_graft_records(graft_sidecars),
+            }
     pool_lineage_bundle_sha = hashlib.sha256(json.dumps([
         {"bank": index, "checkpoint_sha256": bank["sha256"],
          "lineage_sha256": bank["lineage_sha256"]}
@@ -1611,7 +1646,9 @@ PY
                   SCRIPTED_BOT_TYPE="$SCRIPTED_BOT_TYPE" \
                   GRAFT_FROM_SOURCE_SHA256="$GRAFT_FROM_SOURCE_SHA256" \
                   GRAFT_FROM_PATCH_BUNDLE_SHA256="$GRAFT_FROM_PATCH_BUNDLE_SHA256" \
-                  GRAFT_REASON="$GRAFT_REASON")
+                  GRAFT_REASON="$GRAFT_REASON" \
+                  GRAFT_ACCEPT_MIGRATED="$GRAFT_ACCEPT_MIGRATED" \
+                  GRAFT_MIGRATED_REASON="$GRAFT_MIGRATED_REASON")
     elif [ "$SCREEN_PROFILE" = "bridge" ]; then
       LADDER_ENV=(LADDER_ENDZONE_MAXDIST="$LADDER_ENDZONE_MAXDIST" \
                   LADDER_RESET_PCT="$LADDER_RESET_PCT" \
