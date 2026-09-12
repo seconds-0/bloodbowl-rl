@@ -274,6 +274,8 @@ class BuildLeagueTest(unittest.TestCase):
                     'observation_abi': 'obs-v7',
                     'observation_version': '7',
                     'action_abi': 'exact-joint-v1',
+                    'compiled_rollout_transition_contract':
+                        'terminal-aware-tbptt-v1',
                     'initialization': 'lineage-v7',
                     'qualification_only': '0',
                     'policy_hidden_size': '512',
