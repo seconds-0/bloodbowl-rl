@@ -1,0 +1,226 @@
+diff --git a/src/bindings.cu b/src/bindings.cu
+index a012d68..68b4e69 100644
+--- a/src/bindings.cu
++++ b/src/bindings.cu
+@@ -137,6 +137,12 @@ void render(pybind11::object pufferl_obj, int env_id) {
+ 
+ void rollouts(pybind11::object pufferl_obj) {
+     PuffeRL& pufferl = pufferl_obj.cast<PuffeRL&>();
++    if (pufferl.scripted_skip_bank > 0 && !pufferl.scripted_skip_routed) {
++        throw std::runtime_error(
++            "scripted bank forward skip is active but set_env_tags never validated "
++            "its routing; it requires selfplay.enabled=1 and "
++            "1 <= env.scripted_bank_tag <= vec.num_frozen_banks");
++    }
+     pybind11::gil_scoped_release no_gil;
+     double t0 = wall_clock();
+ 
+@@ -829,6 +835,14 @@ PYBIND11_MODULE(_C, m) {
+     m.def("set_env_tags", &py_set_env_tags);
+     m.def("count_aligned", &py_count_aligned);
+     m.def("num_envs", &py_num_envs);
++    m.attr("scripted_bank_forward_skip") = true;
++    m.def("scripted_bank_skip", [](py::object pufferl_obj) {
++        PuffeRL& pufferl = pufferl_obj.cast<PuffeRL&>();
++        py::dict result;
++        result["bank"] = pufferl.scripted_skip_bank;
++        result["routed"] = pufferl.scripted_skip_routed;
++        return result;
++    });
+     m.def("python_vec_recv", &python_vec_recv);
+     m.def("python_vec_send", &python_vec_send);
+     py::class_<Policy>(m, "Policy");
+diff --git a/src/pufferlib.cu b/src/pufferlib.cu
+index 45f56fd..f3d0251 100644
+--- a/src/pufferlib.cu
++++ b/src/pufferlib.cu
+@@ -10,6 +10,7 @@
+ #include "ocean.cu"
+ #include "muon.cu"
+ #include "vecenv.h"
++#include "scripted_bank_skip.h"
+ 
+ static double wall_clock() {
+     struct timespec ts;
+@@ -421,6 +422,11 @@ typedef struct {
+     // worker thread only writes inside its own physical chunk.
+     // Bank 0 = primary (learner). NULL = no layout set (primary owns full chunk).
+     int* bank_layout;
++    // Opt-in scripted-bank skip: rollout loop index whose forward is skipped
++    // (0 = none), and whether set_env_tags proved selfplay routes only bot
++    // seats into that slice.
++    int scripted_skip_bank;
++    bool scripted_skip_routed;
+ } PuffeRL;
+ 
+ __global__ void reset_recurrent_state_on_terminal(
+@@ -766,6 +772,25 @@ extern "C" void net_callback_wrapper(void* ctx, int buf, int t) {
+             mask_stride_b = mask_stride;
+         }
+ 
++        if (pufferl->scripted_skip_bank > 0 && b == pufferl->scripted_skip_bank) {
++            // c_step plays every seat of this slice with the scripted bot and
++            // never reads their actions. Zero the slice so rollout buffers stay
++            // deterministic; puffer_frozen_prio_mask already keeps these rows
++            // out of PPO, and their RNG slots belong to no other row.
++            int act_n = numel(act_b.shape);
++            int lp_n = numel(lp_b.shape);
++            int val_n = numel(val_b.shape);
++            fill_precision_kernel<<<grid_size(act_n), BLOCK_SIZE, 0, stream>>>(
++                act_b.data, from_float(0.0f), act_n);
++            fill_precision_kernel<<<grid_size(lp_n), BLOCK_SIZE, 0, stream>>>(
++                lp_b.data, from_float(0.0f), lp_n);
++            fill_precision_kernel<<<grid_size(val_n), BLOCK_SIZE, 0, stream>>>(
++                val_b.data, from_float(0.0f), val_n);
++            cast<<<grid_size(act_n), BLOCK_SIZE, 0, stream>>>(
++                env.actions.data + (long)sub_start * act_cols, act_b.data, act_n);
++            continue;
++        }
++
+         reset_recurrent_state_on_terminal<<<
+             grid_size(bank_size), BLOCK_SIZE, 0, stream>>>(
+                 s_bank->data, env.terminals.data + sub_start,
+@@ -2047,6 +2072,21 @@ extern "C" void pufferl_set_agent_perm(PuffeRL* pufferl, const int* perm) {
+ // pufferl_num_envs(). Also clears each env's boundary_reached flag.
+ extern "C" void pufferl_set_env_tags(PuffeRL* pufferl, const int* tags) {
+     static_vec_set_env_tags(pufferl->vec, tags);
++    if (pufferl->scripted_skip_bank > 0) {
++        char err[256];
++        StaticVec* vec = pufferl->vec;
++        int num_buffers = pufferl->hypers.num_buffers;
++        if (scripted_bank_skip_validate(pufferl->scripted_skip_bank, num_buffers,
++                vec->total_agents / num_buffers, pufferl->bank_layout,
++                1 + pufferl->num_frozen_banks, vec->size,
++                vec->total_agents / vec->size, tags, vec->agent_perm,
++                err, sizeof(err))) {
++            fprintf(stderr, "pufferl_set_env_tags: scripted bank forward skip "
++                "refused: %s\n", err);
++            abort();
++        }
++        pufferl->scripted_skip_routed = true;
++    }
+ }
+ 
+ // Returns count of envs with tag == tag_value AND boundary_reached. If
+@@ -2258,6 +2298,27 @@ std::unique_ptr<PuffeRL> create_pufferl_impl(HypersT& hypers,
+         }
+     }
+ 
++    // Opt-in: the Blood Bowl scripted bot plays every seat of the bank tagged
++    // env.scripted_bank_tag, so that bank's forward is discarded work. Decided
++    // before graph capture so the captured rollout graph omits it.
++    {
++        DictItem* so_item = dict_get_unsafe(env_kwargs, "scripted_opponent");
++        DictItem* team_item = dict_get_unsafe(env_kwargs, "scripted_opponent_team");
++        DictItem* tag_item = dict_get_unsafe(env_kwargs, "scripted_bank_tag");
++        pufferl->scripted_skip_bank = scripted_bank_skip_index(
++            env_name == "bloodbowl",
++            so_item ? (int)so_item->value : 0,
++            team_item ? (int)team_item->value : 1,
++            tag_item ? (int)tag_item->value : 0,
++            pufferl->num_frozen_banks);
++        pufferl->scripted_skip_routed = false;
++        if (pufferl->scripted_skip_bank > 0) {
++            fprintf(stderr, "create_pufferl: skipping the policy forward for "
++                "scripted bank tag %d (frozen bank %d)\n",
++                pufferl->scripted_skip_bank, pufferl->scripted_skip_bank - 1);
++        }
++    }
++
+     // Exact-action environments allocate ragged joint metadata outside the
+     // activations allocator. Populate and upload it before graph warmup calls
+     // sample_logits; cudaMalloc storage is otherwise uninitialized here.
+diff --git a/src/scripted_bank_skip.h b/src/scripted_bank_skip.h
+new file mode 100644
+index 0000000..703e988
+--- /dev/null
++++ b/src/scripted_bank_skip.h
+@@ -0,0 +1,88 @@
++#pragma once
++// LOCAL PATCH (bloodbowl-rl, opt-in): training/puffer_skip_scripted_bank_forward.patch.
++// Host-only helpers, kept free of CUDA so the keying and routing rules compile
++// and run in tools/test_skip_scripted_bank_forward.py on a machine without nvcc.
++#include <stddef.h>
++#include <stdio.h>
++
++#define SCRIPTED_BANK_SKIP_AWAY_SEAT 1
++
++// Rollout-loop index of the frozen bank whose policy forward is discarded, or
++// 0 when no bank qualifies. Loop index b > 0 is frozen bank b-1, which
++// selfplay.py tags b, so the index equals env.scripted_bank_tag. This mirrors
++// bloodbowl.h c_step: a tagged env ignores the policy action on its AWAY seat
++// only when scripted_opponent != 0, scripted_opponent_team == AWAY and
++// env->tag == scripted_bank_tag. Every other configuration keeps the forward.
++static inline int scripted_bank_skip_index(
++        int is_bloodbowl, int scripted_opponent, int scripted_opponent_team,
++        int scripted_bank_tag, int num_frozen_banks) {
++    if (!is_bloodbowl || scripted_opponent == 0) return 0;
++    if (scripted_opponent_team != SCRIPTED_BANK_SKIP_AWAY_SEAT) return 0;
++    if (scripted_bank_tag < 1 || scripted_bank_tag > num_frozen_banks) return 0;
++    return scripted_bank_tag;
++}
++
++// 0 when every row of the skipped bank's per-buffer slice is the AWAY seat of
++// an env tagged skip_bank, and every such seat lands inside that slice.
++// Otherwise writes the first violation into err and returns 1. agent_perm maps
++// slot -> physical row; env e owns slots [e*agents_per_env, (e+1)*agents_per_env).
++static inline int scripted_bank_skip_validate(
++        int skip_bank, int num_buffers, int agents_per_buffer,
++        const int* bank_layout, int num_banks, int num_envs, int agents_per_env,
++        const int* env_tags, const int* agent_perm, char* err, size_t err_size) {
++    if (skip_bank < 1 || skip_bank >= num_banks) {
++        snprintf(err, err_size, "skip bank %d outside frozen banks 1..%d",
++                 skip_bank, num_banks - 1);
++        return 1;
++    }
++    if (bank_layout == NULL || agent_perm == NULL || env_tags == NULL) {
++        snprintf(err, err_size,
++                 "no selfplay routing (bank_layout, agent_perm or env tags missing)");
++        return 1;
++    }
++    if (agents_per_env != 2 || num_buffers <= 0 || agents_per_buffer <= 0 ||
++            (long)num_envs * agents_per_env != (long)num_buffers * agents_per_buffer) {
++        snprintf(err, err_size,
++                 "layout %d envs x %d agents does not tile %d buffers x %d agents",
++                 num_envs, agents_per_env, num_buffers, agents_per_buffer);
++        return 1;
++    }
++    int lo = bank_layout[skip_bank];
++    int hi = bank_layout[skip_bank + 1];
++    if (lo < 0 || hi > agents_per_buffer || hi <= lo) {
++        snprintf(err, err_size, "bank %d slice [%d,%d) is empty or out of range",
++                 skip_bank, lo, hi);
++        return 1;
++    }
++    long total = (long)num_buffers * agents_per_buffer;
++    long seats = 0;
++    for (int e = 0; e < num_envs; e++) {
++        for (int s = 0; s < agents_per_env; s++) {
++            int slot = e * agents_per_env + s;
++            int phys = agent_perm[slot];
++            if (phys < 0 || phys >= total) {
++                snprintf(err, err_size, "agent_perm[%d]=%d outside %ld rows",
++                         slot, phys, total);
++                return 1;
++            }
++            int col = phys % agents_per_buffer;
++            int in_slice = col >= lo && col < hi;
++            int bot_seat = env_tags[e] == skip_bank &&
++                s == SCRIPTED_BANK_SKIP_AWAY_SEAT;
++            if (in_slice != bot_seat) {
++                snprintf(err, err_size,
++                         "env %d seat %d (tag %d) routes to row %d, %s bank %d slice [%d,%d)",
++                         e, s, env_tags[e], phys, in_slice ? "inside" : "outside",
++                         skip_bank, lo, hi);
++                return 1;
++            }
++            seats += bot_seat;
++        }
++    }
++    if (seats != (long)num_buffers * (hi - lo)) {
++        snprintf(err, err_size, "%ld scripted seats for %ld bank %d rows",
++                 seats, (long)num_buffers * (hi - lo), skip_bank);
++        return 1;
++    }
++    return 0;
++}
