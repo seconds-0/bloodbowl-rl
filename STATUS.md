@@ -15,6 +15,8 @@ The pre-registered paired analysis against chain 14 is in `docs/opponent-populat
 
 **Update 2026-09-12 15:30 (D390): chain 23 is flat.** Chain 23 finished clean at 3B. Its two-seed exam lands within the 0.02 noise floor of chain 14 on all three champion cells (+0.005, -0.0045, -0.016), so it is not promoted and not rejected. It stays below the chain 9 + chain 16 frontier. Chain 9 remains the frontier. Next is a horizon arm: chain 14's exact recipe with train gamma 0.999 and GAE lambda 0.95. The ladder launch path is getting that knob now. The chain 24 seed replicate stays staged but unlaunched.
 
+**Update 2026-09-12 16:43 (D391): chain 25 is training.** The horizon knob merged (PR #99), and chain 25 launched with chain 14's pool identity d67d527b and gamma 0.999 / lambda 0.95 confirmed in the arm banner. The exam waiter is staged. The pre-registered reading is in `docs/horizon-arm-scope-2026-09-12.md`.
+
 The obs-v6 / exact-action lineage has its first reproducible scoring policy:
 two independent rung-6 backplay runs (maxdist 6, reset 0.5, `s0_both`,
 genesis pool `f6a6323a`, 5B steps) finished clean in July at tds 0.299 /

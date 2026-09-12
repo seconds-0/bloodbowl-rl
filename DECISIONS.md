@@ -1123,3 +1123,28 @@ The recipe is otherwise chain 14's: `r0_poss_half`, LR 2.8e-4, seed 42, 3B steps
 | Two-exam-seed mean | **0.5085 / 0.423** | **0.439 / 0.4375** | **0.5595 / 0.3365** |
 
 D389 pre-registered chain 14 as the paired comparator (mean 0.5035 / 0.415, 0.4435 / 0.410, 0.5755 / 0.3445). Champion deltas are **+0.005, -0.0045 and -0.016**: every cell is inside the 0.02 floor, and none improves outside the 0.011 reproducibility floor. Offense AWAY leans negative on both seeds (-0.021, -0.011) but clears no threshold. The conceded moves (+0.008, +0.0275, -0.008) are below D277's reseeding noise and are not scored. **Not promoted, not rejected: a flat null on one training seed.** Against the chain 9 + chain 16 pooled frontier (0.537 / 0.416, 0.492 / 0.406, 0.571 / 0.350) chain 23's champion is -0.0285, -0.053 and -0.0115. That is below it on all three cells, like every continuation since D273, so opponent population at 8x0.06 recovers nothing over plain continuation. Per the scope doc this is not "population rejected": bot exposure halved from 12% to 6%, and one training seed is not a verdict. The pre-registered replicate is chain 24 (seed 44, paired with chain 20). The audit-ranked alternative is a horizon arm (gamma 0.999, lambda 0.95) from chain 9 at the chain 14 recipe. A Kill Team e2e job queued behind the chain 23 lock at 06:47 PDT and was interrupted by its own wrapper 14 minutes later.
+
+**D391 - CHAIN 25 LAUNCHED INSTEAD OF THE CHAIN 24 REPLICATE: THE FIRST HORIZON ARM, GAMMA 0.999 AND LAMBDA 0.95 ON CHAIN 14'S EXACT RECIPE (2026-09-12 16:43 PDT).** **Why the pre-registered replicate was skipped.** Chain 23's null cannot be promoted, so replicating it at seed 44 would only firm up a null. The credit horizon has never been varied: every run in history used gamma in [0.9948, 0.9976] with lambda 0.85. The audit measured a median of 146.5 decisions and about 179 c-steps from first pickup to touchdown. Chain 24 (`/home/rache/r0chain24.sh`) stays staged, unlaunched.
+
+**The knob.** `run_reward_screen.sh` hardcoded gamma 0.995, so PR #99 (merge c50fbe6) adds validated `LADDER_GAMMA` / `LADDER_GAE_LAMBDA` knobs through ladder_stage, launch_ladder_rung, the screen and the arm launcher.
+- Unset, the screen publishes the same contract as before.
+- Set, both effective values are recorded in contract.ladder and the completion marker.
+- With the knob set, the reward-form guard holds only the selected arm's manifest to the effective gamma. The pinned legacy raw-delta `r0_poss_half` passes at 0.999, and exact-PBRS manifests minted at 0.995 are refused at 0.999.
+
+**The recipe.** Chain 25 is `/home/rache/r0chain14-lose.sh`'s recipe with only the discount changed:
+- warm = chain 9 marker, `r0_poss_half`, seed 42, 3B steps
+- 4 frozen banks x 0.12, contact bot at tag 4, LR 2.8e-4
+- `LADDER_GAMMA=0.999 LADDER_GAE_LAMBDA=0.95`
+
+**Preflight.** The rig checkout moved from 2ae5144 to c50fbe6 with no reinstall. The drift check reads OK at 3ed6899e and the module is d63498f6. The live plan-only preflight rebuilt chain 14's pool identity d67d527b (anchor-kickbot, rung0warm1, rung0warm2, chain 9 as rung0warm) and published a contract with ladder gamma 0.999 and gae_lambda 0.95, source 3ed6899e, patch bundle de77f6c0 and module d63498f6.
+
+**Launch.** At 16:43 PDT as `r0chain25-horizon.service` via `/home/rache/r0chain25-locked.sh`, which holds the Kill Team `kt-gpu.lock`. The arm banner reads `reward_distance_form=legacy_raw_delta train_gamma=0.999` and `gamma=0.999 gae_lambda=0.95`. The exam waiter `exam-c25-waiter.service` runs `/home/rache/exam_c25.sh` (seeds 42 and 43 through `rig_exam.sh`) once the completion marker exists. Expected about 6h40m at chain 14's ~125K SPS, which is an estimate, not a measurement.
+
+**Pre-registered reading** (`docs/horizon-arm-scope-2026-09-12.md`). Champion cells only, two-exam-seed mean, deltas against chain 14.
+- **Positive:** both contact champion cells up more than 0.02, and offense AWAY not down more than 0.02. This queues a seed-44 replicate paired with chain 20; it is not a promotion.
+- **Negative:** a contact champion cell down more than 0.02 on the mean and on both exam seeds. The horizon arm is rejected at this budget.
+- **Anything else:** a flat null.
+
+**Named in advance.**
+- The warm value head was fitted at gamma 0.995, so an early value-loss spike is the critic re-fitting, not a kill signal.
+- At 0.999 the legacy raw-delta distance bias is 5x smaller, so a positive read cannot be attributed to the horizon alone.
