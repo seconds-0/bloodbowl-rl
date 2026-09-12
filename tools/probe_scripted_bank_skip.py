@@ -102,6 +102,16 @@ def expected_skip_bank(config: Mapping[str, Any]) -> int:
     return tag
 
 
+def integrity_verdict(env: Mapping[str, Any]) -> dict[str, Any]:
+    """Recorded, never raised, so a probe's output survives a bad interval."""
+    from qualify_recurrent_cuda import validate_hard_integrity
+
+    try:
+        return {"zero": True, "counters": validate_hard_integrity(env)}
+    except Exception as exc:  # missing or nonzero counters
+        return {"zero": False, "error": str(exc)}
+
+
 def _require_equal(label: str, left: Any, right: Any) -> None:
     if left != right:
         raise ProbeError(f"{label} differs: {left!r} != {right!r}")
@@ -111,6 +121,10 @@ def compare_traces(baseline: Mapping[str, Any], candidate: Mapping[str, Any]) ->
     for key in ("schema_version", "config", "bank_layout", "agents_per_buffer",
                 "num_buffers", "requested_rollouts"):
         _require_equal(key, baseline.get(key), candidate.get(key))
+    for label, trace in (("baseline", baseline), ("candidate", candidate)):
+        verdict = trace.get("hard_integrity", {})
+        if verdict.get("zero") is not True:
+            raise ProbeError(f"{label} hard integrity not zero: {verdict.get('error')}")
     if baseline["skip"]["bank"] != 0:
         raise ProbeError("baseline must be a trace without the skip")
     skip = int(candidate["skip"]["bank"])
@@ -174,6 +188,17 @@ def _sha256(path: pathlib.Path) -> str:
     return digest.hexdigest()
 
 
+def single_gpu_args(args: dict[str, Any]) -> dict[str, Any]:
+    """What pufferl.train() sets before _train for one GPU (rank 0)."""
+    if int(args["train"].get("gpus", 1)) != 1:
+        raise ProbeError("the probe runs on exactly one GPU (--train.gpus 1)")
+    args["world_size"] = 1
+    args["nccl_id"] = ""
+    args["rank"] = 0
+    args["gpu_id"] = 0
+    return args
+
+
 def load_trainer(puffer_root: pathlib.Path, overrides: Sequence[str]):
     sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
     from qualify_recurrent_cuda import _load_backend  # CUDART before _C (D225)
@@ -188,9 +213,10 @@ def load_trainer(puffer_root: pathlib.Path, overrides: Sequence[str]):
         args = puffer_cli.load_config("bloodbowl")
     finally:
         sys.argv = saved
-    puffer_cli.validate_config(args)
     puffer_cli.require_training_state_reset(args)
     puffer_cli.guard_scripted_training(args)
+    puffer_cli.validate_config(args)
+    args = single_gpu_args(args)
     pufferl = _C.create_pufferl(args)
     if args.get("load_model_path"):
         _C.load_weights(pufferl, str(args["load_model_path"]))
@@ -207,7 +233,7 @@ def load_trainer(puffer_root: pathlib.Path, overrides: Sequence[str]):
 
 
 def run_trace(options: argparse.Namespace, overrides: Sequence[str]) -> int:
-    from qualify_recurrent_cuda import decode_snapshot, validate_hard_integrity
+    from qualify_recurrent_cuda import decode_snapshot
 
     _C, pufferl, args, skip, identity, evidence = load_trainer(
         pathlib.Path(options.puffer_root).resolve(), overrides)
@@ -226,7 +252,7 @@ def run_trace(options: argparse.Namespace, overrides: Sequence[str]) -> int:
         "skip": skip, "bank_layout": layout, "agents_per_buffer": apb,
         "num_buffers": buffers, "requested_rollouts": options.rollouts,
         "rollouts": rollouts, "env": _json_safe(env),
-        "hard_integrity": validate_hard_integrity(env),
+        "hard_integrity": integrity_verdict(env),
     }
     _write_json(pathlib.Path(options.output), payload)
     print(json.dumps({"output": options.output, "skip": skip, "rollouts": len(rollouts)}))
@@ -255,8 +281,6 @@ def per_epoch_split(perf: Mapping[str, Any], epochs: int) -> dict[str, float]:
 
 
 def run_throughput(options: argparse.Namespace, overrides: Sequence[str]) -> int:
-    from qualify_recurrent_cuda import validate_hard_integrity
-
     _C, pufferl, args, skip, identity, evidence = load_trainer(
         pathlib.Path(options.puffer_root).resolve(), overrides)
     for _ in range(options.warmup_epochs):
@@ -283,7 +307,7 @@ def run_throughput(options: argparse.Namespace, overrides: Sequence[str]) -> int
         "skip": skip, "epochs": epochs, "steps": steps, "elapsed_seconds": elapsed,
         "steps_per_second": steps / elapsed, "split_per_epoch": per_epoch_split(log["perf"], epochs),
         "perf_seconds": _json_safe(dict(log["perf"])), "util": _json_safe(dict(log["util"])),
-        "gpu_samples": samples, "hard_integrity": validate_hard_integrity(env),
+        "gpu_samples": samples, "hard_integrity": integrity_verdict(env),
     }
     _write_json(pathlib.Path(options.output), payload)
     print(json.dumps({"output": options.output, "skip": skip,

@@ -54,6 +54,7 @@ def trace(data_per_rollout, skip_bank=0, binding=False, routed=False, cfg=None):
         "skip": {"bank": skip_bank, "binding": binding, "routed": routed},
         "rollouts": [probe.rollout_record(d, LAYOUT, APB, BUFFERS) for d in data_per_rollout],
         "env": {"tds": 1.0, "n": 12.0},
+        "hard_integrity": {"zero": True, "counters": {}},
     }
 
 
@@ -137,6 +138,27 @@ class ProbeLogicTests(unittest.TestCase):
                              cfg=config(banks=3))
         with self.assertRaisesRegex(probe.ProbeError, "config differs"):
             probe.compare_traces(baseline, other_config)
+        dirty = trace(zeroed, skip_bank=2, binding=True, routed=True)
+        dirty["hard_integrity"] = {"zero": False, "error": "nonzero: x=1"}
+        with self.assertRaisesRegex(probe.ProbeError, "candidate hard integrity not zero"):
+            probe.compare_traces(baseline, dirty)
+        unlogged = dict(baseline)
+        del unlogged["hard_integrity"]
+        with self.assertRaisesRegex(probe.ProbeError, "baseline hard integrity not zero"):
+            probe.compare_traces(unlogged, trace(zeroed, skip_bank=2, binding=True, routed=True))
+
+    def test_integrity_verdict_records_instead_of_raising(self):
+        from qualify_recurrent_cuda import HARD_INTEGRITY_KEYS
+        clean = probe.integrity_verdict({key: 0.0 for key in HARD_INTEGRITY_KEYS})
+        self.assertTrue(clean["zero"])
+        self.assertEqual(len(clean["counters"]), len(HARD_INTEGRITY_KEYS))
+        missing = probe.integrity_verdict({})
+        self.assertFalse(missing["zero"])
+        self.assertIn("missing", missing["error"])
+        key = HARD_INTEGRITY_KEYS[0]
+        nonzero = probe.integrity_verdict({**{k: 0.0 for k in HARD_INTEGRITY_KEYS}, key: 2.0})
+        self.assertFalse(nonzero["zero"])
+        self.assertIn("nonzero", nonzero["error"])
 
     def test_expected_skip_bank_mirrors_the_patch_rule(self):
         self.assertEqual(probe.expected_skip_bank(config()), 2)
@@ -158,6 +180,15 @@ class ProbeLogicTests(unittest.TestCase):
                       "--", "--x", "1"]):
             with self.assertRaises(SystemExit):
                 probe.parse_args(argv)
+
+    def test_single_gpu_args_match_what_train_sets_before_create(self):
+        # pufferl.train() sets these before _train; create_pufferl reads
+        # args["nccl_id"], rank, world_size and gpu_id and fails without them.
+        args = probe.single_gpu_args({"train": {"gpus": 1}})
+        self.assertEqual((args["world_size"], args["nccl_id"], args["rank"], args["gpu_id"]),
+                         (1, "", 0, 0))
+        with self.assertRaises(probe.ProbeError):
+            probe.single_gpu_args({"train": {"gpus": 2}})
 
     def test_per_epoch_split(self):
         perf = {"rollout": 10.0, "eval_gpu": 6.0, "eval_env": 2.0, "train_misc": 0.5,
