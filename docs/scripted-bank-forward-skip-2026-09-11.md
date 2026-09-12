@@ -30,7 +30,9 @@ bank at every step, then threw the result away.
 - `net_callback_wrapper` skips `reset_recurrent_state_on_terminal`,
   `policy_forward` and `sample_logits` for that loop index. It zero-fills the slice's
   rollout actions, logprobs and values, and copies the zero actions into
-  `env.actions`, so the buffers stay deterministic.
+  `env.actions`. The slice's rollout `action_mask` is not rewritten: it keeps the
+  env's marginal mask, which the rollout step casts into every row before the bank
+  loop.
 - `pufferl_set_env_tags` calls `scripted_bank_skip_validate` and aborts unless every
   row of the skipped slice, in every buffer, is the AWAY seat of an env tagged with
   the scripted tag, and every such seat lands in that slice.
@@ -51,12 +53,20 @@ Identical for the learner and every non-scripted bank:
   and values are row-local, so zeroed values and logprobs on the scripted rows
   cannot reach the learner update.
 
-So env trajectories, observations, rewards, terminals, masks, env metrics and all
-non-scripted actions should be bit-identical. The probe below checks exactly that
-against a determinism control.
+So env trajectories, observations, rewards, terminals and env metrics should be
+bit-identical, as should the actions, logprobs, values and rollout action masks
+of every non-scripted bank. The probe below checks exactly that against a
+determinism control.
 
 Different by design: the scripted bank's rollout actions, logprobs, values, decoder
-activations and recurrent state are now zero or stale. The existing qualification
+activations and recurrent state are now zero or stale, and so is its rollout
+action mask. `sample_logits` rewrites each sampled row's mask with the exact-joint
+support conditioned on the heads sampled before it (`src/pufferlib.cu:558-588` in
+10619e2), but the skip continues before `sample_logits`. The scripted slice
+therefore keeps the env's marginal mask. That mask contains every projection of
+the joint support, so it is a superset of the conditional mask a default build
+stores, and it differs whenever a bot seat has more than one legal option.
+Nothing consumes it: PPO never selects frozen rows. The existing qualification
 cells do not use a scripted tag, so they are unaffected. A new qualification cell
 with a scripted tag would see a never-written decoder output for that bank.
 
@@ -198,6 +208,13 @@ Pass conditions:
   `identical_banks` `[0, 1, 2, 3]` (then `[0..7]`). The candidate trace's
   `skip.routed` is true, and the skip build's stderr shows `create_pufferl: skipping
   the policy forward for scripted bank tag N`.
+- Rollout action masks are compared per bank. Every non-skipped bank must match
+  the default trace exactly. For the skipped bank, both traces record the packed
+  mask bits of the configured scripted slice. The candidate's bits must be binary
+  and a superset of the baseline's, bit for bit (the marginal mask versus the
+  conditional one, see above). `skipped_mask_rows_widened` counts the (step, row)
+  pairs where they differ. It should be positive, because the bot seats often have
+  more than one legal option. The control reports 0.
 - Every trace's `hard_integrity` is all zero.
 
 If the control fails, the rollout is nondeterministic on this host. That is a

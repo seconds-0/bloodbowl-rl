@@ -10,11 +10,15 @@
 trace builds the trainer the way pufferl._train does (config plus overrides,
 warm start, selfplay routing), runs rollouts only (no PPO update, so weights
 never move), and digests every rollout tensor by bank slice. compare requires
-two traces of one config to agree on observations, rewards, terminals, action
-masks and env metrics, and on actions/logprobs/values of every bank except the
-candidate's skipped bank, whose slice must be exactly zero. Run compare on two
-default-build traces first: that control is what shows the rollout is
-deterministic, so a candidate mismatch means the patch changed behavior.
+two traces of one config to agree on observations, rewards, terminals and env
+metrics, and on actions/logprobs/values/action masks of every bank except the
+candidate's skipped bank. That slice's actions, logprobs and values must be
+exactly zero, and its mask may only widen: sample_logits rewrites each sampled
+row's mask with the support conditioned on earlier heads, while the skipped
+slice keeps the env's marginal mask, which contains every such support. Run
+compare on two default-build traces first: that control is what shows the
+rollout is deterministic, so a candidate mismatch means the patch changed
+behavior.
 
 throughput alternates rollouts and PPO updates over a wall-clock window and
 records steps/second plus the dashboard's GPU/Env/Train split per epoch.
@@ -25,6 +29,7 @@ tools/qualify_recurrent_cuda.py (D225). Nothing is written except --output.
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import math
@@ -33,13 +38,15 @@ import pathlib
 import subprocess
 import sys
 import time
+import zlib
 from typing import Any, Mapping, Sequence
 
 import numpy as np
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 PER_BANK = ("actions", "logprobs", "values")
-ALL_ROWS = ("observations", "rewards", "terminals", "action_mask")
+MASK = "action_mask"
+ALL_ROWS = ("observations", "rewards", "terminals")
 PERF_KEYS = ("rollout", "eval_gpu", "eval_env", "train_misc", "train_forward", "train")
 
 
@@ -67,12 +74,31 @@ def digest_rows(array: np.ndarray, spans: Sequence[tuple[int, int]]) -> str:
     return digest.hexdigest()
 
 
+def pack_mask(array: np.ndarray, spans: Sequence[tuple[int, int]]) -> dict[str, Any]:
+    mask = np.concatenate([array[:, s:e] for s, e in spans], axis=1) != 0
+    bits = zlib.compress(np.packbits(mask).tobytes(), 6)
+    return {"shape": list(mask.shape), "bits": base64.b64encode(bits).decode("ascii")}
+
+
+def unpack_mask(record: Mapping[str, Any]) -> np.ndarray:
+    shape = tuple(int(v) for v in record["shape"])
+    count = math.prod(shape)
+    try:
+        packed = np.frombuffer(zlib.decompress(base64.b64decode(record["bits"])), dtype=np.uint8)
+    except (ValueError, zlib.error) as exc:
+        raise ProbeError(f"mask bits are malformed: {exc}") from exc
+    if packed.size != (count + 7) // 8:
+        raise ProbeError(f"mask bits hold {packed.size} bytes for shape {list(shape)}")
+    return np.unpackbits(packed, count=count).astype(bool).reshape(shape)
+
+
 def rollout_record(arrays: Mapping[str, np.ndarray], layout: Sequence[int],
-                   agents_per_buffer: int, num_buffers: int) -> dict[str, Any]:
+                   agents_per_buffer: int, num_buffers: int,
+                   scripted_bank: int = 0) -> dict[str, Any]:
     slices = bank_row_slices(layout, agents_per_buffer, num_buffers)
     total = agents_per_buffer * num_buffers
     record: dict[str, Any] = {"all_rows": {}, "banks": []}
-    for key in ALL_ROWS + PER_BANK:
+    for key in ALL_ROWS + PER_BANK + (MASK,):
         array = arrays.get(key)
         if array is None:
             raise ProbeError(f"snapshot lacks {key}")
@@ -86,7 +112,18 @@ def rollout_record(arrays: Mapping[str, np.ndarray], layout: Sequence[int],
             entry[key] = digest_rows(arrays[key], spans)
             entry[f"{key}_zero"] = all(
                 not np.any(arrays[key][:, s:e]) for s, e in spans)
+        entry[MASK] = digest_rows(arrays[MASK], spans)
+        entry[f"{MASK}_binary"] = all(
+            bool(np.all((arrays[MASK][:, s:e] == 0) | (arrays[MASK][:, s:e] == 1)))
+            for s, e in spans)
         record["banks"].append(entry)
+    if scripted_bank:
+        if not 1 <= scripted_bank < len(slices):
+            raise ProbeError(f"scripted bank {scripted_bank} is not a frozen bank of {layout}")
+        # Both traces of one config carry this slice's mask bits, so compare can
+        # check the skipped slice's support relationship, not only a digest.
+        record["scripted_mask"] = {"bank": scripted_bank,
+                                   **pack_mask(arrays[MASK], slices[scripted_bank])}
     return record
 
 
@@ -117,6 +154,32 @@ def _require_equal(label: str, left: Any, right: Any) -> None:
         raise ProbeError(f"{label} differs: {left!r} != {right!r}")
 
 
+def skipped_mask_rows_widened(index: int, bank: int, baseline: Mapping[str, Any],
+                              candidate: Mapping[str, Any]) -> int:
+    """(step, row) pairs where the skipped slice's env mask is wider than the
+    baseline's conditional mask; refuses any bit the baseline has and it lacks."""
+    masks = []
+    for label, rollout in (("baseline", baseline), ("candidate", candidate)):
+        entry = next(e for e in rollout["banks"] if e["bank"] == bank)
+        if not entry[f"{MASK}_binary"]:
+            raise ProbeError(f"rollout {index} {label} bank {bank} {MASK} is not binary")
+        record = rollout.get("scripted_mask")
+        if not record or record.get("bank") != bank:
+            raise ProbeError(f"rollout {index} {label} lacks bank {bank} {MASK} bits")
+        masks.append(unpack_mask(record))
+    conditional, marginal = masks
+    if conditional.shape != marginal.shape:
+        raise ProbeError(f"rollout {index} bank {bank} {MASK} shapes differ: "
+                         f"{list(conditional.shape)} != {list(marginal.shape)}")
+    narrowed = np.argwhere(conditional & ~marginal)
+    if narrowed.size:
+        step, row, bit = (int(v) for v in narrowed[0])
+        raise ProbeError(
+            f"rollout {index} skipped bank {bank} {MASK} is not a superset of the "
+            f"baseline support (step {step}, slice row {row}, bit {bit})")
+    return int(np.count_nonzero(np.any(conditional != marginal, axis=-1)))
+
+
 def compare_traces(baseline: Mapping[str, Any], candidate: Mapping[str, Any]) -> dict[str, Any]:
     for key in ("schema_version", "config", "bank_layout", "agents_per_buffer",
                 "num_buffers", "requested_rollouts"):
@@ -139,6 +202,7 @@ def compare_traces(baseline: Mapping[str, Any], candidate: Mapping[str, Any]) ->
     if not rollouts_a or len(rollouts_a) != len(rollouts_b):
         raise ProbeError("traces hold different rollout counts")
     compared = set()
+    widened = 0
     for index, (a, b) in enumerate(zip(rollouts_a, rollouts_b)):
         _require_equal(f"rollout {index} all-row digests", a["all_rows"], b["all_rows"])
         for bank_a, bank_b in zip(a["banks"], b["banks"], strict=True):
@@ -151,13 +215,14 @@ def compare_traces(baseline: Mapping[str, Any], candidate: Mapping[str, Any]) ->
                     raise ProbeError(
                         f"rollout {index} baseline bank {bank} values are zero; "
                         "the comparison cannot see the forward it removed")
+                widened += skipped_mask_rows_widened(index, bank, a, b)
                 continue
-            for key in PER_BANK:
+            for key in PER_BANK + (MASK,):
                 _require_equal(f"rollout {index} bank {bank} {key}", bank_a[key], bank_b[key])
             compared.add(bank)
     _require_equal("env metrics", baseline["env"], candidate["env"])
     return {"accepted": True, "rollouts": len(rollouts_a), "skip_bank": skip,
-            "identical_banks": sorted(compared)}
+            "identical_banks": sorted(compared), "skipped_mask_rows_widened": widened}
 
 
 def split_overrides(argv: Sequence[str]) -> tuple[list[str], list[str]]:
@@ -240,11 +305,13 @@ def run_trace(options: argparse.Namespace, overrides: Sequence[str]) -> int:
     layout_state = _C.qualification_recurrent_state(pufferl, False)
     layout = [int(v) for v in layout_state["bank_layout"]]
     apb, buffers = int(layout_state["agents_per_buffer"]), int(layout_state["num_buffers"])
+    scripted = expected_skip_bank(args)
     rollouts = []
     for _ in range(options.rollouts):
         _C.rollouts(pufferl)
         rollouts.append(rollout_record(
-            decode_snapshot(_C.qualification_snapshot(pufferl)), layout, apb, buffers))
+            decode_snapshot(_C.qualification_snapshot(pufferl)), layout, apb, buffers,
+            scripted))
     env = dict(_C.log(pufferl)["env"])
     payload = {
         "schema_version": SCHEMA_VERSION, "mode": "trace", "overrides": list(overrides),
