@@ -38,6 +38,10 @@
 #     freezes training under Muon, so leave it at 1 unless experimenting)
 #   LADDER_CHAIN_ENT_SCALE (default 1; scales ONLY the entropy coefficient,
 #     on top of LADDER_CHAIN_LR_SCALE, for an entropy-only probe)
+#   LADDER_GAMMA / LADDER_GAE_LAMBDA (default unset = the screen's fixed
+#     contract) -- trainer discount and GAE lambda for a horizon arm; forwarded
+#     to the screen and, when set, recorded in LADDER_RUNG_COMPLETE.json from
+#     the run manifest the trainer launched with
 #   PREFIX (default ladder-d<RUNG>-s<SEED>-<STAMP>)  STAMP  OUT  C
 #   DEADLINE_HOURS (default 36)
 #   SCRIPTED_BANK_TAG (default 0)  SCRIPTED_BOT_TYPE (default 0)
@@ -196,6 +200,8 @@ echo "  seed   $SEED"
 echo "  warm   $WARM"
 echo "  pool   $POOL ($EXPECTED_POOL_HASH)"
 echo "  bot    scripted_bank_tag=$SCRIPTED_BANK_TAG scripted_bot_type=$SCRIPTED_BOT_TYPE"
+[ -z "${LADDER_GAMMA:-}${LADDER_GAE_LAMBDA:-}" ] || \
+  echo "  horizon gamma=${LADDER_GAMMA:-contract} gae_lambda=${LADDER_GAE_LAMBDA:-contract}"
 echo "  profile $LADDER_PROFILE"
 [ "$LADDER_PROFILE" != "graft" ] || \
   echo "  graft  from source=$GRAFT_FROM_SOURCE_SHA256 patch=$GRAFT_FROM_PATCH_BUNDLE_SHA256 reason=$GRAFT_REASON"
@@ -219,6 +225,7 @@ timeout --signal=TERM --kill-after=120 "$((DEADLINE_HOURS * 3600))" \
       LADDER_SEED="$SEED" LADDER_CHAIN_LR_SCALE="${LADDER_CHAIN_LR_SCALE:-1}" \
       LADDER_CHAIN_ENT_SCALE="${LADDER_CHAIN_ENT_SCALE:-1}" \
       LADDER_ARM="$LADDER_ARM" \
+      LADDER_GAMMA="${LADDER_GAMMA:-}" LADDER_GAE_LAMBDA="${LADDER_GAE_LAMBDA:-}" \
       SCRIPTED_BANK_TAG="$SCRIPTED_BANK_TAG" \
       SCRIPTED_BOT_TYPE="$SCRIPTED_BOT_TYPE" \
       bash "$C/tools/run_reward_screen.sh"
@@ -321,6 +328,17 @@ if profile == "bridge":
         "provenance": bridge_provenance,
         "reason": bridge_reason,
     }
+if os.environ.get("LADDER_GAMMA") or os.environ.get("LADDER_GAE_LAMBDA"):
+    # What the trainer received, not what was asked for: the run manifest is
+    # the record the lineage sidecar hashes.
+    trained = json.load(open(result["log"] + ".manifest.json", encoding="utf-8"))
+    for key, knob in (("gamma", "LADDER_GAMMA"), ("gae_lambda", "LADDER_GAE_LAMBDA")):
+        declared = os.environ.get(knob, "")
+        if declared and float(declared) != float(trained[key]):
+            raise SystemExit(
+                f"{knob}={declared} but the run trained {key}={trained[key]}; "
+                "refusing to publish this rung")
+        payload[key] = float(trained[key])
 with open(out_path, "w", encoding="utf-8") as handle:
     json.dump(payload, handle, indent=2, sort_keys=True)
     handle.write("\n")

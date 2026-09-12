@@ -12,16 +12,113 @@ artifact I/O and assert on specific messages, never on exit status alone.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
+import shlex
 import subprocess
+import sys
+import sysconfig
+import tempfile
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SCREEN = ROOT / "tools/run_reward_screen.sh"
 RUNG = ROOT / "tools/launch_ladder_rung.sh"
+
+# The nine keys every rung SCREEN_MANIFEST has published under contract.ladder
+# since the entropy scale landed; a rung at the fixed horizon must keep them.
+HISTORICAL_LADDER_KEYS = [
+    "arm", "chain_ent_scale", "chain_lr_scale", "endzone_maxdist", "ent_coef",
+    "learning_rate", "reset_pct", "scripted_bank_tag", "scripted_bot_type",
+]
+
+
+def marker_block() -> str:
+    source = RUNG.read_text(encoding="utf-8")
+    match = re.search(
+        r'"\$BRIDGE_REASON" <<\'PY\'\n(.*?)\nPY\n', source, re.S)
+    assert match, "rung marker heredoc not found"
+    return match.group(1)
+
+
+def stand_in_checkout(base, tools_source=None):
+    """A checkout on a stand-in build, so tools/run_reward_screen.sh runs whole.
+
+    tools/ holds the real scripts except two stubs: the install drift check
+    passes, and the per-arm launcher writes the GAMMA / GAE_LAMBDA it received
+    to $HORIZON_DUMP and exits without a process sidecar, which stops the
+    screen right after the hand-off. vendor/PufferLib exposes a fake `_C` with
+    a consistent obs-v6 contract, and the warm carries a real eligible sidecar
+    bound to that build, so the plan writer's module probe and lineage binding
+    execute for real."""
+    from tools.test_graft_profile import mint_lineage
+    tools_source = Path(tools_source or ROOT / "tools")
+    source_sha = "1" * 64
+    root = Path(base).resolve() / "checkout"
+    (root / "tools").mkdir(parents=True)
+    for child in tools_source.iterdir():
+        if child.name not in ("install_puffer_env.sh", "run_reward_ablation.sh"):
+            (root / "tools" / child.name).symlink_to(child)
+    (root / "tools/install_puffer_env.sh").write_text("#!/bin/bash\nexit 0\n")
+    (root / "tools/run_reward_ablation.sh").write_text(
+        "#!/bin/bash\n"
+        "printf 'GAMMA=%s\\nGAE_LAMBDA=%s\\n' \"$GAMMA\" \"$GAE_LAMBDA\" "
+        "> \"$HORIZON_DUMP\"\n")
+    for name in ("puffer", "training"):
+        (root / name).symlink_to(ROOT / name)
+    vendor = root / "vendor/PufferLib"
+    (vendor / "ocean/bloodbowl").mkdir(parents=True)
+    (vendor / "ocean/bloodbowl/.content_hash").write_text(source_sha + "\n")
+    (vendor / "pufferlib").mkdir()
+    (vendor / "src").mkdir()
+    (vendor / ".venv/bin").mkdir(parents=True)
+    python = vendor / ".venv/bin/python"
+    python.write_text(f"#!/bin/sh\nexec {shlex.quote(sys.executable)} \"$@\"\n")
+    python.chmod(0o755)
+    module = vendor / "pufferlib" / ("_C" + sysconfig.get_config_var("EXT_SUFFIX"))
+    module.write_bytes(b"stand-in compiled module\n")
+    (vendor / "pufferlib/__init__.py").write_text(
+        "import types\n"
+        "_C = types.ModuleType('_C')\n"
+        f"_C.__file__ = {str(module)!r}\n"
+        "_C.env_name = 'bloodbowl'\n"
+        "_C.gpu = True\n"
+        "_C.precision_bytes = 4\n"
+        f"_C.exact_action_source_hash = {'8' * 64!r}\n"
+        f"_C.environment_source_hash = {source_sha!r}\n"
+        "_C.observation_abi = 'obs-v6'\n"
+        "_C.observation_version = 6\n"
+        "_C.action_abi = 'exact-joint-v1'\n",
+        encoding="utf-8")
+    for relative in ("pufferlib/pufferl.py", "pufferlib/selfplay.py",
+                     "pufferlib/torch_pufferl.py", "pufferlib/models.py",
+                     "pufferlib/muon.py", "src/pufferlib.cu",
+                     "src/bindings.cu", "src/bindings_cpu.cpp",
+                     "src/kernels.cu", "src/vecenv.h"):
+        (vendor / relative).write_text("# stand-in\n")
+    screen = (tools_source / "run_reward_screen.sh").read_text(encoding="utf-8")
+    patches = re.search(r"\npatches = \[\n(.*?)\n\]\n", screen, re.S)
+    assert patches, "plan-writer patch list not found"
+    paths = [root / rel for rel in
+             re.findall(r'root / "(training/[^"]+\.patch)"', patches.group(1))]
+    patch_sha = hashlib.sha256(b"".join(
+        f"{hashlib.sha256(p.read_bytes()).hexdigest()}  {p}\n".encode()
+        for p in paths)).hexdigest()
+    warm = root / "warm.bin"
+    mint_lineage(root, warm, source=source_sha,
+                 module=hashlib.sha256(module.read_bytes()).hexdigest(),
+                 patch=patch_sha)
+    pool = root / "pool"
+    pool.mkdir()
+    (pool / "league_seeds.json").write_text(json.dumps({"seeds": [
+        {"bank": bank, "name": f"seat{bank}", "file": f"{bank:016d}.bin",
+         "bytes": 16066560, "sha256": f"{bank + 10:064x}",
+         "lineage_file": f"{bank:016d}.bin.lineage.json",
+         "lineage_sha256": f"{bank + 100:064x}"} for bank in range(4)]}))
+    return root, warm, pool
 
 
 def run(script, env):
@@ -577,3 +674,193 @@ class LadderChainEntScaleTests(unittest.TestCase):
         self.assertIn('"chain_ent_scale": float(os.environ.get("LADDER_CHAIN_ENT_SCALE", "1"))', launcher)
         stage = (ROOT / "tools/ladder_stage.sh").read_text(encoding="utf-8")
         self.assertIn('[ -z "${LADDER_CHAIN_ENT_SCALE:-}" ] || export LADDER_CHAIN_ENT_SCALE', stage)
+
+
+class LadderHorizonTests(unittest.TestCase):
+    """LADDER_GAMMA / LADDER_GAE_LAMBDA: the trainer discount and GAE lambda
+    for a horizon arm, rung-shaped profiles only. Unset keeps the fixed
+    contract and every published artifact exactly as it was."""
+
+    RUNG_OK = {**BASE, "LADDER_ENDZONE_MAXDIST": "0", "LADDER_RESET_PCT": "0",
+               "LADDER_SEED": "42", "LADDER_ARM": "r0_poss_half"}
+
+    def test_horizon_knobs_are_rung_only_and_validated(self):
+        from tools.test_ladder_knobs import BAD_HORIZON_VALUES
+        for knob in ("LADDER_GAMMA", "LADDER_GAE_LAMBDA"):
+            result = run(SCREEN, {
+                "WARM": "missing.bin", "POOL": "missing-pool",
+                "STEPS": "12000000000", "SCREEN_PROFILE": "control-final",
+                knob: "0.999",
+            })
+            self.assertNotEqual(result.returncode, 0, knob)
+            self.assertIn("LADDER_GAMMA and LADDER_GAE_LAMBDA are only valid with "
+                          "SCREEN_PROFILE=ladder-rung, graft or bridge",
+                          result.stderr, knob)
+            for bad in BAD_HORIZON_VALUES:
+                result = run(SCREEN, {**self.RUNG_OK, knob: bad})
+                self.assertNotEqual(result.returncode, 0, (knob, bad))
+                self.assertIn(
+                    f"{knob} must be a decimal in (0,1) with at most six decimals",
+                    result.stderr, (knob, bad))
+        for good in ({"LADDER_GAMMA": "0.999"}, {"LADDER_GAE_LAMBDA": "0.95"},
+                     {"LADDER_GAMMA": "0.999", "LADDER_GAE_LAMBDA": "0.95"}):
+            result = run(SCREEN, {**self.RUNG_OK, **good})
+            self.assertNotEqual(result.returncode, 0, good)
+            self.assertNotIn("must be a decimal in (0,1)", result.stderr, good)
+            self.assertNotIn("only valid with", result.stderr, good)
+            self.assertIn("missing warm checkpoint", result.stderr, good)
+
+    def test_rung_marker_records_the_trained_horizon_only_when_declared(self):
+        source = RUNG.read_text(encoding="utf-8")
+        self.assertIn('LADDER_ARM="$LADDER_ARM" \\\n'
+                      '      LADDER_GAMMA="${LADDER_GAMMA:-}" '
+                      'LADDER_GAE_LAMBDA="${LADDER_GAE_LAMBDA:-}" \\\n', source)
+        code = marker_block()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            log = tmp / "arm.log"
+            run_manifest = Path(str(log) + ".manifest.json")
+            run_manifest.write_text(json.dumps({"gamma": "0.999", "gae_lambda": "0.95"}))
+            result_path = tmp / "r.json"
+            result_path.write_text(json.dumps({
+                "acceptance_pass": True, "tag": "t", "log": str(log),
+                "checkpoint": "c", "checkpoint_sha256": "s",
+                "checkpoint_lineage": "cl", "checkpoint_lineage_sha256": "cls",
+                "eval_metrics": {"tds": 1.6, "perf": 0.57}}))
+            out = tmp / "m.json"
+
+            def mark(**knobs):
+                env = {k: v for k, v in os.environ.items()
+                       if not k.startswith("LADDER_")}
+                env.update(knobs)
+                return subprocess.run(
+                    ["python3", "-", str(result_path), str(out), "0", "0",
+                     "3000000000", "42", "w", "p", "pfx", "", "0.5", "4", "0",
+                     "ladder-rung", "", "", "", "", "", "", ""],
+                    input=code, env=env, text=True, stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE, check=False, timeout=60)
+
+            r = mark()
+            self.assertEqual(r.returncode, 0, r.stderr)
+            plain = json.loads(out.read_text())
+            self.assertNotIn("gamma", plain)
+            self.assertNotIn("gae_lambda", plain)
+            r = mark(LADDER_GAMMA="0.999", LADDER_GAE_LAMBDA="0.95")
+            self.assertEqual(r.returncode, 0, r.stderr)
+            marker = json.loads(out.read_text())
+            self.assertEqual(marker.pop("gamma"), 0.999)
+            self.assertEqual(marker.pop("gae_lambda"), 0.95)
+            self.assertEqual(marker, plain)
+            # The values come from the run manifest the lineage sidecar hashes,
+            # and a declaration the trained run contradicts publishes nothing.
+            run_manifest.write_text(json.dumps({"gamma": "0.995", "gae_lambda": "0.85"}))
+            out.unlink()
+            r = mark(LADDER_GAMMA="0.999")
+            self.assertNotEqual(r.returncode, 0)
+            self.assertIn("LADDER_GAMMA=0.999 but the run trained gamma=0.995", r.stderr)
+            self.assertFalse(out.exists())
+
+
+class HorizonScreenStandInTests(unittest.TestCase):
+    """Run the whole rung screen on a stand-in build (see stand_in_checkout)."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root, self.warm, self.pool = stand_in_checkout(self.temp.name)
+        self.dump = self.root / "horizon.dump"
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def screen(self, out, **over):
+        env = {k: v for k, v in os.environ.items()
+               if not k.startswith(("LADDER_", "SCRIPTED_", "GRAFT_", "BRIDGE_"))
+               and k not in ("WARM", "POOL", "CANDIDATE_ARM", "STEPS",
+                             "SCREEN_PROFILE", "EXPECTED_POOL_HASH", "PREFIX",
+                             "OUT_DIR", "PLAN_ONLY", "NUM_FROZEN_BANKS",
+                             "FROZEN_BANK_PCT", "TRANSFER_COMPLETE",
+                             "EXPECTED_TRANSFER_SHA256", "ARM_DETACH",
+                             "POLL_SECONDS", "NUM_THREADS")}
+        env.update({
+            "STEPS": "3000000000", "SCREEN_PROFILE": "ladder-rung",
+            "WARM": str(self.warm), "POOL": str(self.pool),
+            "EXPECTED_POOL_HASH": "d" * 64, "PREFIX": "horizon-test",
+            "OUT_DIR": str(self.root / out), "PLAN_ONLY": "1",
+            "LADDER_ENDZONE_MAXDIST": "0", "LADDER_RESET_PCT": "0",
+            "LADDER_SEED": "42", "LADDER_ARM": "r0_poss_half",
+            "SCRIPTED_BANK_TAG": "4", "SCRIPTED_BOT_TYPE": "0",
+            "FROZEN_BANK_PCT": "0.12", "POLL_SECONDS": "1",
+            "HORIZON_DUMP": str(self.dump),
+        })
+        env.update(over)
+        return subprocess.run(
+            ["bash", str(self.root / "tools/run_reward_screen.sh")],
+            cwd=self.root, env=env, text=True, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, check=False, timeout=300)
+
+    def contract(self, out):
+        return json.loads(
+            (self.root / out / "SCREEN_MANIFEST.json").read_text())["contract"]
+
+    def test_plan_records_the_horizon_only_when_declared(self):
+        r = self.screen("plain")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("SCREEN PLAN VERIFIED", r.stdout)
+        plain = self.contract("plain")
+        self.assertEqual(sorted(plain["ladder"]), HISTORICAL_LADDER_KEYS)
+        r = self.screen("horizon", LADDER_GAMMA="0.999", LADDER_GAE_LAMBDA="0.95")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("SCREEN PLAN VERIFIED", r.stdout)
+        horizon = self.contract("horizon")
+        self.assertEqual(horizon["ladder"].pop("gamma"), 0.999)
+        self.assertEqual(horizon["ladder"].pop("gae_lambda"), 0.95)
+        for contract in (plain, horizon):
+            contract.pop("out_dir")
+        self.assertEqual(horizon, plain)
+        # Declaring one knob records both effective values: the pair is the arm.
+        r = self.screen("lambda-only", LADDER_GAE_LAMBDA="0.95")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        ladder = self.contract("lambda-only")["ladder"]
+        self.assertEqual((ladder["gamma"], ladder["gae_lambda"]), (0.995, 0.95))
+
+    def test_reward_guard_checks_the_arm_at_the_declared_gamma(self):
+        from reward_manifest import distance_form, load_manifest
+        manifest, digest = load_manifest(ROOT / "puffer/config/rewards/r0_poss_half.json")
+        self.assertTrue(digest.startswith("433c7920"), digest)
+        self.assertEqual(distance_form(manifest, digest, 0.999), "legacy_raw_delta")
+        # The pinned legacy raw-delta arm plans at 0.999, even though the
+        # shipped exact-PBRS manifests (minted at 0.995) would not train there.
+        r = self.screen("legacy-0999", LADDER_GAMMA="0.999")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("SCREEN PLAN VERIFIED", r.stdout)
+        # An exact-PBRS arm at a gamma its manifest does not claim is refused
+        # before any plan is published.
+        r = self.screen("exact-0999", LADDER_GAMMA="0.999", LADDER_ARM="s_both")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("s0_both.json", r.stderr)
+        self.assertIn("!= train gamma", r.stderr)
+        self.assertIn("would not train the distance form it claims under train "
+                      "gamma 0.999", r.stderr)
+        self.assertFalse((self.root / "exact-0999/SCREEN_MANIFEST.json").exists())
+        # The same arm at the contract gamma is exact PBRS and plans.
+        r = self.screen("exact-0995", LADDER_ARM="s_both")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("SCREEN PLAN VERIFIED", r.stdout)
+
+    def test_declared_horizon_reaches_the_arm_launcher_and_the_trainer_argv(self):
+        from tools.test_ladder_knobs import render_trainer_argv
+        for knobs, gamma, lam in (
+                ({}, "0.995", "0.85"),
+                ({"LADDER_GAMMA": "0.999", "LADDER_GAE_LAMBDA": "0.95"},
+                 "0.999", "0.95")):
+            if self.dump.exists():
+                self.dump.unlink()
+            r = self.screen(f"arm-{gamma}", PLAN_ONLY="0", **knobs)
+            self.assertIn("missing process sidecar", r.stderr, knobs)
+            received = dict(line.split("=", 1)
+                            for line in self.dump.read_text().splitlines())
+            self.assertEqual(received, {"GAMMA": gamma, "GAE_LAMBDA": lam}, knobs)
+            argv = render_trainer_argv(**received)
+            flag = argv.index("--train.gamma")
+            self.assertEqual(argv[flag:flag + 4],
+                             ["--train.gamma", gamma, "--train.gae-lambda", lam])

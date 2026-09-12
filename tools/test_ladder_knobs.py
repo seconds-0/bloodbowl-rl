@@ -11,6 +11,8 @@ configuration on a machine with no GPU.
 from __future__ import annotations
 
 import os
+import re
+import shlex
 import subprocess
 import unittest
 from pathlib import Path
@@ -19,13 +21,39 @@ ROOT = Path(__file__).resolve().parents[1]
 LAUNCHER = ROOT / "tools" / "run_reward_ablation.sh"
 
 
+def launcher_cmd_block() -> str:
+    source = LAUNCHER.read_text(encoding="utf-8")
+    match = re.search(
+        r"\nCMD=\(env PUFFER_CUDA_RUNTIME_MANIFEST=.*?"
+        r"--train\.eps 0\.000000000001\)\n", source, re.S)
+    assert match, "launcher trainer command block not found"
+    return match.group(0)
+
+
+def render_trainer_argv(**values) -> list[str]:
+    """Evaluate the launcher's real CMD=(...) block and return the trainer argv.
+
+    Variables the block reads and the caller does not name render as empty
+    strings, which is enough to locate a flag and the value beside it."""
+    script = ("REWARD_ARGS=()\n"
+              + "".join(f"{key}={shlex.quote(str(value))}\n"
+                        for key, value in values.items())
+              + launcher_cmd_block()
+              + "printf '%s\\n' \"${CMD[@]}\"\n")
+    out = subprocess.run(["bash", "-c", script], text=True,
+                         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                         check=True, timeout=60)
+    return out.stdout.splitlines()
+
+
 def run(**knobs) -> subprocess.CompletedProcess:
     # Scrub every launcher knob so an operator's shell cannot leak into a test.
     env = {k: v for k, v in os.environ.items()
            if not k.startswith(("LADDER_", "SCRIPTED_", "GRAFT_"))
            and k not in ("WARM", "POOL", "BOOTSTRAP_MODE", "EXPECTED_POOL_HASH",
                          "TAG", "REWARD_MANIFEST", "STEPS", "SEED",
-                         "NUM_FROZEN_BANKS", "FROZEN_BANK_PCT")}
+                         "NUM_FROZEN_BANKS", "FROZEN_BANK_PCT",
+                         "GAMMA", "GAE_LAMBDA")}
     # Enough to get past the required-variable checks and reach the knobs.
     env.setdefault("TAG", "ladder-knob-test")
     env.setdefault("REWARD_MANIFEST", str(ROOT / "puffer/config/rewards/s0_both.json"))
@@ -191,6 +219,37 @@ class ScriptedBankKnobTests(unittest.TestCase):
         # And in the launch banner.
         self.assertIn('echo "scripted_bank_tag=$SCRIPTED_BANK_TAG '
                       'scripted_bot_type=$SCRIPTED_BOT_TYPE"', source)
+
+
+# Junk the horizon knobs must refuse at every layer: out of (0,1), not a plain
+# decimal, or finer than six decimals.
+BAD_HORIZON_VALUES = ("1", "1.0", "0", "0.0", "0.000", ".99", "0.99x", "9.9e-1",
+                      "nan", "inf", "-0.5", "0.99 ", " 0.99", "0,99", "0.9999999")
+
+
+class HorizonKnobTests(unittest.TestCase):
+    """GAMMA / GAE_LAMBDA reach --train.gamma / --train.gae-lambda verbatim.
+
+    The rung screen sets them from LADDER_GAMMA / LADDER_GAE_LAMBDA for a
+    horizon arm. This launcher is the last gate before the trainer argv, so a
+    malformed value is refused here, before any preflight, with its own
+    message. That the screen's effective values reach the argv is covered end
+    to end in tools/test_ladder_rung_profile.py."""
+
+    def test_gamma_and_gae_lambda_are_validated_before_preflight(self):
+        for knob in ("GAMMA", "GAE_LAMBDA"):
+            for value in BAD_HORIZON_VALUES:
+                out = run(**{knob: value}).stdout
+                self.assertIn(
+                    f"{knob} must be a decimal in (0,1) with at most six decimals",
+                    out, (knob, value))
+        vendored = (ROOT / "vendor/PufferLib/.venv/bin/python").exists()
+        for gamma, lam in (("0.995", "0.85"), ("0.999", "0.95"),
+                           ("0.9", "0.999999")):
+            out = run(GAMMA=gamma, GAE_LAMBDA=lam).stdout
+            self.assertNotIn("must be a decimal in (0,1)", out, (gamma, lam))
+            if not vendored:
+                self.assertIn("vendored Python missing", out, (gamma, lam))
 
 
 if __name__ == "__main__":
